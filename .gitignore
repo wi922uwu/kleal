@@ -1,0 +1,33 @@
+# the app codebase lives in its own git repo (with its own secrets/.env)
+dating/
+
+# python
+__pycache__/
+*.pyc
+
+# secrets / env
+.env
+*.env
+*.env.local
+
+# node
+node_modules/
+package-lock.json
+
+# build/ holds lots of scratch (base64 deploy scripts, figma screenshots, dumps, backups).
+# Ignore all of it EXCEPT the reusable deploy generators.
+build/*
+!build/deploy_to_pod.py
+!build/deploy_v2_to_pod.py
+!build/deploy_bundle_to_pod.py
+
+# extracted content dumps + misc scratch
+*.png
+docx_content.txt
+ods_content.txt
+xlsx_content.txt
+index_remote.html
+ALIA-40b-deploy-log.md
+alia_dl_sup.sh
+extract_docs.py
+llm_demo_app.py

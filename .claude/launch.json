@@ -1,0 +1,26 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "llm-demo",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-X", "utf8", "run_local_demo.py"],
+      "port": 7071,
+      "autoPort": false
+    },
+    {
+      "name": "kleal-v2",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-X", "utf8", "run_v2_local.py"],
+      "port": 7072,
+      "autoPort": false
+    },
+    {
+      "name": "kleal-profile",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-X", "utf8", "kleal_profile.py"],
+      "port": 7073,
+      "autoPort": false
+    }
+  ]
+}
