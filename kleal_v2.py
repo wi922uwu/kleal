@@ -96,6 +96,42 @@ A status line tells you exactly what to ask next - follow it strictly.'''
 _FIN_RE = re.compile(r"that'?s all|that is all|\bfinish|\bdone\b|no more|nothing else|i'?m good|all set|\bnope\b|^\s*no[.! ]*$", re.I)
 _ADD_RE = re.compile(r"\badd\b|another|one more|\bmore\b|\byes\b|yeah|sure|\balso\b|actually", re.I)
 
+# gibberish / non-answer detection: catch keyboard-mash like "afcafcafc" / "ппфцпц" so the funnel
+# re-asks instead of silently accepting junk and moving on.
+_VOWELS = "aeiouyауоыиэяюёеAEIOUYАУОЫИЭЯЮЁЕ"
+_KBD_MASH = {"asdf", "asdfg", "asdfgh", "asdfghjkl", "qwer", "qwert", "qwerty", "qwertyu",
+             "zxcv", "zxcvb", "zxcvbn", "hjkl", "asd", "qwe", "zxc", "qaz", "wsx", "edc",
+             "йцук", "йцуке", "йцукен", "фыва", "фывап", "ячсм", "ячсми", "ячсмит", "цук", "фыв"}
+def _is_gibberish(text):
+    """True when a message reads like random characters / a keyboard mash rather than a real answer.
+    Conservative: only flags when EVERY 4+ letter token looks unpronounceable, so real short answers
+    (PC, B1, 5y, Ancient, coffee...) always pass."""
+    t = (text or "").strip().lower()
+    letters = re.sub(r"[^a-zа-яё]", "", t)
+    if len(letters) < 4:
+        return False  # short answers are legitimate (PC, no, B1, 5y)
+    words = [w for w in re.findall(r"[a-zа-яё]{2,}", t) if len(w) >= 4]
+    if not words:
+        return False
+    vset = set(_VOWELS.lower())
+    conrun = re.compile(r"[^" + _VOWELS.lower() + r"]{4,}")
+    def periodic(w):                        # a short pattern tiled: "abcabc", "пвапвап", "аываыва"
+        return any(all(w[i] == w[i % p] for i in range(len(w))) for p in range(1, len(w) // 2 + 1))
+    def bad(w):
+        if w in _KBD_MASH:
+            return True
+        vr = sum(1 for c in w if c in vset) / len(w)
+        if vr < 0.2 or vr > 0.85:           # too few / too many vowels -> unpronounceable
+            return True
+        if conrun.search(w):                # long consonant run
+            return True
+        if len(set(w)) <= max(2, len(w) // 3):  # very repetitive (few unique letters)
+            return True
+        if len(w) >= 5 and periodic(w):     # a tiled n-gram pattern
+            return True
+        return False
+    return all(bad(w) for w in words)
+
 def _v2_listhas(p, path, name):
     v = _cpath(p, path) or []
     key = name.lower()
@@ -230,7 +266,14 @@ def v2_chat(messages, prior):
                         for m in hist)
     sys = FUNNEL_PROMPT
     complete = False
-    if gaps:
+    if _is_gibberish(lastu):
+        # user typed junk / random characters - do NOT advance or wrap up, gently re-ask.
+        sys += (" [The user's last message does not look like a real answer - it reads like random "
+                "characters or a keyboard mash. In ONE short, warm line say you did not quite catch that, "
+                "then re-ask YOUR OWN PREVIOUS question in simpler words. Ask EXACTLY ONE question and keep "
+                "the same [OPTIONS: ...] if your previous question had them. Do NOT move to a new topic and "
+                "do NOT wrap up.]")
+    elif gaps:
         sys += (" [NEXT GAP TO CLOSE: ask %s. Exactly ONE question message - warm reaction line first. "
                 "If it is a closed choice end with [OPTIONS: a | b | c] (pipe-separated only). "
                 "Never re-ask anything already known. Queued after this: %s]"
@@ -254,7 +297,8 @@ def v2_chat(messages, prior):
     if not (reply or "").strip():
         reply = "Tell me a bit more. What do you like to do with it?"
     # funnelComplete = no gaps left AND the user explicitly confirmed they are done adding interests
-    return {"reply": reply, "options": options, "profile": merged, "crit": crit, "funnelComplete": complete}
+    return {"reply": reply, "options": options, "profile": merged, "crit": crit,
+            "funnelComplete": complete, "gibberish": bool(_is_gibberish(lastu))}
 
 # ---------------------------------------------------------------- HTML (mobile V2 — messenger thread)
 HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -804,6 +848,9 @@ async function funnelTurn(text, first){
     elBubble('bot',r.reply,true);
     if(r.profile&&typeof r.profile==='object'){ const ph=st.profile.photo; st.profile=r.profile; if(ph)st.profile.photo=ph; }
     if(r.crit) st.crit=r.crit; updateHeader();
+    // a junk / gibberish answer must NOT count toward the anti-stuck net, else spamming nonsense
+    // could unlock Continue. Undo this turn's increment so only real answers advance the net.
+    if(r.gibberish) st.funnelTurns=Math.max(0, st.funnelTurns-1);
     // Continue ONLY once the agent stops asking: funnel has no gaps AND the bot's reply is a wrap-up (no "?"/options).
     // funnelTurns is an anti-stuck net so the user is never trapped if the model keeps probing.
     const replyAsks=((r.reply||'').indexOf('?')>=0)||(r.options&&r.options.length>0);
