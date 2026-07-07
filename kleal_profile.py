@@ -81,13 +81,16 @@ DATA = {
     "optional": ["Networking", "Dating mode off", "Regular groups"],
   },
 
+  # Safety & Privacy is now a flat FLAGS object (single source of truth); scr_safety builds the
+  # grouped, typed rows from it via safetyGroups(). Redesigned into 6 purpose-scoped groups.
   "safety": {
-    "offline": [["Public places by default", True], ["Private locations forbidden", True],
-                ["Verified users preferred", True], ["Late-night 1:1 restricted", True],
-                ["Alcohol-heavy venues", False], ["Share plan with contact", False]],
-    "permissions": [["Use my interests", True], ["Use my area", True], ["Use my feedback", True],
-                    ["Use behavioral history", True], ["Adjacent suggestions", True],
-                    ["Broad suggestions", False], ["Show me on public map", False], ["Dating mode", False]],
+    "autonomy": "ask",          # 'ask' | 'auto'  (How Kleal acts for you)
+    "confirmShare": True, "paused": False,
+    "publicFirst": True, "noLateNight": True, "avoidAlcohol": False, "sharePlan": False,
+    "trustedContact": None,
+    "useInterestsArea": True, "useFeedback": True, "inferNew": True, "noSensitive": True,
+    "suggestBeyond": True, "publicMap": False, "datingMode": False,
+    "verified": False, "preferVerified": True, "blockedCount": 0, "excludeKnown": True,
   },
 
   "memory": [
@@ -311,6 +314,20 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .st-Temporary{background:var(--warn-bg);color:var(--warn-text)}
 .sig .smeta{font-size:13px;color:var(--muted);line-height:1.6}
 .divider{height:1px;background:var(--line);margin:0 16px}
+/* Safety & Privacy typed rows */
+.trow .rt{display:flex;align-items:center;gap:8px;flex:none;color:var(--muted)}
+.trow .rt svg{color:var(--neutral300)}
+.sval{font-size:13px;color:var(--muted)}
+.sbtn{font:inherit;font-size:13px;font-weight:700;color:var(--primary);background:var(--coral50);
+  border:0;border-radius:999px;padding:6px 14px;cursor:pointer}
+.ssub{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);
+  padding:12px 16px 4px;background:var(--card)}
+.crow2{padding:12px 16px}
+.crow2 .tt{margin-bottom:11px}
+.seg{display:flex;gap:5px;background:var(--neutral100);border-radius:12px;padding:4px}
+.seg button{flex:1;font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:none;border:0;
+  border-radius:9px;padding:9px 6px;cursor:pointer;transition:.15s}
+.seg button.sel{background:var(--card);color:var(--fg);box-shadow:0 1px 3px rgba(20,20,40,.10)}
 /* bottom nav with center FAB */
 .bnav{flex:none;height:66px;display:flex;align-items:center;justify-content:space-around;position:relative;
   background:#fff;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
@@ -475,23 +492,21 @@ function mapOnboarding(op){
   if(km!=null) places.push({icon:'route', title:'Max travel', value:km+' km'});
   places.push({icon:'eye', title:'Location sharing', value:'Area only, never exact location'});
 
-  const consent = !!pm.useProfileForMatching;   // onboarding master consent -> the sub-permissions
-  const safety={ offline:[
-      ['Public places by default',   sf.publicPlacesOnly!==false],
-      ['Private locations forbidden', sf.noPrivateLocations!==false],
-      ['Verified users preferred',   sf.verifiedOnly!==undefined ? !!sf.verifiedOnly : true],
-      ['Late-night 1:1 restricted',  sf.lateNight!==false],
-      ['Alcohol-heavy venues',       !!sf.alcoholVenues],
-      ['Share plan with a contact',  !!sf.sharePlan] ],
-    permissions:[
-      ['Use my interests',        consent],
-      ['Use my area',             consent],
-      ['Use my feedback',         consent],
-      ['Use behavioral history',  consent],
-      ['Adjacent suggestions',    pm.allowAdjacentMatches!==false],
-      ['Broad suggestions',       !!pm.broadSuggestions],
-      ['Show me on public map',   !!pm.publicMap],
-      ['Dating mode',             !!pm.datingMode] ] };
+  const consent = !!pm.useProfileForMatching;   // onboarding master consent -> the data-usage flags
+  const safety={
+      autonomy:'ask', confirmShare:true, paused:false,
+      publicFirst:   sf.publicPlacesOnly!==false,
+      noLateNight:   sf.lateNight!==false,
+      avoidAlcohol:  !!sf.avoidAlcohol,
+      sharePlan:     !!sf.sharePlan,
+      trustedContact: sf.trustedContact||null,
+      useInterestsArea: consent, useFeedback: consent, inferNew: consent, noSensitive:true,
+      suggestBeyond: pm.allowAdjacentMatches!==false,
+      publicMap:     !!pm.publicMap,
+      datingMode:    !!pm.datingMode,
+      verified:false,
+      preferVerified: sf.verifiedOnly!==undefined ? !!sf.verifiedOnly : true,
+      blockedCount:0, excludeKnown:true };
 
   const conf=[];
   if(op.name) conf.push('Name is '+op.name);
@@ -547,6 +562,7 @@ const ALL_TABS=[
 ];
 const TABS = ALL_TABS;
 let cur = 'overview';
+const TITLES={memory:'What Kleal remembers'};   // screens reachable but not in the nav TABS
 function setTab(id){ detail=null; cur=id; render(); }
 // Overview is a hub of drill-in "Settings Rows"
 const SECMETA={
@@ -568,26 +584,67 @@ function summaryRow(r, edit){ return `<div class="card srow"><div class="si">${I
   ${edit?`<div class="edit" data-act="editrow" data-row="${esc(r.title)}">${IC.edit}</div>`:''}</div>`; }
 const UI={};  // persists toggle/checkbox state across re-renders (keyed control state)
 const ui=(k,def)=>(k&&UI[k]!==undefined)?UI[k]:def;
-const SAFEDESC={
-  'Public places by default':'Keep first meetups in public spots',
-  'Private locations forbidden':'Never suggest private addresses',
-  'Verified users preferred':'Prefer verified profiles',
-  'Late-night 1:1 restricted':'No solo late-night meets',
-  'Alcohol-heavy venues':'Allow bars and drinking venues',
-  'Share plan with a contact':'Send your plan to a trusted contact',
-  'Share plan with contact':'Send your plan to a trusted contact',
-  'Use my interests':'Match on what you like',
-  'Use my area':'Match by your neighborhood',
-  'Use my feedback':'Learn from your ratings',
-  'Use behavioral history':'Learn from accepted and declined plans',
-  'Adjacent suggestions':'Friends-of-interests and related plans',
-  'Broad suggestions':'Occasionally suggest outside your usuals',
-  'Show me on public map':'Appear on the discovery map',
-  'Dating mode':'Enable dating intents, off by default',
-};
-function toggleRow(label,on,key){ on=ui(key,on); const d=SAFEDESC[label];
-  return `<div class="trow"><div class="tt"><div class="ttl">${esc(label)}</div>${d?`<div class="tts">${esc(d)}</div>`:''}</div>
-  <div class="sw ${on?'on':''}" data-tog data-uk="${key||''}"><i></i></div></div>`; }
+// ---- Safety & Privacy: typed rows built from the DATA.safety flags object ----
+function sTt(label,desc,danger){ return `<div class="tt"><div class="ttl"${danger?' style="color:var(--danger)"':''}>${esc(label)}</div>${desc?`<div class="tts">${esc(desc)}</div>`:''}</div>`; }
+function sTog(label,desc,on,flag){ return `<div class="trow">${sTt(label,desc)}
+  <div class="sw ${on?'on':''}" data-sflag="${flag}"><i></i></div></div>`; }
+function sAct(label,desc,val,act,danger){ return `<div class="trow" data-act="${act}">${sTt(label,desc,danger)}
+  <div class="rt">${val?`<span class="sval">${esc(val)}</span>`:''}${IC.chevR}</div></div>`; }
+function sStat(label,desc,val,btn,act,icon){
+  const right = btn ? `<span class="sval">${esc(val)}</span><button class="sbtn" data-act="${act}">${esc(btn)}</button>`
+                    : `<span class="sval">${esc(val)}</span>${icon||''}`;
+  return `<div class="trow">${sTt(label,desc)}<div class="rt">${right}</div></div>`; }
+function sChoice(label,desc,options,sel,act){ return `<div class="crow2">${sTt(label,desc)}
+  <div class="seg">${options.map((o,i)=>`<button class="${i===sel?'sel':''}" data-schoice="${act}" data-i="${i}">${esc(o)}</button>`).join('')}</div></div>`; }
+function sSub(label){ return `<div class="ssub">${esc(label)}</div>`; }
+
+function safetyGroups(f){ f=f||{}; return [
+  {t:'How Kleal acts for you', c:'The big levers — your agent’s autonomy and a one-tap pause.', items:[
+    {k:'choice', label:'When Kleal finds someone', desc:'Ask before reaching out, or let Kleal introduce you automatically.',
+      options:['Ask me first','Introduce automatically'], sel:(f.autonomy==='auto'?1:0), act:'autonomy'},
+    {k:'tog', label:'Confirm before sharing my details', desc:'Ask before revealing your name, photo or contact — even when Kleal arranges plans for you.', on:f.confirmShare!==false, flag:'confirmShare'},
+    {k:'tog', label:'Pause Kleal', desc:'Stop all new matching and outreach. Your profile and memory stay saved.', on:!!f.paused, flag:'paused'},
+  ]},
+  {t:'Meeting in person', c:'How Kleal keeps real-world plans safe. Every switch here: on = safer.', items:[
+    {k:'tog', label:'Keep first meetups public', desc:'First meets stay in cafes, parks and other public spots.', on:f.publicFirst!==false, flag:'publicFirst'},
+    {k:'tog', label:'No solo late-night meets', desc:'Kleal avoids one-on-one plans late at night.', on:f.noLateNight!==false, flag:'noLateNight'},
+    {k:'tog', label:'Avoid alcohol-focused venues', desc:'Skip bars and heavy-drinking spots for first meets.', on:!!f.avoidAlcohol, flag:'avoidAlcohol'},
+    {k:'tog', label:'Share my plan with a trusted contact', desc:'Auto-send who, where and when to someone you choose, with a check-in after.', on:!!f.sharePlan, flag:'sharePlan'},
+    {k:'stat', label:'Trusted contact', desc:'Choose who receives your plans. They’ll be told you added them.', val:(f.trustedContact||'Not set'), btn:(f.trustedContact?'Change':'Add'), act:'trusted-contact'},
+  ]},
+  {t:'What Kleal may use & remember', c:'Your consent for what Kleal reads and learns. On = Kleal may use it.', items:[
+    {k:'tog', label:'Match on my interests & area', desc:'Use what you like and your city area — never your exact location.', on:f.useInterestsArea!==false, flag:'useInterestsArea'},
+    {k:'tog', label:'Learn from my feedback & activity', desc:'Use your ratings and which plans you accept or decline.', on:f.useFeedback!==false, flag:'useFeedback'},
+    {k:'tog', label:'Let Kleal infer new things about me', desc:'Allow guesses beyond what you stated, like preferred venues.', on:f.inferNew!==false, flag:'inferNew'},
+    {k:'sub', label:'Guardrails'},
+    {k:'tog', label:'Never infer sensitive traits', desc:'Keep health, religion, politics and orientation out of memory.', on:f.noSensitive!==false, flag:'noSensitive'},
+    {k:'act', label:'Review what Kleal remembers', desc:'See, correct or forget individual signals.', act:'review-memory'},
+  ]},
+  {t:'How people find you', c:'Your reach and visibility. On = more reach, off = more private.', items:[
+    {k:'tog', label:'Suggest people beyond my usual circles', desc:'Occasionally propose friends-of-interests and plans outside your usuals.', on:f.suggestBeyond!==false, flag:'suggestBeyond'},
+    {k:'tog', label:'Show me on the discovery map', desc:'Let others come across you on the public map.', on:!!f.publicMap, flag:'publicMap'},
+    {k:'tog', label:'Dating mode', desc:'Off by default. Turn on to let Kleal suggest dating intros too.', on:!!f.datingMode, flag:'datingMode'},
+  ]},
+  {t:'Verification & people', c:'Who Kleal will introduce you to. On = more protective.', items:[
+    {k:'stat', label:'My verification', desc:'Verify your photo and ID so others know you’re real.',
+      val:(f.verified?'Verified':'Not verified'), btn:(f.verified?null:'Verify'), act:'verify-me', icon:(f.verified?IC.verify:'')},
+    {k:'tog', label:'Prefer verified people', desc:'Kleal favours verified profiles when it matches you.', on:f.preferVerified!==false, flag:'preferVerified'},
+    {k:'act', label:'Blocked people', desc:'People Kleal will never match or introduce you to.', val:((f.blockedCount||0)+' blocked'), act:'blocked'},
+    {k:'tog', label:'Don’t match me with people I may know', desc:'Exclude coworkers, exes and phone contacts from suggestions.', on:f.excludeKnown!==false, flag:'excludeKnown'},
+    {k:'act', label:'Report a problem or get help', desc:'Report someone or reach the safety centre.', act:'report'},
+  ]},
+  {t:'Your data', c:'Your data rights. Take a copy or erase everything, anytime.', items:[
+    {k:'act', label:'Download my data', desc:'Export everything Kleal holds about you.', act:'export-data'},
+    {k:'act', label:'Delete my account & memory', desc:'Permanently erase your profile and everything Kleal learned. Any in-flight introductions are cancelled.', act:'delete-account', danger:true},
+  ]},
+]; }
+function safetyRow(it){
+  if(it.k==='tog')    return sTog(it.label,it.desc,it.on,it.flag);
+  if(it.k==='act')    return sAct(it.label,it.desc,it.val,it.act,it.danger);
+  if(it.k==='stat')   return sStat(it.label,it.desc,it.val,it.btn,it.act,it.icon);
+  if(it.k==='choice') return sChoice(it.label,it.desc,it.options,it.sel,it.act);
+  if(it.k==='sub')    return sSub(it.label);
+  return ''; }
 function checkRow(label,on,key){ on=ui(key,on); return `<div class="crow"><div class="cbx ${on?'on':''}" data-cbx data-uk="${key||''}">${on?IC.check:''}</div>
   <div class="cl">${esc(label)}</div></div>`; }
 
@@ -694,15 +751,20 @@ function scr_goals(){
     <button class="bigbtn primary" style="margin-top:14px" data-act="add-goal">Add goal</button></div>`;
 }
 function scr_safety(){
-  const s=DATA.safety;
-  const grp=(title,cap,rows,pfx)=>`<div class="rowhead"><div class="seclbl">${title}</div></div>
-    <div class="seccap">${cap}</div>
-    <div class="card">${rows.map((r,i)=>toggleRow(r[0],r[1],pfx+i)+(i<rows.length-1?'<div class="divider"></div>':'')).join('')}</div>`;
+  const groups=safetyGroups(DATA.safety).map(gr=>{
+    let inner='';
+    gr.items.forEach((it,i)=>{
+      inner+=safetyRow(it);
+      const next=gr.items[i+1];
+      if(next && it.k!=='sub' && next.k!=='sub') inner+='<div class="divider"></div>';
+    });
+    return `<div class="rowhead"><div class="seclbl">${esc(gr.t)}</div></div>
+      <div class="seccap">${esc(gr.c)}</div><div class="card">${inner}</div>`;
+  }).join('');
   return `<div class="fade">
-    <div class="card pad" style="margin-bottom:4px"><div class="sumlbl" style="color:var(--coral700)">You are in control</div>
-      <div class="sumtxt" style="font-size:13.5px;color:var(--muted)">Nothing happens without your say-so. Turn any signal off for matching, and your exact location is never shared, only your city area.</div></div>
-    ${grp('Offline safety','How Kleal keeps in-person plans safe.',s.offline,'sf-off-')}
-    ${grp('Matching permissions','What Kleal is allowed to use when it looks for people and plans.',s.permissions,'sf-perm-')}</div>`;
+    <div class="card pad" style="margin-bottom:4px"><div class="sumlbl" style="color:var(--coral700)">You’re in control</div>
+      <div class="sumtxt" style="font-size:13.5px;color:var(--muted)">Kleal never acts without your say-so. It shares your city area, never your exact location, learns only what you allow, and everything here is reversible anytime.</div></div>
+    ${groups}</div>`;
 }
 function scr_memory(){
   if(!DATA.memory.length) return emptyState("No signals yet","As you use Kleal, everything it learns shows up here.");
@@ -786,7 +848,7 @@ let detail=null;  // {interest}
 function render(){
   const meta=TABS.find(t=>t[0]===cur)||TABS[0];
   const isHome = !editSig && !detail && cur==='overview';
-  document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : (cur==='overview'?'My Kleal Profile':meta[2]));
+  document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : (cur==='overview'?'My Kleal Profile':(TITLES[cur]||meta[2])));
   document.getElementById('back').style.visibility= (editSig||detail||cur!=='overview')? 'visible' : 'hidden';
   // app-bar right icon: gear (settings) on the Overview, refresh on sub-screens
   const rgt=document.getElementById('bookmark');
@@ -802,6 +864,9 @@ function render(){
   document.querySelectorAll('[data-open]').forEach(el=>el.onclick=()=>{ expInt=(expInt===el.dataset.open?'':el.dataset.open); render(); });
   document.querySelectorAll('[data-imatch]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); const it=DATA.interests.find(i=>i.name===el.dataset.imatch); if(it){ it.used=(it.used===false); el.classList.toggle('on', it.used!==false); } });
   document.querySelectorAll('[data-tog]').forEach(el=>el.onclick=()=>{ const on=!el.classList.contains('on'); el.classList.toggle('on'); if(el.dataset.uk)UI[el.dataset.uk]=on; });
+  // Safety & Privacy: flags are the single source of truth on DATA.safety
+  document.querySelectorAll('[data-sflag]').forEach(el=>el.onclick=()=>{ const k=el.dataset.sflag; const on=!el.classList.contains('on'); el.classList.toggle('on'); if(DATA.safety)DATA.safety[k]=on; });
+  document.querySelectorAll('[data-schoice]').forEach(el=>el.onclick=()=>{ if(el.dataset.schoice==='autonomy'&&DATA.safety){ DATA.safety.autonomy=(+el.dataset.i===1?'auto':'ask'); render(); } });
   document.querySelectorAll('[data-cbx]').forEach(el=>el.onclick=()=>{ const on=!el.classList.contains('on'); el.classList.toggle('on'); el.innerHTML=on?IC.check:''; if(el.dataset.uk)UI[el.dataset.uk]=on; });
   // Social Style chips (Vibe / Conversation depth) — toggle selection, persist to DATA
   document.querySelectorAll('[data-vibe]').forEach(el=>el.onclick=()=>{ const i=+el.dataset.vibe; DATA.social.vibe[i][1]=!DATA.social.vibe[i][1]; el.classList.toggle('sel'); el.classList.toggle('unsel'); });
@@ -842,6 +907,15 @@ function doAct(act, ds){
         DATA.matchingPaths=(DATA.matchingPaths||[]).filter(p=>p!==e.name); detail=null; cur='interests'; render(); toast('Removed '+e.name); }
       else { if(e)DATA.memory.splice(e.sig,1); cur='memory'; render(); toast('Signal removed'); }
       break; }
+    // Safety & Privacy actions
+    case 'autonomy': break;   // handled by data-schoice
+    case 'trusted-contact': toast('Add a trusted contact — coming soon'); break;
+    case 'review-memory': setTab('memory'); break;   // opens the agent-memory screen
+    case 'verify-me': toast('Photo & ID verification — coming soon'); break;
+    case 'blocked': toast('Your blocked list is empty'); break;
+    case 'report': toast('Safety centre & reporting — coming soon'); break;
+    case 'export-data': toast('Preparing your data export — we’ll email you a copy'); break;
+    case 'delete-account': toast('Delete account would ask you to confirm, then erase everything'); break;
     case 'nav': toast((ds.lbl||'This')+' is coming soon'); break;
     case 'fab': case 'createintent': toast('Creating an intent is coming soon'); break;
     case 'add-interests': toast('Adding interests is coming soon'); break;
