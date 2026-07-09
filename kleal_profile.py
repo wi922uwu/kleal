@@ -902,9 +902,15 @@ async function buddySend(text){ text=(text||'').trim(); if(!text||buddyBusy)retu
 function scr_buddychat(){
   const rows=buddyThread.map(m=>{
     if(m.typing) return '<div class="kbub" style="opacity:.55">Kleal is typing…</div>';
-    if(m.matches) return '<div style="display:flex;flex-direction:column;gap:8px;margin:2px 0 8px">'+
-      m.matches.map(x=>`<div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 13px">
-        <b>${esc(x.name)}</b> · ${x.score}<div style="color:var(--muted);font-size:13px;margin-top:3px">${esc(x.reason)}</div></div>`).join('')+'</div>';
+    if(m.matches) return '<div style="display:flex;flex-direction:column;gap:10px;margin:2px 0 10px">'+
+      m.matches.map((x,idx)=>{ const nm=String(x.name||'?').trim(); const init=(nm[0]||'?').toUpperCase();
+        const why=String(x.reason||'').split(';').map(s=>s.trim()).filter(Boolean).join(' · ');
+        return `<div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:13px 15px;display:flex;align-items:center;gap:12px">
+          <div style="width:42px;height:42px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px;flex:none">${esc(init)}</div>
+          <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:16px">${esc(nm)}${idx===0?' <span style="font-size:10px;font-weight:700;color:var(--primary);background:var(--coral50);padding:2px 6px;border-radius:6px;letter-spacing:.03em">TOP</span>':''}</div>
+            <div style="color:var(--muted);font-size:13px;margin-top:2px">${esc(why)}</div></div>
+          <button data-act="sayhi" data-name="${esc(nm)}" style="background:var(--primary);color:#fff;border:0;border-radius:11px;padding:9px 15px;font-weight:600;font-size:14px;cursor:pointer;flex:none">Say hi</button>
+        </div>`; }).join('')+'</div>';
     return m.k? `<div class="kbub">${m.html}</div>` : `<div class="mbub">${m.html}</div>`;
   }).join('');
   return `<div class="fade"><div class="thread">${rows}</div>
@@ -1122,6 +1128,7 @@ function doAct(act, ds){
     case 'launch-intent': intentLaunched=true; if(curIntent)curIntent.status='searching'; render();
       toast('Kleal is searching — I’ll ping you with intros to approve'); break;
     case 'edit-intent': toast('Editing the intent is coming soon'); break;
+    case 'sayhi': toast('Kleal will set up the intro with '+(ds.name||'them')+' — coming soon'); break;
     case 'search-area': toast('Searching this area…'); break;
     case 'filter': toast('Filters are coming soon'); break;
     case 'add-interests': toast('Adding interests is coming soon'); break;

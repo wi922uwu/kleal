@@ -147,10 +147,10 @@ def score_candidate(intent, profile, user_profile=None):
     return round(score, 1), ("; ".join(reasons) if reasons else "общий социальный контекст")
 
 
-# Minimum relevance to surface as a match. Drops lone-format / lone-language "adjacent"
-# hits (sheet-03 Tier 3) so a Dota request doesn't return a yoga profile just for
-# sharing a group-format preference. Requires a real topic/tag/city contribution.
-MIN_SCORE = 12.0
+# Minimum relevance to surface as a match. Set above lone format(8)+language(10)=18 so a
+# candidate needs real topic relevance (category 25 / tag 12+ / city 15), not just a shared
+# group-format and language, to show up (sheet-03: don't surface Tier-3 "adjacent" by default).
+MIN_SCORE = 20.0
 
 
 def find_candidates(intent, user_id, store, limit=4):
