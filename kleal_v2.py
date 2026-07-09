@@ -96,6 +96,42 @@ A status line tells you exactly what to ask next - follow it strictly.'''
 _FIN_RE = re.compile(r"that'?s all|that is all|\bfinish|\bdone\b|no more|nothing else|i'?m good|all set|\bnope\b|^\s*no[.! ]*$", re.I)
 _ADD_RE = re.compile(r"\badd\b|another|one more|\bmore\b|\byes\b|yeah|sure|\balso\b|actually", re.I)
 
+# gibberish / non-answer detection: catch keyboard-mash like "afcafcafc" / "ппфцпц" so the funnel
+# re-asks instead of silently accepting junk and moving on.
+_VOWELS = "aeiouyауоыиэяюёеAEIOUYАУОЫИЭЯЮЁЕ"
+_KBD_MASH = {"asdf", "asdfg", "asdfgh", "asdfghjkl", "qwer", "qwert", "qwerty", "qwertyu",
+             "zxcv", "zxcvb", "zxcvbn", "hjkl", "asd", "qwe", "zxc", "qaz", "wsx", "edc",
+             "йцук", "йцуке", "йцукен", "фыва", "фывап", "ячсм", "ячсми", "ячсмит", "цук", "фыв"}
+def _is_gibberish(text):
+    """True when a message reads like random characters / a keyboard mash rather than a real answer.
+    Conservative: only flags when EVERY 4+ letter token looks unpronounceable, so real short answers
+    (PC, B1, 5y, Ancient, coffee...) always pass."""
+    t = (text or "").strip().lower()
+    letters = re.sub(r"[^a-zа-яё]", "", t)
+    if len(letters) < 4:
+        return False  # short answers are legitimate (PC, no, B1, 5y)
+    words = [w for w in re.findall(r"[a-zа-яё]{2,}", t) if len(w) >= 4]
+    if not words:
+        return False
+    vset = set(_VOWELS.lower())
+    conrun = re.compile(r"[^" + _VOWELS.lower() + r"]{4,}")
+    def periodic(w):                        # a short pattern tiled: "abcabc", "пвапвап", "аываыва"
+        return any(all(w[i] == w[i % p] for i in range(len(w))) for p in range(1, len(w) // 2 + 1))
+    def bad(w):
+        if w in _KBD_MASH:
+            return True
+        vr = sum(1 for c in w if c in vset) / len(w)
+        if vr < 0.2 or vr > 0.85:           # too few / too many vowels -> unpronounceable
+            return True
+        if conrun.search(w):                # long consonant run
+            return True
+        if len(set(w)) <= max(2, len(w) // 3):  # very repetitive (few unique letters)
+            return True
+        if len(w) >= 5 and periodic(w):     # a tiled n-gram pattern
+            return True
+        return False
+    return all(bad(w) for w in words)
+
 def _v2_listhas(p, path, name):
     v = _cpath(p, path) or []
     key = name.lower()
@@ -230,7 +266,14 @@ def v2_chat(messages, prior):
                         for m in hist)
     sys = FUNNEL_PROMPT
     complete = False
-    if gaps:
+    if _is_gibberish(lastu):
+        # user typed junk / random characters - do NOT advance or wrap up, gently re-ask.
+        sys += (" [The user's last message does not look like a real answer - it reads like random "
+                "characters or a keyboard mash. In ONE short, warm line say you did not quite catch that, "
+                "then re-ask YOUR OWN PREVIOUS question in simpler words. Ask EXACTLY ONE question and keep "
+                "the same [OPTIONS: ...] if your previous question had them. Do NOT move to a new topic and "
+                "do NOT wrap up.]")
+    elif gaps:
         sys += (" [NEXT GAP TO CLOSE: ask %s. Exactly ONE question message - warm reaction line first. "
                 "If it is a closed choice end with [OPTIONS: a | b | c] (pipe-separated only). "
                 "Never re-ask anything already known. Queued after this: %s]"
@@ -254,7 +297,8 @@ def v2_chat(messages, prior):
     if not (reply or "").strip():
         reply = "Tell me a bit more. What do you like to do with it?"
     # funnelComplete = no gaps left AND the user explicitly confirmed they are done adding interests
-    return {"reply": reply, "options": options, "profile": merged, "crit": crit, "funnelComplete": complete}
+    return {"reply": reply, "options": options, "profile": merged, "crit": crit,
+            "funnelComplete": complete, "gibberish": bool(_is_gibberish(lastu))}
 
 # ---------------------------------------------------------------- HTML (mobile V2 — messenger thread)
 HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -566,7 +610,7 @@ function emulate(){
       optional:["Networking","Dating mode off","Regular groups"] },
     summary:"You're Ben, a 27-year-old in Barcelona, comfortable in English and Spanish and open to plans within 15 km of the city. You're into AI, which you've been practicing for about 3 years, and you play Dota 2 - 5 years in, on PC, at Ancient rank. You also like meeting over coffee. You prefer low-pressure meetups in public places, and you've allowed Kleal to use your profile for matching and adjacent suggestions."
   };
-  openProfile();
+  openProfile();   // onboarding lands in the profile app V4 (:7073)
 }
 
 // ======================= CHAT THREAD =======================
@@ -804,6 +848,9 @@ async function funnelTurn(text, first){
     elBubble('bot',r.reply,true);
     if(r.profile&&typeof r.profile==='object'){ const ph=st.profile.photo; st.profile=r.profile; if(ph)st.profile.photo=ph; }
     if(r.crit) st.crit=r.crit; updateHeader();
+    // a junk / gibberish answer must NOT count toward the anti-stuck net, else spamming nonsense
+    // could unlock Continue. Undo this turn's increment so only real answers advance the net.
+    if(r.gibberish) st.funnelTurns=Math.max(0, st.funnelTurns-1);
     // Continue ONLY once the agent stops asking: funnel has no gaps AND the bot's reply is a wrap-up (no "?"/options).
     // funnelTurns is an anti-stuck net so the user is never trapped if the model keeps probing.
     const replyAsks=((r.reply||'').indexOf('?')>=0)||(r.options&&r.options.length>0);
@@ -926,7 +973,7 @@ function rDone(){ st.phase='done';
     <div class="d-h">You're on the board!</div>
     <div class="d-sub">Your Kleal agent is ready. Tell it what you want to do and it starts finding people and plans.</div></div>
     <div class="foot"><button class="cta" id="ci">Continue</button></div>`;
-  document.getElementById('ci').onclick=()=>rMenu();
+  document.getElementById('ci').onclick=()=>openProfile();
 }
 
 // ======================= MENU (post-onboarding home) =======================
@@ -938,6 +985,15 @@ function openProfile(){
   const p=Object.assign({},st.profile); delete p.photo;   // strip the heavy dataURL
   let b64=''; try{ b64=btoa(unescape(encodeURIComponent(JSON.stringify(p)))); }catch(e){ b64=btoa(JSON.stringify(p)); }
   location.href = PROFILE_ORIGIN + '/?p=' + encodeURIComponent(b64);
+}
+// Option A: after onboarding "Done", open the Kleal app interface (Buddy) with the
+// collected profile in ?p=<base64> (same handoff as openProfile). BUDDY_URL is baked
+// server-side (env); empty locally -> same-host :8090 dev port.
+const APP_ORIGIN = ("__BUDDY_URL__") || (location.protocol+'//'+location.hostname+':8090');
+function openApp(){
+  const p=Object.assign({},st.profile); delete p.photo;
+  let b64=''; try{ b64=btoa(unescape(encodeURIComponent(JSON.stringify(p)))); }catch(e){ b64=btoa(JSON.stringify(p)); }
+  location.href = APP_ORIGIN + '/?p=' + encodeURIComponent(b64);
 }
 function rMenu(){ st.phase='menu';
   const nm = st.profile.name || 'there';
@@ -961,6 +1017,7 @@ rSplash();
 
 # bake the profile app's public URL (pod: its own tunnel host) into the "My Profile" handoff; empty -> local :7073
 HTML = HTML.replace("__PROFILE_URL__", os.environ.get("PROFILE_URL", "").rstrip("/"))
+HTML = HTML.replace("__BUDDY_URL__", os.environ.get("BUDDY_URL", "").rstrip("/"))
 
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):

@@ -15,6 +15,10 @@
   let uid = localStorage.getItem(LS_UID);
   if (!uid) { uid = 'usr_' + Math.random().toString(36).slice(2, 10); localStorage.setItem(LS_UID, uid); }
 
+  // Raw ?p= value (URL-encoded base64) — reused as-is to embed the full profile card
+  // (kleal_profile expects the kleal_v2 shape, so we pass the original, not the mapped one).
+  const rawP = ((/[?&]p=([^&]+)/.exec(location.search)) || [])[1] || localStorage.getItem('kleal_rawp') || '';
+
   /* Map the kleal_v2 onboarding profile → Buddy's flatter shape. */
   function mapOnboarding(v) {
     if (!v || typeof v !== 'object') return null;
@@ -50,7 +54,7 @@
   const profile = handoff || load() || { name: '', interests: [], languages: [] };
 
   const Store = {
-    uid, profile,
+    uid, profile, rawP,
     fromHandoff: !!handoff,
     save() { localStorage.setItem(LS_PROFILE, JSON.stringify(this.profile)); },
 
@@ -70,7 +74,7 @@
   };
 
   // On a fresh handoff, persist locally + push to the backend (fire and forget).
-  if (Store.fromHandoff) { Store.save(); Store.sync(); }
+  if (Store.fromHandoff) { Store.save(); Store.sync(); if (rawP) localStorage.setItem('kleal_rawp', rawP); }
 
   global.Store = Store;
 })(window);

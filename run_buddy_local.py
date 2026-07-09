@@ -9,6 +9,7 @@ os.environ.setdefault("LLM_MODEL", "llama-3.3-70b")
 os.environ.setdefault("BUDDY_TOOL_MODE", "prompt")
 os.environ.setdefault("BUDDY_PORT", "8090")
 os.environ.setdefault("BUDDY_DB", "buddy_local.db")
+os.environ.setdefault("PROFILE_URL", "")  # public URL of the profile card app for the Profile tab
 
 from buddy import api, store as store_mod
 
