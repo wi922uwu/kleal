@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Kleal</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- phone-framed mount; app.js opens the tab-bar interface (profile comes from ?p=) -->
+  <div class="phone" id="app"></div>
+
+  <!-- load order: helpers → state → screens → controller (controller runs on load) -->
+  <script src="/icons.js"></script>
+  <script src="/state.js"></script>
+  <script src="/chat.js"></script>
+  <script src="/profile.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

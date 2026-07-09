@@ -1,0 +1,74 @@
+/* =============================================================================
+   Kleal app interface — styles (option A: opens after kleal_v2 onboarding).
+   Palette + components from the app mockup: light theme, coral/pink accent,
+   iMessage bubbles, bottom tab-bar with a raised center button.
+   Sections: 1) tokens  2) phone frame  3) chat  4) tab-bar  5) profile
+   ============================================================================= */
+
+/* ---- 1) reset & design tokens ------------------------------------------- */
+:root{
+  --pink:#d24d5e; --pink-d:#bd4152; --pinksh:rgba(210,77,94,.34);
+  --bg:#f5f5f7; --card:#fff; --bot:#ececed; --tx:#15181d; --mut:#9297a0;
+  --line:#e9eaec; --nav:#464b53;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{background:#d9dbe0;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  color:var(--tx);display:flex;justify-content:center}
+button{font:inherit}
+
+/* ---- 2) phone frame ------------------------------------------------------ */
+.phone{width:100%;max-width:430px;height:100dvh;background:var(--bg);
+  display:flex;flex-direction:column;position:relative;overflow:hidden}
+.link{background:none;border:0;color:var(--mut);font-size:14px;cursor:pointer;padding:10px}
+.chip{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:9px 15px;font-size:14px;
+  color:#2b2f36;cursor:pointer;user-select:none}
+.chip:active{transform:scale(.97)}
+
+/* ---- 3) chat ------------------------------------------------------------- */
+.chat{flex:1;overflow-y:auto;display:flex;flex-direction:column;padding:18px 16px 8px}
+.klabel{font-weight:700;font-size:15px;color:#0f1114;margin:8px 0 6px 3px}
+.b{max-width:78%;padding:11px 15px;border-radius:20px;font-size:16px;line-height:1.42;margin-bottom:3px;
+  white-space:pre-wrap;word-wrap:break-word}
+.b.bot{align-self:flex-start;background:var(--bot);color:var(--tx);border-bottom-left-radius:7px}
+.b.me{align-self:flex-end;background:var(--pink);color:#fff;border-bottom-right-radius:7px}
+.b .li{display:block}.b b{font-weight:700}
+.chat .hint{font-size:13.5px;color:var(--mut);margin:1px 0 10px 5px}
+.chat .chips{display:flex;flex-wrap:wrap;gap:8px;margin:4px 2px 14px}
+.mcards{align-self:flex-start;display:flex;flex-direction:column;gap:8px;max-width:82%;margin:2px 0 12px 2px}
+.mcard{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:10px 13px;font-size:15px}
+.mcard b{color:var(--pink)}.mcard .sc{color:var(--mut);font-weight:600}.mcard .r{color:var(--mut);font-size:13px;margin-top:3px}
+.typing{align-self:flex-start;color:var(--mut);font-size:14px;padding:2px 6px 10px}
+.inbar{display:flex;align-items:center;gap:10px;padding:8px 12px}
+.inwrap{flex:1;display:flex;align-items:center;gap:10px;background:var(--bot);border-radius:24px;padding:2px 8px 2px 16px}
+.inwrap input{flex:1;border:0;background:transparent;padding:12px 0;font-size:16px;outline:none;color:var(--tx)}
+.inwrap input::placeholder{color:#9aa0a8}
+.mic{color:#8b9098;display:flex;padding:6px}
+.send{width:46px;height:46px;flex:none;border-radius:50%;background:var(--pink);border:0;display:flex;
+  align-items:center;justify-content:center;cursor:pointer;box-shadow:0 3px 10px var(--pinksh)}
+.send:active{background:var(--pink-d)}.send:disabled{opacity:.5}
+
+/* ---- 4) tab-bar ---------------------------------------------------------- */
+.nav{position:relative;background:#fff;display:flex;justify-content:space-around;align-items:flex-start;
+  padding:11px 4px calc(9px + env(safe-area-inset-bottom));box-shadow:0 -2px 16px rgba(0,0,0,.06)}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--nav);font-size:11px;
+  background:none;border:0;cursor:pointer;padding:0}
+.tab.on{color:var(--pink)}
+.tab.spacer{visibility:hidden}
+.fab{position:absolute;left:50%;top:-22px;transform:translateX(-50%);width:66px;height:66px;border-radius:50%;
+  background:var(--pink);box-shadow:0 7px 18px var(--pinksh);display:flex;align-items:center;justify-content:center;
+  color:#fff;border:5px solid var(--bg);cursor:pointer}
+.fab:active{background:var(--pink-d)}
+
+/* ---- 5) profile & placeholder screens ----------------------------------- */
+.scr-head{padding:22px 20px 10px}
+.scr-head h2{margin:0;font-size:22px;font-weight:800}
+.scr-head p{margin:4px 0 0;color:var(--mut);font-size:14px}
+.scr-body{flex:1;overflow-y:auto;padding:6px 16px 18px;display:flex;flex-direction:column;gap:12px}
+.pcard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px 16px}
+.pcard .pt{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);margin-bottom:6px}
+.pcard .pv{font-size:15px}
+.psum{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;line-height:1.5}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  color:var(--mut);gap:10px;padding:40px}
+.empty .ei{width:56px;height:56px;border-radius:16px;background:#eceef1;display:flex;align-items:center;justify-content:center;color:#aab0b8}

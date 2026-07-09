@@ -5,6 +5,10 @@ dating/
 __pycache__/
 *.pyc
 
+# buddy local sqlite (created at runtime)
+buddy.db
+buddy_local.db
+
 # secrets / env
 .env
 *.env

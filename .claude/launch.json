@@ -21,6 +21,13 @@
       "runtimeArgs": ["-X", "utf8", "kleal_profile.py"],
       "port": 7073,
       "autoPort": false
+    },
+    {
+      "name": "buddy",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-X", "utf8", "run_buddy_local.py"],
+      "port": 8090,
+      "autoPort": false
     }
   ]
 }
