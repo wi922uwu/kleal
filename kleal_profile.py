@@ -426,12 +426,13 @@ const DEMO = __DATA__;                       // fallback demo data (docx / Dmitr
 let DATA = DEMO, _TABIDS = null;
 try{
   const _p = new URLSearchParams(location.search).get('p');
-  // Buddy backend for the live "Create intent" chat + matching. Baked from env; empty -> same host :8090.
-  const BUDDY_URL = ("__BUDDY_URL__") || (location.protocol+'//'+location.hostname+':8090');
-  let KUID = localStorage.getItem('kleal_uid'); if(!KUID){ KUID='usr_'+Math.random().toString(36).slice(2,10); localStorage.setItem('kleal_uid',KUID); }
   if(_p){ const op = JSON.parse(decodeURIComponent(escape(atob(_p)))); const m = mapOnboarding(op);
           DATA = m.data; _TABIDS = m.tabs; }
 }catch(e){ console.error('profile: could not read ?p', e); }
+// Buddy backend for the live "Create intent" chat + matching — TOP-LEVEL so the chat
+// functions can see it. Baked from env server-side; empty -> same host :8090.
+const BUDDY_URL = ("__BUDDY_URL__") || (location.protocol+'//'+location.hostname+':8090');
+let KUID = localStorage.getItem('kleal_uid'); if(!KUID){ KUID='usr_'+Math.random().toString(36).slice(2,10); localStorage.setItem('kleal_uid',KUID); }
 const A=document.getElementById('app');
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function svg(inner,vb,w){return '<svg viewBox="'+(vb||'0 0 24 24')+'" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="'+(w||24)+'" height="'+(w||24)+'">'+inner+'</svg>';}
