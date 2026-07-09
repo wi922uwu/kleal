@@ -93,6 +93,34 @@ DATA = {
     "verified": False, "preferVerified": True, "blockedCount": 0, "excludeKnown": True,
   },
 
+  # V4: quick-facts on the overview + the intent flow + discovery + messages
+  "basics": [
+    {"icon": "person", "title": "Basics", "value": "Male · 29"},
+    {"icon": "pin", "title": "Location", "value": "Barcelona · Gràcia, Poblenou · Max 10 km"},
+    {"icon": "globe", "title": "Languages", "value": "Russian · English · Spanish (B1)"},
+  ],
+  "intents": [
+    {"title": "Coffee & AI talk", "tags": ["Coffee", "AI", "Discuss", "1:1"],
+     "confidence": 82, "status": "searching",
+     "spec": [["moon", "Mode", "Offline"], ["users", "Format", "1:1 or small group"],
+              ["clock", "Time", "Today evening"], ["pin", "Area", "Public places nearby"],
+              ["shield", "Safety", "Public places only"], ["compass", "Reach", "Adjacent interests"],
+              ["eye", "Visibility", "Via Kleal only"]],
+     "steps": [["Structured your intent", "done"], ["Found 2 people worth meeting", "done"],
+               ["Matching your schedules", "now"], ["Checking the safety fit", "wait"],
+               ["Sending intros once you approve", "wait"]]},
+  ],
+  "plans": [
+    {"title": "Morning coffee & AI chat", "who": "Marc · verified", "when": "Today 09:30", "dist": "0.6 km", "x": 33, "y": 26},
+    {"title": "Startup founders meetup", "who": "4 going · public place", "when": "Tomorrow 18:00", "dist": "1.2 km", "x": 63, "y": 44},
+    {"title": "Spanish + coffee swap", "who": "Ana · verified", "when": "Wed 17:00", "dist": "0.9 km", "x": 42, "y": 64},
+  ],
+  "messages": [
+    {"who": "Kleal", "last": "2 people match your Coffee & AI talk — want intros?", "time": "now", "kleal": True},
+    {"who": "Marc", "last": "Sounds great, see you at 9:30!", "time": "12m", "kleal": False},
+    {"who": "Ana", "last": "Hola! Happy to swap Spanish for coffee.", "time": "1h", "kleal": False},
+  ],
+
   "memory": [
     {"signal": "You prefer small groups", "source": "Onboarding + 2 accepted plans",
      "confidence": "High", "status": "Confirmed", "used": True, "updated": "Yesterday"},
@@ -340,6 +368,46 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .gap8{height:8px}.gap12{height:12px}.gap16{height:16px}
 .stack>*+*{margin-top:10px}
 .fade{animation:fd .28s ease}@keyframes fd{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* ---- V4: intents, intent chat, discovery, messages ---- */
+.itag{display:inline-flex;align-items:center;font-size:12px;font-weight:600;color:var(--coral700);
+  background:var(--coral50);border:1px solid var(--coral200);border-radius:999px;padding:5px 11px;margin:0 6px 8px 0}
+.specrow{display:flex;align-items:center;gap:12px;padding:11px 16px}
+.specrow .spi{width:20px;color:var(--muted);flex:none;display:flex}
+.specrow .sl{flex:1;font-size:14px;color:var(--muted)}
+.specrow .sv{font-size:14px;font-weight:600;color:var(--fg);text-align:right}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;border-radius:999px;padding:4px 10px}
+.pill.searching{color:var(--coral700);background:var(--coral50)}
+.pill.dot::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.thread{display:flex;flex-direction:column;gap:12px;padding-bottom:8px}
+.kbub{background:var(--neutral100);border-radius:16px 16px 16px 4px;padding:12px 14px;font-size:14px;color:var(--fg);max-width:88%;align-self:flex-start}
+.mbub{background:var(--primary);color:#fff;border-radius:16px 16px 4px 16px;padding:10px 14px;font-size:14px;max-width:82%;align-self:flex-end}
+.composer{position:sticky;bottom:0;background:var(--bg);display:flex;align-items:center;gap:10px;padding:10px 2px 8px;margin-top:6px}
+.composer .cin{flex:1;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:11px 16px;color:var(--muted);font-size:14px}
+.composer .csend{width:40px;height:40px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer}
+.chkrow{display:flex;align-items:center;gap:12px;padding:12px 16px}
+.chkic{width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center}
+.chkic.done{background:#0f7340}.chkic.now{border:2px solid var(--primary)}.chkic.wait{border:2px solid var(--neutral300)}
+.chklb{flex:1;font-size:14px;color:var(--fg)}.chklb.wait{color:var(--muted)}
+.chkst{font-size:12px;font-weight:700}
+.chkst.done{color:#0f7340}.chkst.now{color:var(--primary)}.chkst.wait{color:var(--neutral300)}
+.sbar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.sbar .box{flex:1;display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:10px 14px;color:var(--muted);font-size:14px}
+.sbar .filt{width:42px;height:42px;border-radius:50%;background:var(--card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--fg);flex:none;cursor:pointer}
+.map{position:relative;height:360px;border-radius:18px;overflow:hidden;background:linear-gradient(135deg,#eef1f6,#e7ebf2);border:1px solid var(--border)}
+.map .grid{position:absolute;inset:0;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:44px 44px;opacity:.55}
+.mpin{position:absolute;transform:translate(-50%,-100%);color:var(--primary);cursor:pointer;filter:drop-shadow(0 3px 4px rgba(20,20,40,.2))}
+.mpin.me{color:var(--fg)}
+.plan-card{position:absolute;transform:translate(-50%,-118%);width:156px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:9px 11px;box-shadow:0 8px 20px rgba(20,20,40,.14);cursor:pointer}
+.plan-card .pt{font-size:12.5px;font-weight:700;line-height:1.25}
+.plan-card .pm{font-size:11px;color:var(--muted);margin-top:3px}
+.searchbtn{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);white-space:nowrap;width:auto;padding:11px 20px}
+.msgrow{display:flex;align-items:center;gap:12px;padding:12px 4px;cursor:pointer}
+.msgav{width:46px;height:46px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:var(--neutral100);color:var(--muted)}
+.msgav.k{background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800}
+.msgt{flex:1;min-width:0}.msgt .mn{font-size:15px;font-weight:600}
+.msgt .ml{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msgtime{font-size:11px;color:var(--muted);flex:none;align-self:flex-start;margin-top:3px}
+.reddot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--primary);margin-left:6px;vertical-align:middle}
 </style></head><body>
 <div class="phone">
   <div class="sb"><span>9:41</span><span class="ic" id="sbic"></span></div>
@@ -410,11 +478,17 @@ document.getElementById('sbic').innerHTML=
  +'<svg viewBox="0 0 20 15" fill="none" stroke="#181B22" stroke-width="1.9" stroke-linecap="round" width="18" height="14"><path d="M2 5.2a13 13 0 0 1 16 0M5 8.6a8 8 0 0 1 10 0M8 12a3 3 0 0 1 4 0"/></svg>'
  +'<svg viewBox="0 0 28 14" width="25" height="13"><rect x="1" y="1.4" width="22" height="11.2" rx="3" stroke="#181B22" stroke-opacity=".5" fill="none"/><rect x="2.8" y="3.1" width="16.5" height="7.8" rx="1.6" fill="#181B22"/><rect x="24.3" y="4.6" width="2.3" height="4.8" rx="1.1" fill="#181B22" fill-opacity=".5"/></svg>';
 document.getElementById('back').innerHTML=IC.back;
-document.getElementById('bnav').innerHTML=
-  '<div class="fab" data-act="fab"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" width="26" height="26"><path d="M12 6v12M6 12h12"/></svg></div>'+
-  [['nIntents','Intents'],['nSearch','Search'],['fabgap',''],['nMsg','Messages'],['nProfile','Profile']]
-  .map(x=>{ if(x[0]==='fabgap') return '<div class="fabgap"></div>'; const on=x[0]==='nProfile';
-    return `<a class="${on?'on':''}" ${on?'':`data-act="nav" data-lbl="${x[1]}"`}>${IC[x[0]]}<span>${x[1]}</span></a>`; }).join('');
+// bottom nav (Intents · Search · [create] · Messages · Profile) — rebuilt each render for the active state
+const ROOTS=['overview','intents','search','messages'];
+function navFam(){ if(cur==='intents'||cur==='intentchat')return'intents'; if(cur==='search')return'search';
+  if(cur==='messages')return'messages'; return'profile'; }
+function bnavHTML(){ const fam=navFam();
+  const items=[['nIntents','Intents','intents','intents'],['nSearch','Search','search','search'],['fab','','',''],
+    ['nMsg','Messages','messages','messages'],['nProfile','Profile','overview','profile']];
+  return '<div class="fab" data-act="createintent"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" width="26" height="26"><path d="M12 6v12M6 12h12"/></svg></div>'+
+    items.map(x=>{ if(x[0]==='fab') return '<div class="fabgap"></div>';
+      return `<a class="${fam===x[3]?'on':''}" data-nav="${x[2]}">${IC[x[0]]}<span>${x[1]}</span></a>`; }).join('');
+}
 
 // ---------- map the onboarding profile (:7072) -> this card's DATA shape ----------
 function mapOnboarding(op){
@@ -534,10 +608,16 @@ function mapOnboarding(op){
   const goals = (op.goals && ((op.goals.active||[]).length || (op.goals.optional||[]).length))
     ? {active:op.goals.active||[], optional:op.goals.optional||[]} : {active:[],optional:[]};
 
+  const basics=[];
+  if(op.gender||op.age) basics.push({icon:'person', title:'Basics', value:[cap(op.gender||''), op.age].filter(Boolean).join(' · ')||'—'});
+  if(areas.length||city) basics.push({icon:'pin', title:'Location', value:[(areas.join(', ')||city), km?('Max '+km+' km'):null].filter(Boolean).join(' · ')});
+  if(langs.length) basics.push({icon:'globe', title:'Languages', value:langs.join(' · ')});
+
   const data={ name:op.name||'You', subtitle:sub, verified:false, confidence,
     summaryLabel:"Kleal's summary", summary: op.summary||'',
-    matchingPaths: ints.slice(0,3), snapshot:snap, interests,
-    social, availability:[], places, goals, safety, memory, knows };
+    matchingPaths: ints.slice(0,3), snapshot:snap, interests, basics,
+    social, availability:[], places, goals, safety, memory, knows,
+    intents:[], plans:[], messages:[] };
 
   const tabs=['overview'];
   if(snap.length) tabs.push('snapshot');
@@ -562,7 +642,7 @@ const ALL_TABS=[
 ];
 const TABS = ALL_TABS;
 let cur = 'overview';
-const TITLES={memory:'What Kleal remembers'};   // screens reachable but not in the nav TABS
+const TITLES={memory:'What Kleal remembers', intents:'Intents', search:'Discover', messages:'Messages'};   // screens reachable but not in the nav TABS
 function setTab(id){ detail=null; cur=id; render(); }
 // Overview is a hub of drill-in "Settings Rows"
 const SECMETA={
@@ -659,9 +739,10 @@ function scr_overview(){
   return `<div class="stack fade">
     <div class="card idcard">
       <div class="idrow"><div class="ava">${IC.person}</div>
-        <div class="it"><div class="nm">${esc(d.name)} ${d.verified?`<span class="badge-verify">${IC.verify}</span>`:''}</div></div></div>
+        <div class="it"><div class="nm">${esc(d.name)} ${d.verified?`<span class="badge-verify">${IC.verify}</span>`:'<span class="reddot"></span>'}</div></div></div>
       <div class="confrow2"><span class="l">Profile confidence</span><span class="confpct">${d.confidence}%</span></div>
       <div class="track"><i style="width:${d.confidence}%"></i></div></div>
+    ${(d.basics||[]).map(r=>summaryRow(r,true)).join('')}
     <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(d.summaryLabel)}</div><span class="updated">Updated today</span></div>${sum}</div>
     <div class="stack" style="margin-top:6px">${navRows()}</div>
   </div>`;
@@ -789,8 +870,75 @@ function scr_knows(){
     <div class="rowhead"><div class="h2">Inferred</div><div class="seeall">See All</div></div>
     <div class="card">${k.inferredList.map((x,i)=>checkRow(x,false,'k-i-'+i)+(i<k.inferredList.length-1?'<div class="divider"></div>':'')).join('')}</div></div>`;
 }
+// ================= V4: intents · intent chat · discovery · messages =================
+let curIntent=null, intentLaunched=false;
+function openIntent(it, launched){ curIntent=it||null; intentLaunched=!!launched; cur='intentchat'; render(); }
+function intentSpec(it){ const s=it.spec||[]; return s.map((r,i)=>`<div class="specrow"><div class="spi">${IC[r[0]]||IC.spark}</div>
+  <div class="sl">${esc(r[1])}</div><div class="sv">${esc(r[2])}</div></div>${i<s.length-1?'<div class="divider"></div>':''}`).join(''); }
+
+function scr_intents(){
+  const list=DATA.intents||[];
+  const head=`<div class="seccap" style="margin:2px 2px 12px">Intents are the plans you ask Kleal to arrange. It searches, matches schedules and lines up intros — you approve every one.</div>`;
+  if(!list.length) return `<div class="fade">${head}${emptyState("No intents yet","Tap Create intent and tell Kleal what you'd like to do.")}
+    <button class="bigbtn primary" style="margin-top:8px" data-act="createintent">Create intent</button></div>`;
+  const cards=list.map((it,i)=>`<div class="card pad intentrow" data-intent="${i}">
+    <div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="pill searching dot">Searching</span></div>
+    <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div>
+    <div class="confrow2"><span class="l">Match confidence</span><span class="confpct">${it.confidence||0}%</span></div>
+    <div class="track"><i style="width:${it.confidence||0}%"></i></div></div>`).join('');
+  return `<div class="stack fade">${head}${cards}
+    <button class="bigbtn primary" style="margin-top:4px" data-act="createintent">Create intent</button></div>`;
+}
+
+function scr_intentchat(){
+  const it=curIntent||(DATA.intents&&DATA.intents[0])||{title:'New intent',tags:[],spec:[],steps:[],confidence:0};
+  const steps=it.steps||[];
+  const work=`<div class="card"><div class="sumhead" style="padding:14px 16px 6px"><div class="sumlbl">Kleal is on it</div>
+      <span class="confpct">${it.confidence||0}%</span></div>
+    ${steps.map((s,i)=>{ const st=s[1], lab=st==='done'?'Done':(st==='now'?'Now':'Next');
+      const ic=st==='done'?`<div class="chkic done">${IC.check}</div>`:`<div class="chkic ${st==='now'?'now':'wait'}"></div>`;
+      return `<div class="chkrow">${ic}<div class="chklb ${st==='wait'?'wait':''}">${esc(s[0])}</div>
+        <div class="chkst ${st}">${lab}</div></div>${i<steps.length-1?'<div class="divider"></div>':''}`; }).join('')}
+    </div>`;
+  return `<div class="fade"><div class="thread">
+    <div class="kbub">Here's the intent I put together from what you told me. Launch the search when it looks right.</div>
+    <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${it.confidence||0}%</span></div>
+      <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div></div>
+    <div class="card">${intentSpec(it)}</div>
+    ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Launch search</button>
+      <button class="bigbtn ghost" data-act="edit-intent">Edit</button>`}
+    ${intentLaunched ? `<div class="mbub">Launch it</div>${work}
+      <div class="kbub">On it. I'll only send intros once you approve each one.</div>` : ''}
+  </div>
+  <div class="composer"><div class="cin">Tell Kleal more…</div><div class="csend">${IC.nMsg}</div></div></div>`;
+}
+
+function scr_search(){
+  const plans=DATA.plans||[];
+  const pins=plans.map((p,i)=>`<div class="mpin" data-plan="${i}" style="left:${p.x}%;top:${p.y}%">${IC.pin}</div>`).join('');
+  const cards=plans.slice(0,2).map((p,i)=>`<div class="plan-card" data-plan="${i}" style="left:${p.x}%;top:${p.y}%">
+    <div class="pt">${esc(p.title)}</div><div class="pm">${esc(p.who)} · ${esc(p.when)} · ${esc(p.dist)}</div></div>`).join('');
+  return `<div class="fade">
+    <div class="sbar"><div class="box">${IC.nSearch}<span>Search this area…</span></div>
+      <div class="filt" data-act="filter">${IC.compass}</div></div>
+    <div class="map"><div class="grid"></div>${pins}<div class="mpin me" style="left:50%;top:85%">${IC.pin}</div>${cards}
+      <button class="bigbtn primary searchbtn" data-act="search-area">Search this area</button></div>
+    <div class="seccap" style="margin:12px 2px">Kleal surfaces public plans and people near you. Nothing here sees your exact location — only your area.</div>
+  </div>`;
+}
+
+function scr_messages(){
+  const list=DATA.messages||[];
+  if(!list.length) return emptyState("No messages yet","When Kleal lines up an intro, your chats show up here.");
+  return `<div class="stack fade" style="padding-top:4px">${list.map((m,i)=>`<div class="card" style="padding:0">
+    <div class="msgrow" data-msg="${i}"><div class="msgav ${m.kleal?'k':''}">${m.kleal?'K':esc(String(m.who||'?')[0])}</div>
+    <div class="msgt"><div class="mn">${esc(m.who)}${m.kleal?'<span class="reddot"></span>':''}</div><div class="ml">${esc(m.last)}</div></div>
+    <div class="msgtime">${esc(m.time)}</div></div></div>`).join('')}</div>`;
+}
+
 const SCREENS={overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
-  places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows};
+  places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
+  intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -848,12 +996,18 @@ let detail=null;  // {interest}
 function render(){
   const meta=TABS.find(t=>t[0]===cur)||TABS[0];
   const isHome = !editSig && !detail && cur==='overview';
-  document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : (cur==='overview'?'My Kleal Profile':(TITLES[cur]||meta[2])));
-  document.getElementById('back').style.visibility= (editSig||detail||cur!=='overview')? 'visible' : 'hidden';
-  // app-bar right icon: gear (settings) on the Overview, refresh on sub-screens
+  const isRoot = !editSig && !detail && ROOTS.includes(cur);
+  const titleFor = cur==='intentchat' ? (curIntent?curIntent.title:'Create intent')
+    : (cur==='overview'?'My Kleal Profile':(TITLES[cur]||meta[2]));
+  document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : titleFor);
+  document.getElementById('back').style.visibility= (editSig||detail||!ROOTS.includes(cur))? 'visible' : 'hidden';
+  // app-bar right icon: gear on Overview, refresh on drill-ins, nothing on the other root tabs
   const rgt=document.getElementById('bookmark');
   rgt.innerHTML = isHome ? IC.gear : IC.refresh;
+  rgt.style.visibility = (isRoot && !isHome) ? 'hidden' : 'visible';   // no right icon on Intents/Search/Messages
   rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
+  // bottom nav: rebuilt for the active tab; hidden on the intent chat (which has its own composer)
+  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
@@ -875,9 +1029,14 @@ function render(){
   const esw=document.querySelector('[data-esw]'); if(esw)esw.onclick=()=>{ editSig.used=!editSig.used; esw.classList.toggle('on'); };
   document.querySelectorAll('[data-ecbx]').forEach(el=>el.onclick=()=>{ const i=+el.dataset.ecbx; editSig.know[i].on=!editSig.know[i].on; el.classList.toggle('on'); el.innerHTML=editSig.know[i].on?IC.check:''; });
   document.querySelectorAll('[data-eexp]').forEach(el=>el.onclick=()=>{ editSig.expansion=el.dataset.eexp; render(); });
+  // V4: intents list, discovery pins/cards, message rows
+  document.querySelectorAll('[data-intent]').forEach(el=>el.onclick=()=>{ const it=(DATA.intents||[])[+el.dataset.intent]; openIntent(it, !!(it&&it.status==='searching')); });
+  document.querySelectorAll('[data-plan]').forEach(el=>el.onclick=()=>toast('Plan details are coming soon'));
+  document.querySelectorAll('[data-msg]').forEach(el=>el.onclick=()=>toast('Opening this chat is coming soon'));
   document.querySelectorAll('[data-act]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); doAct(el.dataset.act, el.dataset); });
 }
-document.getElementById('back').onclick=()=>{ if(editSig){ editSig=null; render(); } else if(detail){ detail=null; render(); } else if(cur!=='overview'){ cur='overview'; render(); } };
+document.getElementById('back').onclick=()=>{ if(editSig){ editSig=null; render(); } else if(detail){ detail=null; render(); }
+  else if(cur==='intentchat'){ cur='intents'; render(); } else if(!ROOTS.includes(cur)){ cur='overview'; render(); } };
 // ---- toast + every button does something ----
 function toast(msg){ let t=document.getElementById('toast');
   if(!t){ t=document.createElement('div'); t.id='toast'; t.className='toast'; document.querySelector('.phone').appendChild(t); }
@@ -916,8 +1075,13 @@ function doAct(act, ds){
     case 'report': toast('Safety centre & reporting — coming soon'); break;
     case 'export-data': toast('Preparing your data export — we’ll email you a copy'); break;
     case 'delete-account': toast('Delete account would ask you to confirm, then erase everything'); break;
-    case 'nav': toast((ds.lbl||'This')+' is coming soon'); break;
-    case 'fab': case 'createintent': toast('Creating an intent is coming soon'); break;
+    case 'nav': setTab(ds.tab||'overview'); break;
+    case 'fab': case 'createintent': openIntent((DATA.intents||[])[0]||null, false); break;
+    case 'launch-intent': intentLaunched=true; if(curIntent)curIntent.status='searching'; render();
+      toast('Kleal is searching — I’ll ping you with intros to approve'); break;
+    case 'edit-intent': toast('Editing the intent is coming soon'); break;
+    case 'search-area': toast('Searching this area…'); break;
+    case 'filter': toast('Filters are coming soon'); break;
     case 'add-interests': toast('Adding interests is coming soon'); break;
     case 'personality-test': toast('The personality test is coming soon'); break;
     case 'edit-personality': toast('Editing your personality is coming soon'); break;
