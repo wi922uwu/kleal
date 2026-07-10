@@ -134,6 +134,8 @@ HTML_HEAD = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{
   --bg:#F7F8FA; --surface:#F7F8FA; --card:#FFFFFF; --fg:#181B22; --muted:#5A616E; --border:#E2E5EC;
@@ -148,7 +150,8 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--fg)}
 .phone{width:390px;height:844px;max-height:100vh;background:var(--bg);border-radius:44px;overflow:hidden;
   position:relative;display:flex;flex-direction:column;box-shadow:0 30px 90px #0008}
-@media(max-width:430px){body{background:var(--bg)}.phone{width:100vw;height:100vh;border-radius:0}}
+@media(max-width:430px){body{background:var(--bg)}.phone{width:100vw;height:100vh;height:100dvh;border-radius:0}
+  .phone .sb{display:none}}  /* real phones have a real status bar; 100dvh keeps the nav above Safari's toolbar */
 .sb{flex:none;height:47px;display:flex;align-items:center;justify-content:space-between;padding:0 24px 0 28px;
   font-weight:600;font-size:15px}
 .sb .ic{display:flex;gap:6px;align-items:center}
@@ -341,8 +344,8 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   border-radius:9px;padding:9px 6px;cursor:pointer;transition:.15s}
 .seg button.sel{background:var(--card);color:var(--fg);box-shadow:0 1px 3px rgba(20,20,40,.10)}
 /* bottom nav with center FAB */
-.bnav{flex:none;height:66px;display:flex;align-items:center;justify-content:space-around;position:relative;
-  background:#fff;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+.bnav{flex:none;min-height:66px;display:flex;align-items:center;justify-content:space-around;position:relative;
+  background:#fff;border-top:1px solid var(--line);padding-top:6px;padding-bottom:calc(6px + env(safe-area-inset-bottom))}
 .bnav a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--muted);cursor:pointer;width:60px}
 .bnav a.on{color:var(--primary)}
 .bnav .fabgap{width:60px}
@@ -421,8 +424,8 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .bc-hi{background:var(--primary);color:#fff;border:0;border-radius:12px;padding:9px 16px;font-weight:700;font-size:14px;cursor:pointer;flex:none;transition:transform .12s}
 .bc-hi:active{transform:scale(.94)}
 .bc-comp{display:flex;align-items:center;gap:9px;padding:9px 2px 4px}
-.bc-in{flex:1;background:var(--card);border:1.5px solid var(--border);border-radius:999px;padding:12px 18px;font-size:15px;
-  color:var(--fg);outline:none;transition:border-color .15s}
+.bc-in{flex:1;min-width:0;background:var(--card);border:1.5px solid var(--border);border-radius:999px;padding:12px 18px;font-size:16px;
+  color:var(--fg);outline:none;transition:border-color .15s}  /* 16px: keeps mobile browsers from zooming on focus */
 .bc-in::placeholder{color:var(--neutral300)}
 .bc-in:focus{border-color:var(--primary)}
 .bc-send{width:44px;height:44px;border-radius:50%;background:var(--primary);color:#fff;border:0;display:flex;align-items:center;
@@ -445,7 +448,15 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .plan-card{position:absolute;transform:translate(-50%,-118%);width:156px;background:var(--card);border:1px solid var(--border);border-radius:12px;padding:9px 11px;box-shadow:0 8px 20px rgba(20,20,40,.14);cursor:pointer}
 .plan-card .pt{font-size:12.5px;font-weight:700;line-height:1.25}
 .plan-card .pm{font-size:11px;color:var(--muted);margin-top:3px}
-.searchbtn{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);white-space:nowrap;width:auto;padding:11px 20px}
+.searchbtn{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);white-space:nowrap;width:auto;padding:11px 20px;z-index:500}
+/* real map (Leaflet) inside the styled .map frame; the grid markup stays as an offline fallback */
+.lmap{position:absolute;inset:0}
+.lmap .leaflet-container{width:100%;height:100%;background:#eef1f6;font:inherit}
+.lpin{color:var(--primary);filter:drop-shadow(0 3px 4px rgba(20,20,40,.25))}
+.lpin.me{color:var(--fg)}
+.leaflet-popup-content-wrapper{border-radius:12px;box-shadow:0 8px 20px rgba(20,20,40,.14);border:1px solid var(--border)}
+.leaflet-popup-content{margin:9px 12px;font:13px/1.4 "Geist",-apple-system,sans-serif;color:var(--fg)}
+.leaflet-popup-content b{display:block;font-size:14px;margin-bottom:2px}
 .msgrow{display:flex;align-items:center;gap:12px;padding:12px 4px;cursor:pointer}
 .msgav{width:46px;height:46px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:var(--neutral100);color:var(--muted)}
 .msgav.k{background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800}
@@ -1093,6 +1104,25 @@ function scr_intentchat(){
   <div class="composer"><div class="cin">Tell Kleal more…</div><div class="csend">${IC.nMsg}</div></div></div>`;
 }
 
+// Real map: Leaflet over OSM tiles, centered on the user's city (Barcelona default).
+// Falls back to the styled grid if Leaflet/tiles are unavailable (offline).
+let lmap=null;
+function initSearchMap(){
+  const el=document.getElementById('lmap'); if(!el||!window.L) return;
+  if(lmap){ try{ lmap.remove(); }catch(e){} lmap=null; }
+  el.innerHTML='';
+  const C=[41.3874,2.1686];
+  lmap=L.map(el,{zoomControl:false,attributionControl:true}).setView(C,13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OSM'}).addTo(lmap);
+  const pinIc=me=>L.divIcon({className:'',html:'<div class="lpin'+(me?' me':'')+'">'+IC.pin+'</div>',iconSize:[26,26],iconAnchor:[13,24]});
+  (DATA.plans||[]).forEach(p=>{
+    const lat=C[0]+(50-(p.y||50))/100*0.05, lng=C[1]+(((p.x||50))-50)/100*0.08;
+    L.marker([lat,lng],{icon:pinIc(false)}).addTo(lmap)
+      .bindPopup('<b>'+esc(p.title)+'</b>'+esc([p.who,p.when,p.dist].filter(Boolean).join(' · ')));
+  });
+  L.marker(C,{icon:pinIc(true)}).addTo(lmap);   // "me" — area only, not an exact location
+}
+
 function scr_search(){
   const plans=DATA.plans||[];
   const pins=plans.map((p,i)=>`<div class="mpin" data-plan="${i}" style="left:${p.x}%;top:${p.y}%">${IC.pin}</div>`).join('');
@@ -1102,7 +1132,7 @@ function scr_search(){
     <div class="sbar"><div class="box">${IC.nSearch}<span>Search this area…</span></div>
       <div class="filt" data-act="filter">${IC.compass}</div></div>
     <button class="bigbtn primary" style="margin:8px 0 10px;padding:11px" data-act="show-all-plans">Show all</button>
-    <div class="map"><div class="grid"></div>${pins}<div class="mpin me" style="left:50%;top:85%">${IC.pin}</div>${cards}
+    <div class="map"><div id="lmap" class="lmap"><div class="grid"></div>${pins}<div class="mpin me" style="left:50%;top:85%">${IC.pin}</div>${cards}</div>
       <button class="bigbtn primary searchbtn" data-act="search-area">Search this area</button></div>
     <div class="seccap" style="margin:12px 2px">Kleal surfaces public plans and people near you. Nothing here sees your exact location — only your area.</div>
   </div>`;
@@ -1236,6 +1266,10 @@ function render(){
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
   A.scrollTop=0;
+  // chats: make the body a flex column so the thread scrolls inside and the composer stays pinned
+  const isChat=(cur==='buddychat'||cur==='helpchat');
+  A.style.display=isChat?'flex':''; A.style.flexDirection=isChat?'column':''; A.style.overflowY=isChat?'hidden':'';
+  if(cur==='search') setTimeout(initSearchMap,0);   // Leaflet needs the element in the DOM
   // wire (drill-in nav: Overview hub -> section -> back)
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>setTab(el.dataset.nav));
   document.querySelectorAll('[data-go]').forEach(el=>el.onclick=()=>setTab(el.dataset.go));
