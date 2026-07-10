@@ -939,11 +939,25 @@ async function buddySend(text){ text=(text||'').trim(); if(!text||buddyBusy)retu
       body:JSON.stringify({user_id:KUID, message:text})});
     const d=await r.json(); buddyThread=buddyThread.filter(m=>!m.typing);
     if(d&&d.error){ buddyThread.push({k:1,html:'⚠️ '+esc(d.error)}); }
-    else { if(d&&d.tool_call==='find_people'&&d.intent) buddyThread.push({intent:d.intent});
+    else { if(d&&d.tool_call==='find_people'&&d.intent){ buddyThread.push({intent:d.intent}); addCreatedIntent(d.intent, d.matches||[]); }
            buddyThread.push({k:1,html:buddyMd((d&&d.reply)||'')});
            if(d&&d.matches&&d.matches.length) buddyThread.push({matches:d.matches}); }
   }catch(e){ buddyThread=buddyThread.filter(m=>!m.typing); buddyThread.push({k:1,html:'⚠️ Клил не отвечает. Попробуй ещё раз.'}); }
   buddyBusy=false; render(); }
+// A created intent becomes a card in My Intents AND a pin on the Search map.
+function addCreatedIntent(it, matches){
+  it = it || {};
+  const raw = (it.activity && String(it.activity).trim().length>1) ? String(it.activity).trim() : (it.category||'Plan');
+  const title = raw.charAt(0).toUpperCase()+raw.slice(1);
+  DATA.intents = DATA.intents || []; DATA.plans = DATA.plans || [];
+  if(DATA.intents[0] && DATA.intents[0].title===title) return;   // don't duplicate the same intent
+  const when = it.time || 'soon', n = matches ? matches.length : 0;
+  DATA.intents.unshift({ title, tags:(it.tags||[]).slice(0,4), confidence:Math.min(92,55+n*8), status:'searching',
+    spec:[['pin','Mode', it.mode||'—'],['users','Format', it.format||'—'],['clock','Time', when]],
+    steps:[['Structured your intent','done'],['Found '+n+' people','done'],['Lining up intros','now']] });
+  DATA.plans.unshift({ title, who:'You', when, dist:(it.mode==='online'?'online':'nearby'),
+    x:22+Math.floor(Math.random()*56), y:22+Math.floor(Math.random()*50) });
+}
 function scr_buddychat(){
   const rows=buddyThread.map((m,i)=>{
     const prevBot = i>0 && buddyThread[i-1].k===1;   // group consecutive Kleal bubbles (hide repeat avatar)
@@ -1101,7 +1115,7 @@ function render(){
   rgt.style.visibility = (isRoot && !isHome) ? 'hidden' : 'visible';   // no right icon on Intents/Search/Messages
   rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
   // bottom nav: rebuilt for the active tab; hidden on the intent chat (which has its own composer)
-  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat'||cur==='buddychat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
+  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
