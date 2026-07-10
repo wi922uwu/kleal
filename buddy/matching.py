@@ -96,18 +96,27 @@ def _profile_categories(profile):
     return cats
 
 
+# human labels for the user-facing match reason (avoid raw enum codes in the card)
+CATEGORY_RU = {"games": "игры", "watch_together": "вместе посмотреть", "sport_activity": "спорт",
+               "language_practice": "язык", "social_meet": "встретиться", "interest_conversation": "поговорить",
+               "networking": "нетворкинг", "culture_event": "культура"}
+LANG_RU = {"ru": "русский", "en": "English", "es": "español", "de": "Deutsch", "fr": "français",
+           "ca": "català", "it": "italiano", "pt": "português"}
+
+
 def score_candidate(intent, profile, user_profile=None):
     """Return (score, human reason). Thin, deterministic."""
     user_profile = user_profile or {}
     score = 0.0
     reasons = []
 
-    # category / activity
-    if intent["category"] in _profile_categories(profile):
+    # category / activity (score now; a friendly fragment is added below only if there is
+    # no more concrete tag overlap to show)
+    cat_match = intent["category"] in _profile_categories(profile)
+    if cat_match:
         score += 25
-        reasons.append("тема: " + intent["category"])
 
-    # tag / entity overlap (exact + substring, e.g. "dota 2" ~ "dota")
+    # tag / entity overlap (exact + substring, e.g. "dota 2" ~ "dota") — the most concrete "why"
     itags = set(t.lower() for t in intent.get("tags", []) if t)
     interests = set(i.lower() for i in profile.get("interests", []) if i)
     overlap = set(itags & interests)
@@ -117,7 +126,9 @@ def score_candidate(intent, profile, user_profile=None):
                 overlap.add(t)
     if overlap:
         score += 12 * len(overlap)
-        reasons.append("совпадает: " + ", ".join(sorted(overlap)))
+        reasons.append("тоже " + ", ".join(sorted(overlap)))
+    elif cat_match:
+        reasons.append(CATEGORY_RU.get(intent["category"], intent["category"]))
 
     # location (only for offline/hybrid/unspecified)
     mode = (intent.get("mode") or "").lower()
@@ -126,25 +137,23 @@ def score_candidate(intent, profile, user_profile=None):
         pcity = (profile.get("city") or "").lower()
         if ucity and pcity and ucity == pcity:
             score += 15
-            reasons.append("тот же город: " + (profile.get("city") or ""))
+            reasons.append("рядом")
 
-    # language (soft boost, only when the intent explicitly names a language — the model
-    # emits one when it matters; names/codes normalized so 'русский' == 'ru')
+    # language (soft boost, only when the intent explicitly names a language)
     ilangs = _norm_langs(intent.get("languages") or [])
     plangs = _norm_langs(profile.get("languages", []))
     common_l = ilangs & plangs
     if common_l:
         score += 10
-        reasons.append("общий язык: " + ", ".join(sorted(common_l)))
+        reasons.append("говорит: " + ", ".join(LANG_RU.get(l, l) for l in sorted(common_l)))
 
-    # format
+    # format (scored, but kept out of the user-facing reason — too technical)
     ifmt = (intent.get("format") or "").lower()
     pfmts = set(f.lower() for f in profile.get("formats", []))
     if ifmt and ifmt in pfmts:
         score += 8
-        reasons.append("формат: " + ifmt)
 
-    return round(score, 1), ("; ".join(reasons) if reasons else "общий социальный контекст")
+    return round(score, 1), (" · ".join(reasons) if reasons else "похоже, зайдёт")
 
 
 # Minimum relevance to surface as a match. Set above lone format(8)+language(10)=18 so a

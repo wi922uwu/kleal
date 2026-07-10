@@ -384,6 +384,48 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .composer{position:sticky;bottom:0;background:var(--bg);display:flex;align-items:center;gap:10px;padding:10px 2px 8px;margin-top:6px}
 .composer .cin{flex:1;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:11px 16px;color:var(--muted);font-size:14px}
 .composer .csend{width:40px;height:40px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer}
+/* ===== Buddy "Create intent" chat ===== */
+.bc{flex:1;display:flex;flex-direction:column;min-height:0}
+.bc-thread{flex:1;overflow-y:auto;padding:10px 2px 6px;display:flex;flex-direction:column;gap:2px}
+.bc-row{display:flex;align-items:flex-end;gap:8px;margin:4px 0;animation:bcpop .34s cubic-bezier(.2,.85,.3,1.15) both}
+@keyframes bcpop{from{opacity:0;transform:translateY(9px) scale(.97)}to{opacity:1;transform:none}}
+.bc-av{width:30px;height:30px;border-radius:50%;background:linear-gradient(140deg,#FB7A88,var(--primary));color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex:none;box-shadow:0 2px 7px rgba(245,69,92,.32)}
+.bc-av.gh{visibility:hidden}
+.bc-bub{max-width:78%;background:var(--card);border:1px solid var(--border);border-radius:20px 20px 20px 6px;
+  padding:11px 15px;font-size:15px;line-height:1.46;color:var(--fg);white-space:pre-wrap;word-wrap:break-word}
+.bc-me{align-self:flex-end;max-width:80%;background:var(--primary);color:#fff;border-radius:20px 20px 6px 20px;
+  padding:11px 15px;font-size:15px;line-height:1.46;margin:4px 0;box-shadow:0 3px 11px rgba(245,69,92,.26);
+  animation:bcpop .34s cubic-bezier(.2,.85,.3,1.15) both}
+.bc-typing{display:flex;gap:5px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:20px 20px 20px 6px}
+.bc-typing i{width:7px;height:7px;border-radius:50%;background:var(--neutral300);animation:bcdot 1.1s infinite}
+.bc-typing i:nth-child(2){animation-delay:.16s}.bc-typing i:nth-child(3){animation-delay:.32s}
+@keyframes bcdot{0%,60%,100%{opacity:.4;transform:translateY(0)}30%{opacity:1;transform:translateY(-4px)}}
+.bc-chips{display:flex;flex-wrap:wrap;gap:8px;margin:9px 0 5px 38px;animation:bcpop .34s both}
+.bc-chip{background:var(--card);border:1.5px solid var(--coral200);color:var(--primary);border-radius:20px;
+  padding:8px 15px;font-size:14px;font-weight:600;cursor:pointer;transition:transform .12s,background .12s}
+.bc-chip:active{background:var(--coral50);transform:scale(.95)}
+.bc-intent{align-self:flex-start;margin:5px 0 7px 38px;display:inline-flex;align-items:center;gap:6px;
+  background:var(--coral50);color:var(--coral700);border-radius:11px;padding:7px 12px;font-size:12.5px;font-weight:700;animation:bcpop .34s both}
+.bc-mwrap{display:flex;flex-direction:column;gap:10px;margin:6px 0 10px 38px}
+.bc-mcard{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:12px 14px;display:flex;
+  align-items:center;gap:12px;box-shadow:0 3px 12px rgba(24,27,34,.05);animation:bcpop .38s both}
+.bc-mav{width:44px;height:44px;border-radius:50%;background:linear-gradient(140deg,#FB7A88,var(--primary));color:#fff;
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;flex:none}
+.bc-mname{font-weight:700;font-size:16px;color:var(--fg);display:flex;align-items:center;gap:7px}
+.bc-mtop{font-size:9px;font-weight:800;letter-spacing:.07em;color:#fff;background:var(--primary);padding:2px 6px;border-radius:6px}
+.bc-mwhy{color:var(--muted);font-size:13px;margin-top:2px}
+.bc-hi{background:var(--primary);color:#fff;border:0;border-radius:12px;padding:9px 16px;font-weight:700;font-size:14px;cursor:pointer;flex:none;transition:transform .12s}
+.bc-hi:active{transform:scale(.94)}
+.bc-comp{display:flex;align-items:center;gap:9px;padding:9px 2px 4px}
+.bc-in{flex:1;background:var(--card);border:1.5px solid var(--border);border-radius:999px;padding:12px 18px;font-size:15px;
+  color:var(--fg);outline:none;transition:border-color .15s}
+.bc-in::placeholder{color:var(--neutral300)}
+.bc-in:focus{border-color:var(--primary)}
+.bc-send{width:44px;height:44px;border-radius:50%;background:var(--primary);color:#fff;border:0;display:flex;align-items:center;
+  justify-content:center;flex:none;cursor:pointer;box-shadow:0 3px 10px rgba(245,69,92,.3);transition:background .15s,transform .12s}
+.bc-send:active{transform:scale(.92)}
+.bc-send:disabled{background:var(--neutral300);box-shadow:none;cursor:default}
 .chkrow{display:flex;align-items:center;gap:12px;padding:12px 16px}
 .chkic{width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center}
 .chkic.done{background:#0f7340}.chkic.now{border:2px solid var(--primary)}.chkic.wait{border:2px solid var(--neutral300)}
@@ -887,34 +929,42 @@ function ensureBuddyOnboard(){ if(buddyOnboarded)return; buddyOnboarded=true;
   try{ fetch(BUDDY_URL+'/buddy/onboard',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({user_id:KUID, profile:buddyProfile()})}); }catch(e){} }
 function openBuddyChat(){ const nm=(DATA.name||'').trim();
-  buddyThread=[{k:1,html:(nm?'Hey '+esc(nm)+'! ':'')+'What do you feel like doing?'}];
+  buddyThread=[{k:1,html:(nm?'Hey '+esc(nm)+'! ':'')+"What do you feel like doing?"},
+    {chips:['Coffee','Watch a match','Play a game','Language','A walk','Something chill']}];
   cur='buddychat'; render(); ensureBuddyOnboard(); }
 async function buddySend(text){ text=(text||'').trim(); if(!text||buddyBusy)return; buddyBusy=true;
+  buddyThread=buddyThread.filter(m=>!m.chips);          // drop quick-idea chips once engaged
   buddyThread.push({k:0,html:esc(text)}); buddyThread.push({typing:1}); render();
   try{ const r=await fetch(BUDDY_URL+'/buddy/chat',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({user_id:KUID, message:text})});
-    const d=await r.json(); if(buddyThread.length&&buddyThread[buddyThread.length-1].typing)buddyThread.pop();
+    const d=await r.json(); buddyThread=buddyThread.filter(m=>!m.typing);
     if(d&&d.error){ buddyThread.push({k:1,html:'⚠️ '+esc(d.error)}); }
-    else { buddyThread.push({k:1,html:buddyMd((d&&d.reply)||'')}); if(d&&d.matches&&d.matches.length) buddyThread.push({matches:d.matches}); }
-  }catch(e){ if(buddyThread.length&&buddyThread[buddyThread.length-1].typing)buddyThread.pop();
-    buddyThread.push({k:1,html:'⚠️ '+esc(String(e))}); }
+    else { if(d&&d.tool_call==='find_people'&&d.intent) buddyThread.push({intent:d.intent});
+           buddyThread.push({k:1,html:buddyMd((d&&d.reply)||'')});
+           if(d&&d.matches&&d.matches.length) buddyThread.push({matches:d.matches}); }
+  }catch(e){ buddyThread=buddyThread.filter(m=>!m.typing); buddyThread.push({k:1,html:'⚠️ Клил не отвечает. Попробуй ещё раз.'}); }
   buddyBusy=false; render(); }
 function scr_buddychat(){
-  const rows=buddyThread.map(m=>{
-    if(m.typing) return '<div class="kbub" style="opacity:.55">Kleal is typing…</div>';
-    if(m.matches) return '<div style="display:flex;flex-direction:column;gap:10px;margin:2px 0 10px">'+
-      m.matches.map((x,idx)=>{ const nm=String(x.name||'?').trim(); const init=(nm[0]||'?').toUpperCase();
-        const why=String(x.reason||'').split(';').map(s=>s.trim()).filter(Boolean).join(' · ');
-        return `<div style="background:var(--card);border:1px solid var(--border);border-radius:16px;padding:13px 15px;display:flex;align-items:center;gap:12px">
-          <div style="width:42px;height:42px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px;flex:none">${esc(init)}</div>
-          <div style="flex:1;min-width:0"><div style="font-weight:700;font-size:16px">${esc(nm)}${idx===0?' <span style="font-size:10px;font-weight:700;color:var(--primary);background:var(--coral50);padding:2px 6px;border-radius:6px;letter-spacing:.03em">TOP</span>':''}</div>
-            <div style="color:var(--muted);font-size:13px;margin-top:2px">${esc(why)}</div></div>
-          <button data-act="sayhi" data-name="${esc(nm)}" style="background:var(--primary);color:#fff;border:0;border-radius:11px;padding:9px 15px;font-weight:600;font-size:14px;cursor:pointer;flex:none">Say hi</button>
-        </div>`; }).join('')+'</div>';
-    return m.k? `<div class="kbub">${m.html}</div>` : `<div class="mbub">${m.html}</div>`;
+  const rows=buddyThread.map((m,i)=>{
+    const prevBot = i>0 && buddyThread[i-1].k===1;   // group consecutive Kleal bubbles (hide repeat avatar)
+    if(m.typing) return `<div class="bc-row"><div class="bc-av${prevBot?' gh':''}">K</div><div class="bc-typing"><i></i><i></i><i></i></div></div>`;
+    if(m.chips) return `<div class="bc-chips">${m.chips.map(c=>`<div class="bc-chip" data-bchip="${esc(c)}">${esc(c)}</div>`).join('')}</div>`;
+    if(m.intent){ const it=m.intent||{}; const bits=[it.activity||it.category, it.mode, it.time].filter(Boolean).join(' · ');
+      return `<div class="bc-intent">✨ Понял: ${esc(bits||'собираю план')}</div>`; }
+    if(m.matches) return `<div class="bc-mwrap">`+m.matches.map((x,idx)=>{
+      const nm=String(x.name||'?').trim(); const init=(nm[0]||'?').toUpperCase();
+      const why=String(x.reason||'').split(';').map(s=>s.trim()).filter(Boolean).join(' · ');
+      return `<div class="bc-mcard"><div class="bc-mav">${esc(init)}</div>
+        <div style="flex:1;min-width:0"><div class="bc-mname">${esc(nm)}${idx===0?'<span class="bc-mtop">TOP</span>':''}</div>
+          <div class="bc-mwhy">${esc(why)}</div></div>
+        <button class="bc-hi" data-act="sayhi" data-name="${esc(nm)}">Say hi</button></div>`;
+    }).join('')+`</div>`;
+    if(m.k===1) return `<div class="bc-row"><div class="bc-av${prevBot?' gh':''}">K</div><div class="bc-bub">${m.html}</div></div>`;
+    return `<div class="bc-me">${m.html}</div>`;
   }).join('');
-  return `<div class="fade"><div class="thread">${rows}</div>
-    <div class="composer"><input class="cin" id="bcin" placeholder="Message…" autocomplete="off" style="outline:none;color:var(--text)"><div class="csend" id="bcsend">${IC.nMsg}</div></div></div>`;
+  return `<div class="bc"><div class="bc-thread" id="bcthread">${rows}</div>
+    <div class="bc-comp"><input class="bc-in" id="bcin" placeholder="Message Kleal…" autocomplete="off">
+      <button class="bc-send" id="bcsend" disabled>${IC.nMsg}</button></div></div>`;
 }
 function intentSpec(it){ const s=it.spec||[]; return s.map((r,i)=>`<div class="specrow"><div class="spi">${IC[r[0]]||IC.spark}</div>
   <div class="sl">${esc(r[1])}</div><div class="sv">${esc(r[2])}</div></div>${i<s.length-1?'<div class="divider"></div>':''}`).join(''); }
@@ -1078,10 +1128,13 @@ function render(){
   document.querySelectorAll('[data-plan]').forEach(el=>el.onclick=()=>toast('Plan details are coming soon'));
   document.querySelectorAll('[data-msg]').forEach(el=>el.onclick=()=>toast('Opening this chat is coming soon'));
   document.querySelectorAll('[data-act]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); doAct(el.dataset.act, el.dataset); });
-  if(cur==='buddychat'){ const ci=document.getElementById('bcin'), cs=document.getElementById('bcsend');
-    const go=()=>{ if(!ci)return; const v=ci.value; ci.value=''; buddySend(v); };
-    if(cs) cs.onclick=go; if(ci){ ci.addEventListener('keydown',e=>{ if(e.key==='Enter')go(); }); ci.focus(); }
-    A.scrollTop=A.scrollHeight; }
+  if(cur==='buddychat'){ const ci=document.getElementById('bcin'), cs=document.getElementById('bcsend'), th=document.getElementById('bcthread');
+    const go=()=>{ if(!ci)return; const v=ci.value.trim(); if(!v||buddyBusy)return; ci.value=''; if(cs)cs.disabled=true; buddySend(v); };
+    if(cs) cs.onclick=go;
+    if(ci){ ci.addEventListener('keydown',e=>{ if(e.key==='Enter')go(); });
+            ci.addEventListener('input',()=>{ if(cs)cs.disabled=!ci.value.trim(); }); ci.focus(); }
+    document.querySelectorAll('[data-bchip]').forEach(el=>el.onclick=()=>buddySend(el.dataset.bchip));
+    if(th) th.scrollTop=th.scrollHeight; }
 }
 document.getElementById('back').onclick=()=>{ if(editSig){ editSig=null; render(); } else if(detail){ detail=null; render(); }
   else if(cur==='intentchat'){ cur='intents'; render(); } else if(!ROOTS.includes(cur)){ cur='overview'; render(); } };
