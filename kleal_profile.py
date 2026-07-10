@@ -1112,8 +1112,8 @@ function initSearchMap(){
   if(lmap){ try{ lmap.remove(); }catch(e){} lmap=null; }
   el.innerHTML='';
   const C=[41.3874,2.1686];
-  lmap=L.map(el,{zoomControl:false,attributionControl:true}).setView(C,13);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OSM'}).addTo(lmap);
+  lmap=L.map(el,{zoomControl:false,attributionControl:false}).setView(C,13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(lmap);
   const pinIc=me=>L.divIcon({className:'',html:'<div class="lpin'+(me?' me':'')+'">'+IC.pin+'</div>',iconSize:[26,26],iconAnchor:[13,24]});
   (DATA.plans||[]).forEach(p=>{
     const lat=C[0]+(50-(p.y||50))/100*0.05, lng=C[1]+(((p.x||50))-50)/100*0.08;
