@@ -99,27 +99,11 @@ DATA = {
     {"icon": "pin", "title": "Location", "value": "Barcelona · Gràcia, Poblenou · Max 10 km"},
     {"icon": "globe", "title": "Languages", "value": "Russian · English · Spanish (B1)"},
   ],
-  "intents": [
-    {"title": "Coffee & AI talk", "tags": ["Coffee", "AI", "Discuss", "1:1"],
-     "confidence": 82, "status": "searching",
-     "spec": [["moon", "Mode", "Offline"], ["users", "Format", "1:1 or small group"],
-              ["clock", "Time", "Today evening"], ["pin", "Area", "Public places nearby"],
-              ["shield", "Safety", "Public places only"], ["compass", "Reach", "Adjacent interests"],
-              ["eye", "Visibility", "Via Kleal only"]],
-     "steps": [["Structured your intent", "done"], ["Found 2 people worth meeting", "done"],
-               ["Matching your schedules", "now"], ["Checking the safety fit", "wait"],
-               ["Sending intros once you approve", "wait"]]},
-  ],
-  "plans": [
-    {"title": "Morning coffee & AI chat", "who": "Marc · verified", "when": "Today 09:30", "dist": "0.6 km", "x": 33, "y": 26},
-    {"title": "Startup founders meetup", "who": "4 going · public place", "when": "Tomorrow 18:00", "dist": "1.2 km", "x": 63, "y": 44},
-    {"title": "Spanish + coffee swap", "who": "Ana · verified", "when": "Wed 17:00", "dist": "0.9 km", "x": 42, "y": 64},
-  ],
-  "messages": [
-    {"who": "Kleal", "last": "2 people match your Coffee & AI talk — want intros?", "time": "now", "kleal": True},
-    {"who": "Marc", "last": "Sounds great, see you at 9:30!", "time": "12m", "kleal": False},
-    {"who": "Ana", "last": "Hola! Happy to swap Spanish for coffee.", "time": "1h", "kleal": False},
-  ],
+  # no mock content: intents/plans/messages start empty and fill from real user actions
+  # (create-intent chat -> addCreatedIntent; intros -> messages)
+  "intents": [],
+  "plans": [],
+  "messages": [],
 
   "memory": [
     {"signal": "You prefer small groups", "source": "Onboarding + 2 accepted plans",
@@ -1071,14 +1055,15 @@ function scr_intents(){
     <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div>
     <div class="confrow2"><span class="l">Match confidence</span><span class="confpct">${it.confidence||0}%</span></div>
     <div class="track"><i style="width:${it.confidence||0}%"></i></div></div>`).join('');
-  const upcoming=hrow(IC.users,'Football · Tonight 21:00','Sports bar · Eixample · 25 min away · 5 going','data-act="upcoming-demo"');
+  // "Upcoming" renders only when a real confirmed plan exists (no mock events)
+  const up=(DATA.upcoming||[]);
+  const upcoming=!up.length?'':`<div class="hcap">Upcoming</div>`+up.map(u=>hrow(IC.users,esc(u.title),u.sub||'','data-act="upcoming-demo"')).join('');
   const decision=hrow(IC.check,'<span style="font-size:11.5px;color:var(--muted);font-weight:500;display:block">Recommended by Kleal</span>Meet in public places','Keep first meetups in busy spots','data-nav="safety"');
   return `<div class="stack fade" style="padding-top:2px">
     ${banner}
     <div class="hcap">Start with one of these</div>
     ${suggests}${profRow}
     ${active}
-    <div class="hcap">Upcoming</div>
     ${upcoming}
     <div class="hcap">Needs your decision</div>
     ${decision}
