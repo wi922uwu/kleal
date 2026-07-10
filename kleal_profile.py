@@ -364,7 +364,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .bnav .fabgap{width:60px}
 .fab{position:absolute;left:50%;top:-16px;transform:translateX(-50%);width:56px;height:56px;border-radius:50%;
   background:var(--primary);color:#fff;border:4px solid var(--bg);display:flex;align-items:center;justify-content:center;
-  cursor:pointer;box-shadow:0 8px 20px rgba(245,69,92,.35)}
+  cursor:pointer;box-shadow:0 8px 20px rgba(0,0,0,.18),0 4px 10px rgba(245,69,92,.45)}  /* Kleal/Elevation/FAB */
 .gap8{height:8px}.gap12{height:12px}.gap16{height:16px}
 .stack>*+*{margin-top:10px}
 .fade{animation:fd .28s ease}@keyframes fd{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -408,6 +408,25 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .bc-intent{align-self:flex-start;margin:5px 0 7px 38px;display:inline-flex;align-items:center;gap:6px;
   background:var(--coral50);color:var(--coral700);border-radius:11px;padding:7px 12px;font-size:12.5px;font-weight:700;animation:bcpop .34s both}
 .bc-mwrap{display:flex;flex-direction:column;gap:10px;margin:6px 0 10px 38px}
+.bc-cardwrap{display:flex;flex-direction:column;gap:10px;margin:6px 0 10px 38px;animation:bcpop .38s both}
+.bc-cardwrap .bigbtn{margin:0}
+/* ===== My Intents home (Figma) ===== */
+.hbanner{display:flex;align-items:center;gap:9px;background:var(--success-bg);color:var(--success-text);
+  border-radius:14px;padding:12px 14px;font-size:13.5px;font-weight:600;cursor:pointer;margin-bottom:4px}
+.hbanner svg{width:17px;height:17px}
+.hbanner .hbchev{margin-left:auto;display:flex;opacity:.7}
+.hcap{font-size:13px;font-weight:700;color:var(--fg);margin:12px 2px 2px}
+.hic{width:40px;height:40px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  background:var(--neutral100);color:var(--muted)}
+.mchev{margin-left:auto;color:var(--neutral300);display:flex;flex:none}
+/* ===== help/assistant chat header + composer extras ===== */
+.hc-actions{display:flex;gap:8px;padding:6px 2px 2px}
+.hc-btn{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);
+  border-radius:999px;padding:8px 14px;font-size:13.5px;font-weight:600;color:var(--fg);cursor:pointer}
+.hc-btn svg{width:15px;height:15px}
+.hc-btn.primary{background:var(--coral50);border-color:var(--coral200);color:var(--coral700)}
+.hc-plus{width:40px;height:40px;flex:none;border-radius:50%;background:var(--card);border:1.5px solid var(--border);
+  color:var(--muted);display:flex;align-items:center;justify-content:center;cursor:pointer}
 .bc-mcard{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:12px 14px;display:flex;
   align-items:center;gap:12px;box-shadow:0 3px 12px rgba(24,27,34,.05);animation:bcpop .38s both}
 .bc-mav{width:44px;height:44px;border-radius:50%;background:linear-gradient(140deg,#FB7A88,var(--primary));color:#fff;
@@ -526,7 +545,8 @@ document.getElementById('sbic').innerHTML=
 document.getElementById('back').innerHTML=IC.back;
 // bottom nav (Intents · Search · [create] · Messages · Profile) — rebuilt each render for the active state
 const ROOTS=['overview','intents','search','messages'];
-function navFam(){ if(cur==='intents'||cur==='intentchat')return'intents'; if(cur==='search')return'search';
+function navFam(){ if(cur==='intents'||cur==='intentchat'||cur==='buddychat')return'intents'; if(cur==='search')return'search';
+  if(cur==='helpchat')return'messages';
   if(cur==='messages')return'messages'; return'profile'; }
 function bnavHTML(){ const fam=navFam();
   const items=[['nIntents','Intents','intents','intents'],['nSearch','Search','search','search'],['fab','','',''],
@@ -921,7 +941,7 @@ let curIntent=null, intentLaunched=false;
 function openIntent(it, launched){ curIntent=it||null; intentLaunched=!!launched; cur='intentchat'; render(); }
 
 // ---- live Buddy chat (the real "Create intent": talks to /buddy/chat, returns matches) ----
-let buddyThread=[], buddyBusy=false, buddyOnboarded=false;
+let buddyThread=[], buddyBusy=false, buddyOnboarded=false, buddyPending=null;
 function buddyMd(s){ s=esc(s).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>'); return s.split('\n').map(l=>l.replace(/^\s*[\*\-]\s+(.*)/,'• $1')).join('<br>'); }
 function buddyProfile(){ const d=DATA||{}; return { name:d.name||'', city:d.city||'', languages:d.languages||[],
   interests:(d.interests||[]).map(i=>({name:i.name, role:i.role||'discuss'})) }; }
@@ -939,11 +959,38 @@ async function buddySend(text){ text=(text||'').trim(); if(!text||buddyBusy)retu
       body:JSON.stringify({user_id:KUID, message:text})});
     const d=await r.json(); buddyThread=buddyThread.filter(m=>!m.typing);
     if(d&&d.error){ buddyThread.push({k:1,html:'⚠️ '+esc(d.error)}); }
-    else { if(d&&d.tool_call==='find_people'&&d.intent){ buddyThread.push({intent:d.intent}); addCreatedIntent(d.intent, d.matches||[]); }
-           buddyThread.push({k:1,html:buddyMd((d&&d.reply)||'')});
+    else if(d&&d.tool_call==='find_people'&&d.intent){
+      // Figma flow: first show the STRUCTURED INTENT CARD; matches appear after "Launch search".
+      buddyPending={intent:d.intent, matches:(d.matches||[]), reply:(d.reply||'')};
+      buddyThread.push({intent:d.intent});
+      buddyThread.push({k:1,html:"Here's the intent I put together from what you told me. Launch the search when it looks right."});
+      buddyThread.push({card:d.intent, launched:false});
+    }
+    else { buddyThread.push({k:1,html:buddyMd((d&&d.reply)||'')});
            if(d&&d.matches&&d.matches.length) buddyThread.push({matches:d.matches}); }
   }catch(e){ buddyThread=buddyThread.filter(m=>!m.typing); buddyThread.push({k:1,html:'⚠️ Клил не отвечает. Попробуй ещё раз.'}); }
   buddyBusy=false; render(); }
+
+// "Launch search" on the in-chat intent card: user confirms -> searching steps -> results.
+function buddyLaunch(){
+  if(!buddyPending) return;
+  const p=buddyPending; buddyPending=null;
+  buddyThread.forEach(m=>{ if(m.card) m.launched=true; });
+  buddyThread.push({k:0,html:'Launch it'});
+  buddyThread.push({typing:1}); render();
+  setTimeout(()=>{
+    buddyThread=buddyThread.filter(m=>!m.typing);
+    buddyThread.push({steps:[['Structured your intent','done'],
+      ['Found '+p.matches.length+' people worth meeting', p.matches.length?'done':'now'],
+      ['Lining up intros','now']]});
+    if(p.reply) buddyThread.push({k:1,html:buddyMd(p.reply)});
+    if(p.matches.length) buddyThread.push({matches:p.matches});
+    else buddyThread.push({k:1,html:"Прямых совпадений пока нет — я подержу интент активным и вернусь с вариантами."});
+    buddyThread.push({k:1,html:"I'll only send intros once you approve each one."});
+    addCreatedIntent(p.intent, p.matches);
+    render();
+  }, 900);
+}
 // A created intent becomes a card in My Intents AND a pin on the Search map.
 function addCreatedIntent(it, matches){
   it = it || {};
@@ -965,6 +1012,28 @@ function scr_buddychat(){
     if(m.chips) return `<div class="bc-chips">${m.chips.map(c=>`<div class="bc-chip" data-bchip="${esc(c)}">${esc(c)}</div>`).join('')}</div>`;
     if(m.intent){ const it=m.intent||{}; const bits=[it.activity||it.category, it.mode, it.time].filter(Boolean).join(' · ');
       return `<div class="bc-intent">✨ Понял: ${esc(bits||'собираю план')}</div>`; }
+    if(m.card){ const it=m.card||{};
+      const raw=(it.activity&&String(it.activity).trim().length>1)?String(it.activity).trim():(it.category||'Plan');
+      const title=raw.charAt(0).toUpperCase()+raw.slice(1);
+      const area=(it.mode==='online')?'Online':((DATA.city&&String(DATA.city))||'Nearby');
+      const MODE_L={offline:'In person',online:'Online',hybrid:'Online & offline'};
+      const FMT_L={one_on_one:'1:1',small_group:'1:1 or small group',open_group:'Open group',online_room:'Online room',game_lobby:'Game lobby'};
+      const rows=[['compass','Mode',MODE_L[it.mode]||it.mode||'—'],['users','Format',FMT_L[it.format]||it.format||'—'],
+        ['clock','Time',it.time||'soon'],['pin','Area',area],['flag','Safety','Public place'],
+        ['refresh','Fallback','Online or tomorrow'],['spark','Visibility','Agent network']];
+      const spec=rows.map((r,ri)=>`<div class="specrow"><div class="spi">${IC[r[0]]||IC.spark}</div>
+        <div class="sl">${esc(r[1])}</div><div class="sv">${esc(r[2])}</div></div>${ri<rows.length-1?'<div class="divider"></div>':''}`).join('');
+      return `<div class="bc-cardwrap"><div class="card pad" style="padding-bottom:6px">
+          <div class="sumhead"><div class="sumlbl">${esc(title)}</div></div>
+          <div style="margin:8px 0 4px">${(it.tags||[]).slice(0,4).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div></div>
+        <div class="card">${spec}</div>
+        ${m.launched?'':`<button class="bigbtn primary" data-act="launch-bintent">Launch search</button>
+          <button class="bigbtn ghost" data-act="edit-bintent">Edit</button>`}</div>`; }
+    if(m.steps){ return `<div class="bc-cardwrap"><div class="card"><div class="sumhead" style="padding:14px 16px 6px"><div class="sumlbl">Kleal is on it</div></div>
+      ${m.steps.map((s,si)=>{ const st=s[1], lab=st==='done'?'Done':(st==='now'?'Now':'Next');
+        const ic=st==='done'?`<div class="chkic done">${IC.check}</div>`:`<div class="chkic ${st==='now'?'now':'wait'}"></div>`;
+        return `<div class="chkrow">${ic}<div class="chklb ${st==='wait'?'wait':''}">${esc(s[0])}</div>
+          <div class="chkst ${st}">${lab}</div></div>${si<m.steps.length-1?'<div class="divider"></div>':''}`; }).join('')}</div></div>`; }
     if(m.matches) return `<div class="bc-mwrap">`+m.matches.map((x,idx)=>{
       const nm=String(x.name||'?').trim(); const init=(nm[0]||'?').toUpperCase();
       const why=String(x.reason||'').split(';').map(s=>s.trim()).filter(Boolean).join(' · ');
@@ -983,18 +1052,37 @@ function scr_buddychat(){
 function intentSpec(it){ const s=it.spec||[]; return s.map((r,i)=>`<div class="specrow"><div class="spi">${IC[r[0]]||IC.spark}</div>
   <div class="sl">${esc(r[1])}</div><div class="sv">${esc(r[2])}</div></div>${i<s.length-1?'<div class="divider"></div>':''}`).join(''); }
 
+// My Intents = the home tab (Figma): ready-banner, suggestions, active intents, upcoming, decisions.
 function scr_intents(){
   const list=DATA.intents||[];
-  const head=`<div class="seccap" style="margin:2px 2px 12px">Intents are the plans you ask Kleal to arrange. It searches, matches schedules and lines up intros — you approve every one.</div>`;
-  if(!list.length) return `<div class="fade">${head}${emptyState("No intents yet","Tap Create intent and tell Kleal what you'd like to do.")}
-    <button class="bigbtn primary" style="margin-top:8px" data-act="createintent">Create intent</button></div>`;
-  const cards=list.map((it,i)=>`<div class="card pad intentrow" data-intent="${i}">
+  const hrow=(icon,t,s,act,extra)=>`<div class="card" style="padding:0"><div class="msgrow" ${act||''}>
+    <div class="hic">${icon}</div>
+    <div class="msgt"><div class="mn">${t}</div><div class="ml">${esc(s)}</div></div>
+    ${extra||('<div class="mchev">'+IC.chevR+'</div>')}</div></div>`;
+  const banner=`<div class="hbanner" data-act="createintent">${IC.spark}<span>Kleal is ready — ${Math.max(3,list.length+2)} ideas for tonight</span><span class="hbchev">${IC.chevR}</span></div>`;
+  const suggests=[
+    [IC.football,'Football tonight?','1:1 or small group nearby','watch football tonight with a small group'],
+    [IC.coffee,'Coffee nearby','Someone around '+esc(DATA.city||'you'),'grab a coffee nearby today'],
+    [IC.globe,'Language practice','EN ↔ ES exchange','30 minutes of Spanish practice this week'],
+  ].map(s=>hrow(s[0],esc(s[1]),s[2],`data-act="bsuggest" data-text="${esc(s[3])}"`)).join('');
+  const profRow=hrow(IC.nProfile,'Profile '+(DATA.confidence||74)+'%','Add a photo to boost matches','data-nav="overview"',`<div class="mchev">${IC.edit}</div>`);
+  const active=!list.length?'':`<div class="hcap">Active</div>`+list.map((it,i)=>`<div class="card pad intentrow" data-intent="${i}">
     <div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="pill searching dot">Searching</span></div>
     <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div>
     <div class="confrow2"><span class="l">Match confidence</span><span class="confpct">${it.confidence||0}%</span></div>
     <div class="track"><i style="width:${it.confidence||0}%"></i></div></div>`).join('');
-  return `<div class="stack fade">${head}${cards}
-    <button class="bigbtn primary" style="margin-top:4px" data-act="createintent">Create intent</button></div>`;
+  const upcoming=hrow(IC.users,'Football · Tonight 21:00','Sports bar · Eixample · 25 min away · 5 going','data-act="upcoming-demo"');
+  const decision=hrow(IC.check,'<span style="font-size:11.5px;color:var(--muted);font-weight:500;display:block">Recommended by Kleal</span>Meet in public places','Keep first meetups in busy spots','data-nav="safety"');
+  return `<div class="stack fade" style="padding-top:2px">
+    ${banner}
+    <div class="hcap">Start with one of these</div>
+    ${suggests}${profRow}
+    ${active}
+    <div class="hcap">Upcoming</div>
+    ${upcoming}
+    <div class="hcap">Needs your decision</div>
+    ${decision}
+  </div>`;
 }
 
 function scr_intentchat(){
@@ -1028,6 +1116,7 @@ function scr_search(){
   return `<div class="fade">
     <div class="sbar"><div class="box">${IC.nSearch}<span>Search this area…</span></div>
       <div class="filt" data-act="filter">${IC.compass}</div></div>
+    <button class="bigbtn primary" style="margin:8px 0 10px;padding:11px" data-act="show-all-plans">Show all</button>
     <div class="map"><div class="grid"></div>${pins}<div class="mpin me" style="left:50%;top:85%">${IC.pin}</div>${cards}
       <button class="bigbtn primary searchbtn" data-act="search-area">Search this area</button></div>
     <div class="seccap" style="margin:12px 2px">Kleal surfaces public plans and people near you. Nothing here sees your exact location — only your area.</div>
@@ -1036,16 +1125,57 @@ function scr_search(){
 
 function scr_messages(){
   const list=DATA.messages||[];
-  if(!list.length) return emptyState("No messages yet","When Kleal lines up an intro, your chats show up here.");
-  return `<div class="stack fade" style="padding-top:4px">${list.map((m,i)=>`<div class="card" style="padding:0">
+  // pinned assistant thread (Figma: "Hey dear! How can I help you?")
+  const kleal=`<div class="card" style="padding:0"><div class="msgrow" data-act="openhelp">
+    <div class="msgav k">K</div>
+    <div class="msgt"><div class="mn">Kleal<span class="reddot"></span></div>
+    <div class="ml">${esc((helpThread.length>1?(helpThread[helpThread.length-1].html||'').replace(/<[^>]*>/g,'').slice(0,42):'Hey dear! How can I help you?'))}</div></div>
+    <div class="msgtime">now</div></div></div>`;
+  if(!list.length) return `<div class="stack fade" style="padding-top:4px">${kleal}</div>`;
+  return `<div class="stack fade" style="padding-top:4px">${kleal}${list.map((m,i)=>`<div class="card" style="padding:0">
     <div class="msgrow" data-msg="${i}"><div class="msgav ${m.kleal?'k':''}">${m.kleal?'K':esc(String(m.who||'?')[0])}</div>
     <div class="msgt"><div class="mn">${esc(m.who)}${m.kleal?'<span class="reddot"></span>':''}</div><div class="ml">${esc(m.last)}</div></div>
     <div class="msgtime">${esc(m.time)}</div></div></div>`).join('')}</div>`;
 }
 
+// ===== assistant / help chat (Figma: "Hey dear! How can I help you?") =====
+let helpThread=[{k:1,html:'Hey dear! How can I help you?'}], helpBusy=false;
+function openHelpChat(){ cur='helpchat'; render(); }
+async function helpSend(text){ text=(text||'').trim(); if(!text||helpBusy)return; helpBusy=true;
+  helpThread.push({k:0,html:esc(text)}); helpThread.push({typing:1}); render();
+  try{ const r=await fetch(BUDDY_URL+'/buddy/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({user_id:KUID+'-help', message:text})});
+    const d=await r.json(); helpThread=helpThread.filter(m=>!m.typing);
+    if(d&&d.error) helpThread.push({k:1,html:'⚠️ '+esc(d.error)});
+    else { helpThread.push({k:1,html:buddyMd((d&&d.reply)||'')});
+           if(d&&d.matches&&d.matches.length) helpThread.push({matches:d.matches}); }
+  }catch(e){ helpThread=helpThread.filter(m=>!m.typing); helpThread.push({k:1,html:'⚠️ Клил не отвечает. Попробуй ещё раз.'}); }
+  helpBusy=false; render(); }
+function scr_helpchat(){
+  const rows=helpThread.map((m,i)=>{
+    const prevBot = i>0 && helpThread[i-1].k===1;
+    if(m.typing) return `<div class="bc-row"><div class="bc-av${prevBot?' gh':''}">K</div><div class="bc-typing"><i></i><i></i><i></i></div></div>`;
+    if(m.matches) return `<div class="bc-mwrap">`+m.matches.map((x,idx)=>{
+      const nm=String(x.name||'?').trim(); const why=String(x.reason||'').split(';').map(s=>s.trim()).filter(Boolean).join(' · ');
+      return `<div class="bc-mcard"><div class="bc-mav">${esc((nm[0]||'?').toUpperCase())}</div>
+        <div style="flex:1;min-width:0"><div class="bc-mname">${esc(nm)}${idx===0?'<span class="bc-mtop">TOP</span>':''}</div>
+          <div class="bc-mwhy">${esc(why)}</div></div>
+        <button class="bc-hi" data-act="sayhi" data-name="${esc(nm)}">Say hi</button></div>`; }).join('')+`</div>`;
+    if(m.k===1) return `<div class="bc-row"><div class="bc-av${prevBot?' gh':''}">K</div><div class="bc-bub">${m.html}</div></div>`;
+    return `<div class="bc-me">${m.html}</div>`;
+  }).join('');
+  return `<div class="bc">
+    <div class="hc-actions"><button class="hc-btn" data-nav="overview">${IC.nProfile}<span>Profile</span></button>
+      <button class="hc-btn primary" data-act="createintent">+ Create Intent</button></div>
+    <div class="bc-thread" id="hcthread">${rows}</div>
+    <div class="bc-comp"><button class="hc-plus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="20" height="20"><path d="M12 5v14M5 12h14"/></svg></button>
+      <input class="bc-in" id="hcin" placeholder="Message…" autocomplete="off">
+      <button class="bc-send" id="hcsend" disabled>${IC.nMsg}</button></div></div>`;
+}
+
 const SCREENS={overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
   places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
-  intents:scr_intents,intentchat:scr_intentchat,buddychat:scr_buddychat,search:scr_search,messages:scr_messages};
+  intents:scr_intents,intentchat:scr_intentchat,buddychat:scr_buddychat,helpchat:scr_helpchat,search:scr_search,messages:scr_messages};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -1105,6 +1235,7 @@ function render(){
   const isHome = !editSig && !detail && cur==='overview';
   const isRoot = !editSig && !detail && ROOTS.includes(cur);
   const titleFor = cur==='buddychat' ? 'Create intent'
+    : cur==='helpchat' ? 'Kleal'
     : cur==='intentchat' ? (curIntent?curIntent.title:'Create intent')
     : (cur==='overview'?'My Kleal Profile':(TITLES[cur]||meta[2]));
   document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : titleFor);
@@ -1115,7 +1246,7 @@ function render(){
   rgt.style.visibility = (isRoot && !isHome) ? 'hidden' : 'visible';   // no right icon on Intents/Search/Messages
   rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
   // bottom nav: rebuilt for the active tab; hidden on the intent chat (which has its own composer)
-  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
+  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat'||cur==='helpchat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
@@ -1149,9 +1280,18 @@ function render(){
             ci.addEventListener('input',()=>{ if(cs)cs.disabled=!ci.value.trim(); }); ci.focus(); }
     document.querySelectorAll('[data-bchip]').forEach(el=>el.onclick=()=>buddySend(el.dataset.bchip));
     if(th) th.scrollTop=th.scrollHeight; }
+  if(cur==='helpchat'){ const hi=document.getElementById('hcin'), hs=document.getElementById('hcsend'), ht=document.getElementById('hcthread');
+    const hgo=()=>{ if(!hi)return; const v=hi.value.trim(); if(!v||helpBusy)return; hi.value=''; if(hs)hs.disabled=true; helpSend(v); };
+    if(hs) hs.onclick=hgo;
+    if(hi){ hi.addEventListener('keydown',e=>{ if(e.key==='Enter')hgo(); });
+            hi.addEventListener('input',()=>{ if(hs)hs.disabled=!hi.value.trim(); }); hi.focus(); }
+    const hp=document.querySelector('.hc-plus'); if(hp)hp.onclick=()=>toast('Attachments are coming soon');
+    if(ht) ht.scrollTop=ht.scrollHeight; }
 }
 document.getElementById('back').onclick=()=>{ if(editSig){ editSig=null; render(); } else if(detail){ detail=null; render(); }
-  else if(cur==='intentchat'){ cur='intents'; render(); } else if(!ROOTS.includes(cur)){ cur='overview'; render(); } };
+  else if(cur==='intentchat'||cur==='buddychat'){ cur='intents'; render(); }
+  else if(cur==='helpchat'){ cur='messages'; render(); }
+  else if(!ROOTS.includes(cur)){ cur='overview'; render(); } };
 // ---- toast + every button does something ----
 function toast(msg){ let t=document.getElementById('toast');
   if(!t){ t=document.createElement('div'); t.id='toast'; t.className='toast'; document.querySelector('.phone').appendChild(t); }
@@ -1196,6 +1336,14 @@ function doAct(act, ds){
       toast('Kleal is searching — I’ll ping you with intros to approve'); break;
     case 'edit-intent': toast('Editing the intent is coming soon'); break;
     case 'sayhi': toast('Kleal will set up the intro with '+(ds.name||'them')+' — coming soon'); break;
+    case 'launch-bintent': buddyLaunch(); break;
+    case 'edit-bintent': { const ci=document.getElementById('bcin');
+      buddyThread.push({k:1,html:'Sure — tell me what to change: time, place, format or vibe.'});
+      render(); const ci2=document.getElementById('bcin'); if(ci2)ci2.focus(); break; }
+    case 'bsuggest': openBuddyChat(); buddySend(ds.text||''); break;
+    case 'openhelp': openHelpChat(); break;
+    case 'upcoming-demo': toast('Plan details are coming soon'); break;
+    case 'show-all-plans': toast('Showing all public plans in your area'); break;
     case 'search-area': toast('Searching this area…'); break;
     case 'filter': toast('Filters are coming soon'); break;
     case 'add-interests': toast('Adding interests is coming soon'); break;
