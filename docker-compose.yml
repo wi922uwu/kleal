@@ -32,7 +32,20 @@ services:
       MATCHING_PORT: "7074"
       LLM_URL: "http://llm:7071"
       V2_MODEL: "llama_self"
+      KLEAL_USERS: "/data/users.json"      # shared user store (admin writes, matching reads)
+    volumes: [userdata:/data]
     depends_on: [llm]
+    networks: [kleal]
+
+  admin:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: admin } }
+    environment:
+      ADMIN_PORT: "7077"
+      MATCH_URL: "http://matching:7074"
+      KLEAL_USERS: "/data/users.json"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-changeme-admin}"
+    volumes: [userdata:/data]
+    depends_on: [matching]
     networks: [kleal]
 
   filtration:
@@ -64,10 +77,15 @@ services:
       HUB_MATCH: "http://matching:7074"
       HUB_BUDDY: "http://buddy:7075"
       HUB_FILTER: "http://filtration:7076"
+      HUB_ADMIN: "http://admin:7077"
     ports: ["7080:7080"]                 # the only publicly published port
-    depends_on: [onboarding, profile, matching, buddy, filtration]
+    depends_on: [onboarding, profile, matching, buddy, filtration, admin]
     networks: [kleal]
 
 networks:
   kleal:
     driver: bridge
+
+volumes:
+  userdata:                              # shared user store between matching + admin
+

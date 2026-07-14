@@ -19,8 +19,11 @@ inter-service contracts in [shared/contracts.md](shared/contracts.md).
 | onboarding | 7072 | **Archivist** agent — onboarding funnel: profile + intents; UI + `/api/onboarding/*` (+`/api/v2/*` alias) | Dev A |
 | buddy | 7075 | **Buddy** agent — general chatbot (ChatGPT-like); routes to filtration+matching when the user wants to meet; `/api/buddy/chat` | Dev B |
 | filtration | 7076 | **Filtration** agent — magnetises a request to existing categories (labubu→toys); `/api/filter/categorize` | Dev B |
-| matching | 7074 | **Matching** agent — signals → ranked candidates by scoring; `/api/agent/*` | Dev B |
+| matching | 7074 | **Matching** agent — signals → ranked candidates by scoring; `/api/agent/*`. Reads users from the shared store (falls back to the built-in 50-pool) | Dev B |
+| admin | 7077 | test-mode **admin panel** — user CRUD; token-gated (`ADMIN_TOKEN`); at `<gateway>/admin`; writes the shared user store | Dev A/B |
 | profile | 7073 | "main page" / Agent-Home UI (static; hosts the buddy chat) | Dev B |
+
+**User store:** admin-service writes `KLEAL_USERS` (a JSON file; local + pod default `services/matching/users.json` / `/root/kleal-ms/users.json`; compose = named volume `userdata`), matching-service reads it (mtime-cached, falls back to `_gen_pool()`). So admin edits change who gets matched. Gitignored (runtime data). Admin token is a secret → only in `.env`.
 
 **The 4 agents (llm/gateway/profile are infra, not agents):**
 1. **Archivist** (onboarding) — builds/edits the user's profile + intents; runs at first launch / profile edits.
