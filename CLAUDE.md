@@ -17,8 +17,14 @@ inter-service contracts in [shared/contracts.md](shared/contracts.md).
 | gateway | 7080 | single public entry; prefix routing; `/menu` | Dev A |
 | llm | 7071 | **only holder of model URLs + API keys**; `POST /llm/complete`, `GET /llm/models` | Dev A |
 | onboarding | 7072 | funnel UI + `/api/onboarding/*` (+ `/api/v2/*` alias) | Dev A |
-| matching | 7074 | buddy agent `/api/agent/*` | Dev B |
-| profile | 7073 | "main page" / Agent-Home UI (static) | Dev B |
+| buddy | 7075 | **conversational** agent the user talks to; gathers signals, then calls matching; `/api/buddy/chat` | Dev B |
+| matching | 7074 | **matching** agent — signals → ranked candidates; `/api/agent/*` | Dev B |
+| profile | 7073 | "main page" / Agent-Home UI (static; hosts the buddy chat) | Dev B |
+
+**Buddy vs matching (important):** the *buddy* is the conversational agent — the user just chats with it;
+it accumulates signals (topics/role/vibe/language/availability/area/dating/deal-breakers) and, when the
+user wants to meet someone, calls the *matching* agent (agent-to-agent, HTTP `POST /api/agent/match`)
+which does the deterministic ranking. Two different agents.
 
 ## Run
 ```bash
