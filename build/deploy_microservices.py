@@ -16,12 +16,14 @@ FILES = [
     ("services/onboarding/app.py",    "services/onboarding/app.py",    "f_onb"),
     ("services/profile/app.py",       "services/profile/app.py",       "f_prof"),
     ("services/matching/app.py",      "services/matching/app.py",      "f_match"),
+    ("services/buddy/app.py",         "services/buddy/app.py",         "f_buddy"),
     ("services/gateway/app.py",       "services/gateway/app.py",       "f_gw"),
 ]
 CH = 1800
 L = ["stty -echo 2>/dev/null",
      "mkdir -p /root/kleal-ms/shared /root/kleal-ms/services/gateway /root/kleal-ms/services/llm "
-     "/root/kleal-ms/services/onboarding /root/kleal-ms/services/matching /root/kleal-ms/services/profile"]
+     "/root/kleal-ms/services/onboarding /root/kleal-ms/services/matching /root/kleal-ms/services/buddy "
+     "/root/kleal-ms/services/profile"]
 
 shas = {}
 for local, remote, var in FILES:
@@ -50,7 +52,7 @@ for local, remote, var in FILES:
 L.append("  echo '===SWAPPED==='")
 # stop old monolith + any previous microservices
 L.append("  pkill -9 -f kleal_v2.py 2>/dev/null; pkill -9 -f kleal_profile.py 2>/dev/null; pkill -9 -f kleal_hub.py 2>/dev/null")
-L.append("  pkill -9 -f 'kleal-ms/services' 2>/dev/null; sleep 2")
+L.append("  pkill -9 -f 'services/.*app.py' 2>/dev/null; sleep 2")   # matches the relative launch cmdline (python3 -u services/<name>/app.py)
 # read the EXISTING tunnel URL (do NOT touch cloudflared)
 L.append("  HUB=$(grep -Eo 'https://[a-z0-9-]+\\.trycloudflare\\.com' /root/cf7080.log | head -1)")
 L.append('  echo "HUB=$HUB"')
@@ -66,8 +68,13 @@ L.append("  PROFILE_PORT=7073 nohup setsid python3 -u services/profile/app.py > 
 L.append("  MATCHING_PORT=7074 LLM_URL=http://localhost:7071 V2_MODEL=llama_self "
          "nohup setsid python3 -u services/matching/app.py > /root/ms_matching.log 2>&1 < /dev/null &")
 L.append("  sleep 3")
+# buddy (conversational) — needs llm + matching up first
+L.append("  BUDDY_PORT=7075 LLM_URL=http://localhost:7071 MATCH_URL=http://localhost:7074 V2_MODEL=llama_self "
+         "nohup setsid python3 -u services/buddy/app.py > /root/ms_buddy.log 2>&1 < /dev/null &")
+L.append("  sleep 2")
 # gateway LAST on :7080 (same port the tunnel already targets)
 L.append("  HUB_PORT=7080 HUB_ONB=http://127.0.0.1:7072 HUB_PROF=http://127.0.0.1:7073 HUB_MATCH=http://127.0.0.1:7074 "
+         "HUB_BUDDY=http://127.0.0.1:7075 "
          "nohup setsid python3 -u services/gateway/app.py > /root/ms_gateway.log 2>&1 < /dev/null &")
 L.append("  sleep 5")
 L.append("  echo '===HEALTH==='")
@@ -75,6 +82,7 @@ L.append('  curl -s -m6 -o /dev/null -w "llm=%{http_code}\\n" localhost:7071/llm
 L.append('  curl -s -m6 -o /dev/null -w "onb=%{http_code}\\n" localhost:7072/')
 L.append('  curl -s -m6 -o /dev/null -w "prof=%{http_code}\\n" localhost:7073/')
 L.append('  curl -s -m6 -o /dev/null -w "match=%{http_code}\\n" localhost:7074/api/agent/weights')
+L.append('  curl -s -m6 -o /dev/null -w "buddy=%{http_code}\\n" localhost:7075/')
 L.append('  curl -s -m6 -o /dev/null -w "gw_root=%{http_code}\\n" localhost:7080/')
 L.append('  curl -s -m8 -o /dev/null -w "gw_profile=%{http_code}\\n" localhost:7080/profile')
 L.append('  curl -s -m8 -o /dev/null -w "gw_agent=%{http_code}\\n" localhost:7080/api/agent/weights')

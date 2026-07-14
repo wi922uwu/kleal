@@ -35,6 +35,16 @@ services:
     depends_on: [llm]
     networks: [kleal]
 
+  buddy:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: buddy } }
+    environment:
+      BUDDY_PORT: "7075"
+      LLM_URL: "http://llm:7071"
+      MATCH_URL: "http://matching:7074"
+      V2_MODEL: "llama_self"
+    depends_on: [llm, matching]
+    networks: [kleal]
+
   gateway:
     build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: gateway } }
     environment:
@@ -42,8 +52,9 @@ services:
       HUB_ONB: "http://onboarding:7072"
       HUB_PROF: "http://profile:7073"
       HUB_MATCH: "http://matching:7074"
+      HUB_BUDDY: "http://buddy:7075"
     ports: ["7080:7080"]                 # the only publicly published port
-    depends_on: [onboarding, profile, matching]
+    depends_on: [onboarding, profile, matching, buddy]
     networks: [kleal]
 
 networks:

@@ -43,9 +43,12 @@ SERVICES = [
     ("profile",    "services/profile/app.py",    {"PROFILE_PORT": "7073"}, False),
     ("matching",   "services/matching/app.py",   {"MATCHING_PORT": "7074", "LLM_URL": "http://127.0.0.1:7071",
                                                   "V2_MODEL": model}, False),
+    ("buddy",      "services/buddy/app.py",      {"BUDDY_PORT": "7075", "LLM_URL": "http://127.0.0.1:7071",
+                                                  "MATCH_URL": "http://127.0.0.1:7074", "V2_MODEL": model}, False),
     ("gateway",    "services/gateway/app.py",    {"HUB_PORT": "7080", "HUB_ONB": "http://127.0.0.1:7072",
                                                   "HUB_PROF": "http://127.0.0.1:7073",
-                                                  "HUB_MATCH": "http://127.0.0.1:7074"}, False),
+                                                  "HUB_MATCH": "http://127.0.0.1:7074",
+                                                  "HUB_BUDDY": "http://127.0.0.1:7075"}, False),
 ]
 
 procs = []

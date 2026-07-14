@@ -748,7 +748,7 @@ const ALL_TABS=[
 ];
 const TABS = ALL_TABS;
 let cur = 'agenthome';   // main landing after onboarding
-const TITLES={memory:'What Kleal remembers', intents:'Plans', search:'Explore', messages:'Messages', agenthome:'Home', notifs:'Notifications'};   // screens reachable but not in the nav TABS
+const TITLES={memory:'What Kleal remembers', intents:'Plans', search:'Explore', messages:'Messages', agenthome:'Home', notifs:'Notifications', buddychat:'Kleal'};   // screens reachable but not in the nav TABS
 if(!DATA.notifs) DATA.notifs=[]; if(!DATA.intents) DATA.intents=[];   // buddy-agent stores
 function setTab(id){ detail=null; cur=id; render(); }
 // Overview is a hub of drill-in "Settings Rows"
@@ -1106,6 +1106,52 @@ function scr_matchchat(){
     <div class="composer"><input id="mcin" class="cin cinput" placeholder="Message ${esc(m.cand.name)}…"><button class="csend" data-act="match-send">${IC.send}</button></div></div>`;
 }
 
+// ================= BUDDY AGENT — the conversational agent you just talk to =================
+// You chat freely; the buddy quietly gathers your SIGNALS and, when you want to meet someone,
+// it calls the matching agent (server-side, agent-to-agent) and drops the best match into the chat.
+let buddyMsgs=[], buddySignals={}, buddyBusy=false;
+function buddyProfile(){   // seed the buddy with what we already know about the user
+  return { interests:(DATA.interests||[]).map(i=>({name:i.name})),
+           city:((DATA.subtitle||'').split('·')[0]||'').trim()||null };
+}
+function openBuddy(first){
+  cur='buddychat';
+  if(!buddyMsgs.length) buddyMsgs=[{who:'them',text:"Hey! I'm Kleal 👋 What have you been into lately — and who would you like to meet?"}];
+  render();
+  if(first && String(first).trim()) buddyTurn(first);
+}
+async function buddyTurn(text){
+  text=(text||'').trim(); if(!text||buddyBusy) return;
+  buddyBusy=true; buddyMsgs.push({who:'me',text}); buddyMsgs.push({who:'them',text:'…',loading:true}); render();
+  let r; try{
+    r=await fetch('/api/buddy/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ messages:buddyMsgs.filter(m=>!m.loading).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text})),
+                            profile:buddyProfile(), signals:buddySignals })}).then(x=>x.json());
+  }catch(e){ r=null; }
+  buddyMsgs=buddyMsgs.filter(m=>!m.loading); buddyBusy=false;
+  if(!r){ buddyMsgs.push({who:'them',text:'I lost the connection for a second — say that again?'}); render(); return; }
+  buddySignals=r.signals||buddySignals;
+  buddyMsgs.push({who:'them', text:r.reply||'…', match:(r.match&&r.match.top)?r.match:null});
+  if(r.match&&r.match.top) addNotif('match','Kleal found you a match: '+r.match.top.name, (r.match.top.reasons||[])[0]||'tap to connect', null);
+  render(); saveState();
+}
+function scr_buddychat(){
+  const thread=buddyMsgs.map((x,i)=>{
+    if(x.who==='me') return `<div class="mbub">${esc(x.text)}</div>`;
+    const bub=`<div class="kbub">${x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>')}</div>`;
+    if(x.match&&x.match.top){ const t=x.match.top; const why=(t.reasons||[]).slice(0,2).join(' · ');
+      return bub+`<div class="card" style="margin:6px 0 2px"><div class="candrow">
+        <div class="candav">${esc(String(t.name||'?')[0])}${t.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':''}</div>
+        <div class="candt"><div class="candn">${esc(t.name)} <span class="candkm">${t.km} km</span></div><div class="cands">${esc(why)}</div></div>
+        <div class="candsc"><div class="candpct">${t.score}%</div></div>
+        <button class="introbtn" data-act="buddy-intro" data-bi="${i}">Intro</button></div></div>`; }
+    return bub;
+  }).join('');
+  return `<div class="fade"><div class="thread" style="padding-top:12px">${thread}</div>
+    <div class="composer"><input id="bcin" class="cin cinput" placeholder="Talk to Kleal…" ${buddyBusy?'disabled':''}>
+      <button class="csend" data-act="buddy-send">${IC.send}</button></div></div>`;
+}
+
 // ---------- Phase 3: public intents on the Explore map ----------
 const ME_LATLON=[41.3874, 2.1686];   // Barcelona (demo user's coarse area)
 const PUBLIC_INTENTS=[
@@ -1240,9 +1286,9 @@ function scr_agenthome(){
   return `<div class="ahome fade">
     <div class="ahead"><div class="agreet">Hi, ${esc(nm)}! 👋</div>
       <div class="abell" data-act="notif">${IC.bell}${unreadNotifs()?`<span class="abadge">${unreadNotifs()}</span>`:''}</div></div>
-    <div class="aintro"><div class="amascot">${MASCOT}</div>
-      <div class="abub">I'm Kleal, your social AI agent. Tell me who or what you're looking for and I'll line up the best for you.</div></div>
-    <div class="asearch"><input id="ainput" placeholder="Describe who or what you're looking for" autocomplete="off">
+    <div class="aintro" data-act="talk-buddy" style="cursor:pointer"><div class="amascot">${MASCOT}</div>
+      <div class="abub">I'm Kleal, your buddy. Just chat with me — tell me what you're into and who you'd like to meet, and I'll find them for you. Tap to talk →</div></div>
+    <div class="asearch"><input id="ainput" placeholder="Say hi to Kleal…" autocomplete="off">
       <button class="asend" data-act="agent-go">${IC.send}</button></div>
     <div class="qhead">Quick actions</div>
     <div class="quick">${qa.map(q=>`<div class="qcard" data-act="${q[2]}"><div class="qic">${IC[q[0]]}</div><div class="qt">${q[1]}</div></div>`).join('')}</div>
@@ -1254,7 +1300,7 @@ function scr_agenthome(){
 const SCREENS={agenthome:scr_agenthome,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
   places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
   intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages,
-  notifs:scr_notifications,matchchat:scr_matchchat};
+  notifs:scr_notifications,matchchat:scr_matchchat,buddychat:scr_buddychat};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -1315,6 +1361,7 @@ function render(){
   const isRoot = !editSig && !detail && ROOTS.includes(cur);
   const titleFor = cur==='intentchat' ? (curIntent&&curIntent.title?curIntent.title:'Create intent')
     : cur==='matchchat' ? (matchWith?matchWith.cand.name:'Chat')
+    : cur==='buddychat' ? 'Kleal'
     : (cur==='overview'?'My Kleal Profile':(TITLES[cur]||meta[2]));
   document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : titleFor);
   document.getElementById('back').style.visibility= (editSig||detail||!ROOTS.includes(cur))? 'visible' : 'hidden';
@@ -1324,7 +1371,7 @@ function render(){
   rgt.style.visibility = (isRoot && !isHome) ? 'hidden' : 'visible';   // no right icon on Intents/Search/Messages
   rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
   // bottom nav: rebuilt for the active tab; hidden on the intent chat (which has its own composer)
-  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat'||cur==='matchchat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
+  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat'||cur==='matchchat'||cur==='buddychat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
   const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome')?'none':'flex';   // Home has its own greeting header
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
@@ -1359,7 +1406,8 @@ function render(){
   document.querySelectorAll('[data-public]').forEach(el=>el.onclick=()=>{ const p=PUBLIC_INTENTS[+el.dataset.public]; if(p)toast(p.title+' — '+p.who+' · '+p.when); });
   document.querySelectorAll('[data-act]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); doAct(el.dataset.act, el.dataset); });
   const acin=document.getElementById('acin'); if(acin){ acin.onkeydown=(e)=>{ if(e.key==='Enter')runAgent(acin.value); }; setTimeout(()=>{try{acin.focus();}catch(_e){}},40); }
-  const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter')runAgent(ainput.value); }; }
+  const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter'){ openBuddy(ainput.value); } }; }
+  const bcin=document.getElementById('bcin'); if(bcin){ bcin.onkeydown=(e)=>{ if(e.key==='Enter')buddyTurn(bcin.value); }; setTimeout(()=>{try{bcin.focus();}catch(_e){}},40); }
   const mcin=document.getElementById('mcin'); if(mcin){ mcin.onkeydown=(e)=>{ if(e.key==='Enter')doAct('match-send',{}); }; setTimeout(()=>{try{mcin.focus();}catch(_e){}},40); }
   saveState();   // persist after every re-render (covers all doAct-driven edits)
 }
@@ -1367,7 +1415,8 @@ function render(){
 A.addEventListener('click', ()=>setTimeout(saveState, 0));
 window.addEventListener('beforeunload', saveState);
 document.getElementById('back').onclick=()=>{ if(editSig){ editSig=null; render(); } else if(detail){ detail=null; render(); }
-  else if(cur==='matchchat'){ cur='intentchat'; render(); }
+  else if(cur==='matchchat'){ cur=(matchWith&&matchWith.fromBuddy)?'buddychat':'intentchat'; render(); }
+  else if(cur==='buddychat'){ cur='agenthome'; render(); }
   else if(cur==='intentchat'){ cur='intents'; render(); }
   else if(cur==='notifs'){ cur='agenthome'; render(); }
   else if(!ROOTS.includes(cur)){ cur='overview'; render(); } };
@@ -1431,7 +1480,10 @@ function doAct(act, ds){
     case 'join': joinPublic(+ds.pi); break;
     // Agent Home
     case 'notif': setTab('notifs'); break;
-    case 'agent-go': { const el=document.getElementById('ainput'); runAgent(el&&el.value||''); break; }
+    case 'agent-go': { const el=document.getElementById('ainput'); openBuddy(el&&el.value||''); break; }
+    case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
+    case 'buddy-intro': { const i=+ds.bi; const m=buddyMsgs[i]; if(m&&m.match&&m.match.top){ approveIntro(m.match.top, m.match.intent); if(matchWith)matchWith.fromBuddy=true; } break; }
+    case 'talk-buddy': openBuddy(''); break;
     case 'q-people': setTab('search'); break;
     case 'q-events': setTab('search'); break;
     case 'q-interests': setTab('interests'); break;

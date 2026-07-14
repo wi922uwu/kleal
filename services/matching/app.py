@@ -569,6 +569,19 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, agent_plan(q, prof, ctx, override))
             except Exception as e:
                 send_json(self, 200, {"intent": _fallback_parse(q), "candidates": [], "error": str(e)[:200]})
+        elif p == "/api/agent/match":
+            # structured entry: caller (e.g. the buddy agent) already assembled the intent/signals -> skip LLM parse
+            intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
+            try:
+                cands = match_candidates(intent, prof, ctx)
+                res = {"intent": intent, "candidates": cands}
+                if not cands:
+                    res["fallback"] = _online_fallback(intent)
+                send_json(self, 200, res)
+            except Exception as e:
+                send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
         elif p == "/api/agent/feedback":
             ok = record_feedback(body.get("name"), body.get("decision"), body.get("uid", "me"))
             send_json(self, 200, {"ok": bool(ok), "feedback": _session("me").get("feedback")})
