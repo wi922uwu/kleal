@@ -588,9 +588,11 @@ function navFam(){ if(cur==='agenthome'||cur==='notifs')return'home'; if(cur==='
   if(cur==='intents'||cur==='intentchat'||cur==='matchchat')return'plans'; return'profile'; }
 function bnavHTML(){ const fam=navFam();
   // Home · Explore · [Agent] · Plans · Profile  (Figma Flow 4). Center FAB = the agent.
+  // The agent is the CONVERSATIONAL buddy (chats first, creates an intent only on an explicit ask),
+  // not the create-intent screen (which parsed every message — even "привет" — into an intent card).
   const items=[['nHome','Home','agenthome','home'],['nSearch','Explore','search','explore'],['fab','','',''],
     ['nPlans','Plans','intents','plans'],['nProfile','Profile','overview','profile']];
-  return '<div class="fab" data-act="createintent">'+IC.mic+'</div>'+
+  return '<div class="fab" data-act="talk-buddy">'+IC.mic+'</div>'+
     items.map(x=>{ if(x[0]==='fab') return '<div class="fabgap"></div>';
       return `<a class="${fam===x[3]?'on':''}" data-nav="${x[2]}">${IC[x[0]]}<span>${x[1]}</span></a>`; }).join('');
 }
