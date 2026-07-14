@@ -1,0 +1,51 @@
+# Kleal microservices — one container per service on a private bridge network.
+# Only the gateway publishes a port to the host; the other four are reachable only inside the
+# network (service DNS names). Secrets go to llm-service ONLY, via env_file.
+#
+#   cp .env.example .env   # fill SELF_BASE / AITUNNEL_KEY
+#   docker compose up --build
+#   open http://localhost:7080
+services:
+  llm:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: llm } }
+    env_file: .env                       # <-- the ONLY service that receives keys
+    environment: { LLM_PORT: "7071" }
+    networks: [kleal]
+
+  onboarding:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: onboarding } }
+    environment:
+      ONBOARDING_PORT: "7072"
+      LLM_URL: "http://llm:7071"
+      V2_MODEL: "llama_self"
+    depends_on: [llm]
+    networks: [kleal]
+
+  profile:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: profile } }
+    environment: { PROFILE_PORT: "7073" }
+    networks: [kleal]
+
+  matching:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: matching } }
+    environment:
+      MATCHING_PORT: "7074"
+      LLM_URL: "http://llm:7071"
+      V2_MODEL: "llama_self"
+    depends_on: [llm]
+    networks: [kleal]
+
+  gateway:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: gateway } }
+    environment:
+      HUB_PORT: "7080"
+      HUB_ONB: "http://onboarding:7072"
+      HUB_PROF: "http://profile:7073"
+      HUB_MATCH: "http://matching:7074"
+    ports: ["7080:7080"]                 # the only publicly published port
+    depends_on: [onboarding, profile, matching]
+    networks: [kleal]
+
+networks:
+  kleal:
+    driver: bridge

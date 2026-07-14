@@ -100,15 +100,17 @@ DATA = {
     {"icon": "globe", "title": "Languages", "value": "Russian · English · Spanish (B1)"},
   ],
   "intents": [
-    {"title": "Coffee & AI talk", "tags": ["Coffee", "AI", "Discuss", "1:1"],
+    {"id": "seed-coffee", "title": "Coffee & AI talk", "tags": ["coffee", "ai", "discuss"],
      "confidence": 82, "status": "searching",
      "spec": [["moon", "Mode", "Offline"], ["users", "Format", "1:1 or small group"],
               ["clock", "Time", "Today evening"], ["pin", "Area", "Public places nearby"],
               ["shield", "Safety", "Public places only"], ["compass", "Reach", "Adjacent interests"],
               ["eye", "Visibility", "Via Kleal only"]],
-     "steps": [["Structured your intent", "done"], ["Found 2 people worth meeting", "done"],
-               ["Matching your schedules", "now"], ["Checking the safety fit", "wait"],
-               ["Sending intros once you approve", "wait"]]},
+     "candidates": [
+       {"name": "Marc", "score": 82, "km": 0.6, "agree": True, "interests": ["coffee", "ai", "startups"],
+        "reasons": ["shares coffee, ai", "very close (0.6 km)"]},
+       {"name": "Nina", "score": 69, "km": 1.1, "agree": True, "interests": ["startups", "networking", "ai"],
+        "reasons": ["shares ai", "open to meet today"]}]},
   ],
   "plans": [
     {"title": "Morning coffee & AI chat", "who": "Marc · verified", "when": "Today 09:30", "dist": "0.6 km", "x": 33, "y": 26},
@@ -150,6 +152,8 @@ HTML_HEAD = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{
   --bg:#F7F8FA; --surface:#F7F8FA; --card:#FFFFFF; --fg:#181B22; --muted:#5A616E; --border:#E2E5EC;
@@ -384,6 +388,54 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .composer{position:sticky;bottom:0;background:var(--bg);display:flex;align-items:center;gap:10px;padding:10px 2px 8px;margin-top:6px}
 .composer .cin{flex:1;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:11px 16px;color:var(--muted);font-size:14px}
 .composer .csend{width:40px;height:40px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer}
+.composer .csend svg{width:19px;height:19px}
+.composer input.cinput{outline:0}.composer input.cinput::placeholder{color:var(--muted)}
+.typing3{display:inline-flex;gap:3px;vertical-align:middle}
+.typing3 i{width:5px;height:5px;border-radius:50%;background:var(--muted);display:inline-block;animation:tb 1s infinite}
+.typing3 i:nth-child(2){animation-delay:.15s}.typing3 i:nth-child(3){animation-delay:.3s}
+@keyframes tb{0%,60%,100%{opacity:.3}30%{opacity:1}}
+.candrow{display:flex;align-items:center;gap:12px;padding:12px 16px}
+.candav{width:38px;height:38px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800;font-size:15px}
+.candt{flex:1;min-width:0}
+.candn{font-size:14.5px;font-weight:700}
+.candn .candkm{font-size:11px;font-weight:500;color:var(--muted);margin-left:6px}
+.cands{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.candsc{flex:none;text-align:right}
+.candpct{font-size:15px;font-weight:800;color:var(--fg)}
+.candok{font-size:10.5px;font-weight:700;color:#0f7340}
+.candbusy{font-size:10.5px;font-weight:600;color:var(--muted)}
+.candno{font-size:10.5px;font-weight:600;color:var(--muted)}
+.introbtn{flex:none;font:inherit;font-size:12px;font-weight:700;color:#fff;background:var(--primary);border:0;
+  border-radius:999px;padding:7px 13px;cursor:pointer;margin-left:2px}
+/* match chat */
+.matchhead{display:flex;align-items:center;gap:12px;padding:6px 2px 4px}
+.mava{width:52px;height:52px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800;font-size:20px;transition:filter .4s}
+.mmeta{flex:1;min-width:0}.mnm{font-size:17px;font-weight:800}
+.mnm .mscore{font-size:12px;font-weight:600;color:var(--primary);margin-left:6px}
+.mhint{font-size:12px;color:var(--muted);margin-top:2px}
+/* notifications */
+.abell{position:relative}
+.abadge{position:absolute;top:-3px;right:-3px;min-width:17px;height:17px;border-radius:999px;background:var(--primary);
+  color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid var(--bg)}
+.notifrow{display:flex;align-items:center;gap:12px;padding:12px 14px}
+.notifrow.unread{border-color:var(--coral200);background:var(--coral50)}
+.nnic{width:38px;height:38px;border-radius:999px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--primary);flex:none}
+.nnt{flex:1;min-width:0}.nntt{font-size:14.5px;font-weight:700}.nnts{font-size:12.5px;color:var(--muted);margin-top:2px}
+.nntime{font-size:11px;color:var(--muted);flex:none;align-self:flex-start}
+/* explore event rows */
+.evrow{display:flex;align-items:center;gap:12px;padding:12px 14px}
+.evic{width:38px;height:38px;border-radius:999px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--fg);flex:none}
+.evt{flex:1;min-width:0}.evtt{font-size:14.5px;font-weight:700}.evts{font-size:12px;color:var(--muted);margin-top:2px}
+/* real map (Leaflet) on Explore */
+.lmap{height:340px;border-radius:18px;overflow:hidden;border:1px solid var(--border);background:#e7ebf2}
+.lmap .leaflet-container{font:inherit}
+.meDot{width:16px;height:16px;border-radius:50%;background:#181B22;border:3px solid #fff;box-shadow:0 0 0 4px rgba(24,27,34,.16)}
+.mapop{min-width:150px}.mapop .mopt{font-size:13.5px;font-weight:700;line-height:1.25}
+.mapop .mopm{font-size:11.5px;color:var(--muted);margin:3px 0 8px}
+.mapop .mopj{font:inherit;font-size:12px;font-weight:700;color:#fff;background:var(--primary);border:0;border-radius:999px;padding:6px 14px;cursor:pointer}
+.leaflet-popup-content{margin:10px 12px}.leaflet-popup-content-wrapper{border-radius:12px}
 .chkrow{display:flex;align-items:center;gap:12px;padding:12px 16px}
 .chkic{width:22px;height:22px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center}
 .chkic.done{background:#0f7340}.chkic.now{border:2px solid var(--primary)}.chkic.wait{border:2px solid var(--neutral300)}
@@ -408,6 +460,40 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .msgt .ml{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .msgtime{font-size:11px;color:var(--muted);flex:none;align-self:flex-start;margin-top:3px}
 .reddot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--primary);margin-left:6px;vertical-align:middle}
+/* ---- Agent Home (main landing) ---- */
+.ahome{padding:4px 0 14px}
+.ahead{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 16px}
+.agreet{font-size:24px;font-weight:800;letter-spacing:-.02em}
+.abell{width:40px;height:40px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--fg);cursor:pointer;flex:none}
+.aintro{display:flex;gap:11px;align-items:flex-start;margin-bottom:14px}
+.aintro .amascot{flex:none}
+.aintro .abub{background:var(--neutral100);border-radius:16px 16px 16px 4px;padding:12px 14px;font-size:14px;line-height:1.5;color:var(--fg)}
+.asearch{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:6px 6px 6px 16px;margin-bottom:22px;box-shadow:0 2px 8px rgba(20,20,40,.05)}
+.asearch input{flex:1;min-width:0;border:0;outline:0;background:none;font:inherit;font-size:14px;color:var(--fg)}
+.asearch input::placeholder{color:var(--muted)}
+.asend{width:40px;height:40px;border-radius:50%;background:var(--primary);color:#fff;border:0;display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer}
+.asend svg{width:19px;height:19px;transform:translate(-1px,0)}
+.qhead,.thead .th{font-size:15px;font-weight:700}
+.qhead{margin-bottom:11px}
+.quick{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:24px}
+.qcard{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px 5px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;text-align:center}
+.qcard .qic{width:34px;height:34px;border-radius:999px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--fg);flex:none}
+.qcard .qic svg{width:18px;height:18px}
+.qcard .qt{font-size:10.5px;color:var(--muted);line-height:1.25;font-weight:500}
+.thead{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.thead .tall{color:var(--primary);font-size:13px;font-weight:600;cursor:pointer}
+.tcard{display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:10px;cursor:pointer}
+.tcard .timg{width:92px;height:76px;border-radius:12px;flex:none;background:linear-gradient(135deg,#caa27a,#6f4a2c)}
+.tcard .tbody{flex:1;min-width:0}
+.tcard .tt{font-size:15px;font-weight:700;line-height:1.25}
+.tcard .tm{font-size:12px;color:var(--muted);margin-top:5px}
+.tcard .tpart{display:flex;align-items:center;gap:9px;margin-top:11px}
+.stack5{display:flex}
+.stack5 .av{width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#FF7A8A,#F5455C);border:2px solid var(--card);margin-left:-7px}
+.stack5 .av:first-child{margin-left:0}
+.stack5 .more{width:22px;height:22px;border-radius:50%;background:var(--neutral100);border:2px solid var(--card);margin-left:-7px;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.tcard .pn{font-size:12px;color:var(--muted)}
+.tcard .tbm{color:var(--muted);flex:none;align-self:flex-start}
 </style></head><body>
 <div class="phone">
   <div class="sb"><span>9:41</span><span class="ic" id="sbic"></span></div>
@@ -429,6 +515,15 @@ try{
   if(_p){ const op = JSON.parse(decodeURIComponent(escape(atob(_p)))); const m = mapOnboarding(op);
           DATA = m.data; _TABIDS = m.tabs; }
 }catch(e){ console.error('profile: could not read ?p', e); }
+// PERSISTENCE: the demo has no backend, so edits used to vanish on a page refresh (it reverted
+// to the seed data). Keep the working state in localStorage and rehydrate on load. Keyed by the
+// data SOURCE so a fresh onboarding hand-off (a new ?p=) shows new data instead of stale edits.
+const _pParam = new URLSearchParams(location.search).get('p');
+const PKEY = 'kleal_profile_state_v1';
+const _psrc = _pParam ? ('p:'+_pParam.length+':'+_pParam.slice(-40)) : 'demo';
+let _saved = null; try{ _saved = JSON.parse(localStorage.getItem(PKEY)||'null'); }catch(_e){}
+if(_saved && _saved._src===_psrc && _saved.data){ DATA = _saved.data; }
+else { try{ localStorage.removeItem(PKEY); }catch(_e){} _saved = null; }
 const A=document.getElementById('app');
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function svg(inner,vb,w){return '<svg viewBox="'+(vb||'0 0 24 24')+'" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="'+(w||24)+'" height="'+(w||24)+'">'+inner+'</svg>';}
@@ -472,20 +567,30 @@ const IC={
   wand:svg('<path d="M6 18L14 10"/><path d="M15 4.2l.9 1.9 1.9.9-1.9.9-.9 1.9-.9-1.9-1.9-.9 1.9-.9.9-1.9z"/><path d="M17.5 11l.6 1.3 1.3.6-1.3.6-.6 1.3-.6-1.3-1.3-.6 1.3-.6.6-1.3z"/>',null,16),
   refresh:svg('<path d="M20 11.5a8 8 0 1 0-.9 5"/><path d="M20 4.5v5h-5"/>'),
   boxx:svg('<rect x="4" y="5.5" width="16" height="13" rx="2"/><path d="M9.5 10l5 4.5M14.5 10l-5 4.5"/>',null,20),
+  nHome:svg('<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9.5 20v-6h5v6"/>',null,22),
+  nPlans:svg('<rect x="4" y="5" width="16" height="16" rx="2.5"/><path d="M4 9.5h16M8.5 3v4M15.5 3v4"/>',null,22),
+  bell:svg('<path d="M6 9a6 6 0 0 1 12 0c0 4.5 1.8 5.7 2 6H4c.2-.3 2-1.5 2-6z"/><path d="M10 20a2 2 0 0 0 4 0"/>'),
+  send:svg('<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>'),
+  calen:svg('<rect x="4" y="5" width="16" height="16" rx="2.5"/><path d="M4 9.5h16M8.5 3v4M15.5 3v4"/>'),
+  heart:svg('<path d="M12 20s-7-4.6-9.3-9A4.6 4.6 0 0 1 12 6.2 4.6 4.6 0 0 1 21.3 11c-2.3 4.4-9.3 9-9.3 9z"/>'),
+  mic:svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>',null,26),
+  peoplePin:svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 9-4"/><path d="M17.5 21s3-2.6 3-5a3 3 0 0 0-6 0c0 2.4 3 5 3 5z"/><circle cx="17.5" cy="16" r="1"/>'),
 };
+const MASCOT = '<svg viewBox="0 0 48 48" width="46" height="46"><rect x="6" y="6" width="36" height="36" rx="16" fill="#FDE7EB"/><circle cx="19" cy="24" r="2.4" fill="#F5455C"/><circle cx="29" cy="24" r="2.4" fill="#F5455C"/><path d="M18.5 30c2.2 1.8 8.8 1.8 11 0" fill="none" stroke="#F5455C" stroke-width="2" stroke-linecap="round"/></svg>';
 document.getElementById('sbic').innerHTML=
  '<svg viewBox="0 0 20 14" fill="#181B22" width="18" height="13"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5.3" y="6" width="3" height="8" rx="1"/><rect x="10.6" y="3" width="3" height="11" rx="1"/><rect x="15.9" y="0" width="3" height="14" rx="1"/></svg>'
  +'<svg viewBox="0 0 20 15" fill="none" stroke="#181B22" stroke-width="1.9" stroke-linecap="round" width="18" height="14"><path d="M2 5.2a13 13 0 0 1 16 0M5 8.6a8 8 0 0 1 10 0M8 12a3 3 0 0 1 4 0"/></svg>'
  +'<svg viewBox="0 0 28 14" width="25" height="13"><rect x="1" y="1.4" width="22" height="11.2" rx="3" stroke="#181B22" stroke-opacity=".5" fill="none"/><rect x="2.8" y="3.1" width="16.5" height="7.8" rx="1.6" fill="#181B22"/><rect x="24.3" y="4.6" width="2.3" height="4.8" rx="1.1" fill="#181B22" fill-opacity=".5"/></svg>';
 document.getElementById('back').innerHTML=IC.back;
 // bottom nav (Intents · Search · [create] · Messages · Profile) — rebuilt each render for the active state
-const ROOTS=['overview','intents','search','messages'];
-function navFam(){ if(cur==='intents'||cur==='intentchat')return'intents'; if(cur==='search')return'search';
-  if(cur==='messages')return'messages'; return'profile'; }
+const ROOTS=['agenthome','overview','intents','search','messages'];
+function navFam(){ if(cur==='agenthome'||cur==='notifs')return'home'; if(cur==='search')return'explore';
+  if(cur==='intents'||cur==='intentchat'||cur==='matchchat')return'plans'; return'profile'; }
 function bnavHTML(){ const fam=navFam();
-  const items=[['nIntents','Intents','intents','intents'],['nSearch','Search','search','search'],['fab','','',''],
-    ['nMsg','Messages','messages','messages'],['nProfile','Profile','overview','profile']];
-  return '<div class="fab" data-act="createintent"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" width="26" height="26"><path d="M12 6v12M6 12h12"/></svg></div>'+
+  // Home · Explore · [Agent] · Plans · Profile  (Figma Flow 4). Center FAB = the agent.
+  const items=[['nHome','Home','agenthome','home'],['nSearch','Explore','search','explore'],['fab','','',''],
+    ['nPlans','Plans','intents','plans'],['nProfile','Profile','overview','profile']];
+  return '<div class="fab" data-act="createintent">'+IC.mic+'</div>'+
     items.map(x=>{ if(x[0]==='fab') return '<div class="fabgap"></div>';
       return `<a class="${fam===x[3]?'on':''}" data-nav="${x[2]}">${IC[x[0]]}<span>${x[1]}</span></a>`; }).join('');
 }
@@ -566,7 +671,8 @@ function mapOnboarding(op){
   if(km!=null) places.push({icon:'route', title:'Max travel', value:km+' km'});
   places.push({icon:'eye', title:'Location sharing', value:'Area only, never exact location'});
 
-  const consent = !!pm.useProfileForMatching;   // onboarding master consent -> the data-usage flags
+  const consent  = pm.useProfileForMatching!==false;   // implied by completing onboarding
+  const remember = !!pm.rememberPreferences;           // "Remember preferences" -> learning consents
   const safety={
       autonomy:'ask', confirmShare:true, paused:false,
       publicFirst:   sf.publicPlacesOnly!==false,
@@ -574,12 +680,12 @@ function mapOnboarding(op){
       avoidAlcohol:  !!sf.avoidAlcohol,
       sharePlan:     !!sf.sharePlan,
       trustedContact: sf.trustedContact||null,
-      useInterestsArea: consent, useFeedback: consent, inferNew: consent, noSensitive:true,
-      suggestBeyond: pm.allowAdjacentMatches!==false,
+      useInterestsArea: consent, useFeedback: remember, inferNew: remember, noSensitive:true,
+      suggestBeyond: !!pm.allowAdjacentMatches,
       publicMap:     !!pm.publicMap,
       datingMode:    !!pm.datingMode,
       verified:false,
-      preferVerified: sf.verifiedOnly!==undefined ? !!sf.verifiedOnly : true,
+      preferVerified: !!sf.verifiedOnly,
       blockedCount:0, excludeKnown:true };
 
   const conf=[];
@@ -641,8 +747,9 @@ const ALL_TABS=[
   ['safety','Safety','Safety & Privacy'],
 ];
 const TABS = ALL_TABS;
-let cur = 'overview';
-const TITLES={memory:'What Kleal remembers', intents:'Intents', search:'Discover', messages:'Messages'};   // screens reachable but not in the nav TABS
+let cur = 'agenthome';   // main landing after onboarding
+const TITLES={memory:'What Kleal remembers', intents:'Plans', search:'Explore', messages:'Messages', agenthome:'Home', notifs:'Notifications'};   // screens reachable but not in the nav TABS
+if(!DATA.notifs) DATA.notifs=[]; if(!DATA.intents) DATA.intents=[];   // buddy-agent stores
 function setTab(id){ detail=null; cur=id; render(); }
 // Overview is a hub of drill-in "Settings Rows"
 const SECMETA={
@@ -663,6 +770,11 @@ function summaryRow(r, edit){ return `<div class="card srow"><div class="si">${I
   <div class="st"><div class="stt">${esc(r.title)}</div><div class="stv">${esc(r.value)}</div></div>
   ${edit?`<div class="edit" data-act="editrow" data-row="${esc(r.title)}">${IC.edit}</div>`:''}</div>`; }
 const UI={};  // persists toggle/checkbox state across re-renders (keyed control state)
+if(_saved && _saved.ui){ Object.assign(UI, _saved.ui); }   // rehydrate control state across refresh
+let _saveT=null;
+function saveState(){ try{ localStorage.setItem(PKEY, JSON.stringify({_src:_psrc, data:DATA, ui:UI})); }catch(_e){}
+  clearTimeout(_saveT); _saveT=setTimeout(()=>{ try{ fetch('/api/agent/save',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({state:{data:DATA,ui:UI}})}); }catch(_e){} }, 800); }
 const ui=(k,def)=>(k&&UI[k]!==undefined)?UI[k]:def;
 // ---- Safety & Privacy: typed rows built from the DATA.safety flags object ----
 function sTt(label,desc,danger){ return `<div class="tt"><div class="ttl"${danger?' style="color:var(--danger)"':''}>${esc(label)}</div>${desc?`<div class="tts">${esc(desc)}</div>`:''}</div>`; }
@@ -871,59 +983,236 @@ function scr_knows(){
     <div class="card">${k.inferredList.map((x,i)=>checkRow(x,false,'k-i-'+i)+(i<k.inferredList.length-1?'<div class="divider"></div>':'')).join('')}</div></div>`;
 }
 // ================= V4: intents · intent chat · discovery · messages =================
-let curIntent=null, intentLaunched=false;
+let curIntent=null, intentLaunched=false, agentBusy=false;
 function openIntent(it, launched){ curIntent=it||null; intentLaunched=!!launched; cur='intentchat'; render(); }
+function capw(s){ s=String(s==null?'':s); return s.charAt(0).toUpperCase()+s.slice(1); }
+// Feedback loop: tell the backend the owner's accept/reject so future ranking learns (fire-and-forget).
+function postFeedback(name,decision){ try{ fetch('/api/agent/feedback',{method:'POST',
+  headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,decision:decision})}); }catch(_e){} }
+// Online fallback UI: when 0 offline matches — go live, or broaden the search (each option re-matches for real).
+function fallbackCard(fb){
+  const rooms=(fb.room&&fb.room.options||[]).map(o=>`<button class="chip" data-act="live" data-kind="${esc(o.id)}" style="margin:4px 6px 0 0">${esc(o.label)}</button>`).join('');
+  const sugg=(fb.suggestions||[]).map(s=>`<button class="chip" data-act="broaden" data-kind="${esc(s.id)}" style="margin:4px 6px 0 0">${esc(s.label)}</button>`).join('');
+  return `<div style="padding:12px 16px 16px"><div class="cands" style="margin-bottom:8px">${esc(fb.note||'No offline matches right now.')}</div>
+    <div style="font-size:11px;color:var(--muted);margin:6px 0 2px">Go live</div>${rooms}
+    <div style="font-size:11px;color:var(--muted);margin:10px 0 2px">Broaden the search</div>${sugg}</div>`;
+}
+// A fallback broaden action re-runs the plan with a relaxed scope override — real re-matching, not a stub.
+async function broadenIntent(kind){
+  if(!curIntent) return;
+  const cur=curIntent.intent||{}; let ov=null;
+  if(kind==='inexact') ov={exactMatchRequired:false,adjacentAllowed:true,broadAllowed:true};
+  else if(kind==='adjacent') ov={adjacentAllowed:true,broadAllowed:true};
+  else if(kind==='radius') ov={radiusKm:Math.max(30,(+cur.radiusKm||15)+20),mode:'offline'};
+  else { addNotif('intent','Still searching “'+(curIntent.title||'plan')+'”','Kleal will ping you when someone fits',curIntent.id||null); saveState(); toast('Kleal keeps searching in the background'); return; }
+  toast('Broadening the search…');
+  let r; try{ r=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({query:curIntent.query,profile:{},override:ov})}).then(x=>x.json()); }catch(e){ r=null; }
+  if(r&&r.candidates&&r.candidates.length){ curIntent.candidates=r.candidates; curIntent.fallback=null;
+    curIntent.intent=r.intent; curIntent.confidence=r.candidates[0].score; toast(r.candidates.length+' matches after broadening'); }
+  else { curIntent.fallback=(r&&r.fallback)||curIntent.fallback; toast('Still no offline matches — try going live'); }
+  render(); saveState();
+}
+// Buddy agent: free-text request -> real structured intent + ranked candidates (backend /api/agent/plan).
+async function runAgent(query){
+  query=(query||'').trim(); if(!query||agentBusy) return;
+  agentBusy=true; curIntent={pending:true, query:query}; intentLaunched=false; cur='intentchat'; render();
+  let r; try{
+    r=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:query, profile:{}})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  agentBusy=false;
+  if(!r||!r.intent){ curIntent={title:'New plan',tags:[],query:query,confidence:0,candidates:[],spec:[],error:true}; render(); return; }
+  const it=r.intent, cands=r.candidates||[];
+  const reach = it.exactMatchRequired?'Exact matches only':(it.broadAllowed===false?'Same activity only':(it.adjacentAllowed===false?'Same + related':'Adjacent + related'));
+  const area = (it.place||'Public places nearby')+(it.mode==='offline'&&it.radiusKm?(' · within '+it.radiusKm+' km'):'');
+  curIntent={ title:it.title||'New plan', tags:it.topics||[], query:query, type:it.type, role:it.role,
+    intent:it, fallback:r.fallback||null,
+    confidence:cands[0]?cands[0].score:70, candidates:cands,
+    spec:[['moon','Mode',capw(it.mode||'Offline')],['users','Format',it.format||'1:1 or small group'],
+          ['clock','Time',it.time||'Flexible'],['pin','Area',area],
+          ['shield','Safety',it.verifiedOnly?'Verified people only':'Public places only'],
+          ['compass','Reach',reach],['eye','Visibility','Via Kleal only']] };
+  intentLaunched=false; render();
+}
 function intentSpec(it){ const s=it.spec||[]; return s.map((r,i)=>`<div class="specrow"><div class="spi">${IC[r[0]]||IC.spark}</div>
   <div class="sl">${esc(r[1])}</div><div class="sv">${esc(r[2])}</div></div>${i<s.length-1?'<div class="divider"></div>':''}`).join(''); }
+
+// ---------- Phase 2 (prod): LLM agent-to-agent negotiation on launch ----------
+async function negotiateIntent(){
+  if(!curIntent){ return; }
+  if(curIntent.negotiated){ saveCurIntent(); return; }
+  curIntent.negotiating=true; render();
+  let r; try{ r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({intent:curIntent, candidates:curIntent.candidates||[]})}).then(x=>x.json()); }catch(e){ r=null; }
+  if(r&&r.candidates&&r.candidates.length){ curIntent.candidates=r.candidates;
+    curIntent.confidence=(r.candidates[0]&&r.candidates[0].score)||curIntent.confidence; }
+  curIntent.negotiating=false; curIntent.negotiated=true; curIntent.status='matched';
+  saveCurIntent(); render();
+  const ag=(curIntent.candidates||[]).filter(c=>c.agree).length;
+  toast(ag+' agent'+(ag===1?'':'s')+' agreed — approve an intro to connect');
+}
+// ---------- Phase 1: saved intents ----------
+function openSavedIntent(id){ const it=(DATA.intents||[]).find(x=>x.id===id); if(!it)return; curIntent=it; intentLaunched=true; cur='intentchat'; render(); }
+function saveCurIntent(){
+  if(curIntent && !curIntent.id){
+    curIntent.id='i'+String(Date.now()); curIntent.status='searching'; curIntent.createdAt='just now';
+    DATA.intents=DATA.intents||[]; DATA.intents.unshift(curIntent);
+    const cs=curIntent.candidates||[];
+    addNotif('intent','“'+curIntent.title+'” — '+cs.length+' matches', cs.filter(c=>c.agree).length+' agreed · tap to review', curIntent.id);
+  }
+  saveState();
+}
+// ---------- Phase 4: notifications ----------
+function addNotif(kind,title,body,ref){ DATA.notifs=DATA.notifs||[];
+  DATA.notifs.unshift({id:'n'+String(Date.now())+Math.round(Math.abs(Math.sin(DATA.notifs.length))*1000),kind:kind,title:title,body:body,ref:ref,read:false,time:'now'}); }
+function unreadNotifs(){ return (DATA.notifs||[]).filter(n=>!n.read).length; }
+function scr_notifications(){
+  const list=DATA.notifs||[];
+  if(!list.length) return emptyState("No notifications yet","When Kleal finds people or agents agree, it shows up here.");
+  return `<div class="stack fade" style="padding-top:4px">${list.map(n=>`<div class="card notifrow ${n.read?'':'unread'}" data-notif="${n.id}">
+    <div class="nnic">${n.kind==='match'?IC.users:IC.spark}</div>
+    <div class="nnt"><div class="nntt">${esc(n.title)}</div><div class="nnts">${esc(n.body)}</div></div>
+    <div class="nntime">${esc(n.time)}</div></div>`).join('')}</div>`;
+}
+function openNotif(id){ const n=(DATA.notifs||[]).find(x=>x.id===id); if(!n)return; n.read=true;
+  if(n.kind==='match' && matchWith){ cur='matchchat'; render(); saveState(); return; }
+  if(n.ref){ openSavedIntent(n.ref); saveState(); return; }
+  render(); saveState();
+}
+// ---------- Phase 2: match chat (blurred photo clears as you talk) ----------
+let matchWith=null;
+async function approveIntro(cand, intent){
+  if(!cand) return;
+  matchWith={cand:cand, intent:intent, msgs:[{who:'them',text:'…'}], loading:true}; cur='matchchat'; render();
+  let r; try{ r=await fetch('/api/agent/intro',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({intent:intent||{}, candidate:cand})}).then(x=>x.json()); }catch(e){ r=null; }
+  const opener=(r&&r.opener)||('Hey! Looks like we both like '+(((intent||{}).tags||[]).join(', ')||'similar things')+' — want to make a plan?');
+  matchWith.msgs=[{who:'them',text:opener}]; matchWith.loading=false;
+  postFeedback(cand.name,'accepted');   // feedback loop: approving an intro teaches the ranker
+  addNotif('match','You matched with '+cand.name, 'Their agent agreed — say hi', null);
+  render(); saveState();
+}
+function scr_matchchat(){
+  const m=matchWith; if(!m) return scr_agenthome();
+  const mine=m.msgs.filter(x=>x.who==='me').length; const blur=Math.max(0, 9-mine*3);
+  const thread=m.msgs.map(x=>x.who==='me'?`<div class="mbub">${esc(x.text)}</div>`
+    :`<div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div>`).join('');
+  return `<div class="fade"><div class="matchhead">
+      <div class="mava" style="filter:blur(${blur}px)">${esc(String(m.cand.name||'?')[0])}</div>
+      <div class="mmeta"><div class="mnm">${esc(m.cand.name)} <span class="mscore">${m.cand.score}% match</span></div>
+        <div class="mhint">Photo clears as you chat${blur>0?' — keep going':' ✓'}</div></div></div>
+    <div class="thread" style="padding-top:12px">${thread}</div>
+    <div class="composer"><input id="mcin" class="cin cinput" placeholder="Message ${esc(m.cand.name)}…"><button class="csend" data-act="match-send">${IC.send}</button></div></div>`;
+}
+
+// ---------- Phase 3: public intents on the Explore map ----------
+const ME_LATLON=[41.3874, 2.1686];   // Barcelona (demo user's coarse area)
+const PUBLIC_INTENTS=[
+  {title:'Morning run in the park',who:'Sofia',topics:['running'],when:'Tomorrow 08:00',dist:'1.4 km',lat:41.3881,lon:2.1870},
+  {title:'Coffee & startup talk',who:'Marc',topics:['coffee','startups'],when:'Today 18:00',dist:'0.6 km',lat:41.3915,lon:2.1650},
+  {title:'Dota 2 squad night',who:'Dima',topics:['dota'],when:'Tonight 21:00',dist:'2.1 km',lat:41.3805,lon:2.1735},
+  {title:'Spanish + coffee exchange',who:'Ana',topics:['spanish','coffee'],when:'Wed 17:00',dist:'0.9 km',lat:41.4028,lon:2.1560},
+  {title:'Architecture city walk',who:'Leo',topics:['architecture','urbanism'],when:'Sat 11:00',dist:'3.2 km',lat:41.4036,lon:2.1744},
+];
+let exploreMap=null;
+function initExploreMap(){
+  if(typeof L==='undefined') return;                 // Leaflet not loaded
+  if(exploreMap){ try{ exploreMap.remove(); }catch(_e){} exploreMap=null; }
+  const el=document.getElementById('lmap'); if(!el) return;
+  const map=L.map('lmap',{zoomControl:false,scrollWheelZoom:false,attributionControl:false});
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
+  const pin='<svg viewBox="0 0 24 24" width="30" height="30" style="filter:drop-shadow(0 3px 3px rgba(20,20,40,.28))"><path d="M12 22s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z" fill="#F5455C"/><circle cx="12" cy="10.5" r="2.6" fill="#fff"/></svg>';
+  const cIcon=L.divIcon({html:pin,className:'',iconSize:[30,30],iconAnchor:[15,30],popupAnchor:[0,-28]});
+  const meIcon=L.divIcon({html:'<div class="meDot"></div>',className:'',iconSize:[16,16],iconAnchor:[8,8]});
+  const pts=[];
+  PUBLIC_INTENTS.forEach((p,i)=>{ const m=L.marker([p.lat,p.lon],{icon:cIcon}).addTo(map);
+    m.bindPopup('<div class="mapop"><div class="mopt">'+esc(p.title)+'</div><div class="mopm">'+esc(p.who)+' · '+esc(p.when)+' · '+esc(p.dist)+'</div><button class="mopj" onclick="joinPublic('+i+')">Join</button></div>');
+    pts.push([p.lat,p.lon]); });
+  L.marker(ME_LATLON,{icon:meIcon}).addTo(map); pts.push(ME_LATLON);
+  try{ map.fitBounds(pts,{padding:[36,36]}); }catch(_e){ map.setView(ME_LATLON,13); }
+  setTimeout(()=>{ try{ map.invalidateSize(); map.fitBounds(pts,{padding:[36,36]}); }catch(_e){} }, 90);
+  exploreMap=map;
+}
+function joinPublic(i){ const p=PUBLIC_INTENTS[i]; if(!p)return; addNotif('intent','Asked to join “'+p.title+'”','Waiting for '+p.who+'’s agent to confirm', null); saveState(); toast('Requested to join — '+p.who+'’s agent will confirm'); }
 
 function scr_intents(){
   const list=DATA.intents||[];
   const head=`<div class="seccap" style="margin:2px 2px 12px">Intents are the plans you ask Kleal to arrange. It searches, matches schedules and lines up intros — you approve every one.</div>`;
   if(!list.length) return `<div class="fade">${head}${emptyState("No intents yet","Tap Create intent and tell Kleal what you'd like to do.")}
     <button class="bigbtn primary" style="margin-top:8px" data-act="createintent">Create intent</button></div>`;
-  const cards=list.map((it,i)=>`<div class="card pad intentrow" data-intent="${i}">
-    <div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="pill searching dot">Searching</span></div>
-    <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div>
-    <div class="confrow2"><span class="l">Match confidence</span><span class="confpct">${it.confidence||0}%</span></div>
-    <div class="track"><i style="width:${it.confidence||0}%"></i></div></div>`).join('');
+  const cards=list.map((it)=>{ const cs=it.candidates||[]; const ag=cs.filter(c=>c.agree).length;
+    return `<div class="card pad intentrow" ${it.id?`data-savedintent="${it.id}"`:''}>
+    <div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="pill searching dot">${esc(capw(it.status||'searching'))}</span></div>
+    <div style="margin:10px 0 6px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div>
+    <div class="confrow2"><span class="l">${cs.length} ${cs.length===1?'match':'matches'}${ag?' · '+ag+' agreed':''}</span><span class="confpct">${it.confidence||0}%</span></div>
+    <div class="track"><i style="width:${it.confidence||0}%"></i></div></div>`; }).join('');
   return `<div class="stack fade">${head}${cards}
     <button class="bigbtn primary" style="margin-top:4px" data-act="createintent">Create intent</button></div>`;
 }
 
 function scr_intentchat(){
-  const it=curIntent||(DATA.intents&&DATA.intents[0])||{title:'New intent',tags:[],spec:[],steps:[],confidence:0};
-  const steps=it.steps||[];
-  const work=`<div class="card"><div class="sumhead" style="padding:14px 16px 6px"><div class="sumlbl">Kleal is on it</div>
-      <span class="confpct">${it.confidence||0}%</span></div>
-    ${steps.map((s,i)=>{ const st=s[1], lab=st==='done'?'Done':(st==='now'?'Now':'Next');
-      const ic=st==='done'?`<div class="chkic done">${IC.check}</div>`:`<div class="chkic ${st==='now'?'now':'wait'}"></div>`;
-      return `<div class="chkrow">${ic}<div class="chklb ${st==='wait'?'wait':''}">${esc(s[0])}</div>
-        <div class="chkst ${st}">${lab}</div></div>${i<steps.length-1?'<div class="divider"></div>':''}`; }).join('')}
+  const it=curIntent;
+  const composer=`<div class="composer"><input id="acin" class="cin cinput" placeholder="Tell Kleal what you'd like to do…" ${agentBusy?'disabled':''}>
+    <button class="csend" data-act="agent-send">${IC.send||IC.nMsg}</button></div>`;
+  if(!it){
+    return `<div class="fade"><div class="thread">
+      <div class="kbub">What would you like to do? Say it in your own words — “coffee & AI chat tonight downtown”, “gym buddy this week”, “someone to practise Spanish with”.</div>
+    </div>${composer}</div>`;
+  }
+  if(it.pending){
+    return `<div class="fade"><div class="thread">
+      <div class="mbub">${esc(it.query)}</div>
+      <div class="kbub"><span class="typing3"><i></i><i></i><i></i></span> structuring your intent…</div>
+    </div>${composer}</div>`;
+  }
+  const cands=it.candidates||[]; const negotiating=!!it.negotiating;
+  const agreed=cands.filter(c=>c.agree).length;
+  const candCard=`<div class="card"><div class="sumhead" style="padding:14px 16px 6px"><div class="sumlbl">Kleal is on it</div>
+      <span class="confpct">${negotiating?'negotiating…':agreed+' agreed'}</span></div>
+    ${cands.length ? cands.map((c,i)=>{
+      const negot=negotiating && !c.decided;
+      const sub=(c.decided&&c.reason)?c.reason:(c.reasons||[]).slice(0,2).join(' · ');
+      const status=negot?'<div class="candbusy"><span class="typing3"><i></i><i></i><i></i></span></div>'
+        :(c.passed?'<div class="candno">passed</div>':(c.agree?'<div class="candok">✓ agreed</div>':'<div class="candno">declined</div>'));
+      const tier=c.kind==='reciprocal'?'<span style="font-size:10px;font-weight:700;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:1px 5px;margin-left:5px">↔ mutual</span>'
+        :(c.tier?`<span style="font-size:10px;font-weight:700;color:var(--muted);background:var(--field);border-radius:6px;padding:1px 5px;margin-left:5px">${esc(c.tier)}</span>`:'');
+      const vtick=c.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':'';
+      return `<div class="candrow" style="${c.passed?'opacity:.5':''}"><div class="candav">${esc(String(c.name||'?')[0])}</div>
+      <div class="candt"><div class="candn">${esc(c.name)}${vtick}${tier} <span class="candkm">${c.km} km</span></div>
+        <div class="cands">${esc(sub)}</div></div>
+      <div class="candsc"><div class="candpct">${c.score}%</div>${status}</div>
+      ${(!negot&&c.agree&&!c.passed)?`<button class="introbtn" data-act="intro" data-ci="${i}">Intro</button>
+        <button data-act="pass" data-ci="${i}" title="Not interested" style="border:none;background:var(--field);color:var(--muted);width:26px;height:26px;border-radius:50%;font-size:13px;margin-left:6px;cursor:pointer">✕</button>`:''}
+      </div>${i<cands.length-1?'<div class="divider"></div>':''}`; }).join('')
+      : (it.fallback ? fallbackCard(it.fallback)
+        : '<div class="chkrow"><div class="chklb wait">No one matched yet — I\'ll keep looking in the background.</div></div>')}
     </div>`;
   return `<div class="fade"><div class="thread">
-    <div class="kbub">Here's the intent I put together from what you told me. Launch the search when it looks right.</div>
+    ${it.query?`<div class="mbub">${esc(it.query)}</div>`:''}
+    <div class="kbub">Here's the intent I structured${it.error?' (offline — used a rough parse)':''}. Launch the search when it looks right.</div>
     <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${it.confidence||0}%</span></div>
       <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div></div>
     <div class="card">${intentSpec(it)}</div>
-    ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Launch search</button>
-      <button class="bigbtn ghost" data-act="edit-intent">Edit</button>`}
-    ${intentLaunched ? `<div class="mbub">Launch it</div>${work}
-      <div class="kbub">On it. I'll only send intros once you approve each one.</div>` : ''}
-  </div>
-  <div class="composer"><div class="cin">Tell Kleal more…</div><div class="csend">${IC.nMsg}</div></div></div>`;
+    ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Launch search</button>`}
+    ${intentLaunched ? `<div class="mbub">Launch it</div>
+      <div class="kbub">${negotiating?'Reaching out to each candidate’s agent — negotiating on your behalf…':('Their agents replied — '+agreed+' agreed:')}</div>
+      ${candCard}
+      ${negotiating?'':'<div class="kbub">Want an intro? I only reach out once you approve.</div>'}` : ''}
+  </div>${composer}</div>`;
 }
 
 function scr_search(){
-  const plans=DATA.plans||[];
-  const pins=plans.map((p,i)=>`<div class="mpin" data-plan="${i}" style="left:${p.x}%;top:${p.y}%">${IC.pin}</div>`).join('');
-  const cards=plans.slice(0,2).map((p,i)=>`<div class="plan-card" data-plan="${i}" style="left:${p.x}%;top:${p.y}%">
-    <div class="pt">${esc(p.title)}</div><div class="pm">${esc(p.who)} · ${esc(p.when)} · ${esc(p.dist)}</div></div>`).join('');
+  const P=PUBLIC_INTENTS;
+  const list=P.map((p,i)=>`<div class="card evrow" data-public="${i}"><div class="evic">${IC.pin}</div>
+    <div class="evt"><div class="evtt">${esc(p.title)}</div><div class="evts">${esc(p.who)} · ${esc(p.when)} · ${esc(p.dist)}</div></div>
+    <button class="introbtn" data-act="join" data-pi="${i}">Join</button></div>`).join('');
   return `<div class="fade">
     <div class="sbar"><div class="box">${IC.nSearch}<span>Search this area…</span></div>
       <div class="filt" data-act="filter">${IC.compass}</div></div>
-    <div class="map"><div class="grid"></div>${pins}<div class="mpin me" style="left:50%;top:85%">${IC.pin}</div>${cards}
-      <button class="bigbtn primary searchbtn" data-act="search-area">Search this area</button></div>
-    <div class="seccap" style="margin:12px 2px">Kleal surfaces public plans and people near you. Nothing here sees your exact location — only your area.</div>
+    <div id="lmap" class="lmap"></div>
+    <div class="seccap" style="margin:12px 2px 8px">Open plans people posted near you — tap a pin to see it, Join and Kleal handles the intro. Only your area is shown, never your exact spot.</div>
+    <div class="stack">${list}</div>
   </div>`;
 }
 
@@ -936,9 +1225,36 @@ function scr_messages(){
     <div class="msgtime">${esc(m.time)}</div></div></div>`).join('')}</div>`;
 }
 
-const SCREENS={overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
+// ================= Agent Home — the main landing after onboarding (Figma Flow 4) =================
+function scr_agenthome(){
+  const nm=DATA.name||'there';
+  const plan=(DATA.plans||[])[0];
+  const qa=[['peoplePin','People nearby','q-people'],['calen','Events nearby','q-events'],
+            ['heart','Interests & groups','q-interests'],['bookmark','Saved','q-saved']];
+  const planCard = plan ? `<div class="tcard" data-plan="0">
+      <div class="timg"></div>
+      <div class="tbody"><div class="tt">${esc(plan.title)}</div>
+        <div class="tm">${esc(plan.when)} · ${esc(plan.dist)}</div>
+        <div class="tpart"><div class="stack5"><span class="av"></span><span class="av"></span><span class="av"></span><span class="av"></span><span class="more">+5</span></div><span class="pn">8 going</span></div></div>
+      <div class="tbm">${IC.bookmark}</div></div>` : '';
+  return `<div class="ahome fade">
+    <div class="ahead"><div class="agreet">Hi, ${esc(nm)}! 👋</div>
+      <div class="abell" data-act="notif">${IC.bell}${unreadNotifs()?`<span class="abadge">${unreadNotifs()}</span>`:''}</div></div>
+    <div class="aintro"><div class="amascot">${MASCOT}</div>
+      <div class="abub">I'm Kleal, your social AI agent. Tell me who or what you're looking for and I'll line up the best for you.</div></div>
+    <div class="asearch"><input id="ainput" placeholder="Describe who or what you're looking for" autocomplete="off">
+      <button class="asend" data-act="agent-go">${IC.send}</button></div>
+    <div class="qhead">Quick actions</div>
+    <div class="quick">${qa.map(q=>`<div class="qcard" data-act="${q[2]}"><div class="qic">${IC[q[0]]}</div><div class="qt">${q[1]}</div></div>`).join('')}</div>
+    <div class="thead"><span class="th">For you today</span><span class="tall" data-act="see-all">See all</span></div>
+    ${planCard}
+  </div>`;
+}
+
+const SCREENS={agenthome:scr_agenthome,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
   places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
-  intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages};
+  intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages,
+  notifs:scr_notifications,matchchat:scr_matchchat};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -997,7 +1313,8 @@ function render(){
   const meta=TABS.find(t=>t[0]===cur)||TABS[0];
   const isHome = !editSig && !detail && cur==='overview';
   const isRoot = !editSig && !detail && ROOTS.includes(cur);
-  const titleFor = cur==='intentchat' ? (curIntent?curIntent.title:'Create intent')
+  const titleFor = cur==='intentchat' ? (curIntent&&curIntent.title?curIntent.title:'Create intent')
+    : cur==='matchchat' ? (matchWith?matchWith.cand.name:'Chat')
     : (cur==='overview'?'My Kleal Profile':(TITLES[cur]||meta[2]));
   document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : titleFor);
   document.getElementById('back').style.visibility= (editSig||detail||!ROOTS.includes(cur))? 'visible' : 'hidden';
@@ -1007,11 +1324,15 @@ function render(){
   rgt.style.visibility = (isRoot && !isHome) ? 'hidden' : 'visible';   // no right icon on Intents/Search/Messages
   rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
   // bottom nav: rebuilt for the active tab; hidden on the intent chat (which has its own composer)
-  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
+  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat'||cur==='matchchat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
+  const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome')?'none':'flex';   // Home has its own greeting header
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
   A.scrollTop=0;
+  // real Leaflet map on Explore; tear it down when leaving
+  if(cur==='search'){ setTimeout(initExploreMap, 0); }
+  else if(exploreMap){ try{ exploreMap.remove(); }catch(_e){} exploreMap=null; }
   // wire (drill-in nav: Overview hub -> section -> back)
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>setTab(el.dataset.nav));
   document.querySelectorAll('[data-go]').forEach(el=>el.onclick=()=>setTab(el.dataset.go));
@@ -1033,10 +1354,23 @@ function render(){
   document.querySelectorAll('[data-intent]').forEach(el=>el.onclick=()=>{ const it=(DATA.intents||[])[+el.dataset.intent]; openIntent(it, !!(it&&it.status==='searching')); });
   document.querySelectorAll('[data-plan]').forEach(el=>el.onclick=()=>toast('Plan details are coming soon'));
   document.querySelectorAll('[data-msg]').forEach(el=>el.onclick=()=>toast('Opening this chat is coming soon'));
+  document.querySelectorAll('[data-savedintent]').forEach(el=>el.onclick=()=>openSavedIntent(el.dataset.savedintent));
+  document.querySelectorAll('[data-notif]').forEach(el=>el.onclick=()=>openNotif(el.dataset.notif));
+  document.querySelectorAll('[data-public]').forEach(el=>el.onclick=()=>{ const p=PUBLIC_INTENTS[+el.dataset.public]; if(p)toast(p.title+' — '+p.who+' · '+p.when); });
   document.querySelectorAll('[data-act]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); doAct(el.dataset.act, el.dataset); });
+  const acin=document.getElementById('acin'); if(acin){ acin.onkeydown=(e)=>{ if(e.key==='Enter')runAgent(acin.value); }; setTimeout(()=>{try{acin.focus();}catch(_e){}},40); }
+  const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter')runAgent(ainput.value); }; }
+  const mcin=document.getElementById('mcin'); if(mcin){ mcin.onkeydown=(e)=>{ if(e.key==='Enter')doAct('match-send',{}); }; setTimeout(()=>{try{mcin.focus();}catch(_e){}},40); }
+  saveState();   // persist after every re-render (covers all doAct-driven edits)
 }
+// also persist after direct toggle/chip clicks that mutate state without a re-render, and on unload
+A.addEventListener('click', ()=>setTimeout(saveState, 0));
+window.addEventListener('beforeunload', saveState);
 document.getElementById('back').onclick=()=>{ if(editSig){ editSig=null; render(); } else if(detail){ detail=null; render(); }
-  else if(cur==='intentchat'){ cur='intents'; render(); } else if(!ROOTS.includes(cur)){ cur='overview'; render(); } };
+  else if(cur==='matchchat'){ cur='intentchat'; render(); }
+  else if(cur==='intentchat'){ cur='intents'; render(); }
+  else if(cur==='notifs'){ cur='agenthome'; render(); }
+  else if(!ROOTS.includes(cur)){ cur='overview'; render(); } };
 // ---- toast + every button does something ----
 function toast(msg){ let t=document.getElementById('toast');
   if(!t){ t=document.createElement('div'); t.id='toast'; t.className='toast'; document.querySelector('.phone').appendChild(t); }
@@ -1076,12 +1410,33 @@ function doAct(act, ds){
     case 'export-data': toast('Preparing your data export — we’ll email you a copy'); break;
     case 'delete-account': toast('Delete account would ask you to confirm, then erase everything'); break;
     case 'nav': setTab(ds.tab||'overview'); break;
-    case 'fab': case 'createintent': openIntent((DATA.intents||[])[0]||null, false); break;
-    case 'launch-intent': intentLaunched=true; if(curIntent)curIntent.status='searching'; render();
-      toast('Kleal is searching — I’ll ping you with intros to approve'); break;
+    case 'fab': case 'createintent': curIntent=null; intentLaunched=false; cur='intentchat'; render(); break;
+    case 'agent-send': { const el=document.getElementById('acin'); runAgent(el&&el.value||''); break; }
+    case 'launch-intent': intentLaunched=true; render(); negotiateIntent(); break;
+    case 'intro': { const i=+ds.ci; approveIntro((curIntent&&curIntent.candidates||[])[i], curIntent); break; }
+    case 'pass': { const i=+ds.ci; const c=(curIntent&&curIntent.candidates||[])[i]; if(!c)break;
+      postFeedback(c.name,'rejected'); c.passed=true; c.agree=false; render(); saveState();
+      toast('Kleal will remember you passed on '+c.name); break; }
+    case 'live': { const k=ds.kind||'voice'; addNotif('match',(k==='watch'?'Watch-together room opened':'Live voice room opened'),
+      'Kleal is inviting nearby people to “'+((curIntent&&curIntent.title)||'your plan')+'”',null); saveState();
+      toast((k==='watch'?'Watch room':'Voice room')+' created — inviting people'); break; }
+    case 'broaden': broadenIntent(ds.kind); break;
+    case 'match-send': { const el=document.getElementById('mcin'); const t=(el&&el.value||'').trim(); if(!t||!matchWith)break;
+      matchWith.msgs.push({who:'me',text:t}); render(); saveState();
+      const R=['Sounds great!','Perfect, that works for me.','Yeah, let’s do it 🙌','Nice — where works for you?','See you there!'];
+      setTimeout(()=>{ if(matchWith){ matchWith.msgs.push({who:'them',text:R[matchWith.msgs.length%R.length]}); render(); saveState(); } }, 750); break; }
     case 'edit-intent': toast('Editing the intent is coming soon'); break;
     case 'search-area': toast('Searching this area…'); break;
     case 'filter': toast('Filters are coming soon'); break;
+    case 'join': joinPublic(+ds.pi); break;
+    // Agent Home
+    case 'notif': setTab('notifs'); break;
+    case 'agent-go': { const el=document.getElementById('ainput'); runAgent(el&&el.value||''); break; }
+    case 'q-people': setTab('search'); break;
+    case 'q-events': setTab('search'); break;
+    case 'q-interests': setTab('interests'); break;
+    case 'q-saved': toast('Saved items are coming soon'); break;
+    case 'see-all': setTab('search'); break;
     case 'add-interests': toast('Adding interests is coming soon'); break;
     case 'personality-test': toast('The personality test is coming soon'); break;
     case 'edit-personality': toast('Editing your personality is coming soon'); break;
