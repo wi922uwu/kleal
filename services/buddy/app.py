@@ -24,31 +24,30 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PORT = int(os.environ.get("BUDDY_PORT", "7075"))
 MODEL_ID = os.environ.get("V2_MODEL", "llama_self")
 MATCH_URL = os.environ.get("MATCH_URL", "http://127.0.0.1:7074").rstrip("/")
+FILTER_URL = os.environ.get("FILTER_URL", "http://127.0.0.1:7076").rstrip("/")
 
-SIGNAL_KEYS = ("topics", "role", "type", "vibe", "languages", "time", "area", "datingOk", "dealBreakers")
+SIGNAL_KEYS = ("topics", "role", "type", "vibe", "languages", "time", "area", "datingOk", "dealBreakers", "interest")
 LIST_KEYS = ("topics", "languages", "dealBreakers")
 MEET_WORDS = ("meet", "find", "someone", "people", "partner", "buddy", "teammate", "match", "date",
               "play with", "together", "join", "hang out", "who else")
 
-BUDDY_PROMPT = '''You are "Kleal", the user's personal buddy — a warm, genuinely curious friend they chat with. Talk naturally and briefly (1-3 sentences), never like a form or a survey. React to what they said, bring a little energy, and ask at most ONE light question when it flows.
+BUDDY_PROMPT = '''You are "Kleal" — the user's buddy: a warm, smart, genuinely helpful companion they can chat with like they would with ChatGPT. Talk naturally (1-4 sentences). Be actually useful: answer questions, riff on ideas, recommend things, help them think — about anything, not only meeting people. You are their day-to-day AI on the Kleal platform. (Deeper tools like web research come later.)
 
-Quietly, as you chat, learn the user's SIGNALS (ONLY what they actually reveal — never invent):
-- topics: interests/activities, lowercase (e.g. ["chess","coffee","football"])
-- role: what they want to DO with someone — one of play, watch, discuss, practise, attend, meet
-- type: sport, gaming, networking, dating, language, social
+Kleal's superpower is connecting people. So while you chat, quietly notice the user's SIGNALS when they naturally come up (ONLY what they actually reveal — never invent):
 - vibe: chill, energetic, competitive, intellectual, creative, social, calm
 - languages: 2-letter codes (e.g. ["en","es"])
 - time: when they are free (e.g. "today evening", "weekend")
 - area: their neighbourhood / city if mentioned
 - datingOk: true ONLY if they clearly want dating / romance
 - dealBreakers: anything they say they want to avoid
+- interest: a short phrase for the thing they're talking about wanting to do with someone (e.g. "play chess", "labubu collectors", "practise spanish")
+
+Set "match": true ONLY when the user clearly wants to MEET a person / find people / do an activity WITH someone. For normal conversation keep it false and just be a great chatbot. When match is true, put a short natural-language description of what they want into "interest" (another agent will categorise it).
 
 Known so far (baseline from their profile): __SIG__
 
-Set "match": true ONLY when the user clearly wants to meet a person or do an activity WITH someone (or asks you to find people). Otherwise keep chatting (match:false).
-
 Reply as ONE JSON object only, nothing outside it:
-{"reply":"<your natural message>","signals":{<only the fields you newly learned THIS turn>},"match":true|false}
+{"reply":"<your natural, helpful message>","signals":{<only fields you newly learned THIS turn; may include "interest">},"match":true|false}
 English only.'''
 
 
@@ -117,33 +116,40 @@ def _baseline_signals(profile):
     return sig
 
 
-def _signals_to_intent(sig):
-    topics = sig.get("topics") or []
-    typ = (sig.get("type") or "").lower()
-    if not typ:
-        typ = "dating" if sig.get("datingOk") else "social"
-    title = "Date" if typ == "dating" else ((topics[0].capitalize() + " meetup") if topics else "Meet someone")
-    return {"title": title, "type": typ, "topics": topics or (["dating"] if typ == "dating" else ["social"]),
-            "role": sig.get("role") or "meet", "mode": "offline",
-            "time": sig.get("time") or "Flexible", "place": "Public places nearby",
-            "radiusKm": 15, "adjacentAllowed": True, "broadAllowed": True,
-            "verifiedOnly": bool(typ == "dating"), "minAge": (18 if typ == "dating" else None)}
-
-
-def _post(path, payload, timeout=30):
+def _post(base_url, path, payload, timeout=30):
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(MATCH_URL + path, data=data,
+    req = urllib.request.Request(base_url + path, data=data,
                                  headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
-def _do_match(sig, profile):
-    """Agent-to-agent: hand the assembled signals to the matching agent, get the best match back."""
-    intent = _signals_to_intent(sig)
+def _categorize(text):
+    """Filtration agent: magnetise the request to an existing category + canonical topics."""
+    try:
+        return _post(FILTER_URL, "/api/filter/categorize", {"text": text}, timeout=45)
+    except Exception:
+        return None
+
+
+def _build_intent(sig, cat):
+    """Assemble a matching intent from the filtration result (topics/category/type/role) + signals (time)."""
+    cat = cat or {}
+    topics = cat.get("topics") or sig.get("topics") or (["dating"] if sig.get("datingOk") else ["social"])
+    typ = (cat.get("type") or sig.get("type") or ("dating" if sig.get("datingOk") else "social")).lower()
+    role = (cat.get("role") or sig.get("role") or "meet").lower()
+    title = "Date" if typ == "dating" else (str(topics[0]).capitalize() + " meetup")
+    return {"title": title, "type": typ, "topics": topics[:4], "role": role, "mode": "offline",
+            "category": cat.get("category"), "time": sig.get("time") or "Flexible",
+            "place": "Public places nearby", "radiusKm": 15, "adjacentAllowed": True, "broadAllowed": True,
+            "verifiedOnly": bool(typ == "dating"), "minAge": (18 if typ == "dating" else None)}
+
+
+def _run_match(intent, sig):
+    """Agent-to-agent: hand the categorised intent to the matching agent, get the best match back."""
     prof = {"languages": {"comfortable": sig.get("languages") or []}, "vibe": sig.get("vibe")}
     try:
-        res = _post("/api/agent/match", {"intent": intent, "profile": prof})
+        res = _post(MATCH_URL, "/api/agent/match", {"intent": intent, "profile": prof})
     except Exception:
         res = {"candidates": []}
     cands = res.get("candidates") or []
@@ -177,13 +183,19 @@ def buddy_chat(messages, profile, signals):
 
     match = None
     if want_match:
-        match = _do_match(sig, profile)
+        # 1) Filtration agent categorises what they want; 2) Matching agent scores by it.
+        req_text = sig.get("interest") or last_user or " ".join(sig.get("topics") or [])
+        cat = _categorize(req_text)
+        intent = _build_intent(sig, cat)
+        match = _run_match(intent, sig)
         if match.get("top"):
             t = match["top"]
             why = (t.get("reasons") or ["a great fit"])[0]
             reply = (reply + "\n\nI think you'd click with %s — %s." % (t.get("name"), why)).strip()
         else:
-            reply = (reply + "\n\nNo one perfect right now — want to go broader or try online?").strip()
+            catn = (cat or {}).get("category")
+            reply = (reply + ("\n\nI filed that under “%s” but found no one perfect right now — go broader or try online?" % catn
+                              if catn else "\n\nNo one perfect right now — want to go broader or try online?")).strip()
     return {"reply": reply, "signals": sig, "match": match}
 
 
@@ -212,5 +224,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("Kleal buddy-service on http://127.0.0.1:%d  (LLM via llm-service, matching at %s)" % (PORT, MATCH_URL))
+    print("Kleal buddy-service on http://127.0.0.1:%d  (LLM llm-service, filter %s, match %s)" % (PORT, FILTER_URL, MATCH_URL))
     ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

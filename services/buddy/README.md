@@ -1,13 +1,15 @@
 # buddy-service (:7075)
 
-The **conversational** agent — the one the user just talks to. It chats naturally, quietly accumulates
-the user's **signals** (topics / role / type / vibe / languages / time / area / datingOk / dealBreakers),
-seeded from their profile and refined through the conversation. When the user clearly wants to meet
-someone, the buddy **calls the matching agent** (agent-to-agent, over HTTP) with the assembled signals
-and surfaces the best match in the chat.
+The **general chatbot** — the agent the user just talks to, like they would with ChatGPT (answers
+questions, riffs, recommends — not only matchmaking; deeper tools like web research come later). While
+chatting it quietly notes the user's **signals** (vibe / languages / time / area / datingOk /
+dealBreakers), seeded from their profile. When the user clearly wants to meet someone, the buddy calls
+the **filtration** agent to categorise the request, then the **matching** agent to score — and drops the
+best match into the chat.
 
 ```
-user  <->  buddy :7075 (talk, LLM)  --HTTP /api/agent/match-->  matching :7074 (rank)
+user  <->  buddy :7075 (talk, LLM)  --/api/filter/categorize-->  filtration :7076
+                                     --/api/agent/match--------->  matching  :7074
 ```
 
 ## API
@@ -19,11 +21,12 @@ user  <->  buddy :7075 (talk, LLM)  --HTTP /api/agent/match-->  matching :7074 (
 `match` is `null` until the buddy decides to match, then `{intent, top, candidates}`.
 
 ## Depends on
-`llm-service` (conversation, via `shared/llm_client`) · `matching-service` (`/api/agent/match`, via `MATCH_URL`).
-Falls back gracefully if the LLM is down (canned reply + keyword-based meet-intent detection).
+`llm-service` (conversation) · `filtration-service` (`/api/filter/categorize`, via `FILTER_URL`) ·
+`matching-service` (`/api/agent/match`, via `MATCH_URL`). Falls back gracefully if the LLM is down
+(canned reply + keyword-based meet-intent detection).
 
 ## Env
-`BUDDY_PORT` (7075) · `V2_MODEL` (default `llama_self`) · `LLM_URL` · `MATCH_URL` (http://127.0.0.1:7074).
+`BUDDY_PORT` (7075) · `V2_MODEL` (default `llama_self`) · `LLM_URL` · `FILTER_URL` (http://127.0.0.1:7076) · `MATCH_URL` (http://127.0.0.1:7074).
 
 ## Run
 `BUDDY_PORT=7075 LLM_URL=http://127.0.0.1:7071 MATCH_URL=http://127.0.0.1:7074 python app.py`. stdlib only.

@@ -6,6 +6,7 @@
 # Routing table (ORDER MATTERS — specific API prefixes are tested before the generic "/" fallback):
 #   /menu                       -> local landing (two-button page)
 #   /api/buddy/*                -> buddy-service    (path unchanged)   [the conversational agent]
+#   /api/filter/*               -> filtration-service (path unchanged) [the categorisation agent]
 #   /api/agent/*                -> matching-service  (path unchanged)   [profile JS hard-codes these]
 #   /api/onboarding/* /api/v2/* -> onboarding-service (path unchanged)  [/api/v2/* = legacy alias]
 #   /profile /profile/*         -> profile-service    (strip /profile)
@@ -20,6 +21,7 @@ ONB = os.environ.get("HUB_ONB", "http://127.0.0.1:7072")
 PROF = os.environ.get("HUB_PROF", "http://127.0.0.1:7073")
 MATCH = os.environ.get("HUB_MATCH", "http://127.0.0.1:7074")
 BUDDY = os.environ.get("HUB_BUDDY", "http://127.0.0.1:7075")
+FILTER = os.environ.get("HUB_FILTER", "http://127.0.0.1:7076")
 PORT = int(os.environ.get("HUB_PORT", "7080"))
 
 LANDING = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
@@ -59,6 +61,8 @@ def route(path):
     # API prefixes — forwarded UNCHANGED so the backends keep their own paths.
     if path.startswith("/api/buddy/"):
         return (BUDDY, path)
+    if path.startswith("/api/filter/"):
+        return (FILTER, path)
     if path.startswith("/api/agent/"):
         return (MATCH, path)
     if path.startswith("/api/onboarding/") or path.startswith("/api/v2/"):   # /api/v2/* = legacy alias
@@ -123,5 +127,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("Kleal gateway on http://0.0.0.0:%d  (onb=%s prof=%s match=%s buddy=%s)" % (PORT, ONB, PROF, MATCH, BUDDY))
+    print("Kleal gateway on http://0.0.0.0:%d  (onb=%s prof=%s match=%s buddy=%s filter=%s)" % (PORT, ONB, PROF, MATCH, BUDDY, FILTER))
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

@@ -16,15 +16,19 @@ inter-service contracts in [shared/contracts.md](shared/contracts.md).
 |---|---|---|---|
 | gateway | 7080 | single public entry; prefix routing; `/menu` | Dev A |
 | llm | 7071 | **only holder of model URLs + API keys**; `POST /llm/complete`, `GET /llm/models` | Dev A |
-| onboarding | 7072 | funnel UI + `/api/onboarding/*` (+ `/api/v2/*` alias) | Dev A |
-| buddy | 7075 | **conversational** agent the user talks to; gathers signals, then calls matching; `/api/buddy/chat` | Dev B |
-| matching | 7074 | **matching** agent — signals → ranked candidates; `/api/agent/*` | Dev B |
+| onboarding | 7072 | **Archivist** agent — onboarding funnel: profile + intents; UI + `/api/onboarding/*` (+`/api/v2/*` alias) | Dev A |
+| buddy | 7075 | **Buddy** agent — general chatbot (ChatGPT-like); routes to filtration+matching when the user wants to meet; `/api/buddy/chat` | Dev B |
+| filtration | 7076 | **Filtration** agent — magnetises a request to existing categories (labubu→toys); `/api/filter/categorize` | Dev B |
+| matching | 7074 | **Matching** agent — signals → ranked candidates by scoring; `/api/agent/*` | Dev B |
 | profile | 7073 | "main page" / Agent-Home UI (static; hosts the buddy chat) | Dev B |
 
-**Buddy vs matching (important):** the *buddy* is the conversational agent — the user just chats with it;
-it accumulates signals (topics/role/vibe/language/availability/area/dating/deal-breakers) and, when the
-user wants to meet someone, calls the *matching* agent (agent-to-agent, HTTP `POST /api/agent/match`)
-which does the deterministic ranking. Two different agents.
+**The 4 agents (llm/gateway/profile are infra, not agents):**
+1. **Archivist** (onboarding) — builds/edits the user's profile + intents; runs at first launch / profile edits.
+2. **Buddy** (buddy) — the general chatbot the user just talks to (broad engagement; web-research via MCP later). When the user wants to meet someone it hands off ↓.
+3. **Filtration** (filtration) — categorises the request into existing categories (`labubu`→`toys_collectibles`), extracts canonical topics + `type`/`role`.
+4. **Matching** (matching) — deterministic scoring over the categorised intent → best people. (Internally also runs the LLM negotiator + intro sub-steps.)
+
+Flow when the user wants to meet: **buddy → `POST /api/filter/categorize` → build intent → `POST /api/agent/match`**.
 
 ## Run
 ```bash

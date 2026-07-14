@@ -35,14 +35,24 @@ services:
     depends_on: [llm]
     networks: [kleal]
 
+  filtration:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: filtration } }
+    environment:
+      FILTER_PORT: "7076"
+      LLM_URL: "http://llm:7071"
+      V2_MODEL: "llama_self"
+    depends_on: [llm]
+    networks: [kleal]
+
   buddy:
     build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: buddy } }
     environment:
       BUDDY_PORT: "7075"
       LLM_URL: "http://llm:7071"
       MATCH_URL: "http://matching:7074"
+      FILTER_URL: "http://filtration:7076"
       V2_MODEL: "llama_self"
-    depends_on: [llm, matching]
+    depends_on: [llm, matching, filtration]
     networks: [kleal]
 
   gateway:
@@ -53,8 +63,9 @@ services:
       HUB_PROF: "http://profile:7073"
       HUB_MATCH: "http://matching:7074"
       HUB_BUDDY: "http://buddy:7075"
+      HUB_FILTER: "http://filtration:7076"
     ports: ["7080:7080"]                 # the only publicly published port
-    depends_on: [onboarding, profile, matching, buddy]
+    depends_on: [onboarding, profile, matching, buddy, filtration]
     networks: [kleal]
 
 networks:
