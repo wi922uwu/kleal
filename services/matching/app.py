@@ -236,8 +236,9 @@ def _gen_pool():
     return pool
 CANDIDATES = _gen_pool()
 
-# The live candidate pool can be overridden by a shared user store (managed by the admin-service).
-# If the file is missing/empty/broken we fall back to the built-in demo pool — never breaks matching.
+# The live candidate pool comes from the shared user store (managed by the admin-service). If the store
+# FILE EXISTS it is authoritative — even when empty (an empty store means an empty system, no test users).
+# Only a MISSING/broken store falls back to the built-in demo pool, so matching never hard-breaks.
 USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json"))
 _users_cache = {"mtime": None, "list": None}
 def load_candidates():
@@ -248,12 +249,12 @@ def load_candidates():
                 data = json.load(f)
             lst = data.get("users") if isinstance(data, dict) else data
             _users_cache["mtime"] = m
-            _users_cache["list"] = lst if (isinstance(lst, list) and lst) else None
-        if _users_cache["list"]:
+            _users_cache["list"] = lst if isinstance(lst, list) else None
+        if _users_cache["list"] is not None:      # store present (even []) -> authoritative
             return _users_cache["list"]
     except Exception:
         pass
-    return CANDIDATES
+    return CANDIDATES                              # only when the store file is missing/unreadable
 
 PARSE_PROMPT = '''You convert a user's free-text social request into a structured intent.
 Return ONLY compact JSON (no prose, no markdown), keys:

@@ -150,6 +150,13 @@ def delete_user(uid):
     return False
 
 
+def clear_users():
+    """Remove ALL users — leaves an empty (but present) store, so matching sees an empty system."""
+    with _LOCK:
+        _write([])
+    return True
+
+
 def _path(handler):
     return handler.path.split("?", 1)[0]
 
@@ -179,6 +186,8 @@ class H(BaseHTTPRequestHandler):
             uid = p[len("/api/admin/user/"):]
             u = update_user(uid, body)
             send_json(self, 200 if u else 404, {"ok": bool(u), "user": u})
+        elif p == "/api/admin/clear":
+            send_json(self, 200, {"ok": clear_users(), "count": 0})
         elif p == "/api/admin/reseed":
             with _LOCK:
                 try:
@@ -257,6 +266,7 @@ function editRow(id){const u=USERS.find(x=>x.id===id);if(!u)return;editing=id;re
 async function delRow(id){const u=USERS.find(x=>x.id===id);if(!confirm('Delete '+(u?u.name:'user')+'?'))return;await api('/api/admin/user/'+id+'/delete',{method:'POST'});toast('Deleted');await load();}
 async function toggle(id,field){const u=USERS.find(x=>x.id===id);if(!u)return;await api('/api/admin/user/'+id,{method:'POST',body:JSON.stringify({[field]:!u[field]})});await load();}
 async function reseed(){if(!confirm('Reset the user list to the demo pool? This replaces all users.'))return;const r=await api('/api/admin/reseed',{method:'POST'});toast('Reseeded '+r.count+' users');await load();}
+async function clearAll(){if(!confirm('Delete ALL users? The system will have no people until you add some. This cannot be undone.'))return;await api('/api/admin/clear',{method:'POST'});toast('All users deleted');await load();}
 
 function gate(){
   $('#app').innerHTML=`<div class="top"><span class="logo">kleal</span><span class="pill">admin · test mode</span></div>
@@ -274,7 +284,8 @@ function render(){
   const flag=(u,f,label,warn)=>`<span class="flag ${warn?'warn':''} ${u[f]?'on':''}" title="${label}" onclick="toggle('${u.id}','${f}')">${u[f]?(warn?'❚':'✓'):'·'}</span>`;
   $('#app').innerHTML=`<div class="top"><span class="logo">kleal</span><span class="pill">admin · test mode</span>
     <span class="muted" style="margin-left:auto">${USERS.length} users</span>
-    <button class="ghost mini" onclick="reseed()">Reset to demo pool</button></div>
+    <button class="ghost mini" onclick="reseed()">Reset to demo pool</button>
+    <button class="danger mini" onclick="clearAll()">Delete all users</button></div>
   <div class="wrap">
     <div class="card"><h2>${editing?'Edit user':'Add user'}</h2>
       <div class="row">
