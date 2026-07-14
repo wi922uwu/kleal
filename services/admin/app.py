@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-# Kleal admin-service — a token-gated admin panel to view / add / edit / delete the platform's users
-# while the app runs in TEST MODE. Lives at its own address (/admin behind the gateway) on the same
-# server. Users are stored in a shared JSON file (KLEAL_USERS) that the matching agent reads, so admin
+# Kleal admin-service — an admin panel to view / add / edit / delete the platform's users while the app
+# runs in TEST MODE. It runs on its OWN address (a separate cloudflared tunnel, not behind the main
+# gateway). Users are stored in a shared JSON file (KLEAL_USERS) that the matching agent reads, so admin
 # edits directly change who gets matched. Seeds itself once from the matching agent's demo pool.
 #
-# Holds NO model keys. Owner: Dev A/B (ops). Auth: X-Admin-Token must equal ADMIN_TOKEN (set in .env).
+# NO auth: protection is the obscure/separate URL only (test-mode tool). Holds no model keys.
 import os
 import sys
 import json
@@ -20,7 +20,6 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
 from http_util import send, send_json, read_json
 
 PORT = int(os.environ.get("ADMIN_PORT", "7077"))
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "changeme-admin")   # override in .env for a real deployment
 MATCH_URL = os.environ.get("MATCH_URL", "http://127.0.0.1:7074").rstrip("/")
 STORE = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "matching", "users.json"))
 _LOCK = threading.Lock()
@@ -151,15 +150,6 @@ def delete_user(uid):
     return False
 
 
-def _authed(handler):
-    tok = handler.headers.get("X-Admin-Token", "")
-    if not tok and "?" in handler.path:
-        for kv in handler.path.split("?", 1)[1].split("&"):
-            if kv.startswith("token="):
-                tok = kv[6:]
-    return tok == ADMIN_TOKEN
-
-
 def _path(handler):
     return handler.path.split("?", 1)[0]
 
@@ -170,10 +160,8 @@ class H(BaseHTTPRequestHandler):
         if p == "/admin" or p == "/admin/" or p == "/":
             send(self, 200, HTML, "text/html")
         elif p == "/api/admin/ping":
-            send_json(self, 200 if _authed(self) else 401, {"ok": _authed(self)})
+            send_json(self, 200, {"ok": True})
         elif p == "/api/admin/users":
-            if not _authed(self):
-                return send_json(self, 401, {"error": "unauthorized"})
             u = list_users()
             send_json(self, 200, {"count": len(u), "users": u})
         else:
@@ -181,8 +169,6 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         p = _path(self)
-        if not _authed(self):
-            return send_json(self, 401, {"error": "unauthorized"})
         body = read_json(self)
         if p == "/api/admin/users":
             send_json(self, 200, {"ok": True, "user": add_user(body)})
@@ -289,8 +275,7 @@ function render(){
   const flag=(u,f,label,warn)=>`<span class="flag ${warn?'warn':''} ${u[f]?'on':''}" title="${label}" onclick="toggle('${u.id}','${f}')">${u[f]?(warn?'❚':'✓'):'·'}</span>`;
   $('#app').innerHTML=`<div class="top"><span class="logo">kleal</span><span class="pill">admin · test mode</span>
     <span class="muted" style="margin-left:auto">${USERS.length} users</span>
-    <button class="ghost mini" onclick="reseed()">Reset to demo pool</button>
-    <button class="ghost mini" onclick="TOK='';sessionStorage.removeItem('kleal_admin_tok');render()">Sign out</button></div>
+    <button class="ghost mini" onclick="reseed()">Reset to demo pool</button></div>
   <div class="wrap">
     <div class="card"><h2>${editing?'Edit user':'Add user'}</h2>
       <div class="row">
@@ -333,7 +318,7 @@ function render(){
     <p class="muted" style="font-size:12px">Changes take effect for the matching agent within a few seconds (shared user store). Test mode.</p>
   </div>`;
 }
-if(TOK){load().catch(()=>gate());}else{gate();}
+load().catch(()=>toast('Load failed — is the server up?'));
 </script></body></html>'''
 
 

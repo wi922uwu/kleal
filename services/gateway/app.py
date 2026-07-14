@@ -5,7 +5,6 @@
 #
 # Routing table (ORDER MATTERS — specific API prefixes are tested before the generic "/" fallback):
 #   /menu                       -> local landing (two-button page)
-#   /admin , /api/admin/*       -> admin-service   (path unchanged)   [test-mode user admin panel]
 #   /api/buddy/*                -> buddy-service    (path unchanged)   [the conversational agent]
 #   /api/filter/*               -> filtration-service (path unchanged) [the categorisation agent]
 #   /api/agent/*                -> matching-service  (path unchanged)   [profile JS hard-codes these]
@@ -23,8 +22,9 @@ PROF = os.environ.get("HUB_PROF", "http://127.0.0.1:7073")
 MATCH = os.environ.get("HUB_MATCH", "http://127.0.0.1:7074")
 BUDDY = os.environ.get("HUB_BUDDY", "http://127.0.0.1:7075")
 FILTER = os.environ.get("HUB_FILTER", "http://127.0.0.1:7076")
-ADMIN = os.environ.get("HUB_ADMIN", "http://127.0.0.1:7077")
 PORT = int(os.environ.get("HUB_PORT", "7080"))
+# NOTE: the admin panel is intentionally NOT routed here — it runs on its own separate cloudflared
+# tunnel (services/admin, :7077) so it is reachable only at its own URL, never via the public app URL.
 
 LANDING = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -61,9 +61,6 @@ def route(path):
     if path == "/menu" or path.startswith("/menu?"):
         return ("LANDING", None)
     # API prefixes — forwarded UNCHANGED so the backends keep their own paths.
-    # admin panel — its own address on the same server (path unchanged)
-    if path == "/admin" or path.startswith("/admin/") or path.startswith("/admin?") or path.startswith("/api/admin/"):
-        return (ADMIN, path)
     if path.startswith("/api/buddy/"):
         return (BUDDY, path)
     if path.startswith("/api/filter/"):
@@ -132,5 +129,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("Kleal gateway on http://0.0.0.0:%d  (onb=%s prof=%s match=%s buddy=%s filter=%s admin=%s)" % (PORT, ONB, PROF, MATCH, BUDDY, FILTER, ADMIN))
+    print("Kleal gateway on http://0.0.0.0:%d  (onb=%s prof=%s match=%s buddy=%s filter=%s)" % (PORT, ONB, PROF, MATCH, BUDDY, FILTER))
     ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()

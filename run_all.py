@@ -35,7 +35,6 @@ secrets = load_env(os.path.join(HERE, ".env"))          # keys live only here
 model = secrets.get("V2_MODEL", os.environ.get("V2_MODEL", "llama_self"))
 profile_url = os.environ.get("PROFILE_URL", "")          # onboarding -> profile hand-off (blank = local)
 users_path = os.path.join(HERE, "services", "matching", "users.json")   # shared user store (admin writes, matching reads)
-admin_token = secrets.get("ADMIN_TOKEN", os.environ.get("ADMIN_TOKEN", "changeme-admin"))
 
 # (name, script, extra_env, gets_secrets)
 SERVICES = [
@@ -51,13 +50,12 @@ SERVICES = [
                                                   "MATCH_URL": "http://127.0.0.1:7074",
                                                   "FILTER_URL": "http://127.0.0.1:7076", "V2_MODEL": model}, False),
     ("admin",      "services/admin/app.py",      {"ADMIN_PORT": "7077", "MATCH_URL": "http://127.0.0.1:7074",
-                                                  "KLEAL_USERS": users_path, "ADMIN_TOKEN": admin_token}, False),
+                                                  "KLEAL_USERS": users_path}, False),   # standalone (own URL, no gateway route)
     ("gateway",    "services/gateway/app.py",    {"HUB_PORT": "7080", "HUB_ONB": "http://127.0.0.1:7072",
                                                   "HUB_PROF": "http://127.0.0.1:7073",
                                                   "HUB_MATCH": "http://127.0.0.1:7074",
                                                   "HUB_BUDDY": "http://127.0.0.1:7075",
-                                                  "HUB_FILTER": "http://127.0.0.1:7076",
-                                                  "HUB_ADMIN": "http://127.0.0.1:7077"}, False),
+                                                  "HUB_FILTER": "http://127.0.0.1:7076"}, False),
 ]
 
 procs = []

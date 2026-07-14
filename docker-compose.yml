@@ -37,14 +37,14 @@ services:
     depends_on: [llm]
     networks: [kleal]
 
-  admin:
+  admin:                                 # standalone (own URL, NOT behind the gateway); no token
     build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: admin } }
     environment:
       ADMIN_PORT: "7077"
       MATCH_URL: "http://matching:7074"
       KLEAL_USERS: "/data/users.json"
-      ADMIN_TOKEN: "${ADMIN_TOKEN:-changeme-admin}"
     volumes: [userdata:/data]
+    ports: ["7077:7077"]                 # published directly on its own address
     depends_on: [matching]
     networks: [kleal]
 
@@ -77,9 +77,8 @@ services:
       HUB_MATCH: "http://matching:7074"
       HUB_BUDDY: "http://buddy:7075"
       HUB_FILTER: "http://filtration:7076"
-      HUB_ADMIN: "http://admin:7077"
-    ports: ["7080:7080"]                 # the only publicly published port
-    depends_on: [onboarding, profile, matching, buddy, filtration, admin]
+    ports: ["7080:7080"]                 # the app's public port (admin is separate, on 7077)
+    depends_on: [onboarding, profile, matching, buddy, filtration]
     networks: [kleal]
 
 networks:

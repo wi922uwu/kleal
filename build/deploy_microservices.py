@@ -18,14 +18,13 @@ FILES = [
     ("services/matching/app.py",      "services/matching/app.py",      "f_match"),
     ("services/filtration/app.py",    "services/filtration/app.py",    "f_filter"),
     ("services/buddy/app.py",         "services/buddy/app.py",         "f_buddy"),
-    ("services/admin/app.py",         "services/admin/app.py",         "f_admin"),
     ("services/gateway/app.py",       "services/gateway/app.py",       "f_gw"),
 ]
 CH = 1800
 L = ["stty -echo 2>/dev/null",
      "mkdir -p /root/kleal-ms/shared /root/kleal-ms/services/gateway /root/kleal-ms/services/llm "
      "/root/kleal-ms/services/onboarding /root/kleal-ms/services/matching /root/kleal-ms/services/filtration "
-     "/root/kleal-ms/services/buddy /root/kleal-ms/services/admin /root/kleal-ms/services/profile"]
+     "/root/kleal-ms/services/buddy /root/kleal-ms/services/profile"]
 
 shas = {}
 for local, remote, var in FILES:
@@ -75,13 +74,10 @@ L.append("  sleep 3")
 # buddy (conversational) — needs llm + matching + filtration up first
 L.append("  BUDDY_PORT=7075 LLM_URL=http://localhost:7071 MATCH_URL=http://localhost:7074 FILTER_URL=http://localhost:7076 V2_MODEL=llama_self "
          "nohup setsid python3 -u services/buddy/app.py > /root/ms_buddy.log 2>&1 < /dev/null &")
-# admin panel (test-mode user CRUD) — shares the user store with matching; ADMIN_TOKEN from pod env (default changeme-admin)
-L.append('  ADMIN_PORT=7077 MATCH_URL=http://localhost:7074 KLEAL_USERS=/root/kleal-ms/users.json ADMIN_TOKEN="${ADMIN_TOKEN:-changeme-admin}" '
-         "nohup setsid python3 -u services/admin/app.py > /root/ms_admin.log 2>&1 < /dev/null &")
-L.append("  sleep 2")
+L.append("  sleep 2")   # NB: the admin panel is deployed separately via build/deploy_admin.py (own tunnel)
 # gateway LAST on :7080 (same port the tunnel already targets)
 L.append("  HUB_PORT=7080 HUB_ONB=http://127.0.0.1:7072 HUB_PROF=http://127.0.0.1:7073 HUB_MATCH=http://127.0.0.1:7074 "
-         "HUB_BUDDY=http://127.0.0.1:7075 HUB_FILTER=http://127.0.0.1:7076 HUB_ADMIN=http://127.0.0.1:7077 "
+         "HUB_BUDDY=http://127.0.0.1:7075 HUB_FILTER=http://127.0.0.1:7076 "
          "nohup setsid python3 -u services/gateway/app.py > /root/ms_gateway.log 2>&1 < /dev/null &")
 L.append("  sleep 5")
 L.append("  echo '===HEALTH==='")
@@ -91,8 +87,6 @@ L.append('  curl -s -m6 -o /dev/null -w "prof=%{http_code}\\n" localhost:7073/')
 L.append('  curl -s -m6 -o /dev/null -w "match=%{http_code}\\n" localhost:7074/api/agent/weights')
 L.append('  curl -s -m6 -o /dev/null -w "filter=%{http_code}\\n" localhost:7076/')
 L.append('  curl -s -m6 -o /dev/null -w "buddy=%{http_code}\\n" localhost:7075/')
-L.append('  curl -s -m6 -o /dev/null -w "admin=%{http_code}\\n" localhost:7077/admin')
-L.append('  curl -s -m6 -o /dev/null -w "gw_admin=%{http_code}\\n" localhost:7080/admin')
 L.append('  curl -s -m6 -o /dev/null -w "gw_root=%{http_code}\\n" localhost:7080/')
 L.append('  curl -s -m8 -o /dev/null -w "gw_profile=%{http_code}\\n" localhost:7080/profile')
 L.append('  curl -s -m8 -o /dev/null -w "gw_agent=%{http_code}\\n" localhost:7080/api/agent/weights')
