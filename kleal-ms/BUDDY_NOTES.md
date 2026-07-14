@@ -1,0 +1,56 @@
+# buddy-service — what changed (2026-07-14)
+
+Our standalone Buddy (the `buddy/` package in this repo, which ran as its own service on `:8090`) was folded
+into the microservice stack. It is no longer a separate app: its brain now lives in
+`kleal-ms/services/buddy/app.py`, and the parts that duplicated the stack were dropped in favour of the
+services that already own them.
+
+| our old buddy (`/buddy`, :8090) | where it went |
+|---|---|
+| `llm.py` (OpenAI client + key) | dropped → `shared/llm_client.py` → **llm-service** owns the keys |
+| `api.py` (own HTTP server) | dropped → `shared/http_util.py` + the gateway |
+| `store.py` (own SQLite + 5 seeded fake profiles) | dropped → **matching-service** owns the candidate pool |
+| `matching.py` (our thin scorer) | dropped → **matching-service** ranks (gates, tiers, weights, geo, feedback) |
+| `agent.py` / `prompts.py` (conversation, tool-call, intent) | **kept** → merged into `services/buddy/app.py` |
+| RU→EN normalisation, humanised reasons | **kept + extended** (see below) |
+
+Result: buddy holds no keys, no user DB, no ranker. It converses, remembers, canonicalises, and orchestrates
+`filtration → matching`.
+
+## What buddy adds on top of the previous version
+
+1. **A backstop for the `match` flag.** The persona asks the 70B to be a great chatbot *and* to raise
+   `"match": true` when the user wants people. At temp 0.6 it often does the first and forgets the second: it
+   answered *"find me someone to play dota with tonight"* with a chat question while extracting
+   `signals.interest = "play dota"`. Per the prompt's own contract `interest` is only set when they want to do
+   something **with someone**, so `interest` + an explicit ask ("find", "с кем", "someone") now triggers the
+   search anyway. Without it the user asks for people and Kleal just makes conversation.
+2. **Canonicalisation before matching.** matching resolves `topics` against its **English** `TAXONOMY`; an
+   unresolvable topic makes `_base_tier` return `none` for *every* candidate — zero matches, no error anywhere.
+   Two things reach it that it cannot resolve: Russian words (filtration's LLM usually translates, but its
+   deterministic fallback scans `[a-zA-Z]+`, so on Cyrillic it yields nothing) and the novel items filtration
+   is proud of ("labubu"). Buddy now maps topics onto the ranker's vocabulary, falls back to a category
+   bridge, and if nothing is rankable it **says so** instead of silently returning an empty list.
+3. **Replies in the user's language** (machine fields stay English — filtration and matching are EN-only).
+4. **Session memory**: `{user_id, message}` mode, so a thin client does not have to replay the thread.
+   The profile UI's stateless `{messages, profile, signals}` mode is unchanged.
+5. **`/launch`** — the Figma "Launch search" step: match **+ negotiation**, so cards carry real accept/decline
+   verdicts from each candidate's agent. (It also repairs a stale `note`: matching computes `note` at scoring
+   time and negotiation only overwrites `agree`, so a declined candidate came back still saying
+   *"Agent agreed"*.)
+6. **`/onboard`**, **`/intro`**, **`/feedback`**, **`/health`**, **`/state`**; humanised match reasons
+   (engine-speak → card copy); CORS + bare `/buddy/*` aliases; lenient JSON repair for truncated 70B output.
+
+The response is a **superset** — `{reply, signals, match:{intent, top, candidates, fallback}}` is unchanged, so
+the profile UI keeps rendering exactly as before; `{intent, matches, tool_call, category, lang}` are additive.
+
+## For Dev A / Dev B — two things worth knowing
+
+- **`BROAD_OF` in `services/buddy/app.py` mirrors `TAXONOMY` in `services/matching/app.py`.** Duplication is a
+  smell; it lives in buddy only because buddy is the one that must guarantee a rankable query. The right home
+  is `shared/taxonomy.py`, imported by both — happy to move it whenever you want.
+- **filtration's deterministic fallback is Cyrillic-blind** (`re.findall(r"[a-zA-Z]+", ...)`) and its `topics`
+  are not validated against matching's taxonomy, so a category can be perfect while the ranker still sees
+  nothing. Buddy compensates, but the durable fix belongs in filtration.
+
+Backup of the previous buddy on the pod: `services/buddy/app.py.bak_20260714_2218`.

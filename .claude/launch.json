@@ -17,7 +17,7 @@
     },
     {
       "name": "kleal-profile",
-      "runtimeExecutable": "python",
+      "runtimeExecutable": "python3",
       "runtimeArgs": ["-X", "utf8", "kleal_profile.py"],
       "port": 7073,
       "autoPort": false
