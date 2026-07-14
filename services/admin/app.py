@@ -31,6 +31,7 @@ ROLES = ["play", "watch", "discuss", "practise", "attend", "meet"]
 
 # ---------------- user normalisation (every stored user is complete + matching-safe) ----------------
 def _as_list(v):
+    """Single-token list (interests, languages, topics) — split on commas AND whitespace."""
     if isinstance(v, list):
         return [str(x).strip() for x in v if str(x).strip()]
     if isinstance(v, str):
@@ -38,40 +39,64 @@ def _as_list(v):
     return []
 
 
+def _as_phrases(v):
+    """Multi-word phrase list (deal-breakers, communities) — split ONLY on commas."""
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    if isinstance(v, str):
+        return [x.strip() for x in v.split(",") if x.strip()]
+    return []
+
+
 def _norm_user(u, keep_id=None):
     u = u or {}
+
+    def _int(v, d):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return d
+
     interests = [x.lower() for x in _as_list(u.get("interests"))] or ["coffee"]
     langs = [x.lower()[:2] for x in _as_list(u.get("langs") or u.get("languages"))] or ["en"]
     try:
         km = round(float(u.get("km", 2.0)), 1)
     except (TypeError, ValueError):
         km = 2.0
-    try:
-        age = int(u.get("age", 28))
-    except (TypeError, ValueError):
-        age = 28
     vibe = str(u.get("vibe") or "chill").lower()
     role = str(u.get("role") or "meet").lower()
+    deal = _as_phrases(u.get("dealBreakers"))[:6]
+    ents = _as_phrases(u.get("entities"))[:6] or [interests[0].capitalize() + " scene"]
+    # own active intent -> makes this person a RECIPROCAL (T0) match. From an `intents` list, or the form's ownIntent* fields.
+    intents = u.get("intents") if isinstance(u.get("intents"), list) else []
+    oi_topics = [t.lower() for t in _as_list(u.get("ownIntentTopics"))][:3]
+    if oi_topics:
+        oi_type = str(u.get("ownIntentType") or "social").lower()
+        oi_role = str(u.get("ownIntentRole") or "meet").lower()
+        intents = [{"type": oi_type, "topics": oi_topics, "role": oi_role if oi_role in ROLES else "meet"}]
+    dcd = u.get("declinedOwnerDaysAgo")
+    dcd = int(dcd) if str(dcd).strip().lstrip("-").isdigit() else None
     return {
         "id": keep_id or u.get("id") or ("u" + uuid.uuid4().hex[:8]),
         "name": (str(u.get("name") or "").strip() or "User"),
         "interests": interests[:6],
         "vibe": vibe if vibe in VIBES else "chill",
         "langs": langs[:4],
+        "area": str(u.get("area") or "").strip(),
         "km": km, "lat": u.get("lat"), "lon": u.get("lon"),
         "open": bool(u.get("open", True)),
         "role": role if role in ROLES else "meet",
         "datingOk": bool(u.get("datingOk", False)),
-        "age": age,
+        "age": _int(u.get("age", 28), 28),
         "verified": bool(u.get("verified", True)),
         "paused": bool(u.get("paused", False)),
-        "pending": int(u.get("pending") or 0),
+        "pending": _int(u.get("pending"), 0),
         "blocksMe": bool(u.get("blocksMe", False)),
-        "lastActiveDays": int(u.get("lastActiveDays") or 0),
-        "declinedOwnerDaysAgo": u.get("declinedOwnerDaysAgo"),
-        "intents": u.get("intents") if isinstance(u.get("intents"), list) else [],
-        "entities": (u.get("entities") if isinstance(u.get("entities"), list) else None) or [interests[0].capitalize() + " scene"],
-        "dealBreakers": u.get("dealBreakers") if isinstance(u.get("dealBreakers"), list) else [],
+        "lastActiveDays": _int(u.get("lastActiveDays"), 0),
+        "declinedOwnerDaysAgo": dcd,
+        "intents": intents,
+        "entities": ents,
+        "dealBreakers": deal,
     }
 
 
@@ -237,6 +262,11 @@ td.wrap2{white-space:normal;max-width:220px}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#181b22;color:#fff;padding:9px 16px;border-radius:10px;opacity:0;transition:.2s;pointer-events:none;font-size:13px}
 .toast.show{opacity:1}
 .tabler{overflow-x:auto}
+.sec{font-size:11px;color:#8a909c;text-transform:uppercase;letter-spacing:.04em;margin:16px 0 6px;font-weight:700}
+.chk{display:flex;align-items:center;gap:6px;margin:0;font-size:13px}
+.chk input{min-width:auto}
+.adv{border-top:1px dashed #e7e8ec;margin-top:14px;padding-top:6px}
+.advtog{cursor:pointer;color:#f5455c;font-size:12px;font-weight:600;user-select:none}
 </style></head><body>
 <div id="app"></div>
 <div class="toast" id="toast"></div>
@@ -249,20 +279,29 @@ const VIBES=["calm","energetic","intellectual","creative","competitive","chill",
 const ROLES=["play","watch","discuss","practise","attend","meet"];
 
 async function load(){const r=await api('/api/admin/users');USERS=r.users||[];render();}
+const gv=id=>{const e=$(id);return e?e.value:'';}, gc=id=>{const e=$(id);return e?e.checked:false;};
 async function saveUser(){
-  const u={name:$('#f_name').value,age:+$('#f_age').value||28,interests:$('#f_int').value,vibe:$('#f_vibe').value,
-    langs:$('#f_lang').value,km:+$('#f_km').value||2,role:$('#f_role').value,
-    open:$('#f_open').checked,verified:$('#f_ver').checked,datingOk:$('#f_dat').checked,paused:$('#f_pau').checked};
+  const u={name:gv('#f_name'),age:+gv('#f_age')||28,area:gv('#f_area'),interests:gv('#f_int'),vibe:gv('#f_vibe'),
+    langs:gv('#f_lang'),km:+gv('#f_km')||2,role:gv('#f_role'),
+    dealBreakers:gv('#f_deal'),entities:gv('#f_ent'),
+    ownIntentType:gv('#f_oit'),ownIntentTopics:gv('#f_oitop'),ownIntentRole:gv('#f_oirole'),
+    open:gc('#f_open'),verified:gc('#f_ver'),datingOk:gc('#f_dat'),paused:gc('#f_pau'),blocksMe:gc('#f_blk'),
+    pending:+gv('#f_pend')||0,lastActiveDays:+gv('#f_last')||0,declinedOwnerDaysAgo:gv('#f_cool')};
   if(!u.name.trim()){toast('Name required');return;}
   if(editing){await api('/api/admin/user/'+editing,{method:'POST',body:JSON.stringify(u)});toast('Updated');}
   else{await api('/api/admin/users',{method:'POST',body:JSON.stringify(u)});toast('User added');}
   editing=null;await load();
 }
 function editRow(id){const u=USERS.find(x=>x.id===id);if(!u)return;editing=id;render();setTimeout(()=>{
-  $('#f_name').value=u.name;$('#f_age').value=u.age;$('#f_int').value=(u.interests||[]).join(', ');
-  $('#f_vibe').value=u.vibe;$('#f_lang').value=(u.langs||[]).join(', ');$('#f_km').value=u.km;$('#f_role').value=u.role;
-  $('#f_open').checked=!!u.open;$('#f_ver').checked=!!u.verified;$('#f_dat').checked=!!u.datingOk;$('#f_pau').checked=!!u.paused;
+  const sv=(id,val)=>{const e=$(id);if(e)e.value=(val==null?'':val);}, sc=(id,val)=>{const e=$(id);if(e)e.checked=!!val;};
+  sv('#f_name',u.name);sv('#f_age',u.age);sv('#f_area',u.area);sv('#f_int',(u.interests||[]).join(', '));
+  sv('#f_vibe',u.vibe);sv('#f_lang',(u.langs||[]).join(', '));sv('#f_km',u.km);sv('#f_role',u.role);
+  sv('#f_deal',(u.dealBreakers||[]).join(', '));sv('#f_ent',(u.entities||[]).join(', '));
+  const oi=(u.intents||[])[0]||{};sv('#f_oit',oi.type||'social');sv('#f_oitop',(oi.topics||[]).join(', '));sv('#f_oirole',oi.role||'meet');
+  sc('#f_open',u.open);sc('#f_ver',u.verified);sc('#f_dat',u.datingOk);sc('#f_pau',u.paused);sc('#f_blk',u.blocksMe);
+  sv('#f_pend',u.pending);sv('#f_last',u.lastActiveDays);sv('#f_cool',u.declinedOwnerDaysAgo);
   window.scrollTo(0,0);},0);}
+function toggleAdv(){const a=$('#advbox');if(a)a.style.display=(a.style.display==='none'?'block':'none');}
 async function delRow(id){const u=USERS.find(x=>x.id===id);if(!confirm('Delete '+(u?u.name:'user')+'?'))return;await api('/api/admin/user/'+id+'/delete',{method:'POST'});toast('Deleted');await load();}
 async function toggle(id,field){const u=USERS.find(x=>x.id===id);if(!u)return;await api('/api/admin/user/'+id,{method:'POST',body:JSON.stringify({[field]:!u[field]})});await load();}
 async function reseed(){if(!confirm('Reset the user list to the demo pool? This replaces all users.'))return;const r=await api('/api/admin/reseed',{method:'POST'});toast('Reseeded '+r.count+' users');await load();}
@@ -288,41 +327,70 @@ function render(){
     <button class="danger mini" onclick="clearAll()">Delete all users</button></div>
   <div class="wrap">
     <div class="card"><h2>${editing?'Edit user':'Add user'}</h2>
+
+      <div class="sec">Basics &amp; location</div>
       <div class="row">
         <div><label>Name</label><input id="f_name"></div>
-        <div><label>Age</label><input id="f_age" type="number" style="min-width:78px" value="28"></div>
-        <div style="flex:1;min-width:240px"><label>Interests (comma)</label><input id="f_int" style="width:100%" placeholder="chess, coffee"></div>
-        <div><label>Vibe</label><select id="f_vibe">${VIBES.map(v=>`<option>${v}</option>`).join('')}</select></div>
-        <div><label>Languages</label><input id="f_lang" style="min-width:100px" placeholder="en, es" value="en"></div>
+        <div><label>Age</label><input id="f_age" type="number" style="min-width:74px" value="28"></div>
+        <div><label>Area / city</label><input id="f_area" style="min-width:130px" placeholder="Barcelona"></div>
         <div><label>Distance km</label><input id="f_km" type="number" step="0.1" style="min-width:90px" value="2"></div>
-        <div><label>Role</label><select id="f_role">${ROLES.map(v=>`<option>${v}</option>`).join('')}</select></div>
+        <div><label>Languages</label><input id="f_lang" style="min-width:110px" placeholder="en, es" value="en"></div>
       </div>
-      <div class="row" style="margin-top:12px">
-        <label style="display:flex;align-items:center;gap:6px;margin:0"><input id="f_open" type="checkbox" checked style="min-width:auto"> open to meet</label>
-        <label style="display:flex;align-items:center;gap:6px;margin:0"><input id="f_ver" type="checkbox" checked style="min-width:auto"> verified</label>
-        <label style="display:flex;align-items:center;gap:6px;margin:0"><input id="f_dat" type="checkbox" style="min-width:auto"> dating opt-in</label>
-        <label style="display:flex;align-items:center;gap:6px;margin:0"><input id="f_pau" type="checkbox" style="min-width:auto"> paused</label>
-        <div style="margin-left:auto;display:flex;gap:8px">
-          ${editing?`<button class="ghost" onclick="editing=null;render()">Cancel</button>`:''}
-          <button onclick="saveUser()">${editing?'Save changes':'Add user'}</button>
-        </div>
+
+      <div class="sec">Interests &amp; personality</div>
+      <div class="row">
+        <div style="flex:1;min-width:220px"><label>Interests (comma)</label><input id="f_int" style="width:100%" placeholder="chess, coffee"></div>
+        <div><label>Preferred role</label><select id="f_role">${ROLES.map(v=>`<option>${v}</option>`).join('')}</select></div>
+        <div><label>Vibe</label><select id="f_vibe">${VIBES.map(v=>`<option>${v}</option>`).join('')}</select></div>
+        <div style="flex:1;min-width:200px"><label>Communities (comma)</label><input id="f_ent" style="width:100%" placeholder="Casa del Chess club"></div>
+      </div>
+
+      <div class="sec">Active intent — makes them a reciprocal (T0) match</div>
+      <div class="row">
+        <div><label>Intent type</label><select id="f_oit"><option value="">— none —</option>${['sport','gaming','networking','language','dating','social','other'].map(v=>`<option>${v}</option>`).join('')}</select></div>
+        <div style="flex:1;min-width:220px"><label>Intent topics (comma)</label><input id="f_oitop" style="width:100%" placeholder="chess (leave blank for no active intent)"></div>
+        <div><label>Intent role</label><select id="f_oirole">${ROLES.map(v=>`<option>${v}</option>`).join('')}</select></div>
+      </div>
+
+      <div class="sec">Safety &amp; matching flags</div>
+      <div class="row">
+        <label class="chk"><input id="f_open" type="checkbox" checked> open to meet</label>
+        <label class="chk"><input id="f_ver" type="checkbox" checked> verified</label>
+        <label class="chk"><input id="f_dat" type="checkbox"> dating opt-in</label>
+        <label class="chk"><input id="f_pau" type="checkbox"> paused</label>
+        <div style="flex:1;min-width:200px"><label>Deal-breakers (comma)</label><input id="f_deal" style="width:100%" placeholder="no smokers, no late nights"></div>
+      </div>
+
+      <div class="adv"><span class="advtog" onclick="toggleAdv()">▸ Advanced state (anti-spam / activity)</span>
+        <div id="advbox" style="display:none;margin-top:10px"><div class="row">
+          <div><label>Open invites (pending)</label><input id="f_pend" type="number" style="min-width:120px" value="0" title="≥6 = overloaded, gated out"></div>
+          <div><label>Last active (days ago)</label><input id="f_last" type="number" style="min-width:130px" value="0" title="≤3 = 'recently active' bonus"></div>
+          <div><label>Declined me (days ago)</label><input id="f_cool" type="number" style="min-width:150px" placeholder="blank = no" title="<7 = cooldown, gated out"></div>
+          <label class="chk" style="align-self:end;padding-bottom:8px"><input id="f_blk" type="checkbox"> blocks me</label>
+        </div></div>
+      </div>
+
+      <div class="row" style="margin-top:14px;justify-content:flex-end">
+        ${editing?`<button class="ghost" onclick="editing=null;render()">Cancel</button>`:''}
+        <button onclick="saveUser()">${editing?'Save changes':'Add user'}</button>
       </div>
     </div>
     <div class="card">
       <div class="bar"><h2 style="margin:0">Users</h2>
         <input class="search" placeholder="Search name / interest / vibe…" value="${esc(Q)}" oninput="Q=this.value;render()"></div>
       <div class="tabler"><table>
-        <thead><tr><th>Name</th><th>Age</th><th>Interests</th><th>Vibe</th><th>Langs</th><th>km</th><th>Role</th>
+        <thead><tr><th>Name</th><th>Age</th><th>Area</th><th>Interests</th><th>Vibe</th><th>Langs</th><th>km</th><th>Role</th>
           <th title="open">Op</th><th title="verified">Vf</th><th title="dating">Dt</th><th title="paused">Pa</th><th></th></tr></thead>
         <tbody>${rows.map(u=>`<tr>
-          <td><b>${esc(u.name)}</b></td><td>${u.age}</td>
+          <td><b>${esc(u.name)}</b>${(u.intents||[]).length?'<span class="tag" title="has an active intent — reciprocal match" style="background:#e9f9f0;color:#1f9d57">↔</span>':''}</td><td>${u.age}</td>
+          <td class="muted">${esc(u.area||'—')}</td>
           <td class="wrap2">${(u.interests||[]).map(i=>`<span class="tag">${esc(i)}</span>`).join('')}</td>
           <td>${esc(u.vibe)}</td><td class="muted">${(u.langs||[]).join(', ')}</td><td>${u.km}</td><td class="muted">${esc(u.role)}</td>
           <td>${flag(u,'open','open to meet')}</td><td>${flag(u,'verified','verified')}</td>
           <td>${flag(u,'datingOk','dating opt-in')}</td><td>${flag(u,'paused','paused',true)}</td>
           <td style="text-align:right"><button class="ghost mini" onclick="editRow('${u.id}')">Edit</button>
             <button class="danger mini" onclick="delRow('${u.id}')">Delete</button></td></tr>`).join('')
-          ||`<tr><td colspan="12" class="muted" style="padding:22px;text-align:center">No users. Add one above or reset to the demo pool.</td></tr>`}
+          ||`<tr><td colspan="13" class="muted" style="padding:22px;text-align:center">No users. Add one above or reset to the demo pool.</td></tr>`}
         </tbody></table></div>
     </div>
     <p class="muted" style="font-size:12px">Changes take effect for the matching agent within a few seconds (shared user store). Test mode.</p>
