@@ -10,6 +10,9 @@ __pycache__/
 *.env
 *.env.local
 
+# per-dev knowledge-graph memory data (config .mcp.json IS shared; the graph data is local)
+.claude/memory.json
+
 # node
 node_modules/
 package-lock.json
