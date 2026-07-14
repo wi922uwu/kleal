@@ -19,12 +19,16 @@ Result: buddy holds no keys, no user DB, no ranker. It converses, remembers, can
 
 ## What buddy adds on top of the previous version
 
-1. **A backstop for the `match` flag.** The persona asks the 70B to be a great chatbot *and* to raise
-   `"match": true` when the user wants people. At temp 0.6 it often does the first and forgets the second: it
-   answered *"find me someone to play dota with tonight"* with a chat question while extracting
-   `signals.interest = "play dota"`. Per the prompt's own contract `interest` is only set when they want to do
-   something **with someone**, so `interest` + an explicit ask ("find", "с кем", "someone") now triggers the
-   search anyway. Without it the user asks for people and Kleal just makes conversation.
+1. **A deterministic search trigger — buddy chats by default, searches only on an explicit ask.**
+   The 70B's own `"match"` flag is unreliable in *both* directions: it answered *"find me someone to play dota
+   tonight"* with a chat question (missed a real ask), yet it also fired on plain talk like *"мы вчера поиграли
+   в футбол вместе"* and *"давай сыграем в шахматы"* (a game with Buddy!). An early fix keyed off
+   `signals.interest`, but the model extracts `interest` for almost any activity mention, so that over-fired.
+   The trigger is now two-tiered and independent of the flag's noise (`wants_people()`): a **STRONG** ask
+   (найди / ищу с кем / find me / who wants / teammate…) always searches; a softer **COMPANION** cue
+   (с кем / кто-нибудь / someone to…) searches only if the model *also* flagged match. Bare activity words
+   ("поиграть", "футбол", "together") never trigger on their own. Net effect: Kleal is a conversationalist
+   first and only creates an intent when the user actually asks to meet people.
 2. **Canonicalisation before matching.** matching resolves `topics` against its **English** `TAXONOMY`; an
    unresolvable topic makes `_base_tier` return `none` for *every* candidate — zero matches, no error anywhere.
    Two things reach it that it cannot resolve: Russian words (filtration's LLM usually translates, but its

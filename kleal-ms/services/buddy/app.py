@@ -65,10 +65,36 @@ STORE_PATH = os.environ.get("BUDDY_STORE", os.path.join(_HERE, "buddy_store.json
 
 SIGNAL_KEYS = ("topics", "role", "type", "vibe", "languages", "time", "area", "datingOk", "dealBreakers", "interest")
 LIST_KEYS = ("topics", "languages", "dealBreakers")
-MEET_WORDS = ("meet", "find", "someone", "people", "partner", "buddy", "teammate", "match", "date",
-              "play with", "together", "join", "hang out", "who else",
-              "найд", "познаком", "встрет", "тиммейт", "напарник", "сыграть", "поиграть", "вместе",
-              "компан", "кто-нибудь", "кого-нибудь", "с кем")
+
+# ── When buddy SEARCHES vs just chats ──────────────────────────────────────────────────────────────
+# Buddy is a general assistant FIRST; it should create an intent + look for people only on an EXPLICIT ask,
+# never just because an activity was mentioned. The 70B's own "match" flag is unreliable in both directions
+# (misses real asks; fires on plain chat), so the trigger is deterministic and two-tiered:
+#   STRONG  — an unmistakable ask to find/meet people (найди, ищу с кем, find me, who wants, teammate…)
+#             -> always search.
+#   COMPANION — a softer "with someone" cue (с кем, кто-нибудь, someone to…)
+#             -> search only if the model ALSO flagged match, so a stray cue in chat doesn't fire.
+# Bare activity words ("поиграть", "футбол", "together", "play") never trigger on their own — that was the
+# bug: "мы вчера поиграли в футбол вместе" and "давай сыграем в шахматы" (with Buddy!) both created intents.
+_STRONG_ASK = re.compile(
+    r"найд[иёе]|найти\b|подбер[иёе]|свед[иё]|познаком|"
+    r"ищу\s+(кого|с\s+кем|людей|компан|напарник|партн[её]р|тиммейт|игрок)|"
+    r"кто\s+хочет|кто-нибудь\s+хочет|кто\s+со\s+мной|есть\s+кто|нужен\s+напарник|напарник|тиммейт|"
+    r"find\s+(me\b|someone|people|players?|a\s+(teammate|partner|buddy|group))|"
+    r"looking\s+for\s+(someone|people|players?|a\s+(teammate|partner|buddy|group))|"
+    r"who\s+wants|who'?s\s+(up\s+for|down\s+for)|anyone\s+(want|up\s+for|keen|down)|"
+    r"match\s+me|connect\s+me|introduce\s+me|hook\s+me\s+up|teammate", re.I)
+_COMPANION = re.compile(
+    r"с\s+кем|кого-нибудь|кто-нибудь|компани[юе]|"
+    r"someone\s+to\b|somebody\s+to\b|people\s+to\b|with\s+(someone|somebody|people)", re.I)
+
+
+def wants_people(text, model_flagged):
+    """Deterministic search trigger. STRONG ask always; COMPANION cue only with the model's agreement."""
+    t = str(text or "")
+    if _STRONG_ASK.search(t):
+        return True
+    return bool(model_flagged and _COMPANION.search(t))
 
 BUDDY_PROMPT = '''You are "Kleal" — the user's buddy: a warm, smart, genuinely helpful companion they can chat with like they would with ChatGPT. Talk naturally (1-4 sentences). Be actually useful: answer questions, riff on ideas, recommend things, help them think — about anything, not only meeting people. You are their day-to-day AI on the Kleal platform. (Deeper tools like web research come later.)
 
@@ -609,19 +635,13 @@ def buddy_chat(messages, profile, signals, uid=None):
 
     if isinstance(obj, dict) and obj.get("reply"):
         reply = str(obj.get("reply"))[:600]
-        delta = obj.get("signals") or {}
-        sig = _merge_signals(sig, delta)
-        # BACKSTOP for a flaky flag. The persona asks the model to be a great chatbot AND to raise
-        # "match": true when the user wants people. At temp 0.6 the 70B often does the first and forgets the
-        # second — it answered "find me someone to play dota tonight" with a chat question while extracting
-        # signals.interest="play dota". Per the prompt's own contract, `interest` is only set when they want
-        # to do something WITH someone, so an interest + an explicit ask ("find", "с кем", "someone") IS the
-        # tool call. Without this, the user asks for people and Kleal just makes conversation.
-        want_match = bool(obj.get("match")) or (
-            bool(delta.get("interest")) and any(w in last_user.lower() for w in MEET_WORDS))
+        sig = _merge_signals(sig, obj.get("signals") or {})
+        # The model's flag alone is not enough (it fires on plain chat and misses real asks). Require an
+        # explicit ask in the user's words; the flag only tips a soft "with someone" cue over the line.
+        want_match = wants_people(last_user, bool(obj.get("match")))
     else:
-        # deterministic fallback (LLM down): keep it light + detect a meet-intent by keywords
-        want_match = any(w in last_user.lower() for w in MEET_WORDS)
+        # LLM down: only the strong, explicit ask triggers a search — never a bare activity mention.
+        want_match = bool(_STRONG_ASK.search(last_user))
         reply = _FALLBACK_REPLY[lang][0 if want_match else 1]
 
     out = {"reply": reply, "signals": sig, "lang": lang, "match": None,
