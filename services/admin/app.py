@@ -269,7 +269,6 @@ async function tryLogin(){TOK=$('#tok').value.trim();const r=await fetch('/api/a
   if(r&&r.ok){sessionStorage.setItem('kleal_admin_tok',TOK);load();}else{toast('Wrong token');}}
 
 function render(){
-  if(!TOK){gate();return;}
   const q=Q.toLowerCase();
   const rows=USERS.filter(u=>!q||(u.name+' '+(u.interests||[]).join(' ')+' '+u.vibe).toLowerCase().includes(q));
   const flag=(u,f,label,warn)=>`<span class="flag ${warn?'warn':''} ${u[f]?'on':''}" title="${label}" onclick="toggle('${u.id}','${f}')">${u[f]?(warn?'❚':'✓'):'·'}</span>`;

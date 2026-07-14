@@ -7,13 +7,16 @@
 import gzip, base64, hashlib, os
 
 ROOT = r"C:\Projects\.dating"
-FILES = [
+# ADMIN_ONLY=1  -> ship ONLY admin/app.py and restart ONLY admin (matching + tunnel untouched).
+ADMIN_ONLY = os.environ.get("ADMIN_ONLY") == "1"
+_ALL = [
     ("shared/llm_client.py",       "shared/llm_client.py",       "a_llmc"),
     ("shared/kleal_lib.py",        "shared/kleal_lib.py",        "a_klib"),
     ("shared/http_util.py",        "shared/http_util.py",        "a_http"),
     ("services/matching/app.py",   "services/matching/app.py",   "a_match"),
     ("services/admin/app.py",      "services/admin/app.py",      "a_admin"),
 ]
+FILES = [f for f in _ALL if f[2] == "a_admin"] if ADMIN_ONLY else _ALL
 CH = 1800
 L = ["stty -echo 2>/dev/null",
      "mkdir -p /root/kleal-ms/shared /root/kleal-ms/services/matching /root/kleal-ms/services/admin"]
@@ -39,11 +42,12 @@ for local, remote, var in FILES:
     L.append("  mv /root/kleal-ms/%s.new /root/kleal-ms/%s" % (remote, remote))
 L.append("  echo '===SWAPPED==='")
 L.append("  cd /root/kleal-ms")
-# restart ONLY matching (targeted) so it picks up the shared user store; everything else untouched
-L.append("  pkill -9 -f 'services/matching/app.py' 2>/dev/null; sleep 1")
-L.append("  MATCHING_PORT=7074 LLM_URL=http://localhost:7071 V2_MODEL=llama_self KLEAL_USERS=/root/kleal-ms/users.json "
-         "nohup setsid python3 -u services/matching/app.py > /root/ms_matching.log 2>&1 < /dev/null &")
-L.append("  sleep 3")
+if not ADMIN_ONLY:
+    # restart ONLY matching (targeted) so it picks up the shared user store; everything else untouched
+    L.append("  pkill -9 -f 'services/matching/app.py' 2>/dev/null; sleep 1")
+    L.append("  MATCHING_PORT=7074 LLM_URL=http://localhost:7071 V2_MODEL=llama_self KLEAL_USERS=/root/kleal-ms/users.json "
+             "nohup setsid python3 -u services/matching/app.py > /root/ms_matching.log 2>&1 < /dev/null &")
+    L.append("  sleep 3")
 # (re)start admin on :7077 — standalone, no token
 L.append("  pkill -9 -f 'services/admin/app.py' 2>/dev/null; sleep 1")
 L.append("  ADMIN_PORT=7077 MATCH_URL=http://localhost:7074 KLEAL_USERS=/root/kleal-ms/users.json "
