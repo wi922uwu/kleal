@@ -20,6 +20,7 @@ build/*
 !build/deploy_to_pod.py
 !build/deploy_v2_to_pod.py
 !build/deploy_bundle_to_pod.py
+!build/deploy_microservices.py
 
 # microservices runtime state (server-side session store) + logs
 services/matching/kleal_store.json
