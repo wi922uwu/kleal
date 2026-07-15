@@ -48,6 +48,27 @@ Result: buddy holds no keys, no user DB, no ranker. It converses, remembers, can
 The response is a **superset** — `{reply, signals, match:{intent, top, candidates, fallback}}` is unchanged, so
 the profile UI keeps rendering exactly as before; `{intent, matches, tool_call, category, lang}` are additive.
 
+## Edit with Kleal — change the profile by talking (2026-07-15)
+
+The profile-service "Profile" button (in the buddy-chat header) opens a dedicated **editor chat**: the user
+changes their own profile in natural language ("добавь теннис", "город Мадрид", "убери футбол") and Kleal
+applies it, with a **confirm step** before every change.
+
+- **Backend** — a separate endpoint `POST /api/buddy/profile-edit {message, profile}` → `{reply, patch}`,
+  kept out of `/chat` so the editor prompt can't leak into the conversational/match agent. `patch` is a
+  list of `{op, field, value, label}`. Set-fields (`name, location, languages, formats, availability,
+  safety, vibe, summary`) carry the full new value; list-fields (`interests, goals`) carry one item with
+  `op add|remove`. `_validate_patch` drops unknown fields / empty values (so the model can't touch anything
+  outside the whitelist). Non-edit messages ("what's the weather?") return `patch:[]` and just reply.
+- **Frontend** — `scr_profileedit` (reuses the chat UI). The reply is a confirmation *question*; the patch
+  renders as a card with the human `label`s + **Отмена / Применить**. Only on Применить does
+  `applyProfilePatch` mutate `DATA` (the frontend owns the profile) and `saveState()` persist it.
+  `fullProfileForEdit` sends the current values (semantic shape) so the agent reasons over real state;
+  `applyProfilePatch` maps semantic fields back onto `DATA` (snapshot rows, `interests`, `goals`,
+  `matchingPaths`). The backend never sees `DATA`'s internal shape — clean separation.
+- **Verified** e2e through the gateway: RU edits produce correct patches ("убери футбол" matched the
+  English `Football`), the confirm→apply flow updates the profile and the change shows on the profile screen.
+
 ## For Dev A / Dev B — two things worth knowing
 
 - **`BROAD_OF` in `services/buddy/app.py` mirrors `TAXONOMY` in `services/matching/app.py`.** Duplication is a

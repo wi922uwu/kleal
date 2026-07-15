@@ -700,6 +700,80 @@ def onboard(uid, profile):
     return {"summary": summary, "signals": sig}
 
 
+# ======================= PROFILE EDITOR ("Edit with Kleal") =======================
+# The user opens a dedicated editor (the profile-service "Profile" button) and changes THEIR OWN profile
+# in natural language ("добавь теннис", "город Мадрид", "убери футбол"). We return a structured PATCH; the
+# frontend shows a confirmation and, on approval, applies it to its own DATA (the frontend owns the profile).
+# We never mutate anything here — buddy has no copy of the card's DATA shape. Keep this endpoint separate
+# from /chat so the editor prompt/behaviour can't leak into the conversational agent.
+#
+# Fields (must match the frontend's applyProfilePatch mapping):
+#   set-fields  (op "set",   value = the FULL new human string): name, location, languages, formats,
+#                availability, safety, vibe, summary
+#   list-fields (op add/remove, value = ONE item):               interests, goals
+EDIT_SET_FIELDS = ("name", "location", "languages", "formats", "availability", "safety", "vibe", "summary")
+EDIT_LIST_FIELDS = ("interests", "goals")
+EDIT_FIELDS = EDIT_SET_FIELDS + EDIT_LIST_FIELDS
+
+PROFILE_EDIT_PROMPT = '''You are Kleal's profile editor. The user is changing THEIR OWN profile by talking to you. Read their message and the current profile, and return the change(s) as a PATCH.
+
+Current profile (JSON): __PROFILE__
+
+Fields you may change:
+- name, location, languages, formats, availability, safety, vibe, summary  -> op "set", value = the COMPLETE new value as a short human string. For languages/formats/availability produce the full updated value (merge with what's already there — do NOT drop existing items unless the user asked to remove them).
+- interests, goals  -> op "add" or "remove", value = the SINGLE item (one interest / one goal). Emit one patch entry per item.
+
+Return ONE JSON object, nothing else:
+{"reply":"<a short confirmation QUESTION in the user's language, e.g. 'Добавить теннис в интересы?'>",
+ "patch":[{"op":"set|add|remove","field":"<one field above>","value":"<value>","label":"<short human description of THIS change, user's language>"}]}
+
+Rules:
+- If the user is NOT changing the profile (a question, chit-chat, unclear) -> "patch":[] and just reply naturally. Never invent a change.
+- Multiple changes in one message -> multiple patch entries.
+- reply and label follow the user's language; field names stay English; value for set-fields may be in the user's language (it is shown as-is on the card).'''
+
+
+def _validate_patch(patch):
+    out = []
+    for p in patch or []:
+        if not isinstance(p, dict):
+            continue
+        field = str(p.get("field") or "").strip().lower()
+        op = str(p.get("op") or "").strip().lower()
+        value = p.get("value")
+        if field not in EDIT_FIELDS:
+            continue
+        if field in EDIT_LIST_FIELDS:
+            op = "remove" if op in ("remove", "delete", "rm", "del", "drop") else "add"
+        else:
+            op = "set"
+        if value in (None, "", [], {}):
+            continue
+        out.append({"op": op, "field": field, "value": str(value)[:200],
+                    "label": str(p.get("label") or "").strip()[:120]})
+    return out[:8]
+
+
+def profile_edit(message, profile, lang):
+    """Free-text profile change -> {reply, patch}. Applying is the frontend's job (it owns DATA)."""
+    prof = json.dumps(profile or {}, ensure_ascii=False)[:2500]
+    obj = None
+    try:
+        raw = llm_complete(MODEL_ID, [{"role": "system", "content": PROFILE_EDIT_PROMPT.replace("__PROFILE__", prof)},
+                                      {"role": "user", "content": str(message or "")}], 0.2)
+        obj = _lenient_json(raw)
+    except Exception:
+        obj = None
+    if not isinstance(obj, dict):
+        return {"reply": ("Не совсем понял — что поменять в профиле?" if lang == "ru"
+                          else "I didn't catch that — what should I change?"), "patch": [], "lang": lang}
+    patch = _validate_patch(obj.get("patch"))
+    reply = str(obj.get("reply") or "").strip()[:400] or (
+        ("Готово?" if lang == "ru" else "Want me to apply that?") if patch
+        else ("Что поменять в профиле?" if lang == "ru" else "What should I change?"))
+    return {"reply": reply, "patch": patch, "lang": lang}
+
+
 # ======================= HTTP =======================
 class H(BaseHTTPRequestHandler):
     def _route(self):
@@ -769,6 +843,11 @@ class H(BaseHTTPRequestHandler):
                     _save_store()
                 return send_json(self, 200, {"intent": intent, "match": block, "matches": cards,
                                              "fallback": block.get("fallback"), "lang": lang})
+
+            if r == "/profile-edit":                 # "Edit with Kleal": free text -> profile patch (frontend applies)
+                msg = body.get("message") or ""
+                prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+                return send_json(self, 200, profile_edit(msg, prof, detect_lang(msg)))
 
             if r == "/intro":                        # the candidate's agent writes the icebreaker
                 return send_json(self, 200, _post(MATCH_URL, "/api/agent/intro",

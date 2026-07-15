@@ -442,6 +442,14 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .bc2-mic svg{width:21px;height:21px}
 .bc2-send{width:44px;height:44px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer;box-shadow:0 6px 14px rgba(245,69,92,.35)}
 .bc2-send svg{width:19px;height:19px}
+/* profile-edit confirmation card */
+.ecard{padding:12px 14px;max-width:80%}
+.epatch{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--fg);padding:3px 0}
+.epatch svg{width:16px;height:16px;color:var(--primary);flex:none}
+.eactions{display:flex;gap:8px;margin-top:10px}
+.ebtn{flex:1;font:inherit;font-size:14px;font-weight:700;border-radius:999px;padding:9px 0;cursor:pointer;border:1px solid var(--border)}
+.ebtn.primary{background:var(--primary);color:#fff;border-color:var(--primary)}
+.ebtn.ghost{background:#fff;color:var(--muted)}
 /* match chat */
 .matchhead{display:flex;align-items:center;gap:12px;padding:6px 2px 4px}
 .mava{width:52px;height:52px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
@@ -619,7 +627,7 @@ document.getElementById('back').innerHTML=IC.back;
 // bottom nav (Intents · Search · [create] · Messages · Profile) — rebuilt each render for the active state
 const ROOTS=['agenthome','overview','intents','search','messages'];
 function navFam(){
-  if(cur==='agenthome'||cur==='buddychat'||cur==='notifs')return'';   // center FAB owns these — no pill highlight
+  if(cur==='agenthome'||cur==='buddychat'||cur==='profileedit'||cur==='notifs')return'';   // center FAB owns these — no pill highlight
   if(cur==='search')return'explore';
   if(cur==='intents'||cur==='intentchat'||cur==='matchchat')return'plans';
   if(cur==='messages')return'messages';
@@ -1220,6 +1228,91 @@ function scr_buddychat(){
     </div></div>`;
 }
 
+// ===== "Edit with Kleal": change the profile by talking to the editor agent (/api/buddy/profile-edit) =====
+// The editor returns a semantic PATCH ([{op,field,value,label}]); we show a confirmation, and only on
+// "Применить" apply it to DATA here (the frontend owns the profile). Fields map 1:1 to applyProfilePatch.
+let editMsgs=[], editBusy=false;
+function openProfileEdit(){
+  cur='profileedit';
+  if(!editMsgs.length) editMsgs=[{who:'them',hello:true,
+    text:"Что поменять в профиле? Скажи, например: «добавь теннис», «город Мадрид» или «убери футбол»."}];
+  render();
+}
+function snapRow(title){ return (DATA.snapshot||[]).find(r=>String(r.title).toLowerCase()===String(title).toLowerCase()); }
+function setSnap(title,icon,value){ const r=snapRow(title); if(r){ r.value=value; } else { (DATA.snapshot=DATA.snapshot||[]).push({icon,title,value}); } }
+function editIcon(name){ const n=String(name).toLowerCase();
+  if(/dota|valorant|\bcs\b|league|fifa|game/.test(n))return'gamepad';
+  if(/football|soccer|basket|tennis|gym|run|box|climb|swim|cycl|sport/.test(n))return'football';
+  if(/coffee|walk|dinner|tea|brunch|drinks/.test(n))return'coffee';
+  if(/movie|cinema|film|series/.test(n))return'film';
+  if(/\bai\b|startup|tech|business|network|career|founder/.test(n))return'rocket';
+  if(/archit|design|\bart\b|photo|museum/.test(n))return'building';
+  if(/language|spanish|english|french|german|italian|practice|music/.test(n))return'chat';
+  if(/hik|nature|outdoor|travel|park/.test(n))return'pin';
+  return'spark'; }
+// current profile in the semantic shape the editor agent reasons over (mirror of applyProfilePatch fields)
+function fullProfileForEdit(){ const g=t=>{const r=snapRow(t);return r?r.value:'';};
+  return { name:DATA.name||'', location:g('Location'), languages:g('Languages'),
+    formats:g('Social formats'), availability:g('Availability'), safety:g('Safety'),
+    interests:(DATA.interests||[]).map(i=>i.name), goals:((DATA.goals||{}).active)||[],
+    vibe:((DATA.social||{}).rows||[]).map(r=>r.title+': '+r.value).join(' · '), summary:DATA.summary||'' }; }
+function applyProfilePatch(patch){ const lc=s=>String(s==null?'':s).toLowerCase();
+  (patch||[]).forEach(p=>{ const f=p.field, v=p.value, op=p.op;
+    if(f==='name') DATA.name=v;
+    else if(f==='summary') DATA.summary=v;
+    else if(f==='location'){ setSnap('Location','pin',v); const pc=(DATA.places||[]).find(r=>lc(r.title)==='city'); if(pc)pc.value=v; }
+    else if(f==='languages') setSnap('Languages','globe',v);
+    else if(f==='formats') setSnap('Social formats','users',v);
+    else if(f==='availability') setSnap('Availability','clock',v);
+    else if(f==='safety') setSnap('Safety','shield',v);
+    else if(f==='vibe'){ const row=((DATA.social||{}).rows||[]).find(r=>lc(r.title)==='energy'); if(row)row.value=v; else DATA.summary=(DATA.summary?DATA.summary+' ':'')+v; }
+    else if(f==='interests'){ DATA.interests=DATA.interests||[];
+      if(op==='remove') DATA.interests=DATA.interests.filter(i=>lc(i.name)!==lc(v));
+      else if(!DATA.interests.some(i=>lc(i.name)===lc(v))) DATA.interests.push({name:v,icon:editIcon(v),conf:'Medium',used:true});
+      DATA.matchingPaths=DATA.interests.slice(0,3).map(i=>i.name);
+      setSnap('Interests','spark',DATA.interests.map(i=>i.name).join(' · ')); }
+    else if(f==='goals'){ DATA.goals=DATA.goals||{active:[],optional:[]}; DATA.goals.active=DATA.goals.active||[];
+      if(op==='remove') DATA.goals.active=DATA.goals.active.filter(x=>lc(x)!==lc(v));
+      else if(!DATA.goals.active.some(x=>lc(x)===lc(v))) DATA.goals.active.push(v); }
+  }); }
+async function editTurn(text){ text=(text||'').trim(); if(!text||editBusy) return;
+  editBusy=true; editMsgs.push({who:'me',text,t:Date.now()}); editMsgs.push({who:'them',text:'…',loading:true}); render();
+  let r; try{ r=await fetch('/api/buddy/profile-edit',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({message:text, profile:fullProfileForEdit()})}).then(x=>x.json()); }catch(e){ r=null; }
+  editMsgs=editMsgs.filter(m=>!m.loading); editBusy=false;
+  if(!r){ editMsgs.push({who:'them',text:'Связь пропала — повтори, пожалуйста.',t:Date.now()}); render(); return; }
+  editMsgs.push({who:'them', text:r.reply||'…', t:Date.now(), patch:(r.patch&&r.patch.length)?r.patch:null});
+  render(); saveState(); }
+function confirmEdit(i){ const m=editMsgs[i]; if(!m||!m.patch) return;
+  applyProfilePatch(m.patch); m.patch=null;
+  editMsgs.push({who:'them',text:'✓ Готово — обновил профиль.',t:Date.now()});
+  render(); saveState(); toast('Профиль обновлён'); }
+function cancelEdit(i){ const m=editMsgs[i]; if(!m) return; m.patch=null;
+  editMsgs.push({who:'them',text:'Ок, оставил как было.',t:Date.now()}); render(); }
+function scr_profileedit(){
+  const hd=`<div class="chd">
+    <button class="chd-back" data-act="edit-back">${IC.back}<span>Back</span></button>
+    <div class="chd-pills"><button class="chd-pill" data-act="edit-view">${IC.person}<span>Профиль</span></button></div></div>`;
+  const thread=editMsgs.map((x,i)=>{
+    if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div><div class="btime r">${fmtTime(x.t)}</div></div>`;
+    if(x.hello) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
+    const first=(i===0)||editMsgs[i-1].who!=='them'||editMsgs[i-1].hello;
+    const inner=x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>');
+    const time=x.loading?'':(x.t?`<div class="btime">${fmtTime(x.t)}</div>`:'');
+    const row=`<div class="krow"><div class="kav${first?'':' sp'}"></div><div class="kcol"><div class="kbub">${inner}</div>${time}</div></div>`;
+    if(x.patch){ const chips=x.patch.map(p=>`<div class="epatch">${IC.wand}<span>${esc(p.label||(p.op+' '+p.field+': '+p.value))}</span></div>`).join('');
+      return row+`<div class="card ecard" style="margin:2px 0 2px 43px">${chips}
+        <div class="eactions"><button class="ebtn ghost" data-act="edit-cancel" data-ei="${i}">Отмена</button>
+        <button class="ebtn primary" data-act="edit-apply" data-ei="${i}">Применить</button></div></div>`; }
+    return row;
+  }).join('');
+  return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${thread}</div>
+    <div class="bc2"><button class="bc2-plus" data-act="buddy-plus">+</button>
+      <div class="bc2-field"><input id="ecin" placeholder="Например: добавь теннис…" ${editBusy?'disabled':''}>
+        <button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
+      <button class="bc2-send" data-act="edit-send">${IC.send}</button></div></div>`;
+}
+
 // ---------- Phase 3: public intents on the Explore map ----------
 const ME_LATLON=[41.3874, 2.1686];   // Barcelona (demo user's coarse area)
 const PUBLIC_INTENTS=[
@@ -1365,7 +1458,7 @@ function scr_agenthome(){
   </div>`;
 }
 
-const SCREENS={agenthome:scr_agenthome,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
+const SCREENS={agenthome:scr_agenthome,profileedit:scr_profileedit,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
   places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
   intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages,
   notifs:scr_notifications,matchchat:scr_matchchat,buddychat:scr_buddychat};
@@ -1439,15 +1532,15 @@ function render(){
   rgt.style.visibility = (isRoot && !isHome) ? 'hidden' : 'visible';   // no right icon on Intents/Search/Messages
   rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
   // bottom nav: rebuilt for the active tab; hidden on the intent chat (which has its own composer)
-  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat'||cur==='matchchat'||cur==='buddychat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
+  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat'||cur==='matchchat'||cur==='buddychat'||cur==='profileedit')?'none':'flex'; bn.innerHTML=bnavHTML(); }
   // Home + Buddy chat carry their own headers, so hide the shared app bar there
-  const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||cur==='buddychat')?'none':'flex';
+  const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||cur==='buddychat'||cur==='profileedit')?'none':'flex';
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
   // Buddy chat owns the full height: app area becomes a flex column so the thread scrolls internally
   // and the composer stays pinned. Other screens keep the normal scrolling body.
-  const chat=(cur==='buddychat');
+  const chat=(cur==='buddychat'||cur==='profileedit');
   A.style.display=chat?'flex':''; A.style.flexDirection=chat?'column':'';
   A.style.overflowY=chat?'hidden':''; A.style.paddingBottom=chat?'0':'';
   A.scrollTop=0;
@@ -1483,6 +1576,7 @@ function render(){
   const acin=document.getElementById('acin'); if(acin){ acin.onkeydown=(e)=>{ if(e.key==='Enter')runAgent(acin.value); }; setTimeout(()=>{try{acin.focus();}catch(_e){}},40); }
   const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter'){ openBuddy(ainput.value); } }; }
   const bcin=document.getElementById('bcin'); if(bcin){ bcin.onkeydown=(e)=>{ if(e.key==='Enter')buddyTurn(bcin.value); }; setTimeout(()=>{try{bcin.focus();}catch(_e){}},40); }
+  const ecin=document.getElementById('ecin'); if(ecin){ ecin.onkeydown=(e)=>{ if(e.key==='Enter')editTurn(ecin.value); }; setTimeout(()=>{try{ecin.focus();}catch(_e){}},40); }
   const mcin=document.getElementById('mcin'); if(mcin){ mcin.onkeydown=(e)=>{ if(e.key==='Enter')doAct('match-send',{}); }; setTimeout(()=>{try{mcin.focus();}catch(_e){}},40); }
   saveState();   // persist after every re-render (covers all doAct-driven edits)
 }
@@ -1492,6 +1586,7 @@ window.addEventListener('beforeunload', saveState);
 document.getElementById('back').onclick=()=>{ if(editSig){ editSig=null; render(); } else if(detail){ detail=null; render(); }
   else if(cur==='matchchat'){ cur=(matchWith&&matchWith.fromBuddy)?'buddychat':'intentchat'; render(); }
   else if(cur==='buddychat'){ cur='agenthome'; render(); }
+  else if(cur==='profileedit'){ cur='buddychat'; render(); }
   else if(cur==='intentchat'){ cur='intents'; render(); }
   else if(cur==='notifs'){ cur='agenthome'; render(); }
   else if(!ROOTS.includes(cur)){ cur='overview'; render(); } };
@@ -1559,7 +1654,12 @@ function doAct(act, ds){
     case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
     case 'buddy-intro': { const i=+ds.bi; const m=buddyMsgs[i]; if(m&&m.match&&m.match.top){ approveIntro(m.match.top, m.match.intent); if(matchWith)matchWith.fromBuddy=true; } break; }
     case 'buddy-back': cur='agenthome'; render(); break;
-    case 'buddy-profile': cur='overview'; render(); break;
+    case 'buddy-profile': openProfileEdit(); break;   // "Edit with Kleal" — change the profile by talking
+    case 'edit-send': { const el=document.getElementById('ecin'); editTurn(el&&el.value||''); break; }
+    case 'edit-apply': confirmEdit(+ds.ei); break;
+    case 'edit-cancel': cancelEdit(+ds.ei); break;
+    case 'edit-back': cur='buddychat'; render(); break;
+    case 'edit-view': cur='overview'; render(); break;
     case 'buddy-create': curIntent=null; intentLaunched=false; cur='intentchat'; render(); break;
     case 'buddy-plus': toast('Attachments are coming soon'); break;
     case 'buddy-mic': buddyMic(); break;
