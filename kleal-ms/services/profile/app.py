@@ -408,6 +408,40 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .candno{font-size:10.5px;font-weight:600;color:var(--muted)}
 .introbtn{flex:none;font:inherit;font-size:12px;font-weight:700;color:#fff;background:var(--primary);border:0;
   border-radius:999px;padding:7px 13px;cursor:pointer;margin-left:2px}
+/* ===== Buddy chat (Figma "assistant chat") ===== */
+.bchat{display:flex;flex-direction:column;height:100%;min-height:0}
+.chd{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 4px 10px}
+.chd-back{display:flex;align-items:center;gap:2px;background:transparent;border:0;color:var(--fg);
+  font:inherit;font-size:16px;font-weight:600;cursor:pointer;padding:6px 4px}
+.chd-back svg{width:22px;height:22px}
+.chd-pills{display:flex;gap:8px}
+.chd-pill{display:flex;align-items:center;gap:5px;background:var(--card);border:1px solid var(--border);
+  border-radius:999px;padding:8px 13px;font:inherit;font-size:13px;font-weight:600;color:var(--fg);cursor:pointer;white-space:nowrap}
+.chd-pill svg{width:16px;height:16px}
+.chd-pill .pl{font-size:17px;line-height:0;font-weight:500;color:var(--primary);margin-right:1px}
+.bthread{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;display:flex;flex-direction:column;gap:14px;padding:6px 2px 10px}
+.bthread::-webkit-scrollbar{display:none}
+.khello{display:flex;align-items:center;gap:12px;margin:6px 0 4px}
+.khello .khtxt{font-size:22px;font-weight:700;letter-spacing:-.02em;line-height:1.25}
+.krow{display:flex;align-items:flex-end;gap:9px;max-width:90%}
+.krow .kav{flex:none}
+.krow .kcol{display:flex;flex-direction:column;gap:3px;min-width:0}
+.kav{width:34px;height:34px;border-radius:50%;flex:none;background:linear-gradient(135deg,#FF7A8A,#F5455C)}
+.kav.sp{background:transparent}
+.mrow{display:flex;flex-direction:column;align-items:flex-end;gap:3px;align-self:flex-end;max-width:82%}
+.btime{font-size:11px;color:var(--muted);padding:0 4px}
+.btime.r{align-self:flex-end}
+.bc2{flex:none;display:flex;align-items:center;gap:9px;padding:8px 2px calc(8px + env(safe-area-inset-bottom))}
+.bc2-plus{width:44px;height:44px;border-radius:50%;background:#fff;border:1px solid var(--border);color:var(--muted);
+  font-size:26px;font-weight:300;line-height:0;display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer}
+.bc2-field{flex:1;min-width:0;display:flex;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:999px;padding:0 4px 0 16px}
+.bc2-field input{flex:1;min-width:0;border:0;outline:0;background:transparent;font-size:16px;padding:12px 0;color:var(--fg)}
+.bc2-field input::placeholder{color:var(--muted)}
+.bc2-mic{width:36px;height:36px;border-radius:50%;background:transparent;border:0;color:var(--muted);display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer}
+.bc2-mic.on{color:var(--primary)}
+.bc2-mic svg{width:21px;height:21px}
+.bc2-send{width:44px;height:44px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer;box-shadow:0 6px 14px rgba(245,69,92,.35)}
+.bc2-send svg{width:19px;height:19px}
 /* match chat */
 .matchhead{display:flex;align-items:center;gap:12px;padding:6px 2px 4px}
 .mava{width:52px;height:52px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
@@ -1116,42 +1150,70 @@ function buddyProfile(){   // seed the buddy with what we already know about the
   return { interests:(DATA.interests||[]).map(i=>({name:i.name})),
            city:((DATA.subtitle||'').split('·')[0]||'').trim()||null };
 }
+function fmtTime(t){ const d=t?new Date(t):new Date(); let h=d.getHours(),m=d.getMinutes(); const ap=h<12?'AM':'PM'; h=h%12||12; return h+':'+(m<10?'0':'')+m+' '+ap; }
 function openBuddy(first){
   cur='buddychat';
-  if(!buddyMsgs.length) buddyMsgs=[{who:'them',text:"Hey! I'm Kleal 👋 What have you been into lately — and who would you like to meet?"}];
+  if(!buddyMsgs.length) buddyMsgs=[{who:'them',text:"Hey dear! How can I help you?",hello:true}];
   render();
   if(first && String(first).trim()) buddyTurn(first);
 }
 async function buddyTurn(text){
   text=(text||'').trim(); if(!text||buddyBusy) return;
-  buddyBusy=true; buddyMsgs.push({who:'me',text}); buddyMsgs.push({who:'them',text:'…',loading:true}); render();
+  buddyBusy=true; buddyMsgs.push({who:'me',text,t:Date.now()}); buddyMsgs.push({who:'them',text:'…',loading:true}); render();
   let r; try{
     r=await fetch('/api/buddy/chat',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ messages:buddyMsgs.filter(m=>!m.loading).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text})),
                             profile:buddyProfile(), signals:buddySignals })}).then(x=>x.json());
   }catch(e){ r=null; }
   buddyMsgs=buddyMsgs.filter(m=>!m.loading); buddyBusy=false;
-  if(!r){ buddyMsgs.push({who:'them',text:'I lost the connection for a second — say that again?'}); render(); return; }
+  if(!r){ buddyMsgs.push({who:'them',text:'I lost the connection for a second — say that again?',t:Date.now()}); render(); return; }
   buddySignals=r.signals||buddySignals;
-  buddyMsgs.push({who:'them', text:r.reply||'…', match:(r.match&&r.match.top)?r.match:null});
+  buddyMsgs.push({who:'them', text:r.reply||'…', t:Date.now(), match:(r.match&&r.match.top)?r.match:null});
   if(r.match&&r.match.top) addNotif('match','Kleal found you a match: '+r.match.top.name, (r.match.top.reasons||[])[0]||'tap to connect', null);
   render(); saveState();
 }
+// browser-native dictation for the mic button — no backend needed; graceful toast where unsupported
+let _rec=null;
+function buddyMic(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const mic=document.querySelector('.bc2-mic');
+  if(!SR){ toast('Voice input isn’t supported in this browser'); return; }
+  if(_rec){ try{_rec.stop();}catch(_e){} return; }
+  _rec=new SR(); _rec.lang='ru-RU'; _rec.interimResults=true; _rec.continuous=false;
+  _rec.onresult=(e)=>{ const el=document.getElementById('bcin'); if(!el)return; let s=''; for(let k=0;k<e.results.length;k++) s+=e.results[k][0].transcript; el.value=s; };
+  _rec.onend=()=>{ _rec=null; if(mic)mic.classList.remove('on'); };
+  _rec.onerror=()=>{ _rec=null; if(mic)mic.classList.remove('on'); };
+  try{ _rec.start(); if(mic)mic.classList.add('on'); toast('Listening…'); }catch(_e){ _rec=null; }
+}
 function scr_buddychat(){
+  const hd=`<div class="chd">
+    <button class="chd-back" data-act="buddy-back">${IC.back}<span>Back</span></button>
+    <div class="chd-pills">
+      <button class="chd-pill" data-act="buddy-profile">${IC.person}<span>Profile</span></button>
+      <button class="chd-pill" data-act="buddy-create"><span class="pl">+</span><span>Create Intent</span></button>
+    </div></div>`;
   const thread=buddyMsgs.map((x,i)=>{
-    if(x.who==='me') return `<div class="mbub">${esc(x.text)}</div>`;
-    const bub=`<div class="kbub">${x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>')}</div>`;
+    if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div><div class="btime r">${fmtTime(x.t)}</div></div>`;
+    if(x.hello) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
+    const first=(i===0)||buddyMsgs[i-1].who!=='them'||buddyMsgs[i-1].hello;   // avatar only on the first of a run
+    const inner=x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>');
+    const time=x.loading?'':(x.t?`<div class="btime">${fmtTime(x.t)}</div>`:'');
+    const row=`<div class="krow"><div class="kav${first?'':' sp'}"></div><div class="kcol"><div class="kbub">${inner}</div>${time}</div></div>`;
     if(x.match&&x.match.top){ const t=x.match.top; const why=(t.reasons||[]).slice(0,2).join(' · ');
-      return bub+`<div class="card" style="margin:6px 0 2px"><div class="candrow">
+      return row+`<div class="card" style="margin:2px 0 2px 43px"><div class="candrow">
         <div class="candav">${esc(String(t.name||'?')[0])}${t.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':''}</div>
         <div class="candt"><div class="candn">${esc(t.name)} <span class="candkm">${t.km} km</span></div><div class="cands">${esc(why)}</div></div>
         <div class="candsc"><div class="candpct">${t.score}%</div></div>
         <button class="introbtn" data-act="buddy-intro" data-bi="${i}">Intro</button></div></div>`; }
-    return bub;
+    return row;
   }).join('');
-  return `<div class="fade"><div class="thread" style="padding-top:12px">${thread}</div>
-    <div class="composer"><input id="bcin" class="cin cinput" placeholder="Talk to Kleal…" ${buddyBusy?'disabled':''}>
-      <button class="csend" data-act="buddy-send">${IC.send}</button></div></div>`;
+  return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${thread}</div>
+    <div class="bc2">
+      <button class="bc2-plus" data-act="buddy-plus">+</button>
+      <div class="bc2-field"><input id="bcin" placeholder="Message…" ${buddyBusy?'disabled':''}>
+        <button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
+      <button class="bc2-send" data-act="buddy-send">${IC.send}</button>
+    </div></div>`;
 }
 
 // ---------- Phase 3: public intents on the Explore map ----------
@@ -1374,11 +1436,18 @@ function render(){
   rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
   // bottom nav: rebuilt for the active tab; hidden on the intent chat (which has its own composer)
   const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat'||cur==='matchchat'||cur==='buddychat')?'none':'flex'; bn.innerHTML=bnavHTML(); }
-  const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome')?'none':'flex';   // Home has its own greeting header
+  // Home + Buddy chat carry their own headers, so hide the shared app bar there
+  const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||cur==='buddychat')?'none':'flex';
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
+  // Buddy chat owns the full height: app area becomes a flex column so the thread scrolls internally
+  // and the composer stays pinned. Other screens keep the normal scrolling body.
+  const chat=(cur==='buddychat');
+  A.style.display=chat?'flex':''; A.style.flexDirection=chat?'column':'';
+  A.style.overflowY=chat?'hidden':''; A.style.paddingBottom=chat?'0':'';
   A.scrollTop=0;
+  if(chat){ const bt=document.getElementById('bthread'); if(bt) bt.scrollTop=bt.scrollHeight; }
   // real Leaflet map on Explore; tear it down when leaving
   if(cur==='search'){ setTimeout(initExploreMap, 0); }
   else if(exploreMap){ try{ exploreMap.remove(); }catch(_e){} exploreMap=null; }
@@ -1485,6 +1554,11 @@ function doAct(act, ds){
     case 'agent-go': { const el=document.getElementById('ainput'); openBuddy(el&&el.value||''); break; }
     case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
     case 'buddy-intro': { const i=+ds.bi; const m=buddyMsgs[i]; if(m&&m.match&&m.match.top){ approveIntro(m.match.top, m.match.intent); if(matchWith)matchWith.fromBuddy=true; } break; }
+    case 'buddy-back': cur='agenthome'; render(); break;
+    case 'buddy-profile': cur='overview'; render(); break;
+    case 'buddy-create': curIntent=null; intentLaunched=false; cur='intentchat'; render(); break;
+    case 'buddy-plus': toast('Attachments are coming soon'); break;
+    case 'buddy-mic': buddyMic(); break;
     case 'talk-buddy': openBuddy(''); break;
     case 'q-people': setTab('search'); break;
     case 'q-events': setTab('search'); break;
