@@ -1296,7 +1296,9 @@ function buddyMic(){
   try{ _rec.start(); if(mic)mic.classList.add('on'); toast('Listening…'); }catch(_e){ _rec=null; }
 }
 function scr_buddychat(){
-  const hd=chatHead('Kleal', {back:'buddy-back', actions:[{act:'buddy-create', icon:'<span class="pl">+</span>', label:T('Интент','Intent')}]});
+  const hd=chatHead('Kleal', {back:'buddy-back', actions:[
+    {act:'buddy-profile', icon:IC.person, label:T('Профиль','Profile')},
+    {act:'buddy-create', icon:'<span class="pl">+</span>', label:T('Интент','Intent')}]});
   const thread=buddyMsgs.map((x,i)=>{
     if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div><div class="btime r">${fmtTime(x.t)}</div></div>`;
     if(x.hello) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
