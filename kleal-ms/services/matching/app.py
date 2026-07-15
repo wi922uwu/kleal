@@ -62,10 +62,12 @@ SYNONYMS = {'soccer':'football','movies':'cinema','movie':'cinema','film':'cinem
             'travelling':'travel','traveling':'travel','trip':'travel','coffees':'coffee',
             'drink':'drinks','party':'party','gym':'gym','codes':'coding','code':'coding','programme':'coding'}
 # curated adjacency between BROAD categories (a mild "related" bonus)
-ADJACENCY = {'sports':['outdoors','social'], 'social':['culture','music','games','learning'],
-             'games':['tech','social'], 'culture':['learning','social','music'],
-             'tech':['games','learning','culture'], 'music':['social','culture'],
-             'outdoors':['sports','social'], 'learning':['culture','tech','social']}
+# Adjacency is deliberately conservative — over-broad links made a coffee search surface a Dota player
+# ("social" ~ "games"). Keep only genuinely related neighbours.
+ADJACENCY = {'sports':['outdoors'], 'social':['culture','music','learning'],
+             'games':['tech'], 'culture':['learning','music'],
+             'tech':['games','learning'], 'music':['culture'],
+             'outdoors':['sports'], 'learning':['culture','tech']}
 _IDX = {}
 for _b, _subs in TAXONOMY.items():
     for _s, _ws in _subs.items():
@@ -95,13 +97,14 @@ def _wtok(s):
     return [w for w in re.findall(r"[a-zа-яё0-9]+", str(s).lower()) if len(w) >= 3]
 
 def _wshare(a, b):
-    """Any raw word shared between two interest strings — exact, or a >=4-char common stem (handles RU
-    inflection: 'технику'~'техника', 'apple'~'apples'). Used ONLY for interests outside the taxonomy."""
+    """A literal shared interest word between two OFF-TAXONOMY strings. Exact token, or a long common stem
+    (>=5-char shared prefix AND near-equal length) to catch RU inflection ('технику'~'техника',
+    'apple'~'apples') WITHOUT false matches like 'apple'~'application' or 'anime'~'animals'."""
     A, B = _wtok(a), _wtok(b)
     for x in A:
         for y in B:
             if x == y: return True
-            if len(x) >= 4 and len(y) >= 4 and x[:4] == y[:4]: return True
+            if len(x) >= 5 and len(y) >= 5 and abs(len(x) - len(y)) <= 2 and x[:5] == y[:5]: return True
     return False
 
 def topical(topics, interests):
@@ -260,10 +263,10 @@ CANDIDATES = _gen_pool()
 USERS_PATH = os.environ.get(
     "KLEAL_USERS",
     os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "users.json"))
-# Merge real users with the demo pool by default. Real users rank first and override a demo user of the same
-# name; the demo pool keeps the system populated until enough real users exist. Set KLEAL_MERGE_DEMO=0 for the
-# old behaviour (store authoritative, demo only as a missing-file fallback).
-MERGE_DEMO = os.environ.get("KLEAL_MERGE_DEMO", "1") != "0"
+# Match ONLY real registered users by default — surfacing demo-pool fakes (Ana/Nico/Iris...) in results
+# reads as "mock users". The demo pool is still the fallback when the store is missing/empty, so a fresh
+# system isn't dead. Set KLEAL_MERGE_DEMO=1 to blend the demo pool in (for a populated demo).
+MERGE_DEMO = os.environ.get("KLEAL_MERGE_DEMO", "0") != "0"
 _users_cache = {"mtime": None, "list": None}
 def load_candidates():
     store = None
@@ -363,11 +366,11 @@ def _hard_gates(intent, c, gate_ctx):
         if mn and age < mn:                                       return False, 'below age range'
         if mx and age > mx:                                       return False, 'above age range'
     reql = {str(l)[:2].lower() for l in (intent.get('requiredLanguages') or [])}
-    if reql and not reql.issubset({str(l)[:2].lower() for l in c['langs']}):
+    if reql and not reql.issubset({str(l)[:2].lower() for l in (c.get('langs') or [])}):
         return False, 'missing a required language'
-    if intent.get('mode') == 'offline' and intent.get('radiusKm'):
+    if intent.get('mode') == 'offline' and intent.get('radiusKm') and c.get('km') is not None:
         try:
-            if c['km'] > float(intent['radiusKm']):               return False, 'outside the radius'
+            if float(c['km']) > float(intent['radiusKm']):       return False, 'outside the radius'
         except (TypeError, ValueError):
             pass
     return True, None
@@ -375,15 +378,13 @@ def _hard_gates(intent, c, gate_ctx):
 GENERIC_TYPES = {'social', 'other', ''}   # too broad to count as a mutual-intent match on their own
 
 def _reciprocal(intent, c):
-    """True if the candidate has their OWN active intent that genuinely matches this one (mutual interest -> T0).
-    A bare type match only counts for SPECIFIC types (sport/gaming/…); generic 'social' needs real topical overlap."""
-    it = (intent.get('type') or '').lower()
+    """True only if the candidate's OWN active intent shares a real topical interest (sub-category or exact).
+    A bare TYPE match (both 'sport', both 'gaming'…) is NOT enough — 'sport/football' must not read as a
+    mutual match for a 'sport/tennis' search, which used to hand football players the top T0 slot."""
     itop = [str(t).lower() for t in (intent.get('topics') or [])]
     for oi in (c.get('intents') or []):
-        if it and it not in GENERIC_TYPES and str(oi.get('type') or '').lower() == it:
-            return True
         b, _ = topical(itop, [str(t).lower() for t in (oi.get('topics') or [])])
-        if b >= 3:                                 # same sub-category or exact -> real mutual interest
+        if b >= 3:                                 # same sub-category or exact -> genuine mutual interest
             return True
     return False
 
@@ -412,10 +413,14 @@ def _tier_label(score):
 
 def _diversify(items):
     """Keep at most WEIGHTS['diversity_max'] per dominant-interest bucket; cap at top_n. Items pre-sorted desc."""
+    # Focused search (1-2 buckets): DON'T cap — a "tennis" search must return all the tennis players, not 3
+    # of them padded with unrelated people. Only diversify when the results genuinely span many categories.
+    buckets = {it.get('bucket') or 'other' for it in items}
+    cap = WEIGHTS['diversity_max'] if len(buckets) > 2 else WEIGHTS['top_n']
     seen, out = {}, []
     for it in items:
         b = it.get('bucket') or 'other'
-        if seen.get(b, 0) >= WEIGHTS['diversity_max']:
+        if seen.get(b, 0) >= cap:
             continue
         seen[b] = seen.get(b, 0) + 1
         out.append(it)
