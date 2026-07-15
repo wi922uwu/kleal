@@ -1327,7 +1327,9 @@ function applyProfilePatch(patch){ const lc=s=>String(s==null?'':s).toLowerCase(
     else if(f==='formats') setSnap('Social formats','users',v);
     else if(f==='availability') setSnap('Availability','clock',v);
     else if(f==='safety') setSnap('Safety','shield',v);
-    else if(f==='vibe'){ const row=((DATA.social||{}).rows||[]).find(r=>lc(r.title)==='energy'); if(row)row.value=v; else DATA.summary=(DATA.summary?DATA.summary+' ':'')+v; }
+    else if(f==='vibe'){ DATA.social=DATA.social||{rows:[],vibe:[],depth:[]}; DATA.social.rows=DATA.social.rows||[];
+      const row=DATA.social.rows.find(r=>lc(r.title)==='energy'); if(row) row.value=v;
+      else DATA.social.rows.unshift({icon:'spark',title:'Energy',value:v}); }   // personality -> the personality section, never appended to the summary
     else if(f==='interests'){ DATA.interests=DATA.interests||[];
       if(op==='remove') DATA.interests=DATA.interests.filter(i=>lc(i.name)!==lc(v));
       else if(!DATA.interests.some(i=>lc(i.name)===lc(v))) DATA.interests.push({name:v,icon:editIcon(v),conf:'Medium',used:true});
@@ -1348,7 +1350,20 @@ async function editTurn(text){ text=(text||'').trim(); if(!text||editBusy) retur
 function confirmEdit(i){ const m=editMsgs[i]; if(!m||!m.patch) return;
   applyProfilePatch(m.patch); m.patch=null;
   editMsgs.push({who:'them',text:'✓ Готово — обновил профиль.',t:Date.now()});
-  render(); saveState(); toast('Профиль обновлён'); }
+  render(); saveState(); toast('Профиль обновлён');
+  adaptSummary();   // rewrite Kleal's summary to fit the new profile (adapt, don't append)
+}
+// After any profile change, ask Kleal to rewrite the summary paragraph so it reflects the new data
+// naturally — instead of a word being tacked onto the end.
+let _resumBusy=false;
+async function adaptSummary(){
+  if(_resumBusy) return; _resumBusy=true;
+  try{ const r=await fetch('/api/buddy/resummary',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({profile:fullProfileForEdit(), current:DATA.summary||''})}).then(x=>x.json());
+    if(r&&r.summary){ DATA.summary=r.summary; DATA.summaryLabel="Kleal's summary"; render(); saveState(); }
+  }catch(e){}
+  _resumBusy=false;
+}
 function cancelEdit(i){ const m=editMsgs[i]; if(!m) return; m.patch=null;
   editMsgs.push({who:'them',text:'Ок, оставил как было.',t:Date.now()}); render(); }
 function scr_profileedit(){

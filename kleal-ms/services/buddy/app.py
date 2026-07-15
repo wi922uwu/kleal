@@ -774,6 +774,24 @@ def profile_edit(message, profile, lang):
     return {"reply": reply, "patch": patch, "lang": lang}
 
 
+# After a profile change is applied, the "Kleal's summary" paragraph must ADAPT — reflect the new profile in
+# flowing prose — not get a word tacked on the end (the bug: changing personality appended "Интроверт" to the
+# summary). We rewrite the whole paragraph from the current summary + up-to-date profile, keeping its language.
+RESUMMARY_PROMPT = '''You are Kleal. Below is a user's current profile summary and their up-to-date profile data. Rewrite the SUMMARY as ONE warm, natural, flowing paragraph that reflects the CURRENT data. Integrate every change smoothly into the prose — NEVER just append or list words. Keep the SAME language as the existing summary (if it is in English, stay English; if Russian, stay Russian). Speak TO the user ("You…" / "Ты…"). 2-4 sentences, concrete, no bullet points, output ONLY the paragraph.'''
+
+
+def resummary(profile, current):
+    """Rewrite the profile summary to integrate the latest changes (adapt, don't append)."""
+    payload = ("CURRENT SUMMARY:\n" + str(current or "(none yet)") +
+               "\n\nUP-TO-DATE PROFILE DATA:\n" + json.dumps(profile or {}, ensure_ascii=False)[:2200])
+    try:
+        s = llm_complete(MODEL_ID, [{"role": "system", "content": RESUMMARY_PROMPT},
+                                    {"role": "user", "content": payload}], 0.5)
+        return {"summary": str(s or "").strip()[:900]}
+    except Exception:
+        return {"summary": ""}
+
+
 # ======================= INTENT BUILDER (conversational "Create intent") =======================
 # The "Create intent" flow used to POST straight to matching's parser, which turned ANY text — even random
 # letters — into an intent card, with no validation and no follow-up. This builder instead runs a SHORT
@@ -921,6 +939,10 @@ class H(BaseHTTPRequestHandler):
                 msgs = body.get("messages") if isinstance(body.get("messages"), list) else []
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
                 return send_json(self, 200, intent_build(msgs, prof))
+
+            if r == "/resummary":                    # after a profile edit: rewrite the summary to fit (adapt, not append)
+                prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+                return send_json(self, 200, resummary(prof, body.get("current") or ""))
 
             if r == "/intro":                        # the candidate's agent writes the icebreaker
                 return send_json(self, 200, _post(MATCH_URL, "/api/agent/intro",
