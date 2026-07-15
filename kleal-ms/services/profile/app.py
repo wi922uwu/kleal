@@ -1254,7 +1254,7 @@ function chatBack(){
 }
 function openBuddy(first){
   cur='buddychat';
-  if(!buddyMsgs.length) buddyMsgs=[{who:'them',text:"Hey dear! How can I help you?",hello:true}];
+  if(!buddyMsgs.length) buddyMsgs=[{who:'them',text:T("Привет! Чем могу помочь?","Hey dear! How can I help you?"),hello:true}];
   render();
   if(first && String(first).trim()) buddyTurn(first);
 }
@@ -1276,7 +1276,7 @@ async function buddyTurn(text){
                             profile:buddyProfile(), signals:buddySignals })}).then(x=>x.json());
   }catch(e){ r=null; }
   buddyMsgs=buddyMsgs.filter(m=>!m.loading); buddyBusy=false;
-  if(!r){ buddyMsgs.push({who:'them',text:'I lost the connection for a second — say that again?',t:Date.now()}); render(); return; }
+  if(!r){ buddyMsgs.push({who:'them',text:T('Связь пропала на секунду — повтори, пожалуйста?','I lost the connection for a second — say that again?'),t:Date.now()}); render(); return; }
   buddySignals=r.signals||buddySignals;
   buddyMsgs.push({who:'them', text:r.reply||'…', t:Date.now(), match:(r.match&&r.match.top)?r.match:null});
   if(r.match&&r.match.top) addNotif('match','Kleal found you a match: '+r.match.top.name, (r.match.top.reasons||[])[0]||'tap to connect', null);
@@ -1315,7 +1315,7 @@ function scr_buddychat(){
   return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${thread}</div>
     <div class="bc2">
       <button class="bc2-plus" data-act="buddy-plus">+</button>
-      <div class="bc2-field"><input id="bcin" placeholder="Message…" ${buddyBusy?'disabled':''}>
+      <div class="bc2-field"><input id="bcin" placeholder="${T('Сообщение…','Message…')}" ${buddyBusy?'disabled':''}>
         <button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
       <button class="bc2-send" data-act="buddy-send">${IC.send}</button>
     </div></div>`;
