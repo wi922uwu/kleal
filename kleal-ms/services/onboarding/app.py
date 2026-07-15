@@ -896,7 +896,7 @@ WIDGETS.location=function(slot){
   // ---- real map (Leaflet + Carto light tiles). A radius circle marks the AREA; no exact pin, no attribution bar. ----
   let lmap=null, circle=null;
   function fit(){ if(lmap&&circle) lmap.fitBounds(circle.getBounds(),{padding:[16,16]}); }
-  function recenter(c){ if(!lmap||!circle)return; circle.setLatLng(c); fit(); }
+  function recenter(c){ if(!lmap||!circle)return; circle.setLatLng(c); lmap.setView(c, lmap.getZoom()||12); fit(); }
   if(hasL){
     const center=(g.coarseLat&&g.coarseLon)?[g.coarseLat,g.coarseLon]:[41.3874,2.1686];
     lmap=L.map('lmap',{zoomControl:false,scrollWheelZoom:false,attributionControl:false});
@@ -907,10 +907,15 @@ WIDGETS.location=function(slot){
   }
   rad.oninput=()=>{ const v=parseInt(rad.value,10); slot.querySelector('#rkm').textContent=v; set('geo.maxDistanceKm',v); if(circle){ circle.setRadius(v*1000); fit(); } };
   function setCity(name){ if(!name)return; area_in.value=name; set('geo.comfortableAreas',[name]); set('city',name); cont.disabled=false; }
-  async function geocode(q){ if(!q)return; try{ const j=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q)).then(x=>x.json()); if(j&&j[0]) recenter([+j[0].lat,+j[0].lon]); }catch(e){} }
-  async function reverseCity(la,lo){ try{ const j=await fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&lat='+la+'&lon='+lo).then(x=>x.json());
+  // Geocode the typed area -> move the map there AND remember the coarse coordinates on the profile, so the
+  // map follows what you type and the user is later placeable on the Explore map. (No exact pin — area only.)
+  async function geocode(q){ if(!q)return; try{ const j=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q),{headers:{'Accept-Language':'ru,en'}}).then(x=>x.json());
+    if(j&&j[0]){ const la=+j[0].lat, lo=+j[0].lon; recenter([la,lo]); set('geo.coarseLat',la); set('geo.coarseLon',lo); set('geo.located',true); } }catch(e){} }
+  async function reverseCity(la,lo){ try{ const j=await fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&lat='+la+'&lon='+lo,{headers:{'Accept-Language':'ru,en'}}).then(x=>x.json());
     const a=(j&&j.address)||{}; return a.city||a.town||a.village||a.municipality||a.county||a.state||''; }catch(e){ return ''; } }
-  area_in.oninput=()=>{ const v=area_in.value.trim(); if(v){set('geo.comfortableAreas',[v]);set('city',v);} cont.disabled=!v; };
+  let _gcT=null;
+  area_in.oninput=()=>{ const v=area_in.value.trim(); if(v){set('geo.comfortableAreas',[v]);set('city',v);} cont.disabled=!v;
+    clearTimeout(_gcT); _gcT=setTimeout(()=>geocode(v), 550); };   // debounced: map moves as you type
   area_in.onchange=()=>geocode(area_in.value.trim());
   if(area) geocode(area);
   // geolocation is requested AUTOMATICALLY when this step opens; the detected CITY name is used (never exact spot)

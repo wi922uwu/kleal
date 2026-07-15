@@ -604,18 +604,26 @@ _EXPLORE_WHEN = ("Today 18:00", "Tonight 21:00", "Tomorrow 08:00", "Tomorrow 19:
 
 
 def explore_plans(limit=12):
+    users = load_candidates()
+    real = [c for c in users if c.get("source") == "onboarding"]
+    # Show REAL registered users first — a plan from their own-intent or, if none, their top interest. Only
+    # fall back to demo users (with own-intents) when there aren't enough real ones to fill the map.
+    ordered = real if len(real) >= 3 else real + [c for c in users if c.get("source") != "onboarding" and c.get("intents")]
     out = []
-    for i, c in enumerate(load_candidates()):
+    for i, c in enumerate(ordered):
+        if c.get("paused") or not c.get("open"):
+            continue
         oi = (c.get("intents") or [None])[0]
-        if not oi or c.get("paused") or not c.get("open"):
+        topics = [str(t).lower() for t in ((oi.get("topics") if oi else None) or c.get("interests") or []) if t][:3]
+        if not topics:
             continue
-        topics = [str(t).lower() for t in (oi.get("topics") or c.get("interests") or []) if t][:3]
-        lat, lon = c.get("lat"), c.get("lon")
-        if not topics or lat is None or lon is None:
-            continue
+        lat, lon, km = c.get("lat"), c.get("lon"), c.get("km")
+        if lat is None or lon is None:                 # real user without precise coords -> place around the area centre
+            km = float(km if km is not None else round(0.5 + (i * 0.9) % 6.5, 1))
+            lat, lon = _offset(ME_LATLON, km, (i * 137.5) % 360)
         out.append({"title": ENTITY_MAP.get(topics[0]) or (topics[0].capitalize() + " meetup"),
-                    "who": c.get("name") or "Someone", "topics": topics, "role": oi.get("role"),
-                    "when": _EXPLORE_WHEN[i % len(_EXPLORE_WHEN)], "dist": round(float(c.get("km") or 0), 1),
+                    "who": c.get("name") or "Someone", "topics": topics, "role": (oi or {}).get("role") or "meet",
+                    "when": _EXPLORE_WHEN[i % len(_EXPLORE_WHEN)], "dist": round(float(km or 0), 1),
                     "lat": lat, "lon": lon, "verified": bool(c.get("verified"))})
     out.sort(key=lambda p: p["dist"])
     return out[:limit]
