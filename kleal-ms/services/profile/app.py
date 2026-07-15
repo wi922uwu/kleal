@@ -618,15 +618,19 @@ document.getElementById('sbic').innerHTML=
 document.getElementById('back').innerHTML=IC.back;
 // bottom nav (Intents · Search · [create] · Messages · Profile) — rebuilt each render for the active state
 const ROOTS=['agenthome','overview','intents','search','messages'];
-function navFam(){ if(cur==='agenthome'||cur==='notifs')return'home'; if(cur==='search')return'explore';
-  if(cur==='intents'||cur==='intentchat'||cur==='matchchat')return'plans'; return'profile'; }
+function navFam(){
+  if(cur==='agenthome'||cur==='buddychat'||cur==='notifs')return'';   // center FAB owns these — no pill highlight
+  if(cur==='search')return'explore';
+  if(cur==='intents'||cur==='intentchat'||cur==='matchchat')return'plans';
+  if(cur==='messages')return'messages';
+  return'profile'; }
 function bnavHTML(){ const fam=navFam();
-  // Home · Explore · [Agent] · Plans · Profile  (Figma Flow 4). Center FAB = the agent.
-  // The agent is the CONVERSATIONAL buddy (chats first, creates an intent only on an explicit ask),
-  // not the create-intent screen (which parsed every message — even "привет" — into an intent card).
-  const items=[['nHome','Home','agenthome','home'],['nSearch','Explore','search','explore'],['fab','','',''],
-    ['nPlans','Plans','intents','plans'],['nProfile','Profile','overview','profile']];
-  return '<div class="fab" data-act="talk-buddy">'+IC.mic+'</div>'+
+  // Intents · Explore · [Home] · Messages · Profile  (Figma "My Intents · Search · [FAB] · Messages · Profile").
+  // The center FAB opens the AGENT HOME (agenthome) — the main landing that carries the Kleal banner, the
+  // "Say hi to Kleal" field and quick actions. The conversational chat is reached from there.
+  const items=[['nIntents','Intents','intents','plans'],['nSearch','Explore','search','explore'],['fab','','',''],
+    ['nMsg','Messages','messages','messages'],['nProfile','Profile','overview','profile']];
+  return '<div class="fab" data-act="go-home">'+IC.mic+'</div>'+
     items.map(x=>{ if(x[0]==='fab') return '<div class="fabgap"></div>';
       return `<a class="${fam===x[3]?'on':''}" data-nav="${x[2]}">${IC[x[0]]}<span>${x[1]}</span></a>`; }).join('');
 }
@@ -1559,6 +1563,7 @@ function doAct(act, ds){
     case 'buddy-create': curIntent=null; intentLaunched=false; cur='intentchat'; render(); break;
     case 'buddy-plus': toast('Attachments are coming soon'); break;
     case 'buddy-mic': buddyMic(); break;
+    case 'go-home': editSig=null; detail=null; cur='agenthome'; render(); break;   // center FAB -> agent home
     case 'talk-buddy': openBuddy(''); break;
     case 'q-people': setTab('search'); break;
     case 'q-events': setTab('search'); break;
