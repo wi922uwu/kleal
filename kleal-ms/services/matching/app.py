@@ -610,10 +610,10 @@ _EXPLORE_WHEN = ("Today 18:00", "Tonight 21:00", "Tomorrow 08:00", "Tomorrow 19:
 def explore_plans(limit=12, self_name=""):
     sn = str(self_name or "").strip().lower()
     users = [c for c in load_candidates() if not (sn and str(c.get("name", "")).strip().lower() == sn)]
-    real = [c for c in users if c.get("source") == "onboarding"]
-    # Show REAL registered users first — a plan from their own-intent or, if none, their top interest. Only
-    # fall back to demo users (with own-intents) when there aren't enough real ones to fill the map.
-    ordered = real if len(real) >= 3 else real + [c for c in users if c.get("source") != "onboarding" and c.get("intents")]
+    # Explore shows ONLY real registered users (source == "onboarding") — a plan from their own-intent, or,
+    # if none, their top interest. Demo pool users are NEVER surfaced here (they exist only so matching has a
+    # non-empty pool to rank against); when there are no real users, the client shows an empty state.
+    ordered = [c for c in users if c.get("source") == "onboarding"]
     out = []
     for i, c in enumerate(ordered):
         if c.get("paused") or not c.get("open"):
