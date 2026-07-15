@@ -887,7 +887,8 @@ WIDGETS.location=function(slot){
   slot.innerHTML=`<div class="card">
     ${mapHtml}
     <div class="lbl" style="margin-top:14px">Your city</div>
-    <input class="inp" id="area" placeholder="Detecting your city..." value="${esc(area)}">
+    <input class="inp" id="area" placeholder="Type your city, or use the button below" value="${esc(area)}">
+    <button id="gloc" type="button" style="margin-top:10px;width:100%;padding:12px;border:1px solid var(--line,#E7E8EC);background:#fff;border-radius:12px;font:inherit;font-weight:600;color:var(--accent,#F5455C);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📍 Use my location</button>
     <div class="lbl" style="margin-top:16px">How far are you happy to go? <b id="rkm">${r}</b> km</div>
     <input type="range" id="rad" min="1" max="50" value="${r}">
     <div class="cap" id="gstat" style="text-align:left;margin-top:8px"></div>
@@ -922,9 +923,14 @@ WIDGETS.location=function(slot){
       const city=await reverseCity(la,lo);
       if(city){ setCity(city); stat.textContent="Kleal shows your city area only, never your exact spot."; }
       else { area_in.placeholder="Type your city"; stat.textContent="Couldn't name your city. Type it above."; }
-    }, err=>{ area_in.placeholder="Your city"; stat.textContent="Location off. Type your city above."; },
+    }, err=>{ area_in.placeholder="Type your city";
+      stat.textContent = err && err.code===1
+        ? "Location blocked. Allow it in your browser (or in-app browsers may block it — open in Chrome/Safari), or type your city."
+        : "Couldn't get your location. Type your city above."; },
       {enableHighAccuracy:false, timeout:10000, maximumAge:600000}); }
-  if(!area) setTimeout(autoLocate, 120);
+  // Reliable path: geolocation on a user click (browsers suppress the prompt for non-gesture calls).
+  const glocBtn=slot.querySelector('#gloc'); if(glocBtn) glocBtn.onclick=autoLocate;
+  if(!area) setTimeout(autoLocate, 300);   // best-effort auto-try (works on some browsers); button is the guaranteed prompt
   cont.onclick=()=>{ lock(slot); const km=(st.profile.geo&&st.profile.geo.maxDistanceKm)||rad.value;
     meSay((area_in.value.trim()||'My city')+', within '+km+' km'); afterAnswer(); };
 };
