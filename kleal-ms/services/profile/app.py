@@ -1162,16 +1162,35 @@ function openNotif(id){ const n=(DATA.notifs||[]).find(x=>x.id===id); if(!n)retu
 }
 // ---------- Phase 2: match chat (blurred photo clears as you talk) ----------
 let matchWith=null;
+// find (or create) the PERSISTENT thread for a candidate in DATA.messages, so the conversation shows up
+// in the Messages tab and survives navigation — the bug was that intros lived only in a transient variable.
+function msgThreadFor(cand, intent){
+  DATA.messages=DATA.messages||[];
+  const key=String((cand&&cand.name)||'').toLowerCase();
+  let t=DATA.messages.find(m=>!m.kleal && String(m.who||'').toLowerCase()===key);
+  if(!t){ t={who:(cand&&cand.name)||'Someone', last:'', time:'now', kleal:false, msgs:[]};
+    DATA.messages.unshift(t); }
+  t.cand=cand; if(intent) t.intent=intent;
+  return t;
+}
 async function approveIntro(cand, intent){
   if(!cand) return;
-  matchWith={cand:cand, intent:intent, msgs:[{who:'them',text:'…'}], loading:true}; cur='matchchat'; render();
+  const t=msgThreadFor(cand, intent);
+  t.msgs=[{who:'them',text:'…'}]; t.loading=true; t.last='…';
+  t.fromMessages=false; t.fromBuddy=false;       // opened from an intro; back goes to the intent/buddy chat
+  matchWith=t; cur='matchchat'; render();
   let r; try{ r=await fetch('/api/agent/intro',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({intent:intent||{}, candidate:cand})}).then(x=>x.json()); }catch(e){ r=null; }
   const opener=(r&&r.opener)||('Hey! Looks like we both like '+(((intent||{}).tags||[]).join(', ')||'similar things')+' — want to make a plan?');
-  matchWith.msgs=[{who:'them',text:opener}]; matchWith.loading=false;
+  t.msgs=[{who:'them',text:opener}]; t.loading=false; t.last=opener; t.time='now';
   postFeedback(cand.name,'accepted');   // feedback loop: approving an intro teaches the ranker
   addNotif('match','You matched with '+cand.name, 'Their agent agreed — say hi', null);
   render(); saveState();
+}
+function openMsgThread(i){
+  const t=(DATA.messages||[])[i]; if(!t) return;
+  if(t.kleal){ openBuddy(''); return; }          // the pinned Kleal thread -> the agent chat
+  matchWith=t; matchWith.fromMessages=true; cur='matchchat'; render(); saveState();
 }
 function scr_matchchat(){
   const m=matchWith; if(!m) return scr_agenthome();
@@ -1621,7 +1640,7 @@ function render(){
   // V4: intents list, discovery pins/cards, message rows
   document.querySelectorAll('[data-intent]').forEach(el=>el.onclick=()=>{ const it=(DATA.intents||[])[+el.dataset.intent]; openIntent(it, !!(it&&it.status==='searching')); });
   document.querySelectorAll('[data-plan]').forEach(el=>el.onclick=()=>toast('Plan details are coming soon'));
-  document.querySelectorAll('[data-msg]').forEach(el=>el.onclick=()=>toast('Opening this chat is coming soon'));
+  document.querySelectorAll('[data-msg]').forEach(el=>el.onclick=()=>openMsgThread(+el.dataset.msg));
   document.querySelectorAll('[data-savedintent]').forEach(el=>el.onclick=()=>openSavedIntent(el.dataset.savedintent));
   document.querySelectorAll('[data-notif]').forEach(el=>el.onclick=()=>openNotif(el.dataset.notif));
   document.querySelectorAll('[data-public]').forEach(el=>el.onclick=()=>{ const p=PUBLIC_INTENTS[+el.dataset.public]; if(p)toast(p.title+' — '+p.who+' · '+p.when); });
@@ -1637,7 +1656,7 @@ function render(){
 A.addEventListener('click', ()=>setTimeout(saveState, 0));
 window.addEventListener('beforeunload', saveState);
 document.getElementById('back').onclick=()=>{ if(editSig){ editSig=null; render(); } else if(detail){ detail=null; render(); }
-  else if(cur==='matchchat'){ cur=(matchWith&&matchWith.fromBuddy)?'buddychat':'intentchat'; render(); }
+  else if(cur==='matchchat'){ cur=(matchWith&&matchWith.fromMessages)?'messages':(matchWith&&matchWith.fromBuddy)?'buddychat':'intentchat'; render(); }
   else if(cur==='buddychat'){ cur='agenthome'; render(); }
   else if(cur==='profileedit'){ cur='buddychat'; render(); }
   else if(cur==='intentchat'){ cur='intents'; render(); }
@@ -1695,9 +1714,9 @@ function doAct(act, ds){
       toast((k==='watch'?'Watch room':'Voice room')+' created — inviting people'); break; }
     case 'broaden': broadenIntent(ds.kind); break;
     case 'match-send': { const el=document.getElementById('mcin'); const t=(el&&el.value||'').trim(); if(!t||!matchWith)break;
-      matchWith.msgs.push({who:'me',text:t}); render(); saveState();
+      matchWith.msgs.push({who:'me',text:t}); matchWith.last=t; matchWith.time='now'; render(); saveState();
       const R=['Sounds great!','Perfect, that works for me.','Yeah, let’s do it 🙌','Nice — where works for you?','See you there!'];
-      setTimeout(()=>{ if(matchWith){ matchWith.msgs.push({who:'them',text:R[matchWith.msgs.length%R.length]}); render(); saveState(); } }, 750); break; }
+      setTimeout(()=>{ if(matchWith){ const rep=R[matchWith.msgs.length%R.length]; matchWith.msgs.push({who:'them',text:rep}); matchWith.last=rep; matchWith.time='now'; render(); saveState(); } }, 750); break; }
     case 'edit-intent': toast('Editing the intent is coming soon'); break;
     case 'search-area': toast('Searching this area…'); break;
     case 'filter': toast('Filters are coming soon'); break;
