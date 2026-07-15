@@ -236,6 +236,26 @@ def _gen_pool():
     return pool
 CANDIDATES = _gen_pool()
 
+# The live candidate pool comes from the shared user store (managed by the admin-service). If the store
+# FILE EXISTS it is authoritative — even when empty (an empty store means an empty system, no test users).
+# Only a MISSING/broken store falls back to the built-in demo pool, so matching never hard-breaks.
+USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json"))
+_users_cache = {"mtime": None, "list": None}
+def load_candidates():
+    try:
+        m = os.path.getmtime(USERS_PATH)
+        if _users_cache["mtime"] != m:
+            with open(USERS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            lst = data.get("users") if isinstance(data, dict) else data
+            _users_cache["mtime"] = m
+            _users_cache["list"] = lst if isinstance(lst, list) else None
+        if _users_cache["list"] is not None:      # store present (even []) -> authoritative
+            return _users_cache["list"]
+    except Exception:
+        pass
+    return CANDIDATES                              # only when the store file is missing/unreadable
+
 PARSE_PROMPT = '''You convert a user's free-text social request into a structured intent.
 Return ONLY compact JSON (no prose, no markdown), keys:
  title  (3-5 word human label, e.g. "Coffee & urbanism chat"),
@@ -391,7 +411,7 @@ def match_candidates(intent, prof, ctx=None):
     adjOk    = intent.get('adjacentAllowed', True)
     broadOk  = intent.get('broadAllowed', True)
     out = []
-    for c in CANDIDATES:
+    for c in load_candidates():
         # ── 1. HARD GATES ──
         ok, _why = _hard_gates(intent, c, gate_ctx)
         if not ok:
@@ -545,6 +565,32 @@ def negotiate_candidates(intent, cands):
     except Exception:
         return [dict(c, **negotiate_one(intent, c)) for c in top]
 
+# ---------------------------------------------------------------- Explore: public plans near the owner
+# The client's Explore map used to hard-code 5 fake plans. Serve real ones instead: every candidate who
+# carries an OPEN own-intent becomes a public plan (title from ENTITY_MAP, distance from their geo). Draws
+# from load_candidates() so it honours the store, and returns [] when nobody is posting — the client then
+# shows an empty state instead of invented pins.
+_EXPLORE_WHEN = ("Today 18:00", "Tonight 21:00", "Tomorrow 08:00", "Tomorrow 19:00", "Sat 11:00",
+                 "Sun 10:00", "Wed 17:00", "Fri 20:00", "Thu 20:00", "Sat 17:00")
+
+
+def explore_plans(limit=12):
+    out = []
+    for i, c in enumerate(load_candidates()):
+        oi = (c.get("intents") or [None])[0]
+        if not oi or c.get("paused") or not c.get("open"):
+            continue
+        topics = [str(t).lower() for t in (oi.get("topics") or c.get("interests") or []) if t][:3]
+        lat, lon = c.get("lat"), c.get("lon")
+        if not topics or lat is None or lon is None:
+            continue
+        out.append({"title": ENTITY_MAP.get(topics[0]) or (topics[0].capitalize() + " meetup"),
+                    "who": c.get("name") or "Someone", "topics": topics, "role": oi.get("role"),
+                    "when": _EXPLORE_WHEN[i % len(_EXPLORE_WHEN)], "dist": round(float(c.get("km") or 0), 1),
+                    "lat": lat, "lon": lon, "verified": bool(c.get("verified"))})
+    out.sort(key=lambda p: p["dist"])
+    return out[:limit]
+
 # ---------------------------------------------------------------- HTTP dispatcher (matching only)
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -552,6 +598,11 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, {"weights": get_weights()})
         elif self.path == "/api/agent/load":
             send_json(self, 200, {"state": _session("me").get("state")})
+        elif self.path == "/api/agent/pool":
+            c = load_candidates()
+            send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None, "users": c})
+        elif self.path == "/api/agent/explore":
+            send_json(self, 200, {"plans": explore_plans()})
         elif self.path == "/":
             send_json(self, 200, {"service": "matching", "ok": True})
         else:

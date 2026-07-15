@@ -1347,13 +1347,15 @@ function scr_profileedit(){
 
 // ---------- Phase 3: public intents on the Explore map ----------
 const ME_LATLON=[41.3874, 2.1686];   // Barcelona (demo user's coarse area)
-const PUBLIC_INTENTS=[
-  {title:'Morning run in the park',who:'Sofia',topics:['running'],when:'Tomorrow 08:00',dist:'1.4 km',lat:41.3881,lon:2.1870},
-  {title:'Coffee & startup talk',who:'Marc',topics:['coffee','startups'],when:'Today 18:00',dist:'0.6 km',lat:41.3915,lon:2.1650},
-  {title:'Dota 2 squad night',who:'Dima',topics:['dota'],when:'Tonight 21:00',dist:'2.1 km',lat:41.3805,lon:2.1735},
-  {title:'Spanish + coffee exchange',who:'Ana',topics:['spanish','coffee'],when:'Wed 17:00',dist:'0.9 km',lat:41.4028,lon:2.1560},
-  {title:'Architecture city walk',who:'Leo',topics:['architecture','urbanism'],when:'Sat 11:00',dist:'3.2 km',lat:41.4036,lon:2.1744},
-];
+// Explore plans are REAL — pulled from the matching pool (/api/agent/explore), not hard-coded here.
+let PUBLIC_INTENTS=[], exploreLoaded=false, exploreLoading=false;
+async function loadExplore(){
+  if(exploreLoading) return; exploreLoading=true;
+  let r; try{ r=await fetch('/api/agent/explore').then(x=>x.json()); }catch(e){ r=null; }
+  exploreLoading=false; exploreLoaded=true;
+  PUBLIC_INTENTS=(r&&r.plans)||[];
+  if(cur==='search') render();
+}
 let exploreMap=null;
 function initExploreMap(){
   if(typeof L==='undefined') return;                 // Leaflet not loaded
@@ -1366,7 +1368,7 @@ function initExploreMap(){
   const meIcon=L.divIcon({html:'<div class="meDot"></div>',className:'',iconSize:[16,16],iconAnchor:[8,8]});
   const pts=[];
   PUBLIC_INTENTS.forEach((p,i)=>{ const m=L.marker([p.lat,p.lon],{icon:cIcon}).addTo(map);
-    m.bindPopup('<div class="mapop"><div class="mopt">'+esc(p.title)+'</div><div class="mopm">'+esc(p.who)+' · '+esc(p.when)+' · '+esc(p.dist)+'</div><button class="mopj" onclick="joinPublic('+i+')">Join</button></div>');
+    m.bindPopup('<div class="mapop"><div class="mopt">'+esc(p.title)+'</div><div class="mopm">'+esc(p.who)+' · '+esc(p.when)+' · '+esc(p.dist)+' km</div><button class="mopj" onclick="joinPublic('+i+')">Join</button></div>');
     pts.push([p.lat,p.lon]); });
   L.marker(ME_LATLON,{icon:meIcon}).addTo(map); pts.push(ME_LATLON);
   try{ map.fitBounds(pts,{padding:[36,36]}); }catch(_e){ map.setView(ME_LATLON,13); }
@@ -1448,14 +1450,18 @@ function scr_intentchat(){
 function scr_search(){
   const P=PUBLIC_INTENTS;
   const list=P.map((p,i)=>`<div class="card evrow" data-public="${i}"><div class="evic">${IC.pin}</div>
-    <div class="evt"><div class="evtt">${esc(p.title)}</div><div class="evts">${esc(p.who)} · ${esc(p.when)} · ${esc(p.dist)}</div></div>
+    <div class="evt"><div class="evtt">${esc(p.title)}</div><div class="evts">${esc(p.who)} · ${esc(p.when)} · ${esc(p.dist)} km</div></div>
     <button class="introbtn" data-act="join" data-pi="${i}">Join</button></div>`).join('');
+  const below = P.length ? `<div class="stack">${list}</div>`
+    : (exploreLoaded
+        ? emptyState('Пока рядом нет открытых планов','Создай интент — и Kleal предложит его людям вокруг.')
+        : `<div class="stack"><div class="card evrow"><div class="evt"><div class="evts"><span class="typing3"><i></i><i></i><i></i></span> ищу планы рядом…</div></div></div></div>`);
   return `<div class="fade">
     <div class="sbar"><div class="box">${IC.nSearch}<span>Search this area…</span></div>
       <div class="filt" data-act="filter">${IC.compass}</div></div>
     <div id="lmap" class="lmap"></div>
     <div class="seccap" style="margin:12px 2px 8px">Open plans people posted near you — tap a pin to see it, Join and Kleal handles the intro. Only your area is shown, never your exact spot.</div>
-    <div class="stack">${list}</div>
+    ${below}
   </div>`;
 }
 
@@ -1582,7 +1588,7 @@ function render(){
   A.scrollTop=0;
   if(chat){ const bt=document.getElementById('bthread'); if(bt) bt.scrollTop=bt.scrollHeight; }
   // real Leaflet map on Explore; tear it down when leaving
-  if(cur==='search'){ setTimeout(initExploreMap, 0); }
+  if(cur==='search'){ if(!exploreLoaded) loadExplore(); setTimeout(initExploreMap, 0); }
   else if(exploreMap){ try{ exploreMap.remove(); }catch(_e){} exploreMap=null; }
   // wire (drill-in nav: Overview hub -> section -> back)
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>setTab(el.dataset.nav));
