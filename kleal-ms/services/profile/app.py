@@ -1086,6 +1086,38 @@ async function runAgent(query){
 function intentSpec(it){ const s=it.spec||[]; return s.map((r,i)=>`<div class="specrow"><div class="spi">${IC[r[0]]||IC.spark}</div>
   <div class="sl">${esc(r[1])}</div><div class="sv">${esc(r[2])}</div></div>${i<s.length-1?'<div class="divider"></div>':''}`).join(''); }
 
+// ===== Conversational "Create intent": Kleal collects the essentials + validates, THEN builds the card =====
+// Replaces the old "any text -> instant card" behaviour: /api/buddy/intent-build runs a short dialogue
+// (gibberish -> ask again; missing when/format -> ask; enough -> ready) and only then do we build a card.
+let intentMsgs=[], intentBusy=false;
+function openCreateIntent(){ curIntent=null; intentLaunched=false;
+  intentMsgs=[{who:'them',text:"Что хочешь устроить? Опиши, чем заняться — например «кофе и поговорить про ИИ сегодня вечером» или «найти напарника в зал на неделе»."}];
+  cur='intentchat'; render(); }
+async function intentTurn(text){ text=(text||'').trim(); if(!text||intentBusy) return;
+  intentBusy=true; intentMsgs.push({who:'me',text}); intentMsgs.push({who:'them',text:'…',loading:true}); render();
+  let r; try{ r=await fetch('/api/buddy/intent-build',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({messages:intentMsgs.filter(m=>!m.loading).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text})),
+      profile:buddyProfile()})}).then(x=>x.json()); }catch(e){ r=null; }
+  intentMsgs=intentMsgs.filter(m=>!m.loading); intentBusy=false;
+  if(!r){ intentMsgs.push({who:'them',text:'Связь пропала — повтори, пожалуйста.'}); render(); return; }
+  intentMsgs.push({who:'them',text:r.reply||'…'}); render(); saveState();
+  if(r.ready && r.intent) buildIntentCard(r.intent);      // enough detail -> structure the card
+}
+async function buildIntentCard(intent){
+  curIntent={pending:true, query:''}; render();
+  let r; try{ r=await fetch('/api/agent/match',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({intent:intent, profile:{}})}).then(x=>x.json()); }catch(e){ r=null; }
+  const cands=(r&&r.candidates)||[]; const it=intent;
+  const reach=it.exactMatchRequired?'Exact matches only':(it.broadAllowed===false?'Same activity only':(it.adjacentAllowed===false?'Same + related':'Adjacent + related'));
+  const area=(it.place||'Public places nearby')+(it.mode==='offline'&&it.radiusKm?(' · within '+it.radiusKm+' km'):'');
+  curIntent={ title:it.title||it.activity||'New plan', tags:it.tags||it.topics||[], query:'', type:it.type, role:it.role, intent:it,
+    fallback:(r&&r.fallback)||null, confidence:cands[0]?cands[0].score:70, candidates:cands,
+    spec:[['moon','Mode',capw(it.mode||'Offline')],['users','Format',it.format||'1:1 or small group'],
+          ['clock','Time',it.time||'Flexible'],['pin','Area',area],
+          ['shield','Safety',it.verifiedOnly?'Verified people only':'Public places only'],
+          ['compass','Reach',reach],['eye','Visibility','Via Kleal only']] };
+  intentLaunched=false; render(); saveState(); }
+
 // ---------- Phase 2 (prod): LLM agent-to-agent negotiation on launch ----------
 async function negotiateIntent(){
   if(!curIntent){ return; }
@@ -1360,12 +1392,16 @@ function scr_intents(){
 
 function scr_intentchat(){
   const it=curIntent;
-  const composer=`<div class="composer"><input id="acin" class="cin cinput" placeholder="Tell Kleal what you'd like to do…" ${agentBusy?'disabled':''}>
-    <button class="csend" data-act="agent-send">${IC.send||IC.nMsg}</button></div>`;
+  const composer=`<div class="composer"><input id="acin" class="cin cinput" placeholder="Опиши, что хочешь сделать…" ${intentBusy?'disabled':''}>
+    <button class="csend" data-act="intent-send">${IC.send||IC.nMsg}</button></div>`;
   if(!it){
-    return `<div class="fade"><div class="thread">
-      <div class="kbub">What would you like to do? Say it in your own words — “coffee & AI chat tonight downtown”, “gym buddy this week”, “someone to practise Spanish with”.</div>
-    </div>${composer}</div>`;
+    // conversational collection: Kleal asks for the missing essentials and validates before building a card
+    const thread=(intentMsgs||[]).map(x=>{
+      if(x.who==='me') return `<div class="mbub">${esc(x.text)}</div>`;
+      const inner=x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>');
+      return `<div class="kbub">${inner}</div>`;
+    }).join('');
+    return `<div class="fade"><div class="thread">${thread}</div>${composer}</div>`;
   }
   if(it.pending){
     return `<div class="fade"><div class="thread">
@@ -1375,13 +1411,13 @@ function scr_intentchat(){
   }
   const cands=it.candidates||[]; const negotiating=!!it.negotiating;
   const agreed=cands.filter(c=>c.agree).length;
-  const candCard=`<div class="card"><div class="sumhead" style="padding:14px 16px 6px"><div class="sumlbl">Kleal is on it</div>
-      <span class="confpct">${negotiating?'negotiating…':agreed+' agreed'}</span></div>
+  const candCard=`<div class="card"><div class="sumhead" style="padding:14px 16px 6px"><div class="sumlbl">Kleal ищет</div>
+      <span class="confpct">${negotiating?'договариваюсь…':'согласны: '+agreed}</span></div>
     ${cands.length ? cands.map((c,i)=>{
       const negot=negotiating && !c.decided;
       const sub=(c.decided&&c.reason)?c.reason:(c.reasons||[]).slice(0,2).join(' · ');
       const status=negot?'<div class="candbusy"><span class="typing3"><i></i><i></i><i></i></span></div>'
-        :(c.passed?'<div class="candno">passed</div>':(c.agree?'<div class="candok">✓ agreed</div>':'<div class="candno">declined</div>'));
+        :(c.passed?'<div class="candno">пропущен</div>':(c.agree?'<div class="candok">✓ согласен</div>':'<div class="candno">отказ</div>'));
       const tier=c.kind==='reciprocal'?'<span style="font-size:10px;font-weight:700;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:1px 5px;margin-left:5px">↔ mutual</span>'
         :(c.tier?`<span style="font-size:10px;font-weight:700;color:var(--muted);background:var(--field);border-radius:6px;padding:1px 5px;margin-left:5px">${esc(c.tier)}</span>`:'');
       const vtick=c.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':'';
@@ -1393,19 +1429,19 @@ function scr_intentchat(){
         <button data-act="pass" data-ci="${i}" title="Not interested" style="border:none;background:var(--field);color:var(--muted);width:26px;height:26px;border-radius:50%;font-size:13px;margin-left:6px;cursor:pointer">✕</button>`:''}
       </div>${i<cands.length-1?'<div class="divider"></div>':''}`; }).join('')
       : (it.fallback ? fallbackCard(it.fallback)
-        : '<div class="chkrow"><div class="chklb wait">No one matched yet — I\'ll keep looking in the background.</div></div>')}
+        : '<div class="chkrow"><div class="chklb wait">Пока никто не подошёл — продолжаю искать в фоне.</div></div>')}
     </div>`;
   return `<div class="fade"><div class="thread">
     ${it.query?`<div class="mbub">${esc(it.query)}</div>`:''}
-    <div class="kbub">Here's the intent I structured${it.error?' (offline — used a rough parse)':''}. Launch the search when it looks right.</div>
+    <div class="kbub">Вот интент, который я собрал${it.error?' (офлайн — грубый разбор)':''}. Запусти поиск, когда всё верно.</div>
     <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${it.confidence||0}%</span></div>
       <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div></div>
     <div class="card">${intentSpec(it)}</div>
-    ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Launch search</button>`}
-    ${intentLaunched ? `<div class="mbub">Launch it</div>
-      <div class="kbub">${negotiating?'Reaching out to each candidate’s agent — negotiating on your behalf…':('Their agents replied — '+agreed+' agreed:')}</div>
+    ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Запустить поиск</button>`}
+    ${intentLaunched ? `<div class="mbub">Запускаю</div>
+      <div class="kbub">${negotiating?'Связываюсь с агентами кандидатов — договариваюсь за тебя…':('Их агенты ответили — согласны: '+agreed)}</div>
       ${candCard}
-      ${negotiating?'':'<div class="kbub">Want an intro? I only reach out once you approve.</div>'}` : ''}
+      ${negotiating?'':'<div class="kbub">Сделать интро? Я пишу только после твоего одобрения.</div>'}` : ''}
   </div>${composer}</div>`;
 }
 
@@ -1573,7 +1609,7 @@ function render(){
   document.querySelectorAll('[data-notif]').forEach(el=>el.onclick=()=>openNotif(el.dataset.notif));
   document.querySelectorAll('[data-public]').forEach(el=>el.onclick=()=>{ const p=PUBLIC_INTENTS[+el.dataset.public]; if(p)toast(p.title+' — '+p.who+' · '+p.when); });
   document.querySelectorAll('[data-act]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); doAct(el.dataset.act, el.dataset); });
-  const acin=document.getElementById('acin'); if(acin){ acin.onkeydown=(e)=>{ if(e.key==='Enter')runAgent(acin.value); }; setTimeout(()=>{try{acin.focus();}catch(_e){}},40); }
+  const acin=document.getElementById('acin'); if(acin){ acin.onkeydown=(e)=>{ if(e.key==='Enter')intentTurn(acin.value); }; setTimeout(()=>{try{acin.focus();}catch(_e){}},40); }
   const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter'){ openBuddy(ainput.value); } }; }
   const bcin=document.getElementById('bcin'); if(bcin){ bcin.onkeydown=(e)=>{ if(e.key==='Enter')buddyTurn(bcin.value); }; setTimeout(()=>{try{bcin.focus();}catch(_e){}},40); }
   const ecin=document.getElementById('ecin'); if(ecin){ ecin.onkeydown=(e)=>{ if(e.key==='Enter')editTurn(ecin.value); }; setTimeout(()=>{try{ecin.focus();}catch(_e){}},40); }
@@ -1629,8 +1665,9 @@ function doAct(act, ds){
     case 'export-data': toast('Preparing your data export — we’ll email you a copy'); break;
     case 'delete-account': toast('Delete account would ask you to confirm, then erase everything'); break;
     case 'nav': setTab(ds.tab||'overview'); break;
-    case 'fab': case 'createintent': curIntent=null; intentLaunched=false; cur='intentchat'; render(); break;
-    case 'agent-send': { const el=document.getElementById('acin'); runAgent(el&&el.value||''); break; }
+    case 'fab': case 'createintent': openCreateIntent(); break;
+    case 'intent-send': { const el=document.getElementById('acin'); intentTurn(el&&el.value||''); break; }
+    case 'agent-send': { const el=document.getElementById('acin'); intentTurn(el&&el.value||''); break; }
     case 'launch-intent': intentLaunched=true; render(); negotiateIntent(); break;
     case 'intro': { const i=+ds.ci; approveIntro((curIntent&&curIntent.candidates||[])[i], curIntent); break; }
     case 'pass': { const i=+ds.ci; const c=(curIntent&&curIntent.candidates||[])[i]; if(!c)break;
@@ -1660,7 +1697,7 @@ function doAct(act, ds){
     case 'edit-cancel': cancelEdit(+ds.ei); break;
     case 'edit-back': cur='buddychat'; render(); break;
     case 'edit-view': cur='overview'; render(); break;
-    case 'buddy-create': curIntent=null; intentLaunched=false; cur='intentchat'; render(); break;
+    case 'buddy-create': openCreateIntent(); break;
     case 'buddy-plus': toast('Attachments are coming soon'); break;
     case 'buddy-mic': buddyMic(); break;
     case 'go-home': editSig=null; detail=null; cur='agenthome'; render(); break;   // center FAB -> agent home

@@ -774,6 +774,74 @@ def profile_edit(message, profile, lang):
     return {"reply": reply, "patch": patch, "lang": lang}
 
 
+# ======================= INTENT BUILDER (conversational "Create intent") =======================
+# The "Create intent" flow used to POST straight to matching's parser, which turned ANY text — even random
+# letters — into an intent card, with no validation and no follow-up. This builder instead runs a SHORT
+# dialogue: it validates (gibberish -> ask again, never build), asks for the missing essentials (activity,
+# when, format) one at a time, and only when it has the gist returns ready:true with a CANONICAL intent
+# (same filtration + build_intent as /chat, so matching can rank it). The card is shown for confirmation;
+# the frontend launches the search separately.
+INTENT_BUILD_PROMPT = '''You help the user create an "intent" — a plan to meet people or do an activity with someone. Keep it SHORT: you only need two things — the ACTIVITY and roughly WHEN. Ask at most ONE brief question, and only if one of those is missing.
+
+Conversation so far is given. Return ONE JSON object, nothing else:
+{"reply":"<your message — a single question, or a short confirmation once you have the gist>",
+ "valid":true|false, "ready":true|false,
+ "activity":"<short activity phrase, once known>", "time":"<when, once known>", "format":"<1:1|small group|group, if the user mentioned it>"}
+
+Rules:
+- valid:false ONLY when the latest message is gibberish / not about doing something with people (e.g. random letters "asdfgh"). Then reply asks them to describe what they'd like to do, and ready MUST be false. Never build an intent from nonsense.
+- ready:true as soon as you know the ACTIVITY and any sense of WHEN (a day, "today", "this weekend", or "whenever"). Do NOT keep asking — format, group size, exact place, number of people are OPTIONAL and default sensibly. If the user already gave activity + time in one message, set ready:true right away with a one-line confirmation.
+- Only when the activity is clear but timing is totally absent, ask the single question "when?". Never ask more than that.
+- Keep reply short (1-2 sentences), in the user's language. activity/time/format values in English.'''
+
+
+def intent_build(messages, profile):
+    last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
+    lang = detect_lang(last_user)
+    convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
+                       else ("Kleal: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
+    obj = None
+    try:
+        raw = llm_complete(MODEL_ID, [{"role": "system", "content": INTENT_BUILD_PROMPT},
+                                      {"role": "user", "content": convo}], 0.5)
+        obj = _lenient_json(raw)
+    except Exception:
+        obj = None
+    if not isinstance(obj, dict) or not obj.get("reply"):
+        return {"reply": ("Что хочешь устроить? Опиши, чем заняться и с кем." if lang == "ru"
+                          else "What would you like to set up? Tell me what and with whom."),
+                "valid": False, "ready": False, "intent": None, "lang": lang}
+    reply = str(obj.get("reply"))[:400]
+    valid = bool(obj.get("valid", True))
+    ready = bool(obj.get("ready")) and valid
+    activity = str(obj.get("activity") or last_user)
+    user_turns = sum(1 for m in (messages or []) if m.get("role") == "user")
+    # Backstop against over-asking: the 70B tends to keep interrogating (group size, exact place...). Once the
+    # user has already answered at least one follow-up AND we can recognise a real activity, build the card
+    # instead of asking further — sensible defaults cover the rest.
+    if valid and not ready and user_turns >= 2 and _categorize(activity).get("topics"):
+        if build_intent(_baseline_signals(profile), _categorize(activity), activity, lang).get("rankable"):
+            ready = True
+    if not ready:
+        return {"reply": reply, "valid": valid, "ready": False, "intent": None, "lang": lang}
+
+    # ready -> assemble a canonical, rankable intent (filtration + the same builder /chat uses)
+    cat = _categorize(activity)
+    sig = _baseline_signals(profile)
+    if obj.get("time"):
+        sig["time"] = str(obj.get("time"))
+    intent = build_intent(sig, cat, activity, lang)
+    if obj.get("format"):
+        intent["format"] = str(obj.get("format"))[:40]
+    # guard: if nothing rankable survived canonicalisation, don't pretend it's ready
+    if not intent.get("rankable"):
+        return {"reply": (("Понял тему, но пока не за что зацепиться для поиска — уточни, чем именно заняться?")
+                          if lang == "ru" else
+                          "I got the gist, but there's nothing concrete to search on yet — what exactly do you want to do?"),
+                "valid": True, "ready": False, "intent": None, "lang": lang}
+    return {"reply": reply, "valid": True, "ready": True, "intent": intent, "lang": lang}
+
+
 # ======================= HTTP =======================
 class H(BaseHTTPRequestHandler):
     def _route(self):
@@ -848,6 +916,11 @@ class H(BaseHTTPRequestHandler):
                 msg = body.get("message") or ""
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
                 return send_json(self, 200, profile_edit(msg, prof, detect_lang(msg)))
+
+            if r == "/intent-build":                 # conversational "Create intent": validate + ask + build
+                msgs = body.get("messages") if isinstance(body.get("messages"), list) else []
+                prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+                return send_json(self, 200, intent_build(msgs, prof))
 
             if r == "/intro":                        # the candidate's agent writes the icebreaker
                 return send_json(self, 200, _post(MATCH_URL, "/api/agent/intro",
