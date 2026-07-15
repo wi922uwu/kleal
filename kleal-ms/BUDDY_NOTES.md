@@ -69,6 +69,23 @@ applies it, with a **confirm step** before every change.
 - **Verified** e2e through the gateway: RU edits produce correct patches ("убери футбол" matched the
   English `Football`), the confirm→apply flow updates the profile and the change shows on the profile screen.
 
+## Create intent — conversational collection (2026-07-15)
+
+The "Create Intent" flow used to POST any text straight to matching's parser → an intent card was built
+from *anything*, even random letters, with no follow-up. Now it's a short dialogue.
+
+- **Backend** — `POST /api/buddy/intent-build {messages, profile}` → `{reply, valid, ready, intent}`.
+  Validates (gibberish → `valid:false`, never builds), asks for the one missing essential (usually "when?"),
+  and only at activity + rough-time returns `ready:true` with a **canonical** intent (same `_categorize` +
+  `build_intent` as `/chat`, so matching can rank it). Two safeguards: a **backstop** forces `ready` once the
+  user has answered a follow-up and a real activity is recognised (the 70B otherwise interrogates forever —
+  group size, exact place…); the **rankable guard** refuses to `ready` a topic matching can't score.
+- **Frontend** — `scr_intentchat` is a chat (`intentMsgs`) until enough detail; then `buildIntentCard` calls
+  `/api/agent/match` and renders the spec card + Launch. All create-intent entry points route to
+  `openCreateIntent`. Card copy + negotiation statuses localised to RU to match the dialogue.
+- **Verified** e2e: gibberish is refused with a re-ask (no card), a full one-line request builds the card in
+  one turn, and a two-turn activity→time reaches ready via the backstop.
+
 ## For Dev A / Dev B — two things worth knowing
 
 - **`BROAD_OF` in `services/buddy/app.py` mirrors `TAXONOMY` in `services/matching/app.py`.** Duplication is a
