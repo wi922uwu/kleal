@@ -1264,10 +1264,21 @@ function scr_buddychat(){
 // The editor returns a semantic PATCH ([{op,field,value,label}]); we show a confirmation, and only on
 // "Применить" apply it to DATA here (the frontend owns the profile). Fields map 1:1 to applyProfilePatch.
 let editMsgs=[], editBusy=false;
-function openProfileEdit(){
+// section -> a focused opening line, so the Edit buttons on the profile sections land the editor in context
+const EDIT_GREET={
+  'Interests':"Что поменять в интересах? Например: «добавь теннис» или «убери футбол».",
+  'Your personality':"Расскажи, как ты общаешься с людьми — например «я больше интроверт» или «люблю глубокие разговоры».",
+  'Goals':"Какая у тебя цель? Например «хочу найти напарника по бегу» или «убери нетворкинг».",
+  'Safety & Privacy':"Что настроить в безопасности и приватности? Например «встречаться только в публичных местах» или «только проверенные».",
+  'Location':"Куда переехал или где удобно встречаться? Например «город Мадрид».",
+  'Languages':"Какие языки добавить или убрать? Например «добавь французский».",
+};
+function openProfileEdit(section){
   cur='profileedit';
-  if(!editMsgs.length) editMsgs=[{who:'them',hello:true,
-    text:"Что поменять в профиле? Скажи, например: «добавь теннис», «город Мадрид» или «убери футбол»."}];
+  const greet = EDIT_GREET[section] || (section
+    ? ("Что поменять в разделе «"+section+"»? Опиши своими словами.")
+    : "Что поменять в профиле? Скажи, например: «добавь теннис», «город Мадрид» или «убери футбол».");
+  if(!editMsgs.length || section) editMsgs=[{who:'them',hello:true,text:greet}];   // Edit button -> fresh, focused
   render();
 }
 function snapRow(title){ return (DATA.snapshot||[]).find(r=>String(r.title).toLowerCase()===String(title).toLowerCase()); }
@@ -1642,8 +1653,8 @@ function doAct(act, ds){
     case 'cancelsum': editingSummary=false; render(); break;
     case 'savesum': { const el=document.getElementById('sumta'); DATA.summary=(el?el.value:'').trim(); editingSummary=false; render(); toast('Summary saved'); break; }
     case 'askwhy': toast('Kleal built this from what you shared during onboarding. Every detail is editable.'); break;
-    case 'editbasics': toast('Editing your basics is coming soon'); break;
-    case 'editrow': toast('Edit '+(ds.row||'this')+' is coming soon'); break;
+    case 'editbasics': openProfileEdit(''); break;   // name / city / languages — all editable by talking
+    case 'editrow': openProfileEdit(ds.row||''); break;   // section Edit -> talk to Kleal, in context
     case 'edit-int': openEditInterest(ds.int); break;
     case 'dontuse-int': toast('"'+(ds.int||'')+'" will not be used for matching'); break;
     case 'remove-int': { DATA.interests=DATA.interests.filter(i=>i.name!==ds.int);
@@ -1713,11 +1724,11 @@ function doAct(act, ds){
     case 'q-interests': setTab('interests'); break;
     case 'q-saved': toast('Saved items are coming soon'); break;
     case 'see-all': setTab('search'); break;
-    case 'add-interests': toast('Adding interests is coming soon'); break;
+    case 'add-interests': openProfileEdit('Interests'); break;
     case 'personality-test': toast('The personality test is coming soon'); break;
-    case 'edit-personality': toast('Editing your personality is coming soon'); break;
-    case 'add-goal': toast('Adding a goal is coming soon'); break;
-    case 'edit-goal': toast('Editing this goal is coming soon'); break;
+    case 'edit-personality': openProfileEdit('Your personality'); break;
+    case 'add-goal': openProfileEdit('Goals'); break;
+    case 'edit-goal': openProfileEdit('Goals'); break;
     default: toast('Coming soon');
   }
 }

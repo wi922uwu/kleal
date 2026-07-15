@@ -236,12 +236,21 @@ def _gen_pool():
     return pool
 CANDIDATES = _gen_pool()
 
-# The live candidate pool comes from the shared user store (managed by the admin-service). If the store
-# FILE EXISTS it is authoritative — even when empty (an empty store means an empty system, no test users).
-# Only a MISSING/broken store falls back to the built-in demo pool, so matching never hard-breaks.
-USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json"))
+# The candidate pool = real users registered by onboarding, MERGED with the built-in demo pool for depth.
+# IMPORTANT (was a silent, total break): onboarding writes the shared store at the repo-root users.json
+# (KLEAL_USERS=/root/kleal-ms/users.json), but this file previously defaulted to services/matching/users.json
+# — a different file onboarding never touched — so every registered person was invisible to the matcher and
+# search ran on the 50 demo fakes only. Default now points at the SAME repo-root users.json onboarding uses.
+USERS_PATH = os.environ.get(
+    "KLEAL_USERS",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "users.json"))
+# Merge real users with the demo pool by default. Real users rank first and override a demo user of the same
+# name; the demo pool keeps the system populated until enough real users exist. Set KLEAL_MERGE_DEMO=0 for the
+# old behaviour (store authoritative, demo only as a missing-file fallback).
+MERGE_DEMO = os.environ.get("KLEAL_MERGE_DEMO", "1") != "0"
 _users_cache = {"mtime": None, "list": None}
 def load_candidates():
+    store = None
     try:
         m = os.path.getmtime(USERS_PATH)
         if _users_cache["mtime"] != m:
@@ -250,11 +259,15 @@ def load_candidates():
             lst = data.get("users") if isinstance(data, dict) else data
             _users_cache["mtime"] = m
             _users_cache["list"] = lst if isinstance(lst, list) else None
-        if _users_cache["list"] is not None:      # store present (even []) -> authoritative
-            return _users_cache["list"]
+        store = _users_cache["list"]
     except Exception:
-        pass
-    return CANDIDATES                              # only when the store file is missing/unreadable
+        store = None
+    if not store:                                  # missing/broken/empty store -> demo pool keeps matching alive
+        return CANDIDATES
+    if not MERGE_DEMO:
+        return store                               # opt-out: store authoritative (original behaviour)
+    seen = {str(u.get("name", "")).strip().lower() for u in store}
+    return list(store) + [c for c in CANDIDATES if str(c.get("name", "")).strip().lower() not in seen]
 
 PARSE_PROMPT = '''You convert a user's free-text social request into a structured intent.
 Return ONLY compact JSON (no prose, no markdown), keys:
