@@ -410,7 +410,11 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   border-radius:999px;padding:7px 13px;cursor:pointer;margin-left:2px}
 /* ===== Buddy chat (Figma "assistant chat") ===== */
 .bchat{display:flex;flex-direction:column;height:100%;min-height:0}
-.chd{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 4px 10px}
+.chd{flex:none;position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 4px 12px;min-height:44px}
+.chd-ttl{position:absolute;left:0;right:0;text-align:center;font-size:16px;font-weight:700;letter-spacing:-.01em;
+  color:var(--fg);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 96px}
+.chd-back,.chd-pills{position:relative;z-index:1}
+.chd-sub{display:block;font-size:11px;font-weight:500;color:var(--muted);margin-top:1px}
 .chd-back{display:flex;align-items:center;gap:2px;background:transparent;border:0;color:var(--fg);
   font:inherit;font-size:16px;font-weight:600;cursor:pointer;padding:6px 4px}
 .chd-back svg{width:22px;height:22px}
@@ -1195,14 +1199,14 @@ function openMsgThread(i){
 function scr_matchchat(){
   const m=matchWith; if(!m) return scr_agenthome();
   const mine=m.msgs.filter(x=>x.who==='me').length; const blur=Math.max(0, 9-mine*3);
-  const thread=m.msgs.map(x=>x.who==='me'?`<div class="mbub">${esc(x.text)}</div>`
-    :`<div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div>`).join('');
-  return `<div class="fade"><div class="matchhead">
-      <div class="mava" style="filter:blur(${blur}px)">${esc(String(m.cand.name||'?')[0])}</div>
-      <div class="mmeta"><div class="mnm">${esc(m.cand.name)} <span class="mscore">${m.cand.score}% match</span></div>
-        <div class="mhint">Photo clears as you chat${blur>0?' — keep going':' ✓'}</div></div></div>
-    <div class="thread" style="padding-top:12px">${thread}</div>
-    <div class="composer"><input id="mcin" class="cin cinput" placeholder="Message ${esc(m.cand.name)}…"><button class="csend" data-act="match-send">${IC.send}</button></div></div>`;
+  const hd=chatHead(m.cand.name, {back:'chat-back', sub:(m.cand.score?m.cand.score+'% совпадение':null)});
+  const thread=m.msgs.map(x=>x.who==='me'?`<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`
+    :`<div class="krow"><div class="kav" style="filter:blur(${Math.min(blur,4)}px)"></div><div class="kcol"><div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div></div></div>`).join('');
+  const hint=blur>0?`<div class="candbusy" style="text-align:center;padding:2px 0 6px">Фото проявится по мере общения</div>`:'';
+  return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${hint}${thread}</div>
+    <div class="bc2"><button class="bc2-plus" data-act="buddy-plus">+</button>
+      <div class="bc2-field"><input id="mcin" placeholder="Сообщение для ${esc(m.cand.name)}…"><button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
+      <button class="bc2-send" data-act="match-send">${IC.send}</button></div></div>`;
 }
 
 // ================= BUDDY AGENT — the conversational agent you just talk to =================
@@ -1213,7 +1217,24 @@ function buddyProfile(){   // seed the buddy with what we already know about the
   return { name:DATA.name||'', interests:(DATA.interests||[]).map(i=>({name:i.name})),
            city:((DATA.subtitle||'').split('·')[0]||'').trim()||null };
 }
-function fmtTime(t){ const d=t?new Date(t):new Date(); let h=d.getHours(),m=d.getMinutes(); const ap=h<12?'AM':'PM'; h=h%12||12; return h+':'+(m<10?'0':'')+m+' '+ap; }
+// Unified chat header so you always know WHERE you are: Back (left) · centered title (+ optional subtitle) ·
+// optional action pills (right). Every chat screen uses this — consistent look, consistent back button.
+function chatHead(title, opts){ opts=opts||{};
+  const acts=(opts.actions||[]).map(a=>`<button class="chd-pill" data-act="${a.act}">${a.icon||''}${a.label?'<span>'+a.label+'</span>':''}</button>`).join('');
+  const sub=opts.sub?`<span class="chd-sub">${esc(opts.sub)}</span>`:'';
+  return `<div class="chd"><button class="chd-back" data-act="${opts.back||'chat-back'}">${IC.back}<span>${esc(opts.backLabel||'Назад')}</span></button>
+    <div class="chd-ttl">${esc(title||'')}${sub}</div>
+    <div class="chd-pills">${acts}</div></div>`;
+}
+// generic chat back: return to a sensible place per screen
+function chatBack(){
+  if(cur==='buddychat'){ cur='agenthome'; }
+  else if(cur==='profileedit'){ cur='buddychat'; }
+  else if(cur==='intentchat'){ cur='agenthome'; }
+  else if(cur==='matchchat'){ cur=(matchWith&&matchWith.fromMessages)?'messages':(matchWith&&matchWith.fromBuddy)?'buddychat':'intentchat'; }
+  else { cur='agenthome'; }
+  render();
+}
 function openBuddy(first){
   cur='buddychat';
   if(!buddyMsgs.length) buddyMsgs=[{who:'them',text:"Hey dear! How can I help you?",hello:true}];
@@ -1249,12 +1270,7 @@ function buddyMic(){
   try{ _rec.start(); if(mic)mic.classList.add('on'); toast('Listening…'); }catch(_e){ _rec=null; }
 }
 function scr_buddychat(){
-  const hd=`<div class="chd">
-    <button class="chd-back" data-act="buddy-back">${IC.back}<span>Back</span></button>
-    <div class="chd-pills">
-      <button class="chd-pill" data-act="buddy-profile">${IC.person}<span>Profile</span></button>
-      <button class="chd-pill" data-act="buddy-create"><span class="pl">+</span><span>Create Intent</span></button>
-    </div></div>`;
+  const hd=chatHead('Kleal', {back:'buddy-back', actions:[{act:'buddy-create', icon:'<span class="pl">+</span>', label:'Интент'}]});
   const thread=buddyMsgs.map((x,i)=>{
     if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div><div class="btime r">${fmtTime(x.t)}</div></div>`;
     if(x.hello) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
@@ -1367,9 +1383,7 @@ async function adaptSummary(){
 function cancelEdit(i){ const m=editMsgs[i]; if(!m) return; m.patch=null;
   editMsgs.push({who:'them',text:'Ок, оставил как было.',t:Date.now()}); render(); }
 function scr_profileedit(){
-  const hd=`<div class="chd">
-    <button class="chd-back" data-act="edit-back">${IC.back}<span>Back</span></button>
-    <div class="chd-pills"><button class="chd-pill" data-act="edit-view">${IC.person}<span>Профиль</span></button></div></div>`;
+  const hd=chatHead('Изменить профиль', {back:'edit-back', actions:[{act:'edit-view', icon:IC.person}]});
   const thread=editMsgs.map((x,i)=>{
     if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div><div class="btime r">${fmtTime(x.t)}</div></div>`;
     if(x.hello) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
@@ -1439,22 +1453,25 @@ function scr_intents(){
 
 function scr_intentchat(){
   const it=curIntent;
-  const composer=`<div class="composer"><input id="acin" class="cin cinput" placeholder="Опиши, что хочешь сделать…" ${intentBusy?'disabled':''}>
-    <button class="csend" data-act="intent-send">${IC.send||IC.nMsg}</button></div>`;
+  const hd=chatHead(it&&it.title?it.title:'Создание интента', {back:'intent-back', sub:(it&&it.title)?'Интент':null});
+  const composer=`<div class="bc2"><button class="bc2-plus" data-act="buddy-plus">+</button>
+    <div class="bc2-field"><input id="acin" placeholder="Опиши, что хочешь сделать…" ${intentBusy?'disabled':''}>
+      <button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
+    <button class="bc2-send" data-act="intent-send">${IC.send}</button></div>`;
+  const wrap=(body)=>`<div class="bchat fade">${hd}<div class="bthread" id="bthread">${body}</div>${composer}</div>`;
   if(!it){
     // conversational collection: Kleal asks for the missing essentials and validates before building a card
-    const thread=(intentMsgs||[]).map(x=>{
-      if(x.who==='me') return `<div class="mbub">${esc(x.text)}</div>`;
+    const thread=(intentMsgs||[]).map((x,i)=>{
+      if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`;
+      if(i===0 && !x.loading) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
       const inner=x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>');
-      return `<div class="kbub">${inner}</div>`;
+      return `<div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">${inner}</div></div></div>`;
     }).join('');
-    return `<div class="fade"><div class="thread">${thread}</div>${composer}</div>`;
+    return wrap(thread);
   }
   if(it.pending){
-    return `<div class="fade"><div class="thread">
-      <div class="mbub">${esc(it.query)}</div>
-      <div class="kbub"><span class="typing3"><i></i><i></i><i></i></span> structuring your intent…</div>
-    </div>${composer}</div>`;
+    return wrap(`<div class="mrow"><div class="mbub">${esc(it.query||'…')}</div></div>
+      <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub"><span class="typing3"><i></i><i></i><i></i></span> собираю интент…</div></div></div>`);
   }
   const cands=it.candidates||[]; const negotiating=!!it.negotiating;
   const agreed=cands.filter(c=>c.agree).length;
@@ -1478,18 +1495,16 @@ function scr_intentchat(){
       : (it.fallback ? fallbackCard(it.fallback)
         : '<div class="chkrow"><div class="chklb wait">Пока никто не подошёл — продолжаю искать в фоне.</div></div>')}
     </div>`;
-  return `<div class="fade"><div class="thread">
-    ${it.query?`<div class="mbub">${esc(it.query)}</div>`:''}
-    <div class="kbub">Вот интент, который я собрал${it.error?' (офлайн — грубый разбор)':''}. Запусти поиск, когда всё верно.</div>
+  return wrap(`
+    <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">Вот интент, который я собрал${it.error?' (офлайн — грубый разбор)':''}. Запусти поиск, когда всё верно.</div></div></div>
     <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${it.confidence||0}%</span></div>
       <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div></div>
     <div class="card">${intentSpec(it)}</div>
     ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Запустить поиск</button>`}
-    ${intentLaunched ? `<div class="mbub">Запускаю</div>
-      <div class="kbub">${negotiating?'Связываюсь с агентами кандидатов — договариваюсь за тебя…':('Их агенты ответили — согласны: '+agreed)}</div>
+    ${intentLaunched ? `<div class="mrow"><div class="mbub">Запускаю</div></div>
+      <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">${negotiating?'Связываюсь с агентами кандидатов — договариваюсь за тебя…':('Их агенты ответили — согласны: '+agreed)}</div></div></div>
       ${candCard}
-      ${negotiating?'':'<div class="kbub">Сделать интро? Я пишу только после твоего одобрения.</div>'}` : ''}
-  </div>${composer}</div>`;
+      ${negotiating?'':'<div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">Сделать интро? Я пишу только после твоего одобрения.</div></div></div>'}` : ''}`);
 }
 
 function scr_search(){
@@ -1618,20 +1633,21 @@ function render(){
   rgt.innerHTML = isHome ? IC.gear : IC.refresh;
   rgt.style.visibility = (isRoot && !isHome) ? 'hidden' : 'visible';   // no right icon on Intents/Search/Messages
   rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
-  // bottom nav: rebuilt for the active tab; hidden on the intent chat (which has its own composer)
-  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=(cur==='intentchat'||cur==='matchchat'||cur==='buddychat'||cur==='profileedit')?'none':'flex'; bn.innerHTML=bnavHTML(); }
-  // Home + Buddy chat carry their own headers, so hide the shared app bar there
-  const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||cur==='buddychat'||cur==='profileedit')?'none':'flex';
+  // Every chat screen carries its OWN in-screen header (chd) and pinned composer, so hide the shared app bar
+  // and the bottom nav on all of them — and treat them all the same way for layout.
+  const chat=(cur==='buddychat'||cur==='profileedit'||cur==='intentchat'||cur==='matchchat');
+  const bn=document.getElementById('bnav'); if(bn){ bn.style.display=chat?'none':'flex'; bn.innerHTML=bnavHTML(); }
+  const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||chat)?'none':'flex';
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
-  // Buddy chat owns the full height: app area becomes a flex column so the thread scrolls internally
-  // and the composer stays pinned. Other screens keep the normal scrolling body.
-  const chat=(cur==='buddychat'||cur==='profileedit');
+  // A chat owns the full height: the app area becomes a flex column so the thread scrolls INTERNALLY and the
+  // composer stays pinned. Resetting scrollTop to 0 on every render is what made the intent chat jump — so
+  // only non-chat screens reset, and chats auto-scroll their thread to the newest message.
   A.style.display=chat?'flex':''; A.style.flexDirection=chat?'column':'';
-  A.style.overflowY=chat?'hidden':''; A.style.paddingBottom=chat?'0':'';
-  A.scrollTop=0;
-  if(chat){ const bt=document.getElementById('bthread'); if(bt) bt.scrollTop=bt.scrollHeight; }
+  A.style.overflowY=chat?'hidden':''; A.style.padding=chat?'0 12px':'';   // chats manage their own vertical space
+  if(!chat) A.scrollTop=0;
+  else { const bt=document.getElementById('bthread'); if(bt) bt.scrollTop=bt.scrollHeight; }
   // real Leaflet map on Explore; tear it down when leaving
   if(cur==='search'){ if(!exploreLoaded) loadExplore(); setTimeout(initExploreMap, 0); }
   else if(exploreMap){ try{ exploreMap.remove(); }catch(_e){} exploreMap=null; }
@@ -1742,6 +1758,8 @@ function doAct(act, ds){
     case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
     case 'buddy-intro': { const i=+ds.bi; const m=buddyMsgs[i]; if(m&&m.match&&m.match.top){ approveIntro(m.match.top, m.match.intent); if(matchWith)matchWith.fromBuddy=true; } break; }
     case 'buddy-back': cur='agenthome'; render(); break;
+    case 'intent-back': cur='agenthome'; render(); break;   // create-intent chat -> home
+    case 'chat-back': chatBack(); break;                     // generic chat back (match chat, etc.)
     case 'buddy-profile': openProfileEdit(); break;   // "Edit with Kleal" — change the profile by talking
     case 'edit-send': { const el=document.getElementById('ecin'); editTurn(el&&el.value||''); break; }
     case 'edit-apply': confirmEdit(+ds.ei); break;
