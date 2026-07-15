@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (onboarding half, lines 16-301 + the embedded HTML).
 # Talks to llm-service over HTTP for every extract/reply/summary turn; holds NO model keys.
 # Contract: ../../shared/contracts.md. Owner: Dev A.
-import os, sys, json, re, threading
+import os, sys, json, re, threading, hashlib
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
@@ -1146,6 +1146,9 @@ function editStep(id){ const i=SCRIPT.findIndex(s=>s.id===id); if(i<0)return goS
 
 // ======================= DONE =======================
 function rDone(){ st.phase='done';
+  // register the finished profile into the shared user store -> becomes matchable + shows in admin (fire-and-forget)
+  try{ fetch('/api/onboarding/register',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({profile:profileForServer()})}).catch(()=>{}); }catch(_e){}
   A.innerHTML=`<div class="done fade"><div class="donedisc">${svg('<path d="M5 12.5l4.5 4.5L19 7"/>','0 0 24 24').replace('width="22" height="22"','width="72" height="72"')}</div>
     <div class="d-h">You're on the board!</div>
     <div class="d-sub">Your Kleal agent is ready. Tell it what you want to do and it starts finding people and plans.</div></div>
@@ -1186,6 +1189,91 @@ rSplash();
 # bake the profile app's public URL (pod: its own tunnel host) into the "My Profile" handoff; empty -> local :7073
 HTML = HTML.replace("__PROFILE_URL__", os.environ.get("PROFILE_URL", "").rstrip("/"))
 
+# ---------------------------------------------------------------- REGISTRATION: onboarding -> shared user store
+# Everyone who finishes onboarding is written into the same store the matching agent reads and the admin
+# panel shows, so they immediately become matchable and visible. Store format matches services/admin.
+USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "matching", "users.json"))
+_REG_LOCK = threading.Lock()
+_R2M = {"watch": "watch", "play": "play", "discuss": "discuss", "practice": "practise",
+        "practise": "practise", "attend": "attend", "meet": "meet"}
+
+
+def _first(*vals):
+    for v in vals:
+        if v not in (None, "", [], {}):
+            return v
+    return None
+
+
+def _profile_to_user(p):
+    """Map a Kleal onboarding profile -> a complete, matching-safe candidate record (like admin _norm_user)."""
+    p = p or {}
+    name = str(_first(p.get("name"), "New user")).strip() or "New user"
+    ints = p.get("interests") or {}
+    interests = [str(x).strip().lower() for x in (ints.get("explicit") if isinstance(ints, dict) else ints) or [] if str(x).strip()][:6]
+    langs = (p.get("languages") or {})
+    ll = langs.get("comfortable") or langs.get("fluent") or langs.get("native") or [] if isinstance(langs, dict) else []
+    langs = [str(x)[:2].lower() for x in ll if str(x).strip()][:4] or ["en"]
+    vibe = ""
+    vb = p.get("vibe")
+    if isinstance(vb, dict) and vb.get("primary"):
+        vibe = str(vb["primary"][0]).lower()
+    elif isinstance(vb, str):
+        vibe = vb.lower()
+    geo = p.get("geo") or {}
+    area = str(_first(p.get("city"), (geo.get("comfortableAreas") or [None])[0], "") or "").strip()
+    # role from the first interest's role, normalised to matching's vocabulary
+    role = "meet"
+    roles = (ints.get("roles") if isinstance(ints, dict) else None) or {}
+    if isinstance(roles, dict):
+        for _k, rv in roles.items():
+            r0 = (rv[0] if isinstance(rv, list) and rv else rv)
+            if r0:
+                role = _R2M.get(str(r0).lower(), "meet")
+                break
+    dating = bool((p.get("domains") or {}).get("dating", {}).get("enabled")) or \
+        ("dating" in [str(x).lower() for x in (p.get("goals") or {}).get("primary") or []])
+    try:
+        age = int(_first(p.get("age"), (p.get("ageRange") or "28").split("-")[0], 28))
+    except (TypeError, ValueError):
+        age = 28
+    km = round(0.5 + (int(hashlib.sha1(name.encode("utf-8")).hexdigest()[:4], 16) % 60) / 10.0, 1)  # deterministic 0.5..6.5
+    deals = [str(x).strip() for x in (p.get("dealBreakers") or []) if str(x).strip()][:6]
+    return {
+        "id": "on" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8],
+        "name": name, "interests": interests or ["social"],
+        "vibe": vibe or "chill", "langs": langs, "area": area,
+        "km": km, "lat": None, "lon": None, "open": True, "role": role,
+        "datingOk": dating, "age": age, "verified": bool(p.get("ageVerified18", True)),
+        "paused": False, "pending": 0, "blocksMe": False, "lastActiveDays": 0, "declinedOwnerDaysAgo": None,
+        "intents": [], "entities": [(interests[0].capitalize() + " scene") if interests else "Social scene"],
+        "dealBreakers": deals, "source": "onboarding",
+    }
+
+
+def register_profile(profile):
+    """Append/replace this person in the shared store (de-dupe by name). Atomic write."""
+    u = _profile_to_user(profile)
+    with _REG_LOCK:
+        try:
+            with open(USERS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            users = data.get("users") if isinstance(data, dict) else data
+            if not isinstance(users, list):
+                users = []
+        except Exception:
+            users = []
+        key = u["name"].strip().lower()
+        users = [x for x in users if str(x.get("name", "")).strip().lower() != key]  # replace prior onboarding of same name
+        users.append(u)
+        tmp = USERS_PATH + ".tmp"
+        os.makedirs(os.path.dirname(os.path.abspath(USERS_PATH)), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"users": users}, f, ensure_ascii=False)
+        os.replace(tmp, USERS_PATH)
+    return u
+
+
 # ---------------------------------------------------------------- HTTP dispatcher (onboarding only)
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1215,6 +1303,13 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, v2_summary(prof))
             except Exception as e:
                 send_json(self, 200, {"summary": "", "error": str(e)[:200]})
+        elif p in ("/api/onboarding/register", "/api/v2/register"):
+            # everyone who finishes onboarding is written into the shared user store (matchable + in admin)
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            try:
+                send_json(self, 200, {"ok": True, "user": register_profile(prof)})
+            except Exception as e:
+                send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         else:
             send_json(self, 404, {})
 

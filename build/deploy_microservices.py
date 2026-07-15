@@ -63,7 +63,7 @@ L.append("  LLM_PORT=7071 SELF_BASE=http://localhost:8002/v1 SELF_KEY=x "
          "nohup setsid python3 -u services/llm/app.py > /root/ms_llm.log 2>&1 < /dev/null &")
 L.append("  sleep 3")
 # onboarding + matching: LLM_URL only, NO keys
-L.append('  ONBOARDING_PORT=7072 LLM_URL=http://localhost:7071 V2_MODEL=llama_self PROFILE_URL="$HUB/profile" '
+L.append('  ONBOARDING_PORT=7072 LLM_URL=http://localhost:7071 V2_MODEL=llama_self KLEAL_USERS=/root/kleal-ms/users.json PROFILE_URL="$HUB/profile" '
          "nohup setsid python3 -u services/onboarding/app.py > /root/ms_onboarding.log 2>&1 < /dev/null &")
 L.append("  PROFILE_PORT=7073 nohup setsid python3 -u services/profile/app.py > /root/ms_profile.log 2>&1 < /dev/null &")
 L.append("  MATCHING_PORT=7074 LLM_URL=http://localhost:7071 V2_MODEL=llama_self KLEAL_USERS=/root/kleal-ms/users.json "

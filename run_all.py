@@ -40,7 +40,8 @@ users_path = os.path.join(HERE, "services", "matching", "users.json")   # shared
 SERVICES = [
     ("llm",        "services/llm/app.py",        {"LLM_PORT": "7071"}, True),
     ("onboarding", "services/onboarding/app.py", {"ONBOARDING_PORT": "7072", "LLM_URL": "http://127.0.0.1:7071",
-                                                  "V2_MODEL": model, "PROFILE_URL": profile_url}, False),
+                                                  "V2_MODEL": model, "PROFILE_URL": profile_url,
+                                                  "KLEAL_USERS": users_path}, False),
     ("profile",    "services/profile/app.py",    {"PROFILE_PORT": "7073"}, False),
     ("matching",   "services/matching/app.py",   {"MATCHING_PORT": "7074", "LLM_URL": "http://127.0.0.1:7071",
                                                   "V2_MODEL": model, "KLEAL_USERS": users_path}, False),

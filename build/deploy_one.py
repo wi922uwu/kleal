@@ -10,7 +10,7 @@ SERVICE = os.environ.get("SERVICE", "").strip()
 
 # per-service (port, launch command run from /root/kleal-ms). $HUB is the public app URL (from cf7080.log).
 SVC = {
-    "onboarding": (7072, 'ONBOARDING_PORT=7072 LLM_URL=http://localhost:7071 V2_MODEL=llama_self PROFILE_URL="$HUB/profile" '
+    "onboarding": (7072, 'ONBOARDING_PORT=7072 LLM_URL=http://localhost:7071 V2_MODEL=llama_self KLEAL_USERS=/root/kleal-ms/users.json PROFILE_URL="$HUB/profile" '
                          'nohup setsid python3 -u services/onboarding/app.py > /root/ms_onboarding.log 2>&1 < /dev/null &'),
     "buddy":      (7075, 'BUDDY_PORT=7075 LLM_URL=http://localhost:7071 MATCH_URL=http://localhost:7074 FILTER_URL=http://localhost:7076 V2_MODEL=llama_self '
                          'nohup setsid python3 -u services/buddy/app.py > /root/ms_buddy.log 2>&1 < /dev/null &'),
