@@ -1233,6 +1233,7 @@ function buddyProfile(){   // seed the buddy with what we already know about the
   return { name:DATA.name||'', interests:(DATA.interests||[]).map(i=>({name:i.name})),
            city:((DATA.subtitle||'').split('·')[0]||'').trim()||null };
 }
+function fmtTime(t){ const d=t?new Date(t):new Date(); let h=d.getHours(),m=d.getMinutes(); const ap=h<12?'AM':'PM'; h=h%12||12; return h+':'+(m<10?'0':'')+m+' '+ap; }
 // Unified chat header so you always know WHERE you are: Back (left) · centered title (+ optional subtitle) ·
 // optional action pills (right). Every chat screen uses this — consistent look, consistent back button.
 function chatHead(title, opts){ opts=opts||{};
