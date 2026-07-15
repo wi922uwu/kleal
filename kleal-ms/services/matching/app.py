@@ -439,8 +439,12 @@ def match_candidates(intent, prof, ctx=None):
     exactReq = bool(intent.get('exactMatchRequired'))
     adjOk    = intent.get('adjacentAllowed', True)
     broadOk  = intent.get('broadAllowed', True)
+    # the searcher must never match themselves — identify them by name (or uid) and skip that candidate
+    self_name = str(ctx.get('self') or prof.get('name') or ctx.get('uid') or '').strip().lower()
     out = []
     for c in load_candidates():
+        if self_name and str(c.get('name', '')).strip().lower() == self_name:
+            continue
         # ── 1. HARD GATES ──
         ok, _why = _hard_gates(intent, c, gate_ctx)
         if not ok:
@@ -603,8 +607,9 @@ _EXPLORE_WHEN = ("Today 18:00", "Tonight 21:00", "Tomorrow 08:00", "Tomorrow 19:
                  "Sun 10:00", "Wed 17:00", "Fri 20:00", "Thu 20:00", "Sat 17:00")
 
 
-def explore_plans(limit=12):
-    users = load_candidates()
+def explore_plans(limit=12, self_name=""):
+    sn = str(self_name or "").strip().lower()
+    users = [c for c in load_candidates() if not (sn and str(c.get("name", "")).strip().lower() == sn)]
     real = [c for c in users if c.get("source") == "onboarding"]
     # Show REAL registered users first — a plan from their own-intent or, if none, their top interest. Only
     # fall back to demo users (with own-intents) when there aren't enough real ones to fill the map.
@@ -638,8 +643,10 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/api/agent/pool":
             c = load_candidates()
             send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None, "users": c})
-        elif self.path == "/api/agent/explore":
-            send_json(self, 200, {"plans": explore_plans()})
+        elif self.path.split("?")[0] == "/api/agent/explore":
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
+            from urllib.parse import unquote
+            send_json(self, 200, {"plans": explore_plans(self_name=unquote(q.get("self", "")))})
         elif self.path == "/":
             send_json(self, 200, {"service": "matching", "ok": True})
         else:

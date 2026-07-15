@@ -575,14 +575,15 @@ def _shape(c, lang):
             "agree": c.get("agree"), "note": c.get("note"), "reply": c.get("reply")}
 
 
-def run_match(intent, sig, uid, lang, negotiate=False):
+def run_match(intent, sig, uid, lang, negotiate=False, owner=None):
     """Hand the intent to the matching agent; optionally let each candidate's agent negotiate.
     Returns (legacy_match_block, cards). Never fabricates people."""
     prof = {"languages": {"comfortable": norm_langs(sig.get("languages"))}, "vibe": sig.get("vibe"),
-            "city": sig.get("area")}
+            "city": sig.get("area"), "name": owner or ""}
     try:
         res = _post(MATCH_URL, "/api/agent/match",
-                    {"intent": intent, "profile": prof, "ctx": {"uid": uid or "me"}}, timeout=45)
+                    {"intent": intent, "profile": prof, "ctx": {"uid": uid or "me", "self": owner or ""}},
+                    timeout=45)
     except Exception as e:
         return {"intent": intent, "top": None, "candidates": [], "error": str(e)[:160]}, []
     cands = res.get("candidates") or []
@@ -682,7 +683,7 @@ def buddy_chat(messages, profile, signals, uid=None):
         out["reply"] = (reply + "\n\n" + _NEW[lang] % (intent.get("category") or "?")).strip()
         return out
 
-    block, cards = run_match(intent, sig, uid, lang)
+    block, cards = run_match(intent, sig, uid, lang, owner=(profile or {}).get("name"))
     out["match"] = block
     out["matches"] = cards
     if block.get("top"):
@@ -941,7 +942,8 @@ class H(BaseHTTPRequestHandler):
                 intent = apply_override(intent, body.get("override"))
                 lang = intent.get("lang") or "en"
                 sig = s.get("signals") or (body.get("signals") if isinstance(body.get("signals"), dict) else {})
-                block, cards = run_match(intent, sig, uid, lang, negotiate=True)
+                owner = (s.get("profile") or {}).get("name") or (body.get("profile") or {}).get("name")
+                block, cards = run_match(intent, sig, uid, lang, negotiate=True, owner=owner)
                 if uid:
                     s["intent"] = intent
                     _save_store()

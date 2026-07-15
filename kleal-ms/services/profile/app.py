@@ -1055,7 +1055,7 @@ async function broadenIntent(kind){
   else { addNotif('intent','Still searching “'+(curIntent.title||'plan')+'”','Kleal will ping you when someone fits',curIntent.id||null); saveState(); toast('Kleal keeps searching in the background'); return; }
   toast('Broadening the search…');
   let r; try{ r=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({query:curIntent.query,profile:{},override:ov})}).then(x=>x.json()); }catch(e){ r=null; }
+    body:JSON.stringify({query:curIntent.query,profile:{name:DATA.name||''},override:ov})}).then(x=>x.json()); }catch(e){ r=null; }
   if(r&&r.candidates&&r.candidates.length){ curIntent.candidates=r.candidates; curIntent.fallback=null;
     curIntent.intent=r.intent; curIntent.confidence=r.candidates[0].score; toast(r.candidates.length+' matches after broadening'); }
   else { curIntent.fallback=(r&&r.fallback)||curIntent.fallback; toast('Still no offline matches — try going live'); }
@@ -1067,7 +1067,7 @@ async function runAgent(query){
   agentBusy=true; curIntent={pending:true, query:query}; intentLaunched=false; cur='intentchat'; render();
   let r; try{
     r=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({query:query, profile:{}})}).then(x=>x.json());
+      body:JSON.stringify({query:query, profile:{name:DATA.name||''}})}).then(x=>x.json());
   }catch(e){ r=null; }
   agentBusy=false;
   if(!r||!r.intent){ curIntent={title:'New plan',tags:[],query:query,confidence:0,candidates:[],spec:[],error:true}; render(); return; }
@@ -1106,7 +1106,7 @@ async function intentTurn(text){ text=(text||'').trim(); if(!text||intentBusy) r
 async function buildIntentCard(intent){
   curIntent={pending:true, query:''}; render();
   let r; try{ r=await fetch('/api/agent/match',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({intent:intent, profile:{}})}).then(x=>x.json()); }catch(e){ r=null; }
+    body:JSON.stringify({intent:intent, profile:{name:DATA.name||''}, ctx:{self:DATA.name||''}})}).then(x=>x.json()); }catch(e){ r=null; }
   const cands=(r&&r.candidates)||[]; const it=intent;
   const reach=it.exactMatchRequired?'Exact matches only':(it.broadAllowed===false?'Same activity only':(it.adjacentAllowed===false?'Same + related':'Adjacent + related'));
   const area=(it.place||'Public places nearby')+(it.mode==='offline'&&it.radiusKm?(' · within '+it.radiusKm+' km'):'');
@@ -1210,7 +1210,7 @@ function scr_matchchat(){
 // it calls the matching agent (server-side, agent-to-agent) and drops the best match into the chat.
 let buddyMsgs=[], buddySignals={}, buddyBusy=false;
 function buddyProfile(){   // seed the buddy with what we already know about the user
-  return { interests:(DATA.interests||[]).map(i=>({name:i.name})),
+  return { name:DATA.name||'', interests:(DATA.interests||[]).map(i=>({name:i.name})),
            city:((DATA.subtitle||'').split('·')[0]||'').trim()||null };
 }
 function fmtTime(t){ const d=t?new Date(t):new Date(); let h=d.getHours(),m=d.getMinutes(); const ap=h<12?'AM':'PM'; h=h%12||12; return h+':'+(m<10?'0':'')+m+' '+ap; }
@@ -1396,7 +1396,7 @@ const ME_LATLON=[41.3874, 2.1686];   // Barcelona (demo user's coarse area)
 let PUBLIC_INTENTS=[], exploreLoaded=false, exploreLoading=false;
 async function loadExplore(){
   if(exploreLoading) return; exploreLoading=true;
-  let r; try{ r=await fetch('/api/agent/explore').then(x=>x.json()); }catch(e){ r=null; }
+  let r; try{ r=await fetch('/api/agent/explore?self='+encodeURIComponent(DATA.name||'')).then(x=>x.json()); }catch(e){ r=null; }
   exploreLoading=false; exploreLoaded=true;
   PUBLIC_INTENTS=(r&&r.plans)||[];
   if(cur==='search') render();
