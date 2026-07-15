@@ -193,6 +193,9 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .confpct{font-size:14px;font-weight:600;color:var(--fg)}
 /* V2 settings row (drill-in) */
 .setrow{display:flex;align-items:center;gap:16px;padding:16px}
+.langtoggle{display:flex;gap:4px;background:var(--neutral100);border-radius:999px;padding:3px;flex:none}
+.langbtn{border:0;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:700;padding:5px 12px;border-radius:999px;cursor:pointer}
+.langbtn.on{background:#fff;color:var(--fg);box-shadow:0 1px 3px rgba(20,20,40,.12)}
 .setrow .sic{width:40px;height:40px;border-radius:50%;border:1px solid var(--border);color:var(--fg);
   display:flex;align-items:center;justify-content:center;flex:none}
 .setrow .st{flex:1;min-width:0}
@@ -508,6 +511,9 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .reddot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--primary);margin-left:6px;vertical-align:middle}
 /* ---- Agent Home (main landing) ---- */
 .ahome{padding:4px 0 14px}
+/* home -> buddy chat transition: the side blocks fade + slide away, then the chat opens */
+.a-leaving{opacity:0;transform:translateY(-8px);transition:opacity .22s ease,transform .22s ease;pointer-events:none}
+.asearch.a-lift{transform:translateY(-6px);transition:transform .22s ease}
 .ahead{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 16px}
 .agreet{font-size:24px;font-weight:800;letter-spacing:-.02em}
 .abell{width:40px;height:40px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--fg);cursor:pointer;flex:none}
@@ -572,6 +578,10 @@ if(_saved && _saved._src===_psrc && _saved.data){ DATA = _saved.data; }
 else { try{ localStorage.removeItem(PKEY); }catch(_e){} _saved = null; }
 const A=document.getElementById('app');
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// ---- UI language (i18n). Default RU; a switch in the profile flips it. T(ru,en) picks the string. ----
+let UILANG='ru'; try{ const _l=localStorage.getItem('kleal_uilang'); if(_l==='ru'||_l==='en') UILANG=_l; }catch(_e){}
+function T(ru,en){ return UILANG==='en' ? en : ru; }
+function setUILang(l){ UILANG=(l==='en'?'en':'ru'); try{localStorage.setItem('kleal_uilang',UILANG);}catch(_e){} render(); }
 function svg(inner,vb,w){return '<svg viewBox="'+(vb||'0 0 24 24')+'" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="'+(w||24)+'" height="'+(w||24)+'">'+inner+'</svg>';}
 const IC={
   back:svg('<path d="M15 6l-6 6 6 6"/>'),
@@ -640,8 +650,8 @@ function bnavHTML(){ const fam=navFam();
   // Intents · Explore · [Home] · Messages · Profile  (Figma "My Intents · Search · [FAB] · Messages · Profile").
   // The center FAB opens the AGENT HOME (agenthome) — the main landing that carries the Kleal banner, the
   // "Say hi to Kleal" field and quick actions. The conversational chat is reached from there.
-  const items=[['nIntents','Intents','intents','plans'],['nSearch','Explore','search','explore'],['fab','','',''],
-    ['nMsg','Messages','messages','messages'],['nProfile','Profile','overview','profile']];
+  const items=[['nIntents',T('Интенты','Intents'),'intents','plans'],['nSearch',T('Обзор','Explore'),'search','explore'],['fab','','',''],
+    ['nMsg',T('Сообщения','Messages'),'messages','messages'],['nProfile',T('Профиль','Profile'),'overview','profile']];
   return '<div class="fab" data-act="go-home">'+IC.mic+'</div>'+
     items.map(x=>{ if(x[0]==='fab') return '<div class="fabgap"></div>';
       return `<a class="${fam===x[3]?'on':''}" data-nav="${x[2]}">${IC[x[0]]}<span>${x[1]}</span></a>`; }).join('');
@@ -800,21 +810,21 @@ const ALL_TABS=[
 ];
 const TABS = ALL_TABS;
 let cur = 'agenthome';   // main landing after onboarding
-const TITLES={memory:'What Kleal remembers', intents:'Plans', search:'Explore', messages:'Messages', agenthome:'Home', notifs:'Notifications', buddychat:'Kleal'};   // screens reachable but not in the nav TABS
+const TITLES=()=>({memory:T('Что Kleal помнит','What Kleal remembers'), intents:T('Интенты','Plans'), search:T('Обзор','Explore'), messages:T('Сообщения','Messages'), agenthome:T('Главная','Home'), notifs:T('Уведомления','Notifications'), buddychat:'Kleal'});   // functions so language switch re-evaluates
 if(!DATA.notifs) DATA.notifs=[]; if(!DATA.intents) DATA.intents=[];   // buddy-agent stores
 function setTab(id){ detail=null; cur=id; render(); }
 // Overview is a hub of drill-in "Settings Rows"
-const SECMETA={
-  interests:['star','Interests','What you like doing with people'],
-  social:['faceScan','Your personality','How you come across'],
-  goals:['sun','Goals','What you want Kleal to help with'],
-  safety:['userLock','Safety & Privacy','What Kleal can use, and your limits'],
-};
+const SECMETA=()=>({
+  interests:['star',T('Интересы','Interests'),T('Чем ты любишь заниматься с людьми','What you like doing with people')],
+  social:['faceScan',T('Твоя личность','Your personality'),T('Как ты воспринимаешься','How you come across')],
+  goals:['sun',T('Цели','Goals'),T('С чем Kleal должен помочь','What you want Kleal to help with')],
+  safety:['userLock',T('Безопасность и приватность','Safety & Privacy'),T('Что Kleal может использовать и твои границы','What Kleal can use, and your limits')],
+});
 function navRows(){
-  return TABS.filter(t=>t[0]!=='overview').map(t=>{ const m=SECMETA[t[0]]||['star',t[2],''];
+  return TABS.filter(t=>t[0]!=='overview').map(t=>{ const m=SECMETA()[t[0]]||['star',t[2],''];
     return `<div class="card setrow" data-nav="${t[0]}"><div class="sic">${IC[m[0]]}</div>
       <div class="st"><div class="stt">${esc(m[1])}</div><div class="sts">${esc(m[2])}</div></div>
-      <div class="sedit" data-act="editrow" data-row="${esc(m[1])}">${IC.wand}<span>Edit</span></div></div>`; }).join('');
+      <div class="sedit" data-act="editrow" data-row="${esc(m[1])}">${IC.wand}<span>${T('Изменить','Edit')}</span></div></div>`; }).join('');
 }
 
 function cbadge(c){ return `<span class="cbadge cb-${c}">${c}</span>`; }
@@ -897,23 +907,29 @@ function scr_overview(){
   const d=DATA;
   const sum = editingSummary
     ? `<textarea id="sumta" class="sumta">${esc(d.summary)}</textarea>
-       <div class="linkrow"><button data-act="savesum">Save</button><button data-act="cancelsum">Cancel</button></div>`
-    : `<div class="sumtxt">${esc(d.summary||"Kleal will summarise you here as it learns more.")}</div>
-       <button class="bigbtn primary" style="margin-top:16px" data-act="createintent">Create intent</button>`;
+       <div class="linkrow"><button data-act="savesum">${T('Сохранить','Save')}</button><button data-act="cancelsum">${T('Отмена','Cancel')}</button></div>`
+    : `<div class="sumtxt">${esc(d.summary||T('Kleal опишет тебя здесь по мере знакомства.','Kleal will summarise you here as it learns more.'))}</div>
+       <button class="bigbtn primary" style="margin-top:16px" data-act="createintent">${T('Создать интент','Create intent')}</button>`;
+  const langRow=`<div class="card setrow" style="justify-content:space-between">
+    <div class="sic">${IC.globe}</div>
+    <div class="st"><div class="stt">${T('Язык интерфейса','Interface language')}</div></div>
+    <div class="langtoggle">
+      <button class="langbtn ${UILANG==='ru'?'on':''}" data-act="set-lang" data-lang="ru">RU</button>
+      <button class="langbtn ${UILANG==='en'?'on':''}" data-act="set-lang" data-lang="en">EN</button></div></div>`;
   return `<div class="stack fade">
     <div class="card idcard">
       <div class="idrow"><div class="ava">${IC.person}</div>
         <div class="it"><div class="nm">${esc(d.name)} ${d.verified?`<span class="badge-verify">${IC.verify}</span>`:'<span class="reddot"></span>'}</div></div></div>
-      <div class="confrow2"><span class="l">Profile confidence</span><span class="confpct">${d.confidence}%</span></div>
+      <div class="confrow2"><span class="l">${T('Наполненность профиля','Profile confidence')}</span><span class="confpct">${d.confidence}%</span></div>
       <div class="track"><i style="width:${d.confidence}%"></i></div></div>
     ${(d.basics||[]).map(r=>summaryRow(r,true)).join('')}
-    <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(d.summaryLabel)}</div><span class="updated">Updated today</span></div>${sum}</div>
-    <div class="stack" style="margin-top:6px">${navRows()}</div>
+    <div class="card pad"><div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>${sum}</div>
+    <div class="stack" style="margin-top:6px">${navRows()}${langRow}</div>
   </div>`;
 }
 function emptyState(title,sub){ return `<div class="empty fade"><div class="eic">${IC.spark}</div>
   <div class="etx">${esc(title)}</div>${sub?`<div class="esub">${esc(sub)}</div>`:''}</div>`; }
-function scr_snapshot(){ if(!DATA.snapshot.length) return emptyState("Nothing to match on yet","Kleal fills this in as it learns about you.");
+function scr_snapshot(){ if(!DATA.snapshot.length) return emptyState(T("Пока не по чему матчить","Nothing to match on yet"),T("Kleal заполнит это по мере знакомства.","Kleal fills this in as it learns about you."));
   return `<div class="stack fade">${DATA.snapshot.map(r=>summaryRow(r,true)).join('')}</div>`; }
 
 function interestSummary(it){
@@ -924,7 +940,7 @@ function interestSummary(it){
 let expInt=null;  // which interest is expanded (V3 inline)
 function scr_interests(){
   const d=DATA;
-  if(!(d.interests||[]).length) return `<div class="fade">${emptyState("No interests yet","Tell Kleal what you're into and they'll show up here.")}<button class="bigbtn primary" style="margin-top:8px" data-act="add-interests">Add interests</button></div>`;
+  if(!(d.interests||[]).length) return `<div class="fade">${emptyState(T("Пока нет интересов","No interests yet"),T("Расскажи Kleal, чем увлекаешься — и они появятся здесь.","Tell Kleal what you're into and they'll show up here."))}<button class="bigbtn primary" style="margin-top:8px" data-act="add-interests">Add interests</button></div>`;
   const exp = expInt!==null ? expInt : ((d.interests[0]||{}).name);
   let rows='';
   for(const it of d.interests){
@@ -936,7 +952,7 @@ function scr_interests(){
         <div class="sumhead"><div class="sumlbl">Kleal's summary</div><span class="updated">Updated today</span></div>
         <div class="sumtxt">${esc(interestSummary(it))}</div>
         <div class="intedit"><div class="intav"></div>
-          <button class="editbtn" data-act="edit-int" data-int="${esc(it.name)}">${IC.wand}<span>Edit</span></button></div></div></div>`;
+          <button class="editbtn" data-act="edit-int" data-int="${esc(it.name)}">${IC.wand}<span>${T('Изменить','Edit')}</span></button></div></div></div>`;
     }
   }
   return `<div class="fade"><div class="intsub">When a toggle is on, Kleal uses that interest for matching.</div>
@@ -975,10 +991,10 @@ function scr_social(){  // "Your personality"
       <div class="sumhead"><div class="sumlbl">Kleal's summary</div><span class="updated">Updated today</span></div>
       <div class="sumtxt">${esc(txt)}</div>
       <div class="intedit"><div class="intav"></div>
-        <button class="editbtn" data-act="edit-personality">${IC.wand}<span>Edit</span></button></div></div></div>`;
+        <button class="editbtn" data-act="edit-personality">${IC.wand}<span>${T('Изменить','Edit')}</span></button></div></div></div>`;
 }
 function scr_places(){
-  if(!DATA.availability.length && !DATA.places.length) return emptyState("No places or times yet","Kleal will note where and when you like to meet.");
+  if(!DATA.availability.length && !DATA.places.length) return emptyState(T("Пока нет мест и времени","No places or times yet"),T("Kleal запомнит, где и когда тебе удобно встречаться.","Kleal will note where and when you like to meet."));
   return `<div class="fade"><div class="rowhead"><div class="seclbl">Usual availability</div></div>
     <div class="stack">${DATA.availability.length?DATA.availability.map(r=>summaryRow(r,false)).join(''):`<div class="seccap">Not set yet — Kleal will learn your usual times.</div>`}</div>
     <div class="rowhead"><div class="seclbl">Places</div></div>
@@ -988,7 +1004,7 @@ function scr_goals(){
   const g=DATA.goals;
   const active=(g.active||[]);
   const sub=`<div class="intsub">Be thoughtful with your goals. Others can see them when they invite you to a plan, and Kleal uses them to find the best matches.</div>`;
-  if(!active.length) return `<div class="fade">${sub}${emptyState("No goals yet","Add a goal and Kleal will start finding the right people and plans.")}<button class="bigbtn primary" style="margin-top:8px" data-act="add-goal">Add goal</button></div>`;
+  if(!active.length) return `<div class="fade">${sub}${emptyState(T("Пока нет целей","No goals yet"),T("Добавь цель — и Kleal начнёт искать нужных людей и планы.","Add a goal and Kleal will start finding the right people and plans."))}<button class="bigbtn primary" style="margin-top:8px" data-act="add-goal">Add goal</button></div>`;
   const cards=active.map((x,i)=>`<div class="card goalcard"><div class="gc"><div class="gci">${IC.sun}</div>
     <div class="gct"><div class="gctn">Goal #${i+1}</div><div class="gcts">${esc(x)}</div></div>
     <div class="gedit" data-act="edit-goal" data-goal="${i}">${IC.edit}</div></div></div>`).join('');
@@ -1012,7 +1028,7 @@ function scr_safety(){
     ${groups}</div>`;
 }
 function scr_memory(){
-  if(!DATA.memory.length) return emptyState("No signals yet","As you use Kleal, everything it learns shows up here.");
+  if(!DATA.memory.length) return emptyState(T("Пока нет сигналов","No signals yet"),T("По мере использования Kleal всё, что он узнаёт, появится здесь.","As you use Kleal, everything it learns shows up here."));
   return `<div class="stack fade">${DATA.memory.map((m,i)=>`<div class="card sig">
     <div class="stopline"><div class="ssig">${esc(m.signal)}</div><span class="stbadge st-${m.status}">${m.status}</span></div>
     <div class="smeta">Source: ${esc(m.source)}<br>Confidence: ${esc(m.confidence)} · Used for matching: ${m.used===false?'No':'Yes'}<br>Last updated: ${esc(m.updated)}</div>
@@ -1023,7 +1039,7 @@ function scr_memory(){
 }
 function scr_knows(){
   const k=DATA.knows;
-  if(!(k.confirmedList||[]).length && !(k.inferredList||[]).length) return emptyState("Nothing tracked yet","Kleal builds this summary as it gets to know you.");
+  if(!(k.confirmedList||[]).length && !(k.inferredList||[]).length) return emptyState(T("Пока ничего не отслеживается","Nothing tracked yet"),T("Kleal собирает эту сводку по мере знакомства.","Kleal builds this summary as it gets to know you."));
   return `<div class="fade"><div class="card">
       <div class="statbig"><span class="n">${k.total}</span><span class="l">signals tracked</span></div>
       <div style="display:flex">${[[k.confirmed,'confirmed'],[k.inferred,'inferred'],[k.temporary,'temporary']]
@@ -1153,7 +1169,7 @@ function addNotif(kind,title,body,ref){ DATA.notifs=DATA.notifs||[];
 function unreadNotifs(){ return (DATA.notifs||[]).filter(n=>!n.read).length; }
 function scr_notifications(){
   const list=DATA.notifs||[];
-  if(!list.length) return emptyState("No notifications yet","When Kleal finds people or agents agree, it shows up here.");
+  if(!list.length) return emptyState(T("Пока нет уведомлений","No notifications yet"),T("Когда Kleal найдёт людей или агенты договорятся — появится здесь.","When Kleal finds people or agents agree, it shows up here."));
   return `<div class="stack fade" style="padding-top:4px">${list.map(n=>`<div class="card notifrow ${n.read?'':'unread'}" data-notif="${n.id}">
     <div class="nnic">${n.kind==='match'?IC.users:IC.spark}</div>
     <div class="nnt"><div class="nntt">${esc(n.title)}</div><div class="nnts">${esc(n.body)}</div></div>
@@ -1199,7 +1215,7 @@ function openMsgThread(i){
 function scr_matchchat(){
   const m=matchWith; if(!m) return scr_agenthome();
   const mine=m.msgs.filter(x=>x.who==='me').length; const blur=Math.max(0, 9-mine*3);
-  const hd=chatHead(m.cand.name, {back:'chat-back', sub:(m.cand.score?m.cand.score+'% совпадение':null)});
+  const hd=chatHead(m.cand.name, {back:'chat-back', sub:(m.cand.score?m.cand.score+T('% совпадение','% match'):null)});
   const thread=m.msgs.map(x=>x.who==='me'?`<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`
     :`<div class="krow"><div class="kav" style="filter:blur(${Math.min(blur,4)}px)"></div><div class="kcol"><div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div></div></div>`).join('');
   const hint=blur>0?`<div class="candbusy" style="text-align:center;padding:2px 0 6px">Фото проявится по мере общения</div>`:'';
@@ -1241,6 +1257,15 @@ function openBuddy(first){
   render();
   if(first && String(first).trim()) buddyTurn(first);
 }
+// Smooth transition from the home screen into the buddy chat: the side blocks (quick actions, plan, greeting)
+// fade + slide away first, THEN the chat opens — so it feels like the page transforms, not a hard jump.
+function goToBuddy(text){
+  const home=document.querySelector('.ahome');
+  if(!home){ openBuddy(text); return; }
+  home.querySelectorAll('.ahead,.aintro,.qhead,.quick,.thead,.tcard').forEach(el=>el.classList.add('a-leaving'));
+  const s=home.querySelector('.asearch'); if(s) s.classList.add('a-lift');
+  setTimeout(()=>openBuddy(text), 240);
+}
 async function buddyTurn(text){
   text=(text||'').trim(); if(!text||buddyBusy) return;
   buddyBusy=true; buddyMsgs.push({who:'me',text,t:Date.now()}); buddyMsgs.push({who:'them',text:'…',loading:true}); render();
@@ -1270,7 +1295,7 @@ function buddyMic(){
   try{ _rec.start(); if(mic)mic.classList.add('on'); toast('Listening…'); }catch(_e){ _rec=null; }
 }
 function scr_buddychat(){
-  const hd=chatHead('Kleal', {back:'buddy-back', actions:[{act:'buddy-create', icon:'<span class="pl">+</span>', label:'Интент'}]});
+  const hd=chatHead('Kleal', {back:'buddy-back', actions:[{act:'buddy-create', icon:'<span class="pl">+</span>', label:T('Интент','Intent')}]});
   const thread=buddyMsgs.map((x,i)=>{
     if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div><div class="btime r">${fmtTime(x.t)}</div></div>`;
     if(x.hello) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
@@ -1283,7 +1308,7 @@ function scr_buddychat(){
         <div class="candav">${esc(String(t.name||'?')[0])}${t.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':''}</div>
         <div class="candt"><div class="candn">${esc(t.name)} <span class="candkm">${t.km} km</span></div><div class="cands">${esc(why)}</div></div>
         <div class="candsc"><div class="candpct">${t.score}%</div></div>
-        <button class="introbtn" data-act="buddy-intro" data-bi="${i}">Intro</button></div></div>`; }
+        <button class="introbtn" data-act="buddy-intro" data-bi="${i}">${T('Познакомиться','Intro')}</button></div></div>`; }
     return row;
   }).join('');
   return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${thread}</div>
@@ -1383,7 +1408,7 @@ async function adaptSummary(){
 function cancelEdit(i){ const m=editMsgs[i]; if(!m) return; m.patch=null;
   editMsgs.push({who:'them',text:'Ок, оставил как было.',t:Date.now()}); render(); }
 function scr_profileedit(){
-  const hd=chatHead('Изменить профиль', {back:'edit-back', actions:[{act:'edit-view', icon:IC.person}]});
+  const hd=chatHead(T('Изменить профиль','Edit profile'), {back:'edit-back', actions:[{act:'edit-view', icon:IC.person}]});
   const thread=editMsgs.map((x,i)=>{
     if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div><div class="btime r">${fmtTime(x.t)}</div></div>`;
     if(x.hello) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
@@ -1439,7 +1464,7 @@ function joinPublic(i){ const p=PUBLIC_INTENTS[i]; if(!p)return; addNotif('inten
 function scr_intents(){
   const list=DATA.intents||[];
   const head=`<div class="seccap" style="margin:2px 2px 12px">Intents are the plans you ask Kleal to arrange. It searches, matches schedules and lines up intros — you approve every one.</div>`;
-  if(!list.length) return `<div class="fade">${head}${emptyState("No intents yet","Tap Create intent and tell Kleal what you'd like to do.")}
+  if(!list.length) return `<div class="fade">${head}${emptyState(T("Пока нет интентов","No intents yet"),T("Нажми «Создать интент» и расскажи Kleal, чем хочешь заняться.","Tap Create intent and tell Kleal what you'd like to do."))}
     <button class="bigbtn primary" style="margin-top:8px" data-act="createintent">Create intent</button></div>`;
   const cards=list.map((it)=>{ const cs=it.candidates||[]; const ag=cs.filter(c=>c.agree).length;
     return `<div class="card pad intentrow" ${it.id?`data-savedintent="${it.id}"`:''}>
@@ -1453,7 +1478,7 @@ function scr_intents(){
 
 function scr_intentchat(){
   const it=curIntent;
-  const hd=chatHead(it&&it.title?it.title:'Создание интента', {back:'intent-back', sub:(it&&it.title)?'Интент':null});
+  const hd=chatHead(it&&it.title?it.title:T('Создание интента','Create intent'), {back:'intent-back', sub:(it&&it.title)?T('Интент','Intent'):null});
   const composer=`<div class="bc2"><button class="bc2-plus" data-act="buddy-plus">+</button>
     <div class="bc2-field"><input id="acin" placeholder="Опиши, что хочешь сделать…" ${intentBusy?'disabled':''}>
       <button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
@@ -1489,7 +1514,7 @@ function scr_intentchat(){
       <div class="candt"><div class="candn">${esc(c.name)}${vtick}${tier} <span class="candkm">${c.km} km</span></div>
         <div class="cands">${esc(sub)}</div></div>
       <div class="candsc"><div class="candpct">${c.score}%</div>${status}</div>
-      ${(!negot&&c.agree&&!c.passed)?`<button class="introbtn" data-act="intro" data-ci="${i}">Intro</button>
+      ${(!negot&&c.agree&&!c.passed)?`<button class="introbtn" data-act="intro" data-ci="${i}">${T('Познакомиться','Intro')}</button>
         <button data-act="pass" data-ci="${i}" title="Not interested" style="border:none;background:var(--field);color:var(--muted);width:26px;height:26px;border-radius:50%;font-size:13px;margin-left:6px;cursor:pointer">✕</button>`:''}
       </div>${i<cands.length-1?'<div class="divider"></div>':''}`; }).join('')
       : (it.fallback ? fallbackCard(it.fallback)
@@ -1511,23 +1536,23 @@ function scr_search(){
   const P=PUBLIC_INTENTS;
   const list=P.map((p,i)=>`<div class="card evrow" data-public="${i}"><div class="evic">${IC.pin}</div>
     <div class="evt"><div class="evtt">${esc(p.title)}</div><div class="evts">${esc(p.who)} · ${esc(p.when)} · ${esc(p.dist)} km</div></div>
-    <button class="introbtn" data-act="join" data-pi="${i}">Join</button></div>`).join('');
+    <button class="introbtn" data-act="join" data-pi="${i}">${T('Присоединиться','Join')}</button></div>`).join('');
   const below = P.length ? `<div class="stack">${list}</div>`
     : (exploreLoaded
         ? emptyState('Пока рядом нет открытых планов','Создай интент — и Kleal предложит его людям вокруг.')
         : `<div class="stack"><div class="card evrow"><div class="evt"><div class="evts"><span class="typing3"><i></i><i></i><i></i></span> ищу планы рядом…</div></div></div></div>`);
   return `<div class="fade">
-    <div class="sbar"><div class="box">${IC.nSearch}<span>Search this area…</span></div>
+    <div class="sbar"><div class="box">${IC.nSearch}<span>${T('Искать в этой зоне…','Search this area…')}</span></div>
       <div class="filt" data-act="filter">${IC.compass}</div></div>
     <div id="lmap" class="lmap"></div>
-    <div class="seccap" style="margin:12px 2px 8px">Open plans people posted near you — tap a pin to see it, Join and Kleal handles the intro. Only your area is shown, never your exact spot.</div>
+    <div class="seccap" style="margin:12px 2px 8px">${T("Открытые планы людей рядом — нажми на пин, «Присоединиться», а знакомство берёт на себя Kleal. Показывается только район, не точное место.","Open plans people posted near you — tap a pin to see it, Join and Kleal handles the intro. Only your area is shown, never your exact spot.")}</div>
     ${below}
   </div>`;
 }
 
 function scr_messages(){
   const list=DATA.messages||[];
-  if(!list.length) return emptyState("No messages yet","When Kleal lines up an intro, your chats show up here.");
+  if(!list.length) return emptyState(T("Пока нет сообщений","No messages yet"),T("Когда Kleal устроит знакомство, переписки появятся здесь.","When Kleal lines up an intro, your chats show up here."));
   return `<div class="stack fade" style="padding-top:4px">${list.map((m,i)=>`<div class="card" style="padding:0">
     <div class="msgrow" data-msg="${i}"><div class="msgav ${m.kleal?'k':''}">${m.kleal?'K':esc(String(m.who||'?')[0])}</div>
     <div class="msgt"><div class="mn">${esc(m.who)}${m.kleal?'<span class="reddot"></span>':''}</div><div class="ml">${esc(m.last)}</div></div>
@@ -1538,24 +1563,24 @@ function scr_messages(){
 function scr_agenthome(){
   const nm=DATA.name||'there';
   const plan=(DATA.plans||[])[0];
-  const qa=[['peoplePin','People nearby','q-people'],['calen','Events nearby','q-events'],
-            ['heart','Interests & groups','q-interests'],['bookmark','Saved','q-saved']];
+  const qa=[['peoplePin',T('Люди рядом','People nearby'),'q-people'],['calen',T('События рядом','Events nearby'),'q-events'],
+            ['heart',T('Интересы и группы','Interests & groups'),'q-interests'],['bookmark',T('Сохранённое','Saved'),'q-saved']];
   const planCard = plan ? `<div class="tcard" data-plan="0">
       <div class="timg"></div>
       <div class="tbody"><div class="tt">${esc(plan.title)}</div>
         <div class="tm">${esc(plan.when)} · ${esc(plan.dist)}</div>
-        <div class="tpart"><div class="stack5"><span class="av"></span><span class="av"></span><span class="av"></span><span class="av"></span><span class="more">+5</span></div><span class="pn">8 going</span></div></div>
+        <div class="tpart"><div class="stack5"><span class="av"></span><span class="av"></span><span class="av"></span><span class="av"></span><span class="more">+5</span></div><span class="pn">${T('идут: 8','8 going')}</span></div></div>
       <div class="tbm">${IC.bookmark}</div></div>` : '';
   return `<div class="ahome fade">
-    <div class="ahead"><div class="agreet">Hi, ${esc(nm)}! 👋</div>
+    <div class="ahead"><div class="agreet">${T('Привет','Hi')}, ${esc(nm)}! 👋</div>
       <div class="abell" data-act="notif">${IC.bell}${unreadNotifs()?`<span class="abadge">${unreadNotifs()}</span>`:''}</div></div>
     <div class="aintro" data-act="talk-buddy" style="cursor:pointer"><div class="amascot">${MASCOT}</div>
-      <div class="abub">I'm Kleal, your buddy. Just chat with me — tell me what you're into and who you'd like to meet, and I'll find them for you. Tap to talk →</div></div>
-    <div class="asearch"><input id="ainput" placeholder="Say hi to Kleal…" autocomplete="off">
+      <div class="abub">${T('Я Kleal, твой бадди. Просто напиши мне — расскажи, чем увлекаешься и с кем хочешь познакомиться, а я найду таких людей. Нажми, чтобы поговорить →','I\'m Kleal, your buddy. Just chat with me — tell me what you\'re into and who you\'d like to meet, and I\'ll find them for you. Tap to talk →')}</div></div>
+    <div class="asearch"><input id="ainput" placeholder="${T('Напиши Kleal…','Say hi to Kleal…')}" autocomplete="off">
       <button class="asend" data-act="agent-go">${IC.send}</button></div>
-    <div class="qhead">Quick actions</div>
+    <div class="qhead">${T('Быстрые действия','Quick actions')}</div>
     <div class="quick">${qa.map(q=>`<div class="qcard" data-act="${q[2]}"><div class="qic">${IC[q[0]]}</div><div class="qt">${q[1]}</div></div>`).join('')}</div>
-    <div class="thead"><span class="th">For you today</span><span class="tall" data-act="see-all">See all</span></div>
+    <div class="thead"><span class="th">${T('Для тебя сегодня','For you today')}</span><span class="tall" data-act="see-all">${T('Все','See all')}</span></div>
     ${planCard}
   </div>`;
 }
@@ -1625,7 +1650,7 @@ function render(){
   const titleFor = cur==='intentchat' ? (curIntent&&curIntent.title?curIntent.title:'Create intent')
     : cur==='matchchat' ? (matchWith?matchWith.cand.name:'Chat')
     : cur==='buddychat' ? 'Kleal'
-    : (cur==='overview'?'My Kleal Profile':(TITLES[cur]||meta[2]));
+    : (cur==='overview'?T('Мой профиль Kleal','My Kleal Profile'):(TITLES()[cur]||meta[2]));
   document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : titleFor);
   document.getElementById('back').style.visibility= (editSig||detail||!ROOTS.includes(cur))? 'visible' : 'hidden';
   // app-bar right icon: gear on Overview, refresh on drill-ins, nothing on the other root tabs
@@ -1677,7 +1702,7 @@ function render(){
   document.querySelectorAll('[data-public]').forEach(el=>el.onclick=()=>{ const p=PUBLIC_INTENTS[+el.dataset.public]; if(p)toast(p.title+' — '+p.who+' · '+p.when); });
   document.querySelectorAll('[data-act]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); doAct(el.dataset.act, el.dataset); });
   const acin=document.getElementById('acin'); if(acin){ acin.onkeydown=(e)=>{ if(e.key==='Enter')intentTurn(acin.value); }; setTimeout(()=>{try{acin.focus();}catch(_e){}},40); }
-  const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter'){ openBuddy(ainput.value); } }; }
+  const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter'){ goToBuddy(ainput.value); } }; }
   const bcin=document.getElementById('bcin'); if(bcin){ bcin.onkeydown=(e)=>{ if(e.key==='Enter')buddyTurn(bcin.value); }; setTimeout(()=>{try{bcin.focus();}catch(_e){}},40); }
   const ecin=document.getElementById('ecin'); if(ecin){ ecin.onkeydown=(e)=>{ if(e.key==='Enter')editTurn(ecin.value); }; setTimeout(()=>{try{ecin.focus();}catch(_e){}},40); }
   const mcin=document.getElementById('mcin'); if(mcin){ mcin.onkeydown=(e)=>{ if(e.key==='Enter')doAct('match-send',{}); }; setTimeout(()=>{try{mcin.focus();}catch(_e){}},40); }
@@ -1699,6 +1724,7 @@ function toast(msg){ let t=document.getElementById('toast');
   t.textContent=msg; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),1900); }
 function doAct(act, ds){
   switch(act){
+    case 'set-lang': setUILang(ds.lang); break;
     case 'editsum': editingSummary=true; render(); break;
     case 'cancelsum': editingSummary=false; render(); break;
     case 'savesum': { const el=document.getElementById('sumta'); DATA.summary=(el?el.value:'').trim(); editingSummary=false; render(); toast('Summary saved'); break; }
@@ -1754,7 +1780,7 @@ function doAct(act, ds){
     case 'join': joinPublic(+ds.pi); break;
     // Agent Home
     case 'notif': setTab('notifs'); break;
-    case 'agent-go': { const el=document.getElementById('ainput'); openBuddy(el&&el.value||''); break; }
+    case 'agent-go': { const el=document.getElementById('ainput'); goToBuddy(el&&el.value||''); break; }
     case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
     case 'buddy-intro': { const i=+ds.bi; const m=buddyMsgs[i]; if(m&&m.match&&m.match.top){ approveIntro(m.match.top, m.match.intent); if(matchWith)matchWith.fromBuddy=true; } break; }
     case 'buddy-back': cur='agenthome'; render(); break;

@@ -697,7 +697,8 @@ def buddy_chat(messages, profile, signals, uid=None):
 
 
 ONBOARD_PROMPT = ('You are Kleal. In 2 short sentences, warmly summarise what you now know about this person '
-                  '(interests, city, languages, how they like to meet). Speak TO them ("You…"). No lists, no JSON.')
+                  '(interests, city, languages, how they like to meet). Speak TO them. Write in the SAME '
+                  'language as their data — Russian if their interests/area are in Russian, else English. No lists, no JSON.')
 
 
 def onboard(uid, profile):
@@ -796,7 +797,7 @@ def profile_edit(message, profile, lang):
 # After a profile change is applied, the "Kleal's summary" paragraph must ADAPT — reflect the new profile in
 # flowing prose — not get a word tacked on the end (the bug: changing personality appended "Интроверт" to the
 # summary). We rewrite the whole paragraph from the current summary + up-to-date profile, keeping its language.
-RESUMMARY_PROMPT = '''You are Kleal. Below is a user's current profile summary and their up-to-date profile data. Rewrite the SUMMARY as ONE warm, natural, flowing paragraph that reflects the CURRENT data. Integrate every change smoothly into the prose — NEVER just append or list words. Keep the SAME language as the existing summary (if it is in English, stay English; if Russian, stay Russian). Speak TO the user ("You…" / "Ты…"). 2-4 sentences, concrete, no bullet points, output ONLY the paragraph.'''
+RESUMMARY_PROMPT = '''You are Kleal. Below is a user's current profile summary and their up-to-date profile data. Rewrite the SUMMARY as ONE warm, natural, flowing paragraph that reflects the CURRENT data. Integrate every change smoothly into the prose — NEVER just append or list words. Write in the language that matches the PROFILE DATA — if their interests/area are in Russian, write the summary in Russian ("Ты…"), otherwise English ("You…"). 2-4 sentences, concrete, no bullet points, output ONLY the paragraph.'''
 
 
 def resummary(profile, current):
