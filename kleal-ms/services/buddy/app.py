@@ -308,6 +308,14 @@ def infer_type(topics):
     return "social"
 
 
+# Stop-words for the raw-topic fallback (when an interest is outside the taxonomy): drop verbs / fillers so
+# "хочу обсудить apple" -> ["apple"], not ["хочу","обсудить","apple"].
+_RAW_STOP = {"хочу", "хотел", "найти", "найди", "найдите", "поговорить", "обсудить", "обсуждать", "встретить",
+             "познакомиться", "люблю", "нравится", "заниматься", "занимаюсь", "интересует", "someone", "people",
+             "with", "about", "want", "like", "find", "meet", "discuss", "talk", "into", "some", "have", "who",
+             "that", "this", "тему", "темы", "человек", "человека", "который", "которые"}
+
+
 # ======================= SIGNALS =======================
 def _as_list(v):
     if isinstance(v, list):
@@ -438,10 +446,20 @@ def build_intent(sig, cat, last_user, lang):
     """Filtration result + signals -> the intent matching ranks on.
     Machine fields are canonical English; the card fields follow the user's language."""
     cat = cat or {}
-    # engine topics: only words the ranker can resolve (RU -> EN, taxonomy-validated).
+    # engine topics: prefer words the ranker resolves (RU -> EN, taxonomy-validated).
     topics = (norm_topics(cat.get("topics")) or norm_topics(sig.get("interest"))
-              or norm_topics(sig.get("topics")) or norm_topics(re.findall(r"[\w']+", str(last_user).lower()))
-              or CATEGORY_BRIDGE.get(str(cat.get("category") or ""), []))
+              or norm_topics(sig.get("topics")) or norm_topics(re.findall(r"[\w']+", str(last_user).lower())))
+    # Interests the taxonomy doesn't cover ("apple", "рыбалка", "labubu") canonicalise to nothing. Keep the
+    # raw significant words — matching's _wshare does literal-word overlap, so two people who both listed
+    # "apple" still match. This runs BEFORE the category bridge so a specific interest isn't replaced by a
+    # generic taxonomy word (apple -> ai). filtration's topics are already cleaned; else use the raw text.
+    if not topics:
+        topics = [str(t).lower()[:24] for t in (cat.get("topics") or []) if str(t).strip()][:4]
+    if not topics:
+        topics = [w[:24] for w in re.findall(r"[a-zа-яё0-9]{4,}", str(sig.get("interest") or last_user).lower())
+                  if w not in _RAW_STOP][:3]
+    if not topics:                                    # last resort: nearest taxonomy word for the category
+        topics = CATEGORY_BRIDGE.get(str(cat.get("category") or ""), [])
     # card tags: what the user actually asked for (may be outside the taxonomy — "labubu" stays "labubu")
     tags = [str(t).lower()[:24] for t in (cat.get("topics") or []) if str(t).strip()][:4] or topics
     typ = str(cat.get("type") or sig.get("type") or "").lower()

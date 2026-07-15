@@ -91,6 +91,19 @@ def same_topic(t, x):
     ct, cx = cat_of(t), cat_of(x)
     return len(t) >= 4 and len(x) >= 4 and (t.startswith(x) or x.startswith(t)) and ct[1] and ct[1] == cx[1]
 
+def _wtok(s):
+    return [w for w in re.findall(r"[a-zа-яё0-9]+", str(s).lower()) if len(w) >= 3]
+
+def _wshare(a, b):
+    """Any raw word shared between two interest strings — exact, or a >=4-char common stem (handles RU
+    inflection: 'технику'~'техника', 'apple'~'apples'). Used ONLY for interests outside the taxonomy."""
+    A, B = _wtok(a), _wtok(b)
+    for x in A:
+        for y in B:
+            if x == y: return True
+            if len(x) >= 4 and len(y) >= 4 and x[:4] == y[:4]: return True
+    return False
+
 def topical(topics, interests):
     """Best topical tier (4 exact > 3 sub-cat > 2 broad-cat > 1 adjacent > 0 none) + matched interests."""
     matched = set(); best = 0
@@ -102,6 +115,9 @@ def topical(topics, interests):
             elif st and st == sx: best = max(best, 3)
             elif bt and bt == bx: best = max(best, 2)
             elif bt and bx and bx in ADJACENCY.get(bt, []): best = max(best, 1)
+            # neither side is in the taxonomy -> fall back to a literal shared interest word, so real
+            # interests the vocabulary doesn't cover ("apple", "рыбалка", "labubu") still match each other.
+            elif not bt and not bx and _wshare(t, x): matched.add(_norm(x)); best = max(best, 4)
     return best, matched
 
 def _cat_of(tok):   # back-compat: broad category only
