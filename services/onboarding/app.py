@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (onboarding half, lines 16-301 + the embedded HTML).
 # Talks to llm-service over HTTP for every extract/reply/summary turn; holds NO model keys.
 # Contract: ../../shared/contracts.md. Owner: Dev A.
-import os, sys, json, re
+import os, sys, json, re, threading
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
