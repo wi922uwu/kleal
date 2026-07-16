@@ -54,12 +54,36 @@ spec's appendix C (#1 sparse-vs-full, #2 not_applicable, #3 no-double-count, #4 
 determinism), config-validator negatives (sha mismatch, broken weight sums), and store-shaped
 regressions (apple/coffee/dota/пиво). Run it before touching scoring.
 
+## Receiving policy + readiness (added 2026-07-16, spec §4.4 / §10.1)
+
+Every store user now carries a `receiving` object (canonical §4.4 shape): `status`
+(active|busy|paused), `allowed_domains`, `passive_outreach`, `quiet_hours{start,end,tz_offset_min}`,
+`paused_until`. Onboarding writes an ACTIVE default at registration (dating excluded unless the
+user opted in); the 4 pre-existing users were backfilled the same shape.
+
+- **Readiness** (`core_v2.readiness_state`): `open_now / open_later (quiet hours) / passive_discovery
+  (domain not allowed or passive_outreach=false) / busy (manual or proposal budget spent) / paused /
+  unknown`. Per spec it NEVER mixes into relevance — it only gates `can_outreach` (open_now required),
+  orders the slate after band (§11.2), and shows as an availability chip. `paused` (incl.
+  `paused_until` in the future) leaves retrieval and Explore entirely; busy/quiet people stay
+  discoverable. **No policy at all = `unknown` = no personal outreach** (unknown is not openness);
+  the demo pool's legacy `open` flag maps True→open_now / False→busy.
+- **Enforcement** (`_negotiate_precheck` in matching): every negotiate re-resolves candidates
+  against the LIVE store, refuses non-open_now people without calling the LLM, caps the parallel
+  wave from the canonical config (2 default / 3 urgent same-day), and logs each sent proposal into
+  matching's kleal_store (`_proposals`) — that log feeds the per-24h fatigue budget
+  (`max_proposals_received_per_user_24h`, default 4 → readiness `busy`).
+- **API**: `POST /api/onboarding/receiving` | `/api/v2/receiving` (onboarding service) —
+  `{name}` reads the policy, `{name, receiving:{...}}` applies a WHITELISTED patch atomically.
+  The profile UI's "Доступность" toggle (Открыт/Занят/Пауза) uses it; candidate cards show the
+  readiness chip when someone isn't open right now.
+
 ## NOT implemented yet (deliberately, staged per spec §22)
 
-- receiving policy store / readiness states (pilot simplification: candidates are assumed reachable;
-  `can_outreach` reflects tier+thresholds only) — spec stage 3;
 - proposal/match/plan **transaction state machines** with idempotency+revalidation (negotiate is
-  still the demo stub) — stage 3–4;
-- allocation caps (exposure/fatigue/exploration) beyond slate diversity — stage 3;
+  still the demo stub; proposals aren't persisted entities with TTL/waves yet) — stage 3–4;
+- allocation caps (exposure/exploration) beyond slate diversity + the proposal-fatigue budget — stage 3;
 - group formation, events/rooms as candidate types, the dating isolated contour — stages 6+;
-- intent compiler per §5 (buddy's build_intent still plays that role).
+- intent compiler per §5 (buddy's build_intent still plays that role);
+- quiet-hours use a fixed pilot tz offset (`tz_offset_min`, default UTC+120 = Madrid summer) —
+  real per-user timezones arrive with the plan coordinator.

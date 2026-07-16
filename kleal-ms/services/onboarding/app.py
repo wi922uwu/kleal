@@ -1254,7 +1254,87 @@ def _profile_to_user(p):
         "paused": False, "pending": 0, "blocksMe": False, "lastActiveDays": 0, "declinedOwnerDaysAgo": None,
         "intents": [], "entities": [(interests[0].capitalize() + " scene") if interests else "Social scene"],
         "dealBreakers": deals, "source": "onboarding",
+        # receiving policy (Matching Core spec §4.4): registering = explicit consent to be matched,
+        # so a default ACTIVE policy is written here. Dating is opt-in only (spec §17). Matching's
+        # readiness engine (core_v2.readiness_state) reads this to decide open_now/quiet-hours/busy.
+        "receiving": _default_receiving(dating),
     }
+
+
+def _default_receiving(dating_ok):
+    doms = ["social_meet", "walk", "culture_event", "language_exchange", "coworking",
+            "watch_together", "games", "sport_activity", "professional_networking"]
+    if dating_ok:
+        doms.append("dating")
+    return {"status": "active", "allowed_domains": doms, "passive_outreach": True,
+            "quiet_hours": {"start": "22:00", "end": "09:00", "tz_offset_min": 120},
+            "paused_until": None}
+
+
+_RECV_STATUSES = ("active", "busy", "paused")
+_RECV_DOMAINS = {"social_meet", "walk", "games", "language_exchange", "sport_activity",
+                 "culture_event", "professional_networking", "watch_together", "coworking", "dating"}
+
+def update_receiving(name, patch):
+    """The user's own availability settings — a WHITELISTED patch of their receiving policy
+    (status / passive_outreach / allowed_domains / quiet_hours / paused_until), atomic on the
+    shared store. Unknown fields are dropped, never written."""
+    key = str(name or "").strip().lower()
+    if not key:
+        return {"ok": False, "error": "name required"}
+    clean = {}
+    st = str(patch.get("status") or "").lower()
+    if st in _RECV_STATUSES:
+        clean["status"] = st
+    if isinstance(patch.get("passive_outreach"), bool):
+        clean["passive_outreach"] = patch["passive_outreach"]
+    doms = patch.get("allowed_domains")
+    if isinstance(doms, list):
+        keep = [d for d in (str(x).strip().lower() for x in doms) if d in _RECV_DOMAINS]
+        if keep:
+            clean["allowed_domains"] = keep
+    q = patch.get("quiet_hours")
+    if isinstance(q, dict):
+        qh = {}
+        for f in ("start", "end"):
+            v = str(q.get(f) or "")
+            if len(v) == 5 and v[2] == ":" and v[:2].isdigit() and v[3:].isdigit():
+                qh[f] = v
+        if isinstance(q.get("tz_offset_min"), (int, float)):
+            qh["tz_offset_min"] = int(q["tz_offset_min"])
+        if qh:
+            clean["quiet_hours"] = qh
+    if "paused_until" in patch and (patch["paused_until"] is None or
+                                    isinstance(patch["paused_until"], (int, float, str))):
+        clean["paused_until"] = patch["paused_until"]
+    with _REG_LOCK:
+        try:
+            with open(USERS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            users = data.get("users") if isinstance(data, dict) else data
+            if not isinstance(users, list):
+                users = []
+        except Exception:
+            users = []
+        me = next((x for x in users if str(x.get("name", "")).strip().lower() == key), None)
+        if me is None:
+            return {"ok": False, "error": "user not found"}
+        r = me.get("receiving")
+        if not isinstance(r, dict):
+            r = _default_receiving(bool(me.get("datingOk")))
+        if not clean:                                   # empty patch = read the current policy
+            return {"ok": True, "receiving": r}
+        merged = dict(r)
+        merged.update({k: v for k, v in clean.items()
+                       if k != "quiet_hours"})
+        if "quiet_hours" in clean:
+            merged["quiet_hours"] = dict(r.get("quiet_hours") or {}, **clean["quiet_hours"])
+        me["receiving"] = merged
+        tmp = USERS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"users": users}, f, ensure_ascii=False)
+        os.replace(tmp, USERS_PATH)
+    return {"ok": True, "receiving": merged}
 
 
 def register_profile(profile):
@@ -1314,6 +1394,14 @@ class H(BaseHTTPRequestHandler):
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             try:
                 send_json(self, 200, {"ok": True, "user": register_profile(prof)})
+            except Exception as e:
+                send_json(self, 200, {"ok": False, "error": str(e)[:200]})
+        elif p in ("/api/onboarding/receiving", "/api/v2/receiving"):
+            # availability settings = the user's receiving policy (Matching Core spec §4.4).
+            # {name} alone reads the current policy; whitelisted fields update it atomically.
+            try:
+                send_json(self, 200, update_receiving(body.get("name"),
+                                                      body.get("receiving") if isinstance(body.get("receiving"), dict) else {}))
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         else:

@@ -24,8 +24,15 @@ def check(name, cond, detail=""):
     if not cond:
         FAILURES.append(name)
 
+# pinned clock for deterministic replay: local (UTC+120) 19:20 — inside open hours
+NOW_OPEN = 1752600000.0
+# same day, local 23:00 — inside the default 22:00-09:00 quiet window
+NOW_QUIET = 1752613200.0
+
 def run(intent, prof, cands, ctx=None):
-    return core_v2.search(intent, prof, ctx or {}, cands, H, CFG)[0]
+    c = {"now": NOW_OPEN}
+    c.update(ctx or {})
+    return core_v2.search(intent, prof, c, cands, H, CFG)[0]
 
 def by_name(res, name):
     return next((c for c in res if c["name"] == name), None)
@@ -187,6 +194,101 @@ apple_srt = [c["name"] for c in apple]
 check("R7 bands sort before clarification cases",
       all(core_v2.BAND_RANK[apple[i]["band"]] <= core_v2.BAND_RANK[apple[i + 1]["band"]]
           for i in range(len(apple) - 1)), apple_srt)
+
+# ---------------------------------------------------------------- receiving policy / readiness (§4.4, §10.1)
+RECV_ACTIVE = {"status": "active",
+               "allowed_domains": ["social_meet", "walk", "culture_event", "games"],
+               "passive_outreach": True,
+               "quiet_hours": {"start": "22:00", "end": "09:00", "tz_offset_min": 120},
+               "paused_until": None}
+
+def mk(name, **kw):
+    base = {"name": name, "interests": ["coffee"], "vibe": "chill", "langs": ["en"], "geo": NEARBY}
+    base.update(kw)
+    return base
+
+open_now = mk("OpenNow", receiving=dict(RECV_ACTIVE))
+r = run(INTENT_COFFEE, PROF_RICH, [open_now])
+c1 = by_name(r, "OpenNow")
+check("RCV1 active policy in open hours -> open_now + outreach allowed",
+      c1 and c1["readiness"] == "open_now" and c1["can_outreach"] is True,
+      (c1 or {}).get("readiness"))
+
+r = run(INTENT_COFFEE, PROF_RICH, [open_now], {"now": NOW_QUIET})
+c2 = by_name(r, "OpenNow")
+check("RCV2a quiet hours -> open_later, NO outreach, still visible",
+      c2 and c2["readiness"] == "open_later" and c2["can_outreach"] is False,
+      (c2 or {}).get("readiness"))
+check("RCV2b readiness never changes relevance (same lcb/coverage)",
+      c1 and c2 and c1["lcb"] == c2["lcb"] and c1["coverage"] == c2["coverage"])
+
+wrong_dom = mk("WrongDom", receiving=dict(RECV_ACTIVE, allowed_domains=["games"]))
+c3 = by_name(run(INTENT_COFFEE, PROF_RICH, [wrong_dom]), "WrongDom")
+check("RCV3 domain not allowed -> passive_discovery, no personal outreach",
+      c3 and c3["readiness"] == "passive_discovery" and c3["can_outreach"] is False,
+      (c3 or {}).get("readiness"))
+
+paused = mk("Paused", receiving=dict(RECV_ACTIVE, status="paused"))
+check("RCV4a paused leaves retrieval entirely",
+      by_name(run(INTENT_COFFEE, PROF_RICH, [paused]), "Paused") is None)
+paused_f = mk("PausedF", receiving=dict(RECV_ACTIVE, paused_until=NOW_OPEN + 3600))
+paused_p = mk("PausedP", receiving=dict(RECV_ACTIVE, paused_until=NOW_OPEN - 3600))
+rr = run(INTENT_COFFEE, PROF_RICH, [paused_f, paused_p])
+check("RCV4b paused_until future excluded, past included",
+      by_name(rr, "PausedF") is None and by_name(rr, "PausedP") is not None,
+      [x["name"] for x in rr])
+
+c5 = by_name(run(INTENT_COFFEE, PROF_RICH, [open_now],
+                 {"received24": {"opennow": 4}}), "OpenNow")
+check("RCV5 proposal budget exhausted -> busy (fatigue)",
+      c5 and c5["readiness"] == "busy" and c5["can_outreach"] is False,
+      (c5 or {}).get("readiness"))
+
+busy = mk("BusyGuy", receiving=dict(RECV_ACTIVE, status="busy"))
+c6 = by_name(run(INTENT_COFFEE, PROF_RICH, [busy]), "BusyGuy")
+check("RCV6 manual busy status -> busy", c6 and c6["readiness"] == "busy")
+
+c7 = by_name(run(INTENT_COFFEE, PROF_RICH, [mk("NoPolicy")]), "NoPolicy")
+check("RCV7 no policy + no signals -> unknown, outreach forbidden (spec: unknown != openness)",
+      c7 and c7["readiness"] == "unknown" and c7["can_outreach"] is False,
+      (c7 or {}).get("readiness"))
+
+c8a = by_name(run(INTENT_COFFEE, PROF_RICH, [mk("LegacyOpen", open=True)]), "LegacyOpen")
+c8b = by_name(run(INTENT_COFFEE, PROF_RICH, [mk("LegacyBusy", open=False)]), "LegacyBusy")
+check("RCV8 legacy open flag maps: True->open_now, False->busy",
+      c8a and c8a["readiness"] == "open_now" and c8b and c8b["readiness"] == "busy",
+      ((c8a or {}).get("readiness"), (c8b or {}).get("readiness")))
+
+rr = run(INTENT_COFFEE, PROF_RICH, [busy, open_now])
+check("RCV9 slate orders open_now before busy within a band (§11.2)",
+      [x["name"] for x in rr][:2] == ["OpenNow", "BusyGuy"], [x["name"] for x in rr])
+
+# ---------------------------------------------------------------- negotiate enforcement (§23.2 #12)
+tmp2 = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+json.dump([mk("A1", receiving=dict(RECV_ACTIVE), source="onboarding"),
+           mk("A2", receiving=dict(RECV_ACTIVE), source="onboarding"),
+           mk("A3", receiving=dict(RECV_ACTIVE), source="onboarding"),
+           mk("B1", receiving=dict(RECV_ACTIVE, status="busy"), source="onboarding")], tmp2)
+tmp2.close()
+old_users2, app.USERS_PATH = app.USERS_PATH, tmp2.name
+app._users_cache = {"mtime": None, "list": None}
+app.SESSION.pop("_proposals", None)
+cands_in = [{"name": n, "score": 80} for n in ("A1", "A2", "A3", "B1")]
+to_send, decided = app._negotiate_precheck({"topics": ["coffee"], "time": "Flexible"},
+                                           cands_in, now_ts=NOW_OPEN)
+sent_names = {c["name"] for c in to_send}
+dec = {c["name"]: c for c in decided}
+check("NEG1 busy candidate never receives a proposal",
+      "B1" not in sent_names and dec.get("B1", {}).get("agree") is False, sent_names)
+check("NEG2 parallel wave capped from config (default 2)",
+      len(to_send) == 2 and "queued" in dec.get("A3", {}).get("reason", ""),
+      (len(to_send), dec.get("A3", {}).get("reason")))
+soon_send, _ = app._negotiate_precheck({"topics": ["coffee"], "time": "today evening"},
+                                       cands_in, now_ts=NOW_OPEN)
+check("NEG3 urgent same-day intent raises the cap to 3", len(soon_send) == 3,
+      len(soon_send))
+app.USERS_PATH = old_users2
+app._users_cache = {"mtime": None, "list": None}
 
 print()
 if FAILURES:

@@ -20,7 +20,7 @@
 # taxonomy helpers (injected via `H`), HTTP routes, and the legacy v1 scorer as rollback
 # (env KLEAL_CORE_V2=0). This module is import-safe: stdlib only, no I/O besides load_config().
 
-import hashlib, math
+import hashlib, math, time
 
 # ------------------------------------------------------------------ config: mini-YAML + validation
 # The canonical config uses a restricted YAML subset (nested maps, scalar lists, scalars). A tiny
@@ -370,6 +370,94 @@ def assign_tier(intent, cand, topics, H):
 
 TIER_KIND = {"T0": "reciprocal", "T1": "exact", "T2": "related", "T3": "adjacent"}
 
+# ------------------------------------------------------------------ receiving readiness (spec §10.1)
+# Readiness answers "may this person be approached NOW for this purpose" — it NEVER mixes into
+# relevance (spec §10: "эти величины не складываются"). It gates can_outreach, orders the slate
+# (§11.2) and is shown as an availability status; paused people leave retrieval entirely.
+READINESS_LABELS = {
+    "open_now":          ("открыт(а) сейчас", "open now"),
+    "open_later":        ("не сейчас — тихие часы", "later (quiet hours)"),
+    "passive_discovery": ("только в подборке", "discovery only"),
+    "busy":              ("сейчас занят(а)", "busy right now"),
+    "paused":            ("на паузе", "paused"),
+    "unknown":           ("доступность не настроена", "availability not set"),
+}
+READINESS_RANK = {"open_now": 0, "open_later": 1, "unknown": 2, "passive_discovery": 3, "busy": 4,
+                  "paused": 5}
+ALL_DOMAINS = ("social_meet", "walk", "games", "language_exchange", "sport_activity",
+               "culture_event", "professional_networking", "watch_together", "coworking", "dating")
+
+def _hhmm_to_min(s):
+    try:
+        h, m = str(s).split(":")
+        return int(h) * 60 + int(m)
+    except Exception:
+        return None
+
+def _in_quiet_hours(now_min, start, end):
+    a, b = _hhmm_to_min(start), _hhmm_to_min(end)
+    if a is None or b is None or now_min is None:
+        return False
+    if a <= b:
+        return a <= now_min < b
+    return now_min >= a or now_min < b                 # window wraps midnight (22:00 -> 09:00)
+
+def _parse_ts(v):
+    """paused_until: epoch seconds or 'YYYY-MM-DDTHH:MM' (pod-local). None if unreadable."""
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return time.mktime(time.strptime(str(v)[:16], "%Y-%m-%dT%H:%M"))
+    except Exception:
+        return None
+
+def is_paused(cand, now_ts=None):
+    """True when the person opted out of retrieval (legacy flag, receiving.status, paused_until)."""
+    if cand.get("paused"):
+        return True
+    r = cand.get("receiving")
+    if not isinstance(r, dict):
+        return False
+    if str(r.get("status") or "").lower() == "paused":
+        pu = _parse_ts(r.get("paused_until"))
+        return True if pu is None else (pu > (now_ts or time.time()))
+    pu = _parse_ts(r.get("paused_until"))
+    return bool(pu and pu > (now_ts or time.time()))
+
+def readiness_state(cand, domain, now_ts, cfg, received_24h=0):
+    """Spec §10.1 states. Sources, in order: receiving policy (canonical §4.4 object on the user),
+    else the demo-pool legacy 'open' flag as an explicit availability signal, else unknown —
+    and unknown is NOT openness: no personal outreach without a policy or a probe."""
+    if is_paused(cand, now_ts):
+        return "paused"
+    r = cand.get("receiving")
+    out_cfg = (cfg or {}).get("outreach") or {}
+    if not isinstance(r, dict):
+        if cand.get("open") is True:
+            return "open_now"
+        if cand.get("open") is False:
+            return "busy"
+        return "unknown"
+    if str(r.get("status") or "").lower() == "busy":
+        return "busy"
+    cap = (r.get("proposal_budget") or {}).get("per_24h") or \
+        out_cfg.get("max_proposals_received_per_user_24h") or 4
+    if received_24h >= int(cap):
+        return "busy"                                   # proposal fatigue: overloaded today
+    doms = r.get("allowed_domains")
+    if isinstance(doms, list) and doms and domain not in doms:
+        return "passive_discovery"                      # visible in discovery, no personal proposals
+    q = r.get("quiet_hours") or {}
+    defaults = out_cfg.get("quiet_hours_local") or ["22:00", "09:00"]
+    if now_ts:
+        # pilot: fixed local offset (Europe/Madrid summer = UTC+120min) stored on the policy
+        local_min = int((now_ts // 60 + int(q.get("tz_offset_min", 120))) % 1440)
+        if _in_quiet_hours(local_min, q.get("start") or defaults[0], q.get("end") or defaults[-1]):
+            return "open_later"
+    if r.get("passive_outreach") is False:
+        return "passive_discovery"
+    return "open_now"
+
 # ------------------------------------------------------------------ presentation (spec §9.7)
 BAND_LABELS = {
     "especially_close":    ("Особенно близко к вашему запросу", "Especially close to your request"),
@@ -464,8 +552,12 @@ def search(intent, prof, ctx, candidates, H, cfg):
     bands = cfg["user_facing_bands"]
     role_conflict = H.get("role_conflict") or set()
     topics = [str(t).lower() for t in (intent.get("topics") or [])]
+    now_ts = ctx.get("now") or time.time()             # pin ctx.now for deterministic replay
+    received24 = ctx.get("received24") or {}           # {name_lower: proposals received last 24h}
     out = []
     for c in candidates:
+        if is_paused(c, now_ts):
+            continue                                    # paused leaves retrieval for this purpose (§10.1)
         tier = assign_tier(intent, c, topics, H)
         if tier == "T5":
             continue                                    # no meaningful overlap -> never proposed
@@ -484,8 +576,10 @@ def search(intent, prof, ctx, candidates, H, cfg):
             continue                                    # weak AND indirect -> drop; direct matches
         #                                                 stay visible as "needs clarification"
         band = assign_band(d_ab["lcb"], d_ab["coverage"], bands) if disc_ok else "needs_clarification"
+        readiness = readiness_state(c, domain, now_ts, cfg,
+                                    received24.get(str(c.get("name", "")).strip().lower(), 0))
         outreach_tier_ok = tier in ("T0", "T1") or (tier == "T2" and bool(intent.get("broadConsent")))
-        can_outreach = (outreach_tier_ok and
+        can_outreach = (outreach_tier_ok and readiness == "open_now" and
                         d_ab["lcb"] >= float(dom_cfg["outreach_min_lcb"]) and
                         d_ab["coverage"] >= float(dom_cfg["outreach_min_coverage"]))
         rs_ru, rs_en, legacy_reasons, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg)
@@ -494,10 +588,13 @@ def search(intent, prof, ctx, candidates, H, cfg):
                   H["cat_of"]((c.get("interests") or ["x"])[0])[0]) or "other"
         km_txt = F["location_feasibility"][2] if F["location_feasibility"][0] in (K_MATCH, K_MISM) else ""
         km = float(km_txt.split(" ")[0]) if km_txt else c.get("km")
-        agree = bool(can_outreach and c.get("open") is not False)
+        agree = bool(can_outreach)
         note = ("Agent agreed — " + (legacy_reasons[0] if legacy_reasons else "good fit")) if agree else \
-               ("Agent: needs clarification" if band == "needs_clarification" else "Agent: fit too weak")
+               ("Agent: not reachable now (%s)" % READINESS_LABELS[readiness][1]
+                if readiness != "open_now" else
+                ("Agent: needs clarification" if band == "needs_clarification" else "Agent: fit too weak"))
         band_ru, band_en = BAND_LABELS[band]
+        rdy_ru, rdy_en = READINESS_LABELS[readiness]
         out.append({
             # ---- legacy card contract (buddy/_card + profile UI keep rendering) ----
             "name": c.get("name"), "score": round(d_ab["lcb"] * 100, 1), "tier": tier,
@@ -511,12 +608,16 @@ def search(intent, prof, ctx, candidates, H, cfg):
             "reasons_ru": rs_ru, "reasons_en": rs_en, "gap_ru": gap_ru, "gap_en": gap_en,
             "coverage": d_ab["coverage"], "lcb": d_ab["lcb"], "reciprocal": rec,
             "unknowns": d_ab["unknowns"], "can_outreach": can_outreach,
+            "readiness": readiness, "readiness_ru": rdy_ru, "readiness_en": rdy_en,
             "trace": {"tier": tier, "policy": "ALLOW", "domain": domain,
                       "a_to_b": d_ab, "b_to_a": d_ba, "reciprocal": rec,
-                      "band": band, "config_version": cfg.get("config_version")},
+                      "band": band, "readiness": readiness,
+                      "config_version": cfg.get("config_version")},
         })
-    out.sort(key=lambda x: (BAND_RANK[x["band"]], -x["reciprocal"], -x["lcb"], -x["coverage"],
-                            str(x["name"])))
+    # slate order (§11.2): band, then readiness class, then reciprocal relevance — readiness is an
+    # ORDERING concern here, never a relevance modifier.
+    out.sort(key=lambda x: (BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]], -x["reciprocal"],
+                            -x["lcb"], -x["coverage"], str(x["name"])))
     meta = {"core": "v2", "config_version": cfg.get("config_version"), "domain": domain,
             "config_sha": cfg.get("_sha256", "")[:12]}
     return _slate(out), meta

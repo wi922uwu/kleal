@@ -580,6 +580,8 @@ def _shape(c, lang):
             "gap_ru": c.get("gap_ru"), "gap_en": c.get("gap_en"),
             "reasons_ru": c.get("reasons_ru"), "reasons_en": c.get("reasons_en"),
             "coverage": c.get("coverage"), "can_outreach": c.get("can_outreach"),
+            "readiness": c.get("readiness"), "readiness_ru": c.get("readiness_ru"),
+            "readiness_en": c.get("readiness_en"),
             "agree": c.get("agree"), "note": c.get("note"), "reply": c.get("reply")}
 
 

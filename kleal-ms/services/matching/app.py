@@ -177,6 +177,24 @@ def _session(uid="me"):
         u.setdefault("blocked", [])    # names the owner blocked
         u.setdefault("state", None)    # mirrored client UI state (server persistence)
         return u
+# ---- proposal fatigue log (receiving policy budgets, spec §4.4/§10.1) ----
+# Counts proposals RECEIVED per person; lives in matching's own kleal_store.json (no new writer
+# on users.json). Feeds readiness ('busy' when over max_proposals_received_per_user_24h).
+def _log_proposal(name):
+    key = str(name or "").strip().lower()
+    if not key:
+        return
+    now = time.time()
+    with _STORE_LOCK:
+        log = SESSION.setdefault("_proposals", {})
+        log[key] = [t for t in (log.get(key) or []) if now - t < 7 * 86400] + [now]
+    _save_store()
+
+def _proposals_received_24h():
+    now = time.time()
+    log = SESSION.get("_proposals") or {}
+    return {k: sum(1 for t in (v or []) if now - t < 86400) for k, v in log.items()}
+
 def record_feedback(name, decision, uid="me"):
     d = str(decision or "").lower()
     if not d.startswith(("accept", "reject")): return False
@@ -551,6 +569,9 @@ def match_candidates(intent, prof, ctx=None):
         if ok:
             eligible.append(c)
     H = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
+    ctx = dict(ctx)
+    ctx.setdefault('now', time.time())                     # pinnable for deterministic replay
+    ctx.setdefault('received24', _proposals_received_24h())  # proposal-fatigue counts -> readiness
     slate, _meta = _core.search(intent, prof or {}, ctx, eligible, H, _CORE_CFG)
     return slate
 
@@ -612,9 +633,12 @@ def negotiate_one(intent, cand):
     topics = ', '.join(intent.get('topics') or intent.get('tags') or []) or 'this'
     a = 'INTENT FROM A: %s. Topics: %s. Time: %s. Place: %s. Format: %s.' % (
         intent.get('title', ''), topics, intent.get('time', ''), intent.get('place', ''), intent.get('format', ''))
+    # availability comes from the readiness engine (receiving policy), not the legacy 'open' flag —
+    # the precheck only lets open_now candidates get this far, so absence of a flag isn't a "no"
+    avail = (cand.get('readiness') == 'open_now') or bool(cand.get('open'))
     b = 'USER B: interests %s; vibe %s; open to meet today: %s; deal-breakers: %s.' % (
         ', '.join(cand.get('interests') or []) or 'unknown', cand.get('vibe', ''),
-        'yes' if cand.get('open') else 'no', ', '.join(cand.get('dealBreakers') or []) or 'none')
+        'yes' if avail else 'no', ', '.join(cand.get('dealBreakers') or []) or 'none')
     try:
         cfg = MODEL_ID
         raw = llm_complete(cfg, [{"role": "system", "content": NEGOTIATE_PROMPT},
@@ -626,20 +650,69 @@ def negotiate_one(intent, cand):
                     "reply": (str(o.get('reply', ''))[:200] if acc and o.get('reply') else None), "decided": True}
     except Exception:
         pass
-    # graceful fallback: keep the deterministic verdict
-    acc = bool(cand.get('open') and cand.get('score', 0) >= 45)
-    return {"agree": acc, "reason": ('good fit and free today' if acc else ('not free today' if not cand.get('open') else 'fit is a bit weak')),
+    # graceful fallback: keep the deterministic verdict (availability = readiness, not legacy flag)
+    avail = (cand.get('readiness') == 'open_now') or bool(cand.get('open'))
+    acc = bool(avail and cand.get('score', 0) >= 45)
+    return {"agree": acc, "reason": ('good fit and free today' if acc else ('not free today' if not avail else 'fit is a bit weak')),
             "reply": None, "decided": False}
+
+def _negotiate_precheck(intent, cands, now_ts=None):
+    """Receiving-policy enforcement BEFORE any proposal goes out (spec §23.2 #12: no proposal
+    without a receiving-policy check). Each candidate is re-resolved against the LIVE store (the
+    client's copy may be stale), readiness is computed, and the parallel wave is capped from the
+    canonical config (default 2, urgent 3). Returns (to_send, decided_without_sending)."""
+    now_ts = now_ts or time.time()
+    store = {str(u.get('name', '')).strip().lower(): u for u in load_candidates()}
+    received = _proposals_received_24h()
+    out_cfg = ((_CORE_CFG or {}).get('outreach') or {})
+    soon = any(w in str(intent.get('time', '')).lower() for w in SOON_WORDS)
+    cap = int(out_cfg.get('urgent_same_day_parallel_proposals' if soon else
+                          'default_parallel_proposals') or (3 if soon else 2))
+    to_send, decided, sent = [], [], 0
+    for c in cands:
+        nm = str(c.get('name', '')).strip().lower()
+        live = store.get(nm, c)
+        if CORE_V2:
+            domain = _core.infer_domain(intent, cat_of)
+            rdy = _core.readiness_state(live, domain, now_ts, _CORE_CFG, received.get(nm, 0))
+        else:
+            rdy = 'open_now' if live.get('open') else ('paused' if live.get('paused') else 'busy')
+        if rdy != 'open_now':
+            label = _core.READINESS_LABELS.get(rdy, (rdy, rdy)) if CORE_V2 else (rdy, rdy)
+            d = dict(c); d.update({"agree": False, "decided": True, "readiness": rdy,
+                                   "reason": label[1], "reply": None})
+            decided.append(d)
+            continue
+        if sent >= cap:
+            d = dict(c); d.update({"agree": False, "decided": True, "readiness": rdy,
+                                   "reason": "queued for the next wave (parallel-proposal cap)",
+                                   "reply": None})
+            decided.append(d)
+            continue
+        sent += 1
+        # the negotiating agent must reason over the LIVE profile, not the client's stale copy —
+        # fill interests/vibe/open/dealBreakers from the store when the client didn't send them
+        merged = dict(c, readiness=rdy)
+        for k in ("interests", "vibe", "open", "dealBreakers"):
+            if merged.get(k) is None and live.get(k) is not None:
+                merged[k] = live[k]
+        to_send.append(merged)
+    return to_send, decided
 
 def negotiate_candidates(intent, cands):
     top = cands[:5]
+    to_send, decided = _negotiate_precheck(intent, top)
+    for c in to_send:
+        _log_proposal(c.get('name'))                   # a real proposal reaches this person's agent
     def work(c):
         v = negotiate_one(intent, c); c = dict(c); c.update(v); return c
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-            return list(ex.map(work, top))
+            done = list(ex.map(work, to_send))
     except Exception:
-        return [dict(c, **negotiate_one(intent, c)) for c in top]
+        done = [dict(c, **negotiate_one(intent, c)) for c in to_send]
+    by = {str(x.get('name', '')).strip().lower(): x for x in done + decided}
+    return [by.get(str(c.get('name', '')).strip().lower(), c) for c in top]
 
 # ---------------------------------------------------------------- Explore: public plans near the owner
 # The client's Explore map used to hard-code 5 fake plans. Serve real ones instead: every candidate who
@@ -659,7 +732,9 @@ def explore_plans(limit=12, self_name=""):
     ordered = [c for c in users if c.get("source") == "onboarding"]
     out = []
     for i, c in enumerate(ordered):
-        if c.get("paused") or not c.get("open"):
+        # paused (incl. receiving.status/paused_until) leaves retrieval entirely (spec §10.1);
+        # busy/quiet-hours people STAY discoverable — receiving policy blocks proposals, not visibility
+        if _core.is_paused(c) or c.get("open") is False:
             continue
         oi = (c.get("intents") or [None])[0]
         topics = [str(t).lower() for t in ((oi.get("topics") if oi else None) or c.get("interests") or []) if t][:3]

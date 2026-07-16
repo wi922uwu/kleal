@@ -582,6 +582,21 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;',
 let UILANG='ru'; try{ const _l=localStorage.getItem('kleal_uilang'); if(_l==='ru'||_l==='en') UILANG=_l; }catch(_e){}
 function T(ru,en){ return UILANG==='en' ? en : ru; }
 function setUILang(l){ UILANG=(l==='en'?'en':'ru'); try{localStorage.setItem('kleal_uilang',UILANG);}catch(_e){} render(); }
+// ---- receiving policy (доступность): читаем/пишем свой статус через onboarding /api/v2/receiving ----
+let RECV=null, RECV_BUSY=false;
+function loadRecv(){ if(RECV||RECV_BUSY||!(DATA&&DATA.name)) return; RECV_BUSY=true;
+  fetch('/api/v2/receiving',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:DATA.name})}).then(x=>x.json())
+    .then(r=>{ RECV_BUSY=false; if(r&&r.ok){ RECV=r.receiving; render(); } })
+    .catch(()=>{ RECV_BUSY=false; }); }
+function setAvail(st){ if(!(DATA&&DATA.name)) return;
+  fetch('/api/v2/receiving',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:DATA.name,receiving:{status:st}})}).then(x=>x.json())
+    .then(r=>{ if(r&&r.ok){ RECV=r.receiving; toast(T('Доступность обновлена','Availability updated')); }
+               else toast(T('Не удалось сохранить','Could not save')); render(); })
+    .catch(()=>toast(T('Не удалось сохранить','Could not save'))); }
+function readinessChip(c){ if(!c||!c.readiness||c.readiness==='open_now') return null;
+  return (UILANG==='ru'?(c.readiness_ru||c.readiness):(c.readiness_en||c.readiness)); }
 function svg(inner,vb,w){return '<svg viewBox="'+(vb||'0 0 24 24')+'" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="'+(w||24)+'" height="'+(w||24)+'">'+inner+'</svg>';}
 const IC={
   back:svg('<path d="M15 6l-6 6 6 6"/>'),
@@ -916,6 +931,14 @@ function scr_overview(){
     <div class="langtoggle">
       <button class="langbtn ${UILANG==='ru'?'on':''}" data-act="set-lang" data-lang="ru">RU</button>
       <button class="langbtn ${UILANG==='en'?'on':''}" data-act="set-lang" data-lang="en">EN</button></div></div>`;
+  const rst=(RECV&&RECV.status)||null; if(!RECV) loadRecv();
+  const availRow=`<div class="card setrow" style="justify-content:space-between">
+    <div class="sic">${IC.spark}</div>
+    <div class="st"><div class="stt">${T('Доступность','Availability')}</div></div>
+    <div class="langtoggle">
+      <button class="langbtn ${rst==='active'?'on':''}" data-act="set-avail" data-st="active">${T('Открыт','Open')}</button>
+      <button class="langbtn ${rst==='busy'?'on':''}" data-act="set-avail" data-st="busy">${T('Занят','Busy')}</button>
+      <button class="langbtn ${rst==='paused'?'on':''}" data-act="set-avail" data-st="paused">${T('Пауза','Pause')}</button></div></div>`;
   return `<div class="stack fade">
     <div class="card idcard">
       <div class="idrow"><div class="ava">${IC.person}</div>
@@ -924,7 +947,7 @@ function scr_overview(){
       <div class="track"><i style="width:${d.confidence}%"></i></div></div>
     ${(d.basics||[]).map(r=>summaryRow(r,true)).join('')}
     <div class="card pad"><div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>${sum}</div>
-    <div class="stack" style="margin-top:6px">${navRows()}${langRow}</div>
+    <div class="stack" style="margin-top:6px">${navRows()}${availRow}${langRow}</div>
   </div>`;
 }
 function emptyState(title,sub){ return `<div class="empty fade"><div class="eic">${IC.spark}</div>
@@ -1316,7 +1339,7 @@ function scr_buddychat(){
     const inner=x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>');
     const time=x.loading?'':(x.t?`<div class="btime">${fmtTime(x.t)}</div>`:'');
     const row=`<div class="krow"><div class="kav${first?'':' sp'}"></div><div class="kcol"><div class="kbub">${inner}</div>${time}</div></div>`;
-    if(x.match&&x.match.top){ const t=x.match.top; const why=candReasons(t).slice(0,2).join(' · ');
+    if(x.match&&x.match.top){ const t=x.match.top; const why=candReasons(t).slice(0,2).concat(readinessChip(t)?[readinessChip(t)]:[]).join(' · ');
       return row+`<div class="card" style="margin:2px 0 2px 43px"><div class="candrow">
         <div class="candav">${esc(String(t.name||'?')[0])}${t.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':''}</div>
         <div class="candt"><div class="candn">${esc(t.name)} <span class="candkm">${t.km} km</span></div><div class="cands">${esc(why)}</div></div>
@@ -1517,7 +1540,8 @@ function scr_intentchat(){
       <span class="confpct">${negotiating?'договариваюсь…':'согласны: '+agreed}</span></div>
     ${cands.length ? cands.map((c,i)=>{
       const negot=negotiating && !c.decided;
-      const sub=(c.decided&&c.reason)?c.reason:candReasons(c).slice(0,2).join(' · ');
+      const rdy=readinessChip(c);
+      const sub=(c.decided&&c.reason)?c.reason:candReasons(c).slice(0,2).concat(rdy?[rdy]:[]).join(' · ');
       const status=negot?'<div class="candbusy"><span class="typing3"><i></i><i></i><i></i></span></div>'
         :(c.passed?'<div class="candno">пропущен</div>':(c.agree?'<div class="candok">✓ согласен</div>':'<div class="candno">отказ</div>'));
       const tier=c.kind==='reciprocal'?'<span style="font-size:10px;font-weight:700;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:1px 5px;margin-left:5px">↔ mutual</span>'
@@ -1738,6 +1762,7 @@ function toast(msg){ let t=document.getElementById('toast');
 function doAct(act, ds){
   switch(act){
     case 'set-lang': setUILang(ds.lang); break;
+    case 'set-avail': setAvail(ds.st); break;
     case 'editsum': editingSummary=true; render(); break;
     case 'cancelsum': editingSummary=false; render(); break;
     case 'savesum': { const el=document.getElementById('sumta'); DATA.summary=(el?el.value:'').trim(); editingSummary=false; render(); toast('Summary saved'); break; }
