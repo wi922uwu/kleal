@@ -16,13 +16,15 @@ FILES = [
     ("services/onboarding/app.py",    "services/onboarding/app.py",    "f_onb"),
     ("services/profile/app.py",       "services/profile/app.py",       "f_prof"),
     ("services/matching/app.py",      "services/matching/app.py",      "f_match"),
+    ("services/matching/core_v2.py",  "services/matching/core_v2.py",  "f_mcore"),   # Matching Core v2 engine — app.py imports it
+    ("config/Kleal_Matching_Core_Config_v2.yaml", "config/Kleal_Matching_Core_Config_v2.yaml", "f_mcfg"),  # sha-pinned canonical config core_v2 loads
     ("services/filtration/app.py",    "services/filtration/app.py",    "f_filter"),
     ("services/buddy/app.py",         "services/buddy/app.py",         "f_buddy"),
     ("services/gateway/app.py",       "services/gateway/app.py",       "f_gw"),
 ]
 CH = 1800
 L = ["stty -echo 2>/dev/null",
-     "mkdir -p /root/kleal-ms/shared /root/kleal-ms/services/gateway /root/kleal-ms/services/llm "
+     "mkdir -p /root/kleal-ms/shared /root/kleal-ms/config /root/kleal-ms/services/gateway /root/kleal-ms/services/llm "
      "/root/kleal-ms/services/onboarding /root/kleal-ms/services/matching /root/kleal-ms/services/filtration "
      "/root/kleal-ms/services/buddy /root/kleal-ms/services/profile"]
 

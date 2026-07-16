@@ -24,17 +24,34 @@ if SERVICE not in SVC:
     raise SystemExit("Set SERVICE to one of: %s" % ", ".join(SVC))
 port, launch = SVC[SERVICE]
 
-data = open(os.path.join(ROOT, "services", SERVICE, "app.py"), "rb").read()
-sha = hashlib.sha256(data).hexdigest()
-b64 = base64.b64encode(gzip.compress(data, 9)).decode("ascii")
+# Files shipped for this service. matching also needs its engine + sha-pinned config, or the new
+# app.py would `import core_v2` against a stale/absent module and crash on start.
+FILESET = [("services/%s/app.py" % SERVICE, "services/%s/app.py" % SERVICE, True)]   # (local, remote, is_python)
+if SERVICE == "matching":
+    FILESET += [("services/matching/core_v2.py", "services/matching/core_v2.py", True),
+                ("config/Kleal_Matching_Core_Config_v2.yaml", "config/Kleal_Matching_Core_Config_v2.yaml", False)]
+
 CH = 1800
-L = ["stty -echo 2>/dev/null", "mkdir -p /root/kleal-ms/services/%s" % SERVICE, ": > /tmp/one.b64.gz"]
-for i in range(0, len(b64), CH):
-    L.append("printf '%%s' '%s' >> /tmp/one.b64.gz" % b64[i:i+CH])
-L.append("base64 -d /tmp/one.b64.gz | gunzip > /root/kleal-ms/services/%s/app.py.new" % SERVICE)
-L.append('python3 -c "import ast; ast.parse(open(\'/root/kleal-ms/services/%s/app.py.new\').read())" && echo ast_ok || echo AST_FAIL' % SERVICE)
-L.append('if [ "$(sha256sum /root/kleal-ms/services/%s/app.py.new | awk \'{print $1}\')" = "%s" ]; then' % (SERVICE, sha))
-L.append("  mv /root/kleal-ms/services/%s/app.py.new /root/kleal-ms/services/%s/app.py" % (SERVICE, SERVICE))
+L = ["stty -echo 2>/dev/null",
+     "mkdir -p /root/kleal-ms/config /root/kleal-ms/services/%s" % SERVICE]
+shas = []
+for n, (local, remote, is_py) in enumerate(FILESET):
+    data = open(os.path.join(ROOT, local.replace("/", os.sep)), "rb").read()
+    sha = hashlib.sha256(data).hexdigest(); shas.append((remote, sha, is_py))
+    b64 = base64.b64encode(gzip.compress(data, 9)).decode("ascii")
+    tmp = "/tmp/one_%d.b64.gz" % n
+    L.append(": > %s" % tmp)
+    for i in range(0, len(b64), CH):
+        L.append("printf '%%s' '%s' >> %s" % (b64[i:i+CH], tmp))
+    L.append("base64 -d %s | gunzip > /root/kleal-ms/%s.new" % (tmp, remote))
+    if is_py:
+        L.append('python3 -c "import ast; ast.parse(open(\'/root/kleal-ms/%s.new\').read())" && echo ast_ok || echo AST_FAIL' % remote)
+# swap only if EVERY file's sha matches (atomic-ish: verify all, then move all)
+cond = " && ".join('[ "$(sha256sum /root/kleal-ms/%s.new | awk \'{print $1}\')" = "%s" ]' % (remote, sha)
+                   for remote, sha, _ in shas)
+L.append("if %s; then" % cond)
+for remote, _sha, _py in shas:
+    L.append("  mv /root/kleal-ms/%s.new /root/kleal-ms/%s" % (remote, remote))
 L.append("  echo SWAPPED")
 L.append("  cd /root/kleal-ms")
 L.append("  HUB=$(grep -Eo 'https://[a-z0-9-]+\\.trycloudflare\\.com' /root/cf7080.log | head -1)")
