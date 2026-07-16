@@ -62,10 +62,12 @@ SYNONYMS = {'soccer':'football','movies':'cinema','movie':'cinema','film':'cinem
             'travelling':'travel','traveling':'travel','trip':'travel','coffees':'coffee',
             'drink':'drinks','party':'party','gym':'gym','codes':'coding','code':'coding','programme':'coding'}
 # curated adjacency between BROAD categories (a mild "related" bonus)
-ADJACENCY = {'sports':['outdoors','social'], 'social':['culture','music','games','learning'],
-             'games':['tech','social'], 'culture':['learning','social','music'],
-             'tech':['games','learning','culture'], 'music':['social','culture'],
-             'outdoors':['sports','social'], 'learning':['culture','tech','social']}
+# Adjacency is deliberately conservative — over-broad links made a coffee search surface a Dota player
+# ("social" ~ "games"). Keep only genuinely related neighbours.
+ADJACENCY = {'sports':['outdoors'], 'social':['culture','music','learning'],
+             'games':['tech'], 'culture':['learning','music'],
+             'tech':['games','learning'], 'music':['culture'],
+             'outdoors':['sports'], 'learning':['culture','tech']}
 _IDX = {}
 for _b, _subs in TAXONOMY.items():
     for _s, _ws in _subs.items():
@@ -91,6 +93,20 @@ def same_topic(t, x):
     ct, cx = cat_of(t), cat_of(x)
     return len(t) >= 4 and len(x) >= 4 and (t.startswith(x) or x.startswith(t)) and ct[1] and ct[1] == cx[1]
 
+def _wtok(s):
+    return [w for w in re.findall(r"[a-zа-яё0-9]+", str(s).lower()) if len(w) >= 3]
+
+def _wshare(a, b):
+    """A literal shared interest word between two OFF-TAXONOMY strings. Exact token, or a long common stem
+    (>=5-char shared prefix AND near-equal length) to catch RU inflection ('технику'~'техника',
+    'apple'~'apples') WITHOUT false matches like 'apple'~'application' or 'anime'~'animals'."""
+    A, B = _wtok(a), _wtok(b)
+    for x in A:
+        for y in B:
+            if x == y: return True
+            if len(x) >= 5 and len(y) >= 5 and abs(len(x) - len(y)) <= 2 and x[:5] == y[:5]: return True
+    return False
+
 def topical(topics, interests):
     """Best topical tier (4 exact > 3 sub-cat > 2 broad-cat > 1 adjacent > 0 none) + matched interests."""
     matched = set(); best = 0
@@ -102,6 +118,9 @@ def topical(topics, interests):
             elif st and st == sx: best = max(best, 3)
             elif bt and bt == bx: best = max(best, 2)
             elif bt and bx and bx in ADJACENCY.get(bt, []): best = max(best, 1)
+            # neither side is in the taxonomy -> fall back to a literal shared interest word, so real
+            # interests the vocabulary doesn't cover ("apple", "рыбалка", "labubu") still match each other.
+            elif not bt and not bx and _wshare(t, x): matched.add(_norm(x)); best = max(best, 4)
     return best, matched
 
 def _cat_of(tok):   # back-compat: broad category only
@@ -158,6 +177,24 @@ def _session(uid="me"):
         u.setdefault("blocked", [])    # names the owner blocked
         u.setdefault("state", None)    # mirrored client UI state (server persistence)
         return u
+# ---- proposal fatigue log (receiving policy budgets, spec §4.4/§10.1) ----
+# Counts proposals RECEIVED per person; lives in matching's own kleal_store.json (no new writer
+# on users.json). Feeds readiness ('busy' when over max_proposals_received_per_user_24h).
+def _log_proposal(name):
+    key = str(name or "").strip().lower()
+    if not key:
+        return
+    now = time.time()
+    with _STORE_LOCK:
+        log = SESSION.setdefault("_proposals", {})
+        log[key] = [t for t in (log.get(key) or []) if now - t < 7 * 86400] + [now]
+    _save_store()
+
+def _proposals_received_24h():
+    now = time.time()
+    log = SESSION.get("_proposals") or {}
+    return {k: sum(1 for t in (v or []) if now - t < 86400) for k, v in log.items()}
+
 def record_feedback(name, decision, uid="me"):
     d = str(decision or "").lower()
     if not d.startswith(("accept", "reject")): return False
@@ -236,12 +273,21 @@ def _gen_pool():
     return pool
 CANDIDATES = _gen_pool()
 
-# The live candidate pool comes from the shared user store (managed by the admin-service). If the store
-# FILE EXISTS it is authoritative — even when empty (an empty store means an empty system, no test users).
-# Only a MISSING/broken store falls back to the built-in demo pool, so matching never hard-breaks.
-USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(os.path.dirname(os.path.abspath(__file__)), "users.json"))
+# The candidate pool = real users registered by onboarding, MERGED with the built-in demo pool for depth.
+# IMPORTANT (was a silent, total break): onboarding writes the shared store at the repo-root users.json
+# (KLEAL_USERS=/root/kleal-ms/users.json), but this file previously defaulted to services/matching/users.json
+# — a different file onboarding never touched — so every registered person was invisible to the matcher and
+# search ran on the 50 demo fakes only. Default now points at the SAME repo-root users.json onboarding uses.
+USERS_PATH = os.environ.get(
+    "KLEAL_USERS",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "users.json"))
+# Match ONLY real registered users by default — surfacing demo-pool fakes (Ana/Nico/Iris...) in results
+# reads as "mock users". The demo pool is still the fallback when the store is missing/empty, so a fresh
+# system isn't dead. Set KLEAL_MERGE_DEMO=1 to blend the demo pool in (for a populated demo).
+MERGE_DEMO = os.environ.get("KLEAL_MERGE_DEMO", "0") != "0"
 _users_cache = {"mtime": None, "list": None}
 def load_candidates():
+    store = None
     try:
         m = os.path.getmtime(USERS_PATH)
         if _users_cache["mtime"] != m:
@@ -250,11 +296,31 @@ def load_candidates():
             lst = data.get("users") if isinstance(data, dict) else data
             _users_cache["mtime"] = m
             _users_cache["list"] = lst if isinstance(lst, list) else None
-        if _users_cache["list"] is not None:      # store present (even []) -> authoritative
-            return _users_cache["list"]
+        store = _users_cache["list"]
     except Exception:
-        pass
-    return CANDIDATES                              # only when the store file is missing/unreadable
+        store = None
+    if not store:                                  # missing/broken/empty store -> demo pool keeps matching alive
+        return CANDIDATES
+    if not MERGE_DEMO:
+        return store                               # opt-out: store authoritative (original behaviour)
+    seen = {str(u.get("name", "")).strip().lower() for u in store}
+    return list(store) + [c for c in CANDIDATES if str(c.get("name", "")).strip().lower() not in seen]
+
+# ---------------- Matching Core v2 (spec-faithful engine; core_v2.py + ../../config/*.yaml) ----------------
+# Scoring per "Kleal_Matching_Core_Final_Spec_RU_v2": feature groups with unknown/coverage, R_lcb,
+# tier-as-provenance, user-facing bands. Weights/thresholds live ONLY in the sha-pinned YAML.
+# Rollback for Dev A/B: KLEAL_CORE_V2=0 -> the legacy scorer below runs unchanged. A missing or
+# tampered config also falls back automatically (fail-safe, spec §21.4) — see /api/agent/weights.
+import core_v2 as _core
+_CORE_CFG, _CORE_ERR = None, None
+try:
+    _CORE_CFG = _core.load_config(os.environ.get(
+        "KLEAL_CORE_CONFIG",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                     "config", "Kleal_Matching_Core_Config_v2.yaml")))
+except Exception as _e:
+    _CORE_ERR = str(_e)
+CORE_V2 = os.environ.get("KLEAL_CORE_V2", "1") != "0" and _CORE_CFG is not None
 
 PARSE_PROMPT = '''You convert a user's free-text social request into a structured intent.
 Return ONLY compact JSON (no prose, no markdown), keys:
@@ -334,11 +400,11 @@ def _hard_gates(intent, c, gate_ctx):
         if mn and age < mn:                                       return False, 'below age range'
         if mx and age > mx:                                       return False, 'above age range'
     reql = {str(l)[:2].lower() for l in (intent.get('requiredLanguages') or [])}
-    if reql and not reql.issubset({str(l)[:2].lower() for l in c['langs']}):
+    if reql and not reql.issubset({str(l)[:2].lower() for l in (c.get('langs') or [])}):
         return False, 'missing a required language'
-    if intent.get('mode') == 'offline' and intent.get('radiusKm'):
+    if intent.get('mode') == 'offline' and intent.get('radiusKm') and c.get('km') is not None:
         try:
-            if c['km'] > float(intent['radiusKm']):               return False, 'outside the radius'
+            if float(c['km']) > float(intent['radiusKm']):       return False, 'outside the radius'
         except (TypeError, ValueError):
             pass
     return True, None
@@ -346,15 +412,13 @@ def _hard_gates(intent, c, gate_ctx):
 GENERIC_TYPES = {'social', 'other', ''}   # too broad to count as a mutual-intent match on their own
 
 def _reciprocal(intent, c):
-    """True if the candidate has their OWN active intent that genuinely matches this one (mutual interest -> T0).
-    A bare type match only counts for SPECIFIC types (sport/gaming/…); generic 'social' needs real topical overlap."""
-    it = (intent.get('type') or '').lower()
+    """True only if the candidate's OWN active intent shares a real topical interest (sub-category or exact).
+    A bare TYPE match (both 'sport', both 'gaming'…) is NOT enough — 'sport/football' must not read as a
+    mutual match for a 'sport/tennis' search, which used to hand football players the top T0 slot."""
     itop = [str(t).lower() for t in (intent.get('topics') or [])]
     for oi in (c.get('intents') or []):
-        if it and it not in GENERIC_TYPES and str(oi.get('type') or '').lower() == it:
-            return True
         b, _ = topical(itop, [str(t).lower() for t in (oi.get('topics') or [])])
-        if b >= 3:                                 # same sub-category or exact -> real mutual interest
+        if b >= 3:                                 # same sub-category or exact -> genuine mutual interest
             return True
     return False
 
@@ -383,10 +447,14 @@ def _tier_label(score):
 
 def _diversify(items):
     """Keep at most WEIGHTS['diversity_max'] per dominant-interest bucket; cap at top_n. Items pre-sorted desc."""
+    # Focused search (1-2 buckets): DON'T cap — a "tennis" search must return all the tennis players, not 3
+    # of them padded with unrelated people. Only diversify when the results genuinely span many categories.
+    buckets = {it.get('bucket') or 'other' for it in items}
+    cap = WEIGHTS['diversity_max'] if len(buckets) > 2 else WEIGHTS['top_n']
     seen, out = {}, []
     for it in items:
         b = it.get('bucket') or 'other'
-        if seen.get(b, 0) >= WEIGHTS['diversity_max']:
+        if seen.get(b, 0) >= cap:
             continue
         seen[b] = seen.get(b, 0) + 1
         out.append(it)
@@ -394,7 +462,7 @@ def _diversify(items):
             break
     return out
 
-def match_candidates(intent, prof, ctx=None):
+def match_candidates_legacy(intent, prof, ctx=None):
     W = WEIGHTS
     ctx = ctx or {}
     sess = _session(ctx.get('uid', 'me'))
@@ -410,8 +478,12 @@ def match_candidates(intent, prof, ctx=None):
     exactReq = bool(intent.get('exactMatchRequired'))
     adjOk    = intent.get('adjacentAllowed', True)
     broadOk  = intent.get('broadAllowed', True)
+    # the searcher must never match themselves — identify them by name (or uid) and skip that candidate
+    self_name = str(ctx.get('self') or prof.get('name') or ctx.get('uid') or '').strip().lower()
     out = []
     for c in load_candidates():
+        if self_name and str(c.get('name', '')).strip().lower() == self_name:
+            continue
         # ── 1. HARD GATES ──
         ok, _why = _hard_gates(intent, c, gate_ctx)
         if not ok:
@@ -478,6 +550,31 @@ def match_candidates(intent, prof, ctx=None):
     out.sort(key=lambda x: (-x['score'], x['name']))
     return _diversify(out)
 
+def match_candidates(intent, prof, ctx=None):
+    """Entry point. Policy hard gates run HERE (scoring only after ALLOW — spec §8), then Core v2
+    scores the eligible pool. KLEAL_CORE_V2=0 or an invalid config -> legacy scorer above, unchanged.
+    The response is a superset of the legacy card contract (name/score/tier/reasons/agree/note/...)."""
+    if not CORE_V2:
+        return match_candidates_legacy(intent, prof, ctx)
+    ctx = ctx or {}
+    sess = _session(ctx.get('uid', 'me'))
+    gate_ctx = {'feedback': dict(sess.get('feedback') or {}),
+                'blocked': set(sess.get('blocked') or []) | set(ctx.get('blocked') or [])}
+    self_name = str(ctx.get('self') or (prof or {}).get('name') or ctx.get('uid') or '').strip().lower()
+    eligible = []
+    for c in load_candidates():
+        if self_name and str(c.get('name', '')).strip().lower() == self_name:
+            continue                                       # the searcher never matches themselves
+        ok, _why = _hard_gates(intent, c, gate_ctx)
+        if ok:
+            eligible.append(c)
+    H = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
+    ctx = dict(ctx)
+    ctx.setdefault('now', time.time())                     # pinnable for deterministic replay
+    ctx.setdefault('received24', _proposals_received_24h())  # proposal-fatigue counts -> readiness
+    slate, _meta = _core.search(intent, prof or {}, ctx, eligible, H, _CORE_CFG)
+    return slate
+
 def _online_fallback(intent):
     """When 0 offline candidates: offer to go live + ways to broaden — so the user never hits a dead end."""
     topics = ', '.join(intent.get('topics') or []) or 'this'
@@ -536,9 +633,12 @@ def negotiate_one(intent, cand):
     topics = ', '.join(intent.get('topics') or intent.get('tags') or []) or 'this'
     a = 'INTENT FROM A: %s. Topics: %s. Time: %s. Place: %s. Format: %s.' % (
         intent.get('title', ''), topics, intent.get('time', ''), intent.get('place', ''), intent.get('format', ''))
+    # availability comes from the readiness engine (receiving policy), not the legacy 'open' flag —
+    # the precheck only lets open_now candidates get this far, so absence of a flag isn't a "no"
+    avail = (cand.get('readiness') == 'open_now') or bool(cand.get('open'))
     b = 'USER B: interests %s; vibe %s; open to meet today: %s; deal-breakers: %s.' % (
         ', '.join(cand.get('interests') or []) or 'unknown', cand.get('vibe', ''),
-        'yes' if cand.get('open') else 'no', ', '.join(cand.get('dealBreakers') or []) or 'none')
+        'yes' if avail else 'no', ', '.join(cand.get('dealBreakers') or []) or 'none')
     try:
         cfg = MODEL_ID
         raw = llm_complete(cfg, [{"role": "system", "content": NEGOTIATE_PROMPT},
@@ -550,31 +650,125 @@ def negotiate_one(intent, cand):
                     "reply": (str(o.get('reply', ''))[:200] if acc and o.get('reply') else None), "decided": True}
     except Exception:
         pass
-    # graceful fallback: keep the deterministic verdict
-    acc = bool(cand.get('open') and cand.get('score', 0) >= 45)
-    return {"agree": acc, "reason": ('good fit and free today' if acc else ('not free today' if not cand.get('open') else 'fit is a bit weak')),
+    # graceful fallback: keep the deterministic verdict (availability = readiness, not legacy flag)
+    avail = (cand.get('readiness') == 'open_now') or bool(cand.get('open'))
+    acc = bool(avail and cand.get('score', 0) >= 45)
+    return {"agree": acc, "reason": ('good fit and free today' if acc else ('not free today' if not avail else 'fit is a bit weak')),
             "reply": None, "decided": False}
+
+def _negotiate_precheck(intent, cands, now_ts=None):
+    """Receiving-policy enforcement BEFORE any proposal goes out (spec §23.2 #12: no proposal
+    without a receiving-policy check). Each candidate is re-resolved against the LIVE store (the
+    client's copy may be stale), readiness is computed, and the parallel wave is capped from the
+    canonical config (default 2, urgent 3). Returns (to_send, decided_without_sending)."""
+    now_ts = now_ts or time.time()
+    store = {str(u.get('name', '')).strip().lower(): u for u in load_candidates()}
+    received = _proposals_received_24h()
+    out_cfg = ((_CORE_CFG or {}).get('outreach') or {})
+    soon = any(w in str(intent.get('time', '')).lower() for w in SOON_WORDS)
+    cap = int(out_cfg.get('urgent_same_day_parallel_proposals' if soon else
+                          'default_parallel_proposals') or (3 if soon else 2))
+    to_send, decided, sent = [], [], 0
+    for c in cands:
+        nm = str(c.get('name', '')).strip().lower()
+        live = store.get(nm, c)
+        if CORE_V2:
+            domain = _core.infer_domain(intent, cat_of)
+            rdy = _core.readiness_state(live, domain, now_ts, _CORE_CFG, received.get(nm, 0))
+        else:
+            rdy = 'open_now' if live.get('open') else ('paused' if live.get('paused') else 'busy')
+        if rdy != 'open_now':
+            label = _core.READINESS_LABELS.get(rdy, (rdy, rdy)) if CORE_V2 else (rdy, rdy)
+            d = dict(c); d.update({"agree": False, "decided": True, "readiness": rdy,
+                                   "reason": label[1], "reply": None})
+            decided.append(d)
+            continue
+        if sent >= cap:
+            d = dict(c); d.update({"agree": False, "decided": True, "readiness": rdy,
+                                   "reason": "queued for the next wave (parallel-proposal cap)",
+                                   "reply": None})
+            decided.append(d)
+            continue
+        sent += 1
+        # the negotiating agent must reason over the LIVE profile, not the client's stale copy —
+        # fill interests/vibe/open/dealBreakers from the store when the client didn't send them
+        merged = dict(c, readiness=rdy)
+        for k in ("interests", "vibe", "open", "dealBreakers"):
+            if merged.get(k) is None and live.get(k) is not None:
+                merged[k] = live[k]
+        to_send.append(merged)
+    return to_send, decided
 
 def negotiate_candidates(intent, cands):
     top = cands[:5]
+    to_send, decided = _negotiate_precheck(intent, top)
+    for c in to_send:
+        _log_proposal(c.get('name'))                   # a real proposal reaches this person's agent
     def work(c):
         v = negotiate_one(intent, c); c = dict(c); c.update(v); return c
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-            return list(ex.map(work, top))
+            done = list(ex.map(work, to_send))
     except Exception:
-        return [dict(c, **negotiate_one(intent, c)) for c in top]
+        done = [dict(c, **negotiate_one(intent, c)) for c in to_send]
+    by = {str(x.get('name', '')).strip().lower(): x for x in done + decided}
+    return [by.get(str(c.get('name', '')).strip().lower(), c) for c in top]
+
+# ---------------------------------------------------------------- Explore: public plans near the owner
+# The client's Explore map used to hard-code 5 fake plans. Serve real ones instead: every candidate who
+# carries an OPEN own-intent becomes a public plan (title from ENTITY_MAP, distance from their geo). Draws
+# from load_candidates() so it honours the store, and returns [] when nobody is posting — the client then
+# shows an empty state instead of invented pins.
+_EXPLORE_WHEN = ("Today 18:00", "Tonight 21:00", "Tomorrow 08:00", "Tomorrow 19:00", "Sat 11:00",
+                 "Sun 10:00", "Wed 17:00", "Fri 20:00", "Thu 20:00", "Sat 17:00")
+
+
+def explore_plans(limit=12, self_name=""):
+    sn = str(self_name or "").strip().lower()
+    users = [c for c in load_candidates() if not (sn and str(c.get("name", "")).strip().lower() == sn)]
+    # Explore shows ONLY real registered users (source == "onboarding") — a plan from their own-intent, or,
+    # if none, their top interest. Demo pool users are NEVER surfaced here (they exist only so matching has a
+    # non-empty pool to rank against); when there are no real users, the client shows an empty state.
+    ordered = [c for c in users if c.get("source") == "onboarding"]
+    out = []
+    for i, c in enumerate(ordered):
+        # paused (incl. receiving.status/paused_until) leaves retrieval entirely (spec §10.1);
+        # busy/quiet-hours people STAY discoverable — receiving policy blocks proposals, not visibility
+        if _core.is_paused(c) or c.get("open") is False:
+            continue
+        oi = (c.get("intents") or [None])[0]
+        topics = [str(t).lower() for t in ((oi.get("topics") if oi else None) or c.get("interests") or []) if t][:3]
+        if not topics:
+            continue
+        lat, lon, km = c.get("lat"), c.get("lon"), c.get("km")
+        if lat is None or lon is None:                 # real user without precise coords -> place around the area centre
+            km = float(km if km is not None else round(0.5 + (i * 0.9) % 6.5, 1))
+            lat, lon = _offset(ME_LATLON, km, (i * 137.5) % 360)
+        out.append({"title": ENTITY_MAP.get(topics[0]) or (topics[0].capitalize() + " meetup"),
+                    "who": c.get("name") or "Someone", "topics": topics, "role": (oi or {}).get("role") or "meet",
+                    "when": _EXPLORE_WHEN[i % len(_EXPLORE_WHEN)], "dist": round(float(km or 0), 1),
+                    "lat": lat, "lon": lon, "verified": bool(c.get("verified"))})
+    out.sort(key=lambda p: p["dist"])
+    return out[:limit]
 
 # ---------------------------------------------------------------- HTTP dispatcher (matching only)
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/agent/weights":
-            send_json(self, 200, {"weights": get_weights()})
+            send_json(self, 200, {"weights": get_weights(),
+                                  "core": {"enabled": CORE_V2,
+                                           "config_version": (_CORE_CFG or {}).get("config_version"),
+                                           "config_sha": ((_CORE_CFG or {}).get("_sha256") or "")[:12],
+                                           "error": _CORE_ERR}})
         elif self.path == "/api/agent/load":
             send_json(self, 200, {"state": _session("me").get("state")})
         elif self.path == "/api/agent/pool":
             c = load_candidates()
             send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None, "users": c})
+        elif self.path.split("?")[0] == "/api/agent/explore":
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
+            from urllib.parse import unquote
+            send_json(self, 200, {"plans": explore_plans(self_name=unquote(q.get("self", "")))})
         elif self.path == "/":
             send_json(self, 200, {"service": "matching", "ok": True})
         else:
