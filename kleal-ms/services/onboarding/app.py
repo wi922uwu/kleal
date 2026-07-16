@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (onboarding half, lines 16-301 + the embedded HTML).
 # Talks to llm-service over HTTP for every extract/reply/summary turn; holds NO model keys.
 # Contract: ../../shared/contracts.md. Owner: Dev A.
-import os, sys, json, re
+import os, sys, json, re, threading, hashlib
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
@@ -224,7 +224,7 @@ interests.experienceByInterest = {"<interest exactly as named in explicit>": "<h
 
 # the stored artifact: ONE continuous plain-text summary describing everything about the user
 SUMMARY_PROMPT = '''You are Kleal, a personal social agent. You store your memory of a user as ONE continuous plain-text summary.
-Given the profile JSON, write that summary in the SAME LANGUAGE the user used — look at their name, interests and area: if they are written in Russian (Cyrillic), write the summary in Russian ("Ты ..."/"Вы ..."); otherwise English ("You're ..."). Second person, 4-8 sentences, warm but strictly factual.
+Given the profile JSON, write that summary: English, second person ("You're ..."), 4-8 sentences, warm but strictly factual.
 Cover, when present in the JSON: who they are (name, age, gender), where and how far they go (area, radius), languages, EVERY interest with its role, how long they have been into it and key details (platform, rank, team, level, industry), how they like to connect, and their safety choices and permissions.
 STRICT: only facts present in the JSON - NEVER invent or embellish. No lists, no markdown, no headings, no emoji, no JSON. Plain flowing text only.'''
 
@@ -887,7 +887,8 @@ WIDGETS.location=function(slot){
   slot.innerHTML=`<div class="card">
     ${mapHtml}
     <div class="lbl" style="margin-top:14px">Your city</div>
-    <input class="inp" id="area" placeholder="Detecting your city..." value="${esc(area)}">
+    <input class="inp" id="area" placeholder="Type your city, or use the button below" value="${esc(area)}">
+    <button id="gloc" type="button" style="margin-top:10px;width:100%;padding:12px;border:1px solid var(--line,#E7E8EC);background:#fff;border-radius:12px;font:inherit;font-weight:600;color:var(--accent,#F5455C);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📍 Use my location</button>
     <div class="lbl" style="margin-top:16px">How far are you happy to go? <b id="rkm">${r}</b> km</div>
     <input type="range" id="rad" min="1" max="50" value="${r}">
     <div class="cap" id="gstat" style="text-align:left;margin-top:8px"></div>
@@ -896,7 +897,7 @@ WIDGETS.location=function(slot){
   // ---- real map (Leaflet + Carto light tiles). A radius circle marks the AREA; no exact pin, no attribution bar. ----
   let lmap=null, circle=null;
   function fit(){ if(lmap&&circle) lmap.fitBounds(circle.getBounds(),{padding:[16,16]}); }
-  function recenter(c){ if(!lmap||!circle)return; circle.setLatLng(c); lmap.setView(c, lmap.getZoom()||12); fit(); }
+  function recenter(c){ if(!lmap||!circle)return; circle.setLatLng(c); fit(); }
   if(hasL){
     const center=(g.coarseLat&&g.coarseLon)?[g.coarseLat,g.coarseLon]:[41.3874,2.1686];
     lmap=L.map('lmap',{zoomControl:false,scrollWheelZoom:false,attributionControl:false});
@@ -907,15 +908,10 @@ WIDGETS.location=function(slot){
   }
   rad.oninput=()=>{ const v=parseInt(rad.value,10); slot.querySelector('#rkm').textContent=v; set('geo.maxDistanceKm',v); if(circle){ circle.setRadius(v*1000); fit(); } };
   function setCity(name){ if(!name)return; area_in.value=name; set('geo.comfortableAreas',[name]); set('city',name); cont.disabled=false; }
-  // Geocode the typed area -> move the map there AND remember the coarse coordinates on the profile, so the
-  // map follows what you type and the user is later placeable on the Explore map. (No exact pin — area only.)
-  async function geocode(q){ if(!q)return; try{ const j=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q),{headers:{'Accept-Language':'ru,en'}}).then(x=>x.json());
-    if(j&&j[0]){ const la=+j[0].lat, lo=+j[0].lon; recenter([la,lo]); set('geo.coarseLat',la); set('geo.coarseLon',lo); set('geo.located',true); } }catch(e){} }
-  async function reverseCity(la,lo){ try{ const j=await fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&lat='+la+'&lon='+lo,{headers:{'Accept-Language':'ru,en'}}).then(x=>x.json());
+  async function geocode(q){ if(!q)return; try{ const j=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q)).then(x=>x.json()); if(j&&j[0]) recenter([+j[0].lat,+j[0].lon]); }catch(e){} }
+  async function reverseCity(la,lo){ try{ const j=await fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&lat='+la+'&lon='+lo).then(x=>x.json());
     const a=(j&&j.address)||{}; return a.city||a.town||a.village||a.municipality||a.county||a.state||''; }catch(e){ return ''; } }
-  let _gcT=null;
-  area_in.oninput=()=>{ const v=area_in.value.trim(); if(v){set('geo.comfortableAreas',[v]);set('city',v);} cont.disabled=!v;
-    clearTimeout(_gcT); _gcT=setTimeout(()=>geocode(v), 550); };   // debounced: map moves as you type
+  area_in.oninput=()=>{ const v=area_in.value.trim(); if(v){set('geo.comfortableAreas',[v]);set('city',v);} cont.disabled=!v; };
   area_in.onchange=()=>geocode(area_in.value.trim());
   if(area) geocode(area);
   // geolocation is requested AUTOMATICALLY when this step opens; the detected CITY name is used (never exact spot)
@@ -927,9 +923,14 @@ WIDGETS.location=function(slot){
       const city=await reverseCity(la,lo);
       if(city){ setCity(city); stat.textContent="Kleal shows your city area only, never your exact spot."; }
       else { area_in.placeholder="Type your city"; stat.textContent="Couldn't name your city. Type it above."; }
-    }, err=>{ area_in.placeholder="Your city"; stat.textContent="Location off. Type your city above."; },
+    }, err=>{ area_in.placeholder="Type your city";
+      stat.textContent = err && err.code===1
+        ? "Location blocked. Allow it in your browser (or in-app browsers may block it — open in Chrome/Safari), or type your city."
+        : "Couldn't get your location. Type your city above."; },
       {enableHighAccuracy:false, timeout:10000, maximumAge:600000}); }
-  if(!area) setTimeout(autoLocate, 120);
+  // Reliable path: geolocation on a user click (browsers suppress the prompt for non-gesture calls).
+  const glocBtn=slot.querySelector('#gloc'); if(glocBtn) glocBtn.onclick=autoLocate;
+  if(!area) setTimeout(autoLocate, 300);   // best-effort auto-try (works on some browsers); button is the guaranteed prompt
   cont.onclick=()=>{ lock(slot); const km=(st.profile.geo&&st.profile.geo.maxDistanceKm)||rad.value;
     meSay((area_in.value.trim()||'My city')+', within '+km+' km'); afterAnswer(); };
 };
@@ -1151,6 +1152,9 @@ function editStep(id){ const i=SCRIPT.findIndex(s=>s.id===id); if(i<0)return goS
 
 // ======================= DONE =======================
 function rDone(){ st.phase='done';
+  // register the finished profile into the shared user store -> becomes matchable + shows in admin (fire-and-forget)
+  try{ fetch('/api/onboarding/register',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({profile:profileForServer()})}).catch(()=>{}); }catch(_e){}
   A.innerHTML=`<div class="done fade"><div class="donedisc">${svg('<path d="M5 12.5l4.5 4.5L19 7"/>','0 0 24 24').replace('width="22" height="22"','width="72" height="72"')}</div>
     <div class="d-h">You're on the board!</div>
     <div class="d-sub">Your Kleal agent is ready. Tell it what you want to do and it starts finding people and plans.</div></div>
@@ -1191,6 +1195,91 @@ rSplash();
 # bake the profile app's public URL (pod: its own tunnel host) into the "My Profile" handoff; empty -> local :7073
 HTML = HTML.replace("__PROFILE_URL__", os.environ.get("PROFILE_URL", "").rstrip("/"))
 
+# ---------------------------------------------------------------- REGISTRATION: onboarding -> shared user store
+# Everyone who finishes onboarding is written into the same store the matching agent reads and the admin
+# panel shows, so they immediately become matchable and visible. Store format matches services/admin.
+USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "matching", "users.json"))
+_REG_LOCK = threading.Lock()
+_R2M = {"watch": "watch", "play": "play", "discuss": "discuss", "practice": "practise",
+        "practise": "practise", "attend": "attend", "meet": "meet"}
+
+
+def _first(*vals):
+    for v in vals:
+        if v not in (None, "", [], {}):
+            return v
+    return None
+
+
+def _profile_to_user(p):
+    """Map a Kleal onboarding profile -> a complete, matching-safe candidate record (like admin _norm_user)."""
+    p = p or {}
+    name = str(_first(p.get("name"), "New user")).strip() or "New user"
+    ints = p.get("interests") or {}
+    interests = [str(x).strip().lower() for x in (ints.get("explicit") if isinstance(ints, dict) else ints) or [] if str(x).strip()][:6]
+    langs = (p.get("languages") or {})
+    ll = langs.get("comfortable") or langs.get("fluent") or langs.get("native") or [] if isinstance(langs, dict) else []
+    langs = [str(x)[:2].lower() for x in ll if str(x).strip()][:4] or ["en"]
+    vibe = ""
+    vb = p.get("vibe")
+    if isinstance(vb, dict) and vb.get("primary"):
+        vibe = str(vb["primary"][0]).lower()
+    elif isinstance(vb, str):
+        vibe = vb.lower()
+    geo = p.get("geo") or {}
+    area = str(_first(p.get("city"), (geo.get("comfortableAreas") or [None])[0], "") or "").strip()
+    # role from the first interest's role, normalised to matching's vocabulary
+    role = "meet"
+    roles = (ints.get("roles") if isinstance(ints, dict) else None) or {}
+    if isinstance(roles, dict):
+        for _k, rv in roles.items():
+            r0 = (rv[0] if isinstance(rv, list) and rv else rv)
+            if r0:
+                role = _R2M.get(str(r0).lower(), "meet")
+                break
+    dating = bool((p.get("domains") or {}).get("dating", {}).get("enabled")) or \
+        ("dating" in [str(x).lower() for x in (p.get("goals") or {}).get("primary") or []])
+    try:
+        age = int(_first(p.get("age"), (p.get("ageRange") or "28").split("-")[0], 28))
+    except (TypeError, ValueError):
+        age = 28
+    km = round(0.5 + (int(hashlib.sha1(name.encode("utf-8")).hexdigest()[:4], 16) % 60) / 10.0, 1)  # deterministic 0.5..6.5
+    deals = [str(x).strip() for x in (p.get("dealBreakers") or []) if str(x).strip()][:6]
+    return {
+        "id": "on" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8],
+        "name": name, "interests": interests or ["social"],
+        "vibe": vibe or "chill", "langs": langs, "area": area,
+        "km": km, "lat": None, "lon": None, "open": True, "role": role,
+        "datingOk": dating, "age": age, "verified": bool(p.get("ageVerified18", True)),
+        "paused": False, "pending": 0, "blocksMe": False, "lastActiveDays": 0, "declinedOwnerDaysAgo": None,
+        "intents": [], "entities": [(interests[0].capitalize() + " scene") if interests else "Social scene"],
+        "dealBreakers": deals, "source": "onboarding",
+    }
+
+
+def register_profile(profile):
+    """Append/replace this person in the shared store (de-dupe by name). Atomic write."""
+    u = _profile_to_user(profile)
+    with _REG_LOCK:
+        try:
+            with open(USERS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            users = data.get("users") if isinstance(data, dict) else data
+            if not isinstance(users, list):
+                users = []
+        except Exception:
+            users = []
+        key = u["name"].strip().lower()
+        users = [x for x in users if str(x.get("name", "")).strip().lower() != key]  # replace prior onboarding of same name
+        users.append(u)
+        tmp = USERS_PATH + ".tmp"
+        os.makedirs(os.path.dirname(os.path.abspath(USERS_PATH)), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"users": users}, f, ensure_ascii=False)
+        os.replace(tmp, USERS_PATH)
+    return u
+
+
 # ---------------------------------------------------------------- HTTP dispatcher (onboarding only)
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1220,6 +1309,13 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, v2_summary(prof))
             except Exception as e:
                 send_json(self, 200, {"summary": "", "error": str(e)[:200]})
+        elif p in ("/api/onboarding/register", "/api/v2/register"):
+            # everyone who finishes onboarding is written into the shared user store (matchable + in admin)
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            try:
+                send_json(self, 200, {"ok": True, "user": register_profile(prof)})
+            except Exception as e:
+                send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         else:
             send_json(self, 404, {})
 
