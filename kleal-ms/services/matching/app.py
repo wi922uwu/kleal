@@ -288,6 +288,22 @@ def load_candidates():
     seen = {str(u.get("name", "")).strip().lower() for u in store}
     return list(store) + [c for c in CANDIDATES if str(c.get("name", "")).strip().lower() not in seen]
 
+# ---------------- Matching Core v2 (spec-faithful engine; core_v2.py + ../../config/*.yaml) ----------------
+# Scoring per "Kleal_Matching_Core_Final_Spec_RU_v2": feature groups with unknown/coverage, R_lcb,
+# tier-as-provenance, user-facing bands. Weights/thresholds live ONLY in the sha-pinned YAML.
+# Rollback for Dev A/B: KLEAL_CORE_V2=0 -> the legacy scorer below runs unchanged. A missing or
+# tampered config also falls back automatically (fail-safe, spec §21.4) — see /api/agent/weights.
+import core_v2 as _core
+_CORE_CFG, _CORE_ERR = None, None
+try:
+    _CORE_CFG = _core.load_config(os.environ.get(
+        "KLEAL_CORE_CONFIG",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                     "config", "Kleal_Matching_Core_Config_v2.yaml")))
+except Exception as _e:
+    _CORE_ERR = str(_e)
+CORE_V2 = os.environ.get("KLEAL_CORE_V2", "1") != "0" and _CORE_CFG is not None
+
 PARSE_PROMPT = '''You convert a user's free-text social request into a structured intent.
 Return ONLY compact JSON (no prose, no markdown), keys:
  title  (3-5 word human label, e.g. "Coffee & urbanism chat"),
@@ -428,7 +444,7 @@ def _diversify(items):
             break
     return out
 
-def match_candidates(intent, prof, ctx=None):
+def match_candidates_legacy(intent, prof, ctx=None):
     W = WEIGHTS
     ctx = ctx or {}
     sess = _session(ctx.get('uid', 'me'))
@@ -515,6 +531,28 @@ def match_candidates(intent, prof, ctx=None):
                     "reasons": reasons, "agree": agree, "note": note, "bucket": bcat})
     out.sort(key=lambda x: (-x['score'], x['name']))
     return _diversify(out)
+
+def match_candidates(intent, prof, ctx=None):
+    """Entry point. Policy hard gates run HERE (scoring only after ALLOW — spec §8), then Core v2
+    scores the eligible pool. KLEAL_CORE_V2=0 or an invalid config -> legacy scorer above, unchanged.
+    The response is a superset of the legacy card contract (name/score/tier/reasons/agree/note/...)."""
+    if not CORE_V2:
+        return match_candidates_legacy(intent, prof, ctx)
+    ctx = ctx or {}
+    sess = _session(ctx.get('uid', 'me'))
+    gate_ctx = {'feedback': dict(sess.get('feedback') or {}),
+                'blocked': set(sess.get('blocked') or []) | set(ctx.get('blocked') or [])}
+    self_name = str(ctx.get('self') or (prof or {}).get('name') or ctx.get('uid') or '').strip().lower()
+    eligible = []
+    for c in load_candidates():
+        if self_name and str(c.get('name', '')).strip().lower() == self_name:
+            continue                                       # the searcher never matches themselves
+        ok, _why = _hard_gates(intent, c, gate_ctx)
+        if ok:
+            eligible.append(c)
+    H = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
+    slate, _meta = _core.search(intent, prof or {}, ctx, eligible, H, _CORE_CFG)
+    return slate
 
 def _online_fallback(intent):
     """When 0 offline candidates: offer to go live + ways to broaden — so the user never hits a dead end."""
@@ -642,7 +680,11 @@ def explore_plans(limit=12, self_name=""):
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/api/agent/weights":
-            send_json(self, 200, {"weights": get_weights()})
+            send_json(self, 200, {"weights": get_weights(),
+                                  "core": {"enabled": CORE_V2,
+                                           "config_version": (_CORE_CFG or {}).get("config_version"),
+                                           "config_sha": ((_CORE_CFG or {}).get("_sha256") or "")[:12],
+                                           "error": _CORE_ERR}})
         elif self.path == "/api/agent/load":
             send_json(self, 200, {"state": _session("me").get("state")})
         elif self.path == "/api/agent/pool":

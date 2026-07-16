@@ -405,7 +405,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .candn .candkm{font-size:11px;font-weight:500;color:var(--muted);margin-left:6px}
 .cands{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .candsc{flex:none;text-align:right}
-.candpct{font-size:15px;font-weight:800;color:var(--fg)}
+.candpct{font-size:12px;font-weight:800;color:var(--fg);text-align:right;max-width:96px;line-height:1.2}
 .candok{font-size:10.5px;font-weight:700;color:#0f7340}
 .candbusy{font-size:10.5px;font-weight:600;color:var(--muted)}
 .candno{font-size:10.5px;font-weight:600;color:var(--muted)}
@@ -1215,7 +1215,7 @@ function openMsgThread(i){
 function scr_matchchat(){
   const m=matchWith; if(!m) return scr_agenthome();
   const mine=m.msgs.filter(x=>x.who==='me').length; const blur=Math.max(0, 9-mine*3);
-  const hd=chatHead(m.cand.name, {back:'chat-back', sub:(m.cand.score?m.cand.score+T('% совпадение','% match'):null)});
+  const hd=chatHead(m.cand.name, {back:'chat-back', sub:(m.cand.band?bandLabel(m.cand,true):(m.cand.score?m.cand.score+T('% совпадение','% match'):null))});
   const thread=m.msgs.map(x=>x.who==='me'?`<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`
     :`<div class="krow"><div class="kav" style="filter:blur(${Math.min(blur,4)}px)"></div><div class="kcol"><div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div></div></div>`).join('');
   const hint=blur>0?`<div class="candbusy" style="text-align:center;padding:2px 0 6px">Фото проявится по мере общения</div>`:'';
@@ -1234,6 +1234,16 @@ function buddyProfile(){   // seed the buddy with what we already know about the
            city:((DATA.subtitle||'').split('·')[0]||'').trim()||null };
 }
 function fmtTime(t){ const d=t?new Date(t):new Date(); let h=d.getHours(),m=d.getMinutes(); const ap=h<12?'AM':'PM'; h=h%12||12; return h+':'+(m<10?'0':'')+m+' '+ap; }
+// Matching Core v2: качественный уровень вместо числового процента (спека §9.7). Фолбэк на score
+// оставлен для legacy-ответов без band.
+function bandLabel(c,full){ if(!c) return '';
+  const M={especially_close:[T('Очень близко','Very close'),T('Особенно близко к вашему запросу','Especially close to your request')],
+           strong_option:[T('Хороший вариант','Good option'),T('Хороший вариант','A good option')],
+           broader_option:[T('Шире запроса','Broader'),T('Более широкий вариант','A broader option')],
+           needs_clarification:[T('Уточнить','Clarify'),T('Нужно уточнение','Needs clarification')]};
+  if(c.band&&M[c.band]) return M[c.band][full?1:0];
+  return (c.score!=null&&c.score!=='')?Math.round(c.score)+'%':''; }
+function candReasons(c){ return ((UILANG==='ru'?c.reasons_ru:c.reasons_en)||c.reasons||[]); }
 // Unified chat header so you always know WHERE you are: Back (left) · centered title (+ optional subtitle) ·
 // optional action pills (right). Every chat screen uses this — consistent look, consistent back button.
 function chatHead(title, opts){ opts=opts||{};
@@ -1306,11 +1316,11 @@ function scr_buddychat(){
     const inner=x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>');
     const time=x.loading?'':(x.t?`<div class="btime">${fmtTime(x.t)}</div>`:'');
     const row=`<div class="krow"><div class="kav${first?'':' sp'}"></div><div class="kcol"><div class="kbub">${inner}</div>${time}</div></div>`;
-    if(x.match&&x.match.top){ const t=x.match.top; const why=(t.reasons||[]).slice(0,2).join(' · ');
+    if(x.match&&x.match.top){ const t=x.match.top; const why=candReasons(t).slice(0,2).join(' · ');
       return row+`<div class="card" style="margin:2px 0 2px 43px"><div class="candrow">
         <div class="candav">${esc(String(t.name||'?')[0])}${t.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':''}</div>
         <div class="candt"><div class="candn">${esc(t.name)} <span class="candkm">${t.km} km</span></div><div class="cands">${esc(why)}</div></div>
-        <div class="candsc"><div class="candpct">${t.score}%</div></div>
+        <div class="candsc"><div class="candpct">${esc(bandLabel(t))}</div></div>
         <button class="introbtn" data-act="buddy-intro" data-bi="${i}">${T('Познакомиться','Intro')}</button></div></div>`; }
     return row;
   }).join('');
@@ -1507,7 +1517,7 @@ function scr_intentchat(){
       <span class="confpct">${negotiating?'договариваюсь…':'согласны: '+agreed}</span></div>
     ${cands.length ? cands.map((c,i)=>{
       const negot=negotiating && !c.decided;
-      const sub=(c.decided&&c.reason)?c.reason:(c.reasons||[]).slice(0,2).join(' · ');
+      const sub=(c.decided&&c.reason)?c.reason:candReasons(c).slice(0,2).join(' · ');
       const status=negot?'<div class="candbusy"><span class="typing3"><i></i><i></i><i></i></span></div>'
         :(c.passed?'<div class="candno">пропущен</div>':(c.agree?'<div class="candok">✓ согласен</div>':'<div class="candno">отказ</div>'));
       const tier=c.kind==='reciprocal'?'<span style="font-size:10px;font-weight:700;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:1px 5px;margin-left:5px">↔ mutual</span>'
@@ -1516,7 +1526,7 @@ function scr_intentchat(){
       return `<div class="candrow" style="${c.passed?'opacity:.5':''}"><div class="candav">${esc(String(c.name||'?')[0])}</div>
       <div class="candt"><div class="candn">${esc(c.name)}${vtick}${tier} <span class="candkm">${c.km} km</span></div>
         <div class="cands">${esc(sub)}</div></div>
-      <div class="candsc"><div class="candpct">${c.score}%</div>${status}</div>
+      <div class="candsc"><div class="candpct">${esc(bandLabel(c))}</div>${status}</div>
       ${(!negot&&c.agree&&!c.passed)?`<button class="introbtn" data-act="intro" data-ci="${i}">${T('Познакомиться','Intro')}</button>
         <button data-act="pass" data-ci="${i}" title="Not interested" style="border:none;background:var(--field);color:var(--muted);width:26px;height:26px;border-radius:50%;font-size:13px;margin-left:6px;cursor:pointer">✕</button>`:''}
       </div>${i<cands.length-1?'<div class="divider"></div>':''}`; }).join('')
@@ -1525,7 +1535,7 @@ function scr_intentchat(){
     </div>`;
   return wrap(`
     <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">Вот интент, который я собрал${it.error?' (офлайн — грубый разбор)':''}. Запусти поиск, когда всё верно.</div></div></div>
-    <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${it.confidence||0}%</span></div>
+    <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${esc((it.candidates&&it.candidates[0]&&it.candidates[0].band)?bandLabel(it.candidates[0]):((it.confidence||0)+'%'))}</span></div>
       <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div></div>
     <div class="card">${intentSpec(it)}</div>
     ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Запустить поиск</button>`}

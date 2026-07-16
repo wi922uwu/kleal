@@ -567,11 +567,19 @@ def humanize(reasons, lang):
 
 
 def _shape(c, lang):
-    """One matching candidate -> the card the UI draws. `reasons` stays verbatim for the legacy UI."""
+    """One matching candidate -> the card the UI draws. `reasons` stays verbatim for the legacy UI.
+    Matching Core v2 fields (band/gap/localised reasons) pass through so the UI can show qualitative
+    bands instead of raw percentages (spec §9.7)."""
+    core_rs = c.get("reasons_ru") if lang == "ru" else c.get("reasons_en")
     return {"user_id": c.get("name"), "name": c.get("name"), "score": c.get("score"), "km": c.get("km"),
             "tier": c.get("tier"), "kind": c.get("kind"), "vibe": c.get("vibe"), "open": c.get("open"),
             "verified": c.get("verified"), "interests": c.get("interests") or [], "role": c.get("role"),
-            "reasons": c.get("reasons") or [], "reason": humanize(c.get("reasons"), lang),
+            "reasons": c.get("reasons") or [],
+            "reason": (", ".join(core_rs[:2]) if core_rs else humanize(c.get("reasons"), lang)),
+            "band": c.get("band"), "band_ru": c.get("band_ru"), "band_en": c.get("band_en"),
+            "gap_ru": c.get("gap_ru"), "gap_en": c.get("gap_en"),
+            "reasons_ru": c.get("reasons_ru"), "reasons_en": c.get("reasons_en"),
+            "coverage": c.get("coverage"), "can_outreach": c.get("can_outreach"),
             "agree": c.get("agree"), "note": c.get("note"), "reply": c.get("reply")}
 
 
