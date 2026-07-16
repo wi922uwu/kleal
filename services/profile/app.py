@@ -1093,6 +1093,13 @@ async function approveIntro(cand, intent){
   addNotif('match','You matched with '+cand.name, 'Their agent agreed — say hi', null);
   render(); saveState();
 }
+// Spec §9.7 / config exact_percentage_enabled:false — the UI must NOT show an uncalibrated
+// compatibility percent. Map the (internal) score/band to a qualitative label + a discrete bar.
+function mBand(c){
+  const key=(c&&c.band) || (c&&c.score!=null ? (c.score>=78?'especially_close':c.score>=66?'strong_option':c.score>=52?'broader_option':'needs_clarification') : null);
+  const M={especially_close:['Top',100],strong_option:['Strong',78],broader_option:['Broad',55],needs_clarification:['Maybe',32]};
+  const v=M[key]||['Match',60]; return {tag:v[0], w:v[1]};
+}
 function scr_matchchat(){
   const m=matchWith; if(!m) return scr_agenthome();
   const mine=m.msgs.filter(x=>x.who==='me').length; const blur=Math.max(0, 9-mine*3);
@@ -1100,7 +1107,7 @@ function scr_matchchat(){
     :`<div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div>`).join('');
   return `<div class="fade"><div class="matchhead">
       <div class="mava" style="filter:blur(${blur}px)">${esc(String(m.cand.name||'?')[0])}</div>
-      <div class="mmeta"><div class="mnm">${esc(m.cand.name)} <span class="mscore">${m.cand.score}% match</span></div>
+      <div class="mmeta"><div class="mnm">${esc(m.cand.name)} <span class="mscore">${mBand(m.cand).tag}</span></div>
         <div class="mhint">Photo clears as you chat${blur>0?' — keep going':' ✓'}</div></div></div>
     <div class="thread" style="padding-top:12px">${thread}</div>
     <div class="composer"><input id="mcin" class="cin cinput" placeholder="Message ${esc(m.cand.name)}…"><button class="csend" data-act="match-send">${IC.send}</button></div></div>`;
@@ -1143,7 +1150,7 @@ function scr_buddychat(){
       return bub+`<div class="card" style="margin:6px 0 2px"><div class="candrow">
         <div class="candav">${esc(String(t.name||'?')[0])}${t.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':''}</div>
         <div class="candt"><div class="candn">${esc(t.name)} <span class="candkm">${t.km} km</span></div><div class="cands">${esc(why)}</div></div>
-        <div class="candsc"><div class="candpct">${t.score}%</div></div>
+        <div class="candsc"><div class="candpct">${mBand(t).tag}</div></div>
         <button class="introbtn" data-act="buddy-intro" data-bi="${i}">Intro</button></div></div>`; }
     return bub;
   }).join('');
@@ -1191,8 +1198,8 @@ function scr_intents(){
     return `<div class="card pad intentrow" ${it.id?`data-savedintent="${it.id}"`:''}>
     <div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="pill searching dot">${esc(capw(it.status||'searching'))}</span></div>
     <div style="margin:10px 0 6px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div>
-    <div class="confrow2"><span class="l">${cs.length} ${cs.length===1?'match':'matches'}${ag?' · '+ag+' agreed':''}</span><span class="confpct">${it.confidence||0}%</span></div>
-    <div class="track"><i style="width:${it.confidence||0}%"></i></div></div>`; }).join('');
+    <div class="confrow2"><span class="l">${cs.length} ${cs.length===1?'match':'matches'}${ag?' · '+ag+' agreed':''}</span><span class="confpct">${cs.length?mBand(cs[0]).tag:''}</span></div>
+    <div class="track"><i style="width:${cs.length?mBand(cs[0]).w:0}%"></i></div></div>`; }).join('');
   return `<div class="stack fade">${head}${cards}
     <button class="bigbtn primary" style="margin-top:4px" data-act="createintent">Create intent</button></div>`;
 }
@@ -1227,7 +1234,7 @@ function scr_intentchat(){
       return `<div class="candrow" style="${c.passed?'opacity:.5':''}"><div class="candav">${esc(String(c.name||'?')[0])}</div>
       <div class="candt"><div class="candn">${esc(c.name)}${vtick}${tier} <span class="candkm">${c.km} km</span></div>
         <div class="cands">${esc(sub)}</div></div>
-      <div class="candsc"><div class="candpct">${c.score}%</div>${status}</div>
+      <div class="candsc"><div class="candpct">${mBand(c).tag}</div>${status}</div>
       ${(!negot&&c.agree&&!c.passed)?`<button class="introbtn" data-act="intro" data-ci="${i}">Intro</button>
         <button data-act="pass" data-ci="${i}" title="Not interested" style="border:none;background:var(--field);color:var(--muted);width:26px;height:26px;border-radius:50%;font-size:13px;margin-left:6px;cursor:pointer">✕</button>`:''}
       </div>${i<cands.length-1?'<div class="divider"></div>':''}`; }).join('')
@@ -1237,7 +1244,7 @@ function scr_intentchat(){
   return `<div class="fade"><div class="thread">
     ${it.query?`<div class="mbub">${esc(it.query)}</div>`:''}
     <div class="kbub">Here's the intent I structured${it.error?' (offline — used a rough parse)':''}. Launch the search when it looks right.</div>
-    <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${it.confidence||0}%</span></div>
+    <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${(it.candidates||[]).length?mBand(it.candidates[0]).tag:''}</span></div>
       <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div></div>
     <div class="card">${intentSpec(it)}</div>
     ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Launch search</button>`}
