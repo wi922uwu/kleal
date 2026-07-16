@@ -287,6 +287,24 @@ soon_send, _ = app._negotiate_precheck({"topics": ["coffee"], "time": "today eve
                                        cands_in, now_ts=NOW_OPEN)
 check("NEG3 urgent same-day intent raises the cap to 3", len(soon_send) == 3,
       len(soon_send))
+
+# NEG4 (regression, §8.2): a candidate that is open_now but INELIGIBLE (two-sided block) must be
+# dropped at the SEND boundary, not proposed — /api/agent/negotiate takes client candidates verbatim.
+tmp3 = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+json.dump([mk("Okay", receiving=dict(RECV_ACTIVE), source="onboarding"),
+           mk("Blk", receiving=dict(RECV_ACTIVE), blocksMe=True, source="onboarding")], tmp3)
+tmp3.close()
+app.USERS_PATH = tmp3.name
+app._users_cache = {"mtime": None, "list": None}
+app.SESSION.pop("_proposals", None)
+ts4, dc4 = app._negotiate_precheck({"topics": ["coffee"], "time": "Flexible"},
+                                   [{"name": "Okay", "score": 80}, {"name": "Blk", "score": 80}],
+                                   now_ts=NOW_OPEN)
+n4 = {c["name"] for c in ts4}; d4 = {c["name"]: c for c in dc4}
+check("NEG4 open_now-but-ineligible (two-sided block) dropped at send boundary",
+      "Blk" not in n4 and d4.get("Blk", {}).get("agree") is False and "Okay" in n4,
+      (n4, d4.get("Blk", {}).get("reason")))
+
 app.USERS_PATH = old_users2
 app._users_cache = {"mtime": None, "list": None}
 
