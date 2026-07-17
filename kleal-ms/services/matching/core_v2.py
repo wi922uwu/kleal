@@ -168,7 +168,10 @@ K_MATCH, K_MISM, UNKNOWN, NA = "known_match", "known_mismatch", "unknown", "not_
 
 # Observed-value anchors for the ONE aggregated subfeature per group (not tunable weights — the
 # per-group weighting comes from the YAML; these are the spec §6 semantic distances).
-SEM_VALUE = {4: 1.0, 3: 0.65, 2: 0.45, 1: 0.25}   # exact/alias > sibling > parent > adjacent
+# exact/alias 1.0; sibling 0.6 (spec §6 range 0.55-0.75); parent/broad 0.3; adjacent 0.15.
+# Parent must sit far below exact: with equal semantic/social weights (social_meet 0.18/0.18),
+# a higher parent anchor lets a same-vibe brunch person outscore a walker on a walk query.
+SEM_VALUE = {4: 1.0, 3: 0.6, 2: 0.3, 1: 0.15}
 GEO_BANDS = ((1.5, 1.0), (3.5, 0.85), (7.0, 0.65), (15.0, 0.45))
 VIBE_CLASH = {("chill", "party"), ("calm", "energetic"), ("introvert", "extrovert"),
               ("competitive", "chill"), ("calm", "competitive")}
@@ -214,7 +217,16 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
             orig = [str(o) for o in (cand.get("interests") or [])
                     if str(o).lower().replace(" ", "") in matched]
             names = ", ".join(sorted(orig)[:3]) or ", ".join(sorted(matched)[:3])
-            F["semantic_activity"] = (K_MATCH, SEM_VALUE[best], names)
+            # multi-topic intents: someone matching MORE of the asked topics must outrank a
+            # one-topic overlap ("стартапы+ai+кофе" -> a founder beats a coffee-only person).
+            # Single aggregated subfeature, capped at 1.0 — still no double count (spec §6.1).
+            value = SEM_VALUE[best]
+            if len(topics) > 1:
+                # only EXACT topic hits count as covering an asked topic — a russian speaker
+                # sub-matching "spanish" hasn't covered the spanish ask
+                hits = sum(1 for t in topics if H["topical"]([t], ints)[0] >= 4)
+                value = round(value * (0.6 + 0.4 * max(1, hits) / len(topics)), 4)
+            F["semantic_activity"] = (K_MATCH, value, names)
         else:
             F["semantic_activity"] = (K_MISM, 0.05, "")
 
@@ -321,7 +333,14 @@ def reverse_features(intent, prof, cand, domain, H, role_conflict):
                [str(x).lower() for x in (cand.get("interests") or [])]
     pseudo_intent = {"topics": b_topics, "mode": intent.get("mode"),
                      "time": (b_int or {}).get("time"), "role": (b_int or {}).get("role") or "meet"}
-    return build_features(pseudo_intent, cand, _profile_as_candidate(prof), domain, H, role_conflict)
+    a_as_cand = _profile_as_candidate(prof)
+    # Spec §4.2 source hierarchy: A's CURRENT intent is the strongest evidence about A — B's side
+    # judges the searcher by what they are asking for right now, not only by stored profile
+    # interests. Without this, an empty searcher profile makes every B->A semantic unknown and
+    # prior noise (not the match) ends up ordering the slate.
+    a_as_cand["interests"] = list(a_as_cand.get("interests") or []) + \
+                             [str(t) for t in (intent.get("topics") or [])]
+    return build_features(pseudo_intent, cand, a_as_cand, domain, H, role_conflict)
 
 # ------------------------------------------------------------------ relevance (spec §9)
 def directional_score(F, dom_cfg, priors):
@@ -528,17 +547,33 @@ def _presentation(F, d_ab, dom_cfg):
 TOP_N, PER_BUCKET = 8, 3        # slate size params (allocation layer, not relevance — spec §11)
 
 def _slate(items):
-    buckets = {it.get("bucket") or "other" for it in items}
-    cap = PER_BUCKET if len(buckets) > 2 else TOP_N
-    seen, out = {}, []
-    for it in items:
-        b = it.get("bucket") or "other"
-        if seen.get(b, 0) >= cap:
-            continue
-        seen[b] = seen.get(b, 0) + 1
-        out.append(it)
-        if len(out) >= TOP_N:
-            break
+    """Diversity is applied WITHIN a band and never promotes a lower band (spec §11: allocation
+    must not change pair relevance). Inside one band the per-bucket cap is SOFT: if the only
+    remaining same-band candidates are from a capped bucket, relevance wins and they fill the
+    slot — a focused search ("кофе") must not swap coffee people for adjacent-category padding."""
+    out, i, n = [], 0, len(items)
+    while len(out) < TOP_N and i < n:
+        j = i
+        while j < n and items[j]["band"] == items[i]["band"]:
+            j += 1
+        group, take = items[i:j], TOP_N - len(out)
+        picked, seen, skipped = [], {}, []
+        for it in group:
+            if len(picked) >= take:
+                break
+            b = it.get("bucket") or "other"
+            if seen.get(b, 0) >= PER_BUCKET:
+                skipped.append(it)
+                continue
+            seen[b] = seen.get(b, 0) + 1
+            picked.append(it)
+        for it in skipped:                       # soft cap: backfill from the same band only
+            if len(picked) >= take:
+                break
+            picked.append(it)
+        chosen = {id(x) for x in picked}
+        out.extend(x for x in group if id(x) in chosen)   # keep the relevance order
+        i = j
     return out
 
 # ------------------------------------------------------------------ main entry
@@ -614,10 +649,15 @@ def search(intent, prof, ctx, candidates, H, cfg):
                       "band": band, "readiness": readiness,
                       "config_version": cfg.get("config_version")},
         })
-    # slate order (§11.2): band, then readiness class, then reciprocal relevance — readiness is an
-    # ORDERING concern here, never a relevance modifier.
-    out.sort(key=lambda x: (BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]], -x["reciprocal"],
-                            -x["lcb"], -x["coverage"], str(x["name"])))
+    # slate order (§11.2): band, readiness class, then provenance tier — a direct match (T0/T1)
+    # precedes broader ones (T2/T3) inside a band (§7: expansion never masquerades as direct) —
+    # then a reciprocal+directional composite (pure reciprocal is noisy when reverse data is
+    # sparse, and allocation must not let that noise reorder quality).
+    tier_rank = {"T0": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4}
+    out.sort(key=lambda x: (BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]],
+                            tier_rank.get(x["tier"], 5),
+                            -round(0.6 * x["reciprocal"] + 0.4 * x["lcb"], 6),
+                            -x["coverage"], str(x["name"])))
     meta = {"core": "v2", "config_version": cfg.get("config_version"), "domain": domain,
             "config_sha": cfg.get("_sha256", "")[:12]}
     return _slate(out), meta

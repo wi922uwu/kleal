@@ -29,7 +29,8 @@ TAXONOMY = {
   'social':  {'coffee':['coffee','tea','brunch','cafe'],
               'dining':['dinner','lunch','food','restaurant','cooking'],
               'nightlife':['bar','drinks','pub','beer','wine','party','club','clubbing'],
-              'casual':['walk','walking','stroll','hang','hangout','chill','talk','chat']},
+              'casual':['walk','walking','stroll','hang','hangout','chill','talk','chat'],
+              'cowork':['coworking','cowork','remotework']},
   'games':   {'esports':['dota','valorant','cs','league','apex','fortnite','fifa','overwatch','gaming'],
               'tabletop':['chess','boardgames','poker','cards','dnd','tabletop']},
   'culture': {'screen':['cinema','movies','film','series'],
@@ -61,6 +62,51 @@ SYNONYMS = {'soccer':'football','movies':'cinema','movie':'cinema','film':'cinem
             'cook':'cooking','read':'reading','dance':'jam','ski':'skiing','surf':'surfing',
             'travelling':'travel','traveling':'travel','trip':'travel','coffees':'coffee',
             'drink':'drinks','party':'party','gym':'gym','codes':'coding','code':'coding','programme':'coding'}
+# ---- RU -> EN taxonomy bridge ----
+# Half the real profiles arrive in Russian while the taxonomy is English; without this bridge
+# "кофе" and "coffee" can never meet (the word-overlap fallback needs BOTH sides off-taxonomy).
+# Keys are _norm()-shaped (lowercase, spaces stripped), values are taxonomy words.
+SYNONYMS.update({
+    'кофе':'coffee','кофейни':'coffee','кофейня':'coffee','чай':'tea','бранч':'brunch',
+    'ужин':'dinner','ужины':'dinner','ресторан':'restaurant','рестораны':'restaurant','еда':'food',
+    'готовка':'cooking','пиво':'beer','бар':'bar','бары':'bar','вино':'wine',
+    'вечеринка':'party','вечеринки':'party','клубы':'club',
+    'прогулка':'walk','прогулки':'walk','гулять':'walk','погулять':'walk','прогуляться':'walk',
+    'футбол':'football','баскетбол':'basketball','волейбол':'volleyball','теннис':'tennis',
+    'падель':'padel','бадминтон':'badminton','бег':'running','пробежка':'running','пробежки':'running',
+    'велосипед':'cycling','вело':'cycling','плавание':'swimming','зал':'gym','качалка':'gym',
+    'фитнес':'fitness','кроссфит':'crossfit','бокс':'boxing','скалолазание':'climbing',
+    'йога':'yoga','пилатес':'pilates','растяжка':'stretching',
+    'дота':'dota','дота2':'dota','доту':'dota','доте':'dota','дотку':'dota','дотан':'dota',
+    'катка':'gaming','катки':'gaming','каточки':'gaming','каточку':'gaming',
+    'лол':'league','валорант':'valorant','контра':'cs','кс':'cs',
+    'фифа':'fifa','гейминг':'gaming','киберспорт':'gaming','шахматы':'chess',
+    'настолки':'boardgames','настольныеигры':'boardgames','покер':'poker',
+    'кино':'cinema','фильм':'cinema','фильмы':'cinema','сериал':'series','сериалы':'series',
+    'искусство':'art','музей':'museum','музеи':'museum','галерея':'gallery',
+    'выставка':'exhibition','выставки':'exhibition','фотография':'photography','театр':'theatre',
+    'опера':'opera','балет':'ballet','стендап':'standup','книги':'books','книга':'books',
+    'чтение':'reading','литература':'literature','книжныйклуб':'bookclub',
+    'архитектура':'architecture','урбанистика':'urbanism',
+    'стартап':'startup','стартапы':'startups','продакт':'product','фаундер':'founder',
+    'бизнес':'business','ии':'ai','нейросети':'ai','нейросеть':'ai','машинноеобучение':'ml',
+    'программирование':'coding','кодинг':'coding','разработка':'software','крипта':'crypto',
+    'криптовалюты':'crypto','нетворкинг':'networking','инвестиции':'investing','инвестор':'investing',
+    'карьера':'career','менторство':'mentorship','дизайн':'design',
+    'концерт':'concert','концерты':'concert','фестиваль':'festival','музыка':'music',
+    'гитара':'guitar','пианино':'piano','диджей':'dj','вокал':'singing','караоке':'karaoke',
+    'рейв':'rave','техно':'techno',
+    'хайкинг':'hiking','поход':'hiking','походы':'hiking','горы':'mountains','природа':'nature',
+    'кемпинг':'camping','сёрфинг':'surfing','серфинг':'surfing','каяк':'kayaking','лыжи':'skiing',
+    'сноуборд':'snowboard','путешествия':'travel','путешествие':'travel',
+    'рыбалка':'fishing','рыбачить':'fishing',
+    'испанский':'spanish','английский':'english','французский':'french','немецкий':'german',
+    'итальянский':'italian','португальский':'portuguese','русский':'russian','языки':'languages',
+    'языковойобмен':'exchange','обменязыками':'exchange','практикаязыка':'practice',
+    'языковой':'language','обмен':'exchange','практика':'practice','паб':'pub','пабы':'pub',
+    'курс':'course','курсы':'course','воркшоп':'workshop','учёба':'study','учеба':'study',
+    'коворкинг':'coworking','поработатьвместе':'coworking','удалёнка':'remotework','удаленка':'remotework',
+})
 # curated adjacency between BROAD categories (a mild "related" bonus)
 # Adjacency is deliberately conservative — over-broad links made a coffee search surface a Dota player
 # ("social" ~ "games"). Keep only genuinely related neighbours.
@@ -80,21 +126,53 @@ def _norm(w):
 def cat_of(word):
     """(broad, sub) for an interest/topic, matched against the KNOWN vocabulary (exact, then prefix>=5).
     Never a raw substring — so no 'art' in 'party', and >=5 stops short words like 'over'->overwatch, 'star'->startups.
-    Short real forms (hike, swim, climb...) are handled by SYNONYMS, not by the prefix rule."""
+    Short real forms (hike, swim, climb...) are handled by SYNONYMS, not by the prefix rule.
+    Multi-word phrases resolve by their strongest token ("пить пиво" -> beer, "смотреть футбол" ->
+    football) so verb+noun interests still land in the right category."""
     w = _norm(word)
     if w in _IDX: return _IDX[w]
     for k, bs in _IDX.items():
         if len(w) >= 5 and (k.startswith(w) or w.startswith(k)): return bs
+    toks = re.findall(r"[a-zа-яё0-9]+", str(word).lower())
+    if len(toks) > 1:
+        for t in toks:
+            tn = _norm(t)
+            if tn in _IDX: return _IDX[tn]
     return (None, None)
 
 def same_topic(t, x):
-    t, x = _norm(t), _norm(x)
-    if t == x: return True
-    ct, cx = cat_of(t), cat_of(x)
-    return len(t) >= 4 and len(x) >= 4 and (t.startswith(x) or x.startswith(t)) and ct[1] and ct[1] == cx[1]
+    tn, xn = _norm(t), _norm(x)
+    if tn == xn: return True
+    ct, cx = cat_of(tn), cat_of(xn)
+    if len(tn) >= 4 and len(xn) >= 4 and (tn.startswith(xn) or xn.startswith(tn)) and ct[1] and ct[1] == cx[1]:
+        return True
+    # phrase vs word: sharing a MEANINGFUL word (exact token or its inflected stem, via _wshare)
+    # is the same entity: "пить пиво" ~ "пиво", "смотреть барсу" ~ "барса". _wtok drops generic
+    # filler (клуб/вечер/games...), so "разговорный клуб" never equals "книжный клуб" this way.
+    if not _wshare(t, x):
+        return False
+    # spec §6 negative edge: WATCHING an activity is not DOING it — "смотреть футбол"/"футбол по
+    # тв" is exact against another watcher, but only category-related to "футбол" players
+    return _watch_marks(t) == _watch_marks(x)
+
+# generic filler words that two unrelated interests can share ("разговорный КЛУБ" vs "книжный КЛУБ");
+# a match on ONLY such a token is not a shared interest, so they never reach _wshare comparison
+_STOPTOK = {'клуб','клуба','клубы','вечер','вечером','встреча','встречи','люди','человек','вместе',
+            'время','город','район','районе','новые','новых','люблю','нравится','хочу',
+            'игры','игра','the','and','for','with','club','together','meet','meetup','new','fan',
+            'fans','games','game','play'}
+
+_WATCH_MARK = {'смотреть', 'посмотреть', 'просмотр', 'watch', 'watching', 'тв', 'tv'}
+
+def _watch_marks(s):
+    # markers scanned on raw tokens (len>=2): "футбол по ТВ" must keep its watcher mark
+    return {w for w in re.findall(r"[a-zа-яё0-9]+", str(s).lower()) if w in _WATCH_MARK}
 
 def _wtok(s):
-    return [w for w in re.findall(r"[a-zа-яё0-9]+", str(s).lower()) if len(w) >= 3]
+    # tokens are normalised through SYNONYMS so the RU->EN bridge works word-by-word inside
+    # phrases too: "выпить кофе" tokenises to {"coffee"} and meets "coffee" exactly
+    return [_norm(w) for w in re.findall(r"[a-zа-яё0-9]+", str(s).lower())
+            if len(w) >= 3 and w not in _STOPTOK]
 
 def _wshare(a, b):
     """A literal shared interest word between two OFF-TAXONOMY strings. Exact token, or a long common stem
@@ -119,8 +197,10 @@ def topical(topics, interests):
             elif bt and bt == bx: best = max(best, 2)
             elif bt and bx and bx in ADJACENCY.get(bt, []): best = max(best, 1)
             # neither side is in the taxonomy -> fall back to a literal shared interest word, so real
-            # interests the vocabulary doesn't cover ("apple", "рыбалка", "labubu") still match each other.
-            elif not bt and not bx and _wshare(t, x): matched.add(_norm(x)); best = max(best, 4)
+            # interests the vocabulary doesn't cover ("apple", "рыбалка", "labubu") still match each
+            # other; the watcher/doer distinction applies here too.
+            elif not bt and not bx and _wshare(t, x) and _watch_marks(t) == _watch_marks(x):
+                matched.add(_norm(x)); best = max(best, 4)
     return best, matched
 
 def _cat_of(tok):   # back-compat: broad category only
@@ -418,9 +498,9 @@ def _reciprocal(intent, c):
     itop = [str(t).lower() for t in (intent.get('topics') or [])]
     for oi in (c.get('intents') or []):
         b, _ = topical(itop, [str(t).lower() for t in (oi.get('topics') or [])])
-        if b >= 3:                                 # same sub-category or exact -> genuine mutual interest
-            return True
-    return False
+        if b >= 4:                                 # EXACT entity only: T0 means "almost the same
+            return True                            # active request" — a wine intent is not a craft-
+    return False                                   # beer request, испанский is not французский
 
 def _base_tier(intent, c, topics, dating):
     """Strongest topical/intent signal -> (kind, base_score, matched_interests, reason)."""
