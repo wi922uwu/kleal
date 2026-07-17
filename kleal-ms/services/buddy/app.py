@@ -87,11 +87,18 @@ _STRONG_ASK = re.compile(
 _COMPANION = re.compile(
     r"с\s+кем|кого-нибудь|кто-нибудь|компани[юе]|"
     r"someone\s+to\b|somebody\s+to\b|people\s+to\b|with\s+(someone|somebody|people)", re.I)
+# language-exchange asks read as "I want a person to practise with" even without a STRONG verb —
+# "практиковать испанский с носителем" / "language partner" should search, not just chat.
+_STRONG_ASK_EXTRA = re.compile(
+    r"с\s+носител|носител[ья]\s+язык|языков\w*\s+обмен|language\s+(partner|exchange)|"
+    r"practi[cs]e\s+\w+\s+with|language\s+buddy", re.I)
 
 
 def wants_people(text, model_flagged):
     """Deterministic search trigger. STRONG ask always; COMPANION cue only with the model's agreement."""
     t = str(text or "")
+    if _STRONG_ASK_EXTRA.search(t):
+        return True
     if _STRONG_ASK.search(t):
         return True
     return bool(model_flagged and _COMPANION.search(t))
@@ -619,7 +626,18 @@ _FALLBACK_REPLY = {
     "ru": ("Сейчас поищу кого-нибудь.", "Расскажи чуть больше — чем занимаешься и с кем хотел бы встретиться?"),
     "en": ("Let me find someone for you.", "Tell me a bit more about what you're into and who you'd like to meet."),
 }
+# Reply framing MUST match the match strength (spec §9.7: show the honest qualitative level, never
+# oversell). Only an especially_close/strong_option candidate is pitched as a confident match; a
+# broader/needs-clarification result is offered as exactly that, so buddy never claims "you'll click
+# with X" about someone the ranker flagged as weak or not-yet-reachable.
 _CLICK = {"ru": "Думаю, вы сойдётесь с %s — %s.", "en": "I think you'd click with %s — %s."}
+_BROADER = {"ru": "Идеального совпадения нет, но есть вариант пошире — %s (%s). Посмотришь?",
+            "en": "No perfect match, but here's a broader option — %s (%s). Want a look?"}
+_NEEDCLAR = {"ru": "Кое-кто есть, например %s, но по деталям стоит уточнить — расскажешь чуть больше (время, район)?",
+             "en": "There are a few, like %s, but the details need firming up — tell me a bit more (time, area)?"}
+# search asked for, but no concrete activity given ("найди мне кого-нибудь") -> ask, don't dump people
+_ASK_ACTIVITY = {"ru": "С радостью найду — а чем хочешь заняться? Кофе, спорт, игра, прогулка?",
+                 "en": "Happy to find someone — what would you like to do? Coffee, sport, a game, a walk?"}
 _NO_ONE = {"ru": "Пока никто не подходит — расширим поиск или попробуем онлайн?",
            "en": "No one perfect right now — want to go broader or try online?"}
 _FILED = {"ru": "Отнёс это к «%s», но пока никого нет — расширим поиск или попробуем онлайн?",
@@ -670,7 +688,7 @@ def buddy_chat(messages, profile, signals, uid=None):
         want_match = wants_people(last_user, bool(obj.get("match")))
     else:
         # LLM down: only the strong, explicit ask triggers a search — never a bare activity mention.
-        want_match = bool(_STRONG_ASK.search(last_user))
+        want_match = wants_people(last_user, False)
         reply = _FALLBACK_REPLY[lang][0 if want_match else 1]
 
     out = {"reply": reply, "signals": sig, "lang": lang, "match": None,
@@ -682,6 +700,18 @@ def buddy_chat(messages, profile, signals, uid=None):
     req_text = sig.get("interest") or last_user or " ".join(sig.get("topics") or [])
     cat = _categorize(req_text)
     intent = build_intent(sig, cat, last_user, lang)
+    # "find me someone" with NO concrete activity -> ask, don't dump a generic social slate (spec §5:
+    # a missing high-value slot is a clarification, not a silent default). Bare-social = the only topic
+    # is the "social" placeholder AND the user named no recognizable activity word.
+    # bare-social = the intent carries only the "social"/"other" placeholder, i.e. the user asked to
+    # meet people but named no concrete activity. Ask what they want to do instead of ranking the
+    # whole pool on a generic intent and name-dropping a weak "match" (spec §5 clarification).
+    topics = [str(t).lower() for t in (intent.get("topics") or [])]
+    bare_social = (not topics) or all(t in ("social", "other") for t in topics)
+    if bare_social:
+        out["reply"] = _ASK_ACTIVITY[lang]
+        out["tool_call"] = "ask_activity"
+        return out
     out["tool_call"] = "find_people"
     out["intent"] = intent
     out["category"] = cat
@@ -698,8 +728,18 @@ def buddy_chat(messages, profile, signals, uid=None):
     out["matches"] = cards
     if block.get("top"):
         t = block["top"]
-        why = humanize(t.get("reasons"), lang) or ("хороший фит" if lang == "ru" else "a great fit")
-        out["reply"] = (reply + "\n\n" + _CLICK[lang] % (t.get("name"), why)).strip()
+        # prefer the localized reason the matcher already produced (reasons_ru/en); humanize is the
+        # legacy fallback and can leak untranslated interest words into an English reply
+        why = (t.get("reason") or humanize(t.get("reasons"), lang)
+               or ("хороший фит" if lang == "ru" else "a great fit"))
+        band = t.get("band")
+        if band in ("especially_close", "strong_option"):
+            line = _CLICK[lang] % (t.get("name"), why)          # confident: real fit + reachable
+        elif band == "broader_option":
+            line = _BROADER[lang] % (t.get("name"), why)        # honest: broader, not perfect
+        else:                                                   # needs_clarification / unknown
+            line = _NEEDCLAR[lang] % t.get("name")              # honest: exists, but firm up details
+        out["reply"] = (reply + "\n\n" + line).strip()
     else:
         catn = intent.get("category")
         out["reply"] = (reply + "\n\n" + (_FILED[lang] % catn if catn else _NO_ONE[lang])).strip()

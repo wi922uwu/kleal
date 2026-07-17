@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (onboarding half, lines 16-301 + the embedded HTML).
 # Talks to llm-service over HTTP for every extract/reply/summary turn; holds NO model keys.
 # Contract: ../../shared/contracts.md. Owner: Dev A.
-import os, sys, json, re, threading, hashlib
+import os, sys, json, re, threading, hashlib, time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
@@ -1271,6 +1271,21 @@ def _default_receiving(dating_ok):
             "paused_until": None}
 
 
+def _valid_ts(s):
+    """A paused_until string is valid only if it parses as epoch seconds or 'YYYY-MM-DDTHH:MM'."""
+    s = str(s).strip()
+    try:
+        float(s)
+        return True
+    except ValueError:
+        pass
+    try:
+        time.strptime(s[:16], "%Y-%m-%dT%H:%M")
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 _RECV_STATUSES = ("active", "busy", "paused")
 _RECV_DOMAINS = {"social_meet", "walk", "games", "language_exchange", "sport_activity",
                  "culture_event", "professional_networking", "watch_together", "coworking", "dating"}
@@ -1298,15 +1313,20 @@ def update_receiving(name, patch):
         qh = {}
         for f in ("start", "end"):
             v = str(q.get(f) or "")
-            if len(v) == 5 and v[2] == ":" and v[:2].isdigit() and v[3:].isdigit():
+            # HH:MM with a REAL clock time (00:00-23:59); "99:99" must be rejected, not stored
+            if (len(v) == 5 and v[2] == ":" and v[:2].isdigit() and v[3:].isdigit()
+                    and 0 <= int(v[:2]) <= 23 and 0 <= int(v[3:]) <= 59):
                 qh[f] = v
-        if isinstance(q.get("tz_offset_min"), (int, float)):
+        if isinstance(q.get("tz_offset_min"), (int, float)) and -720 <= q["tz_offset_min"] <= 840:
             qh["tz_offset_min"] = int(q["tz_offset_min"])
         if qh:
             clean["quiet_hours"] = qh
-    if "paused_until" in patch and (patch["paused_until"] is None or
-                                    isinstance(patch["paused_until"], (int, float, str))):
-        clean["paused_until"] = patch["paused_until"]
+    if "paused_until" in patch:
+        pu = patch["paused_until"]
+        if pu is None or isinstance(pu, (int, float)):
+            clean["paused_until"] = pu
+        elif isinstance(pu, str) and _valid_ts(pu):     # accept epoch or 'YYYY-MM-DDTHH:MM', drop junk
+            clean["paused_until"] = pu
     with _REG_LOCK:
         try:
             with open(USERS_PATH, "r", encoding="utf-8") as f:

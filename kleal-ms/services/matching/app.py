@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (matching half, lines 304-831). Serves /api/agent/*.
 # Talks to llm-service over HTTP for parse/intro/negotiate; holds NO model keys. Owner: Dev B.
 # Endpoint names are FROZEN — the profile-service frontend hard-codes them (see ../../shared/contracts.md).
-import os, sys, json, re, threading, concurrent.futures, math, hashlib, time
+import os, sys, json, re, threading, concurrent.futures, math, hashlib, time, functools
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
@@ -119,10 +119,17 @@ for _b, _subs in TAXONOMY.items():
     for _s, _ws in _subs.items():
         for _w in _ws: _IDX[_w] = (_b, _s)
 
+# _norm/cat_of/same_topic are PURE over the static SYNONYMS+TAXONOMY (never mutated at runtime),
+# so their results are memoized. This is the hottest path by far: without the cache, cat_of ran a
+# linear prefix scan over the whole taxonomy for every off-taxonomy word on every candidate
+# (~9.7M calls / 567M str.startswith at 5000 users). One search sees only a few thousand distinct
+# words, so the cache turns the scan into a dict hit and makes p95 scale flat.
+@functools.lru_cache(maxsize=65536)
 def _norm(w):
     w = str(w).strip().lower().replace(' ', '')
     return SYNONYMS.get(w, w)
 
+@functools.lru_cache(maxsize=65536)
 def cat_of(word):
     """(broad, sub) for an interest/topic, matched against the KNOWN vocabulary (exact, then prefix>=5).
     Never a raw substring — so no 'art' in 'party', and >=5 stops short words like 'over'->overwatch, 'star'->startups.
@@ -140,6 +147,7 @@ def cat_of(word):
             if tn in _IDX: return _IDX[tn]
     return (None, None)
 
+@functools.lru_cache(maxsize=65536)
 def same_topic(t, x):
     tn, xn = _norm(t), _norm(x)
     if tn == xn: return True
@@ -935,6 +943,11 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+class _Server(ThreadingHTTPServer):
+    daemon_threads = True          # don't block shutdown on in-flight requests
+    request_queue_size = 128       # deeper listen backlog — a burst of concurrent clients no longer
+    allow_reuse_address = True     # gets connection-reset (fuzz saw 12/90 resets at queue_size=5)
+
 if __name__ == "__main__":
     print("Kleal matching-service on http://127.0.0.1:%d  (LLM via llm-service)" % PORT)
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    _Server(("127.0.0.1", PORT), H).serve_forever()
