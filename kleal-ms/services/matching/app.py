@@ -656,14 +656,29 @@ def negotiate_one(intent, cand):
     return {"agree": acc, "reason": ('good fit and free today' if acc else ('not free today' if not avail else 'fit is a bit weak')),
             "reply": None, "decided": False}
 
+def _outreach_ok(intent, c):
+    """Tier/consent gate for PERSONAL outreach (spec §7 tier table + §12): T0/T1 always, T2 only
+    with broad consent, T3+/T5 never. Mirrors core_v2.search's outreach_tier_ok so the send path
+    enforces the same consent rule the slate does."""
+    if not CORE_V2:
+        return True
+    topics = [str(t).lower() for t in (intent.get('topics') or [])]
+    Hh = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
+    tier = _core.assign_tier(intent, c, topics, Hh)
+    return tier in ('T0', 'T1') or (tier == 'T2' and bool(intent.get('broadConsent')))
+
 def _negotiate_precheck(intent, cands, now_ts=None):
-    """Receiving-policy enforcement BEFORE any proposal goes out (spec §23.2 #12: no proposal
-    without a receiving-policy check). Each candidate is re-resolved against the LIVE store (the
-    client's copy may be stale), readiness is computed, and the parallel wave is capped from the
-    canonical config (default 2, urgent 3). Returns (to_send, decided_without_sending)."""
+    """Receiving-policy AND eligibility enforcement BEFORE any proposal goes out (spec §8.2: policy
+    revalidation immediately before sending; §23.2 #12: no proposal without a receiving-policy check).
+    /api/agent/negotiate accepts client-supplied candidates verbatim, so each is re-resolved against
+    the LIVE store, re-run through the eligibility hard gates + the tier/consent outreach gate, then
+    readiness is computed and the parallel wave capped from config (default 2, urgent 3).
+    Returns (to_send, decided_without_sending)."""
     now_ts = now_ts or time.time()
     store = {str(u.get('name', '')).strip().lower(): u for u in load_candidates()}
     received = _proposals_received_24h()
+    _sess = _session("me")
+    gate_ctx = {'feedback': dict(_sess.get('feedback') or {}), 'blocked': set(_sess.get('blocked') or [])}
     out_cfg = ((_CORE_CFG or {}).get('outreach') or {})
     soon = any(w in str(intent.get('time', '')).lower() for w in SOON_WORDS)
     cap = int(out_cfg.get('urgent_same_day_parallel_proposals' if soon else
@@ -672,6 +687,18 @@ def _negotiate_precheck(intent, cands, now_ts=None):
     for c in cands:
         nm = str(c.get('name', '')).strip().lower()
         live = store.get(nm, c)
+        # §8.2 revalidation at the SEND boundary — never trust the caller's candidate list.
+        if not (nm or c.get('name')):
+            decided.append(dict(c, agree=False, decided=True, readiness="blocked",
+                                reason="not eligible: no candidate id", reply=None)); continue
+        live = dict(live); live['name'] = live.get('name') or c.get('name') or ''
+        ok, why = _hard_gates(intent, live, gate_ctx)          # block / age / dating / language / radius…
+        if not ok:
+            decided.append(dict(c, agree=False, decided=True, readiness="blocked",
+                                reason="not eligible: %s" % why, reply=None)); continue
+        if not _outreach_ok(intent, live):                     # tier/consent: no personal proposal at T2-no-consent / T3+
+            decided.append(dict(c, agree=False, decided=True, readiness="discovery_only",
+                                reason="discovery only — needs broad consent for this match", reply=None)); continue
         if CORE_V2:
             domain = _core.infer_domain(intent, cat_of)
             rdy = _core.readiness_state(live, domain, now_ts, _CORE_CFG, received.get(nm, 0))
