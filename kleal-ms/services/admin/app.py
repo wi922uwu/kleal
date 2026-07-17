@@ -76,7 +76,7 @@ def _norm_user(u, keep_id=None):
         intents = [{"type": oi_type, "topics": oi_topics, "role": oi_role if oi_role in ROLES else "meet"}]
     dcd = u.get("declinedOwnerDaysAgo")
     dcd = int(dcd) if str(dcd).strip().lstrip("-").isdigit() else None
-    return {
+    out = {
         "id": keep_id or u.get("id") or ("u" + uuid.uuid4().hex[:8]),
         "name": (str(u.get("name") or "").strip() or "User"),
         "interests": interests[:6],
@@ -98,6 +98,13 @@ def _norm_user(u, keep_id=None):
         "entities": ents,
         "dealBreakers": deal,
     }
+    # Preserve fields this form doesn't know about — receiving policy (matching's readiness engine
+    # reads it), geo, tags, source, summary... An admin edit/toggle must never silently strip data
+    # that other services own.
+    for k, v in (u or {}).items():
+        if k not in out:
+            out[k] = v
+    return out
 
 
 # ---------------- store (atomic writes) ----------------
