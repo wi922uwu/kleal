@@ -598,8 +598,8 @@ def search(intent, prof, ctx, candidates, H, cfg):
             continue                                    # no meaningful overlap -> never proposed
         if tier == "T3" and not intent.get("adjacentAllowed", True):
             continue
-        if tier == "T2" and intent.get("exactMatchRequired"):
-            continue
+        if intent.get("exactMatchRequired") and tier not in ("T0", "T1"):
+            continue                                    # exact-only search: no siblings AND no adjacent
         F = build_features(intent, prof, c, domain, H, role_conflict)
         d_ab = directional_score(F, dom_cfg, priors)
         d_ba = directional_score(reverse_features(intent, prof, c, domain, H, role_conflict),
