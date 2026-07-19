@@ -471,18 +471,50 @@ def parse_intent(q):
 ROLE_CONFLICT = {('play', 'watch'), ('watch', 'play'), ('practise', 'watch')}
 SOON_WORDS = ('today', 'tonight', 'evening', 'tomorrow')
 
-def _hard_gates(intent, c, gate_ctx):
-    """Cheap, deterministic exclusions applied BEFORE scoring. Returns (ok, reason_if_blocked)."""
+def _num(v):
+    """Numeric coercion that tolerates strings ('28') and refuses junk — a single profile with a
+    string-typed age/km used to raise inside a gate and kill the search for EVERY user."""
+    if isinstance(v, bool) or v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+def _dist_km(intent, prof, c):
+    """Searcher-relative distance. c['km'] is a pre-baked distance to a FIXED origin, so it can't
+    answer 'within N km of me' — with real coordinates on both sides we measure properly, and only
+    fall back to the stored figure when geo is missing."""
+    a, b = _core._latlon(prof or {}), _core._latlon(c)
+    if a and b:
+        return _core._haversine(a, b)
+    return _num(c.get('km'))
+
+def _hard_gates(intent, c, gate_ctx, prof=None):
+    """Cheap, deterministic exclusions applied BEFORE scoring. Returns (ok, reason_if_blocked).
+    Gates fail CLOSED: when a value needed for a safety decision is unknown, the candidate is
+    excluded rather than let through (spec §8.1)."""
     if c.get('paused'):                                            return False, 'on a break'
-    if c['name'] in gate_ctx['blocked'] or c.get('blocksMe'):     return False, 'blocked'
-    d = c.get('declinedOwnerDaysAgo')
+    # names are compared case/whitespace-insensitively everywhere else; a block list that isn't
+    # would silently stop blocking after any casing difference
+    nm = str(c.get('name', '')).strip().lower()
+    blocked = {str(b).strip().lower() for b in (gate_ctx.get('blocked') or set())}
+    if nm in blocked or c.get('blocksMe'):                         return False, 'blocked'
+    d = _num(c.get('declinedOwnerDaysAgo'))
     if d is not None and d < COOLDOWN_DAYS:                        return False, 'recently declined (cooldown)'
-    if (c.get('pending') or 0) >= MAX_PENDING:                     return False, 'too many open invites'
-    age = c.get('age')
+    if (_num(c.get('pending')) or 0) >= MAX_PENDING:               return False, 'too many open invites'
+    age = _num(c.get('age'))
     if age is not None and age < MIN_AGE:                          return False, 'under 18'
-    if intent.get('type') == 'dating' and not c.get('datingOk'):  return False, 'not open to dating'
+    itype = str(intent.get('type') or '').strip().lower()          # 'Dating' must gate like 'dating'
+    if itype == 'dating':
+        # both sides must be adults with a known age and an explicit opt-in (spec §17)
+        if not c.get('datingOk'):                                  return False, 'not open to dating'
+        if age is None:                                            return False, 'age unknown (dating)'
+        s_age = _num((prof or {}).get('age'))
+        if s_age is None:                                          return False, 'searcher age unknown (dating)'
+        if s_age < MIN_AGE:                                        return False, 'searcher under 18 (dating)'
     if intent.get('verifiedOnly') and not c.get('verified'):      return False, 'not verified'
-    mn, mx = intent.get('minAge'), intent.get('maxAge')
+    mn, mx = _num(intent.get('minAge')), _num(intent.get('maxAge'))
     if mn or mx:
         if age is None:                                           return False, 'age unknown'
         if mn and age < mn:                                       return False, 'below age range'
@@ -490,11 +522,10 @@ def _hard_gates(intent, c, gate_ctx):
     reql = {str(l)[:2].lower() for l in (intent.get('requiredLanguages') or [])}
     if reql and not reql.issubset({str(l)[:2].lower() for l in (c.get('langs') or [])}):
         return False, 'missing a required language'
-    if intent.get('mode') == 'offline' and intent.get('radiusKm') and c.get('km') is not None:
-        try:
-            if float(c['km']) > float(intent['radiusKm']):       return False, 'outside the radius'
-        except (TypeError, ValueError):
-            pass
+    radius = _num(intent.get('radiusKm'))
+    if intent.get('mode') != 'online' and radius and radius > 0:
+        km = _dist_km(intent, prof, c)
+        if km is not None and km > radius:                        return False, 'outside the radius'
     return True, None
 
 GENERIC_TYPES = {'social', 'other', ''}   # too broad to count as a mutual-intent match on their own
@@ -573,7 +604,7 @@ def match_candidates_legacy(intent, prof, ctx=None):
         if self_name and str(c.get('name', '')).strip().lower() == self_name:
             continue
         # ── 1. HARD GATES ──
-        ok, _why = _hard_gates(intent, c, gate_ctx)
+        ok, _why = _hard_gates(intent, c, gate_ctx, prof)
         if not ok:
             continue
         # ── 2. BASE TIER (reciprocal / exact / adjacent / related / broad) + search-breadth gates ──
@@ -653,7 +684,7 @@ def match_candidates(intent, prof, ctx=None):
     for c in load_candidates():
         if self_name and str(c.get('name', '')).strip().lower() == self_name:
             continue                                       # the searcher never matches themselves
-        ok, _why = _hard_gates(intent, c, gate_ctx)
+        ok, _why = _hard_gates(intent, c, gate_ctx, prof)
         if ok:
             eligible.append(c)
     H = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
@@ -744,18 +775,27 @@ def negotiate_one(intent, cand):
     return {"agree": acc, "reason": ('good fit and free today' if acc else ('not free today' if not avail else 'fit is a bit weak')),
             "reply": None, "decided": False}
 
-def _outreach_ok(intent, c):
-    """Tier/consent gate for PERSONAL outreach (spec §7 tier table + §12): T0/T1 always, T2 only
-    with broad consent, T3+/T5 never. Mirrors core_v2.search's outreach_tier_ok so the send path
-    enforces the same consent rule the slate does."""
+def _outreach_ok(intent, c, prof=None, ctx=None):
+    """Full PERSONAL-outreach permission for the send path — the same verdict the slate computes,
+    not a subset of it. It used to check only tier/consent, so a candidate the slate had marked
+    can_outreach=False (fit below the domain's outreach_min_lcb / coverage, or not open_now) still
+    received a proposal. Now the whole decision is delegated to the engine (spec §9.6 + §10.1)."""
     if not CORE_V2:
-        return True
-    topics = [str(t).lower() for t in (intent.get('topics') or [])]
+        return True, ""
     Hh = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
-    tier = _core.assign_tier(intent, c, topics, Hh)
-    return tier in ('T0', 'T1') or (tier == 'T2' and bool(intent.get('broadConsent')))
+    tr = _core.explain(intent, prof or {}, ctx or {}, c, Hh, _CORE_CFG)
+    if tr.get("can_outreach"):
+        return True, ""
+    if not tr.get("shown"):
+        return False, str(tr.get("drop_reason") or "not a match for this intent")
+    tier = tr.get("tier")
+    if tier not in ("T0", "T1") and not (tier == "T2" and intent.get("broadConsent")):
+        return False, "discovery only — needs broad consent for this match"
+    if tr.get("readiness") != "open_now":
+        return False, _core.READINESS_LABELS.get(tr.get("readiness"), ("", "not reachable"))[1]
+    return False, "fit below the outreach threshold for this domain"
 
-def _negotiate_precheck(intent, cands, now_ts=None):
+def _negotiate_precheck(intent, cands, now_ts=None, prof=None):
     """Receiving-policy AND eligibility enforcement BEFORE any proposal goes out (spec §8.2: policy
     revalidation immediately before sending; §23.2 #12: no proposal without a receiving-policy check).
     /api/agent/negotiate accepts client-supplied candidates verbatim, so each is re-resolved against
@@ -780,13 +820,16 @@ def _negotiate_precheck(intent, cands, now_ts=None):
             decided.append(dict(c, agree=False, decided=True, readiness="blocked",
                                 reason="not eligible: no candidate id", reply=None)); continue
         live = dict(live); live['name'] = live.get('name') or c.get('name') or ''
-        ok, why = _hard_gates(intent, live, gate_ctx)          # block / age / dating / language / radius…
+        ok, why = _hard_gates(intent, live, gate_ctx, prof)    # block / age / dating / language / radius…
         if not ok:
             decided.append(dict(c, agree=False, decided=True, readiness="blocked",
                                 reason="not eligible: %s" % why, reply=None)); continue
-        if not _outreach_ok(intent, live):                     # tier/consent: no personal proposal at T2-no-consent / T3+
+        # full outreach permission (tier/consent AND readiness AND the domain's lcb/coverage
+        # thresholds) — identical to what the slate showed, so the send path can't be more generous
+        allowed, deny_why = _outreach_ok(intent, live, prof, {"now": now_ts, "received24": received})
+        if not allowed:
             decided.append(dict(c, agree=False, decided=True, readiness="discovery_only",
-                                reason="discovery only — needs broad consent for this match", reply=None)); continue
+                                reason=deny_why, reply=None)); continue
         if CORE_V2:
             domain = _core.infer_domain(intent, cat_of)
             rdy = _core.readiness_state(live, domain, now_ts, _CORE_CFG, received.get(nm, 0))
@@ -814,9 +857,9 @@ def _negotiate_precheck(intent, cands, now_ts=None):
         to_send.append(merged)
     return to_send, decided
 
-def negotiate_candidates(intent, cands):
+def negotiate_candidates(intent, cands, prof=None):
     top = cands[:5]
-    to_send, decided = _negotiate_precheck(intent, top)
+    to_send, decided = _negotiate_precheck(intent, top, prof=prof)
     for c in to_send:
         _log_proposal(c.get('name'))                   # a real proposal reaches this person's agent
     def work(c):
@@ -944,7 +987,7 @@ class H(BaseHTTPRequestHandler):
                                  "detail": "the searcher is never matched to themselves"}],
                             "drop_reason": "self-match: searcher == candidate"}})
                     else:
-                        ok, why = _hard_gates(intent, cand, gate_ctx)
+                        ok, why = _hard_gates(intent, cand, gate_ctx, prof)
                         if not ok:
                             send_json(self, 200, {"ok": True, "trace": {
                                 "name": cand.get("name"), "shown": False, "steps": [
@@ -976,7 +1019,8 @@ class H(BaseHTTPRequestHandler):
             intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
             cands = body.get("candidates") if isinstance(body.get("candidates"), list) else []
             try:
-                send_json(self, 200, {"candidates": negotiate_candidates(intent, cands)})
+                prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+                send_json(self, 200, {"candidates": negotiate_candidates(intent, cands, prof)})
             except Exception as e:
                 send_json(self, 200, {"candidates": cands, "error": str(e)[:200]})
         else:

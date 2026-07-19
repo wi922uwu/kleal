@@ -100,8 +100,14 @@ SEED_BATTERY = [
     dict(id="cw1_cowork", intent=_i(["коворкинг", "поработать"], time_="Tomorrow morning"),
          expect=dict(include_any=["cowork_poblenou"])),
     # --- dating isolation (§17) ---
+    # dating requires a known adult age on BOTH sides (spec §17) — hence the explicit profile
     dict(id="d1_dating_gate", intent=_i(["прогулки", "кино"], "dating"),
+         profile=dict(TESTER, age=30),
          expect=dict(only_dating_ok=True, include_any=["dating_open"])),
+    dict(id="d2_dating_no_age", intent=_i(["прогулки", "кино"], "dating"),
+         expect=dict(empty=True)),                    # searcher age unknown -> fail closed
+    dict(id="d3_dating_minor", intent=_i(["прогулки", "кино"], "dating"),
+         profile=dict(TESTER, age=15), expect=dict(empty=True)),   # minor never reaches adults
     # --- off-taxonomy honesty ---
     dict(id="ot1_apple", intent=_i(["технику apple", "apple"]),
          expect=dict(include_any=["apple_tech"], exclude=["dev_it", "mate_tea", "labubu"])),
@@ -193,6 +199,8 @@ def evaluate(cx, sc, res):
                 F.append("READINESS %s: %s got %s want %s" % (t, n, byname[n].get("readiness"), st))
     if e.get("nonempty") and not names:
         F.append("EMPTY result")
+    if e.get("empty") and names:
+        F.append("EXPECTED EMPTY, got %s" % names[:3])
     if e.get("only_dating_ok"):
         bad = [n for n in names if not cx.users.get(n, {}).get("datingOk")]
         if bad:

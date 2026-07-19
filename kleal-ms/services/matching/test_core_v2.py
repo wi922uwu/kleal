@@ -274,8 +274,11 @@ old_users2, app.USERS_PATH = app.USERS_PATH, tmp2.name
 app._users_cache = {"mtime": None, "list": None}
 app.SESSION.pop("_proposals", None)
 cands_in = [{"name": n, "score": 80} for n in ("A1", "A2", "A3", "B1")]
+# the searcher profile is required: outreach now needs the full permission (tier + readiness +
+# the domain's lcb/coverage thresholds), and without geo/vibe on the searcher side coverage
+# legitimately falls below the bar
 to_send, decided = app._negotiate_precheck({"topics": ["coffee"], "time": "Flexible"},
-                                           cands_in, now_ts=NOW_OPEN)
+                                           cands_in, now_ts=NOW_OPEN, prof=PROF_RICH)
 sent_names = {c["name"] for c in to_send}
 dec = {c["name"]: c for c in decided}
 check("NEG1 busy candidate never receives a proposal",
@@ -284,11 +287,59 @@ check("NEG2 parallel wave capped from config (default 2)",
       len(to_send) == 2 and "queued" in dec.get("A3", {}).get("reason", ""),
       (len(to_send), dec.get("A3", {}).get("reason")))
 soon_send, _ = app._negotiate_precheck({"topics": ["coffee"], "time": "today evening"},
-                                       cands_in, now_ts=NOW_OPEN)
+                                       cands_in, now_ts=NOW_OPEN, prof=PROF_RICH)
 check("NEG3 urgent same-day intent raises the cap to 3", len(soon_send) == 3,
       len(soon_send))
 app.USERS_PATH = old_users2
 app._users_cache = {"mtime": None, "list": None}
+
+# ---------------------------------------------------------------- safety gates (found by the hunt)
+GC = {"feedback": {}, "blocked": set()}
+ADULT = dict(PROF_RICH, age=30)
+MINOR = dict(PROF_RICH, age=15)
+partner = mk("Partner", age=28, datingOk=True, receiving=dict(RECV_ACTIVE))
+
+ok, why = app._hard_gates({"topics": ["walks"], "type": "dating"}, partner, GC, MINOR)
+check("SAFE1 minor searcher cannot run a dating search", ok is False, why)
+ok, _ = app._hard_gates({"topics": ["walks"], "type": "dating"}, partner, GC, ADULT)
+check("SAFE2 adult searcher still can", ok is True)
+ok, why = app._hard_gates({"topics": ["walks"], "type": "dating"}, partner, GC, PROF_RICH)
+check("SAFE3 unknown searcher age fails closed for dating", ok is False, why)
+ok, why = app._hard_gates({"topics": ["walks"], "type": "dating"},
+                          mk("NoAge", datingOk=True), GC, ADULT)
+check("SAFE4 unknown candidate age fails closed for dating", ok is False, why)
+
+no_optin = mk("NoOptIn", age=28, datingOk=False)
+for t in ("dating", "Dating", " DATING "):
+    ok, _ = app._hard_gates({"topics": ["walks"], "type": t}, no_optin, GC, ADULT)
+    check("SAFE5 dating gate is case-insensitive (%r)" % t, ok is False)
+
+far = mk("Far", geo={"coarseLat": 40.416, "coarseLon": -3.703})     # Madrid, ~500 km away
+near = mk("Near", geo=NEARBY)
+ok, why = app._hard_gates({"topics": ["coffee"], "radiusKm": 5, "mode": "offline"}, far, GC, PROF_RICH)
+check("SAFE6 radius gate excludes a far candidate", ok is False, why)
+ok, _ = app._hard_gates({"topics": ["coffee"], "radiusKm": 5, "mode": "offline"}, near, GC, PROF_RICH)
+check("SAFE7 radius gate keeps a nearby candidate", ok is True)
+
+ok, _ = app._hard_gates({"topics": ["coffee"]}, mk("Str", age="28", km="1.2", pending="0"), GC, PROF_RICH)
+check("SAFE8 string-typed numeric fields do not crash the gates", ok is True)
+ok, why = app._hard_gates({"topics": ["coffee"]}, mk("Junk", age="twenty"), GC, PROF_RICH)
+check("SAFE9 unparseable age is treated as unknown, not as a pass to a minor",
+      ok is True and why is None)
+
+GC_BLOCK = {"feedback": {}, "blocked": {"  BoRiS  "}}
+ok, why = app._hard_gates({"topics": ["coffee"]}, mk("boris"), GC_BLOCK, PROF_RICH)
+check("SAFE10 block list ignores case and whitespace", ok is False, why)
+
+# outreach permission on the SEND path must equal the slate's verdict
+weak = mk("WeakFit", interests=["книги"], receiving=dict(RECV_ACTIVE))
+allowed, why = app._outreach_ok({"topics": ["coffee"], "type": "social", "mode": "offline",
+                                 "time": "Today"}, weak, PROF_RICH, {"now": NOW_OPEN})
+check("SAFE11 send path refuses outreach to a below-threshold candidate", allowed is False, why)
+strong = mk("StrongFit", interests=["coffee"], open=True, receiving=dict(RECV_ACTIVE))
+allowed, why = app._outreach_ok({"topics": ["coffee"], "type": "social", "mode": "offline",
+                                 "time": "Today"}, strong, PROF_RICH, {"now": NOW_OPEN})
+check("SAFE12 send path still allows a genuine match", allowed is True, why)
 
 print()
 if FAILURES:
