@@ -151,6 +151,13 @@ def cat_of(word):
     football) so verb+noun interests still land in the right category."""
     w = _norm(word)
     if w in _IDX: return _IDX[w]
+    # plural of a SHORT vocabulary word ("pubs" -> "pub", "бары" -> "бар"): the length-gated
+    # prefix rule below needs >=5 chars, so short interests fell out of the taxonomy entirely
+    # and their holders became invisible to the very query that names them.
+    for suf in ("s", "es", "ы", "и", "а"):
+        if len(w) > len(suf) + 1 and w.endswith(suf):
+            stem = _norm(w[:-len(suf)])
+            if stem in _IDX: return _IDX[stem]
     for k, bs in _IDX.items():
         if len(w) >= 5 and (k.startswith(w) or w.startswith(k)): return bs
     toks = re.findall(r"[a-zа-яё0-9]+", str(word).lower())
@@ -194,11 +201,15 @@ _STOPTOK = {'клуб','клуба','клубы','вечер','вечером','
             'игры','игра','the','and','for','with','club','together','meet','meetup','new','fan',
             'fans','games','game','play'}
 
-_WATCH_MARK = {'смотреть', 'посмотреть', 'просмотр', 'watch', 'watching', 'тв', 'tv'}
+_WATCH_MARK = {'смотреть', 'посмотреть', 'просмотр', 'смотрим', 'глянуть', 'поглядеть',
+               'watch', 'watching', 'watched', 'viewing', 'тв', 'tv', 'телек', 'трансляция'}
 
 def _watch_marks(s):
-    # markers scanned on raw tokens (len>=2): "футбол по ТВ" must keep its watcher mark
-    return {w for w in re.findall(r"[a-zа-яё0-9]+", str(s).lower()) if w in _WATCH_MARK}
+    # A single BOOLEAN, not the token set: comparing raw tokens made the same interest written in
+    # two languages ("watch football" vs "смотреть футбол") count as different activities, so a
+    # 20-person fan cohort split into mutually invisible language islands.
+    toks = set(re.findall(r"[a-zа-яё0-9]+", str(s).lower()))
+    return bool(toks & _WATCH_MARK)
 
 def _wtok(s):
     # tokens are normalised through SYNONYMS so the RU->EN bridge works word-by-word inside
@@ -526,8 +537,10 @@ def _hard_gates(intent, c, gate_ctx, prof=None):
     excluded rather than let through (spec §8.1)."""
     if c.get('paused'):                                            return False, 'on a break'
     # names are compared case/whitespace-insensitively everywhere else; a block list that isn't
-    # would silently stop blocking after any casing difference
-    nm = str(c.get('name', '')).strip().lower()
+    # would silently stop blocking after any casing difference. A record with no name at all used
+    # to raise KeyError here, aborting retrieval for EVERY user with an unexplained empty slate.
+    nm = str(c.get('name') or '').strip().lower()
+    if not nm:                                                     return False, 'no candidate id'
     blocked = {str(b).strip().lower() for b in (gate_ctx.get('blocked') or set())}
     if nm in blocked or c.get('blocksMe'):                         return False, 'blocked'
     d = _num(c.get('declinedOwnerDaysAgo'))

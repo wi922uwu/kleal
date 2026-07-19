@@ -434,6 +434,31 @@ check("PRIV6 explain returns both RU and EN labels",
       all(k in tr for k in ("band_ru", "band_en", "readiness_ru", "readiness_en")),
       sorted(k for k in tr if "band" in k or "readiness" in k))
 
+# ---------------------------------------------------------------- last hunt findings
+check("LAST1 'needs clarification' only when data really is thin",
+      core_v2.assign_band(0.50, 0.88, CFG["user_facing_bands"]) == "broader_option" and
+      core_v2.assign_band(0.50, 0.30, CFG["user_facing_bands"]) == "needs_clarification",
+      (core_v2.assign_band(0.50, 0.88, CFG["user_facing_bands"]),
+       core_v2.assign_band(0.50, 0.30, CFG["user_facing_bands"])))
+
+check("LAST2 the same watched interest matches across languages",
+      app.same_topic("watch football", "смотреть футбол"), )
+check("LAST3 watcher still isn't a player", not app.same_topic("смотреть футбол", "футбол"))
+check("LAST4 watcher phrasings agree", app.same_topic("смотреть футбол", "футбол по тв"))
+
+check("LAST5 plural of a short vocabulary word still resolves",
+      app.cat_of("pubs")[1] == app.cat_of("pub")[1] and app.cat_of("pub")[1] is not None,
+      (app.cat_of("pub"), app.cat_of("pubs")))
+check("LAST6 plural doesn't invent a category for unknown words",
+      app.cat_of("labubus")[0] is None or app.cat_of("labubus") == app.cat_of("labubu"),
+      app.cat_of("labubus"))
+
+ok, why = app._hard_gates({"topics": ["coffee"]}, {"interests": ["coffee"]}, GC, PROF_RICH)
+check("LAST7 a record with no name is refused, not a crash", ok is False, why)
+r = run(INTENT_COFFEE, PROF_RICH, [FULL, {"interests": ["coffee"]}])
+check("LAST8 a nameless record can't abort the whole search", by_name(r, "Full") is not None,
+      [c["name"] for c in r])
+
 print()
 if FAILURES:
     print("FAILED: %d test(s): %s" % (len(FAILURES), ", ".join(FAILURES)))

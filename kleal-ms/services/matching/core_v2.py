@@ -495,11 +495,17 @@ BAND_LABELS = {
 BAND_RANK = {"especially_close": 0, "strong_option": 1, "broader_option": 2, "needs_clarification": 3}
 
 def assign_band(lcb, cov, bands):
+    """Bands answer two different questions and must not be conflated: how GOOD the fit is
+    (lcb) and how much of it is CONFIRMED (coverage). "Needs clarification" means the data is
+    thin — the config says so explicitly (needs_clarification.max_coverage). It used to be the
+    catch-all for anything below the top three, so a candidate with 0.88 coverage and one
+    unknown field was told to "clarify" when nothing was missing; they are simply a weaker fit."""
     for name in ("especially_close", "strong_option", "broader_option"):
         b = bands.get(name) or {}
         if lcb >= float(b.get("min_lcb", 1)) and cov >= float(b.get("min_coverage", 1)):
             return name
-    return "needs_clarification"
+    thin = float((bands.get("needs_clarification") or {}).get("max_coverage", 0.39))
+    return "needs_clarification" if cov <= thin else "broader_option"
 
 # Human-readable values for detail strings that would otherwise leak engine tokens into the copy
 _ROLE_RU = {"play": "поиграть", "watch": "посмотреть", "discuss": "обсудить",
