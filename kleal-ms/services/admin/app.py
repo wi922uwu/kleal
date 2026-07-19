@@ -446,13 +446,18 @@ function applyPreset(i){const p=PRESETS[i][1];
 function labSig(){const b=labBody();return JSON.stringify([b.self,b.intent,b.now||0]);}
 async function runLab(){
   LAB.running=true;LAB.err=null;LAB.trace=null;render();
-  const sig=labSig(), shown=gv('#l_topics');
+  const sig=labSig(), shown=gv('#l_topics'), body=labBody();
   try{
-    const r=await api('/api/admin/match-test',{method:'POST',body:JSON.stringify(labBody())});
+    const r=await api('/api/admin/match-test',{method:'POST',body:JSON.stringify(body)});
     LAB.res=r.candidates||[];LAB.err=r.error||null;LAB.lastIntent=r.intent||null;
     LAB.searcher=r.searcher||null;LAB.searcherKnown=!!r.searcherKnown;
     LAB.sig=sig;LAB.ranTopics=shown;LAB.ranWhen=(r.intent&&r.intent.time)||'';
-  }catch(e){LAB.err=String(e);LAB.res=null;}
+  }catch(e){
+    // the banner must never be left spinning: say what went wrong and keep the old table visible
+    LAB.err='Матчинг-сервис не ответил ('+String(e&&e.message||e)+'). Нажми «Запустить матчинг».';
+  }
+  // whatever happened, this run is over — stale is recomputed from the CURRENT form
+  LAB.stale=(!!LAB.sig&&labSig()!==LAB.sig);
   LAB.running=false;render();
 }
 async function explain(name){
@@ -558,7 +563,7 @@ function labView(){
     </div>
     ${LAB.err?`<div class="card"><div class="drop">Ошибка: ${esc(LAB.err)}</div></div>`:''}
     ${LAB.res?`<div class="card" ${LAB.stale?'style="opacity:.55"':''}>
-      ${LAB.stale?`<div class="drop" style="margin-bottom:12px">Обновляю результат под новый запрос… (показан прошлый — «${esc(LAB.ranTopics||'')}»)</div>`:''}
+      ${(LAB.stale||LAB.running)?`<div class="drop" style="margin-bottom:12px">${LAB.running?'Обновляю результат…':'Форма изменена — обновлю через секунду'} (показан прошлый — «${esc(LAB.ranTopics||'')}»)</div>`:''}
       <div class="bar"><h2 style="margin:0">Результат по запросу «${esc(LAB.ranTopics||'')}» — ${LAB.res.length} кандидат(ов)</h2>
         <span class="muted" style="font-size:12px">${LAB.searcher?('от лица '+esc(LAB.searcher.name)):''}
           ${LAB.ranWhen?(' · '+esc(LAB.ranWhen)):''}${LAB.searcherKnown===false?' · профиль не из базы':''}</span></div>
