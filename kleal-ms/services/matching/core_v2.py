@@ -577,6 +577,100 @@ def _slate(items):
     return out
 
 # ------------------------------------------------------------------ main entry
+FEATURE_LABELS = {
+    "semantic_activity":    ("Интерес / активность", "Interest / activity"),
+    "time_feasibility":     ("Время", "Time"),
+    "location_feasibility": ("Расстояние", "Distance"),
+    "mode_format":          ("Формат", "Format"),
+    "directed_preferences": ("Роль", "Role"),
+    "social_context":       ("Вайб", "Vibe"),
+    "domain_constraints":   ("Условия домена", "Domain constraints"),
+}
+
+def explain(intent, prof, ctx, cand, H, cfg):
+    """Full decision trace for ONE candidate — the same code path as search(), but every drop point
+    records WHY instead of silently skipping. Powers the admin Matching lab (spec §21.3 decision
+    trace: reproducible, per-feature, with config version). Never mutates state."""
+    intent, prof, ctx = intent or {}, prof or {}, ctx or {}
+    domain = infer_domain(intent, H["cat_of"])
+    dom_cfg = cfg["domains"].get(domain) or cfg["domains"]["social_meet"]
+    priors = {k: (cfg["feature_groups"][k] or {}).get("unknown_prior", 0.5) for k in FEATURE_KEYS}
+    role_conflict = H.get("role_conflict") or set()
+    topics = [str(t).lower() for t in (intent.get("topics") or [])]
+    now_ts = ctx.get("now") or time.time()
+    received24 = ctx.get("received24") or {}
+    steps = []
+    def step(name, ok, detail=""):
+        steps.append({"step": name, "ok": bool(ok), "detail": detail})
+
+    out = {"name": cand.get("name"), "domain": domain, "config_version": cfg.get("config_version"),
+           "steps": steps, "shown": False, "drop_reason": None}
+
+    paused = is_paused(cand, now_ts)
+    step("retrieval: not paused", not paused, "receiving.status/paused_until" if paused else "")
+    if paused:
+        out["drop_reason"] = "paused — left retrieval for this purpose (§10.1)"
+        return out
+
+    tier = assign_tier(intent, cand, topics, H)
+    out["tier"] = tier
+    best, matched = H["topical"](topics, [str(x).lower() for x in (cand.get("interests") or [])])
+    step("tier (provenance)", tier != "T5",
+         "%s — topical overlap level %d%s" % (tier, best, (" on " + ", ".join(sorted(matched)[:3])) if matched else ""))
+    if tier == "T5":
+        out["drop_reason"] = "no meaningful topical overlap (T5) — never proposed"
+        return out
+    if tier == "T3" and not intent.get("adjacentAllowed", True):
+        step("search breadth", False, "adjacentAllowed=false drops T3")
+        out["drop_reason"] = "adjacent matches disabled for this search"
+        return out
+    if intent.get("exactMatchRequired") and tier not in ("T0", "T1"):
+        step("search breadth", False, "exactMatchRequired keeps only T0/T1")
+        out["drop_reason"] = "exact-match-only search: %s dropped" % tier
+        return out
+
+    F = build_features(intent, prof, cand, domain, H, role_conflict)
+    d_ab = directional_score(F, dom_cfg, priors)
+    d_ba = directional_score(reverse_features(intent, prof, cand, domain, H, role_conflict),
+                             dom_cfg, priors)
+    rec = reciprocal_score(d_ab, d_ba)
+    W = dom_cfg["weights"]
+    out["features"] = [{
+        "group": k, "label_ru": FEATURE_LABELS[k][0], "label_en": FEATURE_LABELS[k][1],
+        "state": F[k][0], "value": F[k][1], "detail": F[k][2], "weight": float(W.get(k, 0) or 0),
+        "prior": priors[k],
+    } for k in FEATURE_KEYS]
+    out["a_to_b"], out["b_to_a"], out["reciprocal"] = d_ab, d_ba, rec
+
+    disc_ok = (d_ab["lcb"] >= float(dom_cfg["discovery_min_lcb"]) and
+               d_ab["coverage"] >= float(dom_cfg["discovery_min_coverage"]))
+    step("discovery thresholds", disc_ok or tier in ("T0", "T1"),
+         "lcb %.3f vs %.2f, coverage %.3f vs %.2f" % (d_ab["lcb"], float(dom_cfg["discovery_min_lcb"]),
+                                                      d_ab["coverage"], float(dom_cfg["discovery_min_coverage"])))
+    if not disc_ok and tier not in ("T0", "T1"):
+        out["drop_reason"] = "below discovery thresholds and not a direct match"
+        return out
+
+    band = assign_band(d_ab["lcb"], d_ab["coverage"], cfg["user_facing_bands"]) if disc_ok else "needs_clarification"
+    readiness = readiness_state(cand, domain, now_ts, cfg,
+                                received24.get(str(cand.get("name", "")).strip().lower(), 0))
+    outreach_tier_ok = tier in ("T0", "T1") or (tier == "T2" and bool(intent.get("broadConsent")))
+    thr_ok = (d_ab["lcb"] >= float(dom_cfg["outreach_min_lcb"]) and
+              d_ab["coverage"] >= float(dom_cfg["outreach_min_coverage"]))
+    can_outreach = bool(outreach_tier_ok and readiness == "open_now" and thr_ok)
+    step("readiness", readiness == "open_now", "%s (%s)" % (readiness, READINESS_LABELS[readiness][1]))
+    step("outreach tier/consent", outreach_tier_ok,
+         "%s%s" % (tier, "" if outreach_tier_ok else " needs broadConsent" if tier == "T2" else " never allows outreach"))
+    step("outreach thresholds", thr_ok,
+         "lcb %.3f vs %.2f, coverage %.3f vs %.2f" % (d_ab["lcb"], float(dom_cfg["outreach_min_lcb"]),
+                                                      d_ab["coverage"], float(dom_cfg["outreach_min_coverage"])))
+    rs_ru, rs_en, _legacy, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg)
+    out.update({"shown": True, "band": band, "band_ru": BAND_LABELS[band][0],
+                "readiness": readiness, "readiness_ru": READINESS_LABELS[readiness][0],
+                "can_outreach": can_outreach, "score": round(d_ab["lcb"] * 100, 1),
+                "reasons_ru": rs_ru, "reasons_en": rs_en, "gap_ru": gap_ru, "gap_en": gap_en})
+    return out
+
 def search(intent, prof, ctx, candidates, H, cfg):
     """Score policy-ALLOWED candidates. Returns (slate, meta). `H` injects the taxonomy helpers
     from app.py: {'topical', 'cat_of', 'reciprocal', 'role_conflict'} — taxonomy stays single-sourced."""

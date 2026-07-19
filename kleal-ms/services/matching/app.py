@@ -914,6 +914,49 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, res)
             except Exception as e:
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
+        elif p == "/api/agent/explain":
+            # Decision trace for ONE pair (spec §21.3) — powers the admin Matching lab. Read-only:
+            # runs the same gates + scoring as /match but reports WHY a candidate was dropped.
+            intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
+            who = str(body.get("candidate") or "").strip().lower()
+            try:
+                cand = next((c for c in load_candidates()
+                             if str(c.get("name", "")).strip().lower() == who), None)
+                if cand is None:
+                    send_json(self, 200, {"ok": False, "error": "candidate not found in store"})
+                elif not CORE_V2:
+                    send_json(self, 200, {"ok": False, "error": "core v2 disabled (KLEAL_CORE_V2=0)"})
+                else:
+                    sess = _session(ctx.get("uid", "me"))
+                    gate_ctx = {"feedback": dict(sess.get("feedback") or {}),
+                                "blocked": set(sess.get("blocked") or []) | set(ctx.get("blocked") or [])}
+                    self_name = str(ctx.get("self") or prof.get("name") or "").strip().lower()
+                    ctx2 = dict(ctx)
+                    ctx2.setdefault("received24", _proposals_received_24h())
+                    Hh = {"topical": topical, "cat_of": cat_of, "reciprocal": _reciprocal,
+                          "role_conflict": ROLE_CONFLICT}
+                    if self_name and str(cand.get("name", "")).strip().lower() == self_name:
+                        send_json(self, 200, {"ok": True, "trace": {
+                            "name": cand.get("name"), "shown": False, "steps": [
+                                {"step": "self-match guard", "ok": False,
+                                 "detail": "the searcher is never matched to themselves"}],
+                            "drop_reason": "self-match: searcher == candidate"}})
+                    else:
+                        ok, why = _hard_gates(intent, cand, gate_ctx)
+                        if not ok:
+                            send_json(self, 200, {"ok": True, "trace": {
+                                "name": cand.get("name"), "shown": False, "steps": [
+                                    {"step": "eligibility hard gates", "ok": False, "detail": why}],
+                                "drop_reason": "blocked by policy: %s" % why}})
+                        else:
+                            tr = _core.explain(intent, prof, ctx2, cand, Hh, _CORE_CFG)
+                            tr["steps"].insert(0, {"step": "eligibility hard gates", "ok": True,
+                                                   "detail": "ALLOW"})
+                            send_json(self, 200, {"ok": True, "trace": tr})
+            except Exception as e:
+                send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         elif p == "/api/agent/feedback":
             ok = record_feedback(body.get("name"), body.get("decision"), body.get("uid", "me"))
             send_json(self, 200, {"ok": bool(ok), "feedback": _session("me").get("feedback")})

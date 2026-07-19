@@ -189,6 +189,32 @@ def clear_users():
     return True
 
 
+def _match_post(path, payload, timeout=30):
+    """Call the matching service (read-only endpoints). Returns its JSON or {'error': ...}."""
+    req = urllib.request.Request(MATCH_URL + path, data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return {"error": "%s: %s" % (type(e).__name__, str(e)[:160])}
+
+
+def _searcher_profile(body):
+    """Profile of the person running the search: a store user by name/id, or a custom dict.
+    Shaped the way the matching engine reads it (name/vibe/geo/langs/interests)."""
+    who = str(body.get("self") or "").strip().lower()
+    if who:
+        for u in _read():
+            if str(u.get("name", "")).strip().lower() == who or str(u.get("id", "")) == who:
+                return {"name": u.get("name"), "vibe": u.get("vibe"), "geo": u.get("geo"),
+                        "langs": u.get("langs") or [], "interests": u.get("interests") or [],
+                        "role": u.get("role"), "km": u.get("km")}, u
+    p = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+    p.setdefault("name", body.get("self") or "Tester")
+    return p, None
+
+
 def _path(handler):
     return handler.path.split("?", 1)[0]
 
@@ -218,6 +244,28 @@ class H(BaseHTTPRequestHandler):
             uid = p[len("/api/admin/user/"):]
             u = update_user(uid, body)
             send_json(self, 200 if u else 404, {"ok": bool(u), "user": u})
+        elif p == "/api/admin/match-test":
+            # Matching lab: run a real search as any stored person. Read-only — nothing is written,
+            # no proposals are sent (that is /api/agent/negotiate, deliberately not exposed here).
+            prof, rec = _searcher_profile(body)
+            intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            ctx = {"self": prof.get("name") or "", "uid": "admin-lab"}
+            if body.get("now"):
+                ctx["now"] = float(body["now"])
+            r = _match_post("/api/agent/match", {"intent": intent, "profile": prof, "ctx": ctx})
+            send_json(self, 200, {"ok": "error" not in r, "searcher": prof,
+                                  "searcherKnown": bool(rec), "intent": r.get("intent", intent),
+                                  "candidates": r.get("candidates") or [], "error": r.get("error")})
+        elif p == "/api/admin/explain":
+            # Why did (or didn't) B show up for A's search — full per-feature decision trace.
+            prof, _rec = _searcher_profile(body)
+            intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            ctx = {"self": prof.get("name") or "", "uid": "admin-lab"}
+            if body.get("now"):
+                ctx["now"] = float(body["now"])
+            r = _match_post("/api/agent/explain", {"intent": intent, "profile": prof, "ctx": ctx,
+                                                   "candidate": body.get("candidate")})
+            send_json(self, 200, r)
         elif p == "/api/admin/clear":
             send_json(self, 200, {"ok": clear_users(), "count": 0})
         elif p == "/api/admin/reseed":
@@ -274,11 +322,42 @@ td.wrap2{white-space:normal;max-width:220px}
 .chk input{min-width:auto}
 .adv{border-top:1px dashed #e7e8ec;margin-top:14px;padding-top:6px}
 .advtog{cursor:pointer;color:#f5455c;font-size:12px;font-weight:600;user-select:none}
+/* --- Matching lab --- */
+.tabs{display:flex;gap:6px;margin-left:8px}
+.tab{padding:6px 13px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:#6b7180;border:1px solid transparent}
+.tab.on{background:#fde7eb;color:#c32b40;border-color:#f7c9d2}
+.band{display:inline-block;border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:700;white-space:nowrap}
+.band.especially_close{background:#e9f9f0;color:#12854a}
+.band.strong_option{background:#eaf3ff;color:#1c62c4}
+.band.broader_option{background:#fff5e6;color:#a86400}
+.band.needs_clarification{background:#f1f2f5;color:#6b7180}
+.tierb{display:inline-block;border-radius:5px;padding:1px 6px;font-size:11px;font-weight:700;background:#f1f2f5;color:#5b6170}
+.tierb.T0,.tierb.T1{background:#e9f9f0;color:#1f9d57}
+.rdy{font-size:11.5px;color:#6b7180}
+.rdy.open_now{color:#1f9d57;font-weight:600}
+.rdy.paused,.rdy.busy{color:#c32b40}
+.yes{color:#1f9d57;font-weight:700}.no{color:#b7bcc6}
+.preset{background:#f1f2f5;color:#3a3f4b;font-weight:600;font-size:12px;padding:5px 10px;border-radius:8px;cursor:pointer;border:none}
+.preset:hover{background:#e7e8ec}
+.trace{background:#fbfbfc;border:1px solid #e7e8ec;border-radius:12px;padding:14px;margin-top:12px}
+.stepr{display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:3px 0;border-bottom:1px dashed #eef0f3}
+.stepr b{min-width:190px;display:inline-block}
+.ok{color:#1f9d57;font-weight:700}.bad{color:#e5384f;font-weight:700}
+.fstate{font-size:11px;border-radius:5px;padding:1px 6px;font-weight:600}
+.fstate.known_match{background:#e9f9f0;color:#1f9d57}
+.fstate.known_mismatch{background:#fdecee;color:#e5384f}
+.fstate.unknown{background:#fff5e6;color:#a86400}
+.fstate.not_applicable{background:#f1f2f5;color:#8a909c}
+.metric{display:inline-block;margin-right:14px;font-size:12px;color:#6b7180}
+.metric b{color:#181b22;font-size:13px}
+.drop{background:#fdecee;color:#a3243a;border-radius:9px;padding:10px 12px;font-size:13px;font-weight:600}
+.hint{font-size:11.5px;color:#8a909c;margin-top:3px}
 </style></head><body>
 <div id="app"></div>
 <div class="toast" id="toast"></div>
 <script>
 let TOK=sessionStorage.getItem('kleal_admin_tok')||'', USERS=[], Q='', editing=null;
+let TAB='users', LAB={running:false,res:null,err:null,trace:null,traceFor:'',lastIntent:null,searcher:null};
 const $=s=>document.querySelector(s), esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800);}
 async function api(path,opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json','X-Admin-Token':TOK},opts.headers||{});const r=await fetch(path,opts);if(r.status===401){TOK='';sessionStorage.removeItem('kleal_admin_tok');render();throw new Error('unauthorized');}return r.json();}
@@ -324,14 +403,199 @@ function gate(){
 async function tryLogin(){TOK=$('#tok').value.trim();const r=await fetch('/api/admin/ping',{headers:{'X-Admin-Token':TOK}}).then(x=>x.json()).catch(()=>({}));
   if(r&&r.ok){sessionStorage.setItem('kleal_admin_tok',TOK);load();}else{toast('Wrong token');}}
 
+// ============================ Matching lab ============================
+// Runs REAL searches through the matching service (same engine the app uses) and shows the
+// per-feature decision trace, so a tester can see exactly why someone did or didn't match.
+const PRESETS=[
+  ['Кофе (RU)',{topics:'кофе',type:'social',role:'meet',time:'Today evening'}],
+  ['Coffee (EN)',{topics:'coffee',type:'social',role:'meet',time:'Today evening'}],
+  ['Дота вечером',{topics:'дота, dota 2',type:'gaming',role:'play',time:'tonight'}],
+  ['Падель завтра',{topics:'падель, padel',type:'sport',role:'play',time:'Tomorrow 19:00'}],
+  ['Прогулка',{topics:'прогулка, погулять',type:'social',role:'meet',time:'Today evening'}],
+  ['Испанский',{topics:'испанский, практика языка',type:'language',role:'practise',time:'Flexible'}],
+  ['Стартапы + AI',{topics:'стартапы, ai, кофе',type:'networking',role:'discuss',time:'This week'}],
+  ['Смотреть Барсу',{topics:'смотреть футбол, барса',type:'social',role:'watch',time:'tonight'}],
+  ['Книги',{topics:'книги, кофе',type:'social',role:'discuss',time:'This weekend'}],
+  ['Свидание',{topics:'прогулки, кино',type:'dating',role:'meet',time:'This weekend'}],
+];
+const NOW_QUIET=1752613200; // локальное 23:00 — внутри тихих часов 22:00–09:00
+function labIntent(){
+  const topics=gv('#l_topics').split(',').map(s=>s.trim()).filter(Boolean);
+  const it={topics:topics,type:gv('#l_type'),role:gv('#l_role'),mode:gv('#l_mode'),time:gv('#l_time')||'Flexible'};
+  const rk=+gv('#l_radius'); if(rk>0) it.radiusKm=rk;
+  const rl=gv('#l_langs').split(',').map(s=>s.trim()).filter(Boolean); if(rl.length) it.requiredLanguages=rl;
+  const mn=+gv('#l_minage'), mx=+gv('#l_maxage'); if(mn>0) it.minAge=mn; if(mx>0) it.maxAge=mx;
+  if(gc('#l_ver')) it.verifiedOnly=true;
+  if(gc('#l_consent')) it.broadConsent=true;
+  if(gc('#l_exact')) it.exactMatchRequired=true;
+  if(!gc('#l_adj')) it.adjacentAllowed=false;
+  return it;
+}
+function labBody(extra){
+  const b={self:gv('#l_self'),intent:labIntent()};
+  if(gc('#l_quiet')) b.now=NOW_QUIET;
+  return Object.assign(b,extra||{});
+}
+function applyPreset(i){const p=PRESETS[i][1];
+  const s=(id,v)=>{const e=$(id);if(e)e.value=v;};
+  s('#l_topics',p.topics);s('#l_type',p.type);s('#l_role',p.role);s('#l_time',p.time);
+  runLab();
+}
+async function runLab(){
+  LAB.running=true;LAB.err=null;LAB.trace=null;render();
+  try{
+    const r=await api('/api/admin/match-test',{method:'POST',body:JSON.stringify(labBody())});
+    LAB.res=r.candidates||[];LAB.err=r.error||null;LAB.lastIntent=r.intent||null;
+    LAB.searcher=r.searcher||null;LAB.searcherKnown=!!r.searcherKnown;
+  }catch(e){LAB.err=String(e);LAB.res=null;}
+  LAB.running=false;render();
+}
+async function explain(name){
+  LAB.traceFor=name;LAB.trace='loading';render();
+  try{
+    const r=await api('/api/admin/explain',{method:'POST',body:JSON.stringify(labBody({candidate:name}))});
+    LAB.trace=r.ok?(r.trace||null):{error:r.error||'failed'};
+  }catch(e){LAB.trace={error:String(e)};}
+  render();
+}
+function explainTyped(){const n=gv('#l_who').trim();if(!n){toast('Впиши имя человека');return;}explain(n);}
+function traceView(t){
+  if(t==='loading') return '<div class="trace muted">Считаю трейс…</div>';
+  if(!t) return '';
+  if(t.error) return `<div class="trace"><div class="drop">${esc(t.error)}</div></div>`;
+  const steps=(t.steps||[]).map(s=>`<div class="stepr"><span class="${s.ok?'ok':'bad'}">${s.ok?'✓':'✗'}</span>
+      <b>${esc(s.step)}</b><span class="muted">${esc(s.detail||'')}</span></div>`).join('');
+  const feats=(t.features||[]).map(f=>`<tr>
+      <td>${esc(f.label_ru)}</td>
+      <td><span class="fstate ${f.state}">${f.state}</span></td>
+      <td>${f.value==null?'<span class="muted">prior '+f.prior+'</span>':f.value}</td>
+      <td class="muted">${f.weight.toFixed(2)}</td>
+      <td class="muted wrap2">${esc(f.detail||'')}</td></tr>`).join('');
+  const ab=t.a_to_b||{}, ba=t.b_to_a||{};
+  return `<div class="trace">
+    <div class="bar"><h2 style="margin:0">Трейс: ${esc(t.name)}</h2>
+      <span class="muted" style="font-size:12px">домен ${esc(t.domain||'—')} · ${esc(t.config_version||'')}</span></div>
+    ${t.drop_reason?`<div class="drop">Не показан: ${esc(t.drop_reason)}</div>`:
+      `<div><span class="metric">Уровень <b>${esc(t.band_ru||t.band||'')}</b></span>
+        <span class="metric">Tier <b>${esc(t.tier||'')}</b></span>
+        <span class="metric">Готовность <b>${esc(t.readiness_ru||t.readiness||'')}</b></span>
+        <span class="metric">Можно писать <b class="${t.can_outreach?'yes':'no'}">${t.can_outreach?'да':'нет'}</b></span></div>`}
+    <div class="sec">Шаги решения</div>${steps}
+    ${feats?`<div class="sec">Признаки (7 групп, спека §6.1)</div><div class="tabler"><table>
+      <thead><tr><th>Группа</th><th>Состояние</th><th>Значение</th><th>Вес</th><th>Детали</th></tr></thead>
+      <tbody>${feats}</tbody></table></div>`:''}
+    ${ab.mean!=null?`<div class="sec">Итог</div>
+      <span class="metric">A→B mean <b>${ab.mean}</b></span>
+      <span class="metric">coverage <b>${ab.coverage}</b></span>
+      <span class="metric">lcb <b>${ab.lcb}</b></span>
+      <span class="metric">B→A lcb <b>${ba.lcb!=null?ba.lcb:'—'}</b></span>
+      <span class="metric">взаимность <b>${t.reciprocal!=null?t.reciprocal:'—'}</b></span>
+      ${(ab.unknowns||[]).length?`<div class="hint">Не хватает данных: ${ab.unknowns.map(esc).join(', ')}</div>`:''}
+      ${t.gap_ru?`<div class="hint">Компромисс: ${esc(t.gap_ru)}</div>`:''}`:''}
+  </div>`;
+}
+function labView(){
+  const opts=USERS.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)))
+    .map(u=>`<option value="${esc(u.name)}">${esc(u.name)}${(u.intents||[]).length?' ↔':''}</option>`).join('');
+  const rows=(LAB.res||[]).map((c,i)=>`<tr>
+      <td class="muted">${i+1}</td>
+      <td><b>${esc(c.name)}</b></td>
+      <td><span class="tierb ${esc(c.tier)}">${esc(c.tier)}</span></td>
+      <td><span class="band ${esc(c.band||'')}">${esc(c.band_ru||c.band||'')}</span></td>
+      <td><span class="rdy ${esc(c.readiness||'')}">${esc(c.readiness_ru||c.readiness||'')}</span></td>
+      <td class="${c.can_outreach?'yes':'no'}">${c.can_outreach?'да':'нет'}</td>
+      <td>${c.score}</td>
+      <td class="muted">${c.coverage!=null?c.coverage:'—'}</td>
+      <td class="wrap2">${(c.reasons_ru||c.reasons||[]).slice(0,3).map(esc).join(' · ')}
+        ${c.gap_ru?`<div class="hint">${esc(c.gap_ru)}</div>`:''}</td>
+      <td class="wrap2 muted">${(c.interests||[]).slice(0,4).map(i=>`<span class="tag">${esc(i)}</span>`).join('')}</td>
+      <td style="text-align:right"><button class="ghost mini" onclick="explain('${esc(c.name).replace(/'/g,"\\'")}')">Трейс</button></td>
+    </tr>`).join('');
+  return `<div class="wrap">
+    <div class="card"><h2>Кто ищет</h2>
+      <div class="row">
+        <div style="flex:1;min-width:240px"><label>Искатель (профиль берётся из базы)</label>
+          <select id="l_self" style="width:100%">${opts}</select>
+          <div class="hint">Интересы, гео, вайб и языки берутся из его карточки. Сам себя он никогда не найдёт.</div></div>
+        <label class="chk" style="align-self:end;padding-bottom:8px"><input id="l_quiet" type="checkbox"> ночь (тихие часы 23:00)</label>
+      </div>
+      <div class="sec">Запрос</div>
+      <div class="row">
+        <div style="flex:1;min-width:260px"><label>Темы (через запятую)</label><input id="l_topics" style="width:100%" placeholder="кофе, книги" value="кофе"></div>
+        <div><label>Тип</label><select id="l_type">${['social','gaming','sport','language','networking','dating','dinner','other'].map(v=>`<option>${v}</option>`).join('')}</select></div>
+        <div><label>Роль</label><select id="l_role">${ROLES.map(v=>`<option${v==='meet'?' selected':''}>${v}</option>`).join('')}</select></div>
+        <div><label>Режим</label><select id="l_mode"><option>offline</option><option>online</option></select></div>
+        <div><label>Время</label><input id="l_time" style="min-width:130px" value="Today evening"></div>
+      </div>
+      <div class="adv"><span class="advtog" onclick="toggleAdv2()">▸ Границы поиска (гейты и согласия)</span>
+        <div id="advbox2" style="display:none;margin-top:10px"><div class="row">
+          <div><label>Радиус, км</label><input id="l_radius" type="number" style="min-width:100px" placeholder="—"></div>
+          <div><label>Обязательные языки</label><input id="l_langs" style="min-width:130px" placeholder="es"></div>
+          <div><label>Возраст от</label><input id="l_minage" type="number" style="min-width:100px" placeholder="—"></div>
+          <div><label>до</label><input id="l_maxage" type="number" style="min-width:80px" placeholder="—"></div>
+        </div><div class="row" style="margin-top:8px">
+          <label class="chk"><input id="l_ver" type="checkbox"> только верифицированные</label>
+          <label class="chk"><input id="l_consent" type="checkbox"> согласие на широкий поиск (T2 outreach)</label>
+          <label class="chk"><input id="l_exact" type="checkbox"> только точные совпадения</label>
+          <label class="chk"><input id="l_adj" type="checkbox" checked> разрешить смежные (T3)</label>
+        </div></div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        ${PRESETS.map((p,i)=>`<button class="preset" onclick="applyPreset(${i})">${esc(p[0])}</button>`).join('')}
+      </div>
+      <div class="row" style="margin-top:12px;justify-content:space-between">
+        <div style="display:flex;gap:8px;align-items:end">
+          <div><label>Проверить конкретного человека</label><input id="l_who" placeholder="имя из базы" style="min-width:200px"></div>
+          <button class="ghost" onclick="explainTyped()">Почему не нашёлся?</button>
+        </div>
+        <button onclick="runLab()">${LAB.running?'Ищу…':'Запустить матчинг'}</button>
+      </div>
+    </div>
+    ${LAB.err?`<div class="card"><div class="drop">Ошибка: ${esc(LAB.err)}</div></div>`:''}
+    ${LAB.res?`<div class="card">
+      <div class="bar"><h2 style="margin:0">Результат — ${LAB.res.length} кандидат(ов)</h2>
+        <span class="muted" style="font-size:12px">${LAB.searcher?('от лица '+esc(LAB.searcher.name)):''}
+          ${LAB.searcherKnown===false?' · профиль не из базы':''}</span></div>
+      ${LAB.res.length?`<div class="tabler"><table>
+        <thead><tr><th>#</th><th>Имя</th><th>Tier</th><th>Уровень</th><th>Готовность</th><th>Писать</th>
+          <th>Score</th><th>Cov</th><th>Почему</th><th>Интересы</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`
+        :`<p class="muted" style="padding:14px 2px">Никто не подошёл. Это честный ответ движка: значит, у людей в базе нет реального пересечения с запросом (или их срезали гейты). Впиши имя ниже и нажми «Почему не нашёлся?», чтобы увидеть причину по конкретному человеку.</p>`}
+    </div>`:''}
+    ${traceView(LAB.trace)}
+    <p class="muted" style="font-size:12px">Лаборатория гоняет тот же движок, что и приложение (Matching Core v2). Ничего не пишется в базу и никому не отправляются предложения.</p>
+  </div>`;
+}
+function toggleAdv2(){const a=$('#advbox2');if(a)a.style.display=(a.style.display==='none'?'block':'none');}
+function setTab(t){TAB=t;render();}
+
 function render(){
   const q=Q.toLowerCase();
   const rows=USERS.filter(u=>!q||(u.name+' '+(u.interests||[]).join(' ')+' '+u.vibe).toLowerCase().includes(q));
   const flag=(u,f,label,warn)=>`<span class="flag ${warn?'warn':''} ${u[f]?'on':''}" title="${label}" onclick="toggle('${u.id}','${f}')">${u[f]?(warn?'❚':'✓'):'·'}</span>`;
-  $('#app').innerHTML=`<div class="top"><span class="logo">kleal</span><span class="pill">admin · test mode</span>
+  // keep the lab form's current values across re-renders (render() rebuilds the whole DOM)
+  const LF={};
+  if(TAB==='lab'){['l_self','l_topics','l_type','l_role','l_mode','l_time','l_radius','l_langs',
+    'l_minage','l_maxage','l_who'].forEach(id=>{const e=$('#'+id);if(e)LF[id]=e.value;});
+    ['l_quiet','l_ver','l_consent','l_exact','l_adj'].forEach(id=>{const e=$('#'+id);if(e)LF[id]=e.checked;});}
+  const head=`<div class="top"><span class="logo">kleal</span><span class="pill">admin · test mode</span>
+    <div class="tabs">
+      <button class="tab ${TAB==='users'?'on':''}" onclick="setTab('users')">Люди</button>
+      <button class="tab ${TAB==='lab'?'on':''}" onclick="setTab('lab')">Матчинг-лаборатория</button>
+    </div>
     <span class="muted" style="margin-left:auto">${USERS.length} users</span>
     <button class="ghost mini" onclick="reseed()">Reset to demo pool</button>
-    <button class="danger mini" onclick="clearAll()">Delete all users</button></div>
+    <button class="danger mini" onclick="clearAll()">Delete all users</button></div>`;
+  if(TAB==='lab'){
+    $('#app').innerHTML=head+labView();
+    setTimeout(()=>{Object.keys(LF).forEach(id=>{const e=$('#'+id);if(!e)return;
+      if(typeof LF[id]==='boolean')e.checked=LF[id];else e.value=LF[id];});
+      const adv=$('#advbox2');
+      if(adv&&(LF.l_radius||LF.l_langs||LF.l_minage||LF.l_maxage||LF.l_ver||LF.l_consent||LF.l_exact||LF.l_adj===false))adv.style.display='block';
+      const t=$('#l_topics'); if(t&&!t.value)t.value='кофе';},0);
+    return;
+  }
+  $('#app').innerHTML=head+`
   <div class="wrap">
     <div class="card"><h2>${editing?'Edit user':'Add user'}</h2>
 
