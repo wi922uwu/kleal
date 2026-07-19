@@ -282,6 +282,37 @@ def main():
                                     c.get("can_outreach")) for c in res[:8]]))
         if F:
             failures.append((sc["id"], F))
+    # --- ranking granularity guard -------------------------------------------------------------
+    # Distinct scores per slate. When this collapses, the top-8 order becomes arbitrary and the
+    # "best" person is not distinguishable (it was 42% before the continuous-distance fix).
+    gr_c = gr_d = 0
+    PROBES = [["кофе"], ["coffee"], ["дота", "dota 2"], ["падель"], ["футбол"], ["книги"],
+              ["испанский"], ["стартапы", "ai"], ["прогулка"], ["кино"], ["хайкинг"], ["рыбалка"],
+              ["пиво"], ["йога"], ["шахматы"], ["коворкинг"], ["фотография"], ["бег"]]
+    worst = ("", 0, 0)
+    for topics in PROBES:
+        res, _ms = run_match({"topics": topics, "type": "social", "role": "meet",
+                              "mode": "offline", "time": "Today evening"}, TESTER, NOW_OPEN)
+        if len(res) < 3:
+            continue
+        scores = [c.get("score") for c in res]
+        d = len(set(scores))
+        gr_c += len(scores); gr_d += d
+        if worst[1] == 0 or d < worst[1]:
+            worst = (topics[0], d, len(scores))
+    gran = 100.0 * gr_d / max(1, gr_c)
+    GRAN_MIN = 70.0
+    gran_ok = gran >= GRAN_MIN
+    print("\n%-5s granularity: %.0f%% distinct scores (min %.0f%%) | worst probe '%s': %d/%d distinct"
+          % ("PASS" if gran_ok else "FAIL", gran, GRAN_MIN, worst[0], worst[1], worst[2]))
+    if not gran_ok:
+        failures.append(("ranking_granularity",
+                         ["granularity %.0f%% below %.0f%% — slates tie and order is arbitrary" % (gran, GRAN_MIN)]))
+        results.append(dict(id="ranking_granularity", ok=False,
+                            failures=["granularity %.0f%%" % gran]))
+    else:
+        results.append(dict(id="ranking_granularity", ok=True, granularity=round(gran, 1)))
+
     n_ok = sum(1 for r in results if r.get("ok"))
     hard = sum(1 for _id, fs in failures for f in fs
                if f.startswith(("GATE", "SELF", "OUTREACH", "DATING", "SCORE", "CRASH", "NON-DET")))
