@@ -1167,7 +1167,7 @@ async function negotiateIntent(){
   if(curIntent.negotiated){ saveCurIntent(); return; }
   curIntent.negotiating=true; render();
   let r; try{ r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({intent:curIntent, candidates:curIntent.candidates||[]})}).then(x=>x.json()); }catch(e){ r=null; }
+    body:JSON.stringify({intent:(curIntent.intent||{topics:curIntent.tags||[],type:curIntent.type,role:curIntent.role,time:curIntent.time,mode:curIntent.mode}), candidates:curIntent.candidates||[]})}).then(x=>x.json()); }catch(e){ r=null; }
   if(r&&r.candidates&&r.candidates.length){ curIntent.candidates=r.candidates;
     curIntent.confidence=(r.candidates[0]&&r.candidates[0].score)||curIntent.confidence; }
   curIntent.negotiating=false; curIntent.negotiated=true; curIntent.status='matched';
@@ -1342,7 +1342,7 @@ function scr_buddychat(){
     if(x.match&&x.match.top){ const t=x.match.top; const why=candReasons(t).slice(0,2).concat(readinessChip(t)?[readinessChip(t)]:[]).join(' · ');
       return row+`<div class="card" style="margin:2px 0 2px 43px"><div class="candrow">
         <div class="candav">${esc(String(t.name||'?')[0])}${t.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':''}</div>
-        <div class="candt"><div class="candn">${esc(t.name)} <span class="candkm">${t.km} km</span></div><div class="cands">${esc(why)}</div></div>
+        <div class="candt"><div class="candn">${esc(t.name)} <span class="candkm">${t.km!=null?t.km+' '+T('км','km'):''}</span></div><div class="cands">${esc(why)}</div></div>
         <div class="candsc"><div class="candpct">${esc(bandLabel(t))}</div></div>
         <button class="introbtn" data-act="buddy-intro" data-bi="${i}">${T('Познакомиться','Intro')}</button></div></div>`; }
     return row;
@@ -1548,7 +1548,7 @@ function scr_intentchat(){
         :(c.tier?`<span style="font-size:10px;font-weight:700;color:var(--muted);background:var(--field);border-radius:6px;padding:1px 5px;margin-left:5px">${esc(c.tier)}</span>`:'');
       const vtick=c.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':'';
       return `<div class="candrow" style="${c.passed?'opacity:.5':''}"><div class="candav">${esc(String(c.name||'?')[0])}</div>
-      <div class="candt"><div class="candn">${esc(c.name)}${vtick}${tier} <span class="candkm">${c.km} km</span></div>
+      <div class="candt"><div class="candn">${esc(c.name)}${vtick}${tier} <span class="candkm">${c.km!=null?c.km+' '+T('км','km'):''}</span></div>
         <div class="cands">${esc(sub)}</div></div>
       <div class="candsc"><div class="candpct">${esc(bandLabel(c))}</div>${status}</div>
       ${(!negot&&c.agree&&!c.passed)?`<button class="introbtn" data-act="intro" data-ci="${i}">${T('Познакомиться','Intro')}</button>

@@ -818,6 +818,29 @@ def negotiate_one(intent, cand):
     return {"agree": acc, "reason": ('good fit and free today' if acc else ('not free today' if not avail else 'fit is a bit weak')),
             "reply": None, "decided": False}
 
+def _normalize_intent(raw):
+    """Accept the shapes clients actually send. The profile UI posts its CARD object, where the
+    topics live in `tags` and the real intent is nested under `intent` — so the engine saw an
+    intent with NO topics, tiered everyone as T5 ("no meaningful topical overlap") and declined
+    the whole slate. Be liberal here: a missing topic list is never a legitimate search."""
+    if not isinstance(raw, dict):
+        return {}
+    it = dict(raw)
+    inner = raw.get("intent")
+    if isinstance(inner, dict):                       # card wrapper -> use the real intent
+        merged = dict(inner)
+        for k, v in it.items():
+            if k != "intent" and k not in merged:
+                merged[k] = v
+        it = merged
+    if not it.get("topics"):
+        for alt in ("tags", "keywords"):
+            v = it.get(alt)
+            if isinstance(v, list) and v:
+                it["topics"] = [str(x) for x in v]
+                break
+    return it
+
 def _outreach_ok(intent, c, prof=None, ctx=None):
     """Full PERSONAL-outreach permission for the send path — the same verdict the slate computes,
     not a subset of it. It used to check only tier/consent, so a candidate the slate had marked
@@ -830,7 +853,10 @@ def _outreach_ok(intent, c, prof=None, ctx=None):
     if tr.get("can_outreach"):
         return True, ""
     if not tr.get("shown"):
-        return False, str(tr.get("drop_reason") or "not a match for this intent")
+        # user-facing copy: the trace's drop_reason is engine-speak ("no meaningful topical
+        # overlap (T5) — never proposed") and used to be printed verbatim on the card
+        return False, ("no shared interest with this request" if tr.get("tier") == "T5"
+                       else "not a match for this request")
     tier = tr.get("tier")
     if tier not in ("T0", "T1") and not (tier == "T2" and intent.get("broadConsent")):
         return False, "discovery only — needs broad consent for this match"
@@ -989,7 +1015,7 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, {"intent": _fallback_parse(q), "candidates": [], "error": str(e)[:200]})
         elif p == "/api/agent/match":
             # structured entry: caller (e.g. the buddy agent) already assembled the intent/signals -> skip LLM parse
-            intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            intent = _normalize_intent(body.get("intent"))
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
             try:
@@ -1059,7 +1085,7 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 send_json(self, 200, {"reply": "", "opener": "Hey! Want to make a plan?", "error": str(e)[:200]})
         elif p == "/api/agent/negotiate":
-            intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            intent = _normalize_intent(body.get("intent"))
             cands = body.get("candidates") if isinstance(body.get("candidates"), list) else []
             try:
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}

@@ -459,6 +459,28 @@ r = run(INTENT_COFFEE, PROF_RICH, [FULL, {"interests": ["coffee"]}])
 check("LAST8 a nameless record can't abort the whole search", by_name(r, "Full") is not None,
       [c["name"] for c in r])
 
+# ---------------------------------------------------------------- client intent shapes (from the app)
+card = {"title": "Soccer — встреча", "tags": ["soccer", "football", "sport", "match"],
+        "type": "sport", "role": "meet", "time": "tomorrow at 21", "mode": "offline"}
+n = app._normalize_intent(card)
+check("UI1 a card wrapper's tags are read as topics", n.get("topics") == card["tags"], n.get("topics"))
+wrapped = {"title": "x", "tags": ["ignored"], "candidates": [],
+           "intent": {"topics": ["football"], "type": "sport", "role": "play"}}
+n = app._normalize_intent(wrapped)
+check("UI2 a nested real intent wins over the wrapper", n.get("topics") == ["football"], n.get("topics"))
+check("UI3 a proper intent is untouched",
+      app._normalize_intent({"topics": ["coffee"]})["topics"] == ["coffee"])
+
+# the whole point: a card-shaped intent must still match football people
+football = mk("Footy", interests=["футбол"], geo=NEARBY, open=True, receiving=dict(RECV_ACTIVE))
+r = run(app._normalize_intent(card), PROF_RICH, [football])
+check("UI4 a card-shaped intent finds real candidates instead of tiering everyone T5",
+      by_name(r, "Footy") is not None, [c["name"] for c in r])
+allowed, why = app._outreach_ok({"topics": ["coffee"], "type": "social", "mode": "offline"},
+                                mk("Nope", interests=["скалолазание"]), PROF_RICH, {"now": NOW_OPEN})
+check("UI5 refusal copy is human, not engine-speak",
+      allowed is False and "T5" not in why and "topical overlap" not in why, why)
+
 print()
 if FAILURES:
     print("FAILED: %d test(s): %s" % (len(FAILURES), ", ".join(FAILURES)))
