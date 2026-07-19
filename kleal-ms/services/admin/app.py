@@ -441,12 +441,17 @@ function applyPreset(i){const p=PRESETS[i][1];
   s('#l_topics',p.topics);s('#l_type',p.type);s('#l_role',p.role);s('#l_time',p.time);
   runLab();
 }
+// Signature of the form as it was when the search ran. Without it a stale result silently looks
+// like the answer to whatever is typed now (type "Рыбалка" over a coffee run -> coffee people).
+function labSig(){const b=labBody();return JSON.stringify([b.self,b.intent,b.now||0]);}
 async function runLab(){
   LAB.running=true;LAB.err=null;LAB.trace=null;render();
+  const sig=labSig(), shown=gv('#l_topics');
   try{
     const r=await api('/api/admin/match-test',{method:'POST',body:JSON.stringify(labBody())});
     LAB.res=r.candidates||[];LAB.err=r.error||null;LAB.lastIntent=r.intent||null;
     LAB.searcher=r.searcher||null;LAB.searcherKnown=!!r.searcherKnown;
+    LAB.sig=sig;LAB.ranTopics=shown;LAB.ranWhen=(r.intent&&r.intent.time)||'';
   }catch(e){LAB.err=String(e);LAB.res=null;}
   LAB.running=false;render();
 }
@@ -552,10 +557,11 @@ function labView(){
       </div>
     </div>
     ${LAB.err?`<div class="card"><div class="drop">Ошибка: ${esc(LAB.err)}</div></div>`:''}
-    ${LAB.res?`<div class="card">
-      <div class="bar"><h2 style="margin:0">Результат — ${LAB.res.length} кандидат(ов)</h2>
+    ${LAB.res?`<div class="card" ${LAB.stale?'style="opacity:.55"':''}>
+      ${LAB.stale?`<div class="drop" style="margin-bottom:12px">Форма изменена — это результат прошлого запроса «${esc(LAB.ranTopics||'')}». Нажми «Запустить матчинг».</div>`:''}
+      <div class="bar"><h2 style="margin:0">Результат по запросу «${esc(LAB.ranTopics||'')}» — ${LAB.res.length} кандидат(ов)</h2>
         <span class="muted" style="font-size:12px">${LAB.searcher?('от лица '+esc(LAB.searcher.name)):''}
-          ${LAB.searcherKnown===false?' · профиль не из базы':''}</span></div>
+          ${LAB.ranWhen?(' · '+esc(LAB.ranWhen)):''}${LAB.searcherKnown===false?' · профиль не из базы':''}</span></div>
       ${LAB.res.length?`<div class="tabler"><table>
         <thead><tr><th>#</th><th>Имя</th><th>Tier</th><th>Уровень</th><th>Готовность</th><th>Писать</th>
           <th>Score</th><th>Cov</th><th>Почему</th><th>Интересы</th><th></th></tr></thead>
@@ -568,6 +574,19 @@ function labView(){
 }
 function toggleAdv2(){const a=$('#advbox2');if(a)a.style.display=(a.style.display==='none'?'block':'none');}
 function setTab(t){TAB=t;render();}
+// Re-evaluate staleness on every edit, without re-rendering (that would fight the caret).
+function labTouched(){
+  if(!LAB.res||!LAB.sig)return;
+  const st=(labSig()!==LAB.sig);
+  if(st!==LAB.stale){LAB.stale=st;render();}
+}
+function wireLab(){
+  ['l_self','l_topics','l_type','l_role','l_mode','l_time','l_radius','l_langs','l_minage','l_maxage']
+    .forEach(id=>{const e=$('#'+id);if(!e)return;e.oninput=labTouched;e.onchange=labTouched;});
+  ['l_quiet','l_ver','l_consent','l_exact','l_adj'].forEach(id=>{const e=$('#'+id);if(e)e.onchange=labTouched;});
+  const t=$('#l_topics');if(t)t.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();runLab();}};
+  const w=$('#l_who');if(w)w.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();explainTyped();}};
+}
 
 function render(){
   const q=Q.toLowerCase();
@@ -592,7 +611,8 @@ function render(){
       if(typeof LF[id]==='boolean')e.checked=LF[id];else e.value=LF[id];});
       const adv=$('#advbox2');
       if(adv&&(LF.l_radius||LF.l_langs||LF.l_minage||LF.l_maxage||LF.l_ver||LF.l_consent||LF.l_exact||LF.l_adj===false))adv.style.display='block';
-      const t=$('#l_topics'); if(t&&!t.value)t.value='кофе';},0);
+      const t=$('#l_topics'); if(t&&!t.value)t.value='кофе';
+      wireLab();},0);
     return;
   }
   $('#app').innerHTML=head+`
