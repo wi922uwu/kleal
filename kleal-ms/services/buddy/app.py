@@ -121,7 +121,9 @@ Known so far (baseline from their profile): __SIG__
 Reply as ONE JSON object only, nothing outside it:
 {"reply":"<your natural, helpful message>","signals":{<only fields you newly learned THIS turn; may include "interest">},"match":true|false}
 
-LANGUAGE: write "reply" in the SAME language the user writes in (they write Russian -> you answer in Russian). Every other value — signals, interest, topics, time, area — stays in ENGLISH, because the filtration and matching agents only understand English.'''
+LANGUAGE: write "reply" in the SAME language the user writes in (they write Russian -> you answer in Russian). Every other value — signals, interest, topics, time, area — stays in ENGLISH, because the filtration and matching agents only understand English.
+
+MEMORY: the conversation you are given is the WHOLE history — there is nothing before it. Never refer to things "we already talked about", never say "as I said" or "снова"/"again", and never claim to remember a person or a topic that is not in the text above. If the history starts with [FIRST MESSAGE], this person is talking to you for the very first time: greet them as a new acquaintance.'''
 
 
 # ======================= CANONICALISATION (make the intent rankable) =======================
@@ -449,6 +451,27 @@ def _title_for(topics, typ, lang):
     return "Встреча" if lang == "ru" else "Meet someone"
 
 
+# Online-native activities and explicit "let's do it online" cues. Hard-coding mode="offline" sent
+# ranked Dota to "public places nearby" and made the ranker demand geo feasibility for a game that
+# is played over the internet (spec §18.2: games are an online domain, location weight 0).
+_ONLINE_TOPICS = {"dota", "valorant", "cs", "league", "apex", "fortnite", "fifa", "overwatch",
+                  "gaming", "crypto"}
+_ONLINE_WORDS = ("online", "онлайн", "по сети", "удалённо", "удаленно", "remote", "voice", "video",
+                 "call", "созвон", "стрим", "stream", "discord", "дискорд", "zoom", "зум", "ranked",
+                 "ранкед", "каток", "катку", "катки")
+_OFFLINE_WORDS = ("offline", "офлайн", "оффлайн", "вживую", "встретиться", "meet up", "in person",
+                  "за столом", "в баре", "в кафе")
+
+def _infer_mode(topics, sig, last_user):
+    blob = (str(sig.get("interest") or "") + " " + str(last_user or "")).lower()
+    if any(w in blob for w in _OFFLINE_WORDS):
+        return "offline"
+    if any(w in blob for w in _ONLINE_WORDS):
+        return "online"
+    if any(str(t).lower() in _ONLINE_TOPICS for t in (topics or [])):
+        return "online"
+    return "offline"
+
 def build_intent(sig, cat, last_user, lang):
     """Filtration result + signals -> the intent matching ranks on.
     Machine fields are canonical English; the card fields follow the user's language."""
@@ -478,11 +501,13 @@ def build_intent(sig, cat, last_user, lang):
     dating = typ == "dating"
     demand = str(sig.get("interest") or "") + " " + str(last_user or "")
     req_langs = norm_langs(sig.get("languages")) if any(w in demand.lower() for w in LANG_DEMAND) else []
-    place = str(sig.get("area") or ("Публичные места рядом" if lang == "ru" else "Public places nearby"))[:60]
+    mode = _infer_mode(topics, sig, last_user)
+    place = str(sig.get("area") or (("Онлайн" if lang == "ru" else "Online") if mode == "online" else
+                                    ("Публичные места рядом" if lang == "ru" else "Public places nearby")))[:60]
     title = _title_for(tags or topics, typ, lang)
     return {
         # ---- machine-facing: matching-service reads exactly these ----
-        "title": title, "type": typ, "topics": topics or ["social"], "role": role, "mode": "offline",
+        "title": title, "type": typ, "topics": topics or ["social"], "role": role, "mode": mode,
         "category": cat.get("category"), "subcategory": cat.get("subcategory") or "",
         "time": sig.get("time") or ("Гибко" if lang == "ru" else "Flexible"),
         "place": place, "format": ("1:1 или небольшая группа" if lang == "ru" else "1:1 or small group"),
@@ -670,6 +695,10 @@ def buddy_chat(messages, profile, signals, uid=None):
     sig = _merge_signals(_baseline_signals(profile), signals)
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
                        else ("Buddy: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
+    # Without this marker the 70B invents a shared past on turn one ("Привет снова! Я уже отвечал…",
+    # "I've already told you…") — it reads a bare one-line history as the tail of a longer chat.
+    if sum(1 for m in (messages or []) if m.get("role") == "user") <= 1:
+        convo = "[FIRST MESSAGE — you have never spoken with this person before]\n" + convo
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     lang = detect_lang(last_user)
     obj = None

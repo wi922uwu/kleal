@@ -172,7 +172,13 @@ K_MATCH, K_MISM, UNKNOWN, NA = "known_match", "known_mismatch", "unknown", "not_
 # Parent must sit far below exact: with equal semantic/social weights (social_meet 0.18/0.18),
 # a higher parent anchor lets a same-vibe brunch person outscore a walker on a walk query.
 SEM_VALUE = {4: 1.0, 3: 0.6, 2: 0.3, 1: 0.15}
-GEO_BANDS = ((1.5, 1.0), (3.5, 0.85), (7.0, 0.65), (15.0, 0.45))
+GEO_FAR_KM = 25.0                                  # beyond this, distance stops discriminating
+
+def _geo_value(km):
+    """Continuous distance feasibility. Four fixed bands quantised everyone inside a neighbourhood
+    onto the SAME value, so whole slates tied on one score and the order fell back to the alphabet
+    (every "Lopez" first). A smooth ramp keeps "closer is better" meaningful at street level."""
+    return round(max(0.1, min(1.0, 1.0 - float(km) / GEO_FAR_KM)), 4)
 VIBE_CLASH = {("chill", "party"), ("calm", "energetic"), ("introvert", "extrovert"),
               ("competitive", "chill"), ("calm", "competitive")}
 LANG_WORDS = {"spanish": "es", "espanol": "es", "испан": "es", "english": "en", "англ": "en",
@@ -253,11 +259,7 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
         if km is None:
             F["location_feasibility"] = (UNKNOWN, None, "")
         else:
-            v = 0.15
-            for lim, val in GEO_BANDS:
-                if km <= lim:
-                    v = val
-                    break
+            v = _geo_value(km)
             F["location_feasibility"] = ((K_MATCH if v >= 0.45 else K_MISM), v, "%.1f km" % km)
 
     # 4. mode_format — candidates rarely declare formats; unknown, not assumed compatible
@@ -738,6 +740,7 @@ def search(intent, prof, ctx, candidates, H, cfg):
             "coverage": d_ab["coverage"], "lcb": d_ab["lcb"], "reciprocal": rec,
             "unknowns": d_ab["unknowns"], "can_outreach": can_outreach,
             "readiness": readiness, "readiness_ru": rdy_ru, "readiness_en": rdy_en,
+            "lastActiveDays": c.get("lastActiveDays"),   # allocation tie-break only, never relevance
             "trace": {"tier": tier, "policy": "ALLOW", "domain": domain,
                       "a_to_b": d_ab, "b_to_a": d_ba, "reciprocal": rec,
                       "band": band, "readiness": readiness,
@@ -747,11 +750,17 @@ def search(intent, prof, ctx, candidates, H, cfg):
     # precedes broader ones (T2/T3) inside a band (§7: expansion never masquerades as direct) —
     # then a reciprocal+directional composite (pure reciprocal is noisy when reverse data is
     # sparse, and allocation must not let that noise reorder quality).
+    # Final tie-break: recency of activity (an operational signal, spec §10.2 — never a relevance
+    # feature), then a stable name hash. Sorting by name alphabetically gave every slate the same
+    # surname bias ("Lopez" always first) and made exposure unfair (§11 fairness), so equal
+    # candidates are shuffled deterministically instead — same input, same order, no alphabet.
     tier_rank = {"T0": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4}
     out.sort(key=lambda x: (BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]],
                             tier_rank.get(x["tier"], 5),
                             -round(0.6 * x["reciprocal"] + 0.4 * x["lcb"], 6),
-                            -x["coverage"], str(x["name"])))
+                            -x["coverage"],
+                            min(int(x.get("lastActiveDays") or 9), 9),
+                            hashlib.sha1(str(x["name"]).encode("utf-8")).hexdigest()))
     meta = {"core": "v2", "config_version": cfg.get("config_version"), "domain": domain,
             "config_sha": cfg.get("_sha256", "")[:12]}
     return _slate(out), meta
