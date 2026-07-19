@@ -463,12 +463,16 @@ def readiness_state(cand, domain, now_ts, cfg, received_24h=0):
         return "unknown"
     if str(r.get("status") or "").lower() == "busy":
         return "busy"
-    cap = (r.get("proposal_budget") or {}).get("per_24h") or \
-        out_cfg.get("max_proposals_received_per_user_24h") or 4
+    # Opt-outs must fail CLOSED. Truthiness read `per_24h: 0` and `allowed_domains: []` as
+    # "not set" and fell back to the permissive default — so a user who explicitly asked for zero
+    # proposals, or allowed no domain at all, became MORE reachable than someone who set nothing.
+    pb = (r.get("proposal_budget") or {}).get("per_24h")
+    cap = pb if isinstance(pb, (int, float)) and not isinstance(pb, bool) else \
+        (out_cfg.get("max_proposals_received_per_user_24h") or 4)
     if received_24h >= int(cap):
         return "busy"                                   # proposal fatigue: overloaded today
     doms = r.get("allowed_domains")
-    if isinstance(doms, list) and doms and domain not in doms:
+    if isinstance(doms, list) and domain not in doms:
         return "passive_discovery"                      # visible in discovery, no personal proposals
     q = r.get("quiet_hours") or {}
     defaults = out_cfg.get("quiet_hours_local") or ["22:00", "09:00"]
@@ -497,15 +501,38 @@ def assign_band(lcb, cov, bands):
             return name
     return "needs_clarification"
 
+# Human-readable values for detail strings that would otherwise leak engine tokens into the copy
+_ROLE_RU = {"play": "поиграть", "watch": "посмотреть", "discuss": "обсудить",
+            "practise": "попрактиковаться", "attend": "сходить", "meet": "встретиться"}
+_DETAIL_RU = {"same community": "то же сообщество", "open now": "свободен(на)"}
+_LANG_RU = {"es": "испанский", "en": "английский", "ru": "русский", "fr": "французский",
+            "de": "немецкий", "it": "итальянский", "ca": "каталанский", "pt": "португальский"}
+
+def _ru_detail(d):
+    """Translate a detail token for Russian copy — 'same community', a role or a language code
+    used to appear verbatim inside otherwise-Russian reasons."""
+    s = str(d or "")
+    if s in _DETAIL_RU:  return _DETAIL_RU[s]
+    if s in _ROLE_RU:    return _ROLE_RU[s]
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    if parts and all(p in _LANG_RU for p in parts):
+        return ", ".join(_LANG_RU[p] for p in parts)
+    return s
+
 _REASON = {
+    # NOTE: time_feasibility is only rendered when the group is a known_match, i.e. the person
+    # really is open now — the card used to claim "открыт(а) к встрече сейчас" next to a
+    # readiness chip that said "занят", because the wording ignored the actual state.
     "semantic_activity":   lambda d: (("общее: %s" % d, "shares %s" % d) if d else
                                       ("близкая тема", "related topic")),
-    "time_feasibility":    lambda d: ("открыт(а) к встрече сейчас", "open to meet now"),
-    "location_feasibility":lambda d: ("рядом (%s)" % d, "nearby (%s)" % d),
+    "time_feasibility":    lambda d: ("свободен(на) в это время", "free at that time"),
+    "location_feasibility":lambda d: ("рядом (%s)" % str(d).replace(" km", " км"), "nearby (%s)" % d),
     "mode_format":         lambda d: ("совпадает формат", "format fits"),
-    "directed_preferences":lambda d: ("подходящая роль (%s)" % d, "matching role (%s)" % d),
+    "directed_preferences":lambda d: ("подходящая роль (%s)" % _ru_detail(d),
+                                      "matching role (%s)" % d),
     "social_context":      lambda d: ("похожий вайб", "similar vibe"),
-    "domain_constraints":  lambda d: ("совпадают условия (%s)" % d, "constraints fit (%s)" % d),
+    "domain_constraints":  lambda d: ("совпадают условия (%s)" % _ru_detail(d),
+                                      "constraints fit (%s)" % d),
 }
 _GAP = {
     "semantic_activity":   ("интересы не заполнены", "interests not filled in"),
@@ -532,11 +559,15 @@ _GAP_MISMATCH = {
     "domain_constraints":  (lambda d: ("условия не совпадают", "constraints don't match")),
 }
 
-def _presentation(F, d_ab, dom_cfg):
+def _presentation(F, d_ab, dom_cfg, readiness=None):
     """2-3 confirmed reasons (known_match only — never invented facts) + the single top gap."""
     W = dom_cfg["weights"]
     known = [(float(W.get(k, 0)) * float(v), k, d)
              for k, (st, v, d) in F.items() if st == K_MATCH and float(W.get(k, 0)) > 0]
+    # never claim availability that contradicts the readiness chip on the same card: the legacy
+    # 'open' flag and the receiving policy can disagree (open=True but quiet hours / busy)
+    if readiness and readiness != "open_now":
+        known = [x for x in known if x[1] != "time_feasibility"]
     known.sort(key=lambda x: -x[0])
     rs_ru, rs_en, legacy = [], [], []
     for _wv, k, d in known[:3]:
@@ -691,8 +722,9 @@ def explain(intent, prof, ctx, cand, H, cfg):
     step("outreach thresholds", thr_ok,
          "lcb %.3f vs %.2f, coverage %.3f vs %.2f" % (d_ab["lcb"], float(dom_cfg["outreach_min_lcb"]),
                                                       d_ab["coverage"], float(dom_cfg["outreach_min_coverage"])))
-    rs_ru, rs_en, _legacy, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg)
+    rs_ru, rs_en, _legacy, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg, readiness)
     out.update({"shown": True, "band": band, "band_ru": BAND_LABELS[band][0],
+                "band_en": BAND_LABELS[band][1], "readiness_en": READINESS_LABELS[readiness][1],
                 "readiness": readiness, "readiness_ru": READINESS_LABELS[readiness][0],
                 "can_outreach": can_outreach, "score": round(d_ab["lcb"] * 100, 1),
                 "reasons_ru": rs_ru, "reasons_en": rs_en, "gap_ru": gap_ru, "gap_en": gap_en})
@@ -738,7 +770,7 @@ def search(intent, prof, ctx, candidates, H, cfg):
         can_outreach = (outreach_tier_ok and readiness == "open_now" and
                         d_ab["lcb"] >= float(dom_cfg["outreach_min_lcb"]) and
                         d_ab["coverage"] >= float(dom_cfg["outreach_min_coverage"]))
-        rs_ru, rs_en, legacy_reasons, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg)
+        rs_ru, rs_en, legacy_reasons, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg, readiness)
         matched = F["semantic_activity"][2] or ""
         bucket = (H["cat_of"](matched.split(", ")[0])[0] if matched else
                   H["cat_of"]((c.get("interests") or ["x"])[0])[0]) or "other"

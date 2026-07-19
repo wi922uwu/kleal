@@ -393,6 +393,47 @@ c = by_name(run(INTENT_COFFEE, PROF_RICH, [ru]), "RuWords")
 check("QUAL11 reason quotes the candidate's own interest string, not the canonical token",
       c and "кофе" in " ".join(c.get("reasons_ru") or []), (c or {}).get("reasons_ru"))
 
+# ---------------------------------------------------------------- opt-outs must fail closed
+zero_budget = mk("ZeroBudget", interests=["coffee"], geo=NEARBY, open=True,
+                 receiving=dict(RECV_ACTIVE, proposal_budget={"per_24h": 0}))
+c = by_name(run(INTENT_COFFEE, PROF_RICH, [zero_budget]), "ZeroBudget")
+check("PRIV1 proposal budget of 0 means zero proposals, not 'unset'",
+      c and c["readiness"] == "busy" and c["can_outreach"] is False, (c or {}).get("readiness"))
+
+no_domains = mk("NoDomains", interests=["coffee"], geo=NEARBY, open=True,
+                receiving=dict(RECV_ACTIVE, allowed_domains=[]))
+c = by_name(run(INTENT_COFFEE, PROF_RICH, [no_domains]), "NoDomains")
+check("PRIV2 an empty allowed_domains list allows no domain",
+      c and c["readiness"] == "passive_discovery" and c["can_outreach"] is False,
+      (c or {}).get("readiness"))
+
+# the card must not contradict its own availability chip
+busy_but_open = mk("BusyButOpen", interests=["coffee"], geo=NEARBY, open=True,
+                   receiving=dict(RECV_ACTIVE, status="busy"))
+c = by_name(run(INTENT_COFFEE, PROF_RICH, [busy_but_open]), "BusyButOpen")
+joined = " ".join((c or {}).get("reasons_ru") or []) + " " + " ".join((c or {}).get("reasons_en") or [])
+check("PRIV3 no 'free now' reason on a candidate whose chip says busy",
+      c and "свободен" not in joined and "free at that time" not in joined, joined[:90])
+
+# localisation of detail tokens
+role_c = mk("RolePlay", interests=["dota 2"], role="play", geo=NEARBY, open=True,
+            receiving=dict(RECV_ACTIVE))
+c = by_name(run({"topics": ["dota 2"], "type": "gaming", "role": "play", "mode": "offline",
+                 "time": "Today evening"}, PROF_RICH, [role_c]), "RolePlay")
+ru = " ".join((c or {}).get("reasons_ru") or [])
+check("PRIV4 role token is localised in Russian copy", "(play)" not in ru, ru[:80])
+far_c = mk("FarIsh", interests=["coffee"], geo={"coarseLat": 41.45, "coarseLon": 2.24}, open=True,
+           receiving=dict(RECV_ACTIVE))
+c = by_name(run(INTENT_COFFEE, PROF_RICH, [far_c]), "FarIsh")
+ru = " ".join((c or {}).get("reasons_ru") or []) + " " + str((c or {}).get("gap_ru") or "")
+check("PRIV5 distance unit is Russian in Russian copy", " km" not in ru, ru[:80])
+
+# explain() must expose both locales like search() does
+tr = core_v2.explain(INTENT_COFFEE, PROF_RICH, {"now": NOW_OPEN}, FULL, H, CFG)
+check("PRIV6 explain returns both RU and EN labels",
+      all(k in tr for k in ("band_ru", "band_en", "readiness_ru", "readiness_en")),
+      sorted(k for k in tr if "band" in k or "readiness" in k))
+
 print()
 if FAILURES:
     print("FAILED: %d test(s): %s" % (len(FAILURES), ", ".join(FAILURES)))
