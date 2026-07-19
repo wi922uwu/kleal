@@ -445,8 +445,11 @@ function applyPreset(i){const p=PRESETS[i][1];
 // like the answer to whatever is typed now (type "Рыбалка" over a coffee run -> coffee people).
 function labSig(){const b=labBody();return JSON.stringify([b.self,b.intent,b.now||0]);}
 async function runLab(){
-  LAB.running=true;LAB.err=null;LAB.trace=null;render();
+  // READ THE FORM FIRST. render() rebuilds the DOM and restores field values asynchronously
+  // (setTimeout 0), so reading after it returned the freshly-rendered default — every search
+  // silently ran on "кофе" no matter what was typed.
   const sig=labSig(), shown=gv('#l_topics'), body=labBody();
+  LAB.running=true;LAB.err=null;LAB.trace=null;render();
   try{
     const r=await api('/api/admin/match-test',{method:'POST',body:JSON.stringify(body)});
     LAB.res=r.candidates||[];LAB.err=r.error||null;LAB.lastIntent=r.intent||null;
