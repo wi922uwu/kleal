@@ -558,7 +558,7 @@ function labView(){
     </div>
     ${LAB.err?`<div class="card"><div class="drop">Ошибка: ${esc(LAB.err)}</div></div>`:''}
     ${LAB.res?`<div class="card" ${LAB.stale?'style="opacity:.55"':''}>
-      ${LAB.stale?`<div class="drop" style="margin-bottom:12px">Форма изменена — это результат прошлого запроса «${esc(LAB.ranTopics||'')}». Нажми «Запустить матчинг».</div>`:''}
+      ${LAB.stale?`<div class="drop" style="margin-bottom:12px">Обновляю результат под новый запрос… (показан прошлый — «${esc(LAB.ranTopics||'')}»)</div>`:''}
       <div class="bar"><h2 style="margin:0">Результат по запросу «${esc(LAB.ranTopics||'')}» — ${LAB.res.length} кандидат(ов)</h2>
         <span class="muted" style="font-size:12px">${LAB.searcher?('от лица '+esc(LAB.searcher.name)):''}
           ${LAB.ranWhen?(' · '+esc(LAB.ranWhen)):''}${LAB.searcherKnown===false?' · профиль не из базы':''}</span></div>
@@ -574,11 +574,15 @@ function labView(){
 }
 function toggleAdv2(){const a=$('#advbox2');if(a)a.style.display=(a.style.display==='none'?'block':'none');}
 function setTab(t){TAB=t;render();}
-// Re-evaluate staleness on every edit, without re-rendering (that would fight the caret).
+// Editing any field re-runs the search automatically (debounced). Marking the old result "stale"
+// and waiting for a click was still a trap: you type "рыбалка" and the coffee table just sits there.
+let LAB_T=null;
 function labTouched(){
-  if(!LAB.res||!LAB.sig)return;
+  if(!LAB.sig&&!LAB.res)return;
   const st=(labSig()!==LAB.sig);
   if(st!==LAB.stale){LAB.stale=st;render();}
+  clearTimeout(LAB_T);
+  LAB_T=setTimeout(()=>{if(labSig()!==LAB.sig)runLab();},600);
 }
 function wireLab(){
   ['l_self','l_topics','l_type','l_role','l_mode','l_time','l_radius','l_langs','l_minage','l_maxage']
@@ -606,9 +610,13 @@ function render(){
     <button class="ghost mini" onclick="reseed()">Reset to demo pool</button>
     <button class="danger mini" onclick="clearAll()">Delete all users</button></div>`;
   if(TAB==='lab'){
+    // render() rebuilds the DOM, so remember where the caret was — otherwise auto-refresh would
+    // yank the cursor out of the field mid-word.
+    const ae=document.activeElement, aid=(ae&&ae.id)||'', asel=(ae&&ae.selectionStart!=null)?[ae.selectionStart,ae.selectionEnd]:null;
     $('#app').innerHTML=head+labView();
     setTimeout(()=>{Object.keys(LF).forEach(id=>{const e=$('#'+id);if(!e)return;
       if(typeof LF[id]==='boolean')e.checked=LF[id];else e.value=LF[id];});
+      if(aid){const f=$('#'+aid);if(f){f.focus();if(asel&&f.setSelectionRange){try{f.setSelectionRange(asel[0],asel[1]);}catch(_e){}}}}
       const adv=$('#advbox2');
       if(adv&&(LF.l_radius||LF.l_langs||LF.l_minage||LF.l_maxage||LF.l_ver||LF.l_consent||LF.l_exact||LF.l_adj===false))adv.style.display='block';
       const t=$('#l_topics'); if(t&&!t.value)t.value='кофе';
