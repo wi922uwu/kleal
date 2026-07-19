@@ -220,9 +220,8 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
         best, matched = H["topical"](topics, ints)
         if best >= 1:
             # show the candidate's ORIGINAL interest strings, not the space-stripped normal forms
-            orig = [str(o) for o in (cand.get("interests") or [])
-                    if str(o).lower().replace(" ", "") in matched]
-            names = ", ".join(sorted(orig)[:3]) or ", ".join(sorted(matched)[:3])
+            # `matched` now carries the candidate's own strings, so the card quotes them verbatim
+            names = ", ".join(sorted(str(m) for m in matched)[:3])
             # multi-topic intents: someone matching MORE of the asked topics must outrank a
             # one-topic overlap ("стартапы+ai+кофе" -> a founder beats a coffee-only person).
             # Single aggregated subfeature, capped at 1.0 — still no double count (spec §6.1).
@@ -295,7 +294,10 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
     elif (mv, cv) in VIBE_CLASH or (cv, mv) in VIBE_CLASH:
         F["social_context"] = (K_MISM, 0.25, cv)
     else:
-        F["social_context"] = (K_MATCH, 0.55, cv)
+        # Neutral vibes sat at 0.55, so an identical vibe string was worth 0.45 — MORE than the
+        # spread topical coverage can produce. A person sharing 1 of 3 asked topics outranked one
+        # sharing 2 of 3 purely because their vibe label matched. Vibe is context, not the ask.
+        F["social_context"] = (K_MATCH, 0.8, cv)
 
     # 7. domain_constraints — the domain's mandatory fields (language pair, platform/community…)
     clangs = _lang_codes(cand.get("langs"))
@@ -514,6 +516,21 @@ _GAP = {
     "social_context":      ("вайб не указан", "vibe unknown"),
     "domain_constraints":  ("детали (платформа/уровень) не указаны", "domain details unknown"),
 }
+# A verified CONFLICT is not missing data. Saying "роль не указана" about someone whose role the
+# engine checked and found opposite is a false statement about a real person (spec §23.2: reasons
+# and gaps must be facts the system actually established).
+_GAP_MISMATCH = {
+    "semantic_activity":   (lambda d: ("интересы не совпадают", "interests don't overlap")),
+    "time_feasibility":    (lambda d: ("время может не совпасть", "time may not work")),
+    "location_feasibility":(lambda d: ("далеко%s" % ((" — " + d) if d else ""),
+                                       "far away%s" % ((" — " + d) if d else ""))),
+    "mode_format":         (lambda d: ("формат не совпадает", "format doesn't match")),
+    "directed_preferences":(lambda d: ("другая роль%s" % ((" (%s)" % d) if d else ""),
+                                       "different role%s" % ((" (%s)" % d) if d else ""))),
+    "social_context":      (lambda d: ("другой вайб%s" % ((" (%s)" % d) if d else ""),
+                                       "different vibe%s" % ((" (%s)" % d) if d else ""))),
+    "domain_constraints":  (lambda d: ("условия не совпадают", "constraints don't match")),
+}
 
 def _presentation(F, d_ab, dom_cfg):
     """2-3 confirmed reasons (known_match only — never invented facts) + the single top gap."""
@@ -535,24 +552,32 @@ def _presentation(F, d_ab, dom_cfg):
             legacy.append("open to meet")
         else:
             legacy.append(en)
-    gaps = [(float(W.get(k, 0)), k) for k, (st, v, d) in F.items()
+    # a confirmed conflict outranks missing data as "the one thing to flag", and is worded as
+    # a conflict — with the value the engine actually saw
+    mism = [(float(W.get(k, 0)), k, d) for k, (st, v, d) in F.items()
             if st == K_MISM and float(W.get(k, 0)) > 0]
-    if not gaps:
-        gaps = [(float(W.get(k, 0)), k) for k in d_ab["unknowns"]]
-    gaps.sort(key=lambda x: -x[0])
     gap_ru = gap_en = None
-    if gaps:
-        gap_ru, gap_en = _GAP[gaps[0][1]]
+    if mism:
+        mism.sort(key=lambda x: -x[0])
+        _w, k, d = mism[0]
+        gap_ru, gap_en = _GAP_MISMATCH[k](d)
+    else:
+        unk = [(float(W.get(k, 0)), k) for k in d_ab["unknowns"]]
+        if unk:
+            unk.sort(key=lambda x: -x[0])
+            gap_ru, gap_en = _GAP[unk[0][1]]
     return rs_ru, rs_en, legacy, gap_ru, gap_en
 
 # ------------------------------------------------------------------ allocation (slate diversity)
 TOP_N, PER_BUCKET = 8, 3        # slate size params (allocation layer, not relevance — spec §11)
 
-def _slate(items):
+def _slate(items, home_bucket=None):
     """Diversity is applied WITHIN a band and never promotes a lower band (spec §11: allocation
     must not change pair relevance). Inside one band the per-bucket cap is SOFT: if the only
     remaining same-band candidates are from a capped bucket, relevance wins and they fill the
-    slot — a focused search ("кофе") must not swap coffee people for adjacent-category padding."""
+    slot — a focused search ("кофе") must not swap coffee people for adjacent-category padding.
+    The query's OWN bucket is never capped at all: capping it evicted top-ranked exact matches
+    (a dinner search shipped 3 diners and 5 strangers) — variety is for the padding, not the ask."""
     out, i, n = [], 0, len(items)
     while len(out) < TOP_N and i < n:
         j = i
@@ -564,7 +589,7 @@ def _slate(items):
             if len(picked) >= take:
                 break
             b = it.get("bucket") or "other"
-            if seen.get(b, 0) >= PER_BUCKET:
+            if b != home_bucket and seen.get(b, 0) >= PER_BUCKET:
                 skipped.append(it)
                 continue
             seen[b] = seen.get(b, 0) + 1
@@ -763,4 +788,9 @@ def search(intent, prof, ctx, candidates, H, cfg):
                             hashlib.sha1(str(x["name"]).encode("utf-8")).hexdigest()))
     meta = {"core": "v2", "config_version": cfg.get("config_version"), "domain": domain,
             "config_sha": cfg.get("_sha256", "")[:12]}
-    return _slate(out), meta
+    home = None                                   # the category the user actually asked about
+    for t in topics:
+        home = H["cat_of"](t)[0]
+        if home:
+            break
+    return _slate(out, home), meta

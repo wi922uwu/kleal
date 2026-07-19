@@ -106,7 +106,18 @@ SYNONYMS.update({
     'языковой':'language','обмен':'exchange','практика':'practice','паб':'pub','пабы':'pub',
     'курс':'course','курсы':'course','воркшоп':'workshop','учёба':'study','учеба':'study',
     'коворкинг':'coworking','поработатьвместе':'coworking','удалёнка':'remotework','удаленка':'remotework',
+    # transliterations and stems the pool actually contains — without these whole cohorts were
+    # unreachable from one of the two languages ('крипто' -> 0 results while 'крипта' -> 8)
+    'крипто':'crypto','крипта':'crypto','криптовалюта':'crypto','биткоин':'crypto','биткойн':'crypto',
+    'bitcoin':'crypto','блокчейн':'crypto','blockchain':'crypto','web3':'crypto','вэб3':'crypto',
+    'формула1':'formula1','формула':'formula1','f1':'formula1','автоспорт':'formula1',
+    'барса':'barca','барселона':'barca','barcelona':'barca',
+    'нейросетей':'ai','ml':'ai','ии':'ai',
 })
+# vocabulary the pool actually uses but the taxonomy lacked: motorsport as its own sub-category,
+# and the club name people write instead of "football"
+TAXONOMY['sports']['motorsport'] = ['formula1', 'motorsport', 'karting']
+TAXONOMY['sports']['team'].append('barca')
 # curated adjacency between BROAD categories (a mild "related" bonus)
 # Adjacency is deliberately conservative — over-broad links made a coffee search surface a Dota player
 # ("social" ~ "games"). Keep only genuinely related neighbours.
@@ -129,6 +140,8 @@ def _norm(w):
     w = str(w).strip().lower().replace(' ', '')
     return SYNONYMS.get(w, w)
 
+_SHORT_OK = {'f1', 'ux', 'ui', 'ai', 'cs', 'dj', 'ml', 'pr', 'бг'}
+
 @functools.lru_cache(maxsize=65536)
 def cat_of(word):
     """(broad, sub) for an interest/topic, matched against the KNOWN vocabulary (exact, then prefix>=5).
@@ -143,6 +156,11 @@ def cat_of(word):
     toks = re.findall(r"[a-zа-яё0-9]+", str(word).lower())
     if len(toks) > 1:
         for t in toks:
+            # generic filler must not decide the category: "speaking CLUB" resolved via 'club'
+            # to social/nightlife and then read as the same sub-category as a beer search,
+            # seeding every social query with the same strangers
+            if t in _STOPTOK:
+                continue
             tn = _norm(t)
             if tn in _IDX: return _IDX[tn]
     return (None, None)
@@ -160,7 +178,13 @@ def same_topic(t, x):
     if not _wshare(t, x):
         return False
     # spec §6 negative edge: WATCHING an activity is not DOING it — "смотреть футбол"/"футбол по
-    # тв" is exact against another watcher, but only category-related to "футбол" players
+    # тв" is exact against another watcher, but only category-related to "футбол" players.
+    # It applies ONLY where doing and watching are different activities (sport, games): for
+    # culture/screen watching IS the activity, so "посмотреть кино" must stay exact against
+    # "кино" — it used to drop such candidates a whole tier and revoke outreach permission.
+    broad = (ct[0] or cx[0])
+    if broad not in ('sports', 'games'):
+        return True
     return _watch_marks(t) == _watch_marks(x)
 
 # generic filler words that two unrelated interests can share ("разговорный КЛУБ" vs "книжный КЛУБ");
@@ -178,9 +202,12 @@ def _watch_marks(s):
 
 def _wtok(s):
     # tokens are normalised through SYNONYMS so the RU->EN bridge works word-by-word inside
-    # phrases too: "выпить кофе" tokenises to {"coffee"} and meets "coffee" exactly
+    # phrases too: "выпить кофе" tokenises to {"coffee"} and meets "coffee" exactly.
+    # Short tokens are dropped as noise EXCEPT real short interests — "f1", "ux", "ai", "cs"
+    # are entire hobbies, and filtering purely on length made them match nobody.
     return [_norm(w) for w in re.findall(r"[a-zа-яё0-9]+", str(s).lower())
-            if len(w) >= 3 and w not in _STOPTOK]
+            if (len(w) >= 3 or any(ch.isdigit() for ch in w) or w in _SHORT_OK)
+            and w not in _STOPTOK]
 
 def _wshare(a, b):
     """A literal shared interest word between two OFF-TAXONOMY strings. Exact token, or a long common stem
@@ -194,13 +221,16 @@ def _wshare(a, b):
     return False
 
 def topical(topics, interests):
-    """Best topical tier (4 exact > 3 sub-cat > 2 broad-cat > 1 adjacent > 0 none) + matched interests."""
+    """Best topical tier (4 exact > 3 sub-cat > 2 broad-cat > 1 adjacent > 0 none) + matched interests.
+    `matched` holds the candidate's ORIGINAL strings, not the canonical tokens: the card must say
+    what the person actually wrote ("кофе", "лабубу"), not the engine's internal English form —
+    reasons like "общее: coffee" for someone whose profile says "кофе" read as a different person."""
     matched = set(); best = 0
     xb = [(x, cat_of(x)) for x in interests]
     for t in topics:
         bt, st = cat_of(t)
         for x, (bx, sx) in xb:
-            if same_topic(t, x): matched.add(_norm(x)); best = max(best, 4)
+            if same_topic(t, x): matched.add(str(x)); best = max(best, 4)
             elif st and st == sx: best = max(best, 3)
             elif bt and bt == bx: best = max(best, 2)
             elif bt and bx and bx in ADJACENCY.get(bt, []): best = max(best, 1)
@@ -208,7 +238,7 @@ def topical(topics, interests):
             # interests the vocabulary doesn't cover ("apple", "рыбалка", "labubu") still match each
             # other; the watcher/doer distinction applies here too.
             elif not bt and not bx and _wshare(t, x) and _watch_marks(t) == _watch_marks(x):
-                matched.add(_norm(x)); best = max(best, 4)
+                matched.add(str(x)); best = max(best, 4)
     return best, matched
 
 def _cat_of(tok):   # back-compat: broad category only

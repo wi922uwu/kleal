@@ -341,6 +341,58 @@ allowed, why = app._outreach_ok({"topics": ["coffee"], "type": "social", "mode":
                                  "time": "Today"}, strong, PROF_RICH, {"now": NOW_OPEN})
 check("SAFE12 send path still allows a genuine match", allowed is True, why)
 
+# ---------------------------------------------------------------- quality regressions (from the hunt)
+# watching IS the activity for culture, but NOT for sport
+check("QUAL1 'посмотреть кино' stays exact against 'кино'", app.same_topic("посмотреть кино", "кино"))
+check("QUAL2 'смотреть футбол' is NOT the same as playing football",
+      not app.same_topic("смотреть футбол", "футбол"))
+check("QUAL3 watcher meets watcher in sport", app.same_topic("смотреть футбол", "футбол по тв"))
+
+# aliases / short tokens the pool actually uses
+for a, b in (("крипто", "crypto"), ("крипта", "crypto"), ("биткоин", "crypto"),
+             ("f1", "formula1"), ("формула 1", "formula1"), ("барса", "barca")):
+    check("QUAL4 alias %r resolves" % a, app._norm(a.replace(" ", "")) == b or app.cat_of(a)[0] is not None,
+          app.cat_of(a))
+check("QUAL5 short interest tokens survive tokenisation", app._wtok("f1") == ["formula1"], app._wtok("f1"))
+
+# generic filler must not decide a category
+check("QUAL6 'speaking club' is not nightlife", app.cat_of("speaking club")[1] != "nightlife",
+      app.cat_of("speaking club"))
+check("QUAL7 beer and speaking club are not the same sub-category",
+      app.topical(["пиво"], ["english", "speaking club"])[0] < 3,
+      app.topical(["пиво"], ["english", "speaking club"]))
+
+# vibe must not outweigh topical coverage
+two = mk("TwoOfThree", interests=["startups", "ai"], vibe="energetic", geo=NEARBY, open=True)
+one = mk("OneOfThree", interests=["coffee"], vibe="chill", geo=NEARBY, open=True)   # vibe twin
+r = run({"topics": ["startups", "ai", "coffee"], "type": "networking", "role": "discuss",
+         "mode": "offline", "time": "Today evening"}, PROF_RICH, [two, one])
+names = [c["name"] for c in r]
+check("QUAL8 2-of-3 topics outranks 1-of-3 with a matching vibe",
+      names.index("TwoOfThree") < names.index("OneOfThree"),
+      [(c["name"], c["score"]) for c in r])
+
+# the query's own category is never capped out of its own slate
+diners = [mk("Diner%d" % i, interests=["dinner", "food"], geo=NEARBY, open=True,
+             receiving=dict(RECV_ACTIVE)) for i in range(6)]
+r = run({"topics": ["dinner", "food"], "type": "social", "role": "meet",
+         "mode": "offline", "time": "Today evening"}, PROF_RICH, diners)
+check("QUAL9 diversity cap does not evict exact matches from their own bucket",
+      len([c for c in r if c["name"].startswith("Diner")]) >= 5,
+      [c["name"] for c in r])
+
+# gap wording: verified conflict is not "missing data"
+clash = mk("Clash", interests=["coffee"], vibe="energetic", geo=NEARBY, open=True)
+c = by_name(run(INTENT_COFFEE, PROF_RICH, [clash]), "Clash")
+check("QUAL10 a verified vibe conflict is reported as a conflict, not as unknown",
+      c and "не указан" not in (c.get("gap_ru") or ""), (c or {}).get("gap_ru"))
+
+# the card quotes the person's own words
+ru = mk("RuWords", interests=["кофе"], geo=NEARBY, open=True)
+c = by_name(run(INTENT_COFFEE, PROF_RICH, [ru]), "RuWords")
+check("QUAL11 reason quotes the candidate's own interest string, not the canonical token",
+      c and "кофе" in " ".join(c.get("reasons_ru") or []), (c or {}).get("reasons_ru"))
+
 print()
 if FAILURES:
     print("FAILED: %d test(s): %s" % (len(FAILURES), ", ".join(FAILURES)))
