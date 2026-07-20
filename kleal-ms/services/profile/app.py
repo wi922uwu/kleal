@@ -676,6 +676,11 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kinput{width:100%;border:1px solid var(--border);border-radius:12px;padding:12px;font-size:14px;
   background:var(--bg);color:var(--fg);outline:none;font-family:inherit}
 .kinput:focus{border-color:var(--primary)}
+.ksheet.bottom{max-height:86%;display:flex;flex-direction:column}
+/* The safety sheet carries 15 toggles: without a scrolling body the sheet grew past the viewport and
+   «Принять изменения» sat below the screen edge, unreachable. Header and footer stay put. */
+.esbody{overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1 1 auto;min-height:0;scrollbar-width:none}
+.esbody::-webkit-scrollbar{display:none}
 .khelp{display:flex;justify-content:center;padding:0 12px 6px}
 .khelp .kchip{gap:6px;cursor:pointer;height:34px;min-height:34px}
 .khelp .kchip svg{width:15px;height:15px}
@@ -1072,9 +1077,9 @@ document.getElementById('back').innerHTML=IC.back;
 // bottom nav (Intents · Search · [create] · Messages · Profile) — rebuilt each render for the active state
 const ROOTS=['agenthome','overview','intents','search','messages'];
 function navFam(){
-  if(cur==='agenthome'||cur==='buddychat'||cur==='profileedit'||cur==='notifs')return'';   // center FAB owns these — no pill highlight
+  if(cur==='agenthome'||cur==='notifs')return'';   // center FAB owns these — no pill highlight
   if(cur==='search')return'explore';
-  if(cur==='intents'||cur==='intentchat'||cur==='matchchat')return'plans';
+  if(cur==='intents'||cur==='matchchat')return'plans';
   if(cur==='messages')return'messages';
   return'profile'; }
 function bnavHTML(){ const fam=navFam();
@@ -1250,7 +1255,7 @@ const ALL_TABS=[
 ];
 const TABS = ALL_TABS;
 let cur = 'agenthome';   // main landing after onboarding
-const TITLES=()=>({memory:T('Что Kleal помнит','What Kleal remembers'), intents:T('Интенты','Plans'), search:T('Обзор','Explore'), messages:T('Сообщения','Messages'), agenthome:T('Главная','Home'), notifs:T('Уведомления','Notifications'), buddychat:'Kleal',
+const TITLES=()=>({memory:T('Что Kleal помнит','What Kleal remembers'), intents:T('Интенты','Plans'), search:T('Обзор','Explore'), messages:T('Сообщения','Messages'), agenthome:T('Главная','Home'), notifs:T('Уведомления','Notifications'),
   settings:T('Настройки','Settings'), help:T('Помощь и поддержка','Help & Support')});   // functions so language switch re-evaluates
 if(!DATA.notifs) DATA.notifs=[]; if(!DATA.intents) DATA.intents=[];   // buddy-agent stores
 function setTab(id){ detail=null; cur=id; render(); }
@@ -1265,7 +1270,7 @@ function navRows(){
   return TABS.filter(t=>t[0]!=='overview').map(t=>{ const m=SECMETA()[t[0]]||['star',t[2],''];
     return `<div class="card setrow" data-nav="${t[0]}"><div class="sic">${IC[m[0]]}</div>
       <div class="st"><div class="stt">${esc(m[1])}</div><div class="sts">${esc(m[2])}</div></div>
-      <div class="sedit" data-act="editrow" data-row="${esc(m[1])}">${IC.wand}<span>${T('Изменить','Edit')}</span></div></div>`; }).join('');
+      <div class="sedit" data-act="editrow" data-row="${esc(t[0])}">${IC.wand}<span>${T('Изменить','Edit')}</span></div></div>`; }).join('');
 }
 
 function cbadge(c){ return `<span class="cbadge cb-${c}">${c}</span>`; }
@@ -1331,8 +1336,10 @@ function saveState(){ try{ localStorage.setItem(PKEY, JSON.stringify({_src:_psrc
 const ui=(k,def)=>(k&&UI[k]!==undefined)?UI[k]:def;
 // ---- Safety & Privacy: typed rows built from the DATA.safety flags object ----
 function sTt(label,desc,danger){ return `<div class="tt"><div class="ttl"${danger?' style="color:var(--danger)"':''}>${esc(label)}</div>${desc?`<div class="tts">${esc(desc)}</div>`:''}</div>`; }
-function sTog(label,desc,on,flag){ return `<div class="trow">${sTt(label,desc)}
-  <div class="sw ${on?'on':''}" data-sflag="${flag}"><i></i></div></div>`; }
+// `act` lets the same row live inside an edit sheet, where taps must mutate the sheet's draft and
+// re-render rather than write DATA behind the user's back.
+function sTog(label,desc,on,flag,act){ return `<div class="trow">${sTt(label,desc)}
+  <div class="sw ${on?'on':''}" ${act?`data-act="${act}" data-v="${flag}"`:`data-sflag="${flag}"`}><i></i></div></div>`; }
 function sAct(label,desc,val,act,danger){ return `<div class="trow" data-act="${act}">${sTt(label,desc,danger)}
   <div class="rt">${val?`<span class="sval">${esc(val)}</span>`:''}${IC.chevR}</div></div>`; }
 function sStat(label,desc,val,btn,act,icon){
@@ -1383,8 +1390,8 @@ function safetyGroups(f){ f=f||{}; return [
     {k:'act', label:T('Удалить аккаунт и память','Delete my account & memory'), desc:T('Навсегда стереть профиль и всё, что Kleal узнал. Все текущие знакомства будут отменены.','Permanently erase your profile and everything Kleal learned. Any in-flight introductions are cancelled.'), act:'delete-account', danger:true},
   ]},
 ]; }
-function safetyRow(it){
-  if(it.k==='tog')    return sTog(it.label,it.desc,it.on,it.flag);
+function safetyRow(it, act){
+  if(it.k==='tog')    return sTog(it.label,it.desc,it.on,it.flag,act);
   if(it.k==='act')    return sAct(it.label,it.desc,it.val,it.act,it.danger);
   if(it.k==='stat')   return sStat(it.label,it.desc,it.val,it.btn,it.act,it.icon);
   if(it.k==='choice') return sChoice(it.label,it.desc,it.options,it.sel,it.act);
@@ -1587,7 +1594,6 @@ function scr_knows(){
 }
 // ================= V4: intents · intent chat · discovery · messages =================
 let curIntent=null, intentLaunched=false, agentBusy=false;
-function openIntent(it, launched){ curIntent=it||null; intentLaunched=!!launched; cur='intentchat'; render(); }
 function capw(s){ s=String(s==null?'':s); return s.charAt(0).toUpperCase()+s.slice(1); }
 // Feedback loop: tell the backend the owner's accept/reject so future ranking learns (fire-and-forget).
 function postFeedback(name,decision){ try{ fetch('/api/agent/feedback',{method:'POST',
@@ -1617,52 +1623,12 @@ async function broadenIntent(kind){
   render(); saveState();
 }
 // Buddy agent: free-text request -> real structured intent + ranked candidates (backend /api/agent/plan).
-async function runAgent(query){
-  query=(query||'').trim(); if(!query||agentBusy) return;
-  agentBusy=true; curIntent={pending:true, query:query}; intentLaunched=false; cur='intentchat'; render();
-  let r; try{
-    r=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({query:query, profile:matchProfile()})}).then(x=>x.json());
-  }catch(e){ r=null; }
-  agentBusy=false;
-  if(!r||!r.intent){ curIntent={title:'New plan',tags:[],query:query,confidence:0,candidates:[],spec:[],error:true}; render(); return; }
-  const it=r.intent, cands=r.candidates||[];
-  const reach = it.exactMatchRequired?'Exact matches only':(it.broadAllowed===false?'Same activity only':(it.adjacentAllowed===false?'Same + related':'Adjacent + related'));
-  const area = (it.place||'Public places nearby')+(it.mode==='offline'&&it.radiusKm?(' · within '+it.radiusKm+' km'):'');
-  curIntent={ title:it.title||'New plan', tags:it.topics||[], query:query, type:it.type, role:it.role,
-    intent:it, fallback:r.fallback||null,
-    confidence:cands[0]?cands[0].score:70, candidates:cands,
-    spec:[['moon','Mode',capw(it.mode||'Offline')],['users','Format',it.format||'1:1 or small group'],
-          ['clock','Time',it.time||'Flexible'],['pin','Area',area],
-          ['shield','Safety',it.verifiedOnly?'Verified people only':'Public places only'],
-          ['compass','Reach',reach],['eye','Visibility','Via Kleal only']] };
-  intentLaunched=false; render();
-}
 function intentSpec(it){ const s=it.spec||[]; return s.map((r,i)=>`<div class="specrow"><div class="spi">${IC[r[0]]||IC.spark}</div>
   <div class="sl">${esc(r[1])}</div><div class="sv">${esc(r[2])}</div></div>${i<s.length-1?'<div class="divider"></div>':''}`).join(''); }
 
 // ===== Conversational "Create intent": Kleal collects the essentials + validates, THEN builds the card =====
 // Replaces the old "any text -> instant card" behaviour: /api/buddy/intent-build runs a short dialogue
 // (gibberish -> ask again; missing when/format -> ask; enough -> ready) and only then do we build a card.
-let intentMsgs=[], intentBusy=false;
-function openCreateIntent(){ curIntent=null; intentLaunched=false;
-  intentMsgs=[{who:'them',text:"Что хочешь устроить? Опиши, чем заняться — например «кофе и поговорить про ИИ сегодня вечером» или «найти напарника в зал на неделе»."}];
-  cur='intentchat'; render(); }
-async function intentTurn(text){ text=(text||'').trim(); if(!text||intentBusy) return;
-  intentBusy=true; intentMsgs.push({who:'me',text}); intentMsgs.push({who:'them',text:'…',loading:true}); render();
-  // same rule as flowSay: turns already answered as small talk are not request context
-  let r; try{ r=await fetch('/api/buddy/intent-build',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({messages:intentMsgs.filter(m=>!m.loading&&!m.chat).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text})),
-      profile:buddyProfile()})}).then(x=>x.json()); }catch(e){ r=null; }
-  intentMsgs=intentMsgs.filter(m=>!m.loading); intentBusy=false;
-  if(!r){ intentMsgs.push({who:'them',text:'Связь пропала — повтори, пожалуйста.'}); render(); return; }
-  if(r.conversational){
-    const mine=[...intentMsgs].reverse().find(m=>m.who==='me'); if(mine) mine.chat=true;
-    intentMsgs.push({who:'them',text:r.reply||'…',chat:true}); render(); saveState(); return;
-  }
-  intentMsgs.push({who:'them',text:r.reply||'…'}); render(); saveState();
-  if(r.ready && r.intent) buildIntentCard(r.intent);      // enough detail -> structure the card
-}
 async function buildIntentCard(intent){
   curIntent={pending:true, query:''}; render();
   let r; try{ r=await fetch('/api/agent/match',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1700,7 +1666,6 @@ async function negotiateIntent(){
           :T('Пока никто не подтвердил','Nobody has confirmed yet'));
 }
 // ---------- Phase 1: saved intents ----------
-function openSavedIntent(id){ const it=(DATA.intents||[]).find(x=>x.id===id); if(!it)return; curIntent=it; intentLaunched=true; cur='intentchat'; render(); }
 function saveCurIntent(){
   if(!curIntent) return;
   DATA.intents=DATA.intents||[];
@@ -1745,7 +1710,7 @@ function scr_notifications(){
 }
 function openNotif(id){ const n=(DATA.notifs||[]).find(x=>x.id===id); if(!n)return; n.read=true;
   if(n.kind==='match' && matchWith){ cur='matchchat'; render(); saveState(); return; }
-  if(n.ref){ openSavedIntent(n.ref); saveState(); return; }
+  if(n.ref){ openIntentFlow(n.ref); saveState(); return; }
   render(); saveState();
 }
 // ---------- Phase 2: match chat (blurred photo clears as you talk) ----------
@@ -1784,7 +1749,7 @@ async function approveIntro(cand, intent){
 }
 function openMsgThread(i){
   const t=(DATA.messages||[])[i]; if(!t) return;
-  if(t.kleal){ openBuddy(''); return; }          // the pinned Kleal thread -> the agent chat
+  if(t.kleal){ flowStart(''); return; }          // the pinned Kleal thread -> the one chat screen
   matchWith=t; matchWith.fromMessages=true; cur='matchchat'; render(); saveState();
 }
 // ---- Kleal's help: it drafts YOUR next message, in your voice, from your profile and the thread ----
@@ -1884,7 +1849,6 @@ function scr_matchchat(){
 // ================= BUDDY AGENT — the conversational agent you just talk to =================
 // You chat freely; the buddy quietly gathers your SIGNALS and, when you want to meet someone,
 // it calls the matching agent (server-side, agent-to-agent) and drops the best match into the chat.
-let buddyMsgs=[], buddySignals={}, buddyBusy=false;
 // Profile of the SEARCHER as the matching engine reads it. Sending only {name} meant the engine
 // knew nothing about the person searching: vibe/geo/language groups came back `unknown`, coverage
 // stayed low, and the outreach thresholds could never be met — every launch ended in "согласны: 0"
@@ -1984,43 +1948,15 @@ function chatHead(title, opts){ opts=opts||{};
 }
 // generic chat back: return to a sensible place per screen
 function chatBack(){
-  if(cur==='buddychat'){ cur='agenthome'; }
-  else if(cur==='profileedit'){ cur='buddychat'; }
-  else if(cur==='intentchat'){ cur='agenthome'; }
-  else if(cur==='matchchat'){ cur=(matchWith&&matchWith.fromMessages)?'messages':(matchWith&&matchWith.fromBuddy)?'buddychat':'intentchat'; }
+  if(cur==='matchchat'){ cur=(matchWith&&matchWith.fromMessages)?'messages':'intents'; }
   else { cur='agenthome'; }
   render();
 }
-function openBuddy(first){
-  cur='buddychat';
-  if(!buddyMsgs.length) buddyMsgs=[{who:'them',text:T("Привет! Чем могу помочь?","Hey dear! How can I help you?"),hello:true}];
-  render();
-  if(first && String(first).trim()) buddyTurn(first);
-}
 // Smooth transition from the home screen into the buddy chat: the side blocks (quick actions, plan, greeting)
 // fade + slide away first, THEN the chat opens — so it feels like the page transforms, not a hard jump.
-function goToBuddy(text){
-  const home=document.querySelector('.ahome');
-  if(!home){ openBuddy(text); return; }
-  home.querySelectorAll('.ahead,.aintro,.qhead,.quick,.thead,.tcard').forEach(el=>el.classList.add('a-leaving'));
-  const s=home.querySelector('.asearch'); if(s) s.classList.add('a-lift');
-  setTimeout(()=>openBuddy(text), 240);
-}
-async function buddyTurn(text){
-  text=(text||'').trim(); if(!text||buddyBusy) return;
-  buddyBusy=true; buddyMsgs.push({who:'me',text,t:Date.now()}); buddyMsgs.push({who:'them',text:'…',loading:true}); render();
-  let r; try{
-    r=await fetch('/api/buddy/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ messages:buddyMsgs.filter(m=>!m.loading).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text})),
-                            profile:buddyProfile(), signals:buddySignals })}).then(x=>x.json());
-  }catch(e){ r=null; }
-  buddyMsgs=buddyMsgs.filter(m=>!m.loading); buddyBusy=false;
-  if(!r){ buddyMsgs.push({who:'them',text:T('Связь пропала на секунду — повтори, пожалуйста?','I lost the connection for a second — say that again?'),t:Date.now()}); render(); return; }
-  buddySignals=r.signals||buddySignals;
-  buddyMsgs.push({who:'them', text:r.reply||'…', t:Date.now(), match:(r.match&&r.match.top)?r.match:null});
-  if(r.match&&r.match.top) addNotif('match','Kleal found you a match: '+r.match.top.name, (r.match.top.reasons||[])[0]||'tap to connect', null);
-  render(); saveState();
-}
+// The + in the buddy header and the «Собрать интент» chip both land here: the flow starts from what
+// was ALREADY said, instead of the blank canned greeting openCreateIntent used to show.
+
 // browser-native dictation for the mic button — no backend needed; graceful toast where unsupported
 let _rec=null;
 function buddyMic(){
@@ -2034,57 +1970,11 @@ function buddyMic(){
   _rec.onerror=()=>{ _rec=null; if(mic)mic.classList.remove('on'); };
   try{ _rec.start(); if(mic)mic.classList.add('on'); toast('Listening…'); }catch(_e){ _rec=null; }
 }
-function scr_buddychat(){
-  const hd=chatHead('Kleal', {back:'buddy-back', actions:[
-    {act:'buddy-profile', icon:IC.person, label:T('Профиль','Profile')},
-    {act:'buddy-create', icon:'<span class="pl">+</span>', label:T('Интент','Intent')}]});
-  const thread=buddyMsgs.map((x,i)=>{
-    if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div><div class="btime r">${fmtTime(x.t)}</div></div>`;
-    if(x.hello) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
-    const first=(i===0)||buddyMsgs[i-1].who!=='them'||buddyMsgs[i-1].hello;   // avatar only on the first of a run
-    const inner=x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>');
-    const time=x.loading?'':(x.t?`<div class="btime">${fmtTime(x.t)}</div>`:'');
-    const row=`<div class="krow"><div class="kav${first?'':' sp'}"></div><div class="kcol"><div class="kbub">${inner}</div>${time}</div></div>`;
-    if(x.match&&x.match.top){ const t=x.match.top; const why=candReasons(t).slice(0,2).concat(readinessChip(t)?[readinessChip(t)]:[]).join(' · ');
-      return row+`<div class="card" style="margin:2px 0 2px 43px"><div class="candrow">
-        <div class="candmain"><div class="candav">${esc(String(t.name||'?')[0])}</div>
-          <div class="candt"><div class="candn"><span class="candnm">${esc(t.name)}</span>${t.verified?'<span style="color:var(--ok);font-size:11px">✓</span>':''}${candKm(t,why)}</div>
-            <div class="cands">${esc(why)}</div>
-            <div class="candsc"><div class="candpct">${esc(bandLabel(t))}</div></div></div></div>
-        <div class="candacts"><button class="introbtn" data-act="buddy-intro" data-bi="${i}">${T('Познакомиться','Intro')}</button></div>
-        </div></div>`; }
-    return row;
-  }).join('');
-  return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${thread}</div>
-    <div class="bc2">
-      <button class="bc2-plus" data-act="buddy-plus">+</button>
-      <div class="bc2-field"><input id="bcin" placeholder="${T('Сообщение…','Message…')}" ${buddyBusy?'disabled':''}>
-        <button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
-      <button class="bc2-send" data-act="buddy-send">${IC.send}</button>
-    </div></div>`;
-}
 
 // ===== "Edit with Kleal": change the profile by talking to the editor agent (/api/buddy/profile-edit) =====
 // The editor returns a semantic PATCH ([{op,field,value,label}]); we show a confirmation, and only on
 // "Применить" apply it to DATA here (the frontend owns the profile). Fields map 1:1 to applyProfilePatch.
-let editMsgs=[], editBusy=false;
 // section -> a focused opening line, so the Edit buttons on the profile sections land the editor in context
-const EDIT_GREET={
-  'Interests':"Что поменять в интересах? Например: «добавь теннис» или «убери футбол».",
-  'Your personality':"Расскажи, как ты общаешься с людьми — например «я больше интроверт» или «люблю глубокие разговоры».",
-  'Goals':"Какая у тебя цель? Например «хочу найти напарника по бегу» или «убери нетворкинг».",
-  'Safety & Privacy':"Что настроить в безопасности и приватности? Например «встречаться только в публичных местах» или «только проверенные».",
-  'Location':"Куда переехал или где удобно встречаться? Например «город Мадрид».",
-  'Languages':"Какие языки добавить или убрать? Например «добавь французский».",
-};
-function openProfileEdit(section){
-  cur='profileedit';
-  const greet = EDIT_GREET[section] || (section
-    ? ("Что поменять в разделе «"+section+"»? Опиши своими словами.")
-    : "Что поменять в профиле? Скажи, например: «добавь теннис», «город Мадрид» или «убери футбол».");
-  if(!editMsgs.length || section) editMsgs=[{who:'them',hello:true,text:greet}];   // Edit button -> fresh, focused
-  render();
-}
 function snapRow(title){ return (DATA.snapshot||[]).find(r=>String(r.title).toLowerCase()===String(title).toLowerCase()); }
 function setSnap(title,icon,value){ const r=snapRow(title); if(r){ r.value=value; } else { (DATA.snapshot=DATA.snapshot||[]).push({icon,title,value}); } }
 function editIcon(name){ const n=String(name).toLowerCase();
@@ -2103,41 +1993,6 @@ function fullProfileForEdit(){ const g=t=>{const r=snapRow(t);return r?r.value:'
     formats:g('Social formats'), availability:g('Availability'), safety:g('Safety'),
     interests:(DATA.interests||[]).map(i=>i.name), goals:((DATA.goals||{}).active)||[],
     vibe:((DATA.social||{}).rows||[]).map(r=>r.title+': '+r.value).join(' · '), summary:DATA.summary||'' }; }
-function applyProfilePatch(patch){ const lc=s=>String(s==null?'':s).toLowerCase();
-  (patch||[]).forEach(p=>{ const f=p.field, v=p.value, op=p.op;
-    if(f==='name') DATA.name=v;
-    else if(f==='summary') DATA.summary=v;
-    else if(f==='location'){ setSnap('Location','pin',v); const pc=(DATA.places||[]).find(r=>lc(r.title)==='city'); if(pc)pc.value=v; }
-    else if(f==='languages') setSnap('Languages','globe',v);
-    else if(f==='formats') setSnap('Social formats','users',v);
-    else if(f==='availability') setSnap('Availability','clock',v);
-    else if(f==='safety') setSnap('Safety','shield',v);
-    else if(f==='vibe'){ DATA.social=DATA.social||{rows:[],vibe:[],depth:[]}; DATA.social.rows=DATA.social.rows||[];
-      const row=DATA.social.rows.find(r=>lc(r.title)==='energy'); if(row) row.value=v;
-      else DATA.social.rows.unshift({icon:'spark',title:'Energy',value:v}); }   // personality -> the personality section, never appended to the summary
-    else if(f==='interests'){ DATA.interests=DATA.interests||[];
-      if(op==='remove') DATA.interests=DATA.interests.filter(i=>lc(i.name)!==lc(v));
-      else if(!DATA.interests.some(i=>lc(i.name)===lc(v))) DATA.interests.push({name:v,icon:editIcon(v),conf:'Medium',used:true});
-      DATA.matchingPaths=DATA.interests.slice(0,3).map(i=>i.name);
-      setSnap('Interests','spark',DATA.interests.map(i=>i.name).join(' · ')); }
-    else if(f==='goals'){ DATA.goals=DATA.goals||{active:[],optional:[]}; DATA.goals.active=DATA.goals.active||[];
-      if(op==='remove') DATA.goals.active=DATA.goals.active.filter(x=>lc(x)!==lc(v));
-      else if(!DATA.goals.active.some(x=>lc(x)===lc(v))) DATA.goals.active.push(v); }
-  }); }
-async function editTurn(text){ text=(text||'').trim(); if(!text||editBusy) return;
-  editBusy=true; editMsgs.push({who:'me',text,t:Date.now()}); editMsgs.push({who:'them',text:'…',loading:true}); render();
-  let r; try{ r=await fetch('/api/buddy/profile-edit',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({message:text, profile:fullProfileForEdit()})}).then(x=>x.json()); }catch(e){ r=null; }
-  editMsgs=editMsgs.filter(m=>!m.loading); editBusy=false;
-  if(!r){ editMsgs.push({who:'them',text:'Связь пропала — повтори, пожалуйста.',t:Date.now()}); render(); return; }
-  editMsgs.push({who:'them', text:r.reply||'…', t:Date.now(), patch:(r.patch&&r.patch.length)?r.patch:null});
-  render(); saveState(); }
-function confirmEdit(i){ const m=editMsgs[i]; if(!m||!m.patch) return;
-  applyProfilePatch(m.patch); m.patch=null;
-  editMsgs.push({who:'them',text:'✓ Готово — обновил профиль.',t:Date.now()});
-  render(); saveState(); toast('Профиль обновлён');
-  adaptSummary();   // rewrite Kleal's summary to fit the new profile (adapt, don't append)
-}
 // After any profile change, ask Kleal to rewrite the summary paragraph so it reflects the new data
 // naturally — instead of a word being tacked onto the end.
 let _resumBusy=false;
@@ -2148,29 +2003,6 @@ async function adaptSummary(){
     if(r&&r.summary){ DATA.summary=r.summary; DATA.summaryLabel="Kleal's summary"; render(); saveState(); }
   }catch(e){}
   _resumBusy=false;
-}
-function cancelEdit(i){ const m=editMsgs[i]; if(!m) return; m.patch=null;
-  editMsgs.push({who:'them',text:'Ок, оставил как было.',t:Date.now()}); render(); }
-function scr_profileedit(){
-  const hd=chatHead(T('Изменить профиль','Edit profile'), {back:'edit-back', actions:[{act:'edit-view', icon:IC.person}]});
-  const thread=editMsgs.map((x,i)=>{
-    if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div><div class="btime r">${fmtTime(x.t)}</div></div>`;
-    if(x.hello) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
-    const first=(i===0)||editMsgs[i-1].who!=='them'||editMsgs[i-1].hello;
-    const inner=x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>');
-    const time=x.loading?'':(x.t?`<div class="btime">${fmtTime(x.t)}</div>`:'');
-    const row=`<div class="krow"><div class="kav${first?'':' sp'}"></div><div class="kcol"><div class="kbub">${inner}</div>${time}</div></div>`;
-    if(x.patch){ const chips=x.patch.map(p=>`<div class="epatch">${IC.wand}<span>${esc(p.label||(p.op+' '+p.field+': '+p.value))}</span></div>`).join('');
-      return row+`<div class="card ecard" style="margin:2px 0 2px 43px">${chips}
-        <div class="eactions"><button class="ebtn ghost" data-act="edit-cancel" data-ei="${i}">Отмена</button>
-        <button class="ebtn primary" data-act="edit-apply" data-ei="${i}">Применить</button></div></div>`; }
-    return row;
-  }).join('');
-  return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${thread}</div>
-    <div class="bc2"><button class="bc2-plus" data-act="buddy-plus">+</button>
-      <div class="bc2-field"><input id="ecin" placeholder="Например: добавь теннис…" ${editBusy?'disabled':''}>
-        <button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
-      <button class="bc2-send" data-act="edit-send">${IC.send}</button></div></div>`;
 }
 
 // ---------- Phase 3: public intents on the Explore map ----------
@@ -2524,75 +2356,6 @@ function plural(n,one,few,many){
   return many;
 }
 
-function scr_intentchat(){
-  const it=curIntent;
-  const hd=chatHead(it&&it.title?it.title:T('Создание интента','Create intent'), {back:'intent-back', sub:(it&&it.title)?T('Интент','Intent'):null});
-  const composer=`<div class="bc2"><button class="bc2-plus" data-act="buddy-plus">+</button>
-    <div class="bc2-field"><input id="acin" placeholder="Опиши, что хочешь сделать…" ${intentBusy?'disabled':''}>
-      <button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
-    <button class="bc2-send" data-act="intent-send">${IC.send}</button></div>`;
-  const wrap=(body)=>`<div class="bchat fade">${hd}<div class="bthread" id="bthread">${body}</div>${composer}</div>`;
-  if(!it){
-    // conversational collection: Kleal asks for the missing essentials and validates before building a card
-    const thread=(intentMsgs||[]).map((x,i)=>{
-      if(x.who==='me') return `<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`;
-      if(i===0 && !x.loading) return `<div class="khello"><div class="kav" style="width:44px;height:44px"></div><div class="khtxt">${esc(x.text)}</div></div>`;
-      const inner=x.loading?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text).replace(/\n/g,'<br>');
-      return `<div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">${inner}</div></div></div>`;
-    }).join('');
-    return wrap(thread);
-  }
-  if(it.pending){
-    return wrap(`<div class="mrow"><div class="mbub">${esc(it.query||'…')}</div></div>
-      <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub"><span class="typing3"><i></i><i></i><i></i></span> собираю интент…</div></div></div>`);
-  }
-  const cands=it.candidates||[]; const negotiating=!!it.negotiating;
-  const agreed=cands.filter(c=>c.agree&&c.decided).length;
-  const anyDecided=cands.some(c=>c.decided);
-  const candCard=`<div class="card"><div class="sumhead" style="padding:14px 16px 6px"><div class="sumlbl">${T('Kleal ищет','Kleal is searching')}</div>
-      <span class="confpct">${negotiating?T('договариваюсь…','negotiating…'):(anyDecided?T('согласны: '+agreed,'agreed: '+agreed):T('жду ответов','waiting for replies'))}</span></div>
-    ${cands.length ? cands.map((c,i)=>{
-      const negot=negotiating && !c.decided;
-      const rdy=readinessChip(c);
-      const sub=(c.decided&&c.reason)?c.reason:candReasons(c).slice(0,2).concat(rdy?[rdy]:[]).join(' · ');
-      // Three distinct states, not two. c.decided is set by the matching service only when a real
-      // answer came back; without it the row is "not asked yet", NOT a refusal from a real person.
-      const status=negot?'<div class="candbusy"><span class="typing3"><i></i><i></i><i></i></span></div>'
-        :(c.passed?`<div class="candno">${T('пропущен','skipped')}</div>`
-        :(!c.decided?`<div class="candwait">${T('ещё не спрашивал','not asked yet')}</div>`
-        :(c.agree?`<div class="candok">✓ ${T('согласен','agreed')}</div>`:`<div class="candno">${T('отказ','declined')}</div>`)));
-      // both badges were free to wrap, so "↔ mutual" broke across two lines and shoved the name into an
-      // aggressive ellipsis ("Zoe Smirn…"). They are single tokens — never break them.
-      const tier=c.kind==='reciprocal'
-        ? `<span class="candbadge acc">↔ ${T('взаимно','mutual')}</span>`
-        :(c.tier?`<span class="candbadge">${esc(c.tier)}</span>`:'');
-      const vtick=c.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':'';
-      const acts=(!negot&&c.agree&&!c.passed)
-        ? `<div class="candacts"><button class="introbtn" data-act="intro" data-ci="${i}">${T('Познакомиться','Intro')}</button>
-             <button class="passbtn" data-act="pass" data-ci="${i}" title="${T('Не интересно','Not interested')}">✕</button></div>`
-        : '';
-      return `<div class="candrow" style="${c.passed?'opacity:.5':''}">
-        <div class="candmain"><div class="candav">${esc(String(c.name||'?')[0])}</div>
-          <div class="candt"><div class="candn"><span class="candnm">${esc(c.name)}</span>${vtick}${tier}${candKm(c,sub)}</div>
-            <div class="cands">${esc(sub)}</div>
-            <div class="candsc"><div class="candpct">${esc(bandLabel(c))}</div>${status}</div></div></div>
-        ${acts}</div>${i<cands.length-1?'<div class="divider"></div>':''}`; }).join('')
-      : (it.fallback ? fallbackCard(it.fallback)
-        : '<div class="chkrow"><div class="chklb wait">Пока никто не подошёл — продолжаю искать в фоне.</div></div>')}
-    </div>`;
-  return wrap(`
-    <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">Вот интент, который я собрал${it.error?' (офлайн — грубый разбор)':''}. Запусти поиск, когда всё верно.</div></div></div>
-    <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${esc((it.candidates&&it.candidates[0]&&it.candidates[0].band)?bandLabel(it.candidates[0]):'')}</span></div>
-      <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div></div>
-    <div class="card">${intentSpec(it)}</div>
-    ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Запустить поиск</button>`}
-    ${intentLaunched ? `<div class="mrow"><div class="mbub">Запускаю</div></div>
-      <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">${negotiating?T('Связываюсь с агентами кандидатов — договариваюсь за тебя…','Contacting their agents — negotiating for you…')
-        :(anyDecided?T('Их агенты ответили — согласны: '+agreed,'Their agents replied — agreed: '+agreed)
-                    :T('Ещё жду ответов от их агентов.','Still waiting for their agents to reply.'))}</div></div></div>
-      ${candCard}
-      ${negotiating?'':'<div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">Сделать интро? Я пишу только после твоего одобрения.</div></div></div>'}` : ''}`);
-}
 
 function scr_search(){
   const P=PUBLIC_INTENTS;
@@ -2735,7 +2498,7 @@ function inboxCards(){
     ${INBOX.map(r=>`<div class="card pad">
       <div class="k-h3" style="margin-bottom:2px">${esc(r.from)}</div>
       <div class="k-label" style="color:var(--muted)">${esc(r.note||((r.intent&&r.intent.title)||T('хочет встретиться','wants to meet')))}</div>
-      <div style="display:flex;gap:8px;margin-top:12px">
+      <div class="iacts" style="margin-top:12px">
         <button class="kbtn pri sm" data-act="req-yes" data-id="${esc(r.id)}">${T('Принять','Accept')}</button>
         <button class="kbtn sec sm" data-act="req-no" data-id="${esc(r.id)}">${T('Отклонить','Decline')}</button>
       </div></div>`).join('')}</div>`;
@@ -2821,7 +2584,7 @@ const BACK_MAP = {
   sendreq:'candprofile', waiting:'sendreq', mutual:'waiting', suggestion:'mutual',
   picktime:'suggestion', pickplace:'picktime', awaiting:'pickplace', planok:'awaiting',
   meetstate:'agenthome', mymeetup:'meetstate',
-  intentchat:'intents', buddychat:'agenthome', profileedit:'buddychat', notifs:'agenthome',
+  notifs:'agenthome',
   help:'settings',
 };
 let NAVSTACK=[];
@@ -2871,13 +2634,13 @@ async function flowSay(text, fromSeed){
     FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
   FLOW.lastFailed=false;
   if(r.conversational){
-    // This screen builds an intent and nothing else. The buddy's small-talk reply is not shown here:
-    // answering «расскажи про сервис» with a chat answer invited a conversation the screen cannot
-    // finish, and the turn still polluted nothing but the user's expectations. One steer instead.
+    // Kleal is a companion you can actually talk to, so its conversational answer is shown as-is.
+    // Steering every off-topic turn back to "describe a plan" turned the agent into a form; the way
+    // into an intent is a signal in the conversation or the «+ Создать интент» button in the bar.
+    // Marking the turn `chat` keeps it out of the builder's context — greeting Kleal and then asking
+    // about bonds used to produce an intent whose vibe was "finance, economy".
     FLOW.msgs[meIdx].chat=true;
-    FLOW.msgs.push({who:'ag',chat:true,t:Date.now(),
-      text:T('Здесь я собираю интент — план, под который ищу людей. Напиши, чем хочешь заняться: например «сходить на джаз в пятницу».',
-             "This screen builds an intent — a plan I search people for. Tell me what you'd like to do, e.g. \u201cgo to a jazz gig on Friday\u201d.")});
+    FLOW.msgs.push({who:'ag',text:r.reply,chat:true,t:Date.now()});
     render(); return;
   }
   // the request is the first turn that actually asked for something — never the greeting that opened
@@ -2987,12 +2750,11 @@ function scr_reqcomposer(){
     : `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`).join('');
   // The bar carries «+ Создать интент» (Figma): the way OUT of the dialog is always in reach, not
   // buried under the thread. It appears once there is something to build from.
-  return `<div class="kflow fade">${kbar(!!FLOW.msgs.length)}
+  return `<div class="kflow fade">${kbar(true)}
     <div class="kcont">
       ${kprompt(T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
       ${msgs}
       ${FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:''}
-      ${(FLOW.msgs.length&&!FLOW.busy)?`<button class="kbtn sec" data-act="flow-finish" style="align-self:flex-start">${T('Завершить диалог — к подбору','Finish — review & search')}</button>`:''}
       ${(!FLOW.msgs.length||FLOW.lastFailed)?`<div style="display:flex;flex-direction:column;gap:12px">
         <div class="k-label" style="color:var(--muted)">${T('Попробуй сформулировать иначе','Try phrasing it differently')}</div>
         <div class="kchips">${FLOW_HINTS().map(h=>`<div class="kchip soft" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
@@ -3801,6 +3563,14 @@ function openSheet(kind, idx){
   else if(kind==='basics') ESHEET={kind, draft:{age:DATA.age||'', gender:DATA.gender||''}};
   else if(kind==='goal') ESHEET={kind, idx:(idx==null?-1:idx),
     draft:{text:(idx!=null&&idx>=0)?String(((DATA.goals||{}).active||[])[idx]||''):''}};
+  // The four section sheets (Figma: Interests Edit / Personality Edit / Goals Edit / Safety). Each
+  // drafts a COPY — nothing touches DATA until «Принять изменения».
+  else if(kind==='interests') ESHEET={kind, draft:(DATA.interests||[]).map(i=>({name:i.name,used:i.used!==false})), add:''};
+  else if(kind==='personality') ESHEET={kind, draft:{
+    vibe:((DATA.social||{}).vibe||[]).map(v=>[v[0],!!v[1]]),
+    depth:((DATA.social||{}).depth||[]).map(v=>[v[0],!!v[1]])}};
+  else if(kind==='goals') ESHEET={kind, draft:(((DATA.goals||{}).active)||[]).slice(), add:''};
+  else if(kind==='safety') ESHEET={kind, draft:Object.assign({}, DATA.safety||{})};
   else return;
   render();
 }
@@ -3838,12 +3608,49 @@ function eSheetHTML(){
     title=e.idx>=0?T('Цель','Goal'):T('Новая цель','New goal');
     body=`<textarea id="eshGoal" class="kinput" rows="4" placeholder="${T('Например: найти людей для еженедельного футбола','e.g. find people for weekly football')}">${esc(e.draft.text)}</textarea>`;
     if(e.idx>=0) extra=`<button class="kbtn sec tall" data-act="esheet-goal-del">${T('Удалить','Delete')}</button>`;
+  } else if(e.kind==='interests'){
+    title=T('Интересы','Interests');
+    body=`<div class="k-small" style="color:var(--muted);margin-bottom:8px">${T('Отметь, что Kleal может использовать для подбора.','Pick what Kleal may use for matching.')}</div>`
+      +(e.draft.length?e.draft.map((it,i)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 2px">
+          <div style="font-size:14.5px;min-width:0;overflow:hidden;text-overflow:ellipsis">${esc(it.name)}</div>
+          <div style="display:flex;align-items:center;gap:10px;flex:none">
+            <div class="sw ${it.used?'on':''}" data-act="esheet-int" data-v="${i}"><i></i></div>
+            <div style="cursor:pointer;color:var(--muted);padding:2px 4px" data-act="esheet-int-del" data-v="${i}">✕</div>
+          </div></div>`).join('')
+        :`<div class="k-cap" style="color:var(--muted)">${T('Пока нет интересов.','No interests yet.')}</div>`)
+      +`<input id="eshAdd" class="kinput" style="margin-top:10px" placeholder="${T('Добавить интерес…','Add an interest…')}">
+        <button class="kbtn sec sm" style="margin-top:8px;width:auto;padding:0 16px" data-act="esheet-int-add">${T('Добавить','Add')}</button>`;
+  } else if(e.kind==='personality'){
+    title=T('Твоя личность','Your personality');
+    const chips=(arr,act)=>`<div class="kchips">${arr.map((v,i)=>`<div class="kchip ${v[1]?'on':''}" data-act="${act}" data-v="${i}">${esc(v[0])}</div>`).join('')}</div>`;
+    body=(e.draft.vibe.length?`<div class="k-label" style="color:var(--muted)">${T('Вайб','Vibe')}</div>`+chips(e.draft.vibe,'esheet-vibe'):'')
+      +(e.draft.depth.length?`<div class="k-label" style="color:var(--muted);margin-top:14px">${T('Глубина общения','Conversation depth')}</div>`+chips(e.draft.depth,'esheet-depth'):'')
+      +((!e.draft.vibe.length&&!e.draft.depth.length)
+        ?`<div class="k-cap" style="color:var(--muted)">${T('Kleal ещё не собрал профиль личности — поговори с ним, и он появится.','Kleal has not built your personality profile yet — talk to it and it will appear.')}</div>`:'');
+  } else if(e.kind==='goals'){
+    title=T('Цели','Goals');
+    body=(e.draft.length?e.draft.map((g,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 2px">
+        <div style="flex:1;min-width:0;font-size:14.5px">${esc(g)}</div>
+        <div style="cursor:pointer;color:var(--muted);padding:2px 4px" data-act="esheet-goal-rm" data-v="${i}">✕</div></div>`).join('')
+      :`<div class="k-cap" style="color:var(--muted)">${T('Пока нет целей.','No goals yet.')}</div>`)
+      +`<input id="eshAdd" class="kinput" style="margin-top:10px" placeholder="${T('Например: найти компанию для пробежек','e.g. find people for morning runs')}">
+        <button class="kbtn sec sm" style="margin-top:8px;width:auto;padding:0 16px" data-act="esheet-goals-add">${T('Добавить','Add')}</button>`;
+  } else if(e.kind==='safety'){
+    title=T('Безопасность и приватность','Safety & Privacy');
+    body=safetyGroups(e.draft).map(gr=>`<div style="margin-bottom:14px">
+        <div class="k-label" style="color:var(--muted);margin-bottom:4px">${esc(gr.t||'')}</div>
+        ${gr.items.filter(it=>it.k==='tog'||it.k==='choice'||it.k==='sub').map(it=>
+          it.k==='choice'
+            ? `<div class="crow2">${sTt(it.label,it.desc)}<div class="seg">${it.options.map((o,i)=>
+                `<button class="${i===it.sel?'sel':''}" data-act="esheet-autonomy" data-v="${i}">${esc(o)}</button>`).join('')}</div></div>`
+            : safetyRow(it,'esheet-sflag')).join('')}
+      </div>`).join('');
   }
   return `<div class="kscrim bot" data-act="esheet-close"><div class="ksheet bottom" onclick="event.stopPropagation()">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div class="k-h3">${title}</div><div style="cursor:pointer;padding:4px;color:var(--muted)" data-act="esheet-close">✕</div></div>
-    ${body}
-    <div style="display:flex;gap:8px;margin-top:16px">${extra}
+    <div class="esbody">${body}</div>
+    <div class="iacts" style="margin-top:16px;flex:none">${extra}
       <button class="kbtn pri tall" style="flex:1" data-act="esheet-accept">${T('Принять изменения','Accept changes')}</button></div>
   </div></div>`;
 }
@@ -3868,6 +3675,30 @@ function acceptSheet(){
     if(txt){ DATA.goals=DATA.goals||{active:[],optional:[]}; DATA.goals.active=DATA.goals.active||[];
       if(e.idx>=0) DATA.goals.active[e.idx]=txt; else DATA.goals.active.push(txt);
       pushProfile({goals:DATA.goals.active}); }
+  }
+  else if(e.kind==='interests'){
+    const by={}; (DATA.interests||[]).forEach(i=>by[i.name]=i);
+    DATA.interests=e.draft.map(d=>Object.assign({}, by[d.name]||{name:d.name,icon:editIcon(d.name),conf:'Medium'}, {used:d.used}));
+    DATA.matchingPaths=DATA.interests.filter(i=>i.used!==false).slice(0,3).map(i=>i.name);
+    setSnap('Interests','spark',DATA.interests.map(i=>i.name).join(' · '));
+    pushProfile({interests:DATA.interests.filter(i=>i.used!==false).map(i=>i.name)});
+  }
+  else if(e.kind==='personality'){
+    DATA.social=DATA.social||{rows:[],vibe:[],depth:[]};
+    DATA.social.vibe=e.draft.vibe; DATA.social.depth=e.draft.depth;
+    const on=e.draft.vibe.filter(v=>v[1]).map(v=>v[0]);
+    if(on.length) pushProfile({vibe:on[0]});
+  }
+  else if(e.kind==='goals'){
+    DATA.goals=DATA.goals||{active:[],optional:[]};
+    DATA.goals.active=e.draft.slice();
+    pushProfile({goals:DATA.goals.active});
+  }
+  else if(e.kind==='safety'){
+    DATA.safety=Object.assign({}, DATA.safety||{}, e.draft);
+    pushProfile({safety:{publicPlacesOnly:!!DATA.safety.publicFirst,
+                         verifiedOnly:!!DATA.safety.preferVerified,
+                         hideExactLocation:!DATA.safety.publicMap}});
   }
   ESHEET=null; syncBasicsRows(); render(); saveState(); toast(T('Сохранено','Saved'));
 }
@@ -3938,10 +3769,10 @@ function scr_help(){
         'Privacy controls and blocking live under Privacy & Security. A support channel is not connected yet — it arrives together with accounts.')}</div></div>
   </div>`;
 }
-const SCREENS={agenthome:scr_agenthome,profileedit:scr_profileedit,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
+const SCREENS={agenthome:scr_agenthome,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
   places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
-  intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages,
-  notifs:scr_notifications,matchchat:scr_matchchat,buddychat:scr_buddychat,
+  intents:scr_intents,search:scr_search,messages:scr_messages,
+  notifs:scr_notifications,matchchat:scr_matchchat,
   reqcomposer:scr_reqcomposer,clarify:scr_clarify,summary:scr_summary,searching:scr_searching,fewmatches:scr_fewmatches,
   options:scr_options,bestfit:scr_bestfit,recos:scr_recos,candprofile:scr_candprofile,
   sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
@@ -4006,9 +3837,8 @@ function render(){
   const meta=TABS.find(t=>t[0]===cur)||TABS[0];
   const isHome = !editSig && !detail && cur==='overview';
   const isRoot = !editSig && !detail && ROOTS.includes(cur);
-  const titleFor = cur==='intentchat' ? (curIntent&&curIntent.title?curIntent.title:'Create intent')
+  const titleFor = false ? ''
     : cur==='matchchat' ? ((matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'Chat')
-    : cur==='buddychat' ? 'Kleal'
     : (cur==='overview'?T('Мой профиль Kleal','My Kleal Profile'):(TITLES()[cur]||meta[2]));
   document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : titleFor);
   document.getElementById('back').style.visibility= (editSig||detail||!ROOTS.includes(cur))? 'visible' : 'hidden';
@@ -4022,7 +3852,7 @@ function render(){
   // Every chat screen carries its OWN in-screen header (chd) and pinned composer, so hide the shared app bar
   // and the bottom nav on all of them — and treat them all the same way for layout.
   // the Figma request flow carries its own app bar + composer, exactly like the chat screens
-  const chat=(cur==='buddychat'||cur==='profileedit'||cur==='intentchat'||cur==='matchchat'
+  const chat=(cur==='matchchat'
               ||cur==='reqcomposer'||cur==='clarify'||cur==='summary'||cur==='searching'||cur==='fewmatches'
               ||cur==='options'||cur==='bestfit'||cur==='recos'||cur==='candprofile'
               ||['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'].includes(cur));
@@ -4074,19 +3904,15 @@ function render(){
   document.querySelectorAll('[data-ecbx]').forEach(el=>el.onclick=()=>{ const i=+el.dataset.ecbx; editSig.know[i].on=!editSig.know[i].on; el.classList.toggle('on'); el.innerHTML=editSig.know[i].on?IC.check:''; });
   document.querySelectorAll('[data-eexp]').forEach(el=>el.onclick=()=>{ editSig.expansion=el.dataset.eexp; render(); });
   // V4: intents list, discovery pins/cards, message rows
-  document.querySelectorAll('[data-intent]').forEach(el=>el.onclick=()=>{ const it=(DATA.intents||[])[+el.dataset.intent]; openIntent(it, !!(it&&it.status==='searching')); });
   document.querySelectorAll('[data-plan]').forEach(el=>el.onclick=()=>toast(T('Детали плана — скоро','Plan details are coming soon')));
   document.querySelectorAll('[data-msg]').forEach(el=>el.onclick=()=>openMsgThread(+el.dataset.msg));
   document.querySelectorAll('[data-savedintent]').forEach(el=>el.onclick=()=>openIntentFlow(el.dataset.savedintent));
   document.querySelectorAll('[data-notif]').forEach(el=>el.onclick=()=>openNotif(el.dataset.notif));
   document.querySelectorAll('[data-public]').forEach(el=>el.onclick=()=>{ const p=PUBLIC_INTENTS[+el.dataset.public]; if(p)toast(p.title+' — '+p.who+' · '+p.when); });
   document.querySelectorAll('[data-act]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); doAct(el.dataset.act, el.dataset); });
-  const acin=document.getElementById('acin'); if(acin){ acin.onkeydown=(e)=>{ if(e.key==='Enter')intentTurn(acin.value); }; setTimeout(()=>{try{acin.focus();}catch(_e){}},40); }
   // Enter must do EXACTLY what the send button does. It used to call goToBuddy(), which dropped the
   // user into the old free-chat screen instead of the request flow — same field, two different apps.
   const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); flowStart(ainput.value); } }; }
-  const bcin=document.getElementById('bcin'); if(bcin){ bcin.onkeydown=(e)=>{ if(e.key==='Enter')buddyTurn(bcin.value); }; setTimeout(()=>{try{bcin.focus();}catch(_e){}},40); }
-  const ecin=document.getElementById('ecin'); if(ecin){ ecin.onkeydown=(e)=>{ if(e.key==='Enter')editTurn(ecin.value); }; setTimeout(()=>{try{ecin.focus();}catch(_e){}},40); }
   const mcin=document.getElementById('mcin'); if(mcin){ mcin.onkeydown=(e)=>{ if(e.key==='Enter')doAct('match-send',{}); }; setTimeout(()=>{try{mcin.focus();}catch(_e){}},40); }
   saveState();   // persist after every re-render (covers all doAct-driven edits)
 }
@@ -4094,10 +3920,7 @@ function render(){
 A.addEventListener('click', ()=>setTimeout(saveState, 0));
 window.addEventListener('beforeunload', saveState);
 document.getElementById('back').onclick=()=>{ if(editSig){ editSig=null; render(); } else if(detail){ detail=null; render(); }
-  else if(cur==='matchchat'){ cur=(matchWith&&matchWith.fromMessages)?'messages':(matchWith&&matchWith.fromBuddy)?'buddychat':'intentchat'; render(); }
-  else if(cur==='buddychat'){ cur='agenthome'; render(); }
-  else if(cur==='profileedit'){ cur='buddychat'; render(); }
-  else if(cur==='intentchat'){ cur='intents'; render(); }
+  else if(cur==='matchchat'){ cur=(matchWith&&matchWith.fromMessages)?'messages':'intents'; render(); }
   else if(cur==='notifs'){ cur='agenthome'; render(); }
   else if(!ROOTS.includes(cur)){ cur='overview'; render(); } };
 // ---- toast + every button does something ----
@@ -4112,9 +3935,10 @@ function doAct(act, ds){
     case 'cancelsum': editingSummary=false; render(); break;
     case 'savesum': { const el=document.getElementById('sumta'); DATA.summary=(el?el.value:'').trim(); editingSummary=false; render(); toast('Summary saved'); break; }
     case 'askwhy': toast('Kleal built this from what you shared during onboarding. Every detail is editable.'); break;
-    case 'editbasics': openProfileEdit(''); break;   // name / city / languages — all editable by talking
-    case 'editrow': { const rt={'Basics':'basics','Social formats':'formats','Location':'location','Languages':'languages'}[ds.row||''];
-      if(rt) openSheet(rt); else openProfileEdit(ds.row||''); break; }
+    case 'editbasics': openSheet('basics'); break;
+    case 'editrow': { const rt={'Basics':'basics','Social formats':'formats','Location':'location','Languages':'languages',
+        interests:'interests', social:'personality', goals:'goals', safety:'safety'}[ds.row||''];
+      openSheet(rt||'basics'); break; }
     case 'edit-int': openEditInterest(ds.int); break;
     case 'dontuse-int': toast('"'+(ds.int||'')+'" will not be used for matching'); break;
     case 'remove-int': { DATA.interests=DATA.interests.filter(i=>i.name!==ds.int);
@@ -4142,11 +3966,9 @@ function doAct(act, ds){
     case 'export-data': toast('Preparing your data export — we’ll email you a copy'); break;
     case 'delete-account': toast('Delete account would ask you to confirm, then erase everything'); break;
     case 'nav': setTab(ds.tab||'overview'); break;
-    case 'fab': case 'createintent': openCreateIntent(); break;
+    case 'fab': case 'createintent': flowStart(''); break;   // one chat screen; the bar carries «+ Создать интент»
     case 'intent-open': openIntentFlow(ds.id); break;
     case 'intent-del': deleteIntent(ds.id); break;
-    case 'intent-send': { const el=document.getElementById('acin'); intentTurn(el&&el.value||''); break; }
-    case 'agent-send': { const el=document.getElementById('acin'); intentTurn(el&&el.value||''); break; }
     case 'launch-intent': intentLaunched=true; render(); negotiateIntent(); break;
     case 'intro': { const i=+ds.ci; approveIntro((curIntent&&curIntent.candidates||[])[i], curIntent); break; }
     case 'pass': { const i=+ds.ci; const c=(curIntent&&curIntent.candidates||[])[i]; if(!c)break;
@@ -4159,7 +3981,7 @@ function doAct(act, ds){
     case 'editsum': editingSummary=true; render(); break;
     case 'resum': { if(SUMBUSY)break; SUMBUSY=true; render();
       adaptSummary().then(()=>{ SUMBUSY=false; render(); }); break; }
-    case 'set-personal': openProfileEdit(null); break;
+    case 'set-personal': openSheet('basics'); break;
     case 'set-privacy':  navTo('safety'); break;
     case 'set-help':     cur='help'; render(); break;
     case 'set-language': setUILang(UILANG==='ru'?'en':'ru'); break;   // setUILang persists + re-renders
@@ -4200,6 +4022,9 @@ function doAct(act, ds){
     // Agent Home
     case 'notif': setTab('notifs'); break;
     case 'go-onboarding': location.href='/'; break;
+    // Both home entries open the buddy CHAT. Routing them straight into the intent builder turned a
+    // friendly agent into a matching form: «привет» got a canned "tell me what you want to do".
+    // Building an intent is a thing you ask for — by signalling it in the chat, or with the button.
     case 'agent-go': { const el=document.getElementById('ainput'); flowStart(el&&el.value||''); break; }
     // ---- Figma request flow ----
     case 'flow-back': flowBack(); break;
@@ -4237,6 +4062,19 @@ function doAct(act, ds){
     case 'esheet-gender': { const ag=document.getElementById('eshAge');
       if(ag) ESHEET.draft.age=ag.value;      // the chip tap re-renders the sheet — a typed age must survive it
       ESHEET.draft.gender=ds.v; render(); break; }
+    case 'esheet-int': { const d=ESHEET.draft[+ds.v]; if(d) d.used=!d.used; render(); break; }
+    case 'esheet-int-del': { ESHEET.draft.splice(+ds.v,1); render(); break; }
+    case 'esheet-int-add': { const el=document.getElementById('eshAdd'), v=el?el.value.trim():'';
+      if(v && !ESHEET.draft.some(x=>x.name.toLowerCase()===v.toLowerCase())) ESHEET.draft.push({name:v,used:true});
+      render(); break; }
+    case 'esheet-goals-add': { const el=document.getElementById('eshAdd'), v=el?el.value.trim():'';
+      if(v && !ESHEET.draft.some(x=>String(x).toLowerCase()===v.toLowerCase())) ESHEET.draft.push(v);
+      render(); break; }
+    case 'esheet-goal-rm': { ESHEET.draft.splice(+ds.v,1); render(); break; }
+    case 'esheet-vibe': { const v=ESHEET.draft.vibe[+ds.v]; if(v) v[1]=!v[1]; render(); break; }
+    case 'esheet-depth': { const v=ESHEET.draft.depth[+ds.v]; if(v) v[1]=!v[1]; render(); break; }
+    case 'esheet-sflag': { ESHEET.draft[ds.v]=!ESHEET.draft[ds.v]; render(); break; }
+    case 'esheet-autonomy': { ESHEET.draft.autonomy=(+ds.v===1?'auto':'ask'); render(); break; }
     case 'esheet-goal-del': { if(ESHEET.idx>=0&&DATA.goals&&DATA.goals.active){ DATA.goals.active.splice(ESHEET.idx,1);
         pushProfile({goals:DATA.goals.active}); } ESHEET=null; render(); saveState(); toast(T('Цель удалена','Goal removed')); break; }
     // ---- batch 3: request → mutual → plan → meetup day ----
@@ -4269,28 +4107,15 @@ function doAct(act, ds){
       toast(T('Встреча отмечена завершённой','Meetup marked as finished')); cur='agenthome'; render(); break;
     case 'meet-open': cur=(PLAN&&PLAN.here)?'mymeetup':'meetstate'; render(); break;
     case 'security': SHEET='security'; render(); break;
-    case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
-    case 'buddy-intro': { const i=+ds.bi; const m=buddyMsgs[i]; if(m&&m.match&&m.match.top){ approveIntro(m.match.top, m.match.intent); if(matchWith)matchWith.fromBuddy=true; } break; }
-    case 'buddy-back': cur='agenthome'; render(); break;
-    case 'intent-back': cur='agenthome'; render(); break;   // create-intent chat -> home
     case 'chat-back': chatBack(); break;                     // generic chat back (match chat, etc.)
-    case 'buddy-profile': openProfileEdit(); break;   // "Edit with Kleal" — change the profile by talking
-    case 'edit-send': { const el=document.getElementById('ecin'); editTurn(el&&el.value||''); break; }
-    case 'edit-apply': confirmEdit(+ds.ei); break;
-    case 'edit-cancel': cancelEdit(+ds.ei); break;
-    case 'edit-back': cur='buddychat'; render(); break;
-    case 'edit-view': cur='overview'; render(); break;
-    case 'buddy-create': openCreateIntent(); break;
-    case 'buddy-plus': toast(T('Вложения — скоро','Attachments are coming soon')); break;
-    case 'buddy-mic': buddyMic(); break;
     case 'go-home': editSig=null; detail=null; cur='agenthome'; render(); break;   // center FAB -> agent home
     // This block sits directly above the composer and says the same thing ("опиши, кого ищешь"), so it
     // must open the same screen the composer does. It used to call openBuddy(), the pre-flow free-chat
     // screen — the same stale entry point the Enter key had. Kleal converses on the new screen now.
     case 'talk-buddy': flowStart(''); break;
     case 'see-all': setTab('search'); break;
-    case 'add-interests': openProfileEdit('Interests'); break;
-    case 'edit-personality': openProfileEdit('Your personality'); break;
+    case 'add-interests': openSheet('interests'); break;
+    case 'edit-personality': openSheet('personality'); break;
     case 'add-goal': openSheet('goal'); break;
     case 'edit-goal': openSheet('goal', ds.goal!=null?+ds.goal:null); break;
     default: toast(T('Пока недоступно','Not available yet'));
