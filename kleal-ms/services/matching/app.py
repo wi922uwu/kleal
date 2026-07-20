@@ -882,6 +882,70 @@ def threads_for(self_name):
                                        "mine": _norm_name(m.get("from")) == me}
     return sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50]
 
+# ---- intents as LIVE server-side standing searches ------------------------------------------------
+# Intents used to live only in the sender's localStorage, holding a FROZEN copy of the candidates from
+# the moment they were created — so a saved intent was a private note that never re-searched, while the
+# requests and messages it supposedly drove were already shared server state. Stored here instead, and
+# re-ranked on read so opening one shows who fits NOW, not who fitted then.
+def _intents():
+    return SESSION.setdefault("_intents", [])
+
+def save_intent(owner, intent, title, iid=None):
+    owner = str(owner or "").strip()
+    if not owner or not isinstance(intent, dict):
+        return {"ok": False, "error": "owner and intent required"}
+    now = time.time()
+    with _STORE_LOCK:
+        rows = _intents()
+        if iid:
+            for r in rows:
+                if r.get("id") == iid and _norm_name(r.get("owner")) == _norm_name(owner):
+                    r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+                    _save_store()
+                    return {"ok": True, "id": iid}
+        # the same request twice should update, not pile up a second identical card
+        key = json.dumps(intent.get("topics") or [], sort_keys=True) + "|" + str(intent.get("role") or "")
+        for r in rows:
+            if _norm_name(r.get("owner")) == _norm_name(owner) and r.get("key") == key:
+                r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+                _save_store()
+                return {"ok": True, "id": r["id"], "merged": True}
+        nid = "in_%d" % int(now * 1000)
+        rows.append({"id": nid, "owner": owner, "title": title or "", "intent": intent,
+                     "key": key, "created": now, "updated": now})
+    _save_store()
+    return {"ok": True, "id": nid}
+
+def delete_intent(owner, iid):
+    with _STORE_LOCK:
+        rows = _intents()
+        keep = [r for r in rows
+                if not (r.get("id") == iid and _norm_name(r.get("owner")) == _norm_name(owner))]
+        removed = len(rows) - len(keep)
+        rows[:] = keep
+    _save_store()
+    return {"ok": removed > 0}
+
+def list_intents(owner, profile=None, live=True):
+    """Every intent this user owns. With live=True each one is re-ranked now, so the count and the
+    top band reflect the current pool rather than a snapshot taken when the card was made."""
+    me = _norm_name(owner)
+    if not me:
+        return []
+    out = []
+    for r in [x for x in _intents() if _norm_name(x.get("owner")) == me]:
+        row = {"id": r["id"], "title": r.get("title"), "intent": r.get("intent") or {},
+               "created": r.get("created"), "updated": r.get("updated"), "candidates": []}
+        if live:
+            try:
+                row["candidates"] = match_candidates(_normalize_intent(r.get("intent") or {}),
+                                                     profile or {}, {"self": owner}) or []
+            except Exception as e:
+                row["error"] = str(e)[:120]        # a failed re-rank must not hide the intent
+        out.append(row)
+    out.sort(key=lambda x: -(x.get("updated") or 0))
+    return out
+
 # ---- Agent-to-agent intro (Phase 2): the candidate's agent confirms + an icebreaker opener ----
 INTRO_PROMPT = '''You are the AI agent of user B. User A wants to meet for the activity below, and B's agent has agreed.
 Write (a) as B's agent, a warm one-sentence confirmation to A's agent, and (b) a friendly one-sentence icebreaker
@@ -1240,6 +1304,15 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, agent_intro(intent, cand))
             except Exception as e:
                 send_json(self, 200, {"reply": "", "opener": "Hey! Want to make a plan?", "error": str(e)[:200]})
+        elif p == "/api/agent/intent-save":
+            send_json(self, 200, save_intent(body.get("self"), body.get("intent") or {},
+                                             body.get("title"), body.get("id")))
+        elif p == "/api/agent/intent-delete":
+            send_json(self, 200, delete_intent(body.get("self"), body.get("id")))
+        elif p == "/api/agent/intents":
+            send_json(self, 200, {"intents": list_intents(body.get("self"),
+                                                          body.get("profile") or {},
+                                                          body.get("live") is not False)})
         elif p == "/api/agent/message":
             send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text")))
         elif p == "/api/agent/propose":

@@ -2226,7 +2226,54 @@ function intentBest(it){                      // the honest headline: the best b
   const order={especially_close:0,strong_option:1,broader_option:2,needs_clarification:3};
   return cs.slice().sort((a,b)=>(order[a.band]??9)-(order[b.band]??9))[0];
 }
+// ---- intents live on the server and are re-ranked on every load ----
+// They used to be localStorage-only, holding a frozen candidate list from the moment of creation: a
+// private note that never re-searched, while the requests and messages it drove were already shared.
+async function loadIntents(){
+  const me=(DATA.name||'').trim(); if(!me) return;
+  try{
+    const r=await fetch('/api/agent/intents',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({self:me, profile:matchProfile()})}).then(x=>x.json());
+    const rows=(r&&r.intents)||[];
+    DATA.intents=rows.map(it=>({
+      id:it.id, title:it.title||(it.intent&&it.intent.title)||T('Без названия','Untitled'),
+      tags:(it.intent&&it.intent.topics)||[], intent:it.intent||{},
+      candidates:it.candidates||[], server:true, error:it.error||null}));
+    if(cur==='intents') render();
+    saveState();
+  }catch(e){}
+}
+// Opening a saved intent runs a FRESH search and lands in the same screens a new request does, so
+// there is one visual language instead of two. It used to open `intentchat`, the older screen.
+async function openIntentFlow(id){
+  const it=(DATA.intents||[]).find(x=>x.id===id); if(!it) return;
+  FLOW={text:it.title, request:it.title, msgs:[], intent:it.intent||{}, res:[], busy:true,
+        summary:{request:it.title}, fromIntent:id};
+  cur='searching'; render();
+  await flowSearch();
+  FLOW.busy=false;
+  cur=(FLOW.res&&FLOW.res.length)?'bestfit':'fewmatches';
+  render(); saveState();
+}
+async function deleteIntent(id){
+  const me=(DATA.name||'').trim();
+  try{ await fetch('/api/agent/intent-delete',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({self:me, id})}); }catch(e){}
+  DATA.intents=(DATA.intents||[]).filter(x=>x.id!==id);
+  render(); saveState(); toast(T('Интент удалён','Intent deleted'));
+}
+// Every launched request becomes a standing intent, so the tab reflects what Kleal is actually doing.
+async function persistIntent(){
+  const me=(DATA.name||'').trim(); if(!me||!FLOW||!FLOW.intent) return;
+  try{
+    await fetch('/api/agent/intent-save',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({self:me, id:FLOW.fromIntent||null,
+        title:(FLOW.intent.title)||FLOW.request||'', intent:FLOW.intent})});
+  }catch(e){}
+  loadIntents();
+}
 function scr_intents(){
+  if(!_intT){ _intT=1; loadIntents(); }
   const list=DATA.intents||[];
   const head=`<div class="k-small" style="color:var(--muted);padding:2px 2px 4px">${T(
     'Интенты — это планы, которые ты поручаешь Kleal. Он ищет людей, сверяет расписания и предлагает знакомства — каждое ты подтверждаешь сам(а).',
@@ -2375,7 +2422,7 @@ async function loadThreads(){
   }catch(e){}
   clearTimeout(_thT); _thT=setTimeout(loadThreads, 6000);
 }
-let _thT=null;
+let _thT=null, _intT=null;
 function scr_messages(){
   const list=DATA.messages||[];
   if(!list.length) return emptyState(T("Пока нет сообщений","No messages yet"),T("Когда Kleal устроит знакомство, переписки появятся здесь.","When Kleal lines up an intro, your chats show up here."));
@@ -2661,6 +2708,7 @@ async function flowSearch(isRetry){
   clearInterval(tick); FLOW.steps=4;
   const cands=(r&&r.candidates)||[];
   FLOW.res=cands;
+  persistIntent();                 // the tab must show what Kleal is actually working on
   render();
   setTimeout(()=>{
     if(cands.length){                          // results -> the Figma results screens
@@ -3685,7 +3733,7 @@ function render(){
   document.querySelectorAll('[data-intent]').forEach(el=>el.onclick=()=>{ const it=(DATA.intents||[])[+el.dataset.intent]; openIntent(it, !!(it&&it.status==='searching')); });
   document.querySelectorAll('[data-plan]').forEach(el=>el.onclick=()=>toast(T('Детали плана — скоро','Plan details are coming soon')));
   document.querySelectorAll('[data-msg]').forEach(el=>el.onclick=()=>openMsgThread(+el.dataset.msg));
-  document.querySelectorAll('[data-savedintent]').forEach(el=>el.onclick=()=>openSavedIntent(el.dataset.savedintent));
+  document.querySelectorAll('[data-savedintent]').forEach(el=>el.onclick=()=>openIntentFlow(el.dataset.savedintent));
   document.querySelectorAll('[data-notif]').forEach(el=>el.onclick=()=>openNotif(el.dataset.notif));
   document.querySelectorAll('[data-public]').forEach(el=>el.onclick=()=>{ const p=PUBLIC_INTENTS[+el.dataset.public]; if(p)toast(p.title+' — '+p.who+' · '+p.when); });
   document.querySelectorAll('[data-act]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); doAct(el.dataset.act, el.dataset); });
@@ -3750,10 +3798,8 @@ function doAct(act, ds){
     case 'delete-account': toast('Delete account would ask you to confirm, then erase everything'); break;
     case 'nav': setTab(ds.tab||'overview'); break;
     case 'fab': case 'createintent': openCreateIntent(); break;
-    case 'intent-open': { const it=(DATA.intents||[]).find(x=>x.id===ds.id); if(it) openSavedIntent(it.id); break; }
-    case 'intent-del': { const i=(DATA.intents||[]).findIndex(x=>x.id===ds.id);
-      if(i>=0){ const nm=DATA.intents[i].title||''; DATA.intents.splice(i,1); saveState(); render();
-                toast(T('Интент удалён','Intent deleted')+(nm?(': '+nm):'')); } break; }
+    case 'intent-open': openIntentFlow(ds.id); break;
+    case 'intent-del': deleteIntent(ds.id); break;
     case 'intent-send': { const el=document.getElementById('acin'); intentTurn(el&&el.value||''); break; }
     case 'agent-send': { const el=document.getElementById('acin'); intentTurn(el&&el.value||''); break; }
     case 'launch-intent': intentLaunched=true; render(); negotiateIntent(); break;
