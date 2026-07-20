@@ -146,6 +146,8 @@ TOPIC_ALIASES = {
     "шахматы": "chess", "покер": "poker", "настолки": "boardgames", "настолка": "boardgames",
     "игры": "gaming", "поиграть": "gaming", "гейминг": "gaming", "катка": "gaming", "фифа": "fifa",
     "тиммейт": "gaming", "напарник": "gaming",
+    "майнкрафт": "minecraft", "майн": "minecraft", "роблокс": "roblox", "пубг": "pubg",
+    "варзон": "warzone", "вов": "wow", "кс2": "cs", "калда": "cod", "гта": "gta",
     # social
     "кофе": "coffee", "кофейня": "coffee", "чай": "tea", "бранч": "brunch", "ужин": "dinner",
     "обед": "lunch", "поесть": "food", "ресторан": "restaurant", "готовка": "cooking",
@@ -507,23 +509,32 @@ def _title_for(topics, tags, typ, lang):
 # Online-native activities and explicit "let's do it online" cues. Hard-coding mode="offline" sent
 # ranked Dota to "public places nearby" and made the ranker demand geo feasibility for a game that
 # is played over the internet (spec §18.2: games are an online domain, location weight 0).
-_ONLINE_TOPICS = {"dota", "valorant", "cs", "league", "apex", "fortnite", "fifa", "overwatch",
-                  "gaming", "crypto"}
+# Online-by-nature = the taxonomy's ESPORTS branch (real-time internet games), kept in sync with
+# matching/app.py TAXONOMY['games']['esports'], PLUS crypto. This is the whole branch, not an
+# arbitrary short list — add a game to the esports vocabulary and it becomes online automatically,
+# so "minecraft" no longer silently defaults to a coffee-shop meetup. Tabletop games (chess, poker,
+# boardgames) are deliberately NOT here: you play those across a table, in person.
+_ESPORTS = {"dota", "valorant", "cs", "league", "apex", "fortnite", "fifa", "overwatch", "gaming",
+            "minecraft", "roblox", "rocketleague", "pubg", "warzone", "wow", "hearthstone", "tft",
+            "rainbow6", "callofduty", "cod", "gta", "starcraft", "hots", "pubgm"}
+_ONLINE_TOPICS = _ESPORTS | {"crypto"}
 _ONLINE_WORDS = ("online", "онлайн", "по сети", "удалённо", "удаленно", "remote", "voice", "video",
                  "call", "созвон", "стрим", "stream", "discord", "дискорд", "zoom", "зум", "ranked",
                  "ранкед", "каток", "катку", "катки")
 _OFFLINE_WORDS = ("offline", "офлайн", "оффлайн", "вживую", "встретиться", "meet up", "in person",
                   "за столом", "в баре", "в кафе")
 
-def _infer_mode(topics, sig, last_user):
+def _infer_mode(topics, sig, last_user, category="", subcategory=""):
     blob = (str(sig.get("interest") or "") + " " + str(last_user or "")).lower()
-    if any(w in blob for w in _OFFLINE_WORDS):
+    if any(w in blob for w in _OFFLINE_WORDS):          # the user said "вживую"/"в кафе" — offline wins
         return "offline"
-    if any(w in blob for w in _ONLINE_WORDS):
+    if any(w in blob for w in _ONLINE_WORDS):           # the user said "онлайн"/"discord"/"каток"
         return "online"
+    if str(category).lower() == "esports" or str(subcategory).lower() == "esports":
+        return "online"                                 # taxonomy says this is an internet game
     if any(str(t).lower() in _ONLINE_TOPICS for t in (topics or [])):
         return "online"
-    return "offline"
+    return "offline"                                    # everything else meets in person
 
 def build_intent(sig, cat, last_user, lang):
     """Filtration result + signals -> the intent matching ranks on.
@@ -562,7 +573,7 @@ def build_intent(sig, cat, last_user, lang):
     dating = typ == "dating"
     demand = str(sig.get("interest") or "") + " " + str(last_user or "")
     req_langs = norm_langs(sig.get("languages")) if any(w in demand.lower() for w in LANG_DEMAND) else []
-    mode = _infer_mode(topics, sig, last_user)
+    mode = _infer_mode(topics, sig, last_user, cat.get("category"), cat.get("subcategory"))
     place = str(sig.get("area") or (("Онлайн" if lang == "ru" else "Online") if mode == "online" else
                                     ("Публичные места рядом" if lang == "ru" else "Public places nearby")))[:60]
     title = _title_for(topics, tags, typ, lang)

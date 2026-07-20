@@ -82,6 +82,8 @@ SYNONYMS.update({
     'лол':'league','валорант':'valorant','контра':'cs','кс':'cs',
     'фифа':'fifa','гейминг':'gaming','киберспорт':'gaming','шахматы':'chess',
     'настолки':'boardgames','настольныеигры':'boardgames','покер':'poker',
+    'майнкрафт':'minecraft','майн':'minecraft','роблокс':'roblox','пубг':'pubg',
+    'варзон':'warzone','вов':'wow','кс2':'cs','калда':'cod','гта':'gta',
     'кино':'cinema','фильм':'cinema','фильмы':'cinema','сериал':'series','сериалы':'series',
     'искусство':'art','музей':'museum','музеи':'museum','галерея':'gallery',
     'выставка':'exhibition','выставки':'exhibition','фотография':'photography','театр':'theatre',

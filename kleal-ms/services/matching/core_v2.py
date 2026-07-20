@@ -261,11 +261,16 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
             v = _geo_value(km)
             F["location_feasibility"] = ((K_MATCH if v >= 0.45 else K_MISM), v, "%.1f km" % km)
 
-    # 4. mode_format — candidates rarely declare formats; unknown, not assumed compatible
-    fmts = [str(x).lower() for x in (cand.get("formats") or [])]
+    # 4. mode_format — does the candidate accept this plan's mode (online/offline)?
+    # Only the mode-bearing formats count: online / offline / hybrid (and legacy any/both). A person
+    # who ticked only sizes (1:1, small group) has NOT stated an online/offline preference, so that
+    # stays UNKNOWN rather than a penalty. 'hybrid' means both — it matches either mode. A genuine
+    # opposite-only declaration (offline-only on an online plan) is the one case that is penalised.
+    _MODE_FMTS = ("online", "offline", "hybrid", "any", "both")
+    fmts = [str(x).lower() for x in (cand.get("formats") or []) if str(x).lower() in _MODE_FMTS]
     if not mode or not fmts:
         F["mode_format"] = (UNKNOWN, None, "")
-    elif any(mode in f for f in fmts) or any(f in ("any", "both") for f in fmts):
+    elif mode in fmts or any(f in ("hybrid", "any", "both") for f in fmts):
         F["mode_format"] = (K_MATCH, 1.0, mode)
     else:
         F["mode_format"] = (K_MISM, 0.2, "")
@@ -326,7 +331,8 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
 def _profile_as_candidate(prof):
     langs = ((prof.get("languages") or {}).get("comfortable")) or prof.get("langs") or []
     return {"interests": prof.get("interests") or [], "vibe": prof.get("vibe"),
-            "langs": langs, "geo": prof.get("geo"), "open": None, "role": prof.get("role")}
+            "langs": langs, "geo": prof.get("geo"), "open": None, "role": prof.get("role"),
+            "formats": prof.get("formats") or []}     # so B->A can judge the searcher's mode too
 
 def reverse_features(intent, prof, cand, domain, H, role_conflict):
     """B->A: does the searcher fit what B declared? B's own active intent (topics) is the strongest

@@ -1325,6 +1325,9 @@ def _profile_to_user(p):
         "vibe": vibe, "langs": langs, "area": area,
         "km": None, "lat": lat, "lon": lon, "radiusKm": radius, "open": True, "role": role,
         "gender": gender, "goals": goals, "summary": str(p.get("summary") or "")[:400],
+        # meeting-format preference (Figma «Формат встреч»); matching's mode_format reads this. Empty
+        # until the user picks in the profile sheet — an empty list is honestly "no preference stated".
+        "formats": [str(x).strip().lower() for x in (p.get("formats") or []) if str(x).strip()][:8],
         "safety": {"publicPlacesOnly": bool(sf.get("publicPlacesOnly", True)),
                    "verifiedOnly": bool(sf.get("verifiedOnly")),
                    "hideExactLocation": bool(sf.get("hideExactLocation"))},
