@@ -667,6 +667,10 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .ktabs{display:flex;justify-content:space-between;background:#fff;border-radius:20px;padding:2px;
   flex:0 0 auto;min-height:40px}
 .ktabs .kchip{flex:1;min-width:0}
+.khelp{display:flex;justify-content:center;padding:0 12px 6px}
+.khelp .kchip{gap:6px;cursor:pointer;height:34px;min-height:34px}
+.khelp .kchip svg{width:15px;height:15px}
+.khelp .kchip.busy{opacity:.55;pointer-events:none}
 .ksugg{display:block;width:100%;box-sizing:border-box;padding:12px 14px;border-radius:16px;
   background:var(--neutral100);border:1px solid var(--border);color:var(--fg);
   font-size:15px;line-height:22px;text-align:left;white-space:normal;overflow-wrap:anywhere;cursor:pointer}
@@ -901,10 +905,26 @@ else { try{ localStorage.removeItem(PKEY); }catch(_e){} _saved = null; }
 // the fake intents ("Coffee & AI talk", Marc/Nina) and duplicate cards in localStorage.
 (function migrate(){
   if(!DATA) return;
+  let changed=false;
+  // Threads saved by an older build carry the AI-drafted opener as a message FROM the other person —
+  // a real name, a "now" timestamp, and words they never wrote. A thread where the other side spoke
+  // first and the user never sent anything is impossible in this product, so it is unambiguous: demote
+  // that text to the suggestion it always was. Without this, everyone who opened the app before the
+  // fix keeps seeing the fabricated message.
+  if(Array.isArray(DATA.messages)){
+    DATA.messages.forEach(t=>{
+      if(!t||t.kleal||!Array.isArray(t.msgs)||!t.msgs.length) return;
+      if(t.msgs.some(m=>m&&m.who==='me')) return;              // a real exchange — leave it alone
+      const first=t.msgs.find(m=>m&&m.who==='them'&&m.text&&m.text!=='…');
+      if(!first) return;
+      if(!t.suggest) t.suggest=first.text;
+      t.msgs=[]; t.last=T('Интро сделано — напиши первым','Intro made — say hi first');
+      changed=true;
+    });
+  }
   const GHOSTS=['marc','nina','ana','coffee & ai talk','startup founders meetup','spanish + coffee swap',
                 'morning coffee & ai chat'];
   const ghost=v=>GHOSTS.includes(String(v||'').trim().toLowerCase());
-  let changed=false;
   if(Array.isArray(DATA.intents)){
     const key=x=>String((x&&(x.title||x.query))||'').trim().toLowerCase(), seen=new Set();
     const keep=DATA.intents.filter(it=>{
@@ -1738,6 +1758,25 @@ function openMsgThread(i){
   if(t.kleal){ openBuddy(''); return; }          // the pinned Kleal thread -> the agent chat
   matchWith=t; matchWith.fromMessages=true; cur='matchchat'; render(); saveState();
 }
+// ---- Kleal's help: it drafts YOUR next message, in your voice, from your profile and the thread ----
+// It never sends. The screen already promises «я пишу только после твоего одобрения», and the
+// recipient is a real person — so the draft lands in the composer and you decide.
+let GHOSTBUSY=false;
+async function klealHelp(){
+  if(GHOSTBUSY||!matchWith) return;
+  GHOSTBUSY=true; render();
+  let r=null;
+  try{
+    r=await fetch('/api/buddy/ghostwrite',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({profile:matchProfile(), candidate:matchWith.cand||{name:matchWith.who||''},
+        messages:(matchWith.msgs||[]).map(m=>({who:m.who,text:m.text})), lang:UILANG})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  GHOSTBUSY=false; render();
+  const d=(r&&r.draft||'').trim();
+  if(!d){ toast(T('Не получилось составить — попробуй ещё раз','Could not draft that — try again')); return; }
+  const el=document.getElementById('mcin');
+  if(el){ el.value=d; el.focus(); try{ el.setSelectionRange(d.length,d.length); }catch(_e){} }
+}
 function scr_matchchat(){
   const m=matchWith; if(!m) return scr_agenthome();
   // A thread rehydrated from localStorage can have lost `cand` (it is re-attached by msgThreadFor on
@@ -1757,6 +1796,10 @@ function scr_matchchat(){
   const nostart=(!m.msgs.length)?`<div class="k-cap" style="color:var(--muted);text-align:center;padding:6px 0">${T('Переписка ещё не началась.','No messages yet.')}</div>`:'';
   const wait=m.awaiting?`<div class="k-cap" style="color:var(--muted);text-align:center;padding:6px 0">${T('Отправлено. Ждём ответа — сообщим, когда он придёт.','Sent. Waiting for their reply — we’ll let you know.')}</div>`:'';
   return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${hint}${nostart}${thread}${sugg}${wait}</div>
+    <div class="khelp">
+      <div class="kchip soft ${GHOSTBUSY?'busy':''}" data-act="kleal-help">${IC.spark}
+        ${GHOSTBUSY?T('Kleal пишет…','Kleal is writing…'):T('Kleal, подскажи ответ','Kleal, draft a reply')}</div>
+    </div>
     <div class="bc2"><button class="bc2-plus" data-act="buddy-plus">+</button>
       <div class="bc2-field"><input id="mcin" placeholder="${T('Сообщение для','Message')} ${esc(m.cand.name)}…"><button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
       <button class="bc2-send" data-act="match-send">${IC.send}</button></div></div>`;
@@ -3548,6 +3591,7 @@ function doAct(act, ds){
       if(!confirm(T('Выйти и очистить профиль на этом устройстве?','Log out and clear this profile on this device?'))) break;
       try{ localStorage.clear(); }catch(_e){}
       location.href='/'; break; }
+    case 'kleal-help': klealHelp(); break;
     case 'use-suggest': { const e=document.getElementById('mcin');
       if(e&&matchWith&&matchWith.suggest){ e.value=matchWith.suggest; e.focus(); } break; }
     case 'match-send': { const el=document.getElementById('mcin'); const t=(el&&el.value||'').trim(); if(!t||!matchWith)break;
@@ -3639,7 +3683,10 @@ function doAct(act, ds){
     case 'buddy-plus': toast(T('Вложения — скоро','Attachments are coming soon')); break;
     case 'buddy-mic': buddyMic(); break;
     case 'go-home': editSig=null; detail=null; cur='agenthome'; render(); break;   // center FAB -> agent home
-    case 'talk-buddy': openBuddy(''); break;
+    // This block sits directly above the composer and says the same thing ("опиши, кого ищешь"), so it
+    // must open the same screen the composer does. It used to call openBuddy(), the pre-flow free-chat
+    // screen — the same stale entry point the Enter key had. Kleal converses on the new screen now.
+    case 'talk-buddy': flowStart(''); break;
     case 'q-people': setTab('search'); break;
     case 'q-events': setTab('search'); break;
     case 'q-interests': setTab('interests'); break;

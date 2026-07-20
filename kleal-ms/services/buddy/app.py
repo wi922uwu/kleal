@@ -954,6 +954,67 @@ def resummary(profile, current, lang="ru"):
     return {"summary": best if _lang_ok(best, lang) else ""}
 
 
+# ======================= GHOSTWRITER (Kleal helps in a chat with a real person) =======================
+# Kleal drafts the user's OWN next message to a match, in their voice, from their profile and the
+# thread so far. It never sends: the product's promise on screen is "я пишу только после твоего
+# одобрения", and the recipient is a real person. The draft lands in the composer for the user to edit
+# or send. The other side's words are given as context and are never invented — only what they
+# actually wrote is passed in.
+GHOSTWRITE_PROMPT = '''You are writing AS the user (the account owner), not as their assistant, and not as
+the other person. Produce the user's next message in a chat with someone they have just matched with.
+
+Rules:
+- FIRST PERSON, the user's voice. Never write "as your agent" or refer to Kleal.
+- Ground it in the user's own profile (interests, languages, area) and in what the other person
+  ACTUALLY wrote. Never invent facts about either side — no claimed plans, no places, no times that
+  are not in the conversation.
+- If the thread is empty, write a natural opener that gives the other person something easy to answer.
+- If they asked something, answer it and ask one thing back.
+- Short: 1-2 sentences. Warm, specific, not salesy. No emoji spam, no markdown.
+
+Return ONE JSON object, nothing else: {"draft":"<the message>"}
+The KEY is the literal ASCII word draft. Do NOT translate the key — only its value is translated.
+
+LANGUAGE: write the VALUE of "draft" in __LANGNAME__. This is not optional: __LANGDIR__'''
+
+
+def ghostwrite(profile, candidate, messages, lang="ru"):
+    lang = "en" if str(lang).lower() == "en" else "ru"
+    me = _baseline_signals(profile or {})
+    them = {k: v for k, v in (candidate or {}).items()
+            if k in ("name", "interests", "vibe", "langs", "area", "age")}
+    thread = "\n".join(
+        (("Me: " if m.get("who") == "me" else "Them: ") + str(m.get("text", "")))
+        for m in (messages or [])[-12:] if str(m.get("text", "")).strip())
+    ctx = ("MY PROFILE: %s\nTHE OTHER PERSON: %s\nCONVERSATION SO FAR:\n%s"
+           % (json.dumps(me, ensure_ascii=False), json.dumps(them, ensure_ascii=False),
+              thread or "(nothing yet — this is the first message)"))
+    sys_prompt = (GHOSTWRITE_PROMPT
+                  .replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
+                  .replace("__LANGDIR__", _LANGDIR.get(lang, _LANGDIR["ru"])))
+    best = ""
+    for attempt in range(2):
+        try:
+            raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt},
+                                          {"role": "user", "content": ctx}],
+                               0.7 if attempt == 0 else 0.4)
+            obj = _lenient_json(raw)
+        except Exception:
+            obj = None
+        # The 70B translated the KEY itself ({"черновик": …}) when told to answer in Russian, so accept
+        # the localised key too — a prompt rule alone is not a guarantee.
+        o = obj or {}
+        d = str(o.get("draft") or o.get("черновик") or o.get("сообщение") or
+                (next(iter(o.values())) if len(o) == 1 else "") or "").strip()[:400]
+        if not d:
+            continue
+        best = best or d
+        if _lang_ok(d, lang):
+            return {"draft": d, "lang": lang}
+    # Wrong language twice: return nothing rather than put English words in a Russian user's mouth.
+    return {"draft": best if _lang_ok(best, lang) else "", "lang": lang}
+
+
 # ======================= INTENT BUILDER (conversational "Create intent") =======================
 # The "Create intent" flow used to POST straight to matching's parser, which turned ANY text — even random
 # letters — into an intent card, with no validation and no follow-up. This builder instead runs a SHORT
@@ -1275,6 +1336,11 @@ class H(BaseHTTPRequestHandler):
                 except Exception as e:
                     emit("error", {"error": str(e)[:200]})
                 return
+
+            if r == "/ghostwrite":                   # Kleal drafts the user's OWN next message
+                return send_json(self, 200, ghostwrite(
+                    body.get("profile") or {}, body.get("candidate") or {},
+                    body.get("messages") or [], body.get("lang") or "ru"))
 
             if r == "/resummary":                    # after a profile edit: rewrite the summary to fit (adapt, not append)
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
