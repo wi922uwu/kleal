@@ -1813,12 +1813,12 @@ async function sendMsg(thread, text){
 }
 // Poll the open conversation for what the other person actually wrote.
 let _msgT=null, _msgBusy=false;
+// The old version returned early WITHOUT clearing _msgT whenever the chat was not on screen, so the
+// `if(!_msgT)` starter could never fire again — after leaving a chat once, nothing polled until the
+// page was reloaded. That is why messages only appeared after a refresh.
 async function pollThread(){
-  clearTimeout(_msgT);
-  // Guard BEFORE the await, not after. _msgT was only set at the end, so every re-render during the
-  // in-flight request started another poller and the same incoming message was appended once per
-  // racer — it showed up twice in the thread.
-  if(_msgBusy) return;
+  clearTimeout(_msgT); _msgT=null;
+  if(_msgBusy) return;               // guard before the await; see the duplicate-append fix
   const th=matchWith, me=(DATA.name||'').trim();
   if(!th||cur!=='matchchat'||!me){ return; }
   _msgBusy=true;
@@ -1841,7 +1841,7 @@ async function pollThread(){
     }catch(e){}
   }
   _msgBusy=false;
-  _msgT=setTimeout(pollThread, 5000);
+  _msgT=setTimeout(pollThread, 2000);   // an open conversation should feel live
 }
 function scr_matchchat(){
   const m=matchWith; if(!m) return scr_agenthome();
@@ -1849,7 +1849,6 @@ function scr_matchchat(){
   // the live path only), and reading m.cand.name then threw, taking the whole Messages tab down.
   if(!m.cand) m.cand={name:m.who||T('Собеседник','Someone')};
   m.msgs=m.msgs||[];
-  if(!_msgT) pollThread();          // watch for what the other person actually sends
   const mine=m.msgs.filter(x=>x.who==='me').length; const blur=Math.max(0, 9-mine*3);
   const hd=chatHead(m.cand.name||m.who||'', {back:'chat-back', sub:(m.cand.band?bandLabel(m.cand,true):null)});
   const thread=m.msgs.map(x=>x.who==='me'?`<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`
@@ -2374,11 +2373,10 @@ async function loadThreads(){
     });
     if(changed){ render(); saveState(); }
   }catch(e){}
-  clearTimeout(_thT); _thT=setTimeout(loadThreads, 15000);
+  clearTimeout(_thT); _thT=setTimeout(loadThreads, 6000);
 }
 let _thT=null;
 function scr_messages(){
-  if(!_thT) loadThreads();
   const list=DATA.messages||[];
   if(!list.length) return emptyState(T("Пока нет сообщений","No messages yet"),T("Когда Kleal устроит знакомство, переписки появятся здесь.","When Kleal lines up an intro, your chats show up here."));
   return `<div class="stack fade" style="padding-top:4px">${list.map((m,i)=>`<div class="card" style="padding:0">
@@ -2387,6 +2385,23 @@ function scr_messages(){
     <div class="msgtime">${esc(m.time)}</div></div></div>`).join('')}</div>`;
 }
 
+// Message polling must not depend on which screen is showing. Both pollers used to be kicked off from
+// inside a screen's render, so a user sitting on Agent Home or Intents received nothing until they
+// navigated into Messages — and after leaving a chat, not even then.
+let _liveT=null;
+function startLive(){
+  if(_liveT) return;
+  const tick=async()=>{
+    const me=(DATA.name||'').trim();
+    if(me){
+      try{ await loadThreads(); }catch(e){}          // conversation list + previews
+      if(cur==='matchchat' && matchWith){ try{ await pollThread(); }catch(e){} }
+      try{ await loadInbox(); }catch(e){}            // incoming requests
+    }
+    _liveT=setTimeout(tick, 3000);
+  };
+  _liveT=setTimeout(tick, 300);
+}
 // ---- incoming requests from other accounts (the other half of delivery) ----
 // Until this existed a request had nowhere to arrive: the sender saw «отправлено», the recipient saw
 // nothing anywhere in the app.
@@ -2432,7 +2447,6 @@ function inboxCards(){
 // "For you today" feed (real plans from /api/agent/explore, never invented ones).
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans for "For you today"
-  if(!_inboxT) loadInbox();                  // and any requests other people have sent us
   const nm=(DATA.name||'there').split(' ')[0];
   const plan=(DATA.plans||[])[0];
   const qa=[['person',T('Люди рядом','People nearby'),'q-people'],['calen',T('События рядом','Events nearby'),'q-events'],
@@ -3628,7 +3642,8 @@ function render(){
   else {
     // Guard: a flow screen without its state used to throw (back → FLOW=null → scr_clarify reads
     // FLOW.when → blank screen). Redirect instead of rendering a broken screen.
-    const NEEDS_FLOW=['reqcomposer','clarify','summary','searching','fewmatches','bestfit','options','recos'];
+    startLive();                       // one live loop for the whole app, whatever screen is open
+  const NEEDS_FLOW=['reqcomposer','clarify','summary','searching','fewmatches','bestfit','options','recos'];
     const NEEDS_CAND=['candprofile'];
     const NEEDS_PLAN=['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'];
     if(NEEDS_FLOW.includes(cur)&&!FLOW) cur='agenthome';
