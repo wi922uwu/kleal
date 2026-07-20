@@ -2694,53 +2694,19 @@ function flowBack(){
   if(!prev) prev=NAVSTACK.pop()||'agenthome';
   cur=prev; render();
 }
-// ---- streaming: watch the agent's answer type itself out instead of waiting for the whole thing ----
-// Measured on the pod: first token ~0.2s vs ~5-7s for the complete reply. The transport is SSE, and the
-// server emits only the decoded `reply` field, never the JSON envelope it actually generates.
-//   delta {t}  – more text
-//   reset {}   – the draft you were shown is being discarded (failed the language check, or the turn
-//                turned out to be small talk); clear the bubble and let the real answer stream in
-//   done {...} – the full payload, identical in shape to the non-streaming endpoint
-// Any transport failure returns null so flowSay's existing "connection lost" branch fires unchanged.
-let STREAMING=null;      // {text} of the bubble currently being typed, or null
-async function sseIntentBuild(messages, profile){
-  let res=null;
+// The agent's reply arrives complete. It used to stream token by token over SSE, which showed the
+// first token in ~0.2s instead of ~5-7s — but a bubble that rewrites itself while you are reading it
+// is harder to read than a short wait, and the builder can discard a draft mid-flight and start over,
+// so the text could visibly reset. The server still accepts stream:true; this client no longer asks.
+// Null on any transport failure, so flowSay's existing "connection lost" branch fires unchanged.
+async function intentBuild(messages, profile){
   try{
     const resp=await fetch('/api/buddy/intent-build',{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages, profile, stream:true})});
-    if(!resp.ok||!resp.body) return null;
-    const rd=resp.body.getReader(), dec=new TextDecoder();
-    let buf='', ev=null;
-    STREAMING={text:''}; render();
-    for(;;){
-      const {done,value}=await rd.read(); if(done) break;
-      buf+=dec.decode(value,{stream:true});
-      let i;
-      while((i=buf.indexOf('\n'))>=0){
-        const line=buf.slice(0,i); buf=buf.slice(i+1);
-        if(line.startsWith('event: ')) ev=line.slice(7).trim();
-        else if(line.startsWith('data: ')){
-          let d; try{ d=JSON.parse(line.slice(6)); }catch(_e){ continue; }
-          if(ev==='delta'&&d.t){ STREAMING.text+=d.t; paintStream(); }
-          else if(ev==='reset'){ STREAMING.text=''; paintStream(); }
-          else if(ev==='done') res=d;
-          else if(ev==='error') res=null;
-        }
-      }
-    }
-  }catch(e){ res=null; }
-  STREAMING=null;
-  return res;
-}
-// Repaint just the streaming bubble. A full render() per token would rebuild the whole screen and
-// fight the user's scroll position several times a second.
-function paintStream(){
-  const el=document.getElementById('streambub');
-  if(!el){ render(); return; }
-  el.textContent=STREAMING?STREAMING.text:'';
-  const th=document.getElementById('bthread')||el.closest('.kcont');
-  if(th) th.scrollTop=th.scrollHeight;
+      body:JSON.stringify({messages, profile})});
+    if(!resp.ok) return null;
+    return await resp.json();
+  }catch(e){ return null; }
 }
 async function flowSay(text, fromSeed){
   text=String(text||'').trim(); if(!text||FLOW.busy) return;
@@ -2755,7 +2721,7 @@ async function flowSay(text, fromSeed){
     // intent whose vibe was "bonds, finance, investing, economy". Turns already answered
     // conversationally are marked and excluded — a real multi-turn build is unmarked and still sent.
     const forBuilder=FLOW.msgs.filter(m=>!m.chat).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text}));
-    r=await sseIntentBuild(forBuilder, matchProfile());
+    r=await intentBuild(forBuilder, matchProfile());
   }catch(e){ r=null; }
   FLOW.busy=false;
   if(!r||!r.reply){ FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
@@ -2869,9 +2835,7 @@ function scr_reqcomposer(){
     <div class="kcont">
       ${kprompt(T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
       ${msgs}
-      ${STREAMING
-        ? `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag" id="streambub">${esc(STREAMING.text)}</div></div>`
-        : (FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:'')}
+      ${FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:''}
       <div style="display:flex;flex-direction:column;gap:12px">
         <div class="k-label" style="color:var(--muted)">${T('Попробуй сформулировать иначе','Try phrasing it differently')}</div>
         <div class="kchips">${FLOW_HINTS().map(h=>`<div class="kchip soft" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
