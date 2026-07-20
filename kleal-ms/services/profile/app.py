@@ -134,6 +134,11 @@ HTML_HEAD = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
   --coral50:#FFF1F3; --coral200:#FECDD4; --coral700:#BC1F38;
   --success-text:#0F7340; --success-bg:#E8F7EE; --info-text:#1F58BE; --info-bg:#E8F1FD;
   --warn-text:#9A5400; --warn-bg:#FFF4E5; --danger:#E5484D;
+
+  /* Referenced 6x but never declared, so .candbadge/.passbtn rendered with no background and
+     the verified tick came out black instead of green. Aliases of existing tokens — no new colours. */
+  --field:var(--neutral100); --accent:var(--coral700); --accent-soft:var(--coral50); --ok:var(--success-text);
+  --neutral400:#A9B0BE;   /* placeholder-avatar glyph on a --neutral100 circle; sits between 300 and --muted */
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}

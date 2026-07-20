@@ -1009,6 +1009,50 @@ def _lang_ok(reply, lang):
     return lat <= cyr
 
 
+# Filtration answers a bare greeting with topics: "привет" -> ['hello','greeting'],
+# "как дела" -> ['hello','greeting','how','are']. Those are conversational filler, not activities —
+# treating them as topics kept greetings inside the intent builder and, worse, would let a greeting
+# become a searchable intent whose "topics" are hello/greeting.
+_FILLER_TOPICS = {"hello", "hi", "greeting", "greetings", "how", "are", "you", "thanks", "thank",
+                  "bye", "goodbye", "ok", "okay", "yes", "no", "smalltalk", "small", "talk", "chat"}
+
+
+def _real_topics(cat):
+    """Topics from filtration with conversational filler removed."""
+    ts = [str(t).strip().lower() for t in ((cat or {}).get("topics") or []) if str(t).strip()]
+    return [t for t in ts if t not in _FILLER_TOPICS]
+
+
+def _chat_reply(messages, profile, lang):
+    """A conversational reply and NOTHING ELSE.
+
+    Deliberately not buddy_chat(): that function is side-effecting — when wants_people() fires it runs
+    the whole pipeline (filtration HTTP, then a real ranking POST to the matching service with a 45s
+    timeout). Chaining it here would let an ordinary chat turn silently execute a search. Worse, the
+    two triggers disagree by construction: _STRONG_ASK matches the bare stem "найд[иёе]", so
+    "найди мне книгу по дивидендам" is valid:false to the intent builder AND True to wants_people —
+    exactly the case that would fire a people-search nobody asked for. So this mirrors only the LLM
+    call and drops the entire tail.
+    """
+    sig = _baseline_signals(profile)
+    convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
+                       else ("Buddy: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
+    if sum(1 for m in (messages or []) if m.get("role") == "user") <= 1:
+        convo = "[FIRST MESSAGE — you have never spoken with this person before]\n" + convo
+    for attempt in range(2):
+        try:
+            raw = llm_complete(MODEL_ID, [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
+                                          {"role": "user", "content": convo}], 0.6 if attempt == 0 else 0.3)
+            obj = _lenient_json(raw)
+        except Exception:
+            obj = None
+        if isinstance(obj, dict) and obj.get("reply"):
+            reply = str(obj["reply"])[:600]
+            if _lang_ok(reply, lang):
+                return reply
+    return ""
+
+
 def intent_build(messages, profile):
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     lang = detect_lang(last_user)
@@ -1041,9 +1085,11 @@ def intent_build(messages, profile):
         obj = dict(obj, reply=("Понял. Когда тебе удобно?" if obj.get("ready") is not True
                                else "Понял, записал."))
     if not isinstance(obj, dict) or not obj.get("reply"):
-        return {"reply": ("Что хочешь устроить? Опиши, чем заняться и с кем." if lang == "ru"
-                          else "What would you like to set up? Tell me what and with whom."),
-                "valid": False, "ready": False, "intent": None, "lang": lang}
+        chat = _chat_reply(messages, profile, lang)     # the builder failed; still answer the person
+        return {"reply": chat or ("Что хочешь устроить? Опиши, чем заняться и с кем." if lang == "ru"
+                                  else "What would you like to set up? Tell me what and with whom."),
+                "valid": False, "ready": False, "intent": None, "lang": lang,
+                "conversational": bool(chat)}
     reply = str(obj.get("reply"))[:400]
     valid = bool(obj.get("valid", True))
     ready = bool(obj.get("ready")) and valid
@@ -1055,6 +1101,28 @@ def intent_build(messages, profile):
     if valid and not ready and user_turns >= 2 and _categorize(activity).get("topics"):
         if build_intent(_baseline_signals(profile), _categorize(activity), activity, lang).get("rankable"):
             ready = True
+    # Hand the turn to the conversational agent when there is no plan to build. Two signals, because
+    # one is not enough: the model marks obvious non-asks valid:false, but it called the typo greeting
+    # "привкет" VALID and still answered it with a refusal ("Опишите, что вы хотели бы сделать с
+    # кем-то"). So also catch: nothing ready, no activity extracted, and the raw text categorises to
+    # no topic at all — i.e. there is genuinely nothing to build on. A real but incomplete ask
+    # ("хочу кофе", no time) still has an activity AND a topic, so it stays in the builder.
+    # Deliberately NOT keyed on obj["activity"] — the model fills that field unreliably (it echoed the
+    # raw text for one typo'd greeting and left it empty for the next identical case), which made the
+    # branch flap between runs. Filtration is the stable signal. `cat is not None` matters: filtration
+    # returns None when it times out, and without that guard a slow filtration would push a REAL ask
+    # into small talk instead of building it.
+    _cat = _categorize(last_user)
+    nothing_to_build = (not ready and _cat is not None and not _real_topics(_cat))
+    if not valid or nothing_to_build:
+        # If _chat_reply comes back empty (bad JSON, or the language guard rejected both attempts) we
+        # must NOT fall through to the builder — that is what produced "Опишите, что вы хотели бы
+        # сделать с кем-то" in response to a greeting. Measured: the fall-through made the typo
+        # "привкет" a coin flip, 4 of 8 runs. A plain acknowledgement is always the better answer.
+        chat = _chat_reply(messages, profile, lang) or (
+            "Привет! Чем могу помочь?" if lang == "ru" else "Hey! How can I help?")
+        return {"reply": chat, "valid": valid, "ready": False, "intent": None, "lang": lang,
+                "conversational": True}
     if not ready:
         return {"reply": reply, "valid": valid, "ready": False, "intent": None, "lang": lang}
 
