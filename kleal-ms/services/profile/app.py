@@ -2837,16 +2837,28 @@ function scr_options(){
     </div></div>`;
 }
 
+// One label + icon per engine feature group (matching/core_v2 _REASON). Keyed, never positional —
+// the engine returns reasons sorted by weight, so position says nothing about what a row is about.
+const RSN_LABEL={
+  semantic_activity:   {ic:'heart', t:()=>T('Совпадают интересы','Fits your interests')},
+  time_feasibility:    {ic:'clock', t:()=>T('Подходит по времени','Matches your time')},
+  location_feasibility:{ic:'pin',   t:()=>T('Рядом','Close by')},
+  mode_format:         {ic:'coffee',t:()=>T('Комфортный формат','Comfortable format')},
+  directed_preferences:{ic:'users', t:()=>T('Подходящая роль','Matching role')},
+  social_context:      {ic:'spark', t:()=>T('Похожий вайб','Similar vibe')},
+  domain_constraints:  {ic:'shield',t:()=>T('Совпадают условия','Conditions fit')},   // not IC.check — that one is white-on-badge
+  _:                   {ic:'spark', t:()=>T('Почему подходит','Why it fits')},
+};
 // ---- Best fit (479:14790) — top candidate + three plain-language reasons ----
 function scr_bestfit(){
   const c=(FLOW&&FLOW.res||[])[0]; if(!c){ return scr_options(); }
   const rs=(UILANG==='ru'?c.reasons_ru:c.reasons_en)||c.reasons||[];
-  const icons=[IC.heart||IC.spark,IC.clock,IC.coffee];
-  const titles=[T('Совпадают интересы','Fits your interests'),T('Подходит по времени','Matches your time'),
-                T('Комфортный формат','Comfortable format')];
-  const rows=rs.slice(0,3).map((r,i)=>`<div class="krsn"><div class="ic">${icons[i]||IC.spark}</div>
-    <div class="bd"><div class="ti">${esc(titles[i]||T('Почему подходит','Why it fits'))}</div>
-      <div class="su">${esc(r)}</div></div></div>`).join('');
+  // Title each row from the feature group the engine actually matched on. These arrive weight-ordered,
+  // so titling by POSITION printed a distance ("рядом (3.6 км)") under the label "Подходит по времени".
+  const rows=rs.slice(0,3).map((r,i)=>{const m=RSN_LABEL[(c.reason_keys||[])[i]]||RSN_LABEL._;
+    return `<div class="krsn"><div class="ic">${IC[m.ic]||IC.spark}</div>
+    <div class="bd"><div class="ti">${esc(m.t())}</div>
+      <div class="su">${esc(r)}</div></div></div>`;}).join('');
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
       ${kprompt(T('Лучшее совпадение по запросу','Best fit for your request'))}
@@ -2921,7 +2933,13 @@ function whyDetail(f){
 function candWhyPane(c){
   const tr=CAND&&CAND._trace;
   if(!tr) return `<div class="k-cap" style="color:var(--muted);padding:8px 2px">${T('Считаю объяснение…','Working out the explanation…')}</div>`;
-  const good=(tr.features||[]).filter(f=>f.state==='known_match'&&whyDetail(f));
+  // Same rule the engine applies to the card's reasons (core_v2._presentation): never claim availability
+// that the readiness chip contradicts. The raw trace legitimately keeps 'open now' — feature states are
+// computed before the receiving policy — but showing it here put «Время: свободен(на) сейчас» two rows
+// above «Готовность: не сейчас — тихие часы» on the same screen. The admin lab still sees the full trace.
+  const rdyOK=(tr.readiness||c.readiness)==='open_now';
+  const good=(tr.features||[]).filter(f=>f.state==='known_match'&&whyDetail(f)
+                                       &&(rdyOK||f.group!=='time_feasibility'));
   const miss=(tr.features||[]).filter(f=>f.state==='unknown');
   const card=(title,items,neg)=>items.length?`<div class="kwhycard">
       <div class="k-label">${esc(title)}</div>

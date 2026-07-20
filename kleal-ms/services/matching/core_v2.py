@@ -575,10 +575,12 @@ def _presentation(F, d_ab, dom_cfg, readiness=None):
     if readiness and readiness != "open_now":
         known = [x for x in known if x[1] != "time_feasibility"]
     known.sort(key=lambda x: -x[0])
-    rs_ru, rs_en, legacy = [], [], []
+    # keys travel WITH the strings: reasons come back weight-ordered, so the UI cannot know what a given
+    # row is about from its position. Titling row 2 "Подходит по времени" put a distance under a time label.
+    rs_ru, rs_en, legacy, keys = [], [], [], []
     for _wv, k, d in known[:3]:
         ru, en = _REASON[k](d)
-        rs_ru.append(ru); rs_en.append(en)
+        rs_ru.append(ru); rs_en.append(en); keys.append(k)
         if k == "semantic_activity" and d:
             legacy.append("shares " + d)               # exact legacy phrasing buddy.humanize knows
         elif k == "social_context":
@@ -603,7 +605,7 @@ def _presentation(F, d_ab, dom_cfg, readiness=None):
         if unk:
             unk.sort(key=lambda x: -x[0])
             gap_ru, gap_en = _GAP[unk[0][1]]
-    return rs_ru, rs_en, legacy, gap_ru, gap_en
+    return rs_ru, rs_en, legacy, gap_ru, gap_en, keys
 
 # ------------------------------------------------------------------ allocation (slate diversity)
 TOP_N, PER_BUCKET = 8, 3        # slate size params (allocation layer, not relevance — spec §11)
@@ -728,12 +730,12 @@ def explain(intent, prof, ctx, cand, H, cfg):
     step("outreach thresholds", thr_ok,
          "lcb %.3f vs %.2f, coverage %.3f vs %.2f" % (d_ab["lcb"], float(dom_cfg["outreach_min_lcb"]),
                                                       d_ab["coverage"], float(dom_cfg["outreach_min_coverage"])))
-    rs_ru, rs_en, _legacy, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg, readiness)
+    rs_ru, rs_en, _legacy, gap_ru, gap_en, rkeys = _presentation(F, d_ab, dom_cfg, readiness)
     out.update({"shown": True, "band": band, "band_ru": BAND_LABELS[band][0],
                 "band_en": BAND_LABELS[band][1], "readiness_en": READINESS_LABELS[readiness][1],
                 "readiness": readiness, "readiness_ru": READINESS_LABELS[readiness][0],
                 "can_outreach": can_outreach, "score": round(d_ab["lcb"] * 100, 1),
-                "reasons_ru": rs_ru, "reasons_en": rs_en, "gap_ru": gap_ru, "gap_en": gap_en})
+                "reasons_ru": rs_ru, "reasons_en": rs_en, "reason_keys": rkeys, "gap_ru": gap_ru, "gap_en": gap_en})
     return out
 
 def search(intent, prof, ctx, candidates, H, cfg):
@@ -776,7 +778,7 @@ def search(intent, prof, ctx, candidates, H, cfg):
         can_outreach = (outreach_tier_ok and readiness == "open_now" and
                         d_ab["lcb"] >= float(dom_cfg["outreach_min_lcb"]) and
                         d_ab["coverage"] >= float(dom_cfg["outreach_min_coverage"]))
-        rs_ru, rs_en, legacy_reasons, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg, readiness)
+        rs_ru, rs_en, legacy_reasons, gap_ru, gap_en, rkeys = _presentation(F, d_ab, dom_cfg, readiness)
         matched = F["semantic_activity"][2] or ""
         bucket = (H["cat_of"](matched.split(", ")[0])[0] if matched else
                   H["cat_of"]((c.get("interests") or ["x"])[0])[0]) or "other"
@@ -799,7 +801,7 @@ def search(intent, prof, ctx, candidates, H, cfg):
             "agree": agree, "note": note, "bucket": bucket,
             # ---- Matching Core v2 (spec) ----
             "band": band, "band_ru": band_ru, "band_en": band_en,
-            "reasons_ru": rs_ru, "reasons_en": rs_en, "gap_ru": gap_ru, "gap_en": gap_en,
+            "reasons_ru": rs_ru, "reasons_en": rs_en, "reason_keys": rkeys, "gap_ru": gap_ru, "gap_en": gap_en,
             "coverage": d_ab["coverage"], "lcb": d_ab["lcb"], "reciprocal": rec,
             "unknowns": d_ab["unknowns"], "can_outreach": can_outreach,
             "readiness": readiness, "readiness_ru": rdy_ru, "readiness_en": rdy_en,
