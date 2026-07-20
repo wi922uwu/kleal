@@ -72,6 +72,26 @@ def _v2_role_exp_spec(p):
         out.append(("Experience: " + it, lambda p, i=it: bool(_v2_exp_of(p, i))))
     return out
 
+# Onboarding had no language rule at all — every prompt and the whole scripted greeting are English, so
+# a user writing Russian got answered in English throughout setup, which is their first impression of
+# the product.
+_CYR_ONB = re.compile(r"[\u0430-\u044f\u0410-\u042f\u0451\u0401]")
+
+
+def _onb_lang(hist):
+    """Reply in the language the user is actually writing in."""
+    for m in reversed(hist or []):
+        if m.get("role") == "user" and str(m.get("content", "")).strip():
+            return "ru" if _CYR_ONB.search(str(m["content"])) else "en"
+    return "en"
+
+
+_ONB_LANG_RULE = {
+    "ru": (" [LANGUAGE: the user is writing in Russian, so write EVERY word of your message in Russian,"
+           " including any [OPTIONS: ...] labels. Do not switch to English.]"),
+    "en": "",
+}
+
 def critical_status_v2(p):
     p = p if isinstance(p, dict) else {}
     spec = CRIT_V2 + _v2_role_exp_spec(p)   # + role/experience per picked interest
@@ -96,8 +116,13 @@ Style: react warmly to what they just said in ONE short line, then ask. One ques
 A status line tells you exactly what to ask next - follow it strictly.'''
 
 # finish / add-another intent detection at the confirm stage (order matters: FIN first - "no more" contains "more")
-_FIN_RE = re.compile(r"that'?s all|that is all|\bfinish|\bdone\b|no more|nothing else|i'?m good|all set|\bnope\b|^\s*no[.! ]*$", re.I)
-_ADD_RE = re.compile(r"\badd\b|another|one more|\bmore\b|\byes\b|yeah|sure|\balso\b|actually", re.I)
+# The option buttons are localised (see _CONFIRM_OPTIONS), so these must match the Russian labels too —
+# otherwise tapping «Это всё» would fall through and the step would never finish.
+_FIN_RE = re.compile(r"that'?s all|that is all|\bfinish|\bdone\b|no more|nothing else|i'?m good|all set|\bnope\b|^\s*no[.! ]*$"
+                     r"|это вс[её]|всё|все[.! ]*$|больше нет|хватит|готов|достаточно|^\s*нет[.! ]*$", re.I)
+_ADD_RE = re.compile(r"\badd\b|another|one more|\bmore\b|\byes\b|yeah|sure|\balso\b|actually"
+                     r"|добав|ещ[её]|да[.! ]*$|конечно|также|хочу", re.I)
+_CONFIRM_OPTIONS = {"ru": "Добавить ещё интерес | Это всё", "en": "Add another interest | That's all"}
 
 # gibberish / non-answer detection: catch keyboard-mash like "afcafcafc" / "ппфцпц" so the funnel
 # re-asks instead of silently accepting junk and moving on.
@@ -267,7 +292,7 @@ def v2_chat(messages, prior):
     lastu = next((str(m.get("content", "")) for m in reversed(hist) if m.get("role") == "user"), "")
     confirm_asked = any(m.get("role") == "assistant" and "another interest" in str(m.get("content", "")).lower()
                         for m in hist)
-    sys = FUNNEL_PROMPT
+    sys = FUNNEL_PROMPT + _ONB_LANG_RULE[_onb_lang(hist)]
     complete = False
     if _is_gibberish(lastu):
         # user typed junk / random characters - do NOT advance or wrap up, gently re-ask.
@@ -290,8 +315,8 @@ def v2_chat(messages, prior):
     else:
         # confirm-before-finish: never end the interests step without asking
         sys += (" [ALL PICKED INTERESTS ARE COVERED. Ask EXACTLY ONE closing question: would they like to add "
-                "another interest, or is that everything for now. End with [OPTIONS: Add another interest | That's all]. "
-                "Nothing else.]")
+                "another interest, or is that everything for now. End with [OPTIONS: %s]. "
+                "Nothing else.]" % _CONFIRM_OPTIONS[_onb_lang(hist)])
     raw = llm_complete(cfg, [{"role": "system", "content": sys}] + hist, 0.6)
     reply, _p, _i, _b, _s, options = base.parse_reply(raw)
     options = _norm_options(options)
@@ -467,7 +492,11 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
   border-radius:999px;padding:7px 13px;font:600 12px inherit;color:var(--muted);cursor:pointer;box-shadow:0 2px 8px #0001}
 .emu:active{transform:scale(.97)}
 .illus{width:180px;height:180px;border-radius:50%;background:radial-gradient(circle at 38% 34%,#fff,#E7EAEF);
-  margin:auto 0 0;box-shadow:inset 0 2px 12px #0000000d}
+  margin:auto 0 0;box-shadow:inset 0 2px 12px #0000000d;
+  display:flex;align-items:center;justify-content:center}
+.illus img{width:124px;height:124px;display:block;pointer-events:none;user-select:none;
+  animation:illusIn .42s cubic-bezier(.2,.8,.25,1)}
+@keyframes illusIn{from{opacity:0;transform:translateY(8px) scale(.94)}to{opacity:1;transform:none}}
 .s-h{font-size:25px;font-weight:800;line-height:1.18;margin-top:34px;letter-spacing:-.02em}
 .s-sub{color:var(--muted);font-size:14px;margin-top:10px;max-width:300px;line-height:1.5}
 .dots{display:flex;gap:7px;margin:20px 0 auto}
@@ -640,14 +669,14 @@ function refreshSendState(){ const cin=document.getElementById('cin'),cs=documen
 // ======================= SPLASH =======================
 const SLIDES=[
  {t:"Tell Kleal what you<br>want to do", s:"Coffee, a match, a game, a walk, language practice, or just something spontaneous."},
- {t:"Find people for the plan,<br>not profiles to scroll", s:"Kleal looks for the right people, rooms, groups or events from your mood, time, place and interests."},
- {t:"Less social admin.<br>More real plans", s:"Kleal finds who is interested, checks the fit, and brings you options. You confirm every step."},
+ {t:"Find people for the plan,<br>not profiles to scroll", s:"Kleal looks for the right people, rooms, groups or events from your mood, time, place and interests.", m:"searching"},
+ {t:"Less social admin.<br>More real plans", s:"Kleal finds who is interested, checks the fit, and brings you options. You confirm every step.", m:"match"},
 ];
 function rSplash(){
   const sl=SLIDES[st.slide], last=st.slide===SLIDES.length-1;
   A.innerHTML=`<div class="splash fade">
     <button class="emu" id="emu">Emulate onboarding</button>
-    <div class="illus"></div>
+    <div class="illus"><img src="assets/${sl.m||'primary'}.svg" alt="" draggable="false"></div>
     <div class="s-h">${sl.t}</div><div class="s-sub">${esc(sl.s)}</div>
     <div class="dots">${SLIDES.map((_,i)=>`<i class="${i===st.slide?'on':''}"></i>`).join('')}</div>
     <div class="wave" id="go" style="cursor:pointer"><svg viewBox="0 0 390 160" preserveAspectRatio="none" height="160">
@@ -1381,10 +1410,31 @@ def register_profile(profile):
 
 
 # ---------------------------------------------------------------- HTTP dispatcher (onboarding only)
+# ---------------------------------------------------------------- mascot artwork (splash slides)
+# The three poses the intro slides need, served from /assets/<name>.svg. They are duplicated from the
+# profile service on purpose: every service here is a single self-contained file, and reaching across
+# to :7073 would make the splash screen depend on another service being up just to draw itself.
+ASSETS = {
+    'match': '''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="matchTitle matchDesc"> <title id="matchTitle">Kleal mascot — match confirmed pose</title> <desc id="matchDesc">Kleal celebrates a mutual match with open arms and two connected route nodes.</desc> <defs> <linearGradient id="matchBody" x1="114" y1="66" x2="394" y2="447" gradientUnits="userSpaceOnUse"> <stop stop-color="#FF756A"/> <stop offset="0.55" stop-color="#FF5B55"/> <stop offset="1" stop-color="#E84242"/> </linearGradient> <radialGradient id="matchFace" cx="0" cy="0" r="1" gradientTransform="translate(224 153) rotate(54) scale(170 160)" gradientUnits="userSpaceOnUse"> <stop stop-color="#FFFDF5"/> <stop offset="1" stop-color="#F4E8D7"/> </radialGradient> <radialGradient id="matchGround"> <stop stop-color="#111217" stop-opacity="0.18"/> <stop offset="0.72" stop-color="#111217" stop-opacity="0.06"/> <stop offset="1" stop-color="#111217" stop-opacity="0"/> </radialGradient> </defs> <g id="kleal-match"> <ellipse cx="257" cy="451" rx="154" ry="24" fill="url(#matchGround)"/> <path d="M88 217c87-54 250-55 336 0" stroke="#FF5B55" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 16"/> <path d="M257 35C161 35 91 105 91 195c0 56 24 95 61 121-23 44-15 94 23 126 30 25 70 18 87-21 20 39 64 44 95 15 31-29 41-70 24-108 49-11 78-46 75-85-3-43-36-70-78-69C374 91 323 35 257 35Z" fill="url(#matchBody)"/> <path d="M392 201c52-5 82 20 78 60-4 36-35 55-70 48-29-6-39-28-27-50 9-17 25-25 42-21 15 3 21 15 16 26-5 11-17 15-29 10" stroke="#E84242" stroke-width="25" stroke-linecap="round"/> <ellipse cx="255" cy="190" rx="118" ry="111" fill="url(#matchFace)"/> <path d="M200 191c9 11 20 11 29 0" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M281 191c9 11 20 11 29 0" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M230 227c17 21 36 21 53 0" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M160 307c-41-8-75-36-83-70" stroke="url(#matchBody)" stroke-width="37" stroke-linecap="round"/> <path d="M352 307c41-8 75-36 83-70" stroke="url(#matchBody)" stroke-width="37" stroke-linecap="round"/> <circle cx="72" cy="222" r="16" fill="#FFF8EB" stroke="#FF5B55" stroke-width="8"/> <circle cx="440" cy="222" r="16" fill="#FFF8EB" stroke="#FF5B55" stroke-width="8"/> <path d="M209 414c-5 22-16 38-33 50" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <path d="M306 414c5 22 17 38 34 50" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <ellipse cx="166" cy="468" rx="31" ry="14" fill="#D9363C"/> <ellipse cx="350" cy="468" rx="31" ry="14" fill="#D9363C"/> <circle cx="114" cy="112" r="7" fill="#FF5B55"/> <path d="m398 105 7 12 13 2-10 9 3 13-13-6-12 6 2-13-9-9 13-2Z" fill="#FF5B55" opacity="0.72"/> </g> </svg>''',
+    'primary': '''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="primaryTitle primaryDesc"> <title id="primaryTitle">Kleal mascot — primary welcome pose</title> <desc id="primaryDesc">Coral Kleal mascot facing forward and waving.</desc> <defs> <linearGradient id="primaryBody" x1="110" y1="62" x2="395" y2="448" gradientUnits="userSpaceOnUse"> <stop stop-color="#FF756A"/> <stop offset="0.55" stop-color="#FF5B55"/> <stop offset="1" stop-color="#E84242"/> </linearGradient> <radialGradient id="primaryFace" cx="0" cy="0" r="1" gradientTransform="translate(219 155) rotate(55) scale(175 166)" gradientUnits="userSpaceOnUse"> <stop stop-color="#FFFDF5"/> <stop offset="1" stop-color="#F4E8D7"/> </radialGradient> <linearGradient id="primaryHighlight" x1="150" y1="62" x2="210" y2="315" gradientUnits="userSpaceOnUse"> <stop stop-color="white" stop-opacity="0.34"/> <stop offset="1" stop-color="white" stop-opacity="0"/> </linearGradient> <radialGradient id="primaryGround"> <stop stop-color="#111217" stop-opacity="0.18"/> <stop offset="0.72" stop-color="#111217" stop-opacity="0.06"/> <stop offset="1" stop-color="#111217" stop-opacity="0"/> </radialGradient> </defs> <g id="kleal-primary"> <ellipse cx="256" cy="451" rx="159" ry="24" fill="url(#primaryGround)"/> <path d="M257 35C161 35 91 105 91 195c0 55 23 94 59 120-25 42-18 92 19 126 29 28 72 23 91-17 19 40 64 47 96 18 33-29 45-72 28-112 48-10 79-44 77-82-2-43-34-72-75-74C378 92 324 35 257 35Z" fill="url(#primaryBody)"/> <path d="M391 202c55-6 86 20 83 61-3 37-35 58-73 52-31-5-42-27-31-51 8-19 24-29 44-26 17 2 24 14 20 27-4 12-16 17-29 13" stroke="#E84242" stroke-width="26" stroke-linecap="round"/> <ellipse cx="255" cy="192" rx="118" ry="112" fill="url(#primaryFace)"/> <path d="M169 128c21-39 62-61 105-57" stroke="url(#primaryHighlight)" stroke-width="18" stroke-linecap="round" opacity="0.9"/> <ellipse cx="216" cy="191" rx="12" ry="18" fill="#171920"/> <ellipse cx="294" cy="191" rx="12" ry="18" fill="#171920"/> <path d="M237 229c12 13 26 13 38 0" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M153 307c-38-10-66-39-64-72 1-24 18-43 39-42 17 1 29 13 28 29-1 15-12 24-24 31" stroke="url(#primaryBody)" stroke-width="36" stroke-linecap="round"/> <path d="M356 314c32-4 58-26 67-55" stroke="url(#primaryBody)" stroke-width="38" stroke-linecap="round"/> <path d="M412 249c6-12 16-20 30-25" stroke="#FF6C62" stroke-width="12" stroke-linecap="round"/> <circle cx="444" cy="223" r="8" fill="#FFF8EB"/> <path d="M205 410c-4 23-14 39-31 52" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <path d="M310 412c5 23 17 39 35 51" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <ellipse cx="166" cy="467" rx="32" ry="15" fill="#D9363C"/> <ellipse cx="355" cy="467" rx="32" ry="15" fill="#D9363C"/> <circle cx="378" cy="91" r="9" fill="#FFF8EB" opacity="0.55"/> </g> </svg>''',
+    'searching': '''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="searchTitle searchDesc"> <title id="searchTitle">Kleal mascot — searching pose</title> <desc id="searchDesc">Kleal leans forward, looks to the right, and shades its eyes while searching for a good match.</desc> <defs> <linearGradient id="searchBody" x1="110" y1="70" x2="398" y2="445" gradientUnits="userSpaceOnUse"> <stop stop-color="#FF756A"/> <stop offset="0.56" stop-color="#FF5B55"/> <stop offset="1" stop-color="#E84242"/> </linearGradient> <radialGradient id="searchFace" cx="0" cy="0" r="1" gradientTransform="translate(247 157) rotate(57) scale(163 153)" gradientUnits="userSpaceOnUse"> <stop stop-color="#FFFDF5"/> <stop offset="1" stop-color="#F4E8D7"/> </radialGradient> <radialGradient id="searchGround"> <stop stop-color="#111217" stop-opacity="0.18"/> <stop offset="0.72" stop-color="#111217" stop-opacity="0.06"/> <stop offset="1" stop-color="#111217" stop-opacity="0"/> </radialGradient> </defs> <g id="kleal-searching" transform="rotate(-4 256 256)"> <ellipse cx="250" cy="451" rx="163" ry="24" fill="url(#searchGround)"/> <path d="M251 41C158 49 95 124 103 211c5 54 34 89 72 110-20 44-6 95 34 124 32 24 70 14 84-24 22 34 65 38 94 8 29-30 36-71 17-107 47-13 74-49 69-88-6-42-40-68-81-65-2-83-73-135-141-128Z" fill="url(#searchBody)"/> <path d="M403 198c51-8 82 15 81 54-1 36-30 57-66 53-29-3-41-25-31-48 8-17 23-27 40-25 16 2 23 13 20 25-3 11-14 17-27 14" stroke="#E84242" stroke-width="25" stroke-linecap="round"/> <ellipse cx="265" cy="193" rx="116" ry="109" transform="rotate(4 265 193)" fill="url(#searchFace)"/> <ellipse cx="237" cy="190" rx="12" ry="18" fill="#171920"/> <ellipse cx="312" cy="184" rx="12" ry="18" fill="#171920"/> <circle cx="241" cy="185" r="3.5" fill="white"/> <circle cx="316" cy="179" r="3.5" fill="white"/> <path d="M267 230c12 9 24 8 34-3" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M337 147c29-31 59-36 84-17" stroke="url(#searchBody)" stroke-width="34" stroke-linecap="round"/> <path d="M396 126c22-8 43-3 57 13" stroke="#FF7166" stroke-width="17" stroke-linecap="round"/> <path d="M395 126c13 12 20 27 21 45" stroke="#E84242" stroke-width="13" stroke-linecap="round"/> <path d="M164 317c-38-7-65-31-65-61 0-22 15-39 35-39 17 0 29 11 29 27 0 14-10 24-22 29" stroke="url(#searchBody)" stroke-width="35" stroke-linecap="round"/> <path d="M218 416c-17 22-38 35-63 39" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <path d="M315 414c20 19 43 29 68 29" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <ellipse cx="143" cy="457" rx="33" ry="14" transform="rotate(-12 143 457)" fill="#D9363C"/> <ellipse cx="394" cy="444" rx="33" ry="14" transform="rotate(8 394 444)" fill="#D9363C"/> <circle cx="441" cy="92" r="8" fill="#FF5B55"/> <circle cx="470" cy="82" r="5" fill="#FF5B55" opacity="0.48"/> </g> </svg>''',
+}
+
+
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/":
             send(self, 200, HTML, "text/html")
+        elif self.path.startswith("/assets/") and self.path.endswith(".svg"):
+            art = ASSETS.get(self.path[len("/assets/"):-len(".svg")])
+            if not art:
+                return send_json(self, 404, {})
+            b = art.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers(); self.wfile.write(b)
         else:
             send_json(self, 404, {})
 
