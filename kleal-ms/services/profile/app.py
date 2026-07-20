@@ -1098,7 +1098,7 @@ async function broadenIntent(kind){
   else { addNotif('intent','Still searching “'+(curIntent.title||'plan')+'”','Kleal will ping you when someone fits',curIntent.id||null); saveState(); toast('Kleal keeps searching in the background'); return; }
   toast('Broadening the search…');
   let r; try{ r=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({query:curIntent.query,profile:{name:DATA.name||''},override:ov})}).then(x=>x.json()); }catch(e){ r=null; }
+    body:JSON.stringify({query:curIntent.query,profile:matchProfile(),override:ov})}).then(x=>x.json()); }catch(e){ r=null; }
   if(r&&r.candidates&&r.candidates.length){ curIntent.candidates=r.candidates; curIntent.fallback=null;
     curIntent.intent=r.intent; curIntent.confidence=r.candidates[0].score; toast(r.candidates.length+' matches after broadening'); }
   else { curIntent.fallback=(r&&r.fallback)||curIntent.fallback; toast('Still no offline matches — try going live'); }
@@ -1110,7 +1110,7 @@ async function runAgent(query){
   agentBusy=true; curIntent={pending:true, query:query}; intentLaunched=false; cur='intentchat'; render();
   let r; try{
     r=await fetch('/api/agent/plan',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({query:query, profile:{name:DATA.name||''}})}).then(x=>x.json());
+      body:JSON.stringify({query:query, profile:matchProfile()})}).then(x=>x.json());
   }catch(e){ r=null; }
   agentBusy=false;
   if(!r||!r.intent){ curIntent={title:'New plan',tags:[],query:query,confidence:0,candidates:[],spec:[],error:true}; render(); return; }
@@ -1149,7 +1149,7 @@ async function intentTurn(text){ text=(text||'').trim(); if(!text||intentBusy) r
 async function buildIntentCard(intent){
   curIntent={pending:true, query:''}; render();
   let r; try{ r=await fetch('/api/agent/match',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({intent:intent, profile:{name:DATA.name||''}, ctx:{self:DATA.name||''}})}).then(x=>x.json()); }catch(e){ r=null; }
+    body:JSON.stringify({intent:intent, profile:matchProfile(), ctx:{self:DATA.name||''}})}).then(x=>x.json()); }catch(e){ r=null; }
   const cands=(r&&r.candidates)||[]; const it=intent;
   const reach=it.exactMatchRequired?'Exact matches only':(it.broadAllowed===false?'Same activity only':(it.adjacentAllowed===false?'Same + related':'Adjacent + related'));
   const area=(it.place||'Public places nearby')+(it.mode==='offline'&&it.radiusKm?(' · within '+it.radiusKm+' km'):'');
@@ -1167,7 +1167,7 @@ async function negotiateIntent(){
   if(curIntent.negotiated){ saveCurIntent(); return; }
   curIntent.negotiating=true; render();
   let r; try{ r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({intent:(curIntent.intent||{topics:curIntent.tags||[],type:curIntent.type,role:curIntent.role,time:curIntent.time,mode:curIntent.mode}), candidates:curIntent.candidates||[]})}).then(x=>x.json()); }catch(e){ r=null; }
+    body:JSON.stringify({intent:(curIntent.intent||{topics:curIntent.tags||[],type:curIntent.type,role:curIntent.role,time:curIntent.time,mode:curIntent.mode}), profile:matchProfile(), ctx:{self:DATA.name||''}, candidates:curIntent.candidates||[]})}).then(x=>x.json()); }catch(e){ r=null; }
   if(r&&r.candidates&&r.candidates.length){ curIntent.candidates=r.candidates;
     curIntent.confidence=(r.candidates[0]&&r.candidates[0].score)||curIntent.confidence; }
   curIntent.negotiating=false; curIntent.negotiated=true; curIntent.status='matched';
@@ -1252,6 +1252,25 @@ function scr_matchchat(){
 // You chat freely; the buddy quietly gathers your SIGNALS and, when you want to meet someone,
 // it calls the matching agent (server-side, agent-to-agent) and drops the best match into the chat.
 let buddyMsgs=[], buddySignals={}, buddyBusy=false;
+// Profile of the SEARCHER as the matching engine reads it. Sending only {name} meant the engine
+// knew nothing about the person searching: vibe/geo/language groups came back `unknown`, coverage
+// stayed low, and the outreach thresholds could never be met — every launch ended in "согласны: 0"
+// no matter how good the candidates were.
+function matchProfile(){
+  const g=t=>{const r=snapRow(t);return r?String(r.value||''):'';};
+  const langs=(g('Languages').match(/[A-Za-zА-Яа-яё]+/g)||[]).map(s=>({'english':'en','английский':'en',
+    'spanish':'es','испанский':'es','russian':'ru','русский':'ru','french':'fr','французский':'fr',
+    'german':'de','немецкий':'de','catalan':'ca','italian':'it'}[s.toLowerCase()]||s.slice(0,2).toLowerCase()))
+    .filter((v,i,a)=>v&&a.indexOf(v)===i);
+  const vibeRow=((DATA.social||{}).rows||[])[0];
+  const p={ name:DATA.name||'',
+            interests:(DATA.interests||[]).map(i=>i.name).filter(Boolean),
+            langs:langs, languages:{comfortable:langs},
+            vibe:(DATA.vibeWord||(vibeRow&&String(vibeRow.value||'').split(/[,·]/)[0].trim())||'')||null,
+            city:g('Location')||null };
+  if(DATA.geo&&DATA.geo.coarseLat!=null) p.geo=DATA.geo;
+  return p;
+}
 function buddyProfile(){   // seed the buddy with what we already know about the user
   return { name:DATA.name||'', interests:(DATA.interests||[]).map(i=>({name:i.name})),
            city:((DATA.subtitle||'').split('·')[0]||'').trim()||null };
