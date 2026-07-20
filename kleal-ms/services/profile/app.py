@@ -1417,7 +1417,7 @@ function scr_social(){  // "Your personality"
   const txt = has ? personalitySummary(s) : T('Пройди тест — и Kleal расскажет, как ты воспринимаешься со стороны и с кем тебе легко.','Take the test and Kleal will describe how you come across and who you click with.');
   return `<div class="fade" style="text-align:center">
     <div class="persimg">${IC.faceScan}</div>
-    <button class="bigbtn primary" data-act="personality-test">${T('Пройти тест на личность','Take your personality test')}</button>
+    <button class="bigbtn primary" data-act="edit-personality">${T('Рассказать о себе','Describe yourself')}</button>
     <div class="card pad" style="text-align:left;margin-top:16px">
       <div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>
       <div class="sumtxt">${esc(txt)}</div>
@@ -1942,6 +1942,36 @@ async function loadExplore(){
     when:p.when||'', dist:(p.km!=null?(p.km+' '+T('км','km')):''), going:p.going||p.participants||0}));
   if(cur==='search'||cur==='agenthome') render();
 }
+// Explore rows: prefer the person's stated area over a distance figure. The stored km is measured to a
+// fixed origin, so for someone in another city it reads as a few kilometres away — showing «Москва»
+// tells the truth where «2.6 км» does not.
+// The user's own area lives in different places depending on how the profile was built (onboarding
+// hand-off, demo seed, or an edited state restored from localStorage), so check all of them before
+// giving up — an empty answer here silently disables the cross-area check below.
+function myArea(){
+  const r=snapRow('Location'); if(r&&r.value) return String(r.value).trim();
+  const b=(DATA.basics||[]).find(x=>String(x.title).toLowerCase()==='location');
+  if(b&&b.value) return String(b.value).trim();
+  // NOT DATA.places — that list holds privacy settings ("Area only, never exact location"), not a place.
+  const sub=String(DATA.subtitle||'').split('·')[0].trim();
+  // 'New profile' / 'Новый профиль' is mapOnboarding's placeholder for "no location yet". Returning it
+  // as an area made every comparison mismatch and silently hid every distance.
+  return /^(new profile|новый профиль)$/i.test(sub) ? '' : sub;
+}
+function sameArea(a,b){
+  a=String(a||'').toLowerCase().trim(); b=String(b||'').toLowerCase().trim();
+  if(!a||!b) return null;                       // unknown on either side -> can't say
+  return a===b || a.includes(b) || b.includes(a);
+}
+function planWhere(p){
+  const a=(p&&p.area||'').trim();
+  const same=sameArea(a, myArea());
+  // Only show a distance when it can mean something. The stored km is measured to a FIXED origin, so
+  // for someone in another city it renders as «Москва · 2.6 км» — a contradiction on one line. When the
+  // areas differ we show the area alone; the honest statement is "they're in Moscow", not a number.
+  const d=(p&&p.dist!=null&&same!==false)?(p.dist+' '+T('км','km')):'';
+  return a && d ? (a+' · '+d) : (a || d || T('место не указано','area not set'));
+}
 let exploreMap=null;
 function initExploreMap(){
   if(typeof L==='undefined') return;                 // Leaflet not loaded
@@ -1953,9 +1983,17 @@ function initExploreMap(){
   const cIcon=L.divIcon({html:pin,className:'',iconSize:[30,30],iconAnchor:[15,30],popupAnchor:[0,-28]});
   const meIcon=L.divIcon({html:'<div class="meDot"></div>',className:'',iconSize:[16,16],iconAnchor:[8,8]});
   const pts=[];
-  PUBLIC_INTENTS.forEach((p,i)=>{ const m=L.marker([p.lat,p.lon],{icon:cIcon}).addTo(map);
-    m.bindPopup('<div class="mapop"><div class="mopt">'+esc(p.title)+'</div><div class="mopm">'+esc(p.who)+' · '+esc(p.when)+' · '+esc(p.dist)+' km</div><button class="mopj" onclick="joinPublic('+i+')">Join</button></div>');
-    pts.push([p.lat,p.lon]); });
+  // A plan whose owner never shared coordinates has lat/lon null, and L.marker([null,null]) drops a pin
+  // at 0,0 — the Gulf of Guinea. A pin in the sea claims we know where someone is when we do not, so
+  // those plans are simply not plotted; they still appear in the list below the map.
+  let noGeo=0;
+  PUBLIC_INTENTS.forEach((p,i)=>{
+    const la=+p.lat, lo=+p.lon;
+    if(!isFinite(la)||!isFinite(lo)||(la===0&&lo===0)){ noGeo++; return; }
+    const m=L.marker([la,lo],{icon:cIcon}).addTo(map);
+    m.bindPopup('<div class="mapop"><div class="mopt">'+esc(p.title)+'</div><div class="mopm">'+esc(p.who)+' · '+esc(p.when)+' · '+esc(planWhere(p))+'</div><button class="mopj" onclick="joinPublic('+i+')">'+T('Присоединиться','Join')+'</button></div>');
+    pts.push([la,lo]); });
+  if(noGeo) console.info('explore: '+noGeo+' plan(s) without coordinates were not plotted');
   L.marker(ME_LATLON,{icon:meIcon}).addTo(map); pts.push(ME_LATLON);
   try{ map.fitBounds(pts,{padding:[36,36]}); }catch(_e){ map.setView(ME_LATLON,13); }
   setTimeout(()=>{ try{ map.invalidateSize(); map.fitBounds(pts,{padding:[36,36]}); }catch(_e){} }, 90);
@@ -2109,7 +2147,7 @@ function scr_intentchat(){
 function scr_search(){
   const P=PUBLIC_INTENTS;
   const list=P.map((p,i)=>`<div class="card evrow" data-public="${i}"><div class="evic">${IC.pin}</div>
-    <div class="evt"><div class="evtt">${esc(p.title)}</div><div class="evts">${esc(p.who)} · ${esc(p.when)} · ${esc(p.dist)} km</div></div>
+    <div class="evt"><div class="evtt">${esc(p.title)}</div><div class="evts">${esc(p.who)} · ${esc(p.when)} · ${esc(planWhere(p))}</div></div>
     <button class="introbtn" data-act="join" data-pi="${i}">${T('Присоединиться','Join')}</button></div>`).join('');
   const below = P.length ? `<div class="stack">${list}</div>`
     : (exploreLoaded
@@ -3138,7 +3176,7 @@ function render(){
   const rgt=document.getElementById('bookmark');
   rgt.innerHTML = isHome ? IC.gear : IC.refresh;
   rgt.style.visibility = (isRoot && !isHome) ? 'hidden' : 'visible';   // no right icon on Intents/Search/Messages
-  rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
+  rgt.onclick = ()=> toast(isHome?T('Настройки — скоро','Settings are coming soon'):T('Kleal обновляет это','Kleal is refreshing this'));
   // Every chat screen carries its OWN in-screen header (chd) and pinned composer, so hide the shared app bar
   // and the bottom nav on all of them — and treat them all the same way for layout.
   // the Figma request flow carries its own app bar + composer, exactly like the chat screens
@@ -3193,7 +3231,7 @@ function render(){
   document.querySelectorAll('[data-eexp]').forEach(el=>el.onclick=()=>{ editSig.expansion=el.dataset.eexp; render(); });
   // V4: intents list, discovery pins/cards, message rows
   document.querySelectorAll('[data-intent]').forEach(el=>el.onclick=()=>{ const it=(DATA.intents||[])[+el.dataset.intent]; openIntent(it, !!(it&&it.status==='searching')); });
-  document.querySelectorAll('[data-plan]').forEach(el=>el.onclick=()=>toast('Plan details are coming soon'));
+  document.querySelectorAll('[data-plan]').forEach(el=>el.onclick=()=>toast(T('Детали плана — скоро','Plan details are coming soon')));
   document.querySelectorAll('[data-msg]').forEach(el=>el.onclick=()=>openMsgThread(+el.dataset.msg));
   document.querySelectorAll('[data-savedintent]').forEach(el=>el.onclick=()=>openSavedIntent(el.dataset.savedintent));
   document.querySelectorAll('[data-notif]').forEach(el=>el.onclick=()=>openNotif(el.dataset.notif));
@@ -3251,11 +3289,11 @@ function doAct(act, ds){
       break; }
     // Safety & Privacy actions
     case 'autonomy': break;   // handled by data-schoice
-    case 'trusted-contact': toast('Add a trusted contact — coming soon'); break;
+    case 'trusted-contact': toast(T('Доверенный контакт — скоро','Add a trusted contact — coming soon')); break;
     case 'review-memory': setTab('memory'); break;   // opens the agent-memory screen
-    case 'verify-me': toast('Photo & ID verification — coming soon'); break;
+    case 'verify-me': toast(T('Проверка фото и документов — скоро','Photo & ID verification — coming soon')); break;
     case 'blocked': toast('Your blocked list is empty'); break;
-    case 'report': toast('Safety centre & reporting — coming soon'); break;
+    case 'report': toast(T('Центр безопасности и жалобы — скоро','Safety centre & reporting — coming soon')); break;
     case 'export-data': toast('Preparing your data export — we’ll email you a copy'); break;
     case 'delete-account': toast('Delete account would ask you to confirm, then erase everything'); break;
     case 'nav': setTab(ds.tab||'overview'); break;
@@ -3285,7 +3323,7 @@ function doAct(act, ds){
         FLOW.intent=curIntent.intent||null; FLOW.summary={request:FLOW.request}; cur='clarify'; render(); }
       else toast(T('Нечего изменять','Nothing to edit')); break;
     case 'search-area': loadExplore(); toast(T('Обновляю карту…','Refreshing the map…')); break;
-    case 'filter': toast('Filters are coming soon'); break;
+    case 'filter': toast(T('Фильтры — скоро','Filters are coming soon')); break;
     case 'join': joinPublic(+ds.pi); break;
     // Agent Home
     case 'notif': setTab('notifs'); break;
@@ -3361,7 +3399,7 @@ function doAct(act, ds){
     case 'edit-back': cur='buddychat'; render(); break;
     case 'edit-view': cur='overview'; render(); break;
     case 'buddy-create': openCreateIntent(); break;
-    case 'buddy-plus': toast('Attachments are coming soon'); break;
+    case 'buddy-plus': toast(T('Вложения — скоро','Attachments are coming soon')); break;
     case 'buddy-mic': buddyMic(); break;
     case 'go-home': editSig=null; detail=null; cur='agenthome'; render(); break;   // center FAB -> agent home
     case 'talk-buddy': openBuddy(''); break;
@@ -3371,11 +3409,10 @@ function doAct(act, ds){
     case 'q-saved': cur='saved'; render(); break;
     case 'see-all': setTab('search'); break;
     case 'add-interests': openProfileEdit('Interests'); break;
-    case 'personality-test': toast('The personality test is coming soon'); break;
     case 'edit-personality': openProfileEdit('Your personality'); break;
     case 'add-goal': openProfileEdit('Goals'); break;
     case 'edit-goal': openProfileEdit('Goals'); break;
-    default: toast('Coming soon');
+    default: toast(T('Пока недоступно','Not available yet'));
   }
 }
 render();

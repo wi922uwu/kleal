@@ -980,14 +980,20 @@ def explore_plans(limit=12, self_name=""):
         if not topics:
             continue
         lat, lon, km = c.get("lat"), c.get("lon"), c.get("km")
-        if lat is None or lon is None:                 # real user without precise coords -> place around the area centre
-            km = float(km if km is not None else round(0.5 + (i * 0.9) % 6.5, 1))
-            lat, lon = _offset(ME_LATLON, km, (i * 137.5) % 360)
+        # Do NOT invent a position. This used to spiral users without coordinates around the map centre
+        # at (i * 137.5)°, which put pins in the Mediterranean and — worse — drew people whose area says
+        # "Москва" as a pin 2.6 km from Barcelona. A pin asserts "this person is here"; we only know a
+        # distance to some origin, not a direction. lat/lon stay null and the client omits the pin while
+        # still listing the plan, with `area` shown so the user can see where they actually are.
+        if lat is None or lon is None:
+            lat = lon = None
         out.append({"title": ENTITY_MAP.get(topics[0]) or (topics[0].capitalize() + " meetup"),
                     "who": c.get("name") or "Someone", "topics": topics, "role": (oi or {}).get("role") or "meet",
-                    "when": _EXPLORE_WHEN[i % len(_EXPLORE_WHEN)], "dist": round(float(km or 0), 1),
+                    "when": _EXPLORE_WHEN[i % len(_EXPLORE_WHEN)],
+                    "dist": (round(float(km), 1) if km is not None else None),
+                    "area": c.get("area") or "",
                     "lat": lat, "lon": lon, "verified": bool(c.get("verified"))})
-    out.sort(key=lambda p: p["dist"])
+    out.sort(key=lambda p: (p["dist"] is None, p["dist"] or 0))
     return out[:limit]
 
 # ---------------------------------------------------------------- HTTP dispatcher (matching only)
