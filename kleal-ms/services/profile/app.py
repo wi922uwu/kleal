@@ -1187,7 +1187,8 @@ const ALL_TABS=[
 ];
 const TABS = ALL_TABS;
 let cur = 'agenthome';   // main landing after onboarding
-const TITLES=()=>({memory:T('Что Kleal помнит','What Kleal remembers'), intents:T('Интенты','Plans'), search:T('Обзор','Explore'), messages:T('Сообщения','Messages'), agenthome:T('Главная','Home'), notifs:T('Уведомления','Notifications'), buddychat:'Kleal'});   // functions so language switch re-evaluates
+const TITLES=()=>({memory:T('Что Kleal помнит','What Kleal remembers'), intents:T('Интенты','Plans'), search:T('Обзор','Explore'), messages:T('Сообщения','Messages'), agenthome:T('Главная','Home'), notifs:T('Уведомления','Notifications'), buddychat:'Kleal',
+  settings:T('Настройки','Settings'), help:T('Помощь и поддержка','Help & Support')});   // functions so language switch re-evaluates
 if(!DATA.notifs) DATA.notifs=[]; if(!DATA.intents) DATA.intents=[];   // buddy-agent stores
 function setTab(id){ detail=null; cur=id; render(); }
 // Overview is a hub of drill-in "Settings Rows"
@@ -1328,14 +1329,30 @@ function safetyRow(it){
 function checkRow(label,on,key){ on=ui(key,on); return `<div class="crow"><div class="cbx ${on?'on':''}" data-cbx data-uk="${key||''}">${on?IC.check:''}</div>
   <div class="cl">${esc(label)}</div></div>`; }
 
-let editingSummary=false;
+let editingSummary=false, SUMBUSY=false, _sumTried=false;
+// The summary used to be written ONLY by adaptSummary() after a profile edit, so a user who never
+// edited anything saw the placeholder forever. Generate it the first time the profile is opened,
+// as soon as there is enough to describe.
+function ensureSummary(){
+  if(_sumTried||SUMBUSY||DATA.summary) return;
+  const ints=(DATA.interests||[]).length, snap=(DATA.snapshot||[]).length;
+  if(ints+snap < 2) return;                     // nothing real to describe yet — keep the placeholder
+  _sumTried=true; SUMBUSY=true;
+  adaptSummary().then(()=>{ SUMBUSY=false; render(); });
+}
 function scr_overview(){
   const d=DATA;
+  ensureSummary();
   const sum = editingSummary
     ? `<textarea id="sumta" class="sumta">${esc(d.summary)}</textarea>
        <div class="linkrow"><button data-act="savesum">${T('Сохранить','Save')}</button><button data-act="cancelsum">${T('Отмена','Cancel')}</button></div>`
-    : `<div class="sumtxt">${esc(d.summary||T('Kleal опишет тебя здесь по мере знакомства.','Kleal will summarise you here as it learns more.'))}</div>
-       <button class="bigbtn primary" style="margin-top:16px" data-act="createintent">${T('Создать интент','Create intent')}</button>`;
+    : (d.summary
+        ? `<div class="sumtxt">${esc(d.summary)}</div>
+           <div class="linkrow" style="margin-top:10px"><button data-act="editsum">${T('Изменить','Edit')}</button>
+             <button data-act="resum">${T('Пересобрать','Rewrite')}</button></div>`
+        : `<div class="sumtxt">${esc(SUMBUSY
+             ? T('Kleal составляет описание…','Kleal is writing your summary…')
+             : T('Kleal опишет тебя здесь по мере знакомства.','Kleal will summarise you here as it learns more.'))}</div>`);
   const langRow=`<div class="card setrow" style="justify-content:space-between">
     <div class="sic">${IC.globe}</div>
     <div class="st"><div class="stt">${T('Язык интерфейса','Interface language')}</div></div>
@@ -1631,7 +1648,9 @@ function saveCurIntent(){
   saveState();
 }
 // ---------- Phase 4: notifications ----------
-function addNotif(kind,title,body,ref){ DATA.notifs=DATA.notifs||[];
+function addNotif(kind,title,body,ref){
+  if(((DATA.prefs||{}).notifs)===false) return;   // the Settings switch really gates this
+  DATA.notifs=DATA.notifs||[];
   DATA.notifs.unshift({id:'n'+String(Date.now())+Math.round(Math.abs(Math.sin(DATA.notifs.length))*1000),kind:kind,title:title,body:body,ref:ref,read:false,time:'now'}); }
 function unreadNotifs(){ return (DATA.notifs||[]).filter(n=>!n.read).length; }
 function scr_notifications(){
@@ -1920,7 +1939,7 @@ let _resumBusy=false;
 async function adaptSummary(){
   if(_resumBusy) return; _resumBusy=true;
   try{ const r=await fetch('/api/buddy/resummary',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({profile:fullProfileForEdit(), current:DATA.summary||''})}).then(x=>x.json());
+    body:JSON.stringify({profile:fullProfileForEdit(), current:DATA.summary||'', lang:UILANG})}).then(x=>x.json());
     if(r&&r.summary){ DATA.summary=r.summary; DATA.summaryLabel="Kleal's summary"; render(); saveState(); }
   }catch(e){}
   _resumBusy=false;
@@ -2279,6 +2298,7 @@ const BACK_MAP = {
   picktime:'suggestion', pickplace:'picktime', awaiting:'pickplace', planok:'awaiting',
   meetstate:'agenthome', mymeetup:'meetstate',
   intentchat:'intents', buddychat:'agenthome', profileedit:'buddychat', notifs:'agenthome',
+  help:'settings',
 };
 let NAVSTACK=[];
 function navTo(next){ if(cur!==next){ NAVSTACK.push(cur); if(NAVSTACK.length>20) NAVSTACK.shift(); } cur=next; render(); }
@@ -3120,6 +3140,58 @@ function sheetHTML(){
   </div></div>`;
 }
 
+// ---------------- Settings (Figma "Settings") ----------------
+// Reached from the gear in the app bar on Agent Home / Overview. Rows are wired to the things that
+// really exist in this app; the two the product has no backend for (auth, billing) are rendered
+// visibly disabled rather than as live rows that lead nowhere.
+function setRow(icon, label, opts){
+  const o=opts||{};
+  const right = o.tog!==undefined
+      ? `<div class="sw ${o.tog?'on':''}" style="pointer-events:none"></div>`
+      : (o.disabled ? '' : `<div style="color:var(--muted);flex:none">${IC.chevR}</div>`);
+  const val = o.val ? `<div class="k-label" style="color:var(--muted);flex:none;margin-right:2px">${esc(o.val)}</div>` : '';
+  return `<div class="card" style="padding:0;margin-bottom:10px;${o.disabled?'opacity:.45':''}">
+    <div class="setrow" ${o.disabled?'':`data-act="${o.act}"`} style="${o.disabled?'cursor:default':'cursor:pointer'}">
+      <div class="sic">${IC[icon]||IC.gear}</div>
+      <div class="st"><div class="stt">${esc(label)}</div>
+        ${o.sub?`<div class="sts">${esc(o.sub)}</div>`:''}</div>
+      ${val}${right}</div></div>`;
+}
+function scr_settings(){
+  const soon=T('появится позже','coming later');
+  return `<div class="fade" style="padding-top:4px">
+    ${setRow('edit',   T('Личные данные','Edit Personal Info'), {act:'set-personal'})}
+    ${setRow('userLock',T('Смена пароля','Change Password'),    {disabled:true, sub:soon})}
+    ${setRow('boxx',   T('Способ оплаты','Payment Method'),      {disabled:true, sub:soon})}
+    ${setRow('bell',   T('Уведомления','Notifications'),         {act:'set-notifs', tog:notifsOn()})}
+    ${setRow('globe',  T('Язык','Language'),                     {act:'set-language', val:(UILANG==='ru'?'Русский':'English')})}
+    ${setRow('chat',   T('Помощь и поддержка','Help & Support'), {act:'set-help'})}
+    ${setRow('shield', T('Приватность и безопасность','Privacy & Security'), {act:'set-privacy'})}
+    ${setRow('moon',   T('Тёмная тема','Dark Mode'),
+        {act:'set-dark', tog:darkOn(), sub:T('Тема пока не применяется','Theme not applied yet')})}
+    <button class="bigbtn" style="background:var(--fg);color:#fff;margin-top:14px" data-act="set-logout">${T('Выйти','Log out')}</button>
+  </div>`;
+}
+// Notifications is a REAL preference: addNotif() checks it, so turning it off actually stops Kleal
+// writing to the notification list rather than only remembering a switch position.
+function notifsOn(){ return ((DATA.prefs||{}).notifs)!==false; }
+function darkOn(){ return !!((DATA.prefs||{}).dark); }
+function scr_help(){
+  return `<div class="fade" style="padding-top:4px">
+    <div class="card pad"><div class="seclbl">${T('Как работает Kleal','How Kleal works')}</div>
+      <div class="sumtxt" style="font-size:13.5px;color:var(--muted);margin-top:6px">${T(
+        'Опиши свободным текстом, кого или что ищешь. Kleal превращает это в запрос, находит людей с близкими интересами и сам договаривается с их агентами. Ты видишь только тех, кто тоже открыт к встрече.',
+        'Describe in your own words who or what you are looking for. Kleal turns it into a request, finds people with close interests and talks to their agents for you. You only see people who are open to meeting too.')}</div></div>
+    <div class="card pad" style="margin-top:10px"><div class="seclbl">${T('Что видят другие','What others see')}</div>
+      <div class="sumtxt" style="font-size:13.5px;color:var(--muted);margin-top:6px">${T(
+        'Имя, возраст, район города и общие интересы. Точное местоположение не показывается никогда. Фото открывается постепенно, по мере общения.',
+        'Your name, age, city area and shared interests. Your exact location is never shown. Photos unblur gradually as you talk.')}</div></div>
+    <div class="card pad" style="margin-top:10px"><div class="seclbl">${T('Если что-то не так','If something is wrong')}</div>
+      <div class="sumtxt" style="font-size:13.5px;color:var(--muted);margin-top:6px">${T(
+        'Настройки приватности и блокировки собраны в разделе «Приватность и безопасность». Канал поддержки ещё не подключён — он появится вместе с аккаунтами.',
+        'Privacy controls and blocking live under Privacy & Security. A support channel is not connected yet — it arrives together with accounts.')}</div></div>
+  </div>`;
+}
 const SCREENS={agenthome:scr_agenthome,profileedit:scr_profileedit,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
   places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
   intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages,
@@ -3128,7 +3200,8 @@ const SCREENS={agenthome:scr_agenthome,profileedit:scr_profileedit,overview:scr_
   options:scr_options,bestfit:scr_bestfit,recos:scr_recos,candprofile:scr_candprofile,
   sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
   picktime:scr_picktime,pickplace:scr_pickplace,awaiting:scr_awaiting,planok:scr_planok,
-  meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved};
+  meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved,
+  settings:scr_settings,help:scr_help};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -3196,8 +3269,10 @@ function render(){
   // app-bar right icon: gear on Overview, refresh on drill-ins, nothing on the other root tabs
   const rgt=document.getElementById('bookmark');
   rgt.innerHTML = isHome ? IC.gear : IC.refresh;
-  rgt.style.visibility = (isRoot && !isHome) ? 'hidden' : 'visible';   // no right icon on Intents/Search/Messages
-  rgt.onclick = ()=> toast(isHome?T('Настройки — скоро','Settings are coming soon'):T('Kleal обновляет это','Kleal is refreshing this'));
+  // no right icon on Intents/Search/Messages, nor on Settings/Help — there is nothing to refresh there
+  rgt.style.visibility = ((isRoot && !isHome) || cur==='settings' || cur==='help') ? 'hidden' : 'visible';
+  rgt.onclick = ()=> { if(isHome){ navTo('settings'); saveState(); }
+    else toast(T('Kleal обновляет это','Kleal is refreshing this')); };
   // Every chat screen carries its OWN in-screen header (chd) and pinned composer, so hide the shared app bar
   // and the bottom nav on all of them — and treat them all the same way for layout.
   // the Figma request flow carries its own app bar + composer, exactly like the chat screens
@@ -3334,6 +3409,22 @@ function doAct(act, ds){
       'Kleal is inviting nearby people to “'+((curIntent&&curIntent.title)||'your plan')+'”',null); saveState();
       toast((k==='watch'?'Watch room':'Voice room')+' created — inviting people'); break; }
     case 'broaden': broadenIntent(ds.kind); break;
+    case 'editsum': editingSummary=true; render(); break;
+    case 'resum': { if(SUMBUSY)break; SUMBUSY=true; render();
+      adaptSummary().then(()=>{ SUMBUSY=false; render(); }); break; }
+    case 'set-personal': openProfileEdit(null); break;
+    case 'set-privacy':  navTo('safety'); break;
+    case 'set-help':     cur='help'; render(); break;
+    case 'set-language': setUILang(UILANG==='ru'?'en':'ru'); break;   // setUILang persists + re-renders
+    case 'set-notifs': { DATA.prefs=DATA.prefs||{}; DATA.prefs.notifs=!notifsOn(); render(); saveState();
+      toast(notifsOn()?T('Уведомления включены','Notifications on'):T('Уведомления выключены','Notifications off')); break; }
+    case 'set-dark': { DATA.prefs=DATA.prefs||{}; DATA.prefs.dark=!darkOn(); render(); saveState();
+      toast(T('Запомнил. Тёмная тема ещё не готова — вид не изменится.','Saved. Dark theme is not built yet — the look will not change.')); break; }
+    case 'set-logout': {
+      // Everything this app knows about the user lives in localStorage; clearing it IS the logout.
+      if(!confirm(T('Выйти и очистить профиль на этом устройстве?','Log out and clear this profile on this device?'))) break;
+      try{ localStorage.clear(); }catch(_e){}
+      location.href='/'; break; }
     case 'use-suggest': { const e=document.getElementById('mcin');
       if(e&&matchWith&&matchWith.suggest){ e.value=matchWith.suggest; e.focus(); } break; }
     case 'match-send': { const el=document.getElementById('mcin'); const t=(el&&el.value||'').trim(); if(!t||!matchWith)break;

@@ -920,19 +920,38 @@ def profile_edit(message, profile, lang):
 # After a profile change is applied, the "Kleal's summary" paragraph must ADAPT — reflect the new profile in
 # flowing prose — not get a word tacked on the end (the bug: changing personality appended "Интроверт" to the
 # summary). We rewrite the whole paragraph from the current summary + up-to-date profile, keeping its language.
-RESUMMARY_PROMPT = '''You are Kleal. Below is a user's current profile summary and their up-to-date profile data. Rewrite the SUMMARY as ONE warm, natural, flowing paragraph that reflects the CURRENT data. Integrate every change smoothly into the prose — NEVER just append or list words. Write in the language that matches the PROFILE DATA — if their interests/area are in Russian, write the summary in Russian ("Ты…"), otherwise English ("You…"). 2-4 sentences, concrete, no bullet points, output ONLY the paragraph.'''
+# Language follows the UI, NOT the profile data. Topics are canonicalised to English for matching
+# ("coffee", "football"), so the old "match the language of the profile data" rule handed a Russian
+# user an English paragraph about themselves on their own profile screen.
+RESUMMARY_PROMPT = '''You are Kleal. Below is a user's current profile summary and their up-to-date profile data. Rewrite the SUMMARY as ONE warm, natural, flowing paragraph that reflects the CURRENT data. Integrate every change smoothly into the prose — NEVER just append or list words. Address the user directly. 2-4 sentences, concrete, no bullet points, output ONLY the paragraph.
+
+LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ The interests may be stored as English keywords for the matching engine — translate them naturally, do not switch language because of them.'''
 
 
-def resummary(profile, current):
+def resummary(profile, current, lang="ru"):
     """Rewrite the profile summary to integrate the latest changes (adapt, don't append)."""
+    lang = "en" if str(lang).lower() == "en" else "ru"
     payload = ("CURRENT SUMMARY:\n" + str(current or "(none yet)") +
                "\n\nUP-TO-DATE PROFILE DATA:\n" + json.dumps(profile or {}, ensure_ascii=False)[:2200])
-    try:
-        s = llm_complete(MODEL_ID, [{"role": "system", "content": RESUMMARY_PROMPT},
-                                    {"role": "user", "content": payload}], 0.5)
-        return {"summary": str(s or "").strip()[:900]}
-    except Exception:
-        return {"summary": ""}
+    sys_prompt = (RESUMMARY_PROMPT
+                  .replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
+                  .replace("__LANGDIR__", _LANGDIR.get(lang, _LANGDIR["ru"])))
+    best = ""
+    for attempt in range(2):
+        try:
+            s = str(llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt},
+                                            {"role": "user", "content": payload}],
+                                 0.5 if attempt == 0 else 0.2) or "").strip()[:900]
+        except Exception:
+            s = ""
+        if not s:
+            continue
+        best = best or s
+        if _lang_ok(s, lang):          # same guard the intent builder uses
+            return {"summary": s}
+    # Both attempts came back in the wrong language: an empty summary keeps the honest placeholder,
+    # which beats showing the user an English paragraph about themselves.
+    return {"summary": best if _lang_ok(best, lang) else ""}
 
 
 # ======================= INTENT BUILDER (conversational "Create intent") =======================
@@ -1139,7 +1158,8 @@ class H(BaseHTTPRequestHandler):
 
             if r == "/resummary":                    # after a profile edit: rewrite the summary to fit (adapt, not append)
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
-                return send_json(self, 200, resummary(prof, body.get("current") or ""))
+                return send_json(self, 200, resummary(prof, body.get("current") or "",
+                                                      body.get("lang") or "ru"))
 
             if r == "/intro":                        # the candidate's agent writes the icebreaker
                 return send_json(self, 200, _post(MATCH_URL, "/api/agent/intro",
