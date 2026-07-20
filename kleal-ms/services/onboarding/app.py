@@ -385,6 +385,17 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .pbar>i{position:relative}
 .pbar>i::after{content:'';position:absolute;right:-4px;top:50%;transform:translateY(-50%);
   width:9px;height:9px;border-radius:50%;background:var(--accent)}   /* the thread runs, the dot leads */
+@media (prefers-reduced-motion: no-preference){
+  .bub{animation:oup .35s both}
+  .pbar>i::after{animation:opulse 2.2s ease-out infinite}
+  .illus img{animation:ofloat 3s ease-in-out infinite alternate}
+  .chip,.cta,.opt{transition:transform .15s ease}
+  .chip:active,.opt:active{transform:scale(.95)}
+  .cta:active{transform:scale(.97)}
+}
+@keyframes oup{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes opulse{0%{box-shadow:0 0 0 0 rgba(233,78,43,.35)}70%{box-shadow:0 0 0 8px rgba(233,78,43,0)}100%{box-shadow:0 0 0 0 rgba(233,78,43,0)}}
+@keyframes ofloat{from{transform:translateY(0)}to{transform:translateY(-5px)}}
 .pbar>i{display:block;height:100%;background:var(--accent);border-radius:3px;width:0;
   transition:width .5s cubic-bezier(.4,0,.2,1)}
 .pct{font-size:12.5px;color:var(--muted);font-weight:600;flex:none}

@@ -679,7 +679,33 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* ---- brand deck: editorial display type, the coral thread, B&W photography ---- */
 .ahd .nm,.kprompt .k-h3,.idcard .nm{font-family:"Literata",Georgia,serif;letter-spacing:-.015em}
 .k-title{text-transform:uppercase;font-size:11.5px;letter-spacing:.09em;color:var(--muted);font-weight:600}
-.kthread{display:block;width:100%;height:48px;margin:0;pointer-events:none;flex:none}
+.kthread{display:block;width:100%;height:44px;margin:-6px 0 -8px;pointer-events:none;flex:none}
+/* ---- motion: alive, but only where it means something ---- */
+@media (prefers-reduced-motion: no-preference){
+  .enter .kthread path{stroke-dasharray:1;stroke-dashoffset:1;animation:kdraw .8s .3s cubic-bezier(.6,0,.3,1) forwards}
+  .enter .kthread .kd1{animation:kpop .4s .2s both}
+  .enter .kthread .kd2{animation:kpop .35s 1.05s both}
+  .kthread circle{transform-box:fill-box;transform-origin:center}
+  .enter .ah2 .body>*{animation:kup .45s both}
+  .enter .ah2 .body>*:nth-child(2){animation-delay:.06s}
+  .enter .ah2 .body>*:nth-child(3){animation-delay:.12s}
+  .enter .ah2 .body>*:nth-child(4){animation-delay:.18s}
+  .enter .ah2 .body>*:nth-child(5){animation-delay:.24s}
+  .enter .ah2 .body>*:nth-child(6){animation-delay:.30s}
+  .enter .ah2 .body>*:nth-child(7){animation-delay:.36s}
+  .aintro2 .msc img{animation:kfloat 2.8s ease-in-out infinite alternate}
+  .abadge{animation:kpop .35s .5s both}
+  .kbtn,.snd,.card,.kchip,.qtile{transition:transform .15s ease}
+  .kbtn:active,.kchip:active{transform:scale(.96)}
+  .card:active{transform:scale(.988)}
+  .snd:active{transform:scale(.9)}
+  .snd svg{transition:transform .25s ease}
+  .snd:hover svg{transform:rotate(-14deg)}
+}
+@keyframes kdraw{to{stroke-dashoffset:0}}
+@keyframes kpop{0%{transform:scale(0)}70%{transform:scale(1.3)}100%{transform:scale(1)}}
+@keyframes kup{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes kfloat{from{transform:translateY(0)}to{transform:translateY(-4px)}}
 .ava,.ecard .ph,.candav{filter:grayscale(1)}          /* photography and avatars read B&W, per the deck */
 .msc,.kav,.fab{filter:none}                            /* the mascot stays coral — it IS the brand */
 .khelp{display:flex;justify-content:center;padding:0 12px 6px}
@@ -2496,14 +2522,16 @@ function inboxCards(){
 // "For you today" feed (real plans from /api/agent/explore, never invented ones).
 // The deck's signature: a thin coral thread with dots, travelling from one moment to the next.
 // Purely decorative (pointer-events:none), so UX is untouched.
-function kthread(flip){
-  // One confident arc, like the deck: it dives from under one block and surfaces at the next,
-  // with solid round dots at both ends. Drawn 1:1 (no stretching), so the dots stay circles.
-  const d=flip?'M356 10 C 260 4, 150 46, 18 34':'M18 10 C 130 4, 250 46, 356 34';
-  return `<svg class="kthread" viewBox="0 0 375 48" fill="none" preserveAspectRatio="xMidYMid meet">
-    <path d="${d}" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round"/>
-    <circle cx="${flip?356:18}" cy="10" r="6.5" fill="var(--primary)"/>
-    <circle cx="${flip?18:356}" cy="34" r="6.5" fill="var(--primary)"/></svg>`;
+// The deck's thread, reworked to CONNECT rather than decorate: it leaves from under the send
+// button (where your ask lives) and lands at the next section's eyebrow (where the answer starts).
+// pathLength=1 lets CSS draw it with a plain dashoffset animation on screen entry. The leading dot
+// is larger than the landing dot — the line has a direction, like the deck's.
+function kthread(seq){
+  const d = seq ? 'M342 8 C 250 40, 120 0, 16 34' : 'M342 6 C 290 36, 96 4, 16 36';
+  return `<svg class="kthread" viewBox="0 0 358 44" fill="none" preserveAspectRatio="xMidYMid meet">
+    <path d="${d}" pathLength="1" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round"/>
+    <circle class="kd1" cx="342" cy="${seq?8:6}" r="6.5" fill="var(--primary)"/>
+    <circle class="kd2" cx="16" cy="${seq?34:36}" r="4.5" fill="var(--primary)"/></svg>`;
 }
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans for "For you today"
@@ -2549,7 +2577,7 @@ function scr_agenthome(){
             <input id="ainput" placeholder="${T('Опиши, кого или что ищешь…',"Describe who or what you're look…")}" autocomplete="off">${IC.mic}</div>
           <button class="snd" data-act="agent-go">${IC.send}</button></div>
       </div>
-      ${kthread()}
+      ${kthread(0)}
       ${inboxCards()}
       ${INBOX.length?kthread(1):''}
       <div style="display:flex;flex-direction:column;gap:32px">
@@ -3869,6 +3897,14 @@ function scr_editSignal(){
 let editSig=null;  // {kind:'interest'|'signal', ...}
 let detail=null;  // {interest}
 function render(){
+  // Entrance animations (thread draw, staggered rise) must play when the user ARRIVES on a screen —
+  // not on every re-render the live polls trigger. A short grace window keeps them alive through the
+  // data refreshes that land right after boot (profile row, inbox), which used to wipe the animation
+  // mid-draw; after the window, poll re-renders stay static.
+  const _now=Date.now();
+  if(render._last !== cur) render._lastAt=_now;
+  const _entering = render._last !== cur || (_now-(render._lastAt||0)) < 1600;
+  render._last = cur;
   const meta=TABS.find(t=>t[0]===cur)||TABS[0];
   const isHome = !editSig && !detail && cur==='overview';
   const isRoot = !editSig && !detail && ROOTS.includes(cur);
@@ -3908,6 +3944,7 @@ function render(){
     try{ A.innerHTML=(SCREENS[cur]||scr_overview)(); }
     catch(err){ console.error('render failed on', cur, err); cur='agenthome'; A.innerHTML=scr_agenthome(); }
   }
+  A.classList.toggle('enter', _entering);
   if(SHEET==='interest') A.insertAdjacentHTML('beforeend', sheetHTML());
   if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
   if(ESHEET) A.insertAdjacentHTML('beforeend', eSheetHTML());
