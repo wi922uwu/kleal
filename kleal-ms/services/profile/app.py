@@ -2353,7 +2353,32 @@ function scr_search(){
   </div>`;
 }
 
+// Conversations that exist on the SERVER, merged into the local list. Messages were delivered and
+// stored correctly, but this tab only ever read local state — so the person who RECEIVED a message
+// opened Messages and saw "Пока нет сообщений" while the message sat on the server addressed to them.
+async function loadThreads(){
+  const me=(DATA.name||'').trim(); if(!me) return;
+  try{
+    const r=await fetch('/api/agent/threads?self='+encodeURIComponent(me)).then(x=>x.json());
+    let changed=false;
+    ((r&&r.threads)||[]).forEach(t=>{
+      const key=String(t.who||'').toLowerCase();
+      let local=(DATA.messages||[]).find(m=>!m.kleal&&String(m.who||'').toLowerCase()===key);
+      if(!local){
+        local={who:t.who, kleal:false, msgs:[], cand:{name:t.who}, since:0};
+        (DATA.messages=DATA.messages||[]).unshift(local); changed=true;
+      }
+      const prev=local.last;
+      local.last=t.last; local.time=fmtTime((t.t||0)*1000)||'now';
+      if(prev!==t.last) changed=true;
+    });
+    if(changed){ render(); saveState(); }
+  }catch(e){}
+  clearTimeout(_thT); _thT=setTimeout(loadThreads, 15000);
+}
+let _thT=null;
 function scr_messages(){
+  if(!_thT) loadThreads();
   const list=DATA.messages||[];
   if(!list.length) return emptyState(T("Пока нет сообщений","No messages yet"),T("Когда Kleal устроит знакомство, переписки появятся здесь.","When Kleal lines up an intro, your chats show up here."));
   return `<div class="stack fade" style="padding-top:4px">${list.map((m,i)=>`<div class="card" style="padding:0">
