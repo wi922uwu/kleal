@@ -1193,10 +1193,10 @@ _EXPLORE_WHEN = ("Today 18:00", "Tonight 21:00", "Tomorrow 08:00", "Tomorrow 19:
 def explore_plans(limit=12, self_name=""):
     sn = str(self_name or "").strip().lower()
     users = [c for c in load_candidates() if not (sn and str(c.get("name", "")).strip().lower() == sn)]
-    # Explore shows ONLY real registered users (source == "onboarding") — a plan from their own-intent, or,
-    # if none, their top interest. Demo pool users are NEVER surfaced here (they exist only so matching has a
-    # non-empty pool to rank against); when there are no real users, the client shows an empty state.
-    ordered = [c for c in users if c.get("source") == "onboarding"]
+    # Explore shows real registered users (source == "onboarding") and the AI-generated seed population
+    # (source == "seed") — a plan from their own-intent, or, if none, their top interest. loadtest and
+    # demo-pool rows are NEVER surfaced here; when there is nobody, the client shows an empty state.
+    ordered = [c for c in users if c.get("source") in ("onboarding", "seed")]
     out = []
     for i, c in enumerate(ordered):
         # paused (incl. receiving.status/paused_until) leaves retrieval entirely (spec §10.1);
