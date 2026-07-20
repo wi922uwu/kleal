@@ -2824,13 +2824,15 @@ function openCand(name){
   CTAB='profile'; cur='candprofile'; render();
 }
 async function loadWhy(){
-  if(!CAND||CAND._trace) return;
+  if(!CAND||CAND._trace||CAND._traceErr) return;   // _traceErr also stops the retry loop on failure
   try{
     const r=await fetch('/api/agent/explain',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({intent:(FLOW&&flowIntent())||{topics:[]}, profile:matchProfile(),
                            ctx:{self:DATA.name||''}, candidate:CAND.name})}).then(x=>x.json());
-    if(r&&r.ok&&r.trace){ CAND._trace=r.trace; render(); }
-  }catch(e){ /* pane shows its own waiting copy */ }
+    if(r&&r.ok&&r.trace){ CAND._trace=r.trace; }
+    else { CAND._traceErr=(r&&r.error)||'no explanation returned'; }
+  }catch(e){ CAND._traceErr='network'; }
+  render();   // ALWAYS re-render: on a failure the pane must stop pretending it is still working
 }
 function sendInterest(){                          // "Interested" -> review what gets shared
   if(!CAND) return;
@@ -3009,6 +3011,11 @@ function whyDetail(f){
 }
 function candWhyPane(c){
   const tr=CAND&&CAND._trace;
+  // An explanation can genuinely fail — most often the candidate has left the matching store since the
+  // search ran. Saying so beats a spinner that never resolves and implies work is still happening.
+  if(!tr && CAND && CAND._traceErr) return `<div class="k-cap" style="color:var(--muted);padding:8px 2px">
+    ${T('Не удалось получить объяснение — карточка могла устареть. Запусти поиск заново.',
+        'Could not load the explanation — this card may be out of date. Try searching again.')}</div>`;
   if(!tr) return `<div class="k-cap" style="color:var(--muted);padding:8px 2px">${T('Считаю объяснение…','Working out the explanation…')}</div>`;
   // Same rule the engine applies to the card's reasons (core_v2._presentation): never claim availability
 // that the readiness chip contradicts. The raw trace legitimately keeps 'open now' — feature states are
