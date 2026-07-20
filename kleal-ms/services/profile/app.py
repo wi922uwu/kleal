@@ -198,13 +198,6 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* V3 your personality */
 .persimg{width:120px;height:120px;border-radius:50%;background:linear-gradient(135deg,#e7eaef,#d7dbe3);margin:8px auto 18px;
   display:flex;align-items:center;justify-content:center;color:var(--neutral300)}
-/* V3 goals */
-.goalcard{padding:16px}
-.goalcard .gc{display:flex;align-items:center;gap:14px}
-.goalcard .gci{width:40px;height:40px;border-radius:50%;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--fg);flex:none}
-.goalcard .gct{flex:1;min-width:0}.goalcard .gctn{font-size:15px;font-weight:700}
-.goalcard .gcts{font-size:12.5px;color:var(--muted);margin-top:2px}
-.goalcard .gedit{color:var(--primary);cursor:pointer;flex:none}
 /* body */
 .body{flex:1;overflow-y:auto;padding:2px 16px 20px;scrollbar-width:none}
 .body::-webkit-scrollbar{display:none}
@@ -1237,7 +1230,6 @@ function mapOnboarding(op){
   if(interests.length) tabs.push('interests');
   if(social.rows.length||social.vibe.length) tabs.push('social');
   if(places.length) tabs.push('places');
-  if(goals.active.length||goals.optional.length) tabs.push('goals');
   tabs.push('safety');
   if(memory.length) tabs.push('memory');
   if(conf.length) tabs.push('knows');
@@ -1250,7 +1242,6 @@ const ALL_TABS=[
   ['overview','Overview','My Kleal Profile'],
   ['interests','Interests','Interests'],
   ['social','Your personality','Your personality'],
-  ['goals','Goals','Goals'],
   ['safety','Safety','Safety & Privacy'],
 ];
 const TABS = ALL_TABS;
@@ -1263,7 +1254,6 @@ function setTab(id){ detail=null; cur=id; render(); }
 const SECMETA=()=>({
   interests:['star',T('Интересы','Interests'),T('Чем ты любишь заниматься с людьми','What you like doing with people')],
   social:['faceScan',T('Твоя личность','Your personality'),T('Как ты воспринимаешься','How you come across')],
-  goals:['sun',T('Цели','Goals'),T('С чем Kleal должен помочь','What you want Kleal to help with')],
   safety:['userLock',T('Безопасность и приватность','Safety & Privacy'),T('Что Kleal может использовать и твои границы','What Kleal can use, and your limits')],
 });
 function navRows(){
@@ -1535,17 +1525,6 @@ function scr_places(){
     <div class="stack">${DATA.availability.length?DATA.availability.map(r=>summaryRow(r,false)).join(''):`<div class="seccap">${T('Пока не задано — Kleal сам поймёт, когда тебе удобно.','Not set yet — Kleal will learn your usual times.')}</div>`}</div>
     <div class="rowhead"><div class="seclbl">${T('Места','Places')}</div></div>
     <div class="stack">${DATA.places.length?DATA.places.map(r=>summaryRow(r,false)).join(''):`<div class="seccap">${T('Пока не задано.','Not set yet.')}</div>`}</div></div>`;
-}
-function scr_goals(){
-  const g=DATA.goals;
-  const active=(g.active||[]);
-  const sub=`<div class="intsub">${T('Формулируй цели вдумчиво: их видят другие, когда зовут тебя в план, а Kleal по ним подбирает самые подходящие совпадения.','Be thoughtful with your goals. Others can see them when they invite you to a plan, and Kleal uses them to find the best matches.')}</div>`;
-  if(!active.length) return `<div class="fade">${sub}${emptyState(T("Пока нет целей","No goals yet"),T("Добавь цель — и Kleal начнёт искать нужных людей и планы.","Add a goal and Kleal will start finding the right people and plans."))}<button class="bigbtn primary" style="margin-top:8px" data-act="add-goal">${T('Добавить цель','Add goal')}</button></div>`;
-  const cards=active.map((x,i)=>`<div class="card goalcard"><div class="gc"><div class="gci">${IC.sun}</div>
-    <div class="gct"><div class="gctn">${T('Цель','Goal')} #${i+1}</div><div class="gcts">${esc(x)}</div></div>
-    <div class="gedit" data-act="edit-goal" data-goal="${i}">${IC.edit}</div></div></div>`).join('');
-  return `<div class="fade">${sub}<div class="stack">${cards}</div>
-    <button class="bigbtn primary" style="margin-top:14px" data-act="add-goal">${T('Добавить цель','Add goal')}</button></div>`;
 }
 function scr_safety(){
   const groups=safetyGroups(DATA.safety).map(gr=>{
@@ -3596,15 +3575,12 @@ function openSheet(kind, idx){
   else if(kind==='location') ESHEET={kind, draft:{area:DATA.area||'', radiusKm:DATA.radiusKm||10}};
   else if(kind==='languages') ESHEET={kind, draft:(DATA.langsList||[]).slice()};
   else if(kind==='basics') ESHEET={kind, draft:{age:DATA.age||'', gender:DATA.gender||''}};
-  else if(kind==='goal') ESHEET={kind, idx:(idx==null?-1:idx),
-    draft:{text:(idx!=null&&idx>=0)?String(((DATA.goals||{}).active||[])[idx]||''):''}};
-  // The four section sheets (Figma: Interests Edit / Personality Edit / Goals Edit / Safety). Each
+  // The section sheets (Figma: Interests Edit / Personality Edit / Safety). Each
   // drafts a COPY — nothing touches DATA until «Принять изменения».
   else if(kind==='interests') ESHEET={kind, draft:(DATA.interests||[]).map(i=>({name:i.name,used:i.used!==false})), add:''};
   else if(kind==='personality') ESHEET={kind, draft:{
     vibe:((DATA.social||{}).vibe||[]).map(v=>[v[0],!!v[1]]),
     depth:((DATA.social||{}).depth||[]).map(v=>[v[0],!!v[1]])}};
-  else if(kind==='goals') ESHEET={kind, draft:(((DATA.goals||{}).active)||[]).slice(), add:''};
   else if(kind==='safety') ESHEET={kind, draft:Object.assign({}, DATA.safety||{})};
   else return;
   render();
@@ -3639,10 +3615,6 @@ function eSheetHTML(){
       <input id="eshAge" class="kinput" inputmode="numeric" value="${esc(String(e.draft.age||''))}">
       <div class="k-label" style="color:var(--muted);margin-top:12px">${T('Пол','Gender')}</div>
       <div class="kchips">${GENDER_OPTS().map(g=>`<div class="kchip ${e.draft.gender===g[0]?'on':''}" data-act="esheet-gender" data-v="${g[0]}">${g[1]}</div>`).join('')}</div>`;
-  } else if(e.kind==='goal'){
-    title=e.idx>=0?T('Цель','Goal'):T('Новая цель','New goal');
-    body=`<textarea id="eshGoal" class="kinput" rows="4" placeholder="${T('Например: найти людей для еженедельного футбола','e.g. find people for weekly football')}">${esc(e.draft.text)}</textarea>`;
-    if(e.idx>=0) extra=`<button class="kbtn sec tall" data-act="esheet-goal-del">${T('Удалить','Delete')}</button>`;
   } else if(e.kind==='interests'){
     title=T('Интересы','Interests');
     body=`<div class="k-small" style="color:var(--muted);margin-bottom:8px">${T('Отметь, что Kleal может использовать для подбора.','Pick what Kleal may use for matching.')}</div>`
@@ -3662,14 +3634,6 @@ function eSheetHTML(){
       +(e.draft.depth.length?`<div class="k-label" style="color:var(--muted);margin-top:14px">${T('Глубина общения','Conversation depth')}</div>`+chips(e.draft.depth,'esheet-depth'):'')
       +((!e.draft.vibe.length&&!e.draft.depth.length)
         ?`<div class="k-cap" style="color:var(--muted)">${T('Kleal ещё не собрал профиль личности — поговори с ним, и он появится.','Kleal has not built your personality profile yet — talk to it and it will appear.')}</div>`:'');
-  } else if(e.kind==='goals'){
-    title=T('Цели','Goals');
-    body=(e.draft.length?e.draft.map((g,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 2px">
-        <div style="flex:1;min-width:0;font-size:14.5px">${esc(g)}</div>
-        <div style="cursor:pointer;color:var(--muted);padding:2px 4px" data-act="esheet-goal-rm" data-v="${i}">✕</div></div>`).join('')
-      :`<div class="k-cap" style="color:var(--muted)">${T('Пока нет целей.','No goals yet.')}</div>`)
-      +`<input id="eshAdd" class="kinput" style="margin-top:10px" placeholder="${T('Например: найти компанию для пробежек','e.g. find people for morning runs')}">
-        <button class="kbtn sec sm" style="margin-top:8px;width:auto;padding:0 16px" data-act="esheet-goals-add">${T('Добавить','Add')}</button>`;
   } else if(e.kind==='safety'){
     title=T('Безопасность и приватность','Safety & Privacy');
     body=safetyGroups(e.draft).map(gr=>`<div style="margin-bottom:14px">
@@ -3705,12 +3669,6 @@ function acceptSheet(){
     if(e.draft.gender) DATA.gender=e.draft.gender;
     pushProfile({age:DATA.age, gender:DATA.gender});
   }
-  else if(e.kind==='goal'){
-    const ta=document.getElementById('eshGoal'), txt=ta?ta.value.trim():'';
-    if(txt){ DATA.goals=DATA.goals||{active:[],optional:[]}; DATA.goals.active=DATA.goals.active||[];
-      if(e.idx>=0) DATA.goals.active[e.idx]=txt; else DATA.goals.active.push(txt);
-      pushProfile({goals:DATA.goals.active}); }
-  }
   else if(e.kind==='interests'){
     const by={}; (DATA.interests||[]).forEach(i=>by[i.name]=i);
     DATA.interests=e.draft.map(d=>Object.assign({}, by[d.name]||{name:d.name,icon:editIcon(d.name),conf:'Medium'}, {used:d.used}));
@@ -3723,11 +3681,6 @@ function acceptSheet(){
     DATA.social.vibe=e.draft.vibe; DATA.social.depth=e.draft.depth;
     const on=e.draft.vibe.filter(v=>v[1]).map(v=>v[0]);
     if(on.length) pushProfile({vibe:on[0]});
-  }
-  else if(e.kind==='goals'){
-    DATA.goals=DATA.goals||{active:[],optional:[]};
-    DATA.goals.active=e.draft.slice();
-    pushProfile({goals:DATA.goals.active});
   }
   else if(e.kind==='safety'){
     DATA.safety=Object.assign({}, DATA.safety||{}, e.draft);
@@ -3805,7 +3758,7 @@ function scr_help(){
   </div>`;
 }
 const SCREENS={agenthome:scr_agenthome,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
-  places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
+  places:scr_places,safety:scr_safety,memory:scr_memory,knows:scr_knows,
   intents:scr_intents,search:scr_search,messages:scr_messages,
   notifs:scr_notifications,matchchat:scr_matchchat,
   reqcomposer:scr_reqcomposer,clarify:scr_clarify,summary:scr_summary,searching:scr_searching,fewmatches:scr_fewmatches,
@@ -3972,7 +3925,7 @@ function doAct(act, ds){
     case 'askwhy': toast('Kleal built this from what you shared during onboarding. Every detail is editable.'); break;
     case 'editbasics': openSheet('basics'); break;
     case 'editrow': { const rt={'Basics':'basics','Social formats':'formats','Location':'location','Languages':'languages',
-        interests:'interests', social:'personality', goals:'goals', safety:'safety'}[ds.row||''];
+        interests:'interests', social:'personality', safety:'safety'}[ds.row||''];
       openSheet(rt||'basics'); break; }
     case 'edit-int': openEditInterest(ds.int); break;
     case 'dontuse-int': toast('"'+(ds.int||'')+'" will not be used for matching'); break;
@@ -4103,16 +4056,10 @@ function doAct(act, ds){
     case 'esheet-int-add': { const el=document.getElementById('eshAdd'), v=el?el.value.trim():'';
       if(v && !ESHEET.draft.some(x=>x.name.toLowerCase()===v.toLowerCase())) ESHEET.draft.push({name:v,used:true});
       render(); break; }
-    case 'esheet-goals-add': { const el=document.getElementById('eshAdd'), v=el?el.value.trim():'';
-      if(v && !ESHEET.draft.some(x=>String(x).toLowerCase()===v.toLowerCase())) ESHEET.draft.push(v);
-      render(); break; }
-    case 'esheet-goal-rm': { ESHEET.draft.splice(+ds.v,1); render(); break; }
     case 'esheet-vibe': { const v=ESHEET.draft.vibe[+ds.v]; if(v) v[1]=!v[1]; render(); break; }
     case 'esheet-depth': { const v=ESHEET.draft.depth[+ds.v]; if(v) v[1]=!v[1]; render(); break; }
     case 'esheet-sflag': { ESHEET.draft[ds.v]=!ESHEET.draft[ds.v]; render(); break; }
     case 'esheet-autonomy': { ESHEET.draft.autonomy=(+ds.v===1?'auto':'ask'); render(); break; }
-    case 'esheet-goal-del': { if(ESHEET.idx>=0&&DATA.goals&&DATA.goals.active){ DATA.goals.active.splice(ESHEET.idx,1);
-        pushProfile({goals:DATA.goals.active}); } ESHEET=null; render(); saveState(); toast(T('Цель удалена','Goal removed')); break; }
     // ---- batch 3: request → mutual → plan → meetup day ----
     case 'req-edit': cur='candprofile'; render(); break;
     case 'req-send': planSend(); break;
@@ -4152,8 +4099,6 @@ function doAct(act, ds){
     case 'see-all': setTab('search'); break;
     case 'add-interests': openSheet('interests'); break;
     case 'edit-personality': openSheet('personality'); break;
-    case 'add-goal': openSheet('goal'); break;
-    case 'edit-goal': openSheet('goal', ds.goal!=null?+ds.goal:null); break;
     default: toast(T('Пока недоступно','Not available yet'));
   }
 }
