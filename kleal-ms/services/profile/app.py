@@ -863,6 +863,9 @@ try{
 const _pParam = new URLSearchParams(location.search).get('p');
 const PKEY = 'kleal_profile_state_v1';
 const _psrc = _pParam ? ('p:'+_pParam.length+':'+_pParam.slice(-40)) : 'demo';
+// True when nobody arrived from onboarding: the screens are then filled with a sample identity,
+// and the app must SAY so rather than passing "Dmitry" off as the user's own profile.
+const IS_DEMO = !_pParam;
 let _saved = null; try{ _saved = JSON.parse(localStorage.getItem(PKEY)||'null'); }catch(_e){}
 if(_saved && _saved._src===_psrc && _saved.data){ DATA = _saved.data; }
 else { try{ localStorage.removeItem(PKEY); }catch(_e){} _saved = null; }
@@ -1604,13 +1607,14 @@ function openMsgThread(i){
 function scr_matchchat(){
   const m=matchWith; if(!m) return scr_agenthome();
   const mine=m.msgs.filter(x=>x.who==='me').length; const blur=Math.max(0, 9-mine*3);
-  const hd=chatHead(m.cand.name, {back:'chat-back', sub:(m.cand.band?bandLabel(m.cand,true):(m.cand.score?m.cand.score+T('% совпадение','% match'):null))});
+  const hd=chatHead(m.cand.name, {back:'chat-back', sub:(m.cand.band?bandLabel(m.cand,true):null)});
   const thread=m.msgs.map(x=>x.who==='me'?`<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`
     :`<div class="krow"><div class="kav" style="filter:blur(${Math.min(blur,4)}px)"></div><div class="kcol"><div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div></div></div>`).join('');
-  const hint=blur>0?`<div class="candbusy" style="text-align:center;padding:2px 0 6px">Фото проявится по мере общения</div>`:'';
-  return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${hint}${thread}</div>
+  const hint=blur>0?`<div class="candbusy" style="text-align:center;padding:2px 0 6px">${T('Фото проявится по мере общения','The photo unblurs as you talk')}</div>`:'';
+  const wait=m.awaiting?`<div class="k-cap" style="color:var(--muted);text-align:center;padding:6px 0">${T('Отправлено. Ждём ответа — сообщим, когда он придёт.','Sent. Waiting for their reply — we’ll let you know.')}</div>`:'';
+  return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${hint}${thread}${wait}</div>
     <div class="bc2"><button class="bc2-plus" data-act="buddy-plus">+</button>
-      <div class="bc2-field"><input id="mcin" placeholder="Сообщение для ${esc(m.cand.name)}…"><button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
+      <div class="bc2-field"><input id="mcin" placeholder="${T('Сообщение для','Message')} ${esc(m.cand.name)}…"><button class="bc2-mic" data-act="buddy-mic">${IC.mic}</button></div>
       <button class="bc2-send" data-act="match-send">${IC.send}</button></div></div>`;
 }
 
@@ -1883,7 +1887,33 @@ function initExploreMap(){
   setTimeout(()=>{ try{ map.invalidateSize(); map.fitBounds(pts,{padding:[36,36]}); }catch(_e){} }, 90);
   exploreMap=map;
 }
-function joinPublic(i){ const p=PUBLIC_INTENTS[i]; if(!p)return; addNotif('intent','Asked to join “'+p.title+'”','Waiting for '+p.who+'’s agent to confirm', null); saveState(); toast('Requested to join — '+p.who+'’s agent will confirm'); }
+async function joinPublic(i){
+  // This used to only write a local notification claiming the host's agent had been asked.
+  // Nothing was sent. Now it really asks their agent, and reports what actually happened.
+  const p=PUBLIC_INTENTS[i]; if(!p) return;
+  const who=p.who||p.name||'';
+  if(!who){ toast(T('У этого плана нет владельца','This plan has no host')); return; }
+  toast(T('Спрашиваю агента…','Asking their agent…'));
+  let r=null;
+  try{
+    r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({intent:{topics:p.topics||[p.title||''],type:p.type||'social',
+                                   time:p.when||'Flexible',mode:'offline',title:p.title||''},
+                           profile:matchProfile(), candidates:[{name:who}]})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  const v=(r&&r.candidates&&r.candidates[0])||null;
+  if(!v){ toast(T('Не удалось связаться — попробуй позже','Could not reach them — try later')); return; }
+  if(v.agree){
+    addNotif('intent',T('Заявка принята','Request accepted')+': “'+(p.title||'')+'”',
+             who+' — '+(v.reason||T('агент согласился','their agent agreed')), null);
+    toast(T('Агент согласился','Their agent agreed'));
+  } else {
+    addNotif('intent',T('Пока отказ','Not this time')+': “'+(p.title||'')+'”',
+             who+' — '+(v.reason||''), null);
+    toast(v.reason||T('Пока не сложилось','Not this time'));
+  }
+  saveState(); render();
+}
 
 // Intents tab — rebuilt on the design system. It used to show raw percentages (which the spec
 // forbids), English copy inside a Russian UI, and duplicate cards from repeated launches.
@@ -2046,6 +2076,10 @@ function scr_agenthome(){
     <div class="ahd"><div class="nm k-h2">${T('Привет','Hey')}, ${esc(nm)} 👋</div>
       <div class="bell" data-act="notif">${IC.bell}${unreadNotifs()?`<span class="abadge">${unreadNotifs()}</span>`:''}</div></div>
     <div class="body">
+      ${IS_DEMO?`<div class="kinfo" style="margin-bottom:4px">${IC.info}<div>${T(
+        'Это демо-профиль. Пройди онбординг, чтобы Kleal искал для тебя.',
+        'This is a sample profile. Complete onboarding so Kleal searches for you.')}
+        <span style="color:var(--primary);font-weight:600;cursor:pointer" data-act="go-onboarding"> ${T('Начать','Start')} →</span></div></div>`:''}
       ${(PLAN&&PLAN.confirmed)?`<div>
         <div class="kbub ag" style="max-width:none;margin-bottom:12px">${T('Сегодня у тебя встреча','Today you have a meetup')}</div>
         <div class="kplan tight">
@@ -3060,7 +3094,9 @@ function render(){
   document.querySelectorAll('[data-public]').forEach(el=>el.onclick=()=>{ const p=PUBLIC_INTENTS[+el.dataset.public]; if(p)toast(p.title+' — '+p.who+' · '+p.when); });
   document.querySelectorAll('[data-act]').forEach(el=>el.onclick=(ev)=>{ ev.stopPropagation(); doAct(el.dataset.act, el.dataset); });
   const acin=document.getElementById('acin'); if(acin){ acin.onkeydown=(e)=>{ if(e.key==='Enter')intentTurn(acin.value); }; setTimeout(()=>{try{acin.focus();}catch(_e){}},40); }
-  const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter'){ goToBuddy(ainput.value); } }; }
+  // Enter must do EXACTLY what the send button does. It used to call goToBuddy(), which dropped the
+  // user into the old free-chat screen instead of the request flow — same field, two different apps.
+  const ainput=document.getElementById('ainput'); if(ainput){ ainput.onkeydown=(e)=>{ if(e.key==='Enter'){ e.preventDefault(); flowStart(ainput.value); } }; }
   const bcin=document.getElementById('bcin'); if(bcin){ bcin.onkeydown=(e)=>{ if(e.key==='Enter')buddyTurn(bcin.value); }; setTimeout(()=>{try{bcin.focus();}catch(_e){}},40); }
   const ecin=document.getElementById('ecin'); if(ecin){ ecin.onkeydown=(e)=>{ if(e.key==='Enter')editTurn(ecin.value); }; setTimeout(()=>{try{ecin.focus();}catch(_e){}},40); }
   const mcin=document.getElementById('mcin'); if(mcin){ mcin.onkeydown=(e)=>{ if(e.key==='Enter')doAct('match-send',{}); }; setTimeout(()=>{try{mcin.focus();}catch(_e){}},40); }
@@ -3134,15 +3170,20 @@ function doAct(act, ds){
       toast((k==='watch'?'Watch room':'Voice room')+' created — inviting people'); break; }
     case 'broaden': broadenIntent(ds.kind); break;
     case 'match-send': { const el=document.getElementById('mcin'); const t=(el&&el.value||'').trim(); if(!t||!matchWith)break;
-      matchWith.msgs.push({who:'me',text:t}); matchWith.last=t; matchWith.time='now'; render(); saveState();
-      const R=['Sounds great!','Perfect, that works for me.','Yeah, let’s do it 🙌','Nice — where works for you?','See you there!'];
-      setTimeout(()=>{ if(matchWith){ const rep=R[matchWith.msgs.length%R.length]; matchWith.msgs.push({who:'them',text:rep}); matchWith.last=rep; matchWith.time='now'; render(); saveState(); } }, 750); break; }
-    case 'edit-intent': toast('Editing the intent is coming soon'); break;
-    case 'search-area': toast('Searching this area…'); break;
+      // The other side is a REAL person. Faking their reply (there used to be a canned list of
+      // English one-liners) tells the user someone answered when nobody did.
+      matchWith.msgs.push({who:'me',text:t,t:Date.now()}); matchWith.last=t; matchWith.time='now';
+      matchWith.awaiting=true; if(el) el.value='';
+      render(); saveState(); break; }
+    case 'edit-intent': if(curIntent){ FLOW=FLOW||{}; FLOW.request=curIntent.query||curIntent.title;
+        FLOW.intent=curIntent.intent||null; FLOW.summary={request:FLOW.request}; cur='clarify'; render(); }
+      else toast(T('Нечего изменять','Nothing to edit')); break;
+    case 'search-area': loadExplore(); toast(T('Обновляю карту…','Refreshing the map…')); break;
     case 'filter': toast('Filters are coming soon'); break;
     case 'join': joinPublic(+ds.pi); break;
     // Agent Home
     case 'notif': setTab('notifs'); break;
+    case 'go-onboarding': location.href='/'; break;
     case 'agent-go': { const el=document.getElementById('ainput'); flowStart(el&&el.value||''); break; }
     // ---- Figma request flow ----
     case 'flow-back': flowBack(); break;
