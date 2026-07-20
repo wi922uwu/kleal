@@ -470,18 +470,29 @@ _TOPIC_RU = {
     'formula1':'Формула 1','barca':'Барса','motorsport':'Автоспорт',
 }
 
-def _title_for(topics, typ, lang):
+def _title_for(topics, tags, typ, lang):
+    """Card title. Prefers whichever word we can actually SAY in the user's language.
+
+    It used to title off `tags or topics`, and filtration's tags are synonym bags in arbitrary order —
+    'хочу поиграть в футбол' came back tagged ['soccer','football',...], so the Russian card read
+    "Soccer — встреча". _TOPIC_RU knows 'football' but not 'soccer'. Scan every candidate for one that
+    translates before falling back, so an untranslated synonym can never win over a translatable topic.
+    """
     if typ == "dating":
         return "Свидание" if lang == "ru" else "Date"
-    if topics:
-        raw = str(topics[0])
-        if lang == "ru":
-            word = _TOPIC_RU.get(raw.strip().lower())
-            if not word:                       # already Russian (off-taxonomy) -> keep the user's word
-                word = raw if any('а' <= ch <= 'я' for ch in raw.lower()) else raw.capitalize()
-            return word + " — встреча"
-        return raw.capitalize() + " meetup"
-    return "Встреча" if lang == "ru" else "Meet someone"
+    cands = [str(t) for t in list(topics or []) + list(tags or []) if str(t).strip()]
+    if not cands:
+        return "Встреча" if lang == "ru" else "Meet someone"
+    if lang == "ru":
+        for c in cands:
+            word = _TOPIC_RU.get(c.strip().lower())
+            if word:
+                return word + " — встреча"
+        for c in cands:                        # off-taxonomy but the user's own Russian word -> keep it
+            if any('а' <= ch <= 'я' for ch in c.lower()):
+                return c + " — встреча"
+        return cands[0].capitalize() + " — встреча"
+    return cands[0].capitalize() + " meetup"
 
 
 # Online-native activities and explicit "let's do it online" cues. Hard-coding mode="offline" sent
@@ -537,7 +548,7 @@ def build_intent(sig, cat, last_user, lang):
     mode = _infer_mode(topics, sig, last_user)
     place = str(sig.get("area") or (("Онлайн" if lang == "ru" else "Online") if mode == "online" else
                                     ("Публичные места рядом" if lang == "ru" else "Public places nearby")))[:60]
-    title = _title_for(tags or topics, typ, lang)
+    title = _title_for(topics, tags, typ, lang)
     return {
         # ---- machine-facing: matching-service reads exactly these ----
         "title": title, "type": typ, "topics": topics or ["social"], "role": role, "mode": mode,
@@ -942,7 +953,41 @@ Rules:
 - valid:false ONLY when the latest message is gibberish / not about doing something with people (e.g. random letters "asdfgh"). Then reply asks them to describe what they'd like to do, and ready MUST be false. Never build an intent from nonsense.
 - ready:true as soon as you know the ACTIVITY and any sense of WHEN (a day, "today", "this weekend", or "whenever"). Do NOT keep asking — format, group size, exact place, number of people are OPTIONAL and default sensibly. If the user already gave activity + time in one message, set ready:true right away with a one-line confirmation.
 - Only when the activity is clear but timing is totally absent, ask the single question "when?". Never ask more than that.
-- Keep reply short (1-2 sentences), in the user's language. activity/time/format values in English.'''
+- Keep reply short (1-2 sentences).
+
+LANGUAGE: write "reply" in __LANGNAME__ — the language this user writes in. This is not optional: __LANGDIR__ Every other value — activity, time, format — stays in ENGLISH, because the filtration and matching agents only understand English. (The transcript below is labelled "User:"/"Kleal:" in English for machine reasons; that says nothing about the reply language.)'''
+
+_LANGNAME = {"ru": "Russian", "en": "English"}
+_LANGDIR = {"ru": "every word of \"reply\" must be in Russian, in Cyrillic script.",
+            "en": "every word of \"reply\" must be in English."}
+
+
+_LAT_GLUE = re.compile(r"[а-яА-ЯёЁ][A-Za-z]|[A-Za-z][а-яА-ЯёЁ]")
+_LAT_RUN = re.compile(r"[A-Za-z]")
+
+
+def _lang_ok(reply, lang):
+    """Did the model actually answer in the language the user wrote in?
+
+    Only Russian is checkable cheaply and only Russian is the failure mode we see: the 70B slips into
+    English on the FIRST intent-build turn, and because that turn then sits in the history, the rest of
+    the conversation locks into English too. Three ways it goes wrong, all caught here:
+      1. no Cyrillic at all      -> "Sounds good! When would you like to grab coffee?"
+      2. Latin glued to Cyrillic -> "Завтраsounds как отличный план!" (always a generation artifact)
+      3. mostly Latin            -> a sentence with one Russian word bolted on
+    Latin words that stand on their own are LEFT ALONE — "поиграть в Dota", "Формула 1", venue and game
+    names are normal Russian chat, so the ratio has to be well past half before we call it English.
+    """
+    if lang != "ru":
+        return True
+    s = str(reply or "")
+    if not _CYR.search(s):
+        return False
+    if _LAT_GLUE.search(s):
+        return False
+    lat = len(_LAT_RUN.findall(s))
+    cyr = len(_CYR.findall(s))
+    return lat <= cyr
 
 
 def intent_build(messages, profile):
@@ -950,13 +995,32 @@ def intent_build(messages, profile):
     lang = detect_lang(last_user)
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
                        else ("Kleal: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
+    sys_prompt = (INTENT_BUILD_PROMPT
+                  .replace("__LANGNAME__", _LANGNAME.get(lang, "English"))
+                  .replace("__LANGDIR__", _LANGDIR.get(lang, _LANGDIR["en"])))
+    # Two attempts: the language directive alone still slips occasionally, and one English turn drags the
+    # whole conversation into English because it goes into the history. Cheaper to re-roll than to strand
+    # a Russian first-run user in an English dialogue.
     obj = None
-    try:
-        raw = llm_complete(MODEL_ID, [{"role": "system", "content": INTENT_BUILD_PROMPT},
-                                      {"role": "user", "content": convo}], 0.5)
-        obj = _lenient_json(raw)
-    except Exception:
-        obj = None
+    for attempt in range(2):
+        try:
+            raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt},
+                                          {"role": "user", "content": convo}], 0.5 if attempt == 0 else 0.2)
+            cand = _lenient_json(raw)
+        except Exception:
+            cand = None
+        if not isinstance(cand, dict) or not cand.get("reply"):
+            continue
+        if obj is None:
+            obj = cand          # keep the first structurally valid answer even if its language is wrong
+        if _lang_ok(cand.get("reply"), lang):
+            obj = cand
+            break
+    # Both attempts slipped: keep the extracted activity/time/ready (they are English by design and still
+    # correct) but do not show the user an English sentence — swap in the neutral prompt in their language.
+    if isinstance(obj, dict) and obj.get("reply") and not _lang_ok(obj.get("reply"), lang):
+        obj = dict(obj, reply=("Понял. Когда тебе удобно?" if obj.get("ready") is not True
+                               else "Понял, записал."))
     if not isinstance(obj, dict) or not obj.get("reply"):
         return {"reply": ("Что хочешь устроить? Опиши, чем заняться и с кем." if lang == "ru"
                           else "What would you like to set up? Tell me what and with whom."),
