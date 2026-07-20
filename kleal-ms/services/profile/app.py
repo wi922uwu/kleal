@@ -636,7 +636,10 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   font-size:15px;line-height:20px;font-weight:600;cursor:pointer;border:0;font-family:inherit}
 .kbtn.pri{background:var(--primary);color:#fff}
 .kbtn.sec{background:var(--neutral100);color:var(--fg)}
-.kfoot{flex:none;padding:0 20px 8px;display:flex;flex-direction:column;gap:8px}
+/* the CTA footer sits under a scrolling body — give it breathing room and a surface so long
+   content reads as scrolled-under rather than colliding with the buttons */
+.kfoot{flex:none;padding:12px 20px 16px;display:flex;flex-direction:column;gap:8px;
+  background:var(--bg);box-shadow:0 -8px 16px -8px rgba(0,0,0,.08)}
 .kfoot .kbtn{height:52px}
 /* searching */
 .ksearching{flex:1;min-height:0;overflow-y:auto;padding:8px 20px 24px;display:flex;flex-direction:column;
@@ -728,6 +731,112 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kmedal{width:88px;height:88px;border-radius:999px;background:#F7E3E7;display:flex;align-items:center;
   justify-content:center;color:var(--primary)}
 .kmedal svg{width:36px;height:36px}
+/* ============ Figma batch 3: request → mutual → meetup planning → meetup day ============ */
+/* summary rows on "What will be sent" */
+.kshare{background:var(--card);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:20px}
+.kshare .it{display:flex;gap:12px;align-items:flex-start}
+.kshare .ic{width:22px;height:22px;flex:none;color:var(--fg);margin-top:1px}
+.kshare .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.kshare .ti{font-size:15px;line-height:20px;font-weight:600}
+.kshare .su{font-size:13px;line-height:18px;color:var(--muted)}
+.knote{display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:16px;color:var(--muted);padding:0 2px}
+.knote svg{width:14px;height:14px;flex:none;margin-top:1px}
+.kinfo{display:flex;gap:8px;align-items:flex-start;background:var(--info-bg);color:var(--info-text);
+  border-radius:12px;padding:12px;font-size:13px;line-height:18px}
+.kinfo svg{width:16px;height:16px;flex:none;margin-top:1px}
+/* big centred state (waiting / mutual) */
+.kstate{display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding:8px 0 4px}
+.kstate .hero{width:160px;height:160px;border-radius:999px;background:var(--neutral100);
+  display:flex;align-items:center;justify-content:center;color:var(--neutral300);margin-bottom:8px}
+.kstate .hero.sm{width:72px;height:72px}
+.kstate .ti{font-size:24px;line-height:32px;font-weight:600;letter-spacing:-.24px}
+.kstate .su{font-size:13px;line-height:18px;color:var(--muted)}
+/* list rows with chevron (Change request / See other options / What's next) */
+.klist{background:var(--card);border-radius:16px;overflow:hidden}
+.klist .row{display:flex;gap:12px;align-items:center;padding:16px;cursor:pointer}
+.klist .row+.row{border-top:1px solid var(--line)}
+.klist .ic{width:36px;height:36px;border-radius:999px;background:var(--card);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;flex:none;color:var(--fg)}
+.klist .bd{flex:1;min-width:0}
+.klist .ti{font-size:17px;line-height:24px;font-weight:600}
+.klist .su{font-size:12px;line-height:16px;color:var(--muted)}
+.klist .ch{color:var(--neutral300);flex:none}
+/* two participant cards */
+.kpair{display:flex;gap:12px}
+.kpair .p{flex:1;min-width:0;background:var(--card);border-radius:16px;padding:16px 12px;
+  display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
+.kpair .av{width:64px;height:64px;border-radius:999px;background:var(--neutral100);
+  display:flex;align-items:center;justify-content:center;color:var(--neutral300)}
+.kpair .nm{font-size:15px;line-height:20px;font-weight:600}
+.kpair .su{font-size:12px;line-height:16px;color:var(--muted)}
+/* plan card rows with icon (time / place) */
+.kplanrow{display:flex;gap:8px;align-items:flex-start}
+.kplanrow .ic{width:20px;height:20px;flex:none;color:var(--primary);margin-top:2px}
+.kplanrow .bd{flex:1;min-width:0}
+.kplanrow .ti{font-size:15px;line-height:20px;font-weight:600}
+.kplanrow .su{font-size:12px;line-height:16px;color:var(--muted)}
+.kquote{background:var(--bg);border-radius:12px;padding:12px;font-size:13px;line-height:18px}
+.kdraft{display:flex;gap:4px;align-items:center;background:var(--neutral100);border-radius:999px;
+  padding:4px 10px;font-size:11px;line-height:16px;font-weight:500;color:var(--muted);white-space:nowrap}
+.kdraft svg{width:12px;height:12px}
+/* time slots */
+.kslot{display:flex;gap:12px;align-items:center;background:var(--card);border-radius:12px;padding:14px 16px;
+  border:1px solid transparent;cursor:pointer}
+.kslot.on{border-color:var(--primary)}
+.kslot .ic{width:32px;height:32px;border-radius:999px;background:var(--card);border:1px solid var(--border);
+  display:flex;align-items:center;justify-content:center;flex:none;color:var(--fg)}
+.kslot .bd{flex:1;min-width:0}
+.kslot .d{font-size:15px;line-height:20px;font-weight:600}
+.kslot .w{font-size:12px;line-height:16px;color:var(--muted)}
+.kslot .t{font-size:15px;line-height:20px;font-weight:600;flex:none}
+.kslot .ck{color:var(--primary);flex:none;width:20px}
+/* places */
+.kmap{height:150px;border-radius:12px;background:var(--neutral100);position:relative;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;color:var(--neutral300)}
+.kmap .pin{position:absolute;color:var(--primary)}
+.kplace{display:flex;gap:12px;background:var(--card);border-radius:12px;padding:12px;
+  border:1px solid transparent;cursor:pointer}
+.kplace.on{border-color:var(--primary)}
+.kplace .ph{width:88px;height:88px;border-radius:8px;background:var(--neutral100);flex:none}
+.kplace .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.kplace .nm{font-size:15px;line-height:20px;font-weight:600}
+.kplace .meta{display:flex;gap:12px;flex-wrap:wrap}
+.kplace .mi{display:flex;gap:4px;align-items:center;font-size:12px;line-height:16px;color:var(--muted)}
+.kplace .mi svg{width:14px;height:14px}
+.kplace .tags{display:flex;gap:6px;flex-wrap:wrap}
+/* toggles list (calendar / reminder) */
+.ktogrow{display:flex;gap:12px;align-items:center;padding:12px 0}
+.ktogrow .ic{width:20px;height:20px;flex:none;color:var(--primary)}
+.ktogrow .tx{flex:1;min-width:0;font-size:15px;line-height:20px}
+/* meetup status options */
+.kstatus{display:flex;gap:12px;align-items:flex-start;border-radius:16px;padding:16px;cursor:pointer;
+  border:1px solid transparent}
+.kstatus .ic{width:24px;height:24px;flex:none}
+.kstatus .bd{flex:1;min-width:0}
+.kstatus .ti{font-size:17px;line-height:24px;font-weight:600}
+.kstatus .su{font-size:13px;line-height:18px;color:var(--muted)}
+.kstatus.go{background:var(--success-bg)} .kstatus.go .ic,.kstatus.go .ti{color:var(--success-text)}
+.kstatus.late{background:var(--warn-bg)} .kstatus.late .ic,.kstatus.late .ti{color:var(--warn-text)}
+.kstatus.here{background:var(--success-bg)} .kstatus.here .ic,.kstatus.here .ti{color:var(--success-text)}
+.kstatus.on{border-color:currentColor}
+.kbanner{display:flex;gap:12px;align-items:center;background:var(--success-bg);border-radius:12px;padding:14px 16px}
+.kbanner .ic{width:24px;height:24px;flex:none;color:var(--success-text)}
+.kbanner .bd{flex:1;min-width:0}
+.kbanner .ti{font-size:17px;line-height:24px;font-weight:600;color:var(--success-text)}
+.kbanner .su{font-size:12px;line-height:16px;color:var(--success-text);opacity:.8}
+/* accordion rows (What's next / Security) */
+.kacc{background:var(--card);border-radius:16px;overflow:hidden}
+.kacc .row{display:flex;gap:12px;align-items:center;padding:16px;cursor:pointer}
+.kacc .row+.row{border-top:1px solid var(--line)}
+.kacc .ic{width:24px;height:24px;flex:none;color:var(--fg)}
+.kacc .bd{flex:1;min-width:0}
+.kacc .ti{font-size:15px;line-height:20px;font-weight:600}
+.kacc .su{font-size:12px;line-height:16px;color:var(--muted)}
+/* bottom sheet (Security) */
+.ksheet.bottom{border-radius:20px 20px 0 0;align-items:stretch;text-align:left;padding:12px 16px 24px;
+  margin-top:auto;gap:16px}
+.kscrim.bot{align-items:flex-end;padding:0}
+.kgrab{width:44px;height:4px;border-radius:999px;background:var(--neutral300);margin:0 auto}
 /* few matches: adjustment options */
 .kopt{display:flex;gap:12px;align-items:flex-start;padding:16px;border-radius:12px;border:1px solid transparent;cursor:pointer}
 .kopt.sel{border-color:var(--primary);background:var(--card)}
@@ -806,6 +915,20 @@ const IC={
   homeSm:svg('<path d="M4 10.5L12 4l8 6.5V20H4z"/>',null,22),
   groups:svg('<circle cx="8.5" cy="9" r="3"/><circle cx="16" cy="10.5" r="2.4"/><path d="M3 19a5.5 5.5 0 0 1 11 0M15 19a4.4 4.4 0 0 1 6 0" />',null,22),
   photo:svg('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10.5" r="1.8"/><path d="M4.5 17.5l4.8-4.3 3.4 3 2.6-2.1 4.2 3.6"/>',null,22),
+  // --- batch 3: meetup planning + meetup day ---
+  info:svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.6"/>',null,16),
+  bolt:svg('<path d="M13 3L5.5 13H11l-1 8 7.5-10H12l1-8z"/>',null,24),
+  pinDot:svg('<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>',null,24),
+  walk:svg('<circle cx="13" cy="4.5" r="1.8"/><path d="M12.5 8l-3 3 1.5 4M12.5 8l3.5 2M11 15l-2 6M15 13l1.5 3 .5 5"/>',null,14),
+  calAdd:svg('<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.8h17M8 3.2v3.6M16 3.2v3.6M12 12.6v5M9.5 15.1h5"/>',null,20),
+  bellSm:svg('<path d="M18 15.5V10a6 6 0 1 0-12 0v5.5L4 18h16l-2-2.5z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/>',null,20),
+  shieldSm:svg('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/>',null,14),
+  checkCircle:svg('<circle cx="12" cy="12" r="9"/><path d="M8 12.4l2.6 2.6L16 9.6"/>',null,24),
+  userLeave:svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.4 19.5a5.6 5.6 0 0 1 9.2-4.3"/><path d="M15.5 15.5l4 4M19.5 15.5l-4 4"/>',null,24),
+  help:svg('<circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .9-1 1.6v.3M12 17.2v.3"/>',null,24),
+  dots:svg('<circle cx="12" cy="5.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="12" cy="18.5" r="1.3"/>',null,20),
+  plusCircle:svg('<circle cx="12" cy="12" r="9"/><path d="M12 8.4v7.2M8.4 12h7.2"/>',null,20),
+  expand:svg('<path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/>',null,18),
   back:svg('<path d="M15 6l-6 6 6 6"/>'),
   bookmark:svg('<path d="M6 4h12v17l-6-4-6 4V4z"/>'),
   chevL:svg('<path d="M15 6l-6 6 6 6"/>'),
@@ -1847,6 +1970,18 @@ function scr_agenthome(){
     <div class="ahd"><div class="nm k-h2">${T('Привет','Hey')}, ${esc(nm)} 👋</div>
       <div class="bell" data-act="notif">${IC.bell}${unreadNotifs()?`<span class="abadge">${unreadNotifs()}</span>`:''}</div></div>
     <div class="body">
+      ${(PLAN&&PLAN.confirmed)?`<div>
+        <div class="kbub ag" style="max-width:none;margin-bottom:12px">${T('Сегодня у тебя встреча','Today you have a meetup')}</div>
+        <div class="kplan tight">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+            <div class="k-h3">${T('Кофе и разговор','Coffee & conversation')}</div>
+            <div style="color:var(--muted)">${IC.calen}</div></div>
+          <div class="kplanrow"><div class="ic">${IC.clock}</div><div class="bd">
+            <div class="ti" style="font-size:13px">${esc(slotText())}</div></div></div>
+          <div class="kplanrow"><div class="ic">${IC.pin}</div><div class="bd">
+            <div class="ti" style="font-size:13px">${esc(placeText())}</div></div></div>
+          <button class="kbtn pri" data-act="meet-open">${T('Открыть детали','Open details')}</button>
+        </div></div>`:''}
       <div>
         <div class="aintro2" data-act="talk-buddy" style="cursor:pointer">
           <div class="msc">${IC.photo}</div>
@@ -2098,6 +2233,343 @@ function scr_fewmatches(){
     <div class="kfoot"><button class="kbtn pri" data-act="flow-apply">${T('Применить и обновить','Apply & refresh')}</button></div></div>`;
 }
 
+// ================= Figma batch 3: request → mutual → meetup plan → meetup day =================
+// PLAN is the shared state for everything after "Interested": who, the request we send, the reply,
+// the agreed slot/place and the live meetup status. Slots come from the intent's own time window;
+// places come from the candidate's communities (no venue service exists yet, and inventing venue
+// data would put fake addresses in front of users).
+let PLAN=null;
+function planInit(c){
+  PLAN={ cand:c, sent:false, reply:null, mutual:false, slot:null, place:null,
+         confirmed:false, gcal:false, acal:false, remind:true, status:null, here:false };
+}
+function planSlots(){
+  const it=(FLOW&&flowIntent())||{};
+  const who=(PLAN&&PLAN.cand&&PLAN.cand.name)||T('он(а)','they');
+  const base=[[T('Сегодня','Today'),'16:00–17:00',who+' '+T('предлагает','picks')],
+              [T('Сегодня','Today'),'19:00–20:00',T('ты предлагаешь','you pick')],
+              [T('Завтра','Tomorrow'),'12:00–13:00',T('подходит тебе','works for you')],
+              [T('Завтра','Tomorrow'),'18:00–19:00',who+' '+T('предлагает','picks')]];
+  if(/morning|утр/i.test(it.time||'')) base.unshift([T('Завтра','Tomorrow'),'09:00–10:00',T('подходит тебе','works for you')]);
+  return base;
+}
+function planPlaces(){
+  const c=PLAN&&PLAN.cand, ents=(c&&c.entities)||[];
+  const tags=[T('тихо','quiet'),T('уютно','cosy'),T('удобно говорить','good for talking')];
+  const named=ents.slice(0,3).map((e,i)=>({name:String(e),m:450+i*150,walk:6+i*2,tags:tags.slice(0,3-i%2)}));
+  if(named.length) return named;
+  return [{name:T('Кофейня рядом','Coffee nearby'),m:450,walk:6,tags:tags},
+          {name:T('Тихое место в центре','Quiet spot in the centre'),m:750,walk:10,tags:tags.slice(0,2)}];
+}
+function slotText(){ const s=PLAN&&PLAN.slot; return s?(s[0]+', '+s[1]):T('время не выбрано','time not picked'); }
+function placeText(){ const p=PLAN&&PLAN.place; return p?p.name:T('место не выбрано','place not picked'); }
+
+// ---- 1. What will be sent ----
+function scr_sendreq(){
+  const c=PLAN&&PLAN.cand; if(!c) return scr_options();
+  const me=DATA.name||'', age=(DATA.age||snapRow&&'')||'';
+  const ints=(DATA.interests||[]).map(i=>i.name).slice(0,3).join(', ');
+  const it=(FLOW&&flowIntent())||{};
+  const row=(icon,ti,su)=>`<div class="it"><div class="ic">${icon}</div><div class="bd">
+      <div class="ti">${esc(ti)}</div><div class="su">${esc(su)}</div></div></div>`;
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Что будет отправлено','What will be sent'))}
+      <div class="kbub ag">${T('Вот что я покажу','I will share this with')} ${esc(c.name)}:</div>
+      <div class="kshare">
+        ${row(IC.person,T('Твоё имя','Your name'), me+(age?(', '+age):''))}
+        ${row(IC.heart||IC.spark,T('Твой интент','Your intent'), (it.title||FLOW&&FLOW.request||T('Познакомиться и встретиться вживую','Interested in meeting and connecting in person')))}
+        ${row(IC.chat,T('Короткий контекст','Short context'), ints||T('Интересы пока не заполнены','No interests filled in yet'))}
+      </div>
+      <div class="knote">${IC.shieldSm}${T('Личные данные (телефон, адрес) не передаются.','Personal details (phone, address, etc.) won’t be shared.')}</div>
+    </div>
+    <div class="kfoot"><div class="kcta">
+      <button class="kbtn sec" data-act="req-edit">${T('Изменить','Edit')}</button>
+      <button class="kbtn pri" data-act="req-send">${T('Отправить запрос','Send request')}</button>
+    </div></div></div>`;
+}
+
+// ---- 2. Waiting for reply ----
+function scr_waiting(){
+  const c=PLAN&&PLAN.cand; if(!c) return scr_options();
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      <div class="kstate"><div class="hero">${IC.photo}</div>
+        <div class="ti">${T('Ждём ответа','Waiting for reply')}</div>
+        <div class="su">${T('Мы отправили твой запрос','We sent your request to')} ${esc(c.name)}.<br>
+          ${T('Она увидит только то, что ты одобрил(а).','They’ll only see what you approved.')}</div></div>
+      <div class="kinfo">${IC.info}${T('Если ответа не будет — сообщим позже.','If there’s no reply, we’ll let you know later.')}</div>
+      <div class="klist">
+        <div class="row" data-act="req-edit"><div class="ic">${IC.edit}</div>
+          <div class="bd"><div class="ti">${T('Изменить запрос','Change request')}</div></div><div class="ch">${IC.chevR}</div></div>
+        <div class="row" data-act="go-options"><div class="ic">${IC.gear}</div>
+          <div class="bd"><div class="ti">${T('Другие варианты','See other options')}</div></div><div class="ch">${IC.chevR}</div></div>
+      </div>
+    </div></div>`;
+}
+
+// ---- 3. Mutual interest ----
+function scr_mutual(){
+  const c=PLAN&&PLAN.cand; if(!c) return scr_options();
+  const meInts=(DATA.interests||[]).map(i=>i.name).slice(0,2).join(', ');
+  const theirs=(c.interests||[]).slice(0,2).join(', ');
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      <div class="kstate"><div class="hero sm">${IC.photo}</div>
+        <div class="ti">${T('Взаимный интерес','It’s a mutual interest')}</div>
+        <div class="su">${T('Вы понравились друг другу!','You like each other!')}</div></div>
+      <div class="kpair">
+        <div class="p"><div class="av">${IC.person}</div><div class="nm">${esc(DATA.name||'')}</div>
+          <div class="su">${esc(meInts)}</div></div>
+        <div class="p"><div class="av">${IC.person}</div><div class="nm">${esc(c.name)}${c.age?(', '+c.age):''}</div>
+          <div class="su">${esc(theirs)}</div></div>
+      </div>
+      <div class="klist"><div class="row" style="cursor:default"><div class="ic">${IC.chat}</div>
+        <div class="bd"><div class="su" style="font-size:13px;line-height:18px;color:var(--fg)">
+          ${T('Откройте чат и договоритесь о времени, удобном обоим.','Open the chat and agree on a time that works for both?')}</div></div></div></div>
+    </div>
+    <div class="kfoot">
+      <button class="kbtn pri tall" data-act="plan-open-chat">${T('Открыть чат','Open chat')}</button>
+      <button class="kbtn sec" data-act="plan-later" style="background:transparent">${T('Не сейчас','Not now')}</button>
+    </div></div>`;
+}
+
+// ---- 4. Suggestion from them ----
+function scr_suggestion(){
+  const c=PLAN&&PLAN.cand; if(!c) return scr_options();
+  const s=PLAN.suggest||{title:T('Кофе в центре','Coffee in the city centre'),
+    time:T('Суббота 18:00','Saturday 18:00'), place:T('Уютная кофейня, 60–90 мин','Cosy coffee shop, 60–90 min'),
+    quote:T('Люблю неспешные разговоры за кофе. Буду рад(а) встретиться!','I love unhurried coffee conversations. Excited to meet!')};
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Предложение от','Suggestion from')+' '+c.name)}
+      <div class="kbub ag">${T('Предложение по первой встрече. Ни к чему не обязывает.','They suggested an option for the first meetup. No obligations')}</div>
+      <div class="kplan tight">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <div class="k-h3">${esc(s.title)}</div><div class="ic" style="color:var(--muted)">${IC.calen}</div></div>
+        <div class="kplanrow"><div class="ic">${IC.clock}</div><div class="bd">
+          <div class="su">${T('Время','Time')}</div><div class="ti" style="font-size:13px">${esc(s.time)}</div></div></div>
+        <div class="kplanrow"><div class="ic">${IC.pin}</div><div class="bd">
+          <div class="su">${T('Место','District')}</div><div class="ti" style="font-size:13px">${esc(s.place)}</div></div></div>
+        <div class="kquote">“${esc(s.quote)}” — ${esc(c.name)}</div>
+      </div>
+      <div class="knote">${IC.shieldSm}${T('Личные контакты не передаём, пока вы оба не будете готовы.','We don’t share personal contacts until you’re both ready.')}</div>
+    </div>
+    <div class="kfoot">
+      <button class="kbtn pri tall" data-act="plan-accept">${T('Мне подходит','Works for me')}</button>
+      <button class="kbtn sec" data-act="plan-pick-time">${T('Предложу своё','Suggest my own')}</button>
+    </div></div>`;
+}
+
+// ---- 5. Pick a time ----
+function scr_picktime(){
+  const slots=planSlots();
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      <div style="display:flex;align-items:center;gap:8px">
+        ${kprompt(T('Планируем встречу','Planning the meetup'))}
+        <div class="kdraft">${IC.spark}${T('Черновик','Draft plan')}</div></div>
+      <div class="kbub ag">${T('Вы вместе выбираете время','You and')} ${esc((PLAN&&PLAN.cand&&PLAN.cand.name)||'')} ${T('','pick a time together')}</div>
+      <div class="k-title">${T('Предложенные слоты','Suggested slots')}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${slots.map((s,i)=>`<div class="kslot ${PLAN&&PLAN.slot&&PLAN.slot[1]===s[1]&&PLAN.slot[0]===s[0]?'on':''}" data-act="pick-slot" data-i="${i}">
+          <div class="ic">${IC.clock}</div>
+          <div class="bd"><div class="d">${esc(s[0])}</div><div class="w">${esc(s[2])}</div></div>
+          <div class="t">${esc(s[1])}</div>
+          ${PLAN&&PLAN.slot&&PLAN.slot[1]===s[1]&&PLAN.slot[0]===s[0]?`<div class="ck">${IC.check2||IC.chevR}</div>`:''}</div>`).join('')}
+      </div>
+      <button class="kbtn sec" data-act="plan-own-time">${T('Предложить своё время','Suggest my own time')}</button>
+    </div>
+    ${PLAN&&PLAN.slot?`<div class="kfoot"><button class="kbtn pri tall" data-act="plan-pick-place">${T('Дальше — место','Next: pick a place')}</button></div>`:''}</div>`;
+}
+
+// ---- 6. Pick a place ----
+function scr_pickplace(){
+  const ps=planPlaces();
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      <div style="display:flex;align-items:center;gap:8px">
+        ${kprompt(T('Планируем встречу','Planning the meetup'))}
+        <div class="kdraft">${IC.spark}${T('Черновик','Draft plan')}</div></div>
+      <div class="kbub ag">${T('Вы вместе выбираете место','You and')} ${esc((PLAN&&PLAN.cand&&PLAN.cand.name)||'')} ${T('','pick a place together')}</div>
+      <div class="kmap">${IC.photo}
+        <span class="pin" style="left:30%;top:55%">${IC.pinDot}</span>
+        <span class="pin" style="left:52%;top:28%">${IC.pinDot}</span>
+        <span class="pin" style="left:70%;top:45%">${IC.pinDot}</span></div>
+      <div class="k-title">${T('Рекомендуем рядом','Recommended nearby')}</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${ps.map((p,i)=>`<div class="kplace ${PLAN&&PLAN.place&&PLAN.place.name===p.name?'on':''}" data-act="pick-place" data-i="${i}">
+          <div class="ph"></div>
+          <div class="bd"><div class="nm">${esc(p.name)}</div>
+            <div class="meta"><span class="mi">${IC.pin}${p.m} ${T('м','m')}</span>
+              <span class="mi">${IC.walk}${p.walk} ${T('мин пешком','min walk')}</span></div>
+            <div class="tags">${(p.tags||[]).map(t=>`<span class="ktag">${esc(t)}</span>`).join('')}</div></div></div>`).join('')}
+      </div>
+      <button class="kbtn sec" data-act="plan-own-place">${IC.plusCircle} ${T('Предложить другое место','Suggest another place')}</button>
+    </div>
+    ${PLAN&&PLAN.place?`<div class="kfoot"><button class="kbtn pri tall" data-act="plan-send">${T('Отправить план','Send the plan')}</button></div>`:''}</div>`;
+}
+
+// ---- 7/8. Awaiting confirmation + confirmed ----
+function participants(){
+  const c=PLAN&&PLAN.cand;
+  const st=PLAN&&PLAN.confirmed?T('Подтвердил(а)','Confirmed'):T('Ждём подтверждения','Awaiting confirmation');
+  return `<div class="kpair">
+    <div class="p"><div class="av">${IC.person}</div><div class="nm">${esc(DATA.name||'')}</div>
+      <div class="su">${T('Организатор','Organiser')}</div></div>
+    <div class="p"><div class="av">${IC.person}</div><div class="nm">${esc(c?c.name:'')}${c&&c.age?(', '+c.age):''}</div>
+      <div class="su">${st}</div></div></div>`;
+}
+function planCardBlock(){
+  const p=PLAN&&PLAN.place;
+  return `<div class="kplan tight">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <div class="k-title">${T('План встречи','Meetup plan')}</div>
+      <div class="kdraft">${IC.spark}${T('Черновик','Draft plan')}</div></div>
+    <div class="kplanrow"><div class="ic">${IC.calen}</div><div class="bd">
+      <div class="ti">${esc((PLAN&&PLAN.slot&&PLAN.slot[1])||'')}</div>
+      <div class="su">${esc((PLAN&&PLAN.slot&&PLAN.slot[0])||'')}</div></div></div>
+    <div class="kplanrow"><div class="ic">${IC.pin}</div><div class="bd">
+      <div class="ti">${esc(placeText())}</div>
+      <div class="su">${p?(p.m+' '+T('м','m')+' · '+p.walk+' '+T('мин','min')):''}</div></div></div>
+  </div>`;
+}
+function scr_awaiting(){
+  const c=PLAN&&PLAN.cand; if(!c) return scr_options();
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('План встречи','Meetup plan'))}
+      <div class="kbub ag">${esc(c.name)} ${T('и ты согласовали план. Ждём подтверждения.','and you have agreed on the plan. We’re waiting for confirmation.')}</div>
+      <div style="display:flex;align-items:flex-end;justify-content:space-between">
+        <div class="k-title">${T('Участники','Participants')}</div><div class="k-label" style="color:var(--muted)">[2]</div></div>
+      ${participants()}
+      ${planCardBlock()}
+      <div class="kwhy">${esc(c.name)} ${T('получит уведомление и сможет подтвердить или предложить изменения.','will get a notification and can confirm or suggest changes.')}</div>
+    </div>
+    <div class="kfoot"><button class="kbtn pri tall" data-act="plan-confirm">${T('Подтвердить за обоих (демо)','Mark as confirmed (demo)')}</button></div></div>`;
+}
+function scr_planok(){
+  const c=PLAN&&PLAN.cand; if(!c) return scr_options();
+  const tog=(on,act,icon,label)=>`<div class="ktogrow"><div class="ic">${icon}</div><div class="tx">${esc(label)}</div>
+    <div class="ktog ${on?'on':''}" data-act="${act}"><i></i></div></div>`;
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Детали встречи','Meetup details'))}
+      <div class="kbub ag">${T('Подтверждено обеими сторонами 🎉','Confirmed by both sides 🎉')}</div>
+      <div style="display:flex;align-items:flex-end;justify-content:space-between">
+        <div class="k-title">${T('Участники','Participants')}</div><div class="k-label" style="color:var(--muted)">[2]</div></div>
+      ${participants()}
+      ${planCardBlock()}
+      <div class="kplan tight">
+        <div class="k-title">${T('Добавить в календарь','Add to calendar')}</div>
+        ${tog(PLAN.gcal,'tog-gcal',IC.calAdd,'Google Calendar')}
+        ${tog(PLAN.acal,'tog-acal',IC.calAdd,'Apple Calendar')}
+      </div>
+      <div class="kplan tight">
+        <div class="k-title">${T('Напомнить','Remind me')}</div>
+        ${tog(PLAN.remind,'tog-remind',IC.bellSm,T('За час до встречи','1 hour before'))}
+      </div>
+    </div>
+    <div class="kfoot">
+      <button class="kbtn pri tall" data-act="plan-open-chat">${T('Открыть чат встречи','Open meetup chat')}</button>
+      <button class="kbtn sec" data-act="plan-pick-time">${T('Изменить план','Edit plan')}</button>
+    </div></div>`;
+}
+
+// ---- 10. How is it going (status) ----
+function scr_meetstate(){
+  const c=PLAN&&PLAN.cand; if(!c) return scr_agenthome();
+  const opt=(key,cls,icon,ti,su)=>`<div class="kstatus ${cls} ${PLAN.status===key?'on':''}" data-act="meet-status" data-k="${key}">
+    <div class="ic">${icon}</div><div class="bd"><div class="ti">${esc(ti)}</div><div class="su">${esc(su)}</div></div></div>`;
+  return `<div class="kflow fade">
+    <div class="kbar"><div class="kback" data-act="plan-back">${IC.back}</div>
+      <div class="k-title" style="flex:1;text-align:center">${T('Статус встречи','Meeting state')}</div>
+      <div style="width:44px"></div></div>
+    <div class="kcont">
+      <div class="ecard" style="cursor:default"><div class="ph"></div>
+        <div class="bd"><div><div class="ti">${T('Кофе и разговор','Coffee & conversation')}</div>
+          <div class="meta"><span class="mi">${IC.clock}${esc(slotText())}</span>
+            <span class="mi">${IC.pin}${esc(placeText())}</span></div></div></div></div>
+      <div><div class="k-title">${T('Выбери текущий статус','Select the current status')}</div>
+        <div class="k-cap" style="color:var(--muted);margin-top:4px">${T('Видно только тебе. Можно поменять позже.','Visible only to you. You can change this later')}</div></div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        ${opt('otw','go',IC.bolt,T('Уже иду','On my way'),T('Выхожу','I’m heading out'))}
+        ${opt('late','late',IC.clock,T('Опаздываю','Running late'),T('Скажу примерно на сколько','I’ll say roughly how long'))}
+        ${opt('here','here',IC.pinDot,T('Я на месте','I’m here'),T('Уже в точке встречи','Already at the meeting spot'))}
+      </div>
+      <div class="kinfo">${IC.shieldSm}${T('Статус видит только твой собеседник. Его можно изменить в любой момент.','Only your companion sees the status. You can change it anytime.')}</div>
+    </div></div>`;
+}
+
+// ---- 12. You're here ----
+function scr_mymeetup(){
+  const c=PLAN&&PLAN.cand; if(!c) return scr_agenthome();
+  const row=(icon,ti,su)=>`<div class="row"><div class="ic">${icon}</div>
+    <div class="bd"><div class="ti">${esc(ti)}</div><div class="su">${esc(su)}</div></div>
+    <div class="ch">${IC.chevR}</div></div>`;
+  return `<div class="kflow fade">
+    <div class="kbar"><div class="kback" data-act="plan-back">${IC.back}</div>
+      <div class="k-title" style="flex:1;text-align:center">${T('Моя встреча','My meetup')}</div>
+      <div style="width:44px">${IC.dots}</div></div>
+    <div class="kcont">
+      <div class="ecard" style="cursor:default"><div class="ph"></div>
+        <div class="bd"><div><div class="ti">${T('Кофе и разговор','Coffee & conversation')}</div>
+          <div class="meta"><span class="mi">${IC.clock}${esc(slotText())}</span>
+            <span class="mi">${IC.pin}${esc(placeText())}</span></div></div></div></div>
+      <div class="kbanner"><div class="ic">${IC.checkCircle}</div>
+        <div class="bd"><div class="ti">${T('Ты на месте','You’re here')}</div>
+          <div class="su">${T('Встреча началась','Meetup started')} ${esc(PLAN.startedAt||'19:05')}</div></div>
+        <div class="kbadge mut" data-act="meet-state">${T('Изменить','Edit')}</div></div>
+      <div class="k-title">${T('Что дальше?','What’s next?')}</div>
+      <div class="kacc">
+        ${row(IC.clock,T('Опаздываю','Running late'),T('Сообщить, если время сдвигается','Tell them if the time shifts'))}
+        ${row(IC.userLeave,T('Уже ушёл(ла)','Already left'),T('Отметить встречу завершённой','Mark the meetup as finished'))}
+        ${row(IC.help,T('Нужна помощь?','Need help?'),T('Поддержка и подсказки','Get support and tips'))}
+      </div>
+      <div class="kinfo">${IC.shieldSm}${T('Эти действия видны только тебе и помогают чувствовать себя спокойно.','These actions are visible only to you and help you feel in control.')}</div>
+    </div></div>`;
+}
+
+// ---- security bottom sheet (from the coordination chat) ----
+function securitySheet(){
+  if(SHEET!=='security') return '';
+  const row=(icon,ti,su)=>`<div class="row"><div class="ic">${icon}</div>
+    <div class="bd"><div class="ti">${esc(ti)}</div><div class="su">${esc(su)}</div></div>
+    <div class="ch">${IC.chevR}</div></div>`;
+  return `<div class="kscrim bot" data-act="sheet-close"><div class="ksheet bottom" onclick="event.stopPropagation()">
+    <div class="kgrab"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between">
+      <div class="k-h3">${T('Безопасность','Security')}</div>
+      <div data-act="sheet-close" style="cursor:pointer;color:var(--muted)">${IC.ban}</div></div>
+    <div class="kacc">
+      ${row(IC.shield,T('Доверенный контакт','Trusted contact'),T('Сообщить близкому, что ты на встрече','Let someone know you’re at a meetup'))}
+      ${row(IC.userLeave,T('Уйти спокойно','Leave quietly'),T('Подсказки и поддержка','Get prompts and support'))}
+    </div>
+  </div></div>`;
+}
+
+function openPlanChat(){
+  // the coordination chat is the existing match chat, seeded with the agreed plan
+  const c=PLAN&&PLAN.cand; if(!c) return;
+  approveIntro({name:c.name, score:c.score, km:c.km, interests:c.interests, reasons:c.reasons},
+               (FLOW&&flowIntent())||{});
+  if(matchWith){ matchWith.plan={slot:slotText(), place:placeText()}; matchWith.fromPlan=true; }
+  render();
+}
+function setMeetStatus(k){
+  if(!PLAN) return;
+  PLAN.status=k;
+  if(k==='here'){
+    PLAN.here=true;
+    const d=new Date(); PLAN.startedAt=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+    cur='mymeetup';
+  }
+  render();
+  toast(k==='otw'?T('Отметили: уже идёшь','Marked: on your way')
+       :k==='late'?T('Отметили: опаздываешь','Marked: running late')
+       :T('Отметили: ты на месте','Marked: you’re here'));
+}
+
 // ---- candidate actions: open, explain, send interest ----
 function openCand(name){
   CAND=candOf(name); if(!CAND) return;
@@ -2112,13 +2584,35 @@ async function loadWhy(){
     if(r&&r.ok&&r.trace){ CAND._trace=r.trace; render(); }
   }catch(e){ /* pane shows its own waiting copy */ }
 }
-async function sendInterest(){
+function sendInterest(){                          // "Interested" -> review what gets shared
   if(!CAND) return;
-  SHEET='interest'; render();                    // the modal is the confirmation the design specifies
-  try{                                           // record it the same way the intent flow does
+  planInit(CAND); cur='sendreq'; render();
+}
+async function planSend(){
+  if(!PLAN) return;
+  PLAN.sent=true; cur='waiting'; render();
+  try{                                            // record the decision the engine learns from
     await fetch('/api/agent/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({name:CAND.name, decision:'accepted', uid:DATA.name||'me'})});
+      body:JSON.stringify({name:PLAN.cand.name, decision:'accepted', uid:DATA.name||'me'})});
   }catch(e){}
+  let r=null;                                     // ask THEIR agent, exactly like the intent launch does
+  try{
+    r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({intent:(FLOW&&flowIntent())||{topics:[]}, profile:matchProfile(),
+                           candidates:[PLAN.cand]})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  const v=(r&&r.candidates&&r.candidates[0])||null;
+  PLAN.reply=v; PLAN.mutual=!!(v&&v.agree);
+  if(cur!=='waiting') return;                     // the user navigated away meanwhile
+  if(PLAN.mutual){
+    if(v&&v.reply) PLAN.suggest={title:T('Кофе в центре','Coffee in the city centre'),
+      time:slotText()!==T('время не выбрано','time not picked')?slotText():((FLOW&&flowIntent().time)||''),
+      place:T('Уютное место рядом','A cosy spot nearby'), quote:String(v.reply)};
+    cur=PLAN.suggest?'suggestion':'mutual';
+  } else {
+    toast(((v&&v.reason)||T('Пока без ответа','No reply yet')));
+  }
+  render();
 }
 
 // ============ Figma batch 2: results, best fit, candidate profile, why suggested ============
@@ -2295,7 +2789,10 @@ const SCREENS={agenthome:scr_agenthome,profileedit:scr_profileedit,overview:scr_
   intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages,
   notifs:scr_notifications,matchchat:scr_matchchat,buddychat:scr_buddychat,
   reqcomposer:scr_reqcomposer,clarify:scr_clarify,summary:scr_summary,searching:scr_searching,fewmatches:scr_fewmatches,
-  options:scr_options,bestfit:scr_bestfit,recos:scr_recos,candprofile:scr_candprofile};
+  options:scr_options,bestfit:scr_bestfit,recos:scr_recos,candprofile:scr_candprofile,
+  sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
+  picktime:scr_picktime,pickplace:scr_pickplace,awaiting:scr_awaiting,planok:scr_planok,
+  meetstate:scr_meetstate,mymeetup:scr_mymeetup};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -2370,13 +2867,15 @@ function render(){
   // the Figma request flow carries its own app bar + composer, exactly like the chat screens
   const chat=(cur==='buddychat'||cur==='profileedit'||cur==='intentchat'||cur==='matchchat'
               ||cur==='reqcomposer'||cur==='clarify'||cur==='summary'||cur==='searching'||cur==='fewmatches'
-              ||cur==='options'||cur==='bestfit'||cur==='recos'||cur==='candprofile');
+              ||cur==='options'||cur==='bestfit'||cur==='recos'||cur==='candprofile'
+              ||['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'].includes(cur));
   const bn=document.getElementById('bnav'); if(bn){ bn.style.display=chat?'none':'flex'; bn.innerHTML=bnavHTML(); }
   const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||chat)?'none':'flex';
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
-  if(typeof sheetHTML==='function' && SHEET) A.insertAdjacentHTML('beforeend', sheetHTML());
+  if(SHEET==='interest') A.insertAdjacentHTML('beforeend', sheetHTML());
+  if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
   // A chat owns the full height: the app area becomes a flex column so the thread scrolls INTERNALLY and the
   // composer stays pinned. Resetting scrollTop to 0 on every render is what made the intent chat jump — so
   // only non-chat screens reset, and chats auto-scroll their thread to the newest message.
@@ -2515,6 +3014,29 @@ function doAct(act, ds){
     case 'cand-save': toast(T('Сохранено','Saved')); break;
     case 'cand-interest': sendInterest(); break;
     case 'sheet-close': SHEET=null; render(); break;
+    // ---- batch 3: request → mutual → plan → meetup day ----
+    case 'req-edit': cur='candprofile'; render(); break;
+    case 'req-send': planSend(); break;
+    case 'plan-later': cur='options'; render(); break;
+    case 'plan-open-chat': openPlanChat(); break;
+    case 'plan-accept': PLAN.slot=PLAN.slot||planSlots()[1]; PLAN.place=PLAN.place||planPlaces()[0];
+                        cur='awaiting'; render(); break;
+    case 'plan-pick-time': cur='picktime'; render(); break;
+    case 'pick-slot': PLAN.slot=planSlots()[+ds.i]; render(); break;
+    case 'plan-own-time': toast(T('Свой вариант времени — скоро','Custom time is coming soon')); break;
+    case 'plan-pick-place': cur='pickplace'; render(); break;
+    case 'pick-place': PLAN.place=planPlaces()[+ds.i]; render(); break;
+    case 'plan-own-place': toast(T('Своё место — скоро','Custom place is coming soon')); break;
+    case 'plan-send': cur='awaiting'; render(); break;
+    case 'plan-confirm': PLAN.confirmed=true; cur='planok'; render(); break;
+    case 'tog-gcal': PLAN.gcal=!PLAN.gcal; render(); toast(PLAN.gcal?T('Добавлено в Google Calendar','Added to Google Calendar'):T('Убрано','Removed')); break;
+    case 'tog-acal': PLAN.acal=!PLAN.acal; render(); toast(PLAN.acal?T('Добавлено в Apple Calendar','Added to Apple Calendar'):T('Убрано','Removed')); break;
+    case 'tog-remind': PLAN.remind=!PLAN.remind; render(); break;
+    case 'plan-back': cur=(PLAN&&PLAN.confirmed)?'planok':'agenthome'; render(); break;
+    case 'meet-state': cur='meetstate'; render(); break;
+    case 'meet-status': setMeetStatus(ds.k); break;
+    case 'meet-open': cur=(PLAN&&PLAN.here)?'mymeetup':'meetstate'; render(); break;
+    case 'security': SHEET='security'; render(); break;
     case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
     case 'buddy-intro': { const i=+ds.bi; const m=buddyMsgs[i]; if(m&&m.match&&m.match.top){ approveIntro(m.match.top, m.match.intent); if(matchWith)matchWith.fromBuddy=true; } break; }
     case 'buddy-back': cur='agenthome'; render(); break;
