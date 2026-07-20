@@ -31,12 +31,12 @@ def llm_models():
         return []
 
 
-def llm_stream(model, messages, temperature, field, on_text):
+def llm_stream(model, messages, temperature, field, on_text, gate=None):
     """POST /llm/stream -> consumes SSE, calls on_text(str) per new piece of `field`.
     Returns the FULL raw model output so the caller still parses the complete JSON envelope.
     Raises on transport error, exactly like llm_complete, so existing fallbacks fire."""
     body = json.dumps({"model": model, "messages": messages, "temperature": temperature,
-                       "field": field}).encode("utf-8")
+                       "field": field, "gate": list(gate) if gate else None}).encode("utf-8")
     req = urllib.request.Request(LLM_URL + "/llm/stream", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
     raw, ev = "", None

@@ -351,8 +351,16 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .bnav a.on{color:var(--primary)}
 .bnav .fabgap{width:60px}
 .fab{position:absolute;left:50%;top:-16px;transform:translateX(-50%);width:56px;height:56px;border-radius:50%;
-  background:var(--primary);color:#fff;border:4px solid var(--bg);display:flex;align-items:center;justify-content:center;
-  cursor:pointer;box-shadow:0 8px 20px rgba(245,69,92,.35)}
+  background:var(--card);border:4px solid var(--bg);display:flex;align-items:center;justify-content:center;
+  cursor:pointer;box-shadow:0 8px 20px rgba(245,69,92,.35);overflow:hidden}
+.fab svg{display:block}
+.fab:active{transform:translateX(-50%) scale(.94)}
+/* Mascot art. Sized in one place so a pose can be swapped per screen without touching layout. */
+.masc{display:block;margin:0 auto;width:132px;height:132px;pointer-events:none;user-select:none}
+.masc.sm{width:88px;height:88px}
+.masc.xs{width:56px;height:56px;margin:0}
+.masc.fill{width:100%;height:100%;object-fit:contain}
+.kdraft .masc.xs{width:18px;height:18px;margin:0}
 .gap8{height:8px}.gap12{height:12px}.gap16{height:16px}
 .stack>*+*{margin-top:10px}
 .fade{animation:fd .28s ease}@keyframes fd{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -1016,6 +1024,13 @@ const IC={
   chat:svg('<path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 4v-4a2 2 0 0 1-1-1.7V6z"/>'),
   gamepad:svg('<rect x="3" y="8" width="18" height="9" rx="4"/><path d="M8 12h3M9.5 10.5v3"/><circle cx="16" cy="11.5" r="1"/><circle cx="17.8" cy="13.5" r="1"/>'),
   film:svg('<rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 5v14M16 5v14M4 9.5h4M16 9.5h4M4 14.5h4M16 14.5h4"/>'),
+  peek:'<svg viewBox="14 9 68 68" width="44" height="44" fill="none" aria-hidden="true">'+
+    '<defs><linearGradient id="kpk" x1="21" y1="10" x2="74" y2="73" gradientUnits="userSpaceOnUse">'+
+    '<stop stop-color="#FF796D"/><stop offset="1" stop-color="#E84242"/></linearGradient></defs>'+
+    '<circle cx="48" cy="43" r="34" fill="url(#kpk)"/>'+
+    '<ellipse cx="48" cy="39" rx="21" ry="19" fill="#FFF8EB"/>'+
+    '<circle cx="41" cy="39" r="2.7" fill="#111217"/><circle cx="55" cy="39" r="2.7" fill="#111217"/>'+
+    '<path d="M43 47c3 3 7 3 10 0" stroke="#111217" stroke-width="2.5" stroke-linecap="round"/></svg>',
   spark:svg('<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17l-1.9-5.1L4.5 10l5.6-1.4L12 3z"/>'),
   coffee:svg('<path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8z"/><path d="M17 9h2.5a2 2 0 0 1 0 4H17"/><path d="M7 3v2M11 3v2"/>'),
   ban:svg('<circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/>'),
@@ -1067,7 +1082,7 @@ function bnavHTML(){ const fam=navFam();
   // "Say hi to Kleal" field and quick actions. The conversational chat is reached from there.
   const items=[['nIntents',T('Интенты','Intents'),'intents','plans'],['nSearch',T('Обзор','Explore'),'search','explore'],['fab','','',''],
     ['nMsg',T('Сообщения','Messages'),'messages','messages'],['nProfile',T('Профиль','Profile'),'overview','profile']];
-  return '<div class="fab" data-act="go-home">'+IC.mic+'</div>'+
+  return '<div class="fab" data-act="go-home">'+IC.peek+'</div>'+
     items.map(x=>{ if(x[0]==='fab') return '<div class="fabgap"></div>';
       return `<a class="${fam===x[3]?'on':''}" data-nav="${x[2]}">${IC[x[0]]}<span>${x[1]}</span></a>`; }).join('');
 }
@@ -1427,6 +1442,10 @@ function scr_overview(){
     <div class="stack" style="margin-top:6px">${navRows()}${availRow}${langRow}</div>
   </div>`;
 }
+// Mascot poses live at /assets/<name>.svg (see ASSETS in this file). The container each one sits in
+// already has its own size and round background, so the image fills the box rather than carrying a
+// size of its own — that keeps a pose swap from changing any layout.
+function masc(pose, extra){ return `<img class="masc fill${extra||''}" src="assets/${pose}.svg" alt="" draggable="false">`; }
 function emptyState(title,sub){ return `<div class="empty fade"><div class="eic">${IC.spark}</div>
   <div class="etx">${esc(title)}</div>${sub?`<div class="esub">${esc(sub)}</div>`:''}</div>`; }
 function scr_snapshot(){ if(!DATA.snapshot.length) return emptyState(T("Пока не по чему матчить","Nothing to match on yet"),T("Kleal заполнит это по мере знакомства.","Kleal fills this in as it learns about you."));
@@ -2337,7 +2356,7 @@ function scr_agenthome(){
         </div></div>`:''}
       <div>
         <div class="aintro2" data-act="talk-buddy" style="cursor:pointer">
-          <div class="msc">${IC.photo}</div>
+          <div class="msc">${masc('primary')}</div>
           <div class="txt">${T('Я Kleal, твой социальный AI-агент. Опиши, кого или что ищешь — подберу лучшее.',"I'm Kleal, your social AI agent. Describe who or what you're looking for — I'll find the best fit.")}</div>
         </div>
         <div class="kcomp"><div class="fld">
@@ -2654,7 +2673,7 @@ function scr_searching(){
   }).join('');
   return `<div class="kflow fade">${kbar()}
     <div class="ksearching">
-      <div class="msc">${IC.photo}</div>
+      <div class="msc">${masc('searching')}</div>
       <div class="brand">Kleal</div>
       <div class="lead">${T('Ищу людей, группы и места для тебя','Finding people, groups and places for you')}</div>
       <div class="ksteps">${st}</div>
@@ -2754,7 +2773,7 @@ function scr_waiting(){
   const c=PLAN&&PLAN.cand; if(!c) return scr_options();
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
-      <div class="kstate"><div class="hero">${IC.photo}</div>
+      <div class="kstate"><div class="hero">${masc('thinking')}</div>
         <div class="ti">${T('Ждём ответа','Waiting for reply')}</div>
         <div class="su">${T('Мы отправили твой запрос','We sent your request to')} ${esc(c.name)}.<br>
           ${T('Она увидит только то, что ты одобрил(а).','They’ll only see what you approved.')}</div></div>
@@ -2775,7 +2794,7 @@ function scr_mutual(){
   const theirs=(c.interests||[]).slice(0,2).join(', ');
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
-      <div class="kstate"><div class="hero sm">${IC.photo}</div>
+      <div class="kstate"><div class="hero sm">${masc('match')}</div>
         <div class="ti">${T('Взаимный интерес','It’s a mutual interest')}</div>
         <div class="su">${T('Вы понравились друг другу!','You like each other!')}</div></div>
       <div class="kpair">
@@ -2850,7 +2869,7 @@ function scr_pickplace(){
     <div class="kcont">
       <div style="display:flex;align-items:center;gap:8px">
         ${kprompt(T('Планируем встречу','Planning the meetup'))}
-        <div class="kdraft">${IC.spark}${T('Черновик','Draft plan')}</div></div>
+        <div class="kdraft">${masc('map',' xs')}${T('Черновик','Draft plan')}</div></div>
       <div class="kbub ag">${UILANG==='ru'?('Выбери место — предложим его '+esc((PLAN&&PLAN.cand&&PLAN.cand.name)||''))
         :('Pick a place — we’ll suggest it to '+esc((PLAN&&PLAN.cand&&PLAN.cand.name)||''))}</div>
       <div class="kmap">${IC.photo}
@@ -3705,12 +3724,37 @@ render();
 # escape "</" so a stray "</script>" inside data can never terminate the inline <script> early
 HTML = HTML_HEAD.replace("__DATA__", json.dumps(DATA, ensure_ascii=False).replace("</", "<\\/"))
 
+# ---------------------------------------------------------------- mascot artwork
+# The five Kleal mascot poses, served from /assets/<name>.svg rather than inlined into the page.
+# The SPA rebuilds screens with innerHTML on every render, so an inlined 3KB SVG would be re-parsed
+# several times a second; as an <img> the browser decodes each pose once and caches it. Kept in this
+# file because every service here is deliberately a single file with no static directory.
+ASSETS = {
+    'map': '''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="mapTitle mapDesc"> <title id="mapTitle">Kleal mascot — map planning pose</title> <desc id="mapDesc">Coral Kleal mascot holding a folded route map, based on the supplied reference pose.</desc> <defs> <linearGradient id="mapBody" x1="120" y1="61" x2="409" y2="449" gradientUnits="userSpaceOnUse"> <stop stop-color="#FF756A"/> <stop offset="0.55" stop-color="#FF5B55"/> <stop offset="1" stop-color="#E84242"/> </linearGradient> <radialGradient id="mapFace" cx="0" cy="0" r="1" gradientTransform="translate(221 155) rotate(55) scale(164 155)" gradientUnits="userSpaceOnUse"> <stop stop-color="#FFFDF5"/> <stop offset="1" stop-color="#F4E8D7"/> </radialGradient> <linearGradient id="mapPaper" x1="133" y1="277" x2="328" y2="428" gradientUnits="userSpaceOnUse"> <stop stop-color="#FFFDF7"/> <stop offset="1" stop-color="#ECE7DC"/> </linearGradient> <radialGradient id="mapGround"> <stop stop-color="#111217" stop-opacity="0.18"/> <stop offset="0.72" stop-color="#111217" stop-opacity="0.06"/> <stop offset="1" stop-color="#111217" stop-opacity="0"/> </radialGradient> </defs> <g id="kleal-map"> <ellipse cx="255" cy="451" rx="154" ry="24" fill="url(#mapGround)"/> <path d="M257 35C162 35 93 104 93 194c0 58 25 99 62 124-21 46-9 99 33 128 32 22 66 12 80-23 19 37 62 46 94 18 31-28 41-68 26-106 49-9 81-42 80-82-1-43-34-73-76-74C380 93 325 35 257 35Z" fill="url(#mapBody)"/> <path d="M399 209c52-2 79 26 71 65-8 35-39 50-73 40-28-8-36-31-22-52 10-16 27-22 43-17 15 5 20 17 14 28-6 11-18 13-30 7" stroke="#E84242" stroke-width="25" stroke-linecap="round"/> <ellipse cx="253" cy="190" rx="116" ry="110" fill="url(#mapFace)"/> <ellipse cx="214" cy="190" rx="12" ry="18" fill="#171920"/> <ellipse cx="292" cy="190" rx="12" ry="18" fill="#171920"/> <path d="M236 228c11 11 24 11 36 0" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M132 286 197 268 259 287 328 268 341 413 273 431 209 411 143 431Z" fill="url(#mapPaper)" stroke="#D8D1C4" stroke-width="4" stroke-linejoin="round"/> <path d="M197 268 209 411M259 287l14 144M328 268l13 145" stroke="#D8D1C4" stroke-width="3"/> <path d="M175 382c22-36 41-21 59-42 15-17 7-41 30-53" stroke="#2B2D33" stroke-width="6" stroke-linecap="round" stroke-dasharray="3 13"/> <path d="M280 302c0 17-20 37-20 37s-20-20-20-37a20 20 0 1 1 40 0Z" fill="#FF5B55"/> <circle cx="260" cy="302" r="7" fill="#FFF8EB"/> <circle cx="174" cy="383" r="9" fill="#FF5B55"/> <path d="M142 311c-30-5-54-24-57-48-2-20 10-36 28-38 16-2 28 8 29 23 2 13-6 23-19 28" stroke="url(#mapBody)" stroke-width="34" stroke-linecap="round"/> <path d="M349 316c20 1 34 13 38 30" stroke="url(#mapBody)" stroke-width="34" stroke-linecap="round"/> <ellipse cx="128" cy="313" rx="25" ry="20" transform="rotate(18 128 313)" fill="#E84242"/> <ellipse cx="354" cy="319" rx="25" ry="20" transform="rotate(-12 354 319)" fill="#E84242"/> <path d="M205 420c-5 22-16 37-32 48" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <path d="M307 422c6 22 17 36 34 47" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <ellipse cx="164" cy="470" rx="31" ry="14" fill="#D9363C"/> <ellipse cx="350" cy="470" rx="31" ry="14" fill="#D9363C"/> </g> </svg>''',
+    'match': '''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="matchTitle matchDesc"> <title id="matchTitle">Kleal mascot — match confirmed pose</title> <desc id="matchDesc">Kleal celebrates a mutual match with open arms and two connected route nodes.</desc> <defs> <linearGradient id="matchBody" x1="114" y1="66" x2="394" y2="447" gradientUnits="userSpaceOnUse"> <stop stop-color="#FF756A"/> <stop offset="0.55" stop-color="#FF5B55"/> <stop offset="1" stop-color="#E84242"/> </linearGradient> <radialGradient id="matchFace" cx="0" cy="0" r="1" gradientTransform="translate(224 153) rotate(54) scale(170 160)" gradientUnits="userSpaceOnUse"> <stop stop-color="#FFFDF5"/> <stop offset="1" stop-color="#F4E8D7"/> </radialGradient> <radialGradient id="matchGround"> <stop stop-color="#111217" stop-opacity="0.18"/> <stop offset="0.72" stop-color="#111217" stop-opacity="0.06"/> <stop offset="1" stop-color="#111217" stop-opacity="0"/> </radialGradient> </defs> <g id="kleal-match"> <ellipse cx="257" cy="451" rx="154" ry="24" fill="url(#matchGround)"/> <path d="M88 217c87-54 250-55 336 0" stroke="#FF5B55" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 16"/> <path d="M257 35C161 35 91 105 91 195c0 56 24 95 61 121-23 44-15 94 23 126 30 25 70 18 87-21 20 39 64 44 95 15 31-29 41-70 24-108 49-11 78-46 75-85-3-43-36-70-78-69C374 91 323 35 257 35Z" fill="url(#matchBody)"/> <path d="M392 201c52-5 82 20 78 60-4 36-35 55-70 48-29-6-39-28-27-50 9-17 25-25 42-21 15 3 21 15 16 26-5 11-17 15-29 10" stroke="#E84242" stroke-width="25" stroke-linecap="round"/> <ellipse cx="255" cy="190" rx="118" ry="111" fill="url(#matchFace)"/> <path d="M200 191c9 11 20 11 29 0" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M281 191c9 11 20 11 29 0" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M230 227c17 21 36 21 53 0" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M160 307c-41-8-75-36-83-70" stroke="url(#matchBody)" stroke-width="37" stroke-linecap="round"/> <path d="M352 307c41-8 75-36 83-70" stroke="url(#matchBody)" stroke-width="37" stroke-linecap="round"/> <circle cx="72" cy="222" r="16" fill="#FFF8EB" stroke="#FF5B55" stroke-width="8"/> <circle cx="440" cy="222" r="16" fill="#FFF8EB" stroke="#FF5B55" stroke-width="8"/> <path d="M209 414c-5 22-16 38-33 50" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <path d="M306 414c5 22 17 38 34 50" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <ellipse cx="166" cy="468" rx="31" ry="14" fill="#D9363C"/> <ellipse cx="350" cy="468" rx="31" ry="14" fill="#D9363C"/> <circle cx="114" cy="112" r="7" fill="#FF5B55"/> <path d="m398 105 7 12 13 2-10 9 3 13-13-6-12 6 2-13-9-9 13-2Z" fill="#FF5B55" opacity="0.72"/> </g> </svg>''',
+    'primary': '''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="primaryTitle primaryDesc"> <title id="primaryTitle">Kleal mascot — primary welcome pose</title> <desc id="primaryDesc">Coral Kleal mascot facing forward and waving.</desc> <defs> <linearGradient id="primaryBody" x1="110" y1="62" x2="395" y2="448" gradientUnits="userSpaceOnUse"> <stop stop-color="#FF756A"/> <stop offset="0.55" stop-color="#FF5B55"/> <stop offset="1" stop-color="#E84242"/> </linearGradient> <radialGradient id="primaryFace" cx="0" cy="0" r="1" gradientTransform="translate(219 155) rotate(55) scale(175 166)" gradientUnits="userSpaceOnUse"> <stop stop-color="#FFFDF5"/> <stop offset="1" stop-color="#F4E8D7"/> </radialGradient> <linearGradient id="primaryHighlight" x1="150" y1="62" x2="210" y2="315" gradientUnits="userSpaceOnUse"> <stop stop-color="white" stop-opacity="0.34"/> <stop offset="1" stop-color="white" stop-opacity="0"/> </linearGradient> <radialGradient id="primaryGround"> <stop stop-color="#111217" stop-opacity="0.18"/> <stop offset="0.72" stop-color="#111217" stop-opacity="0.06"/> <stop offset="1" stop-color="#111217" stop-opacity="0"/> </radialGradient> </defs> <g id="kleal-primary"> <ellipse cx="256" cy="451" rx="159" ry="24" fill="url(#primaryGround)"/> <path d="M257 35C161 35 91 105 91 195c0 55 23 94 59 120-25 42-18 92 19 126 29 28 72 23 91-17 19 40 64 47 96 18 33-29 45-72 28-112 48-10 79-44 77-82-2-43-34-72-75-74C378 92 324 35 257 35Z" fill="url(#primaryBody)"/> <path d="M391 202c55-6 86 20 83 61-3 37-35 58-73 52-31-5-42-27-31-51 8-19 24-29 44-26 17 2 24 14 20 27-4 12-16 17-29 13" stroke="#E84242" stroke-width="26" stroke-linecap="round"/> <ellipse cx="255" cy="192" rx="118" ry="112" fill="url(#primaryFace)"/> <path d="M169 128c21-39 62-61 105-57" stroke="url(#primaryHighlight)" stroke-width="18" stroke-linecap="round" opacity="0.9"/> <ellipse cx="216" cy="191" rx="12" ry="18" fill="#171920"/> <ellipse cx="294" cy="191" rx="12" ry="18" fill="#171920"/> <path d="M237 229c12 13 26 13 38 0" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M153 307c-38-10-66-39-64-72 1-24 18-43 39-42 17 1 29 13 28 29-1 15-12 24-24 31" stroke="url(#primaryBody)" stroke-width="36" stroke-linecap="round"/> <path d="M356 314c32-4 58-26 67-55" stroke="url(#primaryBody)" stroke-width="38" stroke-linecap="round"/> <path d="M412 249c6-12 16-20 30-25" stroke="#FF6C62" stroke-width="12" stroke-linecap="round"/> <circle cx="444" cy="223" r="8" fill="#FFF8EB"/> <path d="M205 410c-4 23-14 39-31 52" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <path d="M310 412c5 23 17 39 35 51" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <ellipse cx="166" cy="467" rx="32" ry="15" fill="#D9363C"/> <ellipse cx="355" cy="467" rx="32" ry="15" fill="#D9363C"/> <circle cx="378" cy="91" r="9" fill="#FFF8EB" opacity="0.55"/> </g> </svg>''',
+    'searching': '''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="searchTitle searchDesc"> <title id="searchTitle">Kleal mascot — searching pose</title> <desc id="searchDesc">Kleal leans forward, looks to the right, and shades its eyes while searching for a good match.</desc> <defs> <linearGradient id="searchBody" x1="110" y1="70" x2="398" y2="445" gradientUnits="userSpaceOnUse"> <stop stop-color="#FF756A"/> <stop offset="0.56" stop-color="#FF5B55"/> <stop offset="1" stop-color="#E84242"/> </linearGradient> <radialGradient id="searchFace" cx="0" cy="0" r="1" gradientTransform="translate(247 157) rotate(57) scale(163 153)" gradientUnits="userSpaceOnUse"> <stop stop-color="#FFFDF5"/> <stop offset="1" stop-color="#F4E8D7"/> </radialGradient> <radialGradient id="searchGround"> <stop stop-color="#111217" stop-opacity="0.18"/> <stop offset="0.72" stop-color="#111217" stop-opacity="0.06"/> <stop offset="1" stop-color="#111217" stop-opacity="0"/> </radialGradient> </defs> <g id="kleal-searching" transform="rotate(-4 256 256)"> <ellipse cx="250" cy="451" rx="163" ry="24" fill="url(#searchGround)"/> <path d="M251 41C158 49 95 124 103 211c5 54 34 89 72 110-20 44-6 95 34 124 32 24 70 14 84-24 22 34 65 38 94 8 29-30 36-71 17-107 47-13 74-49 69-88-6-42-40-68-81-65-2-83-73-135-141-128Z" fill="url(#searchBody)"/> <path d="M403 198c51-8 82 15 81 54-1 36-30 57-66 53-29-3-41-25-31-48 8-17 23-27 40-25 16 2 23 13 20 25-3 11-14 17-27 14" stroke="#E84242" stroke-width="25" stroke-linecap="round"/> <ellipse cx="265" cy="193" rx="116" ry="109" transform="rotate(4 265 193)" fill="url(#searchFace)"/> <ellipse cx="237" cy="190" rx="12" ry="18" fill="#171920"/> <ellipse cx="312" cy="184" rx="12" ry="18" fill="#171920"/> <circle cx="241" cy="185" r="3.5" fill="white"/> <circle cx="316" cy="179" r="3.5" fill="white"/> <path d="M267 230c12 9 24 8 34-3" stroke="#171920" stroke-width="8" stroke-linecap="round"/> <path d="M337 147c29-31 59-36 84-17" stroke="url(#searchBody)" stroke-width="34" stroke-linecap="round"/> <path d="M396 126c22-8 43-3 57 13" stroke="#FF7166" stroke-width="17" stroke-linecap="round"/> <path d="M395 126c13 12 20 27 21 45" stroke="#E84242" stroke-width="13" stroke-linecap="round"/> <path d="M164 317c-38-7-65-31-65-61 0-22 15-39 35-39 17 0 29 11 29 27 0 14-10 24-22 29" stroke="url(#searchBody)" stroke-width="35" stroke-linecap="round"/> <path d="M218 416c-17 22-38 35-63 39" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <path d="M315 414c20 19 43 29 68 29" stroke="#E84242" stroke-width="34" stroke-linecap="round"/> <ellipse cx="143" cy="457" rx="33" ry="14" transform="rotate(-12 143 457)" fill="#D9363C"/> <ellipse cx="394" cy="444" rx="33" ry="14" transform="rotate(8 394 444)" fill="#D9363C"/> <circle cx="441" cy="92" r="8" fill="#FF5B55"/> <circle cx="470" cy="82" r="5" fill="#FF5B55" opacity="0.48"/> </g> </svg>''',
+    'thinking': '''<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" role="img" aria-labelledby="thinkTitle thinkDesc"> <title id="thinkTitle">Kleal mascot — thinking and waiting pose</title> <desc id="thinkDesc">Kleal sits calmly, looks upward, and pauses before the next suggestion.</desc> <defs> <linearGradient id="thinkBody" x1="112" y1="74" x2="393" y2="444" gradientUnits="userSpaceOnUse"> <stop stop-color="#FF756A"/> <stop offset="0.55" stop-color="#FF5B55"/> <stop offset="1" stop-color="#E84242"/> </linearGradient> <radialGradient id="thinkFace" cx="0" cy="0" r="1" gradientTransform="translate(217 159) rotate(54) scale(164 155)" gradientUnits="userSpaceOnUse"> <stop stop-color="#FFFDF5"/> <stop offset="1" stop-color="#F4E8D7"/> </radialGradient> <radialGradient id="thinkGround"> <stop stop-color="#111217" stop-opacity="0.18"/> <stop offset="0.72" stop-color="#111217" stop-opacity="0.06"/> <stop offset="1" stop-color="#111217" stop-opacity="0"/> </radialGradient> </defs> <g id="kleal-thinking"> <ellipse cx="256" cy="451" rx="164" ry="24" fill="url(#thinkGround)"/> <path d="M250 43C158 43 91 110 91 197c0 54 25 92 61 117-22 43-13 93 27 123 32 24 69 15 84-21 20 37 62 43 92 16 30-28 40-67 24-104 47-11 76-45 74-83-3-41-35-68-76-68-5-80-61-134-127-134Z" fill="url(#thinkBody)"/> <path d="M389 203c50-5 78 19 75 57-3 35-32 53-66 47-28-5-38-26-27-48 8-16 23-24 40-21 15 3 21 14 17 25-4 11-15 15-27 11" stroke="#E84242" stroke-width="24" stroke-linecap="round"/> <ellipse cx="248" cy="194" rx="114" ry="108" fill="url(#thinkFace)"/> <ellipse cx="214" cy="184" rx="11" ry="17" fill="#171920"/> <ellipse cx="286" cy="174" rx="11" ry="17" fill="#171920"/> <circle cx="217" cy="179" r="3" fill="white"/> <circle cx="289" cy="169" r="3" fill="white"/> <path d="M232 228c10 7 21 6 30-2" stroke="#171920" stroke-width="7" stroke-linecap="round"/> <path d="M159 316c-32-3-55-21-59-46-3-21 9-38 28-41 16-2 28 8 30 23 2 14-6 24-18 29" stroke="url(#thinkBody)" stroke-width="35" stroke-linecap="round"/> <path d="M346 311c-24 10-42 29-50 54" stroke="url(#thinkBody)" stroke-width="35" stroke-linecap="round"/> <ellipse cx="286" cy="368" rx="22" ry="18" transform="rotate(-25 286 368)" fill="#E84242"/> <path d="M201 408c-31 25-60 37-91 36" stroke="#E84242" stroke-width="36" stroke-linecap="round"/> <path d="M306 406c31 24 61 34 94 31" stroke="#E84242" stroke-width="36" stroke-linecap="round"/> <ellipse cx="94" cy="445" rx="34" ry="15" transform="rotate(-5 94 445)" fill="#D9363C"/> <ellipse cx="414" cy="438" rx="34" ry="15" transform="rotate(4 414 438)" fill="#D9363C"/> <path d="M74 443c94 24 267 23 367-4" stroke="#FF5B55" stroke-width="8" stroke-linecap="round" opacity="0.42"/> <circle cx="352" cy="112" r="8" fill="#171920" opacity="0.34"/> <circle cx="381" cy="91" r="6" fill="#171920" opacity="0.24"/> <circle cx="406" cy="72" r="4" fill="#171920" opacity="0.16"/> </g> </svg>''',
+}
+
+
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.split("?", 1)[0] == "/":   # ignore ?p=<onboarding profile> query
             b = HTML.encode("utf-8")
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+        elif self.path.startswith("/assets/") and self.path.endswith(".svg"):
+            name = self.path[len("/assets/"):-len(".svg")]
+            art = ASSETS.get(name)
+            if not art:
+                self.send_response(404); self.end_headers(); return
+            b = art.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers(); self.wfile.write(b)
         else:
             self.send_response(404); self.end_headers()
     def log_message(self, *a):

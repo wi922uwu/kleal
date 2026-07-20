@@ -68,8 +68,13 @@ def call_llm(cfg, messages, temperature=0.7):
 class FieldStreamer:
     """Incrementally pull one top-level string field out of a JSON object as it streams."""
 
-    def __init__(self, field):
+    def __init__(self, field, gate=None):
         self.key = '"%s"' % field if field else None
+        # gate = (key, expected) — hold the field back until another key in the SAME object is seen
+        # with the expected value. The caller puts that key BEFORE the field in the prompt, so the
+        # verdict arrives before the text does and text that would be thrown away is never shown.
+        self.gate = gate
+        self.blocked = False
         self.buf = ""          # raw text seen so far (also the full body for the final parse)
         self.started = False   # we are inside the value
         self.done = False      # the value's closing quote was seen
@@ -85,8 +90,22 @@ class FieldStreamer:
             out = self.buf[self._scan:]
             self._scan = len(self.buf)
             return out
-        if self.done:
+        if self.done or self.blocked:
             return ""
+        if self.gate and not self.started:
+            gk, gv = self.gate
+            i = self.buf.find('"%s"' % gk)
+            if i < 0:
+                return ""                       # verdict not in yet — emit nothing
+            seg = self.buf[i + len(gk) + 2: i + len(gk) + 24].lstrip(": \t")
+            if seg.startswith(("true", "false", '"')):
+                got = seg.split(",")[0].split("}")[0].strip().strip('"')
+                if got != str(gv).lower():
+                    self.blocked = True         # this reply is destined to be discarded
+                    return ""
+                self.gate = None                # verdict matches — stream from here on
+            else:
+                return ""                       # value not complete yet
         if not self.started:
             i = self.buf.find(self.key)
             if i < 0:
@@ -129,7 +148,7 @@ class FieldStreamer:
         return "".join(out)
 
 
-def stream_llm(cfg, messages, temperature, field, on_text):
+def stream_llm(cfg, messages, temperature, field, on_text, gate=None):
     """Stream from the OpenAI-compatible endpoint. Calls on_text(str) per new piece of the field.
     Returns the FULL raw model output so the caller can still parse the complete JSON."""
     payload = {"model": cfg["model"], "messages": messages, "max_tokens": 2500,
@@ -139,7 +158,7 @@ def stream_llm(cfg, messages, temperature, field, on_text):
         headers["Authorization"] = "Bearer " + cfg["key"]
     req = urllib.request.Request(cfg["base"] + "/chat/completions",
                                  data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-    fs = FieldStreamer(field)
+    fs = FieldStreamer(field, gate)
     raw = []
     with urllib.request.urlopen(req, timeout=180) as r:
         for line in r:
@@ -238,8 +257,10 @@ class H(BaseHTTPRequestHandler):
                 alive[0] = False
 
         try:
+            g = body.get("gate")
             raw = stream_llm(cfg, body.get("messages") or [], body.get("temperature", 0.7),
-                             body.get("field") or None, on_text)
+                             body.get("field") or None, on_text,
+                             (g[0], g[1]) if isinstance(g, list) and len(g) == 2 else None)
             if alive[0]:
                 self._sse("done", {"content": raw})
         except Exception as e:

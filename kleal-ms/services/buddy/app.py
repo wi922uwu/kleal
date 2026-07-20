@@ -1024,13 +1024,15 @@ def ghostwrite(profile, candidate, messages, lang="ru"):
 # the frontend launches the search separately.
 INTENT_BUILD_PROMPT = '''You help the user create an "intent" — a plan to meet people or do an activity with someone. Keep it SHORT: you only need two things — the ACTIVITY and roughly WHEN. Ask at most ONE brief question, and only if one of those is missing.
 
-Conversation so far is given. Return ONE JSON object, nothing else:
-{"reply":"<your message — a single question, or a short confirmation once you have the gist>",
- "valid":true|false, "ready":true|false,
+Conversation so far is given. Return ONE JSON object, nothing else, WITH THE KEYS IN EXACTLY THIS ORDER:
+{"valid":true|false, "ready":true|false,
+ "reply":"<your message — a single question, or a short confirmation once you have the gist>",
  "activity":"<short activity phrase, once known>", "time":"<when, once known>", "format":"<1:1|small group|group, if the user mentioned it>"}
+The order matters: "valid" must come before "reply".
 
 Rules:
-- valid:false ONLY when the latest message is gibberish / not about doing something with people (e.g. random letters "asdfgh"). Then reply asks them to describe what they'd like to do, and ready MUST be false. Never build an intent from nonsense.
+- valid:false when the latest message is NOT a plan to do something with people. That includes gibberish ("asdfgh"), greetings and small talk ("привет", "как дела", "спасибо"), and general questions ("что такое дивиденды", "какая погода") — anything a person could ask a chatbot rather than ask of a meetup. ready MUST then be false. Never build an intent from those.
+- valid:true ONLY when the message really is about doing something with another person, even if the details are still missing ("хочу кофе" is valid, "привет" is not).
 - ready:true as soon as you know the ACTIVITY and any sense of WHEN (a day, "today", "this weekend", or "whenever"). Do NOT keep asking — format, group size, exact place, number of people are OPTIONAL and default sensibly. If the user already gave activity + time in one message, set ready:true right away with a one-line confirmation.
 - Only when the activity is clear but timing is totally absent, ask the single question "when?". Never ask more than that.
 - Keep reply short (1-2 sentences).
@@ -1139,7 +1141,12 @@ def intent_build(messages, profile, on_text=None):
             # (wrong language / unparseable), and the user has already watched that text appear —
             # streaming the replacement on top would make the bubble rewrite itself mid-read.
             if on_text is not None and attempt == 0:
-                raw = llm_stream(MODEL_ID, msgs, temp, "reply", on_text)
+                # Gate on the builder's OWN verdict, which the prompt now emits BEFORE the text: when
+                # valid is false this reply is about to be thrown away for a conversational answer, so
+                # not one character of it reaches the screen. Without this the user watched the refusal
+                # type out and then turn into a different answer — indistinguishable from the model
+                # hallucinating and correcting itself, which is exactly how it was reported.
+                raw = llm_stream(MODEL_ID, msgs, temp, "reply", on_text, gate=("valid", True))
             else:
                 raw = llm_complete(MODEL_ID, msgs, temp)
             cand = _lenient_json(raw)
@@ -1196,7 +1203,9 @@ def intent_build(messages, profile, on_text=None):
         # must NOT fall through to the builder — that is what produced "Опишите, что вы хотели бы
         # сделать с кем-то" in response to a greeting. Measured: the fall-through made the typo
         # "привкет" a coin flip, 4 of 8 runs. A plain acknowledgement is always the better answer.
-        chat = _chat_reply(messages, profile, lang) or (
+        # This reply is the first and only text that reaches the screen (the gate suppressed the
+        # builder's discarded draft), so stream it — it is also the long one worth streaming.
+        chat = _chat_reply(messages, profile, lang, on_text=on_text) or (
             "Привет! Чем могу помочь?" if lang == "ru" else "Hey! How can I help?")
         return {"reply": chat, "valid": valid, "ready": False, "intent": None, "lang": lang,
                 "conversational": True}
