@@ -2762,8 +2762,11 @@ const STEP_LABELS = () => [T('Проверяю время и район','Checki
 function kbar(cta){
   // In the buddy chat the pill OPENS the intent conversation; inside that conversation it becomes the
   // way to finish it, and only once there is something to finish.
+  // `cta` is passed ONLY by the chat screen. The intent-mode branch used to ignore it, so the pill
+  // appeared on all 16 screens that share this bar — clarify, summary, searching, results — where it
+  // means nothing and duplicates their own buttons.
   const intentMode=(FLOW&&FLOW.mode==='intent');
-  const show=intentMode ? (FLOW.msgs||[]).some(m=>m.who==='me') : !!cta;
+  const show=!!cta && (!intentMode || (FLOW.msgs||[]).some(m=>m.who==='me'));
   return `<div class="kbar" style="justify-content:space-between">
   <div class="kback" data-act="flow-back">${IC.back}</div>
   ${show?`<div class="kchip on" data-act="${intentMode?'flow-done':'flow-finish'}" style="cursor:pointer;font-weight:600">${
