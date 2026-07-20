@@ -574,7 +574,9 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kflow .kbar{height:56px;display:flex;align-items:center;gap:8px;padding:0 16px;flex:none}
 .kflow .kback{width:44px;height:44px;border:1px solid var(--border);background:var(--card);border-radius:999px;
   display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none}
-.kflow .kcont{flex:1;min-height:0;overflow-y:auto;padding:8px 20px 24px;display:flex;flex-direction:column;gap:12px}
+.kflow .kcont{flex:1;min-height:0;overflow-y:auto;padding:8px 20px 24px;display:flex;flex-direction:column;
+  gap:12px;align-items:stretch}
+.kflow .kcont > *{flex:0 0 auto}
 .kprompt{display:flex;gap:8px;align-items:center}
 .kprompt .av{width:32px;height:32px;border-radius:999px;background:var(--primary);color:#fff;flex:none;
   display:flex;align-items:center;justify-content:center}
@@ -584,13 +586,13 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kbub.me{background:var(--primary);color:#fff;border-radius:18px 18px 1px 18px;align-self:flex-end}
 .ktime{font-size:12px;line-height:16px;color:var(--muted)}
 .kplan{background:var(--card);border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.06);padding:24px 16px 16px;
-  display:flex;flex-direction:column;gap:20px}
+  display:flex;flex-direction:column;gap:20px;flex:0 0 auto}
 .kplan.tight{padding:16px}
 .kgrp{display:flex;flex-direction:column;gap:12px}
 .kgrp .hd{display:flex;gap:8px;align-items:center;font-size:15px;line-height:20px;font-weight:600}
 .kgrp .hd svg{width:18px;height:18px}
 .kchips{display:flex;gap:8px;flex-wrap:wrap}
-.kchip{height:36px;padding:0 14px;border-radius:999px;display:flex;align-items:center;justify-content:center;
+.kchip{height:36px;min-height:36px;flex:0 0 auto;padding:0 14px;border-radius:999px;display:flex;align-items:center;justify-content:center;
   font-size:11px;line-height:16px;font-weight:500;cursor:pointer;background:var(--card);
   border:1px solid var(--border);color:var(--fg);white-space:nowrap}
 .kchip.on{background:var(--primary);border-color:var(--primary);color:#fff}
@@ -604,8 +606,10 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kreq .hd{display:flex;gap:8px;align-items:center;font-size:15px;line-height:20px;font-weight:600}
 .kreq .hd svg{width:22px;height:22px}
 .kcta{display:flex;gap:12px}
-.kbtn{flex:1;height:48px;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:8px;
-  font-size:15px;line-height:20px;font-weight:600;cursor:pointer;border:0;font-family:inherit}
+.kbtn{flex:0 0 auto;height:48px;min-height:48px;width:100%;border-radius:999px;display:flex;align-items:center;
+  justify-content:center;gap:8px;font-size:15px;line-height:20px;font-weight:600;cursor:pointer;border:0;
+  font-family:inherit;padding:0 20px}
+.kcta .kbtn{flex:1 1 0;width:auto}
 .kbtn.pri{background:var(--primary);color:#fff}
 .kbtn.sec{background:var(--neutral100);color:var(--fg)}
 /* the CTA footer sits under a scrolling body — give it breathing room and a surface so long
@@ -637,7 +641,8 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kflow{--success:#1FAE5E;--success-subtle:#E8F7EE;--succ-text:#0F7340;--accent-100:#FCEBC4;
   --warning:#F08C00;--neutral400:#A6ADBB;--primary-subtle:#F7E3E7;--radius-2xl:28px}
 /* segmented tabs (Your options / Why suggested) */
-.ktabs{display:flex;justify-content:space-between;background:#fff;border-radius:20px;padding:2px;overflow:hidden}
+.ktabs{display:flex;justify-content:space-between;background:#fff;border-radius:20px;padding:2px;
+  flex:0 0 auto;min-height:40px}
 .ktabs .kchip{flex:1;min-width:0}
 /* grouped result surface: one card split by right-inset hairlines, no shadow */
 .kgroup{background:var(--card);border-radius:16px;overflow:hidden}
@@ -670,8 +675,8 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .krsn .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
 .krsn .ti{font-size:17px;line-height:24px;font-weight:600}
 .krsn .su{font-size:13px;line-height:18px;color:var(--muted)}
-.kbtn.tall{height:56px}
-.kbtn.sm{height:40px;font-size:13px;line-height:16px;font-weight:500}
+.kbtn.tall{height:56px;min-height:56px}
+.kbtn.sm{height:40px;min-height:40px;font-size:13px;line-height:16px;font-weight:500}
 /* candidate profile */
 .cprof{display:flex;gap:12px;align-items:center;padding:0 16px 12px 12px}
 .cprof .av{width:124px;height:124px;border-radius:999px;background:var(--neutral100);flex:none;position:relative;
@@ -753,7 +758,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kdraft svg{width:12px;height:12px}
 /* time slots */
 .kslot{display:flex;gap:12px;align-items:center;background:var(--card);border-radius:12px;padding:14px 16px;
-  border:1px solid transparent;cursor:pointer}
+  border:1px solid transparent;cursor:pointer;flex:0 0 auto}
 .kslot.on{border-color:var(--primary)}
 .kslot .ic{width:32px;height:32px;border-radius:999px;background:var(--card);border:1px solid var(--border);
   display:flex;align-items:center;justify-content:center;flex:none;color:var(--fg)}
@@ -767,7 +772,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   display:flex;align-items:center;justify-content:center;color:var(--neutral300)}
 .kmap .pin{position:absolute;color:var(--primary)}
 .kplace{display:flex;gap:12px;background:var(--card);border-radius:12px;padding:12px;
-  border:1px solid transparent;cursor:pointer}
+  border:1px solid transparent;cursor:pointer;flex:0 0 auto}
 .kplace.on{border-color:var(--primary)}
 .kplace .ph{width:88px;height:88px;border-radius:8px;background:var(--neutral100);flex:none}
 .kplace .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
