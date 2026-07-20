@@ -342,21 +342,16 @@ def v2_chat(messages, prior):
 HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <title>Kleal - Onboarding</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Literata:opsz,wght@7..72,600;7..72,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{
-  /* Brand deck: coral thread on a clean light ground, B&W photography, editorial type.
-     The mascot is already coral (#FF5B55->#E84242) — the UI accent now matches it instead of pink. */
-  --accent:#E94E2B; --accent-soft:#FCEAE4; --ink:#1B1916; --bg:#F7F6F4; --card:#FFFFFF;
-  --bot:#F0EEEA; --line:#E7E5E0; --muted:#6B675F; --field:#F2F0EC; --ok:#2BB673; --track:#E8E6E1;
+  --accent:#F5455C; --accent-soft:#FDE7EB; --ink:#181B22; --bg:#F6F7F9; --card:#FFFFFF;
+  --bot:#EEEFF2; --line:#E7E8EC; --muted:#6B7180; --field:#F1F2F5; --ok:#2BB673; --track:#E5E7EB;
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}
 body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
-  font-family:"Golos Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;color:var(--ink)}
 .phone{width:390px;height:844px;max-height:100vh;background:var(--bg);border-radius:44px;overflow:hidden;
   position:relative;display:flex;flex-direction:column;box-shadow:0 30px 90px #0008}
@@ -372,30 +367,12 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .head{flex:none;padding:18px 18px 12px;display:flex;align-items:center;gap:12px}
 .ava{width:38px;height:38px;border-radius:50%;flex:none;background-size:cover;background-position:center;
   display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:17px;
-  background:linear-gradient(135deg,#FF6C55,#E84242)}
+  background:linear-gradient(135deg,#FF7A8A,#F5455C)}
 .ht{flex:1;min-width:0}
 .htt{font-weight:700;font-size:16px;letter-spacing:-.01em;text-align:center}
 .hsub{font-size:12px;color:var(--muted);margin-top:1px}
 .prow{display:flex;align-items:center;gap:9px;margin-top:7px}
 .pbar{height:4px;border-radius:3px;background:var(--track);overflow:hidden;flex:1}
-
-/* ---- brand deck: editorial display type + the coral thread ---- */
-.s-h,.htt,.auth-h,.auth-h2,.done-h{font-family:"Literata",Georgia,serif;letter-spacing:-.015em}
-.s-h{font-weight:700}
-.pbar>i{position:relative}
-.pbar>i::after{content:'';position:absolute;right:-4px;top:50%;transform:translateY(-50%);
-  width:9px;height:9px;border-radius:50%;background:var(--accent)}   /* the thread runs, the dot leads */
-@media (prefers-reduced-motion: no-preference){
-  .bub{animation:oup .35s both}
-  .pbar>i::after{animation:opulse 2.2s ease-out infinite}
-  .illus img{animation:ofloat 3s ease-in-out infinite alternate}
-  .chip,.cta,.opt{transition:transform .15s ease}
-  .chip:active,.opt:active{transform:scale(.95)}
-  .cta:active{transform:scale(.97)}
-}
-@keyframes oup{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-@keyframes opulse{0%{box-shadow:0 0 0 0 rgba(233,78,43,.35)}70%{box-shadow:0 0 0 8px rgba(233,78,43,0)}100%{box-shadow:0 0 0 0 rgba(233,78,43,0)}}
-@keyframes ofloat{from{transform:translateY(0)}to{transform:translateY(-5px)}}
 .pbar>i{display:block;height:100%;background:var(--accent);border-radius:3px;width:0;
   transition:width .5s cubic-bezier(.4,0,.2,1)}
 .pct{font-size:12.5px;color:var(--muted);font-weight:600;flex:none}
@@ -534,7 +511,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
 .s-h{font-size:25px;font-weight:800;line-height:1.18;margin-top:34px;letter-spacing:-.02em}
 .s-sub{color:var(--muted);font-size:14px;margin-top:10px;max-width:300px;line-height:1.5}
 .dots{display:flex;gap:7px;margin:20px 0 auto}
-.dots i{width:22px;height:5px;border-radius:3px;background:#D6D8DD}.dots i.on{background:var(--accent)}
+.dots i{width:22px;height:5px;border-radius:3px;background:#D6D8DD}.dots i.on{background:var(--ink);width:28px}
 .wave{position:relative;width:100%;height:160px;margin-top:auto;transform:translateY(44px)}
 .wave svg{position:absolute;bottom:0;left:0;display:block;width:100%;height:160px}
 .wave .btnwrap{position:absolute;left:0;right:0;bottom:54px;display:flex;justify-content:center}
@@ -559,7 +536,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;heigh
 .idcard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin:6px 0 12px;box-shadow:0 8px 24px #0000000a}
 .idrow{display:flex;align-items:center;gap:12px}
 .idava{width:46px;height:46px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#FF6C55,#E84242);color:#fff;font-weight:800;font-size:18px}
+  background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800;font-size:18px}
 .idt{flex:1;min-width:0}
 .idn{font-weight:800;font-size:18px;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
 .statusdot{width:9px;height:9px;border-radius:50%;background:var(--accent);display:inline-block;flex:none}
@@ -945,9 +922,7 @@ function _downscalePhoto(dataURL, cb){
   img.onload=function(){ const MAX=480; let w=img.width, h=img.height;
     if(w>=h && w>MAX){ h=Math.round(h*MAX/w); w=MAX; } else if(h>w && h>MAX){ w=Math.round(w*MAX/h); h=MAX; }
     try{ const c=document.createElement('canvas'); c.width=w; c.height=h;
-      const x=c.getContext('2d');
-      x.filter='grayscale(1) contrast(1.05)';        // brand deck: photography is B&W
-      x.drawImage(img,0,0,w,h); cb(c.toDataURL('image/jpeg',0.85)); }
+      c.getContext('2d').drawImage(img,0,0,w,h); cb(c.toDataURL('image/jpeg',0.85)); }
     catch(_e){ cb(dataURL); } };
   img.onerror=function(){ cb(dataURL); };
   img.src=dataURL;
@@ -972,7 +947,7 @@ WIDGETS.location=function(slot){
     ${mapHtml}
     <div class="lbl" style="margin-top:14px">Your city</div>
     <input class="inp" id="area" placeholder="Type your city, or use the button below" value="${esc(area)}">
-    <button id="gloc" type="button" style="margin-top:10px;width:100%;padding:12px;border:1px solid var(--line,#E7E8EC);background:#fff;border-radius:12px;font:inherit;font-weight:600;color:var(--accent,#E94E2B);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📍 Use my location</button>
+    <button id="gloc" type="button" style="margin-top:10px;width:100%;padding:12px;border:1px solid var(--line,#E7E8EC);background:#fff;border-radius:12px;font:inherit;font-weight:600;color:var(--accent,#F5455C);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📍 Use my location</button>
     <div class="lbl" style="margin-top:16px">How far are you happy to go? <b id="rkm">${r}</b> km</div>
     <input type="range" id="rad" min="1" max="50" value="${r}">
     <div class="cap" id="gstat" style="text-align:left;margin-top:8px"></div>
@@ -986,7 +961,7 @@ WIDGETS.location=function(slot){
     const center=(g.coarseLat&&g.coarseLon)?[g.coarseLat,g.coarseLon]:[41.3874,2.1686];
     lmap=L.map('lmap',{zoomControl:false,scrollWheelZoom:false,attributionControl:false});
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(lmap);
-    circle=L.circle(center,{radius:(r||10)*1000,color:'#E94E2B',weight:2,fillColor:'#E94E2B',fillOpacity:.12}).addTo(lmap);
+    circle=L.circle(center,{radius:(r||10)*1000,color:'#F5455C',weight:2,fillColor:'#F5455C',fillOpacity:.12}).addTo(lmap);
     lmap.setView(center,12); fit();
     setTimeout(()=>{ if(lmap){ lmap.invalidateSize(); fit(); } }, 80);
   }

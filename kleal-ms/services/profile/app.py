@@ -124,28 +124,26 @@ HTML_HEAD = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Kleal Profile</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Literata:opsz,wght@7..72,600;7..72,700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{
-  /* Brand deck: coral thread, B&W photography, editorial type on a clean light ground.
-     The mascot always was coral (#FF5B55->#E84242); --primary now matches it instead of pink. */
-  --bg:#F7F6F4; --surface:#F7F6F4; --card:#FFFFFF; --fg:#1B1916; --muted:#615D55; --border:#E5E3DE;
-  --line:#ECEAE5; --neutral100:#F0EEEA; --neutral300:#D2CFC8; --primary:#E94E2B; --primary-fg:#FFFFFF;
-  --coral50:#FDF1EC; --coral200:#F6C6B4; --coral700:#B23A18;
+  --bg:#F7F8FA; --surface:#F7F8FA; --card:#FFFFFF; --fg:#181B22; --muted:#5A616E; --border:#E2E5EC;
+  --line:#ECEEF2; --neutral100:#EEF0F4; --neutral300:#CDD2DC; --primary:#F5455C; --primary-fg:#FFFFFF;
+  --coral50:#FFF1F3; --coral200:#FECDD4; --coral700:#BC1F38;
   --success-text:#0F7340; --success-bg:#E8F7EE; --info-text:#1F58BE; --info-bg:#E8F1FD;
   --warn-text:#9A5400; --warn-bg:#FFF4E5; --danger:#E5484D;
 
   /* Referenced 6x but never declared, so .candbadge/.passbtn rendered with no background and
      the verified tick came out black instead of green. Aliases of existing tokens — no new colours. */
   --field:var(--neutral100); --accent:var(--coral700); --accent-soft:var(--coral50); --ok:var(--success-text);
-  --neutral400:#ACA8A0;   /* placeholder-avatar glyph on a --neutral100 circle; sits between 300 and --muted */
+  --neutral400:#A9B0BE;   /* placeholder-avatar glyph on a --neutral100 circle; sits between 300 and --muted */
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}
 body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
-  font-family:"Golos Text",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--fg)}
+  font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--fg)}
 .phone{width:390px;height:844px;max-height:100vh;background:var(--bg);border-radius:44px;overflow:hidden;
   position:relative;display:flex;flex-direction:column;box-shadow:0 30px 90px #0008}
 @media(max-width:430px){body{background:var(--bg)}.phone{width:100vw;height:100vh;border-radius:0}}
@@ -388,7 +386,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .candrow{display:flex;flex-direction:column;gap:8px;padding:12px 16px}
 .candmain{display:flex;align-items:center;gap:12px;min-width:0}
 .candav{width:38px;height:38px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#FF6C55,#E84242);color:#fff;font-weight:800;font-size:15px}
+  background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800;font-size:15px}
 .candt{flex:1;min-width:0}
 .candn{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:4px;min-width:0}
 .candnm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
@@ -434,7 +432,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .krow{display:flex;align-items:flex-end;gap:9px;max-width:90%}
 .krow .kav{flex:none}
 .krow .kcol{display:flex;flex-direction:column;gap:3px;min-width:0}
-.kav{width:34px;height:34px;border-radius:50%;flex:none;background:linear-gradient(135deg,#FF6C55,#E84242)}
+.kav{width:34px;height:34px;border-radius:50%;flex:none;background:linear-gradient(135deg,#FF7A8A,#F5455C)}
 .kav.sp{background:transparent}
 .mrow{display:flex;flex-direction:column;align-items:flex-end;gap:3px;align-self:flex-end;max-width:82%}
 .btime{font-size:11px;color:var(--muted);padding:0 4px}
@@ -461,7 +459,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* match chat */
 .matchhead{display:flex;align-items:center;gap:12px;padding:6px 2px 4px}
 .mava{width:52px;height:52px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#FF6C55,#E84242);color:#fff;font-weight:800;font-size:20px;transition:filter .4s}
+  background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800;font-size:20px;transition:filter .4s}
 .mmeta{flex:1;min-width:0}.mnm{font-size:17px;font-weight:800}
 .mnm .mscore{font-size:12px;font-weight:600;color:var(--primary);margin-left:6px}
 .mhint{font-size:12px;color:var(--muted);margin-top:2px}
@@ -502,7 +500,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .searchbtn{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);white-space:nowrap;width:auto;padding:11px 20px}
 .msgrow{display:flex;align-items:center;gap:12px;padding:12px 4px;cursor:pointer}
 .msgav{width:46px;height:46px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:var(--neutral100);color:var(--muted)}
-.msgav.k{background:linear-gradient(135deg,#FF6C55,#E84242);color:#fff;font-weight:800}
+.msgav.k{background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800}
 .msgt{flex:1;min-width:0}.msgt .mn{font-size:15px;font-weight:600}
 .msgt .ml{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .msgtime{font-size:11px;color:var(--muted);flex:none;align-self:flex-start;margin-top:3px}
@@ -539,13 +537,13 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .tcard .tm{font-size:12px;color:var(--muted);margin-top:5px}
 .tcard .tpart{display:flex;align-items:center;gap:9px;margin-top:11px}
 .stack5{display:flex}
-.stack5 .av{width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#FF6C55,#E84242);border:2px solid var(--card);margin-left:-7px}
+.stack5 .av{width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#FF7A8A,#F5455C);border:2px solid var(--card);margin-left:-7px}
 .stack5 .av:first-child{margin-left:0}
 .stack5 .more{width:22px;height:22px;border-radius:50%;background:var(--neutral100);border:2px solid var(--card);margin-left:-7px;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;color:var(--muted)}
 .tcard .pn{font-size:12px;color:var(--muted)}
 .tcard .tbm{color:var(--muted);flex:none;align-self:flex-start}
 /* ===================== Figma "Agent Home / request flow" (479:14518…14661) =====================
-   Design tokens match the current brand set (#F7F6F4 / #1B1916 / coral #E94E2B / Golos Text), so these
+   Design tokens match the existing ones (#F7F8FA / #181B22 / #F5455C / #EEF0F4 / Geist), so these
    rules only add the shapes the new screens need. Sizes are taken verbatim from the frames. */
 .k-h2{font-size:24px;line-height:32px;font-weight:600;letter-spacing:-.24px}
 .k-h3{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.1px}
@@ -676,38 +674,6 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
    «Принять изменения» sat below the screen edge, unreachable. Header and footer stay put. */
 .esbody{overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1 1 auto;min-height:0;scrollbar-width:none}
 .esbody::-webkit-scrollbar{display:none}
-/* ---- brand deck: editorial display type, the coral thread, B&W photography ---- */
-.ahd .nm,.kprompt .k-h3,.idcard .nm{font-family:"Literata",Georgia,serif;letter-spacing:-.015em}
-.k-title{text-transform:uppercase;font-size:11.5px;letter-spacing:.09em;color:var(--muted);font-weight:600}
-.kthread{display:block;width:100%;height:64px;margin:-4px 0 -10px;pointer-events:none;flex:none;overflow:visible}
-/* ---- motion: alive, but only where it means something ---- */
-@media (prefers-reduced-motion: no-preference){
-  .enter .kthread path{stroke-dasharray:1;stroke-dashoffset:1;animation:kdraw .8s .3s cubic-bezier(.6,0,.3,1) forwards}
-  .enter .kthread .kd1{animation:kpop .4s .2s both}
-  .enter .kthread .kd2{animation:kpop .35s 1.05s both}
-  .kthread circle{transform-box:fill-box;transform-origin:center}
-  .enter .ah2 .body>*{animation:kup .45s both}
-  .enter .ah2 .body>*:nth-child(2){animation-delay:.06s}
-  .enter .ah2 .body>*:nth-child(3){animation-delay:.12s}
-  .enter .ah2 .body>*:nth-child(4){animation-delay:.18s}
-  .enter .ah2 .body>*:nth-child(5){animation-delay:.24s}
-  .enter .ah2 .body>*:nth-child(6){animation-delay:.30s}
-  .enter .ah2 .body>*:nth-child(7){animation-delay:.36s}
-  .aintro2 .msc img{animation:kfloat 2.8s ease-in-out infinite alternate}
-  .abadge{animation:kpop .35s .5s both}
-  .kbtn,.snd,.card,.kchip,.qtile{transition:transform .15s ease}
-  .kbtn:active,.kchip:active{transform:scale(.96)}
-  .card:active{transform:scale(.988)}
-  .snd:active{transform:scale(.9)}
-  .snd svg{transition:transform .25s ease}
-  .snd:hover svg{transform:rotate(-14deg)}
-}
-@keyframes kdraw{to{stroke-dashoffset:0}}
-@keyframes kpop{0%{transform:scale(0)}70%{transform:scale(1.3)}100%{transform:scale(1)}}
-@keyframes kup{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-@keyframes kfloat{from{transform:translateY(0)}to{transform:translateY(-4px)}}
-.ava,.ecard .ph,.candav{filter:grayscale(1)}          /* photography and avatars read B&W, per the deck */
-.msc,.kav,.fab{filter:none}                            /* the mascot stays coral — it IS the brand */
 .khelp{display:flex;justify-content:center;padding:0 12px 6px}
 .khelp .kchip{gap:6px;cursor:pointer;height:34px;min-height:34px}
 .khelp .kchip svg{width:15px;height:15px}
@@ -1043,7 +1009,7 @@ const IC={
   back:svg('<path d="M15 6l-6 6 6 6"/>'),
   bookmark:svg('<path d="M6 4h12v17l-6-4-6 4V4z"/>'),
   chevL:svg('<path d="M15 6l-6 6 6 6"/>'),
-  verify:'<svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 2.6l2.2 1.7 2.8-.2.9 2.7 2.4 1.5-.7 2.8.7 2.8-2.4 1.5-.9 2.7-2.8-.2L12 21.4l-2.2-1.7-2.8.2-.9-2.7-2.4-1.5.7-2.8-.7-2.8 2.4-1.5.9-2.7 2.8.2L12 2.6z" fill="#E94E2B"/><path d="M8.6 12l2.2 2.2 4.6-4.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  verify:'<svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 2.6l2.2 1.7 2.8-.2.9 2.7 2.4 1.5-.7 2.8.7 2.8-2.4 1.5-.9 2.7-2.8-.2L12 21.4l-2.2-1.7-2.8.2-.9-2.7-2.4-1.5.7-2.8-.7-2.8 2.4-1.5.9-2.7 2.8.2L12 2.6z" fill="#F5455C"/><path d="M8.6 12l2.2 2.2 4.6-4.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   edit:svg('<path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.83-2.83L5 17z"/><path d="M14 7l3 3"/>',null,22),
   person:svg('<circle cx="12" cy="8.5" r="3.6"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>',null,26),
   pin:svg('<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>'),
@@ -1095,7 +1061,7 @@ const IC={
   mic:svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>',null,26),
   peoplePin:svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 9-4"/><path d="M17.5 21s3-2.6 3-5a3 3 0 0 0-6 0c0 2.4 3 5 3 5z"/><circle cx="17.5" cy="16" r="1"/>'),
 };
-const MASCOT = '<svg viewBox="0 0 48 48" width="46" height="46"><rect x="6" y="6" width="36" height="36" rx="16" fill="#FCEAE4"/><circle cx="19" cy="24" r="2.4" fill="#E94E2B"/><circle cx="29" cy="24" r="2.4" fill="#E94E2B"/><path d="M18.5 30c2.2 1.8 8.8 1.8 11 0" fill="none" stroke="#E94E2B" stroke-width="2" stroke-linecap="round"/></svg>';
+const MASCOT = '<svg viewBox="0 0 48 48" width="46" height="46"><rect x="6" y="6" width="36" height="36" rx="16" fill="#FDE7EB"/><circle cx="19" cy="24" r="2.4" fill="#F5455C"/><circle cx="29" cy="24" r="2.4" fill="#F5455C"/><path d="M18.5 30c2.2 1.8 8.8 1.8 11 0" fill="none" stroke="#F5455C" stroke-width="2" stroke-linecap="round"/></svg>';
 document.getElementById('sbic').innerHTML=
  '<svg viewBox="0 0 20 14" fill="#181B22" width="18" height="13"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5.3" y="6" width="3" height="8" rx="1"/><rect x="10.6" y="3" width="3" height="11" rx="1"/><rect x="15.9" y="0" width="3" height="14" rx="1"/></svg>'
  +'<svg viewBox="0 0 20 15" fill="none" stroke="#181B22" stroke-width="1.9" stroke-linecap="round" width="18" height="14"><path d="M2 5.2a13 13 0 0 1 16 0M5 8.6a8 8 0 0 1 10 0M8 12a3 3 0 0 1 4 0"/></svg>'
@@ -2126,7 +2092,7 @@ function initExploreMap(){
   const el=document.getElementById('lmap'); if(!el) return;
   const map=L.map('lmap',{zoomControl:false,scrollWheelZoom:false,attributionControl:false});
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
-  const pin='<svg viewBox="0 0 24 24" width="30" height="30" style="filter:drop-shadow(0 3px 3px rgba(20,20,40,.28))"><path d="M12 22s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z" fill="#E94E2B"/><circle cx="12" cy="10.5" r="2.6" fill="#fff"/></svg>';
+  const pin='<svg viewBox="0 0 24 24" width="30" height="30" style="filter:drop-shadow(0 3px 3px rgba(20,20,40,.28))"><path d="M12 22s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z" fill="#F5455C"/><circle cx="12" cy="10.5" r="2.6" fill="#fff"/></svg>';
   const cIcon=L.divIcon({html:pin,className:'',iconSize:[30,30],iconAnchor:[15,30],popupAnchor:[0,-28]});
   const meIcon=L.divIcon({html:'<div class="meDot"></div>',className:'',iconSize:[16,16],iconAnchor:[8,8]});
   const pts=[];
@@ -2520,27 +2486,6 @@ function inboxCards(){
 // ================= Agent Home — the main landing after onboarding (Figma Flow 4) =================
 // Agent Home — Figma 479:14518. Greeting, agent intro card, composer, four quick tiles and the
 // "For you today" feed (real plans from /api/agent/explore, never invented ones).
-// The deck's signature: a thin coral thread with dots, travelling from one moment to the next.
-// Purely decorative (pointer-events:none), so UX is untouched.
-// The deck's thread, reworked to CONNECT rather than decorate: it leaves from under the send
-// button (where your ask lives) and lands at the next section's eyebrow (where the answer starts).
-// pathLength=1 lets CSS draw it with a plain dashoffset animation on screen entry. The leading dot
-// is larger than the landing dot — the line has a direction, like the deck's.
-// The deck's thread. Third iteration, and the lesson is direction: a flat horizontal squiggle reads
-// as a failed divider, while the deck's line DIVES — real vertical travel from one block down into
-// the next. So: taller canvas, a descending S from under the send button to the next eyebrow, and
-// exactly ONE thread on the screen — repeated, it became wallpaper.
-// The deck's thread, final placement: at the TAIL of the page. Between blocks it kept reading as a
-// divider no matter the curve. Here it leaves the last card and runs off the right edge of the
-// screen — the deck's own gesture (its lines exit the slide) — and it means something: the thread
-// continues, Kleal keeps searching. No landing dot: a line that lands is a connection, a line that
-// exits is a continuation.
-function kthread(){
-  return `<svg class="kthread" viewBox="0 0 358 64" fill="none" preserveAspectRatio="xMidYMid meet">
-    <path d="M20 12 C 110 46, 236 6, 362 40" pathLength="1"
-      stroke="var(--primary)" stroke-width="2.25" stroke-linecap="round"/>
-    <circle class="kd1" cx="20" cy="12" r="5.5" fill="var(--primary)"/></svg>`;
-}
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans for "For you today"
   const nm=(DATA.name||'there').split(' ')[0];
@@ -2594,7 +2539,6 @@ function scr_agenthome(){
           ${card}
         </div>
       </div>
-      ${kthread()}
     </div>
   </div>`;
 }
@@ -3904,14 +3848,6 @@ function scr_editSignal(){
 let editSig=null;  // {kind:'interest'|'signal', ...}
 let detail=null;  // {interest}
 function render(){
-  // Entrance animations (thread draw, staggered rise) must play when the user ARRIVES on a screen —
-  // not on every re-render the live polls trigger. A short grace window keeps them alive through the
-  // data refreshes that land right after boot (profile row, inbox), which used to wipe the animation
-  // mid-draw; after the window, poll re-renders stay static.
-  const _now=Date.now();
-  if(render._last !== cur) render._lastAt=_now;
-  const _entering = render._last !== cur || (_now-(render._lastAt||0)) < 1600;
-  render._last = cur;
   const meta=TABS.find(t=>t[0]===cur)||TABS[0];
   const isHome = !editSig && !detail && cur==='overview';
   const isRoot = !editSig && !detail && ROOTS.includes(cur);
@@ -3951,7 +3887,6 @@ function render(){
     try{ A.innerHTML=(SCREENS[cur]||scr_overview)(); }
     catch(err){ console.error('render failed on', cur, err); cur='agenthome'; A.innerHTML=scr_agenthome(); }
   }
-  A.classList.toggle('enter', _entering);
   if(SHEET==='interest') A.insertAdjacentHTML('beforeend', sheetHTML());
   if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
   if(ESHEET) A.insertAdjacentHTML('beforeend', eSheetHTML());
@@ -4206,9 +4141,7 @@ function _downscalePhoto(dataURL, cb){
   img.onload=function(){ const MAX=480; let w=img.width, h=img.height;
     if(w>=h && w>MAX){ h=Math.round(h*MAX/w); w=MAX; } else if(h>w && h>MAX){ w=Math.round(w*MAX/h); h=MAX; }
     try{ const c=document.createElement('canvas'); c.width=w; c.height=h;
-      const x=c.getContext('2d');
-      x.filter='grayscale(1) contrast(1.05)';        // brand deck: photography is B&W
-      x.drawImage(img,0,0,w,h); cb(c.toDataURL('image/jpeg',0.85)); }
+      c.getContext('2d').drawImage(img,0,0,w,h); cb(c.toDataURL('image/jpeg',0.85)); }
     catch(_e){ cb(dataURL); } };
   img.onerror=function(){ cb(dataURL); };
   img.src=dataURL;
