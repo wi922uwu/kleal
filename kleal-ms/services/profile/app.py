@@ -2314,11 +2314,52 @@ function scr_messages(){
     <div class="msgtime">${esc(m.time)}</div></div></div>`).join('')}</div>`;
 }
 
+// ---- incoming requests from other accounts (the other half of delivery) ----
+// Until this existed a request had nowhere to arrive: the sender saw «отправлено», the recipient saw
+// nothing anywhere in the app.
+let INBOX=[], _inboxT=null;
+async function loadInbox(){
+  const me=(DATA.name||'').trim(); if(!me) return;
+  try{
+    const r=await fetch('/api/agent/inbox?self='+encodeURIComponent(me)).then(x=>x.json());
+    const next=(r&&r.requests||[]).filter(x=>x.status==='pending');
+    const fresh=next.filter(n=>!INBOX.some(o=>o.id===n.id));
+    INBOX=next;
+    fresh.forEach(n=>addNotif('match', T('Запрос от ','Request from ')+n.from,
+      n.note||((n.intent&&n.intent.title)||T('хочет встретиться','wants to meet')), null));
+    if(fresh.length&&(cur==='agenthome'||cur==='messages'||cur==='notifs')) render();
+  }catch(e){}
+  clearTimeout(_inboxT); _inboxT=setTimeout(loadInbox, 15000);
+}
+async function answerReq(id, decision){
+  const me=(DATA.name||'').trim();
+  try{
+    await fetch('/api/agent/respond',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id, decision, self:me})});
+  }catch(e){}
+  INBOX=INBOX.filter(r=>r.id!==id);
+  toast(decision==='accepted'?T('Принято — можно договариваться','Accepted — you can plan it')
+                             :T('Отклонено','Declined'));
+  render(); saveState();
+}
+function inboxCards(){
+  if(!INBOX.length) return '';
+  return `<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+    <div class="k-title">${T('Входящие запросы','Incoming requests')}</div>
+    ${INBOX.map(r=>`<div class="card pad">
+      <div class="k-h3" style="margin-bottom:2px">${esc(r.from)}</div>
+      <div class="k-label" style="color:var(--muted)">${esc(r.note||((r.intent&&r.intent.title)||T('хочет встретиться','wants to meet')))}</div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="kbtn pri sm" data-act="req-yes" data-id="${esc(r.id)}">${T('Принять','Accept')}</button>
+        <button class="kbtn sec sm" data-act="req-no" data-id="${esc(r.id)}">${T('Отклонить','Decline')}</button>
+      </div></div>`).join('')}</div>`;
+}
 // ================= Agent Home — the main landing after onboarding (Figma Flow 4) =================
 // Agent Home — Figma 479:14518. Greeting, agent intro card, composer, four quick tiles and the
 // "For you today" feed (real plans from /api/agent/explore, never invented ones).
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans for "For you today"
+  if(!_inboxT) loadInbox();                  // and any requests other people have sent us
   const nm=(DATA.name||'there').split(' ')[0];
   const plan=(DATA.plans||[])[0];
   const qa=[['person',T('Люди рядом','People nearby'),'q-people'],['calen',T('События рядом','Events nearby'),'q-events'],
@@ -2363,6 +2404,7 @@ function scr_agenthome(){
             <input id="ainput" placeholder="${T('Опиши, кого или что ищешь…',"Describe who or what you're look…")}" autocomplete="off">${IC.mic}</div>
           <button class="snd" data-act="agent-go">${IC.send}</button></div>
       </div>
+      ${inboxCards()}
       <div style="display:flex;flex-direction:column;gap:32px">
         <div style="display:flex;flex-direction:column;gap:16px">
           <div class="k-title">${T('Быстрые действия','Use district only')}</div>
@@ -3113,7 +3155,48 @@ async function planSend(){
     await fetch('/api/agent/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:PLAN.cand.name, decision:'accepted', uid:DATA.name||'me'})});
   }catch(e){}
-  let r=null;                                     // ask THEIR agent, exactly like the intent launch does
+  // ACTUALLY deliver it. This used to only ask an LLM to role-play the recipient's agent, so the
+  // screen said «мы отправили твой запрос <name>» while nothing reached that account — logging in as
+  // them showed no request at all. The proposal is now stored server-side and they answer it
+  // themselves; nothing here decides on their behalf.
+  let sent=null;
+  try{
+    sent=await fetch('/api/agent/propose',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({from:DATA.name||'', to:PLAN.cand.name,
+        intent:(FLOW&&flowIntent())||{topics:[]},
+        note:(PLAN.note||'')})}).then(x=>x.json());
+  }catch(e){ sent=null; }
+  PLAN.reqId=(sent&&sent.id)||null;
+  PLAN.delivered=!!(sent&&sent.ok);
+  PLAN.reply=null; PLAN.mutual=false;             // only the real person can make this true
+  if(cur==='waiting') render();
+  pollReply();
+  return;
+}
+// The answer comes from the other account, so watch for it instead of generating one.
+let _pollT=null;
+function pollReply(){
+  clearTimeout(_pollT);
+  if(!PLAN||!PLAN.reqId) return;
+  _pollT=setTimeout(async()=>{
+    let rs=null;
+    try{ rs=await fetch('/api/agent/outbox?self='+encodeURIComponent(DATA.name||'')).then(x=>x.json()); }catch(e){}
+    const mine=((rs&&rs.requests)||[]).find(r=>r.id===PLAN.reqId);
+    if(mine&&mine.status!=='pending'){
+      PLAN.mutual=(mine.status==='accepted');
+      PLAN.answered=mine.status;
+      addNotif('match', PLAN.mutual?T('Согласие: ','Accepted: ')+PLAN.cand.name
+                                   :T('Отказ: ','Declined: ')+PLAN.cand.name,
+               PLAN.mutual?T('Можно договариваться о встрече','You can plan the meetup')
+                          :T('В этот раз не сложилось','Not this time'), null);
+      if(cur==='waiting'){ cur=PLAN.mutual?'mutual':'fewmatches'; }
+      render(); saveState(); return;
+    }
+    pollReply();                                   // still pending — keep watching
+  }, 4000);
+}
+async function _planSendLegacy(){
+  let r=null;
   try{
     r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({intent:(FLOW&&flowIntent())||{topics:[]}, profile:matchProfile(),
@@ -3610,6 +3693,8 @@ function doAct(act, ds){
       if(!confirm(T('Выйти и очистить профиль на этом устройстве?','Log out and clear this profile on this device?'))) break;
       try{ localStorage.clear(); }catch(_e){}
       location.href='/'; break; }
+    case 'req-yes': answerReq(ds.id,'accepted'); break;
+    case 'req-no':  answerReq(ds.id,'declined'); break;
     case 'kleal-help': klealHelp(); break;
     case 'use-suggest': { const e=document.getElementById('mcin');
       if(e&&matchWith&&matchWith.suggest){ e.value=matchWith.suggest; e.focus(); } break; }

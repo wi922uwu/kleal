@@ -123,6 +123,9 @@ _FIN_RE = re.compile(r"that'?s all|that is all|\bfinish|\bdone\b|no more|nothing
 _ADD_RE = re.compile(r"\badd\b|another|one more|\bmore\b|\byes\b|yeah|sure|\balso\b|actually"
                      r"|добав|ещ[её]|да[.! ]*$|конечно|также|хочу", re.I)
 _CONFIRM_OPTIONS = {"ru": "Добавить ещё интерес | Это всё", "en": "Add another interest | That's all"}
+# Recognises the closing question in either language, in the agent's OWN words — it phrases it freely,
+# so match the stable part ("ещё интерес" / "another interest"), not a whole sentence.
+_CONFIRM_ASKED_RE = re.compile(r"another interest|ещ[ёе]\s+интерес|это вс[ёе]|that'?s all", re.I)
 
 # gibberish / non-answer detection: catch keyboard-mash like "afcafcafc" / "ппфцпц" so the funnel
 # re-asks instead of silently accepting junk and moving on.
@@ -290,8 +293,11 @@ def v2_chat(messages, prior):
     crit = critical_status_v2(merged)
     gaps = _v2_gaps(merged, hist)
     lastu = next((str(m.get("content", "")) for m in reversed(hist) if m.get("role") == "user"), "")
-    confirm_asked = any(m.get("role") == "assistant" and "another interest" in str(m.get("content", "")).lower()
-                        for m in hist)
+    # THIRD piece of the localisation coupling, and the one that bit: this sniffed the assistant's own
+    # message for the literal English "another interest". Once the funnel started replying in Russian
+    # the flag never went true, the _FIN_RE finish branch became unreachable, and the step looped
+    # forever — the user answered «Это всё» three times and was asked again each time.
+
     sys = FUNNEL_PROMPT + _ONB_LANG_RULE[_onb_lang(hist)]
     complete = False
     if _is_gibberish(lastu):
@@ -306,11 +312,16 @@ def v2_chat(messages, prior):
                 "If it is a closed choice end with [OPTIONS: a | b | c] (pipe-separated only). "
                 "Never re-ask anything already known. Queued after this: %s]"
                 % (gaps[0], "; ".join(gaps[1:3]) or "none"))
-    elif confirm_asked and _FIN_RE.search(lastu):
+    # NOT gated on confirm_asked any more. That flag was inferred from the assistant's own PROSE, which
+    # only ever worked because the English prompt made it echo "another interest" verbatim; in Russian
+    # it rephrases every time ("Похоже, мы уже обсудили все интересы") and no pattern catches it
+    # reliably. This branch is already unreachable while `gaps` is non-empty, so "everything is
+    # covered AND the user says they're done" is the honest condition — and it is language-free.
+    elif _FIN_RE.search(lastu):
         complete = True
         sys += (" [The user confirmed they are done with interests. Reply ONE short, warm wrap-up sentence "
                 "that ends in a period (NEVER a question mark) and tells them to tap Continue. No [OPTIONS].]")
-    elif confirm_asked and _ADD_RE.search(lastu):
+    elif _ADD_RE.search(lastu):
         sys += " [The user wants to add another interest. Ask ONE short question: what else they are into. No [OPTIONS].]"
     else:
         # confirm-before-finish: never end the interests step without asking

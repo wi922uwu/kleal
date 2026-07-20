@@ -768,6 +768,69 @@ def agent_plan(query, prof, ctx=None, override=None):
 
 _CYR_RE = re.compile(r"[\u0430-\u044f\u0410-\u042f\u0451\u0401]")
 
+# ---- real proposal delivery (was missing entirely) -------------------------------------------------
+# Sending a request used to be local: the client posted feedback, asked an LLM to ROLE-PLAY the
+# recipient's agent, and showed "мы отправили твой запрос <name>" plus a mutual match based on that
+# simulation. Nothing ever reached the other account — logging in as the recipient showed no request.
+# These endpoints are the actual delivery: a proposal is stored, the recipient reads and answers it,
+# and the sender sees the real answer instead of a generated one.
+def _norm_name(n):
+    return str(n or "").strip().lower()
+
+def _requests():
+    return SESSION.setdefault("_requests", [])
+
+def propose(frm, to, intent, note):
+    frm, to = str(frm or "").strip(), str(to or "").strip()
+    if not frm or not to or _norm_name(frm) == _norm_name(to):
+        return {"ok": False, "error": "sender and recipient required and must differ"}
+    now = time.time()
+    with _STORE_LOCK:
+        rs = _requests()
+        # one open proposal per pair per direction — re-sending updates it rather than stacking
+        for r in rs:
+            if (_norm_name(r.get("from")) == _norm_name(frm) and _norm_name(r.get("to")) == _norm_name(to)
+                    and r.get("status") == "pending"):
+                r.update({"intent": intent or {}, "note": str(note or "")[:400], "updated": now})
+                _save_store()
+                return {"ok": True, "id": r["id"], "status": "pending", "resent": True}
+        rid = "rq_%d_%s" % (int(now * 1000), hashlib.sha1((frm + to).encode("utf-8")).hexdigest()[:6])
+        rs.append({"id": rid, "from": frm, "to": to, "intent": intent or {},
+                   "note": str(note or "")[:400], "status": "pending", "created": now, "updated": now})
+    _save_store()
+    _log_proposal(to)                       # feeds the receiving-policy budget, spec 4.4
+    return {"ok": True, "id": rid, "status": "pending"}
+
+def inbox(self_name):
+    me = _norm_name(self_name)
+    if not me:
+        return []
+    out = [dict(r) for r in _requests() if _norm_name(r.get("to")) == me]
+    out.sort(key=lambda r: -(r.get("updated") or 0))
+    return out[:50]
+
+def outbox(self_name):
+    me = _norm_name(self_name)
+    if not me:
+        return []
+    out = [dict(r) for r in _requests() if _norm_name(r.get("from")) == me]
+    out.sort(key=lambda r: -(r.get("updated") or 0))
+    return out[:50]
+
+def respond(rid, decision, who):
+    dec = "accepted" if str(decision).lower() in ("accept", "accepted", "yes") else "declined"
+    with _STORE_LOCK:
+        for r in _requests():
+            if r.get("id") == rid:
+                # only the recipient may answer — a sender must not accept on the other person's behalf
+                if who and _norm_name(who) != _norm_name(r.get("to")):
+                    return {"ok": False, "error": "only the recipient can answer this request"}
+                r["status"] = dec
+                r["updated"] = time.time()
+                _save_store()
+                return {"ok": True, "id": rid, "status": dec}
+    return {"ok": False, "error": "not found"}
+
 # ---- Agent-to-agent intro (Phase 2): the candidate's agent confirms + an icebreaker opener ----
 INTRO_PROMPT = '''You are the AI agent of user B. User A wants to meet for the activity below, and B's agent has agreed.
 Write (a) as B's agent, a warm one-sentence confirmation to A's agent, and (b) a friendly one-sentence icebreaker
@@ -1020,6 +1083,12 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/api/agent/pool":
             c = load_candidates()
             send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None, "users": c})
+        elif self.path.split("?")[0] in ("/api/agent/inbox", "/api/agent/outbox"):
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
+            from urllib.parse import unquote
+            who = unquote(q.get("self", ""))
+            fn = inbox if self.path.split("?")[0].endswith("inbox") else outbox
+            send_json(self, 200, {"requests": fn(who)})
         elif self.path.split("?")[0] == "/api/agent/explore":
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
@@ -1112,6 +1181,11 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, agent_intro(intent, cand))
             except Exception as e:
                 send_json(self, 200, {"reply": "", "opener": "Hey! Want to make a plan?", "error": str(e)[:200]})
+        elif p == "/api/agent/propose":
+            send_json(self, 200, propose(body.get("from"), body.get("to"),
+                                         body.get("intent") or {}, body.get("note")))
+        elif p == "/api/agent/respond":
+            send_json(self, 200, respond(body.get("id"), body.get("decision"), body.get("self")))
         elif p == "/api/agent/negotiate":
             intent = _normalize_intent(body.get("intent"))
             cands = body.get("candidates") if isinstance(body.get("candidates"), list) else []
