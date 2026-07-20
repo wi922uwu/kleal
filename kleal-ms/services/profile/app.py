@@ -124,26 +124,28 @@ HTML_HEAD = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Kleal Profile</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Literata:opsz,wght@7..72,600;7..72,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
 :root{
-  --bg:#F7F8FA; --surface:#F7F8FA; --card:#FFFFFF; --fg:#181B22; --muted:#5A616E; --border:#E2E5EC;
-  --line:#ECEEF2; --neutral100:#EEF0F4; --neutral300:#CDD2DC; --primary:#F5455C; --primary-fg:#FFFFFF;
-  --coral50:#FFF1F3; --coral200:#FECDD4; --coral700:#BC1F38;
+  /* Brand deck: coral thread, B&W photography, editorial type on a clean light ground.
+     The mascot always was coral (#FF5B55->#E84242); --primary now matches it instead of pink. */
+  --bg:#F7F6F4; --surface:#F7F6F4; --card:#FFFFFF; --fg:#1B1916; --muted:#615D55; --border:#E5E3DE;
+  --line:#ECEAE5; --neutral100:#F0EEEA; --neutral300:#D2CFC8; --primary:#E94E2B; --primary-fg:#FFFFFF;
+  --coral50:#FDF1EC; --coral200:#F6C6B4; --coral700:#B23A18;
   --success-text:#0F7340; --success-bg:#E8F7EE; --info-text:#1F58BE; --info-bg:#E8F1FD;
   --warn-text:#9A5400; --warn-bg:#FFF4E5; --danger:#E5484D;
 
   /* Referenced 6x but never declared, so .candbadge/.passbtn rendered with no background and
      the verified tick came out black instead of green. Aliases of existing tokens — no new colours. */
   --field:var(--neutral100); --accent:var(--coral700); --accent-soft:var(--coral50); --ok:var(--success-text);
-  --neutral400:#A9B0BE;   /* placeholder-avatar glyph on a --neutral100 circle; sits between 300 and --muted */
+  --neutral400:#ACA8A0;   /* placeholder-avatar glyph on a --neutral100 circle; sits between 300 and --muted */
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}
 body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
-  font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--fg)}
+  font-family:"Golos Text",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--fg)}
 .phone{width:390px;height:844px;max-height:100vh;background:var(--bg);border-radius:44px;overflow:hidden;
   position:relative;display:flex;flex-direction:column;box-shadow:0 30px 90px #0008}
 @media(max-width:430px){body{background:var(--bg)}.phone{width:100vw;height:100vh;border-radius:0}}
@@ -386,7 +388,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .candrow{display:flex;flex-direction:column;gap:8px;padding:12px 16px}
 .candmain{display:flex;align-items:center;gap:12px;min-width:0}
 .candav{width:38px;height:38px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800;font-size:15px}
+  background:linear-gradient(135deg,#FF6C55,#E84242);color:#fff;font-weight:800;font-size:15px}
 .candt{flex:1;min-width:0}
 .candn{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:4px;min-width:0}
 .candnm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
@@ -432,7 +434,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .krow{display:flex;align-items:flex-end;gap:9px;max-width:90%}
 .krow .kav{flex:none}
 .krow .kcol{display:flex;flex-direction:column;gap:3px;min-width:0}
-.kav{width:34px;height:34px;border-radius:50%;flex:none;background:linear-gradient(135deg,#FF7A8A,#F5455C)}
+.kav{width:34px;height:34px;border-radius:50%;flex:none;background:linear-gradient(135deg,#FF6C55,#E84242)}
 .kav.sp{background:transparent}
 .mrow{display:flex;flex-direction:column;align-items:flex-end;gap:3px;align-self:flex-end;max-width:82%}
 .btime{font-size:11px;color:var(--muted);padding:0 4px}
@@ -459,7 +461,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* match chat */
 .matchhead{display:flex;align-items:center;gap:12px;padding:6px 2px 4px}
 .mava{width:52px;height:52px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800;font-size:20px;transition:filter .4s}
+  background:linear-gradient(135deg,#FF6C55,#E84242);color:#fff;font-weight:800;font-size:20px;transition:filter .4s}
 .mmeta{flex:1;min-width:0}.mnm{font-size:17px;font-weight:800}
 .mnm .mscore{font-size:12px;font-weight:600;color:var(--primary);margin-left:6px}
 .mhint{font-size:12px;color:var(--muted);margin-top:2px}
@@ -500,7 +502,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .searchbtn{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);white-space:nowrap;width:auto;padding:11px 20px}
 .msgrow{display:flex;align-items:center;gap:12px;padding:12px 4px;cursor:pointer}
 .msgav{width:46px;height:46px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:var(--neutral100);color:var(--muted)}
-.msgav.k{background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800}
+.msgav.k{background:linear-gradient(135deg,#FF6C55,#E84242);color:#fff;font-weight:800}
 .msgt{flex:1;min-width:0}.msgt .mn{font-size:15px;font-weight:600}
 .msgt .ml{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .msgtime{font-size:11px;color:var(--muted);flex:none;align-self:flex-start;margin-top:3px}
@@ -537,13 +539,13 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .tcard .tm{font-size:12px;color:var(--muted);margin-top:5px}
 .tcard .tpart{display:flex;align-items:center;gap:9px;margin-top:11px}
 .stack5{display:flex}
-.stack5 .av{width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#FF7A8A,#F5455C);border:2px solid var(--card);margin-left:-7px}
+.stack5 .av{width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#FF6C55,#E84242);border:2px solid var(--card);margin-left:-7px}
 .stack5 .av:first-child{margin-left:0}
 .stack5 .more{width:22px;height:22px;border-radius:50%;background:var(--neutral100);border:2px solid var(--card);margin-left:-7px;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;color:var(--muted)}
 .tcard .pn{font-size:12px;color:var(--muted)}
 .tcard .tbm{color:var(--muted);flex:none;align-self:flex-start}
 /* ===================== Figma "Agent Home / request flow" (479:14518…14661) =====================
-   Design tokens match the existing ones (#F7F8FA / #181B22 / #F5455C / #EEF0F4 / Geist), so these
+   Design tokens match the current brand set (#F7F6F4 / #1B1916 / coral #E94E2B / Golos Text), so these
    rules only add the shapes the new screens need. Sizes are taken verbatim from the frames. */
 .k-h2{font-size:24px;line-height:32px;font-weight:600;letter-spacing:-.24px}
 .k-h3{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.1px}
@@ -674,6 +676,12 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
    «Принять изменения» sat below the screen edge, unreachable. Header and footer stay put. */
 .esbody{overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1 1 auto;min-height:0;scrollbar-width:none}
 .esbody::-webkit-scrollbar{display:none}
+/* ---- brand deck: editorial display type, the coral thread, B&W photography ---- */
+.ahd .nm,.kprompt .k-h3,.idcard .nm{font-family:"Literata",Georgia,serif;letter-spacing:-.015em}
+.k-title{text-transform:uppercase;font-size:11.5px;letter-spacing:.09em;color:var(--muted);font-weight:600}
+.kthread{display:block;width:100%;height:48px;margin:0;pointer-events:none;flex:none}
+.ava,.ecard .ph,.candav{filter:grayscale(1)}          /* photography and avatars read B&W, per the deck */
+.msc,.kav,.fab{filter:none}                            /* the mascot stays coral — it IS the brand */
 .khelp{display:flex;justify-content:center;padding:0 12px 6px}
 .khelp .kchip{gap:6px;cursor:pointer;height:34px;min-height:34px}
 .khelp .kchip svg{width:15px;height:15px}
@@ -1009,7 +1017,7 @@ const IC={
   back:svg('<path d="M15 6l-6 6 6 6"/>'),
   bookmark:svg('<path d="M6 4h12v17l-6-4-6 4V4z"/>'),
   chevL:svg('<path d="M15 6l-6 6 6 6"/>'),
-  verify:'<svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 2.6l2.2 1.7 2.8-.2.9 2.7 2.4 1.5-.7 2.8.7 2.8-2.4 1.5-.9 2.7-2.8-.2L12 21.4l-2.2-1.7-2.8.2-.9-2.7-2.4-1.5.7-2.8-.7-2.8 2.4-1.5.9-2.7 2.8.2L12 2.6z" fill="#F5455C"/><path d="M8.6 12l2.2 2.2 4.6-4.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  verify:'<svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 2.6l2.2 1.7 2.8-.2.9 2.7 2.4 1.5-.7 2.8.7 2.8-2.4 1.5-.9 2.7-2.8-.2L12 21.4l-2.2-1.7-2.8.2-.9-2.7-2.4-1.5.7-2.8-.7-2.8 2.4-1.5.9-2.7 2.8.2L12 2.6z" fill="#E94E2B"/><path d="M8.6 12l2.2 2.2 4.6-4.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   edit:svg('<path d="M4 20h4L18.5 9.5a2 2 0 0 0-2.83-2.83L5 17z"/><path d="M14 7l3 3"/>',null,22),
   person:svg('<circle cx="12" cy="8.5" r="3.6"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>',null,26),
   pin:svg('<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>'),
@@ -1061,7 +1069,7 @@ const IC={
   mic:svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>',null,26),
   peoplePin:svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 9-4"/><path d="M17.5 21s3-2.6 3-5a3 3 0 0 0-6 0c0 2.4 3 5 3 5z"/><circle cx="17.5" cy="16" r="1"/>'),
 };
-const MASCOT = '<svg viewBox="0 0 48 48" width="46" height="46"><rect x="6" y="6" width="36" height="36" rx="16" fill="#FDE7EB"/><circle cx="19" cy="24" r="2.4" fill="#F5455C"/><circle cx="29" cy="24" r="2.4" fill="#F5455C"/><path d="M18.5 30c2.2 1.8 8.8 1.8 11 0" fill="none" stroke="#F5455C" stroke-width="2" stroke-linecap="round"/></svg>';
+const MASCOT = '<svg viewBox="0 0 48 48" width="46" height="46"><rect x="6" y="6" width="36" height="36" rx="16" fill="#FCEAE4"/><circle cx="19" cy="24" r="2.4" fill="#E94E2B"/><circle cx="29" cy="24" r="2.4" fill="#E94E2B"/><path d="M18.5 30c2.2 1.8 8.8 1.8 11 0" fill="none" stroke="#E94E2B" stroke-width="2" stroke-linecap="round"/></svg>';
 document.getElementById('sbic').innerHTML=
  '<svg viewBox="0 0 20 14" fill="#181B22" width="18" height="13"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5.3" y="6" width="3" height="8" rx="1"/><rect x="10.6" y="3" width="3" height="11" rx="1"/><rect x="15.9" y="0" width="3" height="14" rx="1"/></svg>'
  +'<svg viewBox="0 0 20 15" fill="none" stroke="#181B22" stroke-width="1.9" stroke-linecap="round" width="18" height="14"><path d="M2 5.2a13 13 0 0 1 16 0M5 8.6a8 8 0 0 1 10 0M8 12a3 3 0 0 1 4 0"/></svg>'
@@ -2092,7 +2100,7 @@ function initExploreMap(){
   const el=document.getElementById('lmap'); if(!el) return;
   const map=L.map('lmap',{zoomControl:false,scrollWheelZoom:false,attributionControl:false});
   L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
-  const pin='<svg viewBox="0 0 24 24" width="30" height="30" style="filter:drop-shadow(0 3px 3px rgba(20,20,40,.28))"><path d="M12 22s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z" fill="#F5455C"/><circle cx="12" cy="10.5" r="2.6" fill="#fff"/></svg>';
+  const pin='<svg viewBox="0 0 24 24" width="30" height="30" style="filter:drop-shadow(0 3px 3px rgba(20,20,40,.28))"><path d="M12 22s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z" fill="#E94E2B"/><circle cx="12" cy="10.5" r="2.6" fill="#fff"/></svg>';
   const cIcon=L.divIcon({html:pin,className:'',iconSize:[30,30],iconAnchor:[15,30],popupAnchor:[0,-28]});
   const meIcon=L.divIcon({html:'<div class="meDot"></div>',className:'',iconSize:[16,16],iconAnchor:[8,8]});
   const pts=[];
@@ -2486,6 +2494,17 @@ function inboxCards(){
 // ================= Agent Home — the main landing after onboarding (Figma Flow 4) =================
 // Agent Home — Figma 479:14518. Greeting, agent intro card, composer, four quick tiles and the
 // "For you today" feed (real plans from /api/agent/explore, never invented ones).
+// The deck's signature: a thin coral thread with dots, travelling from one moment to the next.
+// Purely decorative (pointer-events:none), so UX is untouched.
+function kthread(flip){
+  // One confident arc, like the deck: it dives from under one block and surfaces at the next,
+  // with solid round dots at both ends. Drawn 1:1 (no stretching), so the dots stay circles.
+  const d=flip?'M356 10 C 260 4, 150 46, 18 34':'M18 10 C 130 4, 250 46, 356 34';
+  return `<svg class="kthread" viewBox="0 0 375 48" fill="none" preserveAspectRatio="xMidYMid meet">
+    <path d="${d}" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round"/>
+    <circle cx="${flip?356:18}" cy="10" r="6.5" fill="var(--primary)"/>
+    <circle cx="${flip?18:356}" cy="34" r="6.5" fill="var(--primary)"/></svg>`;
+}
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans for "For you today"
   const nm=(DATA.name||'there').split(' ')[0];
@@ -2530,7 +2549,9 @@ function scr_agenthome(){
             <input id="ainput" placeholder="${T('Опиши, кого или что ищешь…',"Describe who or what you're look…")}" autocomplete="off">${IC.mic}</div>
           <button class="snd" data-act="agent-go">${IC.send}</button></div>
       </div>
+      ${kthread()}
       ${inboxCards()}
+      ${INBOX.length?kthread(1):''}
       <div style="display:flex;flex-direction:column;gap:32px">
         <div style="display:flex;flex-direction:column;gap:16px">
           <div style="display:flex;align-items:flex-end;justify-content:space-between">
@@ -4141,7 +4162,9 @@ function _downscalePhoto(dataURL, cb){
   img.onload=function(){ const MAX=480; let w=img.width, h=img.height;
     if(w>=h && w>MAX){ h=Math.round(h*MAX/w); w=MAX; } else if(h>w && h>MAX){ w=Math.round(w*MAX/h); h=MAX; }
     try{ const c=document.createElement('canvas'); c.width=w; c.height=h;
-      c.getContext('2d').drawImage(img,0,0,w,h); cb(c.toDataURL('image/jpeg',0.85)); }
+      const x=c.getContext('2d');
+      x.filter='grayscale(1) contrast(1.05)';        // brand deck: photography is B&W
+      x.drawImage(img,0,0,w,h); cb(c.toDataURL('image/jpeg',0.85)); }
     catch(_e){ cb(dataURL); } };
   img.onerror=function(){ cb(dataURL); };
   img.src=dataURL;
