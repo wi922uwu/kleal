@@ -117,6 +117,9 @@ Kleal's superpower is connecting people. So while you chat, quietly notice the u
 Set "match": true ONLY when the user clearly wants to MEET a person / find people / do an activity WITH someone. For normal conversation keep it false and just be a great chatbot. When match is true, put a short natural-language description of what they want into "interest" (another agent will categorise it).
 
 Known so far (baseline from their profile): __SIG__
+You ALREADY KNOW this person — that block is their profile. Never ask for anything already in it: not
+their name, not their city, not their languages. If "name" is there, address them by it naturally
+instead of asking who they are.
 
 Reply as ONE JSON object only, nothing outside it:
 {"reply":"<your natural, helpful message>","signals":{<only fields you newly learned THIS turn; may include "interest">},"match":true|false}
@@ -356,6 +359,12 @@ def _baseline_signals(profile):
     """Seed signals from what the buddy already KNOWS about the user (their profile / agent memory)."""
     p = profile or {}
     sig = {}
+    # The client sends the user's name but it was never copied into the signals, so BUDDY_PROMPT's
+    # "Known so far" block reached the model without it and Kleal politely asked «как вас зовут?» —
+    # of someone whose profile it is holding.
+    nm = str(p.get("name") or "").strip()
+    if nm:
+        sig["name"] = nm
     ints = p.get("interests")
     topics = []
     if isinstance(ints, dict):
