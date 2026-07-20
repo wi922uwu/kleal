@@ -766,22 +766,32 @@ def agent_plan(query, prof, ctx=None, override=None):
         res["fallback"] = _online_fallback(intent)
     return res
 
+_CYR_RE = re.compile(r"[\u0430-\u044f\u0410-\u042f\u0451\u0401]")
+
 # ---- Agent-to-agent intro (Phase 2): the candidate's agent confirms + an icebreaker opener ----
 INTRO_PROMPT = '''You are the AI agent of user B. User A wants to meet for the activity below, and B's agent has agreed.
 Write (a) as B's agent, a warm one-sentence confirmation to A's agent, and (b) a friendly one-sentence icebreaker
-opener B could send A. Return ONLY JSON: {"reply":"...","opener":"..."}. English, lively, no markdown.'''
+opener B could send A. Return ONLY JSON: {"reply":"...","opener":"..."}. Lively, no markdown.
+LANGUAGE: write BOTH "reply" and "opener" in __LANG__. The opener is shown to a user in that language,
+so an English line inside a Russian interface reads as someone else's words.'''
 def agent_intro(intent, cand):
     topics = ', '.join(intent.get('topics') or intent.get('tags') or []) or 'this'
     ctx = 'Activity: %s (%s). Person B interests: %s. Vibe: %s.' % (
         intent.get('title', 'a meetup'), topics, ', '.join(cand.get('interests') or []), cand.get('vibe', ''))
+    lang = "ru" if _CYR_RE.search("%s %s" % (intent.get("title", ""), " ".join(intent.get("topics") or []))) \
+        or str(intent.get("lang", "")).lower() == "ru" else "en"
+    prompt = INTRO_PROMPT.replace("__LANG__", "Russian" if lang == "ru" else "English")
     try:
         cfg = MODEL_ID
-        raw = llm_complete(cfg, [{"role": "system", "content": INTRO_PROMPT}, {"role": "user", "content": ctx}], 0.6)
+        raw = llm_complete(cfg, [{"role": "system", "content": prompt}, {"role": "user", "content": ctx}], 0.6)
         obj = base._extract_json(raw)
         if isinstance(obj, dict) and obj.get('opener'):
             return {"reply": str(obj.get('reply', ''))[:200], "opener": str(obj.get('opener', ''))[:200]}
     except Exception:
         pass
+    if lang == "ru":
+        return {"reply": "Мой пользователь не против — со стороны расписания всё сходится.",
+                "opener": "Привет! Похоже, нам обоим интересно: " + topics + ". Давай что-нибудь придумаем?"}
     return {"reply": "My user is up for it — it works on their side.",
             "opener": "Hey! Looks like we both like " + topics + " — want to make a plan?"}
 
