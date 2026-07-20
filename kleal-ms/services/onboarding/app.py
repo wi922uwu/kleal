@@ -1206,7 +1206,10 @@ function rDone(){ st.phase='done';
 // hands the collected profile to the Kleal profile app (:7073) via ?p=<base64 utf8 json>
 // PROFILE_URL is baked in server-side (env) for the pod, where the profile app lives behind its own
 // tunnel host; empty locally -> fall back to the same-host :7073 dev port.
-const PROFILE_ORIGIN = ("__PROFILE_URL__") || (location.protocol+'//'+location.hostname+':7073');
+// Fallback is the SAME origin behind the gateway, not host:7073 — that port is internal (127.0.0.1)
+// and never reachable from a browser, so whenever PROFILE_URL was not baked in, Continue navigated to
+// a dead host and the button just hung. Going through /profile needs no env and works over the tunnel.
+const PROFILE_ORIGIN = ("__PROFILE_URL__") || (location.origin + '/profile');
 function openProfile(){
   const p=Object.assign({},st.profile); delete p.photo;   // strip the heavy dataURL
   let b64=''; try{ b64=btoa(unescape(encodeURIComponent(JSON.stringify(p)))); }catch(e){ b64=btoa(JSON.stringify(p)); }
