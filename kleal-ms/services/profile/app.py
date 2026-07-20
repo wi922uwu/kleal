@@ -909,12 +909,15 @@ let UILANG='ru'; try{ const _l=localStorage.getItem('kleal_uilang'); if(_l==='ru
 function T(ru,en){ return UILANG==='en' ? en : ru; }
 function setUILang(l){ UILANG=(l==='en'?'en':'ru'); try{localStorage.setItem('kleal_uilang',UILANG);}catch(_e){} render(); }
 // ---- receiving policy (доступность): читаем/пишем свой статус через onboarding /api/v2/receiving ----
-let RECV=null, RECV_BUSY=false;
-function loadRecv(){ if(RECV||RECV_BUSY||!(DATA&&DATA.name)) return; RECV_BUSY=true;
+// RECV_ERR: the profile may not exist in the matching store at all — the demo identity never does, and
+// a user who hasn't finished onboarding doesn't either. Without this the screen drew three availability
+// buttons that silently could not work: none selected, nothing saved, no reason given.
+let RECV=null, RECV_BUSY=false, RECV_ERR=null;
+function loadRecv(){ if(RECV||RECV_ERR||RECV_BUSY||!(DATA&&DATA.name)) return; RECV_BUSY=true;
   fetch('/api/v2/receiving',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:DATA.name})}).then(x=>x.json())
-    .then(r=>{ RECV_BUSY=false; if(r&&r.ok){ RECV=r.receiving; render(); } })
-    .catch(()=>{ RECV_BUSY=false; }); }
+    .then(r=>{ RECV_BUSY=false; if(r&&r.ok){ RECV=r.receiving; } else { RECV_ERR=(r&&r.error)||'unavailable'; } render(); })
+    .catch(()=>{ RECV_BUSY=false; RECV_ERR='network'; render(); }); }
 function setAvail(st){ if(!(DATA&&DATA.name)) return;
   fetch('/api/v2/receiving',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:DATA.name,receiving:{status:st}})}).then(x=>x.json())
@@ -1338,11 +1341,12 @@ function scr_overview(){
   const rst=(RECV&&RECV.status)||null; if(!RECV) loadRecv();
   const availRow=`<div class="card setrow" style="justify-content:space-between">
     <div class="sic">${IC.spark}</div>
-    <div class="st"><div class="stt">${T('Доступность','Availability')}</div></div>
-    <div class="langtoggle">
+    <div class="st"><div class="stt">${T('Доступность','Availability')}</div>
+      ${RECV_ERR?`<div class="stv">${T('Доступно после онбординга','Available after onboarding')}</div>`:''}</div>
+    ${RECV_ERR?'':`<div class="langtoggle">
       <button class="langbtn ${rst==='active'?'on':''}" data-act="set-avail" data-st="active">${T('Открыт','Open')}</button>
       <button class="langbtn ${rst==='busy'?'on':''}" data-act="set-avail" data-st="busy">${T('Занят','Busy')}</button>
-      <button class="langbtn ${rst==='paused'?'on':''}" data-act="set-avail" data-st="paused">${T('Пауза','Pause')}</button></div></div>`;
+      <button class="langbtn ${rst==='paused'?'on':''}" data-act="set-avail" data-st="paused">${T('Пауза','Pause')}</button></div>`}</div>`;
   return `<div class="stack fade">
     <div class="card idcard">
       <div class="idrow"><div class="ava">${IC.person}</div>
@@ -2656,7 +2660,7 @@ function scr_awaiting(){
       ${planCardBlock()}
       <div class="kwhy">${esc(c.name)} ${T('получит уведомление и сможет подтвердить или предложить изменения.','will get a notification and can confirm or suggest changes.')}</div>
     </div>
-    <div class="kfoot"><button class="kbtn pri tall" data-act="plan-confirm">${T('Подтвердить за обоих (демо)','Mark as confirmed (demo)')}</button></div></div>`;
+    <div class="kfoot"><button class="kbtn pri tall" data-act="plan-wait-done">${T('Понятно, жду','Got it, waiting')}</button></div></div>`;
 }
 function scr_planok(){
   const c=PLAN&&PLAN.cand; if(!c) return scr_options();
@@ -3329,7 +3333,11 @@ function doAct(act, ds){
     case 'pick-place': PLAN.place=planPlaces()[+ds.i]; render(); break;
     case 'plan-own-place': toast(T('Своё место — скоро','Custom place is coming soon')); break;
     case 'plan-send': cur='awaiting'; render(); break;
-    case 'plan-confirm': PLAN.confirmed=true; cur='planok'; render(); break;
+    // This screen waits on the OTHER person. The old CTA here confirmed the plan "за обоих (демо)" —
+    // the app putting words in a real person's mouth and jumping to a "confirmed" screen nobody agreed
+    // to. Only their real answer can move this forward; the user just acknowledges and leaves.
+    case 'plan-wait-done': cur='agenthome'; render(); saveState(); break;
+    case 'plan-confirm': PLAN.confirmed=true; cur='planok'; render(); break;   // reached from a real confirmation
     case 'cal-download': downloadIcs(); break;
     case 'tog-remind': PLAN.remind=!PLAN.remind; render();
       toast(PLAN.remind?T('Напомним за час','We’ll remind you an hour before'):T('Напоминание выключено','Reminder off')); break;
