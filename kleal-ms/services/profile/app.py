@@ -679,7 +679,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* ---- brand deck: editorial display type, the coral thread, B&W photography ---- */
 .ahd .nm,.kprompt .k-h3,.idcard .nm{font-family:"Literata",Georgia,serif;letter-spacing:-.015em}
 .k-title{text-transform:uppercase;font-size:11.5px;letter-spacing:.09em;color:var(--muted);font-weight:600}
-.kthread{display:block;width:100%;height:44px;margin:-6px 0 -8px;pointer-events:none;flex:none}
+.kthread{display:block;width:100%;height:72px;margin:-10px 0 -14px;pointer-events:none;flex:none}
 /* ---- motion: alive, but only where it means something ---- */
 @media (prefers-reduced-motion: no-preference){
   .enter .kthread path{stroke-dasharray:1;stroke-dashoffset:1;animation:kdraw .8s .3s cubic-bezier(.6,0,.3,1) forwards}
@@ -2526,12 +2526,16 @@ function inboxCards(){
 // button (where your ask lives) and lands at the next section's eyebrow (where the answer starts).
 // pathLength=1 lets CSS draw it with a plain dashoffset animation on screen entry. The leading dot
 // is larger than the landing dot — the line has a direction, like the deck's.
-function kthread(seq){
-  const d = seq ? 'M342 8 C 250 40, 120 0, 16 34' : 'M342 6 C 290 36, 96 4, 16 36';
-  return `<svg class="kthread" viewBox="0 0 358 44" fill="none" preserveAspectRatio="xMidYMid meet">
-    <path d="${d}" pathLength="1" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round"/>
-    <circle class="kd1" cx="342" cy="${seq?8:6}" r="6.5" fill="var(--primary)"/>
-    <circle class="kd2" cx="16" cy="${seq?34:36}" r="4.5" fill="var(--primary)"/></svg>`;
+// The deck's thread. Third iteration, and the lesson is direction: a flat horizontal squiggle reads
+// as a failed divider, while the deck's line DIVES — real vertical travel from one block down into
+// the next. So: taller canvas, a descending S from under the send button to the next eyebrow, and
+// exactly ONE thread on the screen — repeated, it became wallpaper.
+function kthread(){
+  return `<svg class="kthread" viewBox="0 0 358 72" fill="none" preserveAspectRatio="xMidYMid meet">
+    <path d="M338 10 C 320 44, 250 52, 196 40 C 142 28, 74 34, 20 62" pathLength="1"
+      stroke="var(--primary)" stroke-width="2.25" stroke-linecap="round"/>
+    <circle class="kd1" cx="338" cy="8" r="5.5" fill="var(--primary)"/>
+    <circle class="kd2" cx="20" cy="62" r="4" fill="var(--primary)"/></svg>`;
 }
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans for "For you today"
@@ -2577,9 +2581,8 @@ function scr_agenthome(){
             <input id="ainput" placeholder="${T('Опиши, кого или что ищешь…',"Describe who or what you're look…")}" autocomplete="off">${IC.mic}</div>
           <button class="snd" data-act="agent-go">${IC.send}</button></div>
       </div>
-      ${kthread(0)}
+      ${kthread()}
       ${inboxCards()}
-      ${INBOX.length?kthread(1):''}
       <div style="display:flex;flex-direction:column;gap:32px">
         <div style="display:flex;flex-direction:column;gap:16px">
           <div style="display:flex;align-items:flex-end;justify-content:space-between">
