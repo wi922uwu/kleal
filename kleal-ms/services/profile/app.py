@@ -1440,7 +1440,7 @@ function scr_overview(){
   syncBasicsRows();          // the four cards always reflect canonical fields, incl. a not-yet-set formats card
   return `<div class="stack fade">
     <div class="card idcard">
-      <div class="idrow"><div class="ava">${IC.person}</div>
+      <div class="idrow"><div class="ava" data-act="edit-photo" style="cursor:pointer${DATA.photo?`;background-image:url(${DATA.photo});background-size:cover;background-position:center`:''}">${DATA.photo?'':IC.person}</div>
         <div class="it"><div class="nm">${esc(d.name)} ${d.verified?`<span class="badge-verify">${IC.verify}</span>`:'<span class="reddot"></span>'}</div></div></div>
       <div class="confrow2"><span class="l">${T('Наполненность профиля','Profile confidence')}</span><span class="confpct">${d.confidence}%</span></div>
       <div class="track"><i style="width:${d.confidence}%"></i></div></div>
@@ -3995,6 +3995,7 @@ function doAct(act, ds){
     case 'editsum': editingSummary=true; render(); break;
     case 'resum': { if(SUMBUSY)break; SUMBUSY=true; render();
       adaptSummary().then(()=>{ SUMBUSY=false; render(); }); break; }
+    case 'edit-photo': editPhoto(); break;
     case 'set-personal': openSheet('basics'); break;
     case 'set-privacy':  navTo('privacy'); break;
     case 'set-safety':   navTo('safety'); break;
@@ -4133,6 +4134,35 @@ function doAct(act, ds){
     default: toast(T('Пока недоступно','Not available yet'));
   }
 }
+// Change/add the photo from the profile itself — tapping the avatar. Same downscale as onboarding, so
+// this also rescues the case where the onboarding upload never happened.
+function _downscalePhoto(dataURL, cb){
+  const img=new Image();
+  img.onload=function(){ const MAX=480; let w=img.width, h=img.height;
+    if(w>=h && w>MAX){ h=Math.round(h*MAX/w); w=MAX; } else if(h>w && h>MAX){ w=Math.round(w*MAX/h); h=MAX; }
+    try{ const c=document.createElement('canvas'); c.width=w; c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h); cb(c.toDataURL('image/jpeg',0.85)); }
+    catch(_e){ cb(dataURL); } };
+  img.onerror=function(){ cb(dataURL); };
+  img.src=dataURL;
+}
+function editPhoto(){
+  if(IS_DEMO){ toast(T('Это демо-профиль','This is a sample profile')); return; }
+  let fi=document.getElementById('profphotoin');
+  if(!fi){ fi=document.createElement('input'); fi.type='file'; fi.accept='image/*'; fi.id='profphotoin';
+    fi.style.display='none'; document.body.appendChild(fi); }
+  fi.onchange=()=>{ const f=fi.files[0]; if(!f) return;
+    const r=new FileReader();
+    r.onload=()=>{ _downscalePhoto(r.result, function(small){
+      DATA.photo=small; try{ localStorage.setItem('kleal_photo', small); }catch(_e){}
+      fi.value=''; render(); saveState(); toast(T('Фото обновлено','Photo updated')); }); };
+    r.onerror=()=>{ fi.value=''; }; r.readAsDataURL(f); };
+  fi.click();
+}
+// The profile photo arrives from onboarding through shared-origin localStorage — the ?p= hand-off
+// can't carry a multi-MB dataURL, so it is delivered out of band. Read it into DATA once so the
+// avatar can show it. Skipped for the sample (demo) profile, which is not the user's own.
+if(!DATA.photo && !IS_DEMO){ try{ const _ph=localStorage.getItem('kleal_photo'); if(_ph) DATA.photo=_ph; }catch(_e){} }
 render();
 loadServerProfile();   // pull the shared profile row; localStorage alone must never be the truth
 </script></body></html>'''

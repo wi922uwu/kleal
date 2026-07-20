@@ -914,8 +914,27 @@ WIDGETS.basics=function(slot){
   val();
   cont.onclick=()=>{ lock(slot); const bits=[p.name, p.age?p.age:null, p.gender].filter(Boolean).join(', '); meSay(bits+(p.photo?', photo added':'')); afterAnswer(); };
 };
+// A raw phone photo is several MB as a dataURL — too big to keep in st.profile, to stash in
+// localStorage (≈5MB quota), or to move around. Downscale to a 480px JPEG avatar first; that makes
+// the upload reliable and small enough to hand to the profile app.
+function _downscalePhoto(dataURL, cb){
+  const img=new Image();
+  img.onload=function(){ const MAX=480; let w=img.width, h=img.height;
+    if(w>=h && w>MAX){ h=Math.round(h*MAX/w); w=MAX; } else if(h>w && h>MAX){ w=Math.round(w*MAX/h); h=MAX; }
+    try{ const c=document.createElement('canvas'); c.width=w; c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h); cb(c.toDataURL('image/jpeg',0.85)); }
+    catch(_e){ cb(dataURL); } };
+  img.onerror=function(){ cb(dataURL); };
+  img.src=dataURL;
+}
 function pickPhoto(cb){ const fi=document.getElementById('filein'); fi.onchange=()=>{ const f=fi.files[0]; if(!f)return;
-  const r=new FileReader(); r.onload=()=>{ st.profile.photo=r.result; set('photoStatus','uploaded'); fi.value=''; cb(); };
+  const r=new FileReader();
+  r.onload=()=>{ _downscalePhoto(r.result, function(small){
+    st.profile.photo=small; set('photoStatus','uploaded');
+    // onboarding and the profile app share one origin (via the gateway), so localStorage is the
+    // delivery channel — the ?p= URL hand-off deliberately strips the heavy dataURL.
+    try{ localStorage.setItem('kleal_photo', small); }catch(_e){}
+    fi.value=''; cb(); }); };
   r.onerror=()=>{ fi.value=''; }; r.readAsDataURL(f); }; fi.click(); }
 
 WIDGETS.location=function(slot){
