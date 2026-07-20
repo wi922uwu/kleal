@@ -786,21 +786,33 @@ def agent_intro(intent, cand):
             "opener": "Hey! Looks like we both like " + topics + " — want to make a plan?"}
 
 # ---- Agent-to-agent NEGOTIATION (LLM): the candidate's agent decides accept/reject, with a reason ----
-NEGOTIATE_PROMPT = '''You are the AI agent of user B. User A sends an intent (a plan/activity) and wants to meet.
-Decide, on B's behalf, whether B accepts. Consider: does the activity fit B's interests? do time and place work?
-is B open/available right now? would it break any of B's deal-breakers (if so -> reject)?
+# B's AVAILABILITY is already settled by the readiness engine before this call — only reachable
+# people get here. Asking the model about it made it reject on "the meeting is not today" for a
+# perfectly ordinary "tomorrow at 21" plan, which is how half the declines were being produced.
+NEGOTIATE_PROMPT = '''You are the AI agent of user B. User A proposes a plan and wants to meet.
+Decide, on B's behalf, whether B accepts.
+
+B's availability has ALREADY been verified by the system — B is reachable and the proposed time is
+within B's window. NEVER reject because of timing, dates, "not today", or scheduling: that is not
+your call. A future date (tomorrow, this weekend) is perfectly normal.
+
+Judge ONLY:
+- does the activity genuinely fit B's interests?
+- would it break one of B's stated deal-breakers (if so -> reject)?
+Accept when the activity is a reasonable fit. Reject only for a real mismatch of interest or a
+deal-breaker, and say which one.
+
 Return ONLY JSON (no prose): {"decision":"accept"|"reject","reason":"one short sentence why","reply":"one lively sentence from B's agent to A's agent, or null if reject"}.'''
 
 def negotiate_one(intent, cand):
     topics = ', '.join(intent.get('topics') or intent.get('tags') or []) or 'this'
     a = 'INTENT FROM A: %s. Topics: %s. Time: %s. Place: %s. Format: %s.' % (
         intent.get('title', ''), topics, intent.get('time', ''), intent.get('place', ''), intent.get('format', ''))
-    # availability comes from the readiness engine (receiving policy), not the legacy 'open' flag —
-    # the precheck only lets open_now candidates get this far, so absence of a flag isn't a "no"
-    avail = (cand.get('readiness') == 'open_now') or bool(cand.get('open'))
-    b = 'USER B: interests %s; vibe %s; open to meet today: %s; deal-breakers: %s.' % (
+    # No availability field at all: the readiness engine already cleared it, and mentioning "today"
+    # invited the model to decline anything scheduled for another day.
+    b = 'USER B: interests %s; vibe %s; deal-breakers: %s.' % (
         ', '.join(cand.get('interests') or []) or 'unknown', cand.get('vibe', ''),
-        'yes' if avail else 'no', ', '.join(cand.get('dealBreakers') or []) or 'none')
+        ', '.join(cand.get('dealBreakers') or []) or 'none')
     try:
         cfg = MODEL_ID
         raw = llm_complete(cfg, [{"role": "system", "content": NEGOTIATE_PROMPT},
@@ -812,10 +824,10 @@ def negotiate_one(intent, cand):
                     "reply": (str(o.get('reply', ''))[:200] if acc and o.get('reply') else None), "decided": True}
     except Exception:
         pass
-    # graceful fallback: keep the deterministic verdict (availability = readiness, not legacy flag)
-    avail = (cand.get('readiness') == 'open_now') or bool(cand.get('open'))
-    acc = bool(avail and cand.get('score', 0) >= 45)
-    return {"agree": acc, "reason": ('good fit and free today' if acc else ('not free today' if not avail else 'fit is a bit weak')),
+    # graceful fallback when the model is unavailable: availability was already settled upstream,
+    # so the only question left is whether the fit is strong enough
+    acc = cand.get('score', 0) >= 45
+    return {"agree": acc, "reason": ('good fit for this plan' if acc else 'fit is a bit weak'),
             "reply": None, "decided": False}
 
 def _normalize_intent(raw):
