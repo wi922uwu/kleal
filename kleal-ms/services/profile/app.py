@@ -2363,7 +2363,7 @@ async function loadIntents(){
     const rows=(r&&r.intents)||[];
     DATA.intents=rows.map(it=>({
       id:it.id, title:it.title||(it.intent&&it.intent.title)||T('Без названия','Untitled'),
-      tags:(it.intent&&it.intent.topics)||[], intent:it.intent||{},
+      tags:(it.intent&&it.intent.topics)||[], intent:it.intent||{}, launched:!!it.launched,
       candidates:it.candidates||[], server:true, error:it.error||null}));
     if(cur==='intents') render();
     saveState();
@@ -2394,40 +2394,127 @@ async function persistIntent(){
   try{
     await fetch('/api/agent/intent-save',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({self:me, id:FLOW.fromIntent||null,
-        title:(FLOW.intent.title)||FLOW.request||'', intent:FLOW.intent})});
+        title:(FLOW.intent.title)||FLOW.request||'', intent:FLOW.intent, launched:true})});
   }catch(e){}
   loadIntents();
 }
+// Every request touching this account, both directions and all statuses — the Intents tab needs
+// accepted (active), pending (proposals), archived and declined (archive) in one place. INBOX stays
+// as the pending-only notifier it always was.
+let REQS=[], _reqT=null, _reqGen=0;
+// A poll that started BEFORE a local change lands after it and re-asserts the old status: pressing
+// «В архив» left the card sitting in the active list until the next tick. Every mutation bumps the
+// generation, and an in-flight poll whose generation is stale throws its answer away.
+async function loadRequests(){
+  const me=(DATA.name||'').trim(); if(!me) return;
+  const gen=_reqGen;
+  try{
+    const [i,o]=await Promise.all([
+      fetch('/api/agent/inbox?self='+encodeURIComponent(me)).then(x=>x.json()).catch(()=>null),
+      fetch('/api/agent/outbox?self='+encodeURIComponent(me)).then(x=>x.json()).catch(()=>null)]);
+    if(gen!==_reqGen) return;                    // superseded by a local change — discard
+    const all=[...((i&&i.requests)||[]),...((o&&o.requests)||[])];
+    const seen={}; REQS=all.filter(r=>r&&r.id&&!seen[r.id]&&(seen[r.id]=1));
+    REQS.sort((a,b)=>(b.updated||0)-(a.updated||0));
+    if(cur==='intents') render();
+  }catch(e){}
+  finally{ clearTimeout(_reqT); _reqT=setTimeout(loadRequests, 8000); }
+}
+async function archiveMeet(id){
+  const me=(DATA.name||'').trim();
+  _reqGen++;
+  const r=REQS.find(x=>x.id===id); if(r) r.status='archived';   // optimistic, and now poll-proof
+  render(); toast(T('Перенесено в архив','Moved to the archive'));
+  try{ await fetch('/api/agent/request-archive',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id, self:me})}); }catch(e){}
+  loadRequests();
+}
+// Open (or start) the conversation with the person from an active meetup. There was no way from a
+// confirmed meetup to its chat; the Messages tab was the only door and you had to find the name.
+function openMeetThread(name){
+  const nm=String(name||'').trim(); if(!nm) return;
+  DATA.messages=DATA.messages||[];
+  let t=DATA.messages.find(x=>String(x.who||'').trim().toLowerCase()===nm.toLowerCase());
+  if(!t){ t={who:nm, kleal:false, msgs:[], cand:{name:nm}, since:Date.now()/1000}; DATA.messages.unshift(t); }
+  matchWith=t; matchWith.fromMessages=true; cur='matchchat'; render(); saveState();
+}
+let ARCHTAB='archived';
 function scr_intents(){
   if(!_intT){ _intT=1; loadIntents(); }
+  if(!_reqT){ _reqT=1; loadRequests(); }
   const list=DATA.intents||[];
-  const head=`<div class="k-small" style="color:var(--muted);padding:2px 2px 4px">${T(
-    'Интенты — это планы, которые ты поручаешь Kleal. Он ищет людей, сверяет расписания и предлагает знакомства — каждое ты подтверждаешь сам(а).',
-    'Intents are the plans you ask Kleal to arrange. It searches, matches schedules and lines up intros — you approve every one.')}</div>`;
-  if(!list.length) return `<div class="stack fade" style="gap:16px">${head}
-    ${emptyState(T('Пока нет интентов','No intents yet'),T('Расскажи Kleal, чем хочешь заняться — он соберёт план и найдёт людей.','Tell Kleal what you’d like to do — it will build the plan and find people.'))}
-    <button class="kbtn pri tall" data-act="createintent">${T('Создать интент','Create intent')}</button></div>`;
-  const cards=list.map((it)=>{
-    const cs=it.candidates||[], best=intentBest(it), ag=cs.filter(c=>c.agree).length;
-    const st=INTENT_STATUS()[it.status]||INTENT_STATUS().searching;
-    const tags=(it.tags||[]).slice(0,4);
-    return `<div class="icard" ${it.id?`data-savedintent="${it.id}"`:''}>
-      <div class="ihd"><div class="itl">${esc(it.title||T('Без названия','Untitled'))}</div>
-        <span class="kbadge ${st[1]}">${esc(st[0])}</span></div>
-      ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(t)}</span>`).join('')}</div>`:''}
-      <div class="ifoot">
-        <span class="k-cap" style="color:var(--muted)">${cs.length
-            ? (cs.length+' '+plural(cs.length,T('кандидат','match'),T('кандидата','matches'),T('кандидатов','matches'))
-               + (ag?(' · '+ag+' '+T('согласны','agreed')):''))
-            : T('пока никого','no one yet')}</span>
-        ${best?`<span class="kbadge ${best.band==='especially_close'||best.band==='strong_option'?'ok':'mut'}">${esc(bandLabel(best))}</span>`:''}
-      </div>
+  const sec=(title,count,body)=>`<div style="display:flex;flex-direction:column;gap:12px">
+    <div class="k-title">${esc(title)}${count?`<span style="color:var(--muted);font-weight:500"> · ${count}</span>`:''}</div>
+    ${body}</div>`;
+  const none=t=>`<div class="k-cap" style="color:var(--muted);padding:2px 2px 4px">${esc(t)}</div>`;
+  const who=r=>((DATA.name||'').trim().toLowerCase()===String(r.to||'').trim().toLowerCase())?r.from:r.to;
+  const line=r=>[(r.intent&&r.intent.time)||'', (r.intent&&r.intent.place)||''].filter(Boolean).join(' · ');
+  const meetCard=(r,acts)=>`<div class="icard">
+    <div class="ihd"><div class="itl">${esc((r.intent&&r.intent.title)||r.note||T('Встреча','Meetup'))}</div>
+      <span class="kbadge ${r.status==='accepted'?'ok':'mut'}">${esc(
+        r.status==='accepted'?T('подтверждена','confirmed')
+        :r.status==='declined'?T('не принято','not accepted'):T('в архиве','archived'))}</span></div>
+    <div class="ifoot"><span class="k-cap" style="color:var(--muted)">${esc(who(r))}</span>
+      <span class="k-cap" style="color:var(--muted)">${esc(line(r))}</span></div>
+    ${acts||''}</div>`;
+
+  // 1. MY ACTIVE MEETUPS — requests both sides agreed to, either direction
+  const active=REQS.filter(r=>r.status==='accepted');
+  const s1=sec(T('Мои активные встречи','My active meetups'), active.length,
+    active.length?active.map(r=>meetCard(r,`<div class="iacts">
+        <button class="kbtn sec sm" data-act="meet-msg" data-who="${esc(who(r))}">${T('Написать','Message')}</button>
+        <button class="kbtn sec sm" data-act="meet-archive" data-id="${esc(r.id)}">${T('В архив','Archive')}</button>
+      </div>`)).join('')
+      :none(T('Пока нет подтверждённых встреч.','No confirmed meetups yet.')));
+
+  // 2. PROPOSALS FROM OTHER PEOPLE — the pending inbox
+  const pend=REQS.filter(r=>r.status==='pending'&&String(r.to||'').trim().toLowerCase()===(DATA.name||'').trim().toLowerCase());
+  const s2=sec(T('Предложения от других людей','Proposals from other people'), pend.length,
+    pend.length?pend.map(r=>`<div class="icard">
+      <div class="ihd"><div class="itl">${esc(r.from)}</div>
+        <span class="kbadge warn">${T('ждёт ответа','awaiting you')}</span></div>
+      <div class="k-cap" style="color:var(--muted)">${esc(r.note||((r.intent&&r.intent.title)||T('хочет встретиться','wants to meet')))}</div>
       <div class="iacts">
-        <button class="kbtn sec sm" data-act="intent-open" data-id="${esc(it.id||'')}">${T('Открыть','Open')}</button>
-        <button class="kbtn sec sm" data-act="intent-del" data-id="${esc(it.id||'')}">${T('Удалить','Delete')}</button>
-      </div></div>`; }).join('');
-  return `<div class="stack fade" style="gap:12px">${head}${cards}
-    <button class="kbtn pri tall" style="margin-top:4px" data-act="createintent">${T('Создать интент','Create intent')}</button></div>`;
+        <button class="kbtn pri sm" data-act="req-yes" data-id="${esc(r.id)}">${T('Принять','Accept')}</button>
+        <button class="kbtn sec sm" data-act="req-no" data-id="${esc(r.id)}">${T('Отклонить','Decline')}</button>
+      </div></div>`).join('')
+      :none(T('Пока никто не предлагал встретиться.','Nobody has proposed a meetup yet.')));
+
+  // 3. MY INTENTS — status is derived from facts, never guessed: whether a search has actually run
+  // (server `launched`) and whether the live re-rank currently returns anyone.
+  const istat=it=>!it.launched ? [T('поиск не начат','search not started'),'mut']
+    : ((it.candidates||[]).length ? [T('нашли людей','people found'),'ok']
+                                  : [T('поиск начат','searching'),'warn']);
+  const s3=sec(T('Мои созданные интенты','My intents'), list.length,
+    (list.length?list.map(it=>{
+      const cs=it.candidates||[], st=istat(it), tags=(it.tags||[]).slice(0,4);
+      return `<div class="icard" ${it.id?`data-savedintent="${it.id}"`:''}>
+        <div class="ihd"><div class="itl">${esc(it.title||T('Без названия','Untitled'))}</div>
+          <span class="kbadge ${st[1]}">${esc(st[0])}</span></div>
+        ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(t)}</span>`).join('')}</div>`:''}
+        <div class="ifoot"><span class="k-cap" style="color:var(--muted)">${cs.length
+            ? (cs.length+' '+plural(cs.length,T('кандидат','match'),T('кандидата','matches'),T('кандидатов','matches')))
+            : T('пока никого','no one yet')}</span></div>
+        <div class="iacts">
+          <button class="kbtn sec sm" data-act="intent-open" data-id="${esc(it.id||'')}">${T('Открыть','Open')}</button>
+          <button class="kbtn sec sm" data-act="intent-del" data-id="${esc(it.id||'')}">${T('Удалить','Delete')}</button>
+        </div></div>`; }).join('')
+      :none(T('Расскажи Kleal, чем хочешь заняться — он соберёт план и найдёт людей.','Tell Kleal what you would like to do — it will build the plan and find people.')))
+    +`<button class="kbtn pri tall" data-act="createintent">${T('Создать интент','Create intent')}</button>`);
+
+  // 4. ARCHIVE — archived by hand, plus a toggle for the ones that were never accepted
+  const arch=REQS.filter(r=>r.status==='archived'), decl=REQS.filter(r=>r.status==='declined');
+  const shown=ARCHTAB==='declined'?decl:arch;
+  const s4=sec(T('Архив встреч','Meetup archive'), shown.length,
+    `<div class="kchips" style="margin-bottom:2px">
+       <div class="kchip ${ARCHTAB!=='declined'?'on':''}" data-act="arch-tab" data-v="archived">${T('Прошедшие','Past')} · ${arch.length}</div>
+       <div class="kchip ${ARCHTAB==='declined'?'on':''}" data-act="arch-tab" data-v="declined">${T('Непринятые','Not accepted')} · ${decl.length}</div>
+     </div>`
+    +(shown.length?shown.map(r=>meetCard(r)).join('')
+      :none(ARCHTAB==='declined'?T('Непринятых предложений нет.','No unaccepted proposals.')
+                                :T('Архив пуст.','The archive is empty.'))));
+
+  return `<div class="stack fade" style="gap:28px">${s1}${s2}${s3}${s4}</div>`;
 }
 function plural(n,one,few,many){
   const m10=n%10, m100=n%100;
@@ -2635,6 +2722,8 @@ async function answerReq(id, decision){
       body:JSON.stringify({id, decision, self:me})});
   }catch(e){}
   INBOX=INBOX.filter(r=>r.id!==id);
+  _reqGen++;                                     // same race as archiving — see loadRequests
+  const rq=REQS.find(x=>x.id===id); if(rq) rq.status=(decision==='accepted'?'accepted':'declined');
   toast(decision==='accepted'?T('Принято — можно договариваться','Accepted — you can plan it')
                              :T('Отклонено','Declined'));
   render(); saveState();
@@ -2782,9 +2871,13 @@ async function flowSay(text, fromSeed){
     FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
   FLOW.lastFailed=false;
   if(r.conversational){
-    // chit-chat: keep it visible in the thread, but it is not part of the request
+    // This screen builds an intent and nothing else. The buddy's small-talk reply is not shown here:
+    // answering «расскажи про сервис» with a chat answer invited a conversation the screen cannot
+    // finish, and the turn still polluted nothing but the user's expectations. One steer instead.
     FLOW.msgs[meIdx].chat=true;
-    FLOW.msgs.push({who:'ag',text:r.reply,chat:true,t:Date.now()});
+    FLOW.msgs.push({who:'ag',chat:true,t:Date.now(),
+      text:T('Здесь я собираю интент — план, под который ищу людей. Напиши, чем хочешь заняться: например «сходить на джаз в пятницу».',
+             "This screen builds an intent — a plan I search people for. Tell me what you'd like to do, e.g. \u201cgo to a jazz gig on Friday\u201d.")});
     render(); return;
   }
   // the request is the first turn that actually asked for something — never the greeting that opened
@@ -2878,7 +2971,9 @@ const STEP_LABELS = () => [T('Проверяю время и район','Checki
   T('Собираю лучшие варианты','Collecting the best options'),
   T('Проверяю доступность','Verifying availability')];
 
-function kbar(){ return `<div class="kbar"><div class="kback" data-act="flow-back">${IC.back}</div></div>`; }
+function kbar(cta){ return `<div class="kbar" style="justify-content:space-between">
+  <div class="kback" data-act="flow-back">${IC.back}</div>
+  ${cta?`<div class="kchip on" data-act="flow-finish" style="cursor:pointer;font-weight:600">+ ${T('Создать интент','Create Intent')}</div>`:''}</div>`; }
 function kprompt(txt){ return `<div class="kprompt"><div class="av">${IC.person}</div>
   <div class="k-h3" style="flex:1;min-width:0">${esc(txt)}</div></div>`; }
 function kcomposer(id,ph){ return `<div class="kcomp" style="padding:10px 16px;border-top:1px solid var(--border);background:var(--bg)">
@@ -2890,7 +2985,9 @@ function scr_reqcomposer(){
   const msgs=(FLOW.msgs||[]).map(m=>m.who==='me'
     ? `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><div class="kbub me">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`
     : `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`).join('');
-  return `<div class="kflow fade">${kbar()}
+  // The bar carries «+ Создать интент» (Figma): the way OUT of the dialog is always in reach, not
+  // buried under the thread. It appears once there is something to build from.
+  return `<div class="kflow fade">${kbar(!!FLOW.msgs.length)}
     <div class="kcont">
       ${kprompt(T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
       ${msgs}
@@ -4076,6 +4173,9 @@ function doAct(act, ds){
       try{ localStorage.clear(); }catch(_e){}
       location.href='/'; break; }
     case 'area-clear': AREAFILTER=null; render(); break;
+    case 'arch-tab': ARCHTAB=ds.v; render(); break;
+    case 'meet-archive': archiveMeet(ds.id); break;
+    case 'meet-msg': openMeetThread(ds.who); break;
     case 'req-yes': answerReq(ds.id,'accepted'); break;
     case 'req-no':  answerReq(ds.id,'declined'); break;
     case 'kleal-help': klealHelp(); break;

@@ -821,6 +821,24 @@ def outbox(self_name):
     out.sort(key=lambda r: -(r.get("updated") or 0))
     return out[:50]
 
+# A meetup leaves the active list only when someone says so. Deriving "past" from a timestamp would
+# be a guess: the request carries the intent's loose time ("tomorrow evening"), never a real date.
+def archive_request(rid, who):
+    me = _norm_name(who)
+    with _STORE_LOCK:
+        for r in _requests():
+            if r.get("id") == rid:
+                if me and me not in (_norm_name(r.get("to")), _norm_name(r.get("from"))):
+                    return {"ok": False, "error": "not your request"}
+                if r.get("status") != "accepted":
+                    return {"ok": False, "error": "only an accepted meetup can be archived"}
+                r["status"] = "archived"
+                r["updated"] = time.time()
+                _save_store()
+                return {"ok": True, "id": rid, "status": "archived"}
+    return {"ok": False, "error": "not found"}
+
+
 def respond(rid, decision, who):
     dec = "accepted" if str(decision).lower() in ("accept", "accepted", "yes") else "declined"
     with _STORE_LOCK:
@@ -894,7 +912,7 @@ def threads_for(self_name):
 def _intents():
     return SESSION.setdefault("_intents", [])
 
-def save_intent(owner, intent, title, iid=None):
+def save_intent(owner, intent, title, iid=None, launched=None):
     owner = str(owner or "").strip()
     if not owner or not isinstance(intent, dict):
         return {"ok": False, "error": "owner and intent required"}
@@ -905,6 +923,9 @@ def save_intent(owner, intent, title, iid=None):
             for r in rows:
                 if r.get("id") == iid and _norm_name(r.get("owner")) == _norm_name(owner):
                     r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+                    # once a search has actually run this never flips back to "not started"
+                    if launched:
+                        r["launched"] = now
                     _save_store()
                     return {"ok": True, "id": iid}
         # the same request twice should update, not pile up a second identical card
@@ -912,11 +933,14 @@ def save_intent(owner, intent, title, iid=None):
         for r in rows:
             if _norm_name(r.get("owner")) == _norm_name(owner) and r.get("key") == key:
                 r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+                if launched:
+                    r["launched"] = now
                 _save_store()
                 return {"ok": True, "id": r["id"], "merged": True}
         nid = "in_%d" % int(now * 1000)
         rows.append({"id": nid, "owner": owner, "title": title or "", "intent": intent,
-                     "key": key, "created": now, "updated": now})
+                     "key": key, "created": now, "updated": now,
+                     "launched": now if launched else None})
     _save_store()
     return {"ok": True, "id": nid}
 
@@ -939,7 +963,8 @@ def list_intents(owner, profile=None, live=True):
     out = []
     for r in [x for x in _intents() if _norm_name(x.get("owner")) == me]:
         row = {"id": r["id"], "title": r.get("title"), "intent": r.get("intent") or {},
-               "created": r.get("created"), "updated": r.get("updated"), "candidates": []}
+               "created": r.get("created"), "updated": r.get("updated"),
+               "launched": r.get("launched"), "candidates": []}
         if live:
             try:
                 row["candidates"] = match_candidates(_normalize_intent(r.get("intent") or {}),
@@ -1310,7 +1335,8 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, {"reply": "", "opener": "Hey! Want to make a plan?", "error": str(e)[:200]})
         elif p == "/api/agent/intent-save":
             send_json(self, 200, save_intent(body.get("self"), body.get("intent") or {},
-                                             body.get("title"), body.get("id")))
+                                             body.get("title"), body.get("id"),
+                                             bool(body.get("launched"))))
         elif p == "/api/agent/intent-delete":
             send_json(self, 200, delete_intent(body.get("self"), body.get("id")))
         elif p == "/api/agent/intents":
@@ -1322,6 +1348,8 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/propose":
             send_json(self, 200, propose(body.get("from"), body.get("to"),
                                          body.get("intent") or {}, body.get("note")))
+        elif p == "/api/agent/request-archive":
+            send_json(self, 200, archive_request(body.get("id"), body.get("self")))
         elif p == "/api/agent/respond":
             send_json(self, 200, respond(body.get("id"), body.get("decision"), body.get("self")))
         elif p == "/api/agent/negotiate":
