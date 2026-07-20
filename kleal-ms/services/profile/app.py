@@ -480,9 +480,6 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .nnt{flex:1;min-width:0}.nntt{font-size:14.5px;font-weight:700}.nnts{font-size:12.5px;color:var(--muted);margin-top:2px}
 .nntime{font-size:11px;color:var(--muted);flex:none;align-self:flex-start}
 /* explore event rows */
-.evrow{display:flex;align-items:center;gap:12px;padding:12px 14px}
-.evic{width:38px;height:38px;border-radius:999px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--fg);flex:none}
-.evt{flex:1;min-width:0}.evtt{font-size:14.5px;font-weight:700}.evts{font-size:12px;color:var(--muted);margin-top:2px}
 /* real map (Leaflet) on Explore */
 .lmap{height:340px;border-radius:18px;overflow:hidden;border:1px solid var(--border);background:#e7ebf2}
 .lmap .leaflet-container{font:inherit}
@@ -2460,22 +2457,41 @@ function scr_search(){
   shown.forEach((p)=>{ const k=cityKey(p.area); if(k){ (groups[k]=groups[k]||[]).push(p); } else noCity.push(p); });
   const order=Object.keys(groups).sort((a,b)=>
     (a===mineKey?-1:b===mineKey?1:0) || groups[b].length-groups[a].length);
+  // Same card language as the Intents tab — .icard / .ihd / .itags / .ifoot / .iacts — instead of a
+  // separate one-line .evrow. Two screens that both list "things Kleal can act on" were reading as two
+  // different products.
   const row=(p)=>{ const i=P.indexOf(p);
-    return `<div class="card evrow" data-public="${i}"><div class="evic">${IC.pin}</div>
-    <div class="evt"><div class="evtt">${esc(p.title)}</div><div class="evts">${esc(p.who)} · ${esc(p.when)} · ${esc(planWhere(p))}</div></div>
-    <button class="introbtn" data-act="join" data-pi="${i}">${T('Присоединиться','Join')}</button></div>`; };
+    const tags=(p.topics||[]).slice(0,4);
+    const isMine=cityKey(p.area)===cityKey(myArea());
+    return `<div class="icard" data-public="${i}">
+      <div class="ihd"><div class="itl">${esc(p.title)}</div>
+        ${p.verified?`<span class="kbadge ok">${T('проверен','verified')}</span>`
+          :(isMine?`<span class="kbadge mut">${T('твой город','your city')}</span>`:'')}</div>
+      ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(t)}</span>`).join('')}</div>`:''}
+      <div class="ifoot">
+        <span class="k-cap" style="color:var(--muted)">${esc(p.who)} · ${esc(p.when)}</span>
+        <span class="k-cap" style="color:var(--muted)">${esc(planWhere(p))}</span>
+      </div>
+      <div class="iacts">
+        <button class="kbtn pri sm" data-act="join" data-pi="${i}">${T('Присоединиться','Join')}</button>
+      </div></div>`; };
   const chip=AREAFILTER?`<div class="kchip on" data-act="area-clear" style="cursor:pointer;align-self:flex-start">
       ${esc(cityLabel(AREAFILTER))} ✕</div>`:'';
-  const list=chip+order.map(k=>`<div class="k-title" style="margin:14px 2px 6px">${esc(cityLabel(k))}
+  const list=chip+order.map(k=>`<div class="k-title" style="margin:16px 2px 8px">${esc(cityLabel(k))}
       <span style="color:var(--muted);font-weight:500"> · ${groups[k].length}</span>
       ${k===mineKey?`<span class="kbadge ok" style="margin-left:6px">${T('твой город','your city')}</span>`:''}</div>
     ${groups[k].map(row).join('')}`).join('')
     + (noCity.length?`<div class="k-title" style="margin:14px 2px 6px">${T('Город не указан','City not given')}
       <span style="color:var(--muted);font-weight:500"> · ${noCity.length}</span></div>${noCity.map(row).join('')}`:'');
-  const below = P.length ? `<div class="stack">${list}</div>`
+  // gap:16 and the .icard shell match the Intents stack exactly. The loading state used .evrow, which
+  // no longer exists here, and both it and the empty state were hardcoded Russian.
+  const below = P.length ? `<div class="stack" style="gap:16px">${list}</div>`
     : (exploreLoaded
-        ? emptyState('Пока рядом нет открытых планов','Создай интент — и Kleal предложит его людям вокруг.')
-        : `<div class="stack"><div class="card evrow"><div class="evt"><div class="evts"><span class="typing3"><i></i><i></i><i></i></span> ищу планы рядом…</div></div></div></div>`);
+        ? emptyState(T('Пока рядом нет открытых планов','No open plans nearby yet'),
+                     T('Создай интент — и Kleal предложит его людям вокруг.','Create an intent and Kleal will offer it to people around you.'))
+        : `<div class="stack" style="gap:16px"><div class="icard">
+             <div class="k-cap" style="color:var(--muted)"><span class="typing3"><i></i><i></i><i></i></span>
+               ${T('ищу планы рядом…','looking for plans nearby…')}</div></div></div>`);
   return `<div class="fade">
     <div class="sbar"><div class="box">${IC.nSearch}<span>${T('Искать в этой зоне…','Search this area…')}</span></div>
       <div class="filt" data-act="filter">${IC.compass}</div></div>
