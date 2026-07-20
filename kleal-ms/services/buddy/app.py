@@ -530,17 +530,25 @@ def build_intent(sig, cat, last_user, lang):
     Machine fields are canonical English; the card fields follow the user's language."""
     cat = cat or {}
     # engine topics: prefer words the ranker resolves (RU -> EN, taxonomy-validated).
+    # `sig["topics"]` is the searcher's OWN standing profile interests. It used to sit in this chain,
+    # so a request the taxonomy has no word for silently became "find people who share my interests":
+    # «хочу обсудить собачников» resolved to nothing, fell through to the profile, and searched
+    # startups/ai — returning four confident cards about a query the user never made. Standing
+    # interests are context, never the ask. Only the REQUEST may set the topics.
     topics = (norm_topics(cat.get("topics")) or norm_topics(sig.get("interest"))
-              or norm_topics(sig.get("topics")) or norm_topics(re.findall(r"[\w']+", str(last_user).lower())))
+              or norm_topics(re.findall(r"[\w']+", str(last_user).lower())))
+    from_request = bool(topics)
     # Interests the taxonomy doesn't cover ("apple", "рыбалка", "labubu") canonicalise to nothing. Keep the
     # raw significant words — matching's _wshare does literal-word overlap, so two people who both listed
     # "apple" still match. This runs BEFORE the category bridge so a specific interest isn't replaced by a
     # generic taxonomy word (apple -> ai). filtration's topics are already cleaned; else use the raw text.
     if not topics:
         topics = [str(t).lower()[:24] for t in (cat.get("topics") or []) if str(t).strip()][:4]
+        from_request = from_request or bool(topics)      # filtration read the request — still the ask
     if not topics:
         topics = [w[:24] for w in re.findall(r"[a-zа-яё0-9]{4,}", str(sig.get("interest") or last_user).lower())
                   if w not in _RAW_STOP][:3]
+        from_request = from_request or bool(topics)      # raw words of the request itself
     if not topics:                                    # last resort: nearest taxonomy word for the category
         topics = CATEGORY_BRIDGE.get(str(cat.get("category") or ""), [])
     # card tags: what the user actually asked for (may be outside the taxonomy — "labubu" stays "labubu")
@@ -572,7 +580,9 @@ def build_intent(sig, cat, last_user, lang):
         "safety": ("Только публичные места" if lang == "ru" else "Public places only"),
         "visibility": ("Только через Kleal" if lang == "ru" else "Via Kleal only"),
         "fallback": ("Онлайн, если не сложится" if lang == "ru" else "Online if it falls through"),
-        "rankable": bool(topics),          # False -> the ranker has no word for this yet; be honest, don't fake
+        # Only topics that came from the REQUEST make an intent rankable. A category-bridge guess is a
+        # last-resort label, not evidence that anyone matching it wants THIS.
+        "rankable": bool(topics) and from_request,
         "isNew": bool(cat.get("isNew")),
         "lang": lang,
     }

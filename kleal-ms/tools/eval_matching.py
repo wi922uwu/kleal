@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+import os
+# This harness ranks AGAINST the synthetic load pool, which live matching now excludes.
+os.environ.setdefault("KLEAL_INCLUDE_LOADTEST", "1")
+
 """Matching-quality evaluation harness (gold battery over the loadtest pool).
 
 Runs spec-derived scenarios (§18 domain cases + gates/readiness/honesty invariants) against the

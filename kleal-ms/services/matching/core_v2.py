@@ -494,14 +494,22 @@ BAND_LABELS = {
 }
 BAND_RANK = {"especially_close": 0, "strong_option": 1, "broader_option": 2, "needs_clarification": 3}
 
-def assign_band(lcb, cov, bands):
+def assign_band(lcb, cov, bands, sem=None):
     """Bands answer two different questions and must not be conflated: how GOOD the fit is
     (lcb) and how much of it is CONFIRMED (coverage). "Needs clarification" means the data is
     thin — the config says so explicitly (needs_clarification.max_coverage). It used to be the
     catch-all for anything below the top three, so a candidate with 0.88 coverage and one
     unknown field was told to "clarify" when nothing was missing; they are simply a weaker fit."""
+    # A badge must not outrun the topical evidence. semantic_activity is at most ~21% of the score, so
+    # time + distance + format + vibe alone could carry an adjacency-only candidate to «Хороший
+    # вариант» (measured: lcb 0.735, coverage 1.0, topical contributing 4.4%). The two confident bands
+    # now require a real topical match — same broad category or better, SEM_VALUE[3] = 0.6 — while the
+    # candidate stays visible as a broader option. Nothing is hidden; the claim is just made honest.
+    top_ok = sem is None or float(sem) >= 0.6
     for name in ("especially_close", "strong_option", "broader_option"):
         b = bands.get(name) or {}
+        if name in ("especially_close", "strong_option") and not top_ok:
+            continue
         if lcb >= float(b.get("min_lcb", 1)) and cov >= float(b.get("min_coverage", 1)):
             return name
     thin = float((bands.get("needs_clarification") or {}).get("max_coverage", 0.39))
@@ -771,7 +779,10 @@ def search(intent, prof, ctx, candidates, H, cfg):
         if not disc_ok and tier not in ("T0", "T1"):
             continue                                    # weak AND indirect -> drop; direct matches
         #                                                 stay visible as "needs clarification"
-        band = assign_band(d_ab["lcb"], d_ab["coverage"], bands) if disc_ok else "needs_clarification"
+        _sem = (F.get("semantic_activity") or (None, 0.0, ""))
+        band = (assign_band(d_ab["lcb"], d_ab["coverage"], bands,
+                            _sem[1] if _sem[0] == K_MATCH else 0.0)
+                if disc_ok else "needs_clarification")
         readiness = readiness_state(c, domain, now_ts, cfg,
                                     received24.get(str(c.get("name", "")).strip().lower(), 0))
         outreach_tier_ok = tier in ("T0", "T1") or (tier == "T2" and bool(intent.get("broadConsent")))

@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+import os
+# This harness ranks AGAINST the synthetic load pool, which live matching now excludes.
+os.environ.setdefault("KLEAL_INCLUDE_LOADTEST", "1")
+
 """Property-based fuzzer for the matching engine (in-process, deterministic by --seed).
 
 Three layers on top of the gold battery:

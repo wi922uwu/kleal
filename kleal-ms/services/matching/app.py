@@ -418,6 +418,11 @@ USERS_PATH = os.environ.get(
 # reads as "mock users". The demo pool is still the fallback when the store is missing/empty, so a fresh
 # system isn't dead. Set KLEAL_MERGE_DEMO=1 to blend the demo pool in (for a populated demo).
 MERGE_DEMO = os.environ.get("KLEAL_MERGE_DEMO", "0") != "0"
+# tools/gen_test_users.py stamps source="loadtest" on its 1000-person load pool. Only the Explore map
+# ever filtered them out, so a real user's SEARCH was ranked against ~982 synthetic people (every
+# result surnamed Volkov/Petrov/Garcia). They are fixtures, not people, and must not be proposed to
+# anyone. The eval and fuzz harnesses run ON that pool, so they flip this back on.
+INCLUDE_LOADTEST = os.environ.get("KLEAL_INCLUDE_LOADTEST", "0") != "0"
 _users_cache = {"mtime": None, "list": None}
 def load_candidates():
     store = None
@@ -434,6 +439,10 @@ def load_candidates():
         store = None
     if not store:                                  # missing/broken/empty store -> demo pool keeps matching alive
         return CANDIDATES
+    if not INCLUDE_LOADTEST:
+        # Filtered AFTER the emptiness check on purpose: a store that is nothing but fixtures must
+        # yield an empty slate, not resurrect the 50 demo fakes through the fallback above.
+        store = [u for u in store if u.get("source") != "loadtest"]
     if not MERGE_DEMO:
         return store                               # opt-out: store authoritative (original behaviour)
     seen = {str(u.get("name", "")).strip().lower() for u in store}
