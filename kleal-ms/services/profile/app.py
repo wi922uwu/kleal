@@ -646,6 +646,10 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .ktabs{display:flex;justify-content:space-between;background:#fff;border-radius:20px;padding:2px;
   flex:0 0 auto;min-height:40px}
 .ktabs .kchip{flex:1;min-width:0}
+.ksugg{display:block;width:100%;box-sizing:border-box;padding:12px 14px;border-radius:16px;
+  background:var(--neutral100);border:1px solid var(--border);color:var(--fg);
+  font-size:15px;line-height:22px;text-align:left;white-space:normal;overflow-wrap:anywhere;cursor:pointer}
+.ksugg:active{background:var(--border)}
 /* grouped result surface: one card split by right-inset hairlines, no shadow */
 .kgroup{background:var(--card);border-radius:16px;overflow:hidden}
 .kgroup .hr{height:1px;background:var(--bg);margin-left:33px}
@@ -1697,7 +1701,7 @@ function scr_matchchat(){
   // rather than sending anything on its own.
   const sugg=(!m.msgs.length&&m.suggest)?`<div style="padding:8px 2px">
       <div class="k-cap" style="color:var(--muted);margin-bottom:6px">${T('Kleal предлагает начать так','Kleal suggests opening with')}</div>
-      <div class="kchip" data-act="use-suggest" style="display:inline-block;cursor:pointer">${esc(m.suggest)}</div></div>`:'';
+      <div class="ksugg" data-act="use-suggest">${esc(m.suggest)}</div></div>`:'';
   const nostart=(!m.msgs.length)?`<div class="k-cap" style="color:var(--muted);text-align:center;padding:6px 0">${T('Переписка ещё не началась.','No messages yet.')}</div>`:'';
   const wait=m.awaiting?`<div class="k-cap" style="color:var(--muted);text-align:center;padding:6px 0">${T('Отправлено. Ждём ответа — сообщим, когда он придёт.','Sent. Waiting for their reply — we’ll let you know.')}</div>`:'';
   return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${hint}${nostart}${thread}${sugg}${wait}</div>
