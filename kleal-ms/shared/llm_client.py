@@ -29,3 +29,31 @@ def llm_models():
             return json.loads(r.read().decode("utf-8"))
     except Exception:
         return []
+
+
+def llm_stream(model, messages, temperature, field, on_text):
+    """POST /llm/stream -> consumes SSE, calls on_text(str) per new piece of `field`.
+    Returns the FULL raw model output so the caller still parses the complete JSON envelope.
+    Raises on transport error, exactly like llm_complete, so existing fallbacks fire."""
+    body = json.dumps({"model": model, "messages": messages, "temperature": temperature,
+                       "field": field}).encode("utf-8")
+    req = urllib.request.Request(LLM_URL + "/llm/stream", data=body,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    raw, ev = "", None
+    with urllib.request.urlopen(req, timeout=195) as r:
+        for line in r:
+            line = line.decode("utf-8", "replace").rstrip("\n")
+            if line.startswith("event: "):
+                ev = line[7:]
+            elif line.startswith("data: "):
+                try:
+                    d = json.loads(line[6:])
+                except Exception:
+                    continue
+                if ev == "delta" and d.get("t"):
+                    on_text(d["t"])
+                elif ev == "done":
+                    raw = d.get("content") or ""
+                elif ev == "error":
+                    raise RuntimeError(d.get("error") or "llm stream error")
+    return raw

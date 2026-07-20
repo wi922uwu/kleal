@@ -2354,6 +2354,54 @@ function flowBack(){
   if(!prev) prev=NAVSTACK.pop()||'agenthome';
   cur=prev; render();
 }
+// ---- streaming: watch the agent's answer type itself out instead of waiting for the whole thing ----
+// Measured on the pod: first token ~0.2s vs ~5-7s for the complete reply. The transport is SSE, and the
+// server emits only the decoded `reply` field, never the JSON envelope it actually generates.
+//   delta {t}  – more text
+//   reset {}   – the draft you were shown is being discarded (failed the language check, or the turn
+//                turned out to be small talk); clear the bubble and let the real answer stream in
+//   done {...} – the full payload, identical in shape to the non-streaming endpoint
+// Any transport failure returns null so flowSay's existing "connection lost" branch fires unchanged.
+let STREAMING=null;      // {text} of the bubble currently being typed, or null
+async function sseIntentBuild(messages, profile){
+  let res=null;
+  try{
+    const resp=await fetch('/api/buddy/intent-build',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages, profile, stream:true})});
+    if(!resp.ok||!resp.body) return null;
+    const rd=resp.body.getReader(), dec=new TextDecoder();
+    let buf='', ev=null;
+    STREAMING={text:''}; render();
+    for(;;){
+      const {done,value}=await rd.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      let i;
+      while((i=buf.indexOf('\n'))>=0){
+        const line=buf.slice(0,i); buf=buf.slice(i+1);
+        if(line.startsWith('event: ')) ev=line.slice(7).trim();
+        else if(line.startsWith('data: ')){
+          let d; try{ d=JSON.parse(line.slice(6)); }catch(_e){ continue; }
+          if(ev==='delta'&&d.t){ STREAMING.text+=d.t; paintStream(); }
+          else if(ev==='reset'){ STREAMING.text=''; paintStream(); }
+          else if(ev==='done') res=d;
+          else if(ev==='error') res=null;
+        }
+      }
+    }
+  }catch(e){ res=null; }
+  STREAMING=null;
+  return res;
+}
+// Repaint just the streaming bubble. A full render() per token would rebuild the whole screen and
+// fight the user's scroll position several times a second.
+function paintStream(){
+  const el=document.getElementById('streambub');
+  if(!el){ render(); return; }
+  el.textContent=STREAMING?STREAMING.text:'';
+  const th=document.getElementById('bthread')||el.closest('.kcont');
+  if(th) th.scrollTop=th.scrollHeight;
+}
 async function flowSay(text, fromSeed){
   text=String(text||'').trim(); if(!text||FLOW.busy) return;
   if(!fromSeed){ const el=document.getElementById('flowinp')||document.getElementById('flowinp2'); if(el)el.value=''; }
@@ -2367,8 +2415,7 @@ async function flowSay(text, fromSeed){
     // intent whose vibe was "bonds, finance, investing, economy". Turns already answered
     // conversationally are marked and excluded — a real multi-turn build is unmarked and still sent.
     const forBuilder=FLOW.msgs.filter(m=>!m.chat).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text}));
-    r=await fetch('/api/buddy/intent-build',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:forBuilder, profile:matchProfile()})}).then(x=>x.json());
+    r=await sseIntentBuild(forBuilder, matchProfile());
   }catch(e){ r=null; }
   FLOW.busy=false;
   if(!r||!r.reply){ FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
@@ -2399,8 +2446,10 @@ function flowIntent(){
   // merge the clarification answers into the intent the buddy compiled
   const it=Object.assign({}, FLOW.intent||{});
   if(!it.topics||!it.topics.length) it.topics=(FLOW.text||'').split(/[,\s]+/).filter(w=>w.length>2).slice(0,4);
-  const whenTxt={tonight:'tonight',tomorrow:'tomorrow',weekend:'this weekend',pick:'Flexible'}[FLOW.when];
-  const timeTxt={morning:'morning',afternoon:'afternoon','20-22':'20:00-22:00',late:'late evening'}[FLOW.time];
+  // 'tonight'/'20-22' are the OLD chip keys; a state saved before the day/time split still carries them,
+  // so they stay in these maps as aliases — dropping them would make a restored intent time undefined.
+  const whenTxt={today:'today',tonight:'today',tomorrow:'tomorrow',weekend:'this weekend',pick:'Flexible'}[FLOW.when];
+  const timeTxt={morning:'morning',afternoon:'afternoon',evening:'evening','20-22':'evening',late:'late evening'}[FLOW.time];
   it.time=[whenTxt,timeTxt].filter(Boolean).join(' ')||it.time||'Flexible';
   if(FLOW.district) it.place=labelOf(DIST_OPTS(),FLOW.district);
   it.mode=it.mode||'offline';
@@ -2448,10 +2497,14 @@ const FLOW_HINTS = () => [
   T('Найти компанию для кофе и разговора','Find company for coffee & good talk'),
   T('Познакомиться с людьми из творческой среды','Meet new people from the creative field'),
   T('Спокойные встречи без суеты','Low-key meetups in a relaxed setting')];
-const WHEN_OPTS = () => [['tonight',T('Сегодня вечером','Tonight')],['tomorrow',T('Завтра','Tomorrow')],
+// "Когда" is the DAY, "Время" is the time of day — they must be orthogonal. 'tonight' baked an
+// evening into the day group, so "Сегодня вечером" sat above a "Утро" chip you could also pick.
+// The evening shortcut is not lost: Сегодня + Вечер says the same thing and cannot contradict itself.
+const WHEN_OPTS = () => [['today',T('Сегодня','Today')],['tomorrow',T('Завтра','Tomorrow')],
   ['weekend',T('На выходных','This weekend')],['pick',T('Выбрать дату…','Pick a date…')]];
+// '20:00–22:00' was one exact clock range among three vague words; 'Вечер' matches its neighbours.
 const TIME_OPTS = () => [['morning',T('Утро','Morning')],['afternoon',T('День','Afternoon')],
-  ['20-22','20:00–22:00'],['late',T('Поздно','Late')]];
+  ['evening',T('Вечер','Evening')],['late',T('Поздно','Late')]];
 const DIST_OPTS = () => [['center',T('Центр','Center')],['west',T('Запад','West')],['east',T('Восток','East')],
   ['south',T('Юг','South')],['beach',T('Пляж','Beach')]];
 const STEP_LABELS = () => [T('Проверяю время и район','Checking time & district'),
@@ -2475,7 +2528,9 @@ function scr_reqcomposer(){
     <div class="kcont">
       ${kprompt(T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
       ${msgs}
-      ${FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:''}
+      ${STREAMING
+        ? `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag" id="streambub">${esc(STREAMING.text)}</div></div>`
+        : (FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:'')}
       <div style="display:flex;flex-direction:column;gap:12px">
         <div class="k-label" style="color:var(--muted)">${T('Попробуй сформулировать иначе','Try phrasing it differently')}</div>
         <div class="kchips">${FLOW_HINTS().map(h=>`<div class="kchip soft" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>

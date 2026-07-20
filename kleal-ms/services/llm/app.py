@@ -59,6 +59,110 @@ def call_llm(cfg, messages, temperature=0.7):
     return msg.get("content") or msg.get("reasoning_content") or ""
 
 
+# ------------------------------------------------------------------ streaming
+# Kleal's prompts return a JSON object ({"reply": "...", "signals": {...}, ...}), so a raw token
+# stream would show the user `{"reply":"Прив`. This extractor walks the stream character by
+# character and emits ONLY the decoded contents of one string field, so the caller receives plain
+# text as it is generated and never sees the envelope. When no field is requested it passes the
+# tokens through unchanged (plain-text prompts).
+class FieldStreamer:
+    """Incrementally pull one top-level string field out of a JSON object as it streams."""
+
+    def __init__(self, field):
+        self.key = '"%s"' % field if field else None
+        self.buf = ""          # raw text seen so far (also the full body for the final parse)
+        self.started = False   # we are inside the value
+        self.done = False      # the value's closing quote was seen
+        self._esc = False      # previous char was a backslash
+        self._scan = 0         # how much of buf we have already emitted from
+
+    _ESCAPES = {'n': '\n', 't': '\t', 'r': '\r', '"': '"', '\\': '\\', '/': '/', 'b': '', 'f': ''}
+
+    def feed(self, chunk):
+        """Return the newly available plain text for this chunk ('' if none yet)."""
+        self.buf += chunk
+        if not self.key:
+            out = self.buf[self._scan:]
+            self._scan = len(self.buf)
+            return out
+        if self.done:
+            return ""
+        if not self.started:
+            i = self.buf.find(self.key)
+            if i < 0:
+                return ""
+            j = self.buf.find('"', i + len(self.key))     # opening quote of the VALUE
+            if j < 0:
+                return ""
+            self.started = True
+            self._scan = j + 1
+        out = []
+        i = self._scan
+        while i < len(self.buf):
+            c = self.buf[i]
+            if self._esc:
+                if c == 'u' and i + 4 < len(self.buf):     # \uXXXX
+                    try:
+                        out.append(chr(int(self.buf[i + 1:i + 5], 16)))
+                    except ValueError:
+                        pass
+                    i += 5
+                else:
+                    out.append(self._ESCAPES.get(c, c))
+                    i += 1
+                self._esc = False
+                continue
+            if c == '\\':
+                # a trailing backslash may be the first half of an escape split across chunks
+                if i == len(self.buf) - 1:
+                    break
+                self._esc = True
+                i += 1
+                continue
+            if c == '"':                                   # unescaped quote ends the value
+                self.done = True
+                i += 1
+                break
+            out.append(c)
+            i += 1
+        self._scan = i
+        return "".join(out)
+
+
+def stream_llm(cfg, messages, temperature, field, on_text):
+    """Stream from the OpenAI-compatible endpoint. Calls on_text(str) per new piece of the field.
+    Returns the FULL raw model output so the caller can still parse the complete JSON."""
+    payload = {"model": cfg["model"], "messages": messages, "max_tokens": 2500,
+               "temperature": temperature, "stream": True}
+    headers = {"Content-Type": "application/json"}
+    if cfg.get("key"):
+        headers["Authorization"] = "Bearer " + cfg["key"]
+    req = urllib.request.Request(cfg["base"] + "/chat/completions",
+                                 data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+    fs = FieldStreamer(field)
+    raw = []
+    with urllib.request.urlopen(req, timeout=180) as r:
+        for line in r:
+            line = line.decode("utf-8", "replace").strip()
+            if not line.startswith("data: "):
+                continue
+            data = line[6:]
+            if data == "[DONE]":
+                break
+            try:
+                delta = json.loads(data)["choices"][0].get("delta") or {}
+            except Exception:
+                continue
+            piece = delta.get("content") or delta.get("reasoning_content") or ""
+            if not piece:
+                continue
+            raw.append(piece)
+            text = fs.feed(piece)
+            if text:
+                on_text(text)
+    return "".join(raw)
+
+
 def _send(h, code, obj, ctype="application/json"):
     b = obj.encode("utf-8") if isinstance(obj, str) else json.dumps(obj).encode("utf-8")
     h.send_response(code)
@@ -73,11 +177,30 @@ class H(BaseHTTPRequestHandler):
         if self.path == "/llm/models":
             _send(self, 200, [{"id": k, "label": v["label"], "info": v["info"]} for k, v in MODELS.items()])
         elif self.path == "/":
-            _send(self, 200, "Kleal llm-service. POST /llm/complete {model,messages,temperature}; GET /llm/models", "text/plain")
+            _send(self, 200, "Kleal llm-service. POST /llm/complete {model,messages,temperature}; POST /llm/stream (SSE); GET /llm/models", "text/plain")
         else:
             _send(self, 404, {})
 
+    def _sse_open(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")     # tell any proxy in front not to buffer
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+    def _sse(self, event, obj):
+        try:
+            self.wfile.write(("event: %s\ndata: %s\n\n" % (
+                event, json.dumps(obj, ensure_ascii=False))).encode("utf-8"))
+            self.wfile.flush()                          # without this nothing leaves until the end
+            return True
+        except (BrokenPipeError, ConnectionResetError):
+            return False                                # client navigated away mid-stream
+
     def do_POST(self):
+        if self.path == "/llm/stream":
+            return self._stream()
         if self.path != "/llm/complete":
             return _send(self, 404, {})
         ln = int(self.headers.get("Content-Length", "0") or 0)
@@ -95,6 +218,33 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:
             # 502 so shared/llm_client.llm_complete raises and the callers' own fallbacks fire (as before)
             _send(self, 502, {"content": "", "error": str(e)[:200]})
+
+
+    def _stream(self):
+        """POST /llm/stream {model, messages, temperature, field} -> SSE.
+        Events: `delta` {t} per new piece of text, then `done` {content} with the FULL raw output so
+        the caller can still parse the complete JSON envelope, or `error` {error}."""
+        ln = int(self.headers.get("Content-Length", "0") or 0)
+        try:
+            body = json.loads(self.rfile.read(ln).decode("utf-8") or "{}")
+        except Exception:
+            body = {}
+        cfg = MODELS.get(body.get("model") or "llama_self") or MODELS["llama_self"]
+        self._sse_open()
+        alive = [True]
+
+        def on_text(t):
+            if alive[0] and not self._sse("delta", {"t": t}):
+                alive[0] = False
+
+        try:
+            raw = stream_llm(cfg, body.get("messages") or [], body.get("temperature", 0.7),
+                             body.get("field") or None, on_text)
+            if alive[0]:
+                self._sse("done", {"content": raw})
+        except Exception as e:
+            if alive[0]:
+                self._sse("error", {"error": str(e)[:200]})
 
     def log_message(self, *a):
         pass

@@ -100,6 +100,29 @@ class H(BaseHTTPRequestHandler):
                 req.add_header(k, v)
         try:
             with urllib.request.urlopen(req, timeout=300) as r:
+                # Server-sent events must be relayed as they arrive. r.read() blocks until the upstream
+                # closes, which would buffer the whole generation and defeat streaming entirely — the
+                # user would wait the full time and then see the text appear at once.
+                if "text/event-stream" in (r.headers.get("Content-Type") or "").lower():
+                    self.send_response(r.status)
+                    for k, v in r.headers.items():
+                        if k.lower() not in _HOP and k.lower() != "content-length":
+                            self.send_header(k, v)
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    if self.command == "HEAD":
+                        return
+                    try:
+                        while True:
+                            chunk = r.read1(512) if hasattr(r, "read1") else r.read(512)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass                     # client navigated away mid-stream
+                    return
                 body = r.read()
                 self.send_response(r.status)
                 for k, v in r.headers.items():

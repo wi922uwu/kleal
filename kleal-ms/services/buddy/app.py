@@ -53,7 +53,7 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 import kleal_lib as base                      # base._extract_json (keyless)
-from llm_client import llm_complete
+from llm_client import llm_complete, llm_stream
 from http_util import send_json, read_json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -1023,7 +1023,7 @@ def _real_topics(cat):
     return [t for t in ts if t not in _FILLER_TOPICS]
 
 
-def _chat_reply(messages, profile, lang):
+def _chat_reply(messages, profile, lang, on_text=None):
     """A conversational reply and NOTHING ELSE.
 
     Deliberately not buddy_chat(): that function is side-effecting — when wants_people() fires it runs
@@ -1041,8 +1041,13 @@ def _chat_reply(messages, profile, lang):
         convo = "[FIRST MESSAGE — you have never spoken with this person before]\n" + convo
     for attempt in range(2):
         try:
-            raw = llm_complete(MODEL_ID, [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
-                                          {"role": "user", "content": convo}], 0.6 if attempt == 0 else 0.3)
+            msgs = [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
+                    {"role": "user", "content": convo}]
+            temp = 0.6 if attempt == 0 else 0.3
+            if on_text is not None and attempt == 0:      # only the first try streams — see intent_build
+                raw = llm_stream(MODEL_ID, msgs, temp, "reply", on_text)
+            else:
+                raw = llm_complete(MODEL_ID, msgs, temp)
             obj = _lenient_json(raw)
         except Exception:
             obj = None
@@ -1053,7 +1058,7 @@ def _chat_reply(messages, profile, lang):
     return ""
 
 
-def intent_build(messages, profile):
+def intent_build(messages, profile, on_text=None):
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     lang = detect_lang(last_user)
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
@@ -1067,8 +1072,15 @@ def intent_build(messages, profile):
     obj = None
     for attempt in range(2):
         try:
-            raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt},
-                                          {"role": "user", "content": convo}], 0.5 if attempt == 0 else 0.2)
+            msgs = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": convo}]
+            temp = 0.5 if attempt == 0 else 0.2
+            # Only the FIRST attempt streams. A re-roll happens because the first answer was rejected
+            # (wrong language / unparseable), and the user has already watched that text appear —
+            # streaming the replacement on top would make the bubble rewrite itself mid-read.
+            if on_text is not None and attempt == 0:
+                raw = llm_stream(MODEL_ID, msgs, temp, "reply", on_text)
+            else:
+                raw = llm_complete(MODEL_ID, msgs, temp)
             cand = _lenient_json(raw)
         except Exception:
             cand = None
@@ -1112,6 +1124,10 @@ def intent_build(messages, profile):
     # branch flap between runs. Filtration is the stable signal. `cat is not None` matters: filtration
     # returns None when it times out, and without that guard a slow filtration would push a REAL ask
     # into small talk instead of building it.
+    # Classify AFTER the model, not before. Pre-classifying let chit-chat skip a wasted builder call,
+    # but filtration is itself an LLM call — measured, it pushed the first streamed token from 0.16s to
+    # 1.86s on EVERY request, including real ones. Streaming exists to make the common path feel
+    # instant, so the common path wins; the rare chit-chat swap is handled by the explicit reset event.
     _cat = _categorize(last_user)
     nothing_to_build = (not ready and _cat is not None and not _real_topics(_cat))
     if not valid or nothing_to_build:
@@ -1222,7 +1238,43 @@ class H(BaseHTTPRequestHandler):
             if r == "/intent-build":                 # conversational "Create intent": validate + ask + build
                 msgs = body.get("messages") if isinstance(body.get("messages"), list) else []
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
-                return send_json(self, 200, intent_build(msgs, prof))
+                if not body.get("stream"):
+                    return send_json(self, 200, intent_build(msgs, prof))
+                # Streamed variant. Deltas start flowing before we know whether this turn is small talk
+                # or a real intent — that verdict only exists once the whole JSON envelope has parsed,
+                # so it rides in `done` and the client applies its usual branching there.
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("X-Accel-Buffering", "no")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                alive = [True]
+                shown = []                  # exactly what the user has watched appear, for the check below
+
+                def emit(event, obj):
+                    if not alive[0]:
+                        return
+                    try:
+                        self.wfile.write(("event: %s\ndata: %s\n\n" % (
+                            event, json.dumps(obj, ensure_ascii=False))).encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        alive[0] = False        # user left mid-stream; finish the work, stop writing
+
+                def sink(t):
+                    shown.append(t)
+                    emit("delta", {"t": t})
+
+                try:
+                    out = intent_build(msgs, prof, on_text=sink)
+                    # A re-roll, or the hand-off to the conversational agent, produces a DIFFERENT reply
+                    # from the one the user just watched appear. Tell the client so it can replace the
+                    # bubble instead of leaving a stale half-sentence stranded above the real answer.
+                    emit("done", dict(out, replaced=("".join(shown) != (out.get("reply") or ""))))
+                except Exception as e:
+                    emit("error", {"error": str(e)[:200]})
+                return
 
             if r == "/resummary":                    # after a profile edit: rewrite the summary to fit (adapt, not append)
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
