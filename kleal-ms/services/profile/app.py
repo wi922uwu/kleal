@@ -581,9 +581,6 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kcomp .snd{width:44px;height:44px;flex:none;border-radius:22px;background:var(--primary);color:#fff;
   display:flex;align-items:center;justify-content:center;cursor:pointer;border:0}
 /* quick tiles */
-.qtiles{display:flex;gap:8px}
-.qtile{flex:1;min-width:0;height:75px;background:var(--card);border-radius:12px;display:flex;flex-direction:column;
-  align-items:center;justify-content:center;gap:12px;padding:12px 8px;cursor:pointer;text-align:center}
 .qtile .ic{width:20px;height:20px;color:var(--fg);display:flex;align-items:center;justify-content:center}
 .qtile .lb{font-size:10px;line-height:13px;font-weight:500;color:var(--muted)}
 /* event card */
@@ -2598,8 +2595,6 @@ function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans for "For you today"
   const nm=(DATA.name||'there').split(' ')[0];
   const plan=(DATA.plans||[])[0];
-  const qa=[['person',T('Люди рядом','People nearby'),'q-people'],['calen',T('События рядом','Events nearby'),'q-events'],
-            ['groups',T('Интересы и группы','Interests & groups'),'q-interests'],['bookmark',T('Сохранённое','Saved'),'q-saved']];
   const card = plan ? `<div class="ecard" data-plan="0">
       <div class="ph"></div>
       <div class="bd">
@@ -2642,10 +2637,6 @@ function scr_agenthome(){
       </div>
       ${inboxCards()}
       <div style="display:flex;flex-direction:column;gap:32px">
-        <div style="display:flex;flex-direction:column;gap:16px">
-          <div class="k-title">${T('Быстрые действия','Use district only')}</div>
-          <div class="qtiles">${qa.map(q=>`<div class="qtile" data-act="${q[2]}"><div class="ic">${IC[q[0]]}</div><div class="lb">${q[1]}</div></div>`).join('')}</div>
-        </div>
         <div style="display:flex;flex-direction:column;gap:16px">
           <div style="display:flex;align-items:flex-end;justify-content:space-between">
             <span class="k-title">${T('Для тебя сегодня','For you today')}</span>
@@ -2724,7 +2715,9 @@ async function flowSay(text, fromSeed){
     r=await intentBuild(forBuilder, matchProfile());
   }catch(e){ r=null; }
   FLOW.busy=false;
-  if(!r||!r.reply){ FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
+  if(!r||!r.reply){ FLOW.lastFailed=true;
+    FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
+  FLOW.lastFailed=false;
   if(r.conversational){
     // chit-chat: keep it visible in the thread, but it is not part of the request
     FLOW.msgs[meIdx].chat=true;
@@ -2737,9 +2730,12 @@ async function flowSay(text, fromSeed){
   FLOW.msgs.push({who:'ag',text:r.reply,t:Date.now()});
   if(r.ready&&r.intent){                       // enough detail -> one clarification, then the summary
     FLOW.intent=r.intent;
+    intentPrefill();                           // a day named in the dialog must light its chip, not be re-asked
     FLOW.summary={request:FLOW.request||FLOW.text, format:r.intent.format,
                   vibe:(r.intent.tags||[]).filter(t=>t!=='meet').join(', ')||null};
-    cur='clarify';
+    // Only the district question is left when the dialog already gave both the day and the time of
+    // day — and the district is optional, so there is nothing the clarify screen MUST ask. Skip it.
+    cur=(FLOW.knownWhen&&FLOW.knownTime)?'summary':'clarify';
   }
   render();
 }
@@ -2836,25 +2832,51 @@ function scr_reqcomposer(){
       ${kprompt(T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
       ${msgs}
       ${FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:''}
-      <div style="display:flex;flex-direction:column;gap:12px">
+      ${(FLOW.msgs.length&&!FLOW.busy)?`<button class="kbtn sec" data-act="flow-finish" style="align-self:flex-start">${T('Завершить диалог — к подбору','Finish — review & search')}</button>`:''}
+      ${(!FLOW.msgs.length||FLOW.lastFailed)?`<div style="display:flex;flex-direction:column;gap:12px">
         <div class="k-label" style="color:var(--muted)">${T('Попробуй сформулировать иначе','Try phrasing it differently')}</div>
         <div class="kchips">${FLOW_HINTS().map(h=>`<div class="kchip soft" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
-      </div>
+      </div>`:''}
     </div>
     ${kcomposer('flowinp',T('Сообщение…','Message…'))}</div>`;
+}
+
+// The builder's free-text time («завтра», 'tomorrow evening', 'Гибко') mapped onto the clarify
+// chips. It used to live only in FLOW.intent.time, which the clarify screen never read — so the day
+// the user had already named in the dialog was asked again with the chip row dark. This was the
+// «после ответа опять эти вопросы» bug. 'Гибко'/'Flexible' is the builder's own default for "never
+// said", so it deliberately maps to nothing and the question is still asked.
+function intentPrefill(){
+  const t=String((FLOW.intent&&FLOW.intent.time)||'').toLowerCase();
+  FLOW.knownWhen=false; FLOW.knownTime=false;
+  if(!t) return;
+  const day = /завтра|tomorrow/.test(t)?'tomorrow'
+            : /сегодня|today|tonight/.test(t)?'today'
+            : /выходн|weekend|суббот|воскрес|saturday|sunday/.test(t)?'weekend' : null;
+  const tod = /утр|morning/.test(t)?'morning'
+            : /дн[её]м|afternoon/.test(t)?'afternoon'
+            : /вечер|evening|tonight/.test(t)?'evening'
+            : /поздн|ноч|late|night/.test(t)?'late' : null;
+  if(day){ FLOW.when=FLOW.when||day; FLOW.knownWhen=true; }
+  if(tod){ FLOW.time=FLOW.time||tod; FLOW.knownTime=true; }
 }
 
 // ---- 2. One clarification (479:14610) ----
 function scr_clarify(){
   const grp=(icon,title,opts,key)=>`<div class="kgrp"><div class="hd">${icon}${esc(title)}</div>
     <div class="kchips">${opts.map(o=>`<div class="kchip ${FLOW[key]===o[0]?'on':''}" data-act="flow-pick" data-k="${key}" data-v="${o[0]}">${esc(o[1])}</div>`).join('')}</div></div>`;
+  // A group whose answer already came from the dialog is not re-asked; «Изменить» on the summary
+  // (flow-edit) sets editAll and brings every group back for corrections.
+  const showWhen=FLOW.editAll||!FLOW.knownWhen, showTime=FLOW.editAll||!FLOW.knownTime;
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
       ${kprompt(T('Чтобы точнее подобрать — один момент:','To match you better, one thing:'))}
-      <div class="kbub ag">${T('Когда и где удобнее?','When and where works best?')}</div>
+      <div class="kbub ag">${showWhen?T('Когда и где удобнее?','When and where works best?')
+        :(showTime?T('Понял, когда. Время и район уточним?','Got the day. Time and district?')
+                  :T('Остался только район — уточним?','Only the district left — narrow it down?'))}</div>
       <div class="kplan">
-        ${grp(IC.calen,T('Когда','When'),WHEN_OPTS(),'when')}
-        ${grp(IC.clock,T('Время','Time'),TIME_OPTS(),'time')}
+        ${showWhen?grp(IC.calen,T('Когда','When'),WHEN_OPTS(),'when'):''}
+        ${showTime?grp(IC.clock,T('Время','Time'),TIME_OPTS(),'time'):''}
         ${grp(IC.pin,T('Район','District'),DIST_OPTS(),'district')}
         <div class="kwhy">${T('Необязательно — можно пропустить или изменить позже.','Optional — skip it or change it later.')}</div>
         <div class="kcta">
@@ -3926,8 +3948,9 @@ function doAct(act, ds){
     case 'flow-hint': flowSay(ds.h||''); break;
     case 'flow-pick': { FLOW[ds.k]=(FLOW[ds.k]===ds.v?null:ds.v); render(); break; }
     case 'flow-skip': flowToSummary(); break;
+    case 'flow-finish': flowToSummary(); break;   // explicit way to END the dialog from the composer
     case 'flow-next': flowToSummary(); break;
-    case 'flow-edit': cur='clarify'; render(); break;
+    case 'flow-edit': FLOW.editAll=true; cur='clarify'; render(); break;
     case 'flow-start': flowSearch(); break;
     case 'flow-adjust': FLOW.adjust=ds.k; render(); break;
     case 'flow-groups': FLOW.groups=!FLOW.groups; render(); break;
@@ -3996,10 +4019,6 @@ function doAct(act, ds){
     // must open the same screen the composer does. It used to call openBuddy(), the pre-flow free-chat
     // screen — the same stale entry point the Enter key had. Kleal converses on the new screen now.
     case 'talk-buddy': flowStart(''); break;
-    case 'q-people': setTab('search'); break;
-    case 'q-events': setTab('search'); break;
-    case 'q-interests': setTab('interests'); break;
-    case 'q-saved': cur='saved'; render(); break;
     case 'see-all': setTab('search'); break;
     case 'add-interests': openProfileEdit('Interests'); break;
     case 'edit-personality': openProfileEdit('Your personality'); break;
