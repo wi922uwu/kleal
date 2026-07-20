@@ -546,6 +546,127 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .stack5 .more{width:22px;height:22px;border-radius:50%;background:var(--neutral100);border:2px solid var(--card);margin-left:-7px;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;color:var(--muted)}
 .tcard .pn{font-size:12px;color:var(--muted)}
 .tcard .tbm{color:var(--muted);flex:none;align-self:flex-start}
+/* ===================== Figma "Agent Home / request flow" (479:14518…14661) =====================
+   Design tokens match the existing ones (#F7F8FA / #181B22 / #F5455C / #EEF0F4 / Geist), so these
+   rules only add the shapes the new screens need. Sizes are taken verbatim from the frames. */
+.k-h2{font-size:24px;line-height:32px;font-weight:600;letter-spacing:-.24px}
+.k-h3{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.1px}
+.k-title{font-size:17px;line-height:24px;font-weight:600}
+.k-body{font-size:15px;line-height:22px}
+.k-small{font-size:13px;line-height:18px}
+.k-label{font-size:13px;line-height:16px;font-weight:500}
+.k-cap{font-size:12px;line-height:16px}
+.k-lbls{font-size:11px;line-height:16px;font-weight:500}
+.k-card{background:var(--card);border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.06)}
+/* greeting + intro */
+.ah2{display:flex;flex-direction:column;height:100%}
+.ah2 .ahd{display:flex;align-items:center;gap:4px;padding:8px 20px}
+.ah2 .ahd .nm{flex:1;min-width:0}
+.ah2 .bell{width:44px;height:44px;border:1px solid var(--border);border-radius:999px;display:flex;
+  align-items:center;justify-content:center;flex:none;cursor:pointer;position:relative;background:var(--card)}
+.ah2 .body{flex:1;min-height:0;overflow-y:auto;padding:0 20px 12px;display:flex;flex-direction:column;gap:20px}
+.aintro2{display:flex;gap:12px;align-items:center;padding:12px 16px;border-radius:16px}
+.aintro2 .msc{width:72px;height:72px;border-radius:999px;background:var(--neutral100);flex:none;
+  display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.aintro2 .txt{flex:1;min-width:0;font-size:13px;line-height:18px;color:var(--fg)}
+/* composer pill */
+.kcomp{display:flex;gap:10px;align-items:center;padding:10px 0}
+.kcomp .fld{flex:1;min-width:0;display:flex;gap:8px;align-items:center;background:var(--neutral100);
+  border-radius:22px;padding:12px 12px 12px 16px}
+.kcomp .fld input{flex:1;min-width:0;border:0;outline:0;background:none;font:inherit;font-size:15px;line-height:22px;color:var(--fg)}
+.kcomp .fld input::placeholder{color:var(--muted)}
+.kcomp .snd{width:44px;height:44px;flex:none;border-radius:22px;background:var(--primary);color:#fff;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;border:0}
+/* quick tiles */
+.qtiles{display:flex;gap:8px}
+.qtile{flex:1;min-width:0;height:75px;background:var(--card);border-radius:12px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:12px;padding:12px 8px;cursor:pointer;text-align:center}
+.qtile .ic{width:20px;height:20px;color:var(--fg);display:flex;align-items:center;justify-content:center}
+.qtile .lb{font-size:10px;line-height:13px;font-weight:500;color:var(--muted)}
+/* event card */
+.ecard{display:flex;gap:12px;align-items:flex-start;background:var(--card);border-radius:16px;
+  padding:12px 16px 12px 12px;position:relative;cursor:pointer}
+.ecard .ph{width:94px;height:94px;border-radius:8px;background:#eef0f4;flex:none}
+.ecard .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:16px;justify-content:center}
+.ecard .ti{font-size:15px;line-height:20px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ecard .meta{display:flex;gap:12px;margin-top:12px}
+.ecard .mi{display:flex;gap:4px;align-items:center;font-size:12px;line-height:16px;color:var(--muted)}
+.ecard .mi svg{width:14px;height:14px}
+.ecard .bm{position:absolute;right:12px;bottom:12px;width:20px;height:20px;background:var(--card);
+  border-radius:999px;display:flex;align-items:center;justify-content:center;color:var(--fg)}
+/* flow screens: prompt row, bubbles, plan card, chips */
+.kflow{display:flex;flex-direction:column;height:100%;background:var(--bg)}
+.kflow .kbar{height:56px;display:flex;align-items:center;gap:8px;padding:0 16px;flex:none}
+.kflow .kback{width:44px;height:44px;border:1px solid var(--border);background:var(--card);border-radius:999px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none}
+.kflow .kcont{flex:1;min-height:0;overflow-y:auto;padding:8px 20px 24px;display:flex;flex-direction:column;gap:12px}
+.kprompt{display:flex;gap:8px;align-items:center}
+.kprompt .av{width:32px;height:32px;border-radius:999px;background:var(--primary);color:#fff;flex:none;
+  display:flex;align-items:center;justify-content:center}
+.kprompt .av svg{width:16px;height:16px}
+.kbub{max-width:260px;padding:12px 16px;font-size:15px;line-height:22px}
+.kbub.ag{background:var(--neutral100);color:var(--fg);border-radius:18px 18px 18px 1px}
+.kbub.me{background:var(--primary);color:#fff;border-radius:18px 18px 1px 18px;align-self:flex-end}
+.ktime{font-size:12px;line-height:16px;color:var(--muted)}
+.kplan{background:var(--card);border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.06);padding:24px 16px 16px;
+  display:flex;flex-direction:column;gap:20px}
+.kplan.tight{padding:16px}
+.kgrp{display:flex;flex-direction:column;gap:12px}
+.kgrp .hd{display:flex;gap:8px;align-items:center;font-size:15px;line-height:20px;font-weight:600}
+.kgrp .hd svg{width:18px;height:18px}
+.kchips{display:flex;gap:8px;flex-wrap:wrap}
+.kchip{height:36px;padding:0 14px;border-radius:999px;display:flex;align-items:center;justify-content:center;
+  font-size:11px;line-height:16px;font-weight:500;cursor:pointer;background:var(--card);
+  border:1px solid var(--border);color:var(--fg);white-space:nowrap}
+.kchip.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.kchip.soft{background:var(--neutral100);border-color:transparent}
+.kwhy{background:var(--bg);border-radius:12px;padding:12px;font-size:12px;line-height:normal;color:var(--muted)}
+.krow{display:flex;gap:12px;align-items:center}
+.krow .lb{width:80px;flex:none;display:flex;gap:8px;align-items:center;font-size:13px;line-height:16px;font-weight:500}
+.krow .lb svg{width:18px;height:18px}
+.krow .vl{font-size:13px;line-height:16px;font-weight:500;flex:1;min-width:0}
+.kreq{background:var(--bg);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:12px;justify-content:center}
+.kreq .hd{display:flex;gap:8px;align-items:center;font-size:15px;line-height:20px;font-weight:600}
+.kreq .hd svg{width:22px;height:22px}
+.kcta{display:flex;gap:12px}
+.kbtn{flex:1;height:48px;border-radius:999px;display:flex;align-items:center;justify-content:center;gap:8px;
+  font-size:15px;line-height:20px;font-weight:600;cursor:pointer;border:0;font-family:inherit}
+.kbtn.pri{background:var(--primary);color:#fff}
+.kbtn.sec{background:var(--neutral100);color:var(--fg)}
+.kfoot{flex:none;padding:0 20px 8px;display:flex;flex-direction:column;gap:8px}
+.kfoot .kbtn{height:52px}
+/* searching */
+.ksearching{flex:1;min-height:0;overflow-y:auto;padding:8px 20px 24px;display:flex;flex-direction:column;
+  gap:20px;align-items:center;text-align:center}
+.ksearching .msc{width:96px;height:96px;border-radius:999px;background:var(--neutral100);
+  display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.ksearching .brand{font-size:20px;line-height:28px;font-weight:600}
+.ksearching .lead{font-size:20px;line-height:28px;font-weight:600;letter-spacing:-.1px}
+.ksteps{width:100%;background:var(--card);border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.06);
+  padding:8px 0;display:flex;flex-direction:column}
+.kstep{display:flex;gap:12px;align-items:center;padding:12px 16px;text-align:left}
+.kstep .dot{width:18px;height:18px;border-radius:999px;border:2px solid var(--neutral300);flex:none}
+.kstep.done .dot{border-color:#0F7340;background:#0F7340}
+.kstep.now .dot{border-color:var(--primary);border-right-color:transparent;animation:kspin .8s linear infinite}
+@keyframes kspin{to{transform:rotate(360deg)}}
+.kstep .tx{flex:1;min-width:0;font-size:13px;line-height:18px}
+.kstep .bg{font-size:10px;line-height:14px;font-weight:600;padding:2px 8px;border-radius:999px;
+  background:var(--neutral100);color:var(--muted);white-space:nowrap}
+.kstep.done .bg{background:var(--success-bg);color:var(--success-text)}
+.kstep.now .bg{background:var(--coral50);color:var(--primary)}
+/* few matches: adjustment options */
+.kopt{display:flex;gap:12px;align-items:flex-start;padding:16px;border-radius:12px;border:1px solid transparent;cursor:pointer}
+.kopt.sel{border-color:var(--primary);background:var(--card)}
+.kopt .ic{width:22px;height:22px;flex:none;color:var(--fg);margin-top:2px}
+.kopt .bd{flex:1;min-width:0}
+.kopt .ti{font-size:15px;line-height:20px;font-weight:600}
+.kopt .su{font-size:12px;line-height:16px;color:var(--muted);margin-top:2px}
+.kopt .ck{color:var(--primary);flex:none}
+.ktog{width:44px;height:26px;border-radius:999px;background:var(--neutral300);position:relative;flex:none;
+  transition:background .18s;cursor:pointer}
+.ktog.on{background:var(--primary)}
+.ktog i{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:999px;background:#fff;transition:left .18s}
+.ktog.on i{left:21px}
 </style></head><body>
 <div class="phone">
   <div class="sb"><span>9:41</span><span class="ic" id="sbic"></span></div>
@@ -599,6 +720,18 @@ function readinessChip(c){ if(!c||!c.readiness||c.readiness==='open_now') return
   return (UILANG==='ru'?(c.readiness_ru||c.readiness):(c.readiness_en||c.readiness)); }
 function svg(inner,vb,w){return '<svg viewBox="'+(vb||'0 0 24 24')+'" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="'+(w||24)+'" height="'+(w||24)+'">'+inner+'</svg>';}
 const IC={
+  // --- Figma "Agent Home / request flow" set (479:14518…14661) ---
+  mic:svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/>',null,20),
+  send:svg('<path d="M21 3L10.5 13.5M21 3l-6.8 18-3.7-7.5L3 9.8 21 3z"/>',null,20),
+  bell:svg('<path d="M18 15.5V10a6 6 0 1 0-12 0v5.5L4 18h16l-2-2.5z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/>',null,20),
+  calen:svg('<rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 9.8h17M8 3.2v3.6M16 3.2v3.6"/>',null,18),
+  target:svg('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r="1.1" fill="currentColor"/>',null,18),
+  diamond:svg('<path d="M6 3h12l3.5 5.4L12 21 2.5 8.4 6 3z"/><path d="M2.5 8.4h19M9 3l3 5.4L15 3M12 8.4V21"/>',null,18),
+  binoc:svg('<path d="M7 4h3v11H4V9l3-5zM17 4h-3v11h6V9l-3-5z"/><circle cx="7" cy="17" r="3.4"/><circle cx="17" cy="17" r="3.4"/><path d="M10.4 15h3.2"/>',null,22),
+  radius:svg('<circle cx="12" cy="12" r="3"/><path d="M12 3.2v2.4M12 18.4v2.4M3.2 12h2.4M18.4 12h2.4"/><circle cx="12" cy="12" r="8.6" stroke-dasharray="3 3"/>',null,22),
+  homeSm:svg('<path d="M4 10.5L12 4l8 6.5V20H4z"/>',null,22),
+  groups:svg('<circle cx="8.5" cy="9" r="3"/><circle cx="16" cy="10.5" r="2.4"/><path d="M3 19a5.5 5.5 0 0 1 11 0M15 19a4.4 4.4 0 0 1 6 0" />',null,22),
+  photo:svg('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10.5" r="1.8"/><path d="M4.5 17.5l4.8-4.3 3.4 3 2.6-2.1 4.2 3.6"/>',null,22),
   back:svg('<path d="M15 6l-6 6 6 6"/>'),
   bookmark:svg('<path d="M6 4h12v17l-6-4-6 4V4z"/>'),
   chevL:svg('<path d="M15 6l-6 6 6 6"/>'),
@@ -1616,35 +1749,285 @@ function scr_messages(){
 }
 
 // ================= Agent Home — the main landing after onboarding (Figma Flow 4) =================
+// Agent Home — Figma 479:14518. Greeting, agent intro card, composer, four quick tiles and the
+// "For you today" feed (real plans from /api/agent/explore, never invented ones).
 function scr_agenthome(){
-  const nm=DATA.name||'there';
+  const nm=(DATA.name||'there').split(' ')[0];
   const plan=(DATA.plans||[])[0];
-  const qa=[['peoplePin',T('Люди рядом','People nearby'),'q-people'],['calen',T('События рядом','Events nearby'),'q-events'],
-            ['heart',T('Интересы и группы','Interests & groups'),'q-interests'],['bookmark',T('Сохранённое','Saved'),'q-saved']];
-  const planCard = plan ? `<div class="tcard" data-plan="0">
-      <div class="timg"></div>
-      <div class="tbody"><div class="tt">${esc(plan.title)}</div>
-        <div class="tm">${esc(plan.when)} · ${esc(plan.dist)}</div>
-        <div class="tpart"><div class="stack5"><span class="av"></span><span class="av"></span><span class="av"></span><span class="av"></span><span class="more">+5</span></div><span class="pn">${T('идут: 8','8 going')}</span></div></div>
-      <div class="tbm">${IC.bookmark}</div></div>` : '';
-  return `<div class="ahome fade">
-    <div class="ahead"><div class="agreet">${T('Привет','Hi')}, ${esc(nm)}! 👋</div>
-      <div class="abell" data-act="notif">${IC.bell}${unreadNotifs()?`<span class="abadge">${unreadNotifs()}</span>`:''}</div></div>
-    <div class="aintro" data-act="talk-buddy" style="cursor:pointer"><div class="amascot">${MASCOT}</div>
-      <div class="abub">${T('Я Kleal, твой бадди. Просто напиши мне — расскажи, чем увлекаешься и с кем хочешь познакомиться, а я найду таких людей. Нажми, чтобы поговорить →','I\'m Kleal, your buddy. Just chat with me — tell me what you\'re into and who you\'d like to meet, and I\'ll find them for you. Tap to talk →')}</div></div>
-    <div class="asearch"><input id="ainput" placeholder="${T('Напиши Kleal…','Say hi to Kleal…')}" autocomplete="off">
-      <button class="asend" data-act="agent-go">${IC.send}</button></div>
-    <div class="qhead">${T('Быстрые действия','Quick actions')}</div>
-    <div class="quick">${qa.map(q=>`<div class="qcard" data-act="${q[2]}"><div class="qic">${IC[q[0]]}</div><div class="qt">${q[1]}</div></div>`).join('')}</div>
-    <div class="thead"><span class="th">${T('Для тебя сегодня','For you today')}</span><span class="tall" data-act="see-all">${T('Все','See all')}</span></div>
-    ${planCard}
+  const qa=[['person',T('Люди рядом','People nearby'),'q-people'],['calen',T('События рядом','Events nearby'),'q-events'],
+            ['groups',T('Интересы и группы','Interests & groups'),'q-interests'],['bookmark',T('Сохранённое','Saved'),'q-saved']];
+  const card = plan ? `<div class="ecard" data-plan="0">
+      <div class="ph"></div>
+      <div class="bd">
+        <div><div class="ti">${esc(plan.title)}</div>
+          <div class="meta"><span class="mi">${IC.clock}${esc(plan.when||'')}</span>
+            <span class="mi">${IC.pin}${esc(plan.dist||'')}</span></div></div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="k-cap" style="color:var(--muted)">${(plan.going||8)} ${T('участников','participants')}</div>
+          <div class="stack5"><span class="av"></span><span class="av"></span><span class="av"></span><span class="more">+2</span></div>
+        </div>
+      </div>
+      <div class="bm">${IC.bookmark}</div></div>`
+    : `<div class="k-cap" style="color:var(--muted);padding:4px 2px">${T('Пока ничего не запланировано — опиши, чего хочешь, и я поищу.',"Nothing planned yet — tell me what you want and I'll look.")}</div>`;
+  return `<div class="ah2 fade">
+    <div class="ahd"><div class="nm k-h2">${T('Привет','Hey')}, ${esc(nm)} 👋</div>
+      <div class="bell" data-act="notif">${IC.bell}${unreadNotifs()?`<span class="abadge">${unreadNotifs()}</span>`:''}</div></div>
+    <div class="body">
+      <div>
+        <div class="aintro2" data-act="talk-buddy" style="cursor:pointer">
+          <div class="msc">${IC.photo}</div>
+          <div class="txt">${T('Я Kleal, твой социальный AI-агент. Опиши, кого или что ищешь — подберу лучшее.',"I'm Kleal, your social AI agent. Describe who or what you're looking for — I'll find the best fit.")}</div>
+        </div>
+        <div class="kcomp"><div class="fld">
+            <input id="ainput" placeholder="${T('Опиши, кого или что ищешь…',"Describe who or what you're look…")}" autocomplete="off">${IC.mic}</div>
+          <button class="snd" data-act="agent-go">${IC.send}</button></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:32px">
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div class="k-title">${T('Быстрые действия','Use district only')}</div>
+          <div class="qtiles">${qa.map(q=>`<div class="qtile" data-act="${q[2]}"><div class="ic">${IC[q[0]]}</div><div class="lb">${q[1]}</div></div>`).join('')}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:16px">
+          <div style="display:flex;align-items:flex-end;justify-content:space-between">
+            <span class="k-title">${T('Для тебя сегодня','For you today')}</span>
+            <span class="k-label" style="color:var(--primary);cursor:pointer" data-act="see-all">${T('Все','See All')}</span></div>
+          ${card}
+        </div>
+      </div>
+    </div>
   </div>`;
+}
+
+// ---------------- flow logic: every step is backed by a real service ----------------
+// composer  -> POST /api/buddy/intent-build   (understands free text, asks for what's missing)
+// summary   -> the intent that build returned, shown for confirmation
+// searching -> POST /api/agent/match          (the ranking engine)
+// few       -> re-runs the search with the adjustment the user picked
+function flowStart(text){
+  flowInit(String(text||'').trim());
+  cur='reqcomposer'; render();
+  if(FLOW.text) flowSay(FLOW.text, true);
+  else setTimeout(()=>{const e=document.getElementById('flowinp'); if(e)e.focus();},60);
+}
+function flowBack(){
+  if(cur==='reqcomposer'){ cur='agenthome'; FLOW=null; }
+  else if(cur==='clarify') cur='reqcomposer';
+  else if(cur==='summary') cur='clarify';
+  else if(cur==='searching'||cur==='fewmatches') cur='summary';
+  render();
+}
+async function flowSay(text, fromSeed){
+  text=String(text||'').trim(); if(!text||FLOW.busy) return;
+  if(!fromSeed){ const el=document.getElementById('flowinp')||document.getElementById('flowinp2'); if(el)el.value=''; }
+  if(!FLOW.request) FLOW.request=text;      // the summary must quote what was ASKED, not the last reply
+  FLOW.text=text;
+  FLOW.msgs.push({who:'me',text:text,t:Date.now()});
+  FLOW.busy=true; render();
+  let r=null;
+  try{
+    r=await fetch('/api/buddy/intent-build',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({messages:FLOW.msgs.map(m=>({role:m.who==='me'?'user':'assistant',content:m.text})),
+                           profile:matchProfile()})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  FLOW.busy=false;
+  if(!r||!r.reply){ FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
+  FLOW.msgs.push({who:'ag',text:r.reply,t:Date.now()});
+  if(r.ready&&r.intent){                       // enough detail -> one clarification, then the summary
+    FLOW.intent=r.intent;
+    FLOW.summary={request:FLOW.request||FLOW.text, format:r.intent.format,
+                  vibe:(r.intent.tags||[]).filter(t=>t!=='meet').join(', ')||null};
+    cur='clarify';
+  }
+  render();
+}
+function flowToSummary(){
+  if(!FLOW.intent){ FLOW.intent={topics:[],type:'social',role:'meet',mode:'offline'}; }
+  FLOW.summary=FLOW.summary||{request:FLOW.request||FLOW.text};
+  cur='summary'; render();
+}
+function flowIntent(){
+  // merge the clarification answers into the intent the buddy compiled
+  const it=Object.assign({}, FLOW.intent||{});
+  if(!it.topics||!it.topics.length) it.topics=(FLOW.text||'').split(/[,\s]+/).filter(w=>w.length>2).slice(0,4);
+  const whenTxt={tonight:'tonight',tomorrow:'tomorrow',weekend:'this weekend',pick:'Flexible'}[FLOW.when];
+  const timeTxt={morning:'morning',afternoon:'afternoon','20-22':'20:00-22:00',late:'late evening'}[FLOW.time];
+  it.time=[whenTxt,timeTxt].filter(Boolean).join(' ')||it.time||'Flexible';
+  if(FLOW.district) it.place=labelOf(DIST_OPTS(),FLOW.district);
+  it.mode=it.mode||'offline';
+  if(FLOW.adjust==='radius') it.radiusKm=(it.radiusKm||15)+5;
+  if(FLOW.adjust==='wide'){ it.radiusKm=(it.radiusKm||15)+15; it.broadConsent=true; it.adjacentAllowed=true; }
+  return it;
+}
+async function flowSearch(isRetry){
+  FLOW.steps=0; cur='searching'; render();
+  const tick=setInterval(()=>{ if(FLOW.steps<3){ FLOW.steps++; render(); } }, 650);
+  const minShow=new Promise(res=>setTimeout(res, 2600));   // the search screen is part of the design
+  let r=null;
+  try{
+    r=await fetch('/api/agent/match',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({intent:flowIntent(), profile:matchProfile(), ctx:{self:DATA.name||''}})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  await minShow;
+  clearInterval(tick); FLOW.steps=4;
+  const cands=(r&&r.candidates)||[];
+  FLOW.res=cands;
+  render();
+  setTimeout(()=>{
+    if(cands.length>=3){                       // enough people -> hand over to the intent card + launch
+      curIntent={ title:(FLOW.intent&&FLOW.intent.title)||FLOW.text||T('Новый интент','New plan'),
+                  tags:(flowIntent().topics||[]), query:FLOW.text, intent:flowIntent(),
+                  candidates:cands, confidence:cands[0]&&cands[0].score, spec:[], status:'searching' };
+      intentLaunched=false; cur='intentchat'; render(); saveCurIntent();
+    } else {
+      cur='fewmatches'; render();              // too few -> offer the adjustments from the design
+      if(isRetry&&!cands.length) toast(T('Пока никого — попробуй расширить поиск','No one yet — try widening the search'));
+    }
+  }, 600);
+}
+
+// ================= Figma flow: Agent Home → request → clarification → summary → searching =========
+// One shared state object; every screen reads and writes it, and each step talks to the real
+// backend (buddy for language understanding, matching for the search itself).
+let FLOW = null;
+function flowInit(seed){
+  FLOW = { text:seed||'', msgs:[], when:null, time:null, district:null,
+           intent:null, summary:null, steps:0, res:null, adjust:'radius', groups:true, busy:false };
+}
+const FLOW_HINTS = () => [
+  T('Найти компанию для кофе и разговора','Find company for coffee & good talk'),
+  T('Познакомиться с людьми из творческой среды','Meet new people from the creative field'),
+  T('Спокойные встречи без суеты','Low-key meetups in a relaxed setting')];
+const WHEN_OPTS = () => [['tonight',T('Сегодня вечером','Tonight')],['tomorrow',T('Завтра','Tomorrow')],
+  ['weekend',T('На выходных','This weekend')],['pick',T('Выбрать дату…','Pick a date…')]];
+const TIME_OPTS = () => [['morning',T('Утро','Morning')],['afternoon',T('День','Afternoon')],
+  ['20-22','20:00–22:00'],['late',T('Поздно','Late')]];
+const DIST_OPTS = () => [['center',T('Центр','Center')],['west',T('Запад','West')],['east',T('Восток','East')],
+  ['south',T('Юг','South')],['beach',T('Пляж','Beach')]];
+const STEP_LABELS = () => [T('Проверяю время и район','Checking time & district'),
+  T('Ищу подходящие форматы','Scanning matching formats'),
+  T('Собираю лучшие варианты','Collecting the best options'),
+  T('Проверяю доступность','Verifying availability')];
+
+function kbar(){ return `<div class="kbar"><div class="kback" data-act="flow-back">${IC.back}</div></div>`; }
+function kprompt(txt){ return `<div class="kprompt"><div class="av">${IC.person}</div>
+  <div class="k-h3" style="flex:1;min-width:0">${esc(txt)}</div></div>`; }
+function kcomposer(id,ph){ return `<div class="kcomp" style="padding:10px 16px;border-top:1px solid var(--border);background:var(--bg)">
+  <div class="fld"><input id="${id}" placeholder="${esc(ph)}" autocomplete="off">${IC.mic}</div>
+  <button class="snd" data-act="flow-send">${IC.send}</button></div>`; }
+
+// ---- 1. Request composer (479:14582) ----
+function scr_reqcomposer(){
+  const msgs=(FLOW.msgs||[]).map(m=>m.who==='me'
+    ? `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><div class="kbub me">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`
+    : `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`).join('');
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
+      ${msgs}
+      ${FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:''}
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="k-label" style="color:var(--muted)">${T('Попробуй сформулировать иначе','Try phrasing it differently')}</div>
+        <div class="kchips">${FLOW_HINTS().map(h=>`<div class="kchip soft" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
+      </div>
+    </div>
+    ${kcomposer('flowinp',T('Сообщение…','Message…'))}</div>`;
+}
+
+// ---- 2. One clarification (479:14610) ----
+function scr_clarify(){
+  const grp=(icon,title,opts,key)=>`<div class="kgrp"><div class="hd">${icon}${esc(title)}</div>
+    <div class="kchips">${opts.map(o=>`<div class="kchip ${FLOW[key]===o[0]?'on':''}" data-act="flow-pick" data-k="${key}" data-v="${o[0]}">${esc(o[1])}</div>`).join('')}</div></div>`;
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Чтобы точнее подобрать — один момент:','To match you better, one thing:'))}
+      <div class="kbub ag">${T('Когда и где удобнее?','When and where works best?')}</div>
+      <div class="kplan">
+        ${grp(IC.calen,T('Когда','When'),WHEN_OPTS(),'when')}
+        ${grp(IC.clock,T('Время','Time'),TIME_OPTS(),'time')}
+        ${grp(IC.pin,T('Район','District'),DIST_OPTS(),'district')}
+        <div class="kwhy">${T('Необязательно — можно пропустить или изменить позже.','Optional — skip it or change it later.')}</div>
+        <div class="kcta">
+          <button class="kbtn sec" data-act="flow-skip">${T('Пропустить','Skip')}</button>
+          <button class="kbtn pri" data-act="flow-next">${T('Далее','Next')}</button>
+        </div>
+      </div>
+    </div>
+    ${kcomposer('flowinp2',T('Сообщение…','Message…'))}</div>`;
+}
+
+// ---- 3. Summary before search (479:14661) ----
+function labelOf(opts,v,dash){ const o=opts.find(x=>x[0]===v); return o?o[1]:(dash||T('на твоё усмотрение','flexible')); }
+function scr_summary(){
+  const s=FLOW.summary||{};
+  const row=(icon,lb,vl)=>`<div class="krow"><div class="lb">${icon}${esc(lb)}</div><div class="vl">${esc(vl)}</div></div>`;
+  const when=labelOf(WHEN_OPTS(),FLOW.when), tm=labelOf(TIME_OPTS(),FLOW.time,'');
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Вот что получилось',"Here's what I got"))}
+      <div class="kbub ag">${T('Проверь — что-то можно поправить.','Check it — edit anything if needed.')}</div>
+      <div class="kplan tight">
+        <div class="kreq"><div class="hd">${IC.binoc}${T('Запрос','Request')}</div>
+          <div class="k-label">${esc(s.request||FLOW.request||FLOW.text)}</div></div>
+        ${row(IC.clock,T('Время','Time'), when + (tm?(' — '+tm):''))}
+        ${row(IC.pin,T('Район','District'), labelOf(DIST_OPTS(),FLOW.district,T('любой','any')))}
+        ${row(IC.target,T('Формат','Format'), s.format||T('Встреча, неформально','Casual meetup'))}
+        ${row(IC.diamond,T('Вайб','Vibe'), s.vibe||T('открыто и дружелюбно','open, friendly'))}
+        <div class="kwhy">${T('Формат и вайб — мои предположения, их можно поменять.','Format and vibe are my suggestions — tap to adjust.')}</div>
+      </div>
+    </div>
+    <div class="kfoot">
+      <button class="kbtn pri" data-act="flow-start">${T('Начать поиск','Start search')}</button>
+      <button class="kbtn sec" data-act="flow-edit">${T('Изменить','Edit')}</button>
+    </div></div>`;
+}
+
+// ---- 4. Searching (progress while matching runs) ----
+function scr_searching(){
+  const st=STEP_LABELS().map((lb,i)=>{
+    const cls=i<FLOW.steps?'done':(i===FLOW.steps?'now':'');
+    const bg=i<FLOW.steps?T('Готово','Done'):(i===FLOW.steps?T('Идёт','In progress'):T('Скоро','Soon'));
+    return `<div class="kstep ${cls}"><div class="dot"></div><div class="tx">${esc(lb)}</div><div class="bg">${esc(bg)}</div></div>`;
+  }).join('');
+  return `<div class="kflow fade">${kbar()}
+    <div class="ksearching">
+      <div class="msc">${IC.photo}</div>
+      <div class="brand">Kleal</div>
+      <div class="lead">${T('Ищу людей, группы и места для тебя','Finding people, groups and places for you')}</div>
+      <div class="ksteps">${st}</div>
+      <div class="k-cap" style="color:var(--muted)">${T('Это займёт мгновение.','This will take just a moment.')}</div>
+    </div></div>`;
+}
+
+// ---- 5. Few matches → recommended adjustment ----
+function scr_fewmatches(){
+  const n=(FLOW.res||[]).length;
+  const opt=(key,icon,ti,su)=>`<div class="kopt ${FLOW.adjust===key?'sel':''}" data-act="flow-adjust" data-k="${key}">
+    <div class="ic">${icon}</div><div class="bd"><div class="ti">${esc(ti)}</div><div class="su">${esc(su)}</div></div>
+    ${FLOW.adjust===key?`<div class="ck">${IC.check2||IC.chevR}</div>`:''}</div>`;
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Точных совпадений пока немного','Not many exact matches yet'))}
+      <div class="kbub ag">${T('По твоему запросу с текущими фильтрами вариантов мало.','For your request with the current filters, options are limited.')}</div>
+      <div class="k-title">${T('Рекомендуемая настройка','Recommended adjustment')}</div>
+      <div class="kplan tight" style="gap:4px">
+        ${opt('wide',IC.groups,T('Расширить радиус поиска','Widen the search radius'),T('Люди и места за пределами района','Include places and people beyond your district'))}
+        ${opt('radius',IC.radius,T('+5 км к радиусу','+5 km to radius'),T('Рядом появятся новые варианты','New options appear nearby'))}
+        ${opt('keep',IC.homeSm,T('Оставить как есть','Keep it as is'),T('Искать только в текущем районе','Search only in the current district'))}
+        <div class="kopt" style="cursor:default">
+          <div class="bd"><div class="ti">${T('Также включить группы','Also include groups')}</div>
+            <div class="su">${T('Откроет больше форматов встреч','Opens more formats of meeting people')}</div></div>
+          <div class="ktog ${FLOW.groups?'on':''}" data-act="flow-groups"><i></i></div></div>
+      </div>
+      ${n?`<div class="k-cap" style="color:var(--muted)">${T('Сейчас найдено','Found so far')}: ${n}</div>`:''}
+    </div>
+    <div class="kfoot"><button class="kbtn pri" data-act="flow-apply">${T('Применить и обновить','Apply & refresh')}</button></div></div>`;
 }
 
 const SCREENS={agenthome:scr_agenthome,profileedit:scr_profileedit,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
   places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
   intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages,
-  notifs:scr_notifications,matchchat:scr_matchchat,buddychat:scr_buddychat};
+  notifs:scr_notifications,matchchat:scr_matchchat,buddychat:scr_buddychat,
+  reqcomposer:scr_reqcomposer,clarify:scr_clarify,summary:scr_summary,searching:scr_searching,fewmatches:scr_fewmatches};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -1716,7 +2099,9 @@ function render(){
   rgt.onclick = ()=> toast(isHome?'Settings are coming soon':'Kleal is refreshing this');
   // Every chat screen carries its OWN in-screen header (chd) and pinned composer, so hide the shared app bar
   // and the bottom nav on all of them — and treat them all the same way for layout.
-  const chat=(cur==='buddychat'||cur==='profileedit'||cur==='intentchat'||cur==='matchchat');
+  // the Figma request flow carries its own app bar + composer, exactly like the chat screens
+  const chat=(cur==='buddychat'||cur==='profileedit'||cur==='intentchat'||cur==='matchchat'
+              ||cur==='reqcomposer'||cur==='clarify'||cur==='summary'||cur==='searching'||cur==='fewmatches');
   const bn=document.getElementById('bnav'); if(bn){ bn.style.display=chat?'none':'flex'; bn.innerHTML=bnavHTML(); }
   const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||chat)?'none':'flex';
   if(editSig){ A.innerHTML=scr_editSignal(); }
@@ -1837,7 +2222,20 @@ function doAct(act, ds){
     case 'join': joinPublic(+ds.pi); break;
     // Agent Home
     case 'notif': setTab('notifs'); break;
-    case 'agent-go': { const el=document.getElementById('ainput'); goToBuddy(el&&el.value||''); break; }
+    case 'agent-go': { const el=document.getElementById('ainput'); flowStart(el&&el.value||''); break; }
+    // ---- Figma request flow ----
+    case 'flow-back': flowBack(); break;
+    case 'flow-send': { const el=document.getElementById('flowinp')||document.getElementById('flowinp2');
+                        flowSay(el&&el.value||''); break; }
+    case 'flow-hint': flowSay(ds.h||''); break;
+    case 'flow-pick': { FLOW[ds.k]=(FLOW[ds.k]===ds.v?null:ds.v); render(); break; }
+    case 'flow-skip': flowToSummary(); break;
+    case 'flow-next': flowToSummary(); break;
+    case 'flow-edit': cur='clarify'; render(); break;
+    case 'flow-start': flowSearch(); break;
+    case 'flow-adjust': FLOW.adjust=ds.k; render(); break;
+    case 'flow-groups': FLOW.groups=!FLOW.groups; render(); break;
+    case 'flow-apply': flowSearch(true); break;
     case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
     case 'buddy-intro': { const i=+ds.bi; const m=buddyMsgs[i]; if(m&&m.match&&m.match.top){ approveIntro(m.match.top, m.match.intent); if(matchWith)matchWith.fromBuddy=true; } break; }
     case 'buddy-back': cur='agenthome'; render(); break;
