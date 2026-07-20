@@ -99,42 +99,14 @@ DATA = {
     {"icon": "pin", "title": "Location", "value": "Barcelona · Gràcia, Poblenou · Max 10 km"},
     {"icon": "globe", "title": "Languages", "value": "Russian · English · Spanish (B1)"},
   ],
-  "intents": [
-    {"id": "seed-coffee", "title": "Coffee & AI talk", "tags": ["coffee", "ai", "discuss"],
-     "confidence": 82, "status": "searching",
-     "spec": [["moon", "Mode", "Offline"], ["users", "Format", "1:1 or small group"],
-              ["clock", "Time", "Today evening"], ["pin", "Area", "Public places nearby"],
-              ["shield", "Safety", "Public places only"], ["compass", "Reach", "Adjacent interests"],
-              ["eye", "Visibility", "Via Kleal only"]],
-     "candidates": [
-       {"name": "Marc", "score": 82, "km": 0.6, "agree": True, "interests": ["coffee", "ai", "startups"],
-        "reasons": ["shares coffee, ai", "very close (0.6 km)"]},
-       {"name": "Nina", "score": 69, "km": 1.1, "agree": True, "interests": ["startups", "networking", "ai"],
-        "reasons": ["shares ai", "open to meet today"]}]},
-  ],
-  "plans": [
-    {"title": "Morning coffee & AI chat", "who": "Marc · verified", "when": "Today 09:30", "dist": "0.6 km", "x": 33, "y": 26},
-    {"title": "Startup founders meetup", "who": "4 going · public place", "when": "Tomorrow 18:00", "dist": "1.2 km", "x": 63, "y": 44},
-    {"title": "Spanish + coffee swap", "who": "Ana · verified", "when": "Wed 17:00", "dist": "0.9 km", "x": 42, "y": 64},
-  ],
-  "messages": [
-    {"who": "Kleal", "last": "2 people match your Coffee & AI talk — want intros?", "time": "now", "kleal": True},
-    {"who": "Marc", "last": "Sounds great, see you at 9:30!", "time": "12m", "kleal": False},
-    {"who": "Ana", "last": "Hola! Happy to swap Spanish for coffee.", "time": "1h", "kleal": False},
-  ],
+  # No seeded intents: an intent is created by the user and filled by the matching service.
+  "intents": [],
+  # Plans come from /api/agent/explore (real users posting real intents), never from a seed.
+  "plans": [],
+  "messages": [],
 
-  "memory": [
-    {"signal": "You prefer small groups", "source": "Onboarding + 2 accepted plans",
-     "confidence": "High", "status": "Confirmed", "used": True, "updated": "Yesterday"},
-    {"signal": "Prefers public places", "source": "Onboarding",
-     "confidence": "High", "status": "Confirmed", "used": True, "updated": "3 days ago"},
-    {"signal": "Football watch plans work for you", "source": "3 accepted plans",
-     "confidence": "Medium", "status": "Inferred", "used": True, "updated": "Yesterday"},
-    {"signal": "Avoid loud bars", "source": "Feedback on 1 plan",
-     "confidence": "Medium", "status": "Inferred", "used": True, "updated": "Last week"},
-    {"signal": "Wants an offline plan tonight", "source": "Current session",
-     "confidence": "Low", "status": "Temporary", "used": False, "updated": "Just now"},
-  ],
+  # Memory is written from onboarding and profile edits, not seeded.
+  "memory": [],
 
   "knows": {
     "total": 82, "confirmed": 54, "inferred": 19, "temporary": 9,
@@ -837,6 +809,15 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   margin-top:auto;gap:16px}
 .kscrim.bot{align-items:flex-end;padding:0}
 .kgrab{width:44px;height:4px;border-radius:999px;background:var(--neutral300);margin:0 auto}
+/* intents tab cards */
+.icard{background:var(--card);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.ihd{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.itl{flex:1;min-width:0;font-size:17px;line-height:24px;font-weight:600;overflow:hidden;
+  text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.itags{display:flex;gap:6px;flex-wrap:wrap}
+.ifoot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.iacts{display:flex;gap:8px}
+.iacts .kbtn{flex:1}
 /* few matches: adjustment options */
 .kopt{display:flex;gap:12px;align-items:flex-start;padding:16px;border-radius:12px;border:1px solid transparent;cursor:pointer}
 .kopt.sel{border-color:var(--primary);background:var(--card)}
@@ -880,6 +861,37 @@ const _psrc = _pParam ? ('p:'+_pParam.length+':'+_pParam.slice(-40)) : 'demo';
 let _saved = null; try{ _saved = JSON.parse(localStorage.getItem(PKEY)||'null'); }catch(_e){}
 if(_saved && _saved._src===_psrc && _saved.data){ DATA = _saved.data; }
 else { try{ localStorage.removeItem(PKEY); }catch(_e){} _saved = null; }
+// ---- migrate saved state: strip the demo seed people/plans that used to ship in DATA ----
+// Removing the seed from the source is not enough: anyone who opened the app before still has
+// the fake intents ("Coffee & AI talk", Marc/Nina) and duplicate cards in localStorage.
+(function migrate(){
+  if(!DATA) return;
+  const GHOSTS=['marc','nina','ana','coffee & ai talk','startup founders meetup','spanish + coffee swap',
+                'morning coffee & ai chat'];
+  const ghost=v=>GHOSTS.includes(String(v||'').trim().toLowerCase());
+  let changed=false;
+  if(Array.isArray(DATA.intents)){
+    const key=x=>String((x&&(x.title||x.query))||'').trim().toLowerCase(), seen=new Set();
+    const keep=DATA.intents.filter(it=>{
+      if(!it) return false;
+      if(String(it.id||'').startsWith('seed-')||ghost(it.title)) return false;
+      (it.candidates||[]).some(c=>ghost(c&&c.name)) && (it.candidates=[]);
+      const k=key(it); if(k&&seen.has(k)) return false; if(k) seen.add(k);
+      if(it.confidence!==undefined){ delete it.confidence; }        // percentages are gone
+      return true; });
+    if(keep.length!==DATA.intents.length){ changed=true; } DATA.intents=keep;
+  }
+  ['plans','messages','memory'].forEach(k=>{
+    if(!Array.isArray(DATA[k])) return;
+    const keep=DATA[k].filter(x=>!(ghost(x&&(x.who||x.title||x.signal))));
+    if(keep.length!==DATA[k].length){ DATA[k]=keep; changed=true; }
+  });
+  if(Array.isArray(DATA.notifs)){
+    const keep=DATA.notifs.filter(n=>!ghost(n&&n.title)&&!/Coffee & AI talk/i.test((n&&n.title)||''));
+    if(keep.length!==DATA.notifs.length){ DATA.notifs=keep; changed=true; }
+  }
+  if(changed){ try{ localStorage.setItem(PKEY, JSON.stringify({_src:_psrc, data:DATA, ui:(_saved&&_saved.ui)||{}})); }catch(_e){} }
+})();
 const A=document.getElementById('app');
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 // ---- UI language (i18n). Default RU; a switch in the profile flips it. T(ru,en) picks the string. ----
@@ -1508,12 +1520,31 @@ async function negotiateIntent(){
 // ---------- Phase 1: saved intents ----------
 function openSavedIntent(id){ const it=(DATA.intents||[]).find(x=>x.id===id); if(!it)return; curIntent=it; intentLaunched=true; cur='intentchat'; render(); }
 function saveCurIntent(){
-  if(curIntent && !curIntent.id){
-    curIntent.id='i'+String(Date.now()); curIntent.status='searching'; curIntent.createdAt='just now';
-    DATA.intents=DATA.intents||[]; DATA.intents.unshift(curIntent);
-    const cs=curIntent.candidates||[];
-    addNotif('intent','“'+curIntent.title+'” — '+cs.length+' matches', cs.filter(c=>c.agree).length+' agreed · tap to review', curIntent.id);
+  if(!curIntent) return;
+  DATA.intents=DATA.intents||[];
+  const cs=curIntent.candidates||[], ag=cs.filter(c=>c.agree).length;
+  const key=(x)=>String((x&&x.query)||'').trim().toLowerCase();
+  const tkey=(x)=>String((x&&x.title)||'').trim().toLowerCase();
+  // re-launching the same request must UPDATE its intent, not stack another identical card
+  const same=DATA.intents.find(x=>x!==curIntent && (
+      (x.id&&x.id===curIntent.id) ||
+      (key(x)&&key(x)===key(curIntent)) ||
+      (tkey(x)&&tkey(x)===tkey(curIntent))));
+  if(same){
+    Object.assign(same,{candidates:cs, tags:curIntent.tags||same.tags, intent:curIntent.intent||same.intent,
+      status:cs.length?(ag?'matched':'searching'):'searching', confidence:undefined});
+    curIntent=same; saveState(); return;
   }
+  if(!curIntent.id){
+    curIntent.id='i'+String(Date.now()); curIntent.createdAt=Date.now();
+    DATA.intents.unshift(curIntent);
+    addNotif('intent','“'+curIntent.title+'”',
+      cs.length? (cs.length+' '+plural(cs.length,T('кандидат','match'),T('кандидата','matches'),T('кандидатов','matches'))
+                  + (ag?(' · '+ag+' '+T('согласны','agreed')):''))
+               : T('пока никого — можно расширить поиск','no one yet — try widening the search'), curIntent.id);
+  }
+  curIntent.status=cs.length?(ag?'matched':'searching'):'searching';
+  delete curIntent.confidence;                 // percentages are not shown anywhere (spec §9.7)
   saveState();
 }
 // ---------- Phase 4: notifications ----------
@@ -1823,7 +1854,10 @@ async function loadExplore(){
   let r; try{ r=await fetch('/api/agent/explore?self='+encodeURIComponent(DATA.name||'')).then(x=>x.json()); }catch(e){ r=null; }
   exploreLoading=false; exploreLoaded=true;
   PUBLIC_INTENTS=(r&&r.plans)||[];
-  if(cur==='search') render();
+  // Agent Home's "For you today" shows the same REAL plans (the seed carries none)
+  DATA.plans=PUBLIC_INTENTS.map(p=>({title:p.title||p.who||'', who:p.who||'',
+    when:p.when||'', dist:(p.km!=null?(p.km+' '+T('км','km')):''), going:p.going||p.participants||0}));
+  if(cur==='search'||cur==='agenthome') render();
 }
 let exploreMap=null;
 function initExploreMap(){
@@ -1846,19 +1880,57 @@ function initExploreMap(){
 }
 function joinPublic(i){ const p=PUBLIC_INTENTS[i]; if(!p)return; addNotif('intent','Asked to join “'+p.title+'”','Waiting for '+p.who+'’s agent to confirm', null); saveState(); toast('Requested to join — '+p.who+'’s agent will confirm'); }
 
+// Intents tab — rebuilt on the design system. It used to show raw percentages (which the spec
+// forbids), English copy inside a Russian UI, and duplicate cards from repeated launches.
+const INTENT_STATUS = () => ({
+  searching: [T('Идёт поиск','Searching'),'warn'],
+  matched:   [T('Есть совпадения','Matches found'),'ok'],
+  planned:   [T('Встреча назначена','Meetup planned'),'ok'],
+  paused:    [T('На паузе','Paused'),'mut'],
+  done:      [T('Завершён','Done'),'mut'],
+});
+function intentBest(it){                      // the honest headline: the best band, never a percent
+  const cs=it.candidates||[];
+  if(!cs.length) return null;
+  const order={especially_close:0,strong_option:1,broader_option:2,needs_clarification:3};
+  return cs.slice().sort((a,b)=>(order[a.band]??9)-(order[b.band]??9))[0];
+}
 function scr_intents(){
   const list=DATA.intents||[];
-  const head=`<div class="seccap" style="margin:2px 2px 12px">Intents are the plans you ask Kleal to arrange. It searches, matches schedules and lines up intros — you approve every one.</div>`;
-  if(!list.length) return `<div class="fade">${head}${emptyState(T("Пока нет интентов","No intents yet"),T("Нажми «Создать интент» и расскажи Kleal, чем хочешь заняться.","Tap Create intent and tell Kleal what you'd like to do."))}
-    <button class="bigbtn primary" style="margin-top:8px" data-act="createintent">Create intent</button></div>`;
-  const cards=list.map((it)=>{ const cs=it.candidates||[]; const ag=cs.filter(c=>c.agree).length;
-    return `<div class="card pad intentrow" ${it.id?`data-savedintent="${it.id}"`:''}>
-    <div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="pill searching dot">${esc(capw(it.status||'searching'))}</span></div>
-    <div style="margin:10px 0 6px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div>
-    <div class="confrow2"><span class="l">${cs.length} ${cs.length===1?'match':'matches'}${ag?' · '+ag+' agreed':''}</span><span class="confpct">${it.confidence||0}%</span></div>
-    <div class="track"><i style="width:${it.confidence||0}%"></i></div></div>`; }).join('');
-  return `<div class="stack fade">${head}${cards}
-    <button class="bigbtn primary" style="margin-top:4px" data-act="createintent">Create intent</button></div>`;
+  const head=`<div class="k-small" style="color:var(--muted);padding:2px 2px 4px">${T(
+    'Интенты — это планы, которые ты поручаешь Kleal. Он ищет людей, сверяет расписания и предлагает знакомства — каждое ты подтверждаешь сам(а).',
+    'Intents are the plans you ask Kleal to arrange. It searches, matches schedules and lines up intros — you approve every one.')}</div>`;
+  if(!list.length) return `<div class="stack fade" style="gap:16px">${head}
+    ${emptyState(T('Пока нет интентов','No intents yet'),T('Расскажи Kleal, чем хочешь заняться — он соберёт план и найдёт людей.','Tell Kleal what you’d like to do — it will build the plan and find people.'))}
+    <button class="kbtn pri tall" data-act="createintent">${T('Создать интент','Create intent')}</button></div>`;
+  const cards=list.map((it)=>{
+    const cs=it.candidates||[], best=intentBest(it), ag=cs.filter(c=>c.agree).length;
+    const st=INTENT_STATUS()[it.status]||INTENT_STATUS().searching;
+    const tags=(it.tags||[]).slice(0,4);
+    return `<div class="icard" ${it.id?`data-savedintent="${it.id}"`:''}>
+      <div class="ihd"><div class="itl">${esc(it.title||T('Без названия','Untitled'))}</div>
+        <span class="kbadge ${st[1]}">${esc(st[0])}</span></div>
+      ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(t)}</span>`).join('')}</div>`:''}
+      <div class="ifoot">
+        <span class="k-cap" style="color:var(--muted)">${cs.length
+            ? (cs.length+' '+plural(cs.length,T('кандидат','match'),T('кандидата','matches'),T('кандидатов','matches'))
+               + (ag?(' · '+ag+' '+T('согласны','agreed')):''))
+            : T('пока никого','no one yet')}</span>
+        ${best?`<span class="kbadge ${best.band==='especially_close'||best.band==='strong_option'?'ok':'mut'}">${esc(bandLabel(best))}</span>`:''}
+      </div>
+      <div class="iacts">
+        <button class="kbtn sec sm" data-act="intent-open" data-id="${esc(it.id||'')}">${T('Открыть','Open')}</button>
+        <button class="kbtn sec sm" data-act="intent-del" data-id="${esc(it.id||'')}">${T('Удалить','Delete')}</button>
+      </div></div>`; }).join('');
+  return `<div class="stack fade" style="gap:12px">${head}${cards}
+    <button class="kbtn pri tall" style="margin-top:4px" data-act="createintent">${T('Создать интент','Create intent')}</button></div>`;
+}
+function plural(n,one,few,many){
+  const m10=n%10, m100=n%100;
+  if(UILANG!=='ru') return n===1?one:few;
+  if(m10===1&&m100!==11) return one;
+  if(m10>=2&&m10<=4&&(m100<10||m100>=20)) return few;
+  return many;
 }
 
 function scr_intentchat(){
@@ -1949,6 +2021,7 @@ function scr_messages(){
 // Agent Home — Figma 479:14518. Greeting, agent intro card, composer, four quick tiles and the
 // "For you today" feed (real plans from /api/agent/explore, never invented ones).
 function scr_agenthome(){
+  if(!exploreLoaded) loadExplore();          // real plans for "For you today"
   const nm=(DATA.name||'there').split(' ')[0];
   const plan=(DATA.plans||[])[0];
   const qa=[['person',T('Люди рядом','People nearby'),'q-people'],['calen',T('События рядом','Events nearby'),'q-events'],
@@ -2018,12 +2091,30 @@ function flowStart(text){
   if(FLOW.text) flowSay(FLOW.text, true);
   else setTimeout(()=>{const e=document.getElementById('flowinp'); if(e)e.focus();},60);
 }
+// One back-navigation rule for every screen. The flow screens each render their own back button,
+// and it used to call a handler that only knew the first five — on every later screen the button
+// was inert. A single map plus a visited-stack fallback means back always goes somewhere sensible.
+const BACK_MAP = {
+  reqcomposer:'agenthome', clarify:'reqcomposer', summary:'clarify',
+  searching:'summary', fewmatches:'summary',
+  bestfit:'agenthome', options:'bestfit', recos:'options', candprofile:'bestfit',
+  sendreq:'candprofile', waiting:'sendreq', mutual:'waiting', suggestion:'mutual',
+  picktime:'suggestion', pickplace:'picktime', awaiting:'pickplace', planok:'awaiting',
+  meetstate:'agenthome', mymeetup:'meetstate',
+  intentchat:'intents', buddychat:'agenthome', profileedit:'buddychat', notifs:'agenthome',
+};
+let NAVSTACK=[];
+function navTo(next){ if(cur!==next){ NAVSTACK.push(cur); if(NAVSTACK.length>20) NAVSTACK.shift(); } cur=next; render(); }
 function flowBack(){
-  if(cur==='reqcomposer'){ cur='agenthome'; FLOW=null; }
-  else if(cur==='clarify') cur='reqcomposer';
-  else if(cur==='summary') cur='clarify';
-  else if(cur==='searching'||cur==='fewmatches') cur='summary';
-  render();
+  if(SHEET){ SHEET=null; render(); return; }
+  if(cur==='reqcomposer') FLOW=null;
+  if(cur==='candprofile') CAND=null;
+  let prev=BACK_MAP[cur];
+  // don't bounce to a screen that has nothing to show
+  if((prev==='bestfit'||prev==='options')&&!(FLOW&&FLOW.res&&FLOW.res.length)) prev='agenthome';
+  if(prev==='candprofile'&&!CAND) prev=(FLOW&&FLOW.res&&FLOW.res.length)?'bestfit':'agenthome';
+  if(!prev) prev=NAVSTACK.pop()||'agenthome';
+  cur=prev; render();
 }
 async function flowSay(text, fromSeed){
   text=String(text||'').trim(); if(!text||FLOW.busy) return;
@@ -2873,7 +2964,18 @@ function render(){
   const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||chat)?'none':'flex';
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
-  else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
+  else {
+    // Guard: a flow screen without its state used to throw (back → FLOW=null → scr_clarify reads
+    // FLOW.when → blank screen). Redirect instead of rendering a broken screen.
+    const NEEDS_FLOW=['reqcomposer','clarify','summary','searching','fewmatches','bestfit','options','recos'];
+    const NEEDS_CAND=['candprofile'];
+    const NEEDS_PLAN=['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'];
+    if(NEEDS_FLOW.includes(cur)&&!FLOW) cur='agenthome';
+    else if(NEEDS_CAND.includes(cur)&&!CAND) cur=(FLOW&&FLOW.res&&FLOW.res.length)?'bestfit':'agenthome';
+    else if(NEEDS_PLAN.includes(cur)&&!(PLAN&&PLAN.cand)) cur=(FLOW&&FLOW.res&&FLOW.res.length)?'bestfit':'agenthome';
+    try{ A.innerHTML=(SCREENS[cur]||scr_overview)(); }
+    catch(err){ console.error('render failed on', cur, err); cur='agenthome'; A.innerHTML=scr_agenthome(); }
+  }
   if(SHEET==='interest') A.insertAdjacentHTML('beforeend', sheetHTML());
   if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
   // A chat owns the full height: the app area becomes a flex column so the thread scrolls INTERNALLY and the
@@ -2970,6 +3072,10 @@ function doAct(act, ds){
     case 'delete-account': toast('Delete account would ask you to confirm, then erase everything'); break;
     case 'nav': setTab(ds.tab||'overview'); break;
     case 'fab': case 'createintent': openCreateIntent(); break;
+    case 'intent-open': { const it=(DATA.intents||[]).find(x=>x.id===ds.id); if(it) openSavedIntent(it.id); break; }
+    case 'intent-del': { const i=(DATA.intents||[]).findIndex(x=>x.id===ds.id);
+      if(i>=0){ const nm=DATA.intents[i].title||''; DATA.intents.splice(i,1); saveState(); render();
+                toast(T('Интент удалён','Intent deleted')+(nm?(': '+nm):'')); } break; }
     case 'intent-send': { const el=document.getElementById('acin'); intentTurn(el&&el.value||''); break; }
     case 'agent-send': { const el=document.getElementById('acin'); intentTurn(el&&el.value||''); break; }
     case 'launch-intent': intentLaunched=true; render(); negotiateIntent(); break;
@@ -3009,7 +3115,7 @@ function doAct(act, ds){
     case 'opt-tab': OPTTAB=ds.k; render(); break;
     case 'go-options': cur='options'; render(); break;
     case 'cand-open': openCand(ds.n); break;
-    case 'cand-back': cur=(FLOW&&FLOW.res&&FLOW.res.length>=3)?'bestfit':'options'; CAND=null; render(); break;
+    case 'cand-back': flowBack(); break;
     case 'cand-tab': CTAB=ds.k; render(); if(ds.k==='why') loadWhy(); break;
     case 'cand-save': toast(T('Сохранено','Saved')); break;
     case 'cand-interest': sendInterest(); break;
@@ -3032,7 +3138,7 @@ function doAct(act, ds){
     case 'tog-gcal': PLAN.gcal=!PLAN.gcal; render(); toast(PLAN.gcal?T('Добавлено в Google Calendar','Added to Google Calendar'):T('Убрано','Removed')); break;
     case 'tog-acal': PLAN.acal=!PLAN.acal; render(); toast(PLAN.acal?T('Добавлено в Apple Calendar','Added to Apple Calendar'):T('Убрано','Removed')); break;
     case 'tog-remind': PLAN.remind=!PLAN.remind; render(); break;
-    case 'plan-back': cur=(PLAN&&PLAN.confirmed)?'planok':'agenthome'; render(); break;
+    case 'plan-back': flowBack(); break;
     case 'meet-state': cur='meetstate'; render(); break;
     case 'meet-status': setMeetStatus(ds.k); break;
     case 'meet-open': cur=(PLAN&&PLAN.here)?'mymeetup':'meetstate'; render(); break;

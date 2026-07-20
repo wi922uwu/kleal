@@ -443,11 +443,44 @@ def _categorize(text):
         return None
 
 
+# Topics are canonicalised to English for the ranker, so a Russian user's intent came back titled
+# "Coffee — встреча". Titles are user-facing: put the topic back into their language.
+_TOPIC_RU = {
+    'coffee':'Кофе','tea':'Чай','brunch':'Бранч','dinner':'Ужин','food':'Еда','restaurant':'Ресторан',
+    'cooking':'Готовка','beer':'Пиво','bar':'Бар','wine':'Вино','party':'Вечеринка','club':'Клуб',
+    'walk':'Прогулка','football':'Футбол','basketball':'Баскетбол','volleyball':'Волейбол',
+    'tennis':'Теннис','padel':'Падель','running':'Бег','cycling':'Велосипед','swimming':'Плавание',
+    'gym':'Зал','fitness':'Фитнес','crossfit':'Кроссфит','boxing':'Бокс','climbing':'Скалолазание',
+    'yoga':'Йога','pilates':'Пилатес','dota':'Дота','league':'Лига','valorant':'Валорант','cs':'CS',
+    'fifa':'ФИФА','gaming':'Гейминг','chess':'Шахматы','boardgames':'Настолки','poker':'Покер',
+    'cinema':'Кино','series':'Сериалы','art':'Искусство','museum':'Музей','gallery':'Галерея',
+    'exhibition':'Выставка','photography':'Фотография','theatre':'Театр','opera':'Опера',
+    'books':'Книги','reading':'Чтение','literature':'Литература','bookclub':'Книжный клуб',
+    'architecture':'Архитектура','urbanism':'Урбанистика','startup':'Стартап','startups':'Стартапы',
+    'product':'Продакт','founder':'Фаундер','business':'Бизнес','ai':'ИИ','ml':'ML','coding':'Кодинг',
+    'software':'Разработка','crypto':'Крипта','networking':'Нетворкинг','investing':'Инвестиции',
+    'career':'Карьера','design':'Дизайн','concert':'Концерт','festival':'Фестиваль','music':'Музыка',
+    'guitar':'Гитара','piano':'Пианино','dj':'Диджеинг','singing':'Вокал','karaoke':'Караоке',
+    'rave':'Рейв','techno':'Техно','hiking':'Хайкинг','mountains':'Горы','nature':'Природа',
+    'camping':'Кемпинг','surfing':'Сёрфинг','kayaking':'Каякинг','skiing':'Лыжи','snowboard':'Сноуборд',
+    'travel':'Путешествия','fishing':'Рыбалка','spanish':'Испанский','english':'Английский',
+    'french':'Французский','german':'Немецкий','italian':'Итальянский','russian':'Русский',
+    'languages':'Языки','exchange':'Языковой обмен','practice':'Практика языка','course':'Курс',
+    'workshop':'Воркшоп','study':'Учёба','coworking':'Коворкинг','remotework':'Удалёнка',
+    'formula1':'Формула 1','barca':'Барса','motorsport':'Автоспорт',
+}
+
 def _title_for(topics, typ, lang):
     if typ == "dating":
         return "Свидание" if lang == "ru" else "Date"
     if topics:
-        return topics[0].capitalize() + (" — встреча" if lang == "ru" else " meetup")
+        raw = str(topics[0])
+        if lang == "ru":
+            word = _TOPIC_RU.get(raw.strip().lower())
+            if not word:                       # already Russian (off-taxonomy) -> keep the user's word
+                word = raw if any('а' <= ch <= 'я' for ch in raw.lower()) else raw.capitalize()
+            return word + " — встреча"
+        return raw.capitalize() + " meetup"
     return "Встреча" if lang == "ru" else "Meet someone"
 
 
