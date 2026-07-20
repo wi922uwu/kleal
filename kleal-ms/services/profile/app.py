@@ -675,6 +675,10 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .ktabs{display:flex;justify-content:space-between;background:#fff;border-radius:20px;padding:2px;
   flex:0 0 auto;min-height:40px}
 .ktabs .kchip{flex:1;min-width:0}
+.cityPin{width:44px;height:44px;border-radius:999px;background:var(--primary);color:#fff;font-weight:800;
+  font-size:15px;display:flex;align-items:center;justify-content:center;border:3px solid #fff;
+  box-shadow:0 3px 10px rgba(20,20,40,.28);cursor:pointer}
+.cityPin.me{background:var(--fg)}
 .khelp{display:flex;justify-content:center;padding:0 12px 6px}
 .khelp .kchip{gap:6px;cursor:pointer;height:34px;min-height:34px}
 .khelp .kchip svg{width:15px;height:15px}
@@ -2156,6 +2160,62 @@ function planWhere(p){
   const d=(p&&p.dist!=null&&same!==false)?(p.dist+' '+T('км','km')):'';
   return a && d ? (a+' · '+d) : (a || d || T('место не указано','area not set'));
 }
+let AREAFILTER=null;
+function focusArea(key){ AREAFILTER=(AREAFILTER===key)?null:key; cur='search'; render(); }
+// ---- area map: plot CITIES we can name, never people we cannot locate ----
+// Not one real user in the store has coordinates — onboarding collects a free-text area and nothing
+// else. The old map invented a position per person (a golden-angle spiral around the centre), which
+// put pins in the sea and drew people whose area says «Москва» a few km from Barcelona. Removing that
+// left an empty map. What we genuinely know is the CITY and how many plans are in it, so that is what
+// the map shows: one marker per city, carrying a count. A city marker claims a fact; a person pin
+// would claim a location we were never given.
+const CITY_LATLON={
+  'barcelona':[41.3874,2.1686], 'madrid':[40.4168,-3.7038], 'valencia':[39.4699,-0.3763],
+  'moscow':[55.7558,37.6173], 'saint petersburg':[59.9311,30.3609],
+  'belgrade':[44.7866,20.4489], 'lisbon':[38.7223,-9.1393], 'berlin':[52.52,13.405],
+  'london':[51.5074,-0.1278], 'paris':[48.8566,2.3522], 'amsterdam':[52.3676,4.9041],
+  'tbilisi':[41.7151,44.8271], 'yerevan':[40.1792,44.4991], 'istanbul':[41.0082,28.9784],
+  'warsaw':[52.2297,21.0122], 'prague':[50.0755,14.4378], 'kyiv':[50.4501,30.5234],
+  'dubai':[25.2048,55.2708], 'new york':[40.7128,-74.006], 'tel aviv':[32.0853,34.7818],
+};
+// Areas arrive as free text — "bARCELONE", "Москва", "  Barcelona ". Fold spelling and language so a
+// city is one marker, not three.
+const CITY_ALIAS={
+  'москва':'moscow','мск':'moscow','moskva':'moscow',
+  'санкт-петербург':'saint petersburg','спб':'saint petersburg','питер':'saint petersburg',
+  'барселона':'barcelona','barcelone':'barcelona','bcn':'barcelona',
+  'белград':'belgrade','мадрид':'madrid','лиссабон':'lisbon','берлин':'berlin',
+  'лондон':'london','париж':'paris','тбилиси':'tbilisi','ереван':'yerevan',
+  'стамбул':'istanbul','варшава':'warsaw','прага':'prague','киев':'kyiv','київ':'kyiv',
+  'дубай':'dubai','амстердам':'amsterdam','тель-авив':'tel aviv','валенсия':'valencia',
+};
+function cityKey(area){
+  let a=String(area||'').toLowerCase().trim().replace(/[.,]/g,' ').replace(/\s+/g,' ');
+  if(!a) return null;
+  if(CITY_ALIAS[a]) a=CITY_ALIAS[a];
+  if(CITY_LATLON[a]) return a;
+  for(const k in CITY_LATLON){ if(a.indexOf(k)>=0) return k; }      // "Barcelona, Eixample"
+  for(const k in CITY_ALIAS){ if(a.indexOf(k)>=0) return CITY_ALIAS[k]; }
+  return null;                                                       // unknown city -> not plotted
+}
+function cityLabel(key){
+  const RU={moscow:'Москва','saint petersburg':'Санкт-Петербург',barcelona:'Барселона',belgrade:'Белград',
+    madrid:'Мадрид',lisbon:'Лиссабон',berlin:'Берлин',london:'Лондон',paris:'Париж',tbilisi:'Тбилиси',
+    yerevan:'Ереван',istanbul:'Стамбул',warsaw:'Варшава',prague:'Прага',kyiv:'Киев',dubai:'Дубай',
+    amsterdam:'Амстердам','tel aviv':'Тель-Авив',valencia:'Валенсия','new york':'Нью-Йорк'};
+  const en=key.replace(/\b\w/g,c=>c.toUpperCase());
+  return T(RU[key]||en, en);
+}
+// Plans grouped by the city we could resolve. Unresolvable areas are counted, never guessed.
+function exploreAreas(){
+  const by={}; let unknown=0;
+  (PUBLIC_INTENTS||[]).forEach(p=>{
+    const k=cityKey(p.area);
+    if(!k){ unknown++; return; }
+    (by[k]=by[k]||{key:k,plans:[]}).plans.push(p);
+  });
+  return {areas:Object.values(by).sort((a,b)=>b.plans.length-a.plans.length), unknown};
+}
 let exploreMap=null;
 function initExploreMap(){
   if(typeof L==='undefined') return;                 // Leaflet not loaded
@@ -2167,18 +2227,27 @@ function initExploreMap(){
   const cIcon=L.divIcon({html:pin,className:'',iconSize:[30,30],iconAnchor:[15,30],popupAnchor:[0,-28]});
   const meIcon=L.divIcon({html:'<div class="meDot"></div>',className:'',iconSize:[16,16],iconAnchor:[8,8]});
   const pts=[];
-  // A plan whose owner never shared coordinates has lat/lon null, and L.marker([null,null]) drops a pin
-  // at 0,0 — the Gulf of Guinea. A pin in the sea claims we know where someone is when we do not, so
-  // those plans are simply not plotted; they still appear in the list below the map.
-  let noGeo=0;
-  PUBLIC_INTENTS.forEach((p,i)=>{
-    const la=+p.lat, lo=+p.lon;
-    if(!isFinite(la)||!isFinite(lo)||(la===0&&lo===0)){ noGeo++; return; }
-    const m=L.marker([la,lo],{icon:cIcon}).addTo(map);
-    m.bindPopup('<div class="mapop"><div class="mopt">'+esc(p.title)+'</div><div class="mopm">'+esc(p.who)+' · '+esc(p.when)+' · '+esc(planWhere(p))+'</div><button class="mopj" onclick="joinPublic('+i+')">'+T('Присоединиться','Join')+'</button></div>');
-    pts.push([la,lo]); });
-  if(noGeo) console.info('explore: '+noGeo+' plan(s) without coordinates were not plotted');
-  L.marker(ME_LATLON,{icon:meIcon}).addTo(map); pts.push(ME_LATLON);
+  const mine=cityKey(myArea());
+  const {areas, unknown}=exploreAreas();
+  areas.forEach(a=>{
+    const ll=CITY_LATLON[a.key]; if(!ll) return;
+    const here=(a.key===mine);
+    // The marker states a count for a city. It deliberately does NOT sit on any individual person.
+    const badge=L.divIcon({className:'', iconSize:[54,54], iconAnchor:[27,27],
+      html:'<div class="cityPin'+(here?' me':'')+'">'+a.plans.length+'</div>'});
+    const m=L.marker(ll,{icon:badge}).addTo(map);
+    const names=a.plans.slice(0,4).map(p=>esc(p.who||'')).join(', ');
+    m.bindPopup('<div class="mapop"><div class="mopt">'+esc(cityLabel(a.key))+' · '+a.plans.length+'</div>'
+      +'<div class="mopm">'+esc(names)+(a.plans.length>4?' …':'')+'</div>'
+      +'<button class="mopj" onclick="focusArea(\''+a.key+'\')">'+T('Показать','Show')+'</button></div>');
+    pts.push(ll);
+  });
+  if(unknown) console.info('explore: '+unknown+' plan(s) whose area could not be resolved to a city');
+  // No separate "me" dot when your own city already has a marker — identical coordinates, so the dot
+  // just hides under the pin. The dark .cityPin.me styling is what marks the city as yours.
+  const minePlotted=mine&&CITY_LATLON[mine]&&areas.some(a=>a.key===mine);
+  if(mine&&CITY_LATLON[mine]&&!minePlotted){ L.marker(CITY_LATLON[mine],{icon:meIcon}).addTo(map); pts.push(CITY_LATLON[mine]); }
+  else if(!pts.length){ L.marker(ME_LATLON,{icon:meIcon}).addTo(map); pts.push(ME_LATLON); }
   try{ map.fitBounds(pts,{padding:[36,36]}); }catch(_e){ map.setView(ME_LATLON,13); }
   setTimeout(()=>{ try{ map.invalidateSize(); map.fitBounds(pts,{padding:[36,36]}); }catch(_e){} }, 90);
   exploreMap=map;
@@ -2383,9 +2452,26 @@ function scr_intentchat(){
 
 function scr_search(){
   const P=PUBLIC_INTENTS;
-  const list=P.map((p,i)=>`<div class="card evrow" data-public="${i}"><div class="evic">${IC.pin}</div>
+  // Grouped by city, with your own first — the same truth the map shows. A flat list mixed plans from
+  // three countries into one column ordered by a distance that means nothing across cities.
+  const mineKey=cityKey(myArea());
+  const shown=AREAFILTER? P.filter(p=>cityKey(p.area)===AREAFILTER) : P;
+  const groups={}; const noCity=[];
+  shown.forEach((p)=>{ const k=cityKey(p.area); if(k){ (groups[k]=groups[k]||[]).push(p); } else noCity.push(p); });
+  const order=Object.keys(groups).sort((a,b)=>
+    (a===mineKey?-1:b===mineKey?1:0) || groups[b].length-groups[a].length);
+  const row=(p)=>{ const i=P.indexOf(p);
+    return `<div class="card evrow" data-public="${i}"><div class="evic">${IC.pin}</div>
     <div class="evt"><div class="evtt">${esc(p.title)}</div><div class="evts">${esc(p.who)} · ${esc(p.when)} · ${esc(planWhere(p))}</div></div>
-    <button class="introbtn" data-act="join" data-pi="${i}">${T('Присоединиться','Join')}</button></div>`).join('');
+    <button class="introbtn" data-act="join" data-pi="${i}">${T('Присоединиться','Join')}</button></div>`; };
+  const chip=AREAFILTER?`<div class="kchip on" data-act="area-clear" style="cursor:pointer;align-self:flex-start">
+      ${esc(cityLabel(AREAFILTER))} ✕</div>`:'';
+  const list=chip+order.map(k=>`<div class="k-title" style="margin:14px 2px 6px">${esc(cityLabel(k))}
+      <span style="color:var(--muted);font-weight:500"> · ${groups[k].length}</span>
+      ${k===mineKey?`<span class="kbadge ok" style="margin-left:6px">${T('твой город','your city')}</span>`:''}</div>
+    ${groups[k].map(row).join('')}`).join('')
+    + (noCity.length?`<div class="k-title" style="margin:14px 2px 6px">${T('Город не указан','City not given')}
+      <span style="color:var(--muted);font-weight:500"> · ${noCity.length}</span></div>${noCity.map(row).join('')}`:'');
   const below = P.length ? `<div class="stack">${list}</div>`
     : (exploreLoaded
         ? emptyState('Пока рядом нет открытых планов','Создай интент — и Kleal предложит его людям вокруг.')
@@ -2394,7 +2480,7 @@ function scr_search(){
     <div class="sbar"><div class="box">${IC.nSearch}<span>${T('Искать в этой зоне…','Search this area…')}</span></div>
       <div class="filt" data-act="filter">${IC.compass}</div></div>
     <div id="lmap" class="lmap"></div>
-    <div class="seccap" style="margin:12px 2px 8px">${T("Открытые планы людей рядом — нажми на пин, «Присоединиться», а знакомство берёт на себя Kleal. Показывается только район, не точное место.","Open plans people posted near you — tap a pin to see it, Join and Kleal handles the intro. Only your area is shown, never your exact spot.")}</div>
+    <div class="seccap" style="margin:12px 2px 8px">${T("Открытые планы по городам — нажми на кружок, чтобы отфильтровать список. Точное место не показывается: Kleal знает только город, который человек указал сам.","Open plans by city — tap a circle to filter the list. Exact places are never shown: Kleal only knows the city a person gave.")}</div>
     ${below}
   </div>`;
 }
@@ -3827,6 +3913,7 @@ function doAct(act, ds){
       if(!confirm(T('Выйти и очистить профиль на этом устройстве?','Log out and clear this profile on this device?'))) break;
       try{ localStorage.clear(); }catch(_e){}
       location.href='/'; break; }
+    case 'area-clear': AREAFILTER=null; render(); break;
     case 'req-yes': answerReq(ds.id,'accepted'); break;
     case 'req-no':  answerReq(ds.id,'declined'); break;
     case 'kleal-help': klealHelp(); break;
