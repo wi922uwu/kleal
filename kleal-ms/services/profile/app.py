@@ -1216,6 +1216,12 @@ function mapOnboarding(op){
     summaryLabel:"Kleal's summary", summary: op.summary||'',
     matchingPaths: ints.slice(0,3), snapshot:snap, interests, basics,
     social, availability:[], places, goals, safety, memory, knows,
+    // canonical shared-profile fields — the same names the users.json row carries, so the
+    // client, buddy and matching all read one vocabulary instead of re-parsing display strings
+    age:op.age||null, gender:op.gender||null, area:city||'', radiusKm:km||null,
+    langsList:langs.map(l=>({'english':'en','spanish':'es','german':'de','french':'fr','portuguese':'pt',
+      'italian':'it','russian':'ru','catalan':'ca'}[String(l).toLowerCase()]||String(l).slice(0,2).toLowerCase())),
+    formats:[], geo:(op.geo&&op.geo.coarseLat!=null)?{coarseLat:op.geo.coarseLat,coarseLon:op.geo.coarseLon}:null,
     intents:[], plans:[], messages:[] };
 
   const tabs=['overview'];
@@ -1877,18 +1883,66 @@ let buddyMsgs=[], buddySignals={}, buddyBusy=false;
 // knew nothing about the person searching: vibe/geo/language groups came back `unknown`, coverage
 // stayed low, and the outreach thresholds could never be met — every launch ended in "согласны: 0"
 // no matter how good the candidates were.
+// ---- the users.json row is the single source of truth for the shared profile ----
+// Edits used to live only in this device's localStorage while matching ranked everyone by the row
+// onboarding wrote once — two profiles that could only drift apart. Boot pulls the row; every
+// accepted edit pushes back through the onboarding service, the store's only writer.
+async function loadServerProfile(){
+  const me=(DATA.name||'').trim(); if(!me||IS_DEMO) return;
+  try{
+    const r=await fetch('/api/onboarding/profile',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:me})}).then(x=>x.json());
+    const u=r&&r.user; if(!u) return;
+    if(u.area!=null&&u.area!=='') DATA.area=u.area;
+    if(u.radiusKm!=null) DATA.radiusKm=u.radiusKm;
+    if(u.lat!=null&&u.lon!=null) DATA.geo={coarseLat:u.lat,coarseLon:u.lon};
+    if(Array.isArray(u.langs)&&u.langs.length) DATA.langsList=u.langs;
+    if(u.age!=null) DATA.age=u.age;
+    if(u.gender) DATA.gender=u.gender;
+    if(Array.isArray(u.formats)) DATA.formats=u.formats;
+    if(Array.isArray(u.goals)&&u.goals.length&&!((DATA.goals||{}).active||[]).length)
+      DATA.goals={active:u.goals.slice(),optional:[]};
+    syncBasicsRows(); render(); saveState();
+  }catch(e){}
+}
+function pushProfile(patch){
+  const me=(DATA.name||'').trim(); if(!me||IS_DEMO) return;
+  fetch('/api/onboarding/profile-update',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:me,patch})}).catch(()=>{});
+}
+const _LANG_NAMES={en:['Английский','English'],es:['Испанский','Spanish'],ru:['Русский','Russian'],
+  fr:['Французский','French'],de:['Немецкий','German'],it:['Итальянский','Italian'],
+  ca:['Каталанский','Catalan'],pt:['Португальский','Portuguese'],uk:['Украинский','Ukrainian'],
+  pl:['Польский','Polish']};
+function langName(c){ const h=_LANG_NAMES[String(c||'').toLowerCase()]; return h?T(h[0],h[1]):String(c); }
+// Display rows mirror the canonical fields, so a card can never show one value while matching
+// quietly uses another.
+function syncBasicsRows(){
+  const rows=DATA.basics||(DATA.basics=[]);
+  const put=(title,icon,value)=>{ if(!value) return; const r=rows.find(x=>x.title===title);
+    if(r) r.value=value; else rows.push({icon,title,value}); };
+  put('Basics','person',[DATA.gender,DATA.age].filter(Boolean).join(' · '));
+  put('Location','pin',[DATA.area, DATA.radiusKm?T('до '+DATA.radiusKm+' км','up to '+DATA.radiusKm+' km'):null].filter(Boolean).join(' · '));
+  put('Languages','globe',(DATA.langsList||[]).map(langName).join(' · '));
+}
 function matchProfile(){
   const g=t=>{const r=snapRow(t);return r?String(r.value||''):'';};
-  const langs=(g('Languages').match(/[A-Za-zА-Яа-яё]+/g)||[]).map(s=>({'english':'en','английский':'en',
+  const langs=(DATA.langsList&&DATA.langsList.length)?DATA.langsList.slice()
+    :(g('Languages').match(/[A-Za-zА-Яа-яё]+/g)||[]).map(s=>({'english':'en','английский':'en',
     'spanish':'es','испанский':'es','russian':'ru','русский':'ru','french':'fr','французский':'fr',
     'german':'de','немецкий':'de','catalan':'ca','italian':'it'}[s.toLowerCase()]||s.slice(0,2).toLowerCase()))
     .filter((v,i,a)=>v&&a.indexOf(v)===i);
   const vibeRow=((DATA.social||{}).rows||[])[0];
+  // city used to be the RAW snapshot row — «Barcelona · Eixample · Gràcia · Max travel 25 min» went
+  // to the matcher as a "city". Canonical DATA.area wins; the first display segment is the fallback.
   const p={ name:DATA.name||'',
             interests:(DATA.interests||[]).map(i=>i.name).filter(Boolean),
             langs:langs, languages:{comfortable:langs},
             vibe:(DATA.vibeWord||(vibeRow&&String(vibeRow.value||'').split(/[,·]/)[0].trim())||'')||null,
-            city:g('Location')||null };
+            city:(DATA.area||String(g('Location')).split('·')[0].trim())||null };
+  if(DATA.age!=null) p.age=DATA.age;
+  if(DATA.gender) p.gender=DATA.gender;
+  if(DATA.radiusKm!=null) p.radiusKm=DATA.radiusKm;
   if(DATA.geo&&DATA.geo.coarseLat!=null) p.geo=DATA.geo;
   return p;
 }
@@ -4028,6 +4082,7 @@ function doAct(act, ds){
   }
 }
 render();
+loadServerProfile();   // pull the shared profile row; localStorage alone must never be the truth
 </script></body></html>'''
 
 # escape "</" so a stray "</script>" inside data can never terminate the inline <script> early

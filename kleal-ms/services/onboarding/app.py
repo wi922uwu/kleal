@@ -1241,7 +1241,11 @@ HTML = HTML.replace("__PROFILE_URL__", os.environ.get("PROFILE_URL", "").rstrip(
 # ---------------------------------------------------------------- REGISTRATION: onboarding -> shared user store
 # Everyone who finishes onboarding is written into the same store the matching agent reads and the admin
 # panel shows, so they immediately become matchable and visible. Store format matches services/admin.
-USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "matching", "users.json"))
+# Default must be THE SAME file matching's default resolves to (kleal-ms/users.json). They used to
+# differ — matching read <root>/users.json while this service wrote services/matching/users.json —
+# and only a KLEAL_USERS env var kept them aligned; one restart without it split the store in two:
+# registrations landed in a file the matcher never read.
+USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "..", "users.json"))
 _REG_LOCK = threading.Lock()
 _R2M = {"watch": "watch", "play": "play", "discuss": "discuss", "practice": "practise",
         "practise": "practise", "attend": "attend", "meet": "meet"}
@@ -1254,6 +1258,21 @@ def _first(*vals):
     return None
 
 
+
+# 'Spanish'[:2] is 'sp' and 'German'[:2] is 'ge' — neither is a language code, and matching's
+# requiredLanguages gate compares codes, so a Spanish speaker written as 'sp' matched nobody.
+_LANG_CODES = {"english": "en", "spanish": "es", "german": "de", "french": "fr", "portuguese": "pt",
+               "italian": "it", "russian": "ru", "catalan": "ca", "ukrainian": "uk", "polish": "pl",
+               "английский": "en", "испанский": "es", "немецкий": "de", "французский": "fr",
+               "португальский": "pt", "итальянский": "it", "русский": "ru", "каталанский": "ca",
+               "serbian": "sr", "сербский": "sr", "swedish": "sv", "шведский": "sv"}
+
+
+def _lang_code(x):
+    x = str(x or "").strip().lower()
+    return _LANG_CODES.get(x, x[:2]) if x else "en"
+
+
 def _profile_to_user(p):
     """Map a Kleal onboarding profile -> a complete, matching-safe candidate record (like admin _norm_user)."""
     p = p or {}
@@ -1262,7 +1281,7 @@ def _profile_to_user(p):
     interests = [str(x).strip().lower() for x in (ints.get("explicit") if isinstance(ints, dict) else ints) or [] if str(x).strip()][:6]
     langs = (p.get("languages") or {})
     ll = langs.get("comfortable") or langs.get("fluent") or langs.get("native") or [] if isinstance(langs, dict) else []
-    langs = [str(x)[:2].lower() for x in ll if str(x).strip()][:4] or ["en"]
+    langs = [_lang_code(x) for x in ll if str(x).strip()][:4] or ["en"]
     vibe = ""
     vb = p.get("vibe")
     if isinstance(vb, dict) and vb.get("primary"):
@@ -1286,16 +1305,32 @@ def _profile_to_user(p):
         age = int(_first(p.get("age"), (p.get("ageRange") or "28").split("-")[0], 28))
     except (TypeError, ValueError):
         age = 28
-    km = round(0.5 + (int(hashlib.sha1(name.encode("utf-8")).hexdigest()[:4], 16) % 60) / 10.0, 1)  # deterministic 0.5..6.5
+    # A stored per-person "km" is meaningless — distance depends on who is looking. It used to be
+    # fabricated from a hash of the name; now it is honestly absent and distance comes from real
+    # coarse coordinates when the person granted geolocation during onboarding.
     deals = [str(x).strip() for x in (p.get("dealBreakers") or []) if str(x).strip()][:6]
+    lat = geo.get("coarseLat") if isinstance(geo.get("coarseLat"), (int, float)) else None
+    lon = geo.get("coarseLon") if isinstance(geo.get("coarseLon"), (int, float)) else None
+    try:
+        radius = int(geo.get("maxDistanceKm")) if geo.get("maxDistanceKm") else None
+    except (TypeError, ValueError):
+        radius = None
+    gender = str(p.get("gender") or "").strip() or None
+    goals = [str(x).strip() for x in ((p.get("goals") or {}).get("primary") or []) if str(x).strip()][:4]
+    sf = p.get("safety") or {}
     return {
         "id": "on" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8],
         "name": name, "interests": interests or ["social"],
-        "vibe": vibe or "chill", "langs": langs, "area": area,
-        "km": km, "lat": None, "lon": None, "open": True, "role": role,
+        # vibe/entities used to be invented ('chill', '<Interest> scene') — collected-or-absent now
+        "vibe": vibe, "langs": langs, "area": area,
+        "km": None, "lat": lat, "lon": lon, "radiusKm": radius, "open": True, "role": role,
+        "gender": gender, "goals": goals, "summary": str(p.get("summary") or "")[:400],
+        "safety": {"publicPlacesOnly": bool(sf.get("publicPlacesOnly", True)),
+                   "verifiedOnly": bool(sf.get("verifiedOnly")),
+                   "hideExactLocation": bool(sf.get("hideExactLocation"))},
         "datingOk": dating, "age": age, "verified": bool(p.get("ageVerified18", True)),
         "paused": False, "pending": 0, "blocksMe": False, "lastActiveDays": 0, "declinedOwnerDaysAgo": None,
-        "intents": [], "entities": [(interests[0].capitalize() + " scene") if interests else "Social scene"],
+        "intents": [], "entities": [],
         "dealBreakers": deals, "source": "onboarding",
         # receiving policy (Matching Core spec §4.4): registering = explicit consent to be matched,
         # so a default ACTIVE policy is written here. Dating is opt-in only (spec §17). Matching's
@@ -1400,6 +1435,53 @@ def update_receiving(name, patch):
     return {"ok": True, "receiving": merged}
 
 
+
+
+def _read_users():
+    try:
+        with open(USERS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        users = data.get("users") if isinstance(data, dict) else data
+        return users if isinstance(users, list) else []
+    except Exception:
+        return []
+
+
+def get_user(name):
+    key = str(name or "").strip().lower()
+    if not key:
+        return None
+    for x in _read_users():
+        if str(x.get("name", "")).strip().lower() == key:
+            return x
+    return None
+
+
+# The whole point of the whitelist: the profile client pushes edits here, and only fields a person
+# actually owns may change — never source/verified/paused or other trust-bearing flags.
+_PATCH_FIELDS = {"age", "gender", "area", "radiusKm", "lat", "lon", "langs", "interests",
+                 "goals", "formats", "summary", "vibe", "safety"}
+
+
+def update_user(name, patch):
+    key = str(name or "").strip().lower()
+    if not key or not isinstance(patch, dict):
+        return {"ok": False, "error": "name and patch required"}
+    clean = {k: v for k, v in patch.items() if k in _PATCH_FIELDS}
+    if not clean:
+        return {"ok": False, "error": "no editable fields in patch"}
+    with _REG_LOCK:
+        users = _read_users()
+        row = next((x for x in users if str(x.get("name", "")).strip().lower() == key), None)
+        if row is None:
+            return {"ok": False, "error": "unknown user"}
+        row.update(clean)
+        tmp = USERS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"users": users}, f, ensure_ascii=False)
+        os.replace(tmp, USERS_PATH)
+    return {"ok": True, "user": row}
+
 def register_profile(profile):
     """Append/replace this person in the shared store (de-dupe by name). Atomic write."""
     u = _profile_to_user(profile)
@@ -1478,6 +1560,14 @@ class H(BaseHTTPRequestHandler):
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             try:
                 send_json(self, 200, {"ok": True, "user": register_profile(prof)})
+            except Exception as e:
+                send_json(self, 200, {"ok": False, "error": str(e)[:200]})
+        elif p in ("/api/onboarding/profile", "/api/v2/profile"):
+            send_json(self, 200, {"user": get_user(body.get("name"))})
+        elif p in ("/api/onboarding/profile-update", "/api/v2/profile-update"):
+            try:
+                send_json(self, 200, update_user(body.get("name"),
+                                                 body.get("patch") if isinstance(body.get("patch"), dict) else {}))
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         elif p in ("/api/onboarding/receiving", "/api/v2/receiving"):

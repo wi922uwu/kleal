@@ -407,9 +407,13 @@ CANDIDATES = _gen_pool()
 # (KLEAL_USERS=/root/kleal-ms/users.json), but this file previously defaulted to services/matching/users.json
 # — a different file onboarding never touched — so every registered person was invisible to the matcher and
 # search ran on the 50 demo fakes only. Default now points at the SAME repo-root users.json onboarding uses.
+# <kleal-ms>/users.json — exactly two levels up from services/matching/app.py. It was three ("repo
+# root"), which resolves differently depending on where the kleal-ms tree sits: locally that was
+# kleal-repo/users.json, on the pod /root/users.json — a third store outside the project tree that
+# only this service saw. Two-up is unambiguous in both layouts and equals onboarding's default.
+_SVC_DIR = os.path.dirname(os.path.abspath(__file__))
 USERS_PATH = os.environ.get(
-    "KLEAL_USERS",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "users.json"))
+    "KLEAL_USERS", os.path.join(os.path.dirname(os.path.dirname(_SVC_DIR)), "users.json"))
 # Match ONLY real registered users by default — surfacing demo-pool fakes (Ana/Nico/Iris...) in results
 # reads as "mock users". The demo pool is still the fallback when the store is missing/empty, so a fresh
 # system isn't dead. Set KLEAL_MERGE_DEMO=1 to blend the demo pool in (for a populated demo).
