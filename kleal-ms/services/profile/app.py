@@ -1247,7 +1247,8 @@ const ALL_TABS=[
 const TABS = ALL_TABS;
 let cur = 'agenthome';   // main landing after onboarding
 const TITLES=()=>({memory:T('Что Kleal помнит','What Kleal remembers'), intents:T('Интенты','Plans'), search:T('Обзор','Explore'), messages:T('Сообщения','Messages'), agenthome:T('Главная','Home'), notifs:T('Уведомления','Notifications'),
-  settings:T('Настройки','Settings'), help:T('Помощь и поддержка','Help & Support')});   // functions so language switch re-evaluates
+  settings:T('Настройки','Settings'), help:T('Помощь и поддержка','Help & Support'),
+  privacy:T('Приватность и безопасность','Privacy & Security')});   // functions so language switch re-evaluates
 if(!DATA.notifs) DATA.notifs=[]; if(!DATA.intents) DATA.intents=[];   // buddy-agent stores
 function setTab(id){ detail=null; cur=id; render(); }
 // Overview is a hub of drill-in "Settings Rows"
@@ -3741,6 +3742,31 @@ function scr_settings(){
 // writing to the notification list rather than only remembering a switch position.
 function notifsOn(){ return ((DATA.prefs||{}).notifs)!==false; }
 function darkOn(){ return !!((DATA.prefs||{}).dark); }
+function twoFAOn(){ return !!((DATA.security||{}).twoFA); }
+function bioOn(){ return !!((DATA.security||{}).biometric); }
+// Privacy & Security settings screen. 2FA and biometrics are saved preferences, not yet enforced —
+// there is no account/sign-in layer to enforce them (logout is just localStorage.clear). The copy
+// says so plainly rather than implying the app is now protected. The account-level privacy controls
+// that DO work (visibility, blocking, verified-only) already live in scr_safety and are linked below.
+function scr_privacy(){
+  const note=`<div class="kinfo" style="margin-bottom:12px">${IC.info}<div>${T(
+    'Двухфакторная аутентификация и биометрия защитят вход, когда подключим аккаунты. Пока это сохранённые настройки — они включатся автоматически.',
+    'Two-factor and biometrics will protect sign-in once accounts are connected. For now these are saved preferences that will switch on automatically.')}</div></div>`;
+  return `<div class="fade" style="padding-top:4px">
+    ${note}
+    <div class="seclbl" style="margin:2px 2px 8px">${T('Вход в аккаунт','Account sign-in')}</div>
+    ${setRow('userLock',T('Двухфакторная аутентификация','Two-factor authentication'),
+        {act:'set-2fa', tog:twoFAOn(),
+         sub:twoFAOn()?T('Код из приложения-аутентификатора при входе','Authenticator code on sign-in')
+                      :T('Дополнительный код при каждом входе','A second code every time you sign in')})}
+    ${setRow('faceScan',T('Биометрия (Face ID / отпечаток)','Biometrics (Face ID / fingerprint)'),
+        {act:'set-biometric', tog:bioOn(),
+         sub:bioOn()?T('Разблокировка приложения по лицу или отпечатку','Unlock the app with your face or fingerprint')
+                    :T('Быстрый вход без пароля','Fast sign-in without a password')})}
+    <div class="seclbl" style="margin:16px 2px 8px">${T('Приватность','Privacy')}</div>
+    ${setRow('shield',T('Видимость, блокировки и данные','Visibility, blocking & data'), {act:'set-safety'})}
+  </div>`;
+}
 function scr_help(){
   return `<div class="fade" style="padding-top:4px">
     <div class="card pad"><div class="seclbl">${T('Как работает Kleal','How Kleal works')}</div>
@@ -3766,7 +3792,7 @@ const SCREENS={agenthome:scr_agenthome,overview:scr_overview,snapshot:scr_snapsh
   sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
   picktime:scr_picktime,pickplace:scr_pickplace,awaiting:scr_awaiting,planok:scr_planok,
   meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved,
-  settings:scr_settings,help:scr_help};
+  settings:scr_settings,help:scr_help,privacy:scr_privacy};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -3970,7 +3996,12 @@ function doAct(act, ds){
     case 'resum': { if(SUMBUSY)break; SUMBUSY=true; render();
       adaptSummary().then(()=>{ SUMBUSY=false; render(); }); break; }
     case 'set-personal': openSheet('basics'); break;
-    case 'set-privacy':  navTo('safety'); break;
+    case 'set-privacy':  navTo('privacy'); break;
+    case 'set-safety':   navTo('safety'); break;
+    case 'set-2fa': { DATA.security=DATA.security||{}; DATA.security.twoFA=!twoFAOn(); render(); saveState();
+      toast(twoFAOn()?T('2FA включится с аккаунтом','2FA turns on with your account'):T('2FA выключена','2FA off')); break; }
+    case 'set-biometric': { DATA.security=DATA.security||{}; DATA.security.biometric=!bioOn(); render(); saveState();
+      toast(bioOn()?T('Биометрия включится с аккаунтом','Biometrics turns on with your account'):T('Биометрия выключена','Biometrics off')); break; }
     case 'set-help':     cur='help'; render(); break;
     case 'set-language': setUILang(UILANG==='ru'?'en':'ru'); break;   // setUILang persists + re-renders
     case 'set-notifs': { DATA.prefs=DATA.prefs||{}; DATA.prefs.notifs=!notifsOn(); render(); saveState();
