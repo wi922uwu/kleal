@@ -1796,12 +1796,60 @@ async function klealHelp(){
   const el=document.getElementById('mcin');
   if(el){ el.value=d; el.focus(); try{ el.setSelectionRange(d.length,d.length); }catch(_e){} }
 }
+// ---- real message delivery (the chat used to be local-only) ----
+async function sendMsg(thread, text){
+  const to=(thread.cand&&thread.cand.name)||thread.who||'';
+  const me=(DATA.name||'').trim();
+  if(!to||!me){ thread.failed=true; render(); return; }
+  let r=null;
+  try{
+    r=await fetch('/api/agent/message',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({from:me, to:to, text:text})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  // Do not claim delivery that did not happen — the bubble is marked and the user can retry.
+  if(!r||!r.ok){ thread.failed=true; toast(T('Не удалось отправить — попробуй ещё раз','Could not send — try again')); }
+  else { thread.failed=false; thread.since=Math.max(thread.since||0, r.t||0); }
+  render(); saveState();
+}
+// Poll the open conversation for what the other person actually wrote.
+let _msgT=null, _msgBusy=false;
+async function pollThread(){
+  clearTimeout(_msgT);
+  // Guard BEFORE the await, not after. _msgT was only set at the end, so every re-render during the
+  // in-flight request started another poller and the same incoming message was appended once per
+  // racer — it showed up twice in the thread.
+  if(_msgBusy) return;
+  const th=matchWith, me=(DATA.name||'').trim();
+  if(!th||cur!=='matchchat'||!me){ return; }
+  _msgBusy=true;
+  const other=(th.cand&&th.cand.name)||th.who||'';
+  if(other){
+    try{
+      const r=await fetch('/api/agent/thread?self='+encodeURIComponent(me)+'&with='+encodeURIComponent(other)
+                          +'&since='+encodeURIComponent(th.since||0)).then(x=>x.json());
+      const have=new Set((th.msgs||[]).map(x=>x.mid).filter(Boolean));
+      const incoming=(r&&r.messages||[]).filter(m=>String(m.from).toLowerCase()!==me.toLowerCase()
+                                                   && !have.has(m.id));
+      if(incoming.length){
+        incoming.forEach(m=>{ th.msgs.push({who:'them',mid:m.id,text:m.text,t:(m.t||0)*1000}); th.last=m.text; th.time='now'; });
+        th.awaiting=false;
+        th.since=Math.max(th.since||0, ...(r.messages||[]).map(m=>m.t||0));
+        render(); saveState();
+      } else if(r&&r.messages&&r.messages.length){
+        th.since=Math.max(th.since||0, ...r.messages.map(m=>m.t||0));
+      }
+    }catch(e){}
+  }
+  _msgBusy=false;
+  _msgT=setTimeout(pollThread, 5000);
+}
 function scr_matchchat(){
   const m=matchWith; if(!m) return scr_agenthome();
   // A thread rehydrated from localStorage can have lost `cand` (it is re-attached by msgThreadFor on
   // the live path only), and reading m.cand.name then threw, taking the whole Messages tab down.
   if(!m.cand) m.cand={name:m.who||T('Собеседник','Someone')};
   m.msgs=m.msgs||[];
+  if(!_msgT) pollThread();          // watch for what the other person actually sends
   const mine=m.msgs.filter(x=>x.who==='me').length; const blur=Math.max(0, 9-mine*3);
   const hd=chatHead(m.cand.name||m.who||'', {back:'chat-back', sub:(m.cand.band?bandLabel(m.cand,true):null)});
   const thread=m.msgs.map(x=>x.who==='me'?`<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`
@@ -3700,10 +3748,14 @@ function doAct(act, ds){
       if(e&&matchWith&&matchWith.suggest){ e.value=matchWith.suggest; e.focus(); } break; }
     case 'match-send': { const el=document.getElementById('mcin'); const t=(el&&el.value||'').trim(); if(!t||!matchWith)break;
       // The other side is a REAL person. Faking their reply (there used to be a canned list of
-      // English one-liners) tells the user someone answered when nobody did.
+      // English one-liners) tells the user someone answered when nobody did — and until now the
+      // opposite was just as wrong: the text was pushed into local state and never left the device,
+      // so «отправлено» was shown for a message the recipient could never receive.
       matchWith.msgs.push({who:'me',text:t,t:Date.now()}); matchWith.last=t; matchWith.time='now';
       matchWith.awaiting=true; if(el) el.value='';
-      render(); saveState(); break; }
+      render(); saveState();
+      sendMsg(matchWith, t);
+      break; }
     case 'edit-intent': if(curIntent){ FLOW=FLOW||{}; FLOW.request=curIntent.query||curIntent.title;
         FLOW.intent=curIntent.intent||null; FLOW.summary={request:FLOW.request}; cur='clarify'; render(); }
       else toast(T('Нечего изменять','Nothing to edit')); break;

@@ -831,6 +831,57 @@ def respond(rid, decision, who):
                 return {"ok": True, "id": rid, "status": dec}
     return {"ok": False, "error": "not found"}
 
+# ---- real message delivery ------------------------------------------------------------------------
+# Same gap as proposals had: the chat pushed the typed text into local state only, so the recipient's
+# account never received it. Messages are stored per pair and read back by either side.
+def _messages():
+    return SESSION.setdefault("_messages", [])
+
+def _pair_key(a, b):
+    return "|".join(sorted([_norm_name(a), _norm_name(b)]))
+
+def send_message(frm, to, text):
+    frm, to, text = str(frm or "").strip(), str(to or "").strip(), str(text or "").strip()[:2000]
+    if not frm or not to or not text or _norm_name(frm) == _norm_name(to):
+        return {"ok": False, "error": "from, to and text are required and the two must differ"}
+    m = {"id": "m_%d" % int(time.time() * 1000), "pair": _pair_key(frm, to),
+         "from": frm, "to": to, "text": text, "t": time.time()}
+    with _STORE_LOCK:
+        ms = _messages()
+        ms.append(m)
+        del ms[:-4000]                       # keep the store bounded
+    _save_store()
+    return {"ok": True, "id": m["id"], "t": m["t"]}
+
+def thread(self_name, other, since=0.0):
+    """Every message between the two, oldest first. `since` lets a client poll for new ones only."""
+    if not str(self_name or "").strip() or not str(other or "").strip():
+        return []
+    key = _pair_key(self_name, other)
+    try:
+        since = float(since or 0)
+    except (TypeError, ValueError):
+        since = 0.0
+    out = [dict(m) for m in _messages() if m.get("pair") == key and (m.get("t") or 0) > since]
+    out.sort(key=lambda m: m.get("t") or 0)
+    return out[-200:]
+
+def threads_for(self_name):
+    """Latest message per conversation, so the Messages tab reflects what actually exists."""
+    me = _norm_name(self_name)
+    if not me:
+        return []
+    last = {}
+    for m in _messages():
+        if me not in (_norm_name(m.get("from")), _norm_name(m.get("to"))):
+            continue
+        other = m.get("to") if _norm_name(m.get("from")) == me else m.get("from")
+        cur = last.get(_norm_name(other))
+        if not cur or (m.get("t") or 0) > (cur.get("t") or 0):
+            last[_norm_name(other)] = {"who": other, "last": m.get("text"), "t": m.get("t"),
+                                       "mine": _norm_name(m.get("from")) == me}
+    return sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50]
+
 # ---- Agent-to-agent intro (Phase 2): the candidate's agent confirms + an icebreaker opener ----
 INTRO_PROMPT = '''You are the AI agent of user B. User A wants to meet for the activity below, and B's agent has agreed.
 Write (a) as B's agent, a warm one-sentence confirmation to A's agent, and (b) a friendly one-sentence icebreaker
@@ -1083,6 +1134,14 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/api/agent/pool":
             c = load_candidates()
             send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None, "users": c})
+        elif self.path.split("?")[0] in ("/api/agent/thread", "/api/agent/threads"):
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
+            from urllib.parse import unquote
+            me = unquote(q.get("self", ""))
+            if self.path.split("?")[0].endswith("threads"):
+                send_json(self, 200, {"threads": threads_for(me)})
+            else:
+                send_json(self, 200, {"messages": thread(me, unquote(q.get("with", "")), q.get("since", 0))})
         elif self.path.split("?")[0] in ("/api/agent/inbox", "/api/agent/outbox"):
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
@@ -1181,6 +1240,8 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, agent_intro(intent, cand))
             except Exception as e:
                 send_json(self, 200, {"reply": "", "opener": "Hey! Want to make a plan?", "error": str(e)[:200]})
+        elif p == "/api/agent/message":
+            send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text")))
         elif p == "/api/agent/propose":
             send_json(self, 200, propose(body.get("from"), body.get("to"),
                                          body.get("intent") or {}, body.get("note")))
