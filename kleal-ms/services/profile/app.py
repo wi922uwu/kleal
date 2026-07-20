@@ -109,7 +109,8 @@ DATA = {
   "memory": [],
 
   "knows": {
-    "total": 82, "confirmed": 54, "inferred": 19, "temporary": 9,
+    # No stored counters: scr_knows derives them from the lists below, so the headline
+    # number can never drift away from what is actually rendered.
     "confirmedList": ["Lives in Barcelona", "Speaks RU / EN", "Learning Spanish", "Likes football",
                       "Supports FC Barcelona", "Open to small groups", "Prefers public places",
                       "Online fallback allowed"],
@@ -384,6 +385,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .candok{font-size:10.5px;font-weight:700;color:#0f7340}
 .candbusy{font-size:10.5px;font-weight:600;color:var(--muted)}
 .candno{font-size:10.5px;font-weight:600;color:var(--muted)}
+.candwait{font-size:10.5px;font-weight:600;color:var(--muted);opacity:.7}
 .introbtn{flex:none;font:inherit;font-size:12px;font-weight:700;color:#fff;background:var(--primary);border:0;
   border-radius:999px;padding:7px 13px;cursor:pointer;margin-left:2px}
 /* ===== Buddy chat (Figma "assistant chat") ===== */
@@ -1115,18 +1117,21 @@ function mapOnboarding(op){
       preferVerified: !!sf.verifiedOnly,
       blockedCount:0, excludeKnown:true };
 
+  // English 3rd-person -s: naive concatenation produced "Watchs football" / "Studys Spanish".
+  const verb3 = v => { v=String(v||''); return /(?:[sxz]|ch|sh)$/i.test(v) ? v+'es'
+    : (/[^aeiou]y$/i.test(v) ? v.slice(0,-1)+'ies' : v+'s'); };
   const conf=[];
   if(op.name) conf.push('Name is '+op.name);
   if(op.age)  conf.push(op.age+' years old');
   if(city)    conf.push('Lives in '+city);
   if(langs.length) conf.push('Speaks '+langs.join(' / '));
-  ints.forEach(nm=>{ const r=roleOf(nm); conf.push((r?cap(arr(r)[0])+'s ':'Into ')+nm); });
+  ints.forEach(nm=>{ const r=roleOf(nm); conf.push((r?cap(verb3(arr(r)[0]))+' ':'Into ')+nm); });
   if(sf.publicPlacesOnly!==false) conf.push('Prefers public places');
-  const knows={total:conf.length, confirmed:conf.length, inferred:0, temporary:0, confirmedList:conf, inferredList:[]};
+  const knows={confirmedList:conf, inferredList:[], temporaryList:[]};   // counters are derived from these lists at render time
 
   const memory=[];
   ints.forEach(nm=>{ const r=roleOf(nm), e=pickBy(exp,nm);
-    memory.push({signal:(r?cap(arr(r)[0])+'s ':'Into ')+nm+(e?' ('+e+')':''), source:'Onboarding', confidence:'High', status:'Confirmed', used:true, updated:'Just now'}); });
+    memory.push({signal:(r?cap(verb3(arr(r)[0]))+' ':'Into ')+nm+(e?' ('+e+')':''), source:'Onboarding', confidence:'High', status:'Confirmed', used:true, updated:'Just now'}); });
   if(city) memory.push({signal:'Based in '+city+(km?', within '+km+' km':''), source:'Onboarding', confidence:'High', status:'Confirmed', used:true, updated:'Just now'});
   if(langs.length) memory.push({signal:'Comfortable in '+langs.join(', '), source:'Onboarding', confidence:'High', status:'Confirmed', used:true, updated:'Just now'});
 
@@ -1193,8 +1198,57 @@ function navRows(){
 }
 
 function cbadge(c){ return `<span class="cbadge cb-${c}">${c}</span>`; }
+// ---- display localisation for generated profile strings ----
+// mapOnboarding() bakes English sentences into DATA ("Lives in Barcelona", "Plays football", "Just now")
+// and those strings are PERSISTED to localStorage and used as lookup keys (summaryRow's title is the
+// editrow key). Translating them at build time would freeze the language and break the keys, so the
+// stored value stays canonical English and only the RENDERED text is localised — the same approach
+// whyDetail() already uses for engine details. Language switching therefore keeps working live.
+const _RU_FIELD={'Basics':'Основное','Location':'Локация','Languages':'Языки','Interests':'Интересы',
+  'Safety':'Безопасность','Onboarding':'Онбординг','High':'Высокая','Medium':'Средняя','Low':'Низкая',
+  'Confirmed':'Подтверждено','Inferred':'Предположение','Temporary':'Временно','Just now':'Только что',
+  'Role':'Роль','Experience':'Опыт','New profile':'Новый профиль'};
+const _RU_PAT=[
+  [/^Name is (.+)$/,           m=>'Имя: '+m[1]],
+  [/^(\d+) years old$/,        m=>m[1]+' лет'],
+  [/^Lives in (.+)$/,          m=>'Живёт в '+m[1]],
+  [/^Based in (.+?)(, within (\d+) km)?$/, m=>'Живёт в '+m[1]+(m[3]?', в радиусе '+m[3]+' км':'')],
+  [/^Speaks (.+)$/,            m=>'Говорит на '+m[1]],
+  [/^Comfortable in (.+)$/,    m=>'Общается на '+m[1]],
+  [/^Prefers public places$/,  ()=>'Предпочитает публичные места'],
+  [/^Public places( only)?$/,  ()=>'Публичные места'],
+  [/^Matching on$/,            ()=>'Подбор включён'],
+  [/^Adjacent (on|matches allowed)$/,()=>'Смежные совпадения включены'],
+  [/^Verified preferred$/,     ()=>'Предпочитает верифицированных'],
+  [/^No private locations$/,   ()=>'Без частных адресов'],
+  [/^Default$/,                ()=>'По умолчанию'],
+  [/^Location sharing$/,       ()=>'Геолокация'],
+  [/^Area only, never exact location$/,()=>'Только район, никогда точное место'],
+  [/^Max (\d+) km$/,           m=>'до '+m[1]+' км'],
+  [/^Into (.+)$/,              m=>'Увлекается: '+m[1]],
+  [/^Plays? (.+)$/,            m=>'Играет в '+m[1]],
+  // the s? / s{0,2} slack absorbs strings already persisted by the old naive pluraliser ("Watchs",
+  // "Discusss") — those live in users' localStorage and can't be regenerated.
+  [/^Watch(?:e?s)? (.+)$/,     m=>'Смотрит '+m[1]],
+  [/^Practi[sc]e?s? (.+)$/,    m=>'Практикует '+m[1]],
+  [/^Discuss(?:e?s{0,2})? (.+)$/, m=>'Обсуждает '+m[1]],
+  [/^Reads? (.+)$/,            m=>'Читает '+m[1]],
+  [/^Visits? (.+)$/,           m=>'Ходит: '+m[1]],
+  [/^Learns? (.+)$/,           m=>'Учит '+m[1]],
+  [/^Supports? (.+)$/,         m=>'Болеет за '+m[1]],
+];
+function ruTxt(s){
+  s=String(s==null?'':s);
+  if(UILANG!=='ru'||!s) return s;
+  if(_RU_FIELD[s]) return _RU_FIELD[s];
+  for(const [re,f] of _RU_PAT){ const m=s.match(re); if(m) return f(m); }
+  // Values are often "<sentence> · <sentence>" — translate each part rather than giving up on the row.
+  if(s.includes(' · ')){ const parts=s.split(' · '); const t=parts.map(p=>ruTxt(p));
+    if(t.some((x,i)=>x!==parts[i])) return t.join(' · '); }
+  return s;   // unknown shape (a real name, a city, free text) -> leave it exactly as the user wrote it
+}
 function summaryRow(r, edit){ return `<div class="card srow"><div class="si">${IC[r.icon]||''}</div>
-  <div class="st"><div class="stt">${esc(r.title)}</div><div class="stv">${esc(r.value)}</div></div>
+  <div class="st"><div class="stt">${esc(ruTxt(r.title))}</div><div class="stv">${esc(ruTxt(r.value))}</div></div>
   ${edit?`<div class="edit" data-act="editrow" data-row="${esc(r.title)}">${IC.edit}</div>`:''}</div>`; }
 const UI={};  // persists toggle/checkbox state across re-renders (keyed control state)
 if(_saved && _saved.ui){ Object.assign(UI, _saved.ui); }   // rehydrate control state across refresh
@@ -1218,43 +1272,43 @@ function sChoice(label,desc,options,sel,act){ return `<div class="crow2">${sTt(l
 function sSub(label){ return `<div class="ssub">${esc(label)}</div>`; }
 
 function safetyGroups(f){ f=f||{}; return [
-  {t:'How Kleal acts for you', c:'The big levers — your agent’s autonomy and a one-tap pause.', items:[
-    {k:'choice', label:'When Kleal finds someone', desc:'Ask before reaching out, or let Kleal introduce you automatically.',
-      options:['Ask me first','Introduce automatically'], sel:(f.autonomy==='auto'?1:0), act:'autonomy'},
-    {k:'tog', label:'Confirm before sharing my details', desc:'Ask before revealing your name, photo or contact — even when Kleal arranges plans for you.', on:f.confirmShare!==false, flag:'confirmShare'},
-    {k:'tog', label:'Pause Kleal', desc:'Stop all new matching and outreach. Your profile and memory stay saved.', on:!!f.paused, flag:'paused'},
+  {t:T('Как Kleal действует за тебя','How Kleal acts for you'), c:T('Главные рычаги: насколько агент самостоятелен и пауза в один тап.','The big levers — your agent’s autonomy and a one-tap pause.'), items:[
+    {k:'choice', label:T('Когда Kleal кого-то находит','When Kleal finds someone'), desc:T('Спрашивать перед тем, как написать, или пусть Kleal знакомит сам.','Ask before reaching out, or let Kleal introduce you automatically.'),
+      options:[T('Сначала спросить','Ask me first'),T('Знакомить сам','Introduce automatically')], sel:(f.autonomy==='auto'?1:0), act:'autonomy'},
+    {k:'tog', label:T('Спрашивать перед тем, как делиться моими данными','Confirm before sharing my details'), desc:T('Спрашивать, прежде чем показать твоё имя, фото или контакты — даже когда Kleal сам договаривается о встрече.','Ask before revealing your name, photo or contact — even when Kleal arranges plans for you.'), on:f.confirmShare!==false, flag:'confirmShare'},
+    {k:'tog', label:T('Поставить Kleal на паузу','Pause Kleal'), desc:T('Остановить новые подборы и знакомства. Профиль и память сохранятся.','Stop all new matching and outreach. Your profile and memory stay saved.'), on:!!f.paused, flag:'paused'},
   ]},
-  {t:'Meeting in person', c:'How Kleal keeps real-world plans safe. Every switch here: on = safer.', items:[
-    {k:'tog', label:'Keep first meetups public', desc:'First meets stay in cafes, parks and other public spots.', on:f.publicFirst!==false, flag:'publicFirst'},
-    {k:'tog', label:'No solo late-night meets', desc:'Kleal avoids one-on-one plans late at night.', on:f.noLateNight!==false, flag:'noLateNight'},
-    {k:'tog', label:'Avoid alcohol-focused venues', desc:'Skip bars and heavy-drinking spots for first meets.', on:!!f.avoidAlcohol, flag:'avoidAlcohol'},
-    {k:'tog', label:'Share my plan with a trusted contact', desc:'Auto-send who, where and when to someone you choose, with a check-in after.', on:!!f.sharePlan, flag:'sharePlan'},
-    {k:'stat', label:'Trusted contact', desc:'Choose who receives your plans. They’ll be told you added them.', val:(f.trustedContact||'Not set'), btn:(f.trustedContact?'Change':'Add'), act:'trusted-contact'},
+  {t:T('Встречи вживую','Meeting in person'), c:T('Как Kleal делает встречи безопаснее. Здесь везде: включено = безопаснее.','How Kleal keeps real-world plans safe. Every switch here: on = safer.'), items:[
+    {k:'tog', label:T('Первые встречи — только в людных местах','Keep first meetups public'), desc:T('Первые встречи проходят в кафе, парках и других общественных местах.','First meets stay in cafes, parks and other public spots.'), on:f.publicFirst!==false, flag:'publicFirst'},
+    {k:'tog', label:T('Никаких встреч один на один поздно вечером','No solo late-night meets'), desc:T('Kleal не будет предлагать встречи наедине поздним вечером.','Kleal avoids one-on-one plans late at night.'), on:f.noLateNight!==false, flag:'noLateNight'},
+    {k:'tog', label:T('Избегать мест, где всё вокруг алкоголя','Avoid alcohol-focused venues'), desc:T('Пропускать бары и подобные места для первых встреч.','Skip bars and heavy-drinking spots for first meets.'), on:!!f.avoidAlcohol, flag:'avoidAlcohol'},
+    {k:'tog', label:T('Делиться планом с доверенным контактом','Share my plan with a trusted contact'), desc:T('Автоматически отправлять близкому человеку, с кем, где и когда ты встречаешься, и проверять потом, как всё прошло.','Auto-send who, where and when to someone you choose, with a check-in after.'), on:!!f.sharePlan, flag:'sharePlan'},
+    {k:'stat', label:T('Доверенный контакт','Trusted contact'), desc:T('Выбери, кому уходят твои планы. Мы сообщим человеку, что ты его добавил.','Choose who receives your plans. They’ll be told you added them.'), val:(f.trustedContact||T('Не выбран','Not set')), btn:(f.trustedContact?T('Изменить','Change'):T('Добавить','Add')), act:'trusted-contact'},
   ]},
-  {t:'What Kleal may use & remember', c:'Your consent for what Kleal reads and learns. On = Kleal may use it.', items:[
-    {k:'tog', label:'Match on my interests & area', desc:'Use what you like and your city area — never your exact location.', on:f.useInterestsArea!==false, flag:'useInterestsArea'},
-    {k:'tog', label:'Learn from my feedback & activity', desc:'Use your ratings and which plans you accept or decline.', on:f.useFeedback!==false, flag:'useFeedback'},
-    {k:'tog', label:'Let Kleal infer new things about me', desc:'Allow guesses beyond what you stated, like preferred venues.', on:f.inferNew!==false, flag:'inferNew'},
-    {k:'sub', label:'Guardrails'},
-    {k:'tog', label:'Never infer sensitive traits', desc:'Keep health, religion, politics and orientation out of memory.', on:f.noSensitive!==false, flag:'noSensitive'},
-    {k:'act', label:'Review what Kleal remembers', desc:'See, correct or forget individual signals.', act:'review-memory'},
+  {t:T('Что Kleal может использовать и запоминать','What Kleal may use & remember'), c:T('Твоё согласие на то, что Kleal читает и узнаёт. Включено = Kleal может это использовать.','Your consent for what Kleal reads and learns. On = Kleal may use it.'), items:[
+    {k:'tog', label:T('Подбирать по моим интересам и району','Match on my interests & area'), desc:T('Использовать твои увлечения и район города — но никогда точное местоположение.','Use what you like and your city area — never your exact location.'), on:f.useInterestsArea!==false, flag:'useInterestsArea'},
+    {k:'tog', label:T('Учиться на моих оценках и действиях','Learn from my feedback & activity'), desc:T('Использовать твои оценки и то, какие планы ты принимаешь или отклоняешь.','Use your ratings and which plans you accept or decline.'), on:f.useFeedback!==false, flag:'useFeedback'},
+    {k:'tog', label:T('Разрешить Kleal делать выводы обо мне','Let Kleal infer new things about me'), desc:T('Разрешить догадки сверх того, что ты сказал напрямую — например, о любимых местах.','Allow guesses beyond what you stated, like preferred venues.'), on:f.inferNew!==false, flag:'inferNew'},
+    {k:'sub', label:T('Ограничения','Guardrails')},
+    {k:'tog', label:T('Никогда не делать выводов о чувствительном','Never infer sensitive traits'), desc:T('Не хранить в памяти здоровье, религию, политику и ориентацию.','Keep health, religion, politics and orientation out of memory.'), on:f.noSensitive!==false, flag:'noSensitive'},
+    {k:'act', label:T('Посмотреть, что Kleal помнит','Review what Kleal remembers'), desc:T('Посмотреть, исправить или удалить отдельные сигналы.','See, correct or forget individual signals.'), act:'review-memory'},
   ]},
-  {t:'How people find you', c:'Your reach and visibility. On = more reach, off = more private.', items:[
-    {k:'tog', label:'Suggest people beyond my usual circles', desc:'Occasionally propose friends-of-interests and plans outside your usuals.', on:f.suggestBeyond!==false, flag:'suggestBeyond'},
-    {k:'tog', label:'Show me on the discovery map', desc:'Let others come across you on the public map.', on:!!f.publicMap, flag:'publicMap'},
-    {k:'tog', label:'Dating mode', desc:'Off by default. Turn on to let Kleal suggest dating intros too.', on:!!f.datingMode, flag:'datingMode'},
+  {t:T('Как тебя находят люди','How people find you'), c:T('Твой охват и видимость. Включено = больше охват, выключено = больше приватности.','Your reach and visibility. On = more reach, off = more private.'), items:[
+    {k:'tog', label:T('Предлагать людей за пределами привычного круга','Suggest people beyond my usual circles'), desc:T('Иногда предлагать людей со смежными интересами и планы вне привычного.','Occasionally propose friends-of-interests and plans outside your usuals.'), on:f.suggestBeyond!==false, flag:'suggestBeyond'},
+    {k:'tog', label:T('Показывать меня на карте','Show me on the discovery map'), desc:T('Другие смогут наткнуться на тебя на общей карте.','Let others come across you on the public map.'), on:!!f.publicMap, flag:'publicMap'},
+    {k:'tog', label:T('Режим знакомств','Dating mode'), desc:T('По умолчанию выключен. Включи, чтобы Kleal предлагал и романтические знакомства.','Off by default. Turn on to let Kleal suggest dating intros too.'), on:!!f.datingMode, flag:'datingMode'},
   ]},
-  {t:'Verification & people', c:'Who Kleal will introduce you to. On = more protective.', items:[
-    {k:'stat', label:'My verification', desc:'Verify your photo and ID so others know you’re real.',
-      val:(f.verified?'Verified':'Not verified'), btn:(f.verified?null:'Verify'), act:'verify-me', icon:(f.verified?IC.verify:'')},
-    {k:'tog', label:'Prefer verified people', desc:'Kleal favours verified profiles when it matches you.', on:f.preferVerified!==false, flag:'preferVerified'},
-    {k:'act', label:'Blocked people', desc:'People Kleal will never match or introduce you to.', val:((f.blockedCount||0)+' blocked'), act:'blocked'},
-    {k:'tog', label:'Don’t match me with people I may know', desc:'Exclude coworkers, exes and phone contacts from suggestions.', on:f.excludeKnown!==false, flag:'excludeKnown'},
-    {k:'act', label:'Report a problem or get help', desc:'Report someone or reach the safety centre.', act:'report'},
+  {t:T('Верификация и люди','Verification & people'), c:T('С кем Kleal будет тебя знакомить. Включено = осторожнее.','Who Kleal will introduce you to. On = more protective.'), items:[
+    {k:'stat', label:T('Моя верификация','My verification'), desc:T('Подтверди фото и документ, чтобы другие знали, что ты настоящий.','Verify your photo and ID so others know you’re real.'),
+      val:(f.verified?T('Подтверждён','Verified'):T('Не подтверждён','Not verified')), btn:(f.verified?null:T('Подтвердить','Verify')), act:'verify-me', icon:(f.verified?IC.verify:'')},
+    {k:'tog', label:T('Предпочитать подтверждённых людей','Prefer verified people'), desc:T('Kleal будет отдавать предпочтение подтверждённым профилям.','Kleal favours verified profiles when it matches you.'), on:f.preferVerified!==false, flag:'preferVerified'},
+    {k:'act', label:T('Чёрный список','Blocked people'), desc:T('Люди, с которыми Kleal никогда тебя не сведёт.','People Kleal will never match or introduce you to.'), val:((f.blockedCount||0)+T(' заблокировано',' blocked')), act:'blocked'},
+    {k:'tog', label:T('Не сводить меня с теми, кого я могу знать','Don’t match me with people I may know'), desc:T('Исключить коллег, бывших и контакты из телефона.','Exclude coworkers, exes and phone contacts from suggestions.'), on:f.excludeKnown!==false, flag:'excludeKnown'},
+    {k:'act', label:T('Пожаловаться или получить помощь','Report a problem or get help'), desc:T('Пожаловаться на человека или связаться с центром безопасности.','Report someone or reach the safety centre.'), act:'report'},
   ]},
-  {t:'Your data', c:'Your data rights. Take a copy or erase everything, anytime.', items:[
-    {k:'act', label:'Download my data', desc:'Export everything Kleal holds about you.', act:'export-data'},
-    {k:'act', label:'Delete my account & memory', desc:'Permanently erase your profile and everything Kleal learned. Any in-flight introductions are cancelled.', act:'delete-account', danger:true},
+  {t:T('Твои данные','Your data'), c:T('Твои права на данные. В любой момент забери копию или удали всё.','Your data rights. Take a copy or erase everything, anytime.'), items:[
+    {k:'act', label:T('Скачать мои данные','Download my data'), desc:T('Выгрузить всё, что Kleal о тебе хранит.','Export everything Kleal holds about you.'), act:'export-data'},
+    {k:'act', label:T('Удалить аккаунт и память','Delete my account & memory'), desc:T('Навсегда стереть профиль и всё, что Kleal узнал. Все текущие знакомства будут отменены.','Permanently erase your profile and everything Kleal learned. Any in-flight introductions are cancelled.'), act:'delete-account', danger:true},
   ]},
 ]; }
 function safetyRow(it){
@@ -1308,12 +1362,12 @@ function scr_snapshot(){ if(!DATA.snapshot.length) return emptyState(T("Пока
 function interestSummary(it){
   const kv=(it.kv||[]).map(k=>k[1]).filter(Boolean);
   const base = (it.what&&it.what.length) ? it.what.join(', ') : kv.join(', ');
-  return base || ("Kleal is still learning about your "+it.name+".");
+  return base || (T("Kleal ещё разбирается, что для тебя значит ","Kleal is still learning about your ")+it.name+".");
 }
 let expInt=null;  // which interest is expanded (V3 inline)
 function scr_interests(){
   const d=DATA;
-  if(!(d.interests||[]).length) return `<div class="fade">${emptyState(T("Пока нет интересов","No interests yet"),T("Расскажи Kleal, чем увлекаешься — и они появятся здесь.","Tell Kleal what you're into and they'll show up here."))}<button class="bigbtn primary" style="margin-top:8px" data-act="add-interests">Add interests</button></div>`;
+  if(!(d.interests||[]).length) return `<div class="fade">${emptyState(T("Пока нет интересов","No interests yet"),T("Расскажи Kleal, чем увлекаешься — и они появятся здесь.","Tell Kleal what you're into and they'll show up here."))}<button class="bigbtn primary" style="margin-top:8px" data-act="add-interests">${T('Добавить интересы','Add interests')}</button></div>`;
   const exp = expInt!==null ? expInt : ((d.interests[0]||{}).name);
   let rows='';
   for(const it of d.interests){
@@ -1322,67 +1376,67 @@ function scr_interests(){
       <div class="sw ${on?'on':''}" data-imatch="${esc(it.name)}"><i></i></div></div>`;
     if(it.name===exp){
       rows+=`<div class="card intexp"><div class="intimg"></div><div class="pad">
-        <div class="sumhead"><div class="sumlbl">Kleal's summary</div><span class="updated">Updated today</span></div>
+        <div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>
         <div class="sumtxt">${esc(interestSummary(it))}</div>
         <div class="intedit"><div class="intav"></div>
           <button class="editbtn" data-act="edit-int" data-int="${esc(it.name)}">${IC.wand}<span>${T('Изменить','Edit')}</span></button></div></div></div>`;
     }
   }
-  return `<div class="fade"><div class="intsub">When a toggle is on, Kleal uses that interest for matching.</div>
+  return `<div class="fade"><div class="intsub">${T('Если переключатель включён, Kleal учитывает этот интерес при подборе.','When a toggle is on, Kleal uses that interest for matching.')}</div>
     <div class="stack">${rows}</div>
-    <button class="bigbtn primary" style="margin-top:14px" data-act="add-interests">Add interests</button></div>`;
+    <button class="bigbtn primary" style="margin-top:14px" data-act="add-interests">${T('Добавить интересы','Add interests')}</button></div>`;
 }
 function scr_domain(it){  // expanded detail (Dota 2 / Spanish style key-value)
   return `<div class="fade"><div class="card dcard">
-    <div class="dtop"><span class="pill-on">Used for matching · ON</span>${cbadge(it.conf)}</div>
-    ${it.source?`<div class="dsrc">Source: ${esc(it.source)}</div>`:'<div style="height:6px"></div>'}
-    ${(it.what||[]).length?`<div class="seclbl">What exactly</div><div class="bullets" style="margin-bottom:6px">${it.what.map(w=>`<div class="bullet"><span class="dot"></span>${esc(w)}</div>`).join('')}</div>`:''}
+    <div class="dtop"><span class="pill-on">${T('Учитывается при подборе · ВКЛ','Used for matching · ON')}</span>${cbadge(it.conf)}</div>
+    ${it.source?`<div class="dsrc">${T('Источник:','Source:')} ${esc(it.source)}</div>`:'<div style="height:6px"></div>'}
+    ${(it.what||[]).length?`<div class="seclbl">${T('Что именно','What exactly')}</div><div class="bullets" style="margin-bottom:6px">${it.what.map(w=>`<div class="bullet"><span class="dot"></span>${esc(w)}</div>`).join('')}</div>`:''}
     ${(it.kv||[]).map(k=>`<div class="kv"><span class="k">${esc(k[0])}</span><span class="v">${esc(k[1])}</span></div>`).join('')}
     ${it.expansion?`<div class="expansion">${esc(it.expansion)}</div>`:''}
-    <div class="dactions"><button class="txtbtn" data-act="edit-int" data-int="${esc(it.name)}">Edit</button>
-      <button class="txtbtn" data-act="dontuse-int" data-int="${esc(it.name)}">Don’t use</button>
-      <button class="btn-remove" data-act="remove-int" data-int="${esc(it.name)}">Remove</button></div></div></div>`;
+    <div class="dactions"><button class="txtbtn" data-act="edit-int" data-int="${esc(it.name)}">${T('Изменить','Edit')}</button>
+      <button class="txtbtn" data-act="dontuse-int" data-int="${esc(it.name)}">${T('Не использовать','Don’t use')}</button>
+      <button class="btn-remove" data-act="remove-int" data-int="${esc(it.name)}">${T('Удалить','Remove')}</button></div></div></div>`;
 }
 function personalitySummary(s){
   const vibe=(s.vibe||[]).filter(v=>v[1]).map(v=>v[0]);
   const rm={}; (s.rows||[]).forEach(r=>rm[r.title]=r.value);
   const out=[];
-  if(vibe.length) out.push("You come across as "+vibe.slice(0,3).join(', ')+".");
-  if(rm['Conversation depth']) out.push("You like "+rm['Conversation depth'].toLowerCase()+".");
-  if(rm['Best first format']) out.push("Best first meet: "+rm['Best first format'].toLowerCase()+".");
-  if(rm['Group comfort']) out.push("Most comfortable "+rm['Group comfort'].toLowerCase()+".");
+  if(vibe.length) out.push(T('Тебя воспринимают как: ','You come across as ')+vibe.slice(0,3).join(', ')+".");
+  if(rm['Conversation depth']) out.push(T('Тебе нравится: ','You like ')+rm['Conversation depth'].toLowerCase()+".");
+  if(rm['Best first format']) out.push(T('Лучше всего для первой встречи: ','Best first meet: ')+rm['Best first format'].toLowerCase()+".");
+  if(rm['Group comfort']) out.push(T('Комфортнее всего: ','Most comfortable ')+rm['Group comfort'].toLowerCase()+".");
   return out.join(' ');
 }
 function scr_social(){  // "Your personality"
   const s=DATA.social;
   const has = s.rows.length || s.vibe.length || s.depth.length;
-  const txt = has ? personalitySummary(s) : "Take the test and Kleal will describe how you come across and who you click with.";
+  const txt = has ? personalitySummary(s) : T('Пройди тест — и Kleal расскажет, как ты воспринимаешься со стороны и с кем тебе легко.','Take the test and Kleal will describe how you come across and who you click with.');
   return `<div class="fade" style="text-align:center">
     <div class="persimg">${IC.faceScan}</div>
-    <button class="bigbtn primary" data-act="personality-test">Take your personality test</button>
+    <button class="bigbtn primary" data-act="personality-test">${T('Пройти тест на личность','Take your personality test')}</button>
     <div class="card pad" style="text-align:left;margin-top:16px">
-      <div class="sumhead"><div class="sumlbl">Kleal's summary</div><span class="updated">Updated today</span></div>
+      <div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>
       <div class="sumtxt">${esc(txt)}</div>
       <div class="intedit"><div class="intav"></div>
         <button class="editbtn" data-act="edit-personality">${IC.wand}<span>${T('Изменить','Edit')}</span></button></div></div></div>`;
 }
 function scr_places(){
   if(!DATA.availability.length && !DATA.places.length) return emptyState(T("Пока нет мест и времени","No places or times yet"),T("Kleal запомнит, где и когда тебе удобно встречаться.","Kleal will note where and when you like to meet."));
-  return `<div class="fade"><div class="rowhead"><div class="seclbl">Usual availability</div></div>
-    <div class="stack">${DATA.availability.length?DATA.availability.map(r=>summaryRow(r,false)).join(''):`<div class="seccap">Not set yet — Kleal will learn your usual times.</div>`}</div>
-    <div class="rowhead"><div class="seclbl">Places</div></div>
-    <div class="stack">${DATA.places.length?DATA.places.map(r=>summaryRow(r,false)).join(''):`<div class="seccap">Not set yet.</div>`}</div></div>`;
+  return `<div class="fade"><div class="rowhead"><div class="seclbl">${T('Когда обычно свободен','Usual availability')}</div></div>
+    <div class="stack">${DATA.availability.length?DATA.availability.map(r=>summaryRow(r,false)).join(''):`<div class="seccap">${T('Пока не задано — Kleal сам поймёт, когда тебе удобно.','Not set yet — Kleal will learn your usual times.')}</div>`}</div>
+    <div class="rowhead"><div class="seclbl">${T('Места','Places')}</div></div>
+    <div class="stack">${DATA.places.length?DATA.places.map(r=>summaryRow(r,false)).join(''):`<div class="seccap">${T('Пока не задано.','Not set yet.')}</div>`}</div></div>`;
 }
 function scr_goals(){
   const g=DATA.goals;
   const active=(g.active||[]);
-  const sub=`<div class="intsub">Be thoughtful with your goals. Others can see them when they invite you to a plan, and Kleal uses them to find the best matches.</div>`;
-  if(!active.length) return `<div class="fade">${sub}${emptyState(T("Пока нет целей","No goals yet"),T("Добавь цель — и Kleal начнёт искать нужных людей и планы.","Add a goal and Kleal will start finding the right people and plans."))}<button class="bigbtn primary" style="margin-top:8px" data-act="add-goal">Add goal</button></div>`;
+  const sub=`<div class="intsub">${T('Формулируй цели вдумчиво: их видят другие, когда зовут тебя в план, а Kleal по ним подбирает самые подходящие совпадения.','Be thoughtful with your goals. Others can see them when they invite you to a plan, and Kleal uses them to find the best matches.')}</div>`;
+  if(!active.length) return `<div class="fade">${sub}${emptyState(T("Пока нет целей","No goals yet"),T("Добавь цель — и Kleal начнёт искать нужных людей и планы.","Add a goal and Kleal will start finding the right people and plans."))}<button class="bigbtn primary" style="margin-top:8px" data-act="add-goal">${T('Добавить цель','Add goal')}</button></div>`;
   const cards=active.map((x,i)=>`<div class="card goalcard"><div class="gc"><div class="gci">${IC.sun}</div>
-    <div class="gct"><div class="gctn">Goal #${i+1}</div><div class="gcts">${esc(x)}</div></div>
+    <div class="gct"><div class="gctn">${T('Цель','Goal')} #${i+1}</div><div class="gcts">${esc(x)}</div></div>
     <div class="gedit" data-act="edit-goal" data-goal="${i}">${IC.edit}</div></div></div>`).join('');
   return `<div class="fade">${sub}<div class="stack">${cards}</div>
-    <button class="bigbtn primary" style="margin-top:14px" data-act="add-goal">Add goal</button></div>`;
+    <button class="bigbtn primary" style="margin-top:14px" data-act="add-goal">${T('Добавить цель','Add goal')}</button></div>`;
 }
 function scr_safety(){
   const groups=safetyGroups(DATA.safety).map(gr=>{
@@ -1396,32 +1450,38 @@ function scr_safety(){
       <div class="seccap">${esc(gr.c)}</div><div class="card">${inner}</div>`;
   }).join('');
   return `<div class="fade">
-    <div class="card pad" style="margin-bottom:4px"><div class="sumlbl" style="color:var(--coral700)">You’re in control</div>
-      <div class="sumtxt" style="font-size:13.5px;color:var(--muted)">Kleal never acts without your say-so. It shares your city area, never your exact location, learns only what you allow, and everything here is reversible anytime.</div></div>
+    <div class="card pad" style="margin-bottom:4px"><div class="sumlbl" style="color:var(--coral700)">${T('Всё под твоим контролем','You’re in control')}</div>
+      <div class="sumtxt" style="font-size:13.5px;color:var(--muted)">${T('Kleal ничего не делает без твоего согласия. Он показывает район города, а не точное место, узнаёт только то, что ты разрешил, и всё здесь можно откатить в любой момент.','Kleal never acts without your say-so. It shares your city area, never your exact location, learns only what you allow, and everything here is reversible anytime.')}</div></div>
     ${groups}</div>`;
 }
 function scr_memory(){
   if(!DATA.memory.length) return emptyState(T("Пока нет сигналов","No signals yet"),T("По мере использования Kleal всё, что он узнаёт, появится здесь.","As you use Kleal, everything it learns shows up here."));
   return `<div class="stack fade">${DATA.memory.map((m,i)=>`<div class="card sig">
-    <div class="stopline"><div class="ssig">${esc(m.signal)}</div><span class="stbadge st-${m.status}">${m.status}</span></div>
-    <div class="smeta">Source: ${esc(m.source)}<br>Confidence: ${esc(m.confidence)} · Used for matching: ${m.used===false?'No':'Yes'}<br>Last updated: ${esc(m.updated)}</div>
-    <div class="dactions" style="margin-top:12px"><button class="txtbtn" data-act="edit-sig" data-sig="${i}">Edit</button>
-      <button class="txtbtn" data-act="dontuse-sig" data-sig="${i}">${m.used===false?'Use again':'Don’t use'}</button>
-      <button class="txtbtn" style="color:var(--danger)" data-act="remove-sig" data-sig="${i}">Remove</button></div>
+    <div class="stopline"><div class="ssig">${esc(ruTxt(m.signal))}</div><span class="stbadge st-${m.status}">${esc(ruTxt(m.status))}</span></div>
+    <div class="smeta">${T('Источник:','Source:')} ${esc(ruTxt(m.source))}<br>${T('Уверенность:','Confidence:')} ${esc(ruTxt(m.confidence))} · ${T('Используется для подбора:','Used for matching:')} ${m.used===false?T('Нет','No'):T('Да','Yes')}<br>${T('Обновлено:','Last updated:')} ${esc(ruTxt(m.updated))}</div>
+    <div class="dactions" style="margin-top:12px"><button class="txtbtn" data-act="edit-sig" data-sig="${i}">${T('Изменить','Edit')}</button>
+      <button class="txtbtn" data-act="dontuse-sig" data-sig="${i}">${m.used===false?T('Использовать снова','Use again'):T('Не использовать','Don’t use')}</button>
+      <button class="txtbtn" style="color:var(--danger)" data-act="remove-sig" data-sig="${i}">${T('Удалить','Remove')}</button></div>
     </div>`).join('')}</div>`;
 }
 function scr_knows(){
-  const k=DATA.knows;
+  const k=DATA.knows||{};
+  // Counters are DERIVED from the lists rendered right below, never stored, so the headline
+  // number is always exactly what the user can scroll through and count.
+  const cList=k.confirmedList||[], iList=k.inferredList||[], tList=k.temporaryList||[];
+  const nConf=cList.length, nInf=iList.length, nTmp=tList.length, nTotal=nConf+nInf+nTmp;
   if(!(k.confirmedList||[]).length && !(k.inferredList||[]).length) return emptyState(T("Пока ничего не отслеживается","Nothing tracked yet"),T("Kleal собирает эту сводку по мере знакомства.","Kleal builds this summary as it gets to know you."));
+  // An empty section header over an empty card reads as "we have nothing on you here" noise —
+  // render a section only when it actually has rows.
+  const sect=(title,list,on,pfx)=>!list.length?'':`<div class="rowhead"><div class="h2">${title}</div></div>
+    <div class="card">${list.map((x,i)=>checkRow(ruTxt(x),on,pfx+i)+(i<list.length-1?'<div class="divider"></div>':'')).join('')}</div>`;
   return `<div class="fade"><div class="card">
-      <div class="statbig"><span class="n">${k.total}</span><span class="l">signals tracked</span></div>
-      <div style="display:flex">${[[k.confirmed,'confirmed'],[k.inferred,'inferred'],[k.temporary,'temporary']]
+      <div class="statbig"><span class="n">${nTotal}</span><span class="l">${T('сигналов отслеживается','signals tracked')}</span></div>
+      <div style="display:flex">${[[nConf,T('подтверждённые','confirmed')],[nInf,T('предполагаемые','inferred')],[nTmp,T('временные','temporary')]]
         .map(t=>`<div class="stat" style="flex:1"><div class="n">${t[0]}</div><div class="l">${t[1]}</div></div>`).join('')}</div>
     </div>
-    <div class="rowhead"><div class="h2">Confirmed</div><div class="seeall">See All</div></div>
-    <div class="card">${k.confirmedList.map((x,i)=>checkRow(x,true,'k-c-'+i)+(i<k.confirmedList.length-1?'<div class="divider"></div>':'')).join('')}</div>
-    <div class="rowhead"><div class="h2">Inferred</div><div class="seeall">See All</div></div>
-    <div class="card">${k.inferredList.map((x,i)=>checkRow(x,false,'k-i-'+i)+(i<k.inferredList.length-1?'<div class="divider"></div>':'')).join('')}</div></div>`;
+    ${sect(T('Подтверждённые','Confirmed'), cList, true, 'k-c-')}
+    ${sect(T('Предполагаемые','Inferred'), iList, false, 'k-i-')}</div>`;
 }
 // ================= V4: intents · intent chat · discovery · messages =================
 let curIntent=null, intentLaunched=false, agentBusy=false;
@@ -1518,12 +1578,19 @@ async function negotiateIntent(){
   curIntent.negotiating=true; render();
   let r; try{ r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({intent:(curIntent.intent||{topics:curIntent.tags||[],type:curIntent.type,role:curIntent.role,time:curIntent.time,mode:curIntent.mode}), profile:matchProfile(), ctx:{self:DATA.name||''}, candidates:curIntent.candidates||[]})}).then(x=>x.json()); }catch(e){ r=null; }
-  if(r&&r.candidates&&r.candidates.length){ curIntent.candidates=r.candidates;
+  const got=!!(r&&r.candidates&&r.candidates.length);
+  if(got){ curIntent.candidates=r.candidates;
     curIntent.confidence=(r.candidates[0]&&r.candidates[0].score)||curIntent.confidence; }
-  curIntent.negotiating=false; curIntent.negotiated=true; curIntent.status='matched';
+  curIntent.negotiating=false;
+  // Only claim the round happened if it actually did. On a failed request the candidates keep their
+  // pre-negotiation shape (no `agree`, no `decided`), and marking negotiated=true made every real
+  // person render as "отказ" — the app telling the user they were turned down by someone nobody asked.
+  curIntent.negotiated=got; if(got) curIntent.status='matched';
   saveCurIntent(); render();
-  const ag=(curIntent.candidates||[]).filter(c=>c.agree).length;
-  toast(ag+' agent'+(ag===1?'':'s')+' agreed — approve an intro to connect');
+  if(!got){ toast(T('Не удалось связаться с агентами — попробуй ещё раз','Could not reach their agents — try again')); return; }
+  const ag=(curIntent.candidates||[]).filter(c=>c.agree&&c.decided).length;
+  toast(ag?T('Согласились: '+ag+' — одобри интро, чтобы связаться','Agreed: '+ag+' — approve an intro to connect')
+          :T('Пока никто не подтвердил','Nobody has confirmed yet'));
 }
 // ---------- Phase 1: saved intents ----------
 function openSavedIntent(id){ const it=(DATA.intents||[]).find(x=>x.id===id); if(!it)return; curIntent=it; intentLaunched=true; cur='intentchat'; render(); }
@@ -1654,7 +1721,10 @@ function bandLabel(c,full){ if(!c) return '';
            broader_option:[T('Шире запроса','Broader'),T('Более широкий вариант','A broader option')],
            needs_clarification:[T('Уточнить','Clarify'),T('Нужно уточнение','Needs clarification')]};
   if(c.band&&M[c.band]) return M[c.band][full?1:0];
-  return (c.score!=null&&c.score!=='')?Math.round(c.score)+'%':''; }
+  // No band means the legacy v1 scorer answered (KLEAL_CORE_V2=0 rollback). Show nothing rather than a
+  // percentage: spec §9.7 bans user-facing percentages outright, and the v1 score is a different scale
+  // that cannot be honestly relabelled as a band.
+  return ''; }
 function candReasons(c){ return ((UILANG==='ru'?c.reasons_ru:c.reasons_en)||c.reasons||[]); }
 // Unified chat header so you always know WHERE you are: Back (left) · centered title (+ optional subtitle) ·
 // optional action pills (right). Every chat screen uses this — consistent look, consistent back button.
@@ -1991,15 +2061,20 @@ function scr_intentchat(){
       <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub"><span class="typing3"><i></i><i></i><i></i></span> собираю интент…</div></div></div>`);
   }
   const cands=it.candidates||[]; const negotiating=!!it.negotiating;
-  const agreed=cands.filter(c=>c.agree).length;
-  const candCard=`<div class="card"><div class="sumhead" style="padding:14px 16px 6px"><div class="sumlbl">Kleal ищет</div>
-      <span class="confpct">${negotiating?'договариваюсь…':'согласны: '+agreed}</span></div>
+  const agreed=cands.filter(c=>c.agree&&c.decided).length;
+  const anyDecided=cands.some(c=>c.decided);
+  const candCard=`<div class="card"><div class="sumhead" style="padding:14px 16px 6px"><div class="sumlbl">${T('Kleal ищет','Kleal is searching')}</div>
+      <span class="confpct">${negotiating?T('договариваюсь…','negotiating…'):(anyDecided?T('согласны: '+agreed,'agreed: '+agreed):T('жду ответов','waiting for replies'))}</span></div>
     ${cands.length ? cands.map((c,i)=>{
       const negot=negotiating && !c.decided;
       const rdy=readinessChip(c);
       const sub=(c.decided&&c.reason)?c.reason:candReasons(c).slice(0,2).concat(rdy?[rdy]:[]).join(' · ');
+      // Three distinct states, not two. c.decided is set by the matching service only when a real
+      // answer came back; without it the row is "not asked yet", NOT a refusal from a real person.
       const status=negot?'<div class="candbusy"><span class="typing3"><i></i><i></i><i></i></span></div>'
-        :(c.passed?'<div class="candno">пропущен</div>':(c.agree?'<div class="candok">✓ согласен</div>':'<div class="candno">отказ</div>'));
+        :(c.passed?`<div class="candno">${T('пропущен','skipped')}</div>`
+        :(!c.decided?`<div class="candwait">${T('ещё не спрашивал','not asked yet')}</div>`
+        :(c.agree?`<div class="candok">✓ ${T('согласен','agreed')}</div>`:`<div class="candno">${T('отказ','declined')}</div>`)));
       const tier=c.kind==='reciprocal'?'<span style="font-size:10px;font-weight:700;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:1px 5px;margin-left:5px">↔ mutual</span>'
         :(c.tier?`<span style="font-size:10px;font-weight:700;color:var(--muted);background:var(--field);border-radius:6px;padding:1px 5px;margin-left:5px">${esc(c.tier)}</span>`:'');
       const vtick=c.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':'';
@@ -2015,12 +2090,14 @@ function scr_intentchat(){
     </div>`;
   return wrap(`
     <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">Вот интент, который я собрал${it.error?' (офлайн — грубый разбор)':''}. Запусти поиск, когда всё верно.</div></div></div>
-    <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${esc((it.candidates&&it.candidates[0]&&it.candidates[0].band)?bandLabel(it.candidates[0]):((it.confidence||0)+'%'))}</span></div>
+    <div class="card pad"><div class="sumhead"><div class="sumlbl">${esc(it.title)}</div><span class="confpct">${esc((it.candidates&&it.candidates[0]&&it.candidates[0].band)?bandLabel(it.candidates[0]):'')}</span></div>
       <div style="margin:10px 0 2px">${(it.tags||[]).map(t=>`<span class="itag">${esc(t)}</span>`).join('')}</div></div>
     <div class="card">${intentSpec(it)}</div>
     ${intentLaunched ? '' : `<button class="bigbtn primary" data-act="launch-intent">Запустить поиск</button>`}
     ${intentLaunched ? `<div class="mrow"><div class="mbub">Запускаю</div></div>
-      <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">${negotiating?'Связываюсь с агентами кандидатов — договариваюсь за тебя…':('Их агенты ответили — согласны: '+agreed)}</div></div></div>
+      <div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">${negotiating?T('Связываюсь с агентами кандидатов — договариваюсь за тебя…','Contacting their agents — negotiating for you…')
+        :(anyDecided?T('Их агенты ответили — согласны: '+agreed,'Their agents replied — agreed: '+agreed)
+                    :T('Ещё жду ответов от их агентов.','Still waiting for their agents to reply.'))}</div></div></div>
       ${candCard}
       ${negotiating?'':'<div class="krow"><div class="kav sp"></div><div class="kcol"><div class="kbub">Сделать интро? Я пишу только после твоего одобрения.</div></div></div>'}` : ''}`);
 }
