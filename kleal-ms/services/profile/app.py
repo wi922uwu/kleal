@@ -679,7 +679,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* ---- brand deck: editorial display type, the coral thread, B&W photography ---- */
 .ahd .nm,.kprompt .k-h3,.idcard .nm{font-family:"Literata",Georgia,serif;letter-spacing:-.015em}
 .k-title{text-transform:uppercase;font-size:11.5px;letter-spacing:.09em;color:var(--muted);font-weight:600}
-.kthread{display:block;width:100%;height:72px;margin:-10px 0 -14px;pointer-events:none;flex:none}
+.kthread{display:block;width:100%;height:64px;margin:-4px 0 -10px;pointer-events:none;flex:none;overflow:visible}
 /* ---- motion: alive, but only where it means something ---- */
 @media (prefers-reduced-motion: no-preference){
   .enter .kthread path{stroke-dasharray:1;stroke-dashoffset:1;animation:kdraw .8s .3s cubic-bezier(.6,0,.3,1) forwards}
@@ -2530,12 +2530,16 @@ function inboxCards(){
 // as a failed divider, while the deck's line DIVES — real vertical travel from one block down into
 // the next. So: taller canvas, a descending S from under the send button to the next eyebrow, and
 // exactly ONE thread on the screen — repeated, it became wallpaper.
+// The deck's thread, final placement: at the TAIL of the page. Between blocks it kept reading as a
+// divider no matter the curve. Here it leaves the last card and runs off the right edge of the
+// screen — the deck's own gesture (its lines exit the slide) — and it means something: the thread
+// continues, Kleal keeps searching. No landing dot: a line that lands is a connection, a line that
+// exits is a continuation.
 function kthread(){
-  return `<svg class="kthread" viewBox="0 0 358 72" fill="none" preserveAspectRatio="xMidYMid meet">
-    <path d="M338 10 C 320 44, 250 52, 196 40 C 142 28, 74 34, 20 62" pathLength="1"
+  return `<svg class="kthread" viewBox="0 0 358 64" fill="none" preserveAspectRatio="xMidYMid meet">
+    <path d="M20 12 C 110 46, 236 6, 362 40" pathLength="1"
       stroke="var(--primary)" stroke-width="2.25" stroke-linecap="round"/>
-    <circle class="kd1" cx="338" cy="8" r="5.5" fill="var(--primary)"/>
-    <circle class="kd2" cx="20" cy="62" r="4" fill="var(--primary)"/></svg>`;
+    <circle class="kd1" cx="20" cy="12" r="5.5" fill="var(--primary)"/></svg>`;
 }
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans for "For you today"
@@ -2581,7 +2585,6 @@ function scr_agenthome(){
             <input id="ainput" placeholder="${T('Опиши, кого или что ищешь…',"Describe who or what you're look…")}" autocomplete="off">${IC.mic}</div>
           <button class="snd" data-act="agent-go">${IC.send}</button></div>
       </div>
-      ${kthread()}
       ${inboxCards()}
       <div style="display:flex;flex-direction:column;gap:32px">
         <div style="display:flex;flex-direction:column;gap:16px">
@@ -2591,6 +2594,7 @@ function scr_agenthome(){
           ${card}
         </div>
       </div>
+      ${kthread()}
     </div>
   </div>`;
 }
