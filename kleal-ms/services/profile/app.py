@@ -1601,11 +1601,16 @@ function openCreateIntent(){ curIntent=null; intentLaunched=false;
   cur='intentchat'; render(); }
 async function intentTurn(text){ text=(text||'').trim(); if(!text||intentBusy) return;
   intentBusy=true; intentMsgs.push({who:'me',text}); intentMsgs.push({who:'them',text:'…',loading:true}); render();
+  // same rule as flowSay: turns already answered as small talk are not request context
   let r; try{ r=await fetch('/api/buddy/intent-build',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({messages:intentMsgs.filter(m=>!m.loading).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text})),
+    body:JSON.stringify({messages:intentMsgs.filter(m=>!m.loading&&!m.chat).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text})),
       profile:buddyProfile()})}).then(x=>x.json()); }catch(e){ r=null; }
   intentMsgs=intentMsgs.filter(m=>!m.loading); intentBusy=false;
   if(!r){ intentMsgs.push({who:'them',text:'Связь пропала — повтори, пожалуйста.'}); render(); return; }
+  if(r.conversational){
+    const mine=[...intentMsgs].reverse().find(m=>m.who==='me'); if(mine) mine.chat=true;
+    intentMsgs.push({who:'them',text:r.reply||'…',chat:true}); render(); saveState(); return;
+  }
   intentMsgs.push({who:'them',text:r.reply||'…'}); render(); saveState();
   if(r.ready && r.intent) buildIntentCard(r.intent);      // enough detail -> structure the card
 }
@@ -2352,18 +2357,30 @@ function flowBack(){
 async function flowSay(text, fromSeed){
   text=String(text||'').trim(); if(!text||FLOW.busy) return;
   if(!fromSeed){ const el=document.getElementById('flowinp')||document.getElementById('flowinp2'); if(el)el.value=''; }
-  if(!FLOW.request) FLOW.request=text;      // the summary must quote what was ASKED, not the last reply
   FLOW.text=text;
-  FLOW.msgs.push({who:'me',text:text,t:Date.now()});
+  const meIdx=FLOW.msgs.push({who:'me',text:text,t:Date.now()})-1;
   FLOW.busy=true; render();
   let r=null;
   try{
+    // Small talk must not reach the intent builder. Greeting Kleal and then asking it what dividends
+    // are used to leave both turns in the history, so the builder read them as context and produced an
+    // intent whose vibe was "bonds, finance, investing, economy". Turns already answered
+    // conversationally are marked and excluded — a real multi-turn build is unmarked and still sent.
+    const forBuilder=FLOW.msgs.filter(m=>!m.chat).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text}));
     r=await fetch('/api/buddy/intent-build',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:FLOW.msgs.map(m=>({role:m.who==='me'?'user':'assistant',content:m.text})),
-                           profile:matchProfile()})}).then(x=>x.json());
+      body:JSON.stringify({messages:forBuilder, profile:matchProfile()})}).then(x=>x.json());
   }catch(e){ r=null; }
   FLOW.busy=false;
   if(!r||!r.reply){ FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
+  if(r.conversational){
+    // chit-chat: keep it visible in the thread, but it is not part of the request
+    FLOW.msgs[meIdx].chat=true;
+    FLOW.msgs.push({who:'ag',text:r.reply,chat:true,t:Date.now()});
+    render(); return;
+  }
+  // the request is the first turn that actually asked for something — never the greeting that opened
+  // the conversation, which is what used to end up quoted as «Запрос: привет»
+  if(!FLOW.request) FLOW.request=text;
   FLOW.msgs.push({who:'ag',text:r.reply,t:Date.now()});
   if(r.ready&&r.intent){                       // enough detail -> one clarification, then the summary
     FLOW.intent=r.intent;
@@ -2490,11 +2507,26 @@ function scr_clarify(){
 }
 
 // ---- 3. Summary before search (479:14661) ----
-function labelOf(opts,v,dash){ const o=opts.find(x=>x[0]===v); return o?o[1]:(dash||T('на твоё усмотрение','flexible')); }
+// `dash||…` could never yield an empty string: the only caller that wants "show nothing" passes '',
+// which is falsy, so it got the placeholder instead — and the summary rendered
+// «Время: на твоё усмотрение — на твоё усмотрение», the same words joined to themselves.
+// Time the user already stated in their own request, e.g. "…завтра". FLOW.when is only set when they
+// tap a chip on the clarify screen, so without this the summary claimed "на твоё усмотрение" for a
+// request that plainly said when.
+const _WHEN_RU={tomorrow:['Завтра','Tomorrow'],today:['Сегодня','Today'],tonight:['Сегодня вечером','Tonight'],
+  weekend:['В выходные','This weekend'],week:['На неделе','This week'],flexible:['на твоё усмотрение','flexible']};
+function intentWhen(){
+  const t=String((FLOW&&FLOW.intent&&FLOW.intent.time)||'').trim().toLowerCase();
+  if(!t) return undefined;                       // undefined -> labelOf falls back to the placeholder
+  const hit=_WHEN_RU[t]; if(hit) return T(hit[0],hit[1]);
+  return (FLOW.intent.time||'').trim() || undefined;
+}
+function labelOf(opts,v,dash){ const o=opts.find(x=>x[0]===v);
+  return o?o[1]:(dash!==undefined?dash:T('на твоё усмотрение','flexible')); }
 function scr_summary(){
   const s=FLOW.summary||{};
   const row=(icon,lb,vl)=>`<div class="krow"><div class="lb">${icon}${esc(lb)}</div><div class="vl">${esc(vl)}</div></div>`;
-  const when=labelOf(WHEN_OPTS(),FLOW.when), tm=labelOf(TIME_OPTS(),FLOW.time,'');
+  const when=labelOf(WHEN_OPTS(),FLOW.when, intentWhen()), tm=labelOf(TIME_OPTS(),FLOW.time,'');
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
       ${kprompt(T('Вот что получилось',"Here's what I got"))}
