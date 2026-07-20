@@ -2032,10 +2032,8 @@ function scr_agenthome(){
         <div><div class="ti">${esc(plan.title)}</div>
           <div class="meta"><span class="mi">${IC.clock}${esc(plan.when||'')}</span>
             <span class="mi">${IC.pin}${esc(plan.dist||'')}</span></div></div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <div class="k-cap" style="color:var(--muted)">${(plan.going||8)} ${T('участников','participants')}</div>
-          <div class="stack5"><span class="av"></span><span class="av"></span><span class="av"></span><span class="more">+2</span></div>
-        </div>
+        ${plan.going?`<div class="k-cap" style="color:var(--muted)">${plan.going} ${T('участников','participants')}</div>`
+          :`<div class="k-cap" style="color:var(--muted)">${esc(plan.who||'')}</div>`}
       </div>
       <div class="bm">${IC.bookmark}</div></div>`
     : `<div class="k-cap" style="color:var(--muted);padding:4px 2px">${T('Пока ничего не запланировано — опиши, чего хочешь, и я поищу.',"Nothing planned yet — tell me what you want and I'll look.")}</div>`;
@@ -2335,22 +2333,28 @@ function planInit(c){
          confirmed:false, gcal:false, acal:false, remind:true, status:null, here:false };
 }
 function planSlots(){
+  // Slots are OUR suggestions built from the intent's time window. They must never be attributed
+  // to the other person — the app has not asked them anything yet.
   const it=(FLOW&&flowIntent())||{};
-  const who=(PLAN&&PLAN.cand&&PLAN.cand.name)||T('он(а)','they');
-  const base=[[T('Сегодня','Today'),'16:00–17:00',who+' '+T('предлагает','picks')],
-              [T('Сегодня','Today'),'19:00–20:00',T('ты предлагаешь','you pick')],
-              [T('Завтра','Tomorrow'),'12:00–13:00',T('подходит тебе','works for you')],
-              [T('Завтра','Tomorrow'),'18:00–19:00',who+' '+T('предлагает','picks')]];
-  if(/morning|утр/i.test(it.time||'')) base.unshift([T('Завтра','Tomorrow'),'09:00–10:00',T('подходит тебе','works for you')]);
+  const sug=T('вариант Kleal','Kleal’s suggestion');
+  const base=[[T('Сегодня','Today'),'16:00–17:00',sug],
+              [T('Сегодня','Today'),'19:00–20:00',sug],
+              [T('Завтра','Tomorrow'),'12:00–13:00',sug],
+              [T('Завтра','Tomorrow'),'18:00–19:00',sug]];
+  if(/morning|утр/i.test(it.time||'')) base.unshift([T('Завтра','Tomorrow'),'09:00–10:00',sug]);
   return base;
 }
 function planPlaces(){
+  // There is no venue service yet: we can name the communities this person belongs to, but we
+  // cannot know a venue's distance or walking time. Inventing them puts false facts on screen.
   const c=PLAN&&PLAN.cand, ents=(c&&c.entities)||[];
-  const tags=[T('тихо','quiet'),T('уютно','cosy'),T('удобно говорить','good for talking')];
-  const named=ents.slice(0,3).map((e,i)=>({name:String(e),m:450+i*150,walk:6+i*2,tags:tags.slice(0,3-i%2)}));
+  const named=ents.slice(0,3).map(e=>{ const n=String(e);
+    // don't repeat a word the name already carries ("Кофейное сообщество сообщество")
+    const dup=/сообществ|community|club|клуб|scene|сцен/i.test(n);
+    return {name:n, note: dup? T('место встреч этого сообщества','where this community meets')
+                            : T('сообщество','community')}; });
   if(named.length) return named;
-  return [{name:T('Кофейня рядом','Coffee nearby'),m:450,walk:6,tags:tags},
-          {name:T('Тихое место в центре','Quiet spot in the centre'),m:750,walk:10,tags:tags.slice(0,2)}];
+  return [{name:T('Выбрать место в чате','Agree on a place in the chat'), note:T('вы решите вместе','you’ll decide together')}];
 }
 function slotText(){ const s=PLAN&&PLAN.slot; return s?(s[0]+', '+s[1]):T('время не выбрано','time not picked'); }
 function placeText(){ const p=PLAN&&PLAN.place; return p?p.name:T('место не выбрано','place not picked'); }
@@ -2428,9 +2432,7 @@ function scr_mutual(){
 // ---- 4. Suggestion from them ----
 function scr_suggestion(){
   const c=PLAN&&PLAN.cand; if(!c) return scr_options();
-  const s=PLAN.suggest||{title:T('Кофе в центре','Coffee in the city centre'),
-    time:T('Суббота 18:00','Saturday 18:00'), place:T('Уютная кофейня, 60–90 мин','Cosy coffee shop, 60–90 min'),
-    quote:T('Люблю неспешные разговоры за кофе. Буду рад(а) встретиться!','I love unhurried coffee conversations. Excited to meet!')};
+  const s=PLAN.suggest||{};        // only rendered when their agent really replied
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
       ${kprompt(T('Предложение от','Suggestion from')+' '+c.name)}
@@ -2438,11 +2440,12 @@ function scr_suggestion(){
       <div class="kplan tight">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <div class="k-h3">${esc(s.title)}</div><div class="ic" style="color:var(--muted)">${IC.calen}</div></div>
-        <div class="kplanrow"><div class="ic">${IC.clock}</div><div class="bd">
-          <div class="su">${T('Время','Time')}</div><div class="ti" style="font-size:13px">${esc(s.time)}</div></div></div>
-        <div class="kplanrow"><div class="ic">${IC.pin}</div><div class="bd">
-          <div class="su">${T('Место','District')}</div><div class="ti" style="font-size:13px">${esc(s.place)}</div></div></div>
-        <div class="kquote">“${esc(s.quote)}” — ${esc(c.name)}</div>
+        ${s.time?`<div class="kplanrow"><div class="ic">${IC.clock}</div><div class="bd">
+          <div class="su">${T('Время','Time')}</div><div class="ti" style="font-size:13px">${esc(s.time)}</div></div></div>`:''}
+        ${s.place?`<div class="kplanrow"><div class="ic">${IC.pin}</div><div class="bd">
+          <div class="su">${T('Место','District')}</div><div class="ti" style="font-size:13px">${esc(s.place)}</div></div></div>`:''}
+        ${s.quote?`<div class="kquote">“${esc(s.quote)}” — ${esc(c.name)}</div>`:
+          `<div class="kwhy">${T('Детали вы согласуете в чате.','You’ll agree on the details in the chat.')}</div>`}
       </div>
       <div class="knote">${IC.shieldSm}${T('Личные контакты не передаём, пока вы оба не будете готовы.','We don’t share personal contacts until you’re both ready.')}</div>
     </div>
@@ -2460,7 +2463,8 @@ function scr_picktime(){
       <div style="display:flex;align-items:center;gap:8px">
         ${kprompt(T('Планируем встречу','Planning the meetup'))}
         <div class="kdraft">${IC.spark}${T('Черновик','Draft plan')}</div></div>
-      <div class="kbub ag">${T('Вы вместе выбираете время','You and')} ${esc((PLAN&&PLAN.cand&&PLAN.cand.name)||'')} ${T('','pick a time together')}</div>
+      <div class="kbub ag">${UILANG==='ru'?('Выбери время — предложим его '+esc((PLAN&&PLAN.cand&&PLAN.cand.name)||''))
+        :('Pick a time — we’ll suggest it to '+esc((PLAN&&PLAN.cand&&PLAN.cand.name)||''))}</div>
       <div class="k-title">${T('Предложенные слоты','Suggested slots')}</div>
       <div style="display:flex;flex-direction:column;gap:8px">
         ${slots.map((s,i)=>`<div class="kslot ${PLAN&&PLAN.slot&&PLAN.slot[1]===s[1]&&PLAN.slot[0]===s[0]?'on':''}" data-act="pick-slot" data-i="${i}">
@@ -2482,7 +2486,8 @@ function scr_pickplace(){
       <div style="display:flex;align-items:center;gap:8px">
         ${kprompt(T('Планируем встречу','Planning the meetup'))}
         <div class="kdraft">${IC.spark}${T('Черновик','Draft plan')}</div></div>
-      <div class="kbub ag">${T('Вы вместе выбираете место','You and')} ${esc((PLAN&&PLAN.cand&&PLAN.cand.name)||'')} ${T('','pick a place together')}</div>
+      <div class="kbub ag">${UILANG==='ru'?('Выбери место — предложим его '+esc((PLAN&&PLAN.cand&&PLAN.cand.name)||''))
+        :('Pick a place — we’ll suggest it to '+esc((PLAN&&PLAN.cand&&PLAN.cand.name)||''))}</div>
       <div class="kmap">${IC.photo}
         <span class="pin" style="left:30%;top:55%">${IC.pinDot}</span>
         <span class="pin" style="left:52%;top:28%">${IC.pinDot}</span>
@@ -2492,9 +2497,7 @@ function scr_pickplace(){
         ${ps.map((p,i)=>`<div class="kplace ${PLAN&&PLAN.place&&PLAN.place.name===p.name?'on':''}" data-act="pick-place" data-i="${i}">
           <div class="ph"></div>
           <div class="bd"><div class="nm">${esc(p.name)}</div>
-            <div class="meta"><span class="mi">${IC.pin}${p.m} ${T('м','m')}</span>
-              <span class="mi">${IC.walk}${p.walk} ${T('мин пешком','min walk')}</span></div>
-            <div class="tags">${(p.tags||[]).map(t=>`<span class="ktag">${esc(t)}</span>`).join('')}</div></div></div>`).join('')}
+            ${p.note?`<div class="meta"><span class="mi">${IC.info}${esc(p.note)}</span></div>`:''}</div></div>`).join('')}
       </div>
       <button class="kbtn sec" data-act="plan-own-place">${IC.plusCircle} ${T('Предложить другое место','Suggest another place')}</button>
     </div>
@@ -2522,7 +2525,7 @@ function planCardBlock(){
       <div class="su">${esc((PLAN&&PLAN.slot&&PLAN.slot[0])||'')}</div></div></div>
     <div class="kplanrow"><div class="ic">${IC.pin}</div><div class="bd">
       <div class="ti">${esc(placeText())}</div>
-      <div class="su">${p?(p.m+' '+T('м','m')+' · '+p.walk+' '+T('мин','min')):''}</div></div></div>
+      <div class="su">${p&&p.note?esc(p.note):''}</div></div></div>
   </div>`;
 }
 function scr_awaiting(){
@@ -2546,15 +2549,16 @@ function scr_planok(){
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
       ${kprompt(T('Детали встречи','Meetup details'))}
-      <div class="kbub ag">${T('Подтверждено обеими сторонами 🎉','Confirmed by both sides 🎉')}</div>
+      <div class="kbub ag">${PLAN.confirmed?T('Подтверждено обеими сторонами 🎉','Confirmed by both sides 🎉')
+        :T('План собран. Ждём подтверждения второй стороны.','The plan is set. Waiting for the other side to confirm.')}</div>
       <div style="display:flex;align-items:flex-end;justify-content:space-between">
         <div class="k-title">${T('Участники','Participants')}</div><div class="k-label" style="color:var(--muted)">[2]</div></div>
       ${participants()}
       ${planCardBlock()}
       <div class="kplan tight">
-        <div class="k-title">${T('Добавить в календарь','Add to calendar')}</div>
-        ${tog(PLAN.gcal,'tog-gcal',IC.calAdd,'Google Calendar')}
-        ${tog(PLAN.acal,'tog-acal',IC.calAdd,'Apple Calendar')}
+        <div class="k-title">${T('Календарь','Calendar')}</div>
+        <button class="kbtn sec" data-act="cal-download">${IC.calAdd} ${T('Скачать .ics','Download .ics')}</button>
+        <div class="k-cap" style="color:var(--muted)">${T('Файл откроется в Google, Apple или другом календаре.','Opens in Google, Apple or any other calendar.')}</div>
       </div>
       <div class="kplan tight">
         <div class="k-title">${T('Напомнить','Remind me')}</div>
@@ -2595,13 +2599,13 @@ function scr_meetstate(){
 // ---- 12. You're here ----
 function scr_mymeetup(){
   const c=PLAN&&PLAN.cand; if(!c) return scr_agenthome();
-  const row=(icon,ti,su)=>`<div class="row"><div class="ic">${icon}</div>
+  const row=(icon,ti,su,act)=>`<div class="row" data-act="${act}"><div class="ic">${icon}</div>
     <div class="bd"><div class="ti">${esc(ti)}</div><div class="su">${esc(su)}</div></div>
     <div class="ch">${IC.chevR}</div></div>`;
   return `<div class="kflow fade">
     <div class="kbar"><div class="kback" data-act="plan-back">${IC.back}</div>
       <div class="k-title" style="flex:1;text-align:center">${T('Моя встреча','My meetup')}</div>
-      <div style="width:44px">${IC.dots}</div></div>
+      <div style="width:44px;cursor:pointer" data-act="security">${IC.dots}</div></div>
     <div class="kcont">
       <div class="ecard" style="cursor:default"><div class="ph"></div>
         <div class="bd"><div><div class="ti">${T('Кофе и разговор','Coffee & conversation')}</div>
@@ -2613,9 +2617,9 @@ function scr_mymeetup(){
         <div class="kbadge mut" data-act="meet-state">${T('Изменить','Edit')}</div></div>
       <div class="k-title">${T('Что дальше?','What’s next?')}</div>
       <div class="kacc">
-        ${row(IC.clock,T('Опаздываю','Running late'),T('Сообщить, если время сдвигается','Tell them if the time shifts'))}
-        ${row(IC.userLeave,T('Уже ушёл(ла)','Already left'),T('Отметить встречу завершённой','Mark the meetup as finished'))}
-        ${row(IC.help,T('Нужна помощь?','Need help?'),T('Поддержка и подсказки','Get support and tips'))}
+        ${row(IC.clock,T('Опаздываю','Running late'),T('Сообщить, если время сдвигается','Tell them if the time shifts'),'meet-late')}
+        ${row(IC.userLeave,T('Уже ушёл(ла)','Already left'),T('Отметить встречу завершённой','Mark the meetup as finished'),'meet-finish')}
+        ${row(IC.help,T('Нужна помощь?','Need help?'),T('Поддержка и подсказки','Get support and tips'),'security')}
       </div>
       <div class="kinfo">${IC.shieldSm}${T('Эти действия видны только тебе и помогают чувствовать себя спокойно.','These actions are visible only to you and help you feel in control.')}</div>
     </div></div>`;
@@ -2659,6 +2663,43 @@ function setMeetStatus(k){
   toast(k==='otw'?T('Отметили: уже идёшь','Marked: on your way')
        :k==='late'?T('Отметили: опаздываешь','Marked: running late')
        :T('Отметили: ты на месте','Marked: you’re here'));
+}
+
+// ---- saved people ----
+function scr_saved(){
+  const list=DATA.saved||[];
+  if(!list.length) return `<div class="stack fade">${emptyState(T('Пока ничего не сохранено','Nothing saved yet'),
+    T('Открой профиль человека и нажми на закладку, чтобы вернуться к нему позже.','Open someone’s profile and tap the bookmark to keep them for later.'))}</div>`;
+  return `<div class="stack fade" style="gap:12px">
+    ${list.map(x=>`<div class="prow" data-act="cand-open" data-n="${esc(x.name)}">
+      <div class="ph">${IC.person}</div>
+      <div class="bd"><div class="nm"><b>${esc(x.name)}</b>${x.band?`<span class="kbadge ${x.band==='especially_close'||x.band==='strong_option'?'ok':'mut'}">${esc(bandLabel(x))}</span>`:''}</div>
+        ${(x.interests||[]).length?`<div class="meta">${(x.interests||[]).slice(0,3).map(i=>`<span class="ktag">${esc(i)}</span>`).join('')}</div>`:''}</div>
+      <div class="bm" data-act="cand-save" data-n="${esc(x.name)}">${IC.bookmark}</div></div>`).join('')}</div>`;
+}
+
+// ---- calendar: a real .ics file, not a switch that pretends ----
+function icsStamp(d){ return d.toISOString().replace(/[-:]/g,'').split('.')[0]+'Z'; }
+function downloadIcs(){
+  if(!PLAN) return;
+  const slot=(PLAN.slot&&PLAN.slot[1])||'';
+  const m=String(slot).match(/(\d{1,2}):(\d{2})/);
+  const start=new Date(); if(m){ start.setHours(+m[1], +m[2], 0, 0); }
+  if(/завтра|tomorrow/i.test((PLAN.slot&&PLAN.slot[0])||'')) start.setDate(start.getDate()+1);
+  const end=new Date(start.getTime()+60*60*1000);
+  const title=T('Встреча в Kleal','Kleal meetup')+' — '+((PLAN.cand&&PLAN.cand.name)||'');
+  const ics=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Kleal//EN','BEGIN:VEVENT',
+    'UID:'+Date.now()+'@kleal','DTSTAMP:'+icsStamp(new Date()),
+    'DTSTART:'+icsStamp(start),'DTEND:'+icsStamp(end),
+    'SUMMARY:'+title,'LOCATION:'+placeText(),
+    'DESCRIPTION:'+T('Встреча, назначенная через Kleal','A meetup arranged through Kleal'),
+    'END:VEVENT','END:VCALENDAR'].join('\r\n');
+  try{
+    const blob=new Blob([ics],{type:'text/calendar'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='kleal-meetup.ics'; document.body.appendChild(a); a.click(); a.remove();
+    toast(T('Файл календаря скачан','Calendar file downloaded'));
+  }catch(e){ toast(T('Не удалось создать файл','Could not create the file')); }
 }
 
 // ---- candidate actions: open, explain, send interest ----
@@ -2805,7 +2846,7 @@ function scr_candprofile(){
 }
 function candProfilePane(c){
   const ints=(c.interests||[]).map(x=>`<span class="kchip soft" style="height:32px">${esc(x)}</span>`).join('');
-  const facts=[c.vibe?T('Вайб: ','Vibe: ')+c.vibe:null, c.verified?T('Профиль подтверждён','Verified profile'):null,
+  const facts=[(c.vibe&&String(c.vibe).length>2)?T('Вайб: ','Vibe: ')+c.vibe:null, c.verified?T('Профиль подтверждён','Verified profile'):null,
                c.km!=null?(T('в ','')+c.km+' '+T('км от тебя','km away')):null,
                (c.langs||[]).length?T('Языки: ','Languages: ')+(c.langs||[]).join(', '):null].filter(Boolean);
   return `<div class="cprof"><div class="av">${IC.person}${c.readiness==='open_now'?'<i class="dot"></i>':''}</div>
@@ -2814,7 +2855,7 @@ function candProfilePane(c){
         <div class="k-cap" style="color:var(--muted)">${esc((c.interests||[]).slice(0,2).join(' · '))}</div></div></div>
     <div class="kplan flat">
       <div class="kblk"><div class="hd">${T('О себе','About')}</div>
-        <div class="tx">${esc(c.about||((UILANG==='ru'?c.reasons_ru:c.reasons_en)||[])[0]||T('Пока без описания — Kleal подобрал по интересам и доступности.','No bio yet — Kleal matched on interests and availability.'))}</div></div>
+        <div class="tx">${esc(c.about||c.summary||T('Пока без описания — этот человек ещё не заполнил его.','No bio yet — this person hasn’t written one.'))}</div></div>
       ${ints?`<div class="kblk"><div class="hd">${T('Интересы','Interests')}</div>
         <div class="kchips">${ints}</div></div>`:''}
       ${facts.length?`<div class="kblk"><div class="hd">${T('Образ жизни','Lifestyle')}</div>
@@ -2883,7 +2924,7 @@ const SCREENS={agenthome:scr_agenthome,profileedit:scr_profileedit,overview:scr_
   options:scr_options,bestfit:scr_bestfit,recos:scr_recos,candprofile:scr_candprofile,
   sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
   picktime:scr_picktime,pickplace:scr_pickplace,awaiting:scr_awaiting,planok:scr_planok,
-  meetstate:scr_meetstate,mymeetup:scr_mymeetup};
+  meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -3117,7 +3158,13 @@ function doAct(act, ds){
     case 'cand-open': openCand(ds.n); break;
     case 'cand-back': flowBack(); break;
     case 'cand-tab': CTAB=ds.k; render(); if(ds.k==='why') loadWhy(); break;
-    case 'cand-save': toast(T('Сохранено','Saved')); break;
+    case 'cand-save': { const n=ds.n||(CAND&&CAND.name); if(!n) break;
+      DATA.saved=DATA.saved||[];
+      const i=DATA.saved.findIndex(x=>x.name===n);
+      if(i>=0){ DATA.saved.splice(i,1); toast(T('Убрано из сохранённых','Removed from saved')); }
+      else { const c=candOf(n)||CAND; DATA.saved.unshift({name:n, band:c&&c.band, interests:(c&&c.interests)||[],
+             km:c&&c.km, at:Date.now()}); toast(T('Сохранено','Saved')); }
+      saveState(); render(); break; }
     case 'cand-interest': sendInterest(); break;
     case 'sheet-close': SHEET=null; render(); break;
     // ---- batch 3: request → mutual → plan → meetup day ----
@@ -3135,12 +3182,15 @@ function doAct(act, ds){
     case 'plan-own-place': toast(T('Своё место — скоро','Custom place is coming soon')); break;
     case 'plan-send': cur='awaiting'; render(); break;
     case 'plan-confirm': PLAN.confirmed=true; cur='planok'; render(); break;
-    case 'tog-gcal': PLAN.gcal=!PLAN.gcal; render(); toast(PLAN.gcal?T('Добавлено в Google Calendar','Added to Google Calendar'):T('Убрано','Removed')); break;
-    case 'tog-acal': PLAN.acal=!PLAN.acal; render(); toast(PLAN.acal?T('Добавлено в Apple Calendar','Added to Apple Calendar'):T('Убрано','Removed')); break;
-    case 'tog-remind': PLAN.remind=!PLAN.remind; render(); break;
+    case 'cal-download': downloadIcs(); break;
+    case 'tog-remind': PLAN.remind=!PLAN.remind; render();
+      toast(PLAN.remind?T('Напомним за час','We’ll remind you an hour before'):T('Напоминание выключено','Reminder off')); break;
     case 'plan-back': flowBack(); break;
     case 'meet-state': cur='meetstate'; render(); break;
     case 'meet-status': setMeetStatus(ds.k); break;
+    case 'meet-late': setMeetStatus('late'); cur='meetstate'; render(); break;
+    case 'meet-finish': if(PLAN){ PLAN.finished=true; PLAN.status='done'; }
+      toast(T('Встреча отмечена завершённой','Meetup marked as finished')); cur='agenthome'; render(); break;
     case 'meet-open': cur=(PLAN&&PLAN.here)?'mymeetup':'meetstate'; render(); break;
     case 'security': SHEET='security'; render(); break;
     case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
@@ -3162,7 +3212,7 @@ function doAct(act, ds){
     case 'q-people': setTab('search'); break;
     case 'q-events': setTab('search'); break;
     case 'q-interests': setTab('interests'); break;
-    case 'q-saved': toast('Saved items are coming soon'); break;
+    case 'q-saved': cur='saved'; render(); break;
     case 'see-all': setTab('search'); break;
     case 'add-interests': openProfileEdit('Interests'); break;
     case 'personality-test': toast('The personality test is coming soon'); break;
