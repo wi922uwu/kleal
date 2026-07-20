@@ -252,8 +252,11 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .track>i{display:block;height:100%;background:var(--primary);border-radius:999px}
 /* summary */
 .sumlbl{color:var(--fg);font-size:16px;font-weight:700;margin-bottom:8px}
-.sumhead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}
-.sumhead .sumlbl{margin-bottom:0}
+/* gap + truncation: a long intent title used to butt straight against the band label
+   ("кофе и творческие людиХороший вариант") */
+.sumhead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;gap:10px}
+.sumhead .sumlbl{margin-bottom:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sumhead .confpct{flex:none;white-space:nowrap}
 .updated{font-size:12px;color:var(--muted);flex:none}
 .sumtxt{font-size:15px;line-height:1.5;color:var(--muted)}
 .linkrow{display:flex;gap:24px;margin-top:16px}
@@ -654,6 +657,77 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   background:var(--neutral100);color:var(--muted);white-space:nowrap}
 .kstep.done .bg{background:var(--success-bg);color:var(--success-text)}
 .kstep.now .bg{background:var(--coral50);color:var(--primary)}
+/* ============ Figma batch 2 (479:14710…15090): results, profile, why-suggested ============ */
+/* new tokens the frames introduced */
+.kflow{--success:#1FAE5E;--success-subtle:#E8F7EE;--succ-text:#0F7340;--accent-100:#FCEBC4;
+  --warning:#F08C00;--neutral400:#A6ADBB;--primary-subtle:#F7E3E7;--radius-2xl:28px}
+/* segmented tabs (Your options / Why suggested) */
+.ktabs{display:flex;justify-content:space-between;background:#fff;border-radius:20px;padding:2px;overflow:hidden}
+.ktabs .kchip{flex:1;min-width:0}
+/* grouped result surface: one card split by right-inset hairlines, no shadow */
+.kgroup{background:var(--card);border-radius:16px;overflow:hidden}
+.kgroup .hr{height:1px;background:var(--bg);margin-left:33px}
+/* person row / person result card */
+.prow{display:flex;gap:12px;align-items:flex-start;padding:12px 16px 12px 12px;position:relative;
+  background:var(--card);cursor:pointer}
+.prow .ph{width:94px;height:94px;border-radius:999px;background:var(--neutral100);flex:none;
+  display:flex;align-items:center;justify-content:center;color:var(--neutral400);overflow:hidden}
+.prow .ph img{width:100%;height:100%;object-fit:cover}
+.prow .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
+.prow .nm{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.prow .nm b{font-size:15px;line-height:20px;font-weight:600}
+.prow .sub{font-size:12px;line-height:16px;color:var(--muted)}
+.prow .meta{display:flex;gap:12px;flex-wrap:wrap}
+.prow .mi{display:flex;gap:4px;align-items:center;font-size:12px;line-height:16px;color:var(--muted)}
+.prow .mi svg{width:14px;height:14px}
+.prow .bm{position:absolute;right:12px;top:12px;width:20px;height:20px;color:var(--muted);cursor:pointer}
+.prow.top{border-radius:28px 16px 16px 16px}
+.kbadge{padding:4px 10px;border-radius:999px;font-size:11px;line-height:16px;font-weight:500;white-space:nowrap}
+.kbadge.ok{background:var(--success-bg);color:var(--success-text)}
+.kbadge.warn{background:#FCEBC4;color:#F08C00}
+.kbadge.mut{background:var(--neutral100);color:#A6ADBB}
+.ktag{padding:4px 10px;border-radius:999px;background:var(--bg);color:var(--muted);
+  font-size:11px;line-height:16px;font-weight:500;white-space:nowrap}
+/* best fit: fused candidate + reason rows, flat white */
+.kfused{background:var(--card);border-radius:16px;padding:8px 0 16px;display:flex;flex-direction:column;gap:8px}
+.krsn{display:flex;gap:16px;align-items:center;padding:16px}
+.krsn .ic{width:24px;height:24px;flex:none;color:var(--fg)}
+.krsn .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.krsn .ti{font-size:17px;line-height:24px;font-weight:600}
+.krsn .su{font-size:13px;line-height:18px;color:var(--muted)}
+.kbtn.tall{height:56px}
+.kbtn.sm{height:40px;font-size:13px;line-height:16px;font-weight:500}
+/* candidate profile */
+.cprof{display:flex;gap:12px;align-items:center;padding:0 16px 12px 12px}
+.cprof .av{width:124px;height:124px;border-radius:999px;background:var(--neutral100);flex:none;position:relative;
+  display:flex;align-items:center;justify-content:center;color:var(--neutral400);overflow:hidden}
+.cprof .av img{width:100%;height:100%;object-fit:cover}
+.cprof .dot{position:absolute;left:102px;top:102px;width:8px;height:8px;border-radius:999px;
+  background:#1FAE5E;box-shadow:0 0 0 2px rgba(52,185,0,.4)}
+.cprof .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.kplan.flat{box-shadow:none}
+.kblk{display:flex;flex-direction:column;gap:12px}
+.kblk .hd{font-size:13px;line-height:16px;font-weight:500}
+.kblk .tx{font-size:13px;line-height:18px;color:var(--muted)}
+.kfacts{display:flex;flex-direction:column;gap:8px}
+.kfact{display:flex;gap:8px;align-items:center;font-size:13px;line-height:18px;color:var(--muted)}
+.kfact i{width:6px;height:6px;border-radius:999px;background:var(--neutral300);flex:none}
+/* why suggested: check bullets */
+.kwhycard{background:var(--card);border-radius:16px;padding:20px 16px;display:flex;flex-direction:column;gap:16px}
+.kbullet{display:flex;gap:8px;align-items:center}
+.kbullet .dot{width:16px;height:16px;border-radius:999px;background:#1FAE5E;flex:none;
+  display:flex;align-items:center;justify-content:center}
+.kbullet .dot svg{width:10px;height:10px}
+.kbullet .tx{flex:1;min-width:0;font-size:13px;line-height:18px}
+.kbullet.neg .dot{background:var(--neutral300)}
+/* modal sheet */
+.kscrim{position:absolute;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(2px);
+  display:flex;align-items:center;justify-content:center;padding:16px;z-index:40}
+.ksheet{width:100%;background:var(--card);border-radius:16px;box-shadow:0 -4px 32px rgba(0,0,0,.10);
+  padding:24px 20px 20px;display:flex;flex-direction:column;gap:24px;align-items:center;text-align:center}
+.kmedal{width:88px;height:88px;border-radius:999px;background:#F7E3E7;display:flex;align-items:center;
+  justify-content:center;color:var(--primary)}
+.kmedal svg{width:36px;height:36px}
 /* few matches: adjustment options */
 .kopt{display:flex;gap:12px;align-items:flex-start;padding:16px;border-radius:12px;border:1px solid transparent;cursor:pointer}
 .kopt.sel{border-color:var(--primary);background:var(--card)}
@@ -1873,11 +1947,12 @@ async function flowSearch(isRetry){
   FLOW.res=cands;
   render();
   setTimeout(()=>{
-    if(cands.length>=3){                       // enough people -> hand over to the intent card + launch
-      curIntent={ title:(FLOW.intent&&FLOW.intent.title)||FLOW.text||T('Новый интент','New plan'),
-                  tags:(flowIntent().topics||[]), query:FLOW.text, intent:flowIntent(),
+    if(cands.length){                          // results -> the Figma results screens
+      curIntent={ title:(FLOW.intent&&FLOW.intent.title)||FLOW.request||FLOW.text||T('Новый интент','New plan'),
+                  tags:(flowIntent().topics||[]), query:FLOW.request||FLOW.text, intent:flowIntent(),
                   candidates:cands, confidence:cands[0]&&cands[0].score, spec:[], status:'searching' };
-      intentLaunched=false; cur='intentchat'; render(); saveCurIntent();
+      saveCurIntent();
+      cur=(cands.length>=3?'bestfit':'options'); render();
     } else {
       cur='fewmatches'; render();              // too few -> offer the adjustments from the design
       if(isRetry&&!cands.length) toast(T('Пока никого — попробуй расширить поиск','No one yet — try widening the search'));
@@ -2023,11 +2098,204 @@ function scr_fewmatches(){
     <div class="kfoot"><button class="kbtn pri" data-act="flow-apply">${T('Применить и обновить','Apply & refresh')}</button></div></div>`;
 }
 
+// ---- candidate actions: open, explain, send interest ----
+function openCand(name){
+  CAND=candOf(name); if(!CAND) return;
+  CTAB='profile'; cur='candprofile'; render();
+}
+async function loadWhy(){
+  if(!CAND||CAND._trace) return;
+  try{
+    const r=await fetch('/api/agent/explain',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({intent:(FLOW&&flowIntent())||{topics:[]}, profile:matchProfile(),
+                           ctx:{self:DATA.name||''}, candidate:CAND.name})}).then(x=>x.json());
+    if(r&&r.ok&&r.trace){ CAND._trace=r.trace; render(); }
+  }catch(e){ /* pane shows its own waiting copy */ }
+}
+async function sendInterest(){
+  if(!CAND) return;
+  SHEET='interest'; render();                    // the modal is the confirmation the design specifies
+  try{                                           // record it the same way the intent flow does
+    await fetch('/api/agent/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:CAND.name, decision:'accepted', uid:DATA.name||'me'})});
+  }catch(e){}
+}
+
+// ============ Figma batch 2: results, best fit, candidate profile, why suggested ============
+// Everything below renders REAL candidates from /api/agent/match; "Why suggested" is the
+// engine's own decision trace (/api/agent/explain), not copy written for the mockup.
+let CAND=null, CTAB='profile', OPTTAB='people', SHEET=null;
+function candOf(name){ return (FLOW&&FLOW.res||[]).find(c=>c.name===name)||CAND; }
+function bandBadge(c){
+  const b=c&&c.band;
+  const cls=(b==='especially_close'||b==='strong_option')?'ok':(b==='broader_option'?'warn':'mut');
+  return `<span class="kbadge ${cls}">${esc(bandLabel(c)||T('Совпадение','Match'))}</span>`;
+}
+function candMeta(c){
+  const bits=[];
+  if(c.km!=null) bits.push(`<span class="mi">${IC.pin}${c.km} ${T('км','km')}</span>`);
+  if(c.readiness==='open_now') bits.push(`<span class="mi">${IC.clock}${T('свободен(на) сейчас','Free now')}</span>`);
+  else if(c.readiness_ru) bits.push(`<span class="mi">${IC.clock}${esc(UILANG==='ru'?c.readiness_ru:(c.readiness_en||''))}</span>`);
+  return bits.join('');
+}
+function personRow(c,i,cls){
+  const ints=(c.interests||[]).slice(0,3).map(x=>`<span class="ktag">${esc(x)}</span>`).join('');
+  return `<div class="prow ${cls||''}" data-act="cand-open" data-n="${esc(c.name)}">
+    <div class="ph">${IC.person}</div>
+    <div class="bd">
+      <div class="nm"><b>${esc(c.name)}${c.age?(', '+c.age):''}</b>${bandBadge(c)}</div>
+      ${(c.reasons_ru||c.reasons_en||[]).length?`<div class="sub">${esc((UILANG==='ru'?c.reasons_ru:c.reasons_en||[])[0]||'')}</div>`:''}
+      <div class="meta">${candMeta(c)}</div>
+      ${ints?`<div class="meta">${ints}</div>`:''}
+    </div>
+    <div class="bm" data-act="cand-save" data-n="${esc(c.name)}">${IC.bookmark}</div></div>`;
+}
+
+// ---- Your options (479:14751) — tabs + Recommended + Also for you ----
+function scr_options(){
+  const all=(FLOW&&FLOW.res)||[];
+  const top=all[0], rest=all.slice(1,6);
+  const tabs=[['people',T('Люди','People')],['groups',T('Группы','Groups')],['events',T('События и места','Events & places')]];
+  const body = OPTTAB!=='people'
+    ? `<div class="k-cap" style="color:var(--muted);padding:8px 2px">${T('Здесь пока пусто — Kleal ищет только людей на этом этапе.','Nothing here yet — Kleal is matching people at this stage.')}</div>`
+    : `${top?`<div style="display:flex;flex-direction:column;gap:12px">
+          <div class="k-h3">${T('Рекомендуем','Recommended')}</div>${personRow(top,0,'top')}</div>`:''}
+       ${rest.length?`<div style="display:flex;flex-direction:column;gap:12px">
+          <div class="k-h3">${T('Также для тебя','Also for you')}</div>
+          <div style="display:flex;flex-direction:column;gap:12px">${rest.map((c,i)=>personRow(c,i+1)).join('')}</div></div>`:''}`;
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Твои варианты','Your options'))}
+      <div class="kbub ag">${T('Лучшее под твой запрос. Переключай тип.','The best fits for your request. Switch between types.')}</div>
+      <div class="ktabs">${tabs.map(t=>`<div class="kchip ${OPTTAB===t[0]?'on':''}" data-act="opt-tab" data-k="${t[0]}">${t[1]}</div>`).join('')}</div>
+      ${body}
+    </div></div>`;
+}
+
+// ---- Best fit (479:14790) — top candidate + three plain-language reasons ----
+function scr_bestfit(){
+  const c=(FLOW&&FLOW.res||[])[0]; if(!c){ return scr_options(); }
+  const rs=(UILANG==='ru'?c.reasons_ru:c.reasons_en)||c.reasons||[];
+  const icons=[IC.heart||IC.spark,IC.clock,IC.coffee];
+  const titles=[T('Совпадают интересы','Fits your interests'),T('Подходит по времени','Matches your time'),
+                T('Комфортный формат','Comfortable format')];
+  const rows=rs.slice(0,3).map((r,i)=>`<div class="krsn"><div class="ic">${icons[i]||IC.spark}</div>
+    <div class="bd"><div class="ti">${esc(titles[i]||T('Почему подходит','Why it fits'))}</div>
+      <div class="su">${esc(r)}</div></div></div>`).join('');
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Лучшее совпадение по запросу','Best fit for your request'))}
+      <div class="kfused">${personRow(c,0,'top')}${rows}</div>
+    </div>
+    <div class="kfoot">
+      <button class="kbtn pri tall" data-act="cand-open" data-n="${esc(c.name)}">${T('Открыть профиль','Open profile')}</button>
+      <button class="kbtn sec" data-act="go-options">${T('Другие варианты','See other options')}</button>
+    </div></div>`;
+}
+
+// ---- Recommendations (479:14821) — grouped list ----
+function scr_recos(){
+  const all=(FLOW&&FLOW.res)||[];
+  const rows=all.slice(0,5).map((c,i)=>personRow(c,i)).join('<div class="hr"></div>');
+  return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(T('Лучшее совпадение по запросу','Best fit for your request'))}
+      ${all.length?`<div class="kgroup">${rows}</div>`
+        :`<div class="k-cap" style="color:var(--muted)">${T('Пока никого — попробуй расширить поиск.','No one yet — try widening the search.')}</div>`}
+    </div></div>`;
+}
+
+// ---- Full profile + Why suggested (479:14967 / 15028) ----
+function scr_candprofile(){
+  const c=CAND; if(!c) return scr_options();
+  const tabs=[['profile',T('Профиль','Profile')],['why',T('Почему','Why suggested')],['vis',T('Видимость','Visibility')]];
+  return `<div class="kflow fade">
+    <div class="kbar"><div class="kback" data-act="cand-back">${IC.back}</div>
+      <div class="k-title" style="flex:1;text-align:center">${esc(c.name)}${c.age?(', '+c.age):''}</div>
+      <div style="width:44px"></div></div>
+    <div class="kcont">
+      <div class="ktabs">${tabs.map(t=>`<div class="kchip ${CTAB===t[0]?'on':''}" data-act="cand-tab" data-k="${t[0]}">${t[1]}</div>`).join('')}</div>
+      ${CTAB==='profile'?candProfilePane(c):CTAB==='why'?candWhyPane(c):candVisPane(c)}
+    </div></div>`;
+}
+function candProfilePane(c){
+  const ints=(c.interests||[]).map(x=>`<span class="kchip soft" style="height:32px">${esc(x)}</span>`).join('');
+  const facts=[c.vibe?T('Вайб: ','Vibe: ')+c.vibe:null, c.verified?T('Профиль подтверждён','Verified profile'):null,
+               c.km!=null?(T('в ','')+c.km+' '+T('км от тебя','km away')):null,
+               (c.langs||[]).length?T('Языки: ','Languages: ')+(c.langs||[]).join(', '):null].filter(Boolean);
+  return `<div class="cprof"><div class="av">${IC.person}${c.readiness==='open_now'?'<i class="dot"></i>':''}</div>
+      <div class="bd"><div class="k-h3">${esc(c.name)}${c.age?(', '+c.age):''}</div>
+        ${bandBadge(c)}
+        <div class="k-cap" style="color:var(--muted)">${esc((c.interests||[]).slice(0,2).join(' · '))}</div></div></div>
+    <div class="kplan flat">
+      <div class="kblk"><div class="hd">${T('О себе','About')}</div>
+        <div class="tx">${esc(c.about||((UILANG==='ru'?c.reasons_ru:c.reasons_en)||[])[0]||T('Пока без описания — Kleal подобрал по интересам и доступности.','No bio yet — Kleal matched on interests and availability.'))}</div></div>
+      ${ints?`<div class="kblk"><div class="hd">${T('Интересы','Interests')}</div>
+        <div class="kchips">${ints}</div></div>`:''}
+      ${facts.length?`<div class="kblk"><div class="hd">${T('Образ жизни','Lifestyle')}</div>
+        <div class="kfacts">${facts.map(f=>`<div class="kfact"><i></i>${esc(f)}</div>`).join('')}</div></div>`:''}
+      <div class="kblk">
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="kbtn pri sm" style="flex:1" data-act="cand-interest">${T('Интересно','Interested')}</button>
+          <div class="kback" style="width:40px;height:40px" data-act="cand-save" data-n="${esc(c.name)}">${IC.bookmark}</div></div>
+        <div class="k-cap" style="color:var(--muted)">${T('Kleal спросит','Kleal will ask')} ${esc(c.name)} ${T('перед тем, как открыть чат.','before opening the chat.')}</div></div>
+    </div>`;
+}
+// the trace ships engine-side details ("open now", "3.6 km"); render them in the UI language,
+// and drop values too short to mean anything to a human (a one-letter vibe helps nobody)
+function whyDetail(f){
+  let d=String(f.detail||'').trim();
+  if(!d) return '';
+  if(UILANG==='ru'){
+    d=d.replace(/\bopen now\b/i,'свободен(на) сейчас').replace(/\bmay be busy\b/i,'может быть занят(а)')
+       .replace(/\bsame community\b/i,'то же сообщество').replace(/ km\b/,' км');
+  }
+  if(f.group==='social_context'&&d.length<3) return '';
+  return d;
+}
+function candWhyPane(c){
+  const tr=CAND&&CAND._trace;
+  if(!tr) return `<div class="k-cap" style="color:var(--muted);padding:8px 2px">${T('Считаю объяснение…','Working out the explanation…')}</div>`;
+  const good=(tr.features||[]).filter(f=>f.state==='known_match'&&whyDetail(f));
+  const miss=(tr.features||[]).filter(f=>f.state==='unknown');
+  const card=(title,items,neg)=>items.length?`<div class="kwhycard">
+      <div class="k-label">${esc(title)}</div>
+      ${items.map(it=>`<div class="kbullet ${neg?'neg':''}"><div class="dot">${neg?'':IC.check}</div>
+        <div class="tx">${esc(it)}</div></div>`).join('')}</div>`:'';
+  return `<div class="k-h3" style="margin:4px 0">${T('Почему подобрал','Why suggested')}</div>
+    ${card(T('Что совпало','What matched'), good.map(f=>(UILANG==='ru'?f.label_ru:f.label_en||f.label_ru)+': '+whyDetail(f)))}
+    ${card(T('Уровень и готовность','Level and readiness'),
+      [T('Уровень: ','Level: ')+(tr.band_ru||tr.band||''), T('Готовность: ','Readiness: ')+(tr.readiness_ru||tr.readiness||'')])}
+    ${card(T('Пока не хватает данных','Still unknown'), miss.map(f=>(UILANG==='ru'?f.label_ru:f.label_en||f.label_ru)), true)}`;
+}
+function candVisPane(c){
+  const items=[T('Твоё имя, возраст, город','Your name, age, city'),
+    T('Короткое описание и интересы','Short bio and interests'),
+    T('Что ты ищешь и образ жизни','What you’re looking for & lifestyle')];
+  return `<div class="k-h3" style="margin:4px 0">${T('Что увидит другая сторона','What the other side will see')}</div>
+    <div class="kwhycard">${items.map(i=>`<div class="kbullet"><div class="dot">${IC.check}</div><div class="tx">${esc(i)}</div></div>`).join('')}</div>
+    <div class="kwhy">${T('Телефон, соцсети и точный адрес не показываются.','They won’t see your phone, socials or exact address.')}</div>`;
+}
+// ---- Interest sent (479:15090) ----
+function sheetHTML(){
+  if(SHEET!=='interest') return '';
+  const n=(CAND&&CAND.name)||'';
+  return `<div class="kscrim" data-act="sheet-close"><div class="ksheet" onclick="event.stopPropagation()">
+    <div class="kmedal">${IC.send}</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="k-h3">${T('Интерес отправлен','Interest sent')}</div>
+      <div class="k-small" style="color:var(--muted)">${T('Kleal спросит','Kleal will ask')} ${esc(n)}, ${T('готов(а) ли пообщаться.','if they’d like to chat with you.')}<br>${T('Сообщим, если интерес взаимный.','We’ll let you know if the interest is mutual.')}</div>
+    </div>
+    <button class="kbtn pri tall" style="width:100%" data-act="sheet-close">${T('Понятно','Got it')}</button>
+  </div></div>`;
+}
+
 const SCREENS={agenthome:scr_agenthome,profileedit:scr_profileedit,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
   places:scr_places,goals:scr_goals,safety:scr_safety,memory:scr_memory,knows:scr_knows,
   intents:scr_intents,intentchat:scr_intentchat,search:scr_search,messages:scr_messages,
   notifs:scr_notifications,matchchat:scr_matchchat,buddychat:scr_buddychat,
-  reqcomposer:scr_reqcomposer,clarify:scr_clarify,summary:scr_summary,searching:scr_searching,fewmatches:scr_fewmatches};
+  reqcomposer:scr_reqcomposer,clarify:scr_clarify,summary:scr_summary,searching:scr_searching,fewmatches:scr_fewmatches,
+  options:scr_options,bestfit:scr_bestfit,recos:scr_recos,candprofile:scr_candprofile};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -2101,12 +2369,14 @@ function render(){
   // and the bottom nav on all of them — and treat them all the same way for layout.
   // the Figma request flow carries its own app bar + composer, exactly like the chat screens
   const chat=(cur==='buddychat'||cur==='profileedit'||cur==='intentchat'||cur==='matchchat'
-              ||cur==='reqcomposer'||cur==='clarify'||cur==='summary'||cur==='searching'||cur==='fewmatches');
+              ||cur==='reqcomposer'||cur==='clarify'||cur==='summary'||cur==='searching'||cur==='fewmatches'
+              ||cur==='options'||cur==='bestfit'||cur==='recos'||cur==='candprofile');
   const bn=document.getElementById('bnav'); if(bn){ bn.style.display=chat?'none':'flex'; bn.innerHTML=bnavHTML(); }
   const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||chat)?'none':'flex';
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else { A.innerHTML=(SCREENS[cur]||scr_overview)(); }
+  if(typeof sheetHTML==='function' && SHEET) A.insertAdjacentHTML('beforeend', sheetHTML());
   // A chat owns the full height: the app area becomes a flex column so the thread scrolls INTERNALLY and the
   // composer stays pinned. Resetting scrollTop to 0 on every render is what made the intent chat jump — so
   // only non-chat screens reset, and chats auto-scroll their thread to the newest message.
@@ -2236,6 +2506,15 @@ function doAct(act, ds){
     case 'flow-adjust': FLOW.adjust=ds.k; render(); break;
     case 'flow-groups': FLOW.groups=!FLOW.groups; render(); break;
     case 'flow-apply': flowSearch(true); break;
+    // ---- Figma batch 2: results / candidate ----
+    case 'opt-tab': OPTTAB=ds.k; render(); break;
+    case 'go-options': cur='options'; render(); break;
+    case 'cand-open': openCand(ds.n); break;
+    case 'cand-back': cur=(FLOW&&FLOW.res&&FLOW.res.length>=3)?'bestfit':'options'; CAND=null; render(); break;
+    case 'cand-tab': CTAB=ds.k; render(); if(ds.k==='why') loadWhy(); break;
+    case 'cand-save': toast(T('Сохранено','Saved')); break;
+    case 'cand-interest': sendInterest(); break;
+    case 'sheet-close': SHEET=null; render(); break;
     case 'buddy-send': { const el=document.getElementById('bcin'); buddyTurn(el&&el.value||''); break; }
     case 'buddy-intro': { const i=+ds.bi; const m=buddyMsgs[i]; if(m&&m.match&&m.match.top){ approveIntro(m.match.top, m.match.intent); if(matchWith)matchWith.fromBuddy=true; } break; }
     case 'buddy-back': cur='agenthome'; render(); break;
