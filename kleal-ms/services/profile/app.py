@@ -373,15 +373,31 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .typing3 i{width:5px;height:5px;border-radius:50%;background:var(--muted);display:inline-block;animation:tb 1s infinite}
 .typing3 i:nth-child(2){animation-delay:.15s}.typing3 i:nth-child(3){animation-delay:.3s}
 @keyframes tb{0%,60%,100%{opacity:.3}30%{opacity:1}}
-.candrow{display:flex;align-items:center;gap:12px;padding:12px 16px}
+/* Candidate row: a COLUMN (identity line, then actions) instead of one flex row cramming avatar +
+   name + tier + distance + band + Intro + dismiss into ~340px. That fight made "3.6 км" break across
+   two lines, wrapped "Хороший вариант" mid-phrase, and gave rows with buttons a different height
+   from rows without, so the list read as ragged. */
+.candrow{display:flex;flex-direction:column;gap:8px;padding:12px 16px}
+.candmain{display:flex;align-items:center;gap:12px;min-width:0}
 .candav{width:38px;height:38px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;
   background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:800;font-size:15px}
 .candt{flex:1;min-width:0}
-.candn{font-size:14.5px;font-weight:700}
-.candn .candkm{font-size:11px;font-weight:500;color:var(--muted);margin-left:6px}
+.candn{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:4px;min-width:0}
+.candnm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.candn .candkm{font-size:11px;font-weight:500;color:var(--muted);white-space:nowrap;flex:none}
 .cands{font-size:12px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.candsc{flex:none;text-align:right}
-.candpct{font-size:12px;font-weight:800;color:var(--fg);text-align:right;max-width:96px;line-height:1.2}
+/* The band label sits on its OWN line, not in a right-hand column. Measured: with name + badge + band
+   competing for one row, the right column has to drop to 26% before "Zoe Smirnov" stops truncating —
+   and by then "Хороший вариант" itself wraps. No column width satisfies both, so the row stacks. */
+.candsc{display:flex;align-items:baseline;gap:6px;margin-top:3px;flex-wrap:wrap}
+.candpct{font-size:12px;font-weight:800;color:var(--fg);line-height:1.25}
+.candbadge{font-size:10px;font-weight:700;color:var(--muted);background:var(--field);border-radius:6px;
+  padding:1px 5px;white-space:nowrap;flex:none}
+.candbadge.acc{color:var(--accent);background:var(--accent-soft)}
+.candacts{display:flex;align-items:center;gap:8px;padding-left:50px}
+.candacts .introbtn{margin-left:0}
+.passbtn{border:none;background:var(--field);color:var(--muted);width:30px;height:30px;border-radius:50%;
+  font-size:13px;cursor:pointer;flex:none}
 .candok{font-size:10.5px;font-weight:700;color:#0f7340}
 .candbusy{font-size:10.5px;font-weight:600;color:var(--muted)}
 .candno{font-size:10.5px;font-weight:600;color:var(--muted)}
@@ -1329,6 +1345,13 @@ function safetyRow(it){
 function checkRow(label,on,key){ on=ui(key,on); return `<div class="crow"><div class="cbx ${on?'on':''}" data-cbx data-uk="${key||''}">${on?IC.check:''}</div>
   <div class="cl">${esc(label)}</div></div>`; }
 
+// The reason line usually already says "рядом (3.6 км)" — printing the distance again in the name row
+// was pure duplication AND the thing that pushed the line into wrapping. Show it only if absent.
+function candKm(c, sub){
+  if(c==null||c.km==null) return '';
+  if(String(sub||'').indexOf(String(c.km))>=0) return '';
+  return `<span class="candkm">${c.km} ${T('км','km')}</span>`;
+}
 let editingSummary=false, SUMBUSY=false, _sumTried=false;
 // The summary used to be written ONLY by adaptSummary() after a profile edit, so a user who never
 // edited anything saw the placeholder forever. Generate it the first time the profile is opened,
@@ -1844,10 +1867,12 @@ function scr_buddychat(){
     const row=`<div class="krow"><div class="kav${first?'':' sp'}"></div><div class="kcol"><div class="kbub">${inner}</div>${time}</div></div>`;
     if(x.match&&x.match.top){ const t=x.match.top; const why=candReasons(t).slice(0,2).concat(readinessChip(t)?[readinessChip(t)]:[]).join(' · ');
       return row+`<div class="card" style="margin:2px 0 2px 43px"><div class="candrow">
-        <div class="candav">${esc(String(t.name||'?')[0])}${t.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':''}</div>
-        <div class="candt"><div class="candn">${esc(t.name)} <span class="candkm">${t.km!=null?t.km+' '+T('км','km'):''}</span></div><div class="cands">${esc(why)}</div></div>
-        <div class="candsc"><div class="candpct">${esc(bandLabel(t))}</div></div>
-        <button class="introbtn" data-act="buddy-intro" data-bi="${i}">${T('Познакомиться','Intro')}</button></div></div>`; }
+        <div class="candmain"><div class="candav">${esc(String(t.name||'?')[0])}</div>
+          <div class="candt"><div class="candn"><span class="candnm">${esc(t.name)}</span>${t.verified?'<span style="color:var(--ok);font-size:11px">✓</span>':''}${candKm(t,why)}</div>
+            <div class="cands">${esc(why)}</div>
+            <div class="candsc"><div class="candpct">${esc(bandLabel(t))}</div></div></div></div>
+        <div class="candacts"><button class="introbtn" data-act="buddy-intro" data-bi="${i}">${T('Познакомиться','Intro')}</button></div>
+        </div></div>`; }
     return row;
   }).join('');
   return `<div class="bchat fade">${hd}<div class="bthread" id="bthread">${thread}</div>
@@ -2157,16 +2182,22 @@ function scr_intentchat(){
         :(c.passed?`<div class="candno">${T('пропущен','skipped')}</div>`
         :(!c.decided?`<div class="candwait">${T('ещё не спрашивал','not asked yet')}</div>`
         :(c.agree?`<div class="candok">✓ ${T('согласен','agreed')}</div>`:`<div class="candno">${T('отказ','declined')}</div>`)));
-      const tier=c.kind==='reciprocal'?'<span style="font-size:10px;font-weight:700;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:1px 5px;margin-left:5px">↔ mutual</span>'
-        :(c.tier?`<span style="font-size:10px;font-weight:700;color:var(--muted);background:var(--field);border-radius:6px;padding:1px 5px;margin-left:5px">${esc(c.tier)}</span>`:'');
+      // both badges were free to wrap, so "↔ mutual" broke across two lines and shoved the name into an
+      // aggressive ellipsis ("Zoe Smirn…"). They are single tokens — never break them.
+      const tier=c.kind==='reciprocal'
+        ? `<span class="candbadge acc">↔ ${T('взаимно','mutual')}</span>`
+        :(c.tier?`<span class="candbadge">${esc(c.tier)}</span>`:'');
       const vtick=c.verified?'<span style="color:var(--ok);font-size:11px;margin-left:3px">✓</span>':'';
-      return `<div class="candrow" style="${c.passed?'opacity:.5':''}"><div class="candav">${esc(String(c.name||'?')[0])}</div>
-      <div class="candt"><div class="candn">${esc(c.name)}${vtick}${tier} <span class="candkm">${c.km!=null?c.km+' '+T('км','km'):''}</span></div>
-        <div class="cands">${esc(sub)}</div></div>
-      <div class="candsc"><div class="candpct">${esc(bandLabel(c))}</div>${status}</div>
-      ${(!negot&&c.agree&&!c.passed)?`<button class="introbtn" data-act="intro" data-ci="${i}">${T('Познакомиться','Intro')}</button>
-        <button data-act="pass" data-ci="${i}" title="Not interested" style="border:none;background:var(--field);color:var(--muted);width:26px;height:26px;border-radius:50%;font-size:13px;margin-left:6px;cursor:pointer">✕</button>`:''}
-      </div>${i<cands.length-1?'<div class="divider"></div>':''}`; }).join('')
+      const acts=(!negot&&c.agree&&!c.passed)
+        ? `<div class="candacts"><button class="introbtn" data-act="intro" data-ci="${i}">${T('Познакомиться','Intro')}</button>
+             <button class="passbtn" data-act="pass" data-ci="${i}" title="${T('Не интересно','Not interested')}">✕</button></div>`
+        : '';
+      return `<div class="candrow" style="${c.passed?'opacity:.5':''}">
+        <div class="candmain"><div class="candav">${esc(String(c.name||'?')[0])}</div>
+          <div class="candt"><div class="candn"><span class="candnm">${esc(c.name)}</span>${vtick}${tier}${candKm(c,sub)}</div>
+            <div class="cands">${esc(sub)}</div>
+            <div class="candsc"><div class="candpct">${esc(bandLabel(c))}</div>${status}</div></div></div>
+        ${acts}</div>${i<cands.length-1?'<div class="divider"></div>':''}`; }).join('')
       : (it.fallback ? fallbackCard(it.fallback)
         : '<div class="chkrow"><div class="chklb wait">Пока никто не подошёл — продолжаю искать в фоне.</div></div>')}
     </div>`;
