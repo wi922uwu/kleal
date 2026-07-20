@@ -673,6 +673,9 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   font-size:15px;display:flex;align-items:center;justify-content:center;border:3px solid #fff;
   box-shadow:0 3px 10px rgba(20,20,40,.28);cursor:pointer}
 .cityPin.me{background:var(--fg)}
+.kinput{width:100%;border:1px solid var(--border);border-radius:12px;padding:12px;font-size:14px;
+  background:var(--bg);color:var(--fg);outline:none;font-family:inherit}
+.kinput:focus{border-color:var(--primary)}
 .khelp{display:flex;justify-content:center;padding:0 12px 6px}
 .khelp .kchip{gap:6px;cursor:pointer;height:34px;min-height:34px}
 .khelp .kchip svg{width:15px;height:15px}
@@ -1273,6 +1276,7 @@ function cbadge(c){ return `<span class="cbadge cb-${c}">${c}</span>`; }
 // stored value stays canonical English and only the RENDERED text is localised — the same approach
 // whyDetail() already uses for engine details. Language switching therefore keeps working live.
 const _RU_FIELD={'Basics':'Основное','Location':'Локация','Languages':'Языки','Interests':'Интересы',
+  'Social formats':'Формат встреч',
   'Safety':'Безопасность','Onboarding':'Онбординг','High':'Высокая','Medium':'Средняя','Low':'Низкая',
   'Confirmed':'Подтверждено','Inferred':'Предположение','Temporary':'Временно','Just now':'Только что',
   'Role':'Роль','Experience':'Опыт','New profile':'Новый профиль'};
@@ -1435,6 +1439,7 @@ function scr_overview(){
       <button class="langbtn ${rst==='active'?'on':''}" data-act="set-avail" data-st="active">${T('Открыт','Open')}</button>
       <button class="langbtn ${rst==='busy'?'on':''}" data-act="set-avail" data-st="busy">${T('Занят','Busy')}</button>
       <button class="langbtn ${rst==='paused'?'on':''}" data-act="set-avail" data-st="paused">${T('Пауза','Pause')}</button></div>`}</div>`;
+  syncBasicsRows();          // the four cards always reflect canonical fields, incl. a not-yet-set formats card
   return `<div class="stack fade">
     <div class="card idcard">
       <div class="idrow"><div class="ava">${IC.person}</div>
@@ -1442,7 +1447,8 @@ function scr_overview(){
       <div class="confrow2"><span class="l">${T('Наполненность профиля','Profile confidence')}</span><span class="confpct">${d.confidence}%</span></div>
       <div class="track"><i style="width:${d.confidence}%"></i></div></div>
     ${(d.basics||[]).map(r=>summaryRow(r,true)).join('')}
-    <div class="card pad"><div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>${sum}</div>
+    <div class="card pad"><div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>${sum}
+      <button class="kbtn pri" data-act="createintent" style="margin-top:12px">${T('Создать интент','Create intent')}</button></div>
     <div class="stack" style="margin-top:6px">${navRows()}${availRow}${langRow}</div>
   </div>`;
 }
@@ -1913,7 +1919,7 @@ function pushProfile(patch){
 const _LANG_NAMES={en:['Английский','English'],es:['Испанский','Spanish'],ru:['Русский','Russian'],
   fr:['Французский','French'],de:['Немецкий','German'],it:['Итальянский','Italian'],
   ca:['Каталанский','Catalan'],pt:['Португальский','Portuguese'],uk:['Украинский','Ukrainian'],
-  pl:['Польский','Polish']};
+  pl:['Польский','Polish'],sr:['Сербский','Serbian'],sv:['Шведский','Swedish']};
 function langName(c){ const h=_LANG_NAMES[String(c||'').toLowerCase()]; return h?T(h[0],h[1]):String(c); }
 // Display rows mirror the canonical fields, so a card can never show one value while matching
 // quietly uses another.
@@ -1922,8 +1928,11 @@ function syncBasicsRows(){
   const put=(title,icon,value)=>{ if(!value) return; const r=rows.find(x=>x.title===title);
     if(r) r.value=value; else rows.push({icon,title,value}); };
   put('Basics','person',[DATA.gender,DATA.age].filter(Boolean).join(' · '));
+  put('Social formats','groups',(DATA.formats||[]).length?(DATA.formats||[]).map(fmtLabel).join(' · '):T('Не выбрано — открой и отметь','Not set — open and pick'));
   put('Location','pin',[DATA.area, DATA.radiusKm?T('до '+DATA.radiusKm+' км','up to '+DATA.radiusKm+' km'):null].filter(Boolean).join(' · '));
   put('Languages','globe',(DATA.langsList||[]).map(langName).join(' · '));
+  const ORD=['Basics','Social formats','Location','Languages'];
+  rows.sort((a,b)=>{const x=ORD.indexOf(a.title),y=ORD.indexOf(b.title);return (x<0?9:x)-(y<0?9:y);});
 }
 function matchProfile(){
   const g=t=>{const r=snapRow(t);return r?String(r.value||''):'';};
@@ -3671,6 +3680,101 @@ function candVisPane(c){
     <div class="kwhycard">${items.map(i=>`<div class="kbullet"><div class="dot">${IC.check}</div><div class="tx">${esc(i)}</div></div>`).join('')}</div>
     <div class="kwhy">${T('Телефон, соцсети и точный адрес не показываются.','They won’t see your phone, socials or exact address.')}</div>`;
 }
+// ---- bottom edit sheets (Figma: Social formats PopUp / Location PopUp / basics / goal) ----
+// Every card edit used to open the full-screen chat editor. Direct fields deserve a direct control:
+// a bottom sheet with «Принять изменения», which writes DATA, mirrors the display row, and pushes
+// the patch to the server row that matching actually reads. The chat editor stays for the fuzzy
+// sections (interests, personality) — that is literally the Figma «Edit with Kleal».
+let ESHEET=null;
+const FORMAT_OPTS=()=>[
+  ['1:1','1:1 · '+T('один на один','one-on-one')],
+  ['small',T('Малая группа · 2–5','Small group · 2–5')],
+  ['party',T('Компания · 10+','Party · 10+')],
+  ['online',T('Онлайн','Online')],
+  ['offline',T('Вживую','In person')],
+  ['hybrid',T('Гибрид','Hybrid')],
+  ['events',T('События и митапы','Events & meetups')]];
+function fmtLabel(k){ const o=FORMAT_OPTS().find(x=>x[0]===k); return o?o[1]:String(k); }
+const GENDER_OPTS=()=>[['Male',T('Мужчина','Male')],['Female',T('Женщина','Female')],['Other',T('Другое','Other')]];
+const SHEET_LANGS=['en','es','ru','fr','de','it','ca','pt','sr','uk','pl','sv'];
+function openSheet(kind, idx){
+  if(kind==='formats') ESHEET={kind, draft:(DATA.formats||[]).slice()};
+  else if(kind==='location') ESHEET={kind, draft:{area:DATA.area||'', radiusKm:DATA.radiusKm||10}};
+  else if(kind==='languages') ESHEET={kind, draft:(DATA.langsList||[]).slice()};
+  else if(kind==='basics') ESHEET={kind, draft:{age:DATA.age||'', gender:DATA.gender||''}};
+  else if(kind==='goal') ESHEET={kind, idx:(idx==null?-1:idx),
+    draft:{text:(idx!=null&&idx>=0)?String(((DATA.goals||{}).active||[])[idx]||''):''}};
+  else return;
+  render();
+}
+function eSheetHTML(){
+  const e=ESHEET; if(!e) return '';
+  const row=(on,label,act,v)=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 2px;cursor:pointer" data-act="${act}" data-v="${esc(v)}">
+      <div class="cbx ${on?'on':''}">${on?IC.check:''}</div><div style="font-size:14.5px">${esc(label)}</div></div>`;
+  let title='', body='', extra='';
+  if(e.kind==='formats'){
+    title=T('Формат встреч','Social formats');
+    body='<div>'+FORMAT_OPTS().map(o=>row(e.draft.includes(o[0]),o[1],'esheet-fmt',o[0])).join('')+'</div>';
+  } else if(e.kind==='location'){
+    const km=+e.draft.radiusKm||10, px=Math.round(60+km*2.6);
+    const kmTxt=v=>v+' '+T('км','km');
+    title=T('Локация','Location');
+    body=`<input id="eshArea" class="kinput" value="${esc(e.draft.area)}" placeholder="${T('Город','City')}">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
+        <span class="k-small">${T('Как далеко готов(а) ехать?','How far are you happy to go?')}</span>
+        <span class="k-small" id="eshKmL" style="color:var(--primary);font-weight:700">${kmTxt(km)}</span></div>
+      <input id="eshKm" type="range" min="1" max="50" value="${km}" style="width:100%;accent-color:var(--primary)"
+        oninput="ESHEET.draft.radiusKm=+this.value;var t=this.value+' ${T('км','km')}';document.getElementById('eshKmL').textContent=t;document.getElementById('eshKmC').textContent=t;var c=document.getElementById('eshCirc'),px=Math.round(60+this.value*2.6);c.style.width=px+'px';c.style.height=px+'px'">
+      <div style="display:flex;justify-content:center;padding:10px 0 2px">
+        <div id="eshCirc" style="width:${px}px;height:${px}px;border-radius:999px;background:color-mix(in srgb, var(--primary) 14%, transparent);display:flex;align-items:center;justify-content:center;transition:width .15s,height .15s">
+          <div id="eshKmC" style="background:var(--primary);color:#fff;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700">${kmTxt(km)}</div></div></div>`;
+  } else if(e.kind==='languages'){
+    title=T('Языки','Languages');
+    body='<div class="kchips">'+SHEET_LANGS.map(c=>`<div class="kchip ${e.draft.includes(c)?'on':''}" data-act="esheet-lang" data-v="${c}">${esc(langName(c))}</div>`).join('')+'</div>';
+  } else if(e.kind==='basics'){
+    title=T('Основное','Basics');
+    body=`<div class="k-label" style="color:var(--muted)">${T('Возраст','Age')}</div>
+      <input id="eshAge" class="kinput" inputmode="numeric" value="${esc(String(e.draft.age||''))}">
+      <div class="k-label" style="color:var(--muted);margin-top:12px">${T('Пол','Gender')}</div>
+      <div class="kchips">${GENDER_OPTS().map(g=>`<div class="kchip ${e.draft.gender===g[0]?'on':''}" data-act="esheet-gender" data-v="${g[0]}">${g[1]}</div>`).join('')}</div>`;
+  } else if(e.kind==='goal'){
+    title=e.idx>=0?T('Цель','Goal'):T('Новая цель','New goal');
+    body=`<textarea id="eshGoal" class="kinput" rows="4" placeholder="${T('Например: найти людей для еженедельного футбола','e.g. find people for weekly football')}">${esc(e.draft.text)}</textarea>`;
+    if(e.idx>=0) extra=`<button class="kbtn sec tall" data-act="esheet-goal-del">${T('Удалить','Delete')}</button>`;
+  }
+  return `<div class="kscrim bot" data-act="esheet-close"><div class="ksheet bottom" onclick="event.stopPropagation()">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div class="k-h3">${title}</div><div style="cursor:pointer;padding:4px;color:var(--muted)" data-act="esheet-close">✕</div></div>
+    ${body}
+    <div style="display:flex;gap:8px;margin-top:16px">${extra}
+      <button class="kbtn pri tall" style="flex:1" data-act="esheet-accept">${T('Принять изменения','Accept changes')}</button></div>
+  </div></div>`;
+}
+function acceptSheet(){
+  const e=ESHEET; if(!e) return;
+  if(e.kind==='formats'){ DATA.formats=e.draft.slice(); pushProfile({formats:DATA.formats}); }
+  else if(e.kind==='location'){
+    const a=document.getElementById('eshArea'), km=document.getElementById('eshKm');
+    if(a&&a.value.trim()) DATA.area=a.value.trim();
+    if(km) DATA.radiusKm=+km.value;
+    pushProfile({area:DATA.area, radiusKm:DATA.radiusKm});
+  }
+  else if(e.kind==='languages'){ DATA.langsList=e.draft.slice(); pushProfile({langs:DATA.langsList}); }
+  else if(e.kind==='basics'){
+    const ag=document.getElementById('eshAge'), v=ag?parseInt(ag.value,10):NaN;
+    if(v>=18&&v<=120) DATA.age=v;
+    if(e.draft.gender) DATA.gender=e.draft.gender;
+    pushProfile({age:DATA.age, gender:DATA.gender});
+  }
+  else if(e.kind==='goal'){
+    const ta=document.getElementById('eshGoal'), txt=ta?ta.value.trim():'';
+    if(txt){ DATA.goals=DATA.goals||{active:[],optional:[]}; DATA.goals.active=DATA.goals.active||[];
+      if(e.idx>=0) DATA.goals.active[e.idx]=txt; else DATA.goals.active.push(txt);
+      pushProfile({goals:DATA.goals.active}); }
+  }
+  ESHEET=null; syncBasicsRows(); render(); saveState(); toast(T('Сохранено','Saved'));
+}
+
 // ---- Interest sent (479:15090) ----
 function sheetHTML(){
   if(SHEET!=='interest') return '';
@@ -3844,6 +3948,7 @@ function render(){
   }
   if(SHEET==='interest') A.insertAdjacentHTML('beforeend', sheetHTML());
   if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
+  if(ESHEET) A.insertAdjacentHTML('beforeend', eSheetHTML());
   // A chat owns the full height: the app area becomes a flex column so the thread scrolls INTERNALLY and the
   // composer stays pinned. Resetting scrollTop to 0 on every render is what made the intent chat jump — so
   // only non-chat screens reset, and chats auto-scroll their thread to the newest message.
@@ -3911,7 +4016,8 @@ function doAct(act, ds){
     case 'savesum': { const el=document.getElementById('sumta'); DATA.summary=(el?el.value:'').trim(); editingSummary=false; render(); toast('Summary saved'); break; }
     case 'askwhy': toast('Kleal built this from what you shared during onboarding. Every detail is editable.'); break;
     case 'editbasics': openProfileEdit(''); break;   // name / city / languages — all editable by talking
-    case 'editrow': openProfileEdit(ds.row||''); break;   // section Edit -> talk to Kleal, in context
+    case 'editrow': { const rt={'Basics':'basics','Social formats':'formats','Location':'location','Languages':'languages'}[ds.row||''];
+      if(rt) openSheet(rt); else openProfileEdit(ds.row||''); break; }
     case 'edit-int': openEditInterest(ds.int); break;
     case 'dontuse-int': toast('"'+(ds.int||'')+'" will not be used for matching'); break;
     case 'remove-int': { DATA.interests=DATA.interests.filter(i=>i.name!==ds.int);
@@ -4024,6 +4130,15 @@ function doAct(act, ds){
       saveState(); render(); break; }
     case 'cand-interest': sendInterest(); break;
     case 'sheet-close': SHEET=null; render(); break;
+    case 'esheet-close': ESHEET=null; render(); break;
+    case 'esheet-accept': acceptSheet(); break;
+    case 'esheet-fmt': { const d=ESHEET.draft, i=d.indexOf(ds.v); if(i>=0)d.splice(i,1); else d.push(ds.v); render(); break; }
+    case 'esheet-lang': { const d=ESHEET.draft, i=d.indexOf(ds.v); if(i>=0)d.splice(i,1); else d.push(ds.v); render(); break; }
+    case 'esheet-gender': { const ag=document.getElementById('eshAge');
+      if(ag) ESHEET.draft.age=ag.value;      // the chip tap re-renders the sheet — a typed age must survive it
+      ESHEET.draft.gender=ds.v; render(); break; }
+    case 'esheet-goal-del': { if(ESHEET.idx>=0&&DATA.goals&&DATA.goals.active){ DATA.goals.active.splice(ESHEET.idx,1);
+        pushProfile({goals:DATA.goals.active}); } ESHEET=null; render(); saveState(); toast(T('Цель удалена','Goal removed')); break; }
     // ---- batch 3: request → mutual → plan → meetup day ----
     case 'req-edit': cur='candprofile'; render(); break;
     case 'req-send': planSend(); break;
@@ -4076,8 +4191,8 @@ function doAct(act, ds){
     case 'see-all': setTab('search'); break;
     case 'add-interests': openProfileEdit('Interests'); break;
     case 'edit-personality': openProfileEdit('Your personality'); break;
-    case 'add-goal': openProfileEdit('Goals'); break;
-    case 'edit-goal': openProfileEdit('Goals'); break;
+    case 'add-goal': openSheet('goal'); break;
+    case 'edit-goal': openSheet('goal', ds.goal!=null?+ds.goal:null); break;
     default: toast(T('Пока недоступно','Not available yet'));
   }
 }
