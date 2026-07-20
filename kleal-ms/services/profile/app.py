@@ -2633,6 +2633,19 @@ async function flowSay(text, fromSeed){
   if(!r||!r.reply){ FLOW.lastFailed=true;
     FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
   FLOW.lastFailed=false;
+  if(r.conversational && FLOW.mode==='intent'){
+    // This conversation exists to build an intent, so an off-topic turn is steered back once and then
+    // pointed at the buddy chat, where conversation belongs.
+    FLOW.msgs[meIdx].chat=true;
+    const said=FLOW.msgs.filter(m=>m.chat&&m.who==='ag').length;
+    FLOW.msgs.push({who:'ag',chat:true,t:Date.now(),
+      text: said===0
+        ? T('Здесь я собираю интент. Напиши, чем хочешь заняться — например «сходить на джаз в пятницу».',
+             "This chat builds an intent. Tell me what you'd like to do — e.g. \u201cgo to a jazz gig on Friday\u201d.")
+        : T('Про остальное поговорим в обычном чате с Kleal. Здесь нужен план: чем, когда и с кем.',
+             "For anything else, talk to Kleal in the normal chat — this one needs the plan: what, when and with whom.")});
+    render(); return;
+  }
   if(r.conversational){
     // Kleal is a companion you can actually talk to, so its conversational answer is shown as-is.
     // Steering every off-topic turn back to "describe a plan" turned the agent into a form; the way
@@ -2711,9 +2724,21 @@ async function flowSearch(isRetry){
 // One shared state object; every screen reads and writes it, and each step talks to the real
 // backend (buddy for language understanding, matching for the search itself).
 let FLOW = null;
-function flowInit(seed){
-  FLOW = { text:seed||'', msgs:[], when:null, time:null, district:null,
+// One chat screen, two modes. 'buddy' is the companion you can talk to about anything; 'intent' is
+// the dedicated intent-building conversation the «+ Создать интент» button opens. The button used to
+// jump straight to the final summary form, skipping the conversation entirely.
+function flowInit(seed, mode){
+  FLOW = { text:seed||'', msgs:[], when:null, time:null, district:null, mode:mode||'buddy',
            intent:null, summary:null, steps:0, res:null, adjust:'radius', groups:true, busy:false };
+}
+// «+ Создать интент» — a fresh conversation whose only job is to build one.
+function intentStart(){
+  flowInit('', 'intent');
+  FLOW.msgs=[{who:'ag',t:Date.now(),text:T(
+    'Давай соберём интент. Опиши, чем хочешь заняться — например «сходить на джаз в пятницу» или «найти напарника в зал».',
+    "Let's build an intent. Tell me what you'd like to do — e.g. \u201cgo to a jazz gig on Friday\u201d or \u201cfind a gym partner\u201d.")}];
+  cur='reqcomposer'; render();
+  setTimeout(()=>{const e=document.getElementById('flowinp'); if(e)e.focus();},60);
 }
 const FLOW_HINTS = () => [
   T('Найти компанию для кофе и разговора','Find company for coffee & good talk'),
@@ -2734,9 +2759,15 @@ const STEP_LABELS = () => [T('Проверяю время и район','Checki
   T('Собираю лучшие варианты','Collecting the best options'),
   T('Проверяю доступность','Verifying availability')];
 
-function kbar(cta){ return `<div class="kbar" style="justify-content:space-between">
+function kbar(cta){
+  // In the buddy chat the pill OPENS the intent conversation; inside that conversation it becomes the
+  // way to finish it, and only once there is something to finish.
+  const intentMode=(FLOW&&FLOW.mode==='intent');
+  const show=intentMode ? (FLOW.msgs||[]).some(m=>m.who==='me') : !!cta;
+  return `<div class="kbar" style="justify-content:space-between">
   <div class="kback" data-act="flow-back">${IC.back}</div>
-  ${cta?`<div class="kchip on" data-act="flow-finish" style="cursor:pointer;font-weight:600">+ ${T('Создать интент','Create Intent')}</div>`:''}</div>`; }
+  ${show?`<div class="kchip on" data-act="${intentMode?'flow-done':'flow-finish'}" style="cursor:pointer;font-weight:600">${
+    intentMode?T('Готово','Done'):('+ '+T('Создать интент','Create Intent'))}</div>`:''}</div>`; }
 function kprompt(txt){ return `<div class="kprompt"><div class="av">${IC.person}</div>
   <div class="k-h3" style="flex:1;min-width:0">${esc(txt)}</div></div>`; }
 function kcomposer(id,ph){ return `<div class="kcomp" style="padding:10px 16px;border-top:1px solid var(--border);background:var(--bg)">
@@ -2752,7 +2783,8 @@ function scr_reqcomposer(){
   // buried under the thread. It appears once there is something to build from.
   return `<div class="kflow fade">${kbar(true)}
     <div class="kcont">
-      ${kprompt(T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
+      ${kprompt(FLOW.mode==='intent'?T('Собираем интент','Building an intent')
+                                     :T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
       ${msgs}
       ${FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:''}
       ${(!FLOW.msgs.length||FLOW.lastFailed)?`<div style="display:flex;flex-direction:column;gap:12px">
@@ -4033,7 +4065,8 @@ function doAct(act, ds){
     case 'flow-hint': flowSay(ds.h||''); break;
     case 'flow-pick': { FLOW[ds.k]=(FLOW[ds.k]===ds.v?null:ds.v); render(); break; }
     case 'flow-skip': flowToSummary(); break;
-    case 'flow-finish': flowToSummary(); break;   // explicit way to END the dialog from the composer
+    case 'flow-finish': intentStart(); break;    // opens the intent-building chat, not the final form
+    case 'flow-done': flowToSummary(); break;    // inside that chat: finish and review
     case 'flow-next': flowToSummary(); break;
     case 'flow-edit': FLOW.editAll=true; cur='clarify'; render(); break;
     case 'flow-start': flowSearch(); break;
