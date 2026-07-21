@@ -594,9 +594,9 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* "Plans for you" = a horizontal carousel: one wide card at a time, the next peeking to signal swipe.
    Bleeds to the screen edges (cancels .ah2 .body's 20px padding) so a card can be near full-width. */
 .carousel{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;
-  scrollbar-width:none;margin:0 -20px;padding:2px 20px 6px;scroll-padding:0 20px}
+  scrollbar-width:none;margin:0 -20px;padding:2px 0 8px 20px;scroll-padding-left:20px}
 .carousel::-webkit-scrollbar{display:none}
-.carousel .ecard{flex:0 0 88%;max-width:none;scroll-snap-align:start}
+.carousel .ecard{flex:0 0 89%;max-width:none;scroll-snap-align:start}
 /* flow screens: prompt row, bubbles, plan card, chips */
 .kflow{display:flex;flex-direction:column;height:100%;background:var(--bg)}
 .kflow .kbar{height:56px;display:flex;align-items:center;gap:8px;padding:0 16px;flex:none}
