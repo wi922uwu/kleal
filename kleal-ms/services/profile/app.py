@@ -579,8 +579,9 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* event card */
 .ecard{display:flex;gap:12px;align-items:flex-start;background:var(--card);border-radius:16px;
   padding:12px 16px 12px 12px;position:relative;cursor:pointer}
-.ecard .ph{width:94px;height:94px;border-radius:8px;background:#eef0f4;flex:none}
-.ecard .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:16px;justify-content:center}
+.ecard .ph{width:94px;height:94px;border-radius:8px;background:var(--neutral100);flex:none;display:flex;align-items:center;justify-content:center;color:var(--neutral400)}
+.ecard .ph svg{width:36px;height:36px}
+.ecard .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;justify-content:center}
 .ecard .ti{font-size:15px;line-height:20px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ecard .meta{display:flex;gap:12px;margin-top:12px}
 .ecard .mi{display:flex;gap:4px;align-items:center;font-size:12px;line-height:16px;color:var(--muted)}
@@ -1996,7 +1997,8 @@ async function loadExplore(){
   PUBLIC_INTENTS=(r&&r.plans)||[];
   // Agent Home's "For you today" shows the same REAL plans (the seed carries none)
   DATA.plans=PUBLIC_INTENTS.map(p=>({title:p.title||p.who||'', who:p.who||'',
-    when:p.when||'', dist:(p.km!=null?(p.km+' '+T('км','km')):''), going:p.going||p.participants||0}));
+    when:p.when||'', area:p.area||'', topics:p.topics||[],
+    dist:(p.km!=null?(p.km+' '+T('км','km')):''), going:p.going||p.participants||0}));
   if(cur==='search'||cur==='agenthome') render();
 }
 // Explore rows: prefer the person's stated area over a distance figure. The stored km is measured to a
@@ -2489,17 +2491,27 @@ function inboxCards(){
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans for "For you today"
   const nm=(DATA.name||'there').split(' ')[0];
-  const plan=(DATA.plans||[])[0];
-  const card = plan ? `<div class="ecard" data-plan="0">
-      <div class="ph"></div>
+  // "For you today" was one unfinished card: an empty grey square, a lonely pin with nothing after
+  // it, a raw username, a tap that toasted «скоро», and a dead bookmark. Now up to three real plans,
+  // each with a topic icon in the tile, «host · area», the time, a working «Позвать» (joinPublic) and
+  // a bookmark that actually saves. Whom+where varies, so the section no longer claims «сегодня».
+  const plans=(DATA.plans||[]).slice(0,3);
+  const planIcon=p=>IC[editIcon((p.topics&&p.topics[0])||p.title||'')]||IC.spark;
+  const planCard=(p,i)=>`<div class="ecard" style="cursor:default">
+      <div class="ph">${planIcon(p)}</div>
       <div class="bd">
-        <div><div class="ti">${esc(plan.title)}</div>
-          <div class="meta"><span class="mi">${IC.clock}${esc(plan.when||'')}</span>
-            <span class="mi">${IC.pin}${esc(plan.dist||'')}</span></div></div>
-        ${plan.going?`<div class="k-cap" style="color:var(--muted)">${plan.going} ${T('участников','participants')}</div>`
-          :`<div class="k-cap" style="color:var(--muted)">${esc(plan.who||'')}</div>`}
+        <div><div class="ti">${esc(p.title)}</div>
+          <div class="meta"><span class="mi">${IC.clock}${esc(p.when||'')}</span>
+            ${(p.area||p.dist)?`<span class="mi">${IC.pin}${esc(p.area||p.dist)}</span>`:''}</div></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <span class="k-cap" style="color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${
+            p.going?`${p.going} ${T('участников','participants')}`:esc(p.who||'')}</span>
+          <button class="kbtn pri sm" style="width:auto;padding:0 16px;flex:none" data-act="join-plan" data-pi="${i}">${T('Позвать','Invite')}</button>
+        </div>
       </div>
-      <div class="bm">${IC.bookmark}</div></div>`
+      <div class="bm" data-act="cand-save" data-n="${esc(p.who||'')}" style="cursor:pointer">${IC.bookmark}</div></div>`;
+  const card = plans.length
+    ? plans.map(planCard).join('')
     : `<div class="k-cap" style="color:var(--muted);padding:4px 2px">${T('Пока ничего не запланировано — опиши, чего хочешь, и я поищу.',"Nothing planned yet — tell me what you want and I'll look.")}</div>`;
   return `<div class="ah2 fade">
     <div class="ahd"><div class="nm k-h2">${T('Привет','Hey')}, ${esc(nm)} 👋</div>
@@ -2534,7 +2546,7 @@ function scr_agenthome(){
       <div style="display:flex;flex-direction:column;gap:32px">
         <div style="display:flex;flex-direction:column;gap:16px">
           <div style="display:flex;align-items:flex-end;justify-content:space-between">
-            <span class="k-title">${T('Для тебя сегодня','For you today')}</span>
+            <span class="k-title">${T('Планы для тебя','Plans for you')}</span>
             <span class="k-label" style="color:var(--primary);cursor:pointer" data-act="see-all">${T('Все','See All')}</span></div>
           ${card}
         </div>
@@ -3918,7 +3930,6 @@ function render(){
   document.querySelectorAll('[data-ecbx]').forEach(el=>el.onclick=()=>{ const i=+el.dataset.ecbx; editSig.know[i].on=!editSig.know[i].on; el.classList.toggle('on'); el.innerHTML=editSig.know[i].on?IC.check:''; });
   document.querySelectorAll('[data-eexp]').forEach(el=>el.onclick=()=>{ editSig.expansion=el.dataset.eexp; render(); });
   // V4: intents list, discovery pins/cards, message rows
-  document.querySelectorAll('[data-plan]').forEach(el=>el.onclick=()=>toast(T('Детали плана — скоро','Plan details are coming soon')));
   document.querySelectorAll('[data-msg]').forEach(el=>el.onclick=()=>openMsgThread(+el.dataset.msg));
   document.querySelectorAll('[data-savedintent]').forEach(el=>el.onclick=()=>openIntentFlow(el.dataset.savedintent));
   document.querySelectorAll('[data-notif]').forEach(el=>el.onclick=()=>openNotif(el.dataset.notif));
@@ -4039,6 +4050,7 @@ function doAct(act, ds){
     case 'search-area': loadExplore(); toast(T('Обновляю карту…','Refreshing the map…')); break;
     case 'filter': toast(T('Фильтры — скоро','Filters are coming soon')); break;
     case 'join': joinPublic(+ds.pi); break;
+    case 'join-plan': joinPublic(+ds.pi); break;   // "Позвать" on a For-you-today card
     // Agent Home
     case 'notif': setTab('notifs'); break;
     case 'go-onboarding': location.href='/'; break;
