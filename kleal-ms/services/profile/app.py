@@ -3776,90 +3776,77 @@ function okHints(v){
   return (Array.isArray(v)?v:[]).map(x=>String(x||'').trim())
     .filter(x=>x && x.length<=48 && (!ru || /[а-яё]/i.test(x))).slice(0,3);
 }
-// Is there anything personal to build on at all? Below two signals we do not invent a personality.
+// Is there anything personal to build on at all? With no usable interest we do not invent one.
 function hintsSignals(){
-  return (DATA.interests||[]).filter(i=>i&&i.name&&i.used!==false).length
-       + (String(DATA.area||'').trim()?1:0);
+  return (DATA.interests||[]).filter(i=>i&&i.name&&i.used!==false).length;
 }
-// Russian prepositional. Only inflects shapes we are sure of; anything else returns '' and the
-// caller drops the clause rather than printing «в Тбилиси-е».
-const _CITY_PREP={'москва':'Москве','белград':'Белграде','барселона':'Барселоне','тбилиси':'Тбилиси',
-  'ереван':'Ереване','лиссабон':'Лиссабоне','берлин':'Берлине','стамбул':'Стамбуле','прага':'Праге',
-  'валенсия':'Валенсии','варшава':'Варшаве','мадрид':'Мадриде','лондон':'Лондоне','париж':'Париже',
-  'копенгаген':'Копенгагене','амстердам':'Амстердаме','вена':'Вене','рим':'Риме','порту':'Порту'};
-function ruLoc(c){
-  const k=String(c||'').trim().toLowerCase(); if(!k) return '';
-  if(_CITY_PREP[k]) return _CITY_PREP[k];
-  if(/и[яй]$/.test(k)) return c.slice(0,-1)+'и';
-  if(/[ая]$/.test(k))  return c.slice(0,-1)+'е';
-  if(/[бвгдзклмнпрстфх]$/.test(k)) return c+'е';
-  return '';
+// The interests a person actually carries, as coarse keys — so a chip can be about what they DO
+// («поиграть в доту») rather than a category name («игры»).
+const _HINT_KEYS=[
+  ['dota',    /dota|дот/],
+  ['games',   /\bgam|игр|valorant|counter|cs2|league|fifa|фифа|консол/],
+  ['startup', /startup|стартап|\bai\b|\bии\b|tech|техно|product|продукт|business|бизнес|венчур/],
+  ['coffee',  /coffee|кофе|cafe|кафе/],
+  ['walk',    /walk|прогул|stroll|hik|поход/],
+  ['run',     /run|jog|бег|марафон/],
+  ['football',/football|soccer|футбол/],
+  ['gym',     /gym|fitness|зал|тренир|фитнес/],
+  ['music',   /music|музык|jazz|джаз|concert|концерт|гитар/],
+  ['art',     /\bart|искус|design|дизайн|museum|музе|выстав|фото|photo/],
+  ['books',   /book|книг|read|чтен|литерат/],
+  ['lang',    /language|язык|spanish|испан|english|англ|serbian|серб|француз|french/],
+  ['food',    /food|еда|dinner|ужин|cook|готов|ресторан|restaurant|бранч|brunch/],
+  ['film',    /movie|film|кино|сериал|series/]];
+// Recipes are ordered by how specific they are; a two-key recipe fires only when the person really
+// has both, which is what turns «прогулки» + «кофе» into one natural plan instead of two chips.
+const _HINT_RECIPES=()=>[
+  [['walk','coffee'], T('Пройтись по городу и выпить кофе','Take a walk and grab a coffee')],
+  [['run','coffee'],  T('Пробежаться утром и выпить кофе','Morning run, then coffee')],
+  [['startup','coffee'],T('Обсудить стартапы за кофе','Talk startups over coffee')],
+  [['dota'],          T('Поиграть в Доту вечером','Play some Dota tonight')],
+  [['startup'],       T('Обсудить новые стартапы и технологии','Talk new startups and tech')],
+  [['games'],         T('Собрать пати на вечер','Put a party together tonight')],
+  [['coffee'],        T('Выпить кофе и поговорить','Grab a coffee and talk')],
+  [['walk'],          T('Пройтись по городу и поговорить','Take a walk and talk')],
+  [['run'],           T('Пробежаться вместе утром','Go for a morning run together')],
+  [['football'],      T('Собрать игру в футбол','Get a football game together')],
+  [['gym'],           T('Сходить в зал вместе','Hit the gym together')],
+  [['music'],         T('Сходить на живую музыку','Go see some live music')],
+  [['art'],           T('Сходить на выставку','Go to an exhibition')],
+  [['books'],         T('Обсудить книгу за кофе','Talk books over coffee')],
+  [['lang'],          T('Попрактиковать язык за ужином','Practise a language over dinner')],
+  [['food'],          T('Поужинать в новом месте','Try dinner somewhere new')],
+  [['film'],          T('Сходить в кино','Go see a film')]];
+function hintKeys(){
+  const names=(DATA.interests||[]).filter(i=>i&&i.name&&i.used!==false)
+    .map(i=>String(i.name).toLowerCase());
+  const have={}, order=[];
+  names.forEach(n=>_HINT_KEYS.forEach(p=>{ if(p[1].test(n)&&!have[p[0]]){ have[p[0]]=n; order.push(p[0]); } }));
+  return {have, order, names};
 }
-function cityPhrase(){ const c=String(DATA.area||'').trim(); if(!c) return '';
-  return (UILANG==='ru') ? (ruLoc(c)?' в '+ruLoc(c):'') : ' in '+c; }
-// Answer-shaped chips mid-dialog. FLOW.intent is only set once the builder is ready (by which point
-// the screen has left this composer), so we read what the USER has NOT yet said instead.
-function saidText(){ return ((FLOW&&FLOW.msgs)||[]).filter(m=>m.who==='me')
-  .map(m=>String(m.text||'')).join(' ').toLowerCase(); }
-function askHints(){
-  const s=saidText(), out=[];
-  if(!/сегодня|завтра|выходн|пятниц|суббот|воскрес|понедельн|вторник|сред|четверг|today|tomorrow|weekend|friday|saturday|sunday|monday|tuesday|wednesday|thursday/.test(s))
-    out.push(T('Сегодня вечером','Tonight'), T('В выходные','This weekend'));
-  if(!/утр|дн[её]м|вечер|ноч|morning|afternoon|evening|night/.test(s))
-    out.push(T('Днём удобнее','Daytime works better'));
-  if(!/один на один|1:1|вдво[её]м|груп|компан|one-on-one|group|small/.test(s))
-    out.push(T('Лучше один на один','Rather one-on-one'), T('Можно небольшой компанией','A small group is fine'));
-  return out;
-}
-// Profile composer. Deterministic — no Math.random, so the row is stable across re-renders;
-// FLOW.hintSeed rotates the pick day to day so it is not frozen forever either.
-const _HINT_BY_TOPIC=[
-  [/run|jog|бег/,            ()=>[T('Найти компанию на утренний бег'+cityPhrase(),'Find company for a morning run'+cityPhrase()),
-                                  T('Кто бегает рядом по выходным?','Who runs nearby on weekends?')]],
-  [/coffee|cafe|кофе|кафе/,  ()=>[T('Выпить кофе и поговорить'+cityPhrase(),'Grab a coffee and talk'+cityPhrase()),
-                                  T('Спокойное кафе без спешки','A quiet cafe, unhurried')]],
-  [/football|soccer|футбол/, ()=>[T('Собрать игру в футбол на выходных','Get a football game together this weekend'),
-                                  T('Посмотреть матч в компании','Watch the match with company')]],
-  [/\bai\b|startup|стартап|\bии\b/,()=>[T('Обсудить ИИ и стартапы за ужином','Talk AI and startups over dinner'),
-                                  T('Найти людей из продукта и технологий','Meet people from product and tech')]],
-  [/dota|gam|игр/,           ()=>[T('Найти напарника в Dota на вечер','Find a Dota teammate for tonight'),
-                                  T('Собрать пати на вечер','Put a party together for tonight')]],
-  [/walk|hik|прогул|поход/,  ()=>[T('Долгая прогулка и разговор'+cityPhrase(),'A long walk and a good talk'+cityPhrase()),
-                                  T('Выбраться в поход на выходных','Get out on a hike this weekend')]],
-  [/jazz|music|музык|джаз/,  ()=>[T('Сходить на живую музыку','Go to a live music night'),
-                                  T('Кто идёт на концерт на этой неделе?','Who is going to a gig this week?')]],
-  [/design|art|дизайн|искус/,()=>[T('Сходить на выставку'+cityPhrase(),'Go to an exhibition'+cityPhrase()),
-                                  T('Познакомиться с людьми из творческой среды','Meet people from the creative field')]],
-  [/gym|fitness|зал|спорт/,  ()=>[T('Найти напарника в зал','Find a gym partner'),
-                                  T('Потренироваться вместе утром','Train together in the morning')]],
-  [/book|read|книг|чтен/,    ()=>[T('Обсудить книгу за кофе','Talk books over coffee'),
-                                  T('Найти книжный клуб рядом','Find a book club nearby')]],
-  [/spanish|испан|language|язык/,()=>[T('Попрактиковать язык за ужином','Practise the language over dinner'),
-                                  T('Найти языковой обмен'+cityPhrase(),'Find a language exchange'+cityPhrase())]]];
-function topicHints(name){
-  const k=String(name||'').toLowerCase();
-  for(let i=0;i<_HINT_BY_TOPIC.length;i++){ if(_HINT_BY_TOPIC[i][0].test(k)) return _HINT_BY_TOPIC[i][1](); }
-  const w=locTopic(k);   // a free-typed interest: still personal, just plainer
-  return [T('Найти людей, которым тоже интересно: '+w,'Find people who are also into '+w)];
-}
+// Deterministic: no Math.random, so the row is stable across re-renders. Each key is spent once, so
+// «кофе» cannot show up in three chips.
 function seedHints(){
-  if(hintsSignals()<2) return [];
-  const out=[], seen={}, push=x=>{ x=String(x||'').trim(); if(x&&!seen[x]&&out.length<3){seen[x]=1;out.push(x);} };
-  const ints=(DATA.interests||[]).filter(i=>i&&i.name&&i.used!==false);
-  const rot=(FLOW&&FLOW.hintSeed)||0;
-  for(let n=0;n<ints.length&&out.length<3;n++){
-    const v=topicHints(ints[(n+rot)%ints.length].name); push(v[rot%v.length]);
-  }
-  const ln=(DATA.langsList||[]).filter(c=>c!=='ru'&&c!=='en')[0];
-  if(ln) push(T('Попрактиковать '+langName(ln).toLowerCase()+' за кофе','Practise '+langName(ln)+' over coffee'));
+  const K=hintKeys();
+  if(!Object.keys(K.have).length && !K.names.length) return [];
+  const out=[], spent={};
+  _HINT_RECIPES().forEach(r=>{
+    if(out.length>=3) return;
+    if(r[0].some(k=>!K.have[k]||spent[k])) return;
+    r[0].forEach(k=>{ spent[k]=1; });
+    out.push(r[1]);
+  });
+  // A free-typed interest we have no recipe for is still personal — name it plainly.
+  K.names.forEach(n=>{ if(out.length<3 && !_HINT_KEYS.some(p=>p[1].test(n)))
+    out.push(T('Найти людей, которым тоже интересно: '+locTopic(n),'Find people who are also into '+locTopic(n))); });
   return out;
 }
-// `m` is the agent message the chips hang off, or null for the empty / failed block.
 function hintsFor(m){
   const out=[], seen={}, push=x=>{ x=String(x||'').trim(); if(x&&!seen[x]&&out.length<3){seen[x]=1;out.push(x);} };
-  okHints(m&&m.hints).forEach(push);
-  if(out.length<3 && saidText()) askHints().forEach(push);
-  if(out.length<3) seedHints().forEach(push);
+  // The profile leads. These chips open the conversation, so they should name things this person
+  // actually does; the model's own suggestions were true but generic («Хочу познакомиться»).
+  seedHints().forEach(push);
+  if(out.length<3) okHints(m&&m.hints).forEach(push);
   if(out.length<3) FLOW_HINTS().forEach(push);
   return out.slice(0,3);
 }
@@ -3899,14 +3886,15 @@ function kcomposer(id,ph){ return `<div class="kcomp" style="padding:10px 16px;b
 
 // ---- 1. Request composer (479:14582) ----
 function scr_reqcomposer(){
-  const all=(FLOW&&FLOW.msgs)||[], last=all.length-1;
-  // The chips hang inside the LAST agent bubble's own 4px column, not as a .kcont child (12px gap),
-  // so they read as belonging to that message. Never while busy: a stale chip under a live question
-  // is worse than no chip.
+  const all=(FLOW&&FLOW.msgs)||[];
+  // Openers, so they belong to the START of the conversation: the FIRST agent bubble only. Once the
+  // dialogue is going the person is answering Kleal, not looking for a way in. They hang inside that
+  // bubble's own 4px column, not as a .kcont child (12px gap), so they read as part of the message.
+  let firstAg=-1; for(let n=0;n<all.length;n++){ if(all[n].who==='ag'){ firstAg=n; break; } }
   const msgs=all.map((m,i)=>m.who==='me'
     ? `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><div class="kbub me">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`
     : `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div>${
-        (i===last&&!FLOW.busy&&!FLOW.lastFailed)?`<div class="kchips" style="margin-top:2px">${hintsFor(m).map(h=>
+        (i===firstAg&&!FLOW.busy&&!FLOW.lastFailed)?`<div class="kchips" style="margin-top:2px">${hintsFor(m).map(h=>
           `<div class="kchip soft hint" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>`:''
       }</div>`).join('');
   // The bar carries «+ Создать интент» (Figma): the way OUT of the dialog is always in reach, not
