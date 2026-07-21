@@ -22,7 +22,6 @@ DATA = {
   "snapshot": [
     {"icon": "pin",    "title": "Location",       "value": "Barcelona · Eixample · Gràcia · Poblenou · Max travel 25 min"},
     {"icon": "globe",  "title": "Languages",      "value": "Russian native · English fluent · Spanish B1 practice"},
-    {"icon": "users",  "title": "Social formats", "value": "1:1 ✓ · Small group ✓ · Events ○ · Online fallback ✓"},
     {"icon": "clock",  "title": "Availability",   "value": "Weekday evenings · Weekends · Spontaneous sometimes"},
     {"icon": "shield", "title": "Safety",         "value": "Public places · Verified preferred · No private locations"},
   ],
@@ -2432,11 +2431,15 @@ function syncBasicsRows(){
   const rows=DATA.basics||(DATA.basics=[]);
   const put=(title,icon,value)=>{ if(!value) return; const r=rows.find(x=>x.title===title);
     if(r) r.value=value; else rows.push({icon,title,value}); };
+  // «Формат встреч» is gone from the profile. DATA.formats itself stays — it is a real field in the
+  // shared store, written by onboarding and by the personality test, and read on the candidate side.
+  // Only the row and its editor go. Removing it from rows already persisted matters: `put` never
+  // deleted anything, so a saved profile would have kept the row forever.
+  const _i=rows.findIndex(x=>String(x.title)==='Social formats'); if(_i>=0) rows.splice(_i,1);
   put('Basics','person',[DATA.gender,DATA.age].filter(Boolean).join(' · '));
-  put('Social formats','groups',(DATA.formats||[]).length?(DATA.formats||[]).map(fmtLabel).join(' · '):T('Не выбрано — открой и отметь','Not set — open and pick'));
   put('Location','pin',[DATA.area, DATA.radiusKm?T('до '+DATA.radiusKm+' км','up to '+DATA.radiusKm+' km'):null].filter(Boolean).join(' · '));
   put('Languages','globe',(DATA.langsList||[]).map(langName).join(' · '));
-  const ORD=['Basics','Social formats','Location','Languages'];
+  const ORD=['Basics','Location','Languages'];
   rows.sort((a,b)=>{const x=ORD.indexOf(a.title),y=ORD.indexOf(b.title);return (x<0?9:x)-(y<0?9:y);});
 }
 function matchProfile(){
@@ -5188,7 +5191,7 @@ function doAct(act, ds){
       // sheet is the step AFTER it. Jumping the hub row straight into the sheet skipped the page
       // the section is actually about.
       if(ds.row==='social'){ setTab('social'); break; }
-      const rt={'Basics':'basics','Social formats':'formats','Location':'location','Languages':'languages',
+      const rt={'Basics':'basics','Location':'location','Languages':'languages',
         interests:'interests', safety:'safety'}[ds.row||''];
       openSheet(rt||'basics'); break; }
     case 'edit-int': openEditInterest(ds.int); break;
