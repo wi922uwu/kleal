@@ -632,6 +632,24 @@ def _presentation(F, d_ab, dom_cfg, readiness=None):
 TOP_N, PER_BUCKET = 8, 3        # slate size params (allocation layer, not relevance — spec §11)
 
 
+def _shared_first(ints, F):
+    """Put the interests the match is actually BASED on at the front of the list.
+
+    Every card surface shows the first two or three of these. Order them as stored and the evidence
+    can be invisible: a card said «общее: art» above the tags padel / hiking / yoga, because `art`
+    was the person's fourth interest and never made the cut. The claim was true and looked like
+    nonsense. Reordering only — nothing added, nothing hidden, relevance untouched."""
+    d = str(((F or {}).get("semantic_activity") or (None, None, ""))[2] or "").lower()
+    if not d:
+        return list(ints)
+    hit = {w.strip() for w in d.split(",") if w.strip()}
+    if not hit:
+        return list(ints)
+    lead = [i for i in ints if str(i).strip().lower() in hit]
+    rest = [i for i in ints if str(i).strip().lower() not in hit]
+    return lead + rest
+
+
 def _diversify_reasons(slate):
     """A reason every card in the slate carries says nothing about this particular person.
 
@@ -850,7 +868,7 @@ def search(intent, prof, ctx, candidates, H, cfg):
             "name": c.get("name"), "score": round(d_ab["lcb"] * 100, 1), "tier": tier,
             "kind": TIER_KIND.get(tier, "related"), "km": km, "vibe": c.get("vibe"),
             "open": c.get("open"), "verified": c.get("verified"), "age": c.get("age"),
-            "interests": c.get("interests") or [], "role": c.get("role"),
+            "interests": _shared_first(c.get("interests") or [], F), "role": c.get("role"),
             "dealBreakers": c.get("dealBreakers"), "reasons": legacy_reasons or rs_en,
             "agree": agree, "note": note, "bucket": bucket,
             # ---- Matching Core v2 (spec) ----
