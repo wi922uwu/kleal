@@ -682,6 +682,9 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .ksheet.bottom{max-height:86%;display:flex;flex-direction:column}
 /* The safety sheet carries 15 toggles: without a scrolling body the sheet grew past the viewport and
    «Принять изменения» sat below the screen edge, unreachable. Header and footer stay put. */
+.eshmap{height:210px;margin-top:12px;border-radius:12px;overflow:hidden;background:var(--neutral100);
+  border:1px solid var(--line)}
+.eshmap .leaflet-container{font:inherit;background:var(--neutral100)}
 .esbody{overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1 1 auto;min-height:0;scrollbar-width:none}
 .esbody::-webkit-scrollbar{display:none}
 .khelp{display:flex;justify-content:center;padding:0 12px 6px}
@@ -3719,6 +3722,48 @@ function candVisPane(c){
 // the patch to the server row that matching actually reads. The chat editor stays for the fuzzy
 // sections (interests, personality) — that is literally the Figma «Edit with Kleal».
 let ESHEET=null;
+// The Location sheet used to show a decorative CSS circle that grew by pixels — it carried no scale,
+// so "32 км" meant nothing visually. It is a real Leaflet map now: the radius drawn over the actual
+// city, the view always fitted to the circle, and a metric scale bar, so you can see how far it is.
+let eshMap=null, eshCircle=null;
+function locSheetCenter(area){
+  const k=cityKey(area||'');                       // reuse the Explore map's city table
+  if(k&&CITY_LATLON[k]) return CITY_LATLON[k];
+  if(DATA.geo&&DATA.geo.coarseLat!=null) return [DATA.geo.coarseLat,DATA.geo.coarseLon];
+  return null;
+}
+function initLocSheetMap(){
+  const el=document.getElementById('eshMap'); if(!el) return;
+  if(eshMap){ try{ eshMap.remove(); }catch(_e){} eshMap=null; eshCircle=null; }
+  if(typeof L==='undefined') return;
+  const d=(ESHEET&&ESHEET.draft)||{};
+  const c=locSheetCenter(d.area);
+  if(!c){                                          // unknown city: say so instead of drawing a fake map
+    el.innerHTML=`<div class="k-cap" style="color:var(--muted);height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 14px">${
+      T('Не знаю такой город — радиус всё равно сохранится','City not recognised — the radius is still saved')}</div>`;
+    return;
+  }
+  el.innerHTML='';
+  const map=L.map(el,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,
+                      doubleClickZoom:false,touchZoom:false,boxZoom:false,keyboard:false});
+  // A view MUST exist before layers are added: circle.getBounds() projects through the map, so
+  // fitBounds on a view-less map throws and (inside the try/catch) silently left a blank container.
+  map.setView(c, 11);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
+  L.control.scale({metric:true,imperial:false,position:'bottomleft'}).addTo(map);
+  eshCircle=L.circle(c,{radius:(+d.radiusKm||10)*1000,color:'#F5455C',weight:2,
+                        fillColor:'#F5455C',fillOpacity:.12}).addTo(map);
+  L.circleMarker(c,{radius:4,color:'#F5455C',fillColor:'#F5455C',fillOpacity:1,weight:2}).addTo(map);
+  const fit=()=>{ try{ map.invalidateSize(); map.fitBounds(eshCircle.getBounds(),{padding:[16,16]}); }catch(_e){} };
+  fit(); setTimeout(fit,80);
+  eshMap=map;
+}
+// Live while dragging the slider: grow the circle and refit, so the zoom itself shows the distance.
+function locSheetRadius(km){
+  if(!eshMap||!eshCircle) return;
+  eshCircle.setRadius((+km||10)*1000);
+  try{ eshMap.fitBounds(eshCircle.getBounds(),{padding:[16,16]}); }catch(_e){}
+}
 const FORMAT_OPTS=()=>[
   ['1:1','1:1 · '+T('один на один','one-on-one')],
   ['small',T('Малая группа · 2–5','Small group · 2–5')],
@@ -3754,18 +3799,17 @@ function eSheetHTML(){
     title=T('Формат встреч','Social formats');
     body='<div>'+FORMAT_OPTS().map(o=>row(e.draft.includes(o[0]),o[1],'esheet-fmt',o[0])).join('')+'</div>';
   } else if(e.kind==='location'){
-    const km=+e.draft.radiusKm||10, px=Math.round(60+km*2.6);
+    const km=+e.draft.radiusKm||10;
     const kmTxt=v=>v+' '+T('км','km');
     title=T('Локация','Location');
-    body=`<input id="eshArea" class="kinput" value="${esc(e.draft.area)}" placeholder="${T('Город','City')}">
+    body=`<input id="eshArea" class="kinput" value="${esc(e.draft.area)}" placeholder="${T('Город','City')}"
+        onchange="ESHEET.draft.area=this.value;initLocSheetMap()">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
         <span class="k-small">${T('Как далеко готов(а) ехать?','How far are you happy to go?')}</span>
         <span class="k-small" id="eshKmL" style="color:var(--primary);font-weight:700">${kmTxt(km)}</span></div>
       <input id="eshKm" type="range" min="1" max="50" value="${km}" style="width:100%;accent-color:var(--primary)"
-        oninput="ESHEET.draft.radiusKm=+this.value;var t=this.value+' ${T('км','km')}';document.getElementById('eshKmL').textContent=t;document.getElementById('eshKmC').textContent=t;var c=document.getElementById('eshCirc'),px=Math.round(60+this.value*2.6);c.style.width=px+'px';c.style.height=px+'px'">
-      <div style="display:flex;justify-content:center;padding:10px 0 2px">
-        <div id="eshCirc" style="width:${px}px;height:${px}px;border-radius:999px;background:color-mix(in srgb, var(--primary) 14%, transparent);display:flex;align-items:center;justify-content:center;transition:width .15s,height .15s">
-          <div id="eshKmC" style="background:var(--primary);color:#fff;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700">${kmTxt(km)}</div></div></div>`;
+        oninput="ESHEET.draft.radiusKm=+this.value;document.getElementById('eshKmL').textContent=this.value+' ${T('км','km')}';locSheetRadius(this.value)">
+      <div id="eshMap" class="eshmap"></div>`;
   } else if(e.kind==='languages'){
     title=T('Языки','Languages');
     body='<div class="kchips">'+SHEET_LANGS.map(c=>`<div class="kchip ${e.draft.includes(c)?'on':''}" data-act="esheet-lang" data-v="${c}">${esc(langName(c))}</div>`).join('')+'</div>';
@@ -4053,6 +4097,9 @@ function render(){
   if(SHEET==='interest') A.insertAdjacentHTML('beforeend', sheetHTML());
   if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
   if(ESHEET) A.insertAdjacentHTML('beforeend', eSheetHTML());
+  // the Location sheet carries a live Leaflet map; build it after its node exists, tear it down on close
+  if(ESHEET&&ESHEET.kind==='location') setTimeout(initLocSheetMap,0);
+  else if(eshMap){ try{ eshMap.remove(); }catch(_e){} eshMap=null; eshCircle=null; }
   // A chat owns the full height: the app area becomes a flex column so the thread scrolls INTERNALLY and the
   // composer stays pinned. Resetting scrollTop to 0 on every render is what made the intent chat jump — so
   // only non-chat screens reset, and chats auto-scroll their thread to the newest message.
