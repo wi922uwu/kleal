@@ -376,6 +376,9 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .pbar>i{display:block;height:100%;background:var(--accent);border-radius:3px;width:0;
   transition:width .5s cubic-bezier(.4,0,.2,1)}
 .pct{font-size:12.5px;color:var(--muted);font-weight:600;flex:none}
+.hback{flex:none;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:#fff;
+  color:var(--muted);font-size:15px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.hback:active{transform:scale(.94)}
 
 /* thread */
 .thread{flex:1;overflow-y:auto;padding:8px 16px 14px;display:flex;flex-direction:column;gap:7px}
@@ -556,6 +559,8 @@ input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;bac
 .orows{display:flex;flex-direction:column;gap:10px;padding-bottom:6px}
 .orow{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);
   border-radius:16px;padding:13px 14px;cursor:pointer;transition:border-color .15s}
+.orow.flat{cursor:default}
+.orow.flat:active{transform:none}
 .orow:active{border-color:var(--accent)}
 .orow .oic2{width:40px;height:40px;border-radius:999px;border:1px solid var(--line);color:var(--ink);
   display:flex;align-items:center;justify-content:center;flex:none}
@@ -848,13 +853,18 @@ function startChat(){
 }
 function renderChrome(){
   A.innerHTML=`<div class="head"><div class="ava" id="ava">${MASCOT_SRC?'':'K'}</div>
-    <div class="ht"><div class="htt">Creating Profile</div>
-      <div class="prow"><div class="pbar"><i></i></div><div class="pct">0%</div></div></div></div>
+    <div class="ht"><div class="htt">${st.editing?'Editing':'Creating Profile'}</div>
+      <div class="prow"><div class="pbar"><i></i></div><div class="pct">0%</div></div></div>
+    ${st.editing?'<button class="hback" id="hback" title="Back" aria-label="Back">&#10005;</button>':''}</div>
     <div class="thread" id="thread"></div>
     <div class="composer"><button class="cadd">${IC.plus}</button>
       <div class="cwrap" id="cwrap"><input id="cin" placeholder="Message..."><span class="mic">${IC.mic}</span></div>
       <button class="csend" id="csend" disabled>${IC.send}</button></div>`;
   if(MASCOT_SRC){ document.getElementById('ava').style.backgroundImage=`url(${MASCOT_SRC})`; document.getElementById('ava').textContent=''; }
+  // Leaves an edit WITHOUT changing anything. afterAnswer() also returns here, but only once you have
+  // answered — which is not an exit, it is a toll.
+  const hb=document.getElementById('hback');
+  if(hb) hb.onclick=()=>{ st.editing=false; st.funnel=[]; st.fcEl=null; goSummary(); };
   updateHeader();
   const cin=document.getElementById('cin'), csend=document.getElementById('csend'), cwrap=document.getElementById('cwrap');
   cin.onfocus=()=>cwrap.classList.add('foc'); cin.onblur=()=>cwrap.classList.remove('foc');
@@ -1156,8 +1166,12 @@ function funnelCompose(t){
 function advanceFunnel(){ if(st.busy)return; if(st.fcEl){ st.fcEl.remove(); st.fcEl=null; } setCompose(null); afterAnswer(); }
 function funnelOpts(opts){
   if(!opts||!opts.length)return; const w=widgetSlot(); w.className='w fade';
-  w.innerHTML='<div class="chips">'+opts.map(o=>`<div class="chip" data-o="${esc(o)}">${esc(o)}</div>`).join('')+'</div>';
-  w.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{ if(st.busy)return; const v=c.dataset.o; w.remove(); funnelTurn(v); });
+  // «That's enough» is always there. The funnel used to end only when the model stopped asking or a
+  // turn cap fired — so whether the conversation ended was the model's decision, not the person's.
+  w.innerHTML='<div class="chips">'+opts.map(o=>`<div class="chip" data-o="${esc(o)}">${esc(o)}</div>`).join('')
+    +'<div class="chip" id="fdone">That\'s enough</div></div>';
+  w.querySelectorAll('.chip[data-o]').forEach(c=>c.onclick=()=>{ if(st.busy)return; const v=c.dataset.o; w.remove(); funnelTurn(v); });
+  const fd=w.querySelector('#fdone'); if(fd) fd.onclick=()=>{ if(st.busy)return; w.remove(); advanceFunnel(); };
 }
 // always keep exactly ONE Continue button, re-appended at the bottom under the latest message
 function funnelContinue(){ if(st.fcEl)st.fcEl.remove(); const w=widgetSlot(); st.fcEl=w;
@@ -1203,10 +1217,14 @@ function summaryRows(){
   const sf=p.safety||{}, pm=p.permissions||{};
   let roleTxt=''; if(roles){ roleTxt = Array.isArray(roles)?roles.join(', '):(typeof roles==='object'?Object.values(roles).map(v=>typeof v==='object'?Object.values(v).join('/'):v).join(', '):String(roles)); }
   // Figma summary sections: Interests · Your personality · Goals · Safety & Privacy
+  // The 4th element is the SCRIPT step this row opens, or '' when the row is only telling you
+  // something. «Your personality» and «Safety & Privacy» have no step to open — personality is taken
+  // in the profile, and the safety step was removed — so they are shown WITHOUT an edit affordance
+  // instead of offering one that does nothing. «Goals» is gone entirely: that section no longer
+  // exists in the profile either, so the row was pointing at a screen nobody can reach.
   R.push(['spark','Interests',(ints.join(', ')||'Not set')+(roleTxt?' ('+roleTxt+')':''),'interests']);
-  R.push(['chat','Your personality','Take the test in your profile','personality']);
-  R.push(['star','Goals','Add goals in your profile','goals']);
-  R.push(['lock','Safety & Privacy',[sf.publicPlacesOnly!==false?'public places':null,sf.hideExactLocation?'approx location':null,sf.verifiedOnly?'verified first':null,pm.allowAdjacentMatches?'adjacent':null,pm.rememberPreferences?'remembers prefs':null].filter(Boolean).join(', ')||'public places','safety']);
+  R.push(['chat','Your personality','Take the test in your profile','']);
+  R.push(['lock','Safety & Privacy',[sf.publicPlacesOnly!==false?'public places':null,sf.hideExactLocation?'approx location':null,sf.verifiedOnly?'verified first':null,pm.allowAdjacentMatches?'adjacent':null,pm.rememberPreferences?'remembers prefs':null].filter(Boolean).join(', ')||'public places','']);
   return R;
 }
 function goSummary(){ st.phase='summary'; const rows=summaryRows();
@@ -1225,13 +1243,13 @@ function goSummary(){ st.phase='summary'; const rows=summaryRows();
       <div class="sumc"><div class="sumlbl">Kleal's summary</div>
         <div class="sumtxt" id="sumtxt">${st.profile.summary?esc(st.profile.summary):'<span class="shim">Kleal is writing your summary...</span>'}</div>
         <div class="sumedit" id="sume" style="display:${st.profile.summary?'block':'none'}">Edit</div></div>
-      <div class="orows">${rows.map(r=>`<div class="orow" data-step="${r[3]}"><div class="oic2">${IC[r[0]]}</div>
+      <div class="orows">${rows.map(r=>`<div class="orow${r[3]?'':' flat'}" data-step="${r[3]}"><div class="oic2">${IC[r[0]]}</div>
         <div class="ot2"><div class="otn2">${esc(r[1])}</div><div class="otv2">${esc(r[2])}</div></div>
-        <div class="orowedit"><span class="rspark">${IC.spark}</span>${IC.edit}</div></div>`).join('')}</div>
+        ${r[3]?`<div class="orowedit"><span class="rspark">${IC.spark}</span>${IC.edit}</div>`:''}</div>`).join('')}</div>
     </div>
     <div class="foot"><button class="cta" id="done">Done</button></div>`;
   if(MASCOT_SRC){ const a=document.getElementById('ava2'); a.style.backgroundImage=`url(${MASCOT_SRC})`; a.textContent=''; }
-  A.querySelectorAll('.orow').forEach(e=>e.onclick=()=>editStep(e.dataset.step));
+  A.querySelectorAll('.orow').forEach(e=>{ if(e.dataset.step) e.onclick=()=>editStep(e.dataset.step); });
   document.getElementById('done').onclick=()=>rDone();
   wireSummaryEdit();
   if(!st.profile.summary) fetchSummary();
