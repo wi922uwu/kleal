@@ -1335,6 +1335,228 @@ _EXPLORE_WHEN = ("Today 18:00", "Tonight 21:00", "Tomorrow 08:00", "Tomorrow 19:
                  "Sun 10:00", "Wed 17:00", "Fri 20:00", "Thu 20:00", "Sat 17:00")
 
 
+# ================= Group Formation Core (spec §15) =================================================
+# A group is NOT "a proposal with more people". Spec §15.2 scores it as a SET: the weakest member
+# decides, not the average — least_misery dominates so a group with one clearly-out-of-place person
+# scores below a smaller, well-matched one. Feasibility (§15.1) is checked as a set too: capacity,
+# quorum, and pairwise safety against EVERY existing member, not just the host.
+GROUP_MIN, GROUP_MAX = 2, 8
+
+def _groups():
+    return SESSION.setdefault("_groups", [])
+
+def _gnorm(seq):
+    return [_norm_name(x) for x in (seq or [])]
+
+def _group_state(g):
+    """Derived, never stored twice: forming -> confirmed at quorum, full at capacity."""
+    if g.get("state") == "cancelled":
+        return "cancelled"
+    n = len(g.get("members") or [])
+    if n >= int(g.get("max_size") or GROUP_MAX):
+        return "full"
+    return "confirmed" if n >= int(g.get("min_size") or GROUP_MIN) else "forming"
+
+def _group_public(g, me=""):
+    mem = list(g.get("members") or [])
+    return {"gid": g.get("id"), "title": g.get("title"), "host": g.get("host"),
+            "topics": list(g.get("topics") or []), "when": g.get("when") or "",
+            "area": g.get("area") or "", "lat": g.get("lat"), "lon": g.get("lon"),
+            "mode": g.get("mode") or "offline",
+            "min_size": int(g.get("min_size") or GROUP_MIN), "max_size": int(g.get("max_size") or GROUP_MAX),
+            "members": mem, "size": len(mem), "waitlist": list(g.get("waitlist") or []),
+            "state": _group_state(g), "version": int(g.get("version") or 1),
+            "mine": bool(me) and _norm_name(me) in _gnorm(mem),
+            "hosting": bool(me) and _norm_name(me) == _norm_name(g.get("host")),
+            "waiting": bool(me) and _norm_name(me) in _gnorm(g.get("waitlist"))}
+
+def _pair_fit(intent, a, b):
+    """Directed relevance a->b combined reciprocally, on the SAME engine the slate uses. Returns
+    0..1, or None when the engine is off — callers must treat None as 'unknown', never as 0."""
+    if not (CORE_V2 and _CORE_CFG):
+        return None
+    try:
+        # A stored user row and a searcher PROFILE are not the same shape (languages is a list on one
+        # and {comfortable:[...]} on the other). Feeding a row in as a profile made reverse_features
+        # throw, and _pair_fit swallowed it as "unknown" — every group utility came back null.
+        a = dict(a or {})
+        if isinstance(a.get("languages"), list):
+            a["languages"] = {"comfortable": list(a["languages"])}
+        H = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
+        domain = _core.infer_domain(intent, cat_of)
+        dom_cfg = _CORE_CFG["domains"].get(domain) or _CORE_CFG["domains"]["social_meet"]
+        priors = {k: (_CORE_CFG["feature_groups"][k] or {}).get("unknown_prior", 0.5)
+                  for k in _core.FEATURE_KEYS}
+        f_ab = _core.build_features(intent, a, b, domain, H, ROLE_CONFLICT)
+        d_ab = _core.directional_score(f_ab, dom_cfg, priors)
+        f_ba = _core.reverse_features(intent, a, b, domain, H, ROLE_CONFLICT)
+        d_ba = _core.directional_score(f_ba, dom_cfg, priors)
+        return float(_core.reciprocal_score(d_ab, d_ba))
+    except Exception:
+        return None
+
+def group_utility(g, rows=None):
+    """Spec §15.2: 0.35*least_misery + 0.25*mean_pair_fit + 0.20*role_coverage + 0.10*time_overlap
+    + 0.10*diversity_value. Only the terms we can actually evidence are scored; the rest stay out of
+    the denominator instead of being invented (same unknown discipline as the pair engine)."""
+    by = {}
+    for c in (rows if rows is not None else load_candidates()):
+        by[_norm_name(c.get("name"))] = c
+    mem = [by.get(n) for n in _gnorm(g.get("members"))]
+    mem = [m for m in mem if m]
+    if len(mem) < 2:
+        return {"utility": None, "least_misery": None, "mean_pair_fit": None, "pairs": 0}
+    intent = {"topics": list(g.get("topics") or []), "type": g.get("type") or "social",
+              "role": "meet", "mode": g.get("mode") or "offline", "time": g.get("when") or ""}
+    fits = []
+    for i in range(len(mem)):
+        for j in range(len(mem)):
+            if i == j:
+                continue
+            f = _pair_fit(intent, mem[i], mem[j])
+            if f is not None:
+                fits.append(f)
+    if not fits:
+        return {"utility": None, "least_misery": None, "mean_pair_fit": None, "pairs": 0}
+    least, mean = min(fits), sum(fits) / len(fits)
+    langs = set()
+    for m in mem:
+        langs |= {str(x).lower() for x in (m.get("languages") or [])}
+    diversity = min(1.0, len(langs) / 3.0) if langs else None
+    parts, weights = [(least, 0.35), (mean, 0.25)], []
+    if diversity is not None:
+        parts.append((diversity, 0.10))
+    tot = sum(w for _v, w in parts)
+    util = sum(v * w for v, w in parts) / tot if tot else None
+    return {"utility": round(util, 4) if util is not None else None,
+            "least_misery": round(least, 4), "mean_pair_fit": round(mean, 4), "pairs": len(fits)}
+
+def group_create(host, title, topics, when="", area="", mode="offline",
+                 min_size=GROUP_MIN, max_size=GROUP_MAX, lat=None, lon=None, idem=None):
+    host = str(host or "").strip()
+    if not host:
+        return {"ok": False, "error": "host required"}
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    try:
+        mn, mx = int(min_size or GROUP_MIN), int(max_size or GROUP_MAX)
+    except Exception:
+        mn, mx = GROUP_MIN, GROUP_MAX
+    mn = max(2, min(mn, GROUP_MAX))
+    mx = max(mn, min(mx, GROUP_MAX))
+    now = time.time()
+    with _STORE_LOCK:
+        gs = _groups()
+        gid = "gr_%d_%s" % (int(now * 1000), hashlib.sha1(host.encode("utf-8")).hexdigest()[:6])
+        taken = {g.get("id") for g in gs}
+        base, n = gid, 1
+        while gid in taken:
+            gid, n = "%s_%d" % (base, n), n + 1
+        g = {"id": gid, "host": host, "title": str(title or "").strip()[:120] or "Meetup",
+             "topics": [str(t).lower() for t in (topics or [])][:6], "when": str(when or "")[:80],
+             "area": str(area or "")[:80], "mode": str(mode or "offline"), "lat": lat, "lon": lon,
+             "min_size": mn, "max_size": mx, "members": [host], "waitlist": [], "state": "forming",
+             "created": now, "updated": now, "version": 1,
+             "config_version": (_CORE_CFG or {}).get("config_version")}
+        gs.append(g)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _group_public(g, host)})
+
+def group_join(gid, who, idem=None, version=None):
+    """Joining is a transaction, exactly like accepting a proposal: capacity, state and pairwise
+    safety are re-checked under the lock, so two people racing for the last seat cannot both win."""
+    who = str(who or "").strip()
+    if not who:
+        return {"ok": False, "error": "name required"}
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        for g in _groups():
+            if g.get("id") != gid:
+                continue
+            if g.get("state") == "cancelled":
+                return _idem_put(idem, {"ok": False, "error": "CANCELLED", "gid": gid})
+            if version is not None and str(version) != str(g.get("version") or 1):
+                return {"ok": False, "error": "VERSION_CONFLICT", "gid": gid,
+                        "version": g.get("version"), "group": _group_public(g, who)}
+            if _norm_name(who) in _gnorm(g.get("members")):
+                return _idem_put(idem, {"ok": True, "gid": gid, "already": True,
+                                        "group": _group_public(g, who)})
+            # §15.1 safety exclusions are PAIRWISE: the joiner must be acceptable to every member
+            # already in, and every member to them. Checking only the host would let a blocked
+            # person walk in through someone else's group.
+            mine = (SESSION.get("me") or {}).get("blocked") or []
+            for m in (g.get("members") or []):
+                ok, why = _policy_ok_now(who, m, mine)
+                if not ok:
+                    return _idem_put(idem, {"ok": False, "error": "NOT_ELIGIBLE", "gid": gid,
+                                            "reason": why})
+            if len(g.get("members") or []) >= int(g.get("max_size") or GROUP_MAX):
+                wl = g.setdefault("waitlist", [])
+                if _norm_name(who) not in _gnorm(wl):
+                    wl.append(who)
+                g["updated"] = time.time()
+                g["version"] = int(g.get("version") or 1) + 1
+                _save_store()
+                return _idem_put(idem, {"ok": True, "gid": gid, "waitlisted": True,
+                                        "group": _group_public(g, who)})
+            g.setdefault("members", []).append(who)
+            g["waitlist"] = [w for w in (g.get("waitlist") or []) if _norm_name(w) != _norm_name(who)]
+            g["updated"] = time.time()
+            g["version"] = int(g.get("version") or 1) + 1
+            _save_store()
+            return _idem_put(idem, {"ok": True, "gid": gid, "group": _group_public(g, who)})
+    return {"ok": False, "error": "not found"}
+
+def group_leave(gid, who, idem=None):
+    """§15.3 step 7: on a drop, promote from the waitlist; losing quorum re-forms the group rather
+    than cancelling it. The host leaving hands the group to the next member — an empty group ends."""
+    who = str(who or "").strip()
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        for g in _groups():
+            if g.get("id") != gid:
+                continue
+            mem = [m for m in (g.get("members") or []) if _norm_name(m) != _norm_name(who)]
+            wl = [w for w in (g.get("waitlist") or []) if _norm_name(w) != _norm_name(who)]
+            if len(mem) == len(g.get("members") or []) and len(wl) == len(g.get("waitlist") or []):
+                return _idem_put(idem, {"ok": False, "error": "NOT_A_MEMBER", "gid": gid})
+            promoted = None
+            if len(mem) < int(g.get("max_size") or GROUP_MAX) and wl and len(mem) < len(g.get("members") or []):
+                promoted = wl.pop(0)
+                mem.append(promoted)
+            g["members"], g["waitlist"] = mem, wl
+            if not mem:
+                g["state"] = "cancelled"
+            elif _norm_name(g.get("host")) == _norm_name(who):
+                g["host"] = mem[0]                       # the group survives its host leaving
+            g["updated"] = time.time()
+            g["version"] = int(g.get("version") or 1) + 1
+            _save_store()
+            return _idem_put(idem, {"ok": True, "gid": gid, "promoted": promoted,
+                                    "group": _group_public(g, who)})
+    return {"ok": False, "error": "not found"}
+
+def group_list(self_name="", limit=30, open_only=False):
+    me = str(self_name or "").strip()
+    out = []
+    rows = load_candidates()
+    for g in _groups():
+        if g.get("state") == "cancelled":
+            continue
+        pub = _group_public(g, me)
+        if open_only and (pub["mine"] or pub["state"] == "full"):
+            continue
+        pub["fit"] = group_utility(g, rows)
+        out.append(pub)
+    # mine first, then the ones closest to happening, then group utility — never a raw percentage
+    out.sort(key=lambda p: (not p["mine"], -(p["size"] or 0), -((p["fit"] or {}).get("utility") or 0)))
+    return out[:max(1, int(limit or 30))]
+
 def explore_plans(limit=12, self_name=""):
     sn = str(self_name or "").strip().lower()
     users = [c for c in load_candidates() if not (sn and str(c.get("name", "")).strip().lower() == sn)]
@@ -1407,6 +1629,15 @@ class H(BaseHTTPRequestHandler):
             # The map needs a populated world, not the 12 rows a list needed. Capped so one client
             # cannot ask the ranker for the whole store.
             send_json(self, 200, {"plans": explore_plans(limit=lim, self_name=unquote(q.get("self", "")))})
+        elif self.path.split("?")[0] == "/api/agent/groups":
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
+            from urllib.parse import unquote
+            try:
+                lim = max(1, min(100, int(q.get("limit", 30))))
+            except (TypeError, ValueError):
+                lim = 30
+            send_json(self, 200, {"groups": group_list(unquote(q.get("self", "")), lim,
+                                                       q.get("open") in ("1", "true"))})
         elif self.path == "/":
             send_json(self, 200, {"service": "matching", "ok": True})
         else:
@@ -1513,6 +1744,16 @@ class H(BaseHTTPRequestHandler):
                                          body.get("idem")))
         elif p == "/api/agent/request-archive":
             send_json(self, 200, archive_request(body.get("id"), body.get("self")))
+        elif p == "/api/agent/group-create":
+            send_json(self, 200, group_create(body.get("host"), body.get("title"), body.get("topics"),
+                                              body.get("when"), body.get("area"), body.get("mode"),
+                                              body.get("min_size"), body.get("max_size"),
+                                              body.get("lat"), body.get("lon"), body.get("idem")))
+        elif p == "/api/agent/group-join":
+            send_json(self, 200, group_join(body.get("gid"), body.get("self"),
+                                            body.get("idem"), body.get("version")))
+        elif p == "/api/agent/group-leave":
+            send_json(self, 200, group_leave(body.get("gid"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/withdraw":
             send_json(self, 200, withdraw_request(body.get("id"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/respond":

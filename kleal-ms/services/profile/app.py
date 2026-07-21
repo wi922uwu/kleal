@@ -2248,9 +2248,18 @@ let PUBLIC_INTENTS=[], exploreLoaded=false, exploreLoading=false;
 async function loadExplore(){
   if(exploreLoading) return; exploreLoading=true;
   // The map wants a populated world; the old default of 12 rows left it almost empty.
-  let r; try{ r=await fetch('/api/agent/explore?limit=300&self='+encodeURIComponent(DATA.name||'')).then(x=>x.json()); }catch(e){ r=null; }
+  const me=encodeURIComponent(DATA.name||'');
+  let r,gr; try{ [r,gr]=await Promise.all([
+    fetch('/api/agent/explore?limit=300&self='+me).then(x=>x.json()),
+    fetch('/api/agent/groups?limit=60&self='+me).then(x=>x.json())]); }catch(e){ r=null; gr=null; }
   exploreLoading=false; exploreLoaded=true;
-  PUBLIC_INTENTS=(r&&r.plans)||[];
+  // Real groups are plans you can actually join, so they lead — a synthesized "X likes football"
+  // row is only an invitation to write to one person.
+  GROUPS=(gr&&gr.groups)||[];
+  PUBLIC_INTENTS=GROUPS.map(g=>({gid:g.gid, title:g.title, who:g.host, topics:g.topics||[],
+      when:g.when||'', area:g.area||'', lat:g.lat, lon:g.lon, size:g.size, max_size:g.max_size,
+      state:g.state, mine:g.mine, hosting:g.hosting, waiting:g.waiting, version:g.version}))
+    .concat((r&&r.plans)||[]);
   PUBLIC_INTENTS.forEach((p,i)=>{ p._i=i; });     // stable id; indexOf per pin was O(n^2) over 2000 rows
   // Agent Home's "For you today" shows the same REAL plans (the seed carries none)
   DATA.plans=PUBLIC_INTENTS.map(p=>({title:p.title||p.who||'', who:p.who||'',
@@ -2346,6 +2355,7 @@ function exploreAreas(src){
   return {areas:Object.values(by).sort((a,b)=>b.plans.length-a.plans.length), unknown};
 }
 let exploreMap=null, xLayer=null, xMarkers={};
+let GROUPS=[];                                  // real, joinable groups (spec §15) — not synthesized rows
 function initExploreMap(){
   if(typeof L==='undefined') return;                 // Leaflet not loaded
   const el=document.getElementById('lmap'); if(!el) return;
@@ -2534,6 +2544,55 @@ function drawExploreMarkers(){
   xPaintSelection();
 }
 
+async function joinGroup(i){
+  const p=PUBLIC_INTENTS[i]; if(!p||!p.gid) return;
+  if(p.mine){ toast(T('Ты уже в этой группе','You are already in')); return; }
+  let r=null;
+  try{
+    r=await fetch('/api/agent/group-join',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({gid:p.gid, self:DATA.name||'', version:p.version,
+                           idem:idemKey('gj:'+p.gid)})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  if(!r){ toast(T('Нет связи — попробуй ещё раз','No connection — try again')); return; }
+  if(!r.ok){
+    toast(r.error==='NOT_ELIGIBLE' ? T('Не получится присоединиться','You cannot join this one')
+        : r.error==='VERSION_CONFLICT' ? T('Группа изменилась — обнови','The group changed — refresh')
+        : r.error==='CANCELLED' ? T('Группа отменена','This group was cancelled')
+        : T('Не удалось присоединиться','Could not join'));
+    exploreLoaded=false; loadExplore(); return;
+  }
+  toast(r.waitlisted ? T('Мест нет — ты в листе ожидания','Full — you are on the waitlist')
+                     : T('Ты в группе','You are in'));
+  addNotif('intent', r.waitlisted?T('Лист ожидания','Waitlist'):T('Ты в группе','You are in'),
+           (p.title||'')+' · '+groupSeats(r.group||p), null);
+  exploreLoaded=false; await loadExplore();
+  if(cur==='search'){ xSyncList(); if(exploreMap) drawExploreMarkers(); }
+  render(); saveState();
+}
+async function leaveGroup(gid){
+  let r=null;
+  try{
+    r=await fetch('/api/agent/group-leave',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({gid, self:DATA.name||''})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  if(!r||!r.ok){ toast(T('Не удалось выйти','Could not leave')); return; }
+  toast(T('Ты вышел из группы','You left the group'));
+  exploreLoaded=false; await loadExplore(); render(); saveState();
+}
+async function hostGroup(it){
+  if(!it){ return; }
+  let r=null;
+  try{
+    r=await fetch('/api/agent/group-create',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({host:DATA.name||'', title:it.title||'', topics:it.tags||it.topics||[],
+        when:it.when||it.time||'', area:String(myArea()||'').split('·')[0].trim(), mode:it.mode||'offline',
+        min_size:2, max_size:it.max_size||4,
+        idem:idemKey('gc:'+(it.id||it.title||''))})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  if(!r||!r.ok){ toast(T('Не удалось собрать группу','Could not open the group')); return; }
+  toast(T('Группа открыта — люди могут присоединиться','Group is open — people can join'));
+  exploreLoaded=false; await loadExplore(); render(); saveState();
+}
 async function joinPublic(i){
   // This used to only write a local notification claiming the host's agent had been asked.
   // Nothing was sent. Now it really asks their agent, and reports what actually happened.
@@ -2747,6 +2806,27 @@ function scr_intents(){
       </div>`)).join('')
       :none(T('Пока нет подтверждённых встреч.','No confirmed meetups yet.')));
 
+  // 1b. MY GROUPS — real multi-person meetups (spec §15). Seats and state are facts from the
+  // server, so nothing here is a guess: «3/4 · набирается» means exactly that.
+  if(!GROUPS.length && !exploreLoaded && !exploreLoading) loadExplore();
+  const myG=GROUPS.filter(g=>g.mine||g.waiting);
+  const s1b=sec(T('Мои группы','My groups'), myG.length,
+    myG.length?myG.map(g=>{
+      const b=groupBadge(g), tags=(g.topics||[]).slice(0,4);
+      return `<div class="icard">
+        <div class="ihd"><div class="itl">${esc(g.title||T('Групповая встреча','Group meetup'))}</div>
+          <span class="kbadge ${b[1]}">${esc(b[0])} · ${groupSeats(g)}</span></div>
+        ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(locTopic(t))}</span>`).join('')}</div>`:''}
+        <div class="ifoot"><span class="k-cap" style="color:var(--muted)">${esc(
+            (g.hosting?T('ты организатор','you host'):T('организатор','host')+' · '+g.host)
+            +(g.waiting?(' · '+T('лист ожидания','waitlist')):''))}</span>
+          <span class="k-cap" style="color:var(--muted)">${esc([locStr(g.when||''),locStr(g.area||'')].filter(Boolean).join(' · '))}</span></div>
+        <div class="iacts">
+          <button class="kbtn sec sm" data-act="group-leave" data-gid="${esc(g.gid)}">${T('Выйти','Leave')}</button>
+        </div></div>`; }).join('')
+      :none(T('Ты пока не в группах. Открой «Обзор» — там видно, к чему можно присоединиться.',
+              'You are not in any group yet. Open Explore to see what you can join.')));
+
   // 2. PROPOSALS FROM OTHER PEOPLE — the pending inbox
   const pend=REQS.filter(r=>r.status==='pending'&&String(r.to||'').trim().toLowerCase()===(DATA.name||'').trim().toLowerCase());
   const s2=sec(T('Предложения от других людей','Proposals from other people'), pend.length,
@@ -2778,6 +2858,7 @@ function scr_intents(){
             : T('пока никого','no one yet')}</span></div>
         <div class="iacts">
           <button class="kbtn sec sm" data-act="intent-open" data-id="${esc(it.id||'')}">${T('Открыть','Open')}</button>
+          <button class="kbtn sec sm" data-act="group-host" data-id="${esc(it.id||'')}">${T('Собрать группу','Open a group')}</button>
           <button class="kbtn sec sm" data-act="intent-del" data-id="${esc(it.id||'')}">${T('Удалить','Delete')}</button>
         </div></div>`; }).join('')
       :none(T('Расскажи Kleal, чем хочешь заняться — он соберёт план и найдёт людей.','Tell Kleal what you would like to do — it will build the plan and find people.')))
@@ -2797,7 +2878,7 @@ function scr_intents(){
       :none(ARCHTAB==='declined'?T('Непринятых предложений нет.','No unaccepted proposals.')
                                 :T('Архив пуст.','The archive is empty.'))));
 
-  return `<div class="stack fade" style="gap:28px">${s1}${s2}${s3}${s4}</div>`;
+  return `<div class="stack fade" style="gap:28px">${s1}${s1b}${s2}${s3}${s4}</div>`;
 }
 function plural(n,one,few,many){
   const m10=n%10, m100=n%100;
@@ -2860,6 +2941,19 @@ function xRedo(){
   toast(inView?T('В этой зоне: '+inView,'In this area: '+inView):T('В этой зоне пока никого','Nobody here yet'));
 }
 // The tapped-pin card. Injected outside render(), so its buttons are wired by hand.
+// A group says how many seats are left and whether it is already happening. Never a percentage.
+function groupSeats(p){ return (p.size||0)+'/'+(p.max_size||0); }
+function groupBadge(p){
+  return p.state==='full'      ? [T('мест нет','no seats'),'mut']
+       : p.state==='confirmed' ? [T('состоится','happening'),'ok']
+       :                         [T('набирается','forming'),'warn'];
+}
+function joinLabel(p){
+  return p.mine    ? T('Ты в группе','You are in')
+       : p.waiting ? T('Ты в листе ожидания','On the waitlist')
+       : p.state==='full' ? T('В лист ожидания','Join waitlist')
+       : T('Присоединиться','Join');
+}
 function showPlanCard(i){
   const p=PUBLIC_INTENTS[i], el=document.getElementById('xcard'); if(!p||!el) return;
   xSel=i;
@@ -2869,7 +2963,9 @@ function showPlanCard(i){
     +'<div class="k-cap" style="color:var(--muted)">'+esc(p.who)+' · '+esc(locStr(p.when))+' · '+esc(planWhere(p))+'</div></div>'
     +'<span class="xclose" data-act="xcard-close">✕</span></div>'
     +(tags.length?'<div class="itags">'+tags.map(t=>'<span class="ktag">'+esc(locTopic(t))+'</span>').join('')+'</div>':'')
-    +'<button class="kbtn pri" data-act="join" data-pi="'+i+'">'+T('Присоединиться','Join')+'</button>';
+    +(p.gid?'<div class="ifoot"><span class="k-cap" style="color:var(--muted)">'+T('Участники','Members')+' · '+groupSeats(p)+'</span>'
+        +'<span class="kbadge '+groupBadge(p)[1]+'">'+esc(groupBadge(p)[0])+'</span></div>':'')
+    +'<button class="kbtn pri" data-act="join" data-pi="'+i+'"'+(p.mine?' disabled':'')+'>'+esc(joinLabel(p))+'</button>';
   el.classList.add('on');
   const w=document.querySelector('.xwrap'); if(w) w.classList.add('card-on');  // lifts .xctl clear of the card
   const m=document.getElementById('lmap'); if(m) m.classList.add('hasSel');    // dims the other pins
@@ -2893,12 +2989,14 @@ function xListHTML(P){
   const row=(p)=>{ const i=p._i, tags=(p.topics||[]).slice(0,4), isMine=cityKey(p.area)===mineKey;
     return '<div class="icard" data-public="'+i+'">'
       +'<div class="ihd"><div class="itl">'+esc(p.title)+'</div>'
-      +(p.verified?'<span class="kbadge ok">'+T('проверен','verified')+'</span>'
-        :(isMine?'<span class="kbadge mut">'+T('твой город','your city')+'</span>':''))+'</div>'
+      +(p.gid?'<span class="kbadge '+groupBadge(p)[1]+'">'+esc(groupBadge(p)[0])+' · '+groupSeats(p)+'</span>'
+        :(p.verified?'<span class="kbadge ok">'+T('проверен','verified')+'</span>'
+        :(isMine?'<span class="kbadge mut">'+T('твой город','your city')+'</span>':'')))+'</div>'
       +(tags.length?'<div class="itags">'+tags.map(t=>'<span class="ktag">'+esc(locTopic(t))+'</span>').join('')+'</div>':'')
       +'<div class="ifoot"><span class="k-cap" style="color:var(--muted)">'+esc(p.who)+' · '+esc(locStr(p.when))+'</span>'
       +'<span class="k-cap" style="color:var(--muted)">'+esc(planWhere(p))+'</span></div>'
-      +'<div class="iacts"><button class="kbtn pri sm" data-act="join" data-pi="'+i+'">'+T('Присоединиться','Join')+'</button></div></div>'; };
+      +'<div class="iacts"><button class="kbtn pri sm" data-act="join" data-pi="'+i+'"'+(p.mine?' disabled':'')
+      +'>'+esc(joinLabel(p))+'</button></div></div>'; };
   if(!P.length){
     return XQ ? emptyState(T('Ничего не нашлось','Nothing found'),
                  T('Попробуй другое слово — например «кофе», «футбол» или город.','Try another word — «coffee», «football» or a city.'))
@@ -4717,7 +4815,10 @@ function doAct(act, ds){
       else toast(T('Нечего изменять','Nothing to edit')); break;
     case 'search-area': loadExplore(); toast(T('Обновляю карту…','Refreshing the map…')); break;
     case 'filter': toast(T('Фильтры — скоро','Filters are coming soon')); break;
-    case 'join': joinPublic(+ds.pi); break;
+    case 'join': { const p=PUBLIC_INTENTS[+ds.pi];
+      if(p&&p.gid) joinGroup(+ds.pi); else joinPublic(+ds.pi); break; }
+    case 'group-leave': leaveGroup(ds.gid); break;
+    case 'group-host': hostGroup((DATA.intents||[]).find(x=>String(x.id)===String(ds.id))); break;
     case 'join-plan': joinPublic(+ds.pi); break;   // "Позвать" on a For-you-today card
     // Agent Home
     case 'notif': setTab('notifs'); break;
