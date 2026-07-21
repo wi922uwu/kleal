@@ -135,6 +135,10 @@ TOPIC_ALIASES = {
     # sports
     "футбол": "football", "соккер": "football", "матч": "football", "баскетбол": "basketball",
     "баскет": "basketball", "волейбол": "volleyball", "теннис": "tennis", "падел": "padel",
+    # «падл» is how people actually type it, and the filtration LLM answers with "paddle" — a
+    # different sport entirely (an oar, not a racquet). Unresolved, the ask reached the ranker as a
+    # word nobody has, and generic neighbours ("sport", "game") decided the slate instead.
+    "падл": "padel", "паддл": "padel", "paddle": "padel", "padle": "padel", "падел-теннис": "padel",
     "бадминтон": "badminton", "сквош": "squash", "бег": "running", "пробежка": "running",
     "побегать": "running", "велосипед": "cycling", "велик": "cycling", "вело": "cycling",
     "плавание": "swimming", "бассейн": "swimming", "поплавать": "swimming", "зал": "gym",
@@ -229,7 +233,25 @@ CATEGORY_BRIDGE = {
 # a real topic ("football", "soccer", "sport", "game"), and mapping them would bolt a gaming topic onto a
 # football request and surface gamers for it. A bare "games" request still lands via CATEGORY_BRIDGE.
 _EN_SYN = {"soccer": "football", "movies": "cinema", "movie": "cinema", "film": "cinema", "ml": "ai",
-           "boardgame": "boardgames", "videogames": "gaming"}
+           "boardgame": "boardgames", "videogames": "gaming",
+           # the filtration LLM answers «падл» with "paddle" — an oar, not a racquet. Unresolved it
+           # dropped the whole ask into the raw-passthrough branch below.
+           "paddle": "padel", "padle": "padel", "padeltennis": "padel",
+           "ping-pong": "pingpong", "table tennis": "pingpong", "futbol": "football"}
+
+# Words that name a BUCKET, not an ask. They only ever reach `topics` through the raw-passthrough
+# branch (nothing resolved), and there they are actively harmful: measured on «игры в падл», the
+# generic "game" pulled a gamer with no padel to the top of the slate and made every card lead with
+# «gaming» instead of «padel». Dropping them can empty `topics`, which is the honest outcome — the
+# category bridge then labels the request instead of a word nobody meant.
+_GENERIC_TOPIC = {"sport", "sports", "game", "games", "gaming", "activity", "activities", "hobby",
+                  "hobbies", "racquet", "racket", "meetup", "meetups", "event", "events", "fun",
+                  "outdoor", "outdoors", "indoor", "team", "exercise", "training",
+                  "people", "meeting", "social", "friends", "company", "спорт", "игры", "игра",
+                  "хобби", "встреча", "встречи", "люди", "компания", "развлечения",
+                  # verbs describing HOW, not WHAT — filtration emits them alongside the real topic
+                  "play", "playing", "talk", "talking", "discussing", "drinking", "eating",
+                  "watching", "hanging", "joining", "learning", "practising", "practicing"}
 _RU_END = ("ами", "ями", "ах", "ях", "ов", "ев", "ом", "ем", "ой", "ей", "ую", "ые", "ый", "ая", "ое",
            "у", "а", "я", "и", "ы", "е", "ю", "ь", "й", "о")
 _CYR = re.compile(r"[а-яё]", re.I)
@@ -337,6 +359,7 @@ _RAW_STOP = {"хочу", "хотел", "найти", "найди", "найдит
              # filtration writes its `interest` as an English gerund phrase ("discussing bonds while
              # swimming"), so the verb forms leak in as topics unless they are stopped here too.
              "discussing", "talking", "chatting", "meeting", "finding", "looking", "sharing", "wanting",
+             "play", "playing", "game", "games", "talk", "hang", "hangout", "join", "joining",
              "while", "together", "someone", "somebody", "tomorrow", "tonight", "today", "evening",
              "завтра", "сегодня", "вечером", "утром", "вместе", "бокалом"}
 
@@ -581,7 +604,8 @@ def build_intent(sig, cat, last_user, lang):
     # "apple" still match. This runs BEFORE the category bridge so a specific interest isn't replaced by a
     # generic taxonomy word (apple -> ai). filtration's topics are already cleaned; else use the raw text.
     if not topics:
-        topics = [str(t).lower()[:24] for t in (cat.get("topics") or []) if str(t).strip()][:4]
+        topics = [str(t).lower()[:24] for t in (cat.get("topics") or [])
+                  if str(t).strip() and str(t).strip().lower() not in _GENERIC_TOPIC][:4]
         from_request = from_request or bool(topics)      # filtration read the request — still the ask
     if not topics:
         topics = [w[:24] for w in re.findall(r"[a-zа-яё0-9]{4,}", str(sig.get("interest") or last_user).lower())
@@ -590,7 +614,15 @@ def build_intent(sig, cat, last_user, lang):
     if not topics:                                    # last resort: nearest taxonomy word for the category
         topics = CATEGORY_BRIDGE.get(str(cat.get("category") or ""), [])
     # card tags: what the user actually asked for (may be outside the taxonomy — "labubu" stays "labubu")
-    tags = [str(t).lower()[:24] for t in (cat.get("topics") or []) if str(t).strip()][:4] or topics
+    tags = [str(t).lower()[:24] for t in (cat.get("topics") or [])
+            if str(t).strip() and str(t).strip().lower() not in _GENERIC_TOPIC][:4] or topics
+    # Show the word the search actually ran on. Filtration's surface form can be a near-miss
+    # ("paddle" for padel), and a card that names a different sport than the one being searched is
+    # worse than a card that repeats the canonical word.
+    for _canon in topics:
+        if _canon and _canon not in tags:
+            tags = [_canon] + [t for t in tags if norm_topic(t) != _canon][:3]
+            break
     typ = str(cat.get("type") or sig.get("type") or "").lower()
     if typ not in ("dinner", "sport", "gaming", "networking", "dating", "language", "social", "other"):
         typ = "dating" if sig.get("datingOk") and any(
