@@ -3890,16 +3890,19 @@ function kcomposer(id,ph){ return `<div class="kcomp" style="padding:10px 16px;b
 // ---- 1. Request composer (479:14582) ----
 function scr_reqcomposer(){
   const all=(FLOW&&FLOW.msgs)||[];
-  // These chips are openers — a way IN when the page is blank. They used to hang off the first agent
-  // bubble, which meant they appeared under Kleal's reply to something the person had already said:
-  // «хочу покататься на роликах» → «Когда?» → and three chips offering startups and an exhibition.
-  // Once you have stated what you want, a suggestion for what to want is noise. So: only before the
-  // first thing you type. Not "no messages at all" — in intent mode a greeting is seeded into the
-  // transcript and would suppress them for the one state they exist for.
-  const spoke=all.some(m=>m.who==='me');
-  const msgs=all.map(m=>m.who==='me'
+  // These chips are openers — a way IN while the person still hasn't said what they want. The test is
+  // NOT "have they typed anything": «привет» is typing, and it is exactly the moment the openers are
+  // most useful. The builder already draws that line for us — a turn it answers conversationally is
+  // marked `chat`, so a user message WITHOUT that flag is the first real request. Before it: chips.
+  // After it: silence, because a suggestion for what to want is noise once you have said it.
+  const asked=all.some(m=>m.who==='me'&&!m.chat);
+  let lastAg=-1; for(let n=all.length-1;n>=0;n--){ if(all[n].who==='ag'){ lastAg=n; break; } }
+  const msgs=all.map((m,i)=>m.who==='me'
     ? `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><div class="kbub me">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`
-    : `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`).join('');
+    : `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div>${
+        (i===lastAg&&!asked&&!FLOW.busy&&!FLOW.lastFailed)?`<div class="kchips" style="margin-top:2px">${hintsFor(m).map(h=>
+          `<div class="kchip soft hint" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>`:''
+      }</div>`).join('');
   // The bar carries «+ Создать интент» (Figma): the way OUT of the dialog is always in reach, not
   // buried under the thread. It appears once there is something to build from.
   return `<div class="kflow fade">${kbar(true)}
@@ -3908,14 +3911,14 @@ function scr_reqcomposer(){
                                      :T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
       ${msgs}
       ${FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:''}
-      ${(!spoke&&!FLOW.busy)?`<div style="display:flex;flex-direction:column;gap:12px">
+      ${(!all.length&&!FLOW.busy)?`<div style="display:flex;flex-direction:column;gap:12px">
         <div class="k-label" style="color:var(--muted)">${T('Можно начать так','You could start with')}</div>
         <div class="kchips">${hintsFor(null).map(h=>`<div class="kchip soft hint" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
       </div>`:''}
       ${/* A failure is not the moment for openers either: «Обсудить стартапы» is not a rephrasing of
              what the person just tried to say. Generic examples of PHRASING are, which is what this
              block always meant. */''}
-      ${(spoke&&FLOW.lastFailed&&!FLOW.busy)?`<div style="display:flex;flex-direction:column;gap:12px">
+      ${(all.length&&FLOW.lastFailed&&!FLOW.busy)?`<div style="display:flex;flex-direction:column;gap:12px">
         <div class="k-label" style="color:var(--muted)">${T('Попробуй сформулировать иначе','Try phrasing it differently')}</div>
         <div class="kchips">${FLOW_HINTS().map(h=>`<div class="kchip soft hint" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
       </div>`:''}
