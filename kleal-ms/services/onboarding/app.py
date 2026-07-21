@@ -820,9 +820,24 @@ const SCRIPT=[
   {id:'location', bot:["Where are you mostly based?"], widget:'location'},
   {id:'language', bot:["Great. What languages are you comfortable in?"], widget:'language'},
   {id:'interests', bot:["What are you into?"], hint:"Pick some or write your own", widget:'interests'},
-  {id:'safety', bot:["Your safety matters. You're in control."], hint:"You can pick multiple", widget:'safety'},
 ];
-function startChat(){ st.phase='chat'; st.thread=[]; st.step=-1; st.editing=false; renderChrome(); nextStep(); }
+function startChat(){
+  // The «Your safety matters» step is gone, but everything it applied when a person pressed Continue
+  // without touching a toggle still has to exist: it was the ONLY writer of safety.publicPlacesOnly
+  // and permissions.useProfileForMatching, and the progress criteria «Safety mode», «Consent» and
+  // «Adjacent» read exactly those. Unset, the bar would have stopped short of 100% forever.
+  set('safety.publicPlacesOnly', true);        // Kleal's own recommendation, applied by default
+  set('safety.hideExactLocation', false);
+  set('safety.verifiedOnly', false);
+  set('permissions.useProfileForMatching', true);
+  // Written explicitly as TRUE on purpose. Every consumer already reads it as `!== false`, i.e.
+  // treats "unset" as on — while the toggle rendered `!!value`, i.e. showed it OFF. The switch was
+  // telling the user the opposite of what the system did; with the switch gone, the value stops
+  // disagreeing with the behaviour.
+  set('permissions.allowAdjacentMatches', true);
+  set('permissions.rememberPreferences', false);
+  st.phase='chat'; st.thread=[]; st.step=-1; st.editing=false; renderChrome(); nextStep();
+}
 function renderChrome(){
   A.innerHTML=`<div class="head"><div class="ava" id="ava">${MASCOT_SRC?'':'K'}</div>
     <div class="ht"><div class="htt">Creating Profile</div>
@@ -1085,63 +1100,7 @@ async function funnelTurn(text, first){
   st.busy=false; refreshSendState();
 }
 
-const CONNECT=[
- {k:'oneOnOne', ic:'user', t:'1:1', s:'One-on-one'},
- {k:'smallGroup', ic:'users', t:'Small group', s:'2-5 people'},
- {k:'online', ic:'monitor', t:'Online', s:'Video / voice'},
- {k:'inperson', ic:'pin', t:'Offline', s:'In person'},
- {k:'hybrid', ic:'chat', t:'Hybrid', s:'Both online & offline'},
- {k:'events', ic:'events', t:'Events', s:'Workshops, meetups'},
- {k:'lowpressure', ic:'leaf', t:'Low-pressure', s:'Chill & casual'},
-];
-function applyConnect(sel){ set('format.connect',sel);
-  if(sel.includes('oneOnOne'))set('format.oneOnOne',true); if(sel.includes('smallGroup'))set('format.smallGroup',true);
-  const on=sel.includes('online'),off=sel.includes('inperson'),hy=sel.includes('hybrid');
-  if(hy||(on&&off))set('format.modePreference','hybrid'); else if(on)set('format.modePreference','online'); else if(off)set('format.modePreference','offline');
-  if(sel.includes('lowpressure'))set('vibe.primary','low-pressure'); }
-WIDGETS.connect=function(slot){
-  const sel=(st.profile.format&&st.profile.format.connect)||[];
-  slot.innerHTML=`<div class="opts" id="conn">${CONNECT.map(o=>`
-    <div class="opt ${sel.includes(o.k)?'on':''}" data-k="${o.k}"><div class="oic">${IC[o.ic]}</div>
-      <div class="ot"><div class="otn">${o.t}</div><div class="ots">${o.s}</div></div>
-      <div class="ock">${IC.check}</div></div>`).join('')}</div>
-    <button class="cta" id="cont">Next</button>`;
-  slot.querySelectorAll('#conn .opt').forEach(o=>o.onclick=()=>{ o.classList.toggle('on');
-    applyConnect([...slot.querySelectorAll('#conn .opt.on')].map(x=>x.dataset.k)); });
-  slot.querySelector('#cont').onclick=()=>{ const sel=(st.profile.format&&st.profile.format.connect)||[]; lock(slot);
-    meSay(sel.length?sel.map(k=>(CONNECT.find(c=>c.k===k)||{}).t||k).join(', '):'No preference'); afterAnswer(); };
-};
 
-function togRow(id,icon,t,s,on){ return `<div class="tog ${on?'on':''}" data-t="${id}"><div class="oic">${IC[icon]}</div>
-  <div class="ot"><div class="otn">${t}</div><div class="ots">${s}</div></div><div class="sw"><i></i></div></div>`; }
-// icon-less settings toggle row (Figma "Toggle Row": title + subtitle + trailing switch)
-function togRow2(id,t,s,on){ return `<div class="tog ${on?'on':''}" data-t="${id}"><div class="ot"><div class="otn">${t}</div><div class="ots">${s}</div></div><div class="sw"><i></i></div></div>`; }
-WIDGETS.safety=function(slot){
-  const p=st.profile;
-  // "Meet in public places" is the recommended default (applied); matching consent is implied by completing onboarding.
-  if(!(p.safety&&p.safety.publicPlacesOnly!==undefined)) set('safety.publicPlacesOnly',true);
-  if(!(p.permissions&&p.permissions.useProfileForMatching!==undefined)) set('permissions.useProfileForMatching',true);
-  const sf=st.profile.safety||{}, pm=st.profile.permissions||{};
-  slot.innerHTML=`
-    <div class="reccard" id="recpub"><div class="recchip">${IC.star}</div>
-      <div class="rectx"><div class="reclbl">Recommended by Kleal</div><div class="rectitle">Meet in public places</div>
-        <div class="recnote">Kleal keeps first meetups in cafes, parks and other public spots.</div></div>
-      <div class="recarw"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div></div>
-    ${togRow2('safety.hideExactLocation','Hide exact location','Show approximate area only',!!sf.hideExactLocation)}
-    ${togRow2('safety.verifiedOnly','Verified users first','Prefer verified profiles',!!sf.verifiedOnly)}
-    ${togRow2('permissions.allowAdjacentMatches','Adjacent suggestions','Expand nearby options',!!pm.allowAdjacentMatches)}
-    ${togRow2('permissions.rememberPreferences','Remember preferences','Apply to future plans',!!pm.rememberPreferences)}
-    <button class="cta" id="cont" style="margin-top:16px">Continue</button>`;
-  const rec=slot.querySelector('#recpub'); if(rec) rec.onclick=()=>rec.classList.toggle('open');
-  slot.querySelectorAll('.tog').forEach(tg=>tg.onclick=()=>{ const path=tg.dataset.t, now=!tg.classList.contains('on');
-    tg.classList.toggle('on'); set(path,now); });
-  slot.querySelector('#cont').onclick=()=>{ lock(slot);
-    const s2=st.profile.safety||{}, p2=st.profile.permissions||{};
-    const on=['public places'];
-    if(s2.hideExactLocation)on.push('approx area'); if(s2.verifiedOnly)on.push('verified first');
-    if(p2.allowAdjacentMatches)on.push('adjacent'); if(p2.rememberPreferences)on.push('remember');
-    meSay(on.join(', ')); afterAnswer(); };
-};
 
 // ======================= SUMMARY =======================
 function finishChat(){ botSay(["That's everything I need. Here is what I have on you."], ()=>setTimeout(goSummary,500)); }
