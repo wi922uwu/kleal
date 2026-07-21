@@ -581,13 +581,16 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   padding:12px 16px 12px 12px;position:relative;cursor:pointer}
 .ecard .ph{width:94px;height:94px;border-radius:8px;background:var(--neutral100);flex:none;display:flex;align-items:center;justify-content:center;color:var(--neutral400)}
 .ecard .ph svg{width:36px;height:36px}
-.ecard .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;justify-content:center}
+.ecard .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;justify-content:center}
 .ecard .ti{font-size:15px;line-height:20px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ecard .meta{display:flex;gap:12px;margin-top:12px}
+.ecard .meta{display:flex;gap:12px;margin-top:2px}
 .ecard .mi{display:flex;gap:4px;align-items:center;font-size:12px;line-height:16px;color:var(--muted)}
 .ecard .mi svg{width:14px;height:14px}
-.ecard .bm{position:absolute;right:12px;bottom:12px;width:20px;height:20px;background:var(--card);
-  border-radius:999px;display:flex;align-items:center;justify-content:center;color:var(--fg)}
+.ecard .who{font-size:12px;line-height:16px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ecard .pact{display:flex;align-items:center;gap:10px;margin-top:4px}
+.ecard .pact .kbtn{width:auto;padding:0 18px}
+.ecard .pbm{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:pointer}
+.ecard .pbm svg{width:20px;height:20px}
 /* flow screens: prompt row, bubbles, plan card, chips */
 .kflow{display:flex;flex-direction:column;height:100%;background:var(--bg)}
 .kflow .kbar{height:56px;display:flex;align-items:center;gap:8px;padding:0 16px;flex:none}
@@ -2500,16 +2503,15 @@ function scr_agenthome(){
   const planCard=(p,i)=>`<div class="ecard" style="cursor:default">
       <div class="ph">${planIcon(p)}</div>
       <div class="bd">
-        <div><div class="ti">${esc(p.title)}</div>
-          <div class="meta"><span class="mi">${IC.clock}${esc(p.when||'')}</span>
-            ${(p.area||p.dist)?`<span class="mi">${IC.pin}${esc(p.area||p.dist)}</span>`:''}</div></div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <span class="k-cap" style="color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${
-            p.going?`${p.going} ${T('участников','participants')}`:esc(p.who||'')}</span>
-          <button class="kbtn pri sm" style="width:auto;padding:0 16px;flex:none" data-act="join-plan" data-pi="${i}">${T('Позвать','Invite')}</button>
+        <div class="ti">${esc(p.title)}</div>
+        <div class="meta"><span class="mi">${IC.clock}${esc(p.when||'')}</span>
+          ${(p.area||p.dist)?`<span class="mi">${IC.pin}${esc(p.area||p.dist)}</span>`:''}</div>
+        ${(p.going||p.who)?`<div class="who">${p.going?`${p.going} ${T('участников','participants')}`:esc(p.who||'')}</div>`:''}
+        <div class="pact">
+          <button class="kbtn pri sm" data-act="join-plan" data-pi="${i}">${T('Позвать','Invite')}</button>
+          <div class="pbm" data-act="cand-save" data-n="${esc(p.who||'')}">${IC.bookmark}</div>
         </div>
-      </div>
-      <div class="bm" data-act="cand-save" data-n="${esc(p.who||'')}" style="cursor:pointer">${IC.bookmark}</div></div>`;
+      </div></div>`;
   const card = plans.length
     ? plans.map(planCard).join('')
     : `<div class="k-cap" style="color:var(--muted);padding:4px 2px">${T('Пока ничего не запланировано — опиши, чего хочешь, и я поищу.',"Nothing planned yet — tell me what you want and I'll look.")}</div>`;
