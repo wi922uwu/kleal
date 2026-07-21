@@ -139,6 +139,10 @@ TOPIC_ALIASES = {
     # different sport entirely (an oar, not a racquet). Unresolved, the ask reached the ranker as a
     # word nobody has, and generic neighbours ("sport", "game") decided the slate instead.
     "падл": "padel", "паддл": "padel", "paddle": "padel", "padle": "padel", "падел-теннис": "padel",
+    # compounds ending in -спорт, listed explicitly now that the prefix rule no longer guesses them
+    "киберспорт": "gaming", "велоспорт": "cycling", "автоспорт": "cycling", "мотоспорт": "cycling",
+    "пинг-понг": "pingpong", "пингпонг": "pingpong", "настольный теннис": "pingpong",
+    "гандбол": "handball", "кроссфит": "crossfit", "футзал": "football", "мини-футбол": "football",
     "бадминтон": "badminton", "сквош": "squash", "бег": "running", "пробежка": "running",
     "побегать": "running", "велосипед": "cycling", "велик": "cycling", "вело": "cycling",
     "плавание": "swimming", "бассейн": "swimming", "поплавать": "swimming", "зал": "gym",
@@ -251,7 +255,8 @@ _GENERIC_TOPIC = {"sport", "sports", "game", "games", "gaming", "activity", "act
                   "хобби", "встреча", "встречи", "люди", "компания", "развлечения",
                   # verbs describing HOW, not WHAT — filtration emits them alongside the real topic
                   "play", "playing", "talk", "talking", "discussing", "drinking", "eating",
-                  "watching", "hanging", "joining", "learning", "practising", "practicing"}
+                  "watching", "hanging", "hang", "hangout", "chill", "joining", "learning",
+                  "practising", "practicing"}
 _RU_END = ("ами", "ями", "ах", "ях", "ов", "ев", "ом", "ем", "ой", "ей", "ую", "ые", "ый", "ая", "ое",
            "у", "а", "я", "и", "ы", "е", "ю", "ь", "й", "о")
 _CYR = re.compile(r"[а-яё]", re.I)
@@ -288,8 +293,11 @@ def norm_topic(word):
     s = _stem(w)
     if s in _ALIAS_STEMS:
         return _ALIAS_STEMS[s]
+    # PREFIX, not "contained anywhere". Russian compounds put the modifier first, so an infix rule
+    # made «спорт» swallow киберспорт / велоспорт / автоспорт / мотоспорт — every one of them
+    # resolved to `gym`, and someone asking about esports was shown people who lift weights.
     for k in _ALIAS_KEYS:
-        if len(k) >= 5 and k in w:
+        if len(k) >= 5 and w.startswith(k):
             return TOPIC_ALIASES[k]
     return ""
 
@@ -652,7 +660,11 @@ def build_intent(sig, cat, last_user, lang):
         "fallback": ("Онлайн, если не сложится" if lang == "ru" else "Online if it falls through"),
         # Only topics that came from the REQUEST make an intent rankable. A category-bridge guess is a
         # last-resort label, not evidence that anyone matching it wants THIS.
-        "rankable": bool(topics) and from_request,
+        # A bucket word is not something to search on. «Хочу нахуячиться завтра» resolved to
+        # topics ["hang"] and went ready on the first turn — a card with nothing to match against.
+        # Requiring one topic outside the bucket list sends it back through the clarifying question,
+        # which is what the "nothing to search on yet" branch already says.
+        "rankable": from_request and any(t not in _GENERIC_TOPIC for t in (topics or [])),
         "isNew": bool(cat.get("isNew")),
         "lang": lang,
     }
@@ -1272,6 +1284,49 @@ def _chat_reply(messages, profile, lang, on_text=None):
     return ""
 
 
+# Not "мне 15 минут идти" / "мне 15 лет назад" — a bare number followed by one of these is not an age.
+_AGE_NOT_YEARS = re.compile(r"^\s*(мин|час|км|кг|мет|руб|дол|евр|тыс|проц|град|сек|дн|нед|мес|назад)", re.I)
+_AGE_RU = re.compile(r"(?:мне|я)\s+(?:только\s+|всего\s+|уже\s+)?(\d{1,2})\s*(лет|год|года|годика|годиков)?\b")
+_AGE_EN = [re.compile(r"\b(?:i'?m|i am)\s+(\d{1,2})\b"),
+           re.compile(r"\b(\d{1,2})\s*(?:years?\s*old|y\.?o\.?)\b")]
+
+
+def stated_minor(messages):
+    """Did the person say, in their own words, that they are under 18?
+
+    Deterministic and BEFORE the model, so it cannot be talked around: a matching service that pairs
+    a self-declared 15-year-old with adults is not a bug to soften, and an LLM asked to judge this
+    would negotiate. Conservative about what counts as an age («мне 15 минут идти» is not one) and
+    decisive once it does. Scans the whole transcript, so the statement keeps holding on later turns.
+    """
+    for m in (messages or []):
+        if m.get("role") != "user":
+            continue
+        t = str(m.get("content") or "").lower()
+        for mt in _AGE_RU.finditer(t):
+            if mt.group(2) is None and _AGE_NOT_YEARS.match(t[mt.end():]):
+                continue
+            if t[mt.end():].strip().startswith("назад"):
+                continue
+            n = int(mt.group(1))
+            if 1 <= n < 18:
+                return n
+        for rx in _AGE_EN:
+            for mt in rx.finditer(t):
+                n = int(mt.group(1))
+                if 1 <= n < 18:
+                    return n
+    return None
+
+
+MINOR_REPLY = {
+    "ru": "Kleal работает с 18 лет, так что подбирать встречи я тут не смогу. "
+          "Если тебе уже есть 18 — поправь возраст в профиле, и вернёмся к этому.",
+    "en": "Kleal is for 18 and over, so I can't set up meetups here. "
+          "If you are 18 or older, correct your age in your profile and we'll pick this up again.",
+}
+
+
 def _profile_line(p):
     """One compact line at the top of the transcript so the hints can name this person's own city and
     interests instead of offering everyone the same three openers. Interests the user switched off in
@@ -1300,6 +1355,12 @@ def _hints(obj, lang):
 def intent_build(messages, profile, on_text=None):
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     lang = detect_lang(last_user)
+    # Before anything else, and before the model: a person who has said they are under 18 gets no
+    # intent built, on this turn or any later one. The reply is fixed text, not a generation, so
+    # there is nothing to argue with and no way for a later turn to talk it back open.
+    if stated_minor(messages) is not None:
+        return {"reply": MINOR_REPLY.get(lang, MINOR_REPLY["en"]), "valid": False, "ready": False,
+                "intent": None, "lang": lang, "conversational": True, "hints": []}
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
                        else ("Kleal: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
     convo = _profile_line(profile) + convo
