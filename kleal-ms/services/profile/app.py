@@ -2668,6 +2668,10 @@ function flowToSummary(){
   FLOW.summary=FLOW.summary||{request:FLOW.request||FLOW.text};
   cur='summary'; render();
 }
+// An online plan (dota, a call) has no district and no radius — it happens over the internet. The
+// clarify screen, the summary and the search itself all key off this instead of always assuming a
+// place. mode comes from the buddy (esports/online cues -> "online"); default is offline.
+function flowOnline(){ return !!(FLOW && FLOW.intent && FLOW.intent.mode==='online'); }
 function flowIntent(){
   // merge the clarification answers into the intent the buddy compiled
   const it=Object.assign({}, FLOW.intent||{});
@@ -2677,10 +2681,14 @@ function flowIntent(){
   const whenTxt={today:'today',tonight:'today',tomorrow:'tomorrow',weekend:'this weekend',pick:'Flexible'}[FLOW.when];
   const timeTxt={morning:'morning',afternoon:'afternoon',evening:'evening','20-22':'evening',late:'late evening'}[FLOW.time];
   it.time=[whenTxt,timeTxt].filter(Boolean).join(' ')||it.time||'Flexible';
-  if(FLOW.district) it.place=labelOf(DIST_OPTS(),FLOW.district);
   it.mode=it.mode||'offline';
-  if(FLOW.adjust==='radius') it.radiusKm=(it.radiusKm||15)+5;
-  if(FLOW.adjust==='wide'){ it.radiusKm=(it.radiusKm||15)+15; it.broadConsent=true; it.adjacentAllowed=true; }
+  if(it.mode==='online'){
+    it.place=T('Онлайн','Online');                       // no district, no radius — it's over the net
+  } else {
+    if(FLOW.district) it.place=labelOf(DIST_OPTS(),FLOW.district);
+    if(FLOW.adjust==='radius') it.radiusKm=(it.radiusKm||15)+5;
+    if(FLOW.adjust==='wide'){ it.radiusKm=(it.radiusKm||15)+15; it.broadConsent=true; it.adjacentAllowed=true; }
+  }
   return it;
 }
 async function flowSearch(isRetry){
@@ -2816,17 +2824,20 @@ function scr_clarify(){
     <div class="kchips">${opts.map(o=>`<div class="kchip ${FLOW[key]===o[0]?'on':''}" data-act="flow-pick" data-k="${key}" data-v="${o[0]}">${esc(o[1])}</div>`).join('')}</div></div>`;
   // A group whose answer already came from the dialog is not re-asked; «Изменить» on the summary
   // (flow-edit) sets editAll and brings every group back for corrections.
+  const online=flowOnline();     // an online plan never asks for a district
   const showWhen=FLOW.editAll||!FLOW.knownWhen, showTime=FLOW.editAll||!FLOW.knownTime;
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
       ${kprompt(T('Чтобы точнее подобрать — один момент:','To match you better, one thing:'))}
-      <div class="kbub ag">${showWhen?T('Когда и где удобнее?','When and where works best?')
-        :(showTime?T('Понял, когда. Время и район уточним?','Got the day. Time and district?')
+      <div class="kbub ag">${
+        showWhen?(online?T('Когда удобнее?','When works best?'):T('Когда и где удобнее?','When and where works best?'))
+        :(showTime?(online?T('Понял, когда. Во сколько удобно?','Got the day. What time works?')
+                          :T('Понял, когда. Время и район уточним?','Got the day. Time and district?'))
                   :T('Остался только район — уточним?','Only the district left — narrow it down?'))}</div>
       <div class="kplan">
         ${showWhen?grp(IC.calen,T('Когда','When'),WHEN_OPTS(),'when'):''}
         ${showTime?grp(IC.clock,T('Время','Time'),TIME_OPTS(),'time'):''}
-        ${grp(IC.pin,T('Район','District'),DIST_OPTS(),'district')}
+        ${online?'':grp(IC.pin,T('Район','District'),DIST_OPTS(),'district')}
         <div class="kwhy">${T('Необязательно — можно пропустить или изменить позже.','Optional — skip it or change it later.')}</div>
         <div class="kcta">
           <button class="kbtn sec" data-act="flow-skip">${T('Пропустить','Skip')}</button>
@@ -2866,7 +2877,9 @@ function scr_summary(){
         <div class="kreq"><div class="hd">${IC.binoc}${T('Запрос','Request')}</div>
           <div class="k-label">${esc(s.request||FLOW.request||FLOW.text)}</div></div>
         ${row(IC.clock,T('Время','Time'), when + (tm?(' — '+tm):''))}
-        ${row(IC.pin,T('Район','District'), labelOf(DIST_OPTS(),FLOW.district,T('любой','any')))}
+        ${flowOnline()
+          ? row(IC.globe, T('Где','Where'), T('Онлайн','Online'))
+          : row(IC.pin, T('Район','District'), labelOf(DIST_OPTS(),FLOW.district,T('любой','any')))}
         ${row(IC.target,T('Формат','Format'), s.format||T('Встреча, неформально','Casual meetup'))}
         ${row(IC.diamond,T('Вайб','Vibe'), s.vibe||T('открыто и дружелюбно','open, friendly'))}
         <div class="kwhy">${T('Формат и вайб — мои предположения, их можно поменять.','Format and vibe are my suggestions — tap to adjust.')}</div>
@@ -3624,7 +3637,11 @@ function eSheetHTML(){
     body='<div class="kchips">'+SHEET_LANGS.map(c=>`<div class="kchip ${e.draft.includes(c)?'on':''}" data-act="esheet-lang" data-v="${c}">${esc(langName(c))}</div>`).join('')+'</div>';
   } else if(e.kind==='basics'){
     title=T('Основное','Basics');
-    body=`<div class="k-label" style="color:var(--muted)">${T('Возраст','Age')}</div>
+    body=`<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+        <div class="ava" style="width:64px;height:64px;flex:none;cursor:pointer${DATA.photo?`;background-image:url(${DATA.photo});background-size:cover;background-position:center`:''}" data-act="edit-photo">${DATA.photo?'':IC.person}</div>
+        <button class="kbtn sec sm" style="width:auto;padding:0 16px" data-act="edit-photo">${DATA.photo?T('Сменить фото','Change photo'):T('Добавить фото','Add photo')}</button>
+      </div>
+      <div class="k-label" style="color:var(--muted)">${T('Возраст','Age')}</div>
       <input id="eshAge" class="kinput" inputmode="numeric" value="${esc(String(e.draft.age||''))}">
       <div class="k-label" style="color:var(--muted);margin-top:12px">${T('Пол','Gender')}</div>
       <div class="kchips">${GENDER_OPTS().map(g=>`<div class="kchip ${e.draft.gender===g[0]?'on':''}" data-act="esheet-gender" data-v="${g[0]}">${g[1]}</div>`).join('')}</div>`;
