@@ -687,6 +687,104 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .eshmap .leaflet-container{font:inherit;background:var(--neutral100)}
 .esbody{overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1 1 auto;min-height:0;scrollbar-width:none}
 .esbody::-webkit-scrollbar{display:none}
+/* ===== Explore: full-screen interactive map (Zenly / Citymapper / Airbnb flavoured) ===== */
+.xwrap{position:absolute;inset:0;overflow:hidden;--xtop:14px}
+.xmap{position:absolute;inset:0;background:#EDF0F5;z-index:0}
+.xmap .leaflet-container{font:inherit;background:#EDF0F5}
+/* Mute the basemap so the coral marks own the top of the value scale. Tile pane only — markers
+   live in the marker pane and stay full strength. */
+.xmap .leaflet-tile-pane{filter:saturate(.55) brightness(1.05) contrast(.92)}
+.xmap.moving .xpin{transition:none;animation:none}
+.xtop{position:absolute;left:12px;right:12px;top:var(--xtop);z-index:600;display:flex;gap:8px;align-items:center}
+.xtop::before{content:'';position:absolute;left:-12px;right:-12px;top:-58px;height:132px;z-index:-1;
+  pointer-events:none;background:linear-gradient(180deg,rgba(247,248,250,.86) 0%,rgba(247,248,250,.56) 46%,rgba(247,248,250,0) 100%)}
+.xpill{height:44px;padding:0 14px;border-radius:22px;display:flex;align-items:center;gap:8px;
+  background:rgba(255,255,255,.94);-webkit-backdrop-filter:blur(14px) saturate(1.5);backdrop-filter:blur(14px) saturate(1.5);
+  border:1px solid rgba(20,25,40,.07);box-shadow:0 1px 2px rgba(20,25,40,.12),0 8px 24px -6px rgba(20,25,40,.28);
+  font-size:14px;font-weight:500;letter-spacing:-.005em;color:var(--fg);cursor:pointer;white-space:nowrap;flex:none;
+  transition:transform .14s ease}
+.xpill:active{transform:scale(.97)}
+.xpill svg{width:18px;height:18px;flex:none;color:var(--muted)}
+.xpill.grow{flex:1;min-width:0;cursor:text}
+.xpill input{flex:1;min-width:0;border:0;outline:0;background:none;font:inherit;font-weight:400;color:var(--fg)}
+.xpill input::placeholder{color:var(--muted)}
+.xpill b{min-width:22px;height:20px;padding:0 6px;border-radius:10px;background:var(--primary);color:#fff;
+  font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:center}
+.xclr{width:22px;height:22px;border-radius:999px;background:var(--neutral100);color:var(--muted);flex:none;
+  display:none;align-items:center;justify-content:center;font-size:13px;line-height:1;cursor:pointer}
+.xclr.on{display:flex}
+.xredo{position:absolute;left:50%;top:calc(var(--xtop) + 54px);transform:translate(-50%,-6px);z-index:590;
+  height:38px;padding:0 16px;border-radius:19px;background:var(--fg);color:#fff;font-size:13px;font-weight:600;
+  display:flex;align-items:center;gap:7px;box-shadow:0 8px 24px -6px rgba(20,25,40,.5);cursor:pointer;
+  opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;white-space:nowrap}
+.xredo.on{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
+.xredo svg{width:15px;height:15px}
+.xctl{position:absolute;right:12px;bottom:20px;z-index:600;display:flex;flex-direction:column;gap:10px;
+  align-items:flex-end;transition:transform .28s cubic-bezier(.22,.7,.3,1)}
+.xwrap.card-on .xctl{transform:translateY(-176px)}
+.xbtn{width:44px;height:44px;border-radius:999px;background:rgba(255,255,255,.94);
+  -webkit-backdrop-filter:blur(14px) saturate(1.5);backdrop-filter:blur(14px) saturate(1.5);
+  border:1px solid rgba(20,25,40,.07);color:var(--fg);
+  box-shadow:0 1px 2px rgba(20,25,40,.12),0 8px 24px -6px rgba(20,25,40,.30);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;font-weight:500;line-height:1;
+  user-select:none;transition:transform .14s ease,background .14s ease}
+.xbtn:active{transform:scale(.93);background:#F1F3F7}
+.xbtn svg{width:20px;height:20px}
+.xzoom{border-radius:22px;overflow:hidden;background:rgba(255,255,255,.94);
+  -webkit-backdrop-filter:blur(14px) saturate(1.5);backdrop-filter:blur(14px) saturate(1.5);
+  border:1px solid rgba(20,25,40,.07);box-shadow:0 1px 2px rgba(20,25,40,.12),0 8px 24px -6px rgba(20,25,40,.30)}
+.xzoom .xbtn{background:none;border:0;box-shadow:none;border-radius:0;-webkit-backdrop-filter:none;backdrop-filter:none}
+.xzoom .xbtn+.xbtn{box-shadow:inset 0 1px 0 rgba(20,25,40,.08)}
+.xbtn.acc{color:var(--primary)}
+.xpinwrap{display:flex;flex-direction:column;align-items:center;pointer-events:none}
+.xpinwrap .xpin{pointer-events:auto}
+.xpin{border-radius:999px;background:#fff;padding:3px;cursor:pointer;touch-action:manipulation;
+  box-shadow:0 1px 2px rgba(20,25,40,.18),0 8px 20px -4px rgba(20,25,40,.28);
+  transition:transform .16s cubic-bezier(.2,.8,.3,1),opacity .16s;transform-origin:50% 50%}
+.xpin .in{width:100%;height:100%;border-radius:999px;display:flex;align-items:center;justify-content:center}
+.xpin.city{box-shadow:0 0 0 5px rgba(245,69,92,.13),0 0 0 11px rgba(245,69,92,.06),
+  0 2px 4px rgba(20,25,40,.16),0 10px 24px -6px rgba(188,31,56,.42)}
+.xpin.city .in{background:var(--primary);color:#fff;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.xpin.city.me{box-shadow:0 0 0 3px #2E6BFF,0 0 0 8px rgba(46,107,255,.20),0 2px 4px rgba(20,25,40,.16),0 10px 24px -6px rgba(188,31,56,.42)}
+.xpin.plan{padding:2px}
+.xpin.plan .in{background:#fff;color:var(--primary);box-shadow:inset 0 0 0 1.5px rgba(245,69,92,.20)}
+.xpin.plan .in svg{width:20px;height:20px;stroke-width:2.1}
+.xpin.grp .in{background:rgba(245,69,92,.92);color:#fff;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
+.xpin.sel{transform:scale(1.3);padding:4px;box-shadow:0 0 0 4px rgba(245,69,92,.22),0 14px 30px -6px rgba(188,31,56,.48)}
+.xpin.plan.sel .in{background:var(--primary);color:#fff;box-shadow:none}
+.xmap.hasSel .xpin:not(.sel){opacity:.5}
+.xlab{margin-top:6px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.93);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 1px 3px rgba(20,25,40,.20);
+  color:var(--fg);font-size:11px;line-height:15px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+@keyframes xpop{0%{opacity:0;transform:scale(.6)}100%{opacity:1;transform:scale(1)}}
+.xpin.new{animation:xpop .18s cubic-bezier(.2,.9,.3,1.1)}
+.xpin.sel.new{animation:none}
+.xmeDot{width:16px;height:16px;border-radius:50%;background:#2E6BFF;border:2.5px solid #fff;
+  box-shadow:0 1px 4px rgba(20,25,40,.35)}
+.xcard{position:absolute;left:12px;right:12px;bottom:16px;z-index:650;background:#fff;border-radius:22px;
+  border:1px solid rgba(20,25,40,.05);box-shadow:0 2px 6px rgba(20,25,40,.10),0 20px 48px -12px rgba(20,25,40,.38);
+  padding:16px 18px 18px;display:none}
+.xcard.on{display:block;animation:xup .28s cubic-bezier(.22,.7,.3,1)}
+@keyframes xup{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.xcard .k-h3{font-size:17px;line-height:23px;font-weight:600;letter-spacing:-.01em}
+.xcard .k-cap{font-size:12px;line-height:16px}
+.xcard .itags{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
+.xcard .ktag{font-size:11px;line-height:16px;padding:4px 10px}
+.xcard .kbtn{height:46px;min-height:46px;margin-top:14px}
+.xclose{width:44px;height:44px;margin:-12px -14px -12px 0;display:flex;align-items:center;justify-content:center;
+  color:var(--muted);cursor:pointer;font-size:19px;line-height:1;flex:none}
+.xscrim{position:absolute;inset:0;z-index:690;background:rgba(15,18,28,.30);opacity:0;pointer-events:none;transition:opacity .2s}
+.xscrim.on{opacity:1;pointer-events:auto}
+.xsheet{position:absolute;left:0;right:0;bottom:0;top:42%;z-index:700;background:var(--bg);
+  border-radius:22px 22px 0 0;box-shadow:0 -10px 40px rgba(20,25,40,.22);
+  transform:translateY(101%);transition:transform .26s cubic-bezier(.22,.7,.3,1);display:flex;flex-direction:column}
+.xsheet.on{transform:none}
+.xsheet .grab{width:38px;height:4px;border-radius:99px;background:var(--neutral300);opacity:.7;margin:10px auto 4px;flex:none}
+.xsheet .hd{flex:none;padding:8px 16px 12px;display:flex;align-items:center;justify-content:space-between}
+.xsheet .bd{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+  padding:0 16px calc(18px + env(safe-area-inset-bottom));scrollbar-width:none}
+.xsheet .bd::-webkit-scrollbar{display:none}
+@media(prefers-reduced-motion:reduce){.xsheet{transition:none}.xcard.on{animation:none}.xpin.new{animation:none}}
 .khelp{display:flex;justify-content:center;padding:0 12px 6px}
 .khelp .kchip{gap:6px;cursor:pointer;height:34px;min-height:34px}
 .khelp .kchip svg{width:15px;height:15px}
@@ -2077,14 +2175,17 @@ const ME_LATLON=[41.3874, 2.1686];   // Barcelona (demo user's coarse area)
 let PUBLIC_INTENTS=[], exploreLoaded=false, exploreLoading=false;
 async function loadExplore(){
   if(exploreLoading) return; exploreLoading=true;
-  let r; try{ r=await fetch('/api/agent/explore?self='+encodeURIComponent(DATA.name||'')).then(x=>x.json()); }catch(e){ r=null; }
+  // The map wants a populated world; the old default of 12 rows left it almost empty.
+  let r; try{ r=await fetch('/api/agent/explore?limit=300&self='+encodeURIComponent(DATA.name||'')).then(x=>x.json()); }catch(e){ r=null; }
   exploreLoading=false; exploreLoaded=true;
   PUBLIC_INTENTS=(r&&r.plans)||[];
+  PUBLIC_INTENTS.forEach((p,i)=>{ p._i=i; });     // stable id; indexOf per pin was O(n^2) over 2000 rows
   // Agent Home's "For you today" shows the same REAL plans (the seed carries none)
   DATA.plans=PUBLIC_INTENTS.map(p=>({title:p.title||p.who||'', who:p.who||'',
     when:p.when||'', area:p.area||'', topics:p.topics||[],
     dist:(p.km!=null?(p.km+' '+T('км','km')):''), going:p.going||p.participants||0}));
-  if(cur==='search'||cur==='agenthome') render();
+  if(cur==='search'){ xSyncList(); if(exploreMap) drawExploreMarkers(); else render(); }
+  else if(cur==='agenthome') render();
 }
 // Explore rows: prefer the person's stated area over a distance figure. The stored km is measured to a
 // fixed origin, so for someone in another city it reads as a few kilometres away — showing «Москва»
@@ -2163,51 +2264,156 @@ function cityLabel(key){
   return T(RU[key]||en, en);
 }
 // Plans grouped by the city we could resolve. Unresolvable areas are counted, never guessed.
-function exploreAreas(){
+function exploreAreas(src){
   const by={}; let unknown=0;
-  (PUBLIC_INTENTS||[]).forEach(p=>{
+  (src||PUBLIC_INTENTS||[]).forEach(p=>{
     const k=cityKey(p.area);
     if(!k){ unknown++; return; }
     (by[k]=by[k]||{key:k,plans:[]}).plans.push(p);
   });
   return {areas:Object.values(by).sort((a,b)=>b.plans.length-a.plans.length), unknown};
 }
-let exploreMap=null;
+let exploreMap=null, xLayer=null, xMarkers={};
 function initExploreMap(){
   if(typeof L==='undefined') return;                 // Leaflet not loaded
-  if(exploreMap){ try{ exploreMap.remove(); }catch(_e){} exploreMap=null; }
   const el=document.getElementById('lmap'); if(!el) return;
-  const map=L.map('lmap',{zoomControl:false,scrollWheelZoom:false,attributionControl:false});
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
-  const pin='<svg viewBox="0 0 24 24" width="30" height="30" style="filter:drop-shadow(0 3px 3px rgba(20,20,40,.28))"><path d="M12 22s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z" fill="#F5455C"/><circle cx="12" cy="10.5" r="2.6" fill="#fff"/></svg>';
-  const cIcon=L.divIcon({html:pin,className:'',iconSize:[30,30],iconAnchor:[15,30],popupAnchor:[0,-28]});
-  const meIcon=L.divIcon({html:'<div class="meDot"></div>',className:'',iconSize:[16,16],iconAnchor:[8,8]});
-  const pts=[];
+  // Build ONCE. Rebuilding on every render threw the user's pan/zoom away and made every pin blink;
+  // when the map is already alive we only re-measure and redraw the markers.
+  if(exploreMap && exploreMap.getContainer && document.body.contains(exploreMap.getContainer())){
+    try{ exploreMap.invalidateSize(); }catch(_e){}
+    drawExploreMarkers(); return;
+  }
+  if(exploreMap){ try{ exploreMap.remove(); }catch(_e){} }
+  const map=L.map(el,{zoomControl:false,attributionControl:false,scrollWheelZoom:true,dragging:true,
+    touchZoom:true,doubleClickZoom:true,zoomSnap:0,zoomDelta:1,wheelPxPerZoomLevel:90,
+    inertia:true,inertiaDeceleration:2600,easeLinearity:.22,tap:true,tapTolerance:18,
+    minZoom:2.5,maxZoom:17,bounceAtZoomLimits:false,
+    maxBounds:[[-72,-190],[84,190]],maxBoundsViscosity:1});
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    {maxZoom:19,maxNativeZoom:18,detectRetina:true,updateWhenIdle:false,updateWhenZooming:false,keepBuffer:3}).addTo(map);
+  xLayer=L.layerGroup().addTo(map); xMarkers={};
   const mine=cityKey(myArea());
-  const {areas, unknown}=exploreAreas();
-  areas.forEach(a=>{
-    const ll=CITY_LATLON[a.key]; if(!ll) return;
-    const here=(a.key===mine);
-    // The marker states a count for a city. It deliberately does NOT sit on any individual person.
-    const badge=L.divIcon({className:'', iconSize:[54,54], iconAnchor:[27,27],
-      html:'<div class="cityPin'+(here?' me':'')+'">'+a.plans.length+'</div>'});
-    const m=L.marker(ll,{icon:badge}).addTo(map);
-    const names=a.plans.slice(0,4).map(p=>esc(p.who||'')).join(', ');
-    m.bindPopup('<div class="mapop"><div class="mopt">'+esc(cityLabel(a.key))+' · '+a.plans.length+'</div>'
-      +'<div class="mopm">'+esc(names)+(a.plans.length>4?' …':'')+'</div>'
-      +'<button class="mopj" onclick="focusArea(\''+a.key+'\')">'+T('Показать','Show')+'</button></div>');
-    pts.push(ll);
-  });
-  if(unknown) console.info('explore: '+unknown+' plan(s) whose area could not be resolved to a city');
-  // No separate "me" dot when your own city already has a marker — identical coordinates, so the dot
-  // just hides under the pin. The dark .cityPin.me styling is what marks the city as yours.
-  const minePlotted=mine&&CITY_LATLON[mine]&&areas.some(a=>a.key===mine);
-  if(mine&&CITY_LATLON[mine]&&!minePlotted){ L.marker(CITY_LATLON[mine],{icon:meIcon}).addTo(map); pts.push(CITY_LATLON[mine]); }
-  else if(!pts.length){ L.marker(ME_LATLON,{icon:meIcon}).addTo(map); pts.push(ME_LATLON); }
-  try{ map.fitBounds(pts,{padding:[36,36]}); }catch(_e){ map.setView(ME_LATLON,13); }
-  setTimeout(()=>{ try{ map.invalidateSize(); map.fitBounds(pts,{padding:[36,36]}); }catch(_e){} }, 90);
+  const start=exploreCam||{c:(mine&&CITY_LATLON[mine])||ME_LATLON, z:10};
+  map.setView(start.c, start.z);                     // a view must exist before layers/bounds are used
+  // Landing on an empty view is a dead end: if your own city has no plans, frame the ones that do.
+  if(!exploreCam){
+    const {areas}=exploreAreas(xVisiblePlans());
+    const mineHas=areas.some(a=>a.key===mine&&a.plans.length);
+    const pts=areas.map(a=>CITY_LATLON[a.key]).filter(Boolean);
+    if(!mineHas&&pts.length){
+      try{ map.fitBounds(L.latLngBounds(pts).pad(.25),{maxZoom:11,paddingBottomRight:[0,120]}); }catch(_e){}
+    }
+  }
+  let t=null;
+  const redraw=()=>{ clearTimeout(t); t=setTimeout(drawExploreMarkers,120); };
+  map.on('movestart zoomstart', ()=>el.classList.add('moving'));
+  map.on('moveend zoomend', ()=>{ el.classList.remove('moving');
+    exploreCam={c:map.getCenter(), z:map.getZoom()};  // survives leaving and re-entering the tab
+    xRedoCheck(); redraw(); });
+  map.on('click', ()=>xDeselect());                  // tapping empty map dismisses the card
   exploreMap=map;
+  drawExploreMarkers();
+  const fit=()=>{ try{ map.invalidateSize(); }catch(_e){} };
+  fit(); setTimeout(fit,90); setTimeout(fit,320);
 }
+// Below this zoom the map speaks in cities; above it, in individual plans. z12 is ~3.8 km across the
+// 390px frame, so plans jittered +/-1.5 km around a centre are finally separable — at z9 they piled
+// into one unreadable blob exactly when the split was meant to reveal detail.
+const XCITY_MAX=12;
+// Collapse anything closer than one cell so pins never stack (a clusterer in 10 lines, no plugin).
+function xGrid(list, map, cell){
+  const z=map.getZoom(), out={};
+  list.forEach(p=>{ const q=map.project([+p.lat,+p.lon], z);
+    const k=Math.round(q.x/cell)+':'+Math.round(q.y/cell);
+    (out[k]=out[k]||[]).push(p); });
+  return out;
+}
+function xPinIcon(p){ return IC[editIcon((p.topics&&p.topics[0])||p.title||'')]||IC.spark; }
+function hasGeo(p){ const la=+p.lat, lo=+p.lon; return isFinite(la)&&isFinite(lo)&&!(la===0&&lo===0); }
+function xDeselect(){
+  if(xSel===null) return;
+  xSel=null;
+  const c=document.getElementById('xcard'); if(c) c.classList.remove('on');
+  const w=document.querySelector('.xwrap'); if(w) w.classList.remove('card-on');
+  const m=document.getElementById('lmap'); if(m) m.classList.remove('hasSel');
+  drawExploreMarkers();
+}
+function drawExploreMarkers(){
+  const map=exploreMap; if(!map||!xLayer) return;
+  const z=Math.floor(map.getZoom()), mine=cityKey(myArea());
+  const B=map.getBounds().pad(.35);                  // cull: never build pins the camera cannot see
+  const want={};
+  const {areas}=exploreAreas(xVisiblePlans());
+  const showLab=z>=5;                                // below this the chips collide into a wall of text
+  const cityNode=(key,count,isMine)=>{
+    const size=count>49?56:count>9?48:40, fs=count>49?16:count>9?15:13.5;
+    return {ll:CITY_LATLON[key], size:[110,size+22], anchor:[55,size/2],
+      html:'<div class="xpinwrap"><div class="xpin city'+(isMine?' me':'')+'" style="width:'+size+'px;height:'+size+'px">'
+           +'<div class="in" style="font-size:'+fs+'px">'+(count>99?'99+':count)+'</div></div>'
+           +(showLab?'<div class="xlab">'+esc(cityLabel(key))+'</div>':'')+'</div>'};
+  };
+  if(z<XCITY_MAX){
+    areas.forEach(a=>{
+      const ll=CITY_LATLON[a.key]; if(!ll||!B.contains(ll)) return;
+      const n=cityNode(a.key, a.plans.length, a.key===mine);
+      n.onClick=()=>{ const pts=a.plans.filter(hasGeo).map(p=>[+p.lat,+p.lon]);
+        const dz=Math.abs((pts.length?13:11)-map.getZoom()), dur=Math.min(1.1, .35+.11*dz);
+        if(pts.length>=2) map.flyToBounds(L.latLngBounds(pts).pad(.15),{maxZoom:14,paddingBottomRight:[0,180],duration:dur});
+        else map.flyTo(ll, 13, {duration:dur}); };
+      want['c'+a.key]=n; });
+  } else {
+    areas.forEach(a=>{
+      const geo=a.plans.filter(p=>hasGeo(p)&&B.contains([+p.lat,+p.lon]));
+      const flat=a.plans.filter(p=>!hasGeo(p));
+      const cells=xGrid(geo, map, 64);
+      Object.keys(cells).forEach(k=>{
+        const grp=cells[k];
+        if(grp.length===1){
+          const p=grp[0];
+          want['p'+p._i]={ll:[+p.lat,+p.lon], size:[42,42], anchor:[21,21],
+            html:'<div class="xpin plan'+(p._i===xSel?' sel':'')+'" style="width:42px;height:42px"><div class="in">'+xPinIcon(p)+'</div></div>',
+            onClick:()=>showPlanCard(p._i), zoff:(p._i===xSel?1000:0)};
+        } else {
+          const la=grp.reduce((m,p)=>m+(+p.lat),0)/grp.length, lo=grp.reduce((m,p)=>m+(+p.lon),0)/grp.length;
+          want['g'+a.key+k]={ll:[la,lo], size:[36,36], anchor:[18,18],
+            html:'<div class="xpin grp" style="width:36px;height:36px"><div class="in">'+grp.length+'</div></div>',
+            onClick:()=>map.flyTo([la,lo], Math.min(17, map.getZoom()+2), {duration:.45})};
+        }
+      });
+      const ll=CITY_LATLON[a.key];
+      if(flat.length && ll && B.contains(ll)){       // no coordinates: zooming reveals nothing, so list them
+        const n=cityNode(a.key, flat.length, a.key===mine);
+        n.onClick=()=>focusArea(a.key);
+        want['c'+a.key]=n;
+      }
+    });
+  }
+  // Don't stack the blue "you" dot on top of your own city's bubble — they share coordinates and the
+  // dot just sits inside the coral disc. When your city has a bubble, the bubble wears the marker.
+  const c=mine&&CITY_LATLON[mine];
+  if(c&&B.contains(c)&&!want['c'+mine]) want['me']={ll:c, size:[16,16], anchor:[8,8],
+    html:'<div class="xmeDot"></div>', zoff:900, noClick:true};
+
+  // Diff instead of clearLayers(): survivors keep their DOM node, so selection and the enter
+  // animation are not destroyed on every pan.
+  Object.keys(xMarkers).forEach(k=>{ if(!want[k]){ xLayer.removeLayer(xMarkers[k]); delete xMarkers[k]; } });
+  Object.keys(want).forEach(k=>{
+    const w=want[k], had=xMarkers[k];
+    if(had){
+      const elm=had.getElement&&had.getElement();
+      if(elm && elm.innerHTML!==w.html) elm.innerHTML=w.html;
+      if(w.zoff!==undefined) had.setZIndexOffset(w.zoff);
+      return;
+    }
+    const m=L.marker(w.ll,{icon:L.divIcon({className:'',iconSize:w.size,iconAnchor:w.anchor,html:w.html}),
+                           zIndexOffset:w.zoff||0, interactive:!w.noClick});
+    if(w.onClick) m.on('click',ev=>{ L.DomEvent.stopPropagation(ev); w.onClick(); });
+    m.addTo(xLayer); xMarkers[k]=m;
+    const node=m.getElement&&m.getElement(), pin=node&&node.querySelector('.xpin');
+    if(pin){ pin.classList.add('new'); setTimeout(()=>pin.classList.remove('new'),220); }
+  });
+}
+
 async function joinPublic(i){
   // This used to only write a local notification claiming the host's agent had been asked.
   // Nothing was sent. Now it really asks their agent, and reports what actually happened.
@@ -2473,59 +2679,137 @@ function plural(n,one,few,many){
 }
 
 
-function scr_search(){
-  const P=PUBLIC_INTENTS;
-  // Grouped by city, with your own first — the same truth the map shows. A flat list mixed plans from
-  // three countries into one column ordered by a distance that means nothing across cities.
-  const mineKey=cityKey(myArea());
-  const shown=AREAFILTER? P.filter(p=>cityKey(p.area)===AREAFILTER) : P;
-  const groups={}; const noCity=[];
-  shown.forEach((p)=>{ const k=cityKey(p.area); if(k){ (groups[k]=groups[k]||[]).push(p); } else noCity.push(p); });
-  const order=Object.keys(groups).sort((a,b)=>
-    (a===mineKey?-1:b===mineKey?1:0) || groups[b].length-groups[a].length);
-  // Same card language as the Intents tab — .icard / .ihd / .itags / .ifoot / .iacts — instead of a
-  // separate one-line .evrow. Two screens that both list "things Kleal can act on" were reading as two
-  // different products.
-  const row=(p)=>{ const i=P.indexOf(p);
-    const tags=(p.topics||[]).slice(0,4);
-    const isMine=cityKey(p.area)===cityKey(myArea());
-    return `<div class="icard" data-public="${i}">
-      <div class="ihd"><div class="itl">${esc(p.title)}</div>
-        ${p.verified?`<span class="kbadge ok">${T('проверен','verified')}</span>`
-          :(isMine?`<span class="kbadge mut">${T('твой город','your city')}</span>`:'')}</div>
-      ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(locTopic(t))}</span>`).join('')}</div>`:''}
-      <div class="ifoot">
-        <span class="k-cap" style="color:var(--muted)">${esc(p.who)} · ${esc(locStr(p.when))}</span>
-        <span class="k-cap" style="color:var(--muted)">${esc(planWhere(p))}</span>
-      </div>
-      <div class="iacts">
-        <button class="kbtn pri sm" data-act="join" data-pi="${i}">${T('Присоединиться','Join')}</button>
-      </div></div>`; };
-  const chip=AREAFILTER?`<div class="kchip on" data-act="area-clear" style="cursor:pointer;align-self:flex-start">
-      ${esc(cityLabel(AREAFILTER))} ✕</div>`:'';
-  const list=chip+order.map(k=>`<div class="k-title" style="margin:16px 2px 8px">${esc(cityLabel(k))}
-      <span style="color:var(--muted);font-weight:500"> · ${groups[k].length}</span>
-      ${k===mineKey?`<span class="kbadge ok" style="margin-left:6px">${T('твой город','your city')}</span>`:''}</div>
-    ${groups[k].map(row).join('')}`).join('')
-    + (noCity.length?`<div class="k-title" style="margin:14px 2px 6px">${T('Город не указан','City not given')}
-      <span style="color:var(--muted);font-weight:500"> · ${noCity.length}</span></div>${noCity.map(row).join('')}`:'');
-  // gap:16 and the .icard shell match the Intents stack exactly. The loading state used .evrow, which
-  // no longer exists here, and both it and the empty state were hardcoded Russian.
-  const below = P.length ? `<div class="stack" style="gap:16px">${list}</div>`
-    : (exploreLoaded
-        ? emptyState(T('Пока рядом нет открытых планов','No open plans nearby yet'),
-                     T('Создай интент — и Kleal предложит его людям вокруг.','Create an intent and Kleal will offer it to people around you.'))
-        : `<div class="stack" style="gap:16px"><div class="icard">
-             <div class="k-cap" style="color:var(--muted)"><span class="typing3"><i></i><i></i><i></i></span>
-               ${T('ищу планы рядом…','looking for plans nearby…')}</div></div></div>`);
-  return `<div class="fade">
-    <div class="sbar"><div class="box">${IC.nSearch}<span>${T('Искать в этой зоне…','Search this area…')}</span></div>
-      <div class="filt" data-act="filter">${IC.compass}</div></div>
-    <div id="lmap" class="lmap"></div>
-    <div class="seccap" style="margin:12px 2px 8px">${T("Открытые планы по городам — нажми на кружок, чтобы отфильтровать список. Точное место не показывается: Kleal знает только город, который человек указал сам.","Open plans by city — tap a circle to filter the list. Exact places are never shown: Kleal only knows the city a person gave.")}</div>
-    ${below}
-  </div>`;
+// ---- Explore search: real, client-side, drives the map AND the list from one source ----
+// The pill used to be decorative (a "coming soon" toast). It is a live filter now: it matches the
+// plan title, host, city and topics — including each topic's RUSSIAN label, so «кофе» finds a plan
+// tagged "coffee". Both the pins and the sheet list read the same filtered list, so they can never
+// disagree about what is on screen.
+let XQ='', xSel=null, exploreCam=null, xQueried=null, xSearchT=null;
+function xMatch(p,q){
+  const hay=[p.title,p.who,p.area,(p.topics||[]).join(' ')].join(' ').toLowerCase();
+  if(hay.indexOf(q)>=0) return true;
+  return (p.topics||[]).some(t=>String(locTopic(t)).toLowerCase().indexOf(q)>=0);
 }
+function xVisiblePlans(){
+  const q=XQ.trim().toLowerCase();
+  return q ? (PUBLIC_INTENTS||[]).filter(p=>xMatch(p,q)) : (PUBLIC_INTENTS||[]);
+}
+// Rebuild just the sheet list + count badge, without re-rendering the screen (a re-render would tear
+// the Leaflet map down and lose the camera).
+function xSyncList(){
+  const bd=document.getElementById('xsheetbd'); if(!bd) return;
+  const list=xVisiblePlans();
+  bd.innerHTML=xListHTML(list);
+  bd.querySelectorAll('[data-act]').forEach(n=>n.onclick=ev=>{ ev.stopPropagation(); doAct(n.dataset.act,n.dataset); });
+  const b=document.getElementById('xcount'); if(b) b.textContent=list.length;
+  const cl=document.getElementById('xclr'); if(cl) cl.classList.toggle('on', !!XQ);
+}
+function xSearch(v){
+  XQ=v||'';
+  const cl=document.getElementById('xclr'); if(cl) cl.classList.toggle('on', !!XQ);
+  clearTimeout(xSearchT);
+  xSearchT=setTimeout(()=>{ xSyncList(); if(exploreMap) drawExploreMarkers(); }, 160);
+}
+// "Search this area" shows only once the camera moved meaningfully — 30% of the viewport or a full
+// zoom level. Anything twitchier flickers the chip during inertia.
+function xRedoCheck(){
+  const el=document.getElementById('xredo'); if(!el||!exploreMap) return;
+  if(!xQueried){ el.classList.remove('on'); return; }
+  const b=exploreMap.getBounds();
+  const span=exploreMap.distance(b.getNorthWest(), b.getNorthEast());
+  const moved=exploreMap.distance(exploreMap.getCenter(), xQueried.c)>span*.30
+           || Math.abs(exploreMap.getZoom()-xQueried.z)>=1;
+  el.classList.toggle('on', moved);
+}
+function xRedo(){
+  if(!exploreMap) return;
+  xQueried={c:exploreMap.getCenter(), z:exploreMap.getZoom()};
+  const el=document.getElementById('xredo'); if(el) el.classList.remove('on');
+  const b=exploreMap.getBounds();
+  const inView=(PUBLIC_INTENTS||[]).filter(p=>hasGeo(p)&&b.contains([+p.lat,+p.lon])).length;
+  drawExploreMarkers(); xSyncList();
+  toast(inView?T('В этой зоне: '+inView,'In this area: '+inView):T('В этой зоне пока никого','Nobody here yet'));
+}
+// The tapped-pin card. Injected outside render(), so its buttons are wired by hand.
+function showPlanCard(i){
+  const p=PUBLIC_INTENTS[i], el=document.getElementById('xcard'); if(!p||!el) return;
+  xSel=i;
+  const tags=(p.topics||[]).slice(0,3);
+  el.innerHTML='<div style="display:flex;align-items:flex-start;gap:10px">'
+    +'<div style="flex:1;min-width:0"><div class="k-h3" style="margin-bottom:3px">'+esc(p.title)+'</div>'
+    +'<div class="k-cap" style="color:var(--muted)">'+esc(p.who)+' · '+esc(locStr(p.when))+' · '+esc(planWhere(p))+'</div></div>'
+    +'<span class="xclose" data-act="xcard-close">✕</span></div>'
+    +(tags.length?'<div class="itags">'+tags.map(t=>'<span class="ktag">'+esc(locTopic(t))+'</span>').join('')+'</div>':'')
+    +'<button class="kbtn pri" data-act="join" data-pi="'+i+'">'+T('Присоединиться','Join')+'</button>';
+  el.classList.add('on');
+  const w=document.querySelector('.xwrap'); if(w) w.classList.add('card-on');  // lifts .xctl clear of the card
+  const m=document.getElementById('lmap'); if(m) m.classList.add('hasSel');    // dims the other pins
+  el.querySelectorAll('[data-act]').forEach(n=>n.onclick=ev=>{ ev.stopPropagation(); doAct(n.dataset.act,n.dataset); });
+  drawExploreMarkers();                                                         // paints the .sel pin
+  // Nudge the tapped pin out from behind the card — pan only; zooming on select disorients.
+  if(exploreMap && hasGeo(p)){
+    const pt=exploreMap.latLngToContainerPoint([+p.lat,+p.lon]);
+    const safe=exploreMap.getSize().y-(el.offsetHeight+40);
+    if(pt.y>safe) exploreMap.panBy([0, Math.round(pt.y-exploreMap.getSize().y*.38)],{animate:true,duration:.28});
+  }
+}
+function xListHTML(P){
+  const mineKey=cityKey(myArea());
+  const groups={}, noCity=[];
+  P.forEach(p=>{ const k=cityKey(p.area); if(k){ (groups[k]=groups[k]||[]).push(p); } else noCity.push(p); });
+  const order=Object.keys(groups).sort((x,y)=>(x===mineKey?-1:y===mineKey?1:0)||groups[y].length-groups[x].length);
+  const row=(p)=>{ const i=p._i, tags=(p.topics||[]).slice(0,4), isMine=cityKey(p.area)===mineKey;
+    return '<div class="icard" data-public="'+i+'">'
+      +'<div class="ihd"><div class="itl">'+esc(p.title)+'</div>'
+      +(p.verified?'<span class="kbadge ok">'+T('проверен','verified')+'</span>'
+        :(isMine?'<span class="kbadge mut">'+T('твой город','your city')+'</span>':''))+'</div>'
+      +(tags.length?'<div class="itags">'+tags.map(t=>'<span class="ktag">'+esc(locTopic(t))+'</span>').join('')+'</div>':'')
+      +'<div class="ifoot"><span class="k-cap" style="color:var(--muted)">'+esc(p.who)+' · '+esc(locStr(p.when))+'</span>'
+      +'<span class="k-cap" style="color:var(--muted)">'+esc(planWhere(p))+'</span></div>'
+      +'<div class="iacts"><button class="kbtn pri sm" data-act="join" data-pi="'+i+'">'+T('Присоединиться','Join')+'</button></div></div>'; };
+  if(!P.length){
+    return XQ ? emptyState(T('Ничего не нашлось','Nothing found'),
+                 T('Попробуй другое слово — например «кофе», «футбол» или город.','Try another word — «coffee», «football» or a city.'))
+              : (exploreLoaded
+                 ? emptyState(T('Пока рядом нет открытых планов','No open plans nearby yet'),
+                              T('Создай интент — и Kleal предложит его людям вокруг.','Create an intent and Kleal will offer it to people around you.'))
+                 : '<div class="stack" style="gap:16px"><div class="icard"><div class="k-cap" style="color:var(--muted)">'
+                   +'<span class="typing3"><i></i><i></i><i></i></span> '+T('ищу планы рядом…','looking for plans nearby…')+'</div></div></div>');
+  }
+  return '<div class="stack" style="gap:16px">'+order.map(k=>'<div class="k-title" style="margin:16px 2px 8px">'+esc(cityLabel(k))
+      +'<span style="color:var(--muted);font-weight:500"> · '+groups[k].length+'</span>'
+      +(k===mineKey?'<span class="kbadge ok" style="margin-left:6px">'+T('твой город','your city')+'</span>':'')+'</div>'
+    +groups[k].map(row).join('')).join('')
+    + (noCity.length?'<div class="k-title" style="margin:14px 2px 6px">'+T('Город не указан','City not given')
+      +'<span style="color:var(--muted);font-weight:500"> · '+noCity.length+'</span></div>'+noCity.map(row).join(''):'')
+    + '</div>';
+}
+function scr_search(){
+  // Full-screen map with floating chrome. The plan list lives in the «Планы» button and slides up as
+  // a sheet, so the map keeps the whole screen. Everything is toggled imperatively (classList /
+  // innerHTML), never through render(), because a re-render tears the Leaflet map down.
+  const list=xVisiblePlans();
+  return '<div class="xwrap fade">'
+    +'<div id="lmap" class="xmap"></div>'
+    +'<div class="xtop">'
+      +'<div class="xpill grow">'+IC.nSearch
+        +'<input id="xq" value="'+esc(XQ)+'" placeholder="'+T('Кофе, футбол, город…','Coffee, football, a city…')+'"'
+        +' autocomplete="off" oninput="xSearch(this.value)">'
+        +'<span class="xclr'+(XQ?' on':'')+'" id="xclr" data-act="x-clear">✕</span></div>'
+      +'<div class="xpill" data-act="open-plans">'+IC.groups+'<b id="xcount">'+list.length+'</b></div></div>'
+    +'<div class="xredo" id="xredo" data-act="x-redo">'+IC.nSearch+T('Искать в этой зоне','Search this area')+'</div>'
+    +'<div class="xctl">'
+      +'<div class="xzoom"><div class="xbtn" data-act="map-zin">+</div><div class="xbtn" data-act="map-zout">−</div></div>'
+      +'<div class="xbtn acc" data-act="map-me">'+IC.compass+'</div></div>'
+    +'<div class="xcard" id="xcard"></div>'
+    +'<div class="xscrim" id="xscrim" data-act="close-plans"></div>'
+    +'<div class="xsheet" id="xsheet"><div class="grab"></div>'
+      +'<div class="hd"><span class="k-title">'+T('Планы поблизости','Plans nearby')+'</span>'
+      +'<span class="xclose" data-act="close-plans">✕</span></div>'
+      +'<div class="bd" id="xsheetbd">'+xListHTML(list)+'</div></div>'
+    +'</div>';
+}
+
 
 // Conversations that exist on the SERVER, merged into the local list. Messages were delivered and
 // stored correctly, but this tab only ever read local state — so the person who RECEIVED a message
@@ -4078,7 +4362,9 @@ function render(){
               ||cur==='options'||cur==='bestfit'||cur==='recos'||cur==='candprofile'
               ||['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'].includes(cur));
   const bn=document.getElementById('bnav'); if(bn){ bn.style.display=chat?'none':'flex'; bn.innerHTML=bnavHTML(); }
-  const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||chat)?'none':'flex';
+  // The Explore map is edge-to-edge: no app bar, no body padding, no page scroll.
+  const mapfull=(cur==='search');
+  const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||chat||mapfull)?'none':'flex';
   if(editSig){ A.innerHTML=scr_editSignal(); }
   else if(detail){ A.innerHTML=scr_domain(detail); }
   else {
@@ -4104,11 +4390,13 @@ function render(){
   // composer stays pinned. Resetting scrollTop to 0 on every render is what made the intent chat jump — so
   // only non-chat screens reset, and chats auto-scroll their thread to the newest message.
   A.style.display=chat?'flex':''; A.style.flexDirection=chat?'column':'';
-  A.style.overflowY=chat?'hidden':''; A.style.padding=chat?'0 12px':'';   // chats manage their own vertical space
+  A.style.overflowY=(chat||mapfull)?'hidden':''; A.style.padding=chat?'0 12px':(mapfull?'0':'');
+  A.style.position=mapfull?'relative':'';    // containing block for the absolutely-filled map
   if(!chat) A.scrollTop=0;
   else { const bt=document.getElementById('bthread'); if(bt) bt.scrollTop=bt.scrollHeight; }
   // real Leaflet map on Explore; tear it down when leaving
   if(cur==='search'){ if(!exploreLoaded) loadExplore(); setTimeout(initExploreMap, 0); }
+  else if(exploreMap){ try{ exploreMap.remove(); }catch(_e){} exploreMap=null; xLayer=null; xMarkers={}; }
   else if(exploreMap){ try{ exploreMap.remove(); }catch(_e){} exploreMap=null; }
   // wire (drill-in nav: Overview hub -> section -> back)
   document.querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>setTab(el.dataset.nav));
@@ -4224,6 +4512,19 @@ function doAct(act, ds){
       try{ localStorage.clear(); }catch(_e){}
       location.href='/'; break; }
     case 'area-clear': AREAFILTER=null; render(); break;
+    // ---- Explore map chrome: toggled by class/innerHTML so the Leaflet map survives ----
+    case 'open-plans': { const sh=document.getElementById('xsheet'), sc=document.getElementById('xscrim');
+      if(sh) sh.classList.add('on'); if(sc) sc.classList.add('on'); break; }
+    case 'close-plans': { const sh=document.getElementById('xsheet'), sc=document.getElementById('xscrim');
+      if(sh) sh.classList.remove('on'); if(sc) sc.classList.remove('on'); break; }
+    case 'xcard-close': xDeselect(); break;
+    case 'x-clear': { XQ=''; const f=document.getElementById('xq'); if(f){ f.value=''; f.focus(); }
+      xSyncList(); if(exploreMap) drawExploreMarkers(); break; }
+    case 'x-redo': xRedo(); break;
+    case 'map-zin': if(exploreMap) exploreMap.zoomIn(); break;
+    case 'map-zout': if(exploreMap) exploreMap.zoomOut(); break;
+    case 'map-me': { const k=cityKey(myArea()), c=(k&&CITY_LATLON[k])||ME_LATLON;
+      if(exploreMap) exploreMap.flyTo(c, 12, {duration:.6}); break; }
     case 'arch-tab': ARCHTAB=ds.v; render(); break;
     case 'meet-archive': archiveMeet(ds.id); break;
     case 'meet-msg': openMeetThread(ds.who); break;

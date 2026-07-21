@@ -1255,7 +1255,13 @@ class H(BaseHTTPRequestHandler):
         elif self.path.split("?")[0] == "/api/agent/explore":
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
-            send_json(self, 200, {"plans": explore_plans(self_name=unquote(q.get("self", "")))})
+            try:
+                lim = max(1, min(500, int(q.get("limit", 12))))
+            except (TypeError, ValueError):
+                lim = 12
+            # The map needs a populated world, not the 12 rows a list needed. Capped so one client
+            # cannot ask the ranker for the whole store.
+            send_json(self, 200, {"plans": explore_plans(limit=lim, self_name=unquote(q.get("self", "")))})
         elif self.path == "/":
             send_json(self, 200, {"service": "matching", "ok": True})
         else:
