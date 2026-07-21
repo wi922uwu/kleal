@@ -256,7 +256,11 @@ _GENERIC_TOPIC = {"sport", "sports", "game", "games", "gaming", "activity", "act
                   # verbs describing HOW, not WHAT — filtration emits them alongside the real topic
                   "play", "playing", "talk", "talking", "discussing", "drinking", "eating",
                   "watching", "hanging", "hang", "hangout", "chill", "joining", "learning",
-                  "practising", "practicing"}
+                  "practising", "practicing",
+                  # answers to «вдвоём или компанией?» belong in `format`, not in what we search on —
+                  # they leaked into topics as soon as the agent started asking about format
+                  "small", "group", "groups", "big", "large", "duo", "pair", "solo", "alone",
+                  "together", "вдвоём", "вдвоем", "компанией", "группой"}
 _RU_END = ("ами", "ями", "ах", "ях", "ов", "ев", "ом", "ем", "ой", "ей", "ую", "ые", "ый", "ая", "ое",
            "у", "а", "я", "и", "ы", "е", "ю", "ь", "й", "о")
 _CYR = re.compile(r"[а-яё]", re.I)
@@ -590,6 +594,12 @@ def build_intent(sig, cat, last_user, lang):
     # interests are context, never the ask. Only the REQUEST may set the topics.
     topics = (norm_topics(cat.get("topics")) or norm_topics(sig.get("interest"))
               or norm_topics(re.findall(r"[\w']+", str(last_user).lower())))
+    # Weak/strong, not a blanket drop. A bucket word that CANONICALISED (so it is a real taxonomy
+    # entry: «спорт» -> gym, «поиграть» -> gaming) is a legitimate whole ask when it is all the
+    # person gave — dropping it outright returns nothing. It only loses when something specific
+    # exists beside it, which is the «прогулка + outdoors» case.
+    _strong = [t for t in topics if t not in _GENERIC_TOPIC]
+    topics = _strong or topics
     from_request = bool(topics)
     # An `or` chain used to end here, and that is how the SUBJECT of a request got thrown away: the
     # moment the taxonomy resolved a single word, every other word of the request was discarded.
@@ -599,7 +609,9 @@ def build_intent(sig, cat, last_user, lang):
     if topics:
         raw = [w[:24] for w in re.findall(r"[a-zа-яё0-9]{4,}",
                                           str(sig.get("interest") or last_user or "").lower())
-               if w not in _RAW_STOP and norm_topic(w) not in topics]
+               # both lists, or the third path leaks what the other two now stop: «один или с
+               # компанией?» put "company" into the topics of a cinema search.
+               if w not in _RAW_STOP and w not in _GENERIC_TOPIC and norm_topic(w) not in topics]
         # A "discuss" request is ABOUT something; the activity is the setting. Put the subject first
         # so the ranker weighs what the person actually wants to talk about.
         wants_talk = any(w in str(last_user or "").lower()
@@ -660,11 +672,12 @@ def build_intent(sig, cat, last_user, lang):
         "fallback": ("Онлайн, если не сложится" if lang == "ru" else "Online if it falls through"),
         # Only topics that came from the REQUEST make an intent rankable. A category-bridge guess is a
         # last-resort label, not evidence that anyone matching it wants THIS.
-        # A bucket word is not something to search on. «Хочу нахуячиться завтра» resolved to
-        # topics ["hang"] and went ready on the first turn — a card with nothing to match against.
-        # Requiring one topic outside the bucket list sends it back through the clarifying question,
-        # which is what the "nothing to search on yet" branch already says.
-        "rankable": from_request and any(t not in _GENERIC_TOPIC for t in (topics or [])),
+        # Deliberately NOT "must contain a non-bucket word". That rule contradicted the weak/strong
+        # one above — which keeps a bucket word precisely when it is all the person gave — and it
+        # killed «хочу заняться спортом», a real request. The first-turn-ready problem it was meant
+        # to solve is handled where it belongs: the agent now asks what the person actually wants
+        # before deciding anything is ready.
+        "rankable": bool(topics) and from_request,
         "isNew": bool(cat.get("isNew")),
         "lang": lang,
     }
@@ -1178,7 +1191,7 @@ def ghostwrite(profile, candidate, messages, lang="ru"):
 # when, format) one at a time, and only when it has the gist returns ready:true with a CANONICAL intent
 # (same filtration + build_intent as /chat, so matching can rank it). The card is shown for confirmation;
 # the frontend launches the search separately.
-INTENT_BUILD_PROMPT = '''You help the user create an "intent" — a plan to meet people or do an activity with someone. Keep it SHORT: you only need two things — the ACTIVITY and roughly WHEN. Ask at most ONE brief question, and only if one of those is missing.
+INTENT_BUILD_PROMPT = '''You help the user create an "intent" — a plan to meet people or do an activity with someone. What matters is that the ACTIVITY is specific enough to search on. Timing and place are NOT your job: the app asks for the day, the time of day and the district on the very next screen.
 
 Conversation so far is given. Return ONE JSON object, nothing else, WITH THE KEYS IN EXACTLY THIS ORDER:
 {"valid":true|false, "ready":true|false,
@@ -1190,12 +1203,20 @@ The order matters: "valid" must come before "reply".
 Rules:
 - valid:false when the latest message is NOT a plan to do something with people. That includes gibberish ("asdfgh"), greetings and small talk ("привет", "как дела", "спасибо"), and general questions ("что такое дивиденды", "какая погода") — anything a person could ask a chatbot rather than ask of a meetup. ready MUST then be false. Never build an intent from those.
 - valid:true ONLY when the message really is about doing something with another person, even if the details are still missing ("хочу кофе" is valid, "привет" is not).
-- ready:true as soon as you know the ACTIVITY and any sense of WHEN (a day, "today", "this weekend", or "whenever"). Do NOT keep asking — format, group size, exact place, number of people are OPTIONAL and default sensibly. If the user already gave activity + time in one message, set ready:true right away with a one-line confirmation.
-- Only when the activity is clear but timing is totally absent, ask the single question "when?". Never ask more than that.
+- NEVER ask about logistics: not when, not what day, not what time, not where, not which district or city, not how far. The next screen asks all of that with taps, so asking here makes the person answer the same thing twice. If they volunteer a time anyway, record it in "time" and move on without acknowledging it as a question.
+- Ask at most TWO short questions, one per turn, and ONLY to make the request specific enough that a stranger could tell whether it is for them. Useful directions, pick what actually fits:
+  * what they want out of it — «хочу выпить кофе» → «о чём хочется поговорить за кофе — про работу, про город, или просто познакомиться?»
+  * which side of a broad interest — «футбол» → «поиграть или посмотреть матч?»
+  * what kind of company — «вдвоём или небольшой компанией?»
+  * the mood — «спокойно посидеть или куда-то выбраться?»
+- Ask ONE thing at a time. Never stack two questions into one sentence.
+- Never ask something the conversation already answered, and never ask a question whose answer would not change who you look for.
+- ready:true as soon as the activity is specific enough to describe to a stranger in one line. If the first message was ALREADY specific («хочу поиграть в падл», «хочу обсудить стартапы за ужином»), confirm it in one line and set ready:true immediately — asking anything then is noise.
+- Fold the answers into "activity" as one phrase: «coffee and startup talk», not just «coffee». That phrase is what the search runs on, so it is the whole point of asking.
 - Keep reply short (1-2 sentences).
 - "hints": exactly 3, each at most 6 words, written as the USER's own words in __LANGNAME__, never
   questions back at them and never repeats of each other. If your "reply" asked a question, the hints
-  are plausible ANSWERS to it ("в субботу вечером", "лучше один на один"). Otherwise they are
+  are plausible ANSWERS to it ("про работу", "лучше один на один"). Otherwise they are
   concrete next things this person could ask for. Use the PROFILE line at the top of the conversation
   to make them specific ("Найти компанию на утренний бег в Белграде", not "Заняться спортом").
   "hints" is the ONLY key you may omit; never omit or reorder the others.
@@ -1416,7 +1437,10 @@ def intent_build(messages, profile, on_text=None):
     # Backstop against over-asking: the 70B tends to keep interrogating (group size, exact place...). Once the
     # user has already answered at least one follow-up AND we can recognise a real activity, build the card
     # instead of asking further — sensible defaults cover the rest.
-    if valid and not ready and user_turns >= 2 and _categorize(activity).get("topics"):
+    # Was >= 2, which forced ready right after the first answer. Two clarifying questions are the
+    # point now, so the backstop moves out by one — it still exists, because the 70B will happily
+    # interrogate forever.
+    if valid and not ready and user_turns >= 3 and _categorize(activity).get("topics"):
         if build_intent(_baseline_signals(profile), _categorize(activity), activity, lang).get("rankable"):
             ready = True
     # Hand the turn to the conversational agent when there is no plan to build. Two signals, because
