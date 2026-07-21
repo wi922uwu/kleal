@@ -78,12 +78,14 @@ def _v2_role_exp_spec(p):
 _CYR_ONB = re.compile(r"[\u0430-\u044f\u0410-\u042f\u0451\u0401]")
 
 
-def _onb_lang(hist):
-    """Reply in the language the user is actually writing in."""
+def _onb_lang(hist, want=None):
+    """The language the UI is in, when the client tells us; otherwise a guess from what was typed."""
+    if want in ("ru", "en"):
+        return want
     for m in reversed(hist or []):
         if m.get("role") == "user" and str(m.get("content", "")).strip():
             return "ru" if _CYR_ONB.search(str(m["content"])) else "en"
-    return "en"
+    return "ru"
 
 
 _ONB_LANG_RULE = {
@@ -252,21 +254,23 @@ interests.experienceByInterest = {"<interest exactly as named in explicit>": "<h
 
 # the stored artifact: ONE continuous plain-text summary describing everything about the user
 SUMMARY_PROMPT = '''You are Kleal, a personal social agent. You store your memory of a user as ONE continuous plain-text summary.
-Given the profile JSON, write that summary: English, second person ("You're ..."), 4-8 sentences, warm but strictly factual.
+Given the profile JSON, write that summary in __LANGNAME__, second person, 4-8 sentences, warm but strictly factual. In Russian address the user as «ты».
 Cover, when present in the JSON: who they are (name, age, gender), where and how far they go (area, radius), languages, EVERY interest with its role, how long they have been into it and key details (platform, rank, team, level, industry), how they like to connect, and their safety choices and permissions.
 STRICT: only facts present in the JSON - NEVER invent or embellish. No lists, no markdown, no headings, no emoji, no JSON. Plain flowing text only.'''
 
-def v2_summary(profile):
+def v2_summary(profile, lang="ru"):
     """One LLM call -> the running text summary we store for the user (profile.summary)."""
     cfg = MODEL_ID
+    lang = "en" if str(lang).lower() == "en" else "ru"
     prof = {k: v for k, v in (profile or {}).items() if k not in ("photo", "summary")}
-    raw = llm_complete(cfg, [{"role": "system", "content": SUMMARY_PROMPT},
+    sys_prompt = SUMMARY_PROMPT.replace("__LANGNAME__", "Russian" if lang == "ru" else "English")
+    raw = llm_complete(cfg, [{"role": "system", "content": sys_prompt},
                               {"role": "user", "content": json.dumps(prof, ensure_ascii=False)}], 0.4)
     txt = base.parse_reply(raw)[0]
     txt = (txt or "").replace("—", "-").replace("–", "-").strip()
     return {"summary": txt}
 
-def v2_chat(messages, prior):
+def v2_chat(messages, prior, want_lang=None):
     """Interests-step turn: extract first (sequential), then a focused funnel reply. Mirrors the
     base two-call pipeline but scoped to interests/roles/domain detail. Returns merged profile + crit."""
     cfg = MODEL_ID
@@ -298,7 +302,7 @@ def v2_chat(messages, prior):
     # the flag never went true, the _FIN_RE finish branch became unreachable, and the step looped
     # forever — the user answered «Это всё» three times and was asked again each time.
 
-    sys = FUNNEL_PROMPT + _ONB_LANG_RULE[_onb_lang(hist)]
+    sys = FUNNEL_PROMPT + _ONB_LANG_RULE[_onb_lang(hist, want_lang)]
     complete = False
     if _is_gibberish(lastu):
         # user typed junk / random characters - do NOT advance or wrap up, gently re-ask.
@@ -327,7 +331,7 @@ def v2_chat(messages, prior):
         # confirm-before-finish: never end the interests step without asking
         sys += (" [ALL PICKED INTERESTS ARE COVERED. Ask EXACTLY ONE closing question: would they like to add "
                 "another interest, or is that everything for now. End with [OPTIONS: %s]. "
-                "Nothing else.]" % _CONFIRM_OPTIONS[_onb_lang(hist)])
+                "Nothing else.]" % _CONFIRM_OPTIONS[_onb_lang(hist, want_lang)])
     raw = llm_complete(cfg, [{"role": "system", "content": sys}] + hist, 0.6)
     reply, _p, _i, _b, _s, options = base.parse_reply(raw)
     options = _norm_options(options)
@@ -559,6 +563,8 @@ input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;bac
 .orows{display:flex;flex-direction:column;gap:10px;padding-bottom:6px}
 .orow{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);
   border-radius:16px;padding:13px 14px;cursor:pointer;transition:border-color .15s}
+.igrp{font-size:12.5px;font-weight:700;color:var(--muted);margin:12px 2px 6px}
+.igrp:first-child{margin-top:0}
 .orow.flat{cursor:default}
 .orow.flat:active{transform:none}
 .orow:active{border-color:var(--accent)}
@@ -637,6 +643,40 @@ input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;bac
 <input type="file" id="filein" accept="image/*" style="display:none">
 <script>
 const A=document.getElementById('app');
+// ---- UI language. SAME key and SAME default as the profile app, because they share an origin and
+// therefore share localStorage: whoever picks a language here picks it once for both. A browser hint
+// (navigator.language) is deliberately NOT consulted — profile defaults to 'ru' unconditionally, and
+// any other rule here lands a person in a different language than the one they were just shown.
+let UILANG='ru'; try{ const _l=localStorage.getItem('kleal_uilang'); if(_l==='ru'||_l==='en') UILANG=_l; }catch(_e){}
+function T(ru,en){ return UILANG==='en' ? en : ru; }
+function setUILang(l){ UILANG=(l==='en'?'en':'ru');
+  try{ localStorage.setItem('kleal_uilang',UILANG); }catch(_e){}
+  document.documentElement.lang=UILANG;
+  document.title=T('Kleal — Создание профиля','Kleal — Onboarding');
+  if(typeof st!=='undefined'&&st){ if(st.phase==='splash') return rSplash();
+    if(st.phase==='summary') return goSummary(); if(st.phase==='done') return rDone(); } }
+// Displayed label vs stored value. The chip text used to BE the stored value, so translating the
+// labels alone would have written «Женщина» and «Готовка» into a store where every other row says
+// "Female" and "cooking" — the person would then match nobody. Value first, label second, always.
+const GENDERS=[['Male','Мужчина'],['Female','Женщина'],['Other','Другое']];
+function genderLabel(v){ const g=GENDERS.find(x=>x[0]===v); return g?T(g[1],g[0]):String(v||''); }
+const LANG_RU={English:'Английский',Spanish:'Испанский',German:'Немецкий',French:'Французский',
+  Portuguese:'Португальский',Italian:'Итальянский',Russian:'Русский'};
+function langLabel(v){ return LANG_RU[v]?T(LANG_RU[v],v):String(v||''); }
+// The interests offered are the ones the population actually has, ordered by how many people carry
+// them and grouped so 30 chips stay readable. Suggesting a topic nobody shares helps no one.
+const INTEREST_GROUPS=()=>[
+ [T('Спорт','Sport'),          [['hiking','Походы'],['yoga','Йога'],['football','Футбол'],['running','Бег'],['gym','Зал'],['tennis','Теннис']]],
+ [T('Игры','Games'),           [['gaming','Видеоигры'],['chess','Шахматы'],['boardgames','Настолки'],['dnd','D&D'],['dota','Dota 2'],['poker','Покер']]],
+ [T('Еда и напитки','Food & drink'), [['cooking','Готовка'],['coffee','Кофе'],['beer','Пиво'],['wine','Вино'],['baking','Выпечка']]],
+ [T('Творчество','Creative'),  [['music','Музыка'],['photography','Фото'],['art','Искусство'],['fashion','Мода'],['guitar','Гитара'],['design','Дизайн']]],
+ [T('Технологии','Tech'),      [['coding','Код'],['ai','ИИ'],['startups','Стартапы'],['investing','Инвестиции']]],
+ [T('Ещё','More'),             [['travel','Путешествия'],['language','Языки'],['books','Книги'],['pets','Питомцы'],['nightlife','Ночная жизнь'],['cinema','Кино']]]];
+function intLabel(v){
+  const k=String(v||'').toLowerCase();
+  for(const g of INTEREST_GROUPS()) for(const it of g[1]) if(it[0]===k) return T(it[1],it[0]);
+  return String(v||'');            // a free-typed interest is shown exactly as it was written
+}
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const RM=matchMedia('(prefers-reduced-motion:reduce)').matches;  // honor reduced motion (skip typing delay)
 const MASCOT_SRC=""; // drop in the real Kleal mascot image URL/dataURL here later
@@ -827,12 +867,14 @@ function emulate(){
 
 // ======================= CHAT THREAD =======================
 const SCRIPT=[
-  {id:'greet', bot:["Hey! I'm Kleal, your personal agent for real-life plans 👋","Tell me a bit about yourself and I'll start finding the right people and plans around you: coffee, football, a game night, language practice. No feeds, no swiping.","It takes about two minutes. Let's get you set up!"]},
-  {id:'ready', bot:["Ready to fill in a few details about yourself?"], widget:'ready'},
-  {id:'basics', bot:["First, a few basics about you."], widget:'basics'},
-  {id:'location', bot:["Where are you mostly based?"], widget:'location'},
-  {id:'language', bot:["Great. What languages are you comfortable in?"], widget:'language'},
-  {id:'interests', bot:["What are you into?"], hint:"Pick some or write your own", widget:'interests'},
+  {id:'greet', bot:()=>[T('Привет! Я Kleal, твой личный агент по реальным планам 👋',"Hey! I'm Kleal, your personal agent for real-life plans 👋"),
+    T('Расскажи немного о себе, и я начну находить рядом подходящих людей и планы: кофе, футбол, вечер настолок, языковая практика. Без лент и свайпов.',"Tell me a bit about yourself and I'll start finding the right people and plans around you: coffee, football, a game night, language practice. No feeds, no swiping."),
+    T('Займёт около двух минут. Давай тебя настроим!',"It takes about two minutes. Let's get you set up!")]},
+  {id:'ready', bot:()=>[T('Готов заполнить пару деталей о себе?','Ready to fill in a few details about yourself?')], widget:'ready'},
+  {id:'basics', bot:()=>[T('Сначала немного базового о тебе.','First, a few basics about you.')], widget:'basics'},
+  {id:'location', bot:()=>[T('Где ты в основном находишься?','Where are you mostly based?')], widget:'location'},
+  {id:'language', bot:()=>[T('Отлично. На каких языках тебе комфортно?','Great. What languages are you comfortable in?')], widget:'language'},
+  {id:'interests', bot:()=>[T('Чем ты увлекаешься?','What are you into?')], hint:()=>T('Выбери из готовых или напиши своё','Pick some or write your own'), widget:'interests'},
 ];
 function startChat(){
   // The «Your safety matters» step is gone, but everything it applied when a person pressed Continue
@@ -853,12 +895,12 @@ function startChat(){
 }
 function renderChrome(){
   A.innerHTML=`<div class="head"><div class="ava" id="ava">${MASCOT_SRC?'':'K'}</div>
-    <div class="ht"><div class="htt">${st.editing?'Editing':'Creating Profile'}</div>
+    <div class="ht"><div class="htt">${st.editing?T('Редактирование','Editing'):T('Собираем профиль','Creating Profile')}</div>
       <div class="prow"><div class="pbar"><i></i></div><div class="pct">0%</div></div></div>
-    ${st.editing?'<button class="hback" id="hback" title="Back" aria-label="Back">&#10005;</button>':''}</div>
+    ${st.editing?`<button class="hback" id="hback" title="${T('Назад','Back')}" aria-label="${T('Назад','Back')}">&#10005;</button>`:''}</div>
     <div class="thread" id="thread"></div>
     <div class="composer"><button class="cadd">${IC.plus}</button>
-      <div class="cwrap" id="cwrap"><input id="cin" placeholder="Message..."><span class="mic">${IC.mic}</span></div>
+      <div class="cwrap" id="cwrap"><input id="cin" placeholder="${T('Сообщение…','Message…')}"><span class="mic">${IC.mic}</span></div>
       <button class="csend" id="csend" disabled>${IC.send}</button></div>`;
   if(MASCOT_SRC){ document.getElementById('ava').style.backgroundImage=`url(${MASCOT_SRC})`; document.getElementById('ava').textContent=''; }
   // Leaves an edit WITHOUT changing anything. afterAnswer() also returns here, but only once you have
@@ -898,9 +940,9 @@ function nextStep(){
   if(st.step>=SCRIPT.length){ return finishChat(); }
   const s=SCRIPT[st.step];
   setCompose(null);
-  botSay(s.bot, ()=>{
-    if(s.hint) addHint(s.hint);
-    if(s.widget){ try{ WIDGETS[s.widget](widgetSlot()); }catch(e){ console.error(e); elBubble('bot',"Something glitched there. Tap Restart to try again.",false); } }
+  botSay((typeof s.bot==='function')?s.bot():s.bot, ()=>{
+    if(s.hint) addHint((typeof s.hint==='function')?s.hint():s.hint);
+    if(s.widget){ try{ WIDGETS[s.widget](widgetSlot()); }catch(e){ console.error(e); elBubble('bot',T('Что-то сломалось. Нажми «Начать заново», чтобы попробовать ещё раз.','Something glitched there. Tap Restart to try again.'),false); } }
     else { nextStep(); }   // pure-message step (greeting) -> roll on
   });
 }
@@ -915,12 +957,12 @@ const WIDGETS={};
 
 // consent-style gate before the basics form: nothing is asked until the user says they're ready
 WIDGETS.ready=function(slot){
-  slot.innerHTML=`<div class="chips"><div class="chip on" id="rdy">I'm ready</div><div class="chip" id="why">Why do you need this?</div></div>`;
-  slot.querySelector('#rdy').onclick=()=>{ if(st.busy)return; lock(slot); meSay("I'm ready"); afterAnswer(); };
+  slot.innerHTML=`<div class="chips"><div class="chip on" id="rdy">${T('Я готов',"I'm ready")}</div><div class="chip" id="why">${T('Зачем это нужно?','Why do you need this?')}</div></div>`;
+  slot.querySelector('#rdy').onclick=()=>{ if(st.busy)return; lock(slot); meSay(T('Я готов',"I'm ready")); afterAnswer(); };
   slot.querySelector('#why').onclick=()=>{ if(st.busy)return; lock(slot); meSay("Why do you need this?");
     botSay(["Fair question. Your basics help me introduce you to the right people, and you stay in control: every detail can be edited, hidden from matching or removed later.","Ready when you are."],
       ()=>{ const w=widgetSlot(); w.innerHTML=`<div class="chips"><div class="chip on" id="rdy2">I'm ready</div></div>`;
-            w.querySelector('#rdy2').onclick=()=>{ if(st.busy)return; lock(w); meSay("I'm ready"); afterAnswer(); }; });
+            w.querySelector('#rdy2').onclick=()=>{ if(st.busy)return; lock(w); meSay(T('Я готов',"I'm ready")); afterAnswer(); }; });
   };
 };
 
@@ -928,15 +970,15 @@ WIDGETS.basics=function(slot){
   const p=st.profile;
   slot.innerHTML=`<div class="card">
     <div class="photo" id="photo">${p.photo?'':'<span class="ph">'+IC.camera+'</span>'}<span class="cam">${IC.plus}</span></div>
-    <div class="cap">Add a profile photo</div>
-    <div class="lbl">How should I call you?</div>
-    <input class="inp" id="f_name" placeholder="Your name" value="${esc(p.name||'')}">
-    <div class="lbl">Your age</div>
+    <div class="cap">${T('Добавь фото профиля','Add a profile photo')}</div>
+    <div class="lbl">${T('Как мне тебя называть?','How should I call you?')}</div>
+    <input class="inp" id="f_name" placeholder="${T('Твоё имя','Your name')}" value="${esc(p.name||'')}">
+    <div class="lbl">${T('Твой возраст','Your age')}</div>
     <input class="inp" id="f_age" type="number" inputmode="numeric" min="18" placeholder="18+" value="${p.age||''}">
-    <div class="warn" id="agewarn">You need to be 18 or older.</div>
-    <div class="lbl">Gender</div>
-    <div class="grid3" id="f_gender">${['Male','Female','Other'].map(g=>`<div class="chip ${p.gender===g?'on':''}" data-g="${g}">${g}</div>`).join('')}</div>
-    </div><button class="cta" id="cont" disabled>Continue</button>`;
+    <div class="warn" id="agewarn">${T('Нужно быть 18 лет или старше.','You need to be 18 or older.')}</div>
+    <div class="lbl">${T('Пол','Gender')}</div>
+    <div class="grid3" id="f_gender">${GENDERS.map(g=>`<div class="chip ${p.gender===g[0]?'on':''}" data-g="${g[0]}">${esc(T(g[1],g[0]))}</div>`).join('')}</div>
+    </div><button class="cta" id="cont" disabled>${T('Продолжить','Continue')}</button>`;
   const photo=slot.querySelector('#photo'); if(p.photo)photo.style.backgroundImage=`url(${p.photo})`;
   photo.onclick=()=>pickPhoto(()=>WIDGETS.basics(slot));
   const name=slot.querySelector('#f_name'), age=slot.querySelector('#f_age'), cont=slot.querySelector('#cont');
@@ -1014,14 +1056,14 @@ WIDGETS.location=function(slot){
                        : '<div class="map"><div class="ring"></div><div class="pin">'+IC.pin+'</div></div>';
   slot.innerHTML=`<div class="card">
     ${mapHtml}
-    <div class="lbl" style="margin-top:14px">Your city</div>
-    <input class="inp" id="area" list="cityopts" autocomplete="off" placeholder="Start typing — Kleal will suggest" value="${esc(area)}">
+    <div class="lbl" style="margin-top:14px">${T('Твой город','Your city')}</div>
+    <input class="inp" id="area" list="cityopts" autocomplete="off" placeholder="${T('Начни печатать, Kleal подскажет','Start typing — Kleal will suggest')}" value="${esc(area)}">
     <datalist id="cityopts"></datalist>
-    <button id="gloc" type="button" style="margin-top:10px;width:100%;padding:12px;border:1px solid var(--line,#E7E8EC);background:#fff;border-radius:12px;font:inherit;font-weight:600;color:var(--accent,#F5455C);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📍 Use my location</button>
-    <div class="lbl" style="margin-top:16px">How far are you happy to go? <b id="rkm">${r}</b> km</div>
+    <button id="gloc" type="button" style="margin-top:10px;width:100%;padding:12px;border:1px solid var(--line,#E7E8EC);background:#fff;border-radius:12px;font:inherit;font-weight:600;color:var(--accent,#F5455C);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📍 ${T('Определить моё местоположение','Use my location')}</button>
+    <div class="lbl" style="margin-top:16px">${T('Далеко ли готов ехать?','How far are you happy to go?')} <b id="rkm">${r}</b> ${T('км','km')}</div>
     <input type="range" id="rad" min="1" max="50" value="${r}">
     <div class="cap" id="gstat" style="text-align:left;margin-top:8px"></div>
-    </div><button class="cta" id="cont" ${area?'':'disabled'}>Continue</button>`;
+    </div><button class="cta" id="cont" ${area?'':'disabled'}>${T('Продолжить','Continue')}</button>`;
   const rad=slot.querySelector('#rad'), area_in=slot.querySelector('#area'), cont=slot.querySelector('#cont');
   // ---- real map (Leaflet + Carto light tiles). A radius circle marks the AREA; no exact pin, no attribution bar. ----
   let lmap=null, circle=null;
@@ -1066,10 +1108,10 @@ WIDGETS.location=function(slot){
     if(h && isFinite(h.lat) && isFinite(h.lon)){
       set('geo.coarseLat', +h.lat.toFixed(2)); set('geo.coarseLon', +h.lon.toFixed(2));
       recenter([h.lat, h.lon]);
-      stat('Kleal shows your city area only, never your exact spot.');
+      stat(T('Kleal показывает только район города, никогда точное место.','Kleal shows your city area only, never your exact spot.'));
       return true;
     }
-    stat("I couldn't find that place — check the spelling?");
+    stat(T('Не нашёл такое место. Проверишь написание?',"I couldn't find that place — check the spelling?"));
     return false;
   }
   const geocode=applyCity;
@@ -1085,17 +1127,17 @@ WIDGETS.location=function(slot){
   if(area) applyCity(area);
   // geolocation is requested AUTOMATICALLY when this step opens; the detected CITY name is used (never exact spot)
   function autoLocate(){
-    if(!navigator.geolocation){ stat("Start typing your city — I'll suggest as you go."); return; }
-    stat("Finding your city...");
+    if(!navigator.geolocation){ stat(T('Начни печатать город, я буду подсказывать.',"Start typing your city — I'll suggest as you go.")); return; }
+    stat(T('Определяю твой город…','Finding your city…'));
     navigator.geolocation.getCurrentPosition(async pos=>{ const la=pos.coords.latitude.toFixed(2),lo=pos.coords.longitude.toFixed(2);
       set('geo.located',true); set('geo.coarseLat',Number(la)); set('geo.coarseLon',Number(lo)); recenter([Number(la),Number(lo)]);
       const city=await reverseCity(la,lo);
-      if(city){ setCity(city); stat("Kleal shows your city area only, never your exact spot."); }
-      else { stat("Couldn't name your city — start typing it, I'll suggest as you go."); }
-    }, err=>{ area_in.placeholder="Start typing — Kleal will suggest";
+      if(city){ setCity(city); stat(T('Kleal показывает только район города, никогда точное место.','Kleal shows your city area only, never your exact spot.')); }
+      else { stat(T('Не смог определить город. Начни печатать, я буду подсказывать.',"Couldn't name your city — start typing it, I'll suggest as you go.")); }
+    }, err=>{ area_in.placeholder=T('Начни печатать, Kleal подскажет','Start typing — Kleal will suggest');
       stat(err && err.code===1
-        ? "Location is blocked for this site — start typing your city instead, I'll suggest as you go."
-        : "Couldn't get a fix right now — start typing your city instead, I'll suggest as you go."); },
+        ? T('Геолокация для сайта заблокирована. Начни печатать город, я буду подсказывать.',"Location is blocked for this site — start typing your city instead, I'll suggest as you go.")
+        : T('Сейчас не получается определить. Начни печатать город, я буду подсказывать.',"Couldn't get a fix right now — start typing your city instead, I'll suggest as you go.")); },
       {enableHighAccuracy:false, timeout:10000, maximumAge:600000}); }
   // Reliable path: geolocation on a user click (browsers suppress the prompt for non-gesture calls).
   const glocBtn=slot.querySelector('#gloc'); if(glocBtn) glocBtn.onclick=autoLocate;
@@ -1105,17 +1147,17 @@ WIDGETS.location=function(slot){
     // last chance to locate: someone can type and hit Continue without ever blurring the field
     if(!(isFinite(g2.coarseLat)&&isFinite(g2.coarseLon))) await applyCity(area_in.value.trim());
     lock(slot); const km=(st.profile.geo&&st.profile.geo.maxDistanceKm)||rad.value;
-    meSay((area_in.value.trim()||'My city')+', within '+km+' km'); afterAnswer(); };
+    meSay((area_in.value.trim()||T('Мой город','My city'))+T(', в пределах ','; within ')+km+T(' км',' km')); afterAnswer(); };
 };
 
 const LANGS=['English','Spanish','German','French','Portuguese','Italian','Russian'];
 WIDGETS.language=function(slot){
   const cur=(st.profile.languages&&st.profile.languages.comfortable)||[];
   slot.innerHTML=`<div class="chips" id="langs">
-    ${LANGS.map(l=>`<div class="chip ${cur.includes(l)?'on':''}" data-l="${l}">${l}</div>`).join('')}
+    ${LANGS.map(l=>`<div class="chip ${cur.includes(l)?'on':''}" data-l="${l}">${esc(langLabel(l))}</div>`).join('')}
     ${cur.filter(l=>!LANGS.includes(l)).map(l=>`<div class="chip on" data-l="${esc(l)}">${esc(l)}</div>`).join('')}</div>
-    <div class="addrow" id="ar"><span class="ai">${IC.plus}</span><input id="lown" placeholder="Add your own"><button class="go" id="ladd">${IC.send}</button></div>
-    <button class="cta" id="cont" disabled>Next</button>`;
+    <div class="addrow" id="ar"><span class="ai">${IC.plus}</span><input id="lown" placeholder="${T('Добавить своё','Add your own')}"><button class="go" id="ladd">${IC.send}</button></div>
+    <button class="cta" id="cont" disabled>${T('Далее','Next')}</button>`;
   const cont=slot.querySelector('#cont');
   function sync(){ const on=[...slot.querySelectorAll('#langs .chip.on')].map(c=>c.dataset.l); set('languages.comfortable',on); cont.disabled=!on.length; }
   slot.querySelectorAll('#langs .chip').forEach(c=>c.onclick=()=>{ c.classList.toggle('on'); sync(); });
@@ -1127,15 +1169,18 @@ WIDGETS.language=function(slot){
   cont.onclick=()=>{ const on=(st.profile.languages&&st.profile.languages.comfortable)||[]; lock(slot); meSay(on.join(', ')); afterAnswer(); };
 };
 
-const QUICK=['Coffee','Walks','Football','AI','Startups','Dota 2','Jazz','Design','Hiking'];
 WIDGETS.interests=function(slot){
-  const cur=(st.profile.interests&&st.profile.interests.explicit)||[];
-  slot.innerHTML=`<div class="chips" id="ints">
-    ${QUICK.map(q=>`<div class="chip ${cur.includes(q)?'on':''}" data-q="${esc(q)}">${esc(q)}</div>`).join('')}</div>
-    <div class="addrow" id="ar"><span class="ai">${IC.plus}</span><input id="iown" placeholder="Add your own"><button class="go" id="iadd">${IC.send}</button></div>
-    <button class="cta" id="cont" disabled>Next</button>`;
+  const cur=((st.profile.interests&&st.profile.interests.explicit)||[]).map(x=>String(x).toLowerCase());
+  const known=[].concat(...INTEREST_GROUPS().map(g=>g[1].map(i=>i[0])));
+  const extra=((st.profile.interests&&st.profile.interests.explicit)||[]).filter(x=>known.indexOf(String(x).toLowerCase())<0);
+  slot.innerHTML=`<div id="ints">
+    ${INTEREST_GROUPS().map(g=>`<div class="igrp">${esc(g[0])}</div><div class="chips">${
+      g[1].map(i=>`<div class="chip ${cur.includes(i[0])?'on':''}" data-q="${esc(i[0])}">${esc(T(i[1],i[0]))}</div>`).join('')}</div>`).join('')}
+    ${extra.length?`<div class="chips" style="margin-top:8px">${extra.map(x=>`<div class="chip on" data-q="${esc(x)}">${esc(x)}</div>`).join('')}</div>`:''}</div>
+    <div class="addrow" id="ar"><span class="ai">${IC.plus}</span><input id="iown" placeholder="${T('Добавить своё','Add your own')}"><button class="go" id="iadd">${IC.send}</button></div>
+    <button class="cta" id="cont" disabled>${T('Далее','Next')}</button>`;
   const cont=slot.querySelector('#cont');
-  function picks(){ return [...slot.querySelectorAll('#ints .chip.on')].map(c=>c.dataset.q); }
+  function picks(){ return [...slot.querySelectorAll('#ints .chip.on')].map(c=>c.dataset.q); }   // canonical tokens
   function sync(){ const on=picks(); set('interests.explicit',on); cont.disabled=!on.length; }
   slot.querySelectorAll('#ints .chip').forEach(c=>c.onclick=()=>{ c.classList.toggle('on'); sync(); });
   const own=slot.querySelector('#iown'), ar=slot.querySelector('#ar');
@@ -1143,7 +1188,7 @@ WIDGETS.interests=function(slot){
   function add(){ const v=own.value.trim(); if(!v)return; const d=document.createElement('div'); d.className='chip on'; d.dataset.q=v; d.textContent=v; d.onclick=()=>{d.remove();sync();}; slot.querySelector('#ints').appendChild(d); own.value=''; sync(); }
   slot.querySelector('#iadd').onclick=add; own.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();add();}};
   sync();
-  cont.onclick=()=>{ const on=picks(); if(!on.length)return; lock(slot); meSay(on.join(', '));
+  cont.onclick=()=>{ const on=picks(); if(!on.length)return; lock(slot); meSay(on.map(intLabel).join(', '));
     const funnelDone=st.crit&&st.crit.done&&st.crit.done.includes('Interests')
       &&!(st.crit.missing||[]).some(m=>/^(Role|Experience):/.test(m));
     if(st.editing&&funnelDone){ afterAnswer(); } else { startFunnel(on); } };
@@ -1154,7 +1199,7 @@ function startFunnel(picks){
   st.fcEl=null; st.funnelTurns=0;
   st.funnelCap=picks.length*2+4;  // 2 questions per interest + confirm/wiggle room (anti-stuck net)
   st.funnel=[{role:'assistant',content:"Nice picks."},{role:'user',content:"I'm into "+picks.join(', ')}];
-  setCompose(funnelCompose, "Tell Kleal more...");
+  setCompose(funnelCompose, T('Расскажи Kleal больше…','Tell Kleal more…'));
   funnelTurn(null,true);
 }
 function funnelCompose(t){
@@ -1169,13 +1214,13 @@ function funnelOpts(opts){
   // «That's enough» is always there. The funnel used to end only when the model stopped asking or a
   // turn cap fired — so whether the conversation ended was the model's decision, not the person's.
   w.innerHTML='<div class="chips">'+opts.map(o=>`<div class="chip" data-o="${esc(o)}">${esc(o)}</div>`).join('')
-    +'<div class="chip" id="fdone">That\'s enough</div></div>';
+    +`<div class="chip" id="fdone">${T('Это всё',"That's enough")}</div></div>`;
   w.querySelectorAll('.chip[data-o]').forEach(c=>c.onclick=()=>{ if(st.busy)return; const v=c.dataset.o; w.remove(); funnelTurn(v); });
   const fd=w.querySelector('#fdone'); if(fd) fd.onclick=()=>{ if(st.busy)return; w.remove(); advanceFunnel(); };
 }
 // always keep exactly ONE Continue button, re-appended at the bottom under the latest message
 function funnelContinue(){ if(st.fcEl)st.fcEl.remove(); const w=widgetSlot(); st.fcEl=w;
-  w.innerHTML='<button class="cta" id="fc">Continue</button>';
+  w.innerHTML=`<button class="cta" id="fc">${T('Продолжить','Continue')}</button>`;
   w.querySelector('#fc').onclick=()=>advanceFunnel(); }
 async function funnelTurn(text, first){
   if(st.busy) return;
@@ -1184,7 +1229,7 @@ async function funnelTurn(text, first){
   const typ=document.createElement('div'); typ.className='typing fade'; typ.innerHTML='<i></i><i></i><i></i>'; t.appendChild(typ); scrollDown();
   try{
     const r=await fetch('/api/v2/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({messages:st.funnel, profile:profileForServer()})}).then(x=>x.json());
+      body:JSON.stringify({messages:st.funnel, profile:profileForServer(), lang:UILANG})}).then(x=>x.json());
     typ.remove();
     st.funnel.push({role:'assistant',content:r.reply});
     elBubble('bot',r.reply,true);
@@ -1199,14 +1244,14 @@ async function funnelTurn(text, first){
     const done=(!!r.funnelComplete && !replyAsks) || st.funnelTurns>=(st.funnelCap||10);
     if(done){ funnelContinue(); }
     else { if(st.fcEl){ st.fcEl.remove(); st.fcEl=null; } if(r.options&&r.options.length) funnelOpts(r.options); }
-  }catch(e){ typ.remove(); elBubble('bot',"I lost the connection for a second. Say that again?",true); }
+  }catch(e){ typ.remove(); elBubble('bot',T('Связь на секунду пропала. Повторишь?','I lost the connection for a second. Say that again?'),true); }
   st.busy=false; refreshSendState();
 }
 
 
 
 // ======================= SUMMARY =======================
-function finishChat(){ botSay(["That's everything I need. Here is what I have on you."], ()=>setTimeout(goSummary,500)); }
+function finishChat(){ botSay([T('Это всё, что мне нужно. Вот что я о тебе знаю.',"That's everything I need. Here is what I have on you.")], ()=>setTimeout(goSummary,500)); }
 function summaryRows(){
   const p=st.profile, R=[];
   const langs=(p.languages&&p.languages.comfortable)||[];
@@ -1222,26 +1267,27 @@ function summaryRows(){
   // in the profile, and the safety step was removed — so they are shown WITHOUT an edit affordance
   // instead of offering one that does nothing. «Goals» is gone entirely: that section no longer
   // exists in the profile either, so the row was pointing at a screen nobody can reach.
-  R.push(['spark','Interests',(ints.join(', ')||'Not set')+(roleTxt?' ('+roleTxt+')':''),'interests']);
-  R.push(['chat','Your personality','Take the test in your profile','']);
-  R.push(['lock','Safety & Privacy',[sf.publicPlacesOnly!==false?'public places':null,sf.hideExactLocation?'approx location':null,sf.verifiedOnly?'verified first':null,pm.allowAdjacentMatches?'adjacent':null,pm.rememberPreferences?'remembers prefs':null].filter(Boolean).join(', ')||'public places','']);
+  R.push(['spark',T('Интересы','Interests'),(ints.map(intLabel).join(', ')||T('Не указано','Not set'))+(roleTxt?' ('+roleTxt+')':''),'interests']);
+  R.push(['chat',T('Твоя личность','Your personality'),T('Пройди тест в профиле','Take the test in your profile'),'']);
+  R.push(['lock',T('Безопасность и приватность','Safety & Privacy'),[sf.publicPlacesOnly!==false?T('публичные места','public places'):null,sf.hideExactLocation?T('примерное местоположение','approx location'):null,sf.verifiedOnly?T('сначала проверенные','verified first'):null,pm.allowAdjacentMatches?T('смежные интересы','adjacent'):null,pm.rememberPreferences?T('помнит предпочтения','remembers prefs'):null].filter(Boolean).join(', ')||T('публичные места','public places'),'']);
   return R;
 }
 function goSummary(){ st.phase='summary'; const rows=summaryRows();
   const p=st.profile, c=st.crit||{}; const done=(c.done||[]).length, miss=(c.missing||[]).length;
   const conf=Math.round(100*done/((done+miss)||1));
-  const nm=p.name||'You', ini=nm.charAt(0).toUpperCase();
-  const sub=[p.age||null,p.gender||null,p.city||null].filter(Boolean).join(' · ')||'New profile';
+  const nm=p.name||T('Ты','You'), ini=nm.charAt(0).toUpperCase();
+  // p.gender holds the stored English token; the ID card was reading «27 · Male · Белград».
+  const sub=[p.age||null,p.gender?genderLabel(p.gender):null,p.city||null].filter(Boolean).join(' · ')||T('Новый профиль','New profile');
   A.innerHTML=`<div class="head"><div class="ava" id="ava2">${MASCOT_SRC?'':'K'}</div>
-    <div class="ht"><div class="htt">What Kleal knows about you</div><div class="hsub">Your agent's memory. Edit anything, anytime.</div></div></div>
+    <div class="ht"><div class="htt">${T('Что Kleal знает о тебе','What Kleal knows about you')}</div><div class="hsub">${T('Память твоего агента. Изменить можно всё и в любой момент.',"Your agent's memory. Edit anything, anytime.")}</div></div></div>
     <div class="scroll fade">
       <div class="idcard">
         <div class="idrow"><div class="idava">${esc(ini)}</div>
           <div class="idt"><div class="idn">${esc(nm)}<span class="statusdot"></span></div><div class="idsub">${esc(sub)}</div></div></div>
-        <div class="confrow"><span class="cl">Profile readiness</span><span class="cp">${conf}%</span></div>
+        <div class="confrow"><span class="cl">${T('Готовность профиля','Profile readiness')}</span><span class="cp">${conf}%</span></div>
         <div class="ctrack"><i style="width:${conf}%"></i></div></div>
-      <div class="sumc"><div class="sumlbl">Kleal's summary</div>
-        <div class="sumtxt" id="sumtxt">${st.profile.summary?esc(st.profile.summary):'<span class="shim">Kleal is writing your summary...</span>'}</div>
+      <div class="sumc"><div class="sumlbl">${T('Описание от Kleal',"Kleal's summary")}</div>
+        <div class="sumtxt" id="sumtxt">${st.profile.summary?esc(st.profile.summary):`<span class="shim">${T('Kleal составляет описание…','Kleal is writing your summary…')}</span>`}</div>
         <div class="sumedit" id="sume" style="display:${st.profile.summary?'block':'none'}">Edit</div></div>
       <div class="orows">${rows.map(r=>`<div class="orow${r[3]?'':' flat'}" data-step="${r[3]}"><div class="oic2">${IC[r[0]]}</div>
         <div class="ot2"><div class="otn2">${esc(r[1])}</div><div class="otv2">${esc(r[2])}</div></div>
@@ -1257,17 +1303,17 @@ function goSummary(){ st.phase='summary'; const rows=summaryRows();
 // the stored artifact: one continuous text describing the user (kept in profile.summary)
 function fetchSummary(){
   fetch('/api/v2/summary',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({profile:profileForServer()})}).then(r=>r.json()).then(r=>{
+    body:JSON.stringify({profile:profileForServer(), lang:UILANG})}).then(r=>r.json()).then(r=>{
       if(r.summary) st.profile.summary=r.summary;
       if(st.phase!=='summary')return;
-      const el=document.getElementById('sumtxt'); if(el)el.textContent=r.summary||'Could not write the summary right now.';
+      const el=document.getElementById('sumtxt'); if(el)el.textContent=r.summary||T('Сейчас не получилось составить описание.','Could not write the summary right now.');
       const e=document.getElementById('sume'); if(e&&r.summary)e.style.display='block';
-    }).catch(()=>{ const el=document.getElementById('sumtxt'); if(el)el.textContent='Could not write the summary right now.'; });
+    }).catch(()=>{ const el=document.getElementById('sumtxt'); if(el)el.textContent=T('Сейчас не получилось составить описание.','Could not write the summary right now.'); });
 }
 function wireSummaryEdit(){ const e=document.getElementById('sume'); if(!e)return;
-  e.textContent='Edit';
+  e.textContent=T('Изменить','Edit');
   e.onclick=()=>{ const box=document.getElementById('sumtxt');
-    box.innerHTML=`<textarea id="sumta">${esc(st.profile.summary||'')}</textarea>`; e.textContent='Save';
+    box.innerHTML=`<textarea id="sumta">${esc(st.profile.summary||'')}</textarea>`; e.textContent=T('Сохранить','Save');
     e.onclick=()=>{ const v=(document.getElementById('sumta').value||'').trim();
       st.profile.summary=v; st.sumEdited=true; box.textContent=v; wireSummaryEdit(); }; };
 }
@@ -1281,9 +1327,9 @@ function rDone(){ st.phase='done';
   try{ fetch('/api/onboarding/register',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({profile:profileForServer()})}).catch(()=>{}); }catch(_e){}
   A.innerHTML=`<div class="done fade"><div class="donedisc">${svg('<path d="M5 12.5l4.5 4.5L19 7"/>','0 0 24 24').replace('width="22" height="22"','width="72" height="72"')}</div>
-    <div class="d-h">You're on the board!</div>
-    <div class="d-sub">Your Kleal agent is ready. Tell it what you want to do and it starts finding people and plans.</div></div>
-    <div class="foot"><button class="cta" id="ci">Continue</button></div>`;
+    <div class="d-h">${T('Ты в игре!',"You're on the board!")}</div>
+    <div class="d-sub">${T('Твой агент Kleal готов. Скажи ему, чем хочешь заняться, и он начнёт искать людей и планы.','Your Kleal agent is ready. Tell it what you want to do and it starts finding people and plans.')}</div></div>
+    <div class="foot"><button class="cta" id="ci">${T('Продолжить','Continue')}</button></div>`;
   document.getElementById('ci').onclick=()=>openProfile();   // -> the main screen (Agent Home)
 }
 
@@ -1679,7 +1725,7 @@ class H(BaseHTTPRequestHandler):
             prior = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             msgs = body.get("messages") if isinstance(body.get("messages"), list) else []
             try:
-                send_json(self, 200, v2_chat(msgs, prior))
+                send_json(self, 200, v2_chat(msgs, prior, body.get("lang")))
             except Exception as e:
                 send_json(self, 200, {"reply": "I lost the connection for a second. Say that again?",
                                       "options": [], "profile": prior, "crit": critical_status_v2(prior),
@@ -1687,7 +1733,7 @@ class H(BaseHTTPRequestHandler):
         elif p in ("/api/onboarding/summary", "/api/v2/summary"):
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             try:
-                send_json(self, 200, v2_summary(prof))
+                send_json(self, 200, v2_summary(prof, body.get("lang") or "ru"))
             except Exception as e:
                 send_json(self, 200, {"summary": "", "error": str(e)[:200]})
         elif p in ("/api/onboarding/register", "/api/v2/register"):
