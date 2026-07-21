@@ -1103,7 +1103,8 @@ INTENT_BUILD_PROMPT = '''You help the user create an "intent" — a plan to meet
 Conversation so far is given. Return ONE JSON object, nothing else, WITH THE KEYS IN EXACTLY THIS ORDER:
 {"valid":true|false, "ready":true|false,
  "reply":"<your message — a single question, or a short confirmation once you have the gist>",
- "activity":"<short activity phrase, once known>", "time":"<when, once known>", "format":"<1:1|small group|group, if the user mentioned it>"}
+ "activity":"<short activity phrase, once known>", "time":"<when, once known>", "format":"<1:1|small group|group, if the user mentioned it>",
+ "hints":["<3 short things THE USER could say next>"]}
 The order matters: "valid" must come before "reply".
 
 Rules:
@@ -1112,6 +1113,12 @@ Rules:
 - ready:true as soon as you know the ACTIVITY and any sense of WHEN (a day, "today", "this weekend", or "whenever"). Do NOT keep asking — format, group size, exact place, number of people are OPTIONAL and default sensibly. If the user already gave activity + time in one message, set ready:true right away with a one-line confirmation.
 - Only when the activity is clear but timing is totally absent, ask the single question "when?". Never ask more than that.
 - Keep reply short (1-2 sentences).
+- "hints": exactly 3, each at most 6 words, written as the USER's own words in __LANGNAME__, never
+  questions back at them and never repeats of each other. If your "reply" asked a question, the hints
+  are plausible ANSWERS to it ("в субботу вечером", "лучше один на один"). Otherwise they are
+  concrete next things this person could ask for. Use the PROFILE line at the top of the conversation
+  to make them specific ("Найти компанию на утренний бег в Белграде", not "Заняться спортом").
+  "hints" is the ONLY key you may omit; never omit or reorder the others.
 
 LANGUAGE: write "reply" in __LANGNAME__ — the language this user writes in. This is not optional: __LANGDIR__ Every other value — activity, time, format — stays in ENGLISH, because the filtration and matching agents only understand English. (The transcript below is labelled "User:"/"Kleal:" in English for machine reasons; that says nothing about the reply language.)'''
 
@@ -1197,11 +1204,37 @@ def _chat_reply(messages, profile, lang, on_text=None):
     return ""
 
 
+def _profile_line(p):
+    """One compact line at the top of the transcript so the hints can name this person's own city and
+    interests instead of offering everyone the same three openers. Interests the user switched off in
+    the client are already filtered there; this only formats what arrives."""
+    p = p or {}
+    ints = [str(i) for i in (p.get("interests") or []) if str(i).strip()][:6]
+    bits = [str(p.get("city") or p.get("area") or "").strip(), ", ".join(ints)]
+    line = " | ".join(b for b in bits if b)
+    return ("PROFILE: " + line + "\n") if line else ""
+
+
+def _hints(obj, lang):
+    """Three or none. A row of one usable chip reads as a bug, and the client has deterministic
+    layers that are strictly better than a partial list."""
+    out = []
+    for h in ((obj or {}).get("hints") or [])[:6]:
+        t = re.sub(r"\s+", " ", str(h or "")).strip().strip('"\u00ab\u00bb\u2013-\u2022 ').rstrip(".!?")
+        if not t or len(t) > 48 or not _lang_ok(t, lang):
+            continue
+        if t.lower() in [x.lower() for x in out]:
+            continue
+        out.append(t)
+    return out[:3] if len(out) >= 3 else []
+
+
 def intent_build(messages, profile, on_text=None):
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     lang = detect_lang(last_user)
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
                        else ("Kleal: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
+    convo = _profile_line(profile) + convo
     sys_prompt = (INTENT_BUILD_PROMPT
                   .replace("__LANGNAME__", _LANGNAME.get(lang, "English"))
                   .replace("__LANGDIR__", _LANGDIR.get(lang, _LANGDIR["en"])))
@@ -1245,7 +1278,7 @@ def intent_build(messages, profile, on_text=None):
         return {"reply": chat or ("Что хочешь устроить? Опиши, чем заняться и с кем." if lang == "ru"
                                   else "What would you like to set up? Tell me what and with whom."),
                 "valid": False, "ready": False, "intent": None, "lang": lang,
-                "conversational": bool(chat)}
+                "conversational": bool(chat), "hints": []}
     reply = str(obj.get("reply"))[:400]
     valid = bool(obj.get("valid", True))
     ready = bool(obj.get("ready")) and valid
@@ -1284,9 +1317,10 @@ def intent_build(messages, profile, on_text=None):
         chat = _chat_reply(messages, profile, lang, on_text=on_text) or (
             "Привет! Чем могу помочь?" if lang == "ru" else "Hey! How can I help?")
         return {"reply": chat, "valid": valid, "ready": False, "intent": None, "lang": lang,
-                "conversational": True}
+                "conversational": True, "hints": _hints(obj, lang)}
     if not ready:
-        return {"reply": reply, "valid": valid, "ready": False, "intent": None, "lang": lang}
+        return {"reply": reply, "valid": valid, "ready": False, "intent": None, "lang": lang,
+                "hints": _hints(obj, lang)}
 
     # ready -> assemble a canonical, rankable intent (filtration + the same builder /chat uses)
     cat = _categorize(activity)
@@ -1301,8 +1335,9 @@ def intent_build(messages, profile, on_text=None):
         return {"reply": (("Понял тему, но пока не за что зацепиться для поиска — уточни, чем именно заняться?")
                           if lang == "ru" else
                           "I got the gist, but there's nothing concrete to search on yet — what exactly do you want to do?"),
-                "valid": True, "ready": False, "intent": None, "lang": lang}
-    return {"reply": reply, "valid": True, "ready": True, "intent": intent, "lang": lang}
+                "valid": True, "ready": False, "intent": None, "lang": lang, "hints": []}
+    return {"reply": reply, "valid": True, "ready": True, "intent": intent, "lang": lang,
+            "hints": _hints(obj, lang)}
 
 
 # ======================= HTTP =======================

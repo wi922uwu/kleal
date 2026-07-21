@@ -641,7 +641,10 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   font-size:11px;line-height:16px;font-weight:500;cursor:pointer;background:var(--card);
   border:1px solid var(--border);color:var(--fg);white-space:nowrap}
 .kchip.on{background:var(--primary);border-color:var(--primary);color:#fff}
-.kchip.soft{background:var(--neutral100);border-color:transparent}
+.kchip.soft{background:var(--card);border-color:var(--border)}
+/* a whole sentence cannot live in a 36px nowrap pill — the hint variant wraps and grows */
+.kchip.hint{height:auto;min-height:36px;padding:8px 14px;white-space:normal;text-align:left;
+  justify-content:flex-start;max-width:100%;line-height:16px;overflow-wrap:anywhere}
 .kwhy{background:var(--bg);border-radius:12px;padding:12px;font-size:12px;line-height:normal;color:var(--muted)}
 .krow{display:flex;gap:12px;align-items:center}
 .krow .lb{width:80px;flex:none;display:flex;gap:8px;align-items:center;font-size:13px;line-height:16px;font-weight:500}
@@ -3447,6 +3450,14 @@ function flowBack(){
 // is harder to read than a short wait, and the builder can discard a draft mid-flight and start over,
 // so the text could visibly reset. The server still accepts stream:true; this client no longer asks.
 // Null on any transport failure, so flowSay's existing "connection lost" branch fires unchanged.
+// matchProfile() ships every interest, including used===false. For anything the user will READ BACK
+// as a suggestion, the opt-out has to be honoured.
+function matchProfileForHints(){
+  const p=matchProfile(), off={};
+  (DATA.interests||[]).forEach(i=>{ if(i&&i.used===false) off[i.name]=1; });
+  p.interests=(p.interests||[]).filter(n=>!off[n]);
+  return p;
+}
 async function intentBuild(messages, profile){
   try{
     const resp=await fetch('/api/buddy/intent-build',{method:'POST',
@@ -3469,18 +3480,18 @@ async function flowSay(text, fromSeed){
     // intent whose vibe was "bonds, finance, investing, economy". Turns already answered
     // conversationally are marked and excluded — a real multi-turn build is unmarked and still sent.
     const forBuilder=FLOW.msgs.filter(m=>!m.chat).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text}));
-    r=await intentBuild(forBuilder, matchProfile());
+    r=await intentBuild(forBuilder, matchProfileForHints());
   }catch(e){ r=null; }
   FLOW.busy=false;
   if(!r||!r.reply){ FLOW.lastFailed=true;
-    FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),t:Date.now()}); render(); return; }
+    FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),hints:[],t:Date.now()}); render(); return; }
   FLOW.lastFailed=false;
   if(r.conversational && FLOW.mode==='intent'){
     // This conversation exists to build an intent, so an off-topic turn is steered back once and then
     // pointed at the buddy chat, where conversation belongs.
     FLOW.msgs[meIdx].chat=true;
     const said=FLOW.msgs.filter(m=>m.chat&&m.who==='ag').length;
-    FLOW.msgs.push({who:'ag',chat:true,t:Date.now(),
+    FLOW.msgs.push({who:'ag',chat:true,hints:[],t:Date.now(),
       text: said===0
         ? T('Здесь я собираю интент. Напиши, чем хочешь заняться — например «сходить на джаз в пятницу».',
              "This chat builds an intent. Tell me what you'd like to do — e.g. \u201cgo to a jazz gig on Friday\u201d.")
@@ -3495,13 +3506,13 @@ async function flowSay(text, fromSeed){
     // Marking the turn `chat` keeps it out of the builder's context — greeting Kleal and then asking
     // about bonds used to produce an intent whose vibe was "finance, economy".
     FLOW.msgs[meIdx].chat=true;
-    FLOW.msgs.push({who:'ag',text:r.reply,chat:true,t:Date.now()});
+    FLOW.msgs.push({who:'ag',text:r.reply,chat:true,hints:okHints(r.hints),t:Date.now()});
     render(); return;
   }
   // the request is the first turn that actually asked for something — never the greeting that opened
   // the conversation, which is what used to end up quoted as «Запрос: привет»
   if(!FLOW.request) FLOW.request=text;
-  FLOW.msgs.push({who:'ag',text:r.reply,t:Date.now()});
+  FLOW.msgs.push({who:'ag',text:r.reply,hints:okHints(r.hints),t:Date.now()});
   if(r.ready&&r.intent){                       // enough detail -> one clarification, then the summary
     FLOW.intent=r.intent;
     intentPrefill();                           // a day named in the dialog must light its chip, not be re-asked
@@ -3579,7 +3590,8 @@ let FLOW = null;
 // jump straight to the final summary form, skipping the conversation entirely.
 function flowInit(seed, mode){
   FLOW = { text:seed||'', msgs:[], when:null, time:null, district:null, mode:mode||'buddy',
-           intent:null, summary:null, steps:0, res:null, adjust:'radius', groups:true, busy:false };
+           intent:null, summary:null, steps:0, res:null, adjust:'radius', groups:true,
+           hintSeed:(new Date()).getDate(), busy:false };
 }
 // «+ Создать интент» — a fresh conversation whose only job is to build one.
 function intentStart(){
@@ -3594,6 +3606,104 @@ const FLOW_HINTS = () => [
   T('Найти компанию для кофе и разговора','Find company for coffee & good talk'),
   T('Познакомиться с людьми из творческой среды','Meet new people from the creative field'),
   T('Спокойные встречи без суеты','Low-key meetups in a relaxed setting')];
+// ---- Personal conversation hints ------------------------------------------------------------
+// Layer 1 is the model's own, carried by the SAME turn that produced the reply — no second call, so
+// a chip can never arrive seconds after the message it belongs to. Layers 2-4 are deterministic and
+// exist because turn one has no call yet, transport fails, and the 70B drops keys. The row must
+// never be short, never empty, never a loading state.
+function okHints(v){
+  const ru=(UILANG==='ru');
+  return (Array.isArray(v)?v:[]).map(x=>String(x||'').trim())
+    .filter(x=>x && x.length<=48 && (!ru || /[а-яё]/i.test(x))).slice(0,3);
+}
+// Is there anything personal to build on at all? Below two signals we do not invent a personality.
+function hintsSignals(){
+  return (DATA.interests||[]).filter(i=>i&&i.name&&i.used!==false).length
+       + (String(DATA.area||'').trim()?1:0);
+}
+// Russian prepositional. Only inflects shapes we are sure of; anything else returns '' and the
+// caller drops the clause rather than printing «в Тбилиси-е».
+const _CITY_PREP={'москва':'Москве','белград':'Белграде','барселона':'Барселоне','тбилиси':'Тбилиси',
+  'ереван':'Ереване','лиссабон':'Лиссабоне','берлин':'Берлине','стамбул':'Стамбуле','прага':'Праге',
+  'валенсия':'Валенсии','варшава':'Варшаве','мадрид':'Мадриде','лондон':'Лондоне','париж':'Париже',
+  'копенгаген':'Копенгагене','амстердам':'Амстердаме','вена':'Вене','рим':'Риме','порту':'Порту'};
+function ruLoc(c){
+  const k=String(c||'').trim().toLowerCase(); if(!k) return '';
+  if(_CITY_PREP[k]) return _CITY_PREP[k];
+  if(/и[яй]$/.test(k)) return c.slice(0,-1)+'и';
+  if(/[ая]$/.test(k))  return c.slice(0,-1)+'е';
+  if(/[бвгдзклмнпрстфх]$/.test(k)) return c+'е';
+  return '';
+}
+function cityPhrase(){ const c=String(DATA.area||'').trim(); if(!c) return '';
+  return (UILANG==='ru') ? (ruLoc(c)?' в '+ruLoc(c):'') : ' in '+c; }
+// Answer-shaped chips mid-dialog. FLOW.intent is only set once the builder is ready (by which point
+// the screen has left this composer), so we read what the USER has NOT yet said instead.
+function saidText(){ return ((FLOW&&FLOW.msgs)||[]).filter(m=>m.who==='me')
+  .map(m=>String(m.text||'')).join(' ').toLowerCase(); }
+function askHints(){
+  const s=saidText(), out=[];
+  if(!/сегодня|завтра|выходн|пятниц|суббот|воскрес|понедельн|вторник|сред|четверг|today|tomorrow|weekend|friday|saturday|sunday|monday|tuesday|wednesday|thursday/.test(s))
+    out.push(T('Сегодня вечером','Tonight'), T('В выходные','This weekend'));
+  if(!/утр|дн[её]м|вечер|ноч|morning|afternoon|evening|night/.test(s))
+    out.push(T('Днём удобнее','Daytime works better'));
+  if(!/один на один|1:1|вдво[её]м|груп|компан|one-on-one|group|small/.test(s))
+    out.push(T('Лучше один на один','Rather one-on-one'), T('Можно небольшой компанией','A small group is fine'));
+  return out;
+}
+// Profile composer. Deterministic — no Math.random, so the row is stable across re-renders;
+// FLOW.hintSeed rotates the pick day to day so it is not frozen forever either.
+const _HINT_BY_TOPIC=[
+  [/run|jog|бег/,            ()=>[T('Найти компанию на утренний бег'+cityPhrase(),'Find company for a morning run'+cityPhrase()),
+                                  T('Кто бегает рядом по выходным?','Who runs nearby on weekends?')]],
+  [/coffee|cafe|кофе|кафе/,  ()=>[T('Выпить кофе и поговорить'+cityPhrase(),'Grab a coffee and talk'+cityPhrase()),
+                                  T('Спокойное кафе без спешки','A quiet cafe, unhurried')]],
+  [/football|soccer|футбол/, ()=>[T('Собрать игру в футбол на выходных','Get a football game together this weekend'),
+                                  T('Посмотреть матч в компании','Watch the match with company')]],
+  [/\bai\b|startup|стартап|\bии\b/,()=>[T('Обсудить ИИ и стартапы за ужином','Talk AI and startups over dinner'),
+                                  T('Найти людей из продукта и технологий','Meet people from product and tech')]],
+  [/dota|gam|игр/,           ()=>[T('Найти напарника в Dota на вечер','Find a Dota teammate for tonight'),
+                                  T('Собрать пати на вечер','Put a party together for tonight')]],
+  [/walk|hik|прогул|поход/,  ()=>[T('Долгая прогулка и разговор'+cityPhrase(),'A long walk and a good talk'+cityPhrase()),
+                                  T('Выбраться в поход на выходных','Get out on a hike this weekend')]],
+  [/jazz|music|музык|джаз/,  ()=>[T('Сходить на живую музыку','Go to a live music night'),
+                                  T('Кто идёт на концерт на этой неделе?','Who is going to a gig this week?')]],
+  [/design|art|дизайн|искус/,()=>[T('Сходить на выставку'+cityPhrase(),'Go to an exhibition'+cityPhrase()),
+                                  T('Познакомиться с людьми из творческой среды','Meet people from the creative field')]],
+  [/gym|fitness|зал|спорт/,  ()=>[T('Найти напарника в зал','Find a gym partner'),
+                                  T('Потренироваться вместе утром','Train together in the morning')]],
+  [/book|read|книг|чтен/,    ()=>[T('Обсудить книгу за кофе','Talk books over coffee'),
+                                  T('Найти книжный клуб рядом','Find a book club nearby')]],
+  [/spanish|испан|language|язык/,()=>[T('Попрактиковать язык за ужином','Practise the language over dinner'),
+                                  T('Найти языковой обмен'+cityPhrase(),'Find a language exchange'+cityPhrase())]]];
+function topicHints(name){
+  const k=String(name||'').toLowerCase();
+  for(let i=0;i<_HINT_BY_TOPIC.length;i++){ if(_HINT_BY_TOPIC[i][0].test(k)) return _HINT_BY_TOPIC[i][1](); }
+  const w=locTopic(k);   // a free-typed interest: still personal, just plainer
+  return [T('Найти людей, которым тоже интересно: '+w,'Find people who are also into '+w)];
+}
+function seedHints(){
+  if(hintsSignals()<2) return [];
+  const out=[], seen={}, push=x=>{ x=String(x||'').trim(); if(x&&!seen[x]&&out.length<3){seen[x]=1;out.push(x);} };
+  const ints=(DATA.interests||[]).filter(i=>i&&i.name&&i.used!==false);
+  const rot=(FLOW&&FLOW.hintSeed)||0;
+  for(let n=0;n<ints.length&&out.length<3;n++){
+    const v=topicHints(ints[(n+rot)%ints.length].name); push(v[rot%v.length]);
+  }
+  const ln=(DATA.langsList||[]).filter(c=>c!=='ru'&&c!=='en')[0];
+  if(ln) push(T('Попрактиковать '+langName(ln).toLowerCase()+' за кофе','Practise '+langName(ln)+' over coffee'));
+  return out;
+}
+// `m` is the agent message the chips hang off, or null for the empty / failed block.
+function hintsFor(m){
+  const out=[], seen={}, push=x=>{ x=String(x||'').trim(); if(x&&!seen[x]&&out.length<3){seen[x]=1;out.push(x);} };
+  okHints(m&&m.hints).forEach(push);
+  if(out.length<3 && saidText()) askHints().forEach(push);
+  if(out.length<3) seedHints().forEach(push);
+  if(out.length<3) FLOW_HINTS().forEach(push);
+  return out.slice(0,3);
+}
+
 // "Когда" is the DAY, "Время" is the time of day — they must be orthogonal. 'tonight' baked an
 // evening into the day group, so "Сегодня вечером" sat above a "Утро" chip you could also pick.
 // The evening shortcut is not lost: Сегодня + Вечер says the same thing and cannot contradict itself.
@@ -3629,9 +3739,16 @@ function kcomposer(id,ph){ return `<div class="kcomp" style="padding:10px 16px;b
 
 // ---- 1. Request composer (479:14582) ----
 function scr_reqcomposer(){
-  const msgs=(FLOW.msgs||[]).map(m=>m.who==='me'
+  const all=(FLOW&&FLOW.msgs)||[], last=all.length-1;
+  // The chips hang inside the LAST agent bubble's own 4px column, not as a .kcont child (12px gap),
+  // so they read as belonging to that message. Never while busy: a stale chip under a live question
+  // is worse than no chip.
+  const msgs=all.map((m,i)=>m.who==='me'
     ? `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><div class="kbub me">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`
-    : `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`).join('');
+    : `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div>${
+        (i===last&&!FLOW.busy&&!FLOW.lastFailed)?`<div class="kchips" style="margin-top:2px">${hintsFor(m).map(h=>
+          `<div class="kchip soft hint" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>`:''
+      }</div>`).join('');
   // The bar carries «+ Создать интент» (Figma): the way OUT of the dialog is always in reach, not
   // buried under the thread. It appears once there is something to build from.
   return `<div class="kflow fade">${kbar(true)}
@@ -3640,9 +3757,13 @@ function scr_reqcomposer(){
                                      :T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
       ${msgs}
       ${FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:''}
-      ${(!FLOW.msgs.length||FLOW.lastFailed)?`<div style="display:flex;flex-direction:column;gap:12px">
-        <div class="k-label" style="color:var(--muted)">${T('Попробуй сформулировать иначе','Try phrasing it differently')}</div>
-        <div class="kchips">${FLOW_HINTS().map(h=>`<div class="kchip soft" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
+      ${/* On failure THIS block owns the chips — the bubble above is «Связь пропала», and rendering
+             a row under it too drew the same three chips twice. */''}
+      ${(!all.length||FLOW.lastFailed)?`<div style="display:flex;flex-direction:column;gap:12px">
+        <div class="k-label" style="color:var(--muted)">${FLOW.lastFailed
+          ?T('Попробуй сформулировать иначе','Try phrasing it differently')
+          :T('Можно начать так','You could start with')}</div>
+        <div class="kchips">${hintsFor(null).map(h=>`<div class="kchip soft hint" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
       </div>`:''}
     </div>
     ${kcomposer('flowinp',T('Сообщение…','Message…'))}</div>`;
