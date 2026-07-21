@@ -4002,8 +4002,8 @@ function scr_summary(){
           ? row(IC.globe, T('Где','Where'), T('Онлайн','Online'))
           : row(IC.pin, T('Район','District'), labelOf(DIST_OPTS(),FLOW.district,T('любой','any')))}
         ${row(IC.target,T('Формат','Format'), s.format||T('Встреча, неформально','Casual meetup'))}
-        ${row(IC.diamond,T('Вайб','Vibe'), locTopicList(s.vibe)||T('пока не задано','not set yet'))}
-        <div class="kwhy">${T('Формат и вайб — мои предположения, их можно поменять.','Format and vibe are my suggestions — tap to adjust.')}</div>
+        ${row(IC.diamond,T('Темы','Topics'), locTopicList(s.vibe)||T('пока не задано','not set yet'))}
+        <div class="kwhy">${T('Формат и темы — мои предположения, их можно поменять.','Format and topics are my suggestions — tap to adjust.')}</div>
       </div>
     </div>
     <div class="kfoot">

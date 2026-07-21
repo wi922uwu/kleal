@@ -579,8 +579,15 @@ _GAP_MISMATCH = {
     "domain_constraints":  (lambda d: ("условия не совпадают", "constraints don't match")),
 }
 
+REASONS_SHOWN = 3      # what a card displays
+REASONS_POOL = 5       # what the slate diversifier gets to choose from
+
+
 def _presentation(F, d_ab, dom_cfg, readiness=None):
-    """2-3 confirmed reasons (known_match only — never invented facts) + the single top gap."""
+    """Confirmed reasons (known_match only — never invented facts) + the single top gap.
+
+    Returns up to REASONS_POOL, weight-ordered. Callers that do not diversify must trim to
+    REASONS_SHOWN themselves — a card still shows three."""
     W = dom_cfg["weights"]
     known = [(float(W.get(k, 0)) * float(v), k, d)
              for k, (st, v, d) in F.items() if st == K_MATCH and float(W.get(k, 0)) > 0]
@@ -592,7 +599,7 @@ def _presentation(F, d_ab, dom_cfg, readiness=None):
     # keys travel WITH the strings: reasons come back weight-ordered, so the UI cannot know what a given
     # row is about from its position. Titling row 2 "Подходит по времени" put a distance under a time label.
     rs_ru, rs_en, legacy, keys = [], [], [], []
-    for _wv, k, d in known[:3]:
+    for _wv, k, d in known[:REASONS_POOL]:
         ru, en = _REASON[k](d)
         rs_ru.append(ru); rs_en.append(en); keys.append(k)
         if k == "semantic_activity" and d:
@@ -623,6 +630,35 @@ def _presentation(F, d_ab, dom_cfg, readiness=None):
 
 # ------------------------------------------------------------------ allocation (slate diversity)
 TOP_N, PER_BUCKET = 8, 3        # slate size params (allocation layer, not relevance — spec §11)
+
+
+def _diversify_reasons(slate):
+    """A reason every card in the slate carries says nothing about this particular person.
+
+    Reasons come back weight-ordered, which is the right global order and the wrong one for a
+    reader: a role-matched slate led all eight cards with «подходящая роль (обсудить)», so people
+    who differ in topics, distance and vibe looked interchangeable. Compare the RENDERED strings,
+    not the feature keys — every card here matched on the same three features and differed only in
+    what those features contained («общее: ai, ml» vs «общее: ai, startups»), so a key-level
+    comparison finds nothing to promote. Universal lines rotate to the back; nothing is removed and
+    nothing is reworded. Presentation order only, never relevance (spec §11)."""
+    n = len(slate)
+    if n < 3:
+        return
+    freq = {}
+    for x in slate:
+        for t in set(x.get("reasons_ru") or []):
+            freq[t] = freq.get(t, 0) + 1
+    common = {t for t, c in freq.items() if c == n}
+    for x in slate:
+        ru = list(x.get("reasons_ru") or [])
+        order = range(len(ru))
+        if common and len(ru) > 1 and (set(ru) - common):
+            order = sorted(range(len(ru)), key=lambda i: (ru[i] in common, i))
+        for fld in ("reasons_ru", "reasons_en", "reasons", "reason_keys"):
+            v = x.get(fld)
+            if isinstance(v, list) and len(v) == len(ru):
+                x[fld] = [v[i] for i in order][:REASONS_SHOWN]
 
 def _slate(items, home_bucket=None):
     """Diversity is applied WITHIN a band and never promotes a lower band (spec §11: allocation
@@ -745,6 +781,7 @@ def explain(intent, prof, ctx, cand, H, cfg):
          "lcb %.3f vs %.2f, coverage %.3f vs %.2f" % (d_ab["lcb"], float(dom_cfg["outreach_min_lcb"]),
                                                       d_ab["coverage"], float(dom_cfg["outreach_min_coverage"])))
     rs_ru, rs_en, _legacy, gap_ru, gap_en, rkeys = _presentation(F, d_ab, dom_cfg, readiness)
+    rs_ru, rs_en, rkeys = rs_ru[:REASONS_SHOWN], rs_en[:REASONS_SHOWN], rkeys[:REASONS_SHOWN]
     out.update({"shown": True, "band": band, "band_ru": BAND_LABELS[band][0],
                 "band_en": BAND_LABELS[band][1], "readiness_en": READINESS_LABELS[readiness][1],
                 "readiness": readiness, "readiness_ru": READINESS_LABELS[readiness][0],
@@ -850,4 +887,6 @@ def search(intent, prof, ctx, candidates, H, cfg):
         home = H["cat_of"](t)[0]
         if home:
             break
-    return _slate(out, home), meta
+    sl = _slate(out, home)
+    _diversify_reasons(sl)
+    return sl, meta

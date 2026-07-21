@@ -166,7 +166,13 @@ TOPIC_ALIASES = {
     "основатель": "founder", "бизнес": "business", "ии": "ai", "нейронки": "ai", "нейросети": "ai",
     "мл": "ai", "программирование": "coding", "кодинг": "coding", "разработка": "software",
     "данные": "data", "крипта": "crypto", "блокчейн": "blockchain", "нетворкинг": "networking",
-    "инвестиции": "investing", "инвестор": "investor", "карьера": "career", "дизайн": "design",
+    "инвестиции": "investing", "инвестирование": "investing", "инвестировать": "investing",
+    "облигации": "investing", "облигация": "investing", "акции": "investing", "акция": "investing",
+    "биржа": "investing", "бирже": "investing", "фондовый": "investing", "трейдинг": "investing",
+    "финансы": "investing", "финансах": "investing", "портфель": "investing", "дивиденды": "investing",
+    "bonds": "investing", "bond": "investing", "stocks": "investing", "equities": "investing",
+    "finance": "investing", "trading": "investing", "portfolio": "investing",
+    "инвестор": "investor", "карьера": "career", "дизайн": "design",
     # music
     "концерт": "concert", "фестиваль": "festival", "музыка": "music", "винил": "vinyl",
     "гитара": "guitar", "пианино": "piano", "барабаны": "drums", "диджей": "dj", "джем": "jam",
@@ -327,7 +333,12 @@ def infer_type(topics):
 _RAW_STOP = {"хочу", "хотел", "найти", "найди", "найдите", "поговорить", "обсудить", "обсуждать", "встретить",
              "познакомиться", "люблю", "нравится", "заниматься", "занимаюсь", "интересует", "someone", "people",
              "with", "about", "want", "like", "find", "meet", "discuss", "talk", "into", "some", "have", "who",
-             "that", "this", "тему", "темы", "человек", "человека", "который", "которые"}
+             "that", "this", "тему", "темы", "человек", "человека", "который", "которые",
+             # filtration writes its `interest` as an English gerund phrase ("discussing bonds while
+             # swimming"), so the verb forms leak in as topics unless they are stopped here too.
+             "discussing", "talking", "chatting", "meeting", "finding", "looking", "sharing", "wanting",
+             "while", "together", "someone", "somebody", "tomorrow", "tonight", "today", "evening",
+             "завтра", "сегодня", "вечером", "утром", "вместе", "бокалом"}
 
 
 # ======================= SIGNALS =======================
@@ -549,6 +560,22 @@ def build_intent(sig, cat, last_user, lang):
     topics = (norm_topics(cat.get("topics")) or norm_topics(sig.get("interest"))
               or norm_topics(re.findall(r"[\w']+", str(last_user).lower())))
     from_request = bool(topics)
+    # An `or` chain used to end here, and that is how the SUBJECT of a request got thrown away: the
+    # moment the taxonomy resolved a single word, every other word of the request was discarded.
+    # «Обсудить облигации, плавая в бассейне» resolved "плавание" -> ["swimming"] and searched for
+    # swimmers, while "облигации" survived only as a display tag. Matching does literal-word overlap
+    # too (_wshare), so an unresolvable word is still worth carrying — union, not fallback.
+    if topics:
+        raw = [w[:24] for w in re.findall(r"[a-zа-яё0-9]{4,}",
+                                          str(sig.get("interest") or last_user or "").lower())
+               if w not in _RAW_STOP and norm_topic(w) not in topics]
+        # A "discuss" request is ABOUT something; the activity is the setting. Put the subject first
+        # so the ranker weighs what the person actually wants to talk about.
+        wants_talk = any(w in str(last_user or "").lower()
+                         for w in ("обсуд", "поговор", "разговор", "потрещ", "discuss", "talk about", "chat about"))
+        extra = [w for w in raw if w not in topics][:2]
+        topics = (extra + topics) if (wants_talk and extra) else (topics + extra)
+        topics = topics[:4]
     # Interests the taxonomy doesn't cover ("apple", "рыбалка", "labubu") canonicalise to nothing. Keep the
     # raw significant words — matching's _wshare does literal-word overlap, so two people who both listed
     # "apple" still match. This runs BEFORE the category bridge so a specific interest isn't replaced by a
