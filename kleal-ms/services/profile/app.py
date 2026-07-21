@@ -198,6 +198,23 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* V3 your personality */
 .persimg{width:120px;height:120px;border-radius:50%;background:linear-gradient(135deg,#e7eaef,#d7dbe3);margin:8px auto 18px;
   display:flex;align-items:center;justify-content:center;color:var(--neutral300)}
+.persimg.hasphoto{background:var(--neutral100);background-size:cover;background-position:center}
+.bigbtn.dark{background:var(--fg);color:#fff}
+/* «Личность» is a plain .body scroller, not a flex column, so the mock's pinned CTA pins with sticky
+   (the .composer trick) instead of .kfoot. The negative margins full-bleed it over .body's own
+   2px 16px 20px padding, so the story scrolls UNDER a solid bar rather than past a floating one. */
+.stickycta{position:sticky;bottom:-20px;z-index:5;margin:20px -16px -20px;padding:12px 16px 20px;
+  background:var(--bg);box-shadow:0 -8px 16px -8px rgba(0,0,0,.10)}
+.stickycta .bigbtn{margin-top:0}
+.sumtxt.clamp3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.penbtn{width:44px;height:44px;border-radius:50%;background:var(--neutral100);color:var(--muted);flex:none;
+  display:flex;align-items:center;justify-content:center;border:0;cursor:pointer}
+.penbtn svg{width:20px;height:20px}
+.storyta{width:100%;box-sizing:border-box;display:block;border:1px solid var(--line);border-radius:16px;
+  background:var(--card);color:var(--fg);padding:16px;font:inherit;font-size:15px;line-height:1.55;
+  resize:none;outline:none;min-height:220px;box-shadow:0 8px 24px #0000000d}
+.storyta::placeholder{color:var(--muted)}
+.storyta:focus{border-color:var(--primary)}
 /* body */
 .body{flex:1;overflow-y:auto;padding:2px 16px 20px;scrollbar-width:none}
 .body::-webkit-scrollbar{display:none}
@@ -1267,6 +1284,7 @@ const IC={
   homeSm:svg('<path d="M4 10.5L12 4l8 6.5V20H4z"/>',null,22),
   groups:svg('<circle cx="8.5" cy="9" r="3"/><circle cx="16" cy="10.5" r="2.4"/><path d="M3 19a5.5 5.5 0 0 1 11 0M15 19a4.4 4.4 0 0 1 6 0" />',null,22),
   photo:svg('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10.5" r="1.8"/><path d="M4.5 17.5l4.8-4.3 3.4 3 2.6-2.1 4.2 3.6"/>',null,22),
+  doc:svg('<path d="M14 3H7.5A2.5 2.5 0 0 0 5 5.5v13A2.5 2.5 0 0 0 7.5 21h9a2.5 2.5 0 0 0 2.5-2.5V8z"/><path d="M14 3v5h5"/><path d="M8.5 13h7"/><path d="M8.5 16.5h4.5"/>',null,20),
   // --- batch 3: meetup planning + meetup day ---
   info:svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.6"/>',null,16),
   bolt:svg('<path d="M13 3L5.5 13H11l-1 8 7.5-10H12l1-8z"/>',null,24),
@@ -1490,6 +1508,8 @@ function mapOnboarding(op){
 
   const data={ name:op.name||'You', subtitle:sub, verified:false, confidence,
     summaryLabel:"Kleal's summary", summary: op.summary||'',
+    summaryUpdated: op.summary?Date.now():null,   // device-local: the store has no such column
+    story: op.story||'',                          // the free-form life story, own field, own whitelist entry
     matchingPaths: ints.slice(0,3), snapshot:snap, interests, basics,
     social, availability:[], places, goals, safety, memory, knows,
     // canonical shared-profile fields — the same names the users.json row carries, so the
@@ -1503,7 +1523,8 @@ function mapOnboarding(op){
   const tabs=['overview'];
   if(snap.length) tabs.push('snapshot');
   if(interests.length) tabs.push('interests');
-  if(social.rows.length||social.vibe.length) tabs.push('social');
+  tabs.push('social');   // the screen now has three reasons to exist — photo, the test, the story —
+                         // none of which depend on Kleal having collected social data first
   if(places.length) tabs.push('places');
   tabs.push('safety');
   if(memory.length) tabs.push('memory');
@@ -1726,7 +1747,7 @@ function scr_overview(){
       <div class="confrow2"><span class="l">${T('Наполненность профиля','Profile confidence')}</span><span class="confpct">${d.confidence}%</span></div>
       <div class="track"><i style="width:${d.confidence}%"></i></div></div>
     ${(d.basics||[]).map(r=>summaryRow(r,true)).join('')}
-    <div class="card pad"><div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>${sum}
+    <div class="card pad"><div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${esc(fmtUpdated(DATA.summaryUpdated))}</span></div>${sum}
       <button class="kbtn pri" data-act="createintent" style="margin-top:12px">${T('Создать интент','Create intent')}</button></div>
     <div class="stack" style="margin-top:6px">${navRows()}${availRow}${langRow}</div>
   </div>`;
@@ -1757,7 +1778,7 @@ function scr_interests(){
       <div class="sw ${on?'on':''}" data-imatch="${esc(it.name)}"><i></i></div></div>`;
     if(it.name===exp){
       rows+=`<div class="card intexp"><div class="intimg"></div><div class="pad">
-        <div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>
+        <div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div></div>
         <div class="sumtxt">${esc(interestSummary(it))}</div>
         <div class="intedit"><div class="intav"></div>
           <button class="editbtn" data-act="edit-int" data-int="${esc(it.name)}">${IC.wand}<span>${T('Изменить','Edit')}</span></button></div></div></div>`;
@@ -1790,29 +1811,124 @@ function personalitySummary(s){
 }
 // One prose field, one owner. This is the same `summary` the shared user row carries, so the text
 // on this screen, the text the sheet edits and the text in the store cannot drift apart.
+// One prose field, one owner. This is the same `summary` the shared user row carries, so the text
+// on this screen, the text the sheet edits and the text in the store cannot drift apart.
 function personalityText(){
   const t=String(DATA.summary||'').trim();
   return t || personalitySummary(DATA.social||{rows:[],vibe:[],depth:[]});
 }
-function scr_social(){  // "Your personality" (Figma 479:19321 / 479:19422)
-  const s=DATA.social||{rows:[],vibe:[],depth:[]};
-  const txt=personalityText();
-  const chips=(arr,act)=>`<div class="kchips" style="margin-top:8px">${arr.map((v,i)=>
-    `<div class="kchip ${v[1]?'on':''}" data-act="${act}" data-v="${i}">${esc(locTopic(v[0]))}</div>`).join('')}</div>`;
+// Every write to the summary goes through here, so no call site can forget the timestamp and leave
+// the card claiming «Обновлено сегодня» about a paragraph written last month.
+function setSummary(text){ DATA.summary=String(text||'').trim(); DATA.summaryUpdated=Date.now(); }
+function fmtUpdated(ts){
+  if(!ts) return '';                       // never written -> no label at all, which is the honest state
+  const d=Math.floor((Date.now()-ts)/864e5);
+  if(d<=0) return T('Обновлено сегодня','Updated today');
+  if(d===1) return T('Обновлено вчера','Updated yesterday');
+  if(d<7)   return T('Обновлено '+d+' дн. назад','Updated '+d+' days ago');
+  const dt=new Date(ts);
+  return T('Обновлено '+dt.toLocaleDateString('ru-RU',{day:'numeric',month:'short'}),
+           'Updated '+dt.toLocaleDateString('en-GB',{day:'numeric',month:'short'}));
+}
+// The story saves on blur and on «Сохранить и закрыть»; the dirty check keeps blur→confirm from
+// posting the same text twice.
+let _storySaved=null;
+function saveStory(){
+  const el=document.getElementById('storyta'); if(el) DATA.story=el.value;
+  DATA.story=String(DATA.story||'').slice(0,4000);
+  if(_storySaved===null) _storySaved=DATA.story;
+  else if(DATA.story===_storySaved) return false;
+  _storySaved=DATA.story;
+  pushProfile({story:DATA.story}); saveState(); return true;
+}
+function scr_social(){  // "Личность" — the entry screen: photo, Kleal's test, the summary, your story
+  const txt=personalityText(), up=fmtUpdated(DATA.summaryUpdated);
   return `<div class="fade" style="text-align:center">
-    <div class="persimg">${IC.faceScan}</div>
-    <button class="bigbtn primary" data-act="edit-personality">${T('Рассказать о себе','Describe yourself')}</button>
+    <div class="persimg${DATA.photo?' hasphoto" style="background-image:url('+DATA.photo+')':'"'} data-act="edit-photo">${DATA.photo?'':IC.photo}</div>
+    <button class="bigbtn primary" data-act="start-persona">${IC.doc}<span>${T('Пройти тест от Kleal','Take your personality test')}</span></button>
     <div class="card pad" style="text-align:left;margin-top:16px">
-      <div class="sumlbl">${T('Моя личность по тесту Kleal','My personality by Kleal test')}</div>
-      <div class="sumtxt">${esc(txt||T('Пройди тест — и Kleal расскажет, как ты воспринимаешься со стороны и с кем тебе легко.','Take the test and Kleal will describe how you come across and who you click with.'))}</div>
-      <div class="intedit"><div class="intav"></div>
-        <button class="editbtn" data-act="edit-personality">${IC.wand}<span>${T('Изменить','Edit')}</span></button></div></div>
-    ${(s.vibe&&s.vibe.length)?`<div class="card pad" style="text-align:left;margin-top:12px">
-      <div class="sumlbl">${T('Вайб','Vibe')}</div>
-      <div class="seccap" style="margin:0">${T('Отметь, что Kleal может использовать для подбора.','Pick what Kleal may use for matching.')}</div>
-      ${chips(s.vibe,'social-vibe')}
-      ${(s.depth&&s.depth.length)?`<div class="k-label" style="color:var(--muted);margin-top:16px;display:block">${T('Глубина общения','Conversation depth')}</div>`+chips(s.depth,'social-depth'):''}
-    </div>`:''}</div>`;
+      <div class="sumhead"><div class="sumlbl">${T('Сводка Kleal',"Kleal's summary")}</div>
+        ${up?`<span class="updated">${esc(up)}</span>`:''}</div>
+      <div class="sumtxt clamp3">${esc(txt||T('Пройди тест — и Kleal расскажет, как ты воспринимаешься со стороны и с кем тебе легко.','Take the test and Kleal will describe how you come across and who you click with.'))}</div>
+      <div class="intedit">
+        <button class="penbtn" data-act="edit-personality" aria-label="${T('Изменить','Edit')}">${IC.edit}</button>
+        <button class="bigbtn dark" style="margin-top:0;height:44px;font-size:15px" data-act="edit-personality">${IC.wand}<span>${T('Изменить с Kleal','Edit with Kleal')}</span></button></div>
+    </div>
+    <div style="text-align:left;margin-top:18px">
+      <div class="seccap">${T('Расскажи историю своей жизни в свободном формате (детство, обучение, интересы, профессия)','Tell your life story in your own words — childhood, studies, interests, work')}</div>
+      <textarea id="storyta" class="storyta" maxlength="4000" spellcheck="false"
+        placeholder="${T('Пиши как получится — Kleal сам разберётся.','Write it however it comes out — Kleal will make sense of it.')}"
+        oninput="DATA.story=this.value" onblur="saveStory()">${esc(DATA.story||'')}</textarea>
+    </div>
+    <div class="stickycta"><button class="bigbtn primary" data-act="story-confirm">${T('Сохранить и закрыть','Confirm & Close')}</button></div>
+  </div>`;
+}
+
+// ---- The Kleal personality test ------------------------------------------------------------------
+// A fixed eight-question ladder on the client, then exactly ONE call to /api/buddy/persona. An LLM
+// turn per question would give eight chances to hang on a chain with no abort and no visible error,
+// for questions a personality test fixes by design anyway.
+let PTEST=null;   // {i, answers:[{k,q,a}], busy, failed}
+function ptestInit(){ PTEST={i:0, answers:[], busy:false, failed:false}; }
+const PTEST_Q = () => [
+ {k:'energy', q:T('После насыщенного дня с людьми ты скорее…','After a full day around people you usually feel…'),
+  o:[T('Заряжен','Energised'),T('Вымотан','Drained'),T('Зависит от людей','Depends who they were')]},
+ {k:'format', q:T('Как тебе комфортнее знакомиться?','How do you prefer to meet people?'),
+  o:[T('Один на один','One to one'),T('Небольшая группа, 3–5','A small group of 3–5'),T('Большая компания','A big crowd')]},
+ {k:'talk',   q:T('Какой разговор тебе ближе?','What kind of conversation suits you?'),
+  o:[T('Глубокий, про смыслы','Deep, about what matters'),T('Лёгкий и весёлый','Light and funny'),T('Практичный, по делу','Practical, to the point')]},
+ {k:'first',  q:T('Идеальная первая встреча — это…','An ideal first meet is…'),
+  o:[T('Кофе и разговор','Coffee and a talk'),T('Что-то делать вместе','Doing something together'),T('Событие или мероприятие','An event or a meetup')]},
+ {k:'pace',   q:T('Как ты сходишься с людьми?','How do you warm up to people?'),
+  o:[T('Быстро и открыто','Fast and openly'),T('Постепенно, присматриваюсь','Slowly, I watch first'),T('Зависит от человека','Depends on the person')]},
+ {k:'plans',  q:T('Планы или спонтанность?','Plans or spontaneity?'),
+  o:[T('Договариваться заранее','Agree in advance'),T('Лучше спонтанно','Rather spontaneous'),T('Гибко','Flexible')]},
+ {k:'seek',   q:T('Что тебе сейчас важнее всего в новых знакомствах?','What matters most in new connections right now?'),
+  o:[T('Друзья надолго','Friends for the long run'),T('Компания под интерес','Company for a specific interest'),T('Расширить круг','A wider circle')]},
+ {k:'own',    q:T('Что о тебе стоит знать, чтобы понять, с кем тебе легко?','What should Kleal know to understand who you click with?'),
+  o:[], free:true}];
+function scr_persona(){
+  if(!PTEST) ptestInit();
+  const Q=PTEST_Q(), q=(PTEST.i<Q.length)?Q[PTEST.i]:null;
+  const said=PTEST.answers.map(a=>`<div class="kbub ag">${esc(a.q)}</div>`
+    +(a.a?`<div class="kbub me">${esc(a.a)}</div>`:`<div class="kbub me">${T('Пропустить','Skip')}</div>`)).join('');
+  return `<div class="kflow fade">${kbar(false)}
+    <div class="kcont">
+      ${kprompt(T('Тест от Kleal','Kleal’s personality test'))}
+      <div class="seccap" style="margin:0 0 4px">${T('Вопрос','Question')} ${Math.min(PTEST.i+1,Q.length)} / ${Q.length}</div>
+      ${said}
+      ${q?`<div class="kbub ag">${esc(q.q)}</div>
+           <div class="kchips" style="margin-top:2px">${q.o.map(o=>
+             `<div class="kchip" data-act="ptest-pick" data-v="${esc(o)}">${esc(o)}</div>`).join('')
+             +(q.free?`<div class="kchip" data-act="ptest-pick" data-v="">${T('Пропустить','Skip')}</div>`:'')}</div>`:''}
+      ${PTEST.busy?`<div class="kbub ag">${T('Kleal пишет о тебе…','Kleal is writing you up…')}</div>`:''}
+      ${PTEST.failed?`<div class="kbub ag">${T('Kleal не смог собрать текст — попробуй ещё раз.','Kleal could not write it up — try again.')}</div>
+        <div class="kchips" style="margin-top:2px"><div class="kchip" data-act="ptest-retry">${T('Повторить','Retry')}</div></div>`:''}
+    </div>
+    ${kcomposer('ptestinp',T('Или ответь своими словами…','Or answer in your own words…'))}</div>`;
+}
+function ptestAnswer(text){
+  const Q=PTEST_Q(); if(!PTEST||PTEST.busy||PTEST.i>=Q.length) return;
+  PTEST.answers.push({k:Q[PTEST.i].k, q:Q[PTEST.i].q, a:String(text||'').trim()});
+  PTEST.i++;
+  if(PTEST.i>=Q.length) ptestFinish(); else render();
+}
+async function ptestFinish(){
+  PTEST.busy=true; PTEST.failed=false; render();
+  const el=document.getElementById('storyta'); if(el) DATA.story=el.value;   // typed but never blurred
+  let r=null;
+  try{ r=await fetch('/api/buddy/persona',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({profile:fullProfileForEdit(), story:String(DATA.story||'').slice(0,4000),
+      answers:PTEST.answers.filter(a=>a.a).map(a=>({q:a.q,a:a.a})),
+      current:DATA.summary||'', lang:UILANG})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  PTEST.busy=false;
+  // buddy answers 200 with a chat-shaped body when a route throws, and returns {"summary":""} when the
+  // model won't write in the right language — so our own key being non-empty is the only honest test.
+  if(!r||!r.summary){ PTEST.failed=true; render(); return; }
+  setSummary(r.summary); pushProfile({summary:DATA.summary}); saveState();
+  PTEST=null; cur='social'; render();
+  toast(T('Kleal обновил сводку','Kleal updated your summary'));
 }
 function scr_places(){
   if(!DATA.availability.length && !DATA.places.length) return emptyState(T("Пока нет мест и времени","No places or times yet"),T("Kleal запомнит, где и когда тебе удобно встречаться.","Kleal will note where and when you like to meet."));
@@ -2144,6 +2260,7 @@ async function loadServerProfile(){
     if(u.age!=null) DATA.age=u.age;
     if(u.gender) DATA.gender=u.gender;
     if(Array.isArray(u.formats)) DATA.formats=u.formats;
+    if(typeof u.story==='string') DATA.story=u.story;
     if(Array.isArray(u.goals)&&u.goals.length&&!((DATA.goals||{}).active||[]).length)
       DATA.goals={active:u.goals.slice(),optional:[]};
     syncBasicsRows(); render(); saveState();
@@ -2276,7 +2393,7 @@ async function adaptSummary(){
   if(_resumBusy) return; _resumBusy=true;
   try{ const r=await fetch('/api/buddy/resummary',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({profile:fullProfileForEdit(), current:DATA.summary||'', lang:UILANG})}).then(x=>x.json());
-    if(r&&r.summary){ DATA.summary=r.summary; DATA.summaryLabel="Kleal's summary"; render(); saveState(); }
+    if(r&&r.summary){ setSummary(r.summary); render(); saveState(); }
   }catch(e){}
   _resumBusy=false;
 }
@@ -3310,6 +3427,7 @@ const BACK_MAP = {
   meetstate:'agenthome', mymeetup:'meetstate',
   notifs:'agenthome',
   help:'settings',
+  persona:'social',        // the test carries its own back arrow (kbar) — send it home, not to agenthome
 };
 let NAVSTACK=[];
 function navTo(next){ if(cur!==next){ NAVSTACK.push(cur); if(NAVSTACK.length>20) NAVSTACK.shift(); } cur=next; render(); }
@@ -4453,12 +4571,24 @@ function eSheetHTML(){
         <button class="kbtn sec sm" style="margin-top:8px;width:auto;padding:0 16px" data-act="esheet-int-add">${T('Добавить','Add')}</button>`;
   } else if(e.kind==='personality'){
     title=T('Моя личность по тесту Kleal','My personality by Kleal test');
+    // The chips are the raw inputs behind the prose, so they belong on the same edit surface as the
+    // prose — and the screen behind now belongs to the story.
+    const sc=DATA.social||{vibe:[],depth:[]};
+    const ch=(arr,act)=>`<div class="kchips" style="margin-top:8px">${arr.map((v,i)=>
+      `<div class="kchip ${v[1]?'on':''}" data-act="${act}" data-v="${i}">${esc(locTopic(v[0]))}</div>`).join('')}</div>`;
+    extra='';
     // Auto-grow rather than a scrollbar inside a scrollbar: the block should read as a paragraph,
     // not as a text field with its own hidden overflow.
     const rows=Math.max(5, Math.min(22, Math.ceil((e.draft.text||'').length/34)));
     body=`<textarea id="eshPers" class="pertx" rows="${rows}" spellcheck="false"
         oninput="ESHEET.draft.text=this.value;this.style.height='auto';this.style.height=this.scrollHeight+'px'"
-        placeholder="${T('Kleal ещё не описал тебя — поговори с ним, и текст появится здесь.','Kleal has not described you yet — talk to it and the text will appear here.')}">${esc(e.draft.text||'')}</textarea>`;
+        placeholder="${T('Kleal ещё не описал тебя — поговори с ним, и текст появится здесь.','Kleal has not described you yet — talk to it and the text will appear here.')}">${esc(e.draft.text||'')}</textarea>`
+      +((sc.vibe&&sc.vibe.length)?`<div style="margin-top:18px">
+          <div class="sumlbl">${T('Вайб','Vibe')}</div>
+          <div class="seccap" style="margin:2px 0 0">${T('Отметь, что Kleal может использовать для подбора.','Pick what Kleal may use for matching.')}</div>
+          ${ch(sc.vibe,'social-vibe')}
+          ${(sc.depth&&sc.depth.length)?`<div class="sumlbl" style="margin-top:16px">${T('Глубина общения','Conversation depth')}</div>`+ch(sc.depth,'social-depth'):''}
+        </div>`:'');
   } else if(e.kind==='safety'){
     title=T('Безопасность и приватность','Safety & Privacy');
     body=safetyGroups(e.draft).map(gr=>`<div style="margin-bottom:14px">
@@ -4504,7 +4634,7 @@ function acceptSheet(){
   }
   else if(e.kind==='personality'){
     const el=document.getElementById('eshPers');
-    DATA.summary=(el?el.value:(e.draft.text||'')).trim();
+    setSummary(el?el.value:(e.draft.text||''));
     pushProfile({summary:DATA.summary});
   }
   else if(e.kind==='safety'){
@@ -4607,7 +4737,7 @@ function scr_help(){
         'Privacy controls and blocking live under Privacy & Security. A support channel is not connected yet — it arrives together with accounts.')}</div></div>
   </div>`;
 }
-const SCREENS={agenthome:scr_agenthome,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,
+const SCREENS={agenthome:scr_agenthome,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,persona:scr_persona,
   places:scr_places,safety:scr_safety,memory:scr_memory,knows:scr_knows,
   intents:scr_intents,search:scr_search,messages:scr_messages,
   notifs:scr_notifications,matchchat:scr_matchchat,
@@ -4690,7 +4820,7 @@ function render(){
   // Every chat screen carries its OWN in-screen header (chd) and pinned composer, so hide the shared app bar
   // and the bottom nav on all of them — and treat them all the same way for layout.
   // the Figma request flow carries its own app bar + composer, exactly like the chat screens
-  const chat=(cur==='matchchat'
+  const chat=(cur==='matchchat'||cur==='persona'
               ||cur==='reqcomposer'||cur==='clarify'||cur==='summary'||cur==='searching'||cur==='fewmatches'
               ||cur==='options'||cur==='bestfit'||cur==='recos'||cur==='candprofile'
               ||['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'].includes(cur));
@@ -4777,7 +4907,7 @@ function doAct(act, ds){
     case 'set-avail': setAvail(ds.st); break;
     case 'editsum': editingSummary=true; render(); break;
     case 'cancelsum': editingSummary=false; render(); break;
-    case 'savesum': { const el=document.getElementById('sumta'); DATA.summary=(el?el.value:'').trim(); editingSummary=false; render(); toast('Summary saved'); break; }
+    case 'savesum': { const el=document.getElementById('sumta'); setSummary(el?el.value:''); editingSummary=false; render(); toast('Summary saved'); break; }
     case 'askwhy': toast('Kleal built this from what you shared during onboarding. Every detail is editable.'); break;
     case 'editbasics': openSheet('basics'); break;
     case 'editrow': { const rt={'Basics':'basics','Social formats':'formats','Location':'location','Languages':'languages',
@@ -4896,7 +5026,9 @@ function doAct(act, ds){
     case 'agent-go': { const el=document.getElementById('ainput'); flowStart(el&&el.value||''); break; }
     // ---- Figma request flow ----
     case 'flow-back': flowBack(); break;
-    case 'flow-send': { const el=document.getElementById('flowinp')||document.getElementById('flowinp2');
+    case 'flow-send': { if(cur==='persona'){ const p=document.getElementById('ptestinp');
+                          const v=p?p.value.trim():''; if(p) p.value=''; if(v) ptestAnswer(v); break; }
+                        const el=document.getElementById('flowinp')||document.getElementById('flowinp2');
                         flowSay(el&&el.value||''); break; }
     case 'flow-hint': flowSay(ds.h||''); break;
     case 'flow-pick': { FLOW[ds.k]=(FLOW[ds.k]===ds.v?null:ds.v); render(); break; }
@@ -4984,6 +5116,13 @@ function doAct(act, ds){
     case 'see-all': setTab('search'); break;
     case 'add-interests': openSheet('interests'); break;
     case 'edit-personality': openSheet('personality'); break;
+    // ---- Личность: the test, and the life story ----
+    case 'start-persona': ptestInit(); navTo('persona'); break;
+    case 'ptest-pick': ptestAnswer(ds.v||''); break;
+    case 'ptest-retry': ptestFinish(); break;
+    case 'story-confirm': { const changed=saveStory();
+      toast(changed?T('Сохранено','Saved'):T('Уже сохранено','Already saved'));
+      setTab('overview'); break; }
     default: toast(T('Пока недоступно','Not available yet'));
   }
 }

@@ -984,6 +984,52 @@ def resummary(profile, current, lang="ru"):
     return {"summary": best if _lang_ok(best, lang) else ""}
 
 
+# ======================= THE KLEAL PERSONALITY TEST (/persona) =======================
+# Eight fixed questions on the client, then exactly ONE call here. The alternative — an LLM turn per
+# question — gives eight chances to hang on a chain that allows ~195s, for questions that are fixed by
+# design anyway. Everything the person has given us folds into the SAME prose field the profile
+# summary owns, so the profile never grows a second, competing description of the same human.
+PERSONA_PROMPT = """You are Kleal. Below is a user's profile data, the life story they wrote in their own
+words, and their answers to a short personality test. Write ONE warm, natural, flowing paragraph
+describing how this person comes across and who they are easy with. Address the user directly ("you").
+3-5 sentences. Be concrete and grounded ONLY in what is given — never invent facts, never flatter.
+No bullet points, no headings, no preamble: output ONLY the paragraph.
+
+LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ Interests may be
+stored as English keywords for the matching engine — translate them naturally, and do not switch
+language because of them."""
+
+
+def persona(profile, story, answers, current, lang="ru"):
+    """The personality test -> one paragraph, in the user's language, or "" if the model won't comply."""
+    lang = "en" if str(lang).lower() == "en" else "ru"
+    qa = "\n".join("Q: %s\nA: %s" % (str(a.get("q", ""))[:200], str(a.get("a", ""))[:400])
+                    for a in (answers or []) if isinstance(a, dict) and str(a.get("a", "")).strip())
+    payload = ("PROFILE DATA:\n" + json.dumps(profile or {}, ensure_ascii=False)[:1800] +
+               "\n\nTHEIR LIFE STORY, IN THEIR OWN WORDS:\n" + (str(story or "").strip()[:2500] or "(not written)") +
+               "\n\nPERSONALITY TEST ANSWERS:\n" + (qa or "(not taken)") +
+               "\n\nCURRENT SUMMARY:\n" + (str(current or "").strip()[:900] or "(none yet)"))
+    sys_prompt = (PERSONA_PROMPT
+                  .replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
+                  .replace("__LANGDIR__", _LANGDIR.get(lang, _LANGDIR["ru"])))
+    best = ""
+    for attempt in range(2):
+        try:
+            out = str(llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt},
+                                              {"role": "user", "content": payload}],
+                                   0.5 if attempt == 0 else 0.2) or "").strip()[:900]
+        except Exception:
+            out = ""
+        if not out:
+            continue
+        best = best or out
+        if _lang_ok(out, lang):
+            return {"summary": out}
+    # Same honesty rule as resummary: an empty summary keeps the old text on screen and lets the client
+    # offer a retry, which beats handing the user an English paragraph about themselves.
+    return {"summary": best if _lang_ok(best, lang) else ""}
+
+
 # ======================= GHOSTWRITER (Kleal helps in a chat with a real person) =======================
 # Kleal drafts the user's OWN next message to a match, in their voice, from their profile and the
 # thread so far. It never sends: the product's promise on screen is "я пишу только после твоего
@@ -1380,6 +1426,12 @@ class H(BaseHTTPRequestHandler):
                 return send_json(self, 200, ghostwrite(
                     body.get("profile") or {}, body.get("candidate") or {},
                     body.get("messages") or [], body.get("lang") or "ru"))
+
+            if r == "/persona":                      # the Kleal personality test -> one prose summary
+                prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+                ans = body.get("answers") if isinstance(body.get("answers"), list) else []
+                return send_json(self, 200, persona(prof, body.get("story") or "", ans,
+                                                    body.get("current") or "", body.get("lang") or "ru"))
 
             if r == "/resummary":                    # after a profile edit: rewrite the summary to fit (adapt, not append)
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}

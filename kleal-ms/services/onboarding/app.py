@@ -1344,6 +1344,9 @@ def _profile_to_user(p):
         "vibe": vibe, "langs": langs, "area": area,
         "km": None, "lat": lat, "lon": lon, "radiusKm": radius, "open": True, "role": role,
         "gender": gender, "goals": goals, "summary": str(p.get("summary") or "")[:400],
+        # register_profile replaces the whole row, so the story must be carried here too or
+        # re-running onboarding silently wipes what the person wrote.
+        "story": str(p.get("story") or "")[:STORY_MAX],
         # meeting-format preference (Figma «Формат встреч»); matching's mode_format reads this. Empty
         # until the user picks in the profile sheet — an empty list is honestly "no preference stated".
         "formats": [str(x).strip().lower() for x in (p.get("formats") or []) if str(x).strip()][:8],
@@ -1482,7 +1485,8 @@ def get_user(name):
 # The whole point of the whitelist: the profile client pushes edits here, and only fields a person
 # actually owns may change — never source/verified/paused or other trust-bearing flags.
 _PATCH_FIELDS = {"age", "gender", "area", "radiusKm", "lat", "lon", "langs", "interests",
-                 "goals", "formats", "summary", "vibe", "safety"}
+                 "goals", "formats", "summary", "story", "vibe", "safety"}
+STORY_MAX = 4000        # a life story, not a novel — and update_user writes straight into the row
 
 
 def update_user(name, patch):
@@ -1490,6 +1494,13 @@ def update_user(name, patch):
     if not key or not isinstance(patch, dict):
         return {"ok": False, "error": "name and patch required"}
     clean = {k: v for k, v in patch.items() if k in _PATCH_FIELDS}
+    # update_user does a blind row.update(), so the one free-text field a person can type without any
+    # form validation gets its own guard: a string, capped, or not written at all.
+    if "story" in clean:
+        if isinstance(clean["story"], str):
+            clean["story"] = clean["story"][:STORY_MAX]
+        else:
+            clean.pop("story")
     if not clean:
         return {"ok": False, "error": "no editable fields in patch"}
     with _REG_LOCK:
