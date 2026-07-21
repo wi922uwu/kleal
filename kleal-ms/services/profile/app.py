@@ -4910,8 +4910,13 @@ function doAct(act, ds){
     case 'savesum': { const el=document.getElementById('sumta'); setSummary(el?el.value:''); editingSummary=false; render(); toast('Summary saved'); break; }
     case 'askwhy': toast('Kleal built this from what you shared during onboarding. Every detail is editable.'); break;
     case 'editbasics': openSheet('basics'); break;
-    case 'editrow': { const rt={'Basics':'basics','Social formats':'formats','Location':'location','Languages':'languages',
-        interests:'interests', social:'personality', safety:'safety'}[ds.row||''];
+    case 'editrow': {
+      // «Личность» is a screen now, not a sheet: the story and the test live there, and the prose
+      // sheet is the step AFTER it. Jumping the hub row straight into the sheet skipped the page
+      // the section is actually about.
+      if(ds.row==='social'){ setTab('social'); break; }
+      const rt={'Basics':'basics','Social formats':'formats','Location':'location','Languages':'languages',
+        interests:'interests', safety:'safety'}[ds.row||''];
       openSheet(rt||'basics'); break; }
     case 'edit-int': openEditInterest(ds.int); break;
     case 'dontuse-int': toast('"'+(ds.int||'')+'" will not be used for matching'); break;
