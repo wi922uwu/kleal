@@ -687,6 +687,14 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .eshmap .leaflet-container{font:inherit;background:var(--neutral100)}
 .esbody{overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1 1 auto;min-height:0;scrollbar-width:none}
 .esbody::-webkit-scrollbar{display:none}
+/* Personality sheet (Figma 479:19422) — Kleal's own description of you as ONE prose block you can
+   correct, on a sheet that keeps its full height so the text has room and «Принять изменения»
+   stays pinned at the bottom edge. */
+.ksheet.bottom.tall{height:86%}
+.pertx{width:100%;box-sizing:border-box;display:block;border:0;border-radius:14px;
+  background:var(--neutral100);color:var(--fg);padding:16px;font:inherit;font-size:15px;
+  line-height:1.55;resize:none;outline:none;overflow:hidden}
+.pertx:focus{box-shadow:inset 0 0 0 1.5px var(--primary)}
 /* ===== Explore: full-screen interactive map (Zenly / Citymapper / Airbnb flavoured) ===== */
 /* One motion system, so every surface moves like it belongs to the same object. */
 .xwrap{position:absolute;inset:0;overflow:hidden;--xtop:14px;
@@ -1207,7 +1215,20 @@ const _TOPIC_RU={
   gardening:'садоводство',volunteering:'волонтёрство',meditation:'медитация',astrology:'астрология',
   anime:'аниме',cosplay:'косплей',podcasting:'подкасты',
 };
+// Personality words the test emits. They are not topics, so they never reached _TOPIC_RU and the
+// vibe chips stayed English on a Russian screen.
+const _TRAIT_RU={
+  'calm':'спокойный','friendly':'дружелюбный','intellectual':'интеллектуальный','playful':'игривый',
+  'energetic':'энергичный','cozy':'уютный','focused':'сосредоточенный','curious':'любознательный',
+  'warm':'тёплый','open':'открытый','quiet':'тихий','funny':'с юмором','thoughtful':'вдумчивый',
+  'confident':'уверенный','easy-going':'лёгкий в общении','easygoing':'лёгкий в общении',
+  'ambitious':'амбициозный','creative':'творческий','caring':'заботливый','honest':'честный',
+  'adventurous':'лёгок на подъём','reserved':'сдержанный','optimistic':'оптимистичный',
+  'light casual':'лёгкое общение','light':'лёгкое общение','casual':'неформальное',
+  'medium':'среднее','deep talk':'глубокие разговоры','deep':'глубокие разговоры',
+  'topic-based':'по теме','topic based':'по теме','small talk':'светская беседа'};
 function locTopic(w){ if(UILANG!=='ru'||!w) return w||''; const k=String(w).trim().toLowerCase();
+  if(_TRAIT_RU[k]) return _TRAIT_RU[k];
   // plain plurals too — the store holds both "walk" and "walks", "book"/"books"
   return _TOPIC_RU[k] || (k.length>3&&k.slice(-1)==='s'&&_TOPIC_RU[k.slice(0,-1)]) || w; }
 // "dota, game, multiplayer" -> "dota, игры, мультиплеер"
@@ -1500,7 +1521,13 @@ const ALL_TABS=[
 ];
 const TABS = ALL_TABS;
 let cur = 'agenthome';   // main landing after onboarding
-const TITLES=()=>({memory:T('Что Kleal помнит','What Kleal remembers'), intents:T('Интенты','Plans'), search:T('Обзор','Explore'), messages:T('Сообщения','Messages'), agenthome:T('Главная','Home'), notifs:T('Уведомления','Notifications'),
+// The profile sub-sections were missing here, so render() fell through to ALL_TABS — a table whose
+// two columns are both English. Result: the app bar stayed «Your personality» / «Safety & Privacy»
+// on a fully Russian screen.
+const TITLES=()=>({interests:T('Интересы','Interests'), social:T('Личность','Personality'),
+  safety:T('Безопасность и приватность','Safety & Privacy'), places:T('Места и время','Places & times'),
+  knows:T('Что Kleal знает','What Kleal knows'),
+  memory:T('Что Kleal помнит','What Kleal remembers'), intents:T('Интенты','Plans'), search:T('Обзор','Explore'), messages:T('Сообщения','Messages'), agenthome:T('Главная','Home'), notifs:T('Уведомления','Notifications'),
   settings:T('Настройки','Settings'), help:T('Помощь и поддержка','Help & Support'),
   privacy:T('Приватность и безопасность','Privacy & Security')});   // functions so language switch re-evaluates
 if(!DATA.notifs) DATA.notifs=[]; if(!DATA.intents) DATA.intents=[];   // buddy-agent stores
@@ -1761,18 +1788,31 @@ function personalitySummary(s){
   if(rm['Group comfort']) out.push(T('Комфортнее всего: ','Most comfortable ')+rm['Group comfort'].toLowerCase()+".");
   return out.join(' ');
 }
-function scr_social(){  // "Your personality"
-  const s=DATA.social;
-  const has = s.rows.length || s.vibe.length || s.depth.length;
-  const txt = has ? personalitySummary(s) : T('Пройди тест — и Kleal расскажет, как ты воспринимаешься со стороны и с кем тебе легко.','Take the test and Kleal will describe how you come across and who you click with.');
+// One prose field, one owner. This is the same `summary` the shared user row carries, so the text
+// on this screen, the text the sheet edits and the text in the store cannot drift apart.
+function personalityText(){
+  const t=String(DATA.summary||'').trim();
+  return t || personalitySummary(DATA.social||{rows:[],vibe:[],depth:[]});
+}
+function scr_social(){  // "Your personality" (Figma 479:19321 / 479:19422)
+  const s=DATA.social||{rows:[],vibe:[],depth:[]};
+  const txt=personalityText();
+  const chips=(arr,act)=>`<div class="kchips" style="margin-top:8px">${arr.map((v,i)=>
+    `<div class="kchip ${v[1]?'on':''}" data-act="${act}" data-v="${i}">${esc(locTopic(v[0]))}</div>`).join('')}</div>`;
   return `<div class="fade" style="text-align:center">
     <div class="persimg">${IC.faceScan}</div>
     <button class="bigbtn primary" data-act="edit-personality">${T('Рассказать о себе','Describe yourself')}</button>
     <div class="card pad" style="text-align:left;margin-top:16px">
-      <div class="sumhead"><div class="sumlbl">${T("Сводка Kleal","Kleal's summary")}</div><span class="updated">${T('Обновлено сегодня','Updated today')}</span></div>
-      <div class="sumtxt">${esc(txt)}</div>
+      <div class="sumlbl">${T('Моя личность по тесту Kleal','My personality by Kleal test')}</div>
+      <div class="sumtxt">${esc(txt||T('Пройди тест — и Kleal расскажет, как ты воспринимаешься со стороны и с кем тебе легко.','Take the test and Kleal will describe how you come across and who you click with.'))}</div>
       <div class="intedit"><div class="intav"></div>
-        <button class="editbtn" data-act="edit-personality">${IC.wand}<span>${T('Изменить','Edit')}</span></button></div></div></div>`;
+        <button class="editbtn" data-act="edit-personality">${IC.wand}<span>${T('Изменить','Edit')}</span></button></div></div>
+    ${(s.vibe&&s.vibe.length)?`<div class="card pad" style="text-align:left;margin-top:12px">
+      <div class="sumlbl">${T('Вайб','Vibe')}</div>
+      <div class="seccap" style="margin:0">${T('Отметь, что Kleal может использовать для подбора.','Pick what Kleal may use for matching.')}</div>
+      ${chips(s.vibe,'social-vibe')}
+      ${(s.depth&&s.depth.length)?`<div class="k-label" style="color:var(--muted);margin-top:16px;display:block">${T('Глубина общения','Conversation depth')}</div>`+chips(s.depth,'social-depth'):''}
+    </div>`:''}</div>`;
 }
 function scr_places(){
   if(!DATA.availability.length && !DATA.places.length) return emptyState(T("Пока нет мест и времени","No places or times yet"),T("Kleal запомнит, где и когда тебе удобно встречаться.","Kleal will note where and when you like to meet."));
@@ -2444,38 +2484,59 @@ function xDeselect(){
   xClearArea();
   xPaintSelection();
 }
+// Group plans for the zoomed-out band. Deliberately NOT keyed off the CITY_LATLON lookup: that table
+// knows 20 cities while the population lives in ~64, so 177 of 300 plans had real coordinates but an
+// unrecognised city name and were invisible on the map — zooming into Copenhagen showed nothing at
+// all. A group is positioned by the CENTROID of its own plans; the table is only a fallback for a
+// group whose plans carry no coordinates. A group we cannot place at all is not drawn.
+function xClusters(src){
+  const by={};
+  (src||[]).forEach(p=>{
+    const ck=cityKey(p.area), raw=String(p.area||'').trim();
+    const k=ck||(raw?('~'+raw.toLowerCase()):'');
+    if(!k) return;
+    (by[k]=by[k]||{key:k, ck:ck, raw:raw, plans:[]}).plans.push(p);
+  });
+  return Object.keys(by).map(k=>{
+    const g=by[k], geo=g.plans.filter(hasGeo);
+    const ll=geo.length
+      ? [geo.reduce((a,p)=>a+(+p.lat),0)/geo.length, geo.reduce((a,p)=>a+(+p.lon),0)/geo.length]
+      : (g.ck&&CITY_LATLON[g.ck])||null;
+    return {key:k, ll:ll, label:g.ck?cityLabel(g.ck):g.raw, plans:g.plans};
+  }).filter(g=>g.ll);
+}
 function drawExploreMarkers(){
   const map=exploreMap; if(!map||!xLayer) return;
   const z=Math.floor(map.getZoom()), mine=cityKey(myArea());
   const B=map.getBounds().pad(.35);                  // cull: never build pins the camera cannot see
   const want={};
-  const {areas}=exploreAreas(xVisiblePlans());
+  const src=xVisiblePlans();
   const showLab=z>=5;                                // below this the chips collide into a wall of text
-  const cityNode=(key,count,isMine)=>{
+  const cityNode=(key,count,isMine,label,ll)=>{
     const size=count>49?56:count>9?48:40, fs=count>49?16:count>9?15:13.5;
-    return {ll:CITY_LATLON[key], size:[110,size+22], anchor:[55,size/2],
+    return {ll:ll||CITY_LATLON[key], size:[110,size+22], anchor:[55,size/2],
       sig:'c'+key+':'+count+':'+(showLab?1:0),
+      lab:label,
       html:'<div class="xpinwrap"><div class="xpin city'+(isMine?' me':'')+'" data-n="'
            +(count>49?'lg':count>9?'md':'sm')+'" role="button" tabindex="0" aria-label="'
-           +esc(cityLabel(key))+', '+count+'" style="width:'+size+'px;height:'+size+'px">'
+           +esc(label||cityLabel(key))+', '+count+'" style="width:'+size+'px;height:'+size+'px">'
            +'<div class="in" style="font-size:'+fs+'px">'+(count>99?'99+':count)+'</div></div>'
-           +(showLab?'<div class="xlab">'+esc(cityLabel(key))+'</div>':'')+'</div>'};
+           +(showLab?'<div class="xlab">'+esc(label||cityLabel(key))+'</div>':'')+'</div>'};
   };
   if(z<XCITY_MAX){
-    areas.forEach(a=>{
-      const ll=CITY_LATLON[a.key]; if(!ll||!B.contains(ll)) return;
-      const n=cityNode(a.key, a.plans.length, a.key===mine);
+    xClusters(src).forEach(a=>{
+      if(!B.contains(a.ll)) return;
+      const n=cityNode(a.key, a.plans.length, a.key===mine, a.label, a.ll);
       n.onClick=()=>{ const pts=a.plans.filter(hasGeo).map(p=>[+p.lat,+p.lon]);
         const dz=Math.abs((pts.length?13:11)-map.getZoom()), dur=Math.min(1.1, .35+.11*dz);
         if(pts.length>=2) map.flyToBounds(L.latLngBounds(pts).pad(.15),{maxZoom:14,paddingBottomRight:[0,180],duration:dur});
-        else map.flyTo(ll, 13, {duration:dur}); };
+        else map.flyTo(a.ll, 13, {duration:dur}); };
       want['c'+a.key]=n; });
   } else {
-    areas.forEach(a=>{
-      const geo=a.plans.filter(p=>hasGeo(p)&&B.contains([+p.lat,+p.lon]));
-      const flat=a.plans.filter(p=>!hasGeo(p));
-      const cells=xGrid(geo, map, 64);
-      Object.keys(cells).forEach(k=>{
+    // Coordinates are enough to place a plan — no city lookup involved.
+    const geoAll=src.filter(p=>hasGeo(p)&&B.contains([+p.lat,+p.lon]));
+    const cells=xGrid(geoAll, map, 64);
+    Object.keys(cells).forEach(k=>{
         const grp=cells[k];
         if(grp.length===1){
           const p=grp[0];
@@ -2486,23 +2547,25 @@ function drawExploreMarkers(){
             onClick:()=>showPlanCard(p._i), zoff:(p._i===xSel?1000:0)};
         } else {
           const la=grp.reduce((m,p)=>m+(+p.lat),0)/grp.length, lo=grp.reduce((m,p)=>m+(+p.lon),0)/grp.length;
-          want['g'+a.key+k]={ll:[la,lo], size:[36,36], anchor:[18,18], sig:'g'+grp.length,
+          want['g'+k]={ll:[la,lo], size:[36,36], anchor:[18,18], sig:'g'+grp.length,
             html:'<div class="xpinwrap"><div class="xpin grp" role="button" tabindex="0" aria-label="'
                  +grp.length+' '+T('планов рядом','plans here')+'" style="width:36px;height:36px"><div class="in">'+grp.length+'</div></div></div>',
             onClick:()=>map.flyTo([la,lo], Math.min(17, map.getZoom()+2), {duration:.45})};
         }
-      });
-      const ll=CITY_LATLON[a.key];
-      if(flat.length && ll && B.contains(ll)){       // no coordinates: zooming reveals nothing, so list them
-        const n=cityNode(a.key, flat.length, a.key===mine);
-        n.onClick=()=>focusArea(a.key);
-        want['c'+a.key]=n;
-      }
+    });
+    // Plans with no coordinates cannot be placed; keep them as one honest bubble on the city we do
+    // know, and tapping it lists them rather than zooming into nothing.
+    xClusters(src.filter(p=>!hasGeo(p))).forEach(a=>{
+      if(!B.contains(a.ll)) return;
+      const n=cityNode(a.key, a.plans.length, a.key===mine, a.label, a.ll);
+      n.onClick=()=>{ if(a.ck!==undefined||cityKey(a.label)) focusArea(cityKey(a.label)||a.key); };
+      want['c'+a.key]=n;
     });
   }
   // Don't stack the blue "you" dot on top of your own city's bubble — they share coordinates and the
   // dot just sits inside the coral disc. When your city has a bubble, the bubble wears the marker.
-  const c=mine&&CITY_LATLON[mine];
+  const c=(mine&&CITY_LATLON[mine])
+        ||((DATA.geo&&DATA.geo.coarseLat!=null)?[DATA.geo.coarseLat,DATA.geo.coarseLon]:null);
   if(c&&B.contains(c)&&!want['c'+mine]) want['me']={ll:c, size:[96,44], anchor:[48,10], zoff:900, noClick:true,
     sig:'me',
     html:'<div class="xhome"><div class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
@@ -2541,7 +2604,12 @@ function drawExploreMarkers(){
     if(pin){ pin.style.setProperty('--pd', Math.min(born++*18,200)+'ms');
              pin.classList.add('new'); setTimeout(()=>pin.classList.remove('new'),260+Math.min(born*18,200)); }
   });
-  xPaintSelection();
+  // A card that outlived its pin: fly somewhere else and it kept sitting there describing a plan
+  // off-screen (a Lagos meetup while looking at Copenhagen). Once the selected plan leaves the
+  // viewport, let the card go.
+  const sp=(xSel!==null)?PUBLIC_INTENTS[xSel]:null;
+  if(sp && hasGeo(sp) && !B.contains([+sp.lat,+sp.lon])) xDeselect();
+  else xPaintSelection();
 }
 
 async function joinGroup(i){
@@ -4333,9 +4401,7 @@ function openSheet(kind, idx){
   // The section sheets (Figma: Interests Edit / Personality Edit / Safety). Each
   // drafts a COPY — nothing touches DATA until «Принять изменения».
   else if(kind==='interests') ESHEET={kind, draft:(DATA.interests||[]).map(i=>({name:i.name,used:i.used!==false})), add:''};
-  else if(kind==='personality') ESHEET={kind, draft:{
-    vibe:((DATA.social||{}).vibe||[]).map(v=>[v[0],!!v[1]]),
-    depth:((DATA.social||{}).depth||[]).map(v=>[v[0],!!v[1]])}};
+  else if(kind==='personality') ESHEET={kind, draft:{text:personalityText()}};
   else if(kind==='safety') ESHEET={kind, draft:Object.assign({}, DATA.safety||{})};
   else return;
   render();
@@ -4386,12 +4452,13 @@ function eSheetHTML(){
       +`<input id="eshAdd" class="kinput" style="margin-top:10px" placeholder="${T('Добавить интерес…','Add an interest…')}">
         <button class="kbtn sec sm" style="margin-top:8px;width:auto;padding:0 16px" data-act="esheet-int-add">${T('Добавить','Add')}</button>`;
   } else if(e.kind==='personality'){
-    title=T('Твоя личность','Your personality');
-    const chips=(arr,act)=>`<div class="kchips">${arr.map((v,i)=>`<div class="kchip ${v[1]?'on':''}" data-act="${act}" data-v="${i}">${esc(v[0])}</div>`).join('')}</div>`;
-    body=(e.draft.vibe.length?`<div class="k-label" style="color:var(--muted)">${T('Вайб','Vibe')}</div>`+chips(e.draft.vibe,'esheet-vibe'):'')
-      +(e.draft.depth.length?`<div class="k-label" style="color:var(--muted);margin-top:14px">${T('Глубина общения','Conversation depth')}</div>`+chips(e.draft.depth,'esheet-depth'):'')
-      +((!e.draft.vibe.length&&!e.draft.depth.length)
-        ?`<div class="k-cap" style="color:var(--muted)">${T('Kleal ещё не собрал профиль личности — поговори с ним, и он появится.','Kleal has not built your personality profile yet — talk to it and it will appear.')}</div>`:'');
+    title=T('Моя личность по тесту Kleal','My personality by Kleal test');
+    // Auto-grow rather than a scrollbar inside a scrollbar: the block should read as a paragraph,
+    // not as a text field with its own hidden overflow.
+    const rows=Math.max(5, Math.min(22, Math.ceil((e.draft.text||'').length/34)));
+    body=`<textarea id="eshPers" class="pertx" rows="${rows}" spellcheck="false"
+        oninput="ESHEET.draft.text=this.value;this.style.height='auto';this.style.height=this.scrollHeight+'px'"
+        placeholder="${T('Kleal ещё не описал тебя — поговори с ним, и текст появится здесь.','Kleal has not described you yet — talk to it and the text will appear here.')}">${esc(e.draft.text||'')}</textarea>`;
   } else if(e.kind==='safety'){
     title=T('Безопасность и приватность','Safety & Privacy');
     body=safetyGroups(e.draft).map(gr=>`<div style="margin-bottom:14px">
@@ -4403,7 +4470,8 @@ function eSheetHTML(){
             : safetyRow(it,'esheet-sflag')).join('')}
       </div>`).join('');
   }
-  return `<div class="kscrim bot" data-act="esheet-close"><div class="ksheet bottom" onclick="event.stopPropagation()">
+  return `<div class="kscrim bot" data-act="esheet-close"><div class="ksheet bottom${e.kind==='personality'?' tall':''}" onclick="event.stopPropagation()">
+    <div class="kgrab"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div class="k-h3">${title}</div><div style="cursor:pointer;padding:4px;color:var(--muted)" data-act="esheet-close">✕</div></div>
     <div class="esbody">${body}</div>
@@ -4435,10 +4503,9 @@ function acceptSheet(){
     pushProfile({interests:DATA.interests.filter(i=>i.used!==false).map(i=>i.name)});
   }
   else if(e.kind==='personality'){
-    DATA.social=DATA.social||{rows:[],vibe:[],depth:[]};
-    DATA.social.vibe=e.draft.vibe; DATA.social.depth=e.draft.depth;
-    const on=e.draft.vibe.filter(v=>v[1]).map(v=>v[0]);
-    if(on.length) pushProfile({vibe:on[0]});
+    const el=document.getElementById('eshPers');
+    DATA.summary=(el?el.value:(e.draft.text||'')).trim();
+    pushProfile({summary:DATA.summary});
   }
   else if(e.kind==='safety'){
     DATA.safety=Object.assign({}, DATA.safety||{}, e.draft);
@@ -4869,8 +4936,13 @@ function doAct(act, ds){
     case 'esheet-int-add': { const el=document.getElementById('eshAdd'), v=el?el.value.trim():'';
       if(v && !ESHEET.draft.some(x=>x.name.toLowerCase()===v.toLowerCase())) ESHEET.draft.push({name:v,used:true});
       render(); break; }
-    case 'esheet-vibe': { const v=ESHEET.draft.vibe[+ds.v]; if(v) v[1]=!v[1]; render(); break; }
-    case 'esheet-depth': { const v=ESHEET.draft.depth[+ds.v]; if(v) v[1]=!v[1]; render(); break; }
+    // Vibe/depth moved out of the sheet onto the screen itself (the sheet is prose only now), so
+    // they toggle DATA directly — and `vibe` is a whitelisted field, so the store follows.
+    case 'social-vibe': { const a=((DATA.social||{}).vibe)||[], v=a[+ds.v];
+      if(v){ v[1]=!v[1]; const on=a.filter(x=>x[1]).map(x=>x[0]);
+             pushProfile({vibe:on.length?on[0]:''}); render(); saveState(); } break; }
+    case 'social-depth': { const v=(((DATA.social||{}).depth)||[])[+ds.v];
+      if(v){ v[1]=!v[1]; render(); saveState(); } break; }
     case 'esheet-sflag': { ESHEET.draft[ds.v]=!ESHEET.draft[ds.v]; render(); break; }
     case 'esheet-autonomy': { ESHEET.draft.autonomy=(+ds.v===1?'auto':'ask'); render(); break; }
     // ---- batch 3: request → mutual → plan → meetup day ----
