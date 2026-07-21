@@ -955,13 +955,21 @@ def profile_edit(message, profile, lang):
 # user an English paragraph about themselves on their own profile screen.
 RESUMMARY_PROMPT = '''You are Kleal. Below is a user's current profile summary and their up-to-date profile data. Rewrite the SUMMARY as ONE warm, natural, flowing paragraph that reflects the CURRENT data. Integrate every change smoothly into the prose — NEVER just append or list words. Address the user directly. 2-4 sentences, concrete, no bullet points, output ONLY the paragraph.
 
+If a PERSONALITY section is present, it is a separate text the user owns and keeps: do NOT copy its sentences and do NOT replace the summary with it. Carry its substance — how they come across and who they are easy with — into the paragraph, while keeping everything the CURRENT SUMMARY already states about their life, interests and plans. The result must read as ONE paragraph about the whole person.
+
 LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ The interests may be stored as English keywords for the matching engine — translate them naturally, do not switch language because of them.'''
 
 
-def resummary(profile, current, lang="ru"):
-    """Rewrite the profile summary to integrate the latest changes (adapt, don't append)."""
+def resummary(profile, current, lang="ru", personality=""):
+    """Rewrite the profile summary to integrate the latest changes (adapt, don't append).
+
+    `personality` is the SEPARATE text the Kleal test owns. It is carried in as substance to weave,
+    never as sentences to copy: the two texts have two owners and must not collapse into one."""
     lang = "en" if str(lang).lower() == "en" else "ru"
+    pers = str(personality or "").strip()[:900]
     payload = ("CURRENT SUMMARY:\n" + str(current or "(none yet)") +
+               (("\n\nPERSONALITY (the user's own separate text, from the Kleal test — weave, do not copy):\n"
+                 + pers) if pers else "") +
                "\n\nUP-TO-DATE PROFILE DATA:\n" + json.dumps(profile or {}, ensure_ascii=False)[:2200])
     sys_prompt = (RESUMMARY_PROMPT
                   .replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
@@ -987,8 +995,8 @@ def resummary(profile, current, lang="ru"):
 # ======================= THE KLEAL PERSONALITY TEST (/persona) =======================
 # Eight fixed questions on the client, then exactly ONE call here. The alternative — an LLM turn per
 # question — gives eight chances to hang on a chain that allows ~195s, for questions that are fixed by
-# design anyway. Everything the person has given us folds into the SAME prose field the profile
-# summary owns, so the profile never grows a second, competing description of the same human.
+# design anyway. The paragraph is the PERSONALITY text and has its own owner: «Сводка Kleal» keeps its
+# own field and afterwards re-weaves to carry this strand, rather than being replaced by it.
 PERSONA_PROMPT = """You are Kleal. Below is a user's profile data, the life story they wrote in their own
 words, and their answers to a short personality test. Write ONE warm, natural, flowing paragraph
 describing how this person comes across and who they are easy with. Address the user directly ("you").
@@ -1024,10 +1032,11 @@ def persona(profile, story, answers, current, lang="ru"):
             continue
         best = best or out
         if _lang_ok(out, lang):
-            return {"summary": out}
-    # Same honesty rule as resummary: an empty summary keeps the old text on screen and lets the client
+            return {"personality": out, "summary": out}
+    # Same honesty rule as resummary: an empty result keeps the old text on screen and lets the client
     # offer a retry, which beats handing the user an English paragraph about themselves.
-    return {"summary": best if _lang_ok(best, lang) else ""}
+    _b = best if _lang_ok(best, lang) else ""
+    return {"personality": _b, "summary": _b}
 
 
 # ======================= GHOSTWRITER (Kleal helps in a chat with a real person) =======================
@@ -1471,7 +1480,8 @@ class H(BaseHTTPRequestHandler):
             if r == "/resummary":                    # after a profile edit: rewrite the summary to fit (adapt, not append)
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
                 return send_json(self, 200, resummary(prof, body.get("current") or "",
-                                                      body.get("lang") or "ru"))
+                                                      body.get("lang") or "ru",
+                                                      body.get("personality") or ""))
 
             if r == "/intro":                        # the candidate's agent writes the icebreaker
                 return send_json(self, 200, _post(MATCH_URL, "/api/agent/intro",

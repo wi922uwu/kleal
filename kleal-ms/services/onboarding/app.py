@@ -1343,10 +1343,12 @@ def _profile_to_user(p):
         # vibe/entities used to be invented ('chill', '<Interest> scene') — collected-or-absent now
         "vibe": vibe, "langs": langs, "area": area,
         "km": None, "lat": lat, "lon": lon, "radiusKm": radius, "open": True, "role": role,
-        "gender": gender, "goals": goals, "summary": str(p.get("summary") or "")[:400],
+        "gender": gender, "goals": goals, "summary": str(p.get("summary") or "")[:PROSE_MAX],
         # register_profile replaces the whole row, so the story must be carried here too or
         # re-running onboarding silently wipes what the person wrote.
         "story": str(p.get("story") or "")[:STORY_MAX],
+        "personality": str(p.get("personality") or "")[:PROSE_MAX],
+        "persona": (_clean_persona(p.get("persona")) if p.get("persona") else None),
         # meeting-format preference (Figma «Формат встреч»); matching's mode_format reads this. Empty
         # until the user picks in the profile sheet — an empty list is honestly "no preference stated".
         "formats": [str(x).strip().lower() for x in (p.get("formats") or []) if str(x).strip()][:8],
@@ -1484,9 +1486,36 @@ def get_user(name):
 
 # The whole point of the whitelist: the profile client pushes edits here, and only fields a person
 # actually owns may change — never source/verified/paused or other trust-bearing flags.
+# Deliberately ABSENT and never to be added: verified, datingOk, paused, pending, blocksMe,
+# declinedOwnerDaysAgo, source, role. Those are the hard gates in matching/app.py — a client patch
+# that could set them could make a person invisible to everyone with no trace on screen.
 _PATCH_FIELDS = {"age", "gender", "area", "radiusKm", "lat", "lon", "langs", "interests",
-                 "goals", "formats", "summary", "story", "vibe", "safety"}
+                 "goals", "formats", "summary", "story", "personality", "persona", "vibe", "safety"}
 STORY_MAX = 4000        # a life story, not a novel — and update_user writes straight into the row
+PROSE_MAX = 900         # what buddy actually returns for a summary / personality paragraph
+
+# The personality test's own record: a closed vocabulary per axis. An unrecognised token is DROPPED,
+# never defaulted — a default here would be the profile asserting something nobody answered.
+_PERSONA_AXES = {
+    "energy":    ("energised", "drained", "depends"),
+    "group":     ("one", "small", "crowd"),
+    "depth":     ("deep", "light", "practical"),
+    "firstMeet": ("talk", "doing", "event"),
+    "pace":      ("fast", "slow", "depends"),
+    "planning":  ("advance", "spontaneous", "flexible"),
+    "seek":      ("long", "interest", "wider"),
+}
+
+
+def _clean_persona(p):
+    if not isinstance(p, dict):
+        return None
+    axes = p.get("axes") if isinstance(p.get("axes"), dict) else {}
+    keep = {k: v for k, v in axes.items() if k in _PERSONA_AXES and v in _PERSONA_AXES[k]}
+    out = {"v": 1, "axes": keep}
+    if isinstance(p.get("takenAt"), (int, float)):
+        out["takenAt"] = int(p["takenAt"])
+    return out
 
 
 def update_user(name, patch):
@@ -1494,13 +1523,20 @@ def update_user(name, patch):
     if not key or not isinstance(patch, dict):
         return {"ok": False, "error": "name and patch required"}
     clean = {k: v for k, v in patch.items() if k in _PATCH_FIELDS}
-    # update_user does a blind row.update(), so the one free-text field a person can type without any
+    # update_user does a blind row.update(), so every free-text field a person can type without any
     # form validation gets its own guard: a string, capped, or not written at all.
-    if "story" in clean:
-        if isinstance(clean["story"], str):
-            clean["story"] = clean["story"][:STORY_MAX]
+    for _k, _cap in (("story", STORY_MAX), ("personality", PROSE_MAX), ("summary", PROSE_MAX)):
+        if _k in clean:
+            if isinstance(clean[_k], str):
+                clean[_k] = clean[_k][:_cap]
+            else:
+                clean.pop(_k)
+    if "persona" in clean:
+        cp = _clean_persona(clean["persona"])
+        if cp is None:
+            clean.pop("persona")          # not a dict: leave whatever the row already holds
         else:
-            clean.pop("story")
+            clean["persona"] = cp
     if not clean:
         return {"ok": False, "error": "no editable fields in patch"}
     with _REG_LOCK:

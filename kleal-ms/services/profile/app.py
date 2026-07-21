@@ -1513,6 +1513,8 @@ function mapOnboarding(op){
     summaryLabel:"Kleal's summary", summary: op.summary||'',
     summaryUpdated: op.summary?Date.now():null,   // device-local: the store has no such column
     story: op.story||'',                          // the free-form life story, own field, own whitelist entry
+    personality: op.personality||'', personalityUpdated: op.personality?Date.now():null,
+    persona: op.persona||null,                    // the test's own record of what was answered
     matchingPaths: ints.slice(0,3), snapshot:snap, interests, basics,
     social, availability:[], places, goals, safety, memory, knows,
     // canonical shared-profile fields — the same names the users.json row carries, so the
@@ -1814,12 +1816,14 @@ function personalitySummary(s){
 }
 // One prose field, one owner. This is the same `summary` the shared user row carries, so the text
 // on this screen, the text the sheet edits and the text in the store cannot drift apart.
-// One prose field, one owner. This is the same `summary` the shared user row carries, so the text
-// on this screen, the text the sheet edits and the text in the store cannot drift apart.
+// Two texts, two owners. `personality` is what the Kleal test writes; «Сводка Kleal» keeps its own
+// `summary` and afterwards RE-WEAVES to carry this strand. Merging them (as an earlier pass did) made
+// the test silently eat the summary.
 function personalityText(){
-  const t=String(DATA.summary||'').trim();
+  const t=String(DATA.personality||'').trim();
   return t || personalitySummary(DATA.social||{rows:[],vibe:[],depth:[]});
 }
+function setPersonality(text){ DATA.personality=String(text||'').trim(); DATA.personalityUpdated=Date.now(); }
 // Every write to the summary goes through here, so no call site can forget the timestamp and leave
 // the card claiming «Обновлено сегодня» about a paragraph written last month.
 function setSummary(text){ DATA.summary=String(text||'').trim(); DATA.summaryUpdated=Date.now(); }
@@ -1845,12 +1849,12 @@ function saveStory(){
   pushProfile({story:DATA.story}); saveState(); return true;
 }
 function scr_social(){  // "Личность" — the entry screen: photo, Kleal's test, the summary, your story
-  const txt=personalityText(), up=fmtUpdated(DATA.summaryUpdated);
+  const txt=personalityText(), up=fmtUpdated(DATA.personalityUpdated);
   return `<div class="fade" style="text-align:center">
     <div class="persimg${DATA.photo?' hasphoto" style="background-image:url('+DATA.photo+')':'"'} data-act="edit-photo">${DATA.photo?'':IC.photo}</div>
     <button class="bigbtn primary" data-act="start-persona">${IC.doc}<span>${T('Пройти тест от Kleal','Take your personality test')}</span></button>
     <div class="card pad" style="text-align:left;margin-top:16px">
-      <div class="sumhead"><div class="sumlbl">${T('Сводка Kleal',"Kleal's summary")}</div>
+      <div class="sumhead"><div class="sumlbl">${T('Твоя личность','Your personality')}</div>
         ${up?`<span class="updated">${esc(up)}</span>`:''}</div>
       <div class="sumtxt clamp3">${esc(txt||T('Пройди тест — и Kleal расскажет, как ты воспринимаешься со стороны и с кем тебе легко.','Take the test and Kleal will describe how you come across and who you click with.'))}</div>
       <div class="intedit">
@@ -1863,7 +1867,46 @@ function scr_social(){  // "Личность" — the entry screen: photo, Kleal
         placeholder="${T('Пиши как получится — Kleal сам разберётся.','Write it however it comes out — Kleal will make sense of it.')}"
         oninput="DATA.story=this.value" onblur="saveStory()">${esc(DATA.story||'')}</textarea>
     </div>
+    ${ptestResultCard()}
     <div class="stickycta"><button class="bigbtn primary" data-act="story-confirm">${T('Сохранить и закрыть','Confirm & Close')}</button></div>
+  </div>`;
+}
+// Nothing derived is hidden inside prose: every field the test wrote is named, with whether it
+// actually reaches the ranking, and every axis it could NOT derive is named too.
+const _AXIS_RU={energy:['Заряд','Energy'],group:['Формат','Group size'],depth:['Глубина общения','Conversation depth'],
+  firstMeet:['Первая встреча','First meet'],pace:['Темп сближения','Pace'],planning:['Планы','Planning'],seek:['Что ищешь','Looking for']};
+const _TOK_RU={energised:['заряжаешься','energised'],drained:['устаёшь','drained'],one:['один на один','one to one'],
+  small:['малая группа','small group'],crowd:['большая компания','big crowd'],deep:['про смыслы','deep'],
+  light:['лёгкий','light'],practical:['по делу','practical'],talk:['кофе и разговор','coffee and a talk'],
+  doing:['что-то делать вместе','doing something'],event:['событие','an event'],fast:['быстро','fast'],
+  slow:['постепенно','slowly'],advance:['заранее','in advance'],spontaneous:['спонтанно','spontaneous'],
+  long:['друзья надолго','friends for the long run'],interest:['компания под интерес','company for an interest'],
+  wider:['расширить круг','a wider circle'],extrovert:['экстраверт','extrovert'],introvert:['интроверт','introvert'],
+  party:['компания 10+','party'],events:['события и митапы','events']};
+function tokRU(t){ const h=_TOK_RU[String(t)]; return h?T(h[0],h[1]):String(t); }
+function ptestResultCard(){
+  const R=PTEST_RESULT; if(!R) return '';
+  const axes=R.axes||{}, all=PTEST_Q().filter(q=>!q.free);
+  const line=(l,v,note)=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 0">
+      <div style="font-size:14.5px;min-width:0">${esc(l)}: <b>${esc(v)}</b></div>
+      <div class="k-cap" style="color:var(--muted);flex:none;text-align:right">${esc(note)}</div></div>`;
+  const inMatch=(R.applied||[]).map(a=>a[0]==='vibe'
+    ? line(T('Вайб','Vibe'), tokRU(a[1]), T('влияет на подбор','affects matching'))
+    : line(T('Формат','Format'), tokRU(a[1]), T('сохранено, на подбор пока не влияет','saved, not yet weighed'))).join('');
+  const missing=all.filter(q=>!axes[q.k]).map(q=>
+    line(T(_AXIS_RU[q.k][0],_AXIS_RU[q.k][1]), T('не участвует','not used'),
+         T('нет ответа или «зависит»','no answer, or "it depends"'))).join('');
+  const conf=(R.conflicts||[]).map(c=>`<div style="padding:8px 0;border-top:1px solid var(--line)">
+      <div style="font-size:14px">${esc(T('В профиле','In your profile'))}: <b>${esc(tokRU(c[1]))}</b> · ${esc(T('в тесте','in the test'))}: <b>${esc(tokRU(c[2]))}</b></div>
+      <div class="iacts" style="margin-top:8px">
+        <button class="kbtn sec sm" style="flex:1" data-act="ptest-keep" data-f="${esc(c[0])}">${T('Оставить как в профиле','Keep my profile')}</button>
+        <button class="kbtn pri sm" style="flex:1" data-act="ptest-take" data-f="${esc(c[0])}">${T('Взять из теста','Take from the test')}</button></div></div>`).join('');
+  return `<div class="card pad" style="text-align:left;margin-top:12px">
+    <div class="sumlbl">${T('Kleal записал из теста','What Kleal saved from the test')}</div>
+    ${inMatch||`<div class="seccap" style="margin:6px 0 0">${T('Из ответов ничего не легло в поля подбора.','Nothing from your answers landed in a matching field.')}</div>`}
+    ${missing}
+    ${conf}
+    <div class="seccap" style="margin:10px 0 0">${T('Пока в подборе участвует только вайб — он двигает твой счёт с людьми похожего склада и делает тебя заметнее. Остальное сохранено в профиле.','Only the vibe is weighed today — it moves your score with similar people and makes you more visible. The rest is stored on your profile.')}</div>
   </div>`;
 }
 
@@ -1873,23 +1916,89 @@ function scr_social(){  // "Личность" — the entry screen: photo, Kleal
 // for questions a personality test fixes by design anyway.
 let PTEST=null;   // {i, answers:[{k,q,a}], busy, failed}
 function ptestInit(){ PTEST={i:0, answers:[], busy:false, failed:false}; }
+// Each option carries the canonical token it means, ON the question object. Deriving by bare index
+// against a separate table is silently corrupting the day someone reorders an option; `null` is an
+// honest hedge («зависит», «гибко») and derives nothing at all.
 const PTEST_Q = () => [
  {k:'energy', q:T('После насыщенного дня с людьми ты скорее…','After a full day around people you usually feel…'),
-  o:[T('Заряжен','Energised'),T('Вымотан','Drained'),T('Зависит от людей','Depends who they were')]},
- {k:'format', q:T('Как тебе комфортнее знакомиться?','How do you prefer to meet people?'),
-  o:[T('Один на один','One to one'),T('Небольшая группа, 3–5','A small group of 3–5'),T('Большая компания','A big crowd')]},
- {k:'talk',   q:T('Какой разговор тебе ближе?','What kind of conversation suits you?'),
-  o:[T('Глубокий, про смыслы','Deep, about what matters'),T('Лёгкий и весёлый','Light and funny'),T('Практичный, по делу','Practical, to the point')]},
- {k:'first',  q:T('Идеальная первая встреча — это…','An ideal first meet is…'),
-  o:[T('Кофе и разговор','Coffee and a talk'),T('Что-то делать вместе','Doing something together'),T('Событие или мероприятие','An event or a meetup')]},
+  o:[T('Заряжен','Energised'),T('Вымотан','Drained'),T('Зависит от людей','Depends who they were')],
+  m:['energised','drained',null]},
+ {k:'group',  q:T('Как тебе комфортнее знакомиться?','How do you prefer to meet people?'),
+  o:[T('Один на один','One to one'),T('Небольшая группа, 3–5','A small group of 3–5'),T('Большая компания','A big crowd')],
+  m:['one','small','crowd']},
+ {k:'depth',  q:T('Какой разговор тебе ближе?','What kind of conversation suits you?'),
+  o:[T('Глубокий, про смыслы','Deep, about what matters'),T('Лёгкий и весёлый','Light and funny'),T('Практичный, по делу','Practical, to the point')],
+  m:['deep','light','practical']},
+ {k:'firstMeet', q:T('Идеальная первая встреча — это…','An ideal first meet is…'),
+  o:[T('Кофе и разговор','Coffee and a talk'),T('Что-то делать вместе','Doing something together'),T('Событие или мероприятие','An event or a meetup')],
+  m:['talk','doing','event']},
  {k:'pace',   q:T('Как ты сходишься с людьми?','How do you warm up to people?'),
-  o:[T('Быстро и открыто','Fast and openly'),T('Постепенно, присматриваюсь','Slowly, I watch first'),T('Зависит от человека','Depends on the person')]},
- {k:'plans',  q:T('Планы или спонтанность?','Plans or spontaneity?'),
-  o:[T('Договариваться заранее','Agree in advance'),T('Лучше спонтанно','Rather spontaneous'),T('Гибко','Flexible')]},
+  o:[T('Быстро и открыто','Fast and openly'),T('Постепенно, присматриваюсь','Slowly, I watch first'),T('Зависит от человека','Depends on the person')],
+  m:['fast','slow',null]},
+ {k:'planning',q:T('Планы или спонтанность?','Plans or spontaneity?'),
+  o:[T('Договариваться заранее','Agree in advance'),T('Лучше спонтанно','Rather spontaneous'),T('Гибко','Flexible')],
+  m:['advance','spontaneous',null]},
  {k:'seek',   q:T('Что тебе сейчас важнее всего в новых знакомствах?','What matters most in new connections right now?'),
-  o:[T('Друзья надолго','Friends for the long run'),T('Компания под интерес','Company for a specific interest'),T('Расширить круг','A wider circle')]},
+  o:[T('Друзья надолго','Friends for the long run'),T('Компания под интерес','Company for a specific interest'),T('Расширить круг','A wider circle')],
+  m:['long','interest','wider']},
  {k:'own',    q:T('Что о тебе стоит знать, чтобы понять, с кем тебе легко?','What should Kleal know to understand who you click with?'),
-  o:[], free:true}];
+  o:[], m:[], free:true}];
+// Load-bearing correspondence, so assert it rather than hope.
+PTEST_Q().forEach(q=>{ if((q.m||[]).length!==(q.o||[]).length)
+  console.error('PTEST_Q: option/token length mismatch on', q.k); });
+
+// ---- The bridge from the test to the ranking engine ------------------------------------------
+// Only what the engine can actually read, and only from a tapped option. A typed or skipped answer
+// derives NOTHING: we cannot know which option a sentence meant, and a guess written into a matching
+// field is the profile asserting something nobody said.
+const PTEST_WRITABLE=['vibe','formats','persona','personality'];   // no gate field is here, ever
+const _SIZE_TOKENS=['1:1','small','party','events'];
+function ptestDerive(answers){
+  const axes={};
+  (answers||[]).forEach(a=>{ if(a && a.t) axes[a.k]=a.t; });
+  const patch={}, notes=[];
+  // Q1 -> vibe. ('introvert','extrovert') is a literal pair in the engine's clash matrix, which is
+  // the only vibe semantics it has.
+  if(axes.energy==='energised') patch.vibe='extrovert';
+  else if(axes.energy==='drained') patch.vibe='introvert';
+  // Q2/Q4 -> the SIZE half of formats. Mode tokens (online/offline/hybrid) belong to the profile form
+  // and are never touched here.
+  const sizes=[];
+  if(axes.group==='one') sizes.push('1:1');
+  else if(axes.group==='small') sizes.push('small');
+  else if(axes.group==='crowd') sizes.push('party');
+  if(axes.firstMeet==='event') sizes.push('events');
+  if(sizes.length) patch.formats=sizes;
+  return {patch, axes, notes};
+}
+// An explicit form entry is a statement; a test answer is an inference from a proxy question. The
+// weaker evidence never overwrites the stronger one, and never silently.
+function ptestApply(d){
+  const applied=[], conflicts=[], out={};
+  const ownedVibe=((DATA.persona||{}).axes||{}).energy;   // did the test write the current vibe?
+  if(d.patch.vibe){
+    const cur=String(DATA.vibeWord||'').trim();
+    if(!cur || ownedVibe) { out.vibe=d.patch.vibe; DATA.vibeWord=d.patch.vibe;
+                            applied.push(['vibe', d.patch.vibe]); }
+    else conflicts.push(['vibe', cur, d.patch.vibe]);
+  }
+  if(d.patch.formats){
+    const cur=(DATA.formats||[]).slice();
+    const handSize=cur.filter(f=>_SIZE_TOKENS.indexOf(f)>=0);
+    const ownedSize=((DATA.persona||{}).axes||{}).group;
+    if(!handSize.length || ownedSize){
+      const keep=cur.filter(f=>_SIZE_TOKENS.indexOf(f)<0);          // mode tokens survive verbatim
+      const next=keep.concat(d.patch.formats.filter(f=>keep.indexOf(f)<0));
+      out.formats=next; DATA.formats=next;
+      d.patch.formats.forEach(f=>applied.push(['formats', f]));
+    } else conflicts.push(['formats', handSize.join(', '), d.patch.formats.join(', ')]);
+  }
+  DATA.persona={v:1, takenAt:Date.now(), axes:d.axes};
+  out.persona=DATA.persona;
+  // Nothing leaves this function that is not on the writable list.
+  Object.keys(out).forEach(k=>{ if(PTEST_WRITABLE.indexOf(k)<0) delete out[k]; });
+  return {patch:out, applied, conflicts};
+}
 function scr_persona(){
   if(!PTEST) ptestInit();
   const Q=PTEST_Q(), q=(PTEST.i<Q.length)?Q[PTEST.i]:null;
@@ -1901,18 +2010,20 @@ function scr_persona(){
       <div class="seccap" style="margin:0 0 4px">${T('Вопрос','Question')} ${Math.min(PTEST.i+1,Q.length)} / ${Q.length}</div>
       ${said}
       ${q?`<div class="kbub ag">${esc(q.q)}</div>
-           <div class="kchips" style="margin-top:2px">${q.o.map(o=>
-             `<div class="kchip" data-act="ptest-pick" data-v="${esc(o)}">${esc(o)}</div>`).join('')
-             +(q.free?`<div class="kchip" data-act="ptest-pick" data-v="">${T('Пропустить','Skip')}</div>`:'')}</div>`:''}
+           <div class="kchips" style="margin-top:2px">${q.o.map((o,i)=>
+             `<div class="kchip" data-act="ptest-pick" data-v="${esc(o)}" data-i="${i}">${esc(o)}</div>`).join('')
+             +(q.free?`<div class="kchip" data-act="ptest-pick" data-v="" data-i="-1">${T('Пропустить','Skip')}</div>`:'')}</div>`:''}
       ${PTEST.busy?`<div class="kbub ag">${T('Kleal пишет о тебе…','Kleal is writing you up…')}</div>`:''}
       ${PTEST.failed?`<div class="kbub ag">${T('Kleal не смог собрать текст — попробуй ещё раз.','Kleal could not write it up — try again.')}</div>
         <div class="kchips" style="margin-top:2px"><div class="kchip" data-act="ptest-retry">${T('Повторить','Retry')}</div></div>`:''}
     </div>
     ${kcomposer('ptestinp',T('Или ответь своими словами…','Or answer in your own words…'))}</div>`;
 }
-function ptestAnswer(text){
+function ptestAnswer(text, idx){
   const Q=PTEST_Q(); if(!PTEST||PTEST.busy||PTEST.i>=Q.length) return;
-  PTEST.answers.push({k:Q[PTEST.i].k, q:Q[PTEST.i].q, a:String(text||'').trim()});
+  const q=Q[PTEST.i], i=(typeof idx==='number')?idx:-1;
+  // t is the canonical token, or null when the answer was typed, skipped, or an honest hedge.
+  PTEST.answers.push({k:q.k, q:q.q, a:String(text||'').trim(), i:i, t:(i>=0?(q.m||[])[i]:null)||null});
   PTEST.i++;
   if(PTEST.i>=Q.length) ptestFinish(); else render();
 }
@@ -1923,15 +2034,46 @@ async function ptestFinish(){
   try{ r=await fetch('/api/buddy/persona',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({profile:fullProfileForEdit(), story:String(DATA.story||'').slice(0,4000),
       answers:PTEST.answers.filter(a=>a.a).map(a=>({q:a.q,a:a.a})),
-      current:DATA.summary||'', lang:UILANG})}).then(x=>x.json());
+      current:DATA.personality||'', lang:UILANG})}).then(x=>x.json());
   }catch(e){ r=null; }
   PTEST.busy=false;
-  // buddy answers 200 with a chat-shaped body when a route throws, and returns {"summary":""} when the
-  // model won't write in the right language — so our own key being non-empty is the only honest test.
-  if(!r||!r.summary){ PTEST.failed=true; render(); return; }
-  setSummary(r.summary); pushProfile({summary:DATA.summary}); saveState();
-  PTEST=null; cur='social'; render();
-  toast(T('Kleal обновил сводку','Kleal updated your summary'));
+  // buddy answers 200 with a chat-shaped body when a route throws, and returns an empty paragraph when
+  // the model won't write in the right language — so our own key being non-empty is the only honest
+  // test. `summary` is read too: the route ships both keys for one release.
+  const txt=r&&(r.personality||r.summary);
+  if(!txt){ PTEST.failed=true; render(); return; }
+  setPersonality(txt);
+  // What the eight answers actually mean to the engine, and what they may not touch.
+  const res=ptestApply(ptestDerive(PTEST.answers));
+  PTEST_RESULT={applied:res.applied, conflicts:res.conflicts, axes:(DATA.persona||{}).axes||{}, at:Date.now()};
+  pushProfile(Object.assign({personality:DATA.personality}, res.patch));
+  saveState(); PTEST=null; cur='social'; render();
+  toast(T('Kleal записал результат теста','Kleal saved your test result'));
+  // Only NOW the weave, and only into the summary's own field — never the other way round.
+  adaptSummary().then(ok=>{ if(ok) render(); });
+}
+// The result of the last test run, shown on «Личность» until the user resolves it. Device-local:
+// it describes a decision, not profile data.
+let PTEST_RESULT=null;
+// «Взять из теста» on a conflict row — the only path by which a test answer overrides a hand entry.
+function ptestResolve(field){
+  if(!PTEST_RESULT) return;
+  const c=(PTEST_RESULT.conflicts||[]).find(x=>x[0]===field); if(!c) return;
+  const patch={};
+  if(field==='vibe'){ DATA.vibeWord=c[2]; patch.vibe=c[2]; }
+  else if(field==='formats'){
+    const keep=(DATA.formats||[]).filter(f=>_SIZE_TOKENS.indexOf(f)<0);
+    const next=keep.concat(String(c[2]).split(', ').filter(Boolean));
+    DATA.formats=next; patch.formats=next;
+  } else return;
+  PTEST_RESULT.conflicts=PTEST_RESULT.conflicts.filter(x=>x[0]!==field);
+  PTEST_RESULT.applied.push([field, c[2]]);
+  pushProfile(patch); saveState(); render(); toast(T('Взято из теста','Taken from the test'));
+}
+function ptestKeep(field){
+  if(!PTEST_RESULT) return;
+  PTEST_RESULT.conflicts=(PTEST_RESULT.conflicts||[]).filter(x=>x[0]!==field);
+  saveState(); render();
 }
 function scr_places(){
   if(!DATA.availability.length && !DATA.places.length) return emptyState(T("Пока нет мест и времени","No places or times yet"),T("Kleal запомнит, где и когда тебе удобно встречаться.","Kleal will note where and when you like to meet."));
@@ -2264,6 +2406,11 @@ async function loadServerProfile(){
     if(u.gender) DATA.gender=u.gender;
     if(Array.isArray(u.formats)) DATA.formats=u.formats;
     if(typeof u.story==='string') DATA.story=u.story;
+    if(typeof u.personality==='string') DATA.personality=u.personality;
+    if(u.persona&&typeof u.persona==='object') DATA.persona=u.persona;
+    // DATA.vibeWord was read by matchProfile but never assigned anywhere — so the searcher's vibe
+    // token was a whole SENTENCE from the first social row. The store holds the real one.
+    if(typeof u.vibe==='string') DATA.vibeWord=u.vibe;
     if(Array.isArray(u.goals)&&u.goals.length&&!((DATA.goals||{}).active||[]).length)
       DATA.goals={active:u.goals.slice(),optional:[]};
     syncBasicsRows(); render(); saveState();
@@ -2305,7 +2452,10 @@ function matchProfile(){
   const p={ name:DATA.name||'',
             interests:(DATA.interests||[]).map(i=>i.name).filter(Boolean),
             langs:langs, languages:{comfortable:langs},
-            vibe:(DATA.vibeWord||(vibeRow&&String(vibeRow.value||'').split(/[,·]/)[0].trim())||'')||null,
+            // A vibe is a TOKEN the engine compares by equality ('introvert' vs 'extrovert'). The old
+            // fallback sent the first social row's sentence, which matched nobody and silently parked
+            // social_context on its flat neutral branch. No token -> null -> honestly unknown.
+            vibe:(DATA.vibeWord||'')||null,
             city:(DATA.area||String(g('Location')).split('·')[0].trim())||null };
   if(DATA.age!=null) p.age=DATA.age;
   if(DATA.gender) p.gender=DATA.gender;
@@ -2388,17 +2538,27 @@ function fullProfileForEdit(){ const g=t=>{const r=snapRow(t);return r?r.value:'
   return { name:DATA.name||'', location:g('Location'), languages:g('Languages'),
     formats:g('Social formats'), availability:g('Availability'), safety:g('Safety'),
     interests:(DATA.interests||[]).map(i=>i.name), goals:((DATA.goals||{}).active)||[],
-    vibe:((DATA.social||{}).rows||[]).map(r=>r.title+': '+r.value).join(' · '), summary:DATA.summary||'' }; }
+    vibe:((DATA.social||{}).rows||[]).map(r=>r.title+': '+r.value).join(' · '), summary:DATA.summary||'',
+    personality:DATA.personality||'', story:String(DATA.story||'').slice(0,2500) }; }
 // After any profile change, ask Kleal to rewrite the summary paragraph so it reflects the new data
 // naturally — instead of a word being tacked onto the end.
 let _resumBusy=false;
 async function adaptSummary(){
-  if(_resumBusy) return; _resumBusy=true;
+  if(_resumBusy) return false; _resumBusy=true;
+  let ok=false;
   try{ const r=await fetch('/api/buddy/resummary',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({profile:fullProfileForEdit(), current:DATA.summary||'', lang:UILANG})}).then(x=>x.json());
-    if(r&&r.summary){ setSummary(r.summary); render(); saveState(); }
+    body:JSON.stringify({profile:fullProfileForEdit(), current:DATA.summary||'',
+                         personality:DATA.personality||'', lang:UILANG})}).then(x=>x.json());
+    const woven=r&&r.summary, norm=x=>String(x||'').toLowerCase().replace(/\s+/g,' ').trim();
+    // Guard the thing this whole change exists to prevent: a "weave" that is really a replacement.
+    // If the model just handed back the personality text, or lost half the summary, keep the old one —
+    // «сводка ещё не догнала» is recoverable, «тест съел сводку» is not.
+    if(woven && norm(woven)!==norm(DATA.personality)
+             && !(DATA.summary && woven.length < DATA.summary.length*0.5)){
+      setSummary(woven); saveState(); pushProfile({summary:DATA.summary}); ok=true;
+    }
   }catch(e){}
-  _resumBusy=false;
+  _resumBusy=false; return ok;
 }
 
 // ---------- Phase 3: public intents on the Explore map ----------
@@ -3854,7 +4014,7 @@ function scr_summary(){
           ? row(IC.globe, T('Где','Where'), T('Онлайн','Online'))
           : row(IC.pin, T('Район','District'), labelOf(DIST_OPTS(),FLOW.district,T('любой','any')))}
         ${row(IC.target,T('Формат','Format'), s.format||T('Встреча, неформально','Casual meetup'))}
-        ${row(IC.diamond,T('Вайб','Vibe'), locTopicList(s.vibe)||T('открыто и дружелюбно','open, friendly'))}
+        ${row(IC.diamond,T('Вайб','Vibe'), locTopicList(s.vibe)||T('пока не задано','not set yet'))}
         <div class="kwhy">${T('Формат и вайб — мои предположения, их можно поменять.','Format and vibe are my suggestions — tap to adjust.')}</div>
       </div>
     </div>
@@ -4755,8 +4915,9 @@ function acceptSheet(){
   }
   else if(e.kind==='personality'){
     const el=document.getElementById('eshPers');
-    setSummary(el?el.value:(e.draft.text||''));
-    pushProfile({summary:DATA.summary});
+    setPersonality(el?el.value:(e.draft.text||''));
+    pushProfile({personality:DATA.personality});
+    adaptSummary().then(ok=>{ if(ok) render(); });   // the summary follows the personality, not vice versa
   }
   else if(e.kind==='safety'){
     DATA.safety=Object.assign({}, DATA.safety||{}, e.draft);
@@ -5196,9 +5357,12 @@ function doAct(act, ds){
       render(); break; }
     // Vibe/depth moved out of the sheet onto the screen itself (the sheet is prose only now), so
     // they toggle DATA directly — and `vibe` is a whitelisted field, so the store follows.
-    case 'social-vibe': { const a=((DATA.social||{}).vibe)||[], v=a[+ds.v];
-      if(v){ v[1]=!v[1]; const on=a.filter(x=>x[1]).map(x=>x[0]);
-             pushProfile({vibe:on.length?on[0]:''}); render(); saveState(); } break; }
+    // These chips are DISPLAY only. They used to push on[0] — the first still-ticked chip in list
+    // order, not the one you tapped — so with the seed defaults almost every row in the store claimed
+    // vibe:'calm' whatever the user did, and unticking everything shipped ''. The engine's vibe now
+    // has exactly one author: question 1 of the test.
+    case 'social-vibe': { const v=(((DATA.social||{}).vibe)||[])[+ds.v];
+      if(v){ v[1]=!v[1]; render(); saveState(); } break; }
     case 'social-depth': { const v=(((DATA.social||{}).depth)||[])[+ds.v];
       if(v){ v[1]=!v[1]; render(); saveState(); } break; }
     case 'esheet-sflag': { ESHEET.draft[ds.v]=!ESHEET.draft[ds.v]; render(); break; }
@@ -5244,8 +5408,10 @@ function doAct(act, ds){
     case 'edit-personality': openSheet('personality'); break;
     // ---- Личность: the test, and the life story ----
     case 'start-persona': ptestInit(); navTo('persona'); break;
-    case 'ptest-pick': ptestAnswer(ds.v||''); break;
+    case 'ptest-pick': ptestAnswer(ds.v||'', ds.i===undefined?-1:+ds.i); break;
     case 'ptest-retry': ptestFinish(); break;
+    case 'ptest-take': ptestResolve(ds.f||''); break;
+    case 'ptest-keep': ptestKeep(ds.f||''); break;
     case 'story-confirm': { const changed=saveStory();
       toast(changed?T('Сохранено','Saved'):T('Уже сохранено','Already saved'));
       setTab('overview'); break; }
