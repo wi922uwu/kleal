@@ -579,8 +579,8 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* event card */
 .ecard{display:flex;gap:12px;align-items:flex-start;background:var(--card);border-radius:16px;
   padding:12px 16px 12px 12px;position:relative;cursor:pointer}
-.ecard .ph{width:94px;height:94px;border-radius:8px;background:var(--neutral100);flex:none;display:flex;align-items:center;justify-content:center;color:var(--neutral400)}
-.ecard .ph svg{width:36px;height:36px}
+.ecard .ph{width:94px;height:94px;border-radius:8px;background:var(--neutral100);flex:none;overflow:hidden}
+.ecard .ph svg{width:100%;height:100%;display:block}
 .ecard .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;justify-content:center}
 .ecard .ti{font-size:15px;line-height:20px;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .ecard .meta{display:flex;gap:12px;margin-top:2px}
@@ -866,6 +866,8 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .icard{background:var(--card);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:12px}
 .itile{margin:-16px -16px 4px;height:94px;overflow:hidden;border-radius:16px 16px 0 0;background:#FFF3EC}
 .itile svg{width:100%;height:100%;display:block}
+.ftile{height:118px;border-radius:12px;overflow:hidden;margin-bottom:12px}
+.ftile svg{width:100%;height:100%;display:block}
 .ihd{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .itl{flex:1;min-width:0;font-size:17px;line-height:24px;font-weight:600;overflow:hidden;
   text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -988,6 +990,56 @@ const _LOC_RU=[
   [/\bPublic places nearby\b/gi,'Публичные места рядом'],[/\bOnline if it falls through\b/gi,'Онлайн, если не сложится'],[/\bOnline\b/gi,'Онлайн'],
 ];
 function locStr(s){ if(UILANG!=='ru'||!s) return s||''; let out=String(s); _LOC_RU.forEach(p=>{ out=out.replace(p[0],p[1]); }); return out; }
+// Interest/topic vocabulary. Topics are stored canonically in English (the taxonomy the matcher
+// ranks on), so tags and the "vibe" line rendered raw English words inside a Russian UI. Generic
+// concepts are translated; proper names (game titles, K-pop, UX) deliberately pass through, and any
+// word not in the table is returned unchanged — a user's own free-text interest is never mangled.
+const _TOPIC_RU={
+  coffee:'кофе',tea:'чай',brunch:'бранч',cafe:'кафе',dinner:'ужин',lunch:'обед',food:'еда',
+  restaurant:'ресторан',cooking:'готовка',baking:'выпечка',bar:'бар',drinks:'напитки',pub:'паб',
+  beer:'пиво',wine:'вино',party:'вечеринки',club:'клуб',clubbing:'клубы',nightlife:'ночная жизнь',
+  walk:'прогулки',walking:'прогулки',stroll:'прогулки',hang:'тусовки',hangout:'тусовки',chill:'чилл',
+  talk:'разговоры',chat:'разговоры',cowork:'коворкинг',coworking:'коворкинг',remotework:'удалёнка',
+  football:'футбол',soccer:'футбол',basketball:'баскетбол',volleyball:'волейбол',handball:'гандбол',
+  tennis:'теннис',padel:'падел',badminton:'бадминтон',squash:'сквош',pingpong:'настольный теннис',
+  running:'бег',jogging:'пробежки',cycling:'велосипед',biking:'велосипед',swimming:'плавание',
+  triathlon:'триатлон',marathon:'марафон',gym:'зал',fitness:'фитнес',workout:'тренировки',
+  crossfit:'кроссфит',boxing:'бокс',mma:'ММА',climbing:'скалолазание',bouldering:'болдеринг',
+  yoga:'йога',pilates:'пилатес',stretching:'растяжка',sports:'спорт',team:'командные',
+  chess:'шахматы',boardgames:'настолки',tabletop:'настолки',poker:'покер',cards:'карты',
+  gaming:'игры',games:'игры',game:'игры',esports:'киберспорт',multiplayer:'мультиплеер',strategy:'стратегии',
+  cinema:'кино',movies:'кино',film:'кино',screen:'кино',series:'сериалы',art:'искусство',museum:'музеи',
+  gallery:'галереи',photography:'фотография',exhibition:'выставки',painting:'живопись',visual:'визуальное',
+  theatre:'театр',opera:'опера',ballet:'балет',standup:'стендап',stage:'сцена',books:'книги',
+  reading:'книги',literature:'литература',bookclub:'книжный клуб',architecture:'архитектура',
+  urbanism:'урбанистика',city:'город',culture:'культура',
+  startup:'стартапы',startups:'стартапы',product:'продукт',founder:'фаундеры',entrepreneur:'предприниматели',
+  business:'бизнес',ai:'ИИ',ml:'машинное обучение',programming:'программирование',coding:'программирование',
+  software:'софт',data:'данные',crypto:'крипта',blockchain:'блокчейн',networking:'нетворкинг',
+  investing:'инвестиции',investor:'инвесторы',career:'карьера',mentorship:'менторство',design:'дизайн',
+  tech:'технологии',engineering:'инженерия',
+  concert:'концерты',gig:'концерты',festival:'фестивали',music:'музыка',vinyl:'винил',guitar:'гитара',
+  piano:'пианино',drums:'барабаны',dj:'диджеинг',jam:'джемы',producing:'продюсирование',singing:'вокал',
+  karaoke:'караоке',band:'группа',rave:'рейвы',techno:'техно',edm:'электронная музыка',electronic:'электроника',
+  listening:'музыка',making:'музыка',
+  hiking:'походы',trekking:'треккинг',nature:'природа',camping:'кемпинг',mountains:'горы',trail:'тропы',
+  outdoor:'на природе',outdoors:'на природе',surfing:'сёрфинг',kayaking:'каякинг',skiing:'лыжи',
+  snowboard:'сноуборд',travel:'путешествия',roadtrip:'автопутешествия',sightseeing:'прогулки по городу',
+  fishing:'рыбалка',sailing:'парусный спорт',diving:'дайвинг',
+  spanish:'испанский',english:'английский',french:'французский',german:'немецкий',italian:'итальянский',
+  portuguese:'португальский',russian:'русский',language:'языки',languages:'языки',exchange:'языковой обмен',
+  practice:'практика',course:'курсы',workshop:'воркшопы',study:'учёба',skills:'навыки',learning:'обучение',
+  social:'общение',casual:'неформально',meet:'встреча',
+  pets:'питомцы',dogs:'собаки',cats:'кошки',fashion:'мода',pottery:'керамика',knitting:'вязание',
+  gardening:'садоводство',volunteering:'волонтёрство',meditation:'медитация',astrology:'астрология',
+  anime:'аниме',cosplay:'косплей',podcasting:'подкасты',
+};
+function locTopic(w){ if(UILANG!=='ru'||!w) return w||''; const k=String(w).trim().toLowerCase();
+  // plain plurals too — the store holds both "walk" and "walks", "book"/"books"
+  return _TOPIC_RU[k] || (k.length>3&&k.slice(-1)==='s'&&_TOPIC_RU[k.slice(0,-1)]) || w; }
+// "dota, game, multiplayer" -> "dota, игры, мультиплеер"
+function locTopicList(s){ if(UILANG!=='ru'||!s) return s||'';
+  return String(s).split(/\s*,\s*/).filter(Boolean).map(locTopic).join(', '); }
 function setUILang(l){ UILANG=(l==='en'?'en':'ru'); try{localStorage.setItem('kleal_uilang',UILANG);}catch(_e){} render(); }
 // ---- receiving policy (доступность): читаем/пишем свой статус через onboarding /api/v2/receiving ----
 // RECV_ERR: the profile may not exist in the matching store at all — the demo identity never does, and
@@ -2289,6 +2341,7 @@ const TILE_SVG={"football":"<svg viewBox=\"0 0 160 120\" xmlns=\"http://www.w3.o
 const _TILE_MATCH=[
  ['dnd',/\bdnd\b|d&d|dungeon|подземел/],['chess',/chess|шахмат/],
  ['boardgames',/boardgame|tabletop|\bcards\b|poker|настол|покер/],
+ ['football',/football|soccer|футбол/],
  ['gaming',/dota|valorant|\bcs\b|league|apex|fortnite|fifa|overwatch|minecraft|roblox|pubg|warzone|gaming|\bgame|игр|катк/],
  ['wine',/\bwine\b|вино/],['drinks',/\bbar\b|drinks|\bpub\b|beer|nightlife|club|cocktail|бар|пив|коктейл|тусовк/],
  ['coffee',/coffee|\btea\b|brunch|cafe|кофе|\bчай/],['dinner',/dinner|lunch|\bfood\b|restaurant|dining|ужин|обед|ресторан|поесть/],
@@ -2296,7 +2349,7 @@ const _TILE_MATCH=[
  ['festival',/festival|фестивал/],['concert',/concert|\bgig\b|концерт|\blive\b|музык|\bmusic/],
  ['guitar',/guitar|piano|drums|\bjam\b|\bband\b|producing|гитар|пианино/],
  ['dj',/\bdj\b|techno|edm|electronic|\brave\b|электрон|диджей/],['karaoke',/karaoke|singing|караоке/],
- ['football',/football|soccer|футбол/],['basketball',/basketball|basket|баскет/],
+['basketball',/basketball|basket|баскет/],
  ['tennis',/tennis|padel|badminton|squash|теннис|падел/],['running',/\brun\b|running|\bjog|marathon|\bбег|пробеж/],
  ['gym',/\bgym\b|fitness|workout|crossfit|strength|качал|\bзал\b/],['cycling',/cycl|\bbike\b|biking|велос/],
  ['yoga',/\byoga\b|pilates|stretch|йог|пилат/],['boxing',/\bbox|\bmma\b|kickbox|бокс/],
@@ -2310,8 +2363,9 @@ const _TILE_MATCH=[
  ['books',/\bbook|reading|literature|книг|\bчита|литератур/],['photography',/photo|фото/],
  ['fashion',/fashion|\bмода|стиль|одежд/],['gardening',/garden|\bсад\b|садов|растен|plant/],
  ['pets',/\bpet|\bdog|\bcat\b|питом|собак|кошк/],
- ['startups',/startup|founder|entrepreneur|business|\bproduct\b|стартап|бизнес|основател/],
  ['coding',/\bai\b|\bml\b|coding|programming|software|\bdata\b|\bcode|\btech\b|нейросет|программир|разработк/],
+ ['startups',/startup|founder|entrepreneur|business|\bproduct\b|стартап|бизнес|основател/],
+
  ['design',/design|\bux\b|\bui\b|дизайн/],
  ['language',/language|spanish|english|french|german|italian|exchange|practice|язык|испанск|английск/],
  ['meditation',/meditat|\bzen\b|медитац|осознан/],['dating',/dating|\bdate\b|свидан|знаком/],
@@ -2382,7 +2436,7 @@ function scr_intents(){
         ${intentTile(it)}
         <div class="ihd"><div class="itl">${esc(it.title||T('Без названия','Untitled'))}</div>
           <span class="kbadge ${st[1]}">${esc(st[0])}</span></div>
-        ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(t)}</span>`).join('')}</div>`:''}
+        ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(locTopic(t))}</span>`).join('')}</div>`:''}
         <div class="ifoot"><span class="k-cap" style="color:var(--muted)">${cs.length
             ? (cs.length+' '+plural(cs.length,T('кандидат','match'),T('кандидата','matches'),T('кандидатов','matches')))
             : T('пока никого','no one yet')}</span></div>
@@ -2436,7 +2490,7 @@ function scr_search(){
       <div class="ihd"><div class="itl">${esc(p.title)}</div>
         ${p.verified?`<span class="kbadge ok">${T('проверен','verified')}</span>`
           :(isMine?`<span class="kbadge mut">${T('твой город','your city')}</span>`:'')}</div>
-      ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(t)}</span>`).join('')}</div>`:''}
+      ${tags.length?`<div class="itags">${tags.map(t=>`<span class="ktag">${esc(locTopic(t))}</span>`).join('')}</div>`:''}
       <div class="ifoot">
         <span class="k-cap" style="color:var(--muted)">${esc(p.who)} · ${esc(locStr(p.when))}</span>
         <span class="k-cap" style="color:var(--muted)">${esc(planWhere(p))}</span>
@@ -2573,7 +2627,9 @@ function scr_agenthome(){
   // each with a topic icon in the tile, «host · area», the time, a working «Позвать» (joinPublic) and
   // a bookmark that actually saves. Whom+where varies, so the section no longer claims «сегодня».
   const plans=(DATA.plans||[]).slice(0,3);
-  const planIcon=p=>IC[editIcon((p.topics&&p.topics[0])||p.title||'')]||IC.spark;
+  // Same auto-detected category illustration the intent cards use — topics first, title as fallback.
+  const planIcon=p=>{ const k=tileKeyFor((p.topics||[]).join(' ')||String(p.title||''));
+    return TILE_SVG[k]||TILE_SVG.social; };
   const planCard=(p,i)=>`<div class="ecard" style="cursor:default">
       <div class="ph">${planIcon(p)}</div>
       <div class="bd">
@@ -2937,7 +2993,8 @@ function intentWhen(){
   const t=String((FLOW&&FLOW.intent&&FLOW.intent.time)||'').trim().toLowerCase();
   if(!t) return undefined;                       // undefined -> labelOf falls back to the placeholder
   const hit=_WHEN_RU[t]; if(hit) return T(hit[0],hit[1]);
-  return (FLOW.intent.time||'').trim() || undefined;
+  // compound times the table has no entry for ("tomorrow evening") still get their tokens localized
+  return locStr((FLOW.intent.time||'').trim()) || undefined;
 }
 function labelOf(opts,v,dash){ const o=opts.find(x=>x[0]===v);
   return o?o[1]:(dash!==undefined?dash:T('на твоё усмотрение','flexible')); }
@@ -2950,6 +3007,7 @@ function scr_summary(){
       ${kprompt(T('Вот что получилось',"Here's what I got"))}
       <div class="kbub ag">${T('Проверь — что-то можно поправить.','Check it — edit anything if needed.')}</div>
       <div class="kplan tight">
+        <div class="ftile">${TILE_SVG[tileKeyFor(((FLOW.intent&&FLOW.intent.topics)||[]).join(' ')||String(s.request||FLOW.request||FLOW.text||''))]||TILE_SVG.social}</div>
         <div class="kreq"><div class="hd">${IC.binoc}${T('Запрос','Request')}</div>
           <div class="k-label">${esc(s.request||FLOW.request||FLOW.text)}</div></div>
         ${row(IC.clock,T('Время','Time'), when + (tm?(' — '+tm):''))}
@@ -2957,7 +3015,7 @@ function scr_summary(){
           ? row(IC.globe, T('Где','Where'), T('Онлайн','Online'))
           : row(IC.pin, T('Район','District'), labelOf(DIST_OPTS(),FLOW.district,T('любой','any')))}
         ${row(IC.target,T('Формат','Format'), s.format||T('Встреча, неформально','Casual meetup'))}
-        ${row(IC.diamond,T('Вайб','Vibe'), s.vibe||T('открыто и дружелюбно','open, friendly'))}
+        ${row(IC.diamond,T('Вайб','Vibe'), locTopicList(s.vibe)||T('открыто и дружелюбно','open, friendly'))}
         <div class="kwhy">${T('Формат и вайб — мои предположения, их можно поменять.','Format and vibe are my suggestions — tap to adjust.')}</div>
       </div>
     </div>
@@ -3361,7 +3419,7 @@ function scr_saved(){
     ${list.map(x=>`<div class="prow" data-act="cand-open" data-n="${esc(x.name)}">
       <div class="ph">${IC.person}</div>
       <div class="bd"><div class="nm"><b>${esc(x.name)}</b>${x.band?`<span class="kbadge ${x.band==='especially_close'||x.band==='strong_option'?'ok':'mut'}">${esc(bandLabel(x))}</span>`:''}</div>
-        ${(x.interests||[]).length?`<div class="meta">${(x.interests||[]).slice(0,3).map(i=>`<span class="ktag">${esc(i)}</span>`).join('')}</div>`:''}</div>
+        ${(x.interests||[]).length?`<div class="meta">${(x.interests||[]).slice(0,3).map(i=>`<span class="ktag">${esc(locTopic(i))}</span>`).join('')}</div>`:''}</div>
       <div class="bm" data-act="cand-save" data-n="${esc(x.name)}">${IC.bookmark}</div></div>`).join('')}</div>`;
 }
 
