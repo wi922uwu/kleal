@@ -2712,6 +2712,15 @@ function intentTile(it){
   return '<div class="itile">'+(TILE_SVG[k]||TILE_SVG.social)+'</div>';
 }
 
+const NOT_ACCEPTED=['declined','expired','withdrawn','policy_revoked'];
+function reqStatusLabel(st){
+  return st==='accepted'      ? T('подтверждена','confirmed')
+       : st==='declined'      ? T('не принято','not accepted')
+       : st==='expired'       ? T('истекло','expired')
+       : st==='withdrawn'     ? T('отозвано','withdrawn')
+       : st==='policy_revoked'? T('отменено настройками','revoked by settings')
+       :                        T('в архиве','archived');
+}
 function scr_intents(){
   if(!_intT){ _intT=1; loadIntents(); }
   if(!_reqT){ _reqT=1; loadRequests(); }
@@ -2724,9 +2733,7 @@ function scr_intents(){
   const line=r=>[locStr((r.intent&&r.intent.time)||''), locStr((r.intent&&r.intent.place)||'')].filter(Boolean).join(' · ');
   const meetCard=(r,acts)=>`<div class="icard">
     <div class="ihd"><div class="itl">${esc((r.intent&&r.intent.title)||r.note||T('Встреча','Meetup'))}</div>
-      <span class="kbadge ${r.status==='accepted'?'ok':'mut'}">${esc(
-        r.status==='accepted'?T('подтверждена','confirmed')
-        :r.status==='declined'?T('не принято','not accepted'):T('в архиве','archived'))}</span></div>
+      <span class="kbadge ${r.status==='accepted'?'ok':'mut'}">${esc(reqStatusLabel(r.status))}</span></div>
     <div class="ifoot"><span class="k-cap" style="color:var(--muted)">${esc(who(r))}</span>
       <span class="k-cap" style="color:var(--muted)">${esc(line(r))}</span></div>
     ${acts||''}</div>`;
@@ -2777,7 +2784,9 @@ function scr_intents(){
     +`<button class="kbtn pri tall" data-act="createintent">${T('Создать интент','Create intent')}</button>`);
 
   // 4. ARCHIVE — archived by hand, plus a toggle for the ones that were never accepted
-  const arch=REQS.filter(r=>r.status==='archived'), decl=REQS.filter(r=>r.status==='declined');
+  // «Непринятые» means every terminal state that is not an acceptance — declined, expired,
+  // withdrawn by the sender, or revoked because policy changed before the accept committed.
+  const arch=REQS.filter(r=>r.status==='archived'), decl=REQS.filter(r=>NOT_ACCEPTED.indexOf(r.status)>=0);
   const shown=ARCHTAB==='declined'?decl:arch;
   const s4=sec(T('Архив встреч','Meetup archive'), shown.length,
     `<div class="kchips" style="margin-bottom:2px">
@@ -2992,7 +3001,7 @@ async function loadInbox(){
   const me=(DATA.name||'').trim(); if(!me) return;
   try{
     const r=await fetch('/api/agent/inbox?self='+encodeURIComponent(me)).then(x=>x.json());
-    const next=(r&&r.requests||[]).filter(x=>x.status==='pending');
+    const next=(r&&r.requests||[]).filter(x=>x.status==='pending');   // expired/withdrawn drop out server-side
     const fresh=next.filter(n=>!INBOX.some(o=>o.id===n.id));
     INBOX=next;
     fresh.forEach(n=>addNotif('match', T('Запрос от ','Request from ')+n.from,
@@ -3001,17 +3010,32 @@ async function loadInbox(){
   }catch(e){}
   clearTimeout(_inboxT); _inboxT=setTimeout(loadInbox, 15000);
 }
+const _idemKeys={};
+function idemKey(k){ return (_idemKeys[k]=_idemKeys[k]||(k+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8))); }
 async function answerReq(id, decision){
   const me=(DATA.name||'').trim();
+  const known=(INBOX.find(r=>r.id===id)||REQS.find(r=>r.id===id)||{});
+  let res=null;
   try{
-    await fetch('/api/agent/respond',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({id, decision, self:me})});
-  }catch(e){}
+    // The key is stable per (request, decision), so a double tap or a retry after a dropped
+    // connection resolves to the SAME answer instead of a second write.
+    res=await fetch('/api/agent/respond',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id, decision, self:me, version:known.version,
+                           idem:idemKey(id+':'+decision)})}).then(x=>x.json());
+  }catch(e){ res=null; }
+  if(!res){ toast(T('Нет связи — попробуй ещё раз','No connection — try again')); return; }
   INBOX=INBOX.filter(r=>r.id!==id);
   _reqGen++;                                     // same race as archiving — see loadRequests
-  const rq=REQS.find(x=>x.id===id); if(rq) rq.status=(decision==='accepted'?'accepted':'declined');
-  toast(decision==='accepted'?T('Принято — можно договариваться','Accepted — you can plan it')
-                             :T('Отклонено','Declined'));
+  // The UI used to declare success no matter what came back. Now the server's state wins: an
+  // acceptance that policy revoked, or one that expired, must not be shown as confirmed.
+  const st=res.status||(decision==='accepted'?'accepted':'declined');
+  const rq=REQS.find(x=>x.id===id); if(rq){ rq.status=st; rq.version=res.version||rq.version; }
+  toast(res.ok ? (st==='accepted'?T('Принято — можно договариваться','Accepted — you can plan it')
+                                 :T('Отклонено','Declined'))
+     : res.error==='POLICY_CHANGED' ? T('Не получилось: настройки приватности изменились','Could not accept: privacy settings changed')
+     : res.error==='EXPIRED'        ? T('Запрос истёк','This request has expired')
+     : res.error==='ALREADY_RESOLVED'? T('На этот запрос уже ответили','This request was already answered')
+     :                                 T('Не удалось ответить','Could not answer'));
   render(); saveState();
 }
 function inboxCards(){
@@ -3554,6 +3578,8 @@ function scr_waiting(){
           <div class="bd"><div class="ti">${T('Изменить запрос','Change request')}</div></div><div class="ch">${IC.chevR}</div></div>
         <div class="row" data-act="go-options"><div class="ic">${IC.gear}</div>
           <div class="bd"><div class="ti">${T('Другие варианты','See other options')}</div></div><div class="ch">${IC.chevR}</div></div>
+        ${PLAN.reqId?`<div class="row" data-act="req-withdraw"><div class="ic">${IC.close||IC.info}</div>
+          <div class="bd"><div class="ti">${T('Отозвать запрос','Withdraw request')}</div></div><div class="ch">${IC.chevR}</div></div>`:''}
       </div>
     </div></div>`;
 }
@@ -3893,7 +3919,7 @@ async function planSend(){
     sent=await fetch('/api/agent/propose',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({from:DATA.name||'', to:PLAN.cand.name,
         intent:(FLOW&&flowIntent())||{topics:[]},
-        note:(PLAN.note||'')})}).then(x=>x.json());
+        note:(PLAN.note||''), idem:(PLAN._idem=PLAN._idem||idemKey('send:'+Date.now()+':'+PLAN.cand.name))})}).then(x=>x.json());
   }catch(e){ sent=null; }
   PLAN.reqId=(sent&&sent.id)||null;
   PLAN.delivered=!!(sent&&sent.ok);
@@ -3901,6 +3927,22 @@ async function planSend(){
   if(cur==='waiting') render();
   pollReply();
   return;
+}
+async function withdrawReq(){
+  if(!PLAN||!PLAN.reqId) return;
+  let r=null;
+  try{
+    r=await fetch('/api/agent/withdraw',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:PLAN.reqId, self:DATA.name||'',
+                           idem:idemKey('wd:'+PLAN.reqId)})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  if(!r){ toast(T('Нет связи — попробуй ещё раз','No connection — try again')); return; }
+  if(!r.ok && r.error==='ALREADY_RESOLVED'){ toast(T('На запрос уже ответили','It was already answered')); return; }
+  clearTimeout(_pollT);
+  PLAN.reqId=null; PLAN.delivered=false;
+  _reqGen++;
+  toast(T('Запрос отозван','Request withdrawn'));
+  cur='options'; render(); saveState();
 }
 // The answer comes from the other account, so watch for it instead of generating one.
 let _pollT=null;
@@ -3914,10 +3956,13 @@ function pollReply(){
     if(mine&&mine.status!=='pending'){
       PLAN.mutual=(mine.status==='accepted');
       PLAN.answered=mine.status;
+      const gone=(mine.status==='expired');
       addNotif('match', PLAN.mutual?T('Согласие: ','Accepted: ')+PLAN.cand.name
-                                   :T('Отказ: ','Declined: ')+PLAN.cand.name,
+                       :gone?T('Истёк запрос: ','Request expired: ')+PLAN.cand.name
+                            :T('Отказ: ','Declined: ')+PLAN.cand.name,
                PLAN.mutual?T('Можно договариваться о встрече','You can plan the meetup')
-                          :T('В этот раз не сложилось','Not this time'), null);
+                 :gone?T('Ответа не было — запрос закрылся','No reply — the request closed')
+                      :T('В этот раз не сложилось','Not this time'), null);
       if(cur==='waiting'){ cur=PLAN.mutual?'mutual':'fewmatches'; }
       render(); saveState(); return;
     }
@@ -4653,6 +4698,7 @@ function doAct(act, ds){
     case 'meet-msg': openMeetThread(ds.who); break;
     case 'req-yes': answerReq(ds.id,'accepted'); break;
     case 'req-no':  answerReq(ds.id,'declined'); break;
+    case 'req-withdraw': withdrawReq(); break;
     case 'kleal-help': klealHelp(); break;
     case 'use-suggest': { const e=document.getElementById('mcin');
       if(e&&matchWith&&matchWith.suggest){ e.value=matchWith.suggest; e.focus(); } break; }

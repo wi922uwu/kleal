@@ -795,31 +795,115 @@ def _norm_name(n):
 def _requests():
     return SESSION.setdefault("_requests", [])
 
-def propose(frm, to, intent, note):
+# ---- §14 transactional guarantees ------------------------------------------------------------------
+# A proposal used to be a row with a status string: no version, no expiry, no idempotency, and policy
+# was checked only when SENDING. So a retry created a duplicate, a three-week-old request was still
+# acceptable, and — the real defect — if the recipient paused or blocked the sender between SENT and
+# ACCEPT, the accept still went through. §14.2 requires the policy re-check to happen INSIDE the same
+# transaction as the acceptance.
+PROPOSAL_TTL_S = int(os.environ.get("KLEAL_PROPOSAL_TTL_S", 72 * 3600))   # spec §14.2 reservation TTL
+
+def _idem():
+    return SESSION.setdefault("_idem", {})
+
+def _idem_get(key):
+    row = _idem().get(str(key)) if key else None
+    return row.get("result") if row else None
+
+def _idem_put(key, result):
+    """Same idempotency key -> same answer (spec §14.2, acceptance test #7)."""
+    if not key:
+        return result
+    d = _idem()
+    d[str(key)] = {"result": result, "at": time.time()}
+    if len(d) > 2000:                                   # bounded; oldest keys fall off
+        for k in sorted(d, key=lambda k: d[k].get("at") or 0)[:600]:
+            d.pop(k, None)
+    return result
+
+def _expire_due(now=None):
+    """Mark overdue proposals EXPIRED. Called on every read and before every write, so an expired
+    proposal can never be accepted (acceptance test #9)."""
+    now = now or time.time()
+    changed = False
+    for r in _requests():
+        if r.get("status") == "pending" and (r.get("expires_at") or 0) and now > r["expires_at"]:
+            r["status"] = "expired"
+            r["updated"] = now
+            r["version"] = int(r.get("version") or 1) + 1
+            changed = True
+    return changed
+
+def _policy_ok_now(frm, to, blocked=None):
+    """Re-resolve BOTH sides against the live store and re-run the hard gates. Returns (ok, reason).
+    Safe to call while _STORE_LOCK is held: load_candidates() and plain SESSION reads never take it
+    (_session() does — calling that here would deadlock on the non-reentrant lock)."""
+    by = {}
+    for c in load_candidates():
+        by[_norm_name(c.get("name"))] = c
+    a, b = by.get(_norm_name(frm)), by.get(_norm_name(to))
+    if not a or not b:
+        return True, ""                                  # unknown to the store: nothing to revoke on
+    if b.get("open") is False or b.get("paused"):
+        return False, "recipient is not accepting requests"
+    if a.get("paused"):
+        return False, "sender is paused"
+    # Only CONSENT and SAFETY gates are re-checked here. Outreach budgets (fatigue, cooldown,
+    # "too many open invites") governed whether the proposal could be SENT; re-applying them now
+    # would revoke perfectly consensual acceptances just because the sender got popular meanwhile.
+    bl = {str(x).strip().lower() for x in (blocked or ())}
+    if _norm_name(frm) in bl or a.get("blocksMe") or b.get("blocksMe"):
+        return False, "blocked"
+    for side, tag in ((a, "sender"), (b, "recipient")):
+        age = _num(side.get("age"))
+        if age is not None and age < MIN_AGE:
+            return False, "%s under %d" % (tag, MIN_AGE)
+    return True, ""
+
+
+def propose(frm, to, intent, note, idem=None):
     frm, to = str(frm or "").strip(), str(to or "").strip()
     if not frm or not to or _norm_name(frm) == _norm_name(to):
         return {"ok": False, "error": "sender and recipient required and must differ"}
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached                                    # retry-safe: same key, same answer
     now = time.time()
     with _STORE_LOCK:
+        _expire_due(now)
         rs = _requests()
         # one open proposal per pair per direction — re-sending updates it rather than stacking
         for r in rs:
             if (_norm_name(r.get("from")) == _norm_name(frm) and _norm_name(r.get("to")) == _norm_name(to)
                     and r.get("status") == "pending"):
-                r.update({"intent": intent or {}, "note": str(note or "")[:400], "updated": now})
+                r.update({"intent": intent or {}, "note": str(note or "")[:400], "updated": now,
+                          "expires_at": now + PROPOSAL_TTL_S,
+                          "version": int(r.get("version") or 1) + 1})
                 _save_store()
-                return {"ok": True, "id": r["id"], "status": "pending", "resent": True}
-        rid = "rq_%d_%s" % (int(now * 1000), hashlib.sha1((frm + to).encode("utf-8")).hexdigest()[:6])
+                return _idem_put(idem, {"ok": True, "id": r["id"], "status": "pending",
+                                        "version": r["version"], "expires_at": r["expires_at"], "resent": True})
+        # The id was time-in-ms + hash(pair), so two proposals for the SAME pair inside one
+        # millisecond collided — and every later lookup by id hit whichever row came first.
+        base = "rq_%d_%s" % (int(now * 1000), hashlib.sha1((frm + to).encode("utf-8")).hexdigest()[:6])
+        taken = {r.get("id") for r in rs}
+        rid, n = base, 1
+        while rid in taken:
+            rid, n = "%s_%d" % (base, n), n + 1
         rs.append({"id": rid, "from": frm, "to": to, "intent": intent or {},
-                   "note": str(note or "")[:400], "status": "pending", "created": now, "updated": now})
+                   "note": str(note or "")[:400], "status": "pending", "created": now, "updated": now,
+                   "version": 1, "expires_at": now + PROPOSAL_TTL_S,
+                   "config_version": (_CORE_CFG or {}).get("config_version")})   # immutable trace stamp
     _save_store()
     _log_proposal(to)                       # feeds the receiving-policy budget, spec 4.4
-    return {"ok": True, "id": rid, "status": "pending"}
+    return _idem_put(idem, {"ok": True, "id": rid, "status": "pending", "version": 1,
+                            "expires_at": now + PROPOSAL_TTL_S})
 
 def inbox(self_name):
     me = _norm_name(self_name)
     if not me:
         return []
+    if _expire_due():
+        _save_store()
     out = [dict(r) for r in _requests() if _norm_name(r.get("to")) == me]
     out.sort(key=lambda r: -(r.get("updated") or 0))
     return out[:50]
@@ -828,6 +912,8 @@ def outbox(self_name):
     me = _norm_name(self_name)
     if not me:
         return []
+    if _expire_due():
+        _save_store()
     out = [dict(r) for r in _requests() if _norm_name(r.get("from")) == me]
     out.sort(key=lambda r: -(r.get("updated") or 0))
     return out[:50]
@@ -850,19 +936,78 @@ def archive_request(rid, who):
     return {"ok": False, "error": "not found"}
 
 
-def respond(rid, decision, who):
+def respond(rid, decision, who, idem=None, version=None):
+    """Accept/decline INSIDE one transaction that re-checks expiry, version and LIVE policy (§14.2).
+    Before this, policy was validated only when SENDING: if the recipient paused, blocked the sender
+    or closed the domain between SENT and ACCEPT, the accept still went through."""
     dec = "accepted" if str(decision).lower() in ("accept", "accepted", "yes") else "declined"
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached                                    # same key -> same answer (acceptance test #7)
     with _STORE_LOCK:
+        now = time.time()
+        _expire_due(now)
         for r in _requests():
-            if r.get("id") == rid:
-                # only the recipient may answer — a sender must not accept on the other person's behalf
-                if who and _norm_name(who) != _norm_name(r.get("to")):
-                    return {"ok": False, "error": "only the recipient can answer this request"}
-                r["status"] = dec
-                r["updated"] = time.time()
+            if r.get("id") != rid:
+                continue
+            if who and _norm_name(who) != _norm_name(r.get("to")):
+                return {"ok": False, "error": "only the recipient can answer this request"}
+            st = r.get("status")
+            if st == "expired":
                 _save_store()
-                return {"ok": True, "id": rid, "status": dec}
+                return _idem_put(idem, {"ok": False, "error": "EXPIRED", "id": rid, "status": "expired"})
+            if st != "pending":
+                # already settled: report the settled state, never flip it (concurrent-accept, §14.3)
+                return _idem_put(idem, {"ok": False, "error": "ALREADY_RESOLVED", "id": rid,
+                                        "status": st, "version": r.get("version")})
+            # optimistic concurrency: a stale version means someone else moved this row first
+            if version is not None and str(version) != str(r.get("version") or 1):
+                return {"ok": False, "error": "VERSION_CONFLICT", "id": rid,
+                        "status": st, "version": r.get("version")}
+            if dec == "accepted":
+                # the responder IS the local user, so their block list is session "me"
+                mine = (SESSION.get("me") or {}).get("blocked") or []
+                ok, why = _policy_ok_now(r.get("from"), r.get("to"), mine)
+                if not ok:
+                    r["status"] = "policy_revoked"
+                    r["updated"] = now
+                    r["version"] = int(r.get("version") or 1) + 1
+                    r["trace"] = {"decision": "policy_revoked", "at": now, "reason": why}
+                    _save_store()
+                    return _idem_put(idem, {"ok": False, "error": "POLICY_CHANGED", "id": rid,
+                                            "status": "policy_revoked", "reason": why})
+            r["status"] = dec
+            r["updated"] = now
+            r["version"] = int(r.get("version") or 1) + 1
+            r["trace"] = {"decision": dec, "at": now, "by": who or r.get("to"),
+                          "config_version": r.get("config_version")}   # immutable decision trace
+            _save_store()
+            return _idem_put(idem, {"ok": True, "id": rid, "status": dec, "version": r["version"]})
     return {"ok": False, "error": "not found"}
+
+
+def withdraw_request(rid, who, idem=None):
+    """The SENDER pulls a proposal back before it is answered (§14.1 WITHDRAWN)."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        _expire_due()
+        for r in _requests():
+            if r.get("id") != rid:
+                continue
+            if who and _norm_name(who) != _norm_name(r.get("from")):
+                return {"ok": False, "error": "only the sender can withdraw"}
+            if r.get("status") != "pending":
+                return _idem_put(idem, {"ok": False, "error": "ALREADY_RESOLVED",
+                                        "id": rid, "status": r.get("status")})
+            r["status"] = "withdrawn"
+            r["updated"] = time.time()
+            r["version"] = int(r.get("version") or 1) + 1
+            _save_store()
+            return _idem_put(idem, {"ok": True, "id": rid, "status": "withdrawn", "version": r["version"]})
+    return {"ok": False, "error": "not found"}
+
 
 # ---- real message delivery ------------------------------------------------------------------------
 # Same gap as proposals had: the chat pushed the typed text into local state only, so the recipient's
@@ -1364,11 +1509,15 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text")))
         elif p == "/api/agent/propose":
             send_json(self, 200, propose(body.get("from"), body.get("to"),
-                                         body.get("intent") or {}, body.get("note")))
+                                         body.get("intent") or {}, body.get("note"),
+                                         body.get("idem")))
         elif p == "/api/agent/request-archive":
             send_json(self, 200, archive_request(body.get("id"), body.get("self")))
+        elif p == "/api/agent/withdraw":
+            send_json(self, 200, withdraw_request(body.get("id"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/respond":
-            send_json(self, 200, respond(body.get("id"), body.get("decision"), body.get("self")))
+            send_json(self, 200, respond(body.get("id"), body.get("decision"), body.get("self"),
+                                         body.get("idem"), body.get("version")))
         elif p == "/api/agent/negotiate":
             intent = _normalize_intent(body.get("intent"))
             cands = body.get("candidates") if isinstance(body.get("candidates"), list) else []
