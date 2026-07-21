@@ -582,7 +582,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .ecard .ph{width:94px;height:94px;border-radius:8px;background:var(--neutral100);flex:none;display:flex;align-items:center;justify-content:center;color:var(--neutral400)}
 .ecard .ph svg{width:36px;height:36px}
 .ecard .bd{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;justify-content:center}
-.ecard .ti{font-size:15px;line-height:20px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ecard .ti{font-size:15px;line-height:20px;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .ecard .meta{display:flex;gap:12px;margin-top:2px}
 .ecard .mi{display:flex;gap:4px;align-items:center;font-size:12px;line-height:16px;color:var(--muted)}
 .ecard .mi svg{width:14px;height:14px}
@@ -591,6 +591,12 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .ecard .pact .kbtn{width:auto;padding:0 18px}
 .ecard .pbm{width:26px;height:26px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--muted);cursor:pointer}
 .ecard .pbm svg{width:20px;height:20px}
+/* "Plans for you" = a horizontal carousel: one wide card at a time, the next peeking to signal swipe.
+   Bleeds to the screen edges (cancels .ah2 .body's 20px padding) so a card can be near full-width. */
+.carousel{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;margin:0 -20px;padding:2px 20px 6px;scroll-padding:0 20px}
+.carousel::-webkit-scrollbar{display:none}
+.carousel .ecard{flex:0 0 88%;max-width:none;scroll-snap-align:start}
 /* flow screens: prompt row, bubbles, plan card, chips */
 .kflow{display:flex;flex-direction:column;height:100%;background:var(--bg)}
 .kflow .kbar{height:56px;display:flex;align-items:center;gap:8px;padding:0 16px;flex:none}
@@ -2513,7 +2519,7 @@ function scr_agenthome(){
         </div>
       </div></div>`;
   const card = plans.length
-    ? plans.map(planCard).join('')
+    ? `<div class="carousel">${plans.map(planCard).join('')}</div>`
     : `<div class="k-cap" style="color:var(--muted);padding:4px 2px">${T('Пока ничего не запланировано — опиши, чего хочешь, и я поищу.',"Nothing planned yet — tell me what you want and I'll look.")}</div>`;
   return `<div class="ah2 fade">
     <div class="ahd"><div class="nm k-h2">${T('Привет','Hey')}, ${esc(nm)} 👋</div>
