@@ -563,8 +563,6 @@ input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;bac
 .orows{display:flex;flex-direction:column;gap:10px;padding-bottom:6px}
 .orow{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);
   border-radius:16px;padding:13px 14px;cursor:pointer;transition:border-color .15s}
-.igrp{font-size:12.5px;font-weight:700;color:var(--muted);margin:12px 2px 6px}
-.igrp:first-child{margin-top:0}
 .orow.flat{cursor:default}
 .orow.flat:active{transform:none}
 .orow:active{border-color:var(--accent)}
@@ -663,19 +661,24 @@ function genderLabel(v){ const g=GENDERS.find(x=>x[0]===v); return g?T(g[1],g[0]
 const LANG_RU={English:'Английский',Spanish:'Испанский',German:'Немецкий',French:'Французский',
   Portuguese:'Португальский',Italian:'Итальянский',Russian:'Русский'};
 function langLabel(v){ return LANG_RU[v]?T(LANG_RU[v],v):String(v||''); }
-// The interests offered are the ones the population actually has, ordered by how many people carry
-// them and grouped so 30 chips stay readable. Suggesting a topic nobody shares helps no one.
-const INTEREST_GROUPS=()=>[
- [T('Спорт','Sport'),          [['hiking','Походы'],['yoga','Йога'],['football','Футбол'],['running','Бег'],['gym','Зал'],['tennis','Теннис']]],
- [T('Игры','Games'),           [['gaming','Видеоигры'],['chess','Шахматы'],['boardgames','Настолки'],['dnd','D&D'],['dota','Dota 2'],['poker','Покер']]],
- [T('Еда и напитки','Food & drink'), [['cooking','Готовка'],['coffee','Кофе'],['beer','Пиво'],['wine','Вино'],['baking','Выпечка']]],
- [T('Творчество','Creative'),  [['music','Музыка'],['photography','Фото'],['art','Искусство'],['fashion','Мода'],['guitar','Гитара'],['design','Дизайн']]],
- [T('Технологии','Tech'),      [['coding','Код'],['ai','ИИ'],['startups','Стартапы'],['investing','Инвестиции']]],
- [T('Ещё','More'),             [['travel','Путешествия'],['language','Языки'],['books','Книги'],['pets','Питомцы'],['nightlife','Ночная жизнь'],['cinema','Кино']]]];
+// Ten, and the ten the population actually has — the number beside each is how many people carry it.
+// A longer menu is not more choice: whatever is missing goes into «Добавить своё», and free text is
+// carried through matching as a literal word anyway, so nothing is lost by keeping this short.
+const INTERESTS=()=>[
+ ['coding',      'Код'],          // 568
+ ['hiking',      'Походы'],       // 519
+ ['gaming',      'Видеоигры'],    // 469
+ ['yoga',        'Йога'],         // 445
+ ['cooking',     'Готовка'],      // 433
+ ['music',       'Музыка'],       // 376
+ ['coffee',      'Кофе'],         // 326
+ ['photography', 'Фото'],         // 305
+ ['travel',      'Путешествия'],  // 303
+ ['football',    'Футбол']];      // 257
 function intLabel(v){
   const k=String(v||'').toLowerCase();
-  for(const g of INTEREST_GROUPS()) for(const it of g[1]) if(it[0]===k) return T(it[1],it[0]);
-  return String(v||'');            // a free-typed interest is shown exactly as it was written
+  const it=INTERESTS().find(x=>x[0]===k);
+  return it?T(it[1],it[0]):String(v||'');   // a free-typed interest is shown exactly as written
 }
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const RM=matchMedia('(prefers-reduced-motion:reduce)').matches;  // honor reduced motion (skip typing delay)
@@ -1171,12 +1174,11 @@ WIDGETS.language=function(slot){
 
 WIDGETS.interests=function(slot){
   const cur=((st.profile.interests&&st.profile.interests.explicit)||[]).map(x=>String(x).toLowerCase());
-  const known=[].concat(...INTEREST_GROUPS().map(g=>g[1].map(i=>i[0])));
+  const known=INTERESTS().map(i=>i[0]);
   const extra=((st.profile.interests&&st.profile.interests.explicit)||[]).filter(x=>known.indexOf(String(x).toLowerCase())<0);
-  slot.innerHTML=`<div id="ints">
-    ${INTEREST_GROUPS().map(g=>`<div class="igrp">${esc(g[0])}</div><div class="chips">${
-      g[1].map(i=>`<div class="chip ${cur.includes(i[0])?'on':''}" data-q="${esc(i[0])}">${esc(T(i[1],i[0]))}</div>`).join('')}</div>`).join('')}
-    ${extra.length?`<div class="chips" style="margin-top:8px">${extra.map(x=>`<div class="chip on" data-q="${esc(x)}">${esc(x)}</div>`).join('')}</div>`:''}</div>
+  slot.innerHTML=`<div class="chips" id="ints">
+    ${INTERESTS().map(i=>`<div class="chip ${cur.includes(i[0])?'on':''}" data-q="${esc(i[0])}">${esc(T(i[1],i[0]))}</div>`).join('')}
+    ${extra.map(x=>`<div class="chip on" data-q="${esc(x)}">${esc(x)}</div>`).join('')}</div>
     <div class="addrow" id="ar"><span class="ai">${IC.plus}</span><input id="iown" placeholder="${T('Добавить своё','Add your own')}"><button class="go" id="iadd">${IC.send}</button></div>
     <button class="cta" id="cont" disabled>${T('Далее','Next')}</button>`;
   const cont=slot.querySelector('#cont');
@@ -1293,7 +1295,7 @@ function goSummary(){ st.phase='summary'; const rows=summaryRows();
         <div class="ot2"><div class="otn2">${esc(r[1])}</div><div class="otv2">${esc(r[2])}</div></div>
         ${r[3]?`<div class="orowedit"><span class="rspark">${IC.spark}</span>${IC.edit}</div>`:''}</div>`).join('')}</div>
     </div>
-    <div class="foot"><button class="cta" id="done">Done</button></div>`;
+    <div class="foot"><button class="cta" id="done">${T('Готово','Done')}</button></div>`;
   if(MASCOT_SRC){ const a=document.getElementById('ava2'); a.style.backgroundImage=`url(${MASCOT_SRC})`; a.textContent=''; }
   A.querySelectorAll('.orow').forEach(e=>{ if(e.dataset.step) e.onclick=()=>editStep(e.dataset.step); });
   document.getElementById('done').onclick=()=>rDone();
