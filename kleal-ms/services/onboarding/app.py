@@ -474,9 +474,17 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .map .ring{position:absolute;left:50%;top:52%;width:118px;height:118px;border-radius:50%;
   border:2px solid rgba(245,69,92,.5);background:rgba(245,69,92,.10);transform:translate(-50%,-50%)}
 .map .pin{position:absolute;left:50%;top:52%;transform:translate(-50%,-100%);color:var(--accent)}
-input[type=range]{-webkit-appearance:none;width:100%;height:6px;border-radius:4px;background:var(--track);outline:none;margin-top:6px}
+/* The input itself is 28px tall and transparent — that is the hit area. The 6px line the user sees
+   is the TRACK pseudo-element. Before this the input was 6px tall and the thumb was painted outside
+   its box, so dragging meant hitting a six-pixel band with a fingertip. */
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;background:transparent;
+  outline:none;margin-top:2px;cursor:pointer;touch-action:none}
+input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:4px;background:var(--track)}
 input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;
-  background:var(--accent);border:3px solid #fff;box-shadow:0 1px 5px #0004;cursor:pointer}
+  background:var(--accent);border:3px solid #fff;box-shadow:0 1px 5px #0004;cursor:pointer;margin-top:-9px}
+input[type=range]::-moz-range-track{height:6px;border-radius:4px;background:var(--track)}
+input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:var(--accent);
+  border:3px solid #fff;box-shadow:0 1px 5px #0004;cursor:pointer}
 
 /* primary action button inside the thread + composer */
 .cta{width:100%;height:52px;border:0;border-radius:26px;background:var(--accent);color:#fff;
@@ -952,6 +960,42 @@ function pickPhoto(cb){ const fi=document.getElementById('filein'); fi.onchange=
     fi.value=''; cb(); }); };
   r.onerror=()=>{ fi.value=''; }; r.readAsDataURL(f); }; fi.click(); }
 
+// The cities the population actually lives in, ordered by how many people are there — suggesting a
+// place with nobody in it helps no one. Each carries its coordinates, so picking one needs no network
+// at all: Nominatim is a geocoder, not an autocomplete, and on a prefix it answers «Белг» with
+// Belgium and «Bel» with a mountain peak. It stays as the resolver for anything not on this list.
+// The RU column is for typing only. The stored name is always the English one, because that is what
+// every row in the store uses — type «Белград», store «Белград», and you match nobody.
+const CITIES=[
+ ["Copenhagen","Копенгаген",55.69,12.56],["Helsinki","Хельсинки",60.16,24.95],
+ ["Stockholm","Стокгольм",59.33,18.07],["Sao Paulo","Сан-Паулу",-23.54,-46.64],
+ ["London","Лондон",51.52,-0.14],["Oslo","Осло",59.91,10.76],["Yerevan","Ереван",40.17,44.5],
+ ["New York","Нью-Йорк",40.72,-74.0],["Istanbul","Стамбул",41.0,28.99],
+ ["Mexico City","Мехико",19.44,-99.12],["Cape Town","Кейптаун",-33.91,18.41],
+ ["Bogota","Богота",4.72,-74.08],["Bucharest","Бухарест",44.43,26.09],["Dubai","Дубай",25.21,55.27],
+ ["Budapest","Будапешт",47.51,19.03],["Tel Aviv","Тель-Авив",32.09,34.77],
+ ["Toronto","Торонто",43.64,-79.38],["Lima","Лима",-12.05,-77.05],
+ ["San Francisco","Сан-Франциско",37.78,-122.42],["Cairo","Каир",30.04,31.23],
+ ["Chicago","Чикаго",41.89,-87.63],["Warsaw","Варшава",52.23,21.02],["Moscow","Москва",55.76,37.62],
+ ["Kyiv","Киев",50.46,30.53],["Belgrade","Белград",44.79,20.46],["Lagos","Лагос",6.53,3.39],
+ ["Tbilisi","Тбилиси",41.71,44.84],["Los Angeles","Лос-Анджелес",34.06,-118.24],
+ ["Austin","Остин",30.27,-97.74],["Tokyo","Токио",35.67,139.69],
+ ["Buenos Aires","Буэнос-Айрес",-34.59,-58.37],["Lisbon","Лиссабон",38.73,-9.14],
+ ["Zurich","Цюрих",47.37,8.53],["Amsterdam","Амстердам",52.36,4.89],["Krakow","Краков",50.05,19.93],
+ ["Nairobi","Найроби",-1.3,36.82],["Zagreb","Загреб",45.8,15.98],
+ ["Saint Petersburg","Санкт-Петербург",59.92,30.36],["Milan","Милан",45.46,9.2],
+ ["Prague","Прага",50.08,14.45],["Munich","Мюнхен",48.14,11.59],["Seoul","Сеул",37.57,126.98],
+ ["Paris","Париж",48.85,2.35],["Athens","Афины",37.97,23.74],["Singapore","Сингапур",1.35,103.82],
+ ["Manchester","Манчестер",53.47,-2.23],["Rome","Рим",41.91,12.5],["Mumbai","Мумбаи",19.09,72.88],
+ ["Barcelona","Барселона",41.4,2.18],["Rotterdam","Роттердам",51.93,4.48],
+ ["Sydney","Сидней",-33.86,151.2],["Lyon","Лион",45.77,4.85],["Valencia","Валенсия",39.47,-0.37],
+ ["Delhi","Дели",28.61,77.21],["Madrid","Мадрид",40.42,-3.69],["Vienna","Вена",48.21,16.37],
+ ["Melbourne","Мельбурн",-37.82,144.95],["Berlin","Берлин",52.51,13.41],
+ ["Auckland","Окленд",-36.85,174.77],["Bangkok","Бангкок",13.77,100.49]];
+function cityHit(q){
+  q=String(q||'').trim().toLowerCase(); if(!q) return null;
+  return CITIES.find(c=>c[0].toLowerCase()===q||c[1].toLowerCase()===q) || null;
+}
 WIDGETS.location=function(slot){
   const g=st.profile.geo||{}; const r=(g.maxDistanceKm!=null)?g.maxDistanceKm:10; set('geo.maxDistanceKm',r);
   const area=(g.comfortableAreas&&g.comfortableAreas[0])||st.profile.city||'';
@@ -961,7 +1005,8 @@ WIDGETS.location=function(slot){
   slot.innerHTML=`<div class="card">
     ${mapHtml}
     <div class="lbl" style="margin-top:14px">Your city</div>
-    <input class="inp" id="area" placeholder="Type your city, or use the button below" value="${esc(area)}">
+    <input class="inp" id="area" list="cityopts" autocomplete="off" placeholder="Start typing — Kleal will suggest" value="${esc(area)}">
+    <datalist id="cityopts"></datalist>
     <button id="gloc" type="button" style="margin-top:10px;width:100%;padding:12px;border:1px solid var(--line,#E7E8EC);background:#fff;border-radius:12px;font:inherit;font-weight:600;color:var(--accent,#F5455C);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📍 Use my location</button>
     <div class="lbl" style="margin-top:16px">How far are you happy to go? <b id="rkm">${r}</b> km</div>
     <input type="range" id="rad" min="1" max="50" value="${r}">
@@ -981,31 +1026,75 @@ WIDGETS.location=function(slot){
     setTimeout(()=>{ if(lmap){ lmap.invalidateSize(); fit(); } }, 80);
   }
   rad.oninput=()=>{ const v=parseInt(rad.value,10); slot.querySelector('#rkm').textContent=v; set('geo.maxDistanceKm',v); if(circle){ circle.setRadius(v*1000); fit(); } };
+  const stat=t=>{ const e=slot.querySelector('#gstat'); if(e) e.textContent=t; };
   function setCity(name){ if(!name)return; area_in.value=name; set('geo.comfortableAreas',[name]); set('city',name); cont.disabled=false; }
-  async function geocode(q){ if(!q)return; try{ const j=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='+encodeURIComponent(q)).then(x=>x.json()); if(j&&j[0]) recenter([+j[0].lat,+j[0].lon]); }catch(e){} }
+  // Suggestions, so nobody has to guess the exact spelling of their own city in a blank box.
+  let _sugT=null;
+  function suggest(q){
+    q=String(q||'').trim().toLowerCase();
+    const hits=(q.length<1?CITIES:CITIES.filter(c=>c[0].toLowerCase().startsWith(q)||c[1].toLowerCase().startsWith(q)))
+      .slice(0,8);
+    const dl=slot.querySelector('#cityopts');
+    // The option VALUE is the canonical English name — that is what lands in the profile. The label
+    // beside it is the local spelling, so a Russian speaker still recognises their own city.
+    if(dl) dl.innerHTML=hits.map(c=>`<option value="${esc(c[0])}">${esc(c[1])}</option>`).join('');
+  }
+  // The coordinates are the whole point. geocode() used to only move the circle on the map, so a
+  // person who TYPED their city shipped lat:null / lon:null to the store — and the distance gate
+  // cannot place someone with no coordinates. Typing a city now locates it, exactly as the GPS path
+  // does, and to the same two decimals (~1 km) so it stays an area and never an address.
+  async function applyCity(name){
+    name=String(name||'').trim(); if(!name) return false;
+    const known=cityHit(name);
+    // «Белград» and "Belgrade" are the same place; only one of them matches the rest of the store.
+    if(known) name=known[0];
+    setCity(name);
+    let h=known?{lat:known[2],lon:known[3]}:null;
+    if(!h){ try{ const j=await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q='
+                                     +encodeURIComponent(name)).then(x=>x.json());
+                 if(j&&j[0]) h={lat:+j[0].lat, lon:+j[0].lon}; }catch(e){} }
+    if(h && isFinite(h.lat) && isFinite(h.lon)){
+      set('geo.coarseLat', +h.lat.toFixed(2)); set('geo.coarseLon', +h.lon.toFixed(2));
+      recenter([h.lat, h.lon]);
+      stat('Kleal shows your city area only, never your exact spot.');
+      return true;
+    }
+    stat("I couldn't find that place — check the spelling?");
+    return false;
+  }
+  const geocode=applyCity;
   async function reverseCity(la,lo){ try{ const j=await fetch('https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&lat='+la+'&lon='+lo).then(x=>x.json());
     const a=(j&&j.address)||{}; return a.city||a.town||a.village||a.municipality||a.county||a.state||''; }catch(e){ return ''; } }
-  area_in.oninput=()=>{ const v=area_in.value.trim(); if(v){set('geo.comfortableAreas',[v]);set('city',v);} cont.disabled=!v; };
-  area_in.onchange=()=>geocode(area_in.value.trim());
-  if(area) geocode(area);
+  area_in.oninput=()=>{ const v=area_in.value.trim(); if(v){set('geo.comfortableAreas',[v]);set('city',v);} cont.disabled=!v;
+    suggest(v);                       // local list: no debounce needed, no request made
+    // picking from the datalist fires `input`, not `change`, in several browsers
+    if(cityHit(v)) applyCity(v); };
+  area_in.onchange=()=>applyCity(area_in.value.trim());
+  area_in.onfocus=()=>suggest(area_in.value.trim());
+  suggest('');
+  if(area) applyCity(area);
   // geolocation is requested AUTOMATICALLY when this step opens; the detected CITY name is used (never exact spot)
-  function autoLocate(){ const stat=slot.querySelector('#gstat');
-    if(!navigator.geolocation){ stat.textContent="Type your city above."; area_in.placeholder="Your city"; return; }
-    stat.textContent="Finding your city...";
+  function autoLocate(){
+    if(!navigator.geolocation){ stat("Start typing your city — I'll suggest as you go."); return; }
+    stat("Finding your city...");
     navigator.geolocation.getCurrentPosition(async pos=>{ const la=pos.coords.latitude.toFixed(2),lo=pos.coords.longitude.toFixed(2);
       set('geo.located',true); set('geo.coarseLat',Number(la)); set('geo.coarseLon',Number(lo)); recenter([Number(la),Number(lo)]);
       const city=await reverseCity(la,lo);
-      if(city){ setCity(city); stat.textContent="Kleal shows your city area only, never your exact spot."; }
-      else { area_in.placeholder="Type your city"; stat.textContent="Couldn't name your city. Type it above."; }
-    }, err=>{ area_in.placeholder="Type your city";
-      stat.textContent = err && err.code===1
-        ? "Location blocked. Allow it in your browser (or in-app browsers may block it — open in Chrome/Safari), or type your city."
-        : "Couldn't get your location. Type your city above."; },
+      if(city){ setCity(city); stat("Kleal shows your city area only, never your exact spot."); }
+      else { stat("Couldn't name your city — start typing it, I'll suggest as you go."); }
+    }, err=>{ area_in.placeholder="Start typing — Kleal will suggest";
+      stat(err && err.code===1
+        ? "Location is blocked for this site — start typing your city instead, I'll suggest as you go."
+        : "Couldn't get a fix right now — start typing your city instead, I'll suggest as you go."); },
       {enableHighAccuracy:false, timeout:10000, maximumAge:600000}); }
   // Reliable path: geolocation on a user click (browsers suppress the prompt for non-gesture calls).
   const glocBtn=slot.querySelector('#gloc'); if(glocBtn) glocBtn.onclick=autoLocate;
   if(!area) setTimeout(autoLocate, 300);   // best-effort auto-try (works on some browsers); button is the guaranteed prompt
-  cont.onclick=()=>{ lock(slot); const km=(st.profile.geo&&st.profile.geo.maxDistanceKm)||rad.value;
+  cont.onclick=async()=>{
+    const g2=st.profile.geo||{};
+    // last chance to locate: someone can type and hit Continue without ever blurring the field
+    if(!(isFinite(g2.coarseLat)&&isFinite(g2.coarseLon))) await applyCity(area_in.value.trim());
+    lock(slot); const km=(st.profile.geo&&st.profile.geo.maxDistanceKm)||rad.value;
     meSay((area_in.value.trim()||'My city')+', within '+km+' km'); afterAnswer(); };
 };
 
