@@ -688,13 +688,27 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .esbody{overflow-y:auto;-webkit-overflow-scrolling:touch;flex:1 1 auto;min-height:0;scrollbar-width:none}
 .esbody::-webkit-scrollbar{display:none}
 /* ===== Explore: full-screen interactive map (Zenly / Citymapper / Airbnb flavoured) ===== */
-.xwrap{position:absolute;inset:0;overflow:hidden;--xtop:14px}
+/* One motion system, so every surface moves like it belongs to the same object. */
+.xwrap{position:absolute;inset:0;overflow:hidden;--xtop:14px;
+  --e-out:cubic-bezier(.22,.68,0,1);      /* arriving  — emphasised decelerate */
+  --e-in:cubic-bezier(.32,0,.78,.16);     /* leaving   — accelerate */
+  --e-std:cubic-bezier(.4,.14,.3,1);      /* moving between two places */
+  --e-pop:cubic-bezier(.2,.9,.25,1.12);   /* one small overshoot, chips + pins only */
+  --d-card-in:340ms; --d-card-out:200ms; --d-chip-in:280ms; --d-chip-out:150ms;
+  --xlift:180px;
+  /* warm-tinted shadow ramp: neutral grey under coral reads muddy */
+  --sh-1:rgba(20,25,40,.16); --sh-2:rgba(20,25,40,.13); --sh-3:rgba(140,22,40,.34)}
 .xmap{position:absolute;inset:0;background:#EDF0F5;z-index:0}
 .xmap .leaflet-container{font:inherit;background:#EDF0F5}
-/* Mute the basemap so the coral marks own the top of the value scale. Tile pane only — markers
-   live in the marker pane and stay full strength. */
-.xmap .leaflet-tile-pane{filter:saturate(.55) brightness(1.05) contrast(.92)}
-.xmap.moving .xpin{transition:none;animation:none}
+/* One filter function, not three — this pane is re-transformed every frame during a pan. */
+.xmap .leaflet-tile-pane{filter:saturate(.58)}
+.xmap::before{content:'';position:absolute;inset:0;z-index:200;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,.10) 0%,rgba(255,255,255,.05) 100%)}
+/* Marker motion is suppressed during the gesture and plays on settle. */
+.xmap.moving .xpin,.xmap.moving .xlab,.xmap.moving .xhome{transition:none;animation:none}
+.xwrap::after{content:'';position:absolute;inset:0;z-index:1;pointer-events:none;
+  box-shadow:inset 0 0 90px rgba(20,25,40,.07),inset 0 0 24px rgba(20,25,40,.04)}
+/* --- floating top row --- */
 .xtop{position:absolute;left:12px;right:12px;top:var(--xtop);z-index:600;display:flex;gap:8px;align-items:center}
 .xtop::before{content:'';position:absolute;left:-12px;right:-12px;top:-58px;height:132px;z-index:-1;
   pointer-events:none;background:linear-gradient(180deg,rgba(247,248,250,.86) 0%,rgba(247,248,250,.56) 46%,rgba(247,248,250,0) 100%)}
@@ -702,70 +716,123 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   background:rgba(255,255,255,.94);-webkit-backdrop-filter:blur(14px) saturate(1.5);backdrop-filter:blur(14px) saturate(1.5);
   border:1px solid rgba(20,25,40,.07);box-shadow:0 1px 2px rgba(20,25,40,.12),0 8px 24px -6px rgba(20,25,40,.28);
   font-size:14px;font-weight:500;letter-spacing:-.005em;color:var(--fg);cursor:pointer;white-space:nowrap;flex:none;
-  transition:transform .14s ease}
+  transition:transform var(--d-chip-out) var(--e-out),box-shadow 160ms linear}
 .xpill:active{transform:scale(.97)}
+.xpill:focus-within{box-shadow:0 0 0 3px rgba(245,69,92,.18),0 1px 2px rgba(20,25,40,.12),0 8px 24px -6px rgba(20,25,40,.28)}
 .xpill svg{width:18px;height:18px;flex:none;color:var(--muted)}
 .xpill.grow{flex:1;min-width:0;cursor:text}
 .xpill input{flex:1;min-width:0;border:0;outline:0;background:none;font:inherit;font-weight:400;color:var(--fg)}
 .xpill input::placeholder{color:var(--muted)}
-.xpill b{min-width:22px;height:20px;padding:0 6px;border-radius:10px;background:var(--primary);color:#fff;
+.xpill b{min-width:22px;height:20px;padding:0 6px;border-radius:10px;
+  background:linear-gradient(180deg,#EE3A52 0%,#E02D48 100%);color:#fff;
   font-size:11.5px;font-weight:700;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:center}
 .xclr{width:22px;height:22px;border-radius:999px;background:var(--neutral100);color:var(--muted);flex:none;
   display:none;align-items:center;justify-content:center;font-size:13px;line-height:1;cursor:pointer}
 .xclr.on{display:flex}
-.xredo{position:absolute;left:50%;top:calc(var(--xtop) + 54px);transform:translate(-50%,-6px);z-index:590;
+.xredo{position:absolute;left:50%;top:calc(var(--xtop) + 54px);z-index:590;
   height:38px;padding:0 16px;border-radius:19px;background:var(--fg);color:#fff;font-size:13px;font-weight:600;
   display:flex;align-items:center;gap:7px;box-shadow:0 8px 24px -6px rgba(20,25,40,.5);cursor:pointer;
-  opacity:0;pointer-events:none;transition:opacity .18s ease,transform .18s ease;white-space:nowrap}
-.xredo.on{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
+  opacity:0;pointer-events:none;transform:translate(-50%,-8px) scale(.96);
+  transition:opacity var(--d-chip-out) linear,transform var(--d-chip-out) var(--e-in);white-space:nowrap}
+.xredo.on{opacity:1;pointer-events:auto;transform:translate(-50%,0) scale(1);
+  transition:opacity var(--d-chip-in) linear,transform var(--d-chip-in) var(--e-pop)}
 .xredo svg{width:15px;height:15px}
+/* --- floating right controls --- */
 .xctl{position:absolute;right:12px;bottom:20px;z-index:600;display:flex;flex-direction:column;gap:10px;
-  align-items:flex-end;transition:transform .28s cubic-bezier(.22,.7,.3,1)}
-.xwrap.card-on .xctl{transform:translateY(-176px)}
+  align-items:flex-end;transition:transform var(--d-card-out) var(--e-in) 60ms}
+.xwrap.card-on .xctl{transform:translate3d(0,calc(-1 * var(--xlift)),0);
+  transition:transform var(--d-card-in) var(--e-out)}
 .xbtn{width:44px;height:44px;border-radius:999px;background:rgba(255,255,255,.94);
   -webkit-backdrop-filter:blur(14px) saturate(1.5);backdrop-filter:blur(14px) saturate(1.5);
   border:1px solid rgba(20,25,40,.07);color:var(--fg);
   box-shadow:0 1px 2px rgba(20,25,40,.12),0 8px 24px -6px rgba(20,25,40,.30);
   display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:20px;font-weight:500;line-height:1;
-  user-select:none;transition:transform .14s ease,background .14s ease}
-.xbtn:active{transform:scale(.93);background:#F1F3F7}
+  user-select:none;transition:transform 90ms var(--e-out),background 140ms linear}
+.xbtn:active{transform:scale(.92);background:#F1F3F7}
 .xbtn svg{width:20px;height:20px}
 .xzoom{border-radius:22px;overflow:hidden;background:rgba(255,255,255,.94);
   -webkit-backdrop-filter:blur(14px) saturate(1.5);backdrop-filter:blur(14px) saturate(1.5);
   border:1px solid rgba(20,25,40,.07);box-shadow:0 1px 2px rgba(20,25,40,.12),0 8px 24px -6px rgba(20,25,40,.30)}
 .xzoom .xbtn{background:none;border:0;box-shadow:none;border-radius:0;-webkit-backdrop-filter:none;backdrop-filter:none}
 .xzoom .xbtn+.xbtn{box-shadow:inset 0 1px 0 rgba(20,25,40,.08)}
-.xbtn.acc{color:var(--primary)}
-.xpinwrap{display:flex;flex-direction:column;align-items:center;pointer-events:none}
+.xbtn.acc{color:var(--primary);box-shadow:0 0 0 .5px rgba(245,69,92,.18),0 1px 2px rgba(20,25,40,.12),0 8px 24px -6px rgba(188,31,56,.30)}
+/* --- pins: wrap TRANSLATES, pin SCALES, label fades on its own --- */
+.xpinwrap{display:flex;flex-direction:column;align-items:center;pointer-events:none;
+  transform:translate3d(var(--bx,0px),var(--by,0px),0)}
 .xpinwrap .xpin{pointer-events:auto}
-.xpin{border-radius:999px;background:#fff;padding:3px;cursor:pointer;touch-action:manipulation;
-  box-shadow:0 1px 2px rgba(20,25,40,.18),0 8px 20px -4px rgba(20,25,40,.28);
-  transition:transform .16s cubic-bezier(.2,.8,.3,1),opacity .16s;transform-origin:50% 50%}
-.xpin .in{width:100%;height:100%;border-radius:999px;display:flex;align-items:center;justify-content:center}
-.xpin.city{box-shadow:0 0 0 5px rgba(245,69,92,.13),0 0 0 11px rgba(245,69,92,.06),
-  0 2px 4px rgba(20,25,40,.16),0 10px 24px -6px rgba(188,31,56,.42)}
-.xpin.city .in{background:var(--primary);color:#fff;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.xpin.city.me{box-shadow:0 0 0 3px #2E6BFF,0 0 0 8px rgba(46,107,255,.20),0 2px 4px rgba(20,25,40,.16),0 10px 24px -6px rgba(188,31,56,.42)}
+.xpin{--s:1;--press:1;position:relative;
+  border-radius:999px;background:#fff;padding:3px;cursor:pointer;touch-action:manipulation;
+  box-shadow:0 0 0 .5px rgba(20,25,40,.10),0 1px 1px var(--sh-1),0 8px 20px -6px var(--sh-2);
+  transform:scale(calc(var(--s) * var(--press)));transform-origin:50% 50%;
+  transition:transform 160ms var(--e-out),opacity 180ms linear,box-shadow 180ms linear}
+.xpin:active{--press:.92}
+.xpin .in{width:100%;height:100%;border-radius:999px;display:flex;align-items:center;justify-content:center;
+  position:relative;z-index:1}
+/* a soft density bloom instead of hard concentric rings (which read as radar/GPS) */
+.xpin.city::before{content:'';position:absolute;z-index:0;pointer-events:none;
+  left:50%;top:50%;width:var(--bloom,250%);height:var(--bloom,250%);
+  transform:translate(-50%,-50%);border-radius:50%;
+  background:radial-gradient(circle closest-side,rgba(245,69,92,.18) 0%,rgba(245,69,92,.12) 38%,
+    rgba(245,69,92,.045) 68%,rgba(245,69,92,0) 100%)}
+.xpin.city[data-n="lg"]{--bloom:300%}
+.xpin.city[data-n="md"]{--bloom:270%}
+/* coral surfaces get a light model: rim highlight on top, deeper base */
+.xpin.city .in,.xpin.grp .in,.xpin.plan.sel .in{
+  background:radial-gradient(115% 90% at 50% 4%,rgba(255,255,255,.30) 0%,rgba(255,255,255,0) 52%),
+    linear-gradient(180deg,#FF6072 0%,#F5455C 42%,#DE2A46 100%);
+  color:#fff;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;
+  box-shadow:inset 0 .5px 0 rgba(255,255,255,.45),inset 0 -1px 0 rgba(120,8,26,.30)}
 .xpin.plan{padding:2px}
-.xpin.plan .in{background:#fff;color:var(--primary);box-shadow:inset 0 0 0 1.5px rgba(245,69,92,.20)}
+.xpin.plan .in{background:linear-gradient(180deg,#fff 0%,#F7F9FC 100%);color:var(--primary);
+  box-shadow:inset 0 0 0 1.5px rgba(245,69,92,.22),inset 0 .5px 0 rgba(255,255,255,.9)}
 .xpin.plan .in svg{width:20px;height:20px;stroke-width:2.1}
-.xpin.grp .in{background:rgba(245,69,92,.92);color:#fff;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums}
-.xpin.sel{transform:scale(1.3);padding:4px;box-shadow:0 0 0 4px rgba(245,69,92,.22),0 14px 30px -6px rgba(188,31,56,.48)}
-.xpin.plan.sel .in{background:var(--primary);color:#fff;box-shadow:none}
-.xmap.hasSel .xpin:not(.sel){opacity:.5}
-.xlab{margin-top:6px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.93);
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);box-shadow:0 1px 3px rgba(20,25,40,.20);
-  color:var(--fg);font-size:11px;line-height:15px;font-weight:600;letter-spacing:-.01em;white-space:nowrap}
+/* cluster reads as a STACK of cards — offset solid shadows, no extra DOM */
+.xpin.grp{padding:2.5px;
+  box-shadow:2.5px 2.5px 0 -.5px #fff,2.5px 2.5px 0 0 rgba(20,25,40,.10),
+    5px 5px 0 -1.5px rgba(255,255,255,.92),5px 5px 0 -1px rgba(20,25,40,.08),
+    0 0 0 .5px rgba(20,25,40,.10),0 1px 1px var(--sh-1),0 10px 20px -8px var(--sh-3)}
+.xpin.grp .in{font-size:13px}
+/* selection: overshoot in, flat out — elevation via shadow character, never translateY
+   (the pin's CENTRE is the coordinate; lifting it would misplace the mark) */
+.xpin.sel{--s:1.3;
+  box-shadow:0 0 0 .5px rgba(20,25,40,.12),0 2px 3px rgba(20,25,40,.18),
+    0 8px 14px -4px rgba(20,25,40,.22),0 20px 34px -10px rgba(160,20,44,.48);
+  transition:transform 260ms var(--e-pop),box-shadow 260ms var(--e-out)}
+.xpin.desel{transition:transform 180ms var(--e-out),box-shadow 180ms var(--e-out)}
+.xpin.city.sel{--bloom:300%}
+.xmap.hasSel .xpin:not(.sel){opacity:.45;transition:opacity 180ms linear}
+.xmap.hasSel .xlab{opacity:.40}
+/* city name chip: keyline separates better than blur, and costs nothing per marker */
+.xlab{margin-top:7px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.97);
+  box-shadow:0 0 0 .5px rgba(20,25,40,.10),0 1px 1px rgba(20,25,40,.08),0 4px 10px -4px rgba(20,25,40,.30);
+  color:#1B1F28;font-size:11.5px;line-height:15px;font-weight:600;letter-spacing:-.006em;
+  white-space:nowrap;max-width:118px;overflow:hidden;text-overflow:ellipsis;transition:opacity 160ms linear}
 @keyframes xpop{0%{opacity:0;transform:scale(.6)}100%{opacity:1;transform:scale(1)}}
-.xpin.new{animation:xpop .18s cubic-bezier(.2,.9,.3,1.1)}
+.xpin.new{animation:xpop 200ms var(--e-pop) both;animation-delay:var(--pd,0ms)}
 .xpin.sel.new{animation:none}
-.xmeDot{width:16px;height:16px;border-radius:50%;background:#2E6BFF;border:2.5px solid #fff;
-  box-shadow:0 1px 4px rgba(20,25,40,.35)}
+/* "you" is a PLACE (a city centroid), not a GPS fix: a hollow ink ring, never a blue puck, never a pulse */
+.xhome{display:flex;flex-direction:column;align-items:center;pointer-events:none}
+.xhome .ring{width:20px;height:20px;border-radius:50%;
+  background:radial-gradient(circle at 50% 30%,#fff 0%,#EEF1F6 100%);
+  display:flex;align-items:center;justify-content:center;color:#181B22;
+  box-shadow:inset 0 0 0 2px rgba(24,27,34,.72),0 0 0 .5px rgba(20,25,40,.10),
+    0 1px 2px rgba(20,25,40,.22),0 6px 14px -6px rgba(20,25,40,.34)}
+.xhome .ring svg{width:10px;height:10px;stroke-width:2.4}
+.xhome .cap{margin-top:5px;padding:2px 7px;border-radius:999px;background:rgba(24,27,34,.86);color:#F2F4F8;
+  font-size:10px;line-height:14px;font-weight:600;white-space:nowrap;box-shadow:0 2px 6px -2px rgba(20,25,40,.5)}
+.xpin.city.me{box-shadow:0 0 0 2px #fff,0 0 0 3.5px rgba(24,27,34,.62),
+  0 1px 1px var(--sh-1),0 12px 22px -8px var(--sh-3)}
+/* the ±1.5 km jitter drawn in METRES, so it means the same thing at every zoom */
+.xarea{stroke-dasharray:4 6;stroke-linecap:round;pointer-events:none}
+/* --- tapped-pin card: the hidden state IS the exit state --- */
 .xcard{position:absolute;left:12px;right:12px;bottom:16px;z-index:650;background:#fff;border-radius:22px;
   border:1px solid rgba(20,25,40,.05);box-shadow:0 2px 6px rgba(20,25,40,.10),0 20px 48px -12px rgba(20,25,40,.38);
-  padding:16px 18px 18px;display:none}
-.xcard.on{display:block;animation:xup .28s cubic-bezier(.22,.7,.3,1)}
-@keyframes xup{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  padding:16px 18px 18px;
+  visibility:hidden;opacity:0;transform:translate3d(0,calc(100% + 20px),0) scale(.97);transform-origin:50% 100%;
+  transition:transform var(--d-card-out) var(--e-in),opacity 140ms linear 30ms,
+             visibility 0s linear var(--d-card-out)}
+.xcard.on{visibility:visible;opacity:1;transform:translate3d(0,0,0) scale(1);
+  transition:transform var(--d-card-in) var(--e-out),opacity 130ms linear,visibility 0s}
 .xcard .k-h3{font-size:17px;line-height:23px;font-weight:600;letter-spacing:-.01em}
 .xcard .k-cap{font-size:12px;line-height:16px}
 .xcard .itags{margin-top:10px;display:flex;gap:6px;flex-wrap:wrap}
@@ -773,18 +840,23 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .xcard .kbtn{height:46px;min-height:46px;margin-top:14px}
 .xclose{width:44px;height:44px;margin:-12px -14px -12px 0;display:flex;align-items:center;justify-content:center;
   color:var(--muted);cursor:pointer;font-size:19px;line-height:1;flex:none}
-.xscrim{position:absolute;inset:0;z-index:690;background:rgba(15,18,28,.30);opacity:0;pointer-events:none;transition:opacity .2s}
+/* --- plans sheet --- */
+.xscrim{position:absolute;inset:0;z-index:690;background:rgba(15,18,28,.34);opacity:0;pointer-events:none;
+  transition:opacity 260ms var(--e-out)}
 .xscrim.on{opacity:1;pointer-events:auto}
 .xsheet{position:absolute;left:0;right:0;bottom:0;top:42%;z-index:700;background:var(--bg);
   border-radius:22px 22px 0 0;box-shadow:0 -10px 40px rgba(20,25,40,.22);
-  transform:translateY(101%);transition:transform .26s cubic-bezier(.22,.7,.3,1);display:flex;flex-direction:column}
-.xsheet.on{transform:none}
-.xsheet .grab{width:38px;height:4px;border-radius:99px;background:var(--neutral300);opacity:.7;margin:10px auto 4px;flex:none}
+  transform:translate3d(0,101%,0);transition:transform 380ms var(--e-out);display:flex;flex-direction:column;contain:paint}
+.xsheet.on{transform:translate3d(0,0,0)}
+.xsheet .grab{width:38px;height:5px;border-radius:99px;background:var(--neutral300);opacity:.7;margin:10px auto 4px;flex:none}
 .xsheet .hd{flex:none;padding:8px 16px 12px;display:flex;align-items:center;justify-content:space-between}
 .xsheet .bd{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
   padding:0 16px calc(18px + env(safe-area-inset-bottom));scrollbar-width:none}
 .xsheet .bd::-webkit-scrollbar{display:none}
-@media(prefers-reduced-motion:reduce){.xsheet{transition:none}.xcard.on{animation:none}.xpin.new{animation:none}}
+@media(prefers-reduced-motion:reduce){
+  .xsheet,.xcard,.xctl,.xredo,.xpill{transition:none}
+  .xpin,.xpin.new,.xpin.sel,.xpin.desel,.xlab{animation:none;transition:none}
+}
 .khelp{display:flex;justify-content:center;padding:0 12px 6px}
 .khelp .kchip{gap:6px;cursor:pointer;height:34px;min-height:34px}
 .khelp .kchip svg{width:15px;height:15px}
@@ -2330,13 +2402,37 @@ function xGrid(list, map, cell){
 }
 function xPinIcon(p){ return IC[editIcon((p.topics&&p.topics[0])||p.title||'')]||IC.spark; }
 function hasGeo(p){ const la=+p.lat, lo=+p.lon; return isFinite(la)&&isFinite(lo)&&!(la===0&&lo===0); }
+// Selection lives as a class on the surviving node, so .xpin.sel / .xpin.desel can animate.
+function xPaintSelection(){
+  Object.keys(xMarkers).forEach(k=>{
+    const node=xMarkers[k].getElement&&xMarkers[k].getElement();
+    const pin=node&&node.querySelector('.xpin'); if(!pin) return;
+    const on=(xSel!==null && k==='p'+xSel);
+    if(on && !pin.classList.contains('sel')){ pin.classList.remove('desel'); pin.classList.add('sel'); }
+    else if(!on && pin.classList.contains('sel')){
+      pin.classList.remove('sel'); pin.classList.add('desel');
+      setTimeout(()=>pin.classList.remove('desel'),200);
+    }
+  });
+}
+// The plans are jittered ~1.5 km around a city centroid, so a 42px pin claims a doorway it does not
+// know. L.circle takes METRES and scales with zoom, so this ring means the same thing at every zoom.
+const XJITTER_M=1500;
+let xArea=null;
+function xClearArea(){ if(xArea&&exploreMap){ try{ exploreMap.removeLayer(xArea); }catch(_e){} } xArea=null; }
+function xShowArea(ll){
+  if(!exploreMap) return; xClearArea();
+  xArea=L.circle(ll,{radius:XJITTER_M,interactive:false,className:'xarea',
+    color:'#F5455C',weight:1.25,opacity:.42,fillColor:'#F5455C',fillOpacity:.07}).addTo(exploreMap);
+}
 function xDeselect(){
   if(xSel===null) return;
   xSel=null;
   const c=document.getElementById('xcard'); if(c) c.classList.remove('on');
   const w=document.querySelector('.xwrap'); if(w) w.classList.remove('card-on');
   const m=document.getElementById('lmap'); if(m) m.classList.remove('hasSel');
-  drawExploreMarkers();
+  xClearArea();
+  xPaintSelection();
 }
 function drawExploreMarkers(){
   const map=exploreMap; if(!map||!xLayer) return;
@@ -2348,7 +2444,10 @@ function drawExploreMarkers(){
   const cityNode=(key,count,isMine)=>{
     const size=count>49?56:count>9?48:40, fs=count>49?16:count>9?15:13.5;
     return {ll:CITY_LATLON[key], size:[110,size+22], anchor:[55,size/2],
-      html:'<div class="xpinwrap"><div class="xpin city'+(isMine?' me':'')+'" style="width:'+size+'px;height:'+size+'px">'
+      sig:'c'+key+':'+count+':'+(showLab?1:0),
+      html:'<div class="xpinwrap"><div class="xpin city'+(isMine?' me':'')+'" data-n="'
+           +(count>49?'lg':count>9?'md':'sm')+'" role="button" tabindex="0" aria-label="'
+           +esc(cityLabel(key))+', '+count+'" style="width:'+size+'px;height:'+size+'px">'
            +'<div class="in" style="font-size:'+fs+'px">'+(count>99?'99+':count)+'</div></div>'
            +(showLab?'<div class="xlab">'+esc(cityLabel(key))+'</div>':'')+'</div>'};
   };
@@ -2371,12 +2470,15 @@ function drawExploreMarkers(){
         if(grp.length===1){
           const p=grp[0];
           want['p'+p._i]={ll:[+p.lat,+p.lon], size:[42,42], anchor:[21,21],
-            html:'<div class="xpin plan'+(p._i===xSel?' sel':'')+'" style="width:42px;height:42px"><div class="in">'+xPinIcon(p)+'</div></div>',
+            sig:'p'+p._i,
+            html:'<div class="xpinwrap"><div class="xpin plan" role="button" tabindex="0" aria-label="'
+                 +esc(p.title||'')+'" style="width:42px;height:42px"><div class="in">'+xPinIcon(p)+'</div></div></div>',
             onClick:()=>showPlanCard(p._i), zoff:(p._i===xSel?1000:0)};
         } else {
           const la=grp.reduce((m,p)=>m+(+p.lat),0)/grp.length, lo=grp.reduce((m,p)=>m+(+p.lon),0)/grp.length;
-          want['g'+a.key+k]={ll:[la,lo], size:[36,36], anchor:[18,18],
-            html:'<div class="xpin grp" style="width:36px;height:36px"><div class="in">'+grp.length+'</div></div>',
+          want['g'+a.key+k]={ll:[la,lo], size:[36,36], anchor:[18,18], sig:'g'+grp.length,
+            html:'<div class="xpinwrap"><div class="xpin grp" role="button" tabindex="0" aria-label="'
+                 +grp.length+' '+T('планов рядом','plans here')+'" style="width:36px;height:36px"><div class="in">'+grp.length+'</div></div></div>',
             onClick:()=>map.flyTo([la,lo], Math.min(17, map.getZoom()+2), {duration:.45})};
         }
       });
@@ -2391,27 +2493,45 @@ function drawExploreMarkers(){
   // Don't stack the blue "you" dot on top of your own city's bubble — they share coordinates and the
   // dot just sits inside the coral disc. When your city has a bubble, the bubble wears the marker.
   const c=mine&&CITY_LATLON[mine];
-  if(c&&B.contains(c)&&!want['c'+mine]) want['me']={ll:c, size:[16,16], anchor:[8,8],
-    html:'<div class="xmeDot"></div>', zoff:900, noClick:true};
+  if(c&&B.contains(c)&&!want['c'+mine]) want['me']={ll:c, size:[96,44], anchor:[48,10], zoff:900, noClick:true,
+    sig:'me',
+    html:'<div class="xhome"><div class="ring"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+       +' stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V21h13V9.5"/></svg></div>'
+       +'<div class="cap">'+T('твой город','your city')+'</div></div>'};
 
   // Diff instead of clearLayers(): survivors keep their DOM node, so selection and the enter
   // animation are not destroyed on every pan.
   Object.keys(xMarkers).forEach(k=>{ if(!want[k]){ xLayer.removeLayer(xMarkers[k]); delete xMarkers[k]; } });
+  // Selection used to be baked into the markup string, and this loop replaced innerHTML whenever the
+  // string changed — so tapping a pin DESTROYED and rebuilt its node and the CSS transition never ran:
+  // the pin jumped to its selected size. Diff on a cheap signature instead, and apply selection below
+  // as a class toggle on the surviving node, which is what lets it animate at all.
+  let born=0;
   Object.keys(want).forEach(k=>{
     const w=want[k], had=xMarkers[k];
     if(had){
       const elm=had.getElement&&had.getElement();
-      if(elm && elm.innerHTML!==w.html) elm.innerHTML=w.html;
+      if(elm && elm.dataset.sig!==w.sig){ elm.innerHTML=w.html; elm.dataset.sig=w.sig; }
       if(w.zoff!==undefined) had.setZIndexOffset(w.zoff);
       return;
     }
     const m=L.marker(w.ll,{icon:L.divIcon({className:'',iconSize:w.size,iconAnchor:w.anchor,html:w.html}),
                            zIndexOffset:w.zoff||0, interactive:!w.noClick});
-    if(w.onClick) m.on('click',ev=>{ L.DomEvent.stopPropagation(ev); w.onClick(); });
+    if(w.onClick){
+      m.on('click',ev=>{ L.DomEvent.stopPropagation(ev); w.onClick(); });
+      m.on('keypress',ev=>{ const key=ev.originalEvent&&ev.originalEvent.key;
+        if(key==='Enter'||key===' '){ L.DomEvent.stop(ev); w.onClick(); } });
+    }
     m.addTo(xLayer); xMarkers[k]=m;
-    const node=m.getElement&&m.getElement(), pin=node&&node.querySelector('.xpin');
-    if(pin){ pin.classList.add('new'); setTimeout(()=>pin.classList.remove('new'),220); }
+    const node=m.getElement&&m.getElement();
+    if(node) node.dataset.sig=w.sig;
+    const pin=node&&node.querySelector('.xpin');
+    // stagger the cascade so a city opening into its plans reads as a bloom, capped so 40 pins
+    // never feel sluggish
+    if(pin){ pin.style.setProperty('--pd', Math.min(born++*18,200)+'ms');
+             pin.classList.add('new'); setTimeout(()=>pin.classList.remove('new'),260+Math.min(born*18,200)); }
   });
+  xPaintSelection();
 }
 
 async function joinPublic(i){
@@ -2745,7 +2865,10 @@ function showPlanCard(i){
   const w=document.querySelector('.xwrap'); if(w) w.classList.add('card-on');  // lifts .xctl clear of the card
   const m=document.getElementById('lmap'); if(m) m.classList.add('hasSel');    // dims the other pins
   el.querySelectorAll('[data-act]').forEach(n=>n.onclick=ev=>{ ev.stopPropagation(); doAct(n.dataset.act,n.dataset); });
-  drawExploreMarkers();                                                         // paints the .sel pin
+  xPaintSelection();                            // class toggle -> the pin ANIMATES instead of jumping
+  if(hasGeo(p)) xShowArea([+p.lat,+p.lon]);     // honest ±1.5 km area, in metres
+  // lift the controls exactly clear of the real card height instead of a guessed 176px
+  if(w) w.style.setProperty('--xlift', Math.round(el.offsetHeight+24)+'px');
   // Nudge the tapped pin out from behind the card — pan only; zooming on select disorients.
   if(exploreMap && hasGeo(p)){
     const pt=exploreMap.latLngToContainerPoint([+p.lat,+p.lon]);
