@@ -2439,6 +2439,14 @@ function syncBasicsRows(){
   put('Basics','person',[DATA.gender,DATA.age].filter(Boolean).join(' · '));
   put('Location','pin',[DATA.area, DATA.radiusKm?T('до '+DATA.radiusKm+' км','up to '+DATA.radiusKm+' km'):null].filter(Boolean).join(' · '));
   put('Languages','globe',(DATA.langsList||[]).map(langName).join(' · '));
+  // DATA.snapshot is a SECOND copy of the same facts, written once when the profile was built from
+  // onboarding and never updated after. It is what fullProfileForEdit() hands to the model that
+  // writes «Сводка Kleal» — so changing your city updated the card, the store and matching, while
+  // the summary went on describing the city you signed up in. Keep both sets in step here, in the
+  // one function every accepted edit already calls.
+  if(DATA.area) setSnap('Location','pin',[DATA.area, DATA.radiusKm?('Max travel '+DATA.radiusKm+' km'):null].filter(Boolean).join(' · '));
+  if((DATA.langsList||[]).length) setSnap('Languages','globe',DATA.langsList.map(langName).join(' · '));
+  if(DATA.age||DATA.gender) setSnap('Basics','person',[DATA.gender,DATA.age].filter(Boolean).join(' · '));
   const ORD=['Basics','Location','Languages'];
   rows.sort((a,b)=>{const x=ORD.indexOf(a.title),y=ORD.indexOf(b.title);return (x<0?9:x)-(y<0?9:y);});
 }
@@ -2538,7 +2546,10 @@ function editIcon(name){ const n=String(name).toLowerCase();
   return'spark'; }
 // current profile in the semantic shape the editor agent reasons over (mirror of applyProfilePatch fields)
 function fullProfileForEdit(){ const g=t=>{const r=snapRow(t);return r?r.value:'';};
-  return { name:DATA.name||'', location:g('Location'), languages:g('Languages'),
+  // Canonical fields first, the snapshot only as a fallback: the snapshot is a copy and a copy can lag.
+  const loc=[DATA.area, DATA.radiusKm?('Max travel '+DATA.radiusKm+' km'):null].filter(Boolean).join(' · ');
+  const lng=(DATA.langsList||[]).map(langName).join(' · ');
+  return { name:DATA.name||'', location:loc||g('Location'), languages:lng||g('Languages'),
     formats:g('Social formats'), availability:g('Availability'), safety:g('Safety'),
     interests:(DATA.interests||[]).map(i=>i.name), goals:((DATA.goals||{}).active)||[],
     vibe:((DATA.social||{}).rows||[]).map(r=>r.title+': '+r.value).join(' · '), summary:DATA.summary||'',
@@ -2598,6 +2609,7 @@ async function loadExplore(){
 // hand-off, demo seed, or an edited state restored from localStorage), so check all of them before
 // giving up — an empty answer here silently disables the cross-area check below.
 function myArea(){
+  if(DATA.area) return String(DATA.area).trim();     // canonical beats the snapshot copy
   const r=snapRow('Location'); if(r&&r.value) return String(r.value).trim();
   const b=(DATA.basics||[]).find(x=>String(x.title).toLowerCase()==='location');
   if(b&&b.value) return String(b.value).trim();
@@ -4922,7 +4934,12 @@ function acceptSheet(){
                          verifiedOnly:!!DATA.safety.preferVerified,
                          hideExactLocation:!DATA.safety.publicMap}});
   }
+  const kind=e.kind;
   ESHEET=null; syncBasicsRows(); render(); saveState(); toast(T('Сохранено','Saved'));
+  // The summary states these facts out loud, so it has to be rewritten when they change. Guarded by
+  // _resumBusy, and adaptSummary already refuses a rewrite that would shorten or replace the text.
+  if(['location','languages','basics','interests'].indexOf(kind)>=0)
+    adaptSummary().then(okk=>{ if(okk) render(); });
 }
 
 // ---- Interest sent (479:15090) ----
