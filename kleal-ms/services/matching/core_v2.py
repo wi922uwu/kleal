@@ -28,7 +28,7 @@ import hashlib, math, time
 # the unquoted quiet-hour 09:00 as sexagesimal int 540). The file is sha-pinned, so the exact
 # bytes this parser was written against are guaranteed.
 
-PINNED_SHA = "21505ccb4add960291a742084b36d25289ffc93c9870a80b8cba3295010e9c5b"
+PINNED_SHA = "d804df8e2d14c0b306263d5178eb39d98f284335a2fb671bbd413b49435cb197"  # re-pinned: social_meet semantic_activity 0.18->0.30 (activity is the ask)
 
 FEATURE_KEYS = ("semantic_activity", "time_feasibility", "location_feasibility", "mode_format",
                 "directed_preferences", "social_context", "domain_constraints")
@@ -361,9 +361,27 @@ def reverse_features(intent, prof, cand, domain, H, role_conflict):
     return build_features(pseudo_intent, cand, a_as_cand, domain, H, role_conflict)
 
 # ------------------------------------------------------------------ relevance (spec §9)
-def directional_score(F, dom_cfg, priors):
+def topic_relief(topics, ints, H):
+    """The uncertainty penalty λ(1-coverage) exists so a profile we know nothing about cannot ride
+    the priors to a high score. But a candidate who exactly matches the topics you ASKED for is not
+    unknown on the dimension that matters — confirming your activity is evidence. So for a multi-topic
+    search, the penalty is eased in proportion to how much of the ask is confirmed: match everything
+    and it lifts fully, match only the trailing setting-topic and it barely moves.
+
+    This is what makes «кофе + рыбалка» rank an angler-who-also-drinks-coffee above a coffee-only
+    person with a fuller bio — the previous behaviour, where evidence-coverage (profile completeness)
+    silently outweighed topic relevance. Single-topic searches pass relief=1.0 and are unchanged."""
+    topics = [str(t).lower() for t in (topics or [])]
+    if len(topics) <= 1 or not ints:
+        return 1.0
+    w = [1.0 / (1.0 + 0.7 * i) for i in range(len(topics))]
+    got = sum(wi for t, wi in zip(topics, w) if H["topical"]([t], ints)[0] >= 4)
+    return round(1.0 - got / sum(w), 4)
+
+
+def directional_score(F, dom_cfg, priors, relief=1.0):
     W = dom_cfg["weights"]
-    lam = float(dom_cfg["uncertainty_lambda"])
+    lam = float(dom_cfg["uncertainty_lambda"]) * float(relief)
     tw = kw = acc = 0.0
     unknowns = []
     for k in FEATURE_KEYS:
@@ -804,7 +822,8 @@ def explain(intent, prof, ctx, cand, H, cfg):
         return out
 
     F = build_features(intent, prof, cand, domain, H, role_conflict)
-    d_ab = directional_score(F, dom_cfg, priors)
+    _relief = topic_relief(topics, [str(x).lower() for x in (cand.get("interests") or [])], H)
+    d_ab = directional_score(F, dom_cfg, priors, _relief)
     d_ba = directional_score(reverse_features(intent, prof, cand, domain, H, role_conflict),
                              dom_cfg, priors)
     rec = reciprocal_score(d_ab, d_ba)
@@ -886,7 +905,8 @@ def search(intent, prof, ctx, candidates, H, cfg, diag=None):
             _drop("exact match required")
             continue                                    # exact-only search: no siblings AND no adjacent
         F = build_features(intent, prof, c, domain, H, role_conflict)
-        d_ab = directional_score(F, dom_cfg, priors)
+        _relief = topic_relief(topics, [str(x).lower() for x in (c.get("interests") or [])], H)
+        d_ab = directional_score(F, dom_cfg, priors, _relief)
         d_ba = directional_score(reverse_features(intent, prof, c, domain, H, role_conflict),
                                  dom_cfg, priors)
         rec = reciprocal_score(d_ab, d_ba)
@@ -934,6 +954,11 @@ def search(intent, prof, ctx, candidates, H, cfg, diag=None):
             "unknowns": d_ab["unknowns"], "can_outreach": can_outreach,
             "readiness": readiness, "readiness_ru": rdy_ru, "readiness_en": rdy_en,
             "lastActiveDays": c.get("lastActiveDays"),   # allocation tie-break only, never relevance
+            # How many of the ASKED topics this person actually shares. For «кофе + рыбалка» the
+            # person who shares both must lead the person who shares only the setting, whatever the
+            # rest of their profile looks like — evidence-coverage (bio completeness) otherwise wins,
+            # which is exactly the «мне попадаются кофейные, а не рыбаки» complaint.
+            "_thits": sum(1 for t in topics if H["topical"]([t], [str(x).lower() for x in (c.get("interests") or [])])[0] >= 4),
             "trace": {"tier": tier, "policy": "ALLOW", "domain": domain,
                       "a_to_b": d_ab, "b_to_a": d_ba, "reciprocal": rec,
                       "band": band, "readiness": readiness,
@@ -948,7 +973,12 @@ def search(intent, prof, ctx, candidates, H, cfg, diag=None):
     # surname bias ("Lopez" always first) and made exposure unfair (§11 fairness), so equal
     # candidates are shuffled deterministically instead — same input, same order, no alphabet.
     tier_rank = {"T0": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4}
-    out.sort(key=lambda x: (BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]],
+    # «Больше тем = выше»: for a multi-topic ask, the count of shared asked-topics leads the order,
+    # so matching 2 of 2 always beats matching 1 of 2. For a single-topic ask this term is constant
+    # across the slate and the order is byte-identical to before.
+    _multi = len(topics) > 1
+    out.sort(key=lambda x: ((-int(x.get("_thits") or 0)) if _multi else 0,
+                            BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]],
                             tier_rank.get(x["tier"], 5),
                             -round(0.6 * x["reciprocal"] + 0.4 * x["lcb"], 6),
                             -x["coverage"],
@@ -968,4 +998,6 @@ def search(intent, prof, ctx, candidates, H, cfg, diag=None):
             break
     sl = _slate(out, home, seen_names)
     _diversify_reasons(sl)
+    for x in sl:
+        x.pop("_thits", None)                          # internal sort field, not part of the card
     return sl, meta

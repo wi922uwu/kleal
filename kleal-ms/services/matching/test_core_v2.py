@@ -179,6 +179,23 @@ _rank = {b: i for i, b in enumerate(["especially_close", "strong_option", "broad
 check("P7 an unseen candidate is never promoted over a better band",
       all(_rank[_bands[i]] <= _rank[_bands[i + 1]] for i in range(len(_bands) - 1)), _bands)
 
+# ---------------------------------------------------- «больше тем = выше» (two-topic ranking)
+# «кофе + рыбалка» must rank the person who shares BOTH above the one who shares only the setting,
+# even when the setting-only person has a fuller profile — evidence-coverage used to win, which is
+# the «мне попадаются кофейные, а не рыбаки» complaint.
+_BOTH = {"name": "Both", "interests": ["fishing", "coffee"], "vibe": "chill", "langs": ["en"], "km": 3.0}
+_SETTING = {"name": "SettingOnly", "interests": ["coffee", "startups", "hiking"], "vibe": "chill",
+            "langs": ["en"], "km": 2.0, "open": True, "age": 30}   # deliberately the fuller profile
+_TWO = {"type": "social", "topics": ["fishing", "coffee"], "role": "meet", "mode": "offline"}
+_r = run(_TWO, {"name": "T", "interests": ["coffee"]}, [_SETTING, _BOTH])
+_names = [c["name"] for c in _r]
+check("MT1 a two-topic match outranks a one-topic match with a fuller profile",
+      _names.index("Both") < _names.index("SettingOnly"), _names)
+# and single-topic ordering is byte-identical (the multi-topic rule must not touch it)
+_a = json.dumps(run(INTENT_COFFEE, PROF_RICH, [FULL, SPARSE, one, dup]), sort_keys=True)
+_b = json.dumps(run(INTENT_COFFEE, PROF_RICH, [FULL, SPARSE, one, dup]), sort_keys=True)
+check("MT2 single-topic slate is unchanged and deterministic", _a == _b)
+
 # ---------------------------------------------------------------- config validator negatives
 try:
     core_v2.load_config(os.path.join(ROOT, "config", "Kleal_Matching_Core_Config_v2.yaml"),
@@ -188,7 +205,7 @@ except core_v2.ConfigError:
     check("V1 sha mismatch rejected", True)
 tampered = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8")
 with open(os.path.join(ROOT, "config", "Kleal_Matching_Core_Config_v2.yaml"), encoding="utf-8") as fsrc:
-    tampered.write(fsrc.read().replace("semantic_activity: 0.18", "semantic_activity: 0.5", 1))
+    tampered.write(fsrc.read().replace("semantic_activity: 0.3", "semantic_activity: 0.5", 1))
 tampered.close()
 try:
     core_v2.load_config(tampered.name, expect_sha=None)

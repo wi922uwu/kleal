@@ -44,12 +44,12 @@ feature_groups:
 domains:
   social_meet:
     weights:
-      semantic_activity: 0.18
-      time_feasibility: 0.18
-      location_feasibility: 0.16
-      mode_format: 0.14
-      directed_preferences: 0.1
-      social_context: 0.18
+      semantic_activity: 0.3
+      time_feasibility: 0.15
+      location_feasibility: 0.14
+      mode_format: 0.12
+      directed_preferences: 0.08
+      social_context: 0.15
       domain_constraints: 0.06
     uncertainty_lambda: 0.25
     outreach_min_lcb: 0.66
