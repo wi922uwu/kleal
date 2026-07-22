@@ -227,10 +227,18 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
             # Single aggregated subfeature, capped at 1.0 — still no double count (spec §6.1).
             value = SEM_VALUE[best]
             if len(topics) > 1:
-                # only EXACT topic hits count as covering an asked topic — a russian speaker
-                # sub-matching "spanish" hasn't covered the spanish ask
-                hits = sum(1 for t in topics if H["topical"]([t], ints)[0] >= 4)
-                value = round(value * (0.6 + 0.4 * max(1, hits) / len(topics)), 4)
+                # More of the asked topics -> higher, AND the leading topic weighs more than the
+                # trailing ones. The pipeline orders topics subject-first (a «за обсуждением X»
+                # request puts X ahead of the setting), so «кофе + рыбалка» must rank an angler
+                # above a coffee-only person: coffee is the setting almost everyone shares, fishing
+                # is the point. Before this, both matched exactly one topic and scored the same, so
+                # the common topic flooded the slate and the distinctive one drowned.
+                # Only EXACT hits count as covering an asked topic (a russian speaker sub-matching
+                # "spanish" has not covered the spanish ask).
+                w = [1.0 / (1.0 + 0.7 * i) for i in range(len(topics))]
+                got = sum(wi for t, wi in zip(topics, w) if H["topical"]([t], ints)[0] >= 4)
+                cover = got / sum(w)                       # 0..1, weighted toward the lead topic
+                value = round(value * (0.55 + 0.45 * cover), 4)
             F["semantic_activity"] = (K_MATCH, value, names)
         else:
             F["semantic_activity"] = (K_MISM, 0.05, "")

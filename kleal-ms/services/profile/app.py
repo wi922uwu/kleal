@@ -124,6 +124,7 @@ HTML_HEAD = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -578,6 +579,86 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   align-items:center;justify-content:center;flex:none;cursor:pointer;position:relative;background:var(--card)}
 .ah2 .body{flex:1;min-height:0;overflow-y:auto;padding:0 20px 12px;display:flex;flex-direction:column;gap:20px}
 .aintro2{display:flex;gap:12px;align-items:center;padding:12px 16px;border-radius:16px}
+/* ── Home, rebuilt to the mockup ────────────────────────────────────────────────────────────────
+   Two honest substitutions, both forced by what the app actually has:
+   the "photo" band is the TILE_SVG illustration atlas (there is not a single photograph anywhere in
+   this product), and the participants footer shows the ONE host we really know plus the real `going`
+   count — not three invented faces. */
+.serif{font-family:'Fraunces',Georgia,'Times New Roman',serif;font-weight:700;letter-spacing:-.4px}
+.ah2 .ahd .nm.serif{font-size:26px;line-height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ah2 .bell .dot{position:absolute;top:9px;right:11px;width:8px;height:8px;border-radius:50%;
+  background:var(--primary);border:2px solid var(--card)}
+.seclbl2{display:flex;align-items:center;gap:6px;font-size:14px;line-height:20px;font-weight:600;color:var(--fg)}
+.seclbl2 svg{width:16px;height:16px;color:var(--primary)}
+
+/* the carousel centres its active card and lets BOTH neighbours peek */
+.icar{flex:none;display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;
+  scroll-padding:0 34px;padding:6px 34px 2px;margin:0 -20px;scrollbar-width:none}
+.icar::-webkit-scrollbar{display:none}
+.icar .idea{flex:0 0 74%;scroll-snap-align:center}
+.idea{background:var(--card);border-radius:20px;overflow:hidden;position:relative;cursor:pointer;
+  box-shadow:0 8px 24px #0000000f;transition:transform .28s cubic-bezier(.2,.9,.25,1.12),opacity .28s ease}
+.idea:not(.on){transform:scale(.93);opacity:.72}
+.idea .ph{height:140px;background:var(--neutral100);overflow:hidden;position:relative}
+.idea .ph svg{width:100%;height:100%;display:block}
+.idea .cat{position:absolute;top:12px;left:12px;padding:5px 11px;border-radius:999px;background:#ffffffe6;
+  font-size:10px;line-height:14px;font-weight:800;letter-spacing:.6px;color:var(--fg);text-transform:uppercase}
+.idea .cat.near{background:var(--primary);color:#fff}
+.idea .hrt{position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:999px;background:#ffffffe6;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--fg)}
+.idea .hrt svg{width:17px;height:17px}
+.idea .hrt.on{color:var(--primary)}
+.idea .hrt.on svg{fill:currentColor}
+.idea .bdg{position:absolute;left:16px;top:-22px;width:44px;height:44px;border-radius:999px;background:var(--card);
+  display:flex;align-items:center;justify-content:center;color:var(--primary);box-shadow:0 4px 12px #00000014}
+.idea .bdg svg{width:22px;height:22px}
+.idea .bd{position:relative;padding:28px 16px 13px;display:flex;flex-direction:column;gap:6px}
+.idea .ti{font-size:18px;line-height:24px;font-weight:700;letter-spacing:-.2px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.idea .su{font-size:13px;line-height:19px;color:var(--muted);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.idea .ft{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:12px;line-height:16px;color:var(--muted)}
+.idea .ft .hav{width:22px;height:22px;border-radius:50%;flex:none;background:linear-gradient(135deg,#FF7A8A,#F5455C);
+  color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.idots{flex:none;display:flex;gap:6px;justify-content:center;padding-top:10px}
+.idots i{width:6px;height:6px;border-radius:999px;background:var(--neutral300);transition:all .2s ease}
+.idots i.on{background:var(--primary);width:18px}
+
+/* invite row */
+.invrow{flex:none;display:flex;align-items:center;gap:12px;background:var(--card);border-radius:18px;padding:12px 14px;
+  box-shadow:0 8px 24px #0000000d;cursor:pointer}
+.invrow .iav{width:44px;height:44px;border-radius:50%;flex:none;position:relative;color:#fff;font-weight:700;
+  background:linear-gradient(135deg,#FF7A8A,#F5455C);display:flex;align-items:center;justify-content:center}
+.invrow .iav .dot{position:absolute;top:0;right:0;width:11px;height:11px;border-radius:50%;
+  background:var(--primary);border:2px solid var(--card)}
+.invrow .ib{flex:1;min-width:0}
+.invrow .ib .t1{font-size:14px;line-height:19px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.invrow .ib .t2{font-size:13px;line-height:18px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.invrow .ir{display:flex;align-items:center;gap:2px;color:var(--primary);font-size:14px;font-weight:600;flex:none}
+.invrow .ir svg{width:18px;height:18px}
+
+/* the Buddy card — the only large coral surface in the app */
+.bcard{flex:none;background:var(--primary);border-radius:24px;padding:16px 16px 14px;color:#fff;position:relative;overflow:hidden}
+.bcard .top{display:flex;align-items:center;gap:10px}
+.bcard .msc{width:96px;height:96px;flex:none;margin:-8px 0 -8px -6px}
+.bcard .hd{flex:1;min-width:0}
+.bcard .hd .h{font-size:30px;line-height:36px}
+.bcard .hd .s{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;opacity:.95;margin-top:2px}
+.bcard .hd .s svg{width:15px;height:15px}
+.bcard .fld{display:flex;gap:8px;align-items:center;background:#fff;border-radius:999px;
+  padding:6px 6px 6px 16px;margin-top:8px}
+.bcard .fld input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:inherit;
+  font-size:14px;color:var(--fg)}
+.bcard .fld input::placeholder{color:var(--muted)}
+.bcard .fld .mic{color:var(--muted);display:flex;flex:none}
+.bcard .fld .mic svg{width:20px;height:20px}
+.bcard .snd{width:40px;height:40px;flex:none;border-radius:999px;background:var(--primary);color:#fff;border:0;
+  display:flex;align-items:center;justify-content:center;cursor:pointer}
+.bcard .snd svg{width:19px;height:19px}
+.bcard .hist{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:12px;
+  font-size:13px;font-weight:600;opacity:.95;cursor:pointer}
+.bcard .hist svg{width:16px;height:16px}
+
 .aintro2 .msc{width:72px;height:72px;border-radius:999px;background:var(--neutral100);flex:none;
   display:flex;align-items:center;justify-content:center;color:var(--muted)}
 .aintro2 .txt{flex:1;min-width:0;font-size:13px;line-height:18px;color:var(--fg)}
@@ -3469,42 +3550,105 @@ function inboxCards(){
 // ================= Agent Home — the main landing after onboarding (Figma Flow 4) =================
 // Agent Home — Figma 479:14518. Greeting, agent intro card, composer, four quick tiles and the
 // "For you today" feed (real plans from /api/agent/explore, never invented ones).
+// The category chip on an idea card. Derived from the SAME tile key the illustration uses, so the
+// word and the picture can never disagree. «NEARBY» wins when we actually know the plan is close —
+// it is a fact about distance, not a category, which is why it overrides.
+const _CAT_LABEL={hiking:['ПРИРОДА','OUTDOORS'],camping:['ПРИРОДА','OUTDOORS'],walk:['ПРИРОДА','OUTDOORS'],
+  surfing:['ПРИРОДА','OUTDOORS'],skiing:['ПРИРОДА','OUTDOORS'],fishing:['ПРИРОДА','OUTDOORS'],
+  travel:['ПУТЕШЕСТВИЯ','TRAVEL'],art:['КУЛЬТУРА','CULTURE'],theatre:['КУЛЬТУРА','CULTURE'],
+  cinema:['КУЛЬТУРА','CULTURE'],books:['КУЛЬТУРА','CULTURE'],photography:['КУЛЬТУРА','CULTURE'],
+  concert:['МУЗЫКА','MUSIC'],guitar:['МУЗЫКА','MUSIC'],dj:['МУЗЫКА','MUSIC'],karaoke:['МУЗЫКА','MUSIC'],
+  festival:['МУЗЫКА','MUSIC'],coffee:['КОФЕ','COFFEE'],dinner:['ЕДА','FOOD'],cooking:['ЕДА','FOOD'],
+  baking:['ЕДА','FOOD'],wine:['НАПИТКИ','DRINKS'],drinks:['НАПИТКИ','DRINKS'],
+  gaming:['ИГРЫ','GAMING'],chess:['ИГРЫ','GAMING'],boardgames:['ИГРЫ','GAMING'],dnd:['ИГРЫ','GAMING'],
+  startups:['СТАРТАПЫ','STARTUPS'],coding:['ТЕХ','TECH'],design:['ДИЗАЙН','DESIGN'],
+  language:['ЯЗЫКИ','LANGUAGE'],meditation:['ВЕЛНЕС','WELLNESS'],yoga:['ВЕЛНЕС','WELLNESS'],
+  pets:['ПИТОМЦЫ','PETS'],fashion:['СТИЛЬ','FASHION'],dating:['ЗНАКОМСТВА','DATING']};
+function ideaCat(p, key){
+  // A real distance beats a category word: «рядом» is the thing a person actually acts on.
+  const d=String(p.dist||'');
+  const km=parseFloat(d);
+  if(!isNaN(km) && km<=3) return [T('РЯДОМ','NEARBY'), true];
+  const L=_CAT_LABEL[key];
+  if(L) return [T(L[0],L[1]), false];
+  return [T('СПОРТ','SPORT'), false];   // the tile atlas is sport-heavy; social is its own fallback
+}
+function ideaSub(p){
+  const bits=[];
+  if(p.when) bits.push(locStr(p.when));
+  if(p.area) bits.push(p.area); else if(p.dist) bits.push(p.dist);
+  return bits.join(' · ');
+}
+let IDEA_I=0;
 function scr_agenthome(){
-  if(!exploreLoaded) loadExplore();          // real plans for "For you today"
+  if(!exploreLoaded) loadExplore();          // real plans behind "New ideas for you"
   const nm=(DATA.name||'there').split(' ')[0];
-  // "For you today" was one unfinished card: an empty grey square, a lonely pin with nothing after
-  // it, a raw username, a tap that toasted «скоро», and a dead bookmark. Now up to three real plans,
-  // each with a topic icon in the tile, «host · area», the time, a working «Позвать» (joinPublic) and
-  // a bookmark that actually saves. Whom+where varies, so the section no longer claims «сегодня».
-  const plans=(DATA.plans||[]).slice(0,3);
-  // Same auto-detected category illustration the intent cards use — topics first, title as fallback.
-  const planIcon=p=>{ const k=tileKeyFor((p.topics||[]).join(' ')||String(p.title||''));
-    return TILE_SVG[k]||TILE_SVG.social; };
-  const planCard=(p,i)=>`<div class="ecard" style="cursor:default">
-      <div class="ph">${planIcon(p)}</div>
+  const plans=(DATA.plans||[]).slice(0,5);
+  if(IDEA_I>=plans.length) IDEA_I=0;
+  const ideaCard=(p,i)=>{
+    const key=tileKeyFor((p.topics||[]).join(' ')||String(p.title||''));
+    const [cat,near]=ideaCat(p,key);
+    const host=String(p.who||'').trim();
+    // DATA.saved holds objects ({name, band, km…}), not strings — comparing to the raw name meant
+    // the heart saved correctly and then never showed it.
+    const saved=(DATA.saved||[]).some(x=>String((x&&x.name)||x)===host);
+    return `<div class="idea ${i===IDEA_I?'on':''}" data-act="join-plan" data-pi="${i}">
+      <div class="ph">${TILE_SVG[key]||TILE_SVG.social}
+        <div class="cat ${near?'near':''}">${cat}</div>
+        <div class="hrt ${saved?'on':''}" data-act="cand-save" data-n="${esc(host)}">${IC.heart}</div></div>
       <div class="bd">
-        <div class="ti">${esc(p.title)}</div>
-        <div class="meta"><span class="mi">${IC.clock}${esc(locStr(p.when||''))}</span>
-          ${(p.area||p.dist)?`<span class="mi">${IC.pin}${esc(p.area||p.dist)}</span>`:''}</div>
-        ${(p.going||p.who)?`<div class="who">${p.going?`${p.going} ${T('участников','participants')}`:esc(p.who||'')}</div>`:''}
-        <div class="pact">
-          <button class="kbtn pri sm" data-act="join-plan" data-pi="${i}">${T('Позвать','Invite')}</button>
-          <div class="pbm" data-act="cand-save" data-n="${esc(p.who||'')}">${IC.bookmark}</div>
-        </div>
+        <div class="bdg">${IC[key]||IC.spark}</div>
+        <div class="ti">${esc(p.title||'')}</div>
+        <div class="su">${esc(ideaSub(p))}</div>
+        ${(p.going||host)?`<div class="ft">
+          ${host?`<div class="hav">${esc(host.slice(0,1).toUpperCase())}</div>`:''}
+          <span>${p.going
+            ? `${p.going} ${T('уже заинтересованы','others interested')}`
+            : `${esc(host)} ${T('организует','is hosting')}`}</span></div>`:''}
       </div></div>`;
-  const card = plans.length
-    ? `<div class="carousel">${plans.map(planCard).join('')}</div>`
-    : `<div class="k-cap" style="color:var(--muted);padding:4px 2px">${T('Пока ничего не запланировано — опиши, чего хочешь, и я поищу.',"Nothing planned yet — tell me what you want and I'll look.")}</div>`;
+  };
+  const ideas = plans.length
+    ? `<div class="icar" id="icar">${plans.map(ideaCard).join('')}</div>
+       <div class="idots">${plans.map((_,i)=>`<i class="${i===IDEA_I?'on':''}"></i>`).join('')}</div>`
+    : `<div class="k-cap" style="color:var(--muted);padding:4px 2px">${T(
+        'Пока идей нет — опиши, чего хочешь, и я поищу.',"No ideas yet — tell me what you want and I'll look.")}</div>`;
+  // The invite row shows the FIRST pending request; the rest stay in the full list behind it.
+  const inv=(INBOX||[])[0];
+  const invRow = inv ? `<div class="invrow" data-act="go-inbox">
+      <div class="iav">${esc(String(inv.from||'?').slice(0,1).toUpperCase())}<span class="dot"></span></div>
+      <div class="ib">
+        <div class="t1">${INBOX.length} ${T('приглашение ждёт','invite waiting')}${
+          inv.note?' · '+esc(String(inv.note).slice(0,28)):''}</div>
+        <div class="t2">${esc(inv.from||'')} ${T('приглашает тебя','invited you')}</div></div>
+      <div class="ir">${T('Открыть','Review')}${IC.chevR}</div></div>` : '';
   return `<div class="ah2 fade">
-    <div class="ahd"><div class="nm k-h2">${T('Привет','Hey')}, ${esc(nm)} 👋</div>
-      <div class="bell" data-act="notif">${IC.bell}${unreadNotifs()?`<span class="abadge">${unreadNotifs()}</span>`:''}</div></div>
+    <div class="ahd"><div class="nm serif">${T('Привет','Hey')}, ${esc(nm)} 👋</div>
+      <div class="bell" data-act="notif">${IC.bell}${unreadNotifs()?'<span class="dot"></span>':''}</div></div>
     <div class="body">
-      ${IS_DEMO?`<div class="kinfo" style="margin-bottom:4px">${IC.info}<div>${T(
+      ${IS_DEMO?`<div class="kinfo">${IC.info}<div>${T(
         'Это демо-профиль. Пройди онбординг, чтобы Kleal искал для тебя.',
         'This is a sample profile. Complete onboarding so Kleal searches for you.')}
         <span style="color:var(--primary);font-weight:600;cursor:pointer" data-act="go-onboarding"> ${T('Начать','Start')} →</span></div></div>`:''}
+      <div style="flex:none;display:flex;flex-direction:column;gap:10px">
+        <div class="seclbl2">${IC.spark}${T('Новые идеи для тебя','New ideas for you')}</div>
+        ${ideas}
+      </div>
+      ${invRow}
+      <div class="bcard">
+        <div class="top">
+          <div class="msc">${masc('primary')}</div>
+          <div class="hd">
+            <div class="h serif">Buddy</div>
+            <div class="s">${IC.spark}${T('Расскажи Buddy, и он соберёт план','Talk to Buddy to create a plan')}</div>
+          </div>
+        </div>
+        <div class="fld">
+          <input id="ainput" placeholder="${T('Чем хочешь заняться?','What do you feel like doing?')}" autocomplete="off">
+          <span class="mic">${IC.mic}</span>
+          <button class="snd" data-act="agent-go">${IC.send}</button></div>
+        <div class="hist" data-act="talk-buddy">${IC.chat}${T('Открыть историю разговоров','Open conversation history')} ››</div>
+      </div>
       ${(PLAN&&PLAN.confirmed)?`<div>
-        <div class="kbub ag" style="max-width:none;margin-bottom:12px">${T('Сегодня у тебя встреча','Today you have a meetup')}</div>
         <div class="kplan tight">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
             <div class="k-h3">${T('Кофе и разговор','Coffee & conversation')}</div>
@@ -3515,26 +3659,26 @@ function scr_agenthome(){
             <div class="ti" style="font-size:13px">${esc(placeText())}</div></div></div>
           <button class="kbtn pri" data-act="meet-open">${T('Открыть детали','Open details')}</button>
         </div></div>`:''}
-      <div>
-        <div class="aintro2" data-act="talk-buddy" style="cursor:pointer">
-          <div class="msc">${masc('primary')}</div>
-          <div class="txt">${T('Я Kleal, твой социальный AI-агент. Опиши, кого или что ищешь — подберу лучшее.',"I'm Kleal, your social AI agent. Describe who or what you're looking for — I'll find the best fit.")}</div>
-        </div>
-        <div class="kcomp"><div class="fld">
-            <input id="ainput" placeholder="${T('Опиши, кого или что ищешь…',"Describe who or what you're look…")}" autocomplete="off">${IC.mic}</div>
-          <button class="snd" data-act="agent-go">${IC.send}</button></div>
-      </div>
-      ${inboxCards()}
-      <div style="display:flex;flex-direction:column;gap:32px">
-        <div style="display:flex;flex-direction:column;gap:16px">
-          <div style="display:flex;align-items:flex-end;justify-content:space-between">
-            <span class="k-title">${T('Планы для тебя','Plans for you')}</span>
-            <span class="k-label" style="color:var(--primary);cursor:pointer" data-act="see-all">${T('Все','See All')}</span></div>
-          ${card}
-        </div>
-      </div>
     </div>
   </div>`;
+}
+
+// Which card is centred — drives the dots and the raised/dimmed state. Scroll-driven, so it stays
+// truthful when the user flicks rather than taps.
+function wireIdeaCarousel(){
+  const el=document.getElementById('icar'); if(!el) return;
+  let t=null;
+  el.onscroll=()=>{ clearTimeout(t); t=setTimeout(()=>{
+    const cards=[...el.children]; if(!cards.length) return;
+    const mid=el.scrollLeft+el.clientWidth/2;
+    let best=0, bd=1e9;
+    cards.forEach((c,i)=>{ const cm=c.offsetLeft+c.offsetWidth/2; const d=Math.abs(cm-mid);
+      if(d<bd){ bd=d; best=i; } });
+    if(best!==IDEA_I){ IDEA_I=best;
+      cards.forEach((c,i)=>c.classList.toggle('on',i===best));
+      const dots=document.querySelectorAll('.idots i');
+      dots.forEach((d,i)=>d.classList.toggle('on',i===best)); }
+  }, 60); };
 }
 
 // ---------------- flow logic: every step is backed by a real service ----------------
@@ -5089,6 +5233,7 @@ function render(){
               ||cur==='options'||cur==='bestfit'||cur==='candprofile'
               ||['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'].includes(cur));
   const bn=document.getElementById('bnav'); if(bn){ bn.style.display=chat?'none':'flex'; bn.innerHTML=bnavHTML(); }
+  if(cur==='agenthome') setTimeout(wireIdeaCarousel,0);
   // The Explore map is edge-to-edge: no app bar, no body padding, no page scroll.
   const mapfull=(cur==='search');
   const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||chat||mapfull)?'none':'flex';
@@ -5271,6 +5416,7 @@ function doAct(act, ds){
     case 'join-plan': joinPublic(+ds.pi); break;   // "Позвать" on a For-you-today card
     // Agent Home
     case 'notif': setTab('notifs'); break;
+    case 'go-inbox': setTab('messages'); break;
     case 'go-onboarding': location.href='/'; break;
     // Both home entries open the buddy CHAT. Routing them straight into the intent builder turned a
     // friendly agent into a matching form: «привет» got a canned "tell me what you want to do".
