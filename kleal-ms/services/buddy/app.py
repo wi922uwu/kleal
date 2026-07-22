@@ -122,6 +122,50 @@ def _names_an_activity(text):
     return False
 
 
+# ── Negation ──────────────────────────────────────────────────────────────────────────────────────
+# «Не хочу в бар, хочу что-то тихое» used to search for BAR — the one thing the person ruled out.
+# Nothing anywhere in the pipeline read «не»: the model happily reports the mentioned entity as the
+# interest, and both the alias table and the raw-word union then carry it through as a topic.
+# Negation scopes over its CLAUSE, which is why this splits on commas and on «но»/«а» first — in
+# «хочу гулять, но только не спорт» the negation must reach спорт and must not reach гулять.
+_NEG_TRIGGER = re.compile(r"(?:^|[\s,;—-])(?:не|нет|кроме|без|никаких|ничего|"
+                          r"don'?t|do\s+not|not|except|without|no)(?:\s|$)", re.I)
+_CLAUSE_SPLIT = re.compile(r"[,;.!?]|\bно\b|\bа\b|\bbut\b", re.I)
+# Words that are never the thing being ruled out — they are the ruling-out itself, or filler.
+_NEG_NOISE = {"не", "нет", "только", "кроме", "без", "никаких", "ничего", "хочу", "хочется",
+              "что", "чего", "угодно", "это", "нибудь", "какой", "какая", "какое", "тоже",
+              "not", "no", "dont", "don", "any", "anything", "want", "just", "only", "except",
+              "without", "something", "the", "and"}
+
+
+def negated_terms(text):
+    """Everything the user explicitly ruled out, as canonical topics AND raw words.
+
+    Two scoping rules, both learned from getting them wrong:
+    - negation reaches FORWARD from its trigger, not over the whole sentence. «хочу футбол без
+      алкоголя» rules out alcohol, not football, and football sits before the trigger.
+    - it does not cross a clause boundary, so «хочу гулять, но только не спорт» leaves гулять alone.
+    Bucket words are deliberately NOT skipped here: «не спорт» is precisely a negated bucket, and
+    filtering it as noise is what made the first version miss it.
+
+    Raw words are kept alongside canonical ones because the union path carries unresolvable words
+    verbatim — dropping only the canonical form would still let «бар» through as a literal tag."""
+    out = set()
+    for clause in _CLAUSE_SPLIT.split(str(text or "").lower()):
+        m = _NEG_TRIGGER.search(" " + clause)
+        if not m:
+            continue
+        tail = (" " + clause)[m.end():]
+        for w in re.findall(r"[a-zа-яё0-9-]{3,}", tail):
+            if w in _NEG_NOISE:
+                continue
+            n = norm_topic(w)
+            if n:
+                out.add(n)
+            out.add(w)
+    return out
+
+
 def wants_people(text, model_flagged):
     """Deterministic search trigger. STRONG ask always; COMPANION needs the model's agreement;
     DESIRE needs a resolvable activity in the user's own words."""
@@ -675,6 +719,15 @@ def build_intent(sig, cat, last_user, lang):
         from_request = from_request or bool(topics)      # raw words of the request itself
     if not topics:                                    # last resort: nearest taxonomy word for the category
         topics = CATEGORY_BRIDGE.get(str(cat.get("category") or ""), [])
+    # Drop whatever the person ruled out, and remember it as a deal-breaker rather than losing it.
+    _neg = negated_terms(last_user)
+    if _neg:
+        topics = [t for t in topics if str(t).lower() not in _neg]
+        _db = [d for d in (sig.get("dealBreakers") or []) if d]
+        for w in sorted(_neg):
+            if w not in _db:
+                _db.append(w)
+        sig["dealBreakers"] = _db[:8]
     # card tags: what the user actually asked for (may be outside the taxonomy — "labubu" stays "labubu")
     tags = [str(t).lower()[:24] for t in (cat.get("topics") or [])
             if str(t).strip() and str(t).strip().lower() not in _GENERIC_TOPIC][:4] or topics
