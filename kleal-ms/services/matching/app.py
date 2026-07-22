@@ -727,7 +727,7 @@ def match_candidates_legacy(intent, prof, ctx=None):
     out.sort(key=lambda x: (-x['score'], x['name']))
     return _diversify(out)
 
-def match_candidates(intent, prof, ctx=None):
+def match_candidates(intent, prof, ctx=None, diag=None):
     """Entry point. Policy hard gates run HERE (scoring only after ALLOW — spec §8), then Core v2
     scores the eligible pool. KLEAL_CORE_V2=0 or an invalid config -> legacy scorer above, unchanged.
     The response is a superset of the legacy card contract (name/score/tier/reasons/agree/note/...)."""
@@ -738,18 +738,37 @@ def match_candidates(intent, prof, ctx=None):
     gate_ctx = {'feedback': dict(sess.get('feedback') or {}),
                 'blocked': set(sess.get('blocked') or []) | set(ctx.get('blocked') or [])}
     self_name = str(ctx.get('self') or (prof or {}).get('name') or ctx.get('uid') or '').strip().lower()
+    # `_hard_gates` has always returned the exact reason a person was dropped, and both call sites
+    # threw it away. When the caller wants the funnel, keep it: it is the whole answer to «почему
+    # никого нет», and it costs a dict.
+    pool = load_candidates()
+    if diag is not None:
+        diag['pool'] = len(pool)
+        diag['gates'] = {}
     eligible = []
-    for c in load_candidates():
+    for c in pool:
         if self_name and str(c.get('name', '')).strip().lower() == self_name:
+            if diag is not None:
+                diag['self'] = diag.get('self', 0) + 1
             continue                                       # the searcher never matches themselves
-        ok, _why = _hard_gates(intent, c, gate_ctx, prof)
+        ok, why = _hard_gates(intent, c, gate_ctx, prof)
         if ok:
             eligible.append(c)
+        elif diag is not None:
+            k = str(why or 'gate')
+            diag['gates'][k] = diag['gates'].get(k, 0) + 1
+    if diag is not None:
+        diag['eligible'] = len(eligible)
     H = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
     ctx = dict(ctx)
     ctx.setdefault('now', time.time())                     # pinnable for deterministic replay
     ctx.setdefault('received24', _proposals_received_24h())  # proposal-fatigue counts -> readiness
-    slate, _meta = _core.search(intent, prof or {}, ctx, eligible, H, _CORE_CFG)
+    core_diag = {} if diag is not None else None
+    slate, meta = _core.search(intent, prof or {}, ctx, eligible, H, _CORE_CFG, core_diag)
+    if diag is not None:
+        diag['scored'] = core_diag
+        diag['slate'] = len(slate)
+        diag['meta'] = meta                                # engine, config_version, domain, config_sha
     return slate
 
 def _online_fallback(intent):
@@ -1604,7 +1623,17 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, {"state": _session("me").get("state")})
         elif self.path == "/api/agent/pool":
             c = load_candidates()
-            send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None, "users": c})
+            src = {}
+            for u in c:
+                k = str(u.get("source") or "unknown")
+                src[k] = src.get(k, 0) + 1
+            try:
+                st = os.stat(USERS_PATH)
+                store = {"path": os.path.abspath(USERS_PATH), "mtime": int(st.st_mtime), "bytes": st.st_size}
+            except Exception as e:
+                store = {"path": os.path.abspath(USERS_PATH), "error": str(e)[:120]}
+            send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None,
+                                  "bySource": src, "store": store, "users": c})
         elif self.path.split("?")[0] in ("/api/agent/thread", "/api/agent/threads"):
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
@@ -1668,6 +1697,21 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, res)
             except Exception as e:
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
+        elif p == "/api/agent/funnel":
+            # «Почему никого нет», as a shape rather than a slate: how the pool collapses, stage by
+            # stage, with the exact gate string for each drop. Read-only, writes nothing, sends nothing.
+            intent = _normalize_intent(body.get("intent"))
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
+            if body.get("now"):
+                ctx["now"] = float(body["now"])
+            diag = {}
+            try:
+                cands = match_candidates(intent, prof, ctx, diag)
+                send_json(self, 200, {"ok": True, "intent": intent, "funnel": diag,
+                                      "names": [c.get("name") for c in cands]})
+            except Exception as e:
+                send_json(self, 200, {"ok": False, "error": str(e)[:200], "funnel": diag})
         elif p == "/api/agent/explain":
             # Decision trace for ONE pair (spec §21.3) — powers the admin Matching lab. Read-only:
             # runs the same gates + scoring as /match but reports WHY a candidate was dropped.

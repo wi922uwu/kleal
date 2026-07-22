@@ -5,7 +5,7 @@
 # edits directly change who gets matched. Seeds itself once from the matching agent's demo pool.
 #
 # NO auth: protection is the obscure/separate URL only (test-mode tool). Holds no model keys.
-import os
+import os, hashlib, hmac
 import sys
 import json
 import uuid
@@ -21,9 +21,42 @@ from http_util import send, send_json, read_json
 
 PORT = int(os.environ.get("ADMIN_PORT", "7077"))
 MATCH_URL = os.environ.get("MATCH_URL", "http://127.0.0.1:7074").rstrip("/")
-STORE = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "matching", "users.json"))
+# Two-up, the SAME default onboarding and matching resolve to. It used to point at
+# services/matching/users.json, so a restart without KLEAL_USERS silently split the store: the panel
+# edited one file while the matcher read another, and nothing said so. (The new health bar now says
+# so anyway — but a default that cannot go wrong beats a warning that it did.)
+STORE = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "..", "users.json"))
 _LOCK = threading.Lock()
 _seeded = {"done": False}
+
+# The panel can edit and delete real people and can run searches as them. It was open to anyone with
+# the URL. A token is the minimum; it is generated and printed once rather than defaulted to
+# something, so the panel is never accidentally open — and never accidentally locked out either.
+_TOKEN_FILE = os.environ.get("KLEAL_ADMIN_TOKEN_FILE", os.path.join(_HERE, "..", "..", "admin_token.txt"))
+
+
+def _admin_token():
+    t = os.environ.get("KLEAL_ADMIN_TOKEN", "").strip()
+    if t:
+        return t
+    try:
+        with open(_TOKEN_FILE, "r", encoding="utf-8") as f:
+            t = f.read().strip()
+        if t:
+            return t
+    except Exception:
+        pass
+    t = hashlib.sha256(os.urandom(32)).hexdigest()[:24]
+    try:
+        with open(_TOKEN_FILE, "w", encoding="utf-8") as f:
+            f.write(t)
+        os.chmod(_TOKEN_FILE, 0o600)
+    except Exception:
+        pass
+    return t
+
+
+ADMIN_TOKEN = _admin_token()
 
 VIBES = ["calm", "energetic", "intellectual", "creative", "competitive", "chill", "social", "introvert", "extrovert"]
 ROLES = ["play", "watch", "discuss", "practise", "attend", "meet"]
@@ -200,6 +233,15 @@ def _match_post(path, payload, timeout=30):
         return {"error": "%s: %s" % (type(e).__name__, str(e)[:160])}
 
 
+def _match_get(path, timeout=20):
+    """Read-only GET against the matching service — health and pool provenance."""
+    try:
+        with urllib.request.urlopen(MATCH_URL + path, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return {"_error": "%s: %s" % (type(e).__name__, str(e)[:160])}
+
+
 def _searcher_profile(body):
     """Profile of the person running the search: a store user by name/id, or a custom dict.
     Shaped the way the matching engine reads it (name/vibe/geo/langs/interests)."""
@@ -207,9 +249,15 @@ def _searcher_profile(body):
     if who:
         for u in _read():
             if str(u.get("name", "")).strip().lower() == who or str(u.get("id", "")) == who:
+                # age and formats were missing. `_hard_gates` refuses any dating intent when the
+                # SEARCHER's age is unknown, so the lab returned a confident zero for a whole class of
+                # searches and looked like an engine result.
                 return {"name": u.get("name"), "vibe": u.get("vibe"), "geo": u.get("geo"),
                         "langs": u.get("langs") or [], "interests": u.get("interests") or [],
-                        "role": u.get("role"), "km": u.get("km")}, u
+                        "role": u.get("role"), "km": u.get("km"), "age": u.get("age"),
+                        "formats": u.get("formats") or [], "verified": u.get("verified"),
+                        "lat": u.get("lat"), "lon": u.get("lon"),
+                        "radiusKm": u.get("radiusKm")}, u
     p = body.get("profile") if isinstance(body.get("profile"), dict) else {}
     p.setdefault("name", body.get("self") or "Tester")
     return p, None
@@ -220,20 +268,43 @@ def _path(handler):
 
 
 class H(BaseHTTPRequestHandler):
+    def _authed(self):
+        """The page itself is served without the token — it has to be, so a browser can ask for one.
+        Every API call needs it. Constant-time compare, so the check is not a guessing oracle."""
+        got = self.headers.get("X-Admin-Token") or ""
+        if not hmac.compare_digest(str(got), ADMIN_TOKEN):
+            send_json(self, 401, {"ok": False, "error": "unauthorized"})
+            return False
+        return True
+
     def do_GET(self):
         p = _path(self)
         if p == "/admin" or p == "/admin/" or p == "/":
-            send(self, 200, HTML, "text/html")
-        elif p == "/api/admin/ping":
+            return send(self, 200, HTML, "text/html")
+        if not self._authed():
+            return
+        if p == "/api/admin/ping":
             send_json(self, 200, {"ok": True})
         elif p == "/api/admin/users":
             u = list_users()
             send_json(self, 200, {"count": len(u), "users": u})
+        elif p == "/api/admin/health":
+            # What system am I even looking at: engine, config, pool provenance, which users.json.
+            w = _match_get("/api/agent/weights")
+            pl = _match_get("/api/agent/pool")
+            err = (w or {}).get("_error") or (pl or {}).get("_error")
+            send_json(self, 200, {"ok": not err, "core": (w or {}).get("core"),
+                                  "count": (pl or {}).get("count"),
+                                  "fromStore": (pl or {}).get("fromStore"),
+                                  "bySource": (pl or {}).get("bySource"), "store": (pl or {}).get("store"),
+                                  "adminStore": os.path.abspath(STORE), "error": err})
         else:
             send_json(self, 404, {})
 
     def do_POST(self):
         p = _path(self)
+        if not self._authed():
+            return
         body = read_json(self)
         if p == "/api/admin/users":
             send_json(self, 200, {"ok": True, "user": add_user(body)})
@@ -256,6 +327,18 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, {"ok": "error" not in r, "searcher": prof,
                                   "searcherKnown": bool(rec), "intent": r.get("intent", intent),
                                   "candidates": r.get("candidates") or [], "error": r.get("error")})
+        elif p == "/api/admin/funnel":
+            # «Почему никого нет»: the shape of the search, not its result.
+            prof, rec = _searcher_profile(body)
+            intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            ctx = {"self": prof.get("name") or "", "uid": "admin-lab"}
+            if body.get("now"):
+                ctx["now"] = float(body["now"])
+            r = _match_post("/api/agent/funnel", {"intent": intent, "profile": prof, "ctx": ctx,
+                                                  "now": body.get("now")})
+            r["searcher"] = prof
+            r["searcherKnown"] = bool(rec)
+            send_json(self, 200, r)
         elif p == "/api/admin/explain":
             # Why did (or didn't) B show up for A's search — full per-feature decision trace.
             prof, _rec = _searcher_profile(body)
@@ -266,16 +349,10 @@ class H(BaseHTTPRequestHandler):
             r = _match_post("/api/agent/explain", {"intent": intent, "profile": prof, "ctx": ctx,
                                                    "candidate": body.get("candidate")})
             send_json(self, 200, r)
-        elif p == "/api/admin/clear":
-            send_json(self, 200, {"ok": clear_users(), "count": 0})
-        elif p == "/api/admin/reseed":
-            with _LOCK:
-                try:
-                    os.remove(STORE)
-                except OSError:
-                    pass
-            _seeded["done"] = False
-            send_json(self, 200, {"ok": True, "count": len(list_users())})
+        # /api/admin/clear and /api/admin/reseed are GONE. They deleted the live store — the one the
+        # matcher reads and real onboarded people live in — with no auth, no backup and no audit, and
+        # reseed called os.remove() BEFORE it knew a demo pool was reachable. Rebuilding fixtures is a
+        # shell command on the box, not a button one click from real data.
         else:
             send_json(self, 404, {})
 
@@ -324,6 +401,16 @@ td.wrap2{white-space:normal;max-width:220px}
 .advtog{cursor:pointer;color:#f5455c;font-size:12px;font-weight:600;user-select:none}
 /* --- Matching lab --- */
 .tabs{display:flex;gap:6px;margin-left:8px}
+.hbar{padding:7px 14px;background:#fff;border-bottom:1px solid #e8e8ee;font-size:12.5px;display:flex;
+  align-items:center;gap:6px;flex-wrap:wrap}
+.hbar .sep{color:#c9ccd6}
+.funnel{margin-top:14px;border-top:1px solid #eee;padding-top:8px}
+.frow{display:flex;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px dashed #f0f0f4}
+.frow.sub{padding-left:16px;border-bottom:0;color:#7a7f8c;font-size:13px}
+.frow .fl{flex:1;min-width:0}
+.frow .fn{width:64px;text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+.frow.sub .fn{font-weight:500}
+.frow .fnote{width:210px;font-size:12px}
 .tab{padding:6px 13px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:#6b7180;border:1px solid transparent}
 .tab.on{background:#fde7eb;color:#c32b40;border-color:#f7c9d2}
 .band{display:inline-block;border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:700;white-space:nowrap}
@@ -357,14 +444,82 @@ td.wrap2{white-space:normal;max-width:220px}
 <div class="toast" id="toast"></div>
 <script>
 let TOK=sessionStorage.getItem('kleal_admin_tok')||'', USERS=[], Q='', editing=null;
+let HEALTH=null, FUN=null, FUNBUSY=false;
 let TAB='users', LAB={running:false,res:null,err:null,trace:null,traceFor:'',lastIntent:null,searcher:null};
 const $=s=>document.querySelector(s), esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800);}
-async function api(path,opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json','X-Admin-Token':TOK},opts.headers||{});const r=await fetch(path,opts);if(r.status===401){TOK='';sessionStorage.removeItem('kleal_admin_tok');render();throw new Error('unauthorized');}return r.json();}
+async function api(path,opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json','X-Admin-Token':TOK},opts.headers||{});const r=await fetch(path,opts);if(r.status===401){TOK='';sessionStorage.removeItem('kleal_admin_tok');gate();throw new Error('unauthorized');}return r.json();}
+// ---- «Почему никого нет»: the shape of a search instead of its result ----
+async function runFunnel(){
+  const who=(gv('#f_who')||'').trim(), topics=(gv('#f_topics')||'').trim();
+  if(!topics){ toast('Укажи темы'); return; }
+  FUNBUSY=true; render();
+  const intent={topics:topics.split(',').map(t=>t.trim()).filter(Boolean),
+                role:gv('#f_role')||'meet', mode:gv('#f_mode')||'offline', time:gv('#f_time')||'tomorrow'};
+  try{ FUN=await api('/api/admin/funnel',{method:'POST',body:JSON.stringify({self:who,intent})}); }
+  catch(e){ FUN={ok:false,error:String(e&&e.message||e)}; }
+  FUNBUSY=false; render();
+}
+function funnelView(){
+  const f=(FUN&&FUN.funnel)||null, sc=(f&&f.scored)||{}, g=(f&&f.gates)||{};
+  const row=(label,n,note)=>`<div class="frow"><div class="fl">${label}</div>
+      <div class="fn">${n==null?'—':n}</div><div class="fnote muted">${note||''}</div></div>`;
+  const drops=(obj)=>Object.keys(obj||{}).filter(k=>k!=='_in').sort((a,b)=>obj[b]-obj[a])
+      .map(k=>`<div class="frow sub"><div class="fl">− ${k}</div><div class="fn">${obj[k]}</div><div></div></div>`).join('');
+  const meta=(f&&f.meta)||{};
+  return `<div class="card">
+    <h3>Почему никого нет</h3>
+    <div class="muted" style="margin-bottom:10px">Тот же путь, что и в реальном поиске. Ничего не пишет и никому ничего не отправляет.</div>
+    <div class="grid2">
+      <label>Искатель (имя из базы)<input id="f_who" value="${(LFF.who||'').replace(/"/g,'&quot;')}" placeholder="оставь пустым — гость без профиля"></label>
+      <label>Темы через запятую<input id="f_topics" value="${(LFF.topics||'').replace(/"/g,'&quot;')}" placeholder="padel, coffee"></label>
+      <label>Роль<select id="f_role">${['meet','play','watch','discuss','practise','attend'].map(r=>`<option ${LFF.role===r?'selected':''}>${r}</option>`).join('')}</select></label>
+      <label>Режим<select id="f_mode">${['offline','online','hybrid'].map(r=>`<option ${LFF.mode===r?'selected':''}>${r}</option>`).join('')}</select></label>
+    </div>
+    <button class="primary" onclick="runFunnel()" ${FUNBUSY?'disabled':''}>${FUNBUSY?'Считаю…':'Построить воронку'}</button>
+    ${FUN&&FUN.error?`<div class="err">${FUN.error}</div>`:''}
+    ${f?`<div class="funnel">
+      ${row('В пуле', f.pool, 'loadtest-строки уже исключены')}
+      ${row('Минус сам искатель', f.self!=null?-f.self:0, '')}
+      ${row('Прошли жёсткие гейты', f.eligible, Object.keys(g).length?'':'никого не отсеяли')}
+      ${drops(g)}
+      ${row('Дошли до оценки', sc._in, '')}
+      ${drops(sc)}
+      ${row('В выдаче', f.slate, 'слейт ограничен восемью')}
+      <div class="muted" style="margin-top:10px">домен <b>${meta.domain||'?'}</b> · ${meta.core||'?'} · ${meta.config_version||''} · ${meta.config_sha||''}
+      ${FUN.searcherKnown===false?' · <b style="color:#c0392b">искатель не найден в базе — считалось от гостя</b>':''}</div>
+    </div>`:''}
+  </div>`;
+}
+let LFF={who:'',topics:'',role:'meet',mode:'offline'};
 const VIBES=["calm","energetic","intellectual","creative","competitive","chill","social","introvert","extrovert"];
 const ROLES=["play","watch","discuss","practise","attend","meet"];
 
-async function load(){const r=await api('/api/admin/users');USERS=r.users||[];render();}
+async function load(){const r=await api('/api/admin/users');USERS=r.users||[];render();loadHealth();}
+// What system am I looking at. Everything here already existed behind /api/agent/weights and
+// /api/agent/pool — the panel had simply never asked.
+async function loadHealth(){ try{ HEALTH=await api('/api/admin/health'); }catch(e){ HEALTH={error:String(e&&e.message||e)}; } render(); }
+function healthBar(){
+  if(!HEALTH) return '<div class="hbar muted">проверяю движок…</div>';
+  const c=HEALTH.core||{}, st=HEALTH.store||{}, src=HEALTH.bySource||{};
+  const bad=v=>`<b style="color:#c0392b">${v}</b>`, good=v=>`<b>${v}</b>`;
+  // Unreachable is not the same as disabled. Painting a red «ВЫКЛЮЧЕН» because the request failed is
+  // the false alarm that teaches an operator to ignore this bar.
+  const engine = (HEALTH.ok===false || !HEALTH.core)
+      ? `<b style="color:#b7791f">движок не отвечает${HEALTH.error?' · '+HEALTH.error:''}</b>`
+      : (c.enabled ? good('Core v2 '+(c.config_version||'')+' · '+(c.config_sha||''))
+                   : bad('Core v2 ВЫКЛЮЧЕН — легаси-скорер'+(c.error?(' · '+c.error):'')));
+  const parts=Object.keys(src).sort((a,b)=>src[b]-src[a]).map(k=>k+' '+src[k]).join(' · ');
+  // The admin's own default store path differs from onboarding's; a restart without KLEAL_USERS
+  // would split the store in two and nothing would say so. So it says so.
+  const split = (st.path && HEALTH.adminStore && st.path!==HEALTH.adminStore);
+  const age = st.mtime ? Math.round((Date.now()/1000-st.mtime)/60) : null;
+  return `<div class="hbar">${engine}
+    <span class="sep">·</span>пул <b>${HEALTH.count!=null?HEALTH.count:'?'}</b>${parts?` <span class="muted">(${parts})</span>`:''}
+    <span class="sep">·</span><span class="muted" title="${st.path||''}">хранилище ${st.path?st.path.split('/').slice(-2).join('/'):'?'}${age!=null?', изменено '+age+' мин назад':''}</span>
+    ${split?`<span class="sep">·</span>${bad('РАСХОЖДЕНИЕ ПУТЕЙ: движок и панель читают разные файлы')}`:''}
+    ${HEALTH.error?`<span class="sep">·</span>${bad(HEALTH.error)}`:''}</div>`;
+}
 const gv=id=>{const e=$(id);return e?e.value:'';}, gc=id=>{const e=$(id);return e?e.checked:false;};
 async function saveUser(){
   const u={name:gv('#f_name'),age:+gv('#f_age')||28,area:gv('#f_area'),interests:gv('#f_int'),vibe:gv('#f_vibe'),
@@ -390,8 +545,6 @@ function editRow(id){const u=USERS.find(x=>x.id===id);if(!u)return;editing=id;re
 function toggleAdv(){const a=$('#advbox');if(a)a.style.display=(a.style.display==='none'?'block':'none');}
 async function delRow(id){const u=USERS.find(x=>x.id===id);if(!confirm('Delete '+(u?u.name:'user')+'?'))return;await api('/api/admin/user/'+id+'/delete',{method:'POST'});toast('Deleted');await load();}
 async function toggle(id,field){const u=USERS.find(x=>x.id===id);if(!u)return;await api('/api/admin/user/'+id,{method:'POST',body:JSON.stringify({[field]:!u[field]})});await load();}
-async function reseed(){if(!confirm('Reset the user list to the demo pool? This replaces all users.'))return;const r=await api('/api/admin/reseed',{method:'POST'});toast('Reseeded '+r.count+' users');await load();}
-async function clearAll(){if(!confirm('Delete ALL users? The system will have no people until you add some. This cannot be undone.'))return;await api('/api/admin/clear',{method:'POST'});toast('All users deleted');await load();}
 
 function gate(){
   $('#app').innerHTML=`<div class="top"><span class="logo">kleal</span><span class="pill">admin · test mode</span></div>
@@ -418,7 +571,10 @@ const PRESETS=[
   ['Книги',{topics:'книги, кофе',type:'social',role:'discuss',time:'This weekend'}],
   ['Свидание',{topics:'прогулки, кино',type:'dating',role:'meet',time:'This weekend'}],
 ];
-const NOW_QUIET=1752613200; // локальное 23:00 — внутри тихих часов 22:00–09:00
+// Was a hardcoded epoch (a fixed moment in July 2025), so "quiet hours" tested a date in the past
+// rather than the rule. Pin 23:00 of TODAY instead — still deterministic within a session, still
+// inside the 22:00-09:00 window, but it moves with the calendar.
+function nowQuiet(){ const d=new Date(); d.setHours(23,0,0,0); return Math.floor(d.getTime()/1000); }
 function labIntent(){
   const topics=gv('#l_topics').split(',').map(s=>s.trim()).filter(Boolean);
   const it={topics:topics,type:gv('#l_type'),role:gv('#l_role'),mode:gv('#l_mode'),time:gv('#l_time')||'Flexible'};
@@ -433,7 +589,7 @@ function labIntent(){
 }
 function labBody(extra){
   const b={self:gv('#l_self'),intent:labIntent()};
-  if(gc('#l_quiet')) b.now=NOW_QUIET;
+  if(gc('#l_quiet')) b.now=nowQuiet();
   return Object.assign(b,extra||{});
 }
 function applyPreset(i){const p=PRESETS[i][1];
@@ -601,6 +757,7 @@ function wireLab(){
 }
 
 function render(){
+  if(!TOK) return gate();          // no token -> the sign-in card, not a console that cannot load
   const q=Q.toLowerCase();
   const rows=USERS.filter(u=>!q||(u.name+' '+(u.interests||[]).join(' ')+' '+u.vibe).toLowerCase().includes(q));
   const flag=(u,f,label,warn)=>`<span class="flag ${warn?'warn':''} ${u[f]?'on':''}" title="${label}" onclick="toggle('${u.id}','${f}')">${u[f]?(warn?'❚':'✓'):'·'}</span>`;
@@ -613,10 +770,19 @@ function render(){
     <div class="tabs">
       <button class="tab ${TAB==='users'?'on':''}" onclick="setTab('users')">Люди</button>
       <button class="tab ${TAB==='lab'?'on':''}" onclick="setTab('lab')">Матчинг-лаборатория</button>
+      <button class="tab ${TAB==='funnel'?'on':''}" onclick="setTab('funnel')">Почему никого нет</button>
     </div>
     <span class="muted" style="margin-left:auto">${USERS.length} users</span>
-    <button class="ghost mini" onclick="reseed()">Reset to demo pool</button>
-    <button class="danger mini" onclick="clearAll()">Delete all users</button></div>`;
+    </div>${healthBar()}`;
+  if(TAB==='funnel'){
+    // same caret discipline as the lab: render() rebuilds everything
+    ['who','topics','role','mode'].forEach(k=>{const e=$('#f_'+k); if(e) LFF[k]=e.value;});
+    const ae2=document.activeElement, aid2=(ae2&&ae2.id)||'';
+    $('#app').innerHTML=head+'<div class="wrap">'+funnelView()+'</div>';
+    setTimeout(()=>{ ['who','topics','role','mode'].forEach(k=>{const e=$('#f_'+k); if(e&&LFF[k]!=null) e.value=LFF[k];});
+      if(aid2){const f=$('#'+aid2); if(f) f.focus();} },0);
+    return;
+  }
   if(TAB==='lab'){
     // render() rebuilds the DOM, so remember where the caret was — otherwise auto-refresh would
     // yank the cursor out of the field mid-word.
@@ -703,10 +869,11 @@ function render(){
     <p class="muted" style="font-size:12px">Changes take effect for the matching agent within a few seconds (shared user store). Test mode.</p>
   </div>`;
 }
-load().catch(()=>toast('Load failed — is the server up?'));
+if(TOK) load().catch(()=>toast('Load failed — is the server up?')); else gate();
 </script></body></html>'''
 
 
 if __name__ == "__main__":
     print("Kleal admin-service on http://127.0.0.1:%d  (store=%s, seed from %s)" % (PORT, STORE, MATCH_URL))
+    print("ADMIN TOKEN: %s   (from %s — set KLEAL_ADMIN_TOKEN to override)" % (ADMIN_TOKEN, _TOKEN_FILE))
     ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

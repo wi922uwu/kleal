@@ -39,3 +39,6 @@ llm_demo_app.py
 # credentials — never in git, even hashed
 accounts.json
 accounts.json.tmp
+
+# admin token — generated per box, never in git
+admin_token.txt

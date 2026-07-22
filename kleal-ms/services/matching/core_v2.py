@@ -807,7 +807,7 @@ def explain(intent, prof, ctx, cand, H, cfg):
                 "reasons_ru": rs_ru, "reasons_en": rs_en, "reason_keys": rkeys, "gap_ru": gap_ru, "gap_en": gap_en})
     return out
 
-def search(intent, prof, ctx, candidates, H, cfg):
+def search(intent, prof, ctx, candidates, H, cfg, diag=None):
     """Score policy-ALLOWED candidates. Returns (slate, meta). `H` injects the taxonomy helpers
     from app.py: {'topical', 'cat_of', 'reciprocal', 'role_conflict'} — taxonomy stays single-sourced."""
     intent, prof, ctx = intent or {}, prof or {}, ctx or {}
@@ -820,15 +820,27 @@ def search(intent, prof, ctx, candidates, H, cfg):
     now_ts = ctx.get("now") or time.time()             # pin ctx.now for deterministic replay
     received24 = ctx.get("received24") or {}           # {name_lower: proposals received last 24h}
     out = []
+    # Every `continue` below is an answer to «почему я никого не вижу», and every one of them used to
+    # be thrown away. `diag` is an optional counter the caller passes in; when absent this is exactly
+    # the loop it always was.
+    def _drop(reason):
+        if diag is not None:
+            diag[reason] = diag.get(reason, 0) + 1
+    if diag is not None:
+        diag["_in"] = diag.get("_in", 0) + len(candidates)
     for c in candidates:
         if is_paused(c, now_ts):
+            _drop("paused")
             continue                                    # paused leaves retrieval for this purpose (§10.1)
         tier = assign_tier(intent, c, topics, H)
         if tier == "T5":
+            _drop("no topical overlap (T5)")
             continue                                    # no meaningful overlap -> never proposed
         if tier == "T3" and not intent.get("adjacentAllowed", True):
+            _drop("adjacent not allowed (T3)")
             continue
         if intent.get("exactMatchRequired") and tier not in ("T0", "T1"):
+            _drop("exact match required")
             continue                                    # exact-only search: no siblings AND no adjacent
         F = build_features(intent, prof, c, domain, H, role_conflict)
         d_ab = directional_score(F, dom_cfg, priors)
@@ -838,6 +850,7 @@ def search(intent, prof, ctx, candidates, H, cfg):
         disc_ok = (d_ab["lcb"] >= float(dom_cfg["discovery_min_lcb"]) and
                    d_ab["coverage"] >= float(dom_cfg["discovery_min_coverage"]))
         if not disc_ok and tier not in ("T0", "T1"):
+            _drop("below discovery thresholds")
             continue                                    # weak AND indirect -> drop; direct matches
         #                                                 stay visible as "needs clarification"
         _sem = (F.get("semantic_activity") or (None, 0.0, ""))
