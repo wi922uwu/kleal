@@ -1362,8 +1362,6 @@ def negotiate_candidates(intent, cands, prof=None):
 # carries an OPEN own-intent becomes a public plan (title from ENTITY_MAP, distance from their geo). Draws
 # from load_candidates() so it honours the store, and returns [] when nobody is posting — the client then
 # shows an empty state instead of invented pins.
-_EXPLORE_WHEN = ("Today 18:00", "Tonight 21:00", "Tomorrow 08:00", "Tomorrow 19:00", "Sat 11:00",
-                 "Sun 10:00", "Wed 17:00", "Fri 20:00", "Thu 20:00", "Sat 17:00")
 
 
 # ================= Group Formation Core (spec §15) =================================================
@@ -1615,7 +1613,10 @@ def explore_plans(limit=12, self_name=""):
             lat = lon = None
         out.append({"title": ENTITY_MAP.get(topics[0]) or (topics[0].capitalize() + " meetup"),
                     "who": c.get("name") or "Someone", "topics": topics, "role": (oi or {}).get("role") or "meet",
-                    "when": _EXPLORE_WHEN[i % len(_EXPLORE_WHEN)],
+                    # Ten invented times used to be stamped onto real people's pins by list
+                    # position — the map asserted "Today 18:00" about someone who never said it.
+                    # Their own intent's time, or nothing.
+                    "when": ((oi or {}).get("time") or ""),
                     "dist": (round(float(km), 1) if km is not None else None),
                     "area": c.get("area") or "",
                     "lat": lat, "lon": lon, "verified": bool(c.get("verified"))})

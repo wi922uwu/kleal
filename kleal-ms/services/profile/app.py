@@ -1270,8 +1270,6 @@ function setAvail(st){ if(!(DATA&&DATA.name)) return;
     .then(r=>{ if(r&&r.ok){ RECV=r.receiving; toast(T('Доступность обновлена','Availability updated')); }
                else toast(T('Не удалось сохранить','Could not save')); render(); })
     .catch(()=>toast(T('Не удалось сохранить','Could not save'))); }
-function readinessChip(c){ if(!c||!c.readiness||c.readiness==='open_now') return null;
-  return (UILANG==='ru'?(c.readiness_ru||c.readiness):(c.readiness_en||c.readiness)); }
 function svg(inner,vb,w){return '<svg viewBox="'+(vb||'0 0 24 24')+'" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="'+(w||24)+'" height="'+(w||24)+'">'+inner+'</svg>';}
 const IC={
   // --- Figma "Agent Home / request flow" set (479:14518…14661) ---
@@ -1356,7 +1354,6 @@ const IC={
   mic:svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6"/>',null,26),
   peoplePin:svg('<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 9-4"/><path d="M17.5 21s3-2.6 3-5a3 3 0 0 0-6 0c0 2.4 3 5 3 5z"/><circle cx="17.5" cy="16" r="1"/>'),
 };
-const MASCOT = '<svg viewBox="0 0 48 48" width="46" height="46"><rect x="6" y="6" width="36" height="36" rx="16" fill="#FDE7EB"/><circle cx="19" cy="24" r="2.4" fill="#F5455C"/><circle cx="29" cy="24" r="2.4" fill="#F5455C"/><path d="M18.5 30c2.2 1.8 8.8 1.8 11 0" fill="none" stroke="#F5455C" stroke-width="2" stroke-linecap="round"/></svg>';
 document.getElementById('sbic').innerHTML=
  '<svg viewBox="0 0 20 14" fill="#181B22" width="18" height="13"><rect x="0" y="9" width="3" height="5" rx="1"/><rect x="5.3" y="6" width="3" height="8" rx="1"/><rect x="10.6" y="3" width="3" height="11" rx="1"/><rect x="15.9" y="0" width="3" height="14" rx="1"/></svg>'
  +'<svg viewBox="0 0 20 15" fill="none" stroke="#181B22" stroke-width="1.9" stroke-linecap="round" width="18" height="14"><path d="M2 5.2a13 13 0 0 1 16 0M5 8.6a8 8 0 0 1 10 0M8 12a3 3 0 0 1 4 0"/></svg>'
@@ -1697,13 +1694,6 @@ function safetyRow(it, act){
 function checkRow(label,on,key){ on=ui(key,on); return `<div class="crow"><div class="cbx ${on?'on':''}" data-cbx data-uk="${key||''}">${on?IC.check:''}</div>
   <div class="cl">${esc(label)}</div></div>`; }
 
-// The reason line usually already says "рядом (3.6 км)" — printing the distance again in the name row
-// was pure duplication AND the thing that pushed the line into wrapping. Show it only if absent.
-function candKm(c, sub){
-  if(c==null||c.km==null) return '';
-  if(String(sub||'').indexOf(String(c.km))>=0) return '';
-  return `<span class="candkm">${c.km} ${T('км','km')}</span>`;
-}
 let editingSummary=false, SUMBUSY=false, _sumTried=false;
 // The summary used to be written ONLY by adaptSummary() after a profile edit, so a user who never
 // edited anything saw the placeholder forever. Generate it the first time the profile is opened,
@@ -1762,8 +1752,6 @@ function scr_overview(){
 function masc(pose, extra){ return `<img class="masc fill${extra||''}" src="assets/${pose}.svg" alt="" draggable="false">`; }
 function emptyState(title,sub){ return `<div class="empty fade"><div class="eic">${IC.spark}</div>
   <div class="etx">${esc(title)}</div>${sub?`<div class="esub">${esc(sub)}</div>`:''}</div>`; }
-function scr_snapshot(){ if(!DATA.snapshot.length) return emptyState(T("Пока не по чему матчить","Nothing to match on yet"),T("Kleal заполнит это по мере знакомства.","Kleal fills this in as it learns about you."));
-  return `<div class="stack fade">${DATA.snapshot.map(r=>summaryRow(r,true)).join('')}</div>`; }
 
 function interestSummary(it){
   const kv=(it.kv||[]).map(k=>k[1]).filter(Boolean);
@@ -2074,13 +2062,6 @@ function ptestKeep(field){
   PTEST_RESULT.conflicts=(PTEST_RESULT.conflicts||[]).filter(x=>x[0]!==field);
   saveState(); render();
 }
-function scr_places(){
-  if(!DATA.availability.length && !DATA.places.length) return emptyState(T("Пока нет мест и времени","No places or times yet"),T("Kleal запомнит, где и когда тебе удобно встречаться.","Kleal will note where and when you like to meet."));
-  return `<div class="fade"><div class="rowhead"><div class="seclbl">${T('Когда обычно свободен','Usual availability')}</div></div>
-    <div class="stack">${DATA.availability.length?DATA.availability.map(r=>summaryRow(r,false)).join(''):`<div class="seccap">${T('Пока не задано — Kleal сам поймёт, когда тебе удобно.','Not set yet — Kleal will learn your usual times.')}</div>`}</div>
-    <div class="rowhead"><div class="seclbl">${T('Места','Places')}</div></div>
-    <div class="stack">${DATA.places.length?DATA.places.map(r=>summaryRow(r,false)).join(''):`<div class="seccap">${T('Пока не задано.','Not set yet.')}</div>`}</div></div>`;
-}
 function scr_safety(){
   const groups=safetyGroups(DATA.safety).map(gr=>{
     let inner='';
@@ -2127,7 +2108,7 @@ function scr_knows(){
     ${sect(T('Предполагаемые','Inferred'), iList, false, 'k-i-')}</div>`;
 }
 // ================= V4: intents · intent chat · discovery · messages =================
-let curIntent=null, intentLaunched=false, agentBusy=false;
+let curIntent=null;
 function capw(s){ s=String(s==null?'':s); return s.charAt(0).toUpperCase()+s.slice(1); }
 // Feedback loop: tell the backend the owner's accept/reject so future ranking learns (fire-and-forget).
 function postFeedback(name,decision){ try{ fetch('/api/agent/feedback',{method:'POST',
@@ -2176,29 +2157,7 @@ async function buildIntentCard(intent){
           ['clock','Time',it.time||'Flexible'],['pin','Area',area],
           ['shield','Safety',it.verifiedOnly?'Verified people only':'Public places only'],
           ['compass','Reach',reach],['eye','Visibility','Via Kleal only']] };
-  intentLaunched=false; render(); saveState(); }
-
-// ---------- Phase 2 (prod): LLM agent-to-agent negotiation on launch ----------
-async function negotiateIntent(){
-  if(!curIntent){ return; }
-  if(curIntent.negotiated){ saveCurIntent(); return; }
-  curIntent.negotiating=true; render();
-  let r; try{ r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({intent:(curIntent.intent||{topics:curIntent.tags||[],type:curIntent.type,role:curIntent.role,time:curIntent.time,mode:curIntent.mode}), profile:matchProfile(), ctx:{self:DATA.name||''}, candidates:curIntent.candidates||[]})}).then(x=>x.json()); }catch(e){ r=null; }
-  const got=!!(r&&r.candidates&&r.candidates.length);
-  if(got){ curIntent.candidates=r.candidates;
-    curIntent.confidence=(r.candidates[0]&&r.candidates[0].score)||curIntent.confidence; }
-  curIntent.negotiating=false;
-  // Only claim the round happened if it actually did. On a failed request the candidates keep their
-  // pre-negotiation shape (no `agree`, no `decided`), and marking negotiated=true made every real
-  // person render as "отказ" — the app telling the user they were turned down by someone nobody asked.
-  curIntent.negotiated=got; if(got) curIntent.status='matched';
-  saveCurIntent(); render();
-  if(!got){ toast(T('Не удалось связаться с агентами — попробуй ещё раз','Could not reach their agents — try again')); return; }
-  const ag=(curIntent.candidates||[]).filter(c=>c.agree&&c.decided).length;
-  toast(ag?T('Согласились: '+ag+' — одобри интро, чтобы связаться','Agreed: '+ag+' — approve an intro to connect')
-          :T('Пока никто не подтвердил','Nobody has confirmed yet'));
-}
+  render(); saveState(); }
 // ---------- Phase 1: saved intents ----------
 function saveCurIntent(){
   if(!curIntent) return;
@@ -2487,7 +2446,6 @@ function matchProfile(){
   const g=t=>{const r=snapRow(t);return r?String(r.value||''):'';};
   const langs=(DATA.langsList&&DATA.langsList.length)?DATA.langsList.slice()
     :parseLangRow(g('Languages'));
-  const vibeRow=((DATA.social||{}).rows||[])[0];
   // city used to be the RAW snapshot row — «Barcelona · Eixample · Gràcia · Max travel 25 min» went
   // to the matcher as a "city". Canonical DATA.area wins; the first display segment is the fallback.
   const p={ name:DATA.name||'',
@@ -2523,7 +2481,6 @@ function bandLabel(c,full){ if(!c) return '';
   // percentage: spec §9.7 bans user-facing percentages outright, and the v1 score is a different scale
   // that cannot be honestly relabelled as a band.
   return ''; }
-function candReasons(c){ return ((UILANG==='ru'?c.reasons_ru:c.reasons_en)||c.reasons||[]); }
 // Unified chat header so you always know WHERE you are: Back (left) · centered title (+ optional subtitle) ·
 // optional action pills (right). Every chat screen uses this — consistent look, consistent back button.
 function chatHead(title, opts){ opts=opts||{};
@@ -3016,19 +2973,6 @@ async function joinPublic(i){
 
 // Intents tab — rebuilt on the design system. It used to show raw percentages (which the spec
 // forbids), English copy inside a Russian UI, and duplicate cards from repeated launches.
-const INTENT_STATUS = () => ({
-  searching: [T('Идёт поиск','Searching'),'warn'],
-  matched:   [T('Есть совпадения','Matches found'),'ok'],
-  planned:   [T('Встреча назначена','Meetup planned'),'ok'],
-  paused:    [T('На паузе','Paused'),'mut'],
-  done:      [T('Завершён','Done'),'mut'],
-});
-function intentBest(it){                      // the honest headline: the best band, never a percent
-  const cs=it.candidates||[];
-  if(!cs.length) return null;
-  const order={especially_close:0,strong_option:1,broader_option:2,needs_clarification:3};
-  return cs.slice().sort((a,b)=>(order[a.band]??9)-(order[b.band]??9))[0];
-}
 // ---- intents live on the server and are re-ranked on every load ----
 // They used to be localStorage-only, holding a frozen candidate list from the moment of creation: a
 // private note that never re-searched, while the requests and messages it drove were already shared.
@@ -3629,7 +3573,7 @@ function flowStart(text){
 const BACK_MAP = {
   reqcomposer:'agenthome', clarify:'reqcomposer', summary:'clarify',
   searching:'summary', fewmatches:'summary',
-  bestfit:'agenthome', options:'bestfit', recos:'options', candprofile:'bestfit',
+  bestfit:'agenthome', options:'bestfit', candprofile:'bestfit',
   sendreq:'candprofile', waiting:'sendreq', mutual:'waiting', suggestion:'mutual',
   picktime:'suggestion', pickplace:'picktime', awaiting:'pickplace', planok:'awaiting',
   meetstate:'agenthome', mymeetup:'meetstate',
@@ -3884,10 +3828,6 @@ function okHints(v){
   const ru=(UILANG==='ru');
   return (Array.isArray(v)?v:[]).map(x=>String(x||'').trim())
     .filter(x=>x && x.length<=48 && (!ru || /[а-яё]/i.test(x))).slice(0,3);
-}
-// Is there anything personal to build on at all? With no usable interest we do not invent one.
-function hintsSignals(){
-  return (DATA.interests||[]).filter(i=>i&&i.name&&i.used!==false).length;
 }
 // The interests a person actually carries, as coarse keys — so a chip can be about what they DO
 // («поиграть в доту») rather than a category name («игры»).
@@ -4637,27 +4577,6 @@ function pollReply(){
     pollReply();                                   // still pending — keep watching
   }, 4000);
 }
-async function _planSendLegacy(){
-  let r=null;
-  try{
-    r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({intent:(FLOW&&flowIntent())||{topics:[]}, profile:matchProfile(),
-                           candidates:[PLAN.cand]})}).then(x=>x.json());
-  }catch(e){ r=null; }
-  const v=(r&&r.candidates&&r.candidates[0])||null;
-  PLAN.reply=v; PLAN.mutual=!!(v&&v.agree);
-  if(cur!=='waiting') return;                     // the user navigated away meanwhile
-  if(PLAN.mutual){
-    if(v&&v.reply) PLAN.suggest={title:T('Кофе в центре','Coffee in the city centre'),
-      time:slotText()!==T('время не выбрано','time not picked')?slotText():((FLOW&&flowIntent().time)||''),
-      place:T('Уютное место рядом','A cosy spot nearby'), quote:String(v.reply)};
-    cur=PLAN.suggest?'suggestion':'mutual';
-  } else {
-    toast(((v&&v.reason)||T('Пока без ответа','No reply yet')));
-  }
-  render();
-}
-
 // ============ Figma batch 2: results, best fit, candidate profile, why suggested ============
 // Everything below renders REAL candidates from /api/agent/match; "Why suggested" is the
 // engine's own decision trace (/api/agent/explain), not copy written for the mockup.
@@ -4760,19 +4679,6 @@ function scr_bestfit(){
     </div></div>`;
 }
 
-// ---- Recommendations (479:14821) — grouped list ----
-function scr_recos(){
-  const all=(FLOW&&FLOW.res)||[];
-  const rows=all.slice(0,5).map((c,i)=>personRow(c,i)).join('<div class="hr"></div>');
-  return `<div class="kflow fade">${kbar()}
-    <div class="kcont">
-      ${kprompt(T('Лучшее совпадение по запросу','Best fit for your request'))}
-      ${all.length?`<div class="kgroup">${rows}</div>`
-        :`<div class="k-cap" style="color:var(--muted)">${T('Пока никого — попробуй расширить поиск.','No one yet — try widening the search.')}</div>`}
-    </div></div>`;
-}
-
-// ---- Full profile + Why suggested (479:14967 / 15028) ----
 function scr_candprofile(){
   const c=CAND; if(!c) return scr_options();
   const tabs=[['profile',T('Профиль','Profile')],['why',T('Почему','Why suggested')],['vis',T('Видимость','Visibility')]];
@@ -5145,12 +5051,12 @@ function scr_help(){
         'Privacy controls and blocking live under Privacy & Security. A support channel is not connected yet — it arrives together with accounts.')}</div></div>
   </div>`;
 }
-const SCREENS={agenthome:scr_agenthome,overview:scr_overview,snapshot:scr_snapshot,interests:scr_interests,social:scr_social,persona:scr_persona,
-  places:scr_places,safety:scr_safety,memory:scr_memory,knows:scr_knows,
+const SCREENS={agenthome:scr_agenthome,overview:scr_overview,interests:scr_interests,social:scr_social,persona:scr_persona,
+  safety:scr_safety,memory:scr_memory,knows:scr_knows,
   intents:scr_intents,search:scr_search,messages:scr_messages,
   notifs:scr_notifications,matchchat:scr_matchchat,
   reqcomposer:scr_reqcomposer,clarify:scr_clarify,summary:scr_summary,searching:scr_searching,fewmatches:scr_fewmatches,
-  options:scr_options,bestfit:scr_bestfit,recos:scr_recos,candprofile:scr_candprofile,
+  options:scr_options,bestfit:scr_bestfit,candprofile:scr_candprofile,
   sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
   picktime:scr_picktime,pickplace:scr_pickplace,awaiting:scr_awaiting,planok:scr_planok,
   meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved,
@@ -5230,7 +5136,7 @@ function render(){
   // the Figma request flow carries its own app bar + composer, exactly like the chat screens
   const chat=(cur==='matchchat'||cur==='persona'
               ||cur==='reqcomposer'||cur==='clarify'||cur==='summary'||cur==='searching'||cur==='fewmatches'
-              ||cur==='options'||cur==='bestfit'||cur==='recos'||cur==='candprofile'
+              ||cur==='options'||cur==='bestfit'||cur==='candprofile'
               ||['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'].includes(cur));
   const bn=document.getElementById('bnav'); if(bn){ bn.style.display=chat?'none':'flex'; bn.innerHTML=bnavHTML(); }
   // The Explore map is edge-to-edge: no app bar, no body padding, no page scroll.
@@ -5242,7 +5148,7 @@ function render(){
     // Guard: a flow screen without its state used to throw (back → FLOW=null → scr_clarify reads
     // FLOW.when → blank screen). Redirect instead of rendering a broken screen.
     startLive();                       // one live loop for the whole app, whatever screen is open
-  const NEEDS_FLOW=['reqcomposer','clarify','summary','searching','fewmatches','bestfit','options','recos'];
+  const NEEDS_FLOW=['reqcomposer','clarify','summary','searching','fewmatches','bestfit','options'];
     const NEEDS_CAND=['candprofile'];
     const NEEDS_PLAN=['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'];
     if(NEEDS_FLOW.includes(cur)&&!FLOW) cur='agenthome';
@@ -5316,8 +5222,6 @@ function doAct(act, ds){
     case 'editsum': editingSummary=true; render(); break;
     case 'cancelsum': editingSummary=false; render(); break;
     case 'savesum': { const el=document.getElementById('sumta'); setSummary(el?el.value:''); editingSummary=false; render(); toast('Summary saved'); break; }
-    case 'askwhy': toast('Kleal built this from what you shared during onboarding. Every detail is editable.'); break;
-    case 'editbasics': openSheet('basics'); break;
     case 'editrow': {
       // «Личность» is a screen now, not a sheet: the story and the test live there, and the prose
       // sheet is the step AFTER it. Jumping the hub row straight into the sheet skipped the page
@@ -5344,7 +5248,6 @@ function doAct(act, ds){
       else { if(e)DATA.memory.splice(e.sig,1); cur='memory'; render(); toast('Signal removed'); }
       break; }
     // Safety & Privacy actions
-    case 'autonomy': break;   // handled by data-schoice
     case 'trusted-contact': toast(T('Доверенный контакт — скоро','Add a trusted contact — coming soon')); break;
     case 'review-memory': setTab('memory'); break;   // opens the agent-memory screen
     case 'verify-me': toast(T('Проверка фото и документов — скоро','Photo & ID verification — coming soon')); break;
@@ -5352,20 +5255,13 @@ function doAct(act, ds){
     case 'report': toast(T('Центр безопасности и жалобы — скоро','Safety centre & reporting — coming soon')); break;
     case 'export-data': toast('Preparing your data export — we’ll email you a copy'); break;
     case 'delete-account': toast('Delete account would ask you to confirm, then erase everything'); break;
-    case 'nav': setTab(ds.tab||'overview'); break;
-    case 'fab': case 'createintent': flowStart(''); break;   // one chat screen; the bar carries «+ Создать интент»
+    case 'createintent': flowStart(''); break;   // one chat screen; the bar carries «+ Создать интент»
     case 'intent-open': openIntentFlow(ds.id); break;
     case 'intent-del': deleteIntent(ds.id); break;
-    case 'launch-intent': intentLaunched=true; render(); negotiateIntent(); break;
-    case 'intro': { const i=+ds.ci; approveIntro((curIntent&&curIntent.candidates||[])[i], curIntent); break; }
-    case 'pass': { const i=+ds.ci; const c=(curIntent&&curIntent.candidates||[])[i]; if(!c)break;
-      postFeedback(c.name,'rejected'); c.passed=true; c.agree=false; render(); saveState();
-      toast('Kleal will remember you passed on '+c.name); break; }
     case 'live': { const k=ds.kind||'voice'; addNotif('match',(k==='watch'?'Watch-together room opened':'Live voice room opened'),
       'Kleal is inviting nearby people to “'+((curIntent&&curIntent.title)||'your plan')+'”',null); saveState();
       toast((k==='watch'?'Watch room':'Voice room')+' created — inviting people'); break; }
     case 'broaden': broadenIntent(ds.kind); break;
-    case 'editsum': editingSummary=true; render(); break;
     case 'resum': { if(SUMBUSY)break; SUMBUSY=true; render();
       adaptSummary().then(()=>{ SUMBUSY=false; render(); }); break; }
     case 'edit-photo': editPhoto(); break;
@@ -5387,7 +5283,6 @@ function doAct(act, ds){
       if(!confirm(T('Выйти и очистить профиль на этом устройстве?','Log out and clear this profile on this device?'))) break;
       try{ localStorage.clear(); }catch(_e){}
       location.href='/'; break; }
-    case 'area-clear': AREAFILTER=null; render(); break;
     // ---- Explore map chrome: toggled by class/innerHTML so the Leaflet map survives ----
     case 'open-plans': { const sh=document.getElementById('xsheet'), sc=document.getElementById('xscrim');
       if(sh) sh.classList.add('on'); if(sc) sc.classList.add('on'); break; }
@@ -5420,11 +5315,6 @@ function doAct(act, ds){
       render(); saveState();
       sendMsg(matchWith, t);
       break; }
-    case 'edit-intent': if(curIntent){ FLOW=FLOW||{}; FLOW.request=curIntent.query||curIntent.title;
-        FLOW.intent=curIntent.intent||null; FLOW.summary={request:FLOW.request}; cur='clarify'; render(); }
-      else toast(T('Нечего изменять','Nothing to edit')); break;
-    case 'search-area': loadExplore(); toast(T('Обновляю карту…','Refreshing the map…')); break;
-    case 'filter': toast(T('Фильтры — скоро','Filters are coming soon')); break;
     case 'join': { const p=PUBLIC_INTENTS[+ds.pi];
       if(p&&p.gid) joinGroup(+ds.pi); else joinPublic(+ds.pi); break; }
     case 'group-leave': leaveGroup(ds.gid); break;

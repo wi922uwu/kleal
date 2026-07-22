@@ -125,9 +125,6 @@ _FIN_RE = re.compile(r"that'?s all|that is all|\bfinish|\bdone\b|no more|nothing
 _ADD_RE = re.compile(r"\badd\b|another|one more|\bmore\b|\byes\b|yeah|sure|\balso\b|actually"
                      r"|добав|ещ[её]|да[.! ]*$|конечно|также|хочу", re.I)
 _CONFIRM_OPTIONS = {"ru": "Добавить ещё интерес | Это всё", "en": "Add another interest | That's all"}
-# Recognises the closing question in either language, in the agent's OWN words — it phrases it freely,
-# so match the stable part ("ещё интерес" / "another interest"), not a whole sentence.
-_CONFIRM_ASKED_RE = re.compile(r"another interest|ещ[ёе]\s+интерес|это вс[ёе]|that'?s all", re.I)
 
 # gibberish / non-answer detection: catch keyboard-mash like "afcafcafc" / "ппфцпц" so the funnel
 # re-asks instead of silently accepting junk and moving on.
@@ -1138,7 +1135,6 @@ WIDGETS.location=function(slot){
   const stat=t=>{ const e=slot.querySelector('#gstat'); if(e) e.textContent=t; };
   function setCity(name){ if(!name)return; area_in.value=name; set('geo.comfortableAreas',[name]); set('city',name); cont.disabled=false; }
   // Suggestions, so nobody has to guess the exact spelling of their own city in a blank box.
-  let _sugT=null;
   function suggest(q){
     q=String(q||'').trim().toLowerCase();
     const hits=(q.length<1?CITIES:CITIES.filter(c=>c[0].toLowerCase().startsWith(q)||c[1].toLowerCase().startsWith(q)))
