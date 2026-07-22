@@ -698,9 +698,16 @@ def match_candidates_legacy(intent, prof, ctx=None):
         ents = ' | '.join(str(e).lower() for e in (c.get('entities') or []))
         if ents and any(t in ents for t in topics):
             score += W['entity']; reasons.append('shares a community')
-        # geo
-        km = c['km']
-        if km <= GEO_NEAR:
+        # geo. `km` is absent or null for ~1000 rows in the live store (nobody collects it during
+        # onboarding), and this read used to be `c['km']` — so the legacy scorer raised TypeError on
+        # the first such candidate and returned NOTHING. That is the documented rollback path
+        # (KLEAL_CORE_V2=0, and the automatic fallback when the config sha drifts): the system would
+        # not have degraded to worse matches, it would have gone to zero matches for everyone, with
+        # the failure surfacing as an empty slate. Unknown distance now simply scores no geo bonus.
+        km = _num(c.get('km'))
+        if km is None:
+            pass
+        elif km <= GEO_NEAR:
             score += W['geo_near']; reasons.append('very close (%.1f km)' % km)
         elif km <= GEO_MID:
             score += W['geo_mid']; reasons.append('%.1f km away' % km)
@@ -1758,6 +1765,51 @@ def person_report(name, now_ts=None):
             "policy": policy, "readiness": readiness}
 
 
+def compare_scorers(intent, prof, ctx=None):
+    """Same query, both scorers, side by side — the shipped Core v2 and the legacy scorer that
+    KLEAL_CORE_V2=0 falls back to.
+
+    This exists because the fallback is silent. A config whose sha does not match drops the whole
+    system onto the legacy scorer without an error anywhere, and the only visible symptom is that
+    different people start appearing. Before this you could not answer «насколько вообще разные
+    эти два движка» without editing an env var on a live box.
+    """
+    ctx = dict(ctx or {})
+    try:
+        new = match_candidates(intent, prof, ctx) if CORE_V2 else []
+    except Exception as e:
+        new = []
+        ctx["_new_error"] = str(e)[:160]
+    try:
+        old = match_candidates_legacy(intent, prof, ctx)
+    except Exception as e:
+        old = []
+        ctx["_old_error"] = str(e)[:160]
+    nn = [str(c.get("name") or "") for c in new]
+    on = [str(c.get("name") or "") for c in old]
+    sn, so = set(nn), set(on)
+    both = sn & so
+    denom = float(len(sn | so)) or 1.0
+    # Rank movement for the people BOTH scorers show — a slate can have identical membership and
+    # still be a different product if the order is inverted.
+    moved = []
+    for name in both:
+        a, b = nn.index(name), on.index(name)
+        if a != b:
+            moved.append({"name": name, "new": a + 1, "old": b + 1, "delta": b - a})
+    moved.sort(key=lambda m: -abs(m["delta"]))
+    return {"ok": True,
+            "core": {"enabled": CORE_V2, "config_version": (_CORE_CFG or {}).get("config_version"),
+                     "config_sha": ((_CORE_CFG or {}).get("_sha256") or "")[:12], "error": _CORE_ERR},
+            "new": {"n": len(nn), "names": nn}, "old": {"n": len(on), "names": on},
+            "shared": sorted(both), "onlyNew": [n for n in nn if n not in so],
+            "onlyOld": [n for n in on if n not in sn],
+            "jaccard": round(len(both) / denom, 3),
+            "topChanged": bool(nn[:1] != on[:1]),
+            "moved": moved[:8],
+            "errors": {k: v for k, v in ctx.items() if k.startswith("_") and k.endswith("error")}}
+
+
 def reset_fatigue(name):
     """Clear one person's received-proposal log. The ONLY write this admin surface makes, and it
     touches matching's own kleal_store.json — never users.json."""
@@ -1941,6 +1993,10 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, res)
             except Exception as e:
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
+        elif p == "/api/agent/admin/compare":
+            send_json(self, 200, compare_scorers(_normalize_intent(body.get("intent")),
+                                                 body.get("profile") if isinstance(body.get("profile"), dict) else {},
+                                                 body.get("ctx") if isinstance(body.get("ctx"), dict) else {}))
         elif p == "/api/agent/admin/fatigue-reset":
             send_json(self, 200, reset_fatigue(body.get("name")))
         elif p == "/api/agent/stability":

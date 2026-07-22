@@ -356,6 +356,29 @@ def test_e2e_probe():
         check("«%s» resolved to a topic" % row["phrase"], bool(row.get("topics")), json.dumps(row)[:140])
 
 
+def test_rollback_path_works():
+    """The legacy scorer is the documented rollback (KLEAL_CORE_V2=0) AND the automatic fallback
+    when the config sha drifts. It read c['km'] directly, and ~1000 live rows have no km, so it
+    raised TypeError on the first such candidate and returned nothing. The rollback would not have
+    degraded matching — it would have zeroed it, and shown up as an empty slate with no error.
+    """
+    print("\n[rollback] the fallback scorer must actually run, not raise")
+    for topic in ("coffee", "padel", "books"):
+        st, r = _req(ADMIN + "/api/admin/compare",
+                     data={"self": "Nadia", "intent": dict(INTENT, topics=[topic])},
+                     token=TOKEN, timeout=300)
+        check("%s: compare responds" % topic, st == 200 and (r or {}).get("ok"), "got %s" % st)
+        if not (r or {}).get("ok"):
+            continue
+        check("%s: neither scorer raised" % topic, not r.get("errors"), json.dumps(r.get("errors"))[:160])
+        check("%s: the legacy scorer returns people" % topic, (r.get("old") or {}).get("n", 0) > 0,
+              json.dumps(r.get("old"))[:120])
+        check("%s: core v2 returns people" % topic, (r.get("new") or {}).get("n", 0) > 0,
+              json.dumps(r.get("new"))[:120])
+        check("%s: the comparison reports which config is loaded" % topic,
+              bool((r.get("core") or {}).get("config_sha")), json.dumps(r.get("core"))[:120])
+
+
 def test_cohorts():
     print("\n[cohorts] the questions a 3000-row table cannot answer")
     st, r = _req(ADMIN + "/api/admin/cohorts", token=TOKEN, timeout=60)
@@ -408,7 +431,7 @@ def main():
     for fn in (test_auth, test_destructive_routes_gone, test_health_and_store_agreement,
                test_funnel_arithmetic, test_searcher_profile_carries_age, test_stability,
                test_diversity_discriminates, test_engine_separates_topics, test_lab_still_works,
-               test_person_card, test_verbs_do_not_fabricate, test_pair_trace, test_buddy_search_trigger, test_e2e_probe, test_cohorts,
+               test_person_card, test_verbs_do_not_fabricate, test_pair_trace, test_buddy_search_trigger, test_e2e_probe, test_rollback_path_works, test_cohorts,
                test_proposals_registry, test_registry_is_read_only):
         try:
             fn()

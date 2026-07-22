@@ -499,6 +499,13 @@ class H(BaseHTTPRequestHandler):
             r = _match_post("/api/agent/" + p.rsplit("/", 1)[-1], payload, timeout=180)
             r["searcherKnown"] = bool(rec)
             send_json(self, 200, r)
+        elif p == "/api/admin/compare":
+            prof, rec = _searcher_profile(body)
+            r = _match_post("/api/agent/admin/compare",
+                            {"intent": body.get("intent") or {}, "profile": prof,
+                             "ctx": {"self": prof.get("name") or "", "uid": "admin-lab"}}, timeout=180)
+            r["searcherKnown"] = bool(rec)
+            send_json(self, 200, r)
         elif p == "/api/admin/e2e":
             prof, rec = _searcher_profile(body)
             r = e2e_probe(prof, body.get("phrases"))
@@ -718,7 +725,37 @@ function diagCards(){
       <div class="frow"><div class="fl">Порядок не менялся</div><div class="fn"></div><div class="fnote">${verdict(st.stableOrder,st.stableOrder?'да':'НЕТ')}</div></div>
       ${(st.drift&&st.drift.length)?`<div class="frow sub"><div class="fl">появлялись/исчезали: ${st.drift.join(', ')}</div><div class="fn">${st.drift.length}</div><div></div></div>`:''}
     </div>`:''}
-  </div>`+e2eCard();
+  </div>`+e2eCard()+compareCard();
+}
+// The Core v2 fallback is silent: a config whose sha does not match drops the whole system onto the
+// legacy scorer with no error anywhere, and the only symptom is that different people appear.
+let CMP=null, CMPBUSY=false;
+async function runCompare(){
+  const who=($('#f_who')&&$('#f_who').value.trim())||'';
+  const topics=(($('#f_topics')&&$('#f_topics').value)||'кофе').split(',').map(s=>s.trim()).filter(Boolean);
+  CMPBUSY=true; render();
+  try{ CMP=await api('/api/admin/compare',{method:'POST',body:JSON.stringify({self:who,
+        intent:{topics:topics, role:'meet', mode:'offline', time:'tomorrow'}})}); }
+  catch(e){ CMP={ok:false,error:String(e&&e.message||e)}; }
+  CMPBUSY=false; render();
+}
+function compareCard(){
+  const c=CMP;
+  return `<div class="card"><h3>Core v2 против легаси-скорера</h3>
+    <div class="muted" style="margin-bottom:8px">Один запрос, два движка. Откат на легаси происходит МОЛЧА — при несовпадении sha конфига — и снаружи выглядит просто как «стали попадаться другие люди». Берёт тему из формы воронки выше.</div>
+    <button class="primary" onclick="runCompare()" ${CMPBUSY?'disabled':''}>${CMPBUSY?'Считаю…':'Сравнить движки'}</button>
+    ${c&&(c.error||c._error)?`<div class="err">${c.error||c._error}</div>`:''}
+    ${c&&c.ok?`<div class="funnel">
+      ${_kv('Core v2 включён', c.core.enabled?('да · '+(c.core.config_version||'')+' · '+(c.core.config_sha||'')):'<b style="color:#c0392b">НЕТ — сейчас работает легаси</b>')}
+      ${_kv('в выдаче: v2 / легаси', c.new.n+' / '+c.old.n)}
+      ${_kv('совпадение составов', Math.round(c.jaccard*100)+'%')}
+      ${_kv('первый в списке сменился', c.topChanged?'<b style="color:#b7791f">да</b>':'нет')}
+      ${c.onlyNew.length?`<div class="frow"><div class="fl">только в v2</div><div class="fn">${c.onlyNew.length}</div><div class="fnote">${c.onlyNew.join(', ')}</div></div>`:''}
+      ${c.onlyOld.length?`<div class="frow"><div class="fl">только в легаси</div><div class="fn">${c.onlyOld.length}</div><div class="fnote">${c.onlyOld.join(', ')}</div></div>`:''}
+      ${(c.moved||[]).map(m=>`<div class="frow sub"><div class="fl">${m.name}</div><div class="fn">${m.old}→${m.new}</div><div class="fnote">${m.delta>0?'выше на '+m.delta:'ниже на '+(-m.delta)}</div></div>`).join('')}
+      ${Object.keys(c.errors||{}).length?`<div class="frow"><div class="fl" style="color:#c0392b">ошибки движков</div><div class="fn"></div><div class="fnote">${JSON.stringify(c.errors)}</div></div>`:''}
+    </div>`:''}
+  </div>`;
 }
 // Everything above enters at the ranker with a hand-built intent, so it can only ever exonerate
 // the ranker. This one types the phrase the user types.
