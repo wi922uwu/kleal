@@ -222,6 +222,16 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
             # show the candidate's ORIGINAL interest strings, not the space-stripped normal forms
             # `matched` now carries the candidate's own strings, so the card quotes them verbatim
             names = ", ".join(sorted(str(m) for m in matched)[:3])
+            if not names and best >= 2:
+                # A sub/broad-category match with no EXACT interest (e.g. a wrestling search hitting
+                # a football player through the shared "sports" category). Surface the candidate
+                # interest that shares the category, so a «related» card shows «тоже спорт: футбол»
+                # instead of leading with an unrelated first interest — the match is real, the
+                # display just hid the evidence.
+                cat_of = H["cat_of"]
+                tbroads = {cat_of(t)[0] for t in topics if cat_of(t)[0]}
+                rel = [str(x) for x in ints if cat_of(str(x))[0] in tbroads]
+                names = ", ".join(sorted(set(rel))[:2])
             # multi-topic intents: someone matching MORE of the asked topics must outrank a
             # one-topic overlap ("стартапы+ai+кофе" -> a founder beats a coffee-only person).
             # Single aggregated subfeature, capped at 1.0 — still no double count (spec §6.1).
@@ -912,7 +922,11 @@ def search(intent, prof, ctx, candidates, H, cfg, diag=None):
         rec = reciprocal_score(d_ab, d_ba)
         disc_ok = (d_ab["lcb"] >= float(dom_cfg["discovery_min_lcb"]) and
                    d_ab["coverage"] >= float(dom_cfg["discovery_min_coverage"]))
-        if not disc_ok and tier not in ("T0", "T1"):
+        # `broaden` is a deliberate second pass when the exact search found nobody: it keeps the
+        # related-but-weak T2/T3 people (adjacent activities) that the discovery threshold hides, so
+        # «тренировка по борьбе» with no wrestlers can still offer the sporty crowd — honestly
+        # banded as needs_clarification / broader, never sold as an exact match.
+        if not disc_ok and tier not in ("T0", "T1") and not intent.get("broaden"):
             _drop("below discovery thresholds")
             continue                                    # weak AND indirect -> drop; direct matches
         #                                                 stay visible as "needs clarification"

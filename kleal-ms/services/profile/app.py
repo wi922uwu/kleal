@@ -3901,6 +3901,10 @@ async function flowSearch(isRetry){
     FLOW.page.exhausted=true;
   }
   FLOW.sig=_fsSig; FLOW.resumed=_fsSeen.length>0;
+  // The exact search found nobody and the engine broadened to related activities. Say so honestly
+  // on the results screen — never present broadened people as a match for what was asked.
+  FLOW.broadened=!!(r&&r.broadened);
+  FLOW.fbNote=(r&&r.fallback&&(r.fallback.note||r.fallback.note_ru))||'';
   if(cands.length) seenAdd(_fsSig, cands.map(c=>c.name));
   FLOW.res=cands;
   persistIntent();                 // the tab must show what Kleal is actually working on
@@ -4749,6 +4753,13 @@ function moreFooter(){
 }
 
 // ---- Your options (479:14751) — tabs + Recommended + Also for you ----
+// Honest banner when the engine broadened past the exact request (no wrestlers -> the sport crowd).
+function broadenBanner(){
+  if(!(FLOW&&FLOW.broadened)) return '';
+  const note=FLOW.fbNote||T('Точного совпадения по запросу рядом нет — вот кто занимается близкими активностями.',
+                            'No exact match nearby — here are people doing related activities.');
+  return `<div class="kbub ag" style="background:#FFF6E5;border-color:#F2D08A">${esc(note)}</div>`;
+}
 function scr_options(){
   const all=(FLOW&&FLOW.res)||[];
   // was slice(1,6): the server sends eight and the last two were fetched and silently dropped
@@ -4765,6 +4776,7 @@ function scr_options(){
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
       ${kprompt(T('Твои варианты','Your options'))}
+      ${broadenBanner()}
       <div class="kbub ag">${T('Лучшее под твой запрос. Переключай тип.','The best fits for your request. Switch between types.')}</div>
       <div class="ktabs">${tabs.map(t=>`<div class="kchip ${OPTTAB===t[0]?'on':''}" data-act="opt-tab" data-k="${t[0]}">${t[1]}</div>`).join('')}</div>
       ${body}
@@ -4795,7 +4807,8 @@ function scr_bestfit(){
       <div class="su">${esc(r)}</div></div></div>`;}).join('');
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
-      ${kprompt(T('Лучшее совпадение по запросу','Best fit for your request'))}
+      ${kprompt(FLOW&&FLOW.broadened?T('Близкие по активности','Related activities'):T('Лучшее совпадение по запросу','Best fit for your request'))}
+      ${broadenBanner()}
       <div class="kfused">${personRow(c,0,'top')}${rows}</div>
     </div>
     <div class="kfoot">

@@ -957,8 +957,10 @@ def run_match(intent, sig, uid, lang, negotiate=False, owner=None):
         except Exception:
             pass
     block = {"intent": intent, "top": (cands[0] if cands else None), "candidates": cands[:3]}
-    if not cands:
-        block["fallback"] = res.get("fallback")
+    if res.get("broadened"):
+        block["broadened"] = True
+    if res.get("fallback"):
+        block["fallback"] = res.get("fallback")   # honest note is attached whenever the exact search was empty
     return block, [_shape(c, lang) for c in cands[:4]]
 
 
@@ -974,6 +976,8 @@ _FALLBACK_REPLY = {
 _CLICK = {"ru": "Думаю, вы сойдётесь с %s — %s.", "en": "I think you'd click with %s — %s."}
 _BROADER = {"ru": "Идеального совпадения нет, но есть вариант пошире — %s (%s). Посмотришь?",
             "en": "No perfect match, but here's a broader option — %s (%s). Want a look?"}
+_BROADENED = {"ru": "Точного совпадения по этому рядом нет — но вот кто занимается близкими активностями: %s. Посмотришь?",
+              "en": "No exact match for this nearby — but here are people doing related activities: %s. Want a look?"}
 _NEEDCLAR = {"ru": "Кое-кто есть, например %s, но по деталям стоит уточнить — расскажешь чуть больше (время, район)?",
              "en": "There are a few, like %s, but the details need firming up — tell me a bit more (time, area)?"}
 # search asked for, but no concrete activity given ("найди мне кого-нибудь") -> ask, don't dump people
@@ -1089,7 +1093,12 @@ def buddy_chat(messages, profile, signals, uid=None):
         why = (t.get("reason") or humanize(t.get("reasons"), lang)
                or ("хороший фит" if lang == "ru" else "a great fit"))
         band = t.get("band")
-        if band in ("especially_close", "strong_option"):
+        if block.get("broadened"):
+            # Exact search found nobody; these are related-activity people. Say so — never present
+            # a broadened result as if it were a match for what was asked.
+            names = ", ".join(str(c.get("name")) for c in (block.get("candidates") or [])[:3]) or t.get("name")
+            line = _BROADENED[lang] % names
+        elif band in ("especially_close", "strong_option"):
             line = _CLICK[lang] % (t.get("name"), why)          # confident: real fit + reachable
         elif band == "broader_option":
             line = _BROADER[lang] % (t.get("name"), why)        # honest: broader, not perfect

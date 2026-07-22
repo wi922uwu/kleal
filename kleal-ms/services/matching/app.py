@@ -893,20 +893,37 @@ def match_candidates(intent, prof, ctx=None, diag=None):
         diag['meta'] = meta                                # engine, config_version, domain, config_sha
     return slate
 
-def _online_fallback(intent):
-    """When 0 offline candidates: offer to go live + ways to broaden — so the user never hits a dead end."""
+def _online_fallback(intent, diag=None):
+    """When 0 offline candidates. The note used to be one canned line that always blamed the topic
+    and offered to widen the radius — even when the real reason was «nobody nearby does this» and a
+    wider radius would change nothing. It now reads the funnel: how many people were RELATED but too
+    weak to show (adjacent activities) vs how many shared nothing at all. «Тренировка по борьбе» with
+    no wrestlers but 179 sporty people gets «точного нет, но есть близкие», not «расширь радиус»."""
     topics = ', '.join(intent.get('topics') or []) or 'this'
+    scored = (diag or {}).get("scored") or {}
+    related = int(scored.get("below discovery thresholds", 0))   # T2/T3: adjacent, just too weak
+    none_at_all = int(scored.get("no topical overlap (T5)", 0))
+    if related > 0:
+        note_ru = "Точного совпадения по «%s» рядом нет, но есть %d человек с близкими активностями." % (topics, related)
+        note_en = "No exact match for %s nearby, but %d people share a related activity." % (topics, related)
+        sugg = [{"id": "adjacent", "label": "Показать близких", "label_en": "Show related people"},
+                {"id": "intent",   "label": "Создать интент — сообщу, когда появится точное совпадение",
+                 "label_en": "Create an intent — I'll ping you when an exact match appears"},
+                {"id": "radius",   "label": "Расширить радиус", "label_en": "Widen the distance"}]
+    else:
+        note_ru = "Пока рядом никто этим не занимается («%s»). Создай интент — подберу, как только появится, или пойдём онлайн." % topics
+        note_en = "Nobody nearby is into %s yet. Create an intent and I'll match you when someone appears, or go online." % topics
+        sugg = [{"id": "intent", "label": "Создать интент — подберу позже",
+                 "label_en": "Create an intent — I'll match you later"},
+                {"id": "online", "label": "Найти онлайн", "label_en": "Look online"},
+                {"id": "radius", "label": "Расширить радиус", "label_en": "Widen the distance"}]
     return {
         "room": {"title": "Live room: " + intent.get('title', 'meet'),
                  "options": [{"id": "voice", "label": "Start a voice room"},
                              {"id": "watch", "label": "Watch together online"}]},
-        "suggestions": [
-            {"id": "inexact",  "label": "Allow less-exact matches"},
-            {"id": "adjacent", "label": "Include adjacent topics"},
-            {"id": "radius",   "label": "Widen the distance"},
-            {"id": "wait",     "label": "Keep searching in the background"},
-        ],
-        "note": "No offline matches for %s right now — go live, or broaden the search." % topics,
+        "suggestions": sugg,
+        "relatedCount": related, "noOverlapCount": none_at_all,
+        "note": note_ru, "note_ru": note_ru, "note_en": note_en,
     }
 
 def agent_plan(query, prof, ctx=None, override=None):
@@ -2112,7 +2129,21 @@ class H(BaseHTTPRequestHandler):
                                    "remaining": max(0, (m.get("unseen") or 0) - len(cands)),
                                    "exhausted": (m.get("unseen") or 0) <= len(cands)}
                 if not cands:
-                    res["fallback"] = _online_fallback(intent)
+                    # Exact search found nobody. Try ONE broadened pass that surfaces the related-
+                    # but-weak people the discovery threshold hides (adjacent activities). If any
+                    # exist, return them clearly marked `broadened` so the client can say «точного
+                    # нет, но есть близкие», never sold as an exact match.
+                    d2 = {}
+                    bcands = match_candidates(dict(intent, broaden=True), prof, ctx, d2)
+                    if bcands:
+                        res["candidates"] = bcands
+                        res["broadened"] = True
+                        m2 = d2.get("meta") or {}
+                        if m2.get("ranked") is not None:
+                            res["page"] = {"shown": len(bcands), "ranked": m2.get("ranked"),
+                                           "remaining": max(0, (m2.get("unseen") or 0) - len(bcands)),
+                                           "exhausted": (m2.get("unseen") or 0) <= len(bcands)}
+                    res["fallback"] = _online_fallback(intent, d)
                 send_json(self, 200, res)
             except Exception as e:
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})

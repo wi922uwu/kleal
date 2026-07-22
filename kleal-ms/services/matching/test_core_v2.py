@@ -196,6 +196,25 @@ _a = json.dumps(run(INTENT_COFFEE, PROF_RICH, [FULL, SPARSE, one, dup]), sort_ke
 _b = json.dumps(run(INTENT_COFFEE, PROF_RICH, [FULL, SPARSE, one, dup]), sort_keys=True)
 check("MT2 single-topic slate is unchanged and deterministic", _a == _b)
 
+# ------------------------------------------------- broaden: no exact match -> related, honestly banded
+# «тренировка по борьбе» with no wrestlers nearby must not dead-end. A footballer shares the broad
+# «sports» category (T2, below discovery threshold) — hidden by default, surfaced under `broaden`,
+# and never sold as an exact match.
+_FOOTB = {"name": "Footballer", "interests": ["футбол"], "vibe": "chill", "langs": ["es"], "km": 3.0,
+          "geo": NEARBY, "open": True}
+_WREST = {"type": "sport", "topics": ["gym", "wrestling"], "role": "meet", "mode": "offline"}
+_exact = run(_WREST, {"name": "T", "interests": ["coffee"]}, [_FOOTB])
+check("BR1 no exact match -> empty by default (a footballer is not a wrestler)", not _exact, _exact)
+_broad = run(dict(_WREST, broaden=True), {"name": "T", "interests": ["coffee"]}, [_FOOTB])
+check("BR2 broaden surfaces the related-activity person", len(_broad) == 1, _broad)
+if _broad:
+    b = _broad[0]
+    check("BR3 the related person is honestly banded, never especially_close",
+          b["band"] in ("broader_option", "needs_clarification"), b["band"])
+    # the display must surface WHY: the shared-category interest (футбол) shown, not hidden
+    check("BR4 the category-sharing interest is surfaced on the card",
+          "футбол" in [str(x).lower() for x in (b.get("interests") or [])[:2]], b.get("interests"))
+
 # ---------------------------------------------------------------- config validator negatives
 try:
     core_v2.load_config(os.path.join(ROOT, "config", "Kleal_Matching_Core_Config_v2.yaml"),
