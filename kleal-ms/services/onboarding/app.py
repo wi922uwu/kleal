@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (onboarding half, lines 16-301 + the embedded HTML).
 # Talks to llm-service over HTTP for every extract/reply/summary turn; holds NO model keys.
 # Contract: ../../shared/contracts.md. Owner: Dev A.
-import os, sys, json, re, threading, hashlib, time
+import os, sys, json, re, threading, hashlib, hmac, time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
@@ -765,17 +765,71 @@ function startAuth(){ rAuth(); }
 function rAuth(){ st.phase='auth';
   A.innerHTML=`<div class="authwrap fade">
     <div class="authtop"><div class="authmark">kleal</div>
-      <div class="auth-h">Meet your people</div>
-      <div class="auth-sub">Sign in or create your account to get started.</div></div>
+      <div class="auth-h">${T('Найди своих','Meet your people')}</div>
+      <div class="auth-sub">${T('Войди или создай аккаунт, чтобы начать.','Sign in or create your account to get started.')}</div></div>
     <div class="authbtns">
-      <button class="authbtn dark" data-auth="apple">${IC_APPLE}<span>Continue with Apple</span></button>
-      <button class="authbtn white" data-auth="google">${IC_GOOGLE}<span>Continue with Google</span></button>
-      <button class="authbtn coral" data-auth="email">${IC_MAIL}<span>Continue with email</span></button>
+      <button class="authbtn dark" data-auth="apple">${IC_APPLE}<span>${T('Продолжить с Apple','Continue with Apple')}</span></button>
+      <button class="authbtn white" data-auth="google">${IC_GOOGLE}<span>${T('Продолжить с Google','Continue with Google')}</span></button>
+      <button class="authbtn coral" data-auth="email">${IC_MAIL}<span>${T('Продолжить по почте','Continue with email')}</span></button>
+      <button class="authbtn white" data-auth="pw"><span>${T('Логин и пароль','Login and password')}</span></button>
     </div>
     <div class="authterms">${AUTH_TERMS}</div>
   </div>`;
   A.querySelectorAll('[data-auth]').forEach(b=>b.onclick=()=>{ const m=b.dataset.auth;
-    if(m==='email'){ rAuthEmail(); } else { st.profile.authMethod=m; rAuthDone(); } });
+    if(m==='email'){ rAuthEmail(); }
+    else if(m==='pw'){ rAuthPw(); }
+    else { st.profile.authMethod=m; rAuthDone(); } });
+}
+// ---- login + password ----------------------------------------------------------------------
+// A shortcut so a profile survives between sessions instead of being rebuilt through onboarding every
+// time. Deliberately small: no password reset, no rate limiting, no email verification. The password
+// never lives here beyond the request — the server keeps a PBKDF2 hash and a per-account salt, in its
+// own file, away from the matching store.
+function rAuthPw(){ st.phase='auth';
+  A.innerHTML=`<div class="authform fade">
+    <button class="authback" id="ab">${IC_CHEV}</button>
+    <div class="auth-h2">${T('Вход по логину','Sign in')}</div>
+    <div class="auth-sub2">${T('Войди, чтобы вернуться в свой профиль, или создай новый логин.','Sign in to pick your profile back up, or create a new login.')}</div>
+    <div class="fieldlbl">${T('Логин','Login')}</div>
+    <input class="afield" id="alogin" autocapitalize="off" autocomplete="username" placeholder="${T('например, ivan','e.g. ivan')}">
+    <div class="fieldlbl" style="margin-top:12px">${T('Пароль','Password')}</div>
+    <input class="afield" id="apw" type="password" autocomplete="current-password" placeholder="${T('минимум 6 символов','at least 6 characters')}">
+    <div class="cap" id="apwmsg" style="margin-top:10px;min-height:18px;color:#F5455C"></div>
+    <div class="authspace"></div>
+    <div class="authfoot">
+      <button class="cta" id="asignin" disabled>${T('Войти','Sign in')}</button>
+      <button class="cta" id="asignup" disabled style="margin-top:10px;background:#F1F2F5;color:#111">${T('Создать логин','Create a login')}</button>
+      <div class="authterms center">${AUTH_TERMS}</div></div>
+  </div>`;
+  const lg=document.getElementById('alogin'), pw=document.getElementById('apw'),
+        msg=document.getElementById('apwmsg'),
+        bIn=document.getElementById('asignin'), bUp=document.getElementById('asignup');
+  const val=()=>{ const ok=lg.value.trim().length>=3 && pw.value.length>=6;
+    bIn.disabled=!ok; bUp.disabled=!ok; return ok; };
+  lg.oninput=pw.oninput=()=>{ msg.style.color='#F5455C'; msg.textContent=''; val(); };
+  val(); setTimeout(()=>lg.focus(),60);
+  const post=(url,b)=>fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(b)}).then(r=>r.json());
+  bIn.onclick=async()=>{ bIn.disabled=bUp.disabled=true; bIn.textContent=T('Секунду…','One moment…');
+    let r=null; try{ r=await post('/api/onboarding/signin',{login:lg.value.trim(),password:pw.value}); }catch(e){}
+    bIn.textContent=T('Войти','Sign in'); val();
+    if(!r||!r.ok){ msg.textContent=T('Неверный логин или пароль','Wrong login or password'); return; }
+    st.login=r.login;
+    if(r.hasProfile&&r.profile){ st.profile=Object.assign({},r.profile); return openProfile(); }
+    msg.style.color='#6B7180';
+    msg.textContent=T('Логин есть, профиля ещё нет — соберём его сейчас.','Signed in; no profile yet, building it now.');
+    setTimeout(rAuthDone,700); };
+  bUp.onclick=async()=>{ bIn.disabled=bUp.disabled=true;
+    let r=null; try{ r=await post('/api/onboarding/signup',{login:lg.value.trim(),password:pw.value}); }catch(e){}
+    val();
+    if(!r||!r.ok){ msg.textContent = (r&&r.error==='login taken')?T('Такой логин уже занят','That login is taken')
+      : (r&&r.error==='password too short')?T('Пароль короче 6 символов','Password is shorter than 6 characters')
+      : (r&&r.error==='login too short')?T('Логин короче 3 символов','Login is shorter than 3 characters')
+      : T('Не получилось создать логин','Could not create the login'); return; }
+    st.login=r.login; msg.style.color='#6B7180';
+    msg.textContent=T('Логин создан. Теперь соберём профиль.','Login created. Now the profile.');
+    setTimeout(rAuthDone,700); };
+  document.getElementById('ab').onclick=()=>rAuth();
 }
 function rAuthEmail(){ st.phase='auth';
   A.innerHTML=`<div class="authform fade">
@@ -1328,6 +1382,10 @@ function rDone(){ st.phase='done';
   // register the finished profile into the shared user store -> becomes matchable + shows in admin (fire-and-forget)
   try{ fetch('/api/onboarding/register',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({profile:profileForServer()})}).catch(()=>{}); }catch(_e){}
+  // and bind it to the login, so the next sign-in lands in the app instead of back here
+  if(st.login){ const pf=Object.assign({},st.profile); delete pf.photo;
+    try{ fetch('/api/onboarding/attach',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({login:st.login,name:st.profile.name||'',profile:pf})}).catch(()=>{}); }catch(_e){} }
   A.innerHTML=`<div class="done fade"><div class="donedisc">${svg('<path d="M5 12.5l4.5 4.5L19 7"/>','0 0 24 24').replace('width="22" height="22"','width="72" height="72"')}</div>
     <div class="d-h">${T('Ты в игре!',"You're on the board!")}</div>
     <div class="d-sub">${T('Твой агент Kleal готов. Скажи ему, чем хочешь заняться, и он начнёт искать людей и планы.','Your Kleal agent is ready. Tell it what you want to do and it starts finding people and plans.')}</div></div>
@@ -1380,6 +1438,102 @@ HTML = HTML.replace("__PROFILE_URL__", os.environ.get("PROFILE_URL", "").rstrip(
 # registrations landed in a file the matcher never read.
 USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "..", "users.json"))
 _REG_LOCK = threading.Lock()
+
+# ---------------------------------------------------------------- accounts (dev sign-in)
+# A SEPARATE file from users.json on purpose. users.json is the matching store: it is read by the
+# matcher, served to the admin screen and handed around as candidate data. Credentials must not ride
+# along with something that is already being passed about, even hashed.
+ACCOUNTS_PATH = os.environ.get("KLEAL_ACCOUNTS", os.path.join(_HERE, "..", "..", "accounts.json"))
+_ACC_LOCK = threading.Lock()
+_PBKDF_ROUNDS = 200_000
+
+
+def _read_accounts():
+    try:
+        with open(ACCOUNTS_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_accounts(d):
+    tmp = ACCOUNTS_PATH + ".tmp"
+    os.makedirs(os.path.dirname(os.path.abspath(ACCOUNTS_PATH)), exist_ok=True)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False)
+    os.replace(tmp, ACCOUNTS_PATH)
+    try:
+        os.chmod(ACCOUNTS_PATH, 0o600)
+    except Exception:
+        pass
+
+
+def _hash_pw(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"),
+                               bytes.fromhex(salt), _PBKDF_ROUNDS).hex()
+
+
+def _acc_key(login):
+    return str(login or "").strip().lower()
+
+
+def signup(login, password, name=None):
+    """Create an account. The profile itself is attached later, when onboarding finishes."""
+    key = _acc_key(login)
+    if len(key) < 3:
+        return {"ok": False, "error": "login too short"}
+    if len(str(password or "")) < 6:
+        return {"ok": False, "error": "password too short"}
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        if key in accs:
+            return {"ok": False, "error": "login taken"}
+        salt = os.urandom(16).hex()
+        accs[key] = {"login": str(login).strip(), "salt": salt,
+                     "hash": _hash_pw(password, salt), "name": str(name or "").strip(),
+                     "created": int(time.time())}
+        _write_accounts(accs)
+    return {"ok": True, "login": str(login).strip()}
+
+
+def signin(login, password):
+    """Verify, and hand back the stored profile so the app can skip onboarding entirely."""
+    key = _acc_key(login)
+    acc = _read_accounts().get(key)
+    # Same answer whether the login is unknown or the password is wrong: a different message is a
+    # free oracle for which logins exist.
+    bad = {"ok": False, "error": "wrong login or password"}
+    if not acc:
+        return bad
+    try:
+        want = _hash_pw(password, acc.get("salt") or "")
+    except Exception:
+        return bad
+    if not hmac.compare_digest(want, str(acc.get("hash") or "")):
+        return bad
+    # The ONBOARDING-shaped profile, not the user row. They are different shapes — the row is flat
+    # (interests: [...]) and the client expects the nested form (interests.explicit) that the profile
+    # app knows how to map. Handing back the row restored a profile with no interests at all.
+    prof = acc.get("profile") if isinstance(acc.get("profile"), dict) else None
+    return {"ok": True, "login": acc.get("login"), "name": acc.get("name") or "",
+            "profile": prof, "hasProfile": bool(prof)}
+
+
+def attach_profile(login, name, profile=None):
+    """Bind the finished onboarding profile to the account, so the next sign-in restores it verbatim."""
+    key = _acc_key(login)
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        if key not in accs:
+            return {"ok": False, "error": "unknown login"}
+        accs[key]["name"] = str(name or "").strip()
+        if isinstance(profile, dict):
+            # photo is a data URL and can be megabytes; it already travels through shared-origin
+            # localStorage, so it has no business in the credential file.
+            accs[key]["profile"] = {k: v for k, v in profile.items() if k != "photo"}
+        _write_accounts(accs)
+    return {"ok": True}
 _R2M = {"watch": "watch", "play": "play", "discuss": "discuss", "practice": "practise",
         "practise": "practise", "attend": "attend", "meet": "meet"}
 
@@ -1738,6 +1892,12 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, v2_summary(prof, body.get("lang") or "ru"))
             except Exception as e:
                 send_json(self, 200, {"summary": "", "error": str(e)[:200]})
+        elif p in ("/api/onboarding/signup", "/api/v2/signup"):
+            return send_json(self, 200, signup(body.get("login"), body.get("password"), body.get("name")))
+        elif p in ("/api/onboarding/signin", "/api/v2/signin"):
+            return send_json(self, 200, signin(body.get("login"), body.get("password")))
+        elif p in ("/api/onboarding/attach", "/api/v2/attach"):
+            return send_json(self, 200, attach_profile(body.get("login"), body.get("name"), body.get("profile")))
         elif p in ("/api/onboarding/register", "/api/v2/register"):
             # everyone who finishes onboarding is written into the shared user store (matchable + in admin)
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}

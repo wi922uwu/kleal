@@ -35,3 +35,7 @@ ALIA-40b-deploy-log.md
 alia_dl_sup.sh
 extract_docs.py
 llm_demo_app.py
+
+# credentials — never in git, even hashed
+accounts.json
+accounts.json.tmp
