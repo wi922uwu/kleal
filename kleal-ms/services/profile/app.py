@@ -1005,6 +1005,54 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .krsn .ti{font-size:17px;line-height:24px;font-weight:600}
 .krsn .su{font-size:13px;line-height:18px;color:var(--muted)}
 .kbtn.tall{height:56px;min-height:56px}
+/* Create-intent suggestions (Figma 1615:21018). A card of stacked rows, not chips: the design
+   promotes the openers from a chip row into the primary way in, with its own regenerate control. */
+.sugg{display:flex;flex-direction:column;gap:16px;padding:24px 0 16px}
+.sugg .lbl{font-size:13px;line-height:16px;font-weight:500;color:var(--muted)}
+.sugg .card{display:flex;flex-direction:column;background:var(--card);border-radius:16px;overflow:hidden;
+  filter:drop-shadow(0 4px 6px rgba(0,0,0,.08)) drop-shadow(0 1px 1px rgba(0,0,0,.04))}
+.sugg .row{min-height:48px;display:flex;align-items:center;justify-content:center;padding:12px 18px;
+  font-size:15px;line-height:22px;color:var(--fg);text-align:center;cursor:pointer;background:var(--card)}
+.sugg .row:active{background:var(--neutral100)}
+.sugg .row+.row{border-top:1px solid var(--border)}
+.sugg .hintline{font-size:15px;line-height:22px;color:var(--muted)}
+/* Create-intent branching (Figma: format -> group size -> 3-step details) */
+.chrow{display:flex;align-items:center;gap:14px;background:var(--card);border:1.5px solid transparent;
+  border-radius:16px;padding:14px 16px;cursor:pointer;margin-bottom:10px}
+.chrow.on{border-color:var(--primary)}
+.chrow .ic{width:24px;height:24px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--fg)}
+.chrow .ic svg{width:20px;height:20px}
+.chrow .bd{flex:1;min-width:0}
+.chrow .ti{font-size:15px;line-height:22px;font-weight:600;color:var(--fg)}
+.chrow .su{font-size:13px;line-height:18px;color:var(--muted)}
+.chrow .ck{color:var(--primary);opacity:0;flex:none}
+.chrow .ck svg{width:20px;height:20px}
+.chrow.on .ck{opacity:1}
+.stepper{display:flex;align-items:center;padding:2px 0 10px}
+.stepper .st{width:22px;height:22px;border-radius:999px;border:1.5px solid var(--border);display:flex;
+  align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--muted);background:var(--card);flex:none}
+.stepper .st.on{border-color:var(--primary);color:var(--primary)}
+.stepper .ln{flex:1;height:1.5px;background:var(--border)}
+.stepper .ln.on{background:var(--primary)}
+.dcard{background:var(--card);border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:14px;
+  box-shadow:0 8px 24px rgba(0,0,0,.06)}
+.dsec{display:flex;align-items:center;gap:8px;font-size:15px;line-height:22px;font-weight:600;color:var(--fg)}
+.dsec svg{width:18px;height:18px;color:var(--primary)}
+.dchips{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch}
+.dchips .c{flex:none;padding:8px 12px;border-radius:999px;border:1px solid var(--border);background:var(--card);
+  font-size:13px;color:var(--fg);cursor:pointer;white-space:nowrap}
+.dchips .c.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.seg{display:flex;background:var(--neutral100);border-radius:999px;padding:3px}
+.seg .o{flex:1;text-align:center;padding:8px 6px;border-radius:999px;font-size:13px;color:var(--fg);cursor:pointer}
+.seg .o.on{background:var(--primary);color:#fff}
+.dial{display:block;margin:0 auto;touch-action:none;cursor:pointer}
+.dial .val{font-size:34px;font-weight:600;letter-spacing:-1px;fill:var(--fg)}
+.rowlbl{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--muted)}
+.rowlbl b{color:var(--primary);font-weight:600}
+.disc{display:flex;gap:8px;font-size:11px;line-height:15px;color:var(--muted)}
+.disc svg{width:16px;height:16px;flex:none;opacity:.7}
+.tinput{width:100%;border:1px solid var(--border);background:var(--card);border-radius:12px;padding:12px 14px;
+  font-size:15px;color:var(--fg);outline:none}
 .kbtn.sm{height:40px;min-height:40px;font-size:13px;line-height:16px;font-weight:500}
 /* candidate profile */
 .cprof{display:flex;gap:12px;align-items:center;padding:0 16px 12px 12px}
@@ -3794,7 +3842,7 @@ async function flowSay(text, fromSeed){
                   vibe:(r.intent.tags||[]).filter(t=>t!=='meet').join(', ')||null};
     // Only the district question is left when the dialog already gave both the day and the time of
     // day — and the district is optional, so there is nothing the clarify screen MUST ask. Skip it.
-    cur=(FLOW.knownWhen&&FLOW.knownTime)?'summary':'clarify';
+    cur='fmt';   // Figma flow: format -> group size -> details, before the summary
   }
   render();
 }
@@ -4054,10 +4102,16 @@ function kbar(cta){
   // means nothing and duplicates their own buttons.
   const intentMode=(FLOW&&FLOW.mode==='intent');
   const show=!!cta && (!intentMode || (FLOW.msgs||[]).some(m=>m.who==='me'));
+  // In intent mode the design puts «Все интенты» here — navigation to the list, not a finish button.
+  // The way to finish is the conversation itself (the agent turns the request into a plan), so the
+  // pill no longer competes with it. `flow-done` stays reachable from the summary screen's own CTA.
+  if(intentMode) return `<div class="kbar" style="justify-content:space-between">
+  <div class="kback" data-act="flow-back">${IC.back}</div>
+  <div class="kbtn pri sm" data-act="go-intents" style="width:auto;padding:0 16px;gap:8px">${IC.nIntents}<span>${T('Все интенты','All intents')}</span></div></div>`;
   return `<div class="kbar" style="justify-content:space-between">
   <div class="kback" data-act="flow-back">${IC.back}</div>
-  ${show?`<div class="kchip on" data-act="${intentMode?'flow-done':'flow-finish'}" style="cursor:pointer;font-weight:600">${
-    intentMode?T('Готово','Done'):('+ '+T('Создать интент','Create Intent'))}</div>`:''}</div>`; }
+  ${show?`<div class="kchip on" data-act="flow-finish" style="cursor:pointer;font-weight:600">${
+    '+ '+T('Создать интент','Create Intent')}</div>`:''}</div>`; }
 function kprompt(txt){ return `<div class="kprompt"><div class="av">${IC.person}</div>
   <div class="k-h3" style="flex:1;min-width:0">${esc(txt)}</div></div>`; }
 function kcomposer(id,ph){ return `<div class="kcomp" style="padding:10px 16px;border-top:1px solid var(--border);background:var(--bg)">
@@ -4065,6 +4119,149 @@ function kcomposer(id,ph){ return `<div class="kcomp" style="padding:10px 16px;b
   <button class="snd" data-act="flow-send">${IC.send}</button></div>`; }
 
 // ---- 1. Request composer (479:14582) ----
+// The three openers shown on the create-intent screen. Same source as before (hintsFor: profile
+// first, model second, generic last); `FLOW.roll` rotates through the pool so Regenerate returns a
+// different three instead of redrawing the same card.
+// ---- Create Intent: format (Figma «What format do you prefer?») ----
+const FMT_OPTS=()=>[
+  ['offline', IC.pin,        T('Офлайн','Offline'),  T('Вживую','In person')],
+  ['online',  IC.globe,      T('Онлайн','Online'),   T('Видео / голос','Video / voice')],
+  ['hybrid',  IC.plusCircle, T('Гибрид','Hybrid'),   T('И онлайн, и вживую','Both online & offline')]];
+const SIZE_OPTS=()=>[
+  ['1:1',   IC.person, T('1:1','1:1'),                 T('Один на один','One-on-one')],
+  ['small', IC.users,  T('Малая группа','Small group'), T('2–5 человек','2–5 people')],
+  ['party', IC.groups, T('Компания','Party'),           T('10+ человек','10+ people')]];
+function chRows(opts, sel, act){
+  return opts.map(o=>`<div class="chrow ${sel===o[0]?'on':''}" data-act="${act}" data-k="${o[0]}">
+    <div class="ic">${o[1]}</div><div class="bd"><div class="ti">${esc(o[2])}</div><div class="su">${esc(o[3])}</div></div>
+    <div class="ck">${IC.check}</div></div>`).join('');
+}
+function scr_fmt(){
+  return `<div class="kflow fade">${kbar(true)}
+    <div class="kcont">
+      ${kprompt(T('В каком формате удобнее?','What format do you prefer?'))}
+      <div style="margin-top:4px">${chRows(FMT_OPTS(), FLOW&&FLOW.fmt, 'flow-fmt')}</div>
+      ${(FLOW&&FLOW.fmt)?`<div class="kbub ag" style="width:max-content">${T('Отлично!','Awesome!')}</div>`:''}
+    </div>
+    ${kcomposer('flowinp3',T('Сообщение…','Message…'))}</div>`;
+}
+function scr_gsize(){
+  return `<div class="kflow fade">${kbar(true)}
+    <div class="kcont">
+      ${kprompt(T('Сколько вас будет?','How many people will there be?'))}
+      <div style="margin-top:4px">${chRows(SIZE_OPTS(), FLOW&&FLOW.gsize, 'flow-gsize')}</div>
+      ${(FLOW&&FLOW.gsize)?`<div class="kbub ag" style="width:max-content">${T('Отлично!','Awesome!')}</div>`:''}
+    </div>
+    ${kcomposer('flowinp4',T('Сообщение…','Message…'))}</div>`;
+}
+// ---- Create Intent: the 3-step detail card (Figma «To match you better, one thing») ----
+// Step 3 is where the branches meet again: offline asks for a district + radius, online for a link,
+// hybrid for both. That is the only difference between the three flows.
+function dstep(){ return Math.min(3, Math.max(1, (FLOW&&FLOW.dstep)|0 || 1)); }
+function dDates(){
+  const out=[], now=new Date();
+  const wd=[T('Вс','Sun'),T('Пн','Mon'),T('Вт','Tue'),T('Ср','Wed'),T('Чт','Thu'),T('Пт','Fri'),T('Сб','Sat')];
+  const mo=[T('янв','Jan'),T('фев','Feb'),T('мар','Mar'),T('апр','Apr'),T('мая','May'),T('июн','Jun'),
+            T('июл','Jul'),T('авг','Aug'),T('сен','Sep'),T('окт','Oct'),T('ноя','Nov'),T('дек','Dec')];
+  for(let i=0;i<7;i++){ const d=new Date(now.getTime()+i*864e5);
+    out.push([d.toISOString().slice(0,10), wd[d.getDay()]+' '+d.getDate()+' '+mo[d.getMonth()]]); }
+  return out;
+}
+function ring(id, frac, frac2, label){
+  // One SVG ring used for both pickers: a single handle for time, two for the age range. The arc is
+  // the selected span, so the control reads the same way in both modes.
+  const R=74, C=90, tau=Math.PI*2, pt=f=>[C+R*Math.sin(f*tau), C-R*Math.cos(f*tau)];
+  const a=pt(frac), b=(frac2!=null)?pt(frac2):null;
+  let arc='';
+  if(frac2!=null){ const big=((frac2-frac+1)%1)>0.5?1:0;
+    arc=`<path d="M${a[0]} ${a[1]} A${R} ${R} 0 ${big} 1 ${b[0]} ${b[1]}" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round"/>`; }
+  else { const big=frac>0.5?1:0; const z=pt(0);
+    arc=`<path d="M${z[0]} ${z[1]} A${R} ${R} 0 ${big} 1 ${a[0]} ${a[1]}" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round"/>`; }
+  return `<svg class="dial" id="${id}" width="180" height="180" viewBox="0 0 180 180" data-dial="${id}">
+    <circle cx="${C}" cy="${C}" r="${R}" fill="none" stroke="var(--border)" stroke-width="3"/>
+    ${arc}
+    <circle cx="${a[0]}" cy="${a[1]}" r="9" fill="var(--primary)"/>
+    ${b?`<circle cx="${b[0]}" cy="${b[1]}" r="9" fill="var(--primary)"/>`:''}
+    <text class="val" x="${C}" y="${C+11}" text-anchor="middle">${esc(label)}</text></svg>`;
+}
+// The district map is a REAL map with the radius circle, not a placeholder box — same compact
+// Leaflet setup the location sheet already uses. Drawn after render, because the container must
+// exist and have a size before Leaflet measures it.
+let dMap=null, dCircle=null;
+function dMapDraw(){
+  const el=document.getElementById('dmap'); if(!el||typeof L==='undefined') return;
+  const g=(DATA&&DATA.geo)||{}; const c=[g.coarseLat||41.3874, g.coarseLon||2.1686];
+  const km=(FLOW&&FLOW.dkm!=null)?FLOW.dkm:19;
+  try{
+    // Leaflet marks the container with _leaflet_id; re-initialising it without clearing that throws
+    // "Map container is already initialized" — and because innerHTML was wiped first, the panes were
+    // gone and the box silently stayed blank. Tear the old map down properly instead.
+    if(dMap){ try{ dMap.remove(); }catch(_e){} dMap=null; }
+    el.innerHTML=''; if(el._leaflet_id) el._leaflet_id=null;
+    const map=L.map(el,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,
+                        doubleClickZoom:false,touchZoom:false,boxZoom:false,keyboard:false});
+    map.setView(c, 11);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(map);
+    dCircle=L.circle(c,{radius:km*1000,color:'#F5455C',weight:2,fillColor:'#F5455C',fillOpacity:.12}).addTo(map);
+    L.circleMarker(c,{radius:5,color:'#F5455C',fillColor:'#F5455C',fillOpacity:1,weight:2}).addTo(map);
+    const fit=()=>{ try{ map.invalidateSize(); map.fitBounds(dCircle.getBounds(),{padding:[14,14]}); }catch(_e){} };
+    fit(); setTimeout(fit,80); dMap=map;
+  }catch(_e){}
+}
+function scr_detail(){
+  const st=dstep(), fmt=(FLOW&&FLOW.fmt)||'offline';
+  const tm=(FLOW&&FLOW.tmin!=null)?FLOW.tmin:885;                 // 14:45
+  const hh=String(Math.floor(tm/60)).padStart(2,'0'), mm=String(tm%60).padStart(2,'0');
+  const a0=(FLOW&&FLOW.ageA)||18, a1=(FLOW&&FLOW.ageB)||28;
+  const km=(FLOW&&FLOW.dkm!=null)?FLOW.dkm:19;
+  let body='';
+  if(st===1){
+    body=`<div class="dsec">${IC.calen}<span>${T('Дата','Date')}</span></div>
+      <div class="dchips">${dDates().map(d=>`<div class="c ${FLOW.date===d[0]?'on':''}" data-act="d-date" data-k="${d[0]}">${esc(d[1])}</div>`).join('')}</div>
+      <div class="dsec">${IC.clock}<span>${T('Время','Time')}</span></div>
+      ${ring('dialTime', tm/1440, null, hh+':'+mm)}`;
+  } else if(st===2){
+    const sexes=[['male',T('Мужчины','Male')],['female',T('Женщины','Female')],['any',T('Не важно','Any is fine')]];
+    body=`<div class="dsec">${IC.person}<span>${T('Пол','Sex')}</span></div>
+      <div class="seg">${sexes.map(x=>`<div class="o ${((FLOW.sex||'any')===x[0])?'on':''}" data-act="d-sex" data-k="${x[0]}">${esc(x[1])}</div>`).join('')}</div>
+      <div class="dsec">${IC.users}<span>${T('Возраст','Age')}</span></div>
+      ${ring('dialAge', (a0-16)/64, (a1-16)/64, a0+'-'+a1)}`;
+  } else {
+    const geo=`<div class="dsec">${IC.pin}<span>${T('Район','District')}</span></div>
+      <div id="dmap" class="lmap" style="height:170px;border-radius:14px;overflow:hidden"></div>
+      <div class="rowlbl"><span>${T('Насколько далеко готов ехать?','How far are you happy to go?')}</span><b>${km} ${T('км','km')}</b></div>
+      <input class="krange" type="range" min="1" max="40" value="${km}" data-act="d-km" style="width:100%">
+      <input class="tinput" id="daddr" placeholder="${T('Добавь адрес','Add your address')}" value="${esc((FLOW&&FLOW.addr)||'')}">`;
+    const link=`<div class="dsec">${IC.globe}<span>${T('Ссылка','Link')}</span></div>
+      <input class="tinput" id="dlink" placeholder="https://yourlink.com" value="${esc((FLOW&&FLOW.link)||'')}">
+      <div class="disc">${IC.shieldSm||IC.shield}<span>${T('Ссылки добавляют сами пользователи. Открывать их или нет — решаешь ты. Kleal не отвечает за сторонний контент и действия.','External links are shared by users. You choose whether to open them. Kleal is not responsible for third-party content or actions.')}</span></div>`;
+    body = (fmt==='online') ? link : (fmt==='hybrid' ? (geo+link) : geo);
+  }
+  const stp=`<div class="stepper">
+    <div class="st ${st>=1?'on':''}">1</div><div class="ln ${st>=2?'on':''}"></div>
+    <div class="st ${st>=2?'on':''}">2</div><div class="ln ${st>=3?'on':''}"></div>
+    <div class="st ${st>=3?'on':''}">3</div></div>`;
+  return `<div class="kflow fade">${kbar(true)}
+    <div class="kcont">
+      ${kprompt(T('Ещё одно — чтобы подобрать точнее','To match you better, one thing'))}
+      <div class="kbub ag" style="width:max-content">${T('Когда и где удобнее?','When and where works best?')}</div>
+      <div class="dcard">${stp}${body}
+        <div class="kbtn pri" data-act="d-next">${T('Далее','Next')}</div></div>
+    </div>
+    ${kcomposer('flowinp5',T('Сообщение…','Message…'))}</div>`;
+}
+function suggList(){
+  const pool=[];
+  const push=a=>(a||[]).forEach(h=>{ if(h&&pool.indexOf(h)<0) pool.push(h); });
+  push(hintsFor(null));
+  const all=(FLOW&&FLOW.msgs)||[];
+  for(let n=all.length-1;n>=0;n--){ if(all[n].who==='ag'){ push(hintsFor(all[n])); break; } }
+  push(FLOW_HINTS());
+  if(!pool.length) return [];
+  const r=((FLOW&&FLOW.roll)|0)%pool.length;
+  const out=[]; for(let i=0;i<Math.min(3,pool.length);i++) out.push(pool[(r+i)%pool.length]);
+  return out;
+}
 function scr_reqcomposer(){
   const all=(FLOW&&FLOW.msgs)||[];
   // These chips are openers — a way IN while the person still hasn't said what they want. The test is
@@ -4077,21 +4274,31 @@ function scr_reqcomposer(){
   const msgs=all.map((m,i)=>m.who==='me'
     ? `<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end"><div class="kbub me">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div></div>`
     : `<div style="display:flex;flex-direction:column;gap:4px"><div class="kbub ag">${esc(m.text)}</div><div class="ktime">${fmtTime(m.t)}</div>${
-        (i===lastAg&&!asked&&!FLOW.busy&&!FLOW.lastFailed)?`<div class="kchips" style="margin-top:2px">${hintsFor(m).map(h=>
-          `<div class="kchip soft hint" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>`:''
+        ''
       }</div>`).join('');
   // The bar carries «+ Создать интент» (Figma): the way OUT of the dialog is always in reach, not
   // buried under the thread. It appears once there is something to build from.
+  // Figma 1615:21018 — the openers are the primary way in: a titled card of full-width rows with a
+  // regenerate control, not a chip row squeezed under a bubble. Same source (hintsFor), same rule for
+  // WHEN they show; only the surface changed.
+  const sugg = suggList();
+  const suggBlock = (!asked && !FLOW.busy) ? `<div class="sugg">
+        <div class="lbl">${T('Выбери из предложенных','Choose from the suggested options')}</div>
+        <div class="card">${sugg.map(h=>
+          `<div class="row" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
+        <div class="kbtn pri sm" data-act="flow-regen" style="gap:8px">${IC.spark}<span>${
+          T('Сгенерировать заново','Regenerate')}</span></div>
+      </div>` : '';
   return `<div class="kflow fade">${kbar(true)}
     <div class="kcont">
-      ${kprompt(FLOW.mode==='intent'?T('Собираем интент','Building an intent')
+      ${kprompt(FLOW.mode==='intent'?T('Что хочешь сделать?','What do you want to do?')
                                      :T('Чего бы тебе хотелось сегодня?','What would you like today?'))}
+      ${(!asked&&!FLOW.busy)?`<div class="sugg hintline" style="padding:0">${
+        T('Просто и коротко — кофе, матч, игра, прогулка или «не хочу сидеть дома».',
+          'Keep it simple — coffee, a match, a game, a walk, or just “don’t feel like staying in.”')}</div>`:''}
+      ${suggBlock}
       ${msgs}
       ${FLOW.busy?`<div class="kbub ag" style="width:64px"><span class="typing3"><i></i><i></i><i></i></span></div>`:''}
-      ${(!all.length&&!FLOW.busy)?`<div style="display:flex;flex-direction:column;gap:12px">
-        <div class="k-label" style="color:var(--muted)">${T('Можно начать так','You could start with')}</div>
-        <div class="kchips">${hintsFor(null).map(h=>`<div class="kchip soft hint" data-act="flow-hint" data-h="${esc(h)}">${esc(h)}</div>`).join('')}</div>
-      </div>`:''}
       ${/* A failure is not the moment for openers either: «Обсудить стартапы» is not a rephrasing of
              what the person just tried to say. Generic examples of PHRASING are, which is what this
              block always meant. */''}
@@ -5187,7 +5394,7 @@ const SCREENS={agenthome:scr_agenthome,overview:scr_overview,interests:scr_inter
   safety:scr_safety,memory:scr_memory,knows:scr_knows,
   intents:scr_intents,search:scr_search,messages:scr_messages,
   notifs:scr_notifications,matchchat:scr_matchchat,
-  reqcomposer:scr_reqcomposer,clarify:scr_clarify,summary:scr_summary,searching:scr_searching,fewmatches:scr_fewmatches,
+  reqcomposer:scr_reqcomposer,fmt:scr_fmt,gsize:scr_gsize,detail:scr_detail,clarify:scr_clarify,summary:scr_summary,searching:scr_searching,fewmatches:scr_fewmatches,
   options:scr_options,bestfit:scr_bestfit,candprofile:scr_candprofile,
   sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
   picktime:scr_picktime,pickplace:scr_pickplace,awaiting:scr_awaiting,planok:scr_planok,
@@ -5266,11 +5473,19 @@ function render(){
   // and the bottom nav on all of them — and treat them all the same way for layout.
   // the Figma request flow carries its own app bar + composer, exactly like the chat screens
   const chat=(cur==='matchchat'||cur==='persona'
-              ||cur==='reqcomposer'||cur==='clarify'||cur==='summary'||cur==='searching'||cur==='fewmatches'
+              ||cur==='reqcomposer'||cur==='fmt'||cur==='gsize'||cur==='detail'
+              ||cur==='clarify'||cur==='summary'||cur==='searching'||cur==='fewmatches'
               ||cur==='options'||cur==='bestfit'||cur==='candprofile'
               ||['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'].includes(cur));
   const bn=document.getElementById('bnav'); if(bn){ bn.style.display=chat?'none':'flex'; bn.innerHTML=bnavHTML(); }
   if(cur==='agenthome') setTimeout(wireIdeaCarousel,0);
+  if(cur==='detail') setTimeout(()=>{
+    dMapDraw();
+    const r=document.querySelector('input[data-act="d-km"]');
+    if(r) r.oninput=()=>{ FLOW.dkm=+r.value;
+      const lb=document.querySelector('.rowlbl b'); if(lb) lb.textContent=FLOW.dkm+' '+T('км','km');
+      if(dCircle&&dMap){ try{ dCircle.setRadius(FLOW.dkm*1000); dMap.fitBounds(dCircle.getBounds(),{padding:[14,14]}); }catch(_e){} } };
+  },0);
   // The Explore map is edge-to-edge: no app bar, no body padding, no page scroll.
   const mapfull=(cur==='search');
   const ab=document.querySelector('.appbar'); if(ab) ab.style.display=(cur==='agenthome'||chat||mapfull)?'none':'flex';
@@ -5490,6 +5705,24 @@ function doAct(act, ds){
     case 'opt-tab': OPTTAB=ds.k; render(); break;
     case 'go-options': cur='options'; render(); break;
     case 'flow-more': flowMore(); break;
+    // Regenerate the openers. Rotating the pool (not re-asking the model) keeps it instant and
+    // guarantees the card actually changes — a Regenerate that redraws the same three reads as broken.
+    case 'flow-regen': FLOW.roll=((FLOW.roll|0)+3); render(); break;
+    // Picking a format/size confirms with «Отлично!» and moves on — the design shows the answer
+    // acknowledged in-place rather than a separate confirm tap.
+    case 'flow-fmt': FLOW.fmt=ds.k; render(); setTimeout(()=>{ cur='gsize'; render(); }, 650); break;
+    case 'flow-gsize': FLOW.gsize=ds.k; render(); setTimeout(()=>{ FLOW.dstep=1; cur='detail'; render(); }, 650); break;
+    case 'd-date': FLOW.date=ds.k; render(); break;
+    case 'd-km': break;   // handled live by the input listener wired after render
+    case 'd-sex': FLOW.sex=ds.k; render(); break;
+    case 'd-next': {
+      if(dstep()>=3){ const ad=$('#daddr'), lk=$('#dlink');
+        if(ad) FLOW.addr=ad.value; if(lk) FLOW.link=lk.value;
+        flowToSummary(); break; }
+      const ad=$('#daddr'), lk=$('#dlink');
+      if(ad) FLOW.addr=ad.value; if(lk) FLOW.link=lk.value;
+      FLOW.dstep=dstep()+1; render(); break; }
+    case 'go-intents': setTab('intents'); break;
     case 'flow-restart': seenClear(FLOW.sig||sigOf(flowIntent())); flowSearch(); break;
     // The widen controls already exist — they were only reachable when the slate came back EMPTY,
     // so a user with plenty of results could never broaden. Exhaustion is the other way in.
