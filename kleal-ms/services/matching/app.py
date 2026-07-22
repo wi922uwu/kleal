@@ -144,6 +144,90 @@ def _norm(w):
 
 _SHORT_OK = {'f1', 'ux', 'ui', 'ai', 'cs', 'dj', 'ml', 'pr', 'бг'}
 
+# ── Global context taxonomy (Kleal_Global_Context_Profiles_Intent_Taxonomy_RU_v1) ────────────────
+# 405 nodes (19 macro -> 45 family -> 341 leaf) across 12 domains, with 1148 RU/EN/ES aliases and a
+# 560-edge expansion graph. Measured on the sheet's own 353 gold intents, the hand-written 165-word
+# table below resolves 37%; these aliases resolve 97%, and together 98%. It is the FIRST resolver and
+# the old table stays as the fallback, because the two are not nested: the new one is far richer
+# (трейлраннинг, пиклбол, калистеника, боулдеринг) but is missing things the old one has (fishing),
+# so replacing outright would lose coverage we already ship.
+# (macro, family) is returned as the (broad, sub) pair the tier logic already speaks: same leaf = 4,
+# same family = 3, same macro = 2 — nothing changes in how levels are computed.
+# Loaded lazily: cat_of() runs during module import (the demo pool is built at import time), so a
+# module-level load would have to sit above every caller — a constraint that breaks on the next edit.
+TAXO_PATH = os.environ.get("KLEAL_TAXONOMY", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "config", "kleal_taxonomy_v1.json"))
+_TAXO = {"loaded": False, "idx": {}, "by_tok": {}, "data": {}}
+
+
+def _taxo():
+    if not _TAXO["loaded"]:
+        _TAXO["loaded"] = True
+        try:
+            with open(TAXO_PATH, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            nodes = d.get("nodes") or {}
+            idx, by_tok = {}, {}
+            for surface, nid in (d.get("aliases") or {}).items():
+                n = nodes.get(nid)
+                if not n:
+                    continue
+                sv = str(surface).strip().lower()
+                val = (nid, n.get("macro") or n.get("domain"),
+                       n.get("family") or n.get("macro") or n.get("domain"))
+                idx[sv] = val
+                # Index every multi-word alias by its RAREST-looking token so a phrase lookup only
+                # tests the handful of aliases that share a word with it. Scanning all 1148 aliases
+                # per unresolved word looked harmless and took the live search from 0.3s to >110s:
+                # cat_of runs per candidate interest, 500+ candidates deep.
+                toks = [t for t in re.findall(r"[a-zа-яё0-9]+", sv) if len(t) >= 4]
+                if len(toks) > 1:
+                    for t in toks:
+                        by_tok.setdefault(t, []).append(sv)
+            _TAXO["idx"], _TAXO["by_tok"], _TAXO["data"] = idx, by_tok, d
+        except Exception:
+            pass
+    return _TAXO["idx"]
+
+
+def taxo_hit(word):
+    """(node_id, macro, family) for a surface form, or None. Exact alias first, then the LONGEST
+    multi-word alias that occurs in the phrase — «тренировка по боксу» must win over the bare «бокс».
+
+    Containment needs a WORD boundary, not a substring: _norm() strips spaces, so «смотреть футбол»
+    arrives as «смотретьфутбол», a substring rule finds «футбол» inside it, the watch marker is no
+    longer a separate token, and a spectator silently became a player."""
+    w = " ".join(str(word or "").lower().split())
+    if not w:
+        return None
+    idx = _taxo()
+    hit = idx.get(w)
+    if hit:
+        return hit
+    toks = [t for t in re.findall(r"[a-zа-яё0-9]+", w) if len(t) >= 4]
+    if not toks:
+        return None
+    by_tok = _TAXO.get("by_tok") or {}
+    cand = set()
+    for t in toks:
+        cand.update(by_tok.get(t, ()))
+    if not cand:
+        return None
+    want_watch = _watch_marks(w)
+    best = None
+    for surface in cand:
+        if len(surface) < 5:
+            continue
+        if not re.search(r"(?<![a-zа-яё0-9])" + re.escape(surface) + r"(?![a-zа-яё0-9])", w):
+            continue
+        if _watch_marks(surface) != want_watch:
+            continue
+        if best is None or len(surface) > len(best):
+            best = surface
+    return idx[best] if best else None
+
+
 @functools.lru_cache(maxsize=65536)
 def cat_of_fixed(word):
     """Taxonomy only, no learned entries — used to decide whether a word still needs teaching."""
@@ -178,7 +262,16 @@ def cat_of(word):
                 continue
             tn = _norm(t)
             if tn in _IDX: return _IDX[tn]
-    # Nothing hand-written matched. What has filtration taught us about this word?
+    # Nothing hand-written matched. The global context taxonomy is consulted SECOND, not first:
+    # tried first it broke three regressions at once — «смотреть футбол» started reading as playing
+    # football, and the broad-category link a broadened search rides on snapped, because the two
+    # tables use different namespaces (M_sport/F_team_sports vs sports/team) and level-2/3 equality
+    # compares them literally. Ordered this way the change is purely additive: everything the hand
+    # table already resolved behaves exactly as before, and the 341 leaves it never knew now resolve.
+    hit = taxo_hit(word)
+    if hit:
+        return (hit[1], hit[2])          # (macro, family) -> the (broad, sub) pair tiers speak
+    # Still nothing. What has filtration taught us about this word?
     hit = LEARNED.get(w) or LEARNED.get(_norm(str(word).lower()))
     return hit if hit else (None, None)
 
@@ -513,6 +606,8 @@ MERGE_DEMO = os.environ.get("KLEAL_MERGE_DEMO", "0") != "0"
 # anyone. The eval and fuzz harnesses run ON that pool, so they flip this back on.
 INCLUDE_LOADTEST = os.environ.get("KLEAL_INCLUDE_LOADTEST", "0") != "0"
 _users_cache = {"mtime": None, "list": None}
+
+
 def load_candidates():
     store = None
     try:
