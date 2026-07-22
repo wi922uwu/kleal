@@ -270,6 +270,34 @@ def test_verbs_do_not_fabricate():
           st == 200 and (r or {}).get("ok") and "cleared" in (r or {}), json.dumps(r)[:120])
 
 
+def test_pair_trace():
+    print("\n[pair] «мне никогда не попадается X» — which step actually dropped X")
+    st, r = _req(ADMIN + "/api/admin/explain",
+                 data={"self": "Ivan", "intent": dict(INTENT), "candidate": "Nadia"}, token=TOKEN)
+    check("explain responds", st == 200 and isinstance(r, dict), "got %s" % st)
+    tr = (r or {}).get("trace") or {}
+    check("the trace names the person", tr.get("name"), json.dumps(r)[:140])
+    steps = tr.get("steps") or []
+    check("the trace is a sequence of steps, not a verdict", len(steps) >= 3, str(len(steps)))
+    check("every step says whether it passed", all("ok" in s for s in steps), json.dumps(steps)[:160])
+    check("every step explains itself", all(s.get("step") for s in steps), json.dumps(steps)[:160])
+    # A person who is NOT shown must always come with the reason. A trace that ends in
+    # `shown: false` and no drop_reason is the silent zero this whole panel exists to kill.
+    if tr.get("shown") is False:
+        check("a person who is not shown always carries a reason",
+              bool(tr.get("drop_reason")) or any(s.get("ok") is False for s in steps),
+              json.dumps(tr)[:200])
+    st, r2 = _req(ADMIN + "/api/admin/explain",
+                  data={"self": "Ivan", "intent": dict(INTENT), "candidate": "NoSuchPerson"}, token=TOKEN)
+    check("an unknown candidate is an honest miss", (r2 or {}).get("ok") is False, json.dumps(r2)[:120])
+    # The mirror question — what this person's own search sees — has to reconcile with the funnel.
+    st, r3 = _req(ADMIN + "/api/admin/funnel", data={"self": "Nadia", "intent": dict(INTENT)}, token=TOKEN)
+    f = (r3 or {}).get("funnel") or {}
+    check("«кого находит сам» reuses the funnel and still balances",
+          f and f.get("pool", 0) - f.get("self", 0) - sum((f.get("gates") or {}).values()) == f.get("eligible"),
+          json.dumps(f)[:160])
+
+
 def test_cohorts():
     print("\n[cohorts] the questions a 3000-row table cannot answer")
     st, r = _req(ADMIN + "/api/admin/cohorts", token=TOKEN, timeout=60)
@@ -322,7 +350,7 @@ def main():
     for fn in (test_auth, test_destructive_routes_gone, test_health_and_store_agreement,
                test_funnel_arithmetic, test_searcher_profile_carries_age, test_stability,
                test_diversity_discriminates, test_engine_separates_topics, test_lab_still_works,
-               test_person_card, test_verbs_do_not_fabricate, test_cohorts,
+               test_person_card, test_verbs_do_not_fabricate, test_pair_trace, test_cohorts,
                test_proposals_registry, test_registry_is_read_only):
         try:
             fn()

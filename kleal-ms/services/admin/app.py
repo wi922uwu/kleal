@@ -662,6 +662,65 @@ async function personVerb(verb){
   await openPerson(PERSON.name);          // re-read from the engine: never trust the local echo
   load();
 }
+// The actual daily workflow: someone says «мне никогда не попадается X». Open X, name the person
+// who is searching and what they asked for, and read which step dropped X — instead of guessing
+// from a slate that simply doesn't contain them.
+let PPAIR=null, PPAIRBUSY=false, PMINE=null, PMINEBUSY=false;
+async function personPair(){
+  if(!PERSON||!PERSON.name) return;
+  const who=($('#pp_self')&&$('#pp_self').value.trim())||'', topic=($('#pp_topic')&&$('#pp_topic').value.trim())||'';
+  if(!who){ toast('чей это поиск?'); return; }
+  PPAIRBUSY=true; PPAIR=null; render();
+  const intent={topics:topic?topic.split(',').map(s=>s.trim()).filter(Boolean):[],
+                role:'meet', mode:'offline', time:'tomorrow'};
+  try{ PPAIR=await api('/api/admin/explain',{method:'POST',
+        body:JSON.stringify({self:who, intent:intent, candidate:PERSON.name})}); }
+  catch(e){ PPAIR={ok:false,error:String(e&&e.message||e)}; }
+  PPAIRBUSY=false; render();
+}
+async function personMine(){
+  if(!PERSON||!PERSON.name) return;
+  const topic=($('#pp_topic')&&$('#pp_topic').value.trim())||'';
+  PMINEBUSY=true; PMINE=null; render();
+  const intent={topics:topic?topic.split(',').map(s=>s.trim()).filter(Boolean):[],
+                role:'meet', mode:'offline', time:'tomorrow'};
+  try{ PMINE=await api('/api/admin/funnel',{method:'POST',
+        body:JSON.stringify({self:PERSON.name, intent:intent})}); }
+  catch(e){ PMINE={ok:false,error:String(e&&e.message||e)}; }
+  PMINEBUSY=false; render();
+}
+function pairView(){
+  const nm=PERSON&&PERSON.name||'';
+  let out=`<div class="card"><h3>Проверить в конкретном запросе</h3>
+    <div class="muted" style="margin-bottom:8px">«Мне никогда не попадается ${nm}» — вот на каком шаге ${nm} выпадает из этого поиска. И наоборот: кого находит сам ${nm}.</div>
+    <label>Кто ищет<input id="pp_self" value="${(PPSELF||'').replace(/"/g,'&quot;')}" placeholder="Ivan"></label>
+    <label>Тема<input id="pp_topic" value="${(PPTOPIC||'кофе').replace(/"/g,'&quot;')}" placeholder="кофе"></label>
+    <button class="primary" onclick="personPair()" ${PPAIRBUSY?'disabled':''}>${PPAIRBUSY?'Считаю…':'Почему не показался'}</button>
+    <button onclick="personMine()" ${PMINEBUSY?'disabled':''}>${PMINEBUSY?'Считаю…':'Кого находит сам'}</button>`;
+  if(PPAIR&&(PPAIR.error||PPAIR.ok===false)) out+=`<div class="err">${PPAIR.error||'не вышло'}</div>`;
+  const t=PPAIR&&PPAIR.trace;
+  if(t){
+    out+=`<div class="sec">${t.name}: ${t.shown?'<b style="color:#2f9e6b">показался бы</b>':'<b style="color:#c0392b">не показался</b>'}</div>
+      <div class="funnel">
+      ${(t.steps||[]).map(s=>`<div class="frow"><div class="fl">${s.step}</div>
+        <div class="fn">${s.ok?'<span style="color:#2f9e6b">✓</span>':'<span style="color:#c0392b">✗</span>'}</div>
+        <div class="fnote">${(s.detail!=null?String(s.detail):'')}</div></div>`).join('')}
+      ${t.drop_reason?`<div class="frow"><div class="fl"><b>выпал</b></div><div class="fn"></div><div class="fnote" style="color:#c0392b">${t.drop_reason}</div></div>`:''}
+      </div>`;
+  }
+  const f=PMINE&&PMINE.funnel;
+  if(PMINE&&PMINE.error) out+=`<div class="err">${PMINE.error}</div>`;
+  if(f){
+    const gates=Object.keys(f.gates||{});
+    out+=`<div class="sec">Что видит сам ${nm}</div><div class="funnel">
+      ${_kv('в базе', f.pool)}${_kv('дошло до скоринга', f.eligible)}${_kv('в выдаче', f.slate)}
+      ${gates.map(g=>`<div class="frow sub"><div class="fl">отсеяно: ${g}</div><div class="fn">${f.gates[g]}</div><div></div></div>`).join('')}
+      ${PMINE.searcherKnown===false?`<div class="frow sub"><div class="fl" style="color:#b7791f">этого искателя нет в базе — искали с пустым профилем</div><div class="fn"></div><div></div></div>`:''}
+      </div>`;
+  }
+  return out+'</div>';
+}
+let PPSELF='', PPTOPIC='кофе';
 function _kv(k,v){return `<div class="frow"><div class="fl">${k}</div><div class="fn">${
   (v===null||v===undefined||v==='')?'<span class="muted">не собрано</span>':v}</div><div></div></div>`;}
 function personView(){
@@ -714,7 +773,7 @@ function personView(){
     <button onclick="personVerb('unpause')">Снять с паузы</button>
     <button onclick="personVerb(${id.verified?"'unverify'":"'verify'"})">${id.verified?'Снять верификацию':'Верифицировать'}</button>
     <button onclick="personVerb('fatigue')">Сбросить счётчик предложений</button>
-  </div>`+cohortsView();
+  </div>`+pairView()+cohortsView();
 }
 function cohortsView(){
   return `<div class="card"><h3>Когорты</h3>
@@ -1062,10 +1121,20 @@ function render(){
     <span class="muted" style="margin-left:auto" title="строк в файле; движок ищет не по всем — см. полосу ниже">${USERS.length} строк в файле</span>
     </div>${healthBar()}`;
   if(TAB==='person'){
+    // render() rebuilds the DOM, so the three inputs have to survive their own re-render —
+    // otherwise typing a searcher's name and clicking would search for an empty string.
     const pv=$('#p_name'); const keep=pv?pv.value:null;
+    const s1=$('#pp_self'); if(s1) PPSELF=s1.value;
+    const s2=$('#pp_topic'); if(s2) PPTOPIC=s2.value;
+    const ae=document.activeElement, aid=(ae&&ae.id)||'';
     $('#app').innerHTML=head+'<div class="wrap">'+personView()+'</div>';
     setTimeout(()=>{const e=$('#p_name'); if(e&&keep!=null&&!e.value)e.value=keep;
       if(e)e.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();openPerson(e.value);}};
+      const a=$('#pp_self'); if(a){ if(PPSELF)a.value=PPSELF; a.oninput=()=>{PPSELF=a.value;};
+        a.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();personPair();}}; }
+      const b=$('#pp_topic'); if(b){ if(PPTOPIC)b.value=PPTOPIC; b.oninput=()=>{PPTOPIC=b.value;};
+        b.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();personPair();}}; }
+      if(aid){const f=$('#'+aid); if(f)f.focus();}
       if(!COH&&!COHBUSY)loadCohorts();},0);
     return;
   }
