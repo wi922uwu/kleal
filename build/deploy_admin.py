@@ -13,10 +13,23 @@ _ALL = [
     ("shared/llm_client.py",       "shared/llm_client.py",       "a_llmc"),
     ("shared/kleal_lib.py",        "shared/kleal_lib.py",        "a_klib"),
     ("shared/http_util.py",        "shared/http_util.py",        "a_http"),
+    ("shared/kleal_contracts.py",  "shared/kleal_contracts.py",  "a_kcon"),   # §4 contracts — admin AND the restarted matching import it
+    ("shared/kleal_intent.py",     "shared/kleal_intent.py",     "a_kint"),   # §5 intent compiler — the restarted matching imports it
+    ("shared/kleal_taxonomy.py",   "shared/kleal_taxonomy.py",   "a_ktax"),   # §6 taxonomy layer — the restarted matching imports it
+    ("shared/kleal_completion.py", "shared/kleal_completion.py", "a_kcmp"),   # §10.2 completion factors — the restarted matching imports it
+    ("shared/kleal_ml_boundary.py","shared/kleal_ml_boundary.py","a_kmlb"),   # §10.3 ML boundary — the restarted matching imports it
+    ("shared/kleal_protocol.py",   "shared/kleal_protocol.py",   "a_kprot"),  # §13 typed agent protocol — the restarted matching imports it
+    ("shared/kleal_states.py",     "shared/kleal_states.py",     "a_kstate"), # §14 transaction state machines — the restarted matching imports it
+    ("shared/kleal_groups.py",     "shared/kleal_groups.py",     "a_kgrp"),   # §15 group formation core (pilot-disabled) — the restarted matching imports it
+    ("shared/kleal_candidates.py", "shared/kleal_candidates.py", "a_kcand"),  # §16 event/room/venue candidate types (pilot-disabled) — the restarted matching imports it
+    ("shared/kleal_contract_registry.py", "shared/kleal_contract_registry.py", "a_kreg"),  # §22.2.0/§23.4.1 registry — the restarted matching imports it
     ("services/matching/app.py",   "services/matching/app.py",   "a_match"),
     ("services/admin/app.py",      "services/admin/app.py",      "a_admin"),
 ]
-FILES = [f for f in _ALL if f[2] == "a_admin"] if ADMIN_ONLY else _ALL
+# ADMIN_ONLY still ships the NEW shared deps (§4 contracts, §5 intent, §6 taxonomy, §10 completion + ML-boundary):
+# unlike http_util/kleal_lib (already on the pod from prior full deploys), all are imported by the matching
+# process this script restarts, so a solo admin deploy must carry them or matching fails to import on relaunch.
+FILES = [f for f in _ALL if f[2] in ("a_admin", "a_kcon", "a_kint", "a_ktax", "a_kcmp", "a_kmlb", "a_kprot", "a_kstate", "a_kgrp", "a_kcand", "a_kreg")] if ADMIN_ONLY else _ALL
 CH = 1800
 L = ["stty -echo 2>/dev/null",
      "mkdir -p /root/kleal-ms/shared /root/kleal-ms/services/matching /root/kleal-ms/services/admin"]

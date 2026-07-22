@@ -57,6 +57,8 @@ python run_all.py         # → http://127.0.0.1:7080   ( --no-llm skips llm-ser
 - `shared/http_util.py` — `send` / `send_json` / `read_json`
 - `legacy/` — the pre-split monolith (reference/rollback; nothing imports it)
 - `build/` — pod deploy generators
+- `docs/ARCHITECTURE.md` — verifiable map of our code → the spec's §23.1 modules / §21.1 components (conformance + gaps)
+- `config/` — sha-pinned Matching Core config + `schema.json` (draft-07 contract; runtime validator = `core_v2.load_config`)
 
 ## Matching engine (services/matching)
 100% **deterministic** ranking (no randomness, no LLM in scoring): hard gates → base tier

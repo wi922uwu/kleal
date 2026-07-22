@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Deploy the Kleal MICROSERVICES to the pod under /root/kleal-ms/, preserving the existing cloudflared
-# tunnel on :7080 (so the public URL is unchanged). Ships 8 files (5 services + 3 shared) via chunked
-# gzip+base64 over PTY-only SSH, verifies sha256 + ast, kills the old monolith, and launches all 5
+# tunnel on :7080 (so the public URL is unchanged). Ships the FILES manifest below (all shared modules +
+# services; see the list) via chunked gzip+base64 over PTY-only SSH, verifies sha256 + ast, kills the old monolith, launches all
 # services with the secret boundary intact (SELF_* only on llm-service). Pipe:
 #   python build/deploy_microservices.py && ssh -tt ... < build/_deploy_ms.sh
 import gzip, base64, hashlib, os
@@ -12,6 +12,16 @@ FILES = [
     ("shared/llm_client.py",          "shared/llm_client.py",          "f_llmc"),
     ("shared/kleal_lib.py",           "shared/kleal_lib.py",           "f_klib"),
     ("shared/http_util.py",           "shared/http_util.py",           "f_http"),
+    ("shared/kleal_contracts.py",     "shared/kleal_contracts.py",     "f_kcon"),   # §4 canonical data contracts — matching/admin import it
+    ("shared/kleal_intent.py",        "shared/kleal_intent.py",        "f_kint"),   # §5 intent compiler + clarification — matching imports it
+    ("shared/kleal_taxonomy.py",      "shared/kleal_taxonomy.py",      "f_ktax"),   # §6 governed taxonomy layer — matching imports it (data/taxonomy NOT shipped; layer runs data-absent)
+    ("shared/kleal_completion.py",    "shared/kleal_completion.py",    "f_kcmp"),   # §10.2 completion factors — matching imports it
+    ("shared/kleal_ml_boundary.py",   "shared/kleal_ml_boundary.py",   "f_kmlb"),   # §10.3 ML boundary manifest — matching imports it
+    ("shared/kleal_protocol.py",      "shared/kleal_protocol.py",      "f_kprot"),  # §13 typed agent protocol — matching imports it
+    ("shared/kleal_states.py",        "shared/kleal_states.py",        "f_kstate"), # §14 transaction state machines — matching imports it
+    ("shared/kleal_groups.py",        "shared/kleal_groups.py",        "f_kgrp"),   # §15 group formation core (pilot-disabled) — matching imports it
+    ("shared/kleal_candidates.py",    "shared/kleal_candidates.py",    "f_kcand"),  # §16 event/room/venue candidate types (pilot-disabled) — matching imports it
+    ("shared/kleal_contract_registry.py", "shared/kleal_contract_registry.py", "f_kreg"),  # §22.2.0/§23.4.1 contract registry + schema mirror
     ("services/llm/app.py",           "services/llm/app.py",           "f_llm"),
     ("services/onboarding/app.py",    "services/onboarding/app.py",    "f_onb"),
     ("services/profile/app.py",       "services/profile/app.py",       "f_prof"),

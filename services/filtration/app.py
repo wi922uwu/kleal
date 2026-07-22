@@ -24,18 +24,19 @@ PORT = int(os.environ.get("FILTER_PORT", "7076"))
 MODEL_ID = os.environ.get("V2_MODEL", "llama_self")
 
 # The existing category set the agent magnetises to (extensible).
-CATEGORIES = ["sports", "gaming", "esports", "tabletop", "music", "film_tv", "art_culture", "books",
-              "food_drink", "coffee", "nightlife", "outdoors", "travel", "tech", "startups", "career",
-              "languages", "wellness", "fashion", "toys_collectibles", "pets", "photography",
-              "dating", "social", "other"]
+CATEGORIES = ["sports", "gaming", "esports", "tabletop", "music", "dance", "film_tv", "anime", "comedy",
+              "art_culture", "crafts", "writing", "books", "food_drink", "coffee", "nightlife",
+              "outdoors", "travel", "gardening", "tech", "design", "startups", "career", "finance",
+              "science", "languages", "wellness", "volunteering", "fashion", "toys_collectibles",
+              "pets", "photography", "dating", "social", "other"]
 # category -> the `type` the matching agent scores on
 CAT_TO_TYPE = {"sports": "sport", "gaming": "gaming", "esports": "gaming", "tabletop": "gaming",
                "languages": "language", "tech": "networking", "startups": "networking", "career": "networking",
-               "dating": "dating"}
+               "design": "networking", "finance": "networking", "science": "networking", "dating": "dating"}
 
 FILTER_PROMPT = '''You are Kleal's "Filtration" agent. Turn a user's free-text request or interest into a structured, CATEGORISED intent by MAGNETISING it to ONE of our existing categories. Use world knowledge for novel items — e.g. "labubu" -> toys_collectibles, "matcha" -> food_drink, "wordle" -> games, "padel" -> sports, "vinted" -> fashion.
 
-Categories (pick exactly ONE best fit): sports, gaming, esports, tabletop, music, film_tv, art_culture, books, food_drink, coffee, nightlife, outdoors, travel, tech, startups, career, languages, wellness, fashion, toys_collectibles, pets, photography, dating, social, other.
+Categories (pick exactly ONE best fit): sports, gaming, esports, tabletop, music, dance, film_tv, anime, comedy, art_culture, crafts, writing, books, food_drink, coffee, nightlife, outdoors, travel, gardening, tech, design, startups, career, finance, science, languages, wellness, volunteering, fashion, toys_collectibles, pets, photography, dating, social, other.
 
 Return ONLY compact JSON, no prose:
 {"topics":[1-4 lowercase canonical keywords the user actually meant],
@@ -45,30 +46,40 @@ Return ONLY compact JSON, no prose:
  "role":"play|watch|discuss|practise|attend|meet",
  "isNew":<true only if nothing in the list really fits>,
  "note":"<=8 words, what this is"}
-Map category->type: sports->sport; gaming/esports/tabletop->gaming; languages->language; tech/startups/career->networking; dating->dating; everything else->social. Infer role from the verb (play/watch/discuss/practise/attend), default "meet". English only.'''
+Map category->type: sports->sport; gaming/esports/tabletop->gaming; languages->language; tech/startups/career/design/finance/science->networking; dating->dating; everything else->social. Infer role from the verb (play/watch/discuss/practise/attend), default "meet". English only.'''
 
 # ---- deterministic fallback (LLM down): small keyword magnet over the same categories ----
 _KW = {
-    "sports": ["football", "soccer", "basketball", "tennis", "padel", "run", "running", "gym", "boxing", "swim", "cycling", "climb"],
-    "gaming": ["dota", "valorant", "cs", "league", "chess", "boardgame", "poker", "gaming", "game", "wordle"],
-    "music": ["music", "guitar", "concert", "dj", "rave", "techno", "gig", "karaoke"],
-    "film_tv": ["movie", "cinema", "film", "series", "anime"],
-    "art_culture": ["art", "museum", "gallery", "theatre", "exhibition", "architecture", "urbanism"],
-    "books": ["book", "books", "reading"],
-    "food_drink": ["dinner", "food", "restaurant", "cooking", "matcha", "brunch", "lunch"],
-    "coffee": ["coffee", "cafe", "tea"],
-    "nightlife": ["bar", "drinks", "pub", "party", "club"],
-    "outdoors": ["hiking", "hike", "camping", "nature", "trek", "fishing"],
-    "travel": ["travel", "trip", "roadtrip"],
-    "tech": ["ai", "ml", "coding", "programming", "crypto", "data"],
-    "startups": ["startup", "startups", "founder", "product"],
-    "career": ["networking", "career", "mentorship", "investing"],
-    "languages": ["spanish", "english", "french", "german", "language", "exchange"],
-    "wellness": ["yoga", "meditation", "pilates", "wellness"],
+    "sports": ["football", "soccer", "basketball", "tennis", "padel", "run", "running", "gym", "boxing", "swim", "cycling", "climb", "rugby", "judo", "karate", "bjj", "kickboxing", "calisthenics", "pickleball", "volleyball", "hockey", "crossfit"],
+    "gaming": ["dota", "valorant", "cs", "league", "chess", "boardgame", "poker", "gaming", "game", "wordle", "fortnite", "overwatch", "apex", "minecraft", "roblox", "playstation", "xbox", "nintendo", "catan", "warhammer", "dnd", "pubg"],
+    "music": ["music", "guitar", "concert", "dj", "rave", "techno", "gig", "karaoke", "jazz", "rock", "hiphop", "classical", "indie", "piano", "bass", "festival", "vinyl", "band"],
+    "dance": ["dance", "dancing", "salsa", "bachata", "tango", "ballroom", "zumba", "swing"],
+    "film_tv": ["movie", "cinema", "film", "series", "netflix", "documentary", "sitcom"],
+    "anime": ["anime", "manga", "cosplay", "kdrama", "kpop", "weeb"],
+    "comedy": ["comedy", "standup", "improv"],
+    "art_culture": ["art", "museum", "gallery", "theatre", "exhibition", "architecture", "urbanism", "sculpture", "opera", "ballet"],
+    "crafts": ["pottery", "ceramics", "knitting", "crochet", "sewing", "woodworking", "diy", "calligraphy", "craft"],
+    "writing": ["writing", "poetry", "journaling", "blogging", "blog"],
+    "books": ["book", "books", "reading", "literature", "scifi", "fantasy"],
+    "food_drink": ["dinner", "food", "restaurant", "cooking", "matcha", "brunch", "lunch", "baking", "bbq", "vegan", "sushi", "tapas", "pizza", "ramen", "foodie"],
+    "coffee": ["coffee", "cafe", "tea", "espresso"],
+    "nightlife": ["bar", "drinks", "pub", "party", "club", "cocktails", "beer", "wine"],
+    "outdoors": ["hiking", "hike", "camping", "nature", "trek", "fishing", "surfing", "kayaking", "climbing", "paragliding", "birdwatching", "stargazing", "skiing", "snowboard", "paddleboard"],
+    "travel": ["travel", "trip", "roadtrip", "vanlife", "backpacking", "hostels", "digitalnomad"],
+    "gardening": ["gardening", "garden", "plants", "botany", "foraging"],
+    "tech": ["ai", "ml", "coding", "programming", "crypto", "data", "web3", "devops", "cybersecurity", "python", "javascript", "cloud", "llm", "software"],
+    "design": ["design", "ux", "ui", "figma", "branding", "typography"],
+    "startups": ["startup", "startups", "founder", "product", "entrepreneur"],
+    "career": ["networking", "career", "mentorship", "consulting", "freelance", "remote"],
+    "finance": ["finance", "investing", "stocks", "trading", "vc", "investor"],
+    "science": ["science", "psychology", "astronomy", "biology", "physics", "neuroscience", "economics"],
+    "languages": ["spanish", "english", "french", "german", "language", "exchange", "japanese", "korean", "mandarin", "italian", "catalan", "arabic"],
+    "wellness": ["yoga", "meditation", "pilates", "wellness", "spa", "sauna", "breathwork", "selfcare", "massage", "mindfulness"],
+    "volunteering": ["volunteering", "volunteer", "charity", "community", "activism", "sustainability"],
     "fashion": ["fashion", "thrift", "vinted", "sneakers"],
     "toys_collectibles": ["labubu", "lego", "figures", "collectible", "funko", "toys"],
-    "pets": ["dog", "cat", "pet", "puppy"],
-    "photography": ["photography", "photo", "camera"],
+    "pets": ["dog", "cat", "pet", "puppy", "dogs", "cats"],
+    "photography": ["photography", "photo", "camera", "street", "portrait"],
     "dating": ["date", "dating", "romance", "relationship"],
 }
 
