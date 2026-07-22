@@ -4260,22 +4260,73 @@ function dDates(){
     out.push([d.toISOString().slice(0,10), wd[d.getDay()]+' '+d.getDate()+' '+mo[d.getMonth()]]); }
   return out;
 }
-function ring(id, frac, frac2, label){
-  // One SVG ring used for both pickers: a single handle for time, two for the age range. The arc is
-  // the selected span, so the control reads the same way in both modes.
-  const R=74, C=90, tau=Math.PI*2, pt=f=>[C+R*Math.sin(f*tau), C-R*Math.cos(f*tau)];
-  const a=pt(frac), b=(frac2!=null)?pt(frac2):null;
+// One SVG ring used for both pickers: a single handle for time, two for the age range. The arc is
+// the selected span, so the control reads the same way in both modes. Geometry is shared with
+// wireDial()/redrawDial() so a drag can repaint the ring in place without a full screen re-render.
+const RING_R=74, RING_C=90;
+function ringPt(f){ const tau=Math.PI*2; return [RING_C+RING_R*Math.sin(f*tau), RING_C-RING_R*Math.cos(f*tau)]; }
+function ringInner(frac, frac2, label){
+  const R=RING_R, a=ringPt(frac), b=(frac2!=null)?ringPt(frac2):null;
   let arc='';
   if(frac2!=null){ const big=((frac2-frac+1)%1)>0.5?1:0;
     arc=`<path d="M${a[0]} ${a[1]} A${R} ${R} 0 ${big} 1 ${b[0]} ${b[1]}" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round"/>`; }
-  else { const big=frac>0.5?1:0; const z=pt(0);
+  else { const big=frac>0.5?1:0; const z=ringPt(0);
     arc=`<path d="M${z[0]} ${z[1]} A${R} ${R} 0 ${big} 1 ${a[0]} ${a[1]}" fill="none" stroke="var(--primary)" stroke-width="3" stroke-linecap="round"/>`; }
-  return `<svg class="dial" id="${id}" width="180" height="180" viewBox="0 0 180 180" data-dial="${id}">
-    <circle cx="${C}" cy="${C}" r="${R}" fill="none" stroke="var(--border)" stroke-width="3"/>
+  return `<circle cx="${RING_C}" cy="${RING_C}" r="${R}" fill="none" stroke="var(--border)" stroke-width="3"/>
     ${arc}
-    <circle cx="${a[0]}" cy="${a[1]}" r="9" fill="var(--primary)"/>
-    ${b?`<circle cx="${b[0]}" cy="${b[1]}" r="9" fill="var(--primary)"/>`:''}
-    <text class="val" x="${C}" y="${C+11}" text-anchor="middle">${esc(label)}</text></svg>`;
+    <circle class="hand" data-h="0" cx="${a[0]}" cy="${a[1]}" r="9" fill="var(--primary)"/>
+    ${b?`<circle class="hand" data-h="1" cx="${b[0]}" cy="${b[1]}" r="9" fill="var(--primary)"/>`:''}
+    <text class="val" x="${RING_C}" y="${RING_C+11}" text-anchor="middle">${esc(label)}</text>`;
+}
+function ring(id, frac, frac2, label){
+  return `<svg class="dial" id="${id}" width="180" height="180" viewBox="0 0 180 180" data-dial="${id}">${ringInner(frac,frac2,label)}</svg>`;
+}
+// Repaint a dial from the current FLOW state, in place (no re-render → the map/Leaflet isn't rebuilt).
+function redrawDial(id){
+  const svg=document.querySelector('svg.dial[data-dial="'+id+'"]'); if(!svg) return;
+  if(id==='dialTime'){
+    const t=(FLOW&&FLOW.tmin!=null)?FLOW.tmin:885;
+    const lab=String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
+    svg.innerHTML=ringInner(t/1440, null, lab);
+  } else {
+    const a0=(FLOW&&FLOW.ageA)||18, a1=(FLOW&&FLOW.ageB)||28;
+    svg.innerHTML=ringInner((a0-16)/64, (a1-16)/64, a0+'-'+a1);
+  }
+}
+// Make the dials draggable. Pointer events cover mouse + touch; .dial has touch-action:none so a
+// drag doesn't scroll the card. The age dial has two handles — grab whichever is closer.
+function wireDial(){
+  document.querySelectorAll('svg.dial[data-dial]').forEach(function(svg){
+    const id=svg.getAttribute('data-dial');
+    function fracAt(e){
+      const r=svg.getBoundingClientRect();
+      const dx=e.clientX-(r.left+r.width/2), dy=e.clientY-(r.top+r.height/2);
+      let f=Math.atan2(dx,-dy)/(Math.PI*2); if(f<0) f+=1; return f;
+    }
+    let hand=0;
+    function apply(f){
+      if(id==='dialTime'){
+        let t=Math.round(f*1440/5)*5; if(t>=1440) t=0;
+        FLOW.tmin=t; redrawDial(id);
+      } else {
+        let age=Math.round(16+f*64); if(age<16)age=16; if(age>80)age=80;
+        const a0=(FLOW.ageA||18), a1=(FLOW.ageB||28);
+        if(hand===0) FLOW.ageA=Math.min(age, a1); else FLOW.ageB=Math.max(age, a0);
+        redrawDial(id);
+      }
+    }
+    function onMove(e){ e.preventDefault(); apply(fracAt(e)); }
+    function onUp(e){ window.removeEventListener('pointermove',onMove); window.removeEventListener('pointerup',onUp); }
+    svg.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      const f=fracAt(e);
+      if(id==='dialAge'){ const fa=((FLOW.ageA||18)-16)/64, fb=((FLOW.ageB||28)-16)/64;
+        hand = Math.abs(f-fa)<=Math.abs(f-fb) ? 0 : 1; }
+      apply(f);
+      window.addEventListener('pointermove',onMove);
+      window.addEventListener('pointerup',onUp);
+    });
+  });
 }
 // The district map is a REAL map with the radius circle, not a placeholder box — same compact
 // Leaflet setup the location sheet already uses. Drawn after render, because the container must
@@ -5577,6 +5628,7 @@ function render(){
   if(cur==='agenthome') setTimeout(wireIdeaCarousel,0);
   if(cur==='detail') setTimeout(()=>{
     dMapDraw();
+    wireDial();
     const r=document.querySelector('input[data-act="d-km"]');
     if(r) r.oninput=()=>{ FLOW.dkm=+r.value;
       const lb=document.querySelector('.rowlbl b'); if(lb) lb.textContent=FLOW.dkm+' '+T('км','km');
