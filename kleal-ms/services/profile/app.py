@@ -572,11 +572,14 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .k-lbls{font-size:11px;line-height:16px;font-weight:500}
 .k-card{background:var(--card);border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.06)}
 /* greeting + intro */
-/* Home sits on the luxeir cloud sky (Figma 1615-21279). The photo is served inline from PHOTOS;
-   pale-blue fallback colour covers the moment before it loads. Cards/field surfaces stay translucent
-   so the sky reads through them. */
-.ah2{display:flex;flex-direction:column;height:100%;
-  background:#dcebfa url(assets/clouds.jpg) top center/cover no-repeat}
+/* Home sits on the luxeir cloud sky (Figma 1615-21279). The sky is painted on the whole .phone
+   (class toggled per-screen in render) so it bleeds behind the status bar and the bottom nav —
+   edge to edge. The nav becomes a frosted-glass panel so the sky reads through it while the labels
+   stay legible. Cards/field surfaces are translucent for the same reason. */
+.phone.homebg{background:#dcebfa url(assets/clouds.jpg) top center/cover no-repeat}
+.phone.homebg .bnav{background:rgba(255,255,255,.5);border-top-color:rgba(255,255,255,.4);
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.ah2{display:flex;flex-direction:column;height:100%;background:transparent}
 .ah2 .ahd{display:flex;align-items:center;gap:4px;padding:8px 20px}
 .ah2 .ahd .nm{flex:1;min-width:0}
 .ah2 .bell{width:44px;height:44px;border:.5px solid rgba(226,229,236,.75);border-radius:999px;display:flex;
@@ -673,7 +676,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   font:inherit;font-size:13px;font-weight:500;cursor:pointer}
 
 /* the Buddy composer — avatar + field + history link (Figma "Message Composer v2") */
-.bcard{flex:none}
+.bcard{flex:none;margin-top:auto}
 .bcard .brow{display:flex;align-items:center;gap:8px}
 .bcard .bav{width:64px;height:64px;flex:none;border-radius:999px;background:var(--neutral100);overflow:hidden;
   display:flex;align-items:center;justify-content:center}
@@ -3688,10 +3691,19 @@ function goingPill(n){
   return `<div class="gpill"><div class="avg">${a}</div><span>${n} ${T('идут','going')}</span></div>`;
 }
 let IDEA_I=0;
+// Placeholder feed shown while the matcher is being rebuilt and returns nothing yet — TEMPORARY demo
+// content, replaced the moment real plans/invites arrive. Remove MOCK_* to go back to the empty state.
+const MOCK_PLANS=[
+  {title:'Sunset Rooftop Party', who:'Marco', when:'Sat, 24 June 9:00 PM', area:'Gràcia rooftop', topics:['music'], dist:'15 min', going:8},
+  {title:'Утренний бег у моря', who:'Elena', when:'завтра 8:00', area:'Barceloneta', topics:['running'], dist:'2 км', going:5},
+  {title:'Испанский за кофе', who:'Pau', when:'today 18:00', area:'El Born', topics:['language','coffee'], dist:'1.2 км', going:3},
+];
+const MOCK_INVITE={id:'mock1', from:'Anna', age:28, status:'pending', photo:'assets/match-anna.jpg',
+  intent:{when:'Today 18:00', area:'Gràcia rooftop', title:'Coffee'}};
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans behind "New ideas for you"
   const nm=(DATA.name||'there').split(' ')[0];
-  const plans=(DATA.plans||[]).slice(0,5);
+  const plans=((DATA.plans&&DATA.plans.length)?DATA.plans:MOCK_PLANS).slice(0,5);
   if(IDEA_I>=plans.length) IDEA_I=0;
   const ideaCard=(p,i)=>{
     const key=tileKeyFor((p.topics||[]).join(' ')||String(p.title||''));
@@ -3726,7 +3738,7 @@ function scr_agenthome(){
   // The first pending invite becomes the rich "match" card from Figma 1615-21279: photo, name+age,
   // green Match badge, when/where meta, "Review invite". The avatar binds to a real photo when the
   // person has one (the product has none yet), else an initial disc — never a stock face for everyone.
-  const inv=(INBOX||[])[0];
+  const inv=(INBOX&&INBOX.length)?INBOX[0]:MOCK_INVITE;
   const ioi=(inv&&inv.intent)||{};
   const mWhen=inv?locStr(ioi.when||ioi.time||''):'';
   const mWhere=inv?(ioi.area||ioi.place||''):'';
@@ -5548,6 +5560,9 @@ function render(){
               ||cur==='options'||cur==='bestfit'||cur==='candprofile'
               ||['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'].includes(cur));
   const bn=document.getElementById('bnav'); if(bn){ bn.style.display=chat?'none':'flex'; bn.innerHTML=bnavHTML(); }
+  // The cloud sky is painted on the whole phone for the home screen only, so it bleeds behind the
+  // status bar and the (now frosted) bottom nav — full-bleed, no white band.
+  const ph=document.querySelector('.phone'); if(ph) ph.classList.toggle('homebg', cur==='agenthome');
   if(cur==='agenthome') setTimeout(wireIdeaCarousel,0);
   if(cur==='detail') setTimeout(()=>{
     dMapDraw();
