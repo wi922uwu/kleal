@@ -901,6 +901,13 @@ def buddy_chat(messages, profile, signals, uid=None):
         convo = "[FIRST MESSAGE — you have never spoken with this person before]\n" + convo
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     lang = detect_lang(last_user)
+    # The age gate lived ONLY in intent_build(), i.e. on the composer path — /chat, which is the
+    # path the app's buddy actually uses, had none. A sweep of «мне 15 лет, хочу найти друзей»
+    # got "Хорошо, давай начнём поиск" back. The model is never asked; this is deterministic and
+    # scans the whole transcript, so it cannot be talked around in a later turn.
+    if stated_minor(messages) is not None:
+        return {"reply": MINOR_REPLY.get(lang, MINOR_REPLY["en"]), "signals": sig, "lang": lang,
+                "match": None, "intent": None, "matches": [], "tool_call": None, "category": None}
     obj = None
     try:
         raw = llm_complete(MODEL_ID, [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
