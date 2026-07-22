@@ -1697,6 +1697,34 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, res)
             except Exception as e:
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
+        elif p == "/api/agent/diversity":
+            # «Мне попадаются одни и те же люди, какой бы запрос я ни написал.» That is a claim about
+            # a SET of searches, so no single search can confirm or refute it. Run N topics as one
+            # person and report how many distinct people came back and who keeps reappearing.
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            topics = [str(t).strip() for t in (body.get("topics") or []) if str(t).strip()][:24]
+            base = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            ctx = {"self": (prof.get("name") or ""), "uid": "admin-div"}
+            seen, per, empty = {}, [], []
+            for t in topics:
+                it = _normalize_intent(dict(base, topics=[t]))
+                try:
+                    cands = match_candidates(it, prof, dict(ctx))
+                except Exception:
+                    cands = []
+                names = [c.get("name") for c in cands]
+                per.append({"topic": t, "n": len(names), "names": names[:8]})
+                if not names:
+                    empty.append(t)
+                for n in names:
+                    seen[n] = seen.get(n, 0) + 1
+            runs = max(1, len([p for p in per if p["n"]]))
+            repeats = sorted(((v, k) for k, v in seen.items() if v > 1), reverse=True)[:10]
+            send_json(self, 200, {"ok": True, "queries": len(topics), "withResults": runs,
+                                  "distinctPeople": len(seen),
+                                  "shownMoreThanOnce": sum(1 for v in seen.values() if v > 1),
+                                  "topRepeats": [{"name": k, "times": v} for v, k in repeats],
+                                  "emptyTopics": empty, "per": per})
         elif p == "/api/agent/funnel":
             # «Почему никого нет», as a shape rather than a slate: how the pool collapses, stage by
             # stage, with the exact gate string for each drop. Read-only, writes nothing, sends nothing.
