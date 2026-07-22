@@ -3904,7 +3904,9 @@ async function flowSearch(isRetry){
   // The exact search found nobody and the engine broadened to related activities. Say so honestly
   // on the results screen — never present broadened people as a match for what was asked.
   FLOW.broadened=!!(r&&r.broadened);
-  FLOW.fbNote=(r&&r.fallback&&(r.fallback.note||r.fallback.note_ru))||'';
+  const _fb=(r&&r.fallback)||{};
+  FLOW.fbNote=_fb.note||_fb.note_ru||'';
+  FLOW.fbRelated=(typeof _fb.relatedCount==='number')?_fb.relatedCount:null;
   if(cands.length) seenAdd(_fsSig, cands.map(c=>c.name));
   FLOW.res=cands;
   persistIntent();                 // the tab must show what Kleal is actually working on
@@ -4216,13 +4218,35 @@ function scr_searching(){
 // ---- 5. Few matches → recommended adjustment ----
 function scr_fewmatches(){
   const n=(FLOW.res||[]).length;
+  // Nobody does this AND nothing adjacent exists (broaden already ran server-side and found none),
+  // so widening the radius cannot help — the honest move is a standing intent. When the server said
+  // there ARE related people, this screen is not reached (they are shown instead).
+  const noSupply = (FLOW.fbRelated===0);
   const opt=(key,icon,ti,su)=>`<div class="kopt ${FLOW.adjust===key?'sel':''}" data-act="flow-adjust" data-k="${key}">
     <div class="ic">${icon}</div><div class="bd"><div class="ti">${esc(ti)}</div><div class="su">${esc(su)}</div></div>
     ${FLOW.adjust===key?`<div class="ck">${IC.check2||IC.chevR}</div>`:''}</div>`;
+  const head = noSupply ? T('Пока рядом этим никто не занят','Nobody nearby is into this yet')
+                        : T('Точных совпадений пока немного','Not many exact matches yet');
+  const msg = FLOW.fbNote || T('По твоему запросу с текущими фильтрами вариантов мало.',
+                              'For your request with the current filters, options are limited.');
+  if(noSupply){
+    return `<div class="kflow fade">${kbar()}
+    <div class="kcont">
+      ${kprompt(head)}
+      <div class="kbub ag">${esc(msg)}</div>
+      <div class="kplan tight" style="gap:4px">
+        <div class="kopt sel" data-act="flow-save-intent"><div class="ic">${IC.spark||IC.check2||''}</div>
+          <div class="bd"><div class="ti">${T('Создать интент','Create an intent')}</div>
+            <div class="su">${T('Сохраню и подберу, как только кто-то появится','I will save it and match you the moment someone appears')}</div></div></div>
+        ${opt('wide',IC.groups,T('Всё равно расширить радиус','Widen the radius anyway'),T('На случай, если кто-то есть чуть дальше','In case someone is a bit further out'))}
+      </div>
+    </div>
+    <div class="kfoot"><button class="kbtn pri" data-act="flow-save-intent">${T('Создать интент','Create an intent')}</button></div></div>`;
+  }
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
-      ${kprompt(T('Точных совпадений пока немного','Not many exact matches yet'))}
-      <div class="kbub ag">${T('По твоему запросу с текущими фильтрами вариантов мало.','For your request with the current filters, options are limited.')}</div>
+      ${kprompt(head)}
+      <div class="kbub ag">${esc(msg)}</div>
       <div class="k-title">${T('Рекомендуемая настройка','Recommended adjustment')}</div>
       <div class="kplan tight" style="gap:4px">
         ${opt('wide',IC.groups,T('Расширить радиус поиска','Widen the search radius'),T('Люди и места за пределами района','Include places and people beyond your district'))}
@@ -5452,6 +5476,16 @@ function doAct(act, ds){
     case 'flow-adjust': FLOW.adjust=ds.k; render(); break;
     case 'flow-groups': FLOW.groups=!FLOW.groups; render(); break;
     case 'flow-apply': flowSearch(true); break;
+    // Zero supply: no dead end. Save the request as a standing intent so it's matched when someone
+    // with this interest appears, and drop the user into My Intents where it now lives.
+    case 'flow-save-intent': {
+      const it=flowIntent();
+      curIntent={ title:(FLOW.intent&&FLOW.intent.title)||FLOW.request||FLOW.text||T('Новый интент','New plan'),
+                  tags:(it.topics||[]), query:FLOW.request||FLOW.text, intent:it,
+                  candidates:[], spec:[], status:'waiting' };
+      saveCurIntent();
+      toast(T('Интент сохранён — сообщу, как только кто-то появится','Saved — I will ping you when someone appears'));
+      setTab('intents'); break; }
     // ---- Figma batch 2: results / candidate ----
     case 'opt-tab': OPTTAB=ds.k; render(); break;
     case 'go-options': cur='options'; render(); break;
