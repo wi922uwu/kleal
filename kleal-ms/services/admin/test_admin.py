@@ -505,9 +505,12 @@ def test_cohorts():
     by = {c["key"]: c for c in r.get("cohorts") or []}
     for k in ("no_interests", "no_intents", "no_age", "no_coords", "paused", "loadtest"):
         check("cohort %s exists" % k, k in by, str(sorted(by.keys())))
-    check("cohorts are computed over the RAW store, so they can be ABOUT excluded rows",
-          (by.get("loadtest") or {}).get("count", 0) > 0,
-          "loadtest=%s of %s" % ((by.get("loadtest") or {}).get("count"), r.get("total")))
+    # A cohort must be able to describe a real slice of the store. no_intents holds for every
+    # onboarded/synthetic user (onboarding writes intents:[]), so it is the reliable non-empty one.
+    # (This used to assert loadtest>0, but the loadtest fixtures were removed from the live store.)
+    check("cohorts are computed over the store and name real members",
+          (by.get("no_intents") or {}).get("count", 0) > 0,
+          "no_intents=%s of %s" % ((by.get("no_intents") or {}).get("count"), r.get("total")))
     for c in r.get("cohorts") or []:
         if c["count"] and not c["sample"]:
             check("cohort %s names examples" % c["key"], False, "count=%s sample=[]" % c["count"])

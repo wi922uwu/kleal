@@ -1702,7 +1702,7 @@ def explore_plans(limit=12, self_name=""):
     # Explore shows real registered users (source == "onboarding") and the AI-generated seed population
     # (source == "seed") — a plan from their own-intent, or, if none, their top interest. loadtest and
     # demo-pool rows are NEVER surfaced here; when there is nobody, the client shows an empty state.
-    ordered = [c for c in users if c.get("source") in ("onboarding", "seed")]
+    ordered = [c for c in users if c.get("source") in ("onboarding", "seed", "synthetic")]
     out = []
     for i, c in enumerate(ordered):
         # paused (incl. receiving.status/paused_until) leaves retrieval entirely (spec §10.1);
