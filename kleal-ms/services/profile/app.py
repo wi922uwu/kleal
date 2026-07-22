@@ -5812,12 +5812,11 @@ function doAct(act, ds){
     case 'd-km': break;   // handled live by the input listener wired after render
     case 'd-sex': FLOW.sex=ds.k; render(); break;
     case 'd-next': {
-      if(dstep()>=3){ const ad=$('#daddr'), lk=$('#dlink');
-        if(ad) FLOW.addr=ad.value; if(lk) FLOW.link=lk.value;
-        flowToSummary(); break; }
-      const ad=$('#daddr'), lk=$('#dlink');
+      const ad=document.getElementById('daddr'), lk=document.getElementById('dlink');
       if(ad) FLOW.addr=ad.value; if(lk) FLOW.link=lk.value;
-      FLOW.dstep=dstep()+1; render(); break; }
+      if(dstep()>=3) flowToSummary();
+      else { FLOW.dstep=dstep()+1; render(); }
+      break; }
     case 'go-intents': setTab('intents'); break;
     case 'flow-restart': seenClear(FLOW.sig||sigOf(flowIntent())); flowSearch(); break;
     // The widen controls already exist — they were only reachable when the slate came back EMPTY,
