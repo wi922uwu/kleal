@@ -339,6 +339,20 @@ class H(BaseHTTPRequestHandler):
             r["searcher"] = prof
             r["searcherKnown"] = bool(rec)
             send_json(self, 200, r)
+        elif p in ("/api/admin/diversity", "/api/admin/stability"):
+            # Both answer questions about a SET of searches rather than one, which is the shape of
+            # «мне попадаются одни и те же люди». Read-only, like everything else in the lab.
+            prof, rec = _searcher_profile(body)
+            payload = {"profile": prof, "intent": body.get("intent") or {}}
+            if p.endswith("diversity"):
+                payload["topics"] = body.get("topics") or []
+            else:
+                payload["runs"] = body.get("runs") or 4
+                if body.get("now"):
+                    payload["now"] = body["now"]
+            r = _match_post("/api/agent/" + p.rsplit("/", 1)[-1], payload, timeout=180)
+            r["searcherKnown"] = bool(rec)
+            send_json(self, 200, r)
         elif p == "/api/admin/explain":
             # Why did (or didn't) B show up for A's search — full per-feature decision trace.
             prof, _rec = _searcher_profile(body)
@@ -492,6 +506,65 @@ function funnelView(){
   </div>`;
 }
 let LFF={who:'',topics:'',role:'meet',mode:'offline'};
+let DIV=null, DIVBUSY=false, STAB=null, STABBUSY=false;
+const DIV_DEFAULT='padel, coffee, football, dota, yoga, books, photography, cooking, music, hiking, chess, wine';
+
+// «Одни и те же люди» is a claim about a SET of searches, so no single search can settle it.
+async function runDiversity(){
+  const who=(gv('#f_who')||'').trim();
+  const list=((gv('#d_topics')||DIV_DEFAULT).split(',').map(t=>t.trim()).filter(Boolean)).slice(0,24);
+  if(!list.length){ toast('Укажи темы'); return; }
+  DIVBUSY=true; render();
+  try{ DIV=await api('/api/admin/diversity',{method:'POST',body:JSON.stringify({self:who,topics:list,
+        intent:{role:gv('#f_role')||'meet',mode:gv('#f_mode')||'offline',time:'tomorrow'}})}); }
+  catch(e){ DIV={ok:false,error:String(e&&e.message||e)}; }
+  DIVBUSY=false; render();
+}
+// Same search N times. Our tie-break is a name hash, so any drift is time-dependent — and drift is
+// indistinguishable, from the outside, from "random people".
+async function runStability(){
+  const who=(gv('#f_who')||'').trim(), topics=(gv('#f_topics')||'').trim();
+  if(!topics){ toast('Заполни темы в блоке выше'); return; }
+  STABBUSY=true; render();
+  try{ STAB=await api('/api/admin/stability',{method:'POST',body:JSON.stringify({self:who,runs:4,
+        intent:{topics:topics.split(',').map(t=>t.trim()).filter(Boolean),
+                role:gv('#f_role')||'meet',mode:gv('#f_mode')||'offline',time:'tomorrow'}})}); }
+  catch(e){ STAB={ok:false,error:String(e&&e.message||e)}; }
+  STABBUSY=false; render();
+}
+function diagCards(){
+  const d=DIV, st=STAB;
+  const verdict=(good,txt)=>`<b style="color:${good?'#2f9e6b':'#c0392b'}">${txt}</b>`;
+  return `<div class="card">
+    <h3>Разнообразие выдачи</h3>
+    <div class="muted" style="margin-bottom:8px">Гоняет список тем от лица искателя и считает, сколько РАЗНЫХ людей вернулось. Отвечает на «мне попадаются одни и те же».</div>
+    <label>Темы через запятую<input id="d_topics" value="${((DIVT!=null?DIVT:DIV_DEFAULT)).replace(/"/g,'&quot;')}"></label>
+    <button class="primary" onclick="runDiversity()" ${DIVBUSY?'disabled':''}>${DIVBUSY?'Гоняю…':'Проверить разнообразие'}</button>
+    ${d&&d.error?`<div class="err">${d.error}</div>`:''}
+    ${d&&d.ok?`<div class="funnel">
+      ${['Запросов|'+d.queries,'С выдачей|'+d.withResults,'Разных людей|'+d.distinctPeople,
+         'Показан больше раза|'+d.shownMoreThanOnce].map(x=>{const[a,b]=x.split('|');
+         return `<div class="frow"><div class="fl">${a}</div><div class="fn">${b}</div><div></div></div>`;}).join('')}
+      <div class="frow"><div class="fl">Вердикт</div><div class="fn"></div><div class="fnote">${
+        d.distinctPeople >= d.withResults*4 ? verdict(true,'разнообразно') : verdict(false,'подозрительно однообразно')}</div></div>
+      ${(d.emptyTopics&&d.emptyTopics.length)?`<div class="frow sub"><div class="fl">пустые темы: ${d.emptyTopics.join(', ')}</div><div class="fn">${d.emptyTopics.length}</div><div></div></div>`:''}
+      ${(d.topRepeats||[]).slice(0,6).map(r=>`<div class="frow sub"><div class="fl">повтор: ${r.name}</div><div class="fn">${r.times}</div><div></div></div>`).join('')}
+    </div>`:''}
+  </div>
+  <div class="card">
+    <h3>Стабильность ×4</h3>
+    <div class="muted" style="margin-bottom:8px">Один и тот же запрос четыре раза подряд. Дрейф выдачи снаружи выглядит как «случайные люди».</div>
+    <button class="primary" onclick="runStability()" ${STABBUSY?'disabled':''}>${STABBUSY?'Гоняю…':'Проверить стабильность'}</button>
+    ${st&&st.error?`<div class="err">${st.error}</div>`:''}
+    ${st&&st.ok?`<div class="funnel">
+      <div class="frow"><div class="fl">Кандидатов в выдаче</div><div class="fn">${st.n}</div><div></div></div>
+      <div class="frow"><div class="fl">Состав не менялся</div><div class="fn"></div><div class="fnote">${verdict(st.stableSet,st.stableSet?'да':'НЕТ')}</div></div>
+      <div class="frow"><div class="fl">Порядок не менялся</div><div class="fn"></div><div class="fnote">${verdict(st.stableOrder,st.stableOrder?'да':'НЕТ')}</div></div>
+      ${(st.drift&&st.drift.length)?`<div class="frow sub"><div class="fl">появлялись/исчезали: ${st.drift.join(', ')}</div><div class="fn">${st.drift.length}</div><div></div></div>`:''}
+    </div>`:''}
+  </div>`;
+}
+let DIVT=null;
 const VIBES=["calm","energetic","intellectual","creative","competitive","chill","social","introvert","extrovert"];
 const ROLES=["play","watch","discuss","practise","attend","meet"];
 
@@ -770,7 +843,7 @@ function render(){
     <div class="tabs">
       <button class="tab ${TAB==='users'?'on':''}" onclick="setTab('users')">Люди</button>
       <button class="tab ${TAB==='lab'?'on':''}" onclick="setTab('lab')">Матчинг-лаборатория</button>
-      <button class="tab ${TAB==='funnel'?'on':''}" onclick="setTab('funnel')">Почему никого нет</button>
+      <button class="tab ${TAB==='funnel'?'on':''}" onclick="setTab('funnel')">Диагностика</button>
     </div>
     <span class="muted" style="margin-left:auto">${USERS.length} users</span>
     </div>${healthBar()}`;
@@ -778,8 +851,10 @@ function render(){
     // same caret discipline as the lab: render() rebuilds everything
     ['who','topics','role','mode'].forEach(k=>{const e=$('#f_'+k); if(e) LFF[k]=e.value;});
     const ae2=document.activeElement, aid2=(ae2&&ae2.id)||'';
-    $('#app').innerHTML=head+'<div class="wrap">'+funnelView()+'</div>';
+    const de=$('#d_topics'); if(de) DIVT=de.value;
+    $('#app').innerHTML=head+'<div class="wrap">'+funnelView()+diagCards()+'</div>';
     setTimeout(()=>{ ['who','topics','role','mode'].forEach(k=>{const e=$('#f_'+k); if(e&&LFF[k]!=null) e.value=LFF[k];});
+      const de2=$('#d_topics'); if(de2&&DIVT!=null) de2.value=DIVT;
       if(aid2){const f=$('#'+aid2); if(f) f.focus();} },0);
     return;
   }

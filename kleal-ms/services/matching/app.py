@@ -1697,6 +1697,32 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, res)
             except Exception as e:
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
+        elif p == "/api/agent/stability":
+            # Ported capability (not code) from the PROD|OLD|NEW bench: run the SAME search N times
+            # and check the slate does not move. Our tie-break is a name hash, so drift can only come
+            # from something time-dependent — readiness, quiet hours, proposal fatigue — and drift is
+            # indistinguishable, from the outside, from "random people".
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            intent = _normalize_intent(body.get("intent"))
+            runs = max(2, min(8, int(body.get("runs") or 4)))
+            pin = body.get("now")
+            outs = []
+            for _i in range(runs):
+                ctx = {"self": (prof.get("name") or ""), "uid": "admin-stab"}
+                if pin:
+                    ctx["now"] = float(pin)
+                try:
+                    outs.append([c.get("name") for c in match_candidates(intent, prof, ctx)])
+                except Exception as e:
+                    outs.append(["__error__: " + str(e)[:80]])
+            first = outs[0]
+            same_order = all(o == first for o in outs)
+            same_set = all(set(o) == set(first) for o in outs)
+            drift = sorted(set().union(*[set(o) for o in outs]) - set(first)) if not same_set else []
+            send_json(self, 200, {"ok": True, "runs": runs, "n": len(first),
+                                  "stableOrder": same_order, "stableSet": same_set,
+                                  "pinnedNow": bool(pin), "drift": drift[:10],
+                                  "slates": [o[:8] for o in outs]})
         elif p == "/api/agent/diversity":
             # «Мне попадаются одни и те же люди, какой бы запрос я ни написал.» That is a claim about
             # a SET of searches, so no single search can confirm or refute it. Run N topics as one
