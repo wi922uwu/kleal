@@ -83,6 +83,35 @@ def _as_phrases(v):
     return []
 
 
+# Kept byte-identical to onboarding's table (onboarding/app.py:1552) on purpose: the two services
+# write the same users.json, and a language spelled differently by each writer is a person who
+# silently stops matching when their row is touched by the other one.
+_LANG_CODES = {"english": "en", "spanish": "es", "german": "de", "french": "fr", "portuguese": "pt",
+               "italian": "it", "russian": "ru", "catalan": "ca", "ukrainian": "uk", "polish": "pl",
+               "английский": "en", "испанский": "es", "немецкий": "de", "французский": "fr",
+               "португальский": "pt", "итальянский": "it", "русский": "ru", "каталанский": "ca",
+               "serbian": "sr", "сербский": "sr", "swedish": "sv", "шведский": "sv",
+               "sp": "es"}   # legacy typo written by an older build; repair, do not drop
+# Valid codes are ISO 639-1, NOT the keys of the name table above. Deriving them from that table
+# was a bug caught only by counting the live store: 30 of the 31 codes in users.json are real
+# (hi, ar, da, ko, zh, nl, ja, he, cs, el, th, vi, id ...) and simply have no English/Russian NAME
+# entry, so the narrower check would have deleted a real language from anyone the admin touched —
+# a worse bug than the one being fixed. The only genuinely broken code in the store is "sp", two
+# rows, both real onboarding profiles; it is repaired by the alias table.
+_LANG_VALID = set("""en es de fr pt it ru ca uk pl sr sv hi ar da ko zh fi nl tr no ja hu ro
+he cs el th vi id bg hr sk sl et lv lt is ga cy sq mk bs be az ka hy fa ur bn ta te ml kn mr pa gu
+si ne my km lo ms tl sw af zu am ku ps tg uz kk ky mn ta la eo""".split())
+
+
+def _lang_code(x):
+    x = str(x or "").strip().lower()
+    if not x:
+        return ""
+    if x in _LANG_CODES:
+        return _LANG_CODES[x]
+    return x if (len(x) == 2 and x in _LANG_VALID) else ""
+
+
 def _norm_user(u, keep_id=None, fill_defaults=True):
     """Normalise a user row.
 
@@ -109,7 +138,11 @@ def _norm_user(u, keep_id=None, fill_defaults=True):
 
     interests = [x.lower() for x in _as_list(u.get("interests"))]
     interests = interests or (["coffee"] if fill_defaults else [])
-    langs = [x.lower()[:2] for x in _as_list(u.get("langs") or u.get("languages"))]
+    # Truncating to two characters is wrong for most language names — Portuguese becomes "po",
+    # German "ge", Serbian "se" — and none of those is a code the matcher compares against, so the
+    # person matched nobody on language. This is the WRITE path: a wrong code here is stored in
+    # users.json and outlives the session that typed it.
+    langs = [c for c in (_lang_code(x) for x in _as_list(u.get("langs") or u.get("languages"))) if c]
     langs = langs or (["en"] if fill_defaults else [])
     try:
         km = round(float(u.get("km", 2.0 if fill_defaults else None)), 1)

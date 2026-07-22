@@ -2450,13 +2450,43 @@ function syncBasicsRows(){
   const ORD=['Basics','Location','Languages'];
   rows.sort((a,b)=>{const x=ORD.indexOf(a.title),y=ORD.indexOf(b.title);return (x<0?9:x)-(y<0?9:y);});
 }
+// Languages, when all we have is the DISPLAY row («Russian native · English fluent · Spanish B1
+// practice»). Two bugs lived in the old one-liner, and both sent the matcher words that are not
+// languages or codes that are not real:
+//   1. every word became a language, so «native», «fluent», «B1», «practice» were shipped as
+//      na / fl / b / pr — four of seven "languages" on that profile were proficiency labels;
+//   2. an unknown word fell back to its first two letters, which is wrong far more often than it
+//      is right: Portuguese -> "po" (candidates store "pt"), German -> "ge" (de), Serbian -> "se"
+//      (sr). Onboarding offers Portuguese, so that one was reachable by picking it from the menu.
+// A word is now a language only if it IS one. Anything unrecognised is dropped rather than
+// guessed — an invented code matches nobody and cannot be told apart from a real preference.
+const LANG_CODES={english:'en',английский:'en',spanish:'es',испанский:'es','español':'es',
+  russian:'ru',русский:'ru',french:'fr',французский:'fr','français':'fr',
+  german:'de',немецкий:'de',deutsch:'de',italian:'it',итальянский:'it',italiano:'it',
+  portuguese:'pt',португальский:'pt','português':'pt',catalan:'ca',каталанский:'ca','català':'ca',
+  serbian:'sr',сербский:'sr',srpski:'sr',dutch:'nl',нидерландский:'nl',голландский:'nl',
+  polish:'pl',польский:'pl',ukrainian:'uk',украинский:'uk',turkish:'tr',турецкий:'tr',
+  arabic:'ar',арабский:'ar',chinese:'zh',китайский:'zh',japanese:'ja',японский:'ja',
+  hebrew:'he',иврит:'he',greek:'el',греческий:'el',czech:'cs',чешский:'cs',
+  swedish:'sv',шведский:'sv',norwegian:'no',норвежский:'no',danish:'da',датский:'da',
+  finnish:'fi',финский:'fi',hungarian:'hu',венгерский:'hu',romanian:'ro',румынский:'ro',
+  bulgarian:'bg',болгарский:'bg',hindi:'hi',хинди:'hi',korean:'ko',корейский:'ko'};
+const LANG_OK=new Set(Object.keys(LANG_CODES).map(k=>LANG_CODES[k]));
+function langCode(w){
+  const s=String(w||'').toLowerCase();
+  if(LANG_CODES[s]) return LANG_CODES[s];
+  if(s.length===2&&LANG_OK.has(s)) return s;      // already a canonical code
+  return '';                                       // proficiency word, level, anything else
+}
+function parseLangRow(txt){
+  let words; try{ words=String(txt||'').split(/[^\p{L}]+/u); }
+  catch(e){ words=String(txt||'').match(/[A-Za-zÀ-ÿА-Яа-яЁё]+/g)||[]; }
+  return words.map(langCode).filter((v,i,a)=>v&&a.indexOf(v)===i);
+}
 function matchProfile(){
   const g=t=>{const r=snapRow(t);return r?String(r.value||''):'';};
   const langs=(DATA.langsList&&DATA.langsList.length)?DATA.langsList.slice()
-    :(g('Languages').match(/[A-Za-zА-Яа-яё]+/g)||[]).map(s=>({'english':'en','английский':'en',
-    'spanish':'es','испанский':'es','russian':'ru','русский':'ru','french':'fr','французский':'fr',
-    'german':'de','немецкий':'de','catalan':'ca','italian':'it'}[s.toLowerCase()]||s.slice(0,2).toLowerCase()))
-    .filter((v,i,a)=>v&&a.indexOf(v)===i);
+    :parseLangRow(g('Languages'));
   const vibeRow=((DATA.social||{}).rows||[])[0];
   // city used to be the RAW snapshot row — «Barcelona · Eixample · Gràcia · Max travel 25 min» went
   // to the matcher as a "city". Canonical DATA.area wins; the first display segment is the fallback.

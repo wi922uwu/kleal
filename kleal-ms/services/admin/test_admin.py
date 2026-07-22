@@ -402,6 +402,42 @@ def test_edit_form_does_not_fabricate():
           "%r %r" % (a.get("lat"), a.get("lon")))
 
 
+def test_language_codes():
+    """Languages were mangled by `name[:2]` on three different paths. Portuguese became "po",
+    German "ge", Serbian "se" — none of them a code the matcher compares against, so those people
+    matched nobody on language. The profile client was worse: it read the DISPLAY row and turned
+    «Russian native · English fluent · Spanish B1 practice» into ru/na/en/fl/es/b/pr, four of seven
+    "languages" being proficiency words.
+
+    The fix must not overcorrect. 30 of the 31 codes in the live store are real ISO 639-1 codes with
+    no English/Russian name entry (hi, ar, da, ko, zh, nl, ja, he, cs, el, th, vi, id...), and a
+    validity check derived from the name table would have deleted them from any row the admin
+    touched — a worse bug than the one being fixed.
+    """
+    print("\n[langs] a language code that is not a language code matches nobody")
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    ns = {"__file__": os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.py"),
+          "__name__": "adm_probe"}
+    with open(ns["__file__"], "r", encoding="utf-8") as f:
+        exec(compile(f.read().split("def _norm_user")[0], ns["__file__"], "exec"), ns)
+    code = ns["_lang_code"]
+    for name, want in (("Portuguese", "pt"), ("German", "de"), ("Serbian", "sr"),
+                       ("Spanish", "es"), ("русский", "ru")):
+        check("%s resolves to %s, not its first two letters" % (name, want), code(name) == want,
+              "got %r" % code(name))
+    for word in ("native", "fluent", "practice", "B1", "Klingon"):
+        check("«%s» is not a language" % word, code(word) == "", "got %r" % code(word))
+    check("the legacy 'sp' typo is repaired to es, not dropped", code("sp") == "es", code("sp"))
+    # Every code actually present in the live store must survive a round-trip.
+    st, r = _req(ADMIN + "/api/admin/users", token=TOKEN)
+    present = set()
+    for u in (r or {}).get("users") or []:
+        for l in (u.get("langs") or []):
+            present.add(str(l).lower())
+    lost = sorted(c for c in present if c and code(c) != c and code(c) == "")
+    check("no language already in the store is dropped by the validator", not lost, str(lost))
+
+
 def test_cohorts():
     print("\n[cohorts] the questions a 3000-row table cannot answer")
     st, r = _req(ADMIN + "/api/admin/cohorts", token=TOKEN, timeout=60)
@@ -454,7 +490,7 @@ def main():
     for fn in (test_auth, test_destructive_routes_gone, test_health_and_store_agreement,
                test_funnel_arithmetic, test_searcher_profile_carries_age, test_stability,
                test_diversity_discriminates, test_engine_separates_topics, test_lab_still_works,
-               test_person_card, test_verbs_do_not_fabricate, test_pair_trace, test_buddy_search_trigger, test_e2e_probe, test_rollback_path_works, test_edit_form_does_not_fabricate, test_cohorts,
+               test_person_card, test_verbs_do_not_fabricate, test_pair_trace, test_buddy_search_trigger, test_e2e_probe, test_rollback_path_works, test_edit_form_does_not_fabricate, test_language_codes, test_cohorts,
                test_proposals_registry, test_registry_is_read_only):
         try:
             fn()

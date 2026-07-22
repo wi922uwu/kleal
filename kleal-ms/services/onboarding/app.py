@@ -1556,12 +1556,33 @@ _LANG_CODES = {"english": "en", "spanish": "es", "german": "de", "french": "fr",
                "italian": "it", "russian": "ru", "catalan": "ca", "ukrainian": "uk", "polish": "pl",
                "английский": "en", "испанский": "es", "немецкий": "de", "французский": "fr",
                "португальский": "pt", "итальянский": "it", "русский": "ru", "каталанский": "ca",
-               "serbian": "sr", "сербский": "sr", "swedish": "sv", "шведский": "sv"}
+               "serbian": "sr", "сербский": "sr", "swedish": "sv", "шведский": "sv",
+               "sp": "es"}   # legacy typo written by an older build; repair, do not drop
+
+
+# Valid codes are ISO 639-1, NOT the keys of the name table above. Deriving them from that table
+# was a bug caught only by counting the live store: 30 of the 31 codes in users.json are real
+# (hi, ar, da, ko, zh, nl, ja, he, cs, el, th, vi, id ...) and simply have no English/Russian NAME
+# entry, so the narrower check would have deleted a real language from anyone the admin touched —
+# a worse bug than the one being fixed. The only genuinely broken code in the store is "sp", two
+# rows, both real onboarding profiles; it is repaired by the alias table.
+_LANG_VALID = set("""en es de fr pt it ru ca uk pl sr sv hi ar da ko zh fi nl tr no ja hu ro
+he cs el th vi id bg hr sk sl et lv lt is ga cy sq mk bs be az ka hy fa ur bn ta te ml kn mr pa gu
+si ne my km lo ms tl sw af zu am ku ps tg uz kk ky mn ta la eo""".split())
 
 
 def _lang_code(x):
+    """The comment above explains why `x[:2]` is wrong — and the fallback did it anyway for every
+    word outside the table. Portuguese was in the table; Dutch, Greek, Turkish, Hebrew and anything
+    typed freehand were not, and each became a two-letter string that is not a language code and
+    therefore matches nobody. Unknown now returns "" and the caller drops it: no language is honest,
+    a wrong language is not."""
     x = str(x or "").strip().lower()
-    return _LANG_CODES.get(x, x[:2]) if x else "en"
+    if not x:
+        return "en"
+    if x in _LANG_CODES:
+        return _LANG_CODES[x]
+    return x if (len(x) == 2 and x in _LANG_VALID) else ""
 
 
 def _profile_to_user(p):
@@ -1572,7 +1593,7 @@ def _profile_to_user(p):
     interests = [str(x).strip().lower() for x in (ints.get("explicit") if isinstance(ints, dict) else ints) or [] if str(x).strip()][:6]
     langs = (p.get("languages") or {})
     ll = langs.get("comfortable") or langs.get("fluent") or langs.get("native") or [] if isinstance(langs, dict) else []
-    langs = [_lang_code(x) for x in ll if str(x).strip()][:4] or ["en"]
+    langs = [c for c in (_lang_code(x) for x in ll if str(x).strip()) if c][:4] or ["en"]
     vibe = ""
     vb = p.get("vibe")
     if isinstance(vb, dict) and vb.get("primary"):
