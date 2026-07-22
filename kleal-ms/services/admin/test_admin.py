@@ -329,6 +329,21 @@ def test_buddy_search_trigger():
                  "мы вчера поиграли в футбол вместе, было круто", "давай сыграем в шахматы"):
         got = _buddy_searched(text)
         check("«%s» does NOT start a search" % text, got is False, "searched=%s" % got)
+    # An interest outside the 165-word taxonomy must still reach a search. The trigger written to
+    # stop buddy chatting instead of searching had made every novel interest silently unsearchable;
+    # filtration is the second tier that decides, and «other» is its honest no.
+    for text in ("хочу собирать лабубу", "хочу разводить улиток"):
+        st, r = _req(BUDDY + "/api/buddy/chat",
+                     data={"messages": [{"role": "user", "content": text}],
+                           "profile": {"name": "Nadia", "interests": ["coffee"], "age": 30}},
+                     timeout=300)
+        intent = (r or {}).get("intent") or {}
+        check("«%s» builds an intent despite being outside the taxonomy" % text,
+              bool(intent.get("topics")), json.dumps(intent)[:140])
+    # …and a wish with no subject at all still must not.
+    for text in ("хочу спать", "хочу домой"):
+        got = _buddy_searched(text)
+        check("«%s» does NOT start a search" % text, got is False, "searched=%s" % got)
 
 
 def test_e2e_probe():

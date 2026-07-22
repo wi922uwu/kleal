@@ -166,9 +166,40 @@ def negated_terms(text):
     return out
 
 
-def wants_people(text, model_flagged):
-    """Deterministic search trigger. STRONG ask always; COMPANION needs the model's agreement;
-    DESIRE needs a resolvable activity in the user's own words."""
+# A word the taxonomy cannot resolve is not the same as no interest. These are the shapes a NEW
+# interest arrives in — a proper noun, a brand, a hobby nobody has listed yet — and they must not be
+# mistaken for the empty-handed «хочу спать».
+_NOT_A_SUBJECT = re.compile(r"^(спать|есть|пить|жить|домой|туда|сюда|обратно|назад|уже|ещё|еще|"
+                            r"сам|сама|сами|так|тут|там|очень|просто|home|sleep|out)$", re.I)
+
+
+def _has_novel_subject(text):
+    """Is there a content word that could BE the interest, even though the taxonomy has never heard
+    of it? Deliberately shallow — it only decides whether the question is worth asking; filtration
+    makes the actual call."""
+    for w in re.split(r"[^\w'-]+", str(text or "").lower()):
+        if len(w) < 4 or w in _RAW_STOP or w in _GENERIC_TOPIC or w in _NEG_NOISE:
+            continue
+        if _is_verbish(w) or _NOT_A_SUBJECT.match(w):
+            continue
+        if norm_topic(w):
+            continue                       # known word — the fast path already handled it
+        return True
+    return False
+
+
+def wants_people(text, model_flagged, ask_filtration=None):
+    """Deterministic search trigger.
+
+    STRONG ask always; COMPANION needs the model's agreement; DESIRE needs a subject.
+
+    The subject test has two tiers because the taxonomy is 165 words and interests are not. The fast
+    tier is a taxonomy hit. When that misses but the sentence still names something — «хочу собирать
+    лабубу», «хочу шить на машинке» — the word is handed to filtration, which exists precisely to
+    magnetise unseen text onto a category and answers `other` when there is nothing there. Without
+    this second tier every interest outside the 165 words was silently unsearchable: the trigger I
+    wrote to stop buddy chatting instead of searching had made novel interests invisible.
+    """
     t = str(text or "")
     if _STRONG_ASK_EXTRA.search(t):
         return True
@@ -176,7 +207,21 @@ def wants_people(text, model_flagged):
         return True
     if model_flagged and _COMPANION.search(t):
         return True
-    return bool(_DESIRE.search(t) and not _PAST.search(t) and _names_an_activity(t))
+    if not (_DESIRE.search(t) and not _PAST.search(t)):
+        return False
+    if _names_an_activity(t):
+        return True
+    if not _has_novel_subject(t):
+        return False
+    return bool(ask_filtration and ask_filtration(t))
+
+
+def _filtration_says_activity(text):
+    """One filtration call, used only when the cheap checks were inconclusive. `other` is its honest
+    'nothing here', so it is the one answer that does NOT start a search."""
+    cat = _categorize(text) or {}
+    name = str(cat.get("category") or "").lower().strip()
+    return bool(name) and name != "other"
 
 BUDDY_PROMPT = '''You are "Kleal" — the user's buddy: a warm, smart, genuinely helpful companion they can chat with like they would with ChatGPT. Talk naturally (1-4 sentences). Be actually useful: answer questions, riff on ideas, recommend things, help them think — about anything, not only meeting people. You are their day-to-day AI on the Kleal platform. (Deeper tools like web research come later.)
 
@@ -974,7 +1019,7 @@ def buddy_chat(messages, profile, signals, uid=None):
         sig = _merge_signals(sig, obj.get("signals") or {})
         # The model's flag alone is not enough (it fires on plain chat and misses real asks). Require an
         # explicit ask in the user's words; the flag only tips a soft "with someone" cue over the line.
-        want_match = wants_people(last_user, bool(obj.get("match")))
+        want_match = wants_people(last_user, bool(obj.get("match")), _filtration_says_activity)
     else:
         # LLM down: only the strong, explicit ask triggers a search — never a bare activity mention.
         want_match = wants_people(last_user, False)
