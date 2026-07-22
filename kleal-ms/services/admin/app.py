@@ -22,6 +22,7 @@ from http_util import send, send_json, read_json
 
 PORT = int(os.environ.get("ADMIN_PORT", "7077"))
 MATCH_URL = os.environ.get("MATCH_URL", "http://127.0.0.1:7074").rstrip("/")
+BUDDY_URL = os.environ.get("BUDDY_URL", "http://127.0.0.1:7075").rstrip("/")
 # Two-up, the SAME default onboarding and matching resolve to. It used to point at
 # services/matching/users.json, so a restart without KLEAL_USERS silently split the store: the panel
 # edited one file while the matcher read another, and nothing said so. (The new health bar now says
@@ -287,6 +288,90 @@ def _match_get(path, timeout=20):
         return {"_error": "%s: %s" % (type(e).__name__, str(e)[:160])}
 
 
+E2E_PHRASES = ["хочу выпить кофе", "хочу поиграть в падл", "хочу обсудить стартапы",
+               "хочу сходить на выставку", "ищу с кем побегать утром", "хочу поиграть в доту"]
+
+
+def e2e_probe(prof, phrases=None, timeout=300):
+    """The whole app path — free text -> buddy -> intent -> matching — not just the ranker.
+
+    Every diagnostic before this one entered at the ranker with a hand-built intent, so it could
+    only ever exonerate the ranker. «Мне попадаются одни и те же люди» is a complaint about the
+    path the app actually takes, and the two most likely culprits sit BEFORE the ranker: a topic
+    that fails to resolve (every unresolvable topic returns the same fallback crowd) and an intent
+    that comes back not rankable at all.
+    """
+    phrases = [str(p).strip() for p in (phrases or E2E_PHRASES) if str(p).strip()][:12]
+    rows, seen = [], {}
+
+    def _chat(msgs):
+        req = urllib.request.Request(
+            BUDDY_URL + "/api/buddy/chat",
+            data=json.dumps({"messages": msgs, "profile": prof}).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    def _cards(res):
+        cards = res.get("matches") if isinstance(res.get("matches"), list) else []
+        if not cards:
+            blk = res.get("match") if isinstance(res.get("match"), dict) else {}
+            cards = blk.get("candidates") if isinstance(blk.get("candidates"), list) else []
+        return [str(c.get("name") or "") for c in cards if isinstance(c, dict) and c.get("name")]
+
+    for ph in phrases:
+        # Buddy asks up to two clarifying questions before it searches — that is the designed
+        # behaviour, not a failure. A one-shot probe read every one of those as "no topic" and
+        # would have sent someone hunting a resolver bug that does not exist. So the probe holds
+        # the conversation the way a person does, and reports how many turns it took.
+        msgs, res, turns, err = [{"role": "user", "content": ph}], None, 0, None
+        for turn in range(3):
+            try:
+                res = _chat(msgs)
+            except Exception as e:
+                err = "%s: %s" % (type(e).__name__, str(e)[:120])
+                break
+            turns = turn + 1
+            if _cards(res):
+                break
+            reply = str(res.get("reply") or "")
+            if not reply:
+                break
+            msgs = msgs + [{"role": "assistant", "content": reply},
+                           {"role": "user", "content": "не важно, на твой выбор — давай искать"}]
+        if err or res is None:
+            rows.append({"phrase": ph, "error": err or "no response", "names": []})
+            continue
+        intent = res.get("intent") if isinstance(res.get("intent"), dict) else {}
+        names = _cards(res)
+        for n in names:
+            seen[n] = seen.get(n, 0) + 1
+        rows.append({"phrase": ph, "topics": intent.get("topics") or [],
+                     "rankable": intent.get("rankable"), "turns": turns,
+                     "asked": turns > 1,
+                     "n": len(names), "names": names[:8]})
+    withres = [r for r in rows if r.get("names")]
+    order = sorted(seen.items(), key=lambda kv: -kv[1])
+    # Two searches sharing most of their slate is the complaint, stated exactly.
+    worst = None
+    for i in range(len(withres)):
+        for j in range(i + 1, len(withres)):
+            a, b = set(withres[i]["names"]), set(withres[j]["names"])
+            if not a or not b:
+                continue
+            ov = len(a & b) / float(min(len(a), len(b)))
+            if worst is None or ov > worst["overlap"]:
+                worst = {"a": withres[i]["phrase"], "b": withres[j]["phrase"],
+                         "overlap": round(ov, 2), "shared": sorted(a & b)[:8]}
+    return {"ok": True, "phrases": len(rows), "withResults": len(withres),
+            "unrankable": [r["phrase"] for r in rows if r.get("rankable") is False],
+            "noTopics": [r["phrase"] for r in rows if not r.get("topics") and not r.get("error")],
+            "errors": [r for r in rows if r.get("error")],
+            "distinctPeople": len(seen),
+            "topRepeats": [{"name": n, "times": t} for n, t in order[:8] if t > 1],
+            "worstPair": worst, "rows": rows}
+
+
 def _searcher_profile(body):
     """Profile of the person running the search: a store user by name/id, or a custom dict.
     Shaped the way the matching engine reads it (name/vibe/geo/langs/interests)."""
@@ -412,6 +497,11 @@ class H(BaseHTTPRequestHandler):
                 if body.get("now"):
                     payload["now"] = body["now"]
             r = _match_post("/api/agent/" + p.rsplit("/", 1)[-1], payload, timeout=180)
+            r["searcherKnown"] = bool(rec)
+            send_json(self, 200, r)
+        elif p == "/api/admin/e2e":
+            prof, rec = _searcher_profile(body)
+            r = e2e_probe(prof, body.get("phrases"))
             r["searcherKnown"] = bool(rec)
             send_json(self, 200, r)
         elif p == "/api/admin/person/verb":
@@ -627,6 +717,44 @@ function diagCards(){
       <div class="frow"><div class="fl">Состав не менялся</div><div class="fn"></div><div class="fnote">${verdict(st.stableSet,st.stableSet?'да':'НЕТ')}</div></div>
       <div class="frow"><div class="fl">Порядок не менялся</div><div class="fn"></div><div class="fnote">${verdict(st.stableOrder,st.stableOrder?'да':'НЕТ')}</div></div>
       ${(st.drift&&st.drift.length)?`<div class="frow sub"><div class="fl">появлялись/исчезали: ${st.drift.join(', ')}</div><div class="fn">${st.drift.length}</div><div></div></div>`:''}
+    </div>`:''}
+  </div>`+e2eCard();
+}
+// Everything above enters at the ranker with a hand-built intent, so it can only ever exonerate
+// the ranker. This one types the phrase the user types.
+let E2E=null, E2EBUSY=false, E2ET=null;
+const E2E_DEFAULT='хочу выпить кофе, хочу поиграть в падл, хочу обсудить стартапы, хочу сходить на выставку, ищу с кем побегать утром, хочу поиграть в доту';
+async function runE2E(){
+  const who=($('#f_who')&&$('#f_who').value.trim())||'';
+  const list=(($('#e_ph')&&$('#e_ph').value)||E2E_DEFAULT).split(',').map(s=>s.trim()).filter(Boolean);
+  E2EBUSY=true; render();
+  try{ E2E=await api('/api/admin/e2e',{method:'POST',body:JSON.stringify({self:who,phrases:list})}); }
+  catch(e){ E2E={ok:false,error:String(e&&e.message||e)}; }
+  E2EBUSY=false; render();
+}
+function e2eCard(){
+  const e=E2E;
+  return `<div class="card">
+    <h3>Сквозная проверка: текст → бадди → выдача</h3>
+    <div class="muted" style="margin-bottom:8px">Остальные проверки начинаются с готового интента и поэтому могут только оправдать ранжирование. Эта пишет ту же фразу, что пишет человек — и ловит две причины «одних и тех же людей», которые лежат ДО ранжирования: тема не разрезолвилась и интент вернулся неранжируемым.</div>
+    <label>Фразы через запятую<input id="e_ph" value="${((E2ET!=null?E2ET:E2E_DEFAULT)).replace(/"/g,'&quot;')}"></label>
+    <button class="primary" onclick="runE2E()" ${E2EBUSY?'disabled':''}>${E2EBUSY?'Гоняю (это долго — на каждую фразу зовётся модель)…':'Прогнать сквозь бадди'}</button>
+    ${e&&e.error?`<div class="err">${e.error}</div>`:''}
+    ${e&&e.ok?`<div class="funnel">
+      ${_kv('фраз',e.phrases)}${_kv('с выдачей',e.withResults)}${_kv('разных людей',e.distinctPeople)}
+      ${e.unrankable.length?`<div class="frow"><div class="fl" style="color:#c0392b">интент неранжируем</div><div class="fn">${e.unrankable.length}</div><div class="fnote">${e.unrankable.join(' · ')}</div></div>`:''}
+      ${e.noTopics.length?`<div class="frow"><div class="fl" style="color:#c0392b">тема не разрезолвилась</div><div class="fn">${e.noTopics.length}</div><div class="fnote">${e.noTopics.join(' · ')}</div></div>`:''}
+      ${e.errors.length?`<div class="frow"><div class="fl" style="color:#c0392b">ошибки</div><div class="fn">${e.errors.length}</div><div class="fnote">${e.errors.map(x=>x.phrase+': '+x.error).join(' · ')}</div></div>`:''}
+      ${e.worstPair?`<div class="frow"><div class="fl">самая похожая пара выдач</div><div class="fn">${Math.round(e.worstPair.overlap*100)}%</div><div class="fnote">«${e.worstPair.a}» и «${e.worstPair.b}»${e.worstPair.shared.length?' · общие: '+e.worstPair.shared.join(', '):''}</div></div>`:''}
+      ${(e.topRepeats||[]).map(r=>`<div class="frow sub"><div class="fl">повтор: <span onclick="openPerson('${String(r.name).replace(/'/g,"\\'")}')" style="text-decoration:underline;cursor:pointer">${r.name}</span></div><div class="fn">${r.times}</div><div></div></div>`).join('')}
+    </div>
+    <div class="sec">По фразам</div><div class="funnel">
+      ${e.rows.map(r=>`<div class="frow"><div class="fl">«${r.phrase}»</div><div class="fn">${r.error?'—':r.n}</div>
+        <div class="fnote">${r.error?('<span style="color:#c0392b">'+r.error+'</span>'):
+          ((r.topics&&r.topics.length?'темы: '+r.topics.join(', '):'<span style="color:#c0392b">без темы</span>')
+           +(r.rankable===false?' · <span style="color:#c0392b">неранжируем</span>':'')
+           +(r.asked?(' · бадди переспросил, ходов: '+r.turns):''))}</div></div>
+        ${(r.names&&r.names.length)?`<div class="frow sub"><div class="fl muted">${r.names.join(', ')}</div><div class="fn"></div><div></div></div>`:''}`).join('')}
     </div>`:''}
   </div>`;
 }
@@ -1148,9 +1276,11 @@ function render(){
     ['who','topics','role','mode'].forEach(k=>{const e=$('#f_'+k); if(e) LFF[k]=e.value;});
     const ae2=document.activeElement, aid2=(ae2&&ae2.id)||'';
     const de=$('#d_topics'); if(de) DIVT=de.value;
+    const ee=$('#e_ph'); if(ee) E2ET=ee.value;
     $('#app').innerHTML=head+'<div class="wrap">'+funnelView()+diagCards()+'</div>';
     setTimeout(()=>{ ['who','topics','role','mode'].forEach(k=>{const e=$('#f_'+k); if(e&&LFF[k]!=null) e.value=LFF[k];});
       const de2=$('#d_topics'); if(de2&&DIVT!=null) de2.value=DIVT;
+      const ee2=$('#e_ph'); if(ee2&&E2ET!=null) ee2.value=E2ET;
       if(aid2){const f=$('#'+aid2); if(f) f.focus();} },0);
     return;
   }

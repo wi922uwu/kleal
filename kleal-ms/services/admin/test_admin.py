@@ -298,6 +298,64 @@ def test_pair_trace():
           json.dumps(f)[:160])
 
 
+BUDDY = os.environ.get("BUDDY_URL", "http://127.0.0.1:7075").rstrip("/")
+
+
+def _buddy_searched(text):
+    st, r = _req(BUDDY + "/api/buddy/chat",
+                 data={"messages": [{"role": "user", "content": text}],
+                       "profile": {"name": "Nadia", "interests": ["coffee"], "area": "Belgrade"}},
+                 timeout=300)
+    if not isinstance(r, dict):
+        return None
+    cards = r.get("matches") or ((r.get("match") or {}).get("candidates") or [])
+    return bool(cards)
+
+
+def test_buddy_search_trigger():
+    """The bug the end-to-end probe found: five of six ordinary requests never searched at all.
+
+    Buddy only searched on an explicit «найди мне кого-нибудь». For «хочу выпить кофе» — the most
+    ordinary request there is, and the one the product is demoed with — the 70B answers match:false
+    because no person was mentioned, so the trigger never fired and three turns of "давай искать"
+    never got there either. Both directions are asserted here: the fix must not turn plain chat
+    into a search, which is the failure this trigger was originally written to prevent.
+    """
+    print("\n[trigger] «хочу выпить кофе» must search; ordinary chat must not")
+    for text in ("хочу выпить кофе", "хочу поиграть в падл", "хочу обсудить стартапы"):
+        got = _buddy_searched(text)
+        check("«%s» starts a search" % text, got is True, "searched=%s" % got)
+    for text in ("привет, как дела?", "расскажи что-нибудь интересное про кофе",
+                 "мы вчера поиграли в футбол вместе, было круто", "давай сыграем в шахматы"):
+        got = _buddy_searched(text)
+        check("«%s» does NOT start a search" % text, got is False, "searched=%s" % got)
+
+
+def test_e2e_probe():
+    print("\n[e2e] the whole path the app takes — free text, buddy, intent, slate")
+    st, r = _req(ADMIN + "/api/admin/e2e",
+                 data={"self": "Nadia", "phrases": ["хочу выпить кофе", "хочу поиграть в падл",
+                                                    "хочу обсудить стартапы"]},
+                 token=TOKEN, timeout=900)
+    check("e2e responds", st == 200 and (r or {}).get("ok"), "got %s" % st)
+    if not (r or {}).get("ok"):
+        return
+    check("no phrase is left without a topic", not r.get("noTopics"), str(r.get("noTopics")))
+    check("no phrase comes back unrankable", not r.get("unrankable"), str(r.get("unrankable")))
+    check("no transport errors", not r.get("errors"), json.dumps(r.get("errors"))[:160])
+    check("every phrase produced a slate", r.get("withResults") == r.get("phrases"),
+          "%s of %s" % (r.get("withResults"), r.get("phrases")))
+    # The complaint, stated as a number: two different requests must not return the same faces.
+    worst = r.get("worstPair") or {}
+    check("no two requests return mostly the same people",
+          (worst.get("overlap") or 0) <= 0.5, json.dumps(worst)[:160])
+    check("distinct people scale with the number of requests",
+          r.get("distinctPeople", 0) >= r.get("withResults", 0) * 2,
+          "distinct=%s runs=%s" % (r.get("distinctPeople"), r.get("withResults")))
+    for row in r.get("rows") or []:
+        check("«%s» resolved to a topic" % row["phrase"], bool(row.get("topics")), json.dumps(row)[:140])
+
+
 def test_cohorts():
     print("\n[cohorts] the questions a 3000-row table cannot answer")
     st, r = _req(ADMIN + "/api/admin/cohorts", token=TOKEN, timeout=60)
@@ -350,7 +408,7 @@ def main():
     for fn in (test_auth, test_destructive_routes_gone, test_health_and_store_agreement,
                test_funnel_arithmetic, test_searcher_profile_carries_age, test_stability,
                test_diversity_discriminates, test_engine_separates_topics, test_lab_still_works,
-               test_person_card, test_verbs_do_not_fabricate, test_pair_trace, test_cohorts,
+               test_person_card, test_verbs_do_not_fabricate, test_pair_trace, test_buddy_search_trigger, test_e2e_probe, test_cohorts,
                test_proposals_registry, test_registry_is_read_only):
         try:
             fn()

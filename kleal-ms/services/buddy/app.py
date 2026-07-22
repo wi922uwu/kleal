@@ -94,14 +94,45 @@ _STRONG_ASK_EXTRA = re.compile(
     r"practi[cs]e\s+\w+\s+with|language\s+buddy", re.I)
 
 
+# DESIRE — first-person, forward-looking wish to DO something ("хочу выпить кофе", "I want to play
+# padel"). Tier-2 like COMPANION: it fires only with the model's agreement, because the wording alone
+# is ambiguous. Without this tier the most natural way to ask — the way the product is demoed — was
+# answered with small talk forever: an end-to-end probe of six ordinary phrases produced ONE search
+# in six, and three turns of "не важно, давай искать" never got there either.
+# Deliberately excluded: past tense ("мы вчера поиграли"), and "давай …" imperatives, which address
+# Buddy itself rather than describe a wish — both used to create intents and were fixed once already.
+_DESIRE = re.compile(
+    r"(^|[\s,.:;!?—-])(хочу|хочется|хотел[аи]?\s+бы|мечтаю|планиру[юе]|собира[юе]сь|"
+    r"не\s+прочь|было\s+бы\s+круто|"
+    r"i\s+want\s+to|i'?d\s+like\s+to|i\s+wanna|want\s+to\s+go|planning\s+to|thinking\s+of)\b", re.I)
+_PAST = re.compile(r"вчера|позавчера|на\s+прошлой\s+неделе|yesterday|last\s+(week|night|time)", re.I)
+
+
+def _names_an_activity(text):
+    """Does the user's own text contain a word the ranker can actually resolve?
+
+    Deliberately NOT the model's extraction. Gating the desire tier on `signals.interest` made the
+    product a coin flip: at temperature 0.6 the same «хочу выпить кофе» searched on one turn and
+    made small talk on the next, which from outside is indistinguishable from a broken matcher.
+    The user's words are the same every time, so the trigger reads those.
+    """
+    for piece in re.split(r"[^\w'-]+", str(text or "").lower()):
+        if piece and norm_topic(piece):
+            return True
+    return False
+
+
 def wants_people(text, model_flagged):
-    """Deterministic search trigger. STRONG ask always; COMPANION cue only with the model's agreement."""
+    """Deterministic search trigger. STRONG ask always; COMPANION needs the model's agreement;
+    DESIRE needs a resolvable activity in the user's own words."""
     t = str(text or "")
     if _STRONG_ASK_EXTRA.search(t):
         return True
     if _STRONG_ASK.search(t):
         return True
-    return bool(model_flagged and _COMPANION.search(t))
+    if model_flagged and _COMPANION.search(t):
+        return True
+    return bool(_DESIRE.search(t) and not _PAST.search(t) and _names_an_activity(t))
 
 BUDDY_PROMPT = '''You are "Kleal" — the user's buddy: a warm, smart, genuinely helpful companion they can chat with like they would with ChatGPT. Talk naturally (1-4 sentences). Be actually useful: answer questions, riff on ideas, recommend things, help them think — about anything, not only meeting people. You are their day-to-day AI on the Kleal platform. (Deeper tools like web research come later.)
 
