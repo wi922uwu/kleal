@@ -678,7 +678,39 @@ def _diversify_reasons(slate):
             if isinstance(v, list) and len(v) == len(ru):
                 x[fld] = [v[i] for i in order][:REASONS_SHOWN]
 
-def _slate(items, home_bucket=None):
+def _slate(items, home_bucket=None, seen=None):
+    """Allocation with paging. `seen` — names this viewer was already shown FOR THIS QUERY.
+
+    The slate is filled from the UNSEEN candidates first, walking the bands in their existing
+    order, and only backfills with already-seen ones when the unseen run out. Reordering *inside*
+    a band was tried first and does nothing in the common case: the top band here holds exactly
+    eight people, so once you have seen those eight the partition has nothing to swap them with and
+    the slate is identical forever — which is the reported bug, unfixed. Skipping a seen person in
+    a high band to reach an unseen one below is not a promotion: the result is still ordered by
+    band, nobody is scored differently, and `_slate_pick` below is the untouched original logic.
+
+    With an empty `seen` this is byte-for-byte the previous behaviour, so `slate = f(ranked, seen)`
+    stays a deterministic function of declared inputs and the stability probe keeps its meaning."""
+    seen = seen or set()
+    if not seen:
+        return _slate_pick(items, home_bucket)
+    key = lambda x: str(x["name"]).strip().lower()
+    fresh = _slate_pick([x for x in items if key(x) not in seen], home_bucket)
+    if len(fresh) >= TOP_N:
+        return fresh
+    # Exhausted: top up from the head of the list as before. Returning a short or empty slate would
+    # send someone who has seen everybody to the "too few matches" screen.
+    picked = {id(x) for x in fresh}
+    stale = _slate_pick([x for x in items if id(x) not in picked], home_bucket)
+    chosen = fresh + stale[:TOP_N - len(fresh)]
+    # WHICH people are chosen is what paging changes; the order they are shown in is not. Appending
+    # the backfill blindly put a seen `especially_close` card below an unseen `needs_clarification`
+    # one — the slate has to stay ordered by band, or the top card stops meaning "best match".
+    pos = {id(x): i for i, x in enumerate(items)}
+    return sorted(chosen, key=lambda x: pos.get(id(x), len(items)))
+
+
+def _slate_pick(items, home_bucket=None):
     """Diversity is applied WITHIN a band and never promotes a lower band (spec §11: allocation
     must not change pair relevance). Inside one band the per-bucket cap is SOFT: if the only
     remaining same-band candidates are from a capped bucket, relevance wins and they fill the
@@ -819,6 +851,9 @@ def search(intent, prof, ctx, candidates, H, cfg, diag=None):
     topics = [str(t).lower() for t in (intent.get("topics") or [])]
     now_ts = ctx.get("now") or time.time()             # pin ctx.now for deterministic replay
     received24 = ctx.get("received24") or {}           # {name_lower: proposals received last 24h}
+    # Who this viewer has already been shown for THIS query. Allocation input, never a score input
+    # (spec §11: allocation must not change pair relevance) — it only reorders inside a band.
+    seen_names = {str(n).strip().lower() for n in (ctx.get("seen") or []) if str(n).strip()}
     out = []
     # Every `continue` below is an answer to «почему я никого не вижу», and every one of them used to
     # be thrown away. `diag` is an optional counter the caller passes in; when absent this is exactly
@@ -911,13 +946,18 @@ def search(intent, prof, ctx, candidates, H, cfg, diag=None):
                             -x["coverage"],
                             min(int(x.get("lastActiveDays") or 9), 9),
                             hashlib.sha1(str(x["name"]).encode("utf-8")).hexdigest()))
+    # `ranked` is the number of people who passed everything — the answer to "how deep does this
+    # query actually go". Before this it was computed, truncated to 8 and thrown away, so nothing
+    # could tell a query with 9 matches from one with 246.
     meta = {"core": "v2", "config_version": cfg.get("config_version"), "domain": domain,
-            "config_sha": cfg.get("_sha256", "")[:12]}
+            "config_sha": cfg.get("_sha256", "")[:12], "ranked": len(out),
+            "unseen": sum(1 for x in out if str(x["name"]).strip().lower() not in seen_names),
+            "seen_in": len(seen_names)}
     home = None                                   # the category the user actually asked about
     for t in topics:
         home = H["cat_of"](t)[0]
         if home:
             break
-    sl = _slate(out, home)
+    sl = _slate(out, home, seen_names)
     _diversify_reasons(sl)
     return sl, meta

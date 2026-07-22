@@ -142,6 +142,43 @@ a = json.dumps(run(INTENT_COFFEE, PROF_RICH, [FULL, SPARSE, one, dup]), sort_key
 b = json.dumps(run(INTENT_COFFEE, PROF_RICH, [FULL, SPARSE, one, dup]), sort_keys=True)
 check("C24 identical inputs replay to identical slate", a == b)
 
+# ------------------------------------------------- paging: «люди не меняются» на одном и том же запросе
+# The ranker was doing exactly its job — the top of a deterministic list is a deterministic set, and
+# nothing remembered that you had already looked. Determinism is not abandoned here, it becomes
+# conditioned on a declared input: slate = f(ranked, seen). These tests pin both halves of that.
+_POOL = [dict(FULL, name="P%02d" % i, interests=["coffee"]) for i in range(20)]
+_p0 = [c["name"] for c in run(INTENT_COFFEE, PROF_RICH, _POOL)]
+_p0b = [c["name"] for c in run(INTENT_COFFEE, PROF_RICH, _POOL, {"seen": []})]
+check("P1 an empty seen-set is exactly today's slate", _p0 == _p0b, (_p0, _p0b))
+_p1 = [c["name"] for c in run(INTENT_COFFEE, PROF_RICH, _POOL, {"seen": _p0})]
+check("P2 the second page repeats nobody from the first", not (set(_p0) & set(_p1)), sorted(set(_p0) & set(_p1)))
+_p1again = [c["name"] for c in run(INTENT_COFFEE, PROF_RICH, _POOL, {"seen": _p0})]
+check("P3 same query + same seen-set replays identically", _p1 == _p1again, (_p1, _p1again))
+
+# Page through the whole pool: every qualified person must be reachable, none twice.
+_seen, _pages = [], []
+for _ in range(6):
+    _pg = [c["name"] for c in run(INTENT_COFFEE, PROF_RICH, _POOL, {"seen": list(_seen)})]
+    if not _pg or all(n in _seen for n in _pg):
+        break
+    _pages.append(_pg)
+    _seen += [n for n in _pg if n not in _seen]
+check("P4 paging reaches everyone who qualifies", len(_seen) >= min(len(_POOL), 16), len(_seen))
+check("P5 no duplicates across pages", len(_seen) == len(set(_seen)), len(_seen) - len(set(_seen)))
+
+# Exhaustion must be a FULL slate, not an empty one: an empty result routes a satisfied user to the
+# "too few matches" screen, which would tell someone who just saw everybody that nobody matched.
+_ex = run(INTENT_COFFEE, PROF_RICH, _POOL, {"seen": _seen + [c["name"] for c in _POOL]})
+check("P6 exhaustion still returns a full slate", len(_ex) == len(_p0), (len(_ex), len(_p0)))
+
+# Allocation must never masquerade as relevance: novelty may reorder within a band, never across.
+_bands = [c["band"] for c in run(INTENT_COFFEE, PROF_RICH, [FULL, SPARSE, one, dup],
+                                 {"seen": [FULL["name"]]})]
+_rank = {b: i for i, b in enumerate(["especially_close", "strong_option", "broader_option",
+                                     "needs_clarification"])}
+check("P7 an unseen candidate is never promoted over a better band",
+      all(_rank[_bands[i]] <= _rank[_bands[i + 1]] for i in range(len(_bands) - 1)), _bands)
+
 # ---------------------------------------------------------------- config validator negatives
 try:
     core_v2.load_config(os.path.join(ROOT, "config", "Kleal_Matching_Core_Config_v2.yaml"),

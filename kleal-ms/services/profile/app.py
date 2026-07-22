@@ -3727,18 +3727,82 @@ function flowIntent(){
   }
   return it;
 }
+// ---- «люди не меняются» ----------------------------------------------------------------------
+// The ranker is deterministic on purpose, so the top of its list was the same eight people every
+// time, out of ~250 who qualified. We remember who this person has already been shown FOR THIS
+// QUERY and send it along; the engine then pages down the same unchanged ranking instead of
+// re-serving its head. Kept on the client because a search must not become a writer of matching's
+// store, and because the client is the only side that knows what was actually rendered.
+// Bounded hard: DATA rides into that store wholesale via saveState(), so this must not grow.
+const SEEN_MAX_SIGS=40, SEEN_MAX_NAMES=200, SEEN_TTL=7*864e5;
+function sigOf(it){
+  it=it||{};
+  // Only the fields that decide SCOPE. Not the wording: «кофе сегодня» and «выпить кофе сегодня»
+  // normalise to the same topics and must continue the same paging, which is the reported case.
+  const parts=[(it.topics||[]).map(t=>String(t).toLowerCase()).sort().join('+'),
+    it.type||'', it.role||'', it.mode||'', it.time||'', it.format||'',
+    (it.requiredLanguages||[]).map(String).sort().join('+'),
+    it.radiusKm||'', it.minAge||'', it.maxAge||'', it.verifiedOnly?1:0, it.adjacentAllowed===false?0:1];
+  const s=parts.join('|'); let h=0;
+  for(let i=0;i<s.length;i++){ h=((h<<5)-h+s.charCodeAt(i))|0; }
+  return 's'+(h>>>0).toString(36);
+}
+function seenPrune(){
+  const m=DATA.seen&&typeof DATA.seen==='object'?DATA.seen:{}; const now=Date.now();
+  Object.keys(m).forEach(k=>{ if(!m[k]||!m[k].t||now-m[k].t>SEEN_TTL) delete m[k]; });
+  const keys=Object.keys(m).sort((a,b)=>(m[b].t||0)-(m[a].t||0));
+  keys.slice(SEEN_MAX_SIGS).forEach(k=>delete m[k]);
+  DATA.seen=m; return m;
+}
+function seenGet(sig){ const m=seenPrune(); return (m[sig]&&m[sig].n)||[]; }
+function seenAdd(sig,names){
+  const m=seenPrune(); const e=m[sig]||{n:[],t:Date.now()};
+  (names||[]).forEach(n=>{ if(n&&e.n.indexOf(n)<0) e.n.push(n); });
+  e.n=e.n.slice(-SEEN_MAX_NAMES); e.t=Date.now(); m[sig]=e; DATA.seen=m; saveState();
+}
+function seenClear(sig){ const m=seenPrune(); delete m[sig]; DATA.seen=m; saveState(); }
+
+// A second, lighter fetch path: «показать ещё» appends in place. It deliberately skips the 2.6s
+// search screen — that animation is right for starting a search and wrong for extending one.
+async function flowMore(){
+  const it=flowIntent(), sig=sigOf(it);
+  FLOW.moreBusy=true; render();
+  let r=null;
+  try{
+    r=await fetch('/api/agent/match',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({intent:it, profile:matchProfile(), ctx:{self:DATA.name||'', seen:seenGet(sig)}})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  FLOW.moreBusy=false;
+  const fresh=((r&&r.candidates)||[]).filter(c=>c&&c.name&&!(FLOW.res||[]).some(x=>x.name===c.name));
+  FLOW.page=(r&&r.page)||FLOW.page||{};
+  if(!fresh.length){ FLOW.page.exhausted=true; render(); return; }
+  FLOW.res=(FLOW.res||[]).concat(fresh);
+  seenAdd(sig, fresh.map(c=>c.name));
+  if(curIntent){ curIntent.candidates=FLOW.res; saveCurIntent(); }
+  render();
+}
 async function flowSearch(isRetry){
   FLOW.steps=0; cur='searching'; render();
+  const _fsIntent=flowIntent(), _fsSig=sigOf(_fsIntent), _fsSeen=seenGet(_fsSig);
   const tick=setInterval(()=>{ if(FLOW.steps<3){ FLOW.steps++; render(); } }, 650);
   const minShow=new Promise(res=>setTimeout(res, 2600));   // the search screen is part of the design
   let r=null;
   try{
     r=await fetch('/api/agent/match',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({intent:flowIntent(), profile:matchProfile(), ctx:{self:DATA.name||''}})}).then(x=>x.json());
+      body:JSON.stringify({intent:_fsIntent, profile:matchProfile(), ctx:{self:DATA.name||'', seen:_fsSeen}})}).then(x=>x.json());
   }catch(e){ r=null; }
   await minShow;
   clearInterval(tick); FLOW.steps=4;
-  const cands=(r&&r.candidates)||[];
+  let cands=(r&&r.candidates)||[];
+  FLOW.page=(r&&r.page)||{};
+  // Running the same search again is an explicit act — it is the exact thing that was reported as
+  // broken — so it advances. If the engine has nobody new left, fall back to the head of the list
+  // rather than showing an empty screen, and say so.
+  if(_fsSeen.length && cands.length && cands.every(c=>_fsSeen.indexOf(c.name)>=0)){
+    FLOW.page.exhausted=true;
+  }
+  FLOW.sig=_fsSig; FLOW.resumed=_fsSeen.length>0;
+  if(cands.length) seenAdd(_fsSig, cands.map(c=>c.name));
   FLOW.res=cands;
   persistIntent();                 // the tab must show what Kleal is actually working on
   render();
@@ -4594,10 +4658,27 @@ function personRow(c,i,cls){
     <div class="bm" data-act="cand-save" data-n="${esc(c.name)}">${IC.bookmark}</div></div>`;
 }
 
+// The footer that answers «а это все?». It prints the real remaining count, so «показать ещё»
+// is never a promise the engine cannot keep, and it distinguishes «ты посмотрел всех, кто
+// подходит» from «никто не подошёл» — which used to look identical from here.
+function moreFooter(){
+  const p=(FLOW&&FLOW.page)||{}, rem=p.remaining||0;
+  if(FLOW&&FLOW.moreBusy) return `<div class="k-cap" style="color:var(--muted);padding:10px 2px">${T('Ищу ещё…','Looking for more…')}</div>`;
+  if(rem>0) return `<div style="padding:10px 0"><button class="bigbtn" data-act="flow-more">${
+    T('Показать ещё','Show more')} ${rem>50?'50+':rem}</button></div>`;
+  if(p.exhausted) return `<div style="padding:10px 0;display:flex;flex-direction:column;gap:8px">
+    <div class="k-cap" style="color:var(--muted)">${T('Ты посмотрел всех, кто подходит под этот запрос','You have seen everyone who fits this request')}${
+      p.ranked?' — '+p.ranked+' '+T('человек','people'):''}.</div>
+    <button class="bigbtn" data-act="flow-widen">${T('Расширить поиск','Widen the search')}</button>
+    <button class="bigbtn dark" data-act="flow-restart">${T('Начать сначала','Start over')}</button></div>`;
+  return '';
+}
+
 // ---- Your options (479:14751) — tabs + Recommended + Also for you ----
 function scr_options(){
   const all=(FLOW&&FLOW.res)||[];
-  const top=all[0], rest=all.slice(1,6);
+  // was slice(1,6): the server sends eight and the last two were fetched and silently dropped
+  const top=all[0], rest=all.slice(1);
   const tabs=[['people',T('Люди','People')],['groups',T('Группы','Groups')],['events',T('События и места','Events & places')]];
   const body = OPTTAB!=='people'
     ? `<div class="k-cap" style="color:var(--muted);padding:8px 2px">${T('Здесь пока пусто — Kleal ищет только людей на этом этапе.','Nothing here yet — Kleal is matching people at this stage.')}</div>`
@@ -4605,7 +4686,8 @@ function scr_options(){
           <div class="k-h3">${T('Рекомендуем','Recommended')}</div>${personRow(top,0,'top')}</div>`:''}
        ${rest.length?`<div style="display:flex;flex-direction:column;gap:12px">
           <div class="k-h3">${T('Также для тебя','Also for you')}</div>
-          <div style="display:flex;flex-direction:column;gap:12px">${rest.map((c,i)=>personRow(c,i+1)).join('')}</div></div>`:''}`;
+          <div style="display:flex;flex-direction:column;gap:12px">${rest.map((c,i)=>personRow(c,i+1)).join('')}</div></div>`:''}
+       ${moreFooter()}`;
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
       ${kprompt(T('Твои варианты','Your options'))}
@@ -5345,6 +5427,11 @@ function doAct(act, ds){
     // ---- Figma batch 2: results / candidate ----
     case 'opt-tab': OPTTAB=ds.k; render(); break;
     case 'go-options': cur='options'; render(); break;
+    case 'flow-more': flowMore(); break;
+    case 'flow-restart': seenClear(FLOW.sig||sigOf(flowIntent())); flowSearch(); break;
+    // The widen controls already exist — they were only reachable when the slate came back EMPTY,
+    // so a user with plenty of results could never broaden. Exhaustion is the other way in.
+    case 'flow-widen': cur='fewmatches'; render(); break;
     case 'cand-open': openCand(ds.n); break;
     case 'cand-back': flowBack(); break;
     case 'cand-tab': CTAB=ds.k; render(); if(ds.k==='why') loadWhy(); break;

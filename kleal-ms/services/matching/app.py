@@ -770,6 +770,11 @@ def match_candidates(intent, prof, ctx=None, diag=None):
     ctx = dict(ctx)
     ctx.setdefault('now', time.time())                     # pinnable for deterministic replay
     ctx.setdefault('received24', _proposals_received_24h())  # proposal-fatigue counts -> readiness
+    # Names this viewer has already been shown for this query, sent by the client. Bounded: it rides
+    # in a request body, and it costs an O(n) membership test per candidate. A hostile value can at
+    # worst reorder that caller's OWN results inside a band — it demotes, it never gates, so unlike
+    # ctx['blocked'] it cannot be used to hide somebody from somebody else.
+    ctx['seen'] = [str(n) for n in (ctx.get('seen') or []) if str(n).strip()][:400]
     core_diag = {} if diag is not None else None
     slate, meta = _core.search(intent, prof or {}, ctx, eligible, H, _CORE_CFG, core_diag)
     if diag is not None:
@@ -1986,8 +1991,17 @@ class H(BaseHTTPRequestHandler):
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
             try:
-                cands = match_candidates(intent, prof, ctx)
+                # `page` is additive — every existing reader keeps working off `candidates`. It is
+                # what lets the client say «показать ещё N» with a real number instead of guessing,
+                # and tell "you have seen everyone who fits" apart from "nobody fits".
+                d = {}
+                cands = match_candidates(intent, prof, ctx, d)
+                m = d.get("meta") or {}
                 res = {"intent": intent, "candidates": cands}
+                if m.get("ranked") is not None:
+                    res["page"] = {"shown": len(cands), "ranked": m.get("ranked"),
+                                   "remaining": max(0, (m.get("unseen") or 0) - len(cands)),
+                                   "exhausted": (m.get("unseen") or 0) <= len(cands)}
                 if not cands:
                     res["fallback"] = _online_fallback(intent)
                 send_json(self, 200, res)
@@ -2010,7 +2024,10 @@ class H(BaseHTTPRequestHandler):
             pin = body.get("now")
             outs = []
             for _i in range(runs):
-                ctx = {"self": (prof.get("name") or ""), "uid": "admin-stab"}
+                # `seen` pinned empty ON PURPOSE. Paging is a deterministic function of the seen-set,
+                # so this probe answers the question it was written to answer — can the RANKER drift
+                # on its own — rather than accidentally measuring rotation.
+                ctx = {"self": (prof.get("name") or ""), "uid": "admin-stab", "seen": []}
                 if pin:
                     ctx["now"] = float(pin)
                 try:
