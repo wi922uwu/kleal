@@ -355,15 +355,23 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   border-radius:9px;padding:9px 6px;cursor:pointer;transition:.15s}
 .seg button.sel{background:var(--card);color:var(--fg);box-shadow:0 1px 3px rgba(20,20,40,.10)}
 /* bottom nav with center FAB */
-.bnav{flex:none;height:66px;display:flex;align-items:center;justify-content:space-around;position:relative;
-  background:#fff;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
-.bnav a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;color:var(--muted);cursor:pointer;width:60px}
-.bnav a.on{color:var(--primary)}
-.bnav .fabgap{width:60px}
-.fab{position:absolute;left:50%;top:-16px;transform:translateX(-50%);width:56px;height:56px;border-radius:50%;
-  background:var(--card);border:4px solid var(--bg);display:flex;align-items:center;justify-content:center;
-  cursor:pointer;box-shadow:0 8px 20px rgba(245,69,92,.35);overflow:hidden}
-.fab svg{display:block}
+/* Bottom nav (Figma "Bottom Nav"): a floating white pill, not an edge-to-edge bar, with the coral
+   ai-spark FAB raised over its centre. The pill floats over whatever is behind it — clouds on Home,
+   the page on every other screen. */
+.bnav{flex:none;position:relative;display:flex;align-items:flex-end;justify-content:center;
+  height:92px;background:transparent;border:0;padding:0 15px calc(16px + env(safe-area-inset-bottom))}
+.navpill{width:100%;max-width:360px;height:64px;display:flex;align-items:center;justify-content:space-between;
+  gap:6px;padding:0 20px;background:#fff;border-radius:36px;box-shadow:0 8px 24px rgba(0,0,0,.10)}
+.navpill a{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;
+  font-size:10px;font-weight:500;line-height:1.4;color:var(--muted);cursor:pointer}
+.navpill a.on{color:var(--primary)}
+.navpill a svg{width:24px;height:24px}
+.navpill a span{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.navpill .navgap{flex:none;width:58px}
+.fab{position:absolute;left:50%;top:0;transform:translateX(-50%);width:60px;height:60px;border-radius:50%;
+  background:var(--primary);border:0;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  box-shadow:0 4px 10px rgba(245,69,92,.45),0 8px 20px rgba(0,0,0,.18)}
+.fab svg{width:30px;height:30px;color:#fff;display:block}
 .fab:active{transform:translateX(-50%) scale(.94)}
 /* Mascot art. Sized in one place so a pose can be swapped per screen without touching layout. */
 .masc{display:block;margin:0 auto;width:132px;height:132px;pointer-events:none;user-select:none}
@@ -577,8 +585,6 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
    edge to edge. The nav becomes a frosted-glass panel so the sky reads through it while the labels
    stay legible. Cards/field surfaces are translucent for the same reason. */
 .phone.homebg{background:#dcebfa url(assets/clouds.jpg) top center/cover no-repeat}
-.phone.homebg .bnav{background:rgba(255,255,255,.5);border-top-color:rgba(255,255,255,.4);
-  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 .ah2{display:flex;flex-direction:column;height:100%;background:transparent}
 .ah2 .ahd{display:flex;align-items:center;gap:4px;padding:8px 20px}
 .ah2 .ahd .nm{flex:1;min-width:0}
@@ -593,7 +599,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
    this product), and the participants footer shows the ONE host we really know plus the real `going`
    count — not three invented faces. */
 .serif{font-family:'Fraunces',Georgia,'Times New Roman',serif;font-weight:700;letter-spacing:-.4px}
-.ah2 .ahd .nm.serif{font-size:26px;line-height:34px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ah2 .ahd .nm.serif{font-size:22px;line-height:28px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ah2 .bell .dot{position:absolute;top:9px;right:11px;width:8px;height:8px;border-radius:50%;
   background:var(--primary);border:2px solid var(--card)}
 .seclbl2{display:flex;align-items:center;gap:6px;font-size:14px;line-height:20px;font-weight:600;color:var(--fg)}
@@ -676,12 +682,12 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   font:inherit;font-size:13px;font-weight:500;cursor:pointer}
 
 /* the Buddy composer — avatar + field + history link (Figma "Message Composer v2") */
-.bcard{flex:none;margin-top:auto}
+.bcard{flex:none;padding:6px 20px 12px}
 .bcard .brow{display:flex;align-items:center;gap:8px}
 .bcard .bav{width:64px;height:64px;flex:none;border-radius:999px;background:var(--neutral100);overflow:hidden;
   display:flex;align-items:center;justify-content:center}
 .bcard .fld{flex:1;min-width:0;display:flex;gap:8px;align-items:center;background:#EEF0F473;
-  border:.5px solid #ffffff5c;border-radius:22px;padding:7px 7px 7px 16px}
+  border:.5px solid #ffffff5c;border-radius:22px;padding:12px 16px}
 .bcard .fld input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:inherit;
   font-size:15px;color:var(--fg)}
 .bcard .fld input::placeholder{color:var(--muted)}
@@ -1489,6 +1495,10 @@ const IC={
     '<circle cx="41" cy="39" r="2.7" fill="#111217"/><circle cx="55" cy="39" r="2.7" fill="#111217"/>'+
     '<path d="M43 47c3 3 7 3 10 0" stroke="#111217" stroke-width="2.5" stroke-linecap="round"/></svg>',
   spark:svg('<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17l-1.9-5.1L4.5 10l5.6-1.4L12 3z"/>'),
+  aispark:'<svg viewBox="0 0 30 30" width="30" height="30" fill="currentColor" aria-hidden="true">'
+    +'<path d="M15 3.5l2 5.9a4.3 4.3 0 0 0 2.7 2.7l5.9 2-5.9 2a4.3 4.3 0 0 0-2.7 2.7l-2 5.9-2-5.9a4.3 4.3 0 0 0-2.7-2.7l-5.9-2 5.9-2A4.3 4.3 0 0 0 13 9.4l2-5.9z"/>'
+    +'<path d="M24 3.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2z"/>'
+    +'<path d="M7 19l.6 1.7 1.7.6-1.7.6L7 23.6l-.6-1.7L4.7 21.3l1.7-.6L7 19z"/></svg>',
   coffee:svg('<path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8z"/><path d="M17 9h2.5a2 2 0 0 1 0 4H17"/><path d="M7 3v2M11 3v2"/>'),
   ban:svg('<circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/>'),
   moon:svg('<path d="M20 14a8 8 0 1 1-9.5-9.7A6.5 6.5 0 0 0 20 14z"/>'),
@@ -1538,9 +1548,11 @@ function bnavHTML(){ const fam=navFam();
   // "Say hi to Kleal" field and quick actions. The conversational chat is reached from there.
   const items=[['nIntents',T('Интенты','Intents'),'intents','plans'],['nSearch',T('Обзор','Explore'),'search','explore'],['fab','','',''],
     ['nMsg',T('Сообщения','Messages'),'messages','messages'],['nProfile',T('Профиль','Profile'),'overview','profile']];
-  return '<div class="fab" data-act="go-home">'+IC.peek+'</div>'+
-    items.map(x=>{ if(x[0]==='fab') return '<div class="fabgap"></div>';
-      return `<a class="${fam===x[3]?'on':''}" data-nav="${x[2]}">${IC[x[0]]}<span>${x[1]}</span></a>`; }).join('');
+  return '<div class="fab" data-act="go-home">'+IC.aispark+'</div>'+
+    '<div class="navpill">'+
+    items.map(x=>{ if(x[0]==='fab') return '<span class="navgap"></span>';
+      return `<a class="${fam===x[3]?'on':''}" data-nav="${x[2]}">${IC[x[0]]}<span>${x[1]}</span></a>`; }).join('')+
+    '</div>';
 }
 
 // ---------- map the onboarding profile (:7072) -> this card's DATA shape ----------
@@ -3779,16 +3791,15 @@ function scr_agenthome(){
             <span>${IC.pin}${esc(placeText())}</span></div>
           <button class="mbtn" data-act="meet-open">${T('Открыть детали','Open details')}</button>
         </div></div>`:'')}
-      <div class="bcard">
-        <div class="brow">
-          <div class="bav">${masc('primary')}</div>
-          <div class="fld">
-            <input id="ainput" placeholder="${T('Чем хочешь заняться?','What do you feel like doing?')}" autocomplete="off">
-            <span class="mic">${IC.mic}</span>
-            <button class="snd" data-act="agent-go">${IC.send}</button></div>
-        </div>
-        <div class="hist" data-act="talk-buddy">${IC.chat}${T('Открыть историю разговоров','Open conversation history')} ››</div>
+    </div>
+    <div class="bcard">
+      <div class="brow">
+        <div class="bav">${masc('primary')}</div>
+        <div class="fld">
+          <input id="ainput" placeholder="${T('Чем хочешь заняться?','What do you feel like doing?')}" autocomplete="off">
+          <span class="mic">${IC.mic}</span></div>
       </div>
+      <div class="hist" data-act="talk-buddy">${IC.chat}${T('Открыть историю разговоров','Open conversation history')} ››</div>
     </div>
   </div>`;
 }
