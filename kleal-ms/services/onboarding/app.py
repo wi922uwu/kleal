@@ -114,7 +114,7 @@ The user already gave their name, area and languages - do NOT ask about those.
 Your job: understand each picked interest quickly. You get AT MOST TWO questions per interest, so make them count:
 - First: HOW THEY ENGAGE with it (fit the interest - play vs watch for a game or sport; watch or discuss for shows; build / discuss / learn / attend events for a topic like AI or startups; practise + level for a language; the vibe for a social thing like coffee) AND how long they have been into it - both in one natural message. NEVER offer play/watch choices for something you cannot play or watch.
 - Then, only where a domain applies, ONE most-useful detail: games -> platform + rank/level (one combined question); sport they play -> skill level; sport they watch -> favorite team; language -> current level; networking -> industry + goal.
-Style: react warmly to what they just said in ONE short line, then ask. One question message per turn, the question is the LAST thing in the reply. English only. For closed choices end with [OPTIONS: a | b | c] (pipe-separated only, no letters/numbers). NEVER re-ask anything already known. No emoji, no markdown, no JSON, no <profile> tags.
+Style: react warmly to what they just said in ONE short line, then ask. EXACTLY ONE question per reply — one question mark, never two topics joined by "and". Asking "what, with whom and how long" in a single message is three questions and is forbidden; pick the single most useful one and keep the rest for later turns. The question is the LAST thing in the reply. Do not re-ask a question you already asked, even reworded, whether or not it was answered — if they sidestepped it, move on. English only. For closed choices end with [OPTIONS: a | b | c] (pipe-separated only, no letters/numbers). NEVER re-ask anything already known. No emoji, no markdown, no JSON, no <profile> tags.
 A status line tells you exactly what to ask next - follow it strictly.'''
 
 # finish / add-another intent detection at the confirm stage (order matters: FIN first - "no more" contains "more")
@@ -1267,10 +1267,14 @@ function funnelCompose(t){
 function advanceFunnel(){ if(st.busy)return; if(st.fcEl){ st.fcEl.remove(); st.fcEl=null; } setCompose(null); afterAnswer(); }
 function funnelOpts(opts){
   if(!opts||!opts.length)return; const w=widgetSlot(); w.className='w fade';
-  // «That's enough» is always there. The funnel used to end only when the model stopped asking or a
-  // turn cap fired — so whether the conversation ended was the model's decision, not the person's.
+  // A way to end the funnel is always available — it used to stop only when the model decided to stop
+  // or a turn cap fired. But on the closing turn the model ALREADY offers «Это всё», and adding ours
+  // beside it printed the same chip twice. Only add one when none of the offered options is already
+  // a way out; the test is the same regex the server uses to recognise the answer.
+  const FIN=/that'?s all|that'?s enough|that is all|\bfinish|\bdone\b|no more|nothing else|all set|это вс[её]|больше нет|хватит|достаточно/i;
+  const hasOut=opts.some(o=>FIN.test(String(o||'').trim()));
   w.innerHTML='<div class="chips">'+opts.map(o=>`<div class="chip" data-o="${esc(o)}">${esc(o)}</div>`).join('')
-    +`<div class="chip" id="fdone">${T('Это всё',"That's enough")}</div></div>`;
+    +(hasOut?'':`<div class="chip" id="fdone">${T('Это всё',"That's enough")}</div>`)+'</div>';
   w.querySelectorAll('.chip[data-o]').forEach(c=>c.onclick=()=>{ if(st.busy)return; const v=c.dataset.o; w.remove(); funnelTurn(v); });
   const fd=w.querySelector('#fdone'); if(fd) fd.onclick=()=>{ if(st.busy)return; w.remove(); advanceFunnel(); };
 }
