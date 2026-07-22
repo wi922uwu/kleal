@@ -218,6 +218,21 @@ LEARNED = _load_learned()
 _LEARNED_LOCK = threading.Lock()
 
 
+# Generic descriptor words filtration emits alongside the real interest. Stored as categories they
+# match everyone: «money» -> startups/investing would pair every uncategorised person who typed
+# money, «find»/«search» are worse. A learned entry is permanent and invisible in a slate, so the
+# writer — this service — is where the guard belongs, whatever the source.
+_LEARN_STOP = {
+    "hobby", "hobbies", "fun", "day", "days", "time", "people", "person", "friend", "friends",
+    "company", "someone", "somebody", "group", "meet", "meetup", "socialize", "social", "find",
+    "search", "looking", "want", "wanna", "activity", "activities", "thing", "things", "stuff",
+    "money", "cash", "finance", "discussion", "chat", "talk", "collect", "collecting", "watching",
+    "throwing", "playing", "doing", "making", "sport", "sports", "game", "games", "gaming",
+    "interest", "interests", "new", "cool", "nice", "good", "best", "любой", "разное", "хобби",
+    "деньги", "компания", "человек", "люди", "друзья", "встреча", "общение", "интерес",
+}
+
+
 def learn_topics(pairs):
     """pairs: [(word, category, subcategory)]. Returns how many are new. `other` is filtration's
     honest "nothing here" and is never stored — an unknown word must stay unknown, not become a
@@ -230,6 +245,8 @@ def learn_topics(pairs):
             sub = str(sub or "").strip().lower()[:40]
             if not w or c not in _FILTRATION_CATS or w in LEARNED or len(LEARNED) >= _LEARNED_CAPS:
                 continue
+            if w in _LEARN_STOP or len(w) < 3:
+                continue                       # a generic descriptor, not an interest
             if cat_of_fixed(w)[0]:
                 continue                       # the hand-written taxonomy already owns this word
             LEARNED[w] = (c, sub)
@@ -616,6 +633,27 @@ def _dist_km(intent, prof, c):
         return _core._haversine(a, b)
     return _num(c.get('km'))
 
+_LANG_CODES = {"english": "en", "spanish": "es", "german": "de", "french": "fr", "portuguese": "pt",
+               "italian": "it", "russian": "ru", "catalan": "ca", "ukrainian": "uk", "polish": "pl",
+               "английский": "en", "испанский": "es", "немецкий": "de", "французский": "fr",
+               "португальский": "pt", "итальянский": "it", "русский": "ru", "каталанский": "ca",
+               "serbian": "sr", "сербский": "sr", "swedish": "sv", "шведский": "sv", "sp": "es"}
+_LANG_VALID = set("en es de fr pt it ru ca uk pl sr sv hi ar da ko zh fi nl tr no ja hu ro he cs el "
+                  "th vi id bg hr sk sl et lv lt".split())
+
+
+def _lang_code(x):
+    """A language NAME truncated to two chars is not a code — Portuguese -> 'po', not 'pt'. This gate
+    ENFORCES requiredLanguages, so the same fix onboarding and admin already carry has to live here
+    too, or a user who asks for Portuguese speakers matches nobody. Unknown -> '' (dropped)."""
+    x = str(x or "").strip().lower()
+    if not x:
+        return ""
+    if x in _LANG_CODES:
+        return _LANG_CODES[x]
+    return x if (len(x) == 2 and x in _LANG_VALID) else ""
+
+
 def _hard_gates(intent, c, gate_ctx, prof=None):
     """Cheap, deterministic exclusions applied BEFORE scoring. Returns (ok, reason_if_blocked).
     Gates fail CLOSED: when a value needed for a safety decision is unknown, the candidate is
@@ -647,8 +685,8 @@ def _hard_gates(intent, c, gate_ctx, prof=None):
         if age is None:                                           return False, 'age unknown'
         if mn and age < mn:                                       return False, 'below age range'
         if mx and age > mx:                                       return False, 'above age range'
-    reql = {str(l)[:2].lower() for l in (intent.get('requiredLanguages') or [])}
-    if reql and not reql.issubset({str(l)[:2].lower() for l in (c.get('langs') or [])}):
+    reql = {code for l in (intent.get('requiredLanguages') or []) if (code := _lang_code(l))}
+    if reql and not reql.issubset({code for l in (c.get('langs') or []) if (code := _lang_code(l))}):
         return False, 'missing a required language'
     radius = _num(intent.get('radiusKm'))
     if intent.get('mode') != 'online' and radius and radius > 0:
@@ -844,7 +882,9 @@ def match_candidates(intent, prof, ctx=None, diag=None):
     # in a request body, and it costs an O(n) membership test per candidate. A hostile value can at
     # worst reorder that caller's OWN results inside a band — it demotes, it never gates, so unlike
     # ctx['blocked'] it cannot be used to hide somebody from somebody else.
-    ctx['seen'] = [str(n) for n in (ctx.get('seen') or []) if str(n).strip()][:400]
+    # A non-list seen (an int, a bool) used to raise TypeError and leak it into the response.
+    _seen_in = ctx.get('seen')
+    ctx['seen'] = [str(n) for n in _seen_in if str(n).strip()][:400] if isinstance(_seen_in, list) else []
     core_diag = {} if diag is not None else None
     slate, meta = _core.search(intent, prof or {}, ctx, eligible, H, _CORE_CFG, core_diag)
     if diag is not None:

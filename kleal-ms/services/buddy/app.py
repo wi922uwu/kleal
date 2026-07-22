@@ -1475,10 +1475,25 @@ def _chat_reply(messages, profile, lang, on_text=None):
 
 
 # Not "мне 15 минут идти" / "мне 15 лет назад" — a bare number followed by one of these is not an age.
-_AGE_NOT_YEARS = re.compile(r"^\s*(мин|час|км|кг|мет|руб|дол|евр|тыс|проц|град|сек|дн|нед|мес|назад)", re.I)
-_AGE_RU = re.compile(r"(?:мне|я)\s+(?:только\s+|всего\s+|уже\s+)?(\d{1,2})\s*(лет|год|года|годика|годиков)?\b")
-_AGE_EN = [re.compile(r"\b(?:i'?m|i am)\s+(\d{1,2})\b"),
-           re.compile(r"\b(\d{1,2})\s*(?:years?\s*old|y\.?o\.?)\b")]
+# A unit right after the number means it was never an age: «мне 15 минут идти», «жду 15 сек».
+_AGE_NOT_YEARS = re.compile(r"^\s*(мин|час|км|кг|мет|руб|дол|евр|тыс|проц|град|сек|дн|нед|мес|"
+                            r"минут|минуты|min|hour|метр|шаг|остан|назад)", re.I)
+# «мне» / «я» / «мне уже» — but NOT a word ending in -я (Настя, Катя), which used to make «Настя 16»
+# read as a self-declared 16-year-old. Any number of small filler words may sit between the pronoun
+# and the number: the old three-word whitelist let «мне щас 15» and «мне вообще-то 15» straight past.
+_AGE_RU = re.compile(r"(?:^|[^а-яё])(?:мне|я)\s+(?:[\w-]+[\s,]+){0,3}?(\d{1,2})\s*"
+                     r"(лет|год|года|годика|годиков)?\b", re.I)
+# Numbers as words, 1..17 — «мне пятнадцать», «мне шестнадцать».
+_AGE_WORDS = {"один":1,"одна":1,"два":2,"две":2,"три":3,"четыре":4,"пять":5,"шесть":6,"семь":7,
+              "восемь":8,"девять":9,"десять":10,"одиннадцать":11,"двенадцать":12,"тринадцать":13,
+              "четырнадцать":14,"пятнадцать":15,"шестнадцать":16,"семнадцать":17}
+_AGE_RU_WORDS = re.compile(r"(?:^|[^а-яё])(?:мне|я)\s+(?:[\w-]+[\s,]+){0,3}?(" +
+                           "|".join(_AGE_WORDS) + r")\b", re.I)
+# English: "i'm 15" is subject-bound; the bare "N years old" needs the unit and a NOT-a-relative
+# guard, so «my daughter is 15 years old» and «15 minutes away» stop false-firing.
+_AGE_EN = [re.compile(r"\b(?:i'?m|i am|im)\s+(\d{1,2})\b"),
+           re.compile(r"\bi(?:'?m| am)?\s+(\d{1,2})\s*(?:years?\s*old|y\.?o\.?)\b")]
+_AGE_EN_REL = re.compile(r"\b(daughter|son|kid|child|niece|nephew|brother|sister|friend|cousin)\b", re.I)
 
 
 # ── Using another person as the means ─────────────────────────────────────────────────────────────
@@ -1492,13 +1507,18 @@ _AGE_EN = [re.compile(r"\b(?:i'?m|i am)\s+(\d{1,2})\b"),
 # stalk, blackmail or hurt the person being matched. Kleal introduces real people to each other; the
 # harm here would be delivered BY the product, to a user, which is why this runs before the model
 # and cannot be negotiated in a later turn.
+# «развести/развод на деньги» is fraud, but bare «развед/развест» also prefix-matches «разведать»,
+# «развести костёр», «развести цветы». So money-fraud must carry its object, and the loose stems go.
 _HARM_INTENT = re.compile(
-    r"(обман\w*|развед\w*|развест\w*|кинуть|кидать|развод\w+\s+на\s+деньг|"
+    r"(обман\w*|кинуть\s+на\s+деньг|развест\w*\s+на\s+деньг|развод\w*\s+на\s+деньг|"
     r"выманит\w*|вымогат\w*|шантаж\w*|запугат\w*|угрожат\w*|"
-    r"избит\w*|побит\w*|отпиздит\w*|扁|подстав\w*|"
+    r"убить|убью|убива\w*|зареза\w*|задуши\w*|застрел\w*|прикончит\w*|"
+    r"избит\w*|побит\w*|отпиздит\w*|изнасил\w*|похитит\w*|"
     r"следит\w+\s+за|выследит\w*|преследоват\w*|"
-    r"scam|defraud|rip\s+off|con\s+(?:someone|somebody|people)|blackmail|extort|"
-    r"stalk|harass|beat\s+up|jump\s+(?:someone|somebody)|threaten)", re.I)
+    r"scam|defraud|rip\s+off|con\s+(?:someone|somebody|people)|blackmail|extort|kidnap|"
+    r"stalk|harass|beat\s+up|jump\s+(?:someone|somebody)|kill|murder|rape|threaten)", re.I)
+# Negation flips it: «не хочу никого обманывать» is a disclaimer, not a plan. Reuse the negation
+# machinery so the two features agree on what «не …» means.
 # The victim has to be a PERSON, not a game or a system — «обмануть систему», «обыграть бота»,
 # «развести костёр» are not this, and «обманул ожидания» is about nobody.
 _HARM_TARGET = re.compile(
@@ -1508,21 +1528,45 @@ _HARM_NOT = re.compile(r"(систем\w*|бота|игр\w+|казино|кос
                        r"system|the\s+game|bot|expectations)", re.I)
 
 
+def _harm_in_text(t):
+    t = str(t or "").lower()
+    if not _HARM_INTENT.search(t):
+        return False
+    # The harm verb sits inside a negated clause -> a disclaimer, not a plan. «не хочу никого
+    # обманывать», «не буду никого обманывать».
+    # The harm verb sits inside a negated clause -> a disclaimer, not a plan. negated_terms() carries
+    # the same forward-scoping and clause boundaries the negation feature uses, so «не хочу никого
+    # обманывать» and «I don't want to scam anyone» both read as ruling the verb out.
+    if any(_HARM_INTENT.search(w) for w in negated_terms(t)):
+        return False
+    # The user is the VICTIM, not the perpetrator: «меня обманули мошенники», «нас развели»,
+    # «scammed me». Past-tense/passive harm with a first-person object is someone seeking support,
+    # and refusing them is the cruellest false positive this gate can produce.
+    if re.search(r"(меня|мен[яе]|нас)\s+(обману\w+|кину\w+|разве\w+|обокрали|ограбили|избили|"
+                 r"шантажир\w*|развод\w+)|(scammed|defrauded|conned|robbed|cheated)\s+(me|us)|"
+                 r"(я|мы)\s+жертв\w*|был\w*\s+жертв\w*", t):
+        return False
+    if _HARM_NOT.search(t) and not _HARM_TARGET.search(t):
+        return False                                  # target is a system/game, not a person
+    return bool(_HARM_TARGET.search(t) or
+                re.search(r"(найти|найд|ищу|подбер|познаком|find|looking\s+for)", t))
+
+
 def harmful_use_of_a_person(messages):
-    """Is the person being searched for the TARGET of harm? Deterministic, whole-transcript, before
-    the model — the same shape as the age gate, for the same reason: an LLM asked to judge this
-    negotiates, and the cost of getting it wrong lands on a third party who never opted in."""
+    """Is the person being searched for the TARGET of harm? Deterministic and before the model.
+
+    Reads the LATEST user message, not the whole transcript. Harm is an INTENT, and a person can
+    genuinely drop it — «хочу обмануть» then «ладно, просто хочу кофе» must be answered, not refused
+    forever. (Age is different: it is an immutable fact about the person, so that gate still scans
+    everything.) The tradeoff — a bad actor could split the plan across turns — is worth taking:
+    a determined one can say it all in one message anyway, while the poison version was refusing
+    real users for the rest of their conversation.
+    """
+    last = ""
     for m in (messages or []):
-        if m.get("role") != "user":
-            continue
-        t = str(m.get("content") or "").lower()
-        if not _HARM_INTENT.search(t):
-            continue
-        if _HARM_NOT.search(t) and not _HARM_TARGET.search(t):
-            continue
-        if _HARM_TARGET.search(t) or re.search(r"(найти|найд|ищу|подбер|познаком|find|looking\s+for)", t):
-            return True
-    return False
+        if m.get("role") == "user":
+            last = m.get("content") or ""
+    return _harm_in_text(last)
 
 
 HARM_REPLY = {
@@ -1549,17 +1593,22 @@ def stated_minor(messages):
         t = str(m.get("content") or "").lower()
         for mt in _AGE_RU.finditer(t):
             if mt.group(2) is None and _AGE_NOT_YEARS.match(t[mt.end():]):
-                continue
+                continue                              # a unit follows -> not an age
             if t[mt.end():].strip().startswith("назад"):
-                continue
+                continue                              # «15 лет назад»
             n = int(mt.group(1))
             if 1 <= n < 18:
                 return n
-        for rx in _AGE_EN:
-            for mt in rx.finditer(t):
-                n = int(mt.group(1))
-                if 1 <= n < 18:
-                    return n
+        for mt in _AGE_RU_WORDS.finditer(t):
+            n = _AGE_WORDS.get(mt.group(1).lower())
+            if n and 1 <= n < 18:
+                return n
+        if not _AGE_EN_REL.search(t):                 # «my daughter is 15» is about someone else
+            for rx in _AGE_EN:
+                for mt in rx.finditer(t):
+                    n = int(mt.group(1))
+                    if 1 <= n < 18:
+                        return n
     return None
 
 
