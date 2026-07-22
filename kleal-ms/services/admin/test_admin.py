@@ -379,6 +379,29 @@ def test_rollback_path_works():
               bool((r.get("core") or {}).get("config_sha")), json.dumps(r.get("core"))[:120])
 
 
+def test_edit_form_does_not_fabricate():
+    """The Add form's defaults are right for a row being invented and wrong for one being edited.
+    Flipping one checkbox on a real person used to hand them interests, a language, a distance, a
+    vibe, an age and an entity named "<Interest> scene" — and the panel then reported the profile
+    it had just authored as if the person had given it.
+    """
+    print("\n[edit] toggling a flag must not invent a profile")
+    st, before = _req(ADMIN + "/api/admin/person?name=Nadia", token=TOKEN)
+    if not (isinstance(before, dict) and before.get("ok") and before.get("id")):
+        return check("baseline readable", False, json.dumps(before)[:120])
+    uid, b = before["id"], before.get("identity") or {}
+    st, r = _req(ADMIN + "/api/admin/user/" + uid, data={"lastActiveDays": 1}, token=TOKEN)
+    check("the edit applies", st == 200, "got %s" % st)
+    st, after = _req(ADMIN + "/api/admin/person?name=Nadia", token=TOKEN)
+    a = (after or {}).get("identity") or {}
+    for f in ("lat", "lon", "age", "interests", "langs", "area"):
+        check("edit leaves %s exactly as it was" % f, b.get(f) == a.get(f),
+              "%r -> %r" % (b.get(f), a.get(f)))
+    # The specific fabrications, named. Nadia has no coordinates; an edit must not give her any.
+    check("an edit never invents coordinates", a.get("lat") is None and a.get("lon") is None,
+          "%r %r" % (a.get("lat"), a.get("lon")))
+
+
 def test_cohorts():
     print("\n[cohorts] the questions a 3000-row table cannot answer")
     st, r = _req(ADMIN + "/api/admin/cohorts", token=TOKEN, timeout=60)
@@ -431,7 +454,7 @@ def main():
     for fn in (test_auth, test_destructive_routes_gone, test_health_and_store_agreement,
                test_funnel_arithmetic, test_searcher_profile_carries_age, test_stability,
                test_diversity_discriminates, test_engine_separates_topics, test_lab_still_works,
-               test_person_card, test_verbs_do_not_fabricate, test_pair_trace, test_buddy_search_trigger, test_e2e_probe, test_rollback_path_works, test_cohorts,
+               test_person_card, test_verbs_do_not_fabricate, test_pair_trace, test_buddy_search_trigger, test_e2e_probe, test_rollback_path_works, test_edit_form_does_not_fabricate, test_cohorts,
                test_proposals_registry, test_registry_is_read_only):
         try:
             fn()

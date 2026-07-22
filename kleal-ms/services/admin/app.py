@@ -83,7 +83,16 @@ def _as_phrases(v):
     return []
 
 
-def _norm_user(u, keep_id=None):
+def _norm_user(u, keep_id=None, fill_defaults=True):
+    """Normalise a user row.
+
+    `fill_defaults` is False for edits of an EXISTING person. The defaults below are reasonable for
+    a row being invented in the Add form and actively harmful for one being edited: saving a real
+    person to flip one checkbox used to give them `coffee` if they listed no interests, `en` if
+    their languages were never collected, a 2.0 km distance, a "chill" vibe, age 28, and an entity
+    named "<Interest> scene" that nobody ever joined. The panel then reported the profile it had
+    just authored, and the person card exists to report exactly those fields as MISSING.
+    """
     u = u or {}
 
     def _int(v, d):
@@ -92,16 +101,26 @@ def _norm_user(u, keep_id=None):
         except (TypeError, ValueError):
             return d
 
-    interests = [x.lower() for x in _as_list(u.get("interests"))] or ["coffee"]
-    langs = [x.lower()[:2] for x in _as_list(u.get("langs") or u.get("languages"))] or ["en"]
+    def _keep(key, value, default):
+        """Absent stays absent on an edit; only a brand-new row gets the default."""
+        if value:
+            return value
+        return default if fill_defaults else (u.get(key) if key in u else value)
+
+    interests = [x.lower() for x in _as_list(u.get("interests"))]
+    interests = interests or (["coffee"] if fill_defaults else [])
+    langs = [x.lower()[:2] for x in _as_list(u.get("langs") or u.get("languages"))]
+    langs = langs or (["en"] if fill_defaults else [])
     try:
-        km = round(float(u.get("km", 2.0)), 1)
+        km = round(float(u.get("km", 2.0 if fill_defaults else None)), 1)
     except (TypeError, ValueError):
-        km = 2.0
-    vibe = str(u.get("vibe") or "chill").lower()
+        km = 2.0 if fill_defaults else None
+    vibe = str(u.get("vibe") or ("chill" if fill_defaults else "")).lower()
     role = str(u.get("role") or "meet").lower()
     deal = _as_phrases(u.get("dealBreakers"))[:6]
-    ents = _as_phrases(u.get("entities"))[:6] or [interests[0].capitalize() + " scene"]
+    ents = _as_phrases(u.get("entities"))[:6]
+    if not ents and fill_defaults and interests:
+        ents = [interests[0].capitalize() + " scene"]
     # own active intent -> makes this person a RECIPROCAL (T0) match. From an `intents` list, or the form's ownIntent* fields.
     intents = u.get("intents") if isinstance(u.get("intents"), list) else []
     oi_topics = [t.lower() for t in _as_list(u.get("ownIntentTopics"))][:3]
@@ -115,14 +134,16 @@ def _norm_user(u, keep_id=None):
         "id": keep_id or u.get("id") or ("u" + uuid.uuid4().hex[:8]),
         "name": (str(u.get("name") or "").strip() or "User"),
         "interests": interests[:6],
-        "vibe": vibe if vibe in VIBES else "chill",
+        "vibe": (vibe if vibe in VIBES else ("chill" if fill_defaults else vibe)),
         "langs": langs[:4],
         "area": str(u.get("area") or "").strip(),
         "km": km, "lat": u.get("lat"), "lon": u.get("lon"),
         "open": bool(u.get("open", True)),
         "role": role if role in ROLES else "meet",
         "datingOk": bool(u.get("datingOk", False)),
-        "age": _int(u.get("age", 28), 28),
+        # An unknown age is a hard gate for dating and every age-range search. Inventing 28 here
+        # made those people quietly eligible on a number the panel made up.
+        "age": _int(u.get("age", 28 if fill_defaults else None), 28 if fill_defaults else None),
         "verified": bool(u.get("verified", True)),
         "paused": bool(u.get("paused", False)),
         "pending": _int(u.get("pending"), 0),
@@ -200,7 +221,8 @@ def update_user(uid, patch):
             if u.get("id") == uid:
                 merged = dict(u)
                 merged.update(patch or {})
-                users[i] = _norm_user(merged, keep_id=uid)
+                # Editing an existing person never invents the fields they never gave.
+                users[i] = _norm_user(merged, keep_id=uid, fill_defaults=False)
                 _write(users)
                 return users[i]
     return None
