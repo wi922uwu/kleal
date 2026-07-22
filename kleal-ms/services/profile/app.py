@@ -595,31 +595,40 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .icar{flex:none;display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;
   scroll-padding:0 34px;padding:6px 34px 2px;margin:0 -20px;scrollbar-width:none}
 .icar::-webkit-scrollbar{display:none}
-.icar .idea{flex:0 0 74%;scroll-snap-align:center}
-.idea{background:var(--card);border-radius:20px;overflow:hidden;position:relative;cursor:pointer;
-  box-shadow:0 8px 24px #0000000f;transition:transform .28s cubic-bezier(.2,.9,.25,1.12),opacity .28s ease}
-.idea:not(.on){transform:scale(.93);opacity:.72}
-.idea .ph{height:140px;background:var(--neutral100);overflow:hidden;position:relative}
-.idea .ph svg{width:100%;height:100%;display:block}
+.icar .idea{flex:0 0 80%;scroll-snap-align:center}
+/* Event Hero Card v2: cover (100) + bookmark, title, date/time + area meta rows, going pill */
+.idea{background:var(--card);border-radius:16px;overflow:hidden;position:relative;cursor:pointer;
+  box-shadow:0 4px 21.6px #00000014;transition:transform .28s cubic-bezier(.2,.9,.25,1.12),opacity .28s ease}
+.idea:not(.on){transform:scale(.95);opacity:.78}
+.idea .cov{height:100px;background:var(--neutral100);overflow:hidden;position:relative}
+.idea .cov svg{width:100%;height:100%;display:block}
 .idea .cat{position:absolute;top:12px;left:12px;padding:5px 11px;border-radius:999px;background:#ffffffe6;
   font-size:10px;line-height:14px;font-weight:800;letter-spacing:.6px;color:var(--fg);text-transform:uppercase}
 .idea .cat.near{background:var(--primary);color:#fff}
-.idea .hrt{position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:999px;background:#ffffffe6;
-  display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--fg)}
-.idea .hrt svg{width:17px;height:17px}
-.idea .hrt.on{color:var(--primary)}
-.idea .hrt.on svg{fill:currentColor}
-.idea .bdg{position:absolute;left:16px;top:-22px;width:44px;height:44px;border-radius:999px;background:var(--card);
-  display:flex;align-items:center;justify-content:center;color:var(--primary);box-shadow:0 4px 12px #00000014}
-.idea .bdg svg{width:22px;height:22px}
-.idea .bd{position:relative;padding:28px 16px 13px;display:flex;flex-direction:column;gap:6px}
-.idea .ti{font-size:18px;line-height:24px;font-weight:700;letter-spacing:-.2px;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.idea .su{font-size:13px;line-height:19px;color:var(--muted);
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.idea .ft{display:flex;align-items:center;gap:8px;margin-top:4px;font-size:12px;line-height:16px;color:var(--muted)}
-.idea .ft .hav{width:22px;height:22px;border-radius:50%;flex:none;background:linear-gradient(135deg,#FF7A8A,#F5455C);
-  color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.idea .bm{position:absolute;top:12px;right:12px;width:36px;height:36px;border-radius:999px;background:#ffffffe6;
+  box-shadow:0 1px 3px #0000001f;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--fg)}
+.idea .bm svg{width:19px;height:19px}
+.idea .bm.on{background:var(--primary);color:#fff}
+.idea .bm.on svg{fill:currentColor}
+.idea .bd{padding:14px 16px 16px;display:flex;flex-direction:column;gap:10px}
+.idea .ti{font-size:17px;line-height:22px;font-weight:600;letter-spacing:-.2px;color:var(--fg);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.idea .mt{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;color:var(--fg);
+  overflow:hidden;white-space:nowrap}
+.idea .mt svg{width:16px;height:16px;flex:none;color:var(--muted)}
+.idea .mt span{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.idea .mt span+svg{margin-left:2px}
+.idea .ft{display:flex;align-items:center;margin-top:2px}
+.gpill{display:flex;align-items:center;gap:8px;font-size:13px;line-height:16px;font-weight:500;color:var(--muted);
+  min-width:0}
+.gpill>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gpill .avg{display:flex;flex:none}
+.gpill .av{width:24px;height:24px;border-radius:999px;background:var(--neutral100);border:2px solid var(--card);
+  margin-right:-6px;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.gpill .av svg{width:13px;height:13px}
+.gpill .av.ct{font-size:11px;font-weight:600;color:var(--muted);margin-right:0}
+.gpill .hav{width:24px;height:24px;border-radius:999px;flex:none;background:linear-gradient(135deg,#FF7A8A,#F5455C);
+  color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
 .idots{flex:none;display:flex;gap:6px;justify-content:center;padding-top:10px}
 .idots i{width:6px;height:6px;border-radius:999px;background:var(--neutral300);transition:all .2s ease}
 .idots i.on{background:var(--primary);width:18px}
@@ -637,27 +646,45 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .invrow .ir{display:flex;align-items:center;gap:2px;color:var(--primary);font-size:14px;font-weight:600;flex:none}
 .invrow .ir svg{width:18px;height:18px}
 
-/* the Buddy card — the only large coral surface in the app */
-.bcard{flex:none;background:var(--primary);border-radius:24px;padding:16px 16px 14px;color:#fff;position:relative;overflow:hidden}
-.bcard .top{display:flex;align-items:center;gap:10px}
-.bcard .msc{width:96px;height:96px;flex:none;margin:-8px 0 -8px -6px}
-.bcard .hd{flex:1;min-width:0}
-.bcard .hd .h{font-size:30px;line-height:36px}
-.bcard .hd .s{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;opacity:.95;margin-top:2px}
-.bcard .hd .s svg{width:15px;height:15px}
-.bcard .fld{display:flex;gap:8px;align-items:center;background:#fff;border-radius:999px;
-  padding:6px 6px 6px 16px;margin-top:8px}
+/* confirmed-meet card — photo, status badge, coral meta, CTA (Figma "Event Card") */
+.emeet{flex:none;display:flex;gap:12px;align-items:stretch;background:var(--card);
+  border-radius:28px 16px 16px 16px;padding:12px 16px 12px 12px;
+  box-shadow:0 2px 6px #0000000f,0 1px 2px #0000000a;cursor:pointer}
+.emeet .ava{width:72px;height:72px;flex:none;border-radius:999px;background:var(--neutral100);
+  display:flex;align-items:center;justify-content:center;color:var(--primary)}
+.emeet .ava svg{width:30px;height:30px}
+.emeet .mbd{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.emeet .mtop{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.emeet .mt-title{font-size:15px;line-height:20px;font-weight:600;color:var(--fg);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sbadge{flex:none;padding:4px 10px;border-radius:999px;font-size:11px;line-height:16px;font-weight:500}
+.sbadge.ok{background:#E8F7EE;color:#0F7340}
+.emeet .mmeta{display:flex;gap:12px;font-size:12px;line-height:16px;color:var(--muted);min-width:0}
+.emeet .mmeta span{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.emeet .mmeta svg{width:14px;height:14px;flex:none;color:var(--primary)}
+.emeet .mbtn{margin-top:2px;height:32px;border:0;border-radius:999px;background:var(--primary);color:#fff;
+  font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+
+/* the Buddy composer — avatar + field + history link (Figma "Message Composer v2") */
+.bcard{flex:none}
+.bcard .brow{display:flex;align-items:center;gap:8px}
+.bcard .bav{width:64px;height:64px;flex:none;border-radius:999px;background:var(--neutral100);overflow:hidden;
+  display:flex;align-items:center;justify-content:center}
+.bcard .fld{flex:1;min-width:0;display:flex;gap:8px;align-items:center;background:#EEF0F473;
+  border:.5px solid #ffffff5c;border-radius:22px;padding:7px 7px 7px 16px}
 .bcard .fld input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:inherit;
-  font-size:14px;color:var(--fg)}
+  font-size:15px;color:var(--fg)}
 .bcard .fld input::placeholder{color:var(--muted)}
 .bcard .fld .mic{color:var(--muted);display:flex;flex:none}
 .bcard .fld .mic svg{width:20px;height:20px}
-.bcard .snd{width:40px;height:40px;flex:none;border-radius:999px;background:var(--primary);color:#fff;border:0;
+.bcard .snd{width:36px;height:36px;flex:none;border-radius:999px;background:var(--primary);color:#fff;border:0;
   display:flex;align-items:center;justify-content:center;cursor:pointer}
-.bcard .snd svg{width:19px;height:19px}
-.bcard .hist{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:12px;
-  font-size:13px;font-weight:600;opacity:.95;cursor:pointer}
-.bcard .hist svg{width:16px;height:16px}
+.bcard .snd svg{width:18px;height:18px}
+.bcard .hist{display:flex;align-items:center;justify-content:center;gap:6px;margin:12px auto 0;padding:7px 16px;
+  background:var(--card);border-radius:16px;box-shadow:0 1px 2px #0000000a;width:max-content;max-width:100%;
+  font-size:12px;font-weight:500;color:var(--fg);cursor:pointer}
+.bcard .hist svg{width:14px;height:14px;color:var(--primary);flex:none}
 
 .aintro2 .msc{width:72px;height:72px;border-radius:999px;background:var(--neutral100);flex:none;
   display:flex;align-items:center;justify-content:center;color:var(--muted)}
@@ -3627,6 +3654,33 @@ function ideaSub(p){
   if(p.area) bits.push(p.area); else if(p.dist) bits.push(p.dist);
   return bits.join(' · ');
 }
+// Split a free-text "when" into a date part and a time part for the two-icon meta row. The matcher
+// hands back whatever the host wrote ("Sat, 24 June · 9pm", "tonight", "this weekend"), so this is a
+// best-effort split, not a parser: no recognisable time → the whole string sits after the calendar.
+function ideaWhen(p){
+  const raw=String(p.when||'').trim();
+  if(!raw) return {date:T('Гибко','Flexible'), time:''};
+  const s=locStr(raw);
+  // Only an explicit clock time (13:00 / 9:00 PM / 8pm) is peeled into its own chip. Russian
+  // time-of-day words (вечером, утром…) are left inline in the date phrase — matching them here
+  // once split "сего·дня" apart, since «дня» is a substring of «сегодня».
+  const m=s.match(/(\d{1,2}[:.]\d{2}\s*(?:AM|PM|am|pm)?|\d{1,2}\s*(?:AM|PM|am|pm))/);
+  if(m){
+    const time=m[0].trim();
+    const date=s.slice(0,m.index).replace(/[·,\s]+$/,'').trim() || s;
+    return {date, time};
+  }
+  return {date:s, time:''};
+}
+// The going pill: real `going` count with placeholder attendee glyphs (the product has no attendee
+// photos — the neutral user glyph is the honest stand-in the mockup itself uses), overflow as +N.
+function goingPill(n){
+  n=parseInt(n,10)||0; if(n<=0) return '';
+  const shown=Math.min(n,3), extra=n-shown;
+  let a=''; for(let i=0;i<shown;i++) a+=`<span class="av">${IC.person}</span>`;
+  if(extra>0) a+=`<span class="av ct">+${extra}</span>`;
+  return `<div class="gpill"><div class="avg">${a}</div><span>${n} ${T('идут','going')}</span></div>`;
+}
 let IDEA_I=0;
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans behind "New ideas for you"
@@ -3640,19 +3694,20 @@ function scr_agenthome(){
     // DATA.saved holds objects ({name, band, km…}), not strings — comparing to the raw name meant
     // the heart saved correctly and then never showed it.
     const saved=(DATA.saved||[]).some(x=>String((x&&x.name)||x)===host);
+    const w=ideaWhen(p);
+    const loc=[p.area, p.dist].filter(Boolean).join(' · ');
+    const foot=goingPill(p.going) || (host
+      ? `<div class="gpill"><span class="hav">${esc(host.slice(0,1).toUpperCase())}</span><span>${esc(host)} ${T('организует','is hosting')}</span></div>`
+      : '');
     return `<div class="idea ${i===IDEA_I?'on':''}" data-act="join-plan" data-pi="${i}">
-      <div class="ph">${TILE_SVG[key]||TILE_SVG.social}
+      <div class="cov">${TILE_SVG[key]||TILE_SVG.social}
         <div class="cat ${near?'near':''}">${cat}</div>
-        <div class="hrt ${saved?'on':''}" data-act="cand-save" data-n="${esc(host)}">${IC.heart}</div></div>
+        <div class="bm ${saved?'on':''}" data-act="cand-save" data-n="${esc(host)}">${IC.bookmark}</div></div>
       <div class="bd">
-        <div class="bdg">${IC[key]||IC.spark}</div>
         <div class="ti">${esc(p.title||'')}</div>
-        <div class="su">${esc(ideaSub(p))}</div>
-        ${(p.going||host)?`<div class="ft">
-          ${host?`<div class="hav">${esc(host.slice(0,1).toUpperCase())}</div>`:''}
-          <span>${p.going
-            ? `${p.going} ${T('уже заинтересованы','others interested')}`
-            : `${esc(host)} ${T('организует','is hosting')}`}</span></div>`:''}
+        <div class="mt">${IC.calen}<span>${esc(w.date)}</span>${w.time?`${IC.clock}<span>${esc(w.time)}</span>`:''}</div>
+        ${loc?`<div class="mt">${IC.pin}<span>${esc(loc)}</span></div>`:''}
+        ${foot?`<div class="ft">${foot}</div>`:''}
       </div></div>`;
   };
   const ideas = plans.length
@@ -3682,31 +3737,27 @@ function scr_agenthome(){
         ${ideas}
       </div>
       ${invRow}
+      ${(PLAN&&PLAN.confirmed)?`<div class="emeet" data-act="meet-open">
+        <div class="ava">${IC.coffee}</div>
+        <div class="mbd">
+          <div class="mtop">
+            <div class="mt-title">${T('Кофе и разговор','Coffee & conversation')}</div>
+            <div class="sbadge ok">${T('Подтверждено','Confirmed')}</div></div>
+          <div class="mmeta">
+            <span>${IC.clock}${esc(slotText())}</span>
+            <span>${IC.pin}${esc(placeText())}</span></div>
+          <button class="mbtn" data-act="meet-open">${T('Открыть детали','Open details')}</button>
+        </div></div>`:''}
       <div class="bcard">
-        <div class="top">
-          <div class="msc">${masc('primary')}</div>
-          <div class="hd">
-            <div class="h serif">Buddy</div>
-            <div class="s">${IC.spark}${T('Расскажи Buddy, и он соберёт план','Talk to Buddy to create a plan')}</div>
-          </div>
+        <div class="brow">
+          <div class="bav">${masc('primary')}</div>
+          <div class="fld">
+            <input id="ainput" placeholder="${T('Чем хочешь заняться?','What do you feel like doing?')}" autocomplete="off">
+            <span class="mic">${IC.mic}</span>
+            <button class="snd" data-act="agent-go">${IC.send}</button></div>
         </div>
-        <div class="fld">
-          <input id="ainput" placeholder="${T('Чем хочешь заняться?','What do you feel like doing?')}" autocomplete="off">
-          <span class="mic">${IC.mic}</span>
-          <button class="snd" data-act="agent-go">${IC.send}</button></div>
         <div class="hist" data-act="talk-buddy">${IC.chat}${T('Открыть историю разговоров','Open conversation history')} ››</div>
       </div>
-      ${(PLAN&&PLAN.confirmed)?`<div>
-        <div class="kplan tight">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-            <div class="k-h3">${T('Кофе и разговор','Coffee & conversation')}</div>
-            <div style="color:var(--muted)">${IC.calen}</div></div>
-          <div class="kplanrow"><div class="ic">${IC.clock}</div><div class="bd">
-            <div class="ti" style="font-size:13px">${esc(slotText())}</div></div></div>
-          <div class="kplanrow"><div class="ic">${IC.pin}</div><div class="bd">
-            <div class="ti" style="font-size:13px">${esc(placeText())}</div></div></div>
-          <button class="kbtn pri" data-act="meet-open">${T('Открыть детали','Open details')}</button>
-        </div></div>`:''}
     </div>
   </div>`;
 }

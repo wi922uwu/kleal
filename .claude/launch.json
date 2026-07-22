@@ -23,6 +23,13 @@
       "autoPort": false
     },
     {
+      "name": "kleal-profile-ms",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-X", "utf8", "kleal-ms/services/profile/app.py"],
+      "port": 7073,
+      "autoPort": false
+    },
+    {
       "name": "buddy",
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-X", "utf8", "run_buddy_local.py"],
