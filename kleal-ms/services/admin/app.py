@@ -316,13 +316,6 @@ def delete_user(uid):
     return False
 
 
-def clear_users():
-    """Remove ALL users — leaves an empty (but present) store, so matching sees an empty system."""
-    with _LOCK:
-        _write([])
-    return True
-
-
 def _match_post(path, payload, timeout=30):
     """Call the matching service (read-only endpoints). Returns its JSON or {'error': ...}."""
     req = urllib.request.Request(MATCH_URL + path, data=json.dumps(payload).encode("utf-8"),

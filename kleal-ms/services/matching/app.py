@@ -254,9 +254,6 @@ def topical(topics, interests):
                 matched.add(str(x)); best = max(best, 4)
     return best, matched
 
-def _cat_of(tok):   # back-compat: broad category only
-    return cat_of(tok)[0]
-
 # ============================ MATCHING ENGINE (production-parity demo) ============================
 # Mirrors dating/apps/api scoring: hard gates -> base tier (reciprocal/exact/adjacent/related/broad)
 # -> capped modifiers -> deterministic tiebreak -> diversify. 100% deterministic; no LLM, no randomness.
@@ -1913,8 +1910,6 @@ class H(BaseHTTPRequestHandler):
                                            "config_version": (_CORE_CFG or {}).get("config_version"),
                                            "config_sha": ((_CORE_CFG or {}).get("_sha256") or "")[:12],
                                            "error": _CORE_ERR}})
-        elif self.path == "/api/agent/load":
-            send_json(self, 200, {"state": _session("me").get("state")})
         elif self.path == "/api/agent/pool":
             c = load_candidates()
             src = {}

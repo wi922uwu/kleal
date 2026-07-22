@@ -2137,28 +2137,9 @@ async function broadenIntent(kind){
   else { curIntent.fallback=(r&&r.fallback)||curIntent.fallback; toast('Still no offline matches — try going live'); }
   render(); saveState();
 }
-// Buddy agent: free-text request -> real structured intent + ranked candidates (backend /api/agent/plan).
-function intentSpec(it){ const s=it.spec||[]; return s.map((r,i)=>`<div class="specrow"><div class="spi">${IC[r[0]]||IC.spark}</div>
-  <div class="sl">${esc(r[1])}</div><div class="sv">${esc(r[2])}</div></div>${i<s.length-1?'<div class="divider"></div>':''}`).join(''); }
-
 // ===== Conversational "Create intent": Kleal collects the essentials + validates, THEN builds the card =====
 // Replaces the old "any text -> instant card" behaviour: /api/buddy/intent-build runs a short dialogue
 // (gibberish -> ask again; missing when/format -> ask; enough -> ready) and only then do we build a card.
-async function buildIntentCard(intent){
-  curIntent={pending:true, query:''}; render();
-  let r; try{ r=await fetch('/api/agent/match',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({intent:intent, profile:matchProfile(), ctx:{self:DATA.name||''}})}).then(x=>x.json()); }catch(e){ r=null; }
-  const cands=(r&&r.candidates)||[]; const it=intent;
-  const reach=it.exactMatchRequired?'Exact matches only':(it.broadAllowed===false?'Same activity only':(it.adjacentAllowed===false?'Same + related':'Adjacent + related'));
-  const area=(it.place||'Public places nearby')+(it.mode==='offline'&&it.radiusKm?(' · within '+it.radiusKm+' km'):'');
-  curIntent={ title:it.title||it.activity||'New plan', tags:it.tags||it.topics||[], query:'', type:it.type, role:it.role, intent:it,
-    fallback:(r&&r.fallback)||null, confidence:cands[0]?cands[0].score:70, candidates:cands,
-    spec:[['moon','Mode',capw(it.mode||'Offline')],['users','Format',it.format||'1:1 or small group'],
-          ['clock','Time',it.time||'Flexible'],['pin','Area',area],
-          ['shield','Safety',it.verifiedOnly?'Verified people only':'Public places only'],
-          ['compass','Reach',reach],['eye','Visibility','Via Kleal only']] };
-  render(); saveState(); }
-// ---------- Phase 1: saved intents ----------
 function saveCurIntent(){
   if(!curIntent) return;
   DATA.intents=DATA.intents||[];
@@ -4808,20 +4789,10 @@ function locSheetRadius(km){
   eshCircle.setRadius((+km||10)*1000);
   try{ eshMap.fitBounds(eshCircle.getBounds(),{padding:[16,16]}); }catch(_e){}
 }
-const FORMAT_OPTS=()=>[
-  ['1:1','1:1 · '+T('один на один','one-on-one')],
-  ['small',T('Малая группа · 2–5','Small group · 2–5')],
-  ['party',T('Компания · 10+','Party · 10+')],
-  ['online',T('Онлайн','Online')],
-  ['offline',T('Вживую','In person')],
-  ['hybrid',T('Гибрид','Hybrid')],
-  ['events',T('События и митапы','Events & meetups')]];
-function fmtLabel(k){ const o=FORMAT_OPTS().find(x=>x[0]===k); return o?o[1]:String(k); }
 const GENDER_OPTS=()=>[['Male',T('Мужчина','Male')],['Female',T('Женщина','Female')],['Other',T('Другое','Other')]];
 const SHEET_LANGS=['en','es','ru','fr','de','it','ca','pt','sr','uk','pl','sv'];
 function openSheet(kind, idx){
-  if(kind==='formats') ESHEET={kind, draft:(DATA.formats||[]).slice()};
-  else if(kind==='location') ESHEET={kind, draft:{area:DATA.area||'', radiusKm:DATA.radiusKm||10}};
+  if(kind==='location') ESHEET={kind, draft:{area:DATA.area||'', radiusKm:DATA.radiusKm||10}};
   else if(kind==='languages') ESHEET={kind, draft:(DATA.langsList||[]).slice()};
   else if(kind==='basics') ESHEET={kind, draft:{age:DATA.age||'', gender:DATA.gender||''}};
   // The section sheets (Figma: Interests Edit / Personality Edit / Safety). Each
@@ -4834,13 +4805,8 @@ function openSheet(kind, idx){
 }
 function eSheetHTML(){
   const e=ESHEET; if(!e) return '';
-  const row=(on,label,act,v)=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 2px;cursor:pointer" data-act="${act}" data-v="${esc(v)}">
-      <div class="cbx ${on?'on':''}">${on?IC.check:''}</div><div style="font-size:14.5px">${esc(label)}</div></div>`;
   let title='', body='', extra='';
-  if(e.kind==='formats'){
-    title=T('Формат встреч','Social formats');
-    body='<div>'+FORMAT_OPTS().map(o=>row(e.draft.includes(o[0]),o[1],'esheet-fmt',o[0])).join('')+'</div>';
-  } else if(e.kind==='location'){
+  if(e.kind==='location'){
     const km=+e.draft.radiusKm||10;
     const kmTxt=v=>v+' '+T('км','km');
     title=T('Локация','Location');
@@ -4919,8 +4885,7 @@ function eSheetHTML(){
 }
 function acceptSheet(){
   const e=ESHEET; if(!e) return;
-  if(e.kind==='formats'){ DATA.formats=e.draft.slice(); pushProfile({formats:DATA.formats}); }
-  else if(e.kind==='location'){
+  if(e.kind==='location'){
     const a=document.getElementById('eshArea'), km=document.getElementById('eshKm');
     if(a&&a.value.trim()) DATA.area=a.value.trim();
     if(km) DATA.radiusKm=+km.value;
@@ -4958,20 +4923,6 @@ function acceptSheet(){
   // _resumBusy, and adaptSummary already refuses a rewrite that would shorten or replace the text.
   if(['location','languages','basics','interests'].indexOf(kind)>=0)
     adaptSummary().then(okk=>{ if(okk) render(); });
-}
-
-// ---- Interest sent (479:15090) ----
-function sheetHTML(){
-  if(SHEET!=='interest') return '';
-  const n=(CAND&&CAND.name)||'';
-  return `<div class="kscrim" data-act="sheet-close"><div class="ksheet" onclick="event.stopPropagation()">
-    <div class="kmedal">${IC.send}</div>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      <div class="k-h3">${T('Интерес отправлен','Interest sent')}</div>
-      <div class="k-small" style="color:var(--muted)">${T('Kleal спросит','Kleal will ask')} ${esc(n)}, ${T('готов(а) ли пообщаться.','if they’d like to chat with you.')}<br>${T('Сообщим, если интерес взаимный.','We’ll let you know if the interest is mutual.')}</div>
-    </div>
-    <button class="kbtn pri tall" style="width:100%" data-act="sheet-close">${T('Понятно','Got it')}</button>
-  </div></div>`;
 }
 
 // ---------------- Settings (Figma "Settings") ----------------
@@ -5119,8 +5070,7 @@ function render(){
   const meta=TABS.find(t=>t[0]===cur)||TABS[0];
   const isHome = !editSig && !detail && cur==='overview';
   const isRoot = !editSig && !detail && ROOTS.includes(cur);
-  const titleFor = false ? ''
-    : cur==='matchchat' ? ((matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'Chat')
+  const titleFor = cur==='matchchat' ? ((matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'Chat')
     : (cur==='overview'?T('Мой профиль Kleal','My Kleal Profile'):(TITLES()[cur]||meta[2]));
   document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : titleFor);
   document.getElementById('back').style.visibility= (editSig||detail||!ROOTS.includes(cur))? 'visible' : 'hidden';
@@ -5157,7 +5107,6 @@ function render(){
     try{ A.innerHTML=(SCREENS[cur]||scr_overview)(); }
     catch(err){ console.error('render failed on', cur, err); cur='agenthome'; A.innerHTML=scr_agenthome(); }
   }
-  if(SHEET==='interest') A.insertAdjacentHTML('beforeend', sheetHTML());
   if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
   if(ESHEET) A.insertAdjacentHTML('beforeend', eSheetHTML());
   // the Location sheet carries a live Leaflet map; build it after its node exists, tear it down on close
@@ -5366,7 +5315,6 @@ function doAct(act, ds){
     case 'sheet-close': SHEET=null; render(); break;
     case 'esheet-close': ESHEET=null; render(); break;
     case 'esheet-accept': acceptSheet(); break;
-    case 'esheet-fmt': { const d=ESHEET.draft, i=d.indexOf(ds.v); if(i>=0)d.splice(i,1); else d.push(ds.v); render(); break; }
     case 'esheet-lang': { const d=ESHEET.draft, i=d.indexOf(ds.v); if(i>=0)d.splice(i,1); else d.push(ds.v); render(); break; }
     case 'esheet-gender': { const ag=document.getElementById('eshAge');
       if(ag) ESHEET.draft.age=ag.value;      // the chip tap re-renders the sheet — a typed age must survive it

@@ -644,12 +644,6 @@ const A=document.getElementById('app');
 // any other rule here lands a person in a different language than the one they were just shown.
 let UILANG='ru'; try{ const _l=localStorage.getItem('kleal_uilang'); if(_l==='ru'||_l==='en') UILANG=_l; }catch(_e){}
 function T(ru,en){ return UILANG==='en' ? en : ru; }
-function setUILang(l){ UILANG=(l==='en'?'en':'ru');
-  try{ localStorage.setItem('kleal_uilang',UILANG); }catch(_e){}
-  document.documentElement.lang=UILANG;
-  document.title=T('Kleal — Создание профиля','Kleal — Onboarding');
-  if(typeof st!=='undefined'&&st){ if(st.phase==='splash') return rSplash();
-    if(st.phase==='summary') return goSummary(); if(st.phase==='done') return rDone(); } }
 // Displayed label vs stored value. The chip text used to BE the stored value, so translating the
 // labels alone would have written «Женщина» and «Готовка» into a store where every other row says
 // "Female" and "cooking" — the person would then match nobody. Value first, label second, always.
@@ -1406,23 +1400,6 @@ function openProfile(){
   let b64=''; try{ b64=btoa(unescape(encodeURIComponent(JSON.stringify(p)))); }catch(e){ b64=btoa(JSON.stringify(p)); }
   location.href = PROFILE_ORIGIN + '/?p=' + encodeURIComponent(b64);
 }
-function rMenu(){ st.phase='menu';
-  const nm = st.profile.name || 'there';
-  A.innerHTML=`<div class="head"><div class="ava" id="avaM">${MASCOT_SRC?'':'K'}</div>
-      <div class="ht"><div class="htt">Hi, ${esc(nm)}</div><div class="hsub">Your Kleal agent is ready.</div></div></div>
-    <div class="scroll fade">
-      <div class="menucard" id="mp"><div class="mic">${IC.user}</div>
-        <div class="mt"><div class="mtn">My Profile</div><div class="mts">What Kleal knows about you</div></div>
-        <div class="mchev">${svg('<path d="M9 6l6 6-6 6"/>','0 0 24 24')}</div></div>
-      <div class="menucard soon"><div class="mic">${IC.spark}</div>
-        <div class="mt"><div class="mtn">Create an intent</div><div class="mts">Coming soon</div></div></div>
-    </div>
-    <div class="foot"><button class="link" id="rs">Restart onboarding</button></div>`;
-  if(MASCOT_SRC){ const a=document.getElementById('avaM'); a.style.backgroundImage=`url(${MASCOT_SRC})`; a.textContent=''; }
-  document.getElementById('mp').onclick=openProfile;
-  document.getElementById('rs').onclick=()=>{ Object.assign(st,{phase:'splash',slide:0,profile:{},crit:null,thread:[],step:-1,busy:false,compose:null,funnel:[],fcEl:null,funnelTurns:0,funnelCap:0,editing:false,sumEdited:false}); rSplash(); };
-}
-
 rSplash();
 </script></body></html>'''
 
