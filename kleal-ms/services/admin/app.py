@@ -11,6 +11,7 @@ import json
 import uuid
 import threading
 import urllib.request
+from urllib.parse import quote
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -204,6 +205,50 @@ def update_user(uid, patch):
     return None
 
 
+VERBS = ("pause", "unpause", "unverify", "verify")
+
+
+def apply_verb(name, verb):
+    """The three narrow verbs that replaced the edit form.
+
+    They patch ONE key on the raw row and deliberately do NOT go through `_norm_user`, which
+    rewrites a person on every save: it substitutes `coffee` for empty interests, `en` for missing
+    languages, km 2.0, vibe "chill", and invents an entity called "<Interest> scene". Saving a row
+    just to pause someone used to fabricate the very data the person card exists to report as
+    missing — the panel would show a clean profile it had authored itself.
+    """
+    if verb not in VERBS:
+        return {"ok": False, "error": "unknown verb"}
+    want = str(name or "").strip().lower()
+    with _LOCK:
+        users = _read()
+        for i, u in enumerate(users):
+            if str(u.get("name", "")).strip().lower() != want:
+                continue
+            row = dict(u)
+            if verb in ("pause", "unpause"):
+                r = dict(row.get("receiving") or {}) if isinstance(row.get("receiving"), dict) else {}
+                if verb == "pause":
+                    r["status"] = "paused"
+                    r.pop("paused_until", None)      # indefinite: is_paused() reads a missing
+                    row["paused"] = True             # paused_until as "still paused"
+                else:
+                    r["status"] = "active"
+                    r.pop("paused_until", None)
+                    row.pop("paused", None)
+                row["receiving"] = r
+            elif verb == "unverify":
+                row["verified"] = False
+            elif verb == "verify":
+                row["verified"] = True
+            users[i] = row
+            _write(users)
+            return {"ok": True, "name": row.get("name"), "verb": verb,
+                    "verified": bool(row.get("verified")),
+                    "receiving": row.get("receiving"), "paused": bool(row.get("paused"))}
+    return {"ok": False, "error": "no such person"}
+
+
 def delete_user(uid):
     with _LOCK:
         users = _read()
@@ -298,6 +343,22 @@ class H(BaseHTTPRequestHandler):
                                   "fromStore": (pl or {}).get("fromStore"),
                                   "bySource": (pl or {}).get("bySource"), "store": (pl or {}).get("store"),
                                   "adminStore": os.path.abspath(STORE), "error": err})
+        elif p == "/api/admin/person":
+            from urllib.parse import unquote
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
+                if "?" in self.path else {}
+            nm = unquote(q.get("name", "").replace("+", " "))
+            rep = _match_get("/api/agent/admin/person?name=" + quote(nm))
+            # The row id, so the verbs have something to target — the engine's report is keyed by name.
+            for u in _read():
+                if str(u.get("name", "")).strip().lower() == nm.strip().lower():
+                    rep["id"] = u.get("id")
+                    break
+            send_json(self, 200, rep)
+        elif p == "/api/admin/cohorts":
+            send_json(self, 200, _match_get("/api/agent/admin/cohorts", timeout=40))
+        elif p == "/api/admin/proposals":
+            send_json(self, 200, _match_get("/api/agent/admin/proposals"))
         else:
             send_json(self, 404, {})
 
@@ -353,6 +414,11 @@ class H(BaseHTTPRequestHandler):
             r = _match_post("/api/agent/" + p.rsplit("/", 1)[-1], payload, timeout=180)
             r["searcherKnown"] = bool(rec)
             send_json(self, 200, r)
+        elif p == "/api/admin/person/verb":
+            send_json(self, 200, apply_verb(body.get("name"), str(body.get("verb") or "")))
+        elif p == "/api/admin/person/fatigue-reset":
+            send_json(self, 200, _match_post("/api/agent/admin/fatigue-reset",
+                                             {"name": body.get("name")}))
         elif p == "/api/admin/explain":
             # Why did (or didn't) B show up for A's search — full per-feature decision trace.
             prof, _rec = _searcher_profile(body)
@@ -565,6 +631,151 @@ function diagCards(){
   </div>`;
 }
 let DIVT=null;
+
+// ---------------------------------------------------------------- person card + cohorts (stage 2)
+// The 3038-row table could show every field and still not answer the only two questions worth
+// asking about a person: can anyone find them, and can they find anyone. Both are computed by the
+// engine itself (/api/agent/admin/person) so the panel can never disagree with what search does.
+let PERSON=null, PBUSY=false, PNAME='', COH=null, COHBUSY=false;
+async function openPerson(name){
+  PNAME=String(name||'').trim(); if(!PNAME) return;
+  TAB='person'; PBUSY=true; PERSON=null; render();
+  try{ PERSON=await api('/api/admin/person?name='+encodeURIComponent(PNAME)); }
+  catch(e){ PERSON={ok:false,error:String(e&&e.message||e)}; }
+  PBUSY=false; render();
+}
+async function loadCohorts(){
+  COHBUSY=true; render();
+  try{ COH=await api('/api/admin/cohorts'); }catch(e){ COH={ok:false,error:String(e&&e.message||e)}; }
+  COHBUSY=false; render();
+}
+async function personVerb(verb){
+  if(!PERSON||!PERSON.name) return;
+  const label={pause:'поставить на паузу',unpause:'снять с паузы',unverify:'снять верификацию',
+               verify:'верифицировать','fatigue':'сбросить счётчик предложений'}[verb]||verb;
+  if(!confirm(label+': '+PERSON.name+'?')) return;
+  const url=(verb==='fatigue')?'/api/admin/person/fatigue-reset':'/api/admin/person/verb';
+  const body=(verb==='fatigue')?{name:PERSON.name}:{name:PERSON.name,verb:verb};
+  const r=await api(url,{method:'POST',body:JSON.stringify(body)});
+  if(r&&r.ok===false){ toast(r.error||'не вышло'); return; }
+  toast('готово');
+  await openPerson(PERSON.name);          // re-read from the engine: never trust the local echo
+  load();
+}
+function _kv(k,v){return `<div class="frow"><div class="fl">${k}</div><div class="fn">${
+  (v===null||v===undefined||v==='')?'<span class="muted">не собрано</span>':v}</div><div></div></div>`;}
+function personView(){
+  const p=PERSON;
+  const search=`<div class="card"><h3>Карточка человека</h3>
+    <div class="muted" style="margin-bottom:8px">Почему этого человека никто не находит — и почему он сам никого не находит. Это разные вопросы с разными ответами.</div>
+    <label>Имя<input id="p_name" value="${String(PNAME||'').replace(/"/g,'&quot;')}" placeholder="Nadia"></label>
+    <button class="primary" onclick="openPerson($('#p_name').value)" ${PBUSY?'disabled':''}>${PBUSY?'Смотрю…':'Открыть'}</button>
+  </div>`;
+  if(!p) return search+cohortsView();
+  if(p.ok===false) return search+`<div class="card"><div class="err">${p.error||'не найден'}</div></div>`+cohortsView();
+  const id=p.identity||{}, pol=p.policy||{}, qh=pol.quietHours||{};
+  const badge=(p.blocks&&p.blocks.length)?'<b style="color:#c0392b">невидим</b>'
+             :(p.inPool?'<b style="color:#2f9e6b">виден в поиске</b>':'<b style="color:#b7791f">не в пуле</b>');
+  const list=(arr,cls)=>(arr&&arr.length)?arr.map(b=>`<div class="frow sub"><div class="fl" style="color:${cls}">${b.ru}</div><div class="fn"></div><div></div></div>`).join(''):
+    '<div class="frow sub"><div class="fl muted">ничего</div><div class="fn"></div><div></div></div>';
+  const rd=p.readiness||{};
+  const rdRows=Object.keys(rd).map(k=>`<div class="frow sub"><div class="fl">${k}</div><div class="fn">${rd[k]}</div><div></div></div>`).join('');
+  return search+`<div class="card">
+    <h3>${p.name} — ${badge}</h3>
+    <div class="funnel">
+      ${_kv('источник строки', id.source)}
+      ${_kv('город', id.area)}
+      ${_kv('возраст', id.age===null||id.age===undefined?null:Math.round(id.age))}
+      ${_kv('координаты', (id.lat===null||id.lon===null)?null:(id.lat.toFixed(3)+', '+id.lon.toFixed(3)))}
+      ${_kv('радиус, км', id.radiusKm)}
+      ${_kv('языки', (id.langs||[]).join(', '))}
+      ${_kv('интересы', (id.interests||[]).join(', '))}
+      ${_kv('верифицирован', id.verified?'да':'нет')}
+      ${_kv('согласие на dating', id.datingOk?'да':'нет')}
+      ${_kv('своих интентов', id.ownIntents)}
+    </div>
+    <div class="sec">Жёстко блокирует показ</div><div class="funnel">${list(p.blocks,'#c0392b')}</div>
+    <div class="sec">Сужает — выпадает из части запросов</div><div class="funnel">${list(p.warnings,'#b7791f')}</div>
+    <div class="sec">Его собственный поиск</div><div class="funnel">${list(p.outbound,'#b7791f')}</div>
+    <div class="sec">Политика приёма</div>
+    <div class="funnel">
+      ${_kv('политика задана', pol.hasPolicy?'да':'нет — читается как «доступность не настроена»')}
+      ${_kv('статус', pol.status)}
+      ${_kv('разрешённые домены', (pol.allowedDomains===null||pol.allowedDomains===undefined)?null:(pol.allowedDomains.length?pol.allowedDomains.join(', '):'пусто — ни одного предложения'))}
+      ${_kv('пассивные предложения', pol.passiveOutreach===false?'выключены':(pol.passiveOutreach===true?'разрешены':null))}
+      ${_kv('лимит предложений / сутки', pol.budgetPer24h+(pol.budgetExplicit?' (задан явно)':' (по умолчанию)'))}
+      ${_kv('получено за 24 ч', pol.received24h)}
+      ${_kv('тихие часы', qh.start+'–'+qh.end+' (местное сейчас '+qh.localTime+(qh.inQuietNow?', СЕЙЧАС тихий час':'')+')')}
+    </div>
+    <div class="sec">Готовность по доменам</div><div class="funnel">${rdRows}</div>
+    <div class="sec">Действия</div>
+    <div class="muted" style="margin-bottom:8px">Три узких глагола вместо формы редактирования: форма пересохраняла всю строку и по дороге дописывала человеку интересы, язык и «сцену», которых он не указывал.</div>
+    <button onclick="personVerb('pause')">На паузу</button>
+    <button onclick="personVerb('unpause')">Снять с паузы</button>
+    <button onclick="personVerb(${id.verified?"'unverify'":"'verify'"})">${id.verified?'Снять верификацию':'Верифицировать'}</button>
+    <button onclick="personVerb('fatigue')">Сбросить счётчик предложений</button>
+  </div>`+cohortsView();
+}
+function cohortsView(){
+  return `<div class="card"><h3>Когорты</h3>
+    <div class="muted" style="margin-bottom:8px">Сохранённые запросы к базе. На эти вопросы таблица из 3000 строк не отвечает.</div>
+    <button class="primary" onclick="loadCohorts()" ${COHBUSY?'disabled':''}>${COHBUSY?'Считаю…':'Пересчитать'}</button>
+    ${COH&&COH.error?`<div class="err">${COH.error||COH._error}</div>`:''}
+    ${COH&&COH.ok?`<div class="funnel">${COH.cohorts.map(c=>`
+      <div class="frow"><div class="fl">${c.label}</div><div class="fn">${c.count}</div>
+        <div class="fnote">${c.total?Math.round(c.count*100/c.total):0}%</div></div>
+      ${c.sample.length?`<div class="frow sub"><div class="fl muted" style="cursor:pointer">${
+        c.sample.slice(0,12).map(n=>`<span onclick="openPerson('${String(n).replace(/'/g,"\\'")}')" style="text-decoration:underline">${n}</span>`).join(', ')}${c.count>12?' …':''}</div><div class="fn"></div><div></div></div>`:''}
+    `).join('')}</div>`:''}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- proposals registry (stage 3)
+// Four different failures look identical from outside — отклонили, истекло без ответа, отозвано
+// политикой на приёме, и вообще не создалось. Only the trace tells them apart.
+let PROPS=null, PROPBUSY=false, PROPVIEW='all';
+async function loadProposals(){
+  PROPBUSY=true; render();
+  try{ PROPS=await api('/api/admin/proposals'); }catch(e){ PROPS={ok:false,error:String(e&&e.message||e)}; }
+  PROPBUSY=false; render();
+}
+function setPropView(v){PROPVIEW=v;render();}
+function proposalsView(){
+  const p=PROPS;
+  const head=`<div class="card"><h3>Реестр предложений</h3>
+    <div class="muted" style="margin-bottom:8px">Кто кому предложил встречу и что с этим стало. Только чтение — этот файл пишется без tmp+replace, читатель, который пишет, обрежет запрос на лету.</div>
+    <button class="primary" onclick="loadProposals()" ${PROPBUSY?'disabled':''}>${PROPBUSY?'Читаю…':'Обновить'}</button>
+    ${p&&(p.error||p._error)?`<div class="err">${p.error||p._error}</div>`:''}
+    ${p&&p.ok?`<div class="funnel">
+      ${_kv('всего', p.total)}
+      ${_kv('истекает меньше чем через 12 ч', p.expiringSoon)}
+      ${_kv('истекло без ответа', p.expiredUnanswered)}
+      ${_kv('отозвано политикой', p.policyRevoked)}
+      ${Object.keys(p.byStatus||{}).map(k=>`<div class="frow sub"><div class="fl">${k}</div><div class="fn">${p.byStatus[k]}</div><div></div></div>`).join('')}
+    </div>
+    <div style="margin-top:10px">
+      ${['all|все','soon|истекает <12ч','revoked|отозвано политикой','expired|истекло без ответа']
+        .map(x=>{const[k,l]=x.split('|');return `<button class="${PROPVIEW===k?'primary':''}" onclick="setPropView('${k}')">${l}</button>`;}).join('')}
+    </div>`:''}
+  </div>`;
+  if(!p||!p.ok) return head;
+  let rows=p.requests||[];
+  if(PROPVIEW==='soon') rows=rows.filter(r=>r.expiresInHours!==null&&r.expiresInHours>0&&r.expiresInHours<12&&(r.status==='pending'||r.status==='sent'));
+  if(PROPVIEW==='revoked') rows=rows.filter(r=>r.policyRevoked);
+  if(PROPVIEW==='expired') rows=rows.filter(r=>r.expired);
+  if(!rows.length) return head+`<div class="card"><div class="muted">Ни одного предложения в этой выборке.</div></div>`;
+  return head+`<div class="card"><h3>${rows.length} предложени${rows.length===1?'е':'й'}</h3>
+    <div class="funnel">${rows.slice(0,120).map(r=>`
+      <div class="frow"><div class="fl"><span onclick="openPerson('${String(r.from||'').replace(/'/g,"\\'")}')" style="text-decoration:underline;cursor:pointer">${r.from||'?'}</span> → <span onclick="openPerson('${String(r.to||'').replace(/'/g,"\\'")}')" style="text-decoration:underline;cursor:pointer">${r.to||'?'}</span></div>
+        <div class="fn">${r.status}</div>
+        <div class="fnote">${r.ageHours!==null?r.ageHours+' ч назад':''}${r.expiresInHours!==null?' · истекает через '+r.expiresInHours+' ч':''}${r.expired?' · <b style="color:#c0392b">истекло</b>':''}</div></div>
+      ${r.note?`<div class="frow sub"><div class="fl muted">«${r.note}»</div><div class="fn"></div><div></div></div>`:''}
+      ${r.trace.length?`<div class="frow sub"><div class="fl muted">след: ${r.trace.join(' → ')}</div><div class="fn"></div><div></div></div>`:''}
+      ${r.configVersion?`<div class="frow sub"><div class="fl muted">конфиг: ${r.configVersion}</div><div class="fn"></div><div></div></div>`:''}
+    `).join('')}</div>
+    ${rows.length>120?`<div class="muted">показаны первые 120 из ${rows.length}</div>`:''}
+  </div>`;
+}
 const VIBES=["calm","energetic","intellectual","creative","competitive","chill","social","introvert","extrovert"];
 const ROLES=["play","watch","discuss","practise","attend","meet"];
 
@@ -845,9 +1056,24 @@ function render(){
       <button class="tab ${TAB==='users'?'on':''}" onclick="setTab('users')">Люди</button>
       <button class="tab ${TAB==='lab'?'on':''}" onclick="setTab('lab')">Матчинг-лаборатория</button>
       <button class="tab ${TAB==='funnel'?'on':''}" onclick="setTab('funnel')">Диагностика</button>
+      <button class="tab ${TAB==='person'?'on':''}" onclick="setTab('person')">Карточка</button>
+      <button class="tab ${TAB==='props'?'on':''}" onclick="setTab('props')">Предложения</button>
     </div>
     <span class="muted" style="margin-left:auto" title="строк в файле; движок ищет не по всем — см. полосу ниже">${USERS.length} строк в файле</span>
     </div>${healthBar()}`;
+  if(TAB==='person'){
+    const pv=$('#p_name'); const keep=pv?pv.value:null;
+    $('#app').innerHTML=head+'<div class="wrap">'+personView()+'</div>';
+    setTimeout(()=>{const e=$('#p_name'); if(e&&keep!=null&&!e.value)e.value=keep;
+      if(e)e.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();openPerson(e.value);}};
+      if(!COH&&!COHBUSY)loadCohorts();},0);
+    return;
+  }
+  if(TAB==='props'){
+    $('#app').innerHTML=head+'<div class="wrap">'+proposalsView()+'</div>';
+    setTimeout(()=>{if(!PROPS&&!PROPBUSY)loadProposals();},0);
+    return;
+  }
   if(TAB==='funnel'){
     // same caret discipline as the lab: render() rebuilds everything
     ['who','topics','role','mode'].forEach(k=>{const e=$('#f_'+k); if(e) LFF[k]=e.value;});
@@ -937,7 +1163,8 @@ function render(){
           <td>${esc(u.vibe)}</td><td class="muted">${(u.langs||[]).join(', ')}</td><td>${u.km}</td><td class="muted">${esc(u.role)}</td>
           <td>${flag(u,'open','open to meet')}</td><td>${flag(u,'verified','verified')}</td>
           <td>${flag(u,'datingOk','dating opt-in')}</td><td>${flag(u,'paused','paused',true)}</td>
-          <td style="text-align:right"><button class="ghost mini" onclick="editRow('${u.id}')">Edit</button>
+          <td style="text-align:right"><button class="ghost mini" onclick="openPerson('${String(u.name||'').replace(/'/g,"\\'")}')" title="почему его не находят">Карточка</button>
+            <button class="ghost mini" onclick="editRow('${u.id}')">Edit</button>
             <button class="danger mini" onclick="delRow('${u.id}')">Delete</button></td></tr>`).join('')
           ||`<tr><td colspan="13" class="muted" style="padding:22px;text-align:center">No users. Add one above or reset to the demo pool.</td></tr>`}
         </tbody></table></div>

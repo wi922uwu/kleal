@@ -216,13 +216,114 @@ def test_lab_still_works():
                   any(x in shown for x in claimed), "%s vs %s" % (claimed, shown))
 
 
+def test_person_card():
+    print("\n[person] «почему этого человека никто не находит» — and the mirror question")
+    st, r = _req(ADMIN + "/api/admin/person?name=Nadia", token=TOKEN)
+    check("person card responds", st == 200 and isinstance(r, dict) and r.get("ok"), "got %s" % st)
+    if not (isinstance(r, dict) and r.get("ok")):
+        return
+    for k in ("identity", "policy", "readiness", "blocks", "warnings", "outbound", "verdict"):
+        check("card carries %s" % k, k in r, json.dumps(sorted(r.keys()))[:140])
+    ident = r.get("identity") or {}
+    # The whole point: a missing value is reported as missing. A fabricated default here would hide
+    # the exact gate that drops the person — which is what the edit form used to do on every save.
+    check("a missing coordinate is null, not invented",
+          ("lat" in ident) and (ident["lat"] is None or isinstance(ident["lat"], float)),
+          json.dumps(ident)[:160])
+    check("readiness is reported for every domain",
+          len(r.get("readiness") or {}) >= 8, str(len(r.get("readiness") or {})))
+    check("the panel knows the row id, so the verbs have a target", bool(r.get("id")), str(r.get("id")))
+    st, r2 = _req(ADMIN + "/api/admin/person?name=NoSuchPersonAtAll", token=TOKEN)
+    check("an unknown name is an honest miss, not a blank card",
+          st == 200 and isinstance(r2, dict) and r2.get("ok") is False, json.dumps(r2)[:120])
+
+
+def test_verbs_do_not_fabricate():
+    print("\n[verbs] the edit form fabricated data on save — the verbs must not")
+    st, before = _req(ADMIN + "/api/admin/person?name=Nadia", token=TOKEN)
+    if not (isinstance(before, dict) and before.get("ok")):
+        return check("baseline card readable", False, json.dumps(before)[:120])
+    b_id = before.get("identity") or {}
+    st, r = _req(ADMIN + "/api/admin/person/verb", data={"name": "Nadia", "verb": "pause"}, token=TOKEN)
+    check("pause applies", st == 200 and (r or {}).get("ok"), json.dumps(r)[:120])
+    st, mid = _req(ADMIN + "/api/admin/person?name=Nadia", token=TOKEN)
+    keys = [x.get("key") for x in ((mid or {}).get("blocks") or [])]
+    check("a paused person reads as invisible, with the reason named", "paused" in keys, str(keys))
+    st, r = _req(ADMIN + "/api/admin/person/verb", data={"name": "Nadia", "verb": "unpause"}, token=TOKEN)
+    check("unpause applies", st == 200 and (r or {}).get("ok"), json.dumps(r)[:120])
+    st, after = _req(ADMIN + "/api/admin/person?name=Nadia", token=TOKEN)
+    a_id = (after or {}).get("identity") or {}
+    keys = [x.get("key") for x in ((after or {}).get("blocks") or [])]
+    check("unpause removes the block", "paused" not in keys, str(keys))
+    # The regression that matters: a round-trip through the verbs must not add interests, languages,
+    # coordinates, a vibe or an invented "<Interest> scene" that the person never gave.
+    for f in ("lat", "lon", "interests", "langs", "age", "area"):
+        check("round-trip leaves %s untouched" % f, b_id.get(f) == a_id.get(f),
+              "%r -> %r" % (b_id.get(f), a_id.get(f)))
+    st, r = _req(ADMIN + "/api/admin/person/verb", data={"name": "Nadia", "verb": "delete"}, token=TOKEN)
+    check("an unlisted verb is refused (the verb list is the whole safety model)",
+          (r or {}).get("ok") is False, json.dumps(r)[:120])
+    st, r = _req(ADMIN + "/api/admin/person/verb", data={"name": "NoSuchPerson", "verb": "pause"}, token=TOKEN)
+    check("a verb on an unknown person is refused", (r or {}).get("ok") is False, json.dumps(r)[:120])
+    st, r = _req(ADMIN + "/api/admin/person/fatigue-reset", data={"name": "Nadia"}, token=TOKEN)
+    check("fatigue reset responds with what it cleared",
+          st == 200 and (r or {}).get("ok") and "cleared" in (r or {}), json.dumps(r)[:120])
+
+
+def test_cohorts():
+    print("\n[cohorts] the questions a 3000-row table cannot answer")
+    st, r = _req(ADMIN + "/api/admin/cohorts", token=TOKEN, timeout=60)
+    check("cohorts respond", st == 200 and (r or {}).get("ok"), json.dumps(r)[:120])
+    if not (r or {}).get("ok"):
+        return
+    by = {c["key"]: c for c in r.get("cohorts") or []}
+    for k in ("no_interests", "no_intents", "no_age", "no_coords", "paused", "loadtest"):
+        check("cohort %s exists" % k, k in by, str(sorted(by.keys())))
+    check("cohorts are computed over the RAW store, so they can be ABOUT excluded rows",
+          (by.get("loadtest") or {}).get("count", 0) > 0,
+          "loadtest=%s of %s" % ((by.get("loadtest") or {}).get("count"), r.get("total")))
+    for c in r.get("cohorts") or []:
+        if c["count"] and not c["sample"]:
+            check("cohort %s names examples" % c["key"], False, "count=%s sample=[]" % c["count"])
+    check("every cohort count is within the store", all(c["count"] <= r["total"] for c in r["cohorts"]), "")
+
+
+def test_proposals_registry():
+    print("\n[proposals] declined, expired, revoked-by-policy and never-created look identical outside")
+    st, r = _req(ADMIN + "/api/admin/proposals", token=TOKEN)
+    check("registry responds", st == 200 and (r or {}).get("ok"), json.dumps(r)[:120])
+    if not (r or {}).get("ok"):
+        return
+    check("registry counts by status", isinstance(r.get("byStatus"), dict), json.dumps(r)[:120])
+    check("status counts sum to the total", sum((r.get("byStatus") or {}).values()) == r.get("total"),
+          "%s vs %s" % (sum((r.get("byStatus") or {}).values()), r.get("total")))
+    for k in ("expiringSoon", "expiredUnanswered", "policyRevoked"):
+        check("registry separates %s" % k, isinstance(r.get(k), int), json.dumps(r)[:120])
+    for row in (r.get("requests") or [])[:5]:
+        check("a request names both sides", bool(row.get("from")) and bool(row.get("to")),
+              json.dumps(row)[:140])
+        check("a request carries an immutable trace", isinstance(row.get("trace"), list),
+              json.dumps(row)[:140])
+
+
+def test_registry_is_read_only():
+    print("\n[proposals] the ledger is written without tmp+replace — a reader that writes truncates it")
+    st, a = _req(ADMIN + "/api/admin/proposals", token=TOKEN)
+    st, b = _req(ADMIN + "/api/admin/proposals", token=TOKEN)
+    check("two consecutive reads agree (nothing mutated in between)",
+          (a or {}).get("total") == (b or {}).get("total"),
+          "%s vs %s" % ((a or {}).get("total"), (b or {}).get("total")))
+
+
 def main():
     if not TOKEN:
         print("no admin token: set KLEAL_ADMIN_TOKEN or put admin_token.txt beside users.json")
         return 2
     for fn in (test_auth, test_destructive_routes_gone, test_health_and_store_agreement,
                test_funnel_arithmetic, test_searcher_profile_carries_age, test_stability,
-               test_diversity_discriminates, test_engine_separates_topics, test_lab_still_works):
+               test_diversity_discriminates, test_engine_separates_topics, test_lab_still_works,
+               test_person_card, test_verbs_do_not_fabricate, test_cohorts,
+               test_proposals_registry, test_registry_is_read_only):
         try:
             fn()
         except Exception as e:

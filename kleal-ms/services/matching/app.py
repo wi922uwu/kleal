@@ -1610,6 +1610,242 @@ def explore_plans(limit=12, self_name=""):
     out.sort(key=lambda p: (p["dist"] is None, p["dist"] or 0))
     return out[:limit]
 
+# ---------------------------------------------------------------- one person, every reason (admin)
+def _raw_store_rows():
+    """The store as written, WITHOUT the loadtest filter — the admin has to be able to look at a
+    row precisely because it was excluded from the pool."""
+    try:
+        with open(USERS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        lst = data.get("users") if isinstance(data, dict) else data
+        return lst if isinstance(lst, list) else []
+    except Exception:
+        return []
+
+
+def person_report(name, now_ts=None):
+    """Why is this person invisible, and why do they see nobody? Two different questions with two
+    different answers, and until this endpoint existed both looked like "the ranker is bad".
+
+    Every field is reported as the store actually holds it. A missing value is reported as None
+    (the panel renders «не собрано») and NEVER as a default — a fabricated `age: 30` here would
+    hide the exact gate that is dropping the person.
+    """
+    now_ts = now_ts or time.time()
+    want = _norm_name(name)
+    row = None
+    for u in _raw_store_rows():
+        if _norm_name(u.get("name")) == want:
+            row = u
+            break
+    if row is None:
+        for u in CANDIDATES:                      # demo pool, only reachable with KLEAL_MERGE_DEMO
+            if _norm_name(u.get("name")) == want:
+                row = dict(u, source="demo")
+                break
+    if row is None:
+        return {"ok": False, "error": "no such person", "name": name}
+
+    in_pool = any(_norm_name(c.get("name")) == want for c in load_candidates())
+    ints = [str(x).lower() for x in (row.get("interests") or []) if str(x).strip()]
+    lat, lon = _num(row.get("lat")), _num(row.get("lon"))
+    age = _num(row.get("age"))
+    langs = [str(l)[:2].lower() for l in (row.get("langs") or []) if str(l).strip()]
+    r = row.get("receiving") if isinstance(row.get("receiving"), dict) else None
+    received = (_proposals_received_24h() or {}).get(want, 0)
+
+    # ---- inbound: can anyone find them at all
+    blocks = []                                    # hard, absolute — no search reaches them
+    warns = []                                     # narrows them to a subset of searches
+    if row.get("source") == "loadtest" and not INCLUDE_LOADTEST:
+        blocks.append({"key": "loadtest", "ru": "строка помечена source=loadtest — исключена из поиска",
+                       "en": "row is source=loadtest — excluded from retrieval"})
+    if _core.is_paused(row, now_ts):
+        why = ("флаг paused" if row.get("paused") else
+               ("receiving.status=paused" if str((r or {}).get("status") or "").lower() == "paused"
+                else "receiving.paused_until в будущем"))
+        blocks.append({"key": "paused", "ru": "на паузе (%s)" % why, "en": "paused (%s)" % why})
+    if not ints:
+        blocks.append({"key": "no_interests",
+                       "ru": "нет интересов — тир T5 при ЛЮБОМ запросе, никогда не показывается",
+                       "en": "no interests — tier T5 for every query, never shown"})
+    if row.get("open") is False and not r:
+        warns.append({"key": "open_false", "ru": "open=false — готовность «занят(а)»",
+                      "en": "open=false — readiness 'busy'"})
+    if age is None:
+        warns.append({"key": "no_age",
+                      "ru": "возраст не собран — выпадает из dating и из любого запроса с возрастным диапазоном",
+                      "en": "age unknown — dropped from dating and any age-range query"})
+    elif age < MIN_AGE:
+        blocks.append({"key": "under_age", "ru": "младше 18 — жёсткий отказ", "en": "under 18 — hard gate"})
+    if lat is None or lon is None:
+        warns.append({"key": "no_coords",
+                      "ru": "нет координат — выпадает из любого запроса с радиусом",
+                      "en": "no coordinates — dropped from any query with a radius"})
+    if not langs:
+        warns.append({"key": "no_langs", "ru": "языки не собраны — выпадает при requiredLanguages",
+                      "en": "no languages — dropped when a language is required"})
+    if not row.get("verified"):
+        warns.append({"key": "unverified", "ru": "не верифицирован — выпадает при «только проверенные»",
+                      "en": "unverified — dropped when the search asks for verified only"})
+    if not row.get("datingOk"):
+        warns.append({"key": "no_dating", "ru": "нет согласия на dating — выпадает из dating-запросов",
+                      "en": "no dating opt-in — dropped from dating queries"})
+    if (_num(row.get("pending")) or 0) >= MAX_PENDING:
+        blocks.append({"key": "pending", "ru": "слишком много открытых приглашений (%s)" % row.get("pending"),
+                       "en": "too many open invites (%s)" % row.get("pending")})
+
+    # ---- receiving policy, read the same way readiness_state reads it (opt-outs fail closed)
+    out_cfg = (_CORE_CFG or {}).get("outreach") or {}
+    pb = ((r or {}).get("proposal_budget") or {}).get("per_24h")
+    cap = pb if isinstance(pb, (int, float)) and not isinstance(pb, bool) else \
+        (out_cfg.get("max_proposals_received_per_user_24h") or 4)
+    q = (r or {}).get("quiet_hours") or {}
+    tzoff = int(q.get("tz_offset_min", 120))
+    local_min = int((now_ts // 60 + tzoff) % 1440)
+    defaults = out_cfg.get("quiet_hours_local") or ["22:00", "09:00"]
+    quiet_now = _core._in_quiet_hours(local_min, q.get("start") or defaults[0], q.get("end") or defaults[-1])
+    policy = {
+        "hasPolicy": r is not None,
+        "status": (r or {}).get("status"),
+        "allowedDomains": (r or {}).get("allowed_domains"),
+        "passiveOutreach": (r or {}).get("passive_outreach"),
+        "budgetPer24h": cap, "budgetExplicit": pb is not None,
+        "received24h": received,
+        "budgetSpent": received >= int(cap),
+        "quietHours": {"start": q.get("start") or defaults[0], "end": q.get("end") or defaults[-1],
+                       "tzOffsetMin": tzoff,
+                       "localTime": "%02d:%02d" % (local_min // 60, local_min % 60),
+                       "inQuietNow": bool(quiet_now)},
+    }
+    if isinstance(policy["allowedDomains"], list) and not policy["allowedDomains"]:
+        blocks.append({"key": "no_domains", "ru": "allowed_domains пуст — ни одного личного предложения",
+                       "en": "allowed_domains is empty — no personal proposal in any domain"})
+    if policy["budgetSpent"]:
+        warns.append({"key": "budget", "ru": "лимит предложений на сутки исчерпан (%s из %s)" % (received, cap),
+                      "en": "24h proposal budget spent (%s of %s)" % (received, cap)})
+
+    readiness = {}
+    for d in _core.ALL_DOMAINS:
+        readiness[d] = _core.readiness_state(row, d, now_ts, _CORE_CFG, received)
+
+    # ---- outbound: what THIS person's own requests can reach
+    own_intents = row.get("intents") if isinstance(row.get("intents"), list) else []
+    outbound = []
+    if not own_intents:
+        outbound.append({"key": "no_intents",
+                         "ru": "нет собственных интентов — этот человек никогда не станет T0 "
+                               "(взаимным совпадением) ни для кого",
+                         "en": "no own intents — this person can never be a T0 reciprocal match for anybody"})
+    if not ints:
+        outbound.append({"key": "no_interests_out",
+                         "ru": "нет интересов — его собственный поиск не на чем строить",
+                         "en": "no interests — nothing to build their own search on"})
+    if lat is None or lon is None:
+        outbound.append({"key": "no_coords_out",
+                         "ru": "нет координат — его поиск не может отфильтровать по расстоянию",
+                         "en": "no coordinates — their own search cannot filter by distance"})
+
+    return {"ok": True, "name": row.get("name"), "inPool": in_pool,
+            "verdict": ("невидим" if blocks else ("виден" if in_pool else "не в пуле")),
+            "identity": {"source": row.get("source"), "area": row.get("area") or None,
+                         "age": age, "verified": bool(row.get("verified")),
+                         "datingOk": bool(row.get("datingOk")),
+                         "lat": lat, "lon": lon, "radiusKm": _num(row.get("radiusKm")),
+                         "langs": langs or None, "interests": ints or None,
+                         "ownIntents": len(own_intents), "entities": len(row.get("entities") or [])},
+            "blocks": blocks, "warnings": warns, "outbound": outbound,
+            "policy": policy, "readiness": readiness}
+
+
+def reset_fatigue(name):
+    """Clear one person's received-proposal log. The ONLY write this admin surface makes, and it
+    touches matching's own kleal_store.json — never users.json."""
+    key = _norm_name(name)
+    with _STORE_LOCK:
+        log = SESSION.setdefault("_proposals", {})
+        had = len(log.get(key) or [])
+        log[key] = []
+    _save_store()
+    return {"ok": True, "name": name, "cleared": had}
+
+
+def proposals_registry(limit=300):
+    """Stage 3: the proposal ledger. Four failures look identical from outside — declined, expired
+    unanswered, revoked by policy at accept time, and never created at all — and only the trace
+    separates them. Read-only: _save_store() writes this file without tmp+replace, so a reader that
+    ever wrote could truncate a request mid-flight."""
+    now = time.time()
+    rows = []
+    for r in (SESSION.get("_requests") or []):
+        if not isinstance(r, dict):
+            continue
+        trace = r.get("trace") if isinstance(r.get("trace"), list) else []
+        exp = r.get("expires_at")
+        try:
+            exp_f = float(exp) if exp is not None else None
+        except (TypeError, ValueError):
+            exp_f = None
+        st = str(r.get("status") or "").lower()
+        rows.append({
+            "id": r.get("id"), "from": r.get("from"), "to": r.get("to"),
+            "note": (str(r.get("note") or "")[:160] or None),
+            "status": st or "unknown",
+            "domain": r.get("domain") or (r.get("intent") or {}).get("type"),
+            "createdAt": r.get("created_at") or r.get("ts"),
+            "ageHours": (round((now - float(r.get("created_at") or r.get("ts") or now)) / 3600.0, 1)
+                         if (r.get("created_at") or r.get("ts")) else None),
+            "expiresAt": exp_f,
+            "expiresInHours": (round((exp_f - now) / 3600.0, 1) if exp_f else None),
+            "expired": bool(exp_f and exp_f <= now and st in ("pending", "sent", "")),
+            "configVersion": r.get("config_version"),
+            "trace": [str(t) for t in trace][-8:],
+            "policyRevoked": st == "policy_revoked" or any("policy_revoked" in str(t) for t in trace),
+        })
+    rows.sort(key=lambda x: (x["createdAt"] or 0), reverse=True)
+    by_status = {}
+    for r in rows:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    return {"ok": True, "total": len(rows), "byStatus": by_status,
+            "expiringSoon": sum(1 for r in rows
+                                if r["expiresInHours"] is not None and 0 < r["expiresInHours"] < 12
+                                and r["status"] in ("pending", "sent")),
+            "expiredUnanswered": sum(1 for r in rows if r["expired"]),
+            "policyRevoked": sum(1 for r in rows if r["policyRevoked"]),
+            "requests": rows[:limit]}
+
+
+def cohorts():
+    """The saved queries that a 3000-row table cannot answer. Counts + names, computed over the raw
+    store so a cohort can be ABOUT the rows retrieval drops."""
+    rows = _raw_store_rows()
+    now_ts = time.time()
+    defs = [
+        ("no_interests", "Без интересов — навсегда T5", lambda u: not [x for x in (u.get("interests") or []) if str(x).strip()]),
+        ("no_intents", "Без своих интентов — никогда не T0", lambda u: not (u.get("intents") or [])),
+        ("no_age", "Без возраста — нет dating и возрастных запросов", lambda u: _num(u.get("age")) is None),
+        ("no_coords", "Без координат — нет поиска по радиусу", lambda u: _num(u.get("lat")) is None or _num(u.get("lon")) is None),
+        ("paused", "На паузе — вне выдачи", lambda u: _core.is_paused(u, now_ts)),
+        ("no_domains", "allowed_domains пуст — ни одного предложения", lambda u: isinstance(((u.get("receiving") or {}) if isinstance(u.get("receiving"), dict) else {}).get("allowed_domains"), list) and not ((u.get("receiving") or {}).get("allowed_domains"))),
+        ("budget_zero", "Нулевой бюджет предложений", lambda u: (((u.get("receiving") or {}) if isinstance(u.get("receiving"), dict) else {}).get("proposal_budget") or {}).get("per_24h") == 0),
+        ("unverified", "Не верифицированы", lambda u: not u.get("verified")),
+        ("loadtest", "source=loadtest — вне поиска", lambda u: u.get("source") == "loadtest"),
+    ]
+    out = []
+    for key, label, fn in defs:
+        names = []
+        n = 0
+        for u in rows:
+            try:
+                if fn(u):
+                    n += 1
+                    if len(names) < 40:
+                        names.append(u.get("name") or "?")
+            except Exception:
+                pass
+        out.append({"key": key, "label": label, "count": n, "total": len(rows), "sample": names})
+    return {"ok": True, "total": len(rows), "cohorts": out}
+
 # ---------------------------------------------------------------- HTTP dispatcher (matching only)
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1634,6 +1870,14 @@ class H(BaseHTTPRequestHandler):
                 store = {"path": os.path.abspath(USERS_PATH), "error": str(e)[:120]}
             send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None,
                                   "bySource": src, "store": store, "users": c})
+        elif self.path.split("?")[0] == "/api/agent/admin/person":
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
+            from urllib.parse import unquote
+            send_json(self, 200, person_report(unquote(q.get("name", "").replace("+", " "))))
+        elif self.path.split("?")[0] == "/api/agent/admin/cohorts":
+            send_json(self, 200, cohorts())
+        elif self.path.split("?")[0] == "/api/agent/admin/proposals":
+            send_json(self, 200, proposals_registry())
         elif self.path.split("?")[0] in ("/api/agent/thread", "/api/agent/threads"):
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
@@ -1697,6 +1941,8 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, res)
             except Exception as e:
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
+        elif p == "/api/agent/admin/fatigue-reset":
+            send_json(self, 200, reset_fatigue(body.get("name")))
         elif p == "/api/agent/stability":
             # Ported capability (not code) from the PROD|OLD|NEW bench: run the SAME search N times
             # and check the slate does not move. Our tie-break is a name hash, so drift can only come
