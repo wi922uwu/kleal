@@ -588,7 +588,8 @@ function healthBar(){
   const split = (st.path && HEALTH.adminStore && st.path!==HEALTH.adminStore);
   const age = st.mtime ? Math.round((Date.now()/1000-st.mtime)/60) : null;
   return `<div class="hbar">${engine}
-    <span class="sep">·</span>пул <b>${HEALTH.count!=null?HEALTH.count:'?'}</b>${parts?` <span class="muted">(${parts})</span>`:''}
+    <span class="sep">·</span>ищет по <b>${HEALTH.count!=null?HEALTH.count:'?'}</b>${parts?` <span class="muted">(${parts})</span>`:''}${
+      (HEALTH.count!=null&&USERS.length>HEALTH.count)?` <span class="muted">— ещё ${USERS.length-HEALTH.count} loadtest исключены из поиска</span>`:''}
     <span class="sep">·</span><span class="muted" title="${st.path||''}">хранилище ${st.path?st.path.split('/').slice(-2).join('/'):'?'}${age!=null?', изменено '+age+' мин назад':''}</span>
     ${split?`<span class="sep">·</span>${bad('РАСХОЖДЕНИЕ ПУТЕЙ: движок и панель читают разные файлы')}`:''}
     ${HEALTH.error?`<span class="sep">·</span>${bad(HEALTH.error)}`:''}</div>`;
@@ -845,7 +846,7 @@ function render(){
       <button class="tab ${TAB==='lab'?'on':''}" onclick="setTab('lab')">Матчинг-лаборатория</button>
       <button class="tab ${TAB==='funnel'?'on':''}" onclick="setTab('funnel')">Диагностика</button>
     </div>
-    <span class="muted" style="margin-left:auto">${USERS.length} users</span>
+    <span class="muted" style="margin-left:auto" title="строк в файле; движок ищет не по всем — см. полосу ниже">${USERS.length} строк в файле</span>
     </div>${healthBar()}`;
   if(TAB==='funnel'){
     // same caret discipline as the lab: render() rebuilds everything
