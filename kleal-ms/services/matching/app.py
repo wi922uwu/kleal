@@ -145,6 +145,12 @@ def _norm(w):
 _SHORT_OK = {'f1', 'ux', 'ui', 'ai', 'cs', 'dj', 'ml', 'pr', 'бг'}
 
 @functools.lru_cache(maxsize=65536)
+def cat_of_fixed(word):
+    """Taxonomy only, no learned entries — used to decide whether a word still needs teaching."""
+    w = _norm(word)
+    return _IDX.get(w, (None, None))
+
+
 def cat_of(word):
     """(broad, sub) for an interest/topic, matched against the KNOWN vocabulary (exact, then prefix>=5).
     Never a raw substring — so no 'art' in 'party', and >=5 stops short words like 'over'->overwatch, 'star'->startups.
@@ -172,7 +178,74 @@ def cat_of(word):
                 continue
             tn = _norm(t)
             if tn in _IDX: return _IDX[tn]
-    return (None, None)
+    # Nothing hand-written matched. What has filtration taught us about this word?
+    hit = LEARNED.get(w) or LEARNED.get(_norm(str(word).lower()))
+    return hit if hit else (None, None)
+
+# ── Learned categories ────────────────────────────────────────────────────────────────────────────
+# The hand-written taxonomy is 165 words; interests are not a closed set. Filtration already decides
+# a (category, subcategory) for text nobody has seen before — «лабубу» -> toys_collectibles, «улитки»
+# -> pets/breeding — and that answer used to be computed, put on the intent and then ignored, because
+# nothing on the CANDIDATE side had a category to compare against.
+#
+# This is that missing half: one shared word -> (broad, sub) map that both sides resolve through.
+# Because it is consulted from cat_of(), the existing level logic (4 exact / 3 sub / 2 broad /
+# 1 adjacent) applies to new interests unchanged — no new scoring path, no new weights.
+#
+# Only filtration writes here, and only its own vocabulary is accepted, so a malformed answer cannot
+# invent a category. Entries are per-word and bounded; the file is small and human-readable on
+# purpose, because a wrong category here is invisible in a slate and obvious in a list.
+LEARNED_PATH = os.environ.get("KLEAL_LEARNED",
+                              os.path.join(os.path.dirname(os.path.abspath(__file__)), "learned_topics.json"))
+_LEARNED_CAPS = 4000
+_FILTRATION_CATS = {"sports", "gaming", "esports", "tabletop", "music", "film_tv", "art_culture",
+                    "books", "food_drink", "coffee", "nightlife", "outdoors", "travel", "tech",
+                    "startups", "career", "languages", "wellness", "fashion", "toys_collectibles",
+                    "pets", "photography", "dating", "social"}
+
+
+def _load_learned():
+    try:
+        with open(LEARNED_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return {str(k).lower(): (str(v[0]), str(v[1])) for k, v in d.items()
+                if isinstance(v, (list, tuple)) and len(v) == 2 and str(v[0]) in _FILTRATION_CATS}
+    except Exception:
+        return {}
+
+
+LEARNED = _load_learned()
+_LEARNED_LOCK = threading.Lock()
+
+
+def learn_topics(pairs):
+    """pairs: [(word, category, subcategory)]. Returns how many are new. `other` is filtration's
+    honest "nothing here" and is never stored — an unknown word must stay unknown, not become a
+    category that matches everyone else who is also uncategorised."""
+    added = 0
+    with _LEARNED_LOCK:
+        for w, c, sub in pairs or []:
+            w = str(w or "").strip().lower()[:40]
+            c = str(c or "").strip().lower()
+            sub = str(sub or "").strip().lower()[:40]
+            if not w or c not in _FILTRATION_CATS or w in LEARNED or len(LEARNED) >= _LEARNED_CAPS:
+                continue
+            if cat_of_fixed(w)[0]:
+                continue                       # the hand-written taxonomy already owns this word
+            LEARNED[w] = (c, sub)
+            added += 1
+        if added:
+            try:
+                tmp = LEARNED_PATH + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({k: list(v) for k, v in LEARNED.items()}, f, ensure_ascii=False)
+                os.replace(tmp, LEARNED_PATH)   # atomic: this file is read on every search
+            except Exception:
+                pass
+    if added:
+        same_topic.cache_clear()   # cat_of is not memoised; same_topic is, and it reads categories
+    return added
+
 
 @functools.lru_cache(maxsize=65536)
 def same_topic(t, x):
@@ -2007,6 +2080,12 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, compare_scorers(_normalize_intent(body.get("intent")),
                                                  body.get("profile") if isinstance(body.get("profile"), dict) else {},
                                                  body.get("ctx") if isinstance(body.get("ctx"), dict) else {}))
+        elif p == "/api/agent/learn":
+            # Teach the shared word -> (category, subcategory) map. Buddy calls this with what
+            # filtration already worked out, so no extra model call is spent here.
+            pairs = [(x.get("word"), x.get("category"), x.get("subcategory"))
+                     for x in (body.get("items") or []) if isinstance(x, dict)]
+            send_json(self, 200, {"ok": True, "added": learn_topics(pairs), "known": len(LEARNED)})
         elif p == "/api/agent/admin/fatigue-reset":
             send_json(self, 200, reset_fatigue(body.get("name")))
         elif p == "/api/agent/stability":

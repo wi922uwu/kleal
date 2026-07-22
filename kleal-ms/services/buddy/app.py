@@ -619,6 +619,24 @@ def _post(base_url, path, payload, timeout=30):
         return json.loads(r.read().decode("utf-8"))
 
 
+def _teach(cat):
+    """Hand filtration's verdict to matching so BOTH sides of a future search can resolve the word.
+    Fire-and-forget on purpose: teaching is an optimisation, and a slow or dead matcher must never
+    delay the answer the user is waiting for."""
+    try:
+        cname = str((cat or {}).get("category") or "").lower().strip()
+        if not cname or cname == "other":
+            return
+        sub = str((cat or {}).get("subcategory") or "").lower().strip()
+        items = [{"word": str(t).lower(), "category": cname, "subcategory": sub}
+                 for t in ((cat or {}).get("topics") or []) if str(t).strip()][:4]
+        if items:
+            threading.Thread(target=lambda: _post(MATCH_URL, "/api/agent/learn", {"items": items}, timeout=10),
+                             daemon=True).start()
+    except Exception:
+        pass
+
+
 def _categorize(text):
     """Filtration agent: magnetise the request to an existing category + canonical topics.
     Timeout is generous on purpose: it runs its own 70B call, and under load 45s was not enough — the call
@@ -1033,6 +1051,7 @@ def buddy_chat(messages, profile, signals, uid=None):
     # 1) filtration categorises what they want; 2) buddy makes it rankable; 3) matching scores it.
     req_text = sig.get("interest") or last_user or " ".join(sig.get("topics") or [])
     cat = _categorize(req_text)
+    _teach(cat)
     intent = build_intent(sig, cat, last_user, lang)
     # "find me someone" with NO concrete activity -> ask, don't dump a generic social slate (spec §5:
     # a missing high-value slot is a clarification, not a silent default). Bare-social = the only topic
@@ -1606,6 +1625,7 @@ def intent_build(messages, profile, on_text=None):
     # 1.86s on EVERY request, including real ones. Streaming exists to make the common path feel
     # instant, so the common path wins; the rare chit-chat swap is handled by the explicit reset event.
     _cat = _categorize(last_user)
+    _teach(_cat)
     nothing_to_build = (not ready and _cat is not None and not _real_topics(_cat))
     if not valid or nothing_to_build:
         # If _chat_reply comes back empty (bad JSON, or the language guard rejected both attempts) we
@@ -1624,6 +1644,7 @@ def intent_build(messages, profile, on_text=None):
 
     # ready -> assemble a canonical, rankable intent (filtration + the same builder /chat uses)
     cat = _categorize(activity)
+    _teach(cat)
     sig = _baseline_signals(profile)
     if obj.get("time"):
         sig["time"] = str(obj.get("time"))
