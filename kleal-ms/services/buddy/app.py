@@ -404,7 +404,17 @@ _RAW_STOP = {"хочу", "хотел", "найти", "найди", "найдит
              "discussing", "talking", "chatting", "meeting", "finding", "looking", "sharing", "wanting",
              "play", "playing", "game", "games", "talk", "hang", "hangout", "join", "joining",
              "while", "together", "someone", "somebody", "tomorrow", "tonight", "today", "evening",
-             "завтра", "сегодня", "вечером", "утром", "вместе", "бокалом"}
+             "завтра", "сегодня", "вечером", "утром", "вместе", "бокалом",
+             "утро", "вечер", "ночью", "днём", "днем", "выходные", "выходных", "неделе"}
+
+
+def _is_verbish(w):
+    """A Russian infinitive, by ending. The raw-word union exists to carry unresolvable SUBJECTS
+    («облигации», «labubu») — a verb is never the subject, and hand-listing them lost: «выпить»
+    rode into the topics of a coffee search and was shown to the user as a tag. Feminine nouns in
+    -сть/-знь/-щь (новость, жизнь, помощь) are kept, which is what those endings are for."""
+    return (w.endswith("ться") or w.endswith("чься") or
+            (w.endswith("ть") and not w.endswith(("сть", "знь", "щь"))))
 
 
 # ======================= SIGNALS =======================
@@ -642,7 +652,8 @@ def build_intent(sig, cat, last_user, lang):
                                           str(sig.get("interest") or last_user or "").lower())
                # both lists, or the third path leaks what the other two now stop: «один или с
                # компанией?» put "company" into the topics of a cinema search.
-               if w not in _RAW_STOP and w not in _GENERIC_TOPIC and norm_topic(w) not in topics]
+               if w not in _RAW_STOP and w not in _GENERIC_TOPIC and not _is_verbish(w)
+               and norm_topic(w) not in topics]
         # A "discuss" request is ABOUT something; the activity is the setting. Put the subject first
         # so the ranker weighs what the person actually wants to talk about.
         wants_talk = any(w in str(last_user or "").lower()
