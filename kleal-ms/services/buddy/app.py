@@ -1024,6 +1024,9 @@ def buddy_chat(messages, profile, signals, uid=None):
     if stated_minor(messages) is not None:
         return {"reply": MINOR_REPLY.get(lang, MINOR_REPLY["en"]), "signals": sig, "lang": lang,
                 "match": None, "intent": None, "matches": [], "tool_call": None, "category": None}
+    if harmful_use_of_a_person(messages):
+        return {"reply": HARM_REPLY.get(lang, HARM_REPLY["en"]), "signals": sig, "lang": lang,
+                "match": None, "intent": None, "matches": [], "tool_call": None, "category": None}
     obj = None
     try:
         raw = llm_complete(MODEL_ID, [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
@@ -1478,6 +1481,60 @@ _AGE_EN = [re.compile(r"\b(?:i'?m|i am)\s+(\d{1,2})\b"),
            re.compile(r"\b(\d{1,2})\s*(?:years?\s*old|y\.?o\.?)\b")]
 
 
+# ── Using another person as the means ─────────────────────────────────────────────────────────────
+# «Хочу найти кого-то, чтобы обмануть на деньги» came back as a friendly offer to look in financial
+# communities. The model reads it as an interest in finance, because that is what the words are
+# about; nothing was asking what the OTHER person in the sentence is for.
+#
+# That is the line this checks, and it is the only one: not a topic list, and not a morality filter.
+# Drugs, sex, drinking, gambling and money are all legitimate things to want company for — every one
+# of them stays allowed. What is refused is a request whose stated purpose is to defraud, coerce,
+# stalk, blackmail or hurt the person being matched. Kleal introduces real people to each other; the
+# harm here would be delivered BY the product, to a user, which is why this runs before the model
+# and cannot be negotiated in a later turn.
+_HARM_INTENT = re.compile(
+    r"(обман\w*|развед\w*|развест\w*|кинуть|кидать|развод\w+\s+на\s+деньг|"
+    r"выманит\w*|вымогат\w*|шантаж\w*|запугат\w*|угрожат\w*|"
+    r"избит\w*|побит\w*|отпиздит\w*|扁|подстав\w*|"
+    r"следит\w+\s+за|выследит\w*|преследоват\w*|"
+    r"scam|defraud|rip\s+off|con\s+(?:someone|somebody|people)|blackmail|extort|"
+    r"stalk|harass|beat\s+up|jump\s+(?:someone|somebody)|threaten)", re.I)
+# The victim has to be a PERSON, not a game or a system — «обмануть систему», «обыграть бота»,
+# «развести костёр» are not this, and «обманул ожидания» is about nobody.
+_HARM_TARGET = re.compile(
+    r"(кого-то|кого-нибудь|кого\b|人|человек\w*|люд\w+|парн\w+|девуш\w+|мужик\w+|"
+    r"жертв\w*|лох\w*|someone|somebody|people|a\s+guy|a\s+girl|victim|him|her|them)", re.I)
+_HARM_NOT = re.compile(r"(систем\w*|бота|игр\w+|казино|костёр|костер|ожидани\w*|"
+                       r"system|the\s+game|bot|expectations)", re.I)
+
+
+def harmful_use_of_a_person(messages):
+    """Is the person being searched for the TARGET of harm? Deterministic, whole-transcript, before
+    the model — the same shape as the age gate, for the same reason: an LLM asked to judge this
+    negotiates, and the cost of getting it wrong lands on a third party who never opted in."""
+    for m in (messages or []):
+        if m.get("role") != "user":
+            continue
+        t = str(m.get("content") or "").lower()
+        if not _HARM_INTENT.search(t):
+            continue
+        if _HARM_NOT.search(t) and not _HARM_TARGET.search(t):
+            continue
+        if _HARM_TARGET.search(t) or re.search(r"(найти|найд|ищу|подбер|познаком|find|looking\s+for)", t):
+            return True
+    return False
+
+
+HARM_REPLY = {
+    "ru": "Этого я не сделаю. Kleal знакомит людей друг с другом, и я не буду искать человека, "
+          "которому по твоим же словам собираются навредить. Если хочешь найти компанию для "
+          "чего-то другого — скажи, и поищем.",
+    "en": "I won't do that. Kleal introduces real people to each other, and I'm not going to look "
+          "for someone you've just described as the target. If you want company for something "
+          "else, tell me and we'll look.",
+}
+
+
 def stated_minor(messages):
     """Did the person say, in their own words, that they are under 18?
 
@@ -1548,6 +1605,9 @@ def intent_build(messages, profile, on_text=None):
     if stated_minor(messages) is not None:
         return {"reply": MINOR_REPLY.get(lang, MINOR_REPLY["en"]), "valid": False, "ready": False,
                 "intent": None, "lang": lang, "conversational": True, "hints": []}
+    if harmful_use_of_a_person(messages):
+        return {"reply": HARM_REPLY.get(lang, HARM_REPLY["en"]), "valid": False, "ready": False,
+                "rankable": False, "intent": None, "hints": []}
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
                        else ("Kleal: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
     convo = _profile_line(profile) + convo
