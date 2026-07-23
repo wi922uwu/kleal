@@ -1478,6 +1478,7 @@ const IC={
   person:svg('<circle cx="12" cy="8.5" r="3.6"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>',null,26),
   pin:svg('<path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/>'),
   globe:svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>'),
+  chain:svg('<path d="M9.5 14.5l5-5"/><path d="M11.5 6.5l1.2-1.2a3.7 3.7 0 0 1 5.2 5.2l-2 2a3.7 3.7 0 0 1-5.2 0"/><path d="M12.5 17.5l-1.2 1.2a3.7 3.7 0 0 1-5.2-5.2l2-2a3.7 3.7 0 0 1 5.2 0"/>'),
   users:svg('<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M16 6.2a3 3 0 0 1 0 5.6M20.5 19a5.5 5.5 0 0 0-3.5-5.1"/>'),
   clock:svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>'),
   shield:svg('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/>'),
@@ -4534,10 +4535,23 @@ function scr_summary(){
         <div class="ftile">${TILE_SVG[tileKeyFor(((FLOW.intent&&FLOW.intent.topics)||[]).join(' ')||String(s.request||FLOW.request||FLOW.text||''))]||TILE_SVG.social}</div>
         <div class="kreq"><div class="hd">${IC.binoc}${T('Запрос','Request')}</div>
           <div class="k-label">${esc(s.request||FLOW.request||FLOW.text)}</div></div>
-        ${row(IC.clock,T('Время','Time'), when + (tm?(' — '+tm):''))}
-        ${flowOnline()
-          ? row(IC.globe, T('Где','Where'), T('Онлайн','Online'))
-          : row(IC.pin, T('Район','District'), labelOf(DIST_OPTS(),FLOW.district,T('любой','any')))}
+        ${(function(){
+          // Time reflects what the detail step actually collected (date chip + dial), falling back to
+          // the clarify-step values for a flow that skipped the wizard.
+          const dd=dDates().find(x=>x[0]===FLOW.date), dateLbl=dd?dd[1]:'';
+          const t=(FLOW.tmin!=null)?(String(Math.floor(FLOW.tmin/60)).padStart(2,'0')+':'+String(FLOW.tmin%60).padStart(2,'0')):'';
+          const whenVal=[dateLbl,t].filter(Boolean).join(' · ') || (when+(tm?(' — '+tm):'')) || T('Гибко','Flexible');
+          let out=row(IC.clock, T('Время','Time'), whenVal);
+          // Offline → location (+ travel), online → link, hybrid → both. Keyed on the format the user
+          // picked (FLOW.fmt), which is what the two Figma variants differ by.
+          const fmt=FLOW.fmt||(flowOnline()?'online':'offline');
+          const place=(FLOW.addr||'').trim() || labelOf(DIST_OPTS(),FLOW.district,'') || FLOW.area || T('Район рядом','Nearby area');
+          const travel=(FLOW.dkm!=null)?(' · '+FLOW.dkm+' '+T('км','km')):'';
+          const link=(FLOW.link||'').trim();
+          if(fmt!=='online') out+=row(IC.pin, T('Место','Location'), place+travel);
+          if(fmt!=='offline') out+=row(IC.chain, T('Ссылка','Link'), link||T('ссылка не добавлена','no link added'));
+          return out;
+        })()}
         ${row(IC.target,T('Формат','Format'), s.format||T('Встреча, неформально','Casual meetup'))}
         ${row(IC.diamond,T('Темы','Topics'), locTopicList(s.vibe)||T('пока не задано','not set yet'))}
         <div class="kwhy">${T('Формат и темы — мои предположения, их можно поменять.','Format and topics are my suggestions — tap to adjust.')}</div>
