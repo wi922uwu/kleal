@@ -1,5 +1,7 @@
 # the app codebase lives in its own git repo (with its own secrets/.env)
 dating/
+# ...but the clean-rebuild package has its own dating/ submodule that MUST be tracked
+!matching_core/dating/
 
 # python
 __pycache__/

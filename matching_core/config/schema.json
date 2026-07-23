@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://kleal/matching-core/config.schema.json",
+  "title": "Kleal Matching Core — canonical config",
+  "description": "Formal contract for Kleal_Matching_Core_Config_v2.yaml (spec §23.1 config/schema.json). The RUNTIME validator is services/matching/core_v2.load_config(), which additionally enforces the cross-field invariants JSON Schema cannot express: every domain's 7 feature weights sum to 1.0, no unknown feature keys, and the sha-256 pin of the whole file. This schema documents structure + per-field ranges; load_config is authoritative at boot.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["config_version", "feature_groups", "domains", "semantic_tiers", "user_facing_bands"],
+  "$defs": {
+    "unit": { "type": "number", "minimum": 0.0, "maximum": 1.0, "description": "bounded score in [0,1]" },
+    "feature_keys": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "semantic_activity": { "$ref": "#/$defs/unit" },
+        "time_feasibility": { "$ref": "#/$defs/unit" },
+        "location_feasibility": { "$ref": "#/$defs/unit" },
+        "mode_format": { "$ref": "#/$defs/unit" },
+        "directed_preferences": { "$ref": "#/$defs/unit" },
+        "social_context": { "$ref": "#/$defs/unit" },
+        "domain_constraints": { "$ref": "#/$defs/unit" }
+      }
+    },
+    "tier_policy": {
+      "type": ["boolean", "string"],
+      "enum": [true, false, "requires_broad_matching_consent"]
+    },
+    "bandCut": {
+      "type": "object",
+      "required": ["min_lcb", "min_coverage"],
+      "properties": {
+        "min_lcb": { "$ref": "#/$defs/unit" },
+        "min_coverage": { "$ref": "#/$defs/unit" }
+      }
+    }
+  },
+  "properties": {
+    "config_version": { "type": "string", "pattern": "^matching-core-[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "schema_version": { "type": "string" },
+    "release_status": { "type": "string" },
+    "currency_or_paid_priority": {
+      "type": "object",
+      "description": "§11.3/§23.2#14 monetisation invariant — payment must never affect relevance/eligibility/safety/ranking.",
+      "properties": {
+        "ranking_boost_allowed": { "const": false },
+        "safety_priority_affected_by_payment": { "const": false },
+        "note": { "type": "string" }
+      },
+      "required": ["ranking_boost_allowed"]
+    },
+    "feature_groups": {
+      "type": "object",
+      "description": "The 7 evidence groups (spec §6.1). Each carries an unknown_prior used when the group's state is `unknown`.",
+      "additionalProperties": false,
+      "required": ["semantic_activity", "time_feasibility", "location_feasibility", "mode_format",
+                   "directed_preferences", "social_context", "domain_constraints"],
+      "patternProperties": {
+        "^(semantic_activity|time_feasibility|location_feasibility|mode_format|directed_preferences|social_context|domain_constraints)$": {
+          "type": "object",
+          "required": ["unknown_prior"],
+          "properties": {
+            "range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
+            "unknown_prior": { "$ref": "#/$defs/unit" }
+          }
+        }
+      }
+    },
+    "domains": {
+      "type": "object",
+      "description": "Per-domain weight profile + λ + outreach/discovery floors. The 7 weights MUST sum to 1.0 (enforced by load_config, not by this schema). Domain keys are the spec's ALL_DOMAINS.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["weights", "uncertainty_lambda", "outreach_min_lcb", "discovery_min_lcb",
+                     "outreach_min_coverage", "discovery_min_coverage"],
+        "properties": {
+          "weights": { "$ref": "#/$defs/feature_keys" },
+          "uncertainty_lambda": { "$ref": "#/$defs/unit" },
+          "outreach_min_lcb": { "$ref": "#/$defs/unit" },
+          "discovery_min_lcb": { "$ref": "#/$defs/unit" },
+          "outreach_min_coverage": { "$ref": "#/$defs/unit" },
+          "discovery_min_coverage": { "$ref": "#/$defs/unit" },
+          "release_gate": { "type": "string", "description": "e.g. dating -> separate_safety_legal_track (§17.3)" }
+        }
+      }
+    },
+    "semantic_tiers": {
+      "type": "object",
+      "description": "T0–T5 provenance tiers (spec §7). personal_outreach/discovery policy per tier; tier is NEVER derived from score.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "personal_outreach": { "$ref": "#/$defs/tier_policy" },
+          "discovery": { "$ref": "#/$defs/tier_policy" }
+        }
+      }
+    },
+    "outreach": {
+      "type": "object",
+      "properties": {
+        "default_parallel_proposals": { "type": "integer", "minimum": 0 },
+        "urgent_same_day_parallel_proposals": { "type": "integer", "minimum": 0 },
+        "max_proposals_received_per_user_24h": { "type": "integer", "minimum": 0 },
+        "max_passive_proposals_received_per_user_7d": { "type": "integer", "minimum": 0 },
+        "proposal_ttl_minutes": { "type": "integer", "minimum": 0 },
+        "reservation_ttl_minutes": { "type": "integer", "minimum": 0 },
+        "quiet_hours_local": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 },
+        "wave_delays_minutes": { "type": "array", "items": { "type": "integer", "minimum": 0 } },
+        "passive_outreach_default": { "type": "string" }
+      }
+    },
+    "group_formation": {
+      "type": "object",
+      "description": "Set-level formation params (§15). utility_weights should sum to 1.0.",
+      "properties": {
+        "supported_size_min": { "type": "integer", "minimum": 1 },
+        "supported_size_max_mvp": { "type": "integer", "minimum": 1 },
+        "min_quorum_default": { "type": "integer", "minimum": 1 },
+        "utility_weights": {
+          "type": "object",
+          "properties": {
+            "least_misery": { "$ref": "#/$defs/unit" },
+            "mean_member_relevance": { "$ref": "#/$defs/unit" },
+            "role_coverage": { "$ref": "#/$defs/unit" },
+            "time_overlap": { "$ref": "#/$defs/unit" },
+            "diversity_budget": { "$ref": "#/$defs/unit" }
+          }
+        }
+      }
+    },
+    "user_facing_bands": {
+      "type": "object",
+      "description": "Qualitative bands shown to the user (spec §9.7). A candidate is placed by (lcb, coverage) — never as a raw percent.",
+      "additionalProperties": false,
+      "required": ["especially_close", "strong_option", "broader_option", "needs_clarification"],
+      "properties": {
+        "especially_close": { "$ref": "#/$defs/bandCut" },
+        "strong_option": { "$ref": "#/$defs/bandCut" },
+        "broader_option": { "$ref": "#/$defs/bandCut" },
+        "needs_clarification": {
+          "type": "object",
+          "properties": { "max_coverage": { "$ref": "#/$defs/unit" } }
+        }
+      }
+    },
+    "score_semantics": {
+      "type": "object",
+      "description": "Documentation of what each numeric layer means (spec §0 output table); prose, not tunable.",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}
