@@ -4296,15 +4296,20 @@ function redrawDial(id){
 }
 // Make the dials draggable. Pointer events cover mouse + touch; .dial has touch-action:none so a
 // drag doesn't scroll the card. The age dial has two handles — grab whichever is closer.
+// Capture is taken on the SVG itself (setPointerCapture), NOT left to touch's implicit capture:
+// redrawDial() replaces the SVG's innerHTML on every move, which would destroy the handle a touch
+// had implicitly captured and kill the drag after one step — the exact reason it worked with a mouse
+// (no implicit capture; window listeners) but not under a finger. Listeners live on the SVG, which
+// survives the innerHTML swap, so the whole drag keeps flowing.
 function wireDial(){
   document.querySelectorAll('svg.dial[data-dial]').forEach(function(svg){
     const id=svg.getAttribute('data-dial');
+    let hand=0, dragging=false;
     function fracAt(e){
       const r=svg.getBoundingClientRect();
       const dx=e.clientX-(r.left+r.width/2), dy=e.clientY-(r.top+r.height/2);
       let f=Math.atan2(dx,-dy)/(Math.PI*2); if(f<0) f+=1; return f;
     }
-    let hand=0;
     function apply(f){
       if(id==='dialTime'){
         let t=Math.round(f*1440/5)*5; if(t>=1440) t=0;
@@ -4316,17 +4321,18 @@ function wireDial(){
         redrawDial(id);
       }
     }
-    function onMove(e){ e.preventDefault(); apply(fracAt(e)); }
-    function onUp(e){ window.removeEventListener('pointermove',onMove); window.removeEventListener('pointerup',onUp); }
     svg.addEventListener('pointerdown', function(e){
-      e.preventDefault();
+      e.preventDefault(); dragging=true;
+      try{ svg.setPointerCapture(e.pointerId); }catch(_e){}
       const f=fracAt(e);
       if(id==='dialAge'){ const fa=((FLOW.ageA||18)-16)/64, fb=((FLOW.ageB||28)-16)/64;
         hand = Math.abs(f-fa)<=Math.abs(f-fb) ? 0 : 1; }
       apply(f);
-      window.addEventListener('pointermove',onMove);
-      window.addEventListener('pointerup',onUp);
     });
+    svg.addEventListener('pointermove', function(e){ if(dragging){ e.preventDefault(); apply(fracAt(e)); } });
+    function end(e){ dragging=false; try{ svg.releasePointerCapture(e.pointerId); }catch(_e){} }
+    svg.addEventListener('pointerup', end);
+    svg.addEventListener('pointercancel', end);
   });
 }
 // The district map is a REAL map with the radius circle, not a placeholder box — same compact
