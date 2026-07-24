@@ -250,7 +250,7 @@ Reply as ONE JSON object only, nothing outside it:
 
 LANGUAGE: write "reply" in the SAME language the user writes in (Russian -> answer in Russian; Spanish -> answer in Spanish; English -> answer in English). Write EVERY word of "reply" in that language's own script — translate or transliterate technical terms, species/type names and examples (in Russian say «кучевые», «слоистые», «перистые облака», never "cumulus"/"stratus" or any Chinese/Japanese characters). Never leave a foreign-script or stray Latin word inside a Russian or Spanish sentence. Every OTHER value — signals, interest, topics, time, area — stays in ENGLISH, because the filtration and matching agents only understand English.
 
-MEMORY: the conversation you are given is the WHOLE history — there is nothing before it. Never refer to things "we already talked about", never say "as I said" or "снова"/"again", and never claim to remember a person or a topic that is not in the text above. If the history starts with [FIRST MESSAGE], this person is talking to you for the very first time: greet them as a new acquaintance.'''
+MEMORY: the conversation you are given is the WHOLE history — there is nothing before it. Never refer to things "we already talked about", never say "as I said" or "снова"/"again", and never claim to remember a person or a topic that is not in the text above. If the history starts with [FIRST MESSAGE], this person is talking to you for the very first time: greet them as a new acquaintance. Otherwise you are MID-conversation: do NOT greet again (no "Привет"/"Здравствуйте"), and when the user sends a short follow-up like "подробнее"/"примеры"/"ещё"/"а как", it refers to the CURRENT topic — continue and expand it, never ask what they mean or reset to small talk.'''
 
 
 # ======================= CANONICALISATION (make the intent rankable) =======================
@@ -1064,7 +1064,7 @@ def buddy_chat(messages, profile, signals, uid=None):
     obj = None
     for _attempt in range(2):
         try:
-            raw = llm_complete(MODEL_ID, _cmsgs, 0.6 if _attempt == 0 else 0.2)
+            raw = llm_complete(MODEL_ID, _cmsgs, 0.35 if _attempt == 0 else 0.2)
             cand = _lenient_json(raw)
         except Exception:
             cand = None
@@ -1523,7 +1523,7 @@ def _chat_reply(messages, profile, lang, on_text=None):
         try:
             msgs = [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
                     {"role": "user", "content": convo}]
-            temp = 0.6 if attempt == 0 else 0.3
+            temp = 0.35 if attempt == 0 else 0.2   # lower: the streamed attempt-0 is what the user sees
             if on_text is not None and attempt == 0:      # only the first try streams — see intent_build
                 raw = llm_stream(MODEL_ID, msgs, temp, "reply", on_text)
             else:
@@ -1739,7 +1739,7 @@ def intent_build(messages, profile, on_text=None):
     for attempt in range(2):
         try:
             msgs = [{"role": "system", "content": sys_prompt}, {"role": "user", "content": convo}]
-            temp = 0.5 if attempt == 0 else 0.2
+            temp = 0.35 if attempt == 0 else 0.2
             # Only the FIRST attempt streams. A re-roll happens because the first answer was rejected
             # (wrong language / unparseable), and the user has already watched that text appear —
             # streaming the replacement on top would make the bubble rewrite itself mid-read.
