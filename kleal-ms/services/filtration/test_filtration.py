@@ -158,6 +158,30 @@ check("«котлета» is not «кот»", "cat" not in C("котлета н�
 check("«баран» is not «бар»", C("баран в поле")["category"] == "other", C("баран в поле")["category"])
 check("short words still match exactly", "cat" in C("мой кот спит")["topics"], str(C("мой кот спит")["topics"]))
 
+# ---- 10c. the table rescues a subject the model misread ----
+# Real measured LLM outputs: «хочу попробовать бачату» came back paddleball/sports, while the same
+# word with a clearer verb («танцую бачату») came back bachata/music.
+_c, _t = F._rescue_subject("sports", ["paddleball", "sport"], "хочу попробовать бачату")
+check("bachata rescued from paddleball", _c == "music" and "bachata" in _t, "%s %s" % (_c, _t))
+check("a wrong category takes its wrong topics with it", "paddleball" not in _t, str(_t))
+_c, _t = F._rescue_subject("sports", ["paintball", "game"], "играю в страйкбол")
+check("airsoft is not paintball", "airsoft" in _t, str(_t))
+check("right category, wrong wording -> adjacent topics kept", "paintball" in _t, str(_t))
+_c, _t = F._rescue_subject("music", ["bachata", "dance", "latin"], "танцую бачату")
+check("a correct answer is left alone", _c == "music" and _t == ["bachata", "dance", "latin"], str(_t))
+# guard 1: a tie means the table has no opinion
+_c, _t = F._rescue_subject("startups", ["startup", "founder"], "run a startup")
+check("tie (running vs startups) -> no rescue", _c == "startups", _c)
+# guard 2: one surviving concept is enough to trust the model
+_c, _t = F._rescue_subject("tabletop", ["chess", "club", "strategy"], "join a chess club")
+check("model kept the subject -> no rescue", _c == "tabletop", _c)
+# guard 3: never escalate into dating
+_c, _t = F._rescue_subject("food_drink", ["milk", "expiration"], "expiry date on the milk")
+check("bare «date» cannot create a dating verdict", _c == "food_drink", _c)
+# and the ambiguity deliberately kept OUT of the table
+_c, _t = F._rescue_subject("travel", ["city", "maps"], "посмотреть карты города")
+check("«карты» is not in the table, so maps stay travel", _c == "travel", _c)
+
 # ---- 11. `dating` must be corroborated by the answer's own topics ----
 # Injection: the model returns dating while its topics describe chess.
 _n = F._normalize({"category": "dating", "topics": ["chess", "game", "night", "play"]}, "x")

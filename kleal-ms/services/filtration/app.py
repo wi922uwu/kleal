@@ -116,7 +116,14 @@ _KW = {
                ("swimming", "swim", "natación", "natacion", "плавание"),
                ("cycling", "ciclismo"),
                ("climbing", "climb", "escalar"),
-               ("wrestling", "борьба")],
+               ("wrestling", "борьба"),
+               # Niche activities the model transliterates badly on its own: it read «страйкбол»
+               # as paintball. Deliberately NOT adding «карты» — it is also "maps", and the table
+               # has no context to tell «поиграть в карты» from «карты города».
+               ("airsoft", "страйкбол"), ("paintball", "пейнтбол"),
+               ("parkour", "паркур"), ("snowboard", "сноуборд"),
+               ("crossfit", "кроссфит"), ("freediving", "фридайвинг"),
+               ("petanque", "петанк"), ("skateboarding", "skate", "скейт")],
     "gaming": [("dota", "дота"), ("valorant",), ("cs",), ("league",),
                ("chess", "ajedrez", "шахматы"),
                ("boardgames", "boardgame", "настолки"),
@@ -124,12 +131,17 @@ _KW = {
                ("gaming", "videojuegos"),
                ("game", "juego", "partida", "игра", "игры"),
                ("wordle",), ("checkers", "damas")],
+    # Card and board games are their OWN category — filing «преферанс» under `gaming` made the
+    # rescue drag it out of the model's (correct) `tabletop` verdict. Deliberately no «карты» /
+    # "cards" here: the word is also "maps", and the table has no context to tell them apart.
+    "tabletop": [("preferans", "преферанс"), ("backgammon", "нарды"), ("dominoes", "домино"),
+                 ("mahjong", "маджонг")],
     "music": [("music", "música", "musica", "музыка"),
               ("guitar", "guitarra", "гитара"),
               ("concert", "concierto", "gig", "концерт"),
               ("dj",), ("rave",), ("techno",), ("karaoke",),
               ("dance", "baile", "bailar", "танцы"),
-              ("bachata", "бачата"), ("salsa",), ("tango",)],
+              ("bachata", "бачата"), ("salsa",), ("tango",), ("kizomba", "кизомба")],
     "film_tv": [("cinema", "cine", "кино"),
                 ("movie", "film", "película", "pelicula", "фильм"),
                 ("series", "serie", "сериал"), ("anime",)],
@@ -196,7 +208,8 @@ _KW = {
     "toys_collectibles": [("labubu", "лабубу"), ("lego", "лего"),
                           ("figures", "figuras", "фигурки"),
                           ("collectible", "collectibles", "coleccionar", "коллекция"),
-                          ("funko",), ("toys", "juguetes", "игрушки")],
+                          ("funko",), ("toys", "juguetes", "игрушки"),
+                          ("speedcubing", "спидкубинг")],
     "pets": [("dog", "perro", "собака"), ("cat", "gato", "кот"),
              ("pets", "pet", "mascota", "питомец"), ("puppy", "щенок")],
     "photography": [("photography", "fotografía", "fotografia"),
@@ -268,6 +281,62 @@ def _card(cat, topics, role, note):
             "note": note}
 
 
+def _kw_scan(ql):
+    """What the keyword table recognises in `ql`.
+
+    Returns (winning category, [(canon, patterns), ...], tied) — `tied` when another category
+    scored just as many concepts, i.e. the table has no confident opinion. ("" , [], False) when
+    nothing matched at all.
+    """
+    scores, by_cat = {}, {}
+    for c, groups in _KW_RE.items():
+        hit = [g for g in groups if any(p.search(ql) for p in g[1])]
+        if hit:
+            scores[c] = len(hit)
+            by_cat[c] = hit
+    if not scores:
+        return "", [], False
+    cat = max(scores, key=lambda c: (scores[c], c == "dating"))   # dating wins ties (safety-relevant)
+    tied = sum(1 for v in scores.values() if v == scores[cat]) > 1
+    return cat, by_cat[cat], tied
+
+
+def _rescue_subject(cat, topics, text):
+    """Let the table correct the SUBJECT when the model plainly misread it.
+
+    «танцую бачату» comes back bachata/dance/latin/music — right. «хочу попробовать бачату», the
+    same word behind a vaguer verb, came back "paddleball" under `sports`: with no verb to lean on
+    the model guesses at a transliterated loanword. The table has that word outright, so when it
+    recognises a concept in the person's own text and NOT ONE of its concepts survived into the
+    model's topics, the table's reading wins.
+
+    Three guards, each earned on a measured case:
+      * a TIE means no opinion — "run a startup" hits `running` and `startups` equally, and
+        without this the arbitrary winner would have re-filed a startup ask as sport;
+      * ONE surviving concept is enough to leave the model alone — the table sees `chess` and
+        `club` in "join a chess club", the model kept `chess`, so its `tabletop` verdict stands;
+      * the rescue may never ESCALATE into `dating`. A bare "date" is exactly the ambiguity the
+        model resolves better than a word list — "expiry date on the milk" is food, not romance.
+    """
+    kw_cat, hits, tied = _kw_scan((text or "").lower())
+    if not kw_cat or tied:
+        return cat, topics
+    if kw_cat == "dating" and cat != "dating":
+        return cat, topics
+    tl = " ".join(str(t).lower() for t in topics or [])
+    if any(p.search(tl) for _canon, pats in hits for p in pats):
+        return cat, topics                       # the model kept the subject; nothing to correct
+    canon = [c for c, _p in hits]
+    if kw_cat != cat:
+        # It misread the subject AND filed it under the wrong category, so its topics are not
+        # evidence of anything — «бачату» came back `sports` with "paddleball", and carrying that
+        # through would let the search match a paddle player.
+        return kw_cat, canon[:4]
+    # Same category, wrong wording: the model understood the area, so its topics are still context
+    # («страйкбол» -> airsoft, but its "paintball, game" are adjacent and worth keeping).
+    return kw_cat, (canon + [str(t).lower() for t in (topics or []) if str(t).lower() not in canon])[:4]
+
+
 def _classify_fallback(text):
     ql = (text or "").lower()
     # Score categories by how many CONCEPTS appear; the winner is the most-hit category, and the
@@ -276,15 +345,9 @@ def _classify_fallback(text):
     # form that matched. Emitting the surface form meant a Russian or Spanish request produced
     # Russian or Spanish topics («кофе», «футбол», "café"), and matching resolves topics against an
     # English taxonomy: an unresolvable topic makes every candidate tier `none`, i.e. a silent zero.
-    scores, hits_by_cat = {}, {}
-    for c, groups in _KW_RE.items():
-        hits = [canon for canon, pats in groups if any(p.search(ql) for p in pats)]
-        if hits:
-            scores[c] = len(hits)
-            hits_by_cat[c] = hits
-    if scores:
-        cat = max(scores, key=lambda c: (scores[c], c == "dating"))   # dating wins ties (safety-relevant)
-        topics = hits_by_cat[cat][:4]
+    cat, hits, tied = _kw_scan(ql)
+    if cat:
+        topics = [canon for canon, _pats in hits][:4]
     else:
         # Nothing recognised: carry the person's own words through. They are NOT English, and that is
         # the deliberate exception to the rule above — dropping them would make every interest
@@ -354,7 +417,8 @@ def _normalize(obj, text):
     topics = [str(t).lower().strip() for t in (obj.get("topics") or []) if str(t).strip()][:4]
     if not topics:
         topics = _classify_fallback(text)["topics"]
-    cat = _cross_check(cat, topics)
+    cat, topics = _rescue_subject(cat, topics, text)   # the table corrects a misread subject...
+    cat = _cross_check(cat, topics)                    # ...then `dating` still has to be earned
     role = str(obj.get("role") or "meet").lower()
     if role not in VALID_ROLES:
         role = "meet"
