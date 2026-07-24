@@ -755,6 +755,27 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kplan{background:var(--card);border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.06);padding:24px 16px 16px;
   display:flex;flex-direction:column;gap:20px;flex:0 0 auto}
 .kplan.tight{padding:16px}
+/* Summary card «Вот что получилось» — Figma 1688-26605 */
+.isumm{flex:none;background:var(--card);border-radius:16px;overflow:hidden;box-shadow:0 4px 21.6px #00000014}
+.isumm .cov{height:131px;background:var(--neutral100);position:relative;overflow:hidden}
+.isumm .cov svg{position:absolute;inset:0;width:100%;height:100%;display:block}
+.isumm .cov img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.isumm .cnt{padding:20px;display:flex;flex-direction:column;gap:20px}
+.isumm .ti{font-size:17px;line-height:24px;font-weight:600;color:var(--fg);word-break:break-word}
+.isumm .meta{display:flex;flex-direction:column;gap:12px}
+.isumm .mt{display:flex;align-items:center;gap:8px;font-size:13px;line-height:18px;color:var(--fg);overflow:hidden}
+.isumm .mt svg{width:16px;height:16px;flex:none;color:var(--muted)}
+.isumm .mt span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.isumm .mt span+svg{margin-left:2px}
+.isumm .kv{display:flex;flex-direction:column;gap:16px}
+.isumm .kv .r{display:flex;gap:12px;font-size:13px;line-height:18px;align-items:flex-start}
+.isumm .kv .k{width:88px;flex:none;font-weight:500;color:var(--fg)}
+.isumm .kv .v{color:var(--fg);min-width:0;word-break:break-word}
+.isumm .why{position:relative;background:var(--bg);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:6px}
+.isumm .why .h{font-size:12px;line-height:1.3;font-weight:600;color:var(--primary)}
+.isumm .why .tx{font-size:12px;line-height:1.5;color:var(--muted)}
+.isumm .why .ed{position:absolute;top:12px;right:12px;width:16px;height:16px;color:var(--primary);cursor:pointer}
+.isumm .why .ed svg{width:16px;height:16px}
 .kgrp{display:flex;flex-direction:column;gap:12px}
 .kgrp .hd{display:flex;gap:8px;align-items:center;font-size:15px;line-height:20px;font-weight:600}
 .kgrp .hd svg{width:18px;height:18px}
@@ -4530,37 +4551,61 @@ function intentWhen(){
 function labelOf(opts,v,dash){ const o=opts.find(x=>x[0]===v);
   return o?o[1]:(dash!==undefined?dash:T('на твоё усмотрение','flexible')); }
 function scr_summary(){
+  // Full "Here's what I got" card (Figma 1688-26605): cover, title, date/time + location-or-link,
+  // Category/Format/Personality rows, and a Kleal-summary box. Everything binds to what the flow
+  // actually collected; the cover stays an honest category illustration (this is the user's OWN
+  // intent preview, not a stock event photo).
   const s=FLOW.summary||{};
-  const row=(icon,lb,vl)=>`<div class="krow"><div class="lb">${icon}${esc(lb)}</div><div class="vl">${esc(vl)}</div></div>`;
+  const topics=(FLOW.intent&&FLOW.intent.topics)||[];
+  const key=tileKeyFor(topics.join(' ')||String(s.request||FLOW.request||FLOW.text||''));
+  const title=esc(s.title||s.request||FLOW.request||FLOW.text||T('Твой интент','Your intent'));
+  // time — from the detail step (date chip + dial), with the clarify values as a fallback
+  const dd=dDates().find(x=>x[0]===FLOW.date), dateLbl=dd?dd[1]:'';
+  const t=(FLOW.tmin!=null)?(String(Math.floor(FLOW.tmin/60)).padStart(2,'0')+':'+String(FLOW.tmin%60).padStart(2,'0')):'';
   const when=labelOf(WHEN_OPTS(),FLOW.when, intentWhen()), tm=labelOf(TIME_OPTS(),FLOW.time,'');
-  return `<div class="kflow fade">${kbar()}
+  const dateTxt=dateLbl||[when,(tm||'')].filter(Boolean).join(' — ')||T('Гибко','Flexible');
+  // location for offline, link for online, both for hybrid (the two Figma variants)
+  const fmt=FLOW.fmt||(flowOnline()?'online':'offline');
+  const place=(FLOW.addr||'').trim() || labelOf(DIST_OPTS(),FLOW.district,'') || FLOW.area || T('Район рядом','Nearby area');
+  const travel=(FLOW.dkm!=null)?(' · '+FLOW.dkm+' '+T('км','km')):'';
+  const link=(FLOW.link||'').trim();
+  const mt=(icon,val)=>`<div class="mt">${icon}<span>${esc(val)}</span></div>`;
+  let loc='';
+  if(fmt!=='online') loc+=mt(IC.pin, place+travel);
+  if(fmt!=='offline') loc+=mt(IC.chain, link||T('ссылка не добавлена','no link added'));
+  // Category / Format / Personality
+  const cats=locTopicList(topics.length?topics:(s.vibe||[]))||T('пока не задано','not set yet');
+  const fmtL=(FMT_OPTS().find(o=>o[0]===FLOW.fmt)||[])[2]||'';
+  const szL=(SIZE_OPTS().find(o=>o[0]===FLOW.gsize)||[])[2]||'';
+  const format=[fmtL,szL].filter(Boolean).join(', ')||s.format||T('Встреча, неформально','Casual meetup');
+  const sexL={male:T('Мужчины','Male'),female:T('Женщины','Female'),any:T('Не важно','Any')}[FLOW.sex||'any'];
+  const ageL=(FLOW.ageA&&FLOW.ageB)?(FLOW.ageA+'–'+FLOW.ageB):'';
+  const persona=[sexL,ageL].filter(Boolean).join(', ');
+  const summ=esc(s.summary||T('Kleal подберёт людей под этот запрос — по твоим настройкам профиля и деталям интента.',"Kleal will find people for this — from your profile settings and this intent."));
+  const kv=(k,v)=>v?`<div class="r"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`:'';
+  return `<div class="kflow fade">${kbar(true)}
     <div class="kcont">
       ${kprompt(T('Вот что получилось',"Here's what I got"))}
-      <div class="kbub ag">${T('Проверь — что-то можно поправить.','Check it — edit anything if needed.')}</div>
-      <div class="kplan tight">
-        <div class="ftile">${TILE_SVG[tileKeyFor(((FLOW.intent&&FLOW.intent.topics)||[]).join(' ')||String(s.request||FLOW.request||FLOW.text||''))]||TILE_SVG.social}</div>
-        <div class="kreq"><div class="hd">${IC.binoc}${T('Запрос','Request')}</div>
-          <div class="k-label">${esc(s.request||FLOW.request||FLOW.text)}</div></div>
-        ${(function(){
-          // Time reflects what the detail step actually collected (date chip + dial), falling back to
-          // the clarify-step values for a flow that skipped the wizard.
-          const dd=dDates().find(x=>x[0]===FLOW.date), dateLbl=dd?dd[1]:'';
-          const t=(FLOW.tmin!=null)?(String(Math.floor(FLOW.tmin/60)).padStart(2,'0')+':'+String(FLOW.tmin%60).padStart(2,'0')):'';
-          const whenVal=[dateLbl,t].filter(Boolean).join(' · ') || (when+(tm?(' — '+tm):'')) || T('Гибко','Flexible');
-          let out=row(IC.clock, T('Время','Time'), whenVal);
-          // Offline → location (+ travel), online → link, hybrid → both. Keyed on the format the user
-          // picked (FLOW.fmt), which is what the two Figma variants differ by.
-          const fmt=FLOW.fmt||(flowOnline()?'online':'offline');
-          const place=(FLOW.addr||'').trim() || labelOf(DIST_OPTS(),FLOW.district,'') || FLOW.area || T('Район рядом','Nearby area');
-          const travel=(FLOW.dkm!=null)?(' · '+FLOW.dkm+' '+T('км','km')):'';
-          const link=(FLOW.link||'').trim();
-          if(fmt!=='online') out+=row(IC.pin, T('Место','Location'), place+travel);
-          if(fmt!=='offline') out+=row(IC.chain, T('Ссылка','Link'), link||T('ссылка не добавлена','no link added'));
-          return out;
-        })()}
-        ${row(IC.target,T('Формат','Format'), s.format||T('Встреча, неформально','Casual meetup'))}
-        ${row(IC.diamond,T('Темы','Topics'), locTopicList(s.vibe)||T('пока не задано','not set yet'))}
-        <div class="kwhy">${T('Формат и темы — мои предположения, их можно поменять.','Format and topics are my suggestions — tap to adjust.')}</div>
+      <div class="kbub ag">${T('Проверь — что-то можно поправить. Настроим поиск под твой профиль и этот интент.','Check it — edit anything if needed. We will tailor the search to your profile settings and this intent.')}</div>
+      <div class="isumm">
+        <div class="cov">${TILE_SVG[key]||TILE_SVG.social}</div>
+        <div class="cnt">
+          <div class="ti">${title}</div>
+          <div class="meta">
+            <div class="mt">${IC.calen}<span>${esc(dateTxt)}</span>${t?`${IC.clock}<span>${esc(t)}</span>`:''}</div>
+            ${loc}
+          </div>
+          <div class="kv">
+            ${kv(T('Категория','Category'), cats)}
+            ${kv(T('Формат','Format'), format)}
+            ${kv(T('Кто','Personality'), persona)}
+          </div>
+          <div class="why">
+            <div class="ed" data-act="flow-edit">${IC.edit}</div>
+            <div class="h">${T('Саммари Kleal:','Kleal summary:')}</div>
+            <div class="tx">${summ}</div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="kfoot">
