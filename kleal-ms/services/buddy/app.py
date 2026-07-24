@@ -416,6 +416,30 @@ def detect_lang(text):
     return "en"
 
 
+def thread_lang(messages, last_user=None):
+    """Which language to reply in, decided over the thread instead of the last word alone.
+
+    A follow-up is usually one ambiguous token — «ejemplos», "more", «ещё». detect_lang() reads
+    "ejemplos" as English (Latin script, not in the Spanish word list), so a Spanish conversation
+    answered its own follow-up in English. Cyrillic and the Spanish markers are decisive on their
+    own; a short Latin-only turn is not, and inherits the language of the last decisive user turn.
+    """
+    t = str(last_user if last_user is not None else "")
+    if not t:
+        t = next((str(m.get("content", "")) for m in reversed(messages or [])
+                  if m.get("role") == "user"), "")
+    lang = detect_lang(t)
+    if lang != "en" or len(re.findall(r"[^\W\d_]+", t, re.UNICODE)) >= 4:
+        return lang                      # decisive: ru/es markers, or long enough to trust as English
+    for m in reversed(messages or []):
+        if m.get("role") != "user":
+            continue
+        prev = detect_lang(str(m.get("content", "")))
+        if prev != "en":
+            return prev
+    return "en"
+
+
 def _stem(w):
     """RU inflection: 'доту' -> 'дот', 'футболом' -> 'футбол'."""
     for end in _RU_END:
@@ -1045,7 +1069,7 @@ def buddy_chat(messages, profile, signals, uid=None):
     if sum(1 for m in (messages or []) if m.get("role") == "user") <= 1:
         convo = "[FIRST MESSAGE — you have never spoken with this person before]\n" + convo
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
-    lang = detect_lang(last_user)
+    lang = thread_lang(messages, last_user)
     # The age gate lived ONLY in intent_build(), i.e. on the composer path — /chat, which is the
     # path the app's buddy actually uses, had none. A sweep of «мне 15 лет, хочу найти друзей»
     # got "Хорошо, давай начнём поиск" back. The model is never asked; this is deterministic and
@@ -1059,7 +1083,7 @@ def buddy_chat(messages, profile, signals, uid=None):
     # Two attempts: the language directive still slips occasionally (a stray foreign glyph in a technical
     # word — "积云"/"биζнес"). Re-roll once, colder, and prefer the language-clean answer; keep the first
     # usable one as a fallback so a fussy guard never leaves the user with no reply.
-    _cmsgs = [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
+    _cmsgs = [{"role": "system", "content": _buddy_sys(sig, lang)},
               {"role": "user", "content": convo}]
     obj = None
     for _attempt in range(2):
@@ -1072,8 +1096,9 @@ def buddy_chat(messages, profile, signals, uid=None):
             continue
         if obj is None:
             obj = cand
-        if _lang_ok(cand.get("reply"), lang):
-            obj = cand
+        _sal = _salvage(cand.get("reply"), lang)
+        if _sal:
+            obj = dict(cand, reply=_sal)
             break
 
     if isinstance(obj, dict) and obj.get("reply"):
@@ -1479,14 +1504,72 @@ def _lang_ok(reply, lang):
     if _FOREIGN.search(s):
         return False                          # CJK/Hangul/Greek in any reply is an artifact ("积云", "биζнес")
     if lang != "ru":
-        return True
+        # The MIRROR failure, and the one that matters for an EN/ES audience: the user writes English
+        # and the 70B answers in Russian because the profile and the rest of the app around it are
+        # Russian ("what is padel" -> "Привет, Иван! Падель - это..."). Unchecked until now, because
+        # this branch returned True for everything that was not Russian. A Russian proper noun inside
+        # an English sentence is fine; a Russian sentence is not, so compare the two scripts.
+        cyr = len(_CYR.findall(s))
+        return cyr == 0 or cyr <= len(_LAT_RUN.findall(s))
     if not _CYR.search(s):
         return False
     if _LAT_GLUE.search(s):
         return False
     lat = len(_LAT_RUN.findall(s))
     cyr = len(_CYR.findall(s))
-    return lat <= cyr
+    # Was lat <= cyr, which a genuinely Russian answer could fail just by naming places: a list of
+    # Barcelona cafés («Cafè Granja Viader», «Skye Coffee») is half Latin by character count, and
+    # rejecting it twice left the user with a canned line instead of the answer. A fully English
+    # reply is already caught above (no Cyrillic at all), so this only has to catch the mixed case.
+    return lat <= 2 * cyr
+
+
+def _buddy_sys(sig, lang):
+    """BUDDY_PROMPT with the reply language named outright, the way the intent builder already does.
+
+    The prompt's generic "answer in the same language the user writes in" loses to the surrounding
+    context: the profile, the app and most of the history are Russian, so an English "what is padel"
+    came back as «Привет, Иван! Падель - это...». Rejecting that in _lang_ok only bought a re-roll
+    that failed the same way and left the user with a canned line; naming the language fixes the
+    cause instead of catching the symptom.
+    """
+    return (BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))
+            + "\n\nTHIS TURN: write \"reply\" in %s — %s Answer in that language whatever language "
+              "the profile or the earlier turns happen to be in." % (_LANGNAME.get(lang, "English"),
+                                                                     _LANGDIR.get(lang, _LANGDIR["en"])))
+
+
+_FOREIGN_RUN = re.compile(r"[぀-ヿ㐀-鿿가-힯Ͱ-Ͽἀ-῿]+")
+_EMPTY_BRACKETS = re.compile(r"[（(\[]\s*[)）\]]")
+
+
+def _strip_foreign(reply):
+    """Delete the stray non-target-script glyphs instead of throwing the whole answer away.
+
+    The 70B writes perfect Russian and then glosses one technical term in Chinese —
+    «кучевые облака (积云)». _lang_ok rejected the reply for those two characters, both attempts
+    lost the same way, and the caller fell through to a canned greeting: that is how «а какие
+    бывают» in the middle of a conversation about clouds came back as "Привет! Чем могу помочь?".
+    The sentence around the gloss is fine, so drop the glyphs and the bracket they sat in.
+    """
+    s = _FOREIGN_RUN.sub("", str(reply or ""))
+    s = _EMPTY_BRACKETS.sub("", s)
+    s = re.sub(r"\s+([,.;:!?])", r"\1", s)
+    s = re.sub(r"[ \t]{2,}", " ", s)
+    return s.strip()
+
+
+def _salvage(reply, lang):
+    """The reply if it is usable in `lang` — cleaned of stray glyphs if that is all that was wrong.
+
+    Returns "" only when the answer is genuinely in the wrong language, which is unfixable here and
+    still worth a re-roll. Losing a good answer to a two-character artifact is not.
+    """
+    s = str(reply or "")
+    if _lang_ok(s, lang):
+        return s
+    s2 = _strip_foreign(s)
+    return s2 if (s2 and _lang_ok(s2, lang)) else ""
 
 
 # Filtration answers a bare greeting with topics: "привет" -> ['hello','greeting'],
@@ -1521,7 +1604,7 @@ def _chat_reply(messages, profile, lang, on_text=None):
         convo = "[FIRST MESSAGE — you have never spoken with this person before]\n" + convo
     for attempt in range(2):
         try:
-            msgs = [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
+            msgs = [{"role": "system", "content": _buddy_sys(sig, lang)},
                     {"role": "user", "content": convo}]
             temp = 0.35 if attempt == 0 else 0.2   # lower: the streamed attempt-0 is what the user sees
             if on_text is not None and attempt == 0:      # only the first try streams — see intent_build
@@ -1532,8 +1615,8 @@ def _chat_reply(messages, profile, lang, on_text=None):
         except Exception:
             obj = None
         if isinstance(obj, dict) and obj.get("reply"):
-            reply = str(obj["reply"])[:600]
-            if _lang_ok(reply, lang):
+            reply = _salvage(str(obj["reply"])[:600], lang)
+            if reply:
                 return reply
     return ""
 
@@ -1714,9 +1797,30 @@ def _hints(obj, lang):
     return out[:3] if len(out) >= 3 else []
 
 
+def _builder_msgs(messages):
+    """The turns the intent BUILDER may reason about — not the ones the conversation remembers.
+
+    A turn already answered conversationally is context for the chat, not material for a plan:
+    greeting Kleal and then asking what dividends are must not compile into an intent about bonds.
+    The client marks those turns `chat`. They used to be dropped from the request entirely, which
+    is what produced the reported reset — ask a question, then "расскажи детальнее", and the
+    follow-up arrived alone, so the buddy greeted the person again and asked what they meant
+    (reproduced 4/4). Now they are SENT and stay in the conversation, and only the builder is
+    blind to them. The newest user turn is never hidden: it is the one being judged right now.
+    """
+    msgs = list(messages or [])
+    keep = [m for m in msgs if not m.get("chat")]
+    if msgs and not keep:
+        last_user = next((m for m in reversed(msgs) if m.get("role") == "user"), None)
+        keep = [last_user] if last_user is not None else []
+    return keep
+
+
 def intent_build(messages, profile, on_text=None):
+    # The whole thread is the conversation's memory; the builder sees only the plan-relevant part.
+    bmsgs = _builder_msgs(messages)
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
-    lang = detect_lang(last_user)
+    lang = thread_lang(messages, last_user)
     # Before anything else, and before the model: a person who has said they are under 18 gets no
     # intent built, on this turn or any later one. The reply is fixed text, not a generation, so
     # there is nothing to argue with and no way for a later turn to talk it back open.
@@ -1727,7 +1831,7 @@ def intent_build(messages, profile, on_text=None):
         return {"reply": HARM_REPLY.get(lang, HARM_REPLY["en"]), "valid": False, "ready": False,
                 "rankable": False, "intent": None, "hints": []}
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
-                       else ("Kleal: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
+                       else ("Kleal: " + str(m.get("content", "")))) for m in bmsgs[-12:])
     convo = _profile_line(profile) + convo
     sys_prompt = (INTENT_BUILD_PROMPT
                   .replace("__LANGNAME__", _LANGNAME.get(lang, "English"))
@@ -1759,14 +1863,16 @@ def intent_build(messages, profile, on_text=None):
             continue
         if obj is None:
             obj = cand          # keep the first structurally valid answer even if its language is wrong
-        if _lang_ok(cand.get("reply"), lang):
-            obj = cand
+        _sal = _salvage(cand.get("reply"), lang)
+        if _sal:
+            obj = dict(cand, reply=_sal)
             break
     # Both attempts slipped: keep the extracted activity/time/ready (they are English by design and still
     # correct) but do not show the user an English sentence — swap in the neutral prompt in their language.
     if isinstance(obj, dict) and obj.get("reply") and not _lang_ok(obj.get("reply"), lang):
-        obj = dict(obj, reply=("Понял. Когда тебе удобно?" if obj.get("ready") is not True
-                               else "Понял, записал."))
+        _sal = _salvage(obj.get("reply"), lang)
+        obj = dict(obj, reply=_sal) if _sal else dict(obj, reply=(
+            "Понял. Когда тебе удобно?" if obj.get("ready") is not True else "Понял, записал."))
     if not isinstance(obj, dict) or not obj.get("reply"):
         chat = _chat_reply(messages, profile, lang)     # the builder failed; still answer the person
         return {"reply": chat or ("Что хочешь устроить? Опиши, чем заняться и с кем." if lang == "ru"
@@ -1777,7 +1883,9 @@ def intent_build(messages, profile, on_text=None):
     valid = bool(obj.get("valid", True))
     ready = bool(obj.get("ready")) and valid
     activity = str(obj.get("activity") or last_user)
-    user_turns = sum(1 for m in (messages or []) if m.get("role") == "user")
+    # Counts the turns that were actually building this plan. Chit-chat must not inflate it, or a
+    # long conversation would trip the over-asking backstop below and force `ready` on turn one.
+    user_turns = sum(1 for m in bmsgs if m.get("role") == "user")
     # Backstop against over-asking: the 70B tends to keep interrogating (group size, exact place...). Once the
     # user has already answered at least one follow-up AND we can recognise a real activity, build the card
     # instead of asking further — sensible defaults cover the rest.
@@ -1812,8 +1920,16 @@ def intent_build(messages, profile, on_text=None):
         # "привкет" a coin flip, 4 of 8 runs. A plain acknowledgement is always the better answer.
         # This reply is the first and only text that reaches the screen (the gate suppressed the
         # builder's discarded draft), so stream it — it is also the long one worth streaming.
+        # This canned line greeted unconditionally, so whenever _chat_reply came back empty it reset a
+        # conversation that was already running — «а какие бывают» about clouds answered with
+        # "Привет! Чем могу помочь?". Greet only when this genuinely is the first turn.
+        _first_turn = sum(1 for m in (messages or []) if m.get("role") == "user") <= 1
         chat = _chat_reply(messages, profile, lang, on_text=on_text) or (
-            "Привет! Чем могу помочь?" if lang == "ru" else "Hey! How can I help?")
+            _L(lang, "Привет! Чем могу помочь?", "Hey! How can I help?",
+               "¡Hola! ¿En qué puedo ayudarte?") if _first_turn else
+            _L(lang, "Секунду — переспроси, пожалуйста, другими словами.",
+               "One sec — could you put that another way?",
+               "Un segundo — ¿puedes decirlo de otra forma?"))
         return {"reply": chat, "valid": valid, "ready": False, "intent": None, "lang": lang,
                 "conversational": True, "hints": _hints(obj, lang)}
     if not ready:

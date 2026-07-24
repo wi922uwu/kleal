@@ -3975,8 +3975,11 @@ async function flowSay(text, fromSeed){
     // Small talk must not reach the intent builder. Greeting Kleal and then asking it what dividends
     // are used to leave both turns in the history, so the builder read them as context and produced an
     // intent whose vibe was "bonds, finance, investing, economy". Turns already answered
-    // conversationally are marked and excluded — a real multi-turn build is unmarked and still sent.
-    const forBuilder=FLOW.msgs.filter(m=>!m.chat).map(m=>({role:m.who==='me'?'user':'assistant',content:m.text}));
+    // conversationally carry `chat` and the SERVER hides them from the builder — but they are still
+    // SENT, because they are the conversation. Dropping them here is what made every follow-up look
+    // like a first message: "что такое X" then "расскажи детальнее" arrived alone, and Kleal greeted
+    // the user again and asked what they meant (reproduced 4/4 on the pod, 0/4 with the history sent).
+    const forBuilder=FLOW.msgs.map(m=>({role:m.who==='me'?'user':'assistant',content:m.text,chat:!!m.chat}));
     r=await intentBuild(forBuilder, matchProfileForHints());
   }catch(e){ r=null; }
   FLOW.busy=false;
