@@ -388,9 +388,10 @@ _GENERIC_TOPIC = {"sport", "sports", "game", "games", "gaming", "activity", "act
 _RU_END = ("ами", "ями", "ах", "ях", "ов", "ев", "ом", "ем", "ой", "ей", "ую", "ые", "ый", "ая", "ое",
            "у", "а", "я", "и", "ы", "е", "ю", "ь", "й", "о")
 _CYR = re.compile(r"[а-яё]", re.I)
-# Chinese/Japanese/Korean glyphs never belong in a RU/EN/ES reply — the 70B leaks them for technical
-# terms ("积云" for cumulus). Presence of any is an artifact, so _lang_ok rejects it (triggers a re-roll).
-_CJK = re.compile(r"[぀-ヿ㐀-鿿가-힯]")
+# Non-target scripts never belong in a RU/EN/ES reply — the 70B leaks them for technical terms
+# ("积云" for cumulus, "биζнес" with a Greek zeta). Any CJK/Hangul/Greek glyph is an artifact, so
+# _lang_ok rejects it (triggers a re-roll).
+_FOREIGN = re.compile(r"[぀-ヿ㐀-鿿가-힯Ͱ-Ͽἀ-῿]")
 
 
 # Spanish shares the Latin alphabet with English, so a Cyrillic-vs-not test read every Spanish request
@@ -1055,13 +1056,25 @@ def buddy_chat(messages, profile, signals, uid=None):
     if harmful_use_of_a_person(messages):
         return {"reply": HARM_REPLY.get(lang, HARM_REPLY["en"]), "signals": sig, "lang": lang,
                 "match": None, "intent": None, "matches": [], "tool_call": None, "category": None}
+    # Two attempts: the language directive still slips occasionally (a stray foreign glyph in a technical
+    # word — "积云"/"биζнес"). Re-roll once, colder, and prefer the language-clean answer; keep the first
+    # usable one as a fallback so a fussy guard never leaves the user with no reply.
+    _cmsgs = [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
+              {"role": "user", "content": convo}]
     obj = None
-    try:
-        raw = llm_complete(MODEL_ID, [{"role": "system", "content": BUDDY_PROMPT.replace("__SIG__", json.dumps(sig))},
-                                      {"role": "user", "content": convo}], 0.6)
-        obj = _lenient_json(raw)
-    except Exception:
-        obj = None
+    for _attempt in range(2):
+        try:
+            raw = llm_complete(MODEL_ID, _cmsgs, 0.6 if _attempt == 0 else 0.2)
+            cand = _lenient_json(raw)
+        except Exception:
+            cand = None
+        if not isinstance(cand, dict) or not cand.get("reply"):
+            continue
+        if obj is None:
+            obj = cand
+        if _lang_ok(cand.get("reply"), lang):
+            obj = cand
+            break
 
     if isinstance(obj, dict) and obj.get("reply"):
         reply = str(obj.get("reply"))[:600]
@@ -1463,8 +1476,8 @@ def _lang_ok(reply, lang):
     names are normal Russian chat, so the ratio has to be well past half before we call it English.
     """
     s = str(reply or "")
-    if _CJK.search(s):
-        return False                          # CJK/Hangul in any reply is a generation artifact ("积云")
+    if _FOREIGN.search(s):
+        return False                          # CJK/Hangul/Greek in any reply is an artifact ("积云", "биζнес")
     if lang != "ru":
         return True
     if not _CYR.search(s):
