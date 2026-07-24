@@ -1801,8 +1801,11 @@ def intent_build(messages, profile, on_text=None):
         return {"reply": reply, "valid": valid, "ready": False, "intent": None, "lang": lang,
                 "hints": _hints(obj, lang)}
 
-    # ready -> assemble a canonical, rankable intent (filtration + the same builder /chat uses)
-    cat = _categorize(activity)
+    # ready -> assemble a canonical, rankable intent (filtration + the same builder /chat uses).
+    # Feed filtration the raw last user turn ALONGSIDE the model's `activity` paraphrase, so place/game
+    # names survive canonicalisation (нью йорке -> new york, преферанс -> card games) instead of being
+    # mangled by the paraphrase — the same fix as /chat's req_text.
+    cat = _categorize(" ".join(x for x in (str(activity or ""), str(last_user or "")) if x).strip() or activity)
     _teach(cat)
     sig = _baseline_signals(profile)
     if obj.get("time"):
