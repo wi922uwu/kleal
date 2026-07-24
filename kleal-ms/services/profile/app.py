@@ -776,6 +776,49 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .isumm .why .tx{font-size:12px;line-height:1.5;color:var(--muted)}
 .isumm .why .ed{position:absolute;top:12px;right:12px;width:16px;height:16px;color:var(--primary);cursor:pointer}
 .isumm .why .ed svg{width:16px;height:16px}
+/* Public profile (candidate) — reconstructed from the Recommendations→Profile flow screenshots */
+.cpub{display:flex;flex-direction:column;height:100%;background:var(--bg)}
+.cpub .chero{flex:none;position:relative;height:46%;min-height:280px;max-height:440px;background:var(--neutral100);overflow:hidden}
+.cpub .chero img{width:100%;height:100%;object-fit:cover;display:block}
+.cpub .cnav{position:absolute;top:12px;left:0;right:0;display:flex;justify-content:space-between;padding:0 16px}
+.cpub .cbtn{width:44px;height:44px;border-radius:999px;background:#ffffffcc;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--fg);box-shadow:0 1px 3px #0000001f}
+.cpub .cbtn svg{width:20px;height:20px}
+.cpub .cpb{flex:1;min-height:0;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:16px}
+.cpub .chd{display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+.cpub .chd .nm{font-size:22px;line-height:28px;font-weight:700;color:var(--fg);display:flex;align-items:center;gap:6px}
+.cpub .chd .nm .vf{color:var(--primary);display:flex}
+.cpub .chd .nm .vf svg{width:20px;height:20px}
+.cpub .chd .bio{font-size:15px;line-height:22px;color:var(--muted);max-width:300px}
+.cpub .chd .tgs{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:2px}
+.cpub .tg{padding:7px 14px;border-radius:999px;background:var(--neutral100);font-size:13px;font-weight:500;color:var(--fg)}
+.cpub .chd .meta{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--fg)}
+.cpub .chd .meta svg{width:16px;height:16px;color:var(--muted);flex:none}
+.cpub .ksum{background:var(--card);border-radius:16px;padding:16px;box-shadow:0 4px 21.6px #0000000f}
+.cpub .ksum .h{font-size:14px;font-weight:600;color:var(--primary);margin-bottom:6px}
+.cpub .ksum .tx{font-size:14px;line-height:1.5;color:var(--fg)}
+.cpub .cpriv{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.4;color:var(--muted);padding:0 4px}
+.cpub .cpriv svg{width:18px;height:18px;flex:none;color:var(--muted);margin-top:1px}
+.cpub .cfoot{flex:none;padding:6px 16px 10px}
+.cpub .cinv{width:100%;height:60px;border:0;background:var(--card);border-radius:999px;box-shadow:0 8px 24px #0000000f;
+  display:flex;align-items:center;gap:10px;padding:6px;cursor:pointer}
+.cpub .cinv .ck{width:48px;height:48px;border-radius:999px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+.cpub .cinv .ck svg{width:22px;height:22px}
+.cpub .cinv .lb{flex:1;text-align:center;font-size:16px;font-weight:600;color:var(--fg)}
+.cpub .cinv .ch{display:flex;color:var(--neutral300);padding-right:14px}
+.cpub .cinv .ch svg{width:15px;height:15px;margin-left:-5px}
+.cpub .bnav{flex:none}
+/* Profile options bottom sheet */
+.ksheet.copts{display:flex;flex-direction:column;gap:10px}
+.copts .chdr{display:flex;align-items:center;justify-content:space-between;margin:2px 0 6px}
+.copts .chdr .x{cursor:pointer;color:var(--muted);display:flex}
+.copts .chdr .x svg{width:22px;height:22px}
+.coptbtn{width:100%;height:56px;border:0;border-radius:16px;font:inherit;font-size:15px;font-weight:600;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:10px}
+.coptbtn .i{display:flex}.coptbtn .i svg{width:20px;height:20px}
+.coptbtn.mute{background:var(--neutral100);color:var(--fg)}
+.coptbtn.warn{background:var(--primary);color:#fff}
+.coptbtn.dark{background:#181B22;color:#fff}
 .kgrp{display:flex;flex-direction:column;gap:12px}
 .kgrp .hd{display:flex;gap:8px;align-items:center;font-size:15px;line-height:20px;font-weight:600}
 .kgrp .hd svg{width:18px;height:18px}
@@ -5281,17 +5324,69 @@ function scr_bestfit(){
     </div></div>`;
 }
 
+// The Kleal-summary line on a candidate profile = why the agent surfaced THIS person, in plain words.
+// Prefer a real summary; else stitch the top match reasons; else an honest fallback.
+function candSummaryLine(c){
+  if(c.klealSummary && String(c.klealSummary).trim()) return String(c.klealSummary).trim();
+  if(c.summary && String(c.summary).length>24) return String(c.summary).trim();
+  const rs=(UILANG==='ru'?c.reasons_ru:c.reasons_en)||c.reasons||[];
+  if(rs.length) return (c.name||T('Этот человек','This person'))+' — '+rs.slice(0,2).join('; ')+'.';
+  return T('Kleal счёл этого человека сильным совпадением под твой запрос.','Kleal picked this person as a strong match for your request.');
+}
 function scr_candprofile(){
   const c=CAND; if(!c) return scr_options();
-  const tabs=[['profile',T('Профиль','Profile')],['why',T('Почему','Why suggested')],['vis',T('Видимость','Visibility')]];
-  return `<div class="kflow fade">
-    <div class="kbar"><div class="kback" data-act="cand-back">${IC.back}</div>
-      <div class="k-title" style="flex:1;text-align:center">${esc(c.name)}${c.age?(', '+c.age):''}</div>
-      <div style="width:44px"></div></div>
-    <div class="kcont">
-      <div class="ktabs">${tabs.map(t=>`<div class="kchip ${CTAB===t[0]?'on':''}" data-act="cand-tab" data-k="${t[0]}">${t[1]}</div>`).join('')}</div>
-      ${CTAB==='profile'?candProfilePane(c):CTAB==='why'?candWhyPane(c):candVisPane(c)}
-    </div></div>`;
+  const photo=c.photo||'assets/match-anna.jpg';                 // demo placeholder until real photos exist
+  const tags=(c.interests||[]).slice(0,6).map(x=>`<span class="tg">${esc(x)}</span>`).join('');
+  const langs=(c.langs||[]).join(', ');
+  const loc=c.area||c.city||(c.km!=null?(c.km+' '+T('км','km')):'');
+  const bio=esc(c.tagline||c.about||c.summary||'');
+  return `<div class="kflow cpub fade">
+    <div class="chero">
+      <img src="${esc(photo)}" alt="" onerror="this.style.display='none'">
+      <div class="cnav">
+        <div class="cbtn" data-act="cand-back">${IC.back}</div>
+        <div class="cbtn" data-act="cand-opts" data-n="${esc(c.name)}">${IC.dots}</div>
+      </div>
+    </div>
+    <div class="cpb">
+      <div class="chd">
+        <div class="nm">${esc(c.name)}${c.age?(', '+c.age):''}${c.verified?`<span class="vf">${IC.verify}</span>`:''}</div>
+        ${bio?`<div class="bio">${bio}</div>`:''}
+        ${tags?`<div class="tgs">${tags}</div>`:''}
+        ${langs?`<div class="meta">${IC.globe}<span>${esc(langs)}</span></div>`:''}
+        ${loc?`<div class="meta">${IC.pin}<span>${esc(loc)}</span></div>`:''}
+      </div>
+      <div class="ksum">
+        <div class="h">${T('Саммари Kleal','Kleal summary')}</div>
+        <div class="tx">${esc(candSummaryLine(c))}</div>
+      </div>
+      <div class="cpriv">${IC.shield}<span>${T('Тебя видят только те, кого рекомендовал твой агент. Ты управляешь этим.',"Only people your agent recommended can see your profile. You're in control.")}</span></div>
+    </div>
+    <div class="cfoot">
+      <button class="cinv" data-act="cand-interest">
+        <span class="ck">${IC.check}</span>
+        <span class="lb">${T('Пригласить','Invite')}</span>
+        <span class="ch">${IC.chevR}${IC.chevR}${IC.chevR}</span></button>
+    </div>
+    <div class="bnav">${bnavHTML()}</div></div>`;
+}
+function dropCand(n){ if(n&&FLOW&&FLOW.res) FLOW.res=FLOW.res.filter(x=>x&&x.name!==n); }
+// Profile-options bottom sheet (Not interested / Report / Block / Cancel). Report/block have no
+// backend yet — they hide the person locally and acknowledge; wiring to a real safety endpoint is a
+// backend task, flagged rather than faked as "done".
+function candOptsSheet(){
+  if(SHEET!=='candopts') return '';
+  const nm=(CAND&&CAND.name)||'';
+  const opt=(cls,icon,label,act,dn)=>`<button class="coptbtn ${cls}" data-act="${act}"${dn?` data-n="${esc(dn)}"`:''}>${icon?`<span class="i">${icon}</span>`:''}${esc(label)}</button>`;
+  return `<div class="kscrim bot" data-act="sheet-close"><div class="ksheet bottom copts" onclick="event.stopPropagation()">
+    <div class="kgrab"></div>
+    <div class="chdr"><div class="k-h3">${T('Опции профиля','Profile options')}</div>
+      <div data-act="sheet-close" class="x">${IC.ban}</div></div>
+    ${opt('mute', IC.ban,      T('Не интересно','Not interested'),  'cand-notint', nm)}
+    ${opt('warn', IC.flag,     T('Пожаловаться','Report profile'),  'cand-report', nm)}
+    ${opt('warn', IC.userLock||IC.shield, T('Заблокировать','Block')+(nm?' '+nm:''), 'cand-block', nm)}
+    ${opt('dark', '',          T('Отмена','Cancel'),                'sheet-close')}
+  </div></div>`;
 }
 function candProfilePane(c){
   const ints=(c.interests||[]).map(x=>`<span class="kchip soft" style="height:32px">${esc(x)}</span>`).join('');
@@ -5742,6 +5837,7 @@ function render(){
     catch(err){ console.error('render failed on', cur, err); cur='agenthome'; A.innerHTML=scr_agenthome(); }
   }
   if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
+  if(SHEET==='candopts') A.insertAdjacentHTML('beforeend', candOptsSheet());
   if(ESHEET) A.insertAdjacentHTML('beforeend', eSheetHTML());
   // the Location sheet carries a live Leaflet map; build it after its node exists, tear it down on close
   if(ESHEET&&ESHEET.kind==='location') setTimeout(initLocSheetMap,0);
@@ -5974,6 +6070,13 @@ function doAct(act, ds){
              km:c&&c.km, at:Date.now()}); toast(T('Сохранено','Saved')); }
       saveState(); render(); break; }
     case 'cand-interest': sendInterest(); break;
+    case 'cand-opts': SHEET='candopts'; render(); break;
+    case 'cand-notint': { const n=(CAND&&CAND.name)||ds.n; dropCand(n); SHEET=null;
+      toast(T('Скрыто — больше не покажу','Hidden — you won’t see them again')); flowBack(); break; }
+    case 'cand-report': { SHEET=null; render();
+      toast(T('Спасибо. Центр безопасности посмотрит.','Thanks — our safety team will review.')); break; }
+    case 'cand-block': { const n=(CAND&&CAND.name)||ds.n; dropCand(n); SHEET=null;
+      toast(T('Заблокировано','Blocked')); flowBack(); break; }
     case 'sheet-close': SHEET=null; render(); break;
     case 'esheet-close': ESHEET=null; render(); break;
     case 'esheet-accept': acceptSheet(); break;
