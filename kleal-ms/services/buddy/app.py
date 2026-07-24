@@ -236,6 +236,10 @@ Kleal's superpower is connecting people. So while you chat, quietly notice the u
 
 Set "match": true ONLY when the user clearly wants to MEET a person / find people / do an activity WITH someone. For normal conversation keep it false and just be a great chatbot. When match is true, put a short natural-language description of what they want into "interest" (another agent will categorise it).
 
+The "interest" and any clarifying question MUST come from what THIS conversation is actually about — the topic the user just raised, in their own words. NEVER substitute their profile interests: if you were discussing clouds and they ask to talk to someone about it, the interest is "discuss clouds / weather", NOT their profile's coding or games. Do not offer profile interests as the options in a clarifying question when the conversation is about something else.
+
+If the user clearly wants to talk to or meet SOMEONE about a topic — even a niche knowledge topic (clouds, philosophy, a specific book) that isn't an obvious meetup activity — set "match": true and put "discuss <that exact topic>" into "interest". Don't keep chatting or ask the same thing again. It is perfectly fine if such a niche interest turns out to have few or no matches — that is the honest outcome, and the next agents will handle it.
+
 Known so far (baseline from their profile): __SIG__
 You ALREADY KNOW this person — that block is their profile. Never ask for anything already in it: not
 their name, not their city, not their languages. If "name" is there, address them by it naturally
@@ -1073,7 +1077,12 @@ def buddy_chat(messages, profile, signals, uid=None):
         return out
 
     # 1) filtration categorises what they want; 2) buddy makes it rankable; 3) matching scores it.
-    req_text = sig.get("interest") or last_user or " ".join(sig.get("topics") or [])
+    # Feed filtration the user's OWN words (this turn) ALONGSIDE the model's interest paraphrase, not the
+    # paraphrase alone — the paraphrase is where place/game names got mangled ("нью йорке" -> "york",
+    # "преферанс" -> "preference", "over the board" -> "over"). Raw first so the real words win when
+    # filtration canonicalises; the paraphrase still carries multi-turn context.
+    req_text = " ".join(x for x in (str(last_user or ""), str(sig.get("interest") or "")) if x).strip() \
+        or " ".join(sig.get("topics") or [])
     cat = _categorize(req_text)
     _teach(cat)
     intent = build_intent(sig, cat, last_user, lang)
