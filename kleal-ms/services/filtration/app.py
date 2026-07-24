@@ -85,7 +85,9 @@ CAT_TO_DOMAIN = {
     # coffee / food_drink / nightlife / wellness / fashion / pets / travel / social / other
 }
 
-FILTER_PROMPT = '''You are Kleal's "Filtration" agent. Turn a user's free-text request or interest into a structured, CATEGORISED intent by MAGNETISING it to ONE of our existing categories. Use world knowledge for novel items — e.g. "labubu" -> toys_collectibles, "matcha" -> food_drink, "wordle" -> games, "padel" -> sports, "vinted" -> fashion.
+FILTER_PROMPT = '''You are Kleal's "Filtration" agent (Barcelona; users write in ENGLISH or SPANISH). Turn a user's free-text request or interest into a structured, CATEGORISED intent by MAGNETISING it to ONE of our existing categories. Use world knowledge for novel items — e.g. "labubu" -> toys_collectibles, "matcha" -> food_drink, "wordle" -> games, "padel" -> sports, "vinted" -> fashion.
+
+Read English AND Spanish naturally; do NOT force an English reading of a Spanish word: "pan" = bread -> food_drink, "quedar para un café" -> coffee, "fútbol" -> sports, "senderismo" -> outdoors, "intercambio de idiomas" -> languages, "cita" -> dating, "quedada" -> social, "salir de fiesta" -> nightlife.
 
 Categories (pick exactly ONE best fit): sports, gaming, esports, tabletop, music, film_tv, art_culture, books, food_drink, coffee, nightlife, outdoors, travel, tech, startups, career, languages, wellness, fashion, toys_collectibles, pets, photography, dating, social, other.
 
@@ -96,58 +98,81 @@ Return ONLY compact JSON, no prose:
  "role":"play|watch|discuss|practise|attend|meet",
  "isNew":<true only if nothing in the list really fits>,
  "note":"<=8 words, what this is"}
-Infer role from the verb (play/watch/discuss/practise/attend), default "meet". Topics in English, lowercase.'''
+Infer role from the verb (play/jugar, watch/ver, discuss/hablar, practise/practicar, attend/asistir); default "meet". Output topics in ENGLISH, lowercase (canonical), even when the request is Spanish. Only pick "dating" when the request is clearly romantic, not for a bare ambiguous word like "date".'''
 
 # ------------------------------------------------------------------ keyword fallback (LLM down)
-# Bilingual keyword magnet over the same categories — used when the model is unreachable or times out.
-# Cyrillic keys matter: the model prompt asks for English topics, but a DOWN model must still resolve a
-# Russian request instead of dumping it into `other`.
+# Keyword magnet over the same categories — used when the model is unreachable or times out. The
+# audience is Barcelona: ENGLISH + SPANISH first (Spanish keys carry accents: fútbol, café, música);
+# Russian keys are kept as a harmless bonus. The tokeniser must accept Spanish diacritics, otherwise a
+# down model breaks "fútbol" into "f"/"tbol" and the request falls into `other`.
 _KW = {
     "sports": ["football", "soccer", "basketball", "tennis", "padel", "run", "running", "gym", "boxing",
                "swim", "cycling", "climb",
-               "футбол", "баскетбол", "теннис", "падел", "бег", "пробежка", "зал", "бокс", "плавание", "велосипед", "борьба"],
+               "fútbol", "futbol", "baloncesto", "tenis", "pádel", "correr", "gimnasio", "natación", "ciclismo", "boxeo", "escalar",
+               "футбол", "баскетбол", "теннис", "бег", "зал", "бокс", "плавание", "борьба"],
     "gaming": ["dota", "valorant", "cs", "league", "chess", "boardgame", "poker", "gaming", "game", "wordle",
+               "ajedrez", "videojuegos", "partida", "juego", "damas",
                "дота", "шахматы", "настолки", "покер", "игра", "игры"],
     "music": ["music", "guitar", "concert", "dj", "rave", "techno", "gig", "karaoke",
-              "музыка", "гитара", "концерт", "караоке"],
+              "música", "musica", "guitarra", "concierto",
+              "музыка", "гитара", "концерт"],
     "film_tv": ["movie", "cinema", "film", "series", "anime",
-                "кино", "фильм", "сериал", "аниме"],
+                "cine", "película", "pelicula", "serie",
+                "кино", "фильм", "сериал"],
     "art_culture": ["art", "museum", "gallery", "theatre", "exhibition", "architecture", "urbanism",
-                    "искусство", "музей", "галерея", "театр", "выставка", "архитектура"],
-    "books": ["book", "books", "reading", "книги", "книга", "чтение"],
+                    "arte", "museo", "galería", "teatro", "exposición", "arquitectura",
+                    "искусство", "музей", "театр", "выставка"],
+    "books": ["book", "books", "reading", "libro", "libros", "lectura", "leer", "книги", "чтение"],
     "food_drink": ["dinner", "food", "restaurant", "cooking", "matcha", "brunch", "lunch",
-                   "ужин", "еда", "ресторан", "готовка", "бранч", "обед"],
-    "coffee": ["coffee", "cafe", "tea", "кофе", "кафе", "чай"],
+                   "cena", "comida", "restaurante", "cocinar", "almuerzo", "tapas", "pan",
+                   "ужин", "еда", "ресторан", "готовка", "обед"],
+    "coffee": ["coffee", "cafe", "tea", "café", "té", "кофе", "кафе", "чай"],
     "nightlife": ["bar", "drinks", "pub", "party", "club",
-                  "бар", "напитки", "вечеринка", "клуб", "тусовка"],
+                  "copas", "fiesta", "discoteca",
+                  "бар", "вечеринка", "клуб", "тусовка"],
     "outdoors": ["hiking", "hike", "camping", "nature", "trek", "fishing",
-                 "поход", "походы", "природа", "рыбалка", "кемпинг"],
-    "travel": ["travel", "trip", "roadtrip", "путешествия", "поездка"],
+                 "senderismo", "montaña", "naturaleza", "acampada", "pesca", "excursión",
+                 "поход", "походы", "природа", "рыбалка"],
+    "travel": ["travel", "trip", "roadtrip", "viajar", "viaje", "escapada", "путешествия", "поездка"],
     "tech": ["ai", "ml", "coding", "programming", "crypto", "data",
-             "код", "программирование", "крипта", "данные", "разработка"],
-    "startups": ["startup", "startups", "founder", "product", "стартап", "стартапы", "основатель"],
-    "career": ["networking", "career", "mentorship", "investing", "нетворкинг", "карьера", "инвестиции"],
+             "programar", "código", "cripto", "datos", "tecnología",
+             "код", "программирование", "крипта", "данные"],
+    "startups": ["startup", "startups", "founder", "product", "emprender", "fundador", "стартап", "основатель"],
+    "career": ["networking", "career", "mentorship", "investing",
+               "carrera", "mentoría", "inversión",
+               "нетворкинг", "карьера", "инвестиции"],
     "languages": ["spanish", "english", "french", "german", "language", "exchange",
-                  "испанский", "английский", "французский", "немецкий", "язык", "практика"],
-    "wellness": ["yoga", "meditation", "pilates", "wellness", "йога", "медитация", "пилатес"],
-    "fashion": ["fashion", "thrift", "vinted", "sneakers", "мода", "винтаж", "кроссовки"],
+                  "español", "inglés", "francés", "alemán", "idioma", "intercambio",
+                  "испанский", "английский", "язык", "практика"],
+    "wellness": ["yoga", "meditation", "pilates", "wellness",
+                 "meditación", "bienestar",
+                 "йога", "медитация", "пилатес"],
+    "fashion": ["fashion", "thrift", "vinted", "sneakers",
+                "moda", "ropa", "vintage", "zapatillas",
+                "мода", "винтаж", "кроссовки"],
     "toys_collectibles": ["labubu", "lego", "figures", "collectible", "funko", "toys",
+                          "coleccionar", "figuras", "juguetes",
                           "лабубу", "лего", "фигурки", "коллекция"],
-    "pets": ["dog", "cat", "pet", "puppy", "собака", "кот", "питомец", "щенок"],
-    "photography": ["photography", "photo", "camera", "фото", "съёмка", "камера"],
-    "dating": ["date", "dating", "romance", "relationship", "свидание", "знакомства", "отношения"],
+    "pets": ["dog", "cat", "pet", "puppy", "perro", "gato", "mascota", "собака", "кот", "питомец", "щенок"],
+    "photography": ["photography", "photo", "camera", "fotografía", "foto", "cámara", "фото", "камера"],
+    "dating": ["date", "dating", "romance", "relationship",
+               "cita", "ligar", "pareja", "relación",
+               "свидание", "знакомства", "отношения"],
 }
 
 _ROLE_HINTS = (
-    ("play", ("play", "match", "squad", "играть", "поиграть", "сыграть")),
-    ("watch", ("watch", "смотреть", "посмотреть")),
-    ("practise", ("practise", "practice", "learn", "учить", "практика", "практиковать")),
-    ("discuss", ("discuss", "talk", "chat", "обсудить", "поговорить", "обсуждать")),
+    ("play", ("play", "match", "squad", "jugar", "juego", "partida", "играть", "поиграть", "сыграть")),
+    ("watch", ("watch", "ver", "mirar", "смотреть", "посмотреть")),
+    ("practise", ("practise", "practice", "learn", "practicar", "aprender", "учить", "практика", "практиковать")),
+    ("discuss", ("discuss", "talk", "chat", "hablar", "charlar", "обсудить", "поговорить", "обсуждать")),
+    ("attend", ("attend", "asistir", "asisto")),
 )
 
 
 def _tokens(ql):
-    return [w for w in re.findall(r"[a-zа-яё0-9]+", ql) if len(w) >= 3]
+    # accept Latin (incl. Spanish diacritics áéíóúüñ) + Cyrillic + digits so accented Spanish words
+    # ("fútbol", "cámara") survive as single tokens.
+    return [w for w in re.findall(r"[a-z0-9áéíóúüñа-яё]+", ql) if len(w) >= 3]
 
 
 def _role_of(ql):

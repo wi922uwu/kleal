@@ -67,6 +67,35 @@ check("ru coffee -> coffee", r["category"] == "coffee", r["category"])
 check("ru coffee -> type social", r["type"] == "social")
 check("ru coffee -> role discuss", r["role"] == "discuss", r["role"])
 
+# ---- 4b. SPANISH fallback (EN/ES audience) + accented tokeniser ----
+check("tokeniser keeps accented word whole", "fútbol" in F._tokens("quiero jugar al fútbol"),
+      str(F._tokens("quiero jugar al fútbol")))
+r = C("quiero jugar al fútbol")
+check("es futbol -> sports", r["category"] == "sports", r["category"])
+check("es futbol -> role play (jugar)", r["role"] == "play", r["role"])
+check("es futbol topic accented", "fútbol" in r["topics"], str(r["topics"]))
+
+r = C("quedar para un café")
+check("es cafe -> coffee", r["category"] == "coffee", r["category"])
+
+r = C("me gusta el senderismo")
+check("es senderismo -> outdoors", r["category"] == "outdoors", r["category"])
+check("es senderismo -> domain sport_activity", r["domain"] == "sport_activity")
+
+r = C("intercambio de idiomas en español")
+check("es idiomas -> languages", r["category"] == "languages", r["category"])
+check("es idiomas -> type language", r["type"] == "language")
+
+r = C("busco una cita")
+check("es cita -> dating", r["category"] == "dating", r["category"])
+
+r = C("quiero ver una película")
+check("es pelicula -> film_tv", r["category"] == "film_tv", r["category"])
+check("es pelicula -> role watch (ver)", r["role"] == "watch", r["role"])
+
+r = C("clase de fotografía con cámara")
+check("es camara accented -> photography", r["category"] == "photography", r["category"])
+
 # ---- 5. best-match (most hits) beats last-iterated ----
 r = C("футбол футбол футбол и немного кофе")
 check("best-match picks the dominant category", r["category"] == "sports", r["category"])
