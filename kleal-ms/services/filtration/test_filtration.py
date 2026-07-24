@@ -51,7 +51,10 @@ check("english padel topic", "padel" in r["topics"], str(r["topics"]))
 r = C("хочу поиграть в футбол")
 check("ru football -> sports", r["category"] == "sports", r["category"])
 check("ru football -> role play", r["role"] == "play", r["role"])
-check("ru football topic cyrillic", "футбол" in r["topics"], str(r["topics"]))
+# The topic is the CANONICAL English word, not the surface form that matched. This used to assert
+# "футбол" — i.e. it locked in the bug: matching resolves topics against an English taxonomy, so a
+# Cyrillic topic makes every candidate tier `none` and the search returns a silent zero.
+check("ru football topic is canonical english", "football" in r["topics"], str(r["topics"]))
 
 r = C("собираю лабубу")
 check("ru labubu -> toys_collectibles", r["category"] == "toys_collectibles", r["category"])
@@ -73,7 +76,7 @@ check("tokeniser keeps accented word whole", "fútbol" in F._tokens("quiero juga
 r = C("quiero jugar al fútbol")
 check("es futbol -> sports", r["category"] == "sports", r["category"])
 check("es futbol -> role play (jugar)", r["role"] == "play", r["role"])
-check("es futbol topic accented", "fútbol" in r["topics"], str(r["topics"]))
+check("es futbol topic is canonical english", "football" in r["topics"], str(r["topics"]))
 
 r = C("quedar para un café")
 check("es cafe -> coffee", r["category"] == "coffee", r["category"])
@@ -129,6 +132,50 @@ obj = {"category": "gaming", "topics": [], "role": "zzz"}
 n = F._normalize(obj, "хочу поиграть в доту")
 check("normalize backfills empty topics from fallback", len(n["topics"]) >= 1, str(n["topics"]))
 check("normalize clamps bad role -> meet", n["role"] == "meet")
+
+# ---- 10. the fallback speaks the taxonomy's language, whatever the user typed ----
+import re as _re
+_CYRILLIC = _re.compile(r"[а-яё]", _re.I)
+for _q, _want in [("хочу выпить кофе", "coffee"), ("поиграть в футбол", "football"),
+                  ("quiero quedar para un café", "coffee"), ("jugar al fútbol", "football"),
+                  ("шахматы вечером", "chess"), ("ajedrez por la noche", "chess"),
+                  ("сходить в кино", "cinema"), ("ir al cine", "cinema"),
+                  ("хочу на концерт", "concert"), ("ir a un concierto", "concert")]:
+    _r = C(_q)
+    check("fallback canon: %s -> %s" % (_q[:26], _want), _want in _r["topics"], str(_r["topics"]))
+    check("fallback topics english: %s" % _q[:26], not _CYRILLIC.search(" ".join(_r["topics"])),
+          str(_r["topics"]))
+# the ONE deliberate exception: nothing recognised -> the person's own words are carried through
+check("unrecognised text keeps the raw words", C("собираю кинцуги")["category"] == "other")
+
+# ---- 10b. Russian inflection: the table lists one form, people write all of them ----
+for _q, _want in [("хочу попробовать бачату", "bachata"), ("поиграть в футболом", "football"),
+                  ("играю в шахматами", "chess"), ("гуляю с собакой", "dog"),
+                  ("хочу в поход", "hiking"), ("коллекцию фигурок", "collectible")]:
+    check("inflected: %s -> %s" % (_q[:24], _want), _want in C(_q)["topics"], str(C(_q)["topics"]))
+# ...but the tolerance must not swallow unrelated words (why the 5-letter minimum exists)
+check("«котлета» is not «кот»", "cat" not in C("котлета на обед")["topics"], str(C("котлета на обед")["topics"]))
+check("«баран» is not «бар»", C("баран в поле")["category"] == "other", C("баран в поле")["category"])
+check("short words still match exactly", "cat" in C("мой кот спит")["topics"], str(C("мой кот спит")["topics"]))
+
+# ---- 11. `dating` must be corroborated by the answer's own topics ----
+# Injection: the model returns dating while its topics describe chess.
+_n = F._normalize({"category": "dating", "topics": ["chess", "game", "night", "play"]}, "x")
+check("injected dating with chess topics -> gaming", _n["category"] == "gaming", _n["category"])
+check("injected dating loses the dating type", _n["type"] != "dating", _n["type"])
+_n = F._normalize({"category": "dating", "topics": ["mountain", "hike", "trip", "outdoor"]}, "x")
+check("injected dating with hiking topics -> outdoors", _n["category"] == "outdoors", _n["category"])
+# Over-eagerness: no topic supports dating and nothing else is recognisable either.
+_n = F._normalize({"category": "dating", "topics": ["person", "attractive"]}, "x")
+check("uncorroborated dating -> social", _n["category"] == "social", _n["category"])
+# A REAL dating request must survive untouched — false-negatives here are the expensive side.
+for _t in (["date", "romance", "partner"], ["relationship", "serious"], ["love", "meet"],
+           ["flirt"], ["pareja", "cita"], ["romantic", "dinner"], ["girlfriend"], ["tinder"]):
+    _n = F._normalize({"category": "dating", "topics": _t}, "x")
+    check("real dating survives: %s" % _t, _n["category"] == "dating", _n["category"])
+# and the gate must not touch any other category
+_n = F._normalize({"category": "sports", "topics": ["padel"]}, "x")
+check("non-dating categories are untouched", _n["category"] == "sports")
 
 print()
 if _fails:
