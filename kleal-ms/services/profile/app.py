@@ -4550,6 +4550,30 @@ function intentWhen(){
 }
 function labelOf(opts,v,dash){ const o=opts.find(x=>x[0]===v);
   return o?o[1]:(dash!==undefined?dash:T('на твоё усмотрение','flexible')); }
+// "Kleal summary" = how Kleal READ the intent, not a generic promise. Prefer a real AI understanding
+// from the backend (s.summary / intent.summary) when it lands; otherwise reflect the parsed pieces
+// (activity + format + group + who) back as a short paraphrase, so the box always says what Kleal
+// understood rather than what it will do.
+function intentUnderstanding(){
+  const s=FLOW.summary||{}, it=FLOW.intent||{};
+  const given=String(s.summary||it.summary||'').trim();
+  if(given) return given;
+  const lead=String(s.request||FLOW.request||FLOW.text||'').trim()
+             || locTopicList(it.topics||[]) || T('встретиться','meet up');
+  const fmt=FLOW.fmt||(flowOnline()?'online':'offline');
+  const set=[
+    {offline:T('вживую','in person'),online:T('онлайн','online'),hybrid:T('онлайн или вживую','online or in person')}[fmt],
+    {'1:1':T('один на один','one-on-one'),small:T('в малой группе','in a small group'),party:T('компанией','with a group')}[FLOW.gsize||'']
+  ].filter(Boolean);
+  const sexL={male:T('парней','guys'),female:T('девушек','women'),any:''}[FLOW.sex||'any'];
+  const ageL=(FLOW.ageA&&FLOW.ageB)?(FLOW.ageA+'–'+FLOW.ageB):'';
+  const who=[sexL,ageL].filter(Boolean).join(' ');
+  let out=T('Понял так: ','Read it as: ')+lead;
+  if(set.length) out+=' — '+set.join(', ');
+  out+='.';
+  if(who) out+=' '+T('Ищу ','Looking for ')+who+'.';
+  return out;
+}
 function scr_summary(){
   // Full "Here's what I got" card (Figma 1688-26605): cover, title, date/time + location-or-link,
   // Category/Format/Personality rows, and a Kleal-summary box. Everything binds to what the flow
@@ -4581,7 +4605,7 @@ function scr_summary(){
   const sexL={male:T('Мужчины','Male'),female:T('Женщины','Female'),any:T('Не важно','Any')}[FLOW.sex||'any'];
   const ageL=(FLOW.ageA&&FLOW.ageB)?(FLOW.ageA+'–'+FLOW.ageB):'';
   const persona=[sexL,ageL].filter(Boolean).join(', ');
-  const summ=esc(s.summary||T('Kleal подберёт людей под этот запрос — по твоим настройкам профиля и деталям интента.',"Kleal will find people for this — from your profile settings and this intent."));
+  const summ=esc(intentUnderstanding());
   const kv=(k,v)=>v?`<div class="r"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`:'';
   return `<div class="kflow fade">${kbar(true)}
     <div class="kcont">
