@@ -116,12 +116,49 @@ def field_provenance(slots, provenance=None, field_confidence=None):
 # hard-токен (из classify_constraints) -> имя слота в provenance-карте (Вердикт#3): напр. dating -> 'type'.
 _HARD_TOKEN_FIELD = {"dating_mode": "type"}
 
+# Аудит #13 — НЕТ единого универсального порога для всех hard-слотов. Правило на поле:
+#   "explicit" — принимать только explicit (inferred/defaulted при ЛЮБОй уверенности -> уточнение);
+#   float      — explicit ИЛИ confidence >= порог.
+DEFAULT_HARD_CONFIDENCE = HARD_CONFIDENCE_MIN            # 0.6 для неперечисленных hard-полей
+FIELD_CONFIDENCE_RULE = {
+    "dating_mode": "explicit",          # dating -> explicit only
+    "type": "explicit",                 # purpose/тип режима -> explicit
+    "purpose": 0.9,                     # purpose -> explicit / очень высокая уверенность
+    "verifiedOnly": "explicit",         # safety -> explicit / rule-derived only
+    "minAge": "explicit", "maxAge": "explicit",   # sensitive preference -> explicit only
+    "gender": "explicit", "orientation": "explicit",
+    "requiredLanguages": 0.8,           # hard exclusionary language -> высокий порог
+    "format": 0.8,                      # exact format
+    "activity": 0.65,                   # activity subtype
+    "role": 0.65,
+}
 
-def low_confidence_hard_fields(fields, hard, *, threshold=HARD_CONFIDENCE_MIN):
-    """Вердикт#3: обязательное уточнение при низкой уверенности по HARD-полям (нельзя молча искать).
-    hard-токен резолвится в реальное имя слота (dating_mode -> type), иначе dating-инференс не флагался."""
-    return [k for k in hard
-            if float((fields.get(_HARD_TOKEN_FIELD.get(k, k)) or {}).get("confidence", 1.0)) < threshold]
+
+def _field_ok(source, confidence, rule):
+    """Аудит #13: проходит ли поле по своему правилу. explicit — всегда; иначе по порогу/или запрещено."""
+    if source == "explicit":
+        return True
+    if rule == "explicit":
+        return False
+    return float(confidence) >= float(rule)
+
+
+def low_confidence_hard_fields(fields, hard, *, rules=None):
+    """Аудит #13 (+Вердикт#3): field-specific обязательное уточнение по HARD-полям. Для каждого hard-токена
+    берётся его правило (explicit-only / порог), а не один общий 0.6. hard-токен резолвится в реальный слот
+    (dating_mode -> type). Заявленное-но-неуверенное inferred поле -> уточнение; отсутствующее -> это missing
+    (blocking_clarifications), здесь не флагаем."""
+    rules = rules or FIELD_CONFIDENCE_RULE
+    out = []
+    for k in hard:
+        field_name = _HARD_TOKEN_FIELD.get(k, k)
+        f = fields.get(field_name)
+        if f is None:
+            continue
+        rule = rules.get(k, rules.get(field_name, DEFAULT_HARD_CONFIDENCE))
+        if not _field_ok(f.get("source", "defaulted"), f.get("confidence", 0.0), rule):
+            out.append(k)
+    return out
 
 
 def compile_intent(slots, *, intent_id, user_id, created_at=None, expires_at=None, ttl_sec=None,

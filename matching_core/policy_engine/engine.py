@@ -6,6 +6,32 @@ explanation, ни в agent probe (C#5: safety block исключает до feat
 discovery, но personal proposal запрещён до ответа пользователя / проверки сервиса безопасности.
 """
 from .gates import CANONICAL_GATES, ALLOW, BLOCK, REVIEW
+from . import gates as _G
+
+# Аудит #3: дешёвый hard-eligibility subset — гоняется по ВСЕМУ пулу ДО budget truncation, чтобы бюджет
+# не отрезал допустимых кандидатов раньше policy. Только definite-hard field-гейты (без feature building).
+HARD_ELIGIBILITY_GATES = (_G.account_status, _G.mutual_block, _G.safety_restrictions, _G.age_legal,
+                          _G.intent_mode_isolation, _G.language_feasibility, _G.location_policy, _G.capacity)
+
+
+def hard_blocked(intent, candidate, ctx=None):
+    """True, если кандидат получает definite BLOCK от cheap hard-eligibility subset (для префильтра)."""
+    ctx = ctx or {}
+    for gate in HARD_ELIGIBILITY_GATES:
+        if gate(intent, candidate, ctx)[0] == BLOCK:
+            return True
+    return False
+
+
+def hard_prefilter(intent, pool, ctx=None):
+    """Аудит #3: cheap hard-eligibility prefilter по ВСЕМУ пулу ДО retrieval-бюджета. Убирает definite-BLOCK
+    кандидатов; ALLOW/REVIEW проходят (полная policy.evaluate — позже, на retrieved-срезе). Так budget
+    режет уже ДОПУСТИМЫЙ пул, а не теряет хороших кандидатов за хвостом заблокированных.
+    Возвращает (eligible_pool, stats)."""
+    ctx = ctx or {}
+    eligible = [c for c in (pool or []) if not hard_blocked(intent, c, ctx)]
+    return eligible, {"input": len(pool or []), "eligible": len(eligible),
+                      "dropped_hard": len(pool or []) - len(eligible)}
 
 
 def evaluate(intent, candidate, ctx=None):

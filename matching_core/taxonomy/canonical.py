@@ -97,13 +97,15 @@ def _family_id(nid):
 
 # --------------------------------------------------------------- публичный API
 def resolve_node(text):
-    """Строка интереса/темы -> node_id по алиасам (exact norm, затем по значимому слову)."""
+    """Строка интереса/темы -> node_id: точный алиас, затем СТРОГИЙ морфологический префикс.
+    review#A: короткие алиасы (len<5: 'remo','surf','lol') больше НЕ матчат несвязанные длинные слова
+    ('remote'→rowing, 'surface'→surfing, 'lollipop'→league) — иначе canonical давал ложный EXACT (уровень 4)."""
     w = _norm(text)
     if w in ALIAS:
-        return ALIAS[w]
+        return ALIAS[w]                                       # точный алиас
     for alias, nid in ALIAS.items():
-        if len(w) >= 4 and (alias == w or alias.startswith(w) or w.startswith(alias)):
-            return nid
+        if len(alias) >= 5 and len(w) >= 4 and (alias.startswith(w) or w.startswith(alias)):
+            return nid                                        # морфологический вариант (оба достаточно длинные)
     return None
 
 
