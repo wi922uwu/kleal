@@ -414,7 +414,12 @@ _GENERIC_TOPIC = {"sport", "sports", "game", "games", "gaming", "activity", "act
                   # verbs describing HOW, not WHAT — filtration emits them alongside the real topic
                   "play", "playing", "talk", "talking", "discussing", "drinking", "eating",
                   "watching", "hanging", "hang", "hangout", "chill", "joining", "learning",
-                  "practising", "practicing",
+                  "practising", "practicing", "practice", "practise",
+                  # English filler verbs, the counterpart of _is_verbish for Russian: filtration
+                  # answers "grab a beer" with a `grab` topic, which the ranker then tries to match
+                  # people on.
+                  "grab", "grabbing", "get", "getting", "take", "taking", "catch", "catching",
+                  "do", "doing", "make", "making", "go", "going", "visit", "visiting",
                   # answers to «вдвоём или компанией?» belong in `format`, not in what we search on —
                   # they leaked into topics as soon as the agent started asking about format
                   "small", "group", "groups", "big", "large", "duo", "pair", "solo", "alone",
@@ -870,7 +875,10 @@ def build_intent(sig, cat, last_user, lang):
     # entry: «спорт» -> gym, «поиграть» -> gaming) is a legitimate whole ask when it is all the
     # person gave — dropping it outright returns nothing. It only loses when something specific
     # exists beside it, which is the «прогулка + outdoors» case.
-    _strong = [t for t in topics if t not in _GENERIC_TOPIC]
+    # _NO_ACTIVITY joins the filter here: «ищу напарника в зал» produced [gym, workout, fitness,
+    # partner], and `partner` names WHO you want, not what you would do — the ranker can only match
+    # noise on it. Still weak-not-blanket: if such a word is ALL the person gave, it survives below.
+    _strong = [t for t in topics if t not in _GENERIC_TOPIC and t not in _NO_ACTIVITY]
     topics = _strong or topics
     from_request = bool(topics)
     # An `or` chain used to end here, and that is how the SUBJECT of a request got thrown away: the
@@ -897,8 +905,12 @@ def build_intent(sig, cat, last_user, lang):
         # Russian or Spanish grammar: «настольный», «искусственный» and "quiero" all reached the
         # engine — and the user's card tags — through this branch, where they can never match
         # anything. So a non-Latin word is used only if nothing English survived at all.
+        # Same filter as _strong above, or the word comes straight back in through the side door:
+        # `partner` was dropped from the primary topics and re-admitted here, so «ищу напарника в
+        # зал» ranked on it anyway — and the result flapped between 0 and 4 people run to run.
         spare = [str(t).lower()[:24] for t in (cat.get("topics") or [])
-                 if str(t).strip() and str(t).strip().lower() not in _GENERIC_TOPIC]
+                 if str(t).strip() and str(t).strip().lower() not in _GENERIC_TOPIC
+                 and str(t).strip().lower() not in _NO_ACTIVITY]
         _pool, _seen = [], set(topics)
         for w in spare + raw:
             if w and w not in _seen:
@@ -1085,6 +1097,12 @@ def run_match(intent, sig, uid, lang, negotiate=False, owner=None):
     except Exception as e:
         return {"intent": intent, "top": None, "candidates": [], "error": str(e)[:160]}, []
     cands = res.get("candidates") or []
+    # A score of 0 is not a weak match, it is no evidence at all. When the pool has nobody for the
+    # ask, matching still returns filler at score 0 and the cards presented them as real people —
+    # measured on "find someone into speedcubing": four scored-0 strangers, shown without a hint
+    # that nothing was found. Dropping them here empties `top` too, so the honest "nobody yet"
+    # reply downstream takes over. A missing score is left alone; only an explicit <=0 is filler.
+    cands = [c for c in cands if not (isinstance(c.get("score"), (int, float)) and c["score"] <= 0)]
     if cands and negotiate:
         try:                                     # each candidate's agent accepts/declines + writes an opener
             cands = (_post(MATCH_URL, "/api/agent/negotiate", {"intent": intent, "candidates": cands[:5]},
@@ -1239,7 +1257,13 @@ def buddy_chat(messages, profile, signals, uid=None):
     # meet people but named no concrete activity. Ask what they want to do instead of ranking the
     # whole pool on a generic intent and name-dropping a weak "match" (spec §5 clarification).
     topics = [str(t).lower() for t in (intent.get("topics") or [])]
-    bare_social = (not topics) or all(t in ("social", "other") for t in topics)
+    # The test used to be `all topics are literally "social"/"other"`. Filtration answers «найди мне
+    # кого-нибудь» with something richer and perfectly reasonable — [person, find, someone] — so the
+    # guard stopped firing and a request that named nothing ranked the whole pool: four strangers
+    # presented as matches for nothing in particular, in all three languages. Ask instead whether any
+    # topic names a THING TO DO, which is what the guard always meant.
+    bare_social = not [t for t in topics
+                       if t not in _NO_ACTIVITY and t not in _GENERIC_TOPIC and t not in _FILLER_TOPICS]
     if bare_social:
         out["reply"] = _ASK_ACTIVITY.get(lang, _ASK_ACTIVITY["en"])
         out["tool_call"] = "ask_activity"
@@ -1683,6 +1707,24 @@ def _salvage(reply, lang):
 # become a searchable intent whose "topics" are hello/greeting.
 _FILLER_TOPICS = {"hello", "hi", "greeting", "greetings", "how", "are", "you", "thanks", "thank",
                   "bye", "goodbye", "ok", "okay", "yes", "no", "smalltalk", "small", "talk", "chat"}
+
+
+# Words that name the PERSON you want, never the thing you want to do. They are legitimate output
+# from filtration for a request that named no activity — and completely useless to rank on.
+_NO_ACTIVITY = {"person", "people", "someone", "somebody", "anyone", "friend", "friends",
+                "new friends", "meet people", "meeting people", "making friends", "new people",
+                "find", "finding", "search", "searching", "looking", "company", "companion",
+                "buddy", "mate", "partner", "partners", "teammate", "team mate",
+                "connection", "connections", "acquaintance",
+                "socializing", "socialising", "socialize", "socialise", "social", "other",
+                "meet", "meets", "mingle", "hang out", "hangout", "get together",
+                # bare "network" arrives from «познакомиться»; the ACTIVITY word is "networking",
+                # which the ranker's taxonomy actually resolves — bare "network" it does not, so it
+                # could only ever add literal noise.
+                "network",
+                "gente", "persona", "personas", "alguien", "amigos", "amigo", "conocer",
+                "pareja", "compañero", "compañera", "companero", "напарник", "партнёр", "партнер",
+                "человек", "люди", "друзья", "знакомство", "компания"}
 
 
 def _real_topics(cat):

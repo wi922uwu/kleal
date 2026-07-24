@@ -156,6 +156,29 @@ for _n, _d in _LOCALISED.items():
               all(v.count("%s") == _c for v in _d.values() if isinstance(v, str)),
               str({k: v.count("%s") for k, v in _d.items() if isinstance(v, str)}))
 
+# ---- 9b. a request that names no ACTIVITY must be a question, not a slate of strangers ----
+def _bare(tops):
+    return not [t for t in tops if t not in B._NO_ACTIVITY and t not in B._GENERIC_TOPIC
+                and t not in B._FILLER_TOPICS]
+
+
+# Real filtration output for «найди мне кого-нибудь» / "find me someone" / "busco a alguien".
+# The old guard only caught the literal "social"/"other" placeholders, so once filtration started
+# answering with richer wording it stopped firing and ranked the whole pool on nothing.
+for _t in ([], ["social"], ["other"], ["person", "find", "someone"], ["meet people", "new friends"],
+           ["person", "friend"], ["person", "search"], ["people", "company"], ["gente", "alguien"],
+           # exactly what filtration returned on the pod for these two Russian asks
+           ["person", "find", "someone", "meet"], ["meet people", "socialize", "friends", "network"]):
+    check("vague ask -> clarify: %s" % _t, _bare(_t) is True, str(_t))
+for _t in (["football", "match"], ["coffee"], ["yoga"], ["chess", "strategy"], ["padel", "racket"],
+           ["coffee", "company"], ["language", "exchange"], ["labubu"], ["bachata"],
+           ["startup", "founder", "networking", "business"], ["gym", "workout", "fitness"]):
+    check("real ask -> search: %s" % _t, _bare(_t) is False, str(_t))
+
+# ---- 9c. "practice" is a HOW-word: 16 people in the pool list it as their whole interest ----
+check("practice is filtered as generic", "practice" in B._GENERIC_TOPIC)
+check("practise too", "practise" in B._GENERIC_TOPIC)
+
 print()
 if _fails:
     print("FAILED %d:" % len(_fails), ", ".join(_fails))
