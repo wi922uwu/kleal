@@ -819,6 +819,23 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .coptbtn.mute{background:var(--neutral100);color:var(--fg)}
 .coptbtn.warn{background:var(--primary);color:#fff}
 .coptbtn.dark{background:#181B22;color:#fff}
+/* Recommendation card (candidate) */
+.rcard{background:var(--card);border-radius:20px;padding:16px;box-shadow:0 4px 21.6px #0000000f;
+  display:flex;flex-direction:column;gap:14px}
+.rcard .rtop{display:flex;gap:12px;align-items:flex-start;cursor:pointer}
+.rcard .rph{width:64px;height:64px;flex:none;border-radius:999px;background:var(--neutral100);overflow:hidden}
+.rcard .rph img{width:100%;height:100%;object-fit:cover;display:block}
+.rcard .rbd{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.rcard .rnm{font-size:16px;line-height:20px;font-weight:700;color:var(--fg)}
+.rcard .rrole{font-size:13px;line-height:18px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rcard .rloc{display:flex;align-items:center;gap:4px;font-size:13px;line-height:18px;color:var(--muted);margin-top:1px}
+.rcard .rloc svg{width:14px;height:14px;flex:none}
+.rcard .rtags{display:flex;flex-wrap:wrap;gap:8px}
+.rcard .rtag{padding:6px 12px;border-radius:999px;background:var(--neutral100);font-size:12px;font-weight:500;color:var(--fg)}
+.rcard .rsum .h{font-size:13px;font-weight:600;color:var(--primary);margin-bottom:4px}
+.rcard .rsum .tx{font-size:13px;line-height:1.5;color:var(--muted)}
+.rcard .rinv{width:100%;height:48px;border:0;border-radius:999px;background:var(--primary);color:#fff;
+  font:inherit;font-size:15px;font-weight:600;cursor:pointer}
 .kgrp{display:flex;flex-direction:column;gap:12px}
 .kgrp .hd{display:flex;gap:8px;align-items:center;font-size:15px;line-height:20px;font-weight:600}
 .kgrp .hd svg{width:18px;height:18px}
@@ -5230,17 +5247,28 @@ function candMeta(c){
   else if(c.readiness_ru) bits.push(`<span class="mi">${IC.clock}${esc(UILANG==='ru'?c.readiness_ru:(c.readiness_en||''))}</span>`);
   return bits.join('');
 }
+// Recommendation card (Figma "Best fit for your request"): photo, name, role/location, tags, band
+// badge, a Kleal-summary line, and an Invite CTA. Used both in the results list and the best-fit view.
 function personRow(c,i,cls){
-  const ints=(c.interests||[]).slice(0,3).map(x=>`<span class="ktag">${esc(x)}</span>`).join('');
-  return `<div class="prow ${cls||''}" data-act="cand-open" data-n="${esc(c.name)}">
-    <div class="ph">${IC.person}</div>
-    <div class="bd">
-      <div class="nm"><b>${esc(c.name)}${c.age?(', '+c.age):''}</b>${bandBadge(c)}</div>
-      ${(c.reasons_ru||c.reasons_en||[]).length?`<div class="sub">${esc((UILANG==='ru'?c.reasons_ru:c.reasons_en||[])[0]||'')}</div>`:''}
-      <div class="meta">${candMeta(c)}</div>
-      ${ints?`<div class="meta">${ints}</div>`:''}
+  const photo=c.photo||'assets/match-anna.jpg';                 // demo placeholder until real photos exist
+  const tags=(c.interests||[]).slice(0,3).map(x=>`<span class="rtag">${esc(x)}</span>`).join('');
+  const role=(c.tagline||c.about||'').trim();
+  const loc=c.area||c.city||(c.km!=null?(c.km+' '+T('км','km')):'');
+  return `<div class="rcard ${cls||''}">
+    <div class="rtop" data-act="cand-open" data-n="${esc(c.name)}">
+      <div class="rph"><img src="${esc(photo)}" alt="" onerror="this.style.display='none'"></div>
+      <div class="rbd">
+        <div class="rnm">${esc(c.name)}${c.age?(', '+c.age):''}</div>
+        ${role?`<div class="rrole">${esc(role.slice(0,60))}</div>`:''}
+        ${loc?`<div class="rloc">${IC.pin}<span>${esc(loc)}</span></div>`:''}
+      </div>
+      ${bandBadge(c)}
     </div>
-    <div class="bm" data-act="cand-save" data-n="${esc(c.name)}">${IC.bookmark}</div></div>`;
+    ${tags?`<div class="rtags">${tags}</div>`:''}
+    <div class="rsum"><div class="h">${T('Саммари Kleal:','Kleal summary:')}</div>
+      <div class="tx">${esc(candSummaryLine(c))}</div></div>
+    <button class="rinv" data-act="cand-open" data-n="${esc(c.name)}">${T('Пригласить','Invite')}</button>
+  </div>`;
 }
 
 // The footer that answers «а это все?». It prints the real remaining count, so «показать ещё»
