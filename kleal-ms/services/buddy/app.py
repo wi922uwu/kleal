@@ -244,7 +244,7 @@ instead of asking who they are.
 Reply as ONE JSON object only, nothing outside it:
 {"reply":"<your natural, helpful message>","signals":{<only fields you newly learned THIS turn; may include "interest">},"match":true|false}
 
-LANGUAGE: write "reply" in the SAME language the user writes in (they write Russian -> you answer in Russian). Every other value — signals, interest, topics, time, area — stays in ENGLISH, because the filtration and matching agents only understand English.
+LANGUAGE: write "reply" in the SAME language the user writes in (Russian -> answer in Russian; Spanish -> answer in Spanish; English -> answer in English). Every other value — signals, interest, topics, time, area — stays in ENGLISH, because the filtration and matching agents only understand English.
 
 MEMORY: the conversation you are given is the WHOLE history — there is nothing before it. Never refer to things "we already talked about", never say "as I said" or "снова"/"again", and never claim to remember a person or a topic that is not in the text above. If the history starts with [FIRST MESSAGE], this person is talking to you for the very first time: greet them as a new acquaintance.'''
 
@@ -386,9 +386,26 @@ _RU_END = ("ами", "ями", "ах", "ях", "ов", "ев", "ом", "ем", "
 _CYR = re.compile(r"[а-яё]", re.I)
 
 
+# Spanish shares the Latin alphabet with English, so a Cyrillic-vs-not test read every Spanish request
+# as English (the P0 bug: an ES/EN audience got English replies to Spanish). Detect Spanish by its
+# distinctive glyphs (ñ ¿ ¡ accents) or a common Spanish function/verb word; only then fall to English.
+_ES_CHARS = re.compile(r"[ñ¿¡áéíóúü]", re.I)
+_ES_WORDS = re.compile(
+    r"\b(?:que|con|para|por|una|quiero|quieres|busco|buscas|hola|gente|alguien|alguno|alguna|"
+    r"quedar|salir|español|espanol|mañana|manana|fútbol|futbol|café|cafe|práctica|practica|practicar|"
+    r"cita|pareja|noche|fiesta|película|pelicula|idiomas|idioma|nativo|nativa|tranquilo|tranquila|"
+    r"vamos|hacer|tengo|estoy|está|estás|también|tambien|gustaría|gustaria|jugar|contigo|conmigo)\b",
+    re.I)
+
+
 def detect_lang(text):
     """Which language we REPLY in. Machine-facing fields stay English regardless."""
-    return "ru" if _CYR.search(str(text or "")) else "en"
+    t = str(text or "")
+    if _CYR.search(t):
+        return "ru"
+    if _ES_CHARS.search(t) or _ES_WORDS.search(t):
+        return "es"
+    return "en"
 
 
 def _stem(w):
@@ -684,10 +701,10 @@ def _title_for(topics, tags, typ, lang):
     translates before falling back, so an untranslated synonym can never win over a translatable topic.
     """
     if typ == "dating":
-        return "Свидание" if lang == "ru" else "Date"
+        return _L(lang, "Свидание", "Date", "Cita")
     cands = [str(t) for t in list(topics or []) + list(tags or []) if str(t).strip()]
     if not cands:
-        return "Встреча" if lang == "ru" else "Meet someone"
+        return _L(lang, "Встреча", "Meet someone", "Quedada")
     if lang == "ru":
         for c in cands:
             word = _TOPIC_RU.get(c.strip().lower())
@@ -697,7 +714,7 @@ def _title_for(topics, tags, typ, lang):
             if any('а' <= ch <= 'я' for ch in c.lower()):
                 return c + " — встреча"
         return cands[0].capitalize() + " — встреча"
-    return cands[0].capitalize() + " meetup"
+    return cands[0].capitalize() + (" — quedada" if lang == "es" else " meetup")
 
 
 # Online-native activities and explicit "let's do it online" cues. Hard-coding mode="offline" sent
@@ -811,23 +828,23 @@ def build_intent(sig, cat, last_user, lang):
     demand = str(sig.get("interest") or "") + " " + str(last_user or "")
     req_langs = norm_langs(sig.get("languages")) if any(w in demand.lower() for w in LANG_DEMAND) else []
     mode = _infer_mode(topics, sig, last_user, cat.get("category"), cat.get("subcategory"))
-    place = str(sig.get("area") or (("Онлайн" if lang == "ru" else "Online") if mode == "online" else
-                                    ("Публичные места рядом" if lang == "ru" else "Public places nearby")))[:60]
+    place = str(sig.get("area") or (_L(lang, "Онлайн", "Online", "En línea") if mode == "online" else
+                                    _L(lang, "Публичные места рядом", "Public places nearby", "Lugares públicos cercanos")))[:60]
     title = _title_for(topics, tags, typ, lang)
     return {
         # ---- machine-facing: matching-service reads exactly these ----
         "title": title, "type": typ, "topics": topics or ["social"], "role": role, "mode": mode,
         "category": cat.get("category"), "subcategory": cat.get("subcategory") or "",
-        "time": sig.get("time") or ("Гибко" if lang == "ru" else "Flexible"),
-        "place": place, "format": ("1:1 или небольшая группа" if lang == "ru" else "1:1 or small group"),
+        "time": sig.get("time") or _L(lang, "Гибко", "Flexible", "Flexible"),
+        "place": place, "format": _L(lang, "1:1 или небольшая группа", "1:1 or small group", "1:1 o grupo pequeño"),
         "radiusKm": 15, "verifiedOnly": bool(dating), "minAge": (18 if dating else None), "maxAge": None,
         "requiredLanguages": req_langs, "exactMatchRequired": False,
         "adjacentAllowed": True, "broadAllowed": True,
         # ---- card-facing: what the intent card in the UI shows ----
         "activity": title, "tags": tags or ["social"], "area": place,
-        "safety": ("Только публичные места" if lang == "ru" else "Public places only"),
-        "visibility": ("Только через Kleal" if lang == "ru" else "Via Kleal only"),
-        "fallback": ("Онлайн, если не сложится" if lang == "ru" else "Online if it falls through"),
+        "safety": _L(lang, "Только публичные места", "Public places only", "Solo lugares públicos"),
+        "visibility": _L(lang, "Только через Kleal", "Via Kleal only", "Solo a través de Kleal"),
+        "fallback": _L(lang, "Онлайн, если не сложится", "Online if it falls through", "En línea si no cuaja"),
         # Only topics that came from the REQUEST make an intent rankable. A category-bridge guess is a
         # last-resort label, not evidence that anyone matching it wants THIS.
         # Deliberately NOT "must contain a non-bucket word". That rule contradicted the weak/strong
@@ -1401,9 +1418,19 @@ Rules:
 
 LANGUAGE: write "reply" in __LANGNAME__ — the language this user writes in. This is not optional: __LANGDIR__ Every other value — activity, time, format — stays in ENGLISH, because the filtration and matching agents only understand English. (The transcript below is labelled "User:"/"Kleal:" in English for machine reasons; that says nothing about the reply language.)'''
 
-_LANGNAME = {"ru": "Russian", "en": "English"}
+_LANGNAME = {"ru": "Russian", "en": "English", "es": "Spanish"}
 _LANGDIR = {"ru": "every word of \"reply\" must be in Russian, in Cyrillic script.",
-            "en": "every word of \"reply\" must be in English."}
+            "en": "every word of \"reply\" must be in English.",
+            "es": "every word of \"reply\" must be in Spanish (castellano)."}
+
+
+def _L(lang, ru, en, es=None):
+    """Pick a user-facing string by reply language; Spanish falls back to English if not given."""
+    if lang == "ru":
+        return ru
+    if lang == "es":
+        return es if es is not None else en
+    return en
 
 
 _LAT_GLUE = re.compile(r"[а-яА-ЯёЁ][A-Za-z]|[A-Za-z][а-яА-ЯёЁ]")
@@ -1585,6 +1612,9 @@ HARM_REPLY = {
     "en": "I won't do that. Kleal introduces real people to each other, and I'm not going to look "
           "for someone you've just described as the target. If you want company for something "
           "else, tell me and we'll look.",
+    "es": "Eso no lo voy a hacer. Kleal conecta a personas reales entre sí, y no voy a buscar a "
+          "alguien que, según tus propias palabras, sería el objetivo. Si quieres compañía para "
+          "otra cosa, dímelo y la buscamos.",
 }
 
 
@@ -1626,6 +1656,8 @@ MINOR_REPLY = {
           "Если тебе уже есть 18 — поправь возраст в профиле, и вернёмся к этому.",
     "en": "Kleal is for 18 and over, so I can't set up meetups here. "
           "If you are 18 or older, correct your age in your profile and we'll pick this up again.",
+    "es": "Kleal es para mayores de 18 años, así que no puedo organizar quedadas aquí. "
+          "Si ya tienes 18, corrige tu edad en el perfil y lo retomamos.",
 }
 
 
