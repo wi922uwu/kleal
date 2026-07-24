@@ -248,7 +248,7 @@ instead of asking who they are.
 Reply as ONE JSON object only, nothing outside it:
 {"reply":"<your natural, helpful message>","signals":{<only fields you newly learned THIS turn; may include "interest">},"match":true|false}
 
-LANGUAGE: write "reply" in the SAME language the user writes in (Russian -> answer in Russian; Spanish -> answer in Spanish; English -> answer in English). Every other value — signals, interest, topics, time, area — stays in ENGLISH, because the filtration and matching agents only understand English.
+LANGUAGE: write "reply" in the SAME language the user writes in (Russian -> answer in Russian; Spanish -> answer in Spanish; English -> answer in English). Write EVERY word of "reply" in that language's own script — translate or transliterate technical terms, species/type names and examples (in Russian say «кучевые», «слоистые», «перистые облака», never "cumulus"/"stratus" or any Chinese/Japanese characters). Never leave a foreign-script or stray Latin word inside a Russian or Spanish sentence. Every OTHER value — signals, interest, topics, time, area — stays in ENGLISH, because the filtration and matching agents only understand English.
 
 MEMORY: the conversation you are given is the WHOLE history — there is nothing before it. Never refer to things "we already talked about", never say "as I said" or "снова"/"again", and never claim to remember a person or a topic that is not in the text above. If the history starts with [FIRST MESSAGE], this person is talking to you for the very first time: greet them as a new acquaintance.'''
 
@@ -388,6 +388,9 @@ _GENERIC_TOPIC = {"sport", "sports", "game", "games", "gaming", "activity", "act
 _RU_END = ("ами", "ями", "ах", "ях", "ов", "ев", "ом", "ем", "ой", "ей", "ую", "ые", "ый", "ая", "ое",
            "у", "а", "я", "и", "ы", "е", "ю", "ь", "й", "о")
 _CYR = re.compile(r"[а-яё]", re.I)
+# Chinese/Japanese/Korean glyphs never belong in a RU/EN/ES reply — the 70B leaks them for technical
+# terms ("积云" for cumulus). Presence of any is an artifact, so _lang_ok rejects it (triggers a re-roll).
+_CJK = re.compile(r"[぀-ヿ㐀-鿿가-힯]")
 
 
 # Spanish shares the Latin alphabet with English, so a Cyrillic-vs-not test read every Spanish request
@@ -1428,9 +1431,10 @@ Rules:
 LANGUAGE: write "reply" in __LANGNAME__ — the language this user writes in. This is not optional: __LANGDIR__ Every other value — activity, time, format — stays in ENGLISH, because the filtration and matching agents only understand English. (The transcript below is labelled "User:"/"Kleal:" in English for machine reasons; that says nothing about the reply language.)'''
 
 _LANGNAME = {"ru": "Russian", "en": "English", "es": "Spanish"}
-_LANGDIR = {"ru": "every word of \"reply\" must be in Russian, in Cyrillic script.",
-            "en": "every word of \"reply\" must be in English.",
-            "es": "every word of \"reply\" must be in Spanish (castellano)."}
+_LANGDIR = {"ru": "every word must be in Russian, in Cyrillic script — translate/transliterate technical "
+                  "terms and names («кучевые облака», not \"cumulus\"), and use NO Latin or Chinese/Japanese words.",
+            "en": "every word must be in English.",
+            "es": "every word must be in Spanish (castellano) — translate technical terms and names, no Russian or CJK words."}
 
 
 def _L(lang, ru, en, es=None):
@@ -1458,9 +1462,11 @@ def _lang_ok(reply, lang):
     Latin words that stand on their own are LEFT ALONE — "поиграть в Dota", "Формула 1", venue and game
     names are normal Russian chat, so the ratio has to be well past half before we call it English.
     """
+    s = str(reply or "")
+    if _CJK.search(s):
+        return False                          # CJK/Hangul in any reply is a generation artifact ("积云")
     if lang != "ru":
         return True
-    s = str(reply or "")
     if not _CYR.search(s):
         return False
     if _LAT_GLUE.search(s):
