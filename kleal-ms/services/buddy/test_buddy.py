@@ -99,6 +99,63 @@ check("a long english turn is trusted on its own",
       B.thread_lang(ru_thread, "could you tell me more about this topic") == "en")
 check("thread_lang with no history falls back cleanly", B.thread_lang([], "") == "en")
 
+# ---- 7. topics: multi-word phrases, accents, and the EN-first union ----
+check("multi-word alias resolves WHOLE ('table tennis' is not 'tennis')",
+      B.norm_topics(["table tennis"]) == ["pingpong"], str(B.norm_topics(["table tennis"])))
+check("a multi-word phrase with no alias still splits",
+      "ai" in B.norm_topics(["artificial intelligence", "ai"]), str(B.norm_topics(["artificial intelligence", "ai"])))
+check("plain single words are unaffected", B.norm_topics(["футбол"]) == ["football"],
+      str(B.norm_topics(["футбол"])))
+
+check("spanish sport resolves", B.norm_topic("fútbol") == "football", B.norm_topic("fútbol"))
+check("spanish padel resolves", B.norm_topic("pádel") == "padel", B.norm_topic("pádel"))
+check("spanish coffee resolves", B.norm_topic("café") == "coffee", B.norm_topic("café"))
+check("every ES/EN alias points at a real taxonomy word",
+      all(v in B.BROAD_OF for v in B._EN_SYN.values()),
+      str([k for k, v in B._EN_SYN.items() if v not in B.BROAD_OF]))
+
+import re as _re
+_TOK = _re.compile(r"[a-zа-яёáéíóúüñç0-9]{4,}")
+check("tokeniser keeps «sábado» whole (was 'bado')", "sábado" in _TOK.findall("jugar el sábado"),
+      str(_TOK.findall("jugar el sábado")))
+check("tokeniser keeps «fútbol» whole (was 'tbol')", "fútbol" in _TOK.findall("jugar al fútbol"),
+      str(_TOK.findall("jugar al fútbol")))
+
+check("spanish function words are stopped", all(w in B._RAW_STOP for w in ("quiero", "quedar", "jugar", "alguien")))
+check("weekdays are not topics", all(w in B._GENERIC_TOPIC for w in ("saturday", "sábado", "суббота")))
+check("«кого» fragment is stopped", "кого" in B._RAW_STOP)
+
+# ---- 8. the search trigger speaks Spanish (the ES audience could not reach matching at all) ----
+for _t in ("quiero encontrar a alguien para jugar al pádel", "busco gente para tomar un café",
+           "busco compañero de pádel", "¿alguien se apunta a jugar?", "preséntame a alguien",
+           "quiero conocer gente en Barcelona", "encuéntrame a alguien para jugar",
+           "intercambio de idiomas en español"):
+    check("es ask triggers a search: %s" % _t[:34], B.wants_people(_t, False) is True)
+for _t in ("busco un libro sobre historia", "qué es el padel", "hola cómo estás",
+           "ayer jugué al pádel con mi hermano"):
+    check("es non-ask stays chat: %s" % _t[:34], B.wants_people(_t, False) is False)
+# the RU/EN triggers must be untouched
+check("ru ask still triggers", B.wants_people("найди мне кого-то поиграть в футбол", False) is True)
+check("en ask still triggers", B.wants_people("find me someone to play football", False) is True)
+check("ru chit-chat still stays chat", B.wants_people("что такое хламидиоз", False) is False)
+
+# ---- 9. every user-facing string exists in all three languages ----
+# A missing "es" row was not a cosmetic gap: these are indexed as dict[lang] on the search-result
+# path, so KeyError('es') killed a Spanish search AFTER matching had already found people.
+_LOCALISED = {"_FALLBACK_REPLY": B._FALLBACK_REPLY, "_CLICK": B._CLICK, "_BROADER": B._BROADER,
+              "_BROADENED": B._BROADENED, "_NEEDCLAR": B._NEEDCLAR, "_ASK_ACTIVITY": B._ASK_ACTIVITY,
+              "_NO_ONE": B._NO_ONE, "_FILED": B._FILED, "_NEW": B._NEW, "_GLITCH": B._GLITCH,
+              "MINOR_REPLY": B.MINOR_REPLY, "HARM_REPLY": B.HARM_REPLY}
+for _n, _d in _LOCALISED.items():
+    check("%s covers ru/en/es" % _n, {"ru", "en", "es"} <= set(_d), str(sorted(_d)))
+# the %s placeholders must match across languages, or a localised reply raises at format time
+for _n, _d in _LOCALISED.items():
+    if isinstance(_d.get("en"), str):
+        _c = _d["en"].count("%s")
+        check("%s has the same placeholders in every language" % _n,
+              all(v.count("%s") == _c for v in _d.values() if isinstance(v, str)),
+              str({k: v.count("%s") for k, v in _d.items() if isinstance(v, str)}))
+
 print()
 if _fails:
     print("FAILED %d:" % len(_fails), ", ".join(_fails))

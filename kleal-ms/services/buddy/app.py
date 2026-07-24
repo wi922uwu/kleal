@@ -83,15 +83,26 @@ _STRONG_ASK = re.compile(
     r"find\s+(me\b|someone|people|players?|a\s+(teammate|partner|buddy|group))|"
     r"looking\s+for\s+(someone|people|players?|a\s+(teammate|partner|buddy|group))|"
     r"who\s+wants|who'?s\s+(up\s+for|down\s+for)|anyone\s+(want|up\s+for|keen|down)|"
-    r"match\s+me|connect\s+me|introduce\s+me|hook\s+me\s+up|teammate", re.I)
+    r"match\s+me|connect\s+me|introduce\s+me|hook\s+me\s+up|teammate|"
+    # SPANISH. Missing entirely until now, so «quiero encontrar a alguien para jugar al pádel» —
+    # about as explicit as an ask gets — never started a search: buddy asked a follow-up question
+    # instead, and the ES half of the audience could not reach matching at all. Mirrors the Russian
+    # «ищу …» shape: the verb alone is not enough (\"busco un libro\" is not an ask for people).
+    r"busc\w*\s+(a\s+)?(alguien|gente|personas?|compañer|companer|pareja|jugador|equipo|grupo|amigos?)|"
+    r"encontrar\s+(a\s+)?(alguien|gente|personas?|compañer|companer|jugador)|"
+    r"encu[eé]ntrame|preséntame|presentame|conocer\s+(gente|personas)|"
+    r"alguien\s+(quiere|que\s+quiera|se\s+apunta)|qui[eé]n\s+se\s+apunta|"
+    r"compañer[oa]\s+de|companer[oa]\s+de|pareja\s+de\s+juego", re.I)
 _COMPANION = re.compile(
     r"с\s+кем|кого-нибудь|кто-нибудь|компани[юе]|"
-    r"someone\s+to\b|somebody\s+to\b|people\s+to\b|with\s+(someone|somebody|people)", re.I)
+    r"someone\s+to\b|somebody\s+to\b|people\s+to\b|with\s+(someone|somebody|people)|"
+    r"con\s+alguien|alguien\s+para|gente\s+para|con\s+qui[eé]n|acompañante", re.I)
 # language-exchange asks read as "I want a person to practise with" even without a STRONG verb —
 # "практиковать испанский с носителем" / "language partner" should search, not just chat.
 _STRONG_ASK_EXTRA = re.compile(
     r"с\s+носител|носител[ья]\s+язык|языков\w*\s+обмен|language\s+(partner|exchange)|"
-    r"practi[cs]e\s+\w+\s+with|language\s+buddy", re.I)
+    r"practi[cs]e\s+\w+\s+with|language\s+buddy|"
+    r"intercambio\s+(de\s+)?(idiomas?|ling)|practicar\s+\w+\s+con|hablante\s+nativo|con\s+un\s+nativo", re.I)
 
 
 # DESIRE — first-person, forward-looking wish to DO something ("хочу выпить кофе", "I want to play
@@ -104,8 +115,10 @@ _STRONG_ASK_EXTRA = re.compile(
 _DESIRE = re.compile(
     r"(^|[\s,.:;!?—-])(хочу|хочется|хотел[аи]?\s+бы|мечтаю|планиру[юе]|собира[юе]сь|"
     r"не\s+прочь|было\s+бы\s+круто|"
-    r"i\s+want\s+to|i'?d\s+like\s+to|i\s+wanna|want\s+to\s+go|planning\s+to|thinking\s+of)\b", re.I)
-_PAST = re.compile(r"вчера|позавчера|на\s+прошлой\s+неделе|yesterday|last\s+(week|night|time)", re.I)
+    r"i\s+want\s+to|i'?d\s+like\s+to|i\s+wanna|want\s+to\s+go|planning\s+to|thinking\s+of|"
+    r"quiero|quisiera|me\s+gustar[ií]a|tengo\s+ganas\s+de|me\s+apetece|planeo|pienso\s+ir)\b", re.I)
+_PAST = re.compile(r"вчера|позавчера|на\s+прошлой\s+неделе|yesterday|last\s+(week|night|time)|"
+                   r"\bayer\b|anteayer|anoche|la\s+semana\s+pasada", re.I)
 
 
 def _names_an_activity(text):
@@ -156,7 +169,7 @@ def negated_terms(text):
         if not m:
             continue
         tail = (" " + clause)[m.end():]
-        for w in re.findall(r"[a-zа-яё0-9-]{3,}", tail):
+        for w in re.findall(r"[a-zа-яёáéíóúüñç0-9-]{3,}", tail):
             if w in _NEG_NOISE:
                 continue
             n = norm_topic(w)
@@ -365,7 +378,28 @@ _EN_SYN = {"soccer": "football", "movies": "cinema", "movie": "cinema", "film": 
            # the filtration LLM answers «падл» with "paddle" — an oar, not a racquet. Unresolved it
            # dropped the whole ask into the raw-passthrough branch below.
            "paddle": "padel", "padle": "padel", "padeltennis": "padel",
-           "ping-pong": "pingpong", "table tennis": "pingpong", "futbol": "football"}
+           "ping-pong": "pingpong", "table tennis": "pingpong", "futbol": "football",
+           # SPANISH -> the ranker's English vocabulary. Filtration usually translates first, but a
+           # word the user typed themselves reaches norm_topic() raw, and until now every Spanish
+           # one resolved to nothing — the ES half of the target audience searched on fragments.
+           "fútbol": "football", "pádel": "padel", "tenis": "tennis", "baloncesto": "basketball",
+           "básquet": "basketball", "basquet": "basketball", "voleibol": "volleyball",
+           "vóley": "volleyball", "balonmano": "handball", "bádminton": "badminton",
+           "natación": "swimming", "natacion": "swimming", "ciclismo": "cycling",
+           "senderismo": "hiking", "escalada": "climbing", "boxeo": "boxing", "ajedrez": "chess",
+           "gimnasio": "gym", "esquí": "skiing", "esqui": "skiing", "pesca": "fishing",
+           "café": "coffee", "cerveza": "beer", "vino": "wine", "cocina": "cooking",
+           "cena": "dinner", "almuerzo": "lunch", "restaurante": "restaurant",
+           "cine": "cinema", "película": "cinema", "pelicula": "cinema", "música": "music",
+           "musica": "music", "concierto": "concert", "conciertos": "concert", "fiesta": "party",
+           "libros": "books", "lectura": "reading", "fotografía": "photography",
+           "fotografia": "photography", "museo": "museum", "teatro": "theatre", "arte": "art",
+           "viajes": "travel", "montaña": "mountains", "montana": "mountains",
+           "videojuegos": "gaming", "cartas": "cards", "póker": "poker",
+           "idiomas": "languages", "español": "spanish", "espanol": "spanish", "inglés": "english",
+           "ingles": "english", "negocios": "business", "emprendedor": "entrepreneur",
+           "programación": "programming", "programacion": "programming", "diseño": "design",
+           "caminar": "walking", "paseo": "stroll", "camping": "camping", "surf": "surfing"}
 
 # Words that name a BUCKET, not an ask. They only ever reach `topics` through the raw-passthrough
 # branch (nothing resolved), and there they are actively harmful: measured on «игры в падл», the
@@ -384,7 +418,16 @@ _GENERIC_TOPIC = {"sport", "sports", "game", "games", "gaming", "activity", "act
                   # answers to «вдвоём или компанией?» belong in `format`, not in what we search on —
                   # they leaked into topics as soon as the agent started asking about format
                   "small", "group", "groups", "big", "large", "duo", "pair", "solo", "alone",
-                  "together", "вдвоём", "вдвоем", "компанией", "группой"}
+                  "together", "вдвоём", "вдвоем", "компанией", "группой",
+                  # WHEN, not WHAT. Filtration answers «в субботу» with a "saturday" topic, and it
+                  # rode into the search and onto the card as if the person's interest were Saturday.
+                  # The day belongs in `time`, which build_intent fills separately.
+                  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+                  "weekend", "weekday", "morning", "afternoon", "evening", "night", "today",
+                  "tomorrow", "tonight",
+                  "lunes", "martes", "miércoles", "miercoles", "jueves", "viernes", "sábado",
+                  "sabado", "domingo", "mañana", "manana", "tarde", "noche",
+                  "понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"}
 _RU_END = ("ами", "ями", "ах", "ях", "ов", "ев", "ом", "ем", "ой", "ей", "ую", "ые", "ый", "ая", "ое",
            "у", "а", "я", "и", "ы", "е", "ю", "ь", "й", "о")
 _CYR = re.compile(r"[а-яё]", re.I)
@@ -476,8 +519,20 @@ def norm_topic(word):
 
 
 def norm_topics(topics):
+    """Filtration's topics -> the ranker's vocabulary. Multi-word topics are tried WHOLE first.
+
+    Splitting first made every multi-word alias dead code and, worse, turned a phrase into a
+    different concept: filtration reads «настольный теннис» correctly as "table tennis", the split
+    threw away "table", and the search ran on `tennis` — a different sport, and one _EN_SYN already
+    had the right answer for ("table tennis" -> pingpong).
+    """
     out = []
     for t in topics or []:
+        whole = norm_topic(str(t).lower().strip())
+        if whole:
+            if whole not in out:
+                out.append(whole)
+            continue
         for piece in re.split(r"[\s,/]+", str(t).lower()):
             n = norm_topic(piece)
             if n and n not in out:
@@ -543,7 +598,27 @@ _RAW_STOP = {"хочу", "хотел", "найти", "найди", "найдит
              "play", "playing", "game", "games", "talk", "hang", "hangout", "join", "joining",
              "while", "together", "someone", "somebody", "tomorrow", "tonight", "today", "evening",
              "завтра", "сегодня", "вечером", "утром", "вместе", "бокалом",
-             "утро", "вечер", "ночью", "днём", "днем", "выходные", "выходных", "неделе"}
+             "утро", "вечер", "ночью", "днём", "днем", "выходные", "выходных", "неделе",
+             # Russian pronouns that survive as 4+ letter fragments: «кого-то» tokenises to "кого",
+             # which then rode into the topics of a Go search as if it were the subject.
+             "кого", "кому", "кем-то", "чего", "чем-то", "чтобы", "нибудь", "какой", "какие", "кто-то",
+             # SPANISH — the audience this product is aimed at, and entirely unstopped until now:
+             # «quiero quedar para un café» searched on ["coffee", "quiero", "quedar"] and showed
+             # the user a card tagged «quiero».
+             "quiero", "queria", "quería", "quedar", "quedamos", "busco", "buscar", "buscando",
+             "alguien", "alguno", "alguna", "gente", "personas", "persona", "conocer", "hablar",
+             "charlar", "tomar", "hacer", "salir", "para", "con", "una", "unos", "unas", "algo",
+             "sobre", "tengo", "ganas", "quisiera", "podemos", "puedo", "estoy", "estar", "encontrar",
+             "mañana", "manana", "hoy", "noche", "tarde", "fin", "semana", "finde",
+             # Spanish infinitives are listed, not detected by ending: -ar/-er/-ir would also swallow
+             # «billar», "poker", "beer" and "theater", which are exactly the subjects we carry.
+             "jugar", "comer", "beber", "correr", "bailar", "cantar", "aprender", "practicar",
+             "entrenar", "pasear", "cocinar", "viajar", "escuchar", "compartir", "disfrutar",
+             "conversar", "quedarme", "apetece", "gustaria", "gustaría",
+             # Russian fillers that are neither verb nor subject — «лучше» rode into a basketball
+             # search as a topic.
+             "лучше", "больше", "меньше", "очень", "просто", "немного", "может", "можно",
+             "давай", "давайте", "нужно", "надо", "чуть", "если", "либо"}
 
 
 def _is_verbish(w):
@@ -804,7 +879,9 @@ def build_intent(sig, cat, last_user, lang):
     # swimmers, while "облигации" survived only as a display tag. Matching does literal-word overlap
     # too (_wshare), so an unresolvable word is still worth carrying — union, not fallback.
     if topics:
-        raw = [w[:24] for w in re.findall(r"[a-zа-яё0-9]{4,}",
+        # Accented letters are LETTERS, not separators. Without them «sábado» tokenised to "bado"
+        # and «fútbol» to "tbol" — fragments that match no candidate and reach the card as tags.
+        raw = [w[:24] for w in re.findall(r"[a-zа-яёáéíóúüñç0-9]{4,}",
                                           str(sig.get("interest") or last_user or "").lower())
                # both lists, or the third path leaks what the other two now stop: «один или с
                # компанией?» put "company" into the topics of a cinema search.
@@ -814,7 +891,21 @@ def build_intent(sig, cat, last_user, lang):
         # so the ranker weighs what the person actually wants to talk about.
         wants_talk = any(w in str(last_user or "").lower()
                          for w in ("обсуд", "поговор", "разговор", "потрещ", "discuss", "talk about", "chat about"))
-        extra = [w for w in raw if w not in topics][:2]
+        # Filtration's own leftovers come FIRST, because they are already English — the only thing
+        # the ranker's taxonomy and the candidate pool speak. The raw surface words below exist to
+        # carry a subject the taxonomy has no word for ("labubu"), and that job does not require
+        # Russian or Spanish grammar: «настольный», «искусственный» and "quiero" all reached the
+        # engine — and the user's card tags — through this branch, where they can never match
+        # anything. So a non-Latin word is used only if nothing English survived at all.
+        spare = [str(t).lower()[:24] for t in (cat.get("topics") or [])
+                 if str(t).strip() and str(t).strip().lower() not in _GENERIC_TOPIC]
+        _pool, _seen = [], set(topics)
+        for w in spare + raw:
+            if w and w not in _seen:
+                _seen.add(w)
+                _pool.append(w)
+        _eng = [w for w in _pool if not _CYR.search(w)]
+        extra = (_eng or _pool)[:2]
         topics = (extra + topics) if (wants_talk and extra) else (topics + extra)
         topics = topics[:4]
     # Interests the taxonomy doesn't cover ("apple", "рыбалка", "labubu") canonicalise to nothing. Keep the
@@ -826,7 +917,7 @@ def build_intent(sig, cat, last_user, lang):
                   if str(t).strip() and str(t).strip().lower() not in _GENERIC_TOPIC][:4]
         from_request = from_request or bool(topics)      # filtration read the request — still the ask
     if not topics:
-        topics = [w[:24] for w in re.findall(r"[a-zа-яё0-9]{4,}", str(sig.get("interest") or last_user).lower())
+        topics = [w[:24] for w in re.findall(r"[a-zа-яёáéíóúüñç0-9]{4,}", str(sig.get("interest") or last_user).lower())
                   if w not in _RAW_STOP][:3]
         from_request = from_request or bool(topics)      # raw words of the request itself
     if not topics:                                    # last resort: nearest taxonomy word for the category
@@ -1014,31 +1105,45 @@ def run_match(intent, sig, uid, lang, negotiate=False, owner=None):
 
 
 # ======================= CONVERSATION =======================
+# Every one of these is indexed as dict[lang], and lang can be "es" since detect_lang() learned
+# Spanish. Without the "es" rows a Spanish search raised KeyError('es') INSIDE the result-rendering
+# path — the request reached matching, found people, and then died on the way to the screen, so the
+# user got "I glitched for a second". Measured: the whole search path was unreachable in Spanish.
 _FALLBACK_REPLY = {
     "ru": ("Сейчас поищу кого-нибудь.", "Расскажи чуть больше — чем занимаешься и с кем хотел бы встретиться?"),
     "en": ("Let me find someone for you.", "Tell me a bit more about what you're into and who you'd like to meet."),
+    "es": ("Voy a buscar a alguien para ti.", "Cuéntame un poco más — qué te gusta hacer y con quién te gustaría quedar."),
 }
 # Reply framing MUST match the match strength (spec §9.7: show the honest qualitative level, never
 # oversell). Only an especially_close/strong_option candidate is pitched as a confident match; a
 # broader/needs-clarification result is offered as exactly that, so buddy never claims "you'll click
 # with X" about someone the ranker flagged as weak or not-yet-reachable.
-_CLICK = {"ru": "Думаю, вы сойдётесь с %s — %s.", "en": "I think you'd click with %s — %s."}
+_CLICK = {"ru": "Думаю, вы сойдётесь с %s — %s.", "en": "I think you'd click with %s — %s.",
+          "es": "Creo que conectarías con %s — %s."}
 _BROADER = {"ru": "Идеального совпадения нет, но есть вариант пошире — %s (%s). Посмотришь?",
-            "en": "No perfect match, but here's a broader option — %s (%s). Want a look?"}
+            "en": "No perfect match, but here's a broader option — %s (%s). Want a look?",
+            "es": "No hay una coincidencia perfecta, pero sí una opción más amplia — %s (%s). ¿Le echas un vistazo?"}
 _BROADENED = {"ru": "Точного совпадения по этому рядом нет — но вот кто занимается близкими активностями: %s. Посмотришь?",
-              "en": "No exact match for this nearby — but here are people doing related activities: %s. Want a look?"}
+              "en": "No exact match for this nearby — but here are people doing related activities: %s. Want a look?",
+              "es": "No hay coincidencia exacta cerca — pero aquí tienes gente con actividades parecidas: %s. ¿Le echas un vistazo?"}
 _NEEDCLAR = {"ru": "Кое-кто есть, например %s, но по деталям стоит уточнить — расскажешь чуть больше (время, район)?",
-             "en": "There are a few, like %s, but the details need firming up — tell me a bit more (time, area)?"}
+             "en": "There are a few, like %s, but the details need firming up — tell me a bit more (time, area)?",
+             "es": "Hay algunas personas, como %s, pero faltan detalles — ¿me cuentas un poco más (hora, zona)?"}
 # search asked for, but no concrete activity given ("найди мне кого-нибудь") -> ask, don't dump people
 _ASK_ACTIVITY = {"ru": "С радостью найду — а чем хочешь заняться? Кофе, спорт, игра, прогулка?",
-                 "en": "Happy to find someone — what would you like to do? Coffee, sport, a game, a walk?"}
+                 "en": "Happy to find someone — what would you like to do? Coffee, sport, a game, a walk?",
+                 "es": "Encantado de buscar — ¿qué te apetece hacer? ¿Un café, deporte, una partida, un paseo?"}
 _NO_ONE = {"ru": "Пока никто не подходит — расширим поиск или попробуем онлайн?",
-           "en": "No one perfect right now — want to go broader or try online?"}
+           "en": "No one perfect right now — want to go broader or try online?",
+           "es": "Ahora mismo no encaja nadie — ¿ampliamos la búsqueda o probamos en línea?"}
 _FILED = {"ru": "Отнёс это к «%s», но пока никого нет — расширим поиск или попробуем онлайн?",
-          "en": "I filed that under “%s” but found no one perfect right now — go broader or try online?"}
+          "en": "I filed that under “%s” but found no one perfect right now — go broader or try online?",
+          "es": "Lo he clasificado como «%s», pero ahora mismo no hay nadie — ¿ampliamos la búsqueda o probamos en línea?"}
 _NEW = {"ru": "Отнёс это к «%s» — для Kleal это новая тема, вокруг неё пока никого. Поискать что-то смежное?",
-        "en": "I filed that under “%s” — it's new for Kleal and nobody is around it yet. Try something adjacent?"}
-_GLITCH = {"ru": "Что-то я подвис — повтори, пожалуйста?", "en": "I glitched for a second — say that again?"}
+        "en": "I filed that under “%s” — it's new for Kleal and nobody is around it yet. Try something adjacent?",
+        "es": "Lo he clasificado como «%s» — es un tema nuevo para Kleal y aún no hay nadie alrededor. ¿Probamos algo parecido?"}
+_GLITCH = {"ru": "Что-то я подвис — повтори, пожалуйста?", "en": "I glitched for a second — say that again?",
+           "es": "Me he colgado un momento — ¿me lo repites?"}
 
 
 def _lenient_json(raw):
@@ -1110,7 +1215,7 @@ def buddy_chat(messages, profile, signals, uid=None):
     else:
         # LLM down: only the strong, explicit ask triggers a search — never a bare activity mention.
         want_match = wants_people(last_user, False)
-        reply = _FALLBACK_REPLY[lang][0 if want_match else 1]
+        reply = _FALLBACK_REPLY.get(lang, _FALLBACK_REPLY["en"])[0 if want_match else 1]
 
     out = {"reply": reply, "signals": sig, "lang": lang, "match": None,
            "intent": None, "matches": [], "tool_call": None, "category": None}
@@ -1136,7 +1241,7 @@ def buddy_chat(messages, profile, signals, uid=None):
     topics = [str(t).lower() for t in (intent.get("topics") or [])]
     bare_social = (not topics) or all(t in ("social", "other") for t in topics)
     if bare_social:
-        out["reply"] = _ASK_ACTIVITY[lang]
+        out["reply"] = _ASK_ACTIVITY.get(lang, _ASK_ACTIVITY["en"])
         out["tool_call"] = "ask_activity"
         return out
     out["tool_call"] = "find_people"
@@ -1147,7 +1252,7 @@ def buddy_chat(messages, profile, signals, uid=None):
         # Categorised fine, but the ranker has no vocabulary for it yet (e.g. "labubu"). Say so — do not
         # silently return an empty list, and do not match the wrong people just to show a card.
         out["match"] = {"intent": intent, "top": None, "candidates": [], "fallback": None}
-        out["reply"] = (reply + "\n\n" + _NEW[lang] % (intent.get("category") or "?")).strip()
+        out["reply"] = (reply + "\n\n" + _NEW.get(lang, _NEW["en"]) % (intent.get("category") or "?")).strip()
         return out
 
     block, cards = run_match(intent, sig, uid, lang, owner=(profile or {}).get("name"))
@@ -1164,17 +1269,17 @@ def buddy_chat(messages, profile, signals, uid=None):
             # Exact search found nobody; these are related-activity people. Say so — never present
             # a broadened result as if it were a match for what was asked.
             names = ", ".join(str(c.get("name")) for c in (block.get("candidates") or [])[:3]) or t.get("name")
-            line = _BROADENED[lang] % names
+            line = _BROADENED.get(lang, _BROADENED["en"]) % names
         elif band in ("especially_close", "strong_option"):
-            line = _CLICK[lang] % (t.get("name"), why)          # confident: real fit + reachable
+            line = _CLICK.get(lang, _CLICK["en"]) % (t.get("name"), why)          # confident: real fit + reachable
         elif band == "broader_option":
-            line = _BROADER[lang] % (t.get("name"), why)        # honest: broader, not perfect
+            line = _BROADER.get(lang, _BROADER["en"]) % (t.get("name"), why)        # honest: broader, not perfect
         else:                                                   # needs_clarification / unknown
-            line = _NEEDCLAR[lang] % t.get("name")              # honest: exists, but firm up details
+            line = _NEEDCLAR.get(lang, _NEEDCLAR["en"]) % t.get("name")              # honest: exists, but firm up details
         out["reply"] = (reply + "\n\n" + line).strip()
     else:
         catn = intent.get("category")
-        out["reply"] = (reply + "\n\n" + (_FILED[lang] % catn if catn else _NO_ONE[lang])).strip()
+        out["reply"] = (reply + "\n\n" + (_FILED.get(lang, _FILED["en"]) % catn if catn else _NO_ONE.get(lang, _NO_ONE["en"]))).strip()
     return out
 
 
@@ -2108,7 +2213,7 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 404, {})
         except Exception as e:
             lang = detect_lang(body.get("message") or "")
-            send_json(self, 200, {"reply": _GLITCH[lang], "signals": body.get("signals") or {},
+            send_json(self, 200, {"reply": _GLITCH.get(lang, _GLITCH["en"]), "signals": body.get("signals") or {},
                                   "match": None, "matches": [], "intent": None, "error": str(e)[:200]})
 
     def end_headers(self):
