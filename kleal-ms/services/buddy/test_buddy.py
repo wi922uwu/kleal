@@ -193,6 +193,30 @@ for _t in ("хочу поиграть в футбол", "подробнее ра
            "ещё хочу найти напарника в теннис"):
     check("not a follow-up: %s" % _t[:34], bool(B._FOLLOWUP.match(_t)) is False)
 
+# ---- 11. «поговорить об этом»: the ask points back, the conversation is the subject ----
+# Reported from the app: a chat about hertz, then «я хочу с кем-то поговорить об этом» ->
+# «О чём именно хочется поговорить?» -> «я выше писал». The builder is blind to small talk, so it
+# genuinely could not see what «это» referred to.
+for _t in ("я хочу с кем-то поговорить об этом", "хочу с кем-то это обсудить",
+           "обсудить это с кем-нибудь", "давай про это поговорим", "это обсудить хочу",
+           "я выше писал", "как я писал выше", "talk about this", "i want to discuss it",
+           "sobre esto", "lo mismo", "como dije"):
+    check("refers back: %s" % _t[:32], bool(B._ANAPHORA.search(_t)) is True)
+for _t in ("хочу обсудить падел", "это интересно", "хочу поговорить о стартапах",
+           "обсудить облигации", "i want to discuss startups", "хочу поиграть в футбол"):
+    check("names its own subject: %s" % _t[:30], bool(B._ANAPHORA.search(_t)) is False)
+
+# the referent is the last turn that actually named something — follow-ups are skipped
+_thread = [U("что такое герцы", True), A("Единица частоты.", True), U("а подробнее", True),
+           A("Используются в музыке.", True), U("я хочу с кем-то поговорить об этом")]
+check("subject is recovered from the chat", B._subject_from_history(_thread) == "что такое герцы",
+      B._subject_from_history(_thread))
+check("builder sees the whole thread when the ask refers back",
+      len(B._builder_msgs(_thread, keep_chat=True)) == 5, str(len(B._builder_msgs(_thread, keep_chat=True))))
+check("and still hides small talk when it does not",
+      len(B._builder_msgs(_thread)) == 1, str(len(B._builder_msgs(_thread))))
+check("no history -> no subject, and no crash", B._subject_from_history([]) == "")
+
 print()
 if _fails:
     print("FAILED %d:" % len(_fails), ", ".join(_fails))

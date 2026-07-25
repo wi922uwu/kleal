@@ -1245,7 +1245,10 @@ def buddy_chat(messages, profile, signals, uid=None):
     # paraphrase alone — the paraphrase is where place/game names got mangled ("нью йорке" -> "york",
     # "преферанс" -> "preference", "over the board" -> "over"). Raw first so the real words win when
     # filtration canonicalises; the paraphrase still carries multi-turn context.
-    req_text = " ".join(x for x in (str(last_user or ""), str(sig.get("interest") or "")) if x).strip() \
+    # Same back-reference rule as intent_build: «поговорить об этом» names no subject, the turn it
+    # points at does. Without it /chat searched on ["conversation","discussion","talk"].
+    _subj = _subject_from_history(messages) if _ANAPHORA.search(str(last_user or "")) else ""
+    req_text = " ".join(x for x in (_subj, str(last_user or ""), str(sig.get("interest") or "")) if x).strip() \
         or " ".join(sig.get("topics") or [])
     cat = _categorize(req_text)
     _teach(cat)
@@ -1739,6 +1742,39 @@ _FOLLOWUP = re.compile(
     r"m[aá]s|m[aá]s\s+detalles|detalles|ejemplos?|sigue|contin[uú]a|por\s+qu[eé])\W*$", re.I)
 
 
+# «поговорить об этом», "talk about this", «sobre esto» — the ask points BACK at the conversation,
+# which means the conversation IS the subject. The builder is deliberately blind to small talk, so
+# without this it saw only "я хочу с кем-то поговорить об этом" and asked «О чём именно хочется
+# поговорить?» — to which the honest answer was «я выше писал».
+_ANAPHORA = re.compile(
+    r"об\s+этом|про\s+это|на\s+эту\s+тему|об\s+этой\s+теме|"
+    # word order is free in Russian: «это обсудить», «обсудить это», «поговорить об этом»
+    r"(?:обсуд|поговор|потрещ|пообща|расскаж)\w*\s+(?:об\s+|про\s+|на\s+)?эт\w+|"
+    r"\bэт(?:о|ом|у|ой)\s+(?:же\s+)?(?:обсуд|поговор|потрещ|пообща)\w*|"
+    r"выше\s+(писал|говорил|сказал)|как\s+я\s+(писал|сказал|говорил)|то\s+же\s+самое|"
+    r"about\s+(this|that|it)\b|on\s+this\s+topic|as\s+i\s+(said|wrote)|the\s+same\s+thing|"
+    r"(?:discuss|talk|chat|speak)\s+(?:about\s+)?(?:it|this|that)\b|"
+    r"(?:hablar|discutir|charlar)\s+(?:de\s+|sobre\s+)?(?:esto|eso)\b|"
+    r"sobre\s+(esto|eso|este\s+tema)|de\s+esto|como\s+(dije|he\s+dicho)|lo\s+mismo", re.I)
+
+
+def _subject_from_history(messages):
+    """The last thing the person actually asked ABOUT — the referent of «об этом».
+
+    Walks their OWN turns backwards and skips the ones that carry no subject either: another
+    back-reference, or a bare follow-up like «а подробнее». Assistant turns are not used — the
+    answer paraphrases, the question names.
+    """
+    for m in reversed(messages or []):
+        if m.get("role") != "user":
+            continue
+        t = str(m.get("content") or "").strip()
+        if not t or _ANAPHORA.search(t) or _FOLLOWUP.match(t):
+            continue
+        return t[:200]
+    return ""
+
+
 def _real_topics(cat):
     """Topics from filtration with conversational filler removed."""
     ts = [str(t).strip().lower() for t in ((cat or {}).get("topics") or []) if str(t).strip()]
@@ -1956,7 +1992,7 @@ def _hints(obj, lang):
     return out[:3] if len(out) >= 3 else []
 
 
-def _builder_msgs(messages):
+def _builder_msgs(messages, keep_chat=False):
     """The turns the intent BUILDER may reason about — not the ones the conversation remembers.
 
     A turn already answered conversationally is context for the chat, not material for a plan:
@@ -1968,6 +2004,8 @@ def _builder_msgs(messages):
     blind to them. The newest user turn is never hidden: it is the one being judged right now.
     """
     msgs = list(messages or [])
+    if keep_chat:
+        return msgs          # the ask refers back to the conversation, so the conversation is context
     keep = [m for m in msgs if not m.get("chat")]
     if msgs and not keep:
         last_user = next((m for m in reversed(msgs) if m.get("role") == "user"), None)
@@ -1976,9 +2014,12 @@ def _builder_msgs(messages):
 
 
 def intent_build(messages, profile, on_text=None):
-    # The whole thread is the conversation's memory; the builder sees only the plan-relevant part.
-    bmsgs = _builder_msgs(messages)
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
+    # The whole thread is the conversation's memory; the builder normally sees only the plan-relevant
+    # part — unless the ask points back at the chat, in which case the chat is what it is about.
+    _refers_back = bool(_ANAPHORA.search(last_user))
+    _subject = _subject_from_history(messages) if _refers_back else ""
+    bmsgs = _builder_msgs(messages, keep_chat=_refers_back)
     lang = thread_lang(messages, last_user)
     # Before anything else, and before the model: a person who has said they are under 18 gets no
     # intent built, on this turn or any later one. The reply is fixed text, not a generation, so
@@ -2069,7 +2110,8 @@ def intent_build(messages, profile, on_text=None):
     # but filtration is itself an LLM call — measured, it pushed the first streamed token from 0.16s to
     # 1.86s on EVERY request, including real ones. Streaming exists to make the common path feel
     # instant, so the common path wins; the rare chit-chat swap is handled by the explicit reset event.
-    _cat = _categorize(last_user)
+    # «поговорить об этом» has no subject of its own; the referent does. Feed both.
+    _cat = _categorize((_subject + " " + last_user).strip() if _subject else last_user)
     _teach(_cat)
     _followup = bool(_FOLLOWUP.match(str(last_user or "").strip()))
     nothing_to_build = not ready and (_followup or (_cat is not None and not _real_topics(_cat)))
@@ -2100,7 +2142,14 @@ def intent_build(messages, profile, on_text=None):
     # Feed filtration the raw last user turn ALONGSIDE the model's `activity` paraphrase, so place/game
     # names survive canonicalisation (нью йорке -> new york, преферанс -> card games) instead of being
     # mangled by the paraphrase — the same fix as /chat's req_text.
-    cat = _categorize(" ".join(x for x in (str(activity or ""), str(last_user or "")) if x).strip() or activity)
+    # The person's OWN words go first, the model's paraphrase last. The comment above has claimed
+    # this since the «нью йорке -> york» fix, but the code passed the paraphrase first — and that is
+    # decisive, not cosmetic: the builder wrote `activity` as "talk about Herz" (German spelling of
+    # hertz), and paraphrase-first made filtration read the whole thing as LEARNING GERMAN, so a
+    # chat about frequency compiled into «Немецкий — встреча». Raw-first on the same input gives
+    # tech/physics. Measured both ways.
+    cat = _categorize(" ".join(x for x in (_subject, str(last_user or ""), str(activity or "")) if x).strip()
+                      or activity)
     _teach(cat)
     sig = _baseline_signals(profile)
     if obj.get("time"):
