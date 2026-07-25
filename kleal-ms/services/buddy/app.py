@@ -1727,6 +1727,18 @@ _NO_ACTIVITY = {"person", "people", "someone", "somebody", "anyone", "friend", "
                 "человек", "люди", "друзья", "знакомство", "компания"}
 
 
+# A bare request to elaborate points BACK at the previous turn — it can never be an intent of its
+# own. Reported twice from the app: «что такое герцы» answered well, then «а подробнее» came back as
+# "О чём хочется поговорить за кофе — про кодинг, игры или просто познакомиться?" — the builder
+# answering a question nobody asked it. The only thing standing between that and the user was the
+# model's own `valid` flag, which is a coin flip on an input this short.
+_FOLLOWUP = re.compile(
+    r"^\W*(а|и|ну|ok|окей)?\s*(подробн\w*|поподробнее|детальн\w*|ещё|еще|дальше|продолжай|"
+    r"примеры|пример|а\s+как|а\s+почему|почему|как\s+так|и\s+что|"
+    r"more|tell\s+me\s+more|go\s+on|continue|examples?|why|how\s+so|"
+    r"m[aá]s|m[aá]s\s+detalles|detalles|ejemplos?|sigue|contin[uú]a|por\s+qu[eé])\W*$", re.I)
+
+
 def _real_topics(cat):
     """Topics from filtration with conversational filler removed."""
     ts = [str(t).strip().lower() for t in ((cat or {}).get("topics") or []) if str(t).strip()]
@@ -2059,7 +2071,8 @@ def intent_build(messages, profile, on_text=None):
     # instant, so the common path wins; the rare chit-chat swap is handled by the explicit reset event.
     _cat = _categorize(last_user)
     _teach(_cat)
-    nothing_to_build = (not ready and _cat is not None and not _real_topics(_cat))
+    _followup = bool(_FOLLOWUP.match(str(last_user or "").strip()))
+    nothing_to_build = not ready and (_followup or (_cat is not None and not _real_topics(_cat)))
     if not valid or nothing_to_build:
         # If _chat_reply comes back empty (bad JSON, or the language guard rejected both attempts) we
         # must NOT fall through to the builder — that is what produced "Опишите, что вы хотели бы

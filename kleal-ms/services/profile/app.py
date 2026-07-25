@@ -6248,6 +6248,13 @@ class H(BaseHTTPRequestHandler):
         if self.path.split("?", 1)[0] == "/":   # ignore ?p=<onboarding profile> query
             b = HTML.encode("utf-8")
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
+            # The whole app — every line of JS — lives inside this one document, and it went out with
+            # no cache directives at all. With none, a browser and the cloudflared tunnel in front of
+            # it are both free to cache heuristically, so a phone kept running a build from before a
+            # deploy: fixes were verified in the served bytes and still "not fixed" on the device.
+            # Assets below keep their 24h cache; only the page that carries the code must be fresh.
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
             self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
         elif self.path.startswith("/assets/") and self.path.endswith(".svg"):
             name = self.path[len("/assets/"):-len(".svg")]

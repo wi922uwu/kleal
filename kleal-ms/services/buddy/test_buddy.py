@@ -179,6 +179,20 @@ for _t in (["football", "match"], ["coffee"], ["yoga"], ["chess", "strategy"], [
 check("practice is filtered as generic", "practice" in B._GENERIC_TOPIC)
 check("practise too", "practise" in B._GENERIC_TOPIC)
 
+# ---- 10. a bare "tell me more" is a follow-up, never an intent ----
+# Reported twice from the app: «что такое герцы» answered well, then «а подробнее» came back as
+# "О чём хочется поговорить за кофе — про кодинг, игры или просто познакомиться?".
+for _t in ("а подробнее", "подробнее", "поподробнее", "детальнее", "ещё", "еще", "примеры",
+           "а как", "почему", "дальше", "продолжай", "more", "tell me more", "examples",
+           "why", "go on", "continue", "más", "más detalles", "ejemplos", "sigue", "por qué"):
+    check("follow-up: %s" % _t, bool(B._FOLLOWUP.match(_t)) is True)
+# a real ask that merely CONTAINS one of those words must still build
+for _t in ("хочу поиграть в футбол", "подробнее расскажи про падел в барселоне",
+           "найди мне кого-то для кофе", "more coffee places to meet people",
+           "почему бы не сходить в кино вместе", "ejemplos de sitios para jugar padel",
+           "ещё хочу найти напарника в теннис"):
+    check("not a follow-up: %s" % _t[:34], bool(B._FOLLOWUP.match(_t)) is False)
+
 print()
 if _fails:
     print("FAILED %d:" % len(_fails), ", ".join(_fails))
