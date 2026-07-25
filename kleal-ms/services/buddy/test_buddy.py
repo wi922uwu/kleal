@@ -217,6 +217,33 @@ check("and still hides small talk when it does not",
       len(B._builder_msgs(_thread)) == 1, str(len(B._builder_msgs(_thread))))
 check("no history -> no subject, and no crash", B._subject_from_history([]) == "")
 
+# ---- 12. the card title has to name what will actually happen ----
+# From the app: a chat about hertz produced a card headed «я хочу с кем-то об этом поговорить» —
+# the sentence the person typed, which names nothing.
+check("discuss gets a talk suffix, not «встреча»",
+      B._title_for(["hertz", "frequency", "music"], ["hertz", "разговоры"], "social", "ru", "discuss")
+      == "Hertz — разговор",
+      B._title_for(["hertz", "frequency", "music"], ["hertz", "разговоры"], "social", "ru", "discuss"))
+check("the subject wins over a merely-translatable later topic",
+      "Музыка" not in B._title_for(["hertz", "frequency", "music"], [], "social", "ru", "discuss"))
+check("the person's own Russian word is preferred when ours is Latin",
+      B._title_for(["chlamydia"], ["хламидиоз"], "social", "ru", "discuss") == "Хламидиоз — разговор",
+      B._title_for(["chlamydia"], ["хламидиоз"], "social", "ru", "discuss"))
+check("play still reads as a meetup", B._title_for(["football"], ["football"], "sport", "ru", "play")
+      == "Футбол — встреча", B._title_for(["football"], ["football"], "sport", "ru", "play"))
+# the tag bag IS arbitrary order — there a scan for a translatable word is still right
+check("untranslated synonym cannot win from the tag bag",
+      B._title_for([], ["soccer", "football"], "sport", "ru", "play") == "Футбол — встреча",
+      B._title_for([], ["soccer", "football"], "sport", "ru", "play"))
+check("all-generic topics are named once, not twice",
+      B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss") == "Разговор",
+      B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss"))
+check("dating is untouched", B._title_for([], [], "dating", "ru", "meet") == "Свидание")
+check("es discuss", B._title_for(["padel"], [], "sport", "es", "discuss") == "Padel — charla",
+      B._title_for(["padel"], [], "sport", "es", "discuss"))
+check("en play", B._title_for(["padel"], [], "sport", "en", "play") == "Padel meetup",
+      B._title_for(["padel"], [], "sport", "en", "play"))
+
 print()
 if _fails:
     print("FAILED %d:" % len(_fails), ", ".join(_fails))

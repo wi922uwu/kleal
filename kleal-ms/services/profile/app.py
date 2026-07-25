@@ -4016,7 +4016,10 @@ async function flowSay(text, fromSeed){
   if(r.ready&&r.intent){                       // enough detail -> one clarification, then the summary
     FLOW.intent=r.intent;
     intentPrefill();                           // a day named in the dialog must light its chip, not be re-asked
-    FLOW.summary={request:FLOW.request||FLOW.text, format:r.intent.format,
+    // scr_summary already prefers s.title over the raw request — nothing ever put one there, so
+    // the card was headed with the sentence the person typed. That reads fine for «хочу поиграть в
+    // футбол», and not at all for «я хочу с кем-то об этом поговорить», which names nothing.
+    FLOW.summary={request:FLOW.request||FLOW.text, title:r.intent.title||null, format:r.intent.format,
                   vibe:(r.intent.tags||[]).filter(t=>t!=='meet').join(', ')||null};
     // Only the district question is left when the dialog already gave both the day and the time of
     // day — and the district is optional, so there is nothing the clarify screen MUST ask. Skip it.
@@ -4621,7 +4624,12 @@ function intentUnderstanding(){
   const s=FLOW.summary||{}, it=FLOW.intent||{};
   const given=String(s.summary||it.summary||'').trim();
   if(given) return given;
-  const lead=String(s.request||FLOW.request||FLOW.text||'').trim()
+  // Quoting the person back is the friendliest lead — right up until their words point at the
+  // conversation instead of naming anything: «Понял так: я хочу с кем-то об этом поговорить».
+  // In that one case the compiled title is the only thing that actually says what this is.
+  const req=String(s.request||FLOW.request||FLOW.text||'').trim();
+  const pointsBack=/об\s+этом|про\s+это|это\s+обсуд|обсуд\w*\s+это|выше\s+писал|about\s+(this|that|it)\b|discuss\s+it\b|sobre\s+esto|de\s+esto/i.test(req);
+  const lead=(pointsBack&&(s.title||it.title))||req
              || locTopicList(it.topics||[]) || T('встретиться','meet up');
   const fmt=FLOW.fmt||(flowOnline()?'online':'offline');
   const set=[

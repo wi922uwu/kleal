@@ -411,6 +411,8 @@ _GENERIC_TOPIC = {"sport", "sports", "game", "games", "gaming", "activity", "act
                   "outdoor", "outdoors", "indoor", "team", "exercise", "training",
                   "people", "meeting", "social", "friends", "company", "спорт", "игры", "игра",
                   "хобби", "встреча", "встречи", "люди", "компания", "развлечения",
+                  "разговор", "разговоры", "беседа", "общение", "conversation", "conversations",
+                  "discussion", "conversación", "conversacion", "charla", "tertulia",
                   # verbs describing HOW, not WHAT — filtration emits them alongside the real topic
                   "play", "playing", "talk", "talking", "discussing", "drinking", "eating",
                   "watching", "hanging", "hang", "hangout", "chill", "joining", "learning",
@@ -804,7 +806,12 @@ _TOPIC_RU = {
     'formula1':'Формула 1','barca':'Барса','motorsport':'Автоспорт',
 }
 
-def _title_for(topics, tags, typ, lang):
+# «хочу поиграть в падел завтра в 19:00» came back with "19:00" as a TOPIC, so the ranker went
+# looking for people whose interest is a clock reading. WHEN belongs in `time`, filled separately.
+_TIMEISH = re.compile(r"^\s*\d{1,2}\s*[:.\-]?\s*\d{0,2}\s*(ч|h|am|pm)?\s*$", re.I)
+
+
+def _title_for(topics, tags, typ, lang, role="meet"):
     """Card title. Prefers whichever word we can actually SAY in the user's language.
 
     It used to title off `tags or topics`, and filtration's tags are synonym bags in arbitrary order —
@@ -815,18 +822,54 @@ def _title_for(topics, tags, typ, lang):
     if typ == "dating":
         return _L(lang, "Свидание", "Date", "Cita")
     cands = [str(t) for t in list(topics or []) + list(tags or []) if str(t).strip()]
+    # A generic word must never win the title. Tags carried «разговоры» alongside `hertz`, and the
+    # Russian-preference scan below happily picked it: "разговоры — разговор".
+    named = [c for c in cands if c.strip().lower() not in _GENERIC_TOPIC
+             and c.strip().lower() not in _NO_ACTIVITY and not _TIMEISH.match(c)]
+    if cands and not named:
+        # Nothing but generic words — «разговоры» and nothing else. Naming it twice
+        # ("разговоры — разговор") is worse than naming it once.
+        return {"discuss": _L(lang, "Разговор", "A chat", "Charla")}.get(
+            str(role or "").lower(), _L(lang, "Встреча", "Meet someone", "Quedada"))
+    cands = named
     if not cands:
         return _L(lang, "Встреча", "Meet someone", "Quedada")
+    # The suffix should name what will actually happen. Someone who asked to TALK about hertz was
+    # given "Hertz — встреча"; "встреча" is right for padel, wrong for a conversation.
+    suffix = {"discuss": _L(lang, " — разговор", " chat", " — charla"),
+              "watch": _L(lang, " — просмотр", " watch", " — sesión"),
+              "practise": _L(lang, " — практика", " practice", " — práctica")}.get(
+        str(role or "").lower(), _L(lang, " — встреча", " meetup", " — quedada"))
     if lang == "ru":
+        # `topics` is ordered and canonical, so position 0 IS the subject — translate it, or show it
+        # as it is. Scanning past it for a word that merely happens to be translatable turned
+        # ['hertz','frequency','music'] into «Музыка — разговор», which is not what was discussed.
+        prim = [str(t) for t in (topics or []) if str(t).strip()
+                and str(t).strip().lower() not in _GENERIC_TOPIC
+                and str(t).strip().lower() not in _NO_ACTIVITY]
+        if prim:
+            first = prim[0]
+            word = _TOPIC_RU.get(first.strip().lower())
+            if word:
+                return word + suffix
+            if any('а' <= ch <= 'я' for ch in first.lower()):
+                return first[:1].upper() + first[1:] + suffix
+            # Untranslatable and Latin — but filtration usually also returned the person's OWN word
+            # among the tags («chlamydia» next to «хламидиоз»). Show them their word, not ours.
+            for c in cands:
+                if any('а' <= ch <= 'я' for ch in c.lower()):
+                    return c[:1].upper() + c[1:] + suffix
+            return first.capitalize() + suffix
+        # No engine topics — we are in the tag bag, whose order IS arbitrary («хочу поиграть в
+        # футбол» came back tagged ['soccer','football',...]), so there a scan is the right move.
         for c in cands:
             word = _TOPIC_RU.get(c.strip().lower())
             if word:
-                return word + " — встреча"
-        for c in cands:                        # off-taxonomy but the user's own Russian word -> keep it
+                return word + suffix
+        for c in cands:
             if any('а' <= ch <= 'я' for ch in c.lower()):
-                return c + " — встреча"
-        return cands[0].capitalize() + " — встреча"
-    return cands[0].capitalize() + (" — quedada" if lang == "es" else " meetup")
+                return c[:1].upper() + c[1:] + suffix
+    return cands[0].capitalize() + suffix
 
 
 # Online-native activities and explicit "let's do it online" cues. Hard-coding mode="offline" sent
@@ -878,7 +921,8 @@ def build_intent(sig, cat, last_user, lang):
     # _NO_ACTIVITY joins the filter here: «ищу напарника в зал» produced [gym, workout, fitness,
     # partner], and `partner` names WHO you want, not what you would do — the ranker can only match
     # noise on it. Still weak-not-blanket: if such a word is ALL the person gave, it survives below.
-    _strong = [t for t in topics if t not in _GENERIC_TOPIC and t not in _NO_ACTIVITY]
+    _strong = [t for t in topics if t not in _GENERIC_TOPIC and t not in _NO_ACTIVITY
+               and not _TIMEISH.match(str(t))]
     topics = _strong or topics
     from_request = bool(topics)
     # An `or` chain used to end here, and that is how the SUBJECT of a request got thrown away: the
@@ -910,7 +954,8 @@ def build_intent(sig, cat, last_user, lang):
         # зал» ranked on it anyway — and the result flapped between 0 and 4 people run to run.
         spare = [str(t).lower()[:24] for t in (cat.get("topics") or [])
                  if str(t).strip() and str(t).strip().lower() not in _GENERIC_TOPIC
-                 and str(t).strip().lower() not in _NO_ACTIVITY]
+                 and str(t).strip().lower() not in _NO_ACTIVITY
+                 and not _TIMEISH.match(str(t))]
         _pool, _seen = [], set(topics)
         for w in spare + raw:
             if w and w not in _seen:
@@ -965,7 +1010,7 @@ def build_intent(sig, cat, last_user, lang):
     mode = _infer_mode(topics, sig, last_user, cat.get("category"), cat.get("subcategory"))
     place = str(sig.get("area") or (_L(lang, "Онлайн", "Online", "En línea") if mode == "online" else
                                     _L(lang, "Публичные места рядом", "Public places nearby", "Lugares públicos cercanos")))[:60]
-    title = _title_for(topics, tags, typ, lang)
+    title = _title_for(topics, tags, typ, lang, role)
     return {
         # ---- machine-facing: matching-service reads exactly these ----
         "title": title, "type": typ, "topics": topics or ["social"], "role": role, "mode": mode,
