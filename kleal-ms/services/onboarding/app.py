@@ -631,6 +631,127 @@ input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;bac
   justify-content:center;margin-top:auto}
 .authdone .auth-sub{margin-bottom:auto;max-width:290px}
 .authdone .authfoot{width:100%}
+
+/* ============ Figma onboarding rework (2026-07-25) ============================================
+   The mock is one chat surface all the way through: a left-aligned "Creating Profile" header with
+   the percentage on the right and a hairline progress rule under it, full-width stacked action
+   buttons, and a composer whose back control sits next to the field instead of up in the header. */
+.head{padding:14px 18px 10px;gap:11px;position:relative}
+.head::after{content:'';position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--line)}
+.head .ava{width:34px;height:34px;font-size:15px}
+.htt{text-align:left;font-size:17px;font-weight:800;letter-spacing:-.02em}
+.hpct{font-size:13px;color:var(--muted);font-weight:600;flex:none}
+.hrule{position:absolute;left:0;bottom:0;height:2px;background:var(--accent);width:0;z-index:1;
+  border-radius:2px;transition:width .5s cubic-bezier(.4,0,.2,1)}
+
+/* stacked full-width actions */
+.acts{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+.btn{width:100%;min-height:52px;border:0;border-radius:26px;font:700 16px inherit;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:9px;transition:.12s;padding:0 18px}
+.btn:active{transform:translateY(1px)}
+.btn.pri{background:var(--accent);color:#fff}
+.btn.pri:disabled{background:#F7B9C2;color:#fff;cursor:default}
+.btn.dark{background:#15171C;color:#fff}
+.btn.ghost{background:#ECEDF0;color:var(--ink)}
+.btn svg{display:block}
+
+/* age dial */
+.dial{display:flex;flex-direction:column;align-items:center;margin-top:6px}
+.dial svg{touch-action:none;display:block}
+.dial .dnum{font-weight:800;font-size:34px;letter-spacing:-.03em}
+.dialbox{margin-top:10px;min-width:74px;height:38px;border-radius:12px;background:var(--field);
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px}
+
+/* labelled row with a value on the right (distance) */
+.rowlbl{display:flex;align-items:baseline;justify-content:space-between;margin:16px 0 2px}
+.rowlbl .k{font-size:13.5px;font-weight:600;color:var(--ink)}
+.rowlbl .v{font-size:13.5px;font-weight:700;color:var(--accent)}
+
+/* select-looking field */
+.selwrap{position:relative;margin-top:4px}
+.selwrap .cv{position:absolute;right:14px;top:50%;transform:translateY(-50%);color:var(--muted);
+  pointer-events:none;display:flex}
+.sel{width:100%;height:50px;border:1.5px solid var(--line);background:#fff;border-radius:14px;
+  padding:0 40px 0 15px;font:15px inherit;color:var(--ink);outline:none;appearance:none;-webkit-appearance:none}
+.sel:focus{border-color:var(--accent)}
+
+/* camera sheet */
+.cam-sheet{position:absolute;inset:0;background:#0E1013;z-index:40;display:flex;flex-direction:column;color:#fff}
+.cam-top{flex:none;display:flex;align-items:center;justify-content:center;padding:16px 18px;position:relative}
+.cam-top .ttl{font-weight:700;font-size:17px}
+.cam-top .cancel{position:absolute;left:18px;top:50%;transform:translateY(-50%);background:none;border:0;
+  color:#fff;font:600 15px inherit;cursor:pointer}
+.cam-stage{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;padding:8px 24px}
+.cam-oval{width:min(78vw,300px);aspect-ratio:1/1.28;border-radius:50%;overflow:hidden;background:#22252B;
+  border:3px solid rgba(255,255,255,.85);display:flex;align-items:center;justify-content:center}
+.cam-oval video,.cam-oval img{width:100%;height:100%;object-fit:cover;display:block}
+.cam-bar{flex:none;display:flex;align-items:center;justify-content:center;padding:14px 24px 30px;position:relative}
+.cam-shot{width:74px;height:74px;border-radius:50%;background:#fff;border:5px solid rgba(255,255,255,.45);cursor:pointer}
+.cam-shot:active{transform:scale(.95)}
+.cam-thumb{position:absolute;left:24px;bottom:38px;width:46px;height:46px;border-radius:10px;object-fit:cover;
+  background:#2A2E35}
+.cam-note{color:#C9CDD4;font-size:13px;text-align:center;padding:0 28px 10px}
+
+/* photo bubble + "photo set" confirmation */
+.pbub{align-self:flex-end;width:150px;border-radius:18px;overflow:hidden;background:var(--field)}
+.pbub img{width:100%;display:block}
+.setcard{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);
+  border-radius:16px;padding:12px 14px;margin-top:4px}
+.setcard img{width:40px;height:40px;border-radius:50%;object-fit:cover;flex:none;background:var(--field)}
+.setcard .st{flex:1;min-width:0}
+.setcard .stn{font-weight:700;font-size:14.5px}
+.setcard .sts{font-size:12.5px;color:var(--muted);margin-top:1px}
+.setcard .ok{width:24px;height:24px;border-radius:50%;background:var(--ok);color:#fff;flex:none;
+  display:flex;align-items:center;justify-content:center}
+
+/* profile summary screen */
+.sumhead{flex:none;padding:14px 18px 10px;display:flex;align-items:center;gap:11px;position:relative}
+.sumhead::after{content:'';position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--line)}
+.sumwrap{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+.sumwrap::-webkit-scrollbar{width:0}
+.idcard{display:flex;align-items:center;gap:13px;background:#fff;border:1px solid var(--line);
+  border-radius:18px;padding:14px}
+.idcard .av{width:46px;height:46px;border-radius:50%;background:var(--field);object-fit:cover;flex:none;
+  display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.idcard .idt{flex:1;min-width:0}
+.idcard .idn{font-weight:800;font-size:17px;display:flex;align-items:center;gap:6px}
+.idcard .idn .vf{color:var(--accent);display:flex}
+.conf{margin-top:7px}
+.conf .cl{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--muted)}
+.conf .cl b{color:var(--ink)}
+.conf .cb{height:5px;border-radius:3px;background:var(--track);margin-top:5px;overflow:hidden}
+.conf .cb>i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.sumbox{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px}
+.sumbox .sh{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}
+.sumbox .sh b{font-size:16px;font-weight:800}
+.sumbox .sh span{font-size:11.5px;color:var(--muted)}
+.sumbox p{font-size:13.5px;line-height:1.5;color:#3A3F4A}
+.infobox{display:flex;gap:11px;background:#EEF4FF;border-radius:16px;padding:14px}
+.infobox .ii{color:#4B7BEC;flex:none;display:flex}
+.infobox p{font-size:12.5px;line-height:1.45;color:#3C4A66}
+.sumfoot{flex:none;padding:12px 16px calc(14px + env(safe-area-inset-bottom))}
+
+/* success screen */
+.done{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  padding:24px 28px;gap:22px}
+.done .ph{width:170px;height:170px;border-radius:50%;background:var(--field);display:flex;
+  align-items:center;justify-content:center;color:#B9BEC7}
+.done h2{font-size:24px;font-weight:800;letter-spacing:-.02em;line-height:1.25}
+.donefoot{flex:none;padding:0 16px 10px}
+
+/* bottom nav (Figma Bottom Nav) */
+.bnav{flex:none;display:flex;align-items:flex-end;justify-content:space-between;padding:8px 18px
+  calc(10px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid var(--line);position:relative}
+.bnav .bi{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--muted);
+  font-size:10.5px;font-weight:600}
+.bnav .bfab{width:56px;height:56px;border-radius:50%;background:var(--accent);color:#fff;flex:none;
+  display:flex;align-items:center;justify-content:center;margin-top:-26px;
+  box-shadow:0 8px 20px rgba(245,69,92,.42)}
+
+/* composer back control */
+.cback{width:40px;height:40px;border-radius:50%;background:#fff;border:1.5px solid var(--line);
+  color:var(--ink);display:flex;align-items:center;justify-content:center;flex:none;cursor:pointer}
+.cback:active{transform:scale(.94)}
 </style></head><body>
 <div class="phone">
   <div id="app"></div>
@@ -689,6 +810,15 @@ const IC={
   spark:svg('<path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17l-1.9-5.1L4.5 10l5.6-1.4L12 3z"/>'),
   cal:svg('<rect x="4" y="5" width="16" height="16" rx="2.5"/><path d="M4 9.5h16M8 3v4M16 3v4"/>'),
   info:svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6h.01"/>'),
+  chevl:svg('<path d="M15 5l-7 7 7 7"/>'),
+  chevd:svg('<path d="M6 9.5l6 6 6-6"/>'),
+  upload:svg('<path d="M12 16V4M7.5 8.5L12 4l4.5 4.5"/><path d="M4 16v2.5A1.5 1.5 0 005.5 20h13a1.5 1.5 0 001.5-1.5V16"/>'),
+  verified:'<svg viewBox="0 0 24 24" fill="currentColor" width="17" height="17"><path d="M12 2l2.4 1.8 3-.2.9 2.9 2.5 1.6-1.2 2.8 1.2 2.8-2.5 1.6-.9 2.9-3-.2L12 22l-2.4-1.8-3 .2-.9-2.9L3.2 15.9 4.4 13.1 3.2 10.3l2.5-1.6.9-2.9 3 .2z"/><path d="M8.4 12.4l2.5 2.5 4.7-4.9" stroke="#fff" stroke-width="1.9" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  usr:svg('<circle cx="12" cy="8.5" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0115 0"/>'),
+  list:svg('<path d="M4 7h16M4 12h16M4 17h10"/>'),
+  search:svg('<circle cx="11" cy="11" r="6.6"/><path d="M16 16l4 4"/>'),
+  msg:svg('<path d="M20 15a3 3 0 01-3 3H8l-4 3V6a3 3 0 013-3h10a3 3 0 013 3z"/>'),
+  img:svg('<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M4 18l5.5-5 4 3.5L17 13l3 3"/>'),
   lock:svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/>'),
   star:svg('<path d="M12 4l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 9.7l5.4-.8L12 4z"/>'),
   user:svg('<circle cx="12" cy="8" r="3.5"/><path d="M5.5 20a6.5 6.5 0 0113 0"/>'),
@@ -719,7 +849,8 @@ async function refreshCrit(){
     body:JSON.stringify({profile:profileForServer()})}).then(r=>r.json()); }catch(e){}
   updateHeader();
 }
-function updateHeader(){ const b=document.querySelector('.pbar>i'),p=document.querySelector('.pct');
+function updateHeader(){ const b=document.querySelector('.hrule')||document.querySelector('.pbar>i');
+  const p=document.querySelector('.hpct')||document.querySelector('.pct');
   const pct=st.crit?st.crit.pct:0; if(b)b.style.width=pct+'%'; if(p)p.textContent=pct+'%'; }
 function refreshSendState(){ const cin=document.getElementById('cin'),cs=document.getElementById('csend');
   if(cin&&cs) cs.disabled=!(cin.value.trim()&&st.compose)||st.busy; }
@@ -914,15 +1045,21 @@ function emulate(){
 }
 
 // ======================= CHAT THREAD =======================
+// The scripted funnel, in the order the Figma flow walks it. Copy is the mock's, one bubble per
+// screen, and every step that collects something owns an inline widget.
 const SCRIPT=[
-  {id:'greet', bot:()=>[T('Привет! Я Kleal, твой личный агент по реальным планам 👋',"Hey! I'm Kleal, your personal agent for real-life plans 👋"),
-    T('Расскажи немного о себе, и я начну находить рядом подходящих людей и планы: кофе, футбол, вечер настолок, языковая практика. Без лент и свайпов.',"Tell me a bit about yourself and I'll start finding the right people and plans around you: coffee, football, a game night, language practice. No feeds, no swiping."),
-    T('Займёт около двух минут. Давай тебя настроим!',"It takes about two minutes. Let's get you set up!")]},
-  {id:'ready', bot:()=>[T('Готов заполнить пару деталей о себе?','Ready to fill in a few details about yourself?')], widget:'ready'},
-  {id:'basics', bot:()=>[T('Сначала немного базового о тебе.','First, a few basics about you.')], widget:'basics'},
-  {id:'location', bot:()=>[T('Где ты в основном находишься?','Where are you mostly based?')], widget:'location'},
-  {id:'language', bot:()=>[T('Отлично. На каких языках тебе комфортно?','Great. What languages are you comfortable in?')], widget:'language'},
-  {id:'interests', bot:()=>[T('Чем ты увлекаешься?','What are you into?')], hint:()=>T('Выбери из готовых или напиши своё','Pick some or write your own'), widget:'interests'},
+  {id:'ready', bot:()=>[T('Расскажешь пару деталей о себе?','Would you be willing to fill in a few details about yourself?')],
+    hint:()=>T('Выбери вариант или напиши своё','Pick some or write your own'), widget:'ready'},
+  {id:'name', bot:()=>[T('Отлично! Как тебя зовут?','We\'re on! May I know your name?')], widget:'name'},
+  {id:'basics', bot:()=>[T('Супер! Сначала немного о тебе.','Awesome! First, a little bit about you.')], widget:'basics'},
+  {id:'location', bot:()=>[T('Класс! Где ты обычно бываешь?','Cool! Where do you usually hang out?')], widget:'location'},
+  {id:'language', bot:()=>[T('Отлично. На каких языках тебе комфортно общаться?','Great. What languages are you comfortable communicating in?')],
+    hint:()=>T('Выбери варианты или напиши свой','Pick some or write your own'), widget:'language'},
+  {id:'interests', bot:()=>[T('Класс! Чем увлекаешься?','Cool! What are your hobbies?')],
+    hint:()=>T('Выбери из готовых или напиши своё','Choose from the pre-written options or write your own'), widget:'interests'},
+  {id:'photo', bot:()=>[T('Рад знакомству, '+(st.profile.name||'')+'!','Nice to meet you, '+(st.profile.name||'')+'!'),
+    T('Давай добавим фото профиля, чтобы тебя узнавали на встречах.','Let\'s add a profile photo so people recognize you at meetups.')],
+    hint:()=>T('Добавь фото','Add a photo'), widget:'photo'},
 ];
 function startChat(){
   // The «Your safety matters» step is gone, but everything it applied when a person pressed Continue
@@ -942,12 +1079,16 @@ function startChat(){
   st.phase='chat'; st.thread=[]; st.step=-1; st.editing=false; renderChrome(); nextStep();
 }
 function renderChrome(){
+  // Figma header: avatar, left-aligned title, percentage on the right, and the progress as a
+  // hairline rule along the bottom edge of the header itself (not a pill under the title).
   A.innerHTML=`<div class="head"><div class="ava" id="ava">${MASCOT_SRC?'':'K'}</div>
-    <div class="ht"><div class="htt">${st.editing?T('Редактирование','Editing'):T('Собираем профиль','Creating Profile')}</div>
-      <div class="prow"><div class="pbar"><i></i></div><div class="pct">0%</div></div></div>
+    <div class="ht"><div class="htt">${st.editing?T('Редактирование','Editing'):T('Собираем профиль','Creating Profile')}</div></div>
+    <div class="hpct">0%</div>
+    <div class="hrule"></div>
     ${st.editing?`<button class="hback" id="hback" title="${T('Назад','Back')}" aria-label="${T('Назад','Back')}">&#10005;</button>`:''}</div>
     <div class="thread" id="thread"></div>
-    <div class="composer"><button class="cadd">${IC.plus}</button>
+    <div class="composer">
+      <button class="cback" id="cback" title="${T('Назад','Back')}" aria-label="${T('Назад','Back')}">${IC.chevl}</button>
       <div class="cwrap" id="cwrap"><input id="cin" placeholder="${T('Сообщение…','Message…')}"><span class="mic">${IC.mic}</span></div>
       <button class="csend" id="csend" disabled>${IC.send}</button></div>`;
   if(MASCOT_SRC){ document.getElementById('ava').style.backgroundImage=`url(${MASCOT_SRC})`; document.getElementById('ava').textContent=''; }
@@ -961,6 +1102,10 @@ function renderChrome(){
   cin.oninput=refreshSendState;
   function sendC(){ if(st.busy||!st.compose)return; const v=cin.value.trim(); if(!v)return; const fn=st.compose; cin.value=''; refreshSendState(); fn(v); }
   csend.onclick=sendC; cin.onkeydown=e=>{ if(e.key==='Enter')sendC(); };
+  // The mock puts back next to the composer, not in the header. It re-asks the previous step
+  // rather than unwinding state: the answers are already stored, and re-answering overwrites them.
+  const cb=document.getElementById('cback');
+  if(cb) cb.onclick=()=>{ if(st.busy)return; stepBack(); };
 }
 function setCompose(fn,ph){ st.compose=fn; const cin=document.getElementById('cin'); if(cin){ cin.placeholder=ph||'Message...'; } refreshSendState(); }
 function thread(){ return document.getElementById('thread'); }
@@ -994,6 +1139,16 @@ function nextStep(){
     else { nextStep(); }   // pure-message step (greeting) -> roll on
   });
 }
+// Back re-opens the PREVIOUS step. The thread keeps its history — that is what a chat looks like —
+// so this appends the question again instead of deleting bubbles; re-answering overwrites the stored
+// value. Inside the free-chat interests funnel there is no scripted step to return to, so it is a
+// no-op there rather than a jump out of the conversation.
+function stepBack(){
+  if(st.phase!=='chat' || st.busy) return;
+  if(st.funnel && st.funnel.length) return;
+  if(st.step<=0) return;
+  st.step-=2; setCompose(null); nextStep();
+}
 function afterAnswer(){ refreshCrit().then(()=>{ if(st.editing){ st.editing=false; return goSummary(); } nextStep(); }).catch(()=>nextStep()); }
 
 // once a step is answered the inline widget collapses away (the answer is now a bubble); this
@@ -1004,39 +1159,99 @@ function lock(slot){ slot.remove(); }
 const WIDGETS={};
 
 // consent-style gate before the basics form: nothing is asked until the user says they're ready
+// Flags/emoji come straight from the mock — they are decoration on top of the same canonical values
+// the rest of the funnel already stores, never a new vocabulary.
+const LANG_FLAG={English:'🇬🇧',Spanish:'🇪🇸',German:'🇩🇪',French:'🇫🇷',Portuguese:'🇵🇹',Italian:'🇮🇹',Russian:'🇷🇺'};
+const INT_EMOJI={coding:'💻',hiking:'🥾',gaming:'🎮',yoga:'🧘',cooking:'🍳',music:'🎵',coffee:'☕',
+  photography:'📷',travel:'✈️',football:'⚽'};
+const INT_EN={coding:'Coding',hiking:'Hiking',gaming:'Video games',yoga:'Yoga',cooking:'Cooking',
+  music:'Music',coffee:'Coffee',photography:'Photography',travel:'Travel',football:'Football'};
+function intChipLabel(k){ const en=INT_EN[k]||k; const it=INTERESTS().find(x=>x[0]===k);
+  return (it?T(it[1],en):en)+(INT_EMOJI[k]?' '+INT_EMOJI[k]:''); }
+
+// consent-style gate: nothing is asked until the person says go
 WIDGETS.ready=function(slot){
-  slot.innerHTML=`<div class="chips"><div class="chip on" id="rdy">${T('Я готов',"I'm ready")}</div><div class="chip" id="why">${T('Зачем это нужно?','Why do you need this?')}</div></div>`;
-  slot.querySelector('#rdy').onclick=()=>{ if(st.busy)return; lock(slot); meSay(T('Я готов',"I'm ready")); afterAnswer(); };
-  slot.querySelector('#why').onclick=()=>{ if(st.busy)return; lock(slot); meSay("Why do you need this?");
-    botSay(["Fair question. Your basics help me introduce you to the right people, and you stay in control: every detail can be edited, hidden from matching or removed later.","Ready when you are."],
-      ()=>{ const w=widgetSlot(); w.innerHTML=`<div class="chips"><div class="chip on" id="rdy2">I'm ready</div></div>`;
-            w.querySelector('#rdy2').onclick=()=>{ if(st.busy)return; lock(w); meSay(T('Я готов',"I'm ready")); afterAnswer(); }; });
-  };
+  slot.innerHTML=`<div class="chips">
+    <div class="chip" id="why">${T('Зачем это нужно?','Why do you need this?')}</div>
+    <div class="chip on" id="rdy">${T('Поехали!',"Let's go!")}</div></div>`;
+  slot.querySelector('#rdy').onclick=()=>{ if(st.busy)return; lock(slot); meSay(T('Поехали!',"Let's go!")); afterAnswer(); };
+  slot.querySelector('#why').onclick=()=>{ if(st.busy)return; meSay(T('Зачем это нужно?','Why do you need this?'));
+    botSay([T('Чтобы находить тебе людей и планы рядом, а не ленту незнакомцев. Всё можно изменить потом.',
+              "So I can find you people and plans nearby instead of a feed of strangers. You can change any of it later.")]); };
 };
+
+// name — typed into the composer, exactly as the mock shows it
+WIDGETS.name=function(slot){
+  slot.remove();
+  setCompose(function(v){
+    const nm=String(v||'').trim().slice(0,40); if(!nm) return;
+    meSay(nm); set('name',nm); setCompose(null); afterAnswer();
+  }, T('Твоё имя','Your name'));
+};
+
+// ---- age dial -------------------------------------------------------------------------------
+// A round scale, not a number field: the mock's control is the age. Pointer capture is explicit —
+// without it a redraw during the drag steals the implicit touch capture and the dial stops after
+// one step (the same trap the profile app's dials hit).
+function ageDial(slot, value, onChange){
+  const MIN=18, MAX=80, R=74, C=2*Math.PI*R;
+  slot.innerHTML=`<div class="dial">
+    <svg width="188" height="188" viewBox="0 0 188 188" id="agsvg">
+      <circle cx="94" cy="94" r="${R}" fill="none" stroke="#EDEEF1" stroke-width="10"/>
+      <circle cx="94" cy="94" r="${R}" fill="none" stroke="var(--accent)" stroke-width="10"
+        stroke-linecap="round" id="agarc" transform="rotate(-90 94 94)"/>
+      <circle id="aghand" r="9" fill="var(--accent)" stroke="#fff" stroke-width="3"/>
+      <text x="94" y="94" text-anchor="middle" dominant-baseline="central" class="dnum"
+        font-size="34" font-weight="800" fill="#181B22" id="agtxt"></text>
+    </svg>
+    <div class="dialbox" id="agbox"></div></div>`;
+  const svg=slot.querySelector('#agsvg'), arc=slot.querySelector('#agarc'),
+        hand=slot.querySelector('#aghand'), txt=slot.querySelector('#agtxt'), box=slot.querySelector('#agbox');
+  let cur=Math.min(MAX,Math.max(MIN,value||28));
+  function paint(){
+    const f=(cur-MIN)/(MAX-MIN);
+    arc.setAttribute('stroke-dasharray', C);
+    arc.setAttribute('stroke-dashoffset', C*(1-f));
+    const a=-Math.PI/2 + f*2*Math.PI;
+    hand.setAttribute('cx', 94+R*Math.cos(a)); hand.setAttribute('cy', 94+R*Math.sin(a));
+    txt.textContent=cur; box.textContent=cur;
+  }
+  function at(e){
+    const b=svg.getBoundingClientRect();
+    const x=e.clientX-(b.left+b.width/2), y=e.clientY-(b.top+b.height/2);
+    let a=Math.atan2(y,x)+Math.PI/2; if(a<0)a+=2*Math.PI;
+    return Math.round(MIN+(a/(2*Math.PI))*(MAX-MIN));
+  }
+  let drag=false;
+  function apply(v){ v=Math.min(MAX,Math.max(MIN,v)); if(v===cur)return; cur=v; paint(); onChange(cur); }
+  svg.addEventListener('pointerdown',e=>{ e.preventDefault(); drag=true;
+    try{ svg.setPointerCapture(e.pointerId); }catch(_e){} apply(at(e)); });
+  svg.addEventListener('pointermove',e=>{ if(drag){ e.preventDefault(); apply(at(e)); } });
+  svg.addEventListener('pointerup',()=>{ drag=false; });
+  svg.addEventListener('pointercancel',()=>{ drag=false; });
+  paint(); onChange(cur);
+  return ()=>cur;
+}
 
 WIDGETS.basics=function(slot){
   const p=st.profile;
   slot.innerHTML=`<div class="card">
-    <div class="photo" id="photo">${p.photo?'':'<span class="ph">'+IC.camera+'</span>'}<span class="cam">${IC.plus}</span></div>
-    <div class="cap">${T('Добавь фото профиля','Add a profile photo')}</div>
-    <div class="lbl">${T('Как мне тебя называть?','How should I call you?')}</div>
-    <input class="inp" id="f_name" placeholder="${T('Твоё имя','Your name')}" value="${esc(p.name||'')}">
-    <div class="lbl">${T('Твой возраст','Your age')}</div>
-    <input class="inp" id="f_age" type="number" inputmode="numeric" min="18" placeholder="18+" value="${p.age||''}">
-    <div class="warn" id="agewarn">${T('Нужно быть 18 лет или старше.','You need to be 18 or older.')}</div>
-    <div class="lbl">${T('Пол','Gender')}</div>
-    <div class="grid3" id="f_gender">${GENDERS.map(g=>`<div class="chip ${p.gender===g[0]?'on':''}" data-g="${g[0]}">${esc(T(g[1],g[0]))}</div>`).join('')}</div>
-    </div><button class="cta" id="cont" disabled>${T('Продолжить','Continue')}</button>`;
-  const photo=slot.querySelector('#photo'); if(p.photo)photo.style.backgroundImage=`url(${p.photo})`;
-  photo.onclick=()=>pickPhoto(()=>WIDGETS.basics(slot));
-  const name=slot.querySelector('#f_name'), age=slot.querySelector('#f_age'), cont=slot.querySelector('#cont');
-  slot.querySelectorAll('#f_gender .chip').forEach(c=>c.onclick=()=>{ slot.querySelectorAll('#f_gender .chip').forEach(x=>x.classList.remove('on')); c.classList.add('on'); set('gender',c.dataset.g); val(); });
-  function val(){ const a=parseInt(age.value,10); const okA=a>=18&&a<=120; slot.querySelector('#agewarn').style.display=(age.value&&!okA)?'block':'none'; cont.disabled=!(name.value.trim()&&okA&&p.gender); }
-  name.oninput=()=>{ set('name',name.value.trim()); val(); };
-  age.oninput=()=>{ const a=parseInt(age.value,10); if(a>=18){set('age',a);set('ageVerified18',true);} else{delete p.age;delete p.ageVerified18;} val(); };
+      <div class="lbl" style="margin-top:0">${T('Твой возраст','Your age')}</div>
+      <div id="agslot"></div>
+      <div class="lbl">${T('Пол','Sex')}</div>
+      <div class="grid3" id="f_sex">${GENDERS.map(g=>`<div class="chip ${p.gender===g[0]?'on':''}" data-g="${g[0]}">${esc(T(g[1],g[0]==='Other'?'Any is fine':g[0]))}</div>`).join('')}</div>
+    </div>
+    <div class="acts"><button class="btn pri" id="cont" disabled>${T('Продолжаем','Keep going')}</button></div>`;
+  const cont=slot.querySelector('#cont');
+  function val(){ cont.disabled=!(p.age>=18 && p.gender); }
+  ageDial(slot.querySelector('#agslot'), p.age||28, v=>{ set('age',v); set('ageVerified18',true); val(); });
+  slot.querySelectorAll('#f_sex .chip').forEach(c=>c.onclick=()=>{
+    slot.querySelectorAll('#f_sex .chip').forEach(x=>x.classList.remove('on'));
+    c.classList.add('on'); set('gender',c.dataset.g); val(); });
   val();
-  cont.onclick=()=>{ lock(slot); const bits=[p.name, p.age?p.age:null, p.gender].filter(Boolean).join(', '); meSay(bits+(p.photo?', photo added':'')); afterAnswer(); };
+  cont.onclick=()=>{ lock(slot); meSay([p.age, genderLabel(p.gender)].filter(Boolean).join(', ')); afterAnswer(); };
 };
+
 // A raw phone photo is several MB as a dataURL — too big to keep in st.profile, to stash in
 // localStorage (≈5MB quota), or to move around. Downscale to a 480px JPEG avatar first; that makes
 // the upload reliable and small enough to hand to the profile app.
@@ -1102,16 +1317,23 @@ WIDGETS.location=function(slot){
   const hasL=(typeof L!=='undefined');
   const mapHtml = hasL ? '<div class="map" id="lmap"></div>'
                        : '<div class="map"><div class="ring"></div><div class="pin">'+IC.pin+'</div></div>';
+  // Figma order: the place field first, then the distance with its value on the right, then the
+  // dark "detect" action, and the map underneath as confirmation of what was chosen. The field
+  // stays a typeable input with a datalist (styled as the mock's select): the product needs a CITY
+  // with coordinates, and a fixed dropdown cannot hold every city people actually live in.
   slot.innerHTML=`<div class="card">
-    ${mapHtml}
-    <div class="lbl" style="margin-top:14px">${T('Твой город','Your city')}</div>
-    <input class="inp" id="area" list="cityopts" autocomplete="off" placeholder="${T('Начни печатать, Kleal подскажет','Start typing — Kleal will suggest')}" value="${esc(area)}">
+    <div class="selwrap">
+      <input class="sel" id="area" list="cityopts" autocomplete="off" placeholder="${T('Твой город','Your city')}" value="${esc(area)}">
+      <span class="cv">${IC.chevd}</span>
+    </div>
     <datalist id="cityopts"></datalist>
-    <button id="gloc" type="button" style="margin-top:10px;width:100%;padding:12px;border:1px solid var(--line,#E7E8EC);background:#fff;border-radius:12px;font:inherit;font-weight:600;color:var(--accent,#F5455C);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px">📍 ${T('Определить моё местоположение','Use my location')}</button>
-    <div class="lbl" style="margin-top:16px">${T('Далеко ли готов ехать?','How far are you happy to go?')} <b id="rkm">${r}</b> ${T('км','km')}</div>
+    <div class="rowlbl"><span class="k">${T('Далеко ли готов ехать?','How far are you happy to go?')}</span><span class="v"><b id="rkm">${r}</b> ${T('км','km')}</span></div>
     <input type="range" id="rad" min="1" max="50" value="${r}">
+    <button class="btn dark" id="gloc" type="button" style="margin-top:14px">${IC.pin} ${T('Определить моё местоположение','Detect my location')}</button>
+    <div style="margin-top:14px">${mapHtml}</div>
     <div class="cap" id="gstat" style="text-align:left;margin-top:8px"></div>
-    </div><button class="cta" id="cont" ${area?'':'disabled'}>${T('Продолжить','Continue')}</button>`;
+    </div>
+    <div class="acts"><button class="btn pri" id="cont" ${area?'':'disabled'}>${T('Почти закончили','We\'re almost done')}</button></div>`;
   const rad=slot.querySelector('#rad'), area_in=slot.querySelector('#area'), cont=slot.querySelector('#cont');
   // ---- real map (Leaflet + Carto light tiles). A radius circle marks the AREA; no exact pin, no attribution bar. ----
   let lmap=null, circle=null;
@@ -1201,10 +1423,10 @@ const LANGS=['English','Spanish','German','French','Portuguese','Italian','Russi
 WIDGETS.language=function(slot){
   const cur=(st.profile.languages&&st.profile.languages.comfortable)||[];
   slot.innerHTML=`<div class="chips" id="langs">
-    ${LANGS.map(l=>`<div class="chip ${cur.includes(l)?'on':''}" data-l="${l}">${esc(langLabel(l))}</div>`).join('')}
+    ${LANGS.map(l=>`<div class="chip ${cur.includes(l)?'on':''}" data-l="${l}">${esc(langLabel(l))} ${LANG_FLAG[l]||''}</div>`).join('')}
     ${cur.filter(l=>!LANGS.includes(l)).map(l=>`<div class="chip on" data-l="${esc(l)}">${esc(l)}</div>`).join('')}</div>
-    <div class="addrow" id="ar"><span class="ai">${IC.plus}</span><input id="lown" placeholder="${T('Добавить своё','Add your own')}"><button class="go" id="ladd">${IC.send}</button></div>
-    <button class="cta" id="cont" disabled>${T('Далее','Next')}</button>`;
+    <div class="addrow" id="ar"><span class="ai">${IC.plus}</span><input id="lown" placeholder="${T('Свой вариант','Your option')}"><button class="go" id="ladd">${IC.send}</button></div>
+    <div class="acts"><button class="btn pri" id="cont" disabled>${T('Далее','Next')}</button></div>`;
   const cont=slot.querySelector('#cont');
   function sync(){ const on=[...slot.querySelectorAll('#langs .chip.on')].map(c=>c.dataset.l); set('languages.comfortable',on); cont.disabled=!on.length; }
   slot.querySelectorAll('#langs .chip').forEach(c=>c.onclick=()=>{ c.classList.toggle('on'); sync(); });
@@ -1221,10 +1443,10 @@ WIDGETS.interests=function(slot){
   const known=INTERESTS().map(i=>i[0]);
   const extra=((st.profile.interests&&st.profile.interests.explicit)||[]).filter(x=>known.indexOf(String(x).toLowerCase())<0);
   slot.innerHTML=`<div class="chips" id="ints">
-    ${INTERESTS().map(i=>`<div class="chip ${cur.includes(i[0])?'on':''}" data-q="${esc(i[0])}">${esc(T(i[1],i[0]))}</div>`).join('')}
+    ${INTERESTS().map(i=>`<div class="chip ${cur.includes(i[0])?'on':''}" data-q="${esc(i[0])}">${esc(intChipLabel(i[0]))}</div>`).join('')}
     ${extra.map(x=>`<div class="chip on" data-q="${esc(x)}">${esc(x)}</div>`).join('')}</div>
     <div class="addrow" id="ar"><span class="ai">${IC.plus}</span><input id="iown" placeholder="${T('Добавить своё','Add your own')}"><button class="go" id="iadd">${IC.send}</button></div>
-    <button class="cta" id="cont" disabled>${T('Далее','Next')}</button>`;
+    <div class="acts"><button class="btn pri" id="cont" disabled>${T('Далее','Next')}</button></div>`;
   const cont=slot.querySelector('#cont');
   function picks(){ return [...slot.querySelectorAll('#ints .chip.on')].map(c=>c.dataset.q); }   // canonical tokens
   function sync(){ const on=picks(); set('interests.explicit',on); cont.disabled=!on.length; }
@@ -1239,6 +1461,101 @@ WIDGETS.interests=function(slot){
       &&!(st.crit.missing||[]).some(m=>/^(Role|Experience):/.test(m));
     if(st.editing&&funnelDone){ afterAnswer(); } else { startFunnel(on); } };
 };
+
+// ---- photo step: take / upload / skip, then the selfie sheet, then review, then confirmation ----
+// Three screens in the mock, one widget here: they are the same decision seen at different stages.
+WIDGETS.photo=function(slot){
+  slot.innerHTML=`<div class="acts">
+    <button class="btn pri" id="ptake">${IC.camera} ${T('Сделать фото','Take photo')}</button>
+    <button class="btn dark" id="pup">${IC.upload} ${T('Загрузить фото','Upload photo')}</button>
+    <button class="btn ghost" id="pskip">${T('Пропустить','Skip')}</button></div>`;
+  slot.querySelector('#ptake').onclick=()=>{ if(st.busy)return; openCamera(dataURL=>reviewPhoto(slot,dataURL)); };
+  slot.querySelector('#pup').onclick=()=>{ if(st.busy)return; pickPhoto(()=>reviewPhoto(slot, st.profile.photo)); };
+  slot.querySelector('#pskip').onclick=()=>{ if(st.busy)return; lock(slot); meSay(T('Пропустить','Skip')); finishPhoto(); };
+};
+
+function photoBubble(src){
+  const row=document.createElement('div'); row.className='row fade';
+  const b=document.createElement('div'); b.className='pbub'; b.innerHTML=`<img src="${src}" alt="">`;
+  row.appendChild(b);
+  const tm=document.createElement('div'); tm.className='time me'; tm.textContent=clock(); row.appendChild(tm);
+  thread().appendChild(row); scrollDown();
+}
+
+function reviewPhoto(slot, dataURL){
+  if(!dataURL) return;
+  lock(slot);
+  photoBubble(dataURL);
+  botSay([T('Отлично выглядишь! Идеальное фото профиля.',"Wow — you look great! That's a perfect profile photo.")], ()=>{
+    addHint(T('Выбери вариант','Select an option by tap'));
+    const w=widgetSlot();
+    w.innerHTML=`<div class="chips">
+      <div class="chip on" id="puse">${T('Оставить','Use it')}</div>
+      <div class="chip" id="pre">${T('Переснять','Retake')}</div></div>`;
+    w.querySelector('#puse').onclick=()=>{ if(st.busy)return; lock(w); usePhoto(dataURL); };
+    w.querySelector('#pre').onclick=()=>{ if(st.busy)return; lock(w);
+      openCamera(d=>reviewPhoto(widgetSlot(), d)); };
+  });
+}
+
+function usePhoto(dataURL){
+  _downscalePhoto(dataURL, function(small){
+    st.profile.photo=small; set('photoStatus','uploaded');
+    try{ localStorage.setItem('kleal_photo', small); }catch(_e){}
+    botSay([T('Супер — теперь это твоё фото профиля.',"Love it — that's your profile photo now.")], ()=>{
+      const w=widgetSlot();
+      w.innerHTML=`<div class="setcard"><img src="${small}" alt="">
+        <div class="st"><div class="stn">${T('Фото профиля установлено','Profile photo set')}</div>
+          <div class="sts">${T('Выглядит отлично, ','Looking sharp, ')}${esc(st.profile.name||'')}</div></div>
+        <div class="ok">${IC.check}</div></div>`;
+      finishPhoto();
+    });
+  });
+}
+
+// Last scripted beat before the summary — the mock's "Now let's find your people."
+function finishPhoto(){
+  botSay([T('Теперь найдём твоих людей. Как будешь готов.',"Now let's find your people. Ready when you are.")], ()=>{
+    const w=widgetSlot();
+    w.innerHTML=`<div class="acts"><button class="btn pri" id="pgo">${T('Поехали',"Let's go")}</button></div>`;
+    w.querySelector('#pgo').onclick=()=>{ if(st.busy)return; lock(w); afterAnswer(); };
+  });
+}
+
+// ---- selfie sheet ----------------------------------------------------------------------------
+// getUserMedia is not available everywhere (http origins, denied permission, desktop without a
+// camera). Rather than show a dead shutter, the sheet says so and hands straight over to the file
+// picker, which is the same outcome the user wanted.
+function openCamera(cb){
+  const host=document.querySelector('.phone')||document.body;
+  const sheet=document.createElement('div'); sheet.className='cam-sheet fade';
+  sheet.innerHTML=`<div class="cam-top"><button class="cancel" id="ccancel">${T('Отмена','Cancel')}</button>
+      <div class="ttl">${T('Сделай селфи','Take a selfie')}</div></div>
+    <div class="cam-stage"><div class="cam-oval" id="coval"><video id="cvid" autoplay playsinline muted></video></div></div>
+    <div class="cam-note" id="cnote"></div>
+    <div class="cam-bar"><button class="cam-shot" id="cshot" aria-label="${T('Снять','Shutter')}"></button></div>`;
+  host.appendChild(sheet);
+  const vid=sheet.querySelector('#cvid'), note=sheet.querySelector('#cnote');
+  let stream=null;
+  function close(){ try{ if(stream) stream.getTracks().forEach(t=>t.stop()); }catch(_e){} sheet.remove(); }
+  sheet.querySelector('#ccancel').onclick=close;
+  sheet.querySelector('#cshot').onclick=()=>{
+    if(!stream){ close(); pickPhoto(()=>cb(st.profile.photo)); return; }
+    try{
+      const c=document.createElement('canvas');
+      const w=vid.videoWidth||480, h=vid.videoHeight||640;
+      c.width=w; c.height=h; c.getContext('2d').drawImage(vid,0,0,w,h);
+      const d=c.toDataURL('image/jpeg',0.9); close(); cb(d);
+    }catch(_e){ close(); pickPhoto(()=>cb(st.profile.photo)); }
+  };
+  if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia){
+    navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false})
+      .then(s=>{ stream=s; vid.srcObject=s; })
+      .catch(()=>{ note.textContent=T('Камера недоступна — выбери фото из галереи.','Camera unavailable — pick a photo instead.'); });
+  } else {
+    note.textContent=T('Камера недоступна — выбери фото из галереи.','Camera unavailable — pick a photo instead.');
+  }
+}
 
 // interests free-chat funnel (Llama): draws out roles + domain detail, inline option chips
 function startFunnel(picks){
@@ -1328,25 +1645,36 @@ function goSummary(){ st.phase='summary'; const rows=summaryRows();
   const nm=p.name||T('Ты','You'), ini=nm.charAt(0).toUpperCase();
   // p.gender holds the stored English token; the ID card was reading «27 · Male · Белград».
   const sub=[p.age||null,p.gender?genderLabel(p.gender):null,p.city||null].filter(Boolean).join(' · ')||T('Новый профиль','New profile');
-  A.innerHTML=`<div class="head"><div class="ava" id="ava2">${MASCOT_SRC?'':'K'}</div>
-    <div class="ht"><div class="htt">${T('Что Kleal знает о тебе','What Kleal knows about you')}</div><div class="hsub">${T('Память твоего агента. Изменить можно всё и в любой момент.',"Your agent's memory. Edit anything, anytime.")}</div></div></div>
-    <div class="scroll fade">
+  // Figma "Profile Summary": identity card with a confidence bar, Kleal's own write-up, then the
+  // detail rows behind a disclosure — the mock leads with the summary, not with a settings list.
+  A.innerHTML=`<div class="sumhead"><div class="ava" id="ava2">${MASCOT_SRC?'':'K'}</div>
+    <div class="ht"><div class="htt">${T('Что Kleal знает о тебе','What Kleal knows about you')}</div></div>
+    <div class="hpct">${conf}%</div><div class="hrule" style="width:${conf}%"></div></div>
+    <div class="sumwrap fade">
       <div class="idcard">
-        <div class="idrow"><div class="idava">${esc(ini)}</div>
-          <div class="idt"><div class="idn">${esc(nm)}<span class="statusdot"></span></div><div class="idsub">${esc(sub)}</div></div></div>
-        <div class="confrow"><span class="cl">${T('Готовность профиля','Profile readiness')}</span><span class="cp">${conf}%</span></div>
-        <div class="ctrack"><i style="width:${conf}%"></i></div></div>
-      <div class="sumc"><div class="sumlbl">${T('Описание от Kleal',"Kleal's summary")}</div>
-        <div class="sumtxt" id="sumtxt">${st.profile.summary?esc(st.profile.summary):`<span class="shim">${T('Kleal составляет описание…','Kleal is writing your summary…')}</span>`}</div>
+        ${p.photo?`<img class="av" src="${p.photo}" alt="">`:`<div class="av">${IC.usr}</div>`}
+        <div class="idt"><div class="idn">${esc(nm)}<span class="vf">${IC.verified}</span></div>
+          <div class="conf"><div class="cl"><span>${T('Готовность профиля','Profile confidence')}</span><b>${conf}%</b></div>
+            <div class="cb"><i style="width:${conf}%"></i></div></div></div></div>
+      <div class="sumbox"><div class="sh"><b>${T('Описание от Kleal',"Kleal's summary")}</b><span>${T('Обновлено сегодня','Updated today')}</span></div>
+        <p class="sumtxt" id="sumtxt">${st.profile.summary?esc(st.profile.summary):`<span class="shim">${T('Kleal составляет описание…','Kleal is writing your summary…')}</span>`}</p>
         <div class="sumedit" id="sume" style="display:${st.profile.summary?'block':'none'}">Edit</div></div>
-      <div class="orows">${rows.map(r=>`<div class="orow${r[3]?'':' flat'}" data-step="${r[3]}"><div class="oic2">${IC[r[0]]}</div>
+      <button class="btn pri" id="viewall">${T('Все настройки профиля','View all profile settings')}</button>
+      <div class="infobox"><span class="ii">${IC.spark}</span>
+        <p>${T('Чем больше Kleal о тебе знает, тем точнее он понимает твои намерения и находит нужных людей.','The more Kleal knows about you, the better it can understand your intentions and connect you with the right people.')}</p></div>
+      <div class="orows" id="orows" style="display:none">${rows.map(r=>`<div class="orow${r[3]?'':' flat'}" data-step="${r[3]}"><div class="oic2">${IC[r[0]]}</div>
         <div class="ot2"><div class="otn2">${esc(r[1])}</div><div class="otv2">${esc(r[2])}</div></div>
         ${r[3]?`<div class="orowedit"><span class="rspark">${IC.spark}</span>${IC.edit}</div>`:''}</div>`).join('')}</div>
     </div>
-    <div class="foot"><button class="cta" id="done">${T('Готово','Done')}</button></div>`;
+    <div class="sumfoot"><button class="btn pri" id="done">${T('Готово','Done')}</button></div>`;
   if(MASCOT_SRC){ const a=document.getElementById('ava2'); a.style.backgroundImage=`url(${MASCOT_SRC})`; a.textContent=''; }
   A.querySelectorAll('.orow').forEach(e=>{ if(e.dataset.step) e.onclick=()=>editStep(e.dataset.step); });
   document.getElementById('done').onclick=()=>rDone();
+  // The rows are the same editable list as before, just folded away behind the mock's button.
+  const va=document.getElementById('viewall'), rowsEl=document.getElementById('orows');
+  if(va&&rowsEl) va.onclick=()=>{ const open=rowsEl.style.display!=='none';
+    rowsEl.style.display=open?'none':'block';
+    va.textContent=open?T('Все настройки профиля','View all profile settings'):T('Свернуть настройки','Hide settings'); };
   wireSummaryEdit();
   if(!st.profile.summary) fetchSummary();
 }
@@ -1380,10 +1708,20 @@ function rDone(){ st.phase='done';
   if(st.login){ const pf=Object.assign({},st.profile); delete pf.photo;
     try{ fetch('/api/onboarding/attach',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({login:st.login,name:st.profile.name||'',profile:pf})}).catch(()=>{}); }catch(_e){} }
-  A.innerHTML=`<div class="done fade"><div class="donedisc">${svg('<path d="M5 12.5l4.5 4.5L19 7"/>','0 0 24 24').replace('width="22" height="22"','width="72" height="72"')}</div>
-    <div class="d-h">${T('Ты в игре!',"You're on the board!")}</div>
-    <div class="d-sub">${T('Твой агент Kleal готов. Скажи ему, чем хочешь заняться, и он начнёт искать людей и планы.','Your Kleal agent is ready. Tell it what you want to do and it starts finding people and plans.')}</div></div>
-    <div class="foot"><button class="cta" id="ci">${T('Продолжить','Continue')}</button></div>`;
+  // Figma "Profile Success": the congratulation, then straight into creating the first intent —
+  // with the app's own bottom nav already visible, so the person can see where they have landed.
+  A.innerHTML=`<div class="done fade">
+      <div class="ph">${svg('<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M4 18l5.5-5 4 3.5L17 13l3 3"/>','0 0 24 24').replace('width="22" height="22"','width="76" height="76"')}</div>
+      <h2>${T('Поздравляем!<br>Ты в игре!',"Congratulation!<br>You are on the board!")}</h2>
+    </div>
+    <div class="donefoot"><button class="btn pri" id="ci">${T('Создать интент','Create Intent')}</button></div>
+    <div class="bnav">
+      <div class="bi">${IC.list}<span>${T('Интенты','My Intents')}</span></div>
+      <div class="bi">${IC.search}<span>${T('Поиск','Search')}</span></div>
+      <div class="bfab">${IC.spark}</div>
+      <div class="bi">${IC.msg}<span>${T('Сообщения','Messages')}</span></div>
+      <div class="bi">${IC.usr}<span>${T('Профиль','Profile')}</span></div>
+    </div>`;
   document.getElementById('ci').onclick=()=>openProfile();   // -> the main screen (Agent Home)
 }
 
