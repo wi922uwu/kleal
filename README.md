@@ -1,38 +1,69 @@
-# Kleal — Onboarding + Profile prototypes
+# Kleal
 
-Single-file prototypes for the Kleal onboarding flow and the "agent memory" profile card, built to match the Figma designs. Each app is a self-contained Python `http.server` with embedded HTML/CSS/JS.
+AI social agent: a person says what they want to do, and the agent finds them real people
+to do it with. Everything the user touches is a chat with the agent.
 
-## Apps
+The product is a set of small, single-file Python services (`http.server`, stdlib only —
+no framework, no build step). Each service owns one concern and embeds its own UI as one
+HTML document, so any service can be deployed by copying one file.
 
-| File | What | Port |
+## Services
+
+Every service binds `127.0.0.1`. **Only the gateway is public** — one tunnel, one URL.
+
+| Service | Port | What it owns |
 |---|---|---|
-| `kleal_v2.py` | Messenger-style onboarding: splash → basics → location (auto-geo + map) → language → interests funnel (LLM, per-type domain questions) → safety → text summary → menu. | 7072 |
-| `kleal_profile.py` | "My Kleal Profile" card (Figma V3): Overview hub + Interests / Your personality / Goals / Safety & Privacy, Edit Signal, drill-in nav. Static, no LLM. | 7073 |
-| `llm_demo_local.py` | LLM backend + a 7-model comparison demo. `kleal_v2` reuses its extractor / LLM helpers. | 7071 |
+| `gateway` | 7080 | The single public entry point. Routing only — no logic, no state, no keys. |
+| `llm` | 7071 | The only holder of model endpoints/keys. Everything else reaches models through it. |
+| `onboarding` | 7072 | Sign-up funnel + accounts + the write path into the user store. |
+| `profile` | 7073 | The profile card and every post-onboarding screen (intents, search, messages). |
+| `matching` | 7074 | Intent → ranked candidates → agent negotiation. Owner: Dev B. |
+| `buddy` | 7075 | The conversational agent: free text → confirmed intent → launch a search. |
+| `filtration` | 7076 | Text → canonical topics/category. The shared vocabulary everything matches on. |
+| `admin` | 7077 | Operator panel: the store, cohorts, and a matching lab. Token-gated. |
 
-The onboarding hands the finished profile to the profile card via a base64 URL param (`/?p=<...>`), so the two run independently and connect cross-origin.
+Request flow: `browser → gateway → service → (llm-service) → model`.
 
 ## Run
 
 ```bash
-# profile card (static, no LLM needed)
-python kleal_profile.py                 # http://localhost:7073
-
-# onboarding (needs an OpenAI-compatible LLM endpoint via SELF_BASE)
-python run_v2_local.py                  # http://localhost:7072
+cd kleal-ms && ops/run.sh all
 ```
 
-On the onboarding splash, the **"Emulate onboarding"** button fills a realistic profile and jumps straight to the filled card.
+`ops/run.sh <service>` starts one; `ops/run.sh all` starts the set in dependency order.
+Ports and inter-service URLs come from `shared/config.py` — the single source of truth.
 
-## Config (environment variables)
+The model itself is self-hosted on the pod: `ops/start_llama.sh` (vLLM, Llama-3.3-70B AWQ
+on :8002). `llm-service` is the only thing that talks to it.
 
-- `SELF_BASE` / `SELF_KEY` — self-hosted, OpenAI-compatible LLM endpoint (e.g. vLLM serving Llama-3.3-70B) used by the interests funnel.
-- `AITUNNEL_KEY` / `AITUNNEL_BASE` — optional, only for the model-comparison demo in `llm_demo_local.py`.
-- `PROFILE_URL` — public URL of the profile app, baked into the onboarding "My Profile" handoff (needed when the two apps sit behind separate tunnels).
-- `V2_PORT` / `PROFILE_PORT` / `DEMO_PORT` — ports.
+## Contracts
 
-**No secrets are committed** — set your own keys via the environment.
+`shared/contracts.md` is the frozen part: endpoint names other teams' code hard-codes,
+the user-store row shape, and the rules for changing either. Read it before renaming
+anything under `/api/`.
 
-## Deploy
+## Layout
 
-`build/deploy_bundle_to_pod.py` generates a remote bash script (gzip + base64 chunks) that deploys both apps to a RunPod pod over PTY-only SSH, wires the profile URL into the onboarding handoff, and opens cloudflared tunnels. Pipe the generated `build/_deploy_bundle.sh` into `ssh -tt ...`.
+```
+kleal-ms/
+  services/<name>/app.py    one service, one file, UI included
+  services/<name>/test_*.py its tests (stdlib assert, no pytest needed)
+  shared/config.py          ports, URLs, store paths — single source of truth
+  shared/contracts.md       the frozen cross-service contracts
+  shared/kleal_lib.py       keyless helpers shared by onboarding + matching
+  shared/llm_client.py      the only way to reach llm-service
+  shared/http_util.py       JSON request/response boilerplate
+  config/                   matching config (sha-pinned YAML) + interest taxonomy
+  docs/                     the matching-core specification
+  ops/                      start scripts (local and pod)
+  tools/                    seeding, evaluation and corpus harnesses
+```
+
+## Config
+
+No secrets are committed. Everything is environment-overridable; the defaults in
+`shared/config.py` are what the pod actually runs.
+
+- `SELF_BASE` / `SELF_KEY` — the self-hosted OpenAI-compatible endpoint (vLLM).
+- `KLEAL_USERS` — the shared user store. Every service must resolve to the *same* file.
+- `KLEAL_ADMIN_TOKEN` — admin panel auth; generated per box, never committed.

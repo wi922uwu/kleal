@@ -42,3 +42,14 @@ accounts.json.tmp
 
 # admin token — generated per box, never in git
 admin_token.txt
+
+# graphify knowledge-graph output (generated; rebuild with /graphify)
+graphify-out/
+
+# runtime state written next to the services
+kleal-ms/users.json
+kleal-ms/users.json.tmp
+kleal-ms/services/*/buddy_store.json
+kleal-ms/services/*/kleal_store.json
+kleal-ms/services/*/learned_topics.json
+kleal-ms/ops/logs/
