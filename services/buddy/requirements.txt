@@ -1,0 +1,1 @@
+# buddy-service — Python 3 standard library only; no third-party packages.

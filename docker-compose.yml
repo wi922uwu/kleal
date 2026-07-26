@@ -1,0 +1,90 @@
+# Kleal microservices — one container per service on a private bridge network.
+# Only the gateway publishes a port to the host; the other four are reachable only inside the
+# network (service DNS names). Secrets go to llm-service ONLY, via env_file.
+#
+#   cp .env.example .env   # fill SELF_BASE / AITUNNEL_KEY
+#   docker compose up --build
+#   open http://localhost:7080
+services:
+  llm:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: llm } }
+    env_file: .env                       # <-- the ONLY service that receives keys
+    environment: { LLM_PORT: "7071" }
+    networks: [kleal]
+
+  onboarding:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: onboarding } }
+    environment:
+      ONBOARDING_PORT: "7072"
+      LLM_URL: "http://llm:7071"
+      V2_MODEL: "llama_self"
+    depends_on: [llm]
+    networks: [kleal]
+
+  profile:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: profile } }
+    environment: { PROFILE_PORT: "7073" }
+    networks: [kleal]
+
+  matching:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: matching } }
+    environment:
+      MATCHING_PORT: "7074"
+      LLM_URL: "http://llm:7071"
+      V2_MODEL: "llama_self"
+      KLEAL_USERS: "/data/users.json"      # shared user store (admin writes, matching reads)
+    volumes: [userdata:/data]
+    depends_on: [llm]
+    networks: [kleal]
+
+  admin:                                 # standalone (own URL, NOT behind the gateway); no token
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: admin } }
+    environment:
+      ADMIN_PORT: "7077"
+      MATCH_URL: "http://matching:7074"
+      KLEAL_USERS: "/data/users.json"
+    volumes: [userdata:/data]
+    ports: ["7077:7077"]                 # published directly on its own address
+    depends_on: [matching]
+    networks: [kleal]
+
+  filtration:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: filtration } }
+    environment:
+      FILTER_PORT: "7076"
+      LLM_URL: "http://llm:7071"
+      V2_MODEL: "llama_self"
+    depends_on: [llm]
+    networks: [kleal]
+
+  buddy:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: buddy } }
+    environment:
+      BUDDY_PORT: "7075"
+      LLM_URL: "http://llm:7071"
+      MATCH_URL: "http://matching:7074"
+      FILTER_URL: "http://filtration:7076"
+      V2_MODEL: "llama_self"
+    depends_on: [llm, matching, filtration]
+    networks: [kleal]
+
+  gateway:
+    build: { context: ., dockerfile: docker/Dockerfile, args: { SERVICE: gateway } }
+    environment:
+      HUB_PORT: "7080"
+      HUB_ONB: "http://onboarding:7072"
+      HUB_PROF: "http://profile:7073"
+      HUB_MATCH: "http://matching:7074"
+      HUB_BUDDY: "http://buddy:7075"
+      HUB_FILTER: "http://filtration:7076"
+    ports: ["7080:7080"]                 # the app's public port (admin is separate, on 7077)
+    depends_on: [onboarding, profile, matching, buddy, filtration]
+    networks: [kleal]
+
+networks:
+  kleal:
+    driver: bridge
+
+volumes:
+  userdata:                              # shared user store between matching + admin
+

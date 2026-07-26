@@ -1,38 +1,71 @@
-# Kleal — Onboarding + Profile prototypes
+# Kleal — microservices
 
-Single-file prototypes for the Kleal onboarding flow and the "agent memory" profile card, built to match the Figma designs. Each app is a self-contained Python `http.server` with embedded HTML/CSS/JS.
+Kleal is an AI-agent social/matchmaking prototype. It used to be three single-file Python apps; it is
+now split into **five small services** behind one **gateway**, so two developers can each own services
+and work in parallel without stepping on each other.
 
-## Apps
-
-| File | What | Port |
-|---|---|---|
-| `kleal_v2.py` | Messenger-style onboarding: splash → basics → location (auto-geo + map) → language → interests funnel (LLM, per-type domain questions) → safety → text summary → menu. | 7072 |
-| `kleal_profile.py` | "My Kleal Profile" card (Figma V3): Overview hub + Interests / Your personality / Goals / Safety & Privacy, Edit Signal, drill-in nav. Static, no LLM. | 7073 |
-| `llm_demo_local.py` | LLM backend + a 7-model comparison demo. `kleal_v2` reuses its extractor / LLM helpers. | 7071 |
-
-The onboarding hands the finished profile to the profile card via a base64 URL param (`/?p=<...>`), so the two run independently and connect cross-origin.
-
-## Run
-
-```bash
-# profile card (static, no LLM needed)
-python kleal_profile.py                 # http://localhost:7073
-
-# onboarding (needs an OpenAI-compatible LLM endpoint via SELF_BASE)
-python run_v2_local.py                  # http://localhost:7072
+```
+                         ┌───────────────────────── one public URL (cloudflared) ──────────────────┐
+                         │                          gateway  :7080                                 │
+                         │        routes by path prefix; the only 0.0.0.0-bound process            │
+                         └───┬──────────────┬───────────────────────┬───────────────┬──────────────┘
+              / , /onboarding│   /profile    │   /api/agent/*        │ /api/onboarding/* (+ /api/v2/*)
+                             ▼               ▼                       ▼               ▼
+                    onboarding :7072   profile :7073        matching :7074     onboarding :7072
+                        (funnel UI)     ("main page")        (buddy agent)        (funnel API)
+                             │                                     │
+                             └──────────────┬──────────────────────┘
+                                            ▼   HTTP  (keyless — shared/llm_client.py)
+                                       llm  :7071   ← the ONLY holder of API keys / model URLs
+                                            ▼
+                                     vLLM / aitunnel models
 ```
 
-On the onboarding splash, the **"Emulate onboarding"** button fills a realistic profile and jumps straight to the filled card.
+## Services
 
-## Config (environment variables)
+| Service | Port | Responsibility | Frontend? | Owner |
+|---|---|---|---|---|
+| **gateway** | 7080 | Single public entry; routes by path prefix; serves `/menu`. No logic, no keys. | — | Dev A |
+| **llm** | 7071 | The only service with model URLs + **API keys**. Exposes `POST /llm/complete`, `GET /llm/models`. | — | Dev A |
+| **onboarding** | 7072 | Profile-setup funnel: messenger UI + `/api/onboarding/*`. Calls llm over HTTP. | ✅ | Dev A |
+| **matching** | 7074 | Buddy agent: intent parse → ranked candidates → agent negotiation. `/api/agent/*`. | — | Dev B |
+| **profile** | 7073 | The "main page" / Agent-Home + profile screens. Static; its JS calls `/api/agent/*`. | ✅ | Dev B |
 
-- `SELF_BASE` / `SELF_KEY` — self-hosted, OpenAI-compatible LLM endpoint (e.g. vLLM serving Llama-3.3-70B) used by the interests funnel.
-- `AITUNNEL_KEY` / `AITUNNEL_BASE` — optional, only for the model-comparison demo in `llm_demo_local.py`.
-- `PROFILE_URL` — public URL of the profile app, baked into the onboarding "My Profile" handoff (needed when the two apps sit behind separate tunnels).
-- `V2_PORT` / `PROFILE_PORT` / `DEMO_PORT` — ports.
+Contracts between services are frozen in [`shared/contracts.md`](shared/contracts.md).
 
-**No secrets are committed** — set your own keys via the environment.
+## Run it
 
-## Deploy
+```bash
+cp .env.example .env          # fill SELF_BASE (self-hosted vLLM) and/or AITUNNEL_KEY
+python run_all.py             # boots all 5 → open http://127.0.0.1:7080
+#  --no-llm  skips llm-service for pure front-end work
+```
 
-`build/deploy_bundle_to_pod.py` generates a remote bash script (gzip + base64 chunks) that deploys both apps to a RunPod pod over PTY-only SSH, wires the profile URL into the onboarding handoff, and opens cloudflared tunnels. Pipe the generated `build/_deploy_bundle.sh` into `ssh -tt ...`.
+or with Docker:
+
+```bash
+docker compose up --build     # gateway published on :7080, the rest internal-only
+```
+
+## Layout
+
+```
+run_all.py            docker-compose.yml   docker/Dockerfile   .env.example
+shared/               llm_client.py · http_util.py · kleal_lib.py · contracts.md
+services/
+  gateway/  llm/  onboarding/  matching/  profile/     # each: app.py + README.md + requirements.txt
+legacy/               the pre-split single-file prototype (kept for reference / rollback)
+build/                pod deploy generators (chunked gzip+base64 over PTY-SSH + cloudflared)
+dating/               SEPARATE real-product monorepo (NestJS/Expo/Vite) — untouched by this repo's tooling
+```
+
+## The two seams that keep the teams decoupled
+
+1. **Keys live only in `llm-service`.** Onboarding and matching reach models via `shared/llm_client.py`
+   (HTTP), so they hold no secrets — `run_all.py` and docker-compose scrub the keys from every other
+   service's environment. Proof: `grep -rIE "AITUNNEL_KEY|SELF_KEY|Bearer" services/onboarding services/matching services/profile services/gateway` returns nothing.
+2. **The buddy API (`/api/agent/*`) has one producer and one consumer**, both Dev B (matching produces,
+   profile's JS consumes). The onboarding API and the gateway routing table are Dev A's.
+
+See [`shared/contracts.md`](shared/contracts.md) for the exact HTTP interfaces, and each service's own
+`README.md` for how to run and change it in isolation.
