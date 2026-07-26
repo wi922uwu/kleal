@@ -1753,6 +1753,50 @@ HTML = HTML.replace("__PROFILE_URL__", os.environ.get("PROFILE_URL", "").rstrip(
 # registrations landed in a file the matcher never read.
 USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "..", "users.json"))
 _REG_LOCK = threading.Lock()
+FILTER_URL = os.environ.get("FILTER_URL", "http://127.0.0.1:7076")
+
+
+def _canon_interests(words):
+    """Give a free-typed interest an English handle the ranker can resolve.
+
+    The search side already canonicalises — «senderismo» becomes hiking/trail before matching sees
+    it — but the CANDIDATE side did not, so a person who typed «senderismo» or «настолки» stayed
+    invisible to the very search looking for them. The chip interests are canonical already; this
+    is for whatever someone typed into «Добавить своё».
+
+    Their own wording stays FIRST (it is what the card shows, and the only handle a novel interest
+    like "labubu" ever gets); filtration's canonical topics are appended. Best-effort by design: a
+    slow or down filtration must never block a registration, it just means no extra handle.
+    Same rule as tools/canonicalise_interests.py, which backfills people already in the store.
+    """
+    import urllib.request
+    GENERIC = {"sport", "sports", "exercise", "activity", "activities", "hobby", "hobbies", "fun",
+               "leisure", "beverage", "drink", "drinks", "food", "social", "socializing", "people",
+               "meeting", "meetup", "friends", "community", "culture", "tradition", "lifestyle",
+               "wellness", "entertainment", "game", "games", "play", "event", "events", "health", "art"}
+    out = [str(w).strip() for w in (words or []) if str(w).strip()]
+    have = {w.lower() for w in out}
+    cands = []
+    for w in out:
+        try:
+            req = urllib.request.Request(FILTER_URL + "/api/filter/categorize",
+                                         data=json.dumps({"text": w}).encode(),
+                                         headers={"Content-Type": "application/json"})
+            topics = json.loads(urllib.request.urlopen(req, timeout=6).read().decode()).get("topics") or []
+        except Exception:
+            topics = []                    # filtration unavailable -> keep the raw word, lose nothing
+        cands.append([str(t).strip().lower() for t in topics[:3]
+                      if str(t).strip().lower() and str(t).strip().lower() not in GENERIC])
+    # Round-robin, not first-come: filling from interest #1 until the cap left the LAST interest with
+    # no English handle at all — exactly the person whose «настолки» then matched nobody.
+    for depth in range(3):
+        for lst in cands:
+            if len(out) >= 8:
+                return out[:8]
+            if depth < len(lst) and lst[depth] not in have:
+                have.add(lst[depth])
+                out.append(lst[depth])
+    return out[:8]
 
 # ---------------------------------------------------------------- accounts (dev sign-in)
 # A SEPARATE file from users.json on purpose. users.json is the matching store: it is read by the
@@ -2158,6 +2202,7 @@ def update_user(name, patch):
 def register_profile(profile):
     """Append/replace this person in the shared store (de-dupe by name). Atomic write."""
     u = _profile_to_user(profile)
+    u["interests"] = _canon_interests(u.get("interests")) or u.get("interests")
     with _REG_LOCK:
         try:
             with open(USERS_PATH, "r", encoding="utf-8") as f:
