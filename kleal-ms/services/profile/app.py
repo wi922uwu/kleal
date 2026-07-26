@@ -4045,6 +4045,11 @@ function flowIntent(){
   const whenTxt={today:'today',tonight:'today',tomorrow:'tomorrow',weekend:'this weekend',pick:'Flexible'}[FLOW.when];
   const timeTxt={morning:'morning',afternoon:'afternoon',evening:'evening','20-22':'evening',late:'late evening'}[FLOW.time];
   it.time=[whenTxt,timeTxt].filter(Boolean).join(' ')||it.time||'Flexible';
+  // The age dial wrote FLOW.ageA/ageB and the summary showed them back — but nothing ever copied
+  // them into the intent, so the ranker (which HAS a minAge/maxAge gate and enforces it) never saw
+  // a range and returned people of every age. Only sent when the person actually moved the dial:
+  // ageA/ageB stay undefined until then, and defaulting them here would impose a filter nobody set.
+  if(FLOW.ageA&&FLOW.ageB){ it.minAge=Math.min(FLOW.ageA,FLOW.ageB); it.maxAge=Math.max(FLOW.ageA,FLOW.ageB); }
   it.mode=it.mode||'offline';
   if(it.mode==='online'){
     it.place=T('Онлайн','Online');                       // no district, no radius — it's over the net
