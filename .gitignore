@@ -1,5 +1,5 @@
 # the app codebase lives in its own git repo (with its own secrets/.env)
-dating/
+/dating/
 
 # python
 __pycache__/

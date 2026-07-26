@@ -28,7 +28,7 @@ import hashlib, math, time
 # the unquoted quiet-hour 09:00 as sexagesimal int 540). The file is sha-pinned, so the exact
 # bytes this parser was written against are guaranteed.
 
-PINNED_SHA = "d804df8e2d14c0b306263d5178eb39d98f284335a2fb671bbd413b49435cb197"  # re-pinned: social_meet semantic_activity 0.18->0.30 (activity is the ask)
+PINNED_SHA = "21505ccb4add960291a742084b36d25289ffc93c9870a80b8cba3295010e9c5b"
 
 FEATURE_KEYS = ("semantic_activity", "time_feasibility", "location_feasibility", "mode_format",
                 "directed_preferences", "social_context", "domain_constraints")
@@ -168,17 +168,8 @@ K_MATCH, K_MISM, UNKNOWN, NA = "known_match", "known_mismatch", "unknown", "not_
 
 # Observed-value anchors for the ONE aggregated subfeature per group (not tunable weights — the
 # per-group weighting comes from the YAML; these are the spec §6 semantic distances).
-# exact/alias 1.0; sibling 0.6 (spec §6 range 0.55-0.75); parent/broad 0.3; adjacent 0.15.
-# Parent must sit far below exact: with equal semantic/social weights (social_meet 0.18/0.18),
-# a higher parent anchor lets a same-vibe brunch person outscore a walker on a walk query.
-SEM_VALUE = {4: 1.0, 3: 0.6, 2: 0.3, 1: 0.15}
-GEO_FAR_KM = 25.0                                  # beyond this, distance stops discriminating
-
-def _geo_value(km):
-    """Continuous distance feasibility. Four fixed bands quantised everyone inside a neighbourhood
-    onto the SAME value, so whole slates tied on one score and the order fell back to the alphabet
-    (every "Lopez" first). A smooth ramp keeps "closer is better" meaningful at street level."""
-    return round(max(0.1, min(1.0, 1.0 - float(km) / GEO_FAR_KM)), 4)
+SEM_VALUE = {4: 1.0, 3: 0.65, 2: 0.45, 1: 0.25}   # exact/alias > sibling > parent > adjacent
+GEO_BANDS = ((1.5, 1.0), (3.5, 0.85), (7.0, 0.65), (15.0, 0.45))
 VIBE_CLASH = {("chill", "party"), ("calm", "energetic"), ("introvert", "extrovert"),
               ("competitive", "chill"), ("calm", "competitive")}
 LANG_WORDS = {"spanish": "es", "espanol": "es", "испан": "es", "english": "en", "англ": "en",
@@ -220,36 +211,10 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
         best, matched = H["topical"](topics, ints)
         if best >= 1:
             # show the candidate's ORIGINAL interest strings, not the space-stripped normal forms
-            # `matched` now carries the candidate's own strings, so the card quotes them verbatim
-            names = ", ".join(sorted(str(m) for m in matched)[:3])
-            if not names and best >= 2:
-                # A sub/broad-category match with no EXACT interest (e.g. a wrestling search hitting
-                # a football player through the shared "sports" category). Surface the candidate
-                # interest that shares the category, so a «related» card shows «тоже спорт: футбол»
-                # instead of leading with an unrelated first interest — the match is real, the
-                # display just hid the evidence.
-                cat_of = H["cat_of"]
-                tbroads = {cat_of(t)[0] for t in topics if cat_of(t)[0]}
-                rel = [str(x) for x in ints if cat_of(str(x))[0] in tbroads]
-                names = ", ".join(sorted(set(rel))[:2])
-            # multi-topic intents: someone matching MORE of the asked topics must outrank a
-            # one-topic overlap ("стартапы+ai+кофе" -> a founder beats a coffee-only person).
-            # Single aggregated subfeature, capped at 1.0 — still no double count (spec §6.1).
-            value = SEM_VALUE[best]
-            if len(topics) > 1:
-                # More of the asked topics -> higher, AND the leading topic weighs more than the
-                # trailing ones. The pipeline orders topics subject-first (a «за обсуждением X»
-                # request puts X ahead of the setting), so «кофе + рыбалка» must rank an angler
-                # above a coffee-only person: coffee is the setting almost everyone shares, fishing
-                # is the point. Before this, both matched exactly one topic and scored the same, so
-                # the common topic flooded the slate and the distinctive one drowned.
-                # Only EXACT hits count as covering an asked topic (a russian speaker sub-matching
-                # "spanish" has not covered the spanish ask).
-                w = [1.0 / (1.0 + 0.7 * i) for i in range(len(topics))]
-                got = sum(wi for t, wi in zip(topics, w) if H["topical"]([t], ints)[0] >= 4)
-                cover = got / sum(w)                       # 0..1, weighted toward the lead topic
-                value = round(value * (0.55 + 0.45 * cover), 4)
-            F["semantic_activity"] = (K_MATCH, value, names)
+            orig = [str(o) for o in (cand.get("interests") or [])
+                    if str(o).lower().replace(" ", "") in matched]
+            names = ", ".join(sorted(orig)[:3]) or ", ".join(sorted(matched)[:3])
+            F["semantic_activity"] = (K_MATCH, SEM_VALUE[best], names)
         else:
             F["semantic_activity"] = (K_MISM, 0.05, "")
 
@@ -276,19 +241,18 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
         if km is None:
             F["location_feasibility"] = (UNKNOWN, None, "")
         else:
-            v = _geo_value(km)
+            v = 0.15
+            for lim, val in GEO_BANDS:
+                if km <= lim:
+                    v = val
+                    break
             F["location_feasibility"] = ((K_MATCH if v >= 0.45 else K_MISM), v, "%.1f km" % km)
 
-    # 4. mode_format — does the candidate accept this plan's mode (online/offline)?
-    # Only the mode-bearing formats count: online / offline / hybrid (and legacy any/both). A person
-    # who ticked only sizes (1:1, small group) has NOT stated an online/offline preference, so that
-    # stays UNKNOWN rather than a penalty. 'hybrid' means both — it matches either mode. A genuine
-    # opposite-only declaration (offline-only on an online plan) is the one case that is penalised.
-    _MODE_FMTS = ("online", "offline", "hybrid", "any", "both")
-    fmts = [str(x).lower() for x in (cand.get("formats") or []) if str(x).lower() in _MODE_FMTS]
+    # 4. mode_format — candidates rarely declare formats; unknown, not assumed compatible
+    fmts = [str(x).lower() for x in (cand.get("formats") or [])]
     if not mode or not fmts:
         F["mode_format"] = (UNKNOWN, None, "")
-    elif mode in fmts or any(f in ("hybrid", "any", "both") for f in fmts):
+    elif any(mode in f for f in fmts) or any(f in ("any", "both") for f in fmts):
         F["mode_format"] = (K_MATCH, 1.0, mode)
     else:
         F["mode_format"] = (K_MISM, 0.2, "")
@@ -317,10 +281,7 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
     elif (mv, cv) in VIBE_CLASH or (cv, mv) in VIBE_CLASH:
         F["social_context"] = (K_MISM, 0.25, cv)
     else:
-        # Neutral vibes sat at 0.55, so an identical vibe string was worth 0.45 — MORE than the
-        # spread topical coverage can produce. A person sharing 1 of 3 asked topics outranked one
-        # sharing 2 of 3 purely because their vibe label matched. Vibe is context, not the ask.
-        F["social_context"] = (K_MATCH, 0.8, cv)
+        F["social_context"] = (K_MATCH, 0.55, cv)
 
     # 7. domain_constraints — the domain's mandatory fields (language pair, platform/community…)
     clangs = _lang_codes(cand.get("langs"))
@@ -349,8 +310,7 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
 def _profile_as_candidate(prof):
     langs = ((prof.get("languages") or {}).get("comfortable")) or prof.get("langs") or []
     return {"interests": prof.get("interests") or [], "vibe": prof.get("vibe"),
-            "langs": langs, "geo": prof.get("geo"), "open": None, "role": prof.get("role"),
-            "formats": prof.get("formats") or []}     # so B->A can judge the searcher's mode too
+            "langs": langs, "geo": prof.get("geo"), "open": None, "role": prof.get("role")}
 
 def reverse_features(intent, prof, cand, domain, H, role_conflict):
     """B->A: does the searcher fit what B declared? B's own active intent (topics) is the strongest
@@ -361,37 +321,12 @@ def reverse_features(intent, prof, cand, domain, H, role_conflict):
                [str(x).lower() for x in (cand.get("interests") or [])]
     pseudo_intent = {"topics": b_topics, "mode": intent.get("mode"),
                      "time": (b_int or {}).get("time"), "role": (b_int or {}).get("role") or "meet"}
-    a_as_cand = _profile_as_candidate(prof)
-    # Spec §4.2 source hierarchy: A's CURRENT intent is the strongest evidence about A — B's side
-    # judges the searcher by what they are asking for right now, not only by stored profile
-    # interests. Without this, an empty searcher profile makes every B->A semantic unknown and
-    # prior noise (not the match) ends up ordering the slate.
-    a_as_cand["interests"] = list(a_as_cand.get("interests") or []) + \
-                             [str(t) for t in (intent.get("topics") or [])]
-    return build_features(pseudo_intent, cand, a_as_cand, domain, H, role_conflict)
+    return build_features(pseudo_intent, cand, _profile_as_candidate(prof), domain, H, role_conflict)
 
 # ------------------------------------------------------------------ relevance (spec §9)
-def topic_relief(topics, ints, H):
-    """The uncertainty penalty λ(1-coverage) exists so a profile we know nothing about cannot ride
-    the priors to a high score. But a candidate who exactly matches the topics you ASKED for is not
-    unknown on the dimension that matters — confirming your activity is evidence. So for a multi-topic
-    search, the penalty is eased in proportion to how much of the ask is confirmed: match everything
-    and it lifts fully, match only the trailing setting-topic and it barely moves.
-
-    This is what makes «кофе + рыбалка» rank an angler-who-also-drinks-coffee above a coffee-only
-    person with a fuller bio — the previous behaviour, where evidence-coverage (profile completeness)
-    silently outweighed topic relevance. Single-topic searches pass relief=1.0 and are unchanged."""
-    topics = [str(t).lower() for t in (topics or [])]
-    if len(topics) <= 1 or not ints:
-        return 1.0
-    w = [1.0 / (1.0 + 0.7 * i) for i in range(len(topics))]
-    got = sum(wi for t, wi in zip(topics, w) if H["topical"]([t], ints)[0] >= 4)
-    return round(1.0 - got / sum(w), 4)
-
-
-def directional_score(F, dom_cfg, priors, relief=1.0):
+def directional_score(F, dom_cfg, priors):
     W = dom_cfg["weights"]
-    lam = float(dom_cfg["uncertainty_lambda"]) * float(relief)
+    lam = float(dom_cfg["uncertainty_lambda"])
     tw = kw = acc = 0.0
     unknowns = []
     for k in FEATURE_KEYS:
@@ -505,16 +440,12 @@ def readiness_state(cand, domain, now_ts, cfg, received_24h=0):
         return "unknown"
     if str(r.get("status") or "").lower() == "busy":
         return "busy"
-    # Opt-outs must fail CLOSED. Truthiness read `per_24h: 0` and `allowed_domains: []` as
-    # "not set" and fell back to the permissive default — so a user who explicitly asked for zero
-    # proposals, or allowed no domain at all, became MORE reachable than someone who set nothing.
-    pb = (r.get("proposal_budget") or {}).get("per_24h")
-    cap = pb if isinstance(pb, (int, float)) and not isinstance(pb, bool) else \
-        (out_cfg.get("max_proposals_received_per_user_24h") or 4)
+    cap = (r.get("proposal_budget") or {}).get("per_24h") or \
+        out_cfg.get("max_proposals_received_per_user_24h") or 4
     if received_24h >= int(cap):
         return "busy"                                   # proposal fatigue: overloaded today
     doms = r.get("allowed_domains")
-    if isinstance(doms, list) and domain not in doms:
+    if isinstance(doms, list) and doms and domain not in doms:
         return "passive_discovery"                      # visible in discovery, no personal proposals
     q = r.get("quiet_hours") or {}
     defaults = out_cfg.get("quiet_hours_local") or ["22:00", "09:00"]
@@ -536,59 +467,22 @@ BAND_LABELS = {
 }
 BAND_RANK = {"especially_close": 0, "strong_option": 1, "broader_option": 2, "needs_clarification": 3}
 
-def assign_band(lcb, cov, bands, sem=None):
-    """Bands answer two different questions and must not be conflated: how GOOD the fit is
-    (lcb) and how much of it is CONFIRMED (coverage). "Needs clarification" means the data is
-    thin — the config says so explicitly (needs_clarification.max_coverage). It used to be the
-    catch-all for anything below the top three, so a candidate with 0.88 coverage and one
-    unknown field was told to "clarify" when nothing was missing; they are simply a weaker fit."""
-    # A badge must not outrun the topical evidence. semantic_activity is at most ~21% of the score, so
-    # time + distance + format + vibe alone could carry an adjacency-only candidate to «Хороший
-    # вариант» (measured: lcb 0.735, coverage 1.0, topical contributing 4.4%). The two confident bands
-    # now require a real topical match — same broad category or better, SEM_VALUE[3] = 0.6 — while the
-    # candidate stays visible as a broader option. Nothing is hidden; the claim is just made honest.
-    top_ok = sem is None or float(sem) >= 0.6
+def assign_band(lcb, cov, bands):
     for name in ("especially_close", "strong_option", "broader_option"):
         b = bands.get(name) or {}
-        if name in ("especially_close", "strong_option") and not top_ok:
-            continue
         if lcb >= float(b.get("min_lcb", 1)) and cov >= float(b.get("min_coverage", 1)):
             return name
-    thin = float((bands.get("needs_clarification") or {}).get("max_coverage", 0.39))
-    return "needs_clarification" if cov <= thin else "broader_option"
-
-# Human-readable values for detail strings that would otherwise leak engine tokens into the copy
-_ROLE_RU = {"play": "поиграть", "watch": "посмотреть", "discuss": "обсудить",
-            "practise": "попрактиковаться", "attend": "сходить", "meet": "встретиться"}
-_DETAIL_RU = {"same community": "то же сообщество", "open now": "свободен(на)"}
-_LANG_RU = {"es": "испанский", "en": "английский", "ru": "русский", "fr": "французский",
-            "de": "немецкий", "it": "итальянский", "ca": "каталанский", "pt": "португальский"}
-
-def _ru_detail(d):
-    """Translate a detail token for Russian copy — 'same community', a role or a language code
-    used to appear verbatim inside otherwise-Russian reasons."""
-    s = str(d or "")
-    if s in _DETAIL_RU:  return _DETAIL_RU[s]
-    if s in _ROLE_RU:    return _ROLE_RU[s]
-    parts = [p.strip() for p in s.split(",") if p.strip()]
-    if parts and all(p in _LANG_RU for p in parts):
-        return ", ".join(_LANG_RU[p] for p in parts)
-    return s
+    return "needs_clarification"
 
 _REASON = {
-    # NOTE: time_feasibility is only rendered when the group is a known_match, i.e. the person
-    # really is open now — the card used to claim "открыт(а) к встрече сейчас" next to a
-    # readiness chip that said "занят", because the wording ignored the actual state.
     "semantic_activity":   lambda d: (("общее: %s" % d, "shares %s" % d) if d else
                                       ("близкая тема", "related topic")),
-    "time_feasibility":    lambda d: ("свободен(на) в это время", "free at that time"),
-    "location_feasibility":lambda d: ("рядом (%s)" % str(d).replace(" km", " км"), "nearby (%s)" % d),
+    "time_feasibility":    lambda d: ("открыт(а) к встрече сейчас", "open to meet now"),
+    "location_feasibility":lambda d: ("рядом (%s)" % d, "nearby (%s)" % d),
     "mode_format":         lambda d: ("совпадает формат", "format fits"),
-    "directed_preferences":lambda d: ("подходящая роль (%s)" % _ru_detail(d),
-                                      "matching role (%s)" % d),
+    "directed_preferences":lambda d: ("подходящая роль (%s)" % d, "matching role (%s)" % d),
     "social_context":      lambda d: ("похожий вайб", "similar vibe"),
-    "domain_constraints":  lambda d: ("совпадают условия (%s)" % _ru_detail(d),
-                                      "constraints fit (%s)" % d),
+    "domain_constraints":  lambda d: ("совпадают условия (%s)" % d, "constraints fit (%s)" % d),
 }
 _GAP = {
     "semantic_activity":   ("интересы не заполнены", "interests not filled in"),
@@ -599,45 +493,17 @@ _GAP = {
     "social_context":      ("вайб не указан", "vibe unknown"),
     "domain_constraints":  ("детали (платформа/уровень) не указаны", "domain details unknown"),
 }
-# A verified CONFLICT is not missing data. Saying "роль не указана" about someone whose role the
-# engine checked and found opposite is a false statement about a real person (spec §23.2: reasons
-# and gaps must be facts the system actually established).
-_GAP_MISMATCH = {
-    "semantic_activity":   (lambda d: ("интересы не совпадают", "interests don't overlap")),
-    "time_feasibility":    (lambda d: ("время может не совпасть", "time may not work")),
-    "location_feasibility":(lambda d: ("далеко%s" % ((" — " + d) if d else ""),
-                                       "far away%s" % ((" — " + d) if d else ""))),
-    "mode_format":         (lambda d: ("формат не совпадает", "format doesn't match")),
-    "directed_preferences":(lambda d: ("другая роль%s" % ((" (%s)" % d) if d else ""),
-                                       "different role%s" % ((" (%s)" % d) if d else ""))),
-    "social_context":      (lambda d: ("другой вайб%s" % ((" (%s)" % d) if d else ""),
-                                       "different vibe%s" % ((" (%s)" % d) if d else ""))),
-    "domain_constraints":  (lambda d: ("условия не совпадают", "constraints don't match")),
-}
 
-REASONS_SHOWN = 3      # what a card displays
-REASONS_POOL = 5       # what the slate diversifier gets to choose from
-
-
-def _presentation(F, d_ab, dom_cfg, readiness=None):
-    """Confirmed reasons (known_match only — never invented facts) + the single top gap.
-
-    Returns up to REASONS_POOL, weight-ordered. Callers that do not diversify must trim to
-    REASONS_SHOWN themselves — a card still shows three."""
+def _presentation(F, d_ab, dom_cfg):
+    """2-3 confirmed reasons (known_match only — never invented facts) + the single top gap."""
     W = dom_cfg["weights"]
     known = [(float(W.get(k, 0)) * float(v), k, d)
              for k, (st, v, d) in F.items() if st == K_MATCH and float(W.get(k, 0)) > 0]
-    # never claim availability that contradicts the readiness chip on the same card: the legacy
-    # 'open' flag and the receiving policy can disagree (open=True but quiet hours / busy)
-    if readiness and readiness != "open_now":
-        known = [x for x in known if x[1] != "time_feasibility"]
     known.sort(key=lambda x: -x[0])
-    # keys travel WITH the strings: reasons come back weight-ordered, so the UI cannot know what a given
-    # row is about from its position. Titling row 2 "Подходит по времени" put a distance under a time label.
-    rs_ru, rs_en, legacy, keys = [], [], [], []
-    for _wv, k, d in known[:REASONS_POOL]:
+    rs_ru, rs_en, legacy = [], [], []
+    for _wv, k, d in known[:3]:
         ru, en = _REASON[k](d)
-        rs_ru.append(ru); rs_en.append(en); keys.append(k)
+        rs_ru.append(ru); rs_en.append(en)
         if k == "semantic_activity" and d:
             legacy.append("shares " + d)               # exact legacy phrasing buddy.humanize knows
         elif k == "social_context":
@@ -648,235 +514,35 @@ def _presentation(F, d_ab, dom_cfg, readiness=None):
             legacy.append("open to meet")
         else:
             legacy.append(en)
-    # a confirmed conflict outranks missing data as "the one thing to flag", and is worded as
-    # a conflict — with the value the engine actually saw
-    mism = [(float(W.get(k, 0)), k, d) for k, (st, v, d) in F.items()
+    gaps = [(float(W.get(k, 0)), k) for k, (st, v, d) in F.items()
             if st == K_MISM and float(W.get(k, 0)) > 0]
+    if not gaps:
+        gaps = [(float(W.get(k, 0)), k) for k in d_ab["unknowns"]]
+    gaps.sort(key=lambda x: -x[0])
     gap_ru = gap_en = None
-    if mism:
-        mism.sort(key=lambda x: -x[0])
-        _w, k, d = mism[0]
-        gap_ru, gap_en = _GAP_MISMATCH[k](d)
-    else:
-        unk = [(float(W.get(k, 0)), k) for k in d_ab["unknowns"]]
-        if unk:
-            unk.sort(key=lambda x: -x[0])
-            gap_ru, gap_en = _GAP[unk[0][1]]
-    return rs_ru, rs_en, legacy, gap_ru, gap_en, keys
+    if gaps:
+        gap_ru, gap_en = _GAP[gaps[0][1]]
+    return rs_ru, rs_en, legacy, gap_ru, gap_en
 
 # ------------------------------------------------------------------ allocation (slate diversity)
 TOP_N, PER_BUCKET = 8, 3        # slate size params (allocation layer, not relevance — spec §11)
 
-
-def _shared_first(ints, F):
-    """Put the interests the match is actually BASED on at the front of the list.
-
-    Every card surface shows the first two or three of these. Order them as stored and the evidence
-    can be invisible: a card said «общее: art» above the tags padel / hiking / yoga, because `art`
-    was the person's fourth interest and never made the cut. The claim was true and looked like
-    nonsense. Reordering only — nothing added, nothing hidden, relevance untouched."""
-    d = str(((F or {}).get("semantic_activity") or (None, None, ""))[2] or "").lower()
-    if not d:
-        return list(ints)
-    hit = {w.strip() for w in d.split(",") if w.strip()}
-    if not hit:
-        return list(ints)
-    lead = [i for i in ints if str(i).strip().lower() in hit]
-    rest = [i for i in ints if str(i).strip().lower() not in hit]
-    return lead + rest
-
-
-def _diversify_reasons(slate):
-    """A reason every card in the slate carries says nothing about this particular person.
-
-    Reasons come back weight-ordered, which is the right global order and the wrong one for a
-    reader: a role-matched slate led all eight cards with «подходящая роль (обсудить)», so people
-    who differ in topics, distance and vibe looked interchangeable. Compare the RENDERED strings,
-    not the feature keys — every card here matched on the same three features and differed only in
-    what those features contained («общее: ai, ml» vs «общее: ai, startups»), so a key-level
-    comparison finds nothing to promote. Universal lines rotate to the back; nothing is removed and
-    nothing is reworded. Presentation order only, never relevance (spec §11)."""
-    n = len(slate)
-    if n < 3:
-        return
-    freq = {}
-    for x in slate:
-        for t in set(x.get("reasons_ru") or []):
-            freq[t] = freq.get(t, 0) + 1
-    common = {t for t, c in freq.items() if c == n}
-    for x in slate:
-        ru = list(x.get("reasons_ru") or [])
-        order = range(len(ru))
-        if common and len(ru) > 1 and (set(ru) - common):
-            order = sorted(range(len(ru)), key=lambda i: (ru[i] in common, i))
-        for fld in ("reasons_ru", "reasons_en", "reasons", "reason_keys"):
-            v = x.get(fld)
-            if isinstance(v, list) and len(v) == len(ru):
-                x[fld] = [v[i] for i in order][:REASONS_SHOWN]
-
-def _slate(items, home_bucket=None, seen=None):
-    """Allocation with paging. `seen` — names this viewer was already shown FOR THIS QUERY.
-
-    The slate is filled from the UNSEEN candidates first, walking the bands in their existing
-    order, and only backfills with already-seen ones when the unseen run out. Reordering *inside*
-    a band was tried first and does nothing in the common case: the top band here holds exactly
-    eight people, so once you have seen those eight the partition has nothing to swap them with and
-    the slate is identical forever — which is the reported bug, unfixed. Skipping a seen person in
-    a high band to reach an unseen one below is not a promotion: the result is still ordered by
-    band, nobody is scored differently, and `_slate_pick` below is the untouched original logic.
-
-    With an empty `seen` this is byte-for-byte the previous behaviour, so `slate = f(ranked, seen)`
-    stays a deterministic function of declared inputs and the stability probe keeps its meaning."""
-    seen = seen or set()
-    if not seen:
-        return _slate_pick(items, home_bucket)
-    key = lambda x: str(x["name"]).strip().lower()
-    fresh = _slate_pick([x for x in items if key(x) not in seen], home_bucket)
-    if len(fresh) >= TOP_N:
-        return fresh
-    # Exhausted: top up from the head of the list as before. Returning a short or empty slate would
-    # send someone who has seen everybody to the "too few matches" screen.
-    picked = {id(x) for x in fresh}
-    stale = _slate_pick([x for x in items if id(x) not in picked], home_bucket)
-    chosen = fresh + stale[:TOP_N - len(fresh)]
-    # WHICH people are chosen is what paging changes; the order they are shown in is not. Appending
-    # the backfill blindly put a seen `especially_close` card below an unseen `needs_clarification`
-    # one — the slate has to stay ordered by band, or the top card stops meaning "best match".
-    pos = {id(x): i for i, x in enumerate(items)}
-    return sorted(chosen, key=lambda x: pos.get(id(x), len(items)))
-
-
-def _slate_pick(items, home_bucket=None):
-    """Diversity is applied WITHIN a band and never promotes a lower band (spec §11: allocation
-    must not change pair relevance). Inside one band the per-bucket cap is SOFT: if the only
-    remaining same-band candidates are from a capped bucket, relevance wins and they fill the
-    slot — a focused search ("кофе") must not swap coffee people for adjacent-category padding.
-    The query's OWN bucket is never capped at all: capping it evicted top-ranked exact matches
-    (a dinner search shipped 3 diners and 5 strangers) — variety is for the padding, not the ask."""
-    out, i, n = [], 0, len(items)
-    while len(out) < TOP_N and i < n:
-        j = i
-        while j < n and items[j]["band"] == items[i]["band"]:
-            j += 1
-        group, take = items[i:j], TOP_N - len(out)
-        picked, seen, skipped = [], {}, []
-        for it in group:
-            if len(picked) >= take:
-                break
-            b = it.get("bucket") or "other"
-            if b != home_bucket and seen.get(b, 0) >= PER_BUCKET:
-                skipped.append(it)
-                continue
-            seen[b] = seen.get(b, 0) + 1
-            picked.append(it)
-        for it in skipped:                       # soft cap: backfill from the same band only
-            if len(picked) >= take:
-                break
-            picked.append(it)
-        chosen = {id(x) for x in picked}
-        out.extend(x for x in group if id(x) in chosen)   # keep the relevance order
-        i = j
+def _slate(items):
+    buckets = {it.get("bucket") or "other" for it in items}
+    cap = PER_BUCKET if len(buckets) > 2 else TOP_N
+    seen, out = {}, []
+    for it in items:
+        b = it.get("bucket") or "other"
+        if seen.get(b, 0) >= cap:
+            continue
+        seen[b] = seen.get(b, 0) + 1
+        out.append(it)
+        if len(out) >= TOP_N:
+            break
     return out
 
 # ------------------------------------------------------------------ main entry
-FEATURE_LABELS = {
-    "semantic_activity":    ("Интерес / активность", "Interest / activity"),
-    "time_feasibility":     ("Время", "Time"),
-    "location_feasibility": ("Расстояние", "Distance"),
-    "mode_format":          ("Формат", "Format"),
-    "directed_preferences": ("Роль", "Role"),
-    "social_context":       ("Вайб", "Vibe"),
-    "domain_constraints":   ("Условия домена", "Domain constraints"),
-}
-
-def explain(intent, prof, ctx, cand, H, cfg):
-    """Full decision trace for ONE candidate — the same code path as search(), but every drop point
-    records WHY instead of silently skipping. Powers the admin Matching lab (spec §21.3 decision
-    trace: reproducible, per-feature, with config version). Never mutates state."""
-    intent, prof, ctx = intent or {}, prof or {}, ctx or {}
-    domain = infer_domain(intent, H["cat_of"])
-    dom_cfg = cfg["domains"].get(domain) or cfg["domains"]["social_meet"]
-    priors = {k: (cfg["feature_groups"][k] or {}).get("unknown_prior", 0.5) for k in FEATURE_KEYS}
-    role_conflict = H.get("role_conflict") or set()
-    topics = [str(t).lower() for t in (intent.get("topics") or [])]
-    now_ts = ctx.get("now") or time.time()
-    received24 = ctx.get("received24") or {}
-    steps = []
-    def step(name, ok, detail=""):
-        steps.append({"step": name, "ok": bool(ok), "detail": detail})
-
-    out = {"name": cand.get("name"), "domain": domain, "config_version": cfg.get("config_version"),
-           "steps": steps, "shown": False, "drop_reason": None}
-
-    paused = is_paused(cand, now_ts)
-    step("retrieval: not paused", not paused, "receiving.status/paused_until" if paused else "")
-    if paused:
-        out["drop_reason"] = "paused — left retrieval for this purpose (§10.1)"
-        return out
-
-    tier = assign_tier(intent, cand, topics, H)
-    out["tier"] = tier
-    best, matched = H["topical"](topics, [str(x).lower() for x in (cand.get("interests") or [])])
-    step("tier (provenance)", tier != "T5",
-         "%s — topical overlap level %d%s" % (tier, best, (" on " + ", ".join(sorted(matched)[:3])) if matched else ""))
-    if tier == "T5":
-        out["drop_reason"] = "no meaningful topical overlap (T5) — never proposed"
-        return out
-    if tier == "T3" and not intent.get("adjacentAllowed", True):
-        step("search breadth", False, "adjacentAllowed=false drops T3")
-        out["drop_reason"] = "adjacent matches disabled for this search"
-        return out
-    if intent.get("exactMatchRequired") and tier not in ("T0", "T1"):
-        step("search breadth", False, "exactMatchRequired keeps only T0/T1")
-        out["drop_reason"] = "exact-match-only search: %s dropped" % tier
-        return out
-
-    F = build_features(intent, prof, cand, domain, H, role_conflict)
-    _relief = topic_relief(topics, [str(x).lower() for x in (cand.get("interests") or [])], H)
-    d_ab = directional_score(F, dom_cfg, priors, _relief)
-    d_ba = directional_score(reverse_features(intent, prof, cand, domain, H, role_conflict),
-                             dom_cfg, priors)
-    rec = reciprocal_score(d_ab, d_ba)
-    W = dom_cfg["weights"]
-    out["features"] = [{
-        "group": k, "label_ru": FEATURE_LABELS[k][0], "label_en": FEATURE_LABELS[k][1],
-        "state": F[k][0], "value": F[k][1], "detail": F[k][2], "weight": float(W.get(k, 0) or 0),
-        "prior": priors[k],
-    } for k in FEATURE_KEYS]
-    out["a_to_b"], out["b_to_a"], out["reciprocal"] = d_ab, d_ba, rec
-
-    disc_ok = (d_ab["lcb"] >= float(dom_cfg["discovery_min_lcb"]) and
-               d_ab["coverage"] >= float(dom_cfg["discovery_min_coverage"]))
-    step("discovery thresholds", disc_ok or tier in ("T0", "T1"),
-         "lcb %.3f vs %.2f, coverage %.3f vs %.2f" % (d_ab["lcb"], float(dom_cfg["discovery_min_lcb"]),
-                                                      d_ab["coverage"], float(dom_cfg["discovery_min_coverage"])))
-    if not disc_ok and tier not in ("T0", "T1"):
-        out["drop_reason"] = "below discovery thresholds and not a direct match"
-        return out
-
-    band = assign_band(d_ab["lcb"], d_ab["coverage"], cfg["user_facing_bands"]) if disc_ok else "needs_clarification"
-    readiness = readiness_state(cand, domain, now_ts, cfg,
-                                received24.get(str(cand.get("name", "")).strip().lower(), 0))
-    outreach_tier_ok = tier in ("T0", "T1") or (tier == "T2" and bool(intent.get("broadConsent")))
-    thr_ok = (d_ab["lcb"] >= float(dom_cfg["outreach_min_lcb"]) and
-              d_ab["coverage"] >= float(dom_cfg["outreach_min_coverage"]))
-    can_outreach = bool(outreach_tier_ok and readiness == "open_now" and thr_ok)
-    step("readiness", readiness == "open_now", "%s (%s)" % (readiness, READINESS_LABELS[readiness][1]))
-    step("outreach tier/consent", outreach_tier_ok,
-         "%s%s" % (tier, "" if outreach_tier_ok else " needs broadConsent" if tier == "T2" else " never allows outreach"))
-    step("outreach thresholds", thr_ok,
-         "lcb %.3f vs %.2f, coverage %.3f vs %.2f" % (d_ab["lcb"], float(dom_cfg["outreach_min_lcb"]),
-                                                      d_ab["coverage"], float(dom_cfg["outreach_min_coverage"])))
-    rs_ru, rs_en, _legacy, gap_ru, gap_en, rkeys = _presentation(F, d_ab, dom_cfg, readiness)
-    rs_ru, rs_en, rkeys = rs_ru[:REASONS_SHOWN], rs_en[:REASONS_SHOWN], rkeys[:REASONS_SHOWN]
-    out.update({"shown": True, "band": band, "band_ru": BAND_LABELS[band][0],
-                "band_en": BAND_LABELS[band][1], "readiness_en": READINESS_LABELS[readiness][1],
-                "readiness": readiness, "readiness_ru": READINESS_LABELS[readiness][0],
-                "can_outreach": can_outreach, "score": round(d_ab["lcb"] * 100, 1),
-                "reasons_ru": rs_ru, "reasons_en": rs_en, "reason_keys": rkeys, "gap_ru": gap_ru, "gap_en": gap_en})
-    return out
-
-def search(intent, prof, ctx, candidates, H, cfg, diag=None):
+def search(intent, prof, ctx, candidates, H, cfg):
     """Score policy-ALLOWED candidates. Returns (slate, meta). `H` injects the taxonomy helpers
     from app.py: {'topical', 'cat_of', 'reciprocal', 'role_conflict'} — taxonomy stays single-sourced."""
     intent, prof, ctx = intent or {}, prof or {}, ctx or {}
@@ -888,59 +554,35 @@ def search(intent, prof, ctx, candidates, H, cfg, diag=None):
     topics = [str(t).lower() for t in (intent.get("topics") or [])]
     now_ts = ctx.get("now") or time.time()             # pin ctx.now for deterministic replay
     received24 = ctx.get("received24") or {}           # {name_lower: proposals received last 24h}
-    # Who this viewer has already been shown for THIS query. Allocation input, never a score input
-    # (spec §11: allocation must not change pair relevance) — it only reorders inside a band.
-    seen_names = {str(n).strip().lower() for n in (ctx.get("seen") or []) if str(n).strip()}
     out = []
-    # Every `continue` below is an answer to «почему я никого не вижу», and every one of them used to
-    # be thrown away. `diag` is an optional counter the caller passes in; when absent this is exactly
-    # the loop it always was.
-    def _drop(reason):
-        if diag is not None:
-            diag[reason] = diag.get(reason, 0) + 1
-    if diag is not None:
-        diag["_in"] = diag.get("_in", 0) + len(candidates)
     for c in candidates:
         if is_paused(c, now_ts):
-            _drop("paused")
             continue                                    # paused leaves retrieval for this purpose (§10.1)
         tier = assign_tier(intent, c, topics, H)
         if tier == "T5":
-            _drop("no topical overlap (T5)")
             continue                                    # no meaningful overlap -> never proposed
         if tier == "T3" and not intent.get("adjacentAllowed", True):
-            _drop("adjacent not allowed (T3)")
             continue
-        if intent.get("exactMatchRequired") and tier not in ("T0", "T1"):
-            _drop("exact match required")
-            continue                                    # exact-only search: no siblings AND no adjacent
+        if tier == "T2" and intent.get("exactMatchRequired"):
+            continue
         F = build_features(intent, prof, c, domain, H, role_conflict)
-        _relief = topic_relief(topics, [str(x).lower() for x in (c.get("interests") or [])], H)
-        d_ab = directional_score(F, dom_cfg, priors, _relief)
+        d_ab = directional_score(F, dom_cfg, priors)
         d_ba = directional_score(reverse_features(intent, prof, c, domain, H, role_conflict),
                                  dom_cfg, priors)
         rec = reciprocal_score(d_ab, d_ba)
         disc_ok = (d_ab["lcb"] >= float(dom_cfg["discovery_min_lcb"]) and
                    d_ab["coverage"] >= float(dom_cfg["discovery_min_coverage"]))
-        # `broaden` is a deliberate second pass when the exact search found nobody: it keeps the
-        # related-but-weak T2/T3 people (adjacent activities) that the discovery threshold hides, so
-        # «тренировка по борьбе» with no wrestlers can still offer the sporty crowd — honestly
-        # banded as needs_clarification / broader, never sold as an exact match.
-        if not disc_ok and tier not in ("T0", "T1") and not intent.get("broaden"):
-            _drop("below discovery thresholds")
+        if not disc_ok and tier not in ("T0", "T1"):
             continue                                    # weak AND indirect -> drop; direct matches
         #                                                 stay visible as "needs clarification"
-        _sem = (F.get("semantic_activity") or (None, 0.0, ""))
-        band = (assign_band(d_ab["lcb"], d_ab["coverage"], bands,
-                            _sem[1] if _sem[0] == K_MATCH else 0.0)
-                if disc_ok else "needs_clarification")
+        band = assign_band(d_ab["lcb"], d_ab["coverage"], bands) if disc_ok else "needs_clarification"
         readiness = readiness_state(c, domain, now_ts, cfg,
                                     received24.get(str(c.get("name", "")).strip().lower(), 0))
         outreach_tier_ok = tier in ("T0", "T1") or (tier == "T2" and bool(intent.get("broadConsent")))
         can_outreach = (outreach_tier_ok and readiness == "open_now" and
                         d_ab["lcb"] >= float(dom_cfg["outreach_min_lcb"]) and
                         d_ab["coverage"] >= float(dom_cfg["outreach_min_coverage"]))
-        rs_ru, rs_en, legacy_reasons, gap_ru, gap_en, rkeys = _presentation(F, d_ab, dom_cfg, readiness)
+        rs_ru, rs_en, legacy_reasons, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg)
         matched = F["semantic_activity"][2] or ""
         bucket = (H["cat_of"](matched.split(", ")[0])[0] if matched else
                   H["cat_of"]((c.get("interests") or ["x"])[0])[0]) or "other"
@@ -958,60 +600,24 @@ def search(intent, prof, ctx, candidates, H, cfg, diag=None):
             "name": c.get("name"), "score": round(d_ab["lcb"] * 100, 1), "tier": tier,
             "kind": TIER_KIND.get(tier, "related"), "km": km, "vibe": c.get("vibe"),
             "open": c.get("open"), "verified": c.get("verified"), "age": c.get("age"),
-            "interests": _shared_first(c.get("interests") or [], F), "role": c.get("role"),
+            "interests": c.get("interests") or [], "role": c.get("role"),
             "dealBreakers": c.get("dealBreakers"), "reasons": legacy_reasons or rs_en,
             "agree": agree, "note": note, "bucket": bucket,
             # ---- Matching Core v2 (spec) ----
             "band": band, "band_ru": band_ru, "band_en": band_en,
-            "reasons_ru": rs_ru, "reasons_en": rs_en, "reason_keys": rkeys, "gap_ru": gap_ru, "gap_en": gap_en,
+            "reasons_ru": rs_ru, "reasons_en": rs_en, "gap_ru": gap_ru, "gap_en": gap_en,
             "coverage": d_ab["coverage"], "lcb": d_ab["lcb"], "reciprocal": rec,
             "unknowns": d_ab["unknowns"], "can_outreach": can_outreach,
             "readiness": readiness, "readiness_ru": rdy_ru, "readiness_en": rdy_en,
-            "lastActiveDays": c.get("lastActiveDays"),   # allocation tie-break only, never relevance
-            # How many of the ASKED topics this person actually shares. For «кофе + рыбалка» the
-            # person who shares both must lead the person who shares only the setting, whatever the
-            # rest of their profile looks like — evidence-coverage (bio completeness) otherwise wins,
-            # which is exactly the «мне попадаются кофейные, а не рыбаки» complaint.
-            "_thits": sum(1 for t in topics if H["topical"]([t], [str(x).lower() for x in (c.get("interests") or [])])[0] >= 4),
             "trace": {"tier": tier, "policy": "ALLOW", "domain": domain,
                       "a_to_b": d_ab, "b_to_a": d_ba, "reciprocal": rec,
                       "band": band, "readiness": readiness,
                       "config_version": cfg.get("config_version")},
         })
-    # slate order (§11.2): band, readiness class, then provenance tier — a direct match (T0/T1)
-    # precedes broader ones (T2/T3) inside a band (§7: expansion never masquerades as direct) —
-    # then a reciprocal+directional composite (pure reciprocal is noisy when reverse data is
-    # sparse, and allocation must not let that noise reorder quality).
-    # Final tie-break: recency of activity (an operational signal, spec §10.2 — never a relevance
-    # feature), then a stable name hash. Sorting by name alphabetically gave every slate the same
-    # surname bias ("Lopez" always first) and made exposure unfair (§11 fairness), so equal
-    # candidates are shuffled deterministically instead — same input, same order, no alphabet.
-    tier_rank = {"T0": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4}
-    # «Больше тем = выше»: for a multi-topic ask, the count of shared asked-topics leads the order,
-    # so matching 2 of 2 always beats matching 1 of 2. For a single-topic ask this term is constant
-    # across the slate and the order is byte-identical to before.
-    _multi = len(topics) > 1
-    out.sort(key=lambda x: ((-int(x.get("_thits") or 0)) if _multi else 0,
-                            BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]],
-                            tier_rank.get(x["tier"], 5),
-                            -round(0.6 * x["reciprocal"] + 0.4 * x["lcb"], 6),
-                            -x["coverage"],
-                            min(int(x.get("lastActiveDays") or 9), 9),
-                            hashlib.sha1(str(x["name"]).encode("utf-8")).hexdigest()))
-    # `ranked` is the number of people who passed everything — the answer to "how deep does this
-    # query actually go". Before this it was computed, truncated to 8 and thrown away, so nothing
-    # could tell a query with 9 matches from one with 246.
+    # slate order (§11.2): band, then readiness class, then reciprocal relevance — readiness is an
+    # ORDERING concern here, never a relevance modifier.
+    out.sort(key=lambda x: (BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]], -x["reciprocal"],
+                            -x["lcb"], -x["coverage"], str(x["name"])))
     meta = {"core": "v2", "config_version": cfg.get("config_version"), "domain": domain,
-            "config_sha": cfg.get("_sha256", "")[:12], "ranked": len(out),
-            "unseen": sum(1 for x in out if str(x["name"]).strip().lower() not in seen_names),
-            "seen_in": len(seen_names)}
-    home = None                                   # the category the user actually asked about
-    for t in topics:
-        home = H["cat_of"](t)[0]
-        if home:
-            break
-    sl = _slate(out, home, seen_names)
-    _diversify_reasons(sl)
-    for x in sl:
-        x.pop("_thits", None)                          # internal sort field, not part of the card
-    return sl, meta
+            "config_sha": cfg.get("_sha256", "")[:12]}
+    return _slate(out), meta
