@@ -600,6 +600,8 @@ USERS_PATH = os.environ.get(
 # reads as "mock users". The demo pool is still the fallback when the store is missing/empty, so a fresh
 # system isn't dead. Set KLEAL_MERGE_DEMO=1 to blend the demo pool in (for a populated demo).
 MERGE_DEMO = os.environ.get("KLEAL_MERGE_DEMO", "0") != "0"
+# Off by default: no fabricated people, ever, unless a demo explicitly asks for them.
+DEMO_FALLBACK = os.environ.get("KLEAL_DEMO_FALLBACK", "0") != "0"
 # tools/gen_test_users.py stamps source="loadtest" on its 1000-person load pool. Only the Explore map
 # ever filtered them out, so a real user's SEARCH was ranked against ~982 synthetic people (every
 # result surnamed Volkov/Petrov/Garcia). They are fixtures, not people, and must not be proposed to
@@ -621,8 +623,13 @@ def load_candidates():
         store = _users_cache["list"]
     except Exception:
         store = None
-    if not store:                                  # missing/broken/empty store -> demo pool keeps matching alive
-        return CANDIDATES
+    if not store:
+        # No real people in the store. The demo pool used to stand in here so a fresh system would
+        # not look dead — but those stand-ins ARE what a user reads as "mock users": after the store
+        # was emptied on request, every search still answered with Ana/Nico/Iris. An empty pool must
+        # return an empty pool; buddy already has an honest "nobody yet" reply for exactly that.
+        # Kept one env var away for demos and for matching's own testing: KLEAL_DEMO_FALLBACK=1.
+        return CANDIDATES if DEMO_FALLBACK else []
     if not INCLUDE_LOADTEST:
         # Filtered AFTER the emptiness check on purpose: a store that is nothing but fixtures must
         # yield an empty slate, not resurrect the 50 demo fakes through the fallback above.
