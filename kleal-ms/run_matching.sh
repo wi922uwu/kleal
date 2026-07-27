@@ -4,7 +4,7 @@
 #   - KLEAL_ENGINE=core_v2 here (Dev B engine; core_v2.py is shipped alongside), OR
 #   - restore Dev B's live service dir: mv services/_matching_removed_20260722-2232 -> services/matching
 # NOTE: KLEAL_CORE_CONFIG must point at the 21505ccb config (matching_core PINNED_SHA); the pod's
-# config/Kleal_Matching_Core_Config_v2.yaml is a DIFFERENT sha (d804df8e) and will fail the pin.
+# config/Kleal_Matching_Core_Config_v2.yaml is a DIFFERENT sha (2b7c24eb) and will fail the pin.
 cd /root/kleal-ms || exit 1
 pkill -f "services/matching/app.py" 2>/dev/null
 sleep 1

@@ -26,9 +26,11 @@ TYPE_ALLOWLIST = {"dinner", "sport", "gaming", "networking", "dating", "language
 ROLE_ALLOWLIST = {"play", "watch", "discuss", "practise", "attend", "meet"}
 MODE_ALLOWLIST = {"offline", "online"}
 RADIUS_MAX_KM, AGE_FLOOR, AGE_CEIL, TOPIC_CAP = 500.0, 18, 120, 4
-# §15 MVP seat band, on TOTAL headcount (the asker included). Mirrors kleal_groups._MAX_MVP_SIZE; the
-# value is duplicated rather than imported because this module deliberately depends on nothing but kc.
-GROUP_SIZE_MIN, GROUP_SIZE_MAX = 2, 8
+# §15 MVP band on TOTAL headcount (the asker included), so one above kleal_groups._MAX_MVP_SIZE,
+# which counts SEATS. The value is duplicated rather than imported because this module deliberately
+# depends on nothing but kc. Not to be confused with core_v2.TOP_N — that is how many people a
+# person-to-person search returns, and it stays at 8.
+GROUP_SIZE_MIN, GROUP_SIZE_MAX = 2, 13
 
 def _domain_critical(domain, role):
     """§5.3 minimal domain-critical fields, keyed by the ACTUAL core_v2 domain (infer_domain emits

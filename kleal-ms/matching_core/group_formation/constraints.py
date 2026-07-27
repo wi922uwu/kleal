@@ -6,6 +6,10 @@ C#18: 4 одинаковых role/side отклоняются даже при в
 """
 
 
+# §15 supported_size_max_mvp, in seats. Kept in step with services/matching/kleal_groups.py
+# and the sha-pinned config; an 8 here silently capped every larger company.
+MAX_MVP_SIZE = 12
+
 def _intersect_windows(members):
     """Общее временное окно (минуты) как пересечение окон всех участников. 0 — если пересечения нет."""
     per_member = []
@@ -42,7 +46,7 @@ def check_set_constraints(members, constraints, pair_blocks=None):
     """Возвращает (feasible, violations[]). Коды нарушений типизированы."""
     v = []
     n = len(members)
-    smin, smax = int(constraints.get("size_min", 3)), int(constraints.get("size_max", 8))
+    smin, smax = int(constraints.get("size_min", 3)), int(constraints.get("size_max", MAX_MVP_SIZE))
     if n < smin:
         v.append("below_size_min")
     if n > smax:

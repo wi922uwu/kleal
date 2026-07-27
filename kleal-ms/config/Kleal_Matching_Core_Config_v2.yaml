@@ -219,7 +219,7 @@ outreach:
   passive_outreach_default: off_unless_receiving_policy_allows
 group_formation:
   supported_size_min: 3
-  supported_size_max_mvp: 8
+  supported_size_max_mvp: 12
   min_quorum_default: 3
   utility_weights:
     least_misery: 0.35

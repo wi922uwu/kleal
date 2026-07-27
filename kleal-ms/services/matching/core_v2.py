@@ -28,7 +28,7 @@ import hashlib, math, time
 # the unquoted quiet-hour 09:00 as sexagesimal int 540). The file is sha-pinned, so the exact
 # bytes this parser was written against are guaranteed.
 
-PINNED_SHA = "d804df8e2d14c0b306263d5178eb39d98f284335a2fb671bbd413b49435cb197"
+PINNED_SHA = "2b7c24eb2629ed05234bd806bd5c1c95e3e9047f4811c9a0d4ee782f3864a394"
 
 FEATURE_KEYS = ("semantic_activity", "time_feasibility", "location_feasibility", "mode_format",
                 "directed_preferences", "social_context", "domain_constraints")
@@ -527,9 +527,15 @@ def _presentation(F, d_ab, dom_cfg):
 # ------------------------------------------------------------------ allocation (slate diversity)
 TOP_N, PER_BUCKET = 8, 3        # slate size params (allocation layer, not relevance — spec §11)
 
-def _slate(items):
+def _slate(items, top_n=None):
+    """`top_n` widens the cut for ONE caller only: §15 forms a group out of the slate it is handed,
+    so a company of twelve cannot be assembled from a slate of eight. Person-to-person search keeps
+    TOP_N — eight people is the 1:1 answer, and a group request is not a reason to make that list
+    longer. PER_BUCKET scales with the cut so a wider slate stays as diverse as a narrow one."""
+    n = int(top_n or TOP_N)
+    per = PER_BUCKET if n <= TOP_N else max(PER_BUCKET, -(-n // 2))
     buckets = {it.get("bucket") or "other" for it in items}
-    cap = PER_BUCKET if len(buckets) > 2 else TOP_N
+    cap = per if len(buckets) > 2 else n
     seen, out = {}, []
     for it in items:
         b = it.get("bucket") or "other"
@@ -537,14 +543,17 @@ def _slate(items):
             continue
         seen[b] = seen.get(b, 0) + 1
         out.append(it)
-        if len(out) >= TOP_N:
+        if len(out) >= n:
             break
     return out
 
 # ------------------------------------------------------------------ main entry
-def search(intent, prof, ctx, candidates, H, cfg):
+def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
     """Score policy-ALLOWED candidates. Returns (slate, meta). `H` injects the taxonomy helpers
-    from app.py: {'topical', 'cat_of', 'reciprocal', 'role_conflict'} — taxonomy stays single-sourced."""
+    from app.py: {'topical', 'cat_of', 'reciprocal', 'role_conflict'} — taxonomy stays single-sourced.
+
+    `top_n` widens the slate cut; it is used only by the group path (see _slate) and defaults to the
+    TOP_N that person-to-person search has always returned."""
     intent, prof, ctx = intent or {}, prof or {}, ctx or {}
     domain = infer_domain(intent, H["cat_of"])
     dom_cfg = cfg["domains"].get(domain) or cfg["domains"]["social_meet"]
@@ -620,4 +629,4 @@ def search(intent, prof, ctx, candidates, H, cfg):
                             -x["lcb"], -x["coverage"], str(x["name"])))
     meta = {"core": "v2", "config_version": cfg.get("config_version"), "domain": domain,
             "config_sha": cfg.get("_sha256", "")[:12]}
-    return _slate(out), meta
+    return _slate(out, top_n), meta

@@ -26,7 +26,11 @@ import kleal_states as ks
 
 GROUPS_VERSION = "groups-15.0.0"
 _EPS = 1e-9
-_MAX_MVP_SIZE = 8          # §15 config supported_size_max_mvp ceiling; a per-intent size may only tighten this
+# §15 config supported_size_max_mvp ceiling, in SEATS (the asker is not in their own slate, so a
+# group of twelve people is eleven seats). A per-intent size may only tighten this. It was 8, which
+# is the person-to-person SLATE size and has nothing to do with how large a company may be — with
+# both at 8 the «Компания / 10+ человек» option could never be honoured.
+_MAX_MVP_SIZE = 12
 _RES_TTL = 3600            # reservation hold seconds (seat hold); TTL semantics live in kc.build_reservation
 
 # EXACT config keys are the source of truth. The §15.2 PROSE uses different names for two of them — SPEC_ALIAS

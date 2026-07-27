@@ -61,14 +61,20 @@ check("no answer, no groupSize", flowIntent().groupSize === undefined, flowInten
 FLOW = { intent: { topics: ["coffee"] }, gsize: "" };
 check("an empty answer, no groupSize", flowIntent().groupSize === undefined, flowIntent().groupSize);
 
-console.log("\n4. the size stays inside the §15 MVP band");
-// «Компания» is labelled 10+ on screen, but the engine's ceiling is 8 (kleal_groups._MAX_MVP_SIZE).
-// Asking for more than that is answered with a clamp, so ask for what can actually be served.
+console.log("\n4. the size stays inside the §15 MVP band, and matches the label on screen");
+// The ceiling is kleal_groups._MAX_MVP_SIZE = 12 SEATS, i.e. 13 people counting the asker. It used
+// to be 8 — which is core_v2.TOP_N, how many people a 1:1 search returns, and never a statement
+// about how large a company may be. With both at 8 the «10+ человек» option could not be honoured.
 for (const k of ["small", "party"]) {
   FLOW = { intent: {}, gsize: k };
   const n = flowIntent().groupSize;
-  check(k + " asks for a size the engine can serve (2..8)", n >= 2 && n <= 8, n);
+  check(k + " asks for a size the engine can serve (2..13)", n >= 2 && n <= 13, n);
 }
+FLOW = { intent: {}, gsize: "party" };
+check("«Компания» asks for the 10+ its own label promises", flowIntent().groupSize >= 10,
+      flowIntent().groupSize);
+FLOW = { intent: {}, gsize: "small" };
+check("«Малая группа» stays inside its 2–5 label", flowIntent().groupSize <= 5, flowIntent().groupSize);
 
 console.log("\n5. the size does not disturb the rest of the intent");
 FLOW = { intent: { topics: ["padel"], mode: "offline" }, gsize: "small", ageA: 25, ageB: 35, sex: "female" };

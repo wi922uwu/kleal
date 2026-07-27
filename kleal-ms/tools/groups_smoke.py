@@ -165,6 +165,22 @@ if live:
     check("the original ask survives the clamp, so the UI can explain it",
           seats.get(8, {}).get("asked") == 8, seats.get(8))
 
+    # A domain WITHOUT a fixed-seat pack must be able to reach «Компания / 10+ человек». The group
+    # ceiling used to be 8 — which is core_v2.TOP_N, the number of people a 1:1 search returns, and
+    # never a statement about how large a company may be. The two are separate numbers now: the
+    # person-to-person slate stays at 8, and the slate feeding §15 widens to match the seats asked
+    # for, because §15 forms a group only out of candidates it is handed.
+    BIG = {"topics": ["coffee"], "type": "social", "role": "discuss"}
+    solo = call("/api/agent/match", {"intent": BIG, "profile": PROF, "ctx": CTX})
+    big = call("/api/agent/match", {"intent": dict(BIG, groupSize=10), "profile": PROF, "ctx": CTX})
+    check("a 1:1 search still returns its eight people", len(solo.get("candidates") or []) <= 8,
+          len(solo.get("candidates") or []))
+    check("a group request widens the slate past eight", len(big.get("candidates") or []) > 8,
+          len(big.get("candidates") or []))
+    bg = big.get("group") or {}
+    check("«10+» is reachable, not clamped to the 1:1 slate size",
+          len(bg.get("members") or []) + 1 >= 9, (bg.get("members"), bg.get("seats")))
+
 print()
 print("=" * 74)
 print("6. THE GROUP IS THE BEST OF THE SLATE, NOT THE FIRST OF IT")

@@ -4321,8 +4321,10 @@ function flowIntent(){
   // the product ever set — so choosing «Малая группа» searched for one person, exactly like 1:1.
   // The number is the TOTAL at the meetup, this person included. '1:1' deliberately sends nothing:
   // one-on-one IS person_to_person, and a groupSize would push it down the group path.
-  // 'party' is labelled 10+, but §15's MVP ceiling is 8 — ask for 8 rather than for a refusal.
-  if(FLOW.gsize==='small'||FLOW.gsize==='party') it.groupSize=(FLOW.gsize==='party'?8:4);
+  // «Малая группа» is labelled 2–5 and «Компания» 10+; the engine ceiling is 12 seats, so both
+  // labels are askable as written. The 8 that used to cap this is the person-to-person SLATE size —
+  // how many people a 1:1 search returns — and was never a statement about how big a company may be.
+  if(FLOW.gsize==='small'||FLOW.gsize==='party') it.groupSize=(FLOW.gsize==='party'?10:4);
   it.mode=it.mode||'offline';
   if(it.mode==='online'){
     it.place=T('Онлайн','Online');                       // no district, no radius — it's over the net

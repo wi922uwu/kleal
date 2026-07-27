@@ -7,6 +7,13 @@ import os, sys, json, re, threading, concurrent.futures, math, hashlib, time, co
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
+# ...and THIS directory ahead of shared/, always. The kleal_* engine modules below live here; only
+# kleal_lib is genuinely shared. An older layout kept all of them in shared/, and a deploy that
+# restored that layout left stale copies behind — which, with shared/ first on the path, SHADOWED
+# every module in this directory. The service then ran a mix of new dispatcher and old engine:
+# matching answered with a group ceiling of 8 that no file in this folder still contained, and the
+# config-pin check failed against a config it was never meant to read. A local module must win.
+sys.path.insert(0, _HERE)
 import kleal_lib as base                      # keyless shared helpers (uses base._extract_json)
 import kleal_contracts as kc                  # §4 canonical data contracts (builders/validators; keyless)
 import kleal_intent as ki                     # §5 intent compiler + clarification policy (keyless, LLM-free)
@@ -1345,6 +1352,24 @@ def _retrieval_report(slate):
             "top_n": (_core.TOP_N if CORE_V2 else None)}
 
 
+def _slate_budget(intent):
+    """How many people the slate may hold for THIS request.
+
+    Person-to-person keeps the eight it has always returned — that is the answer to «найди мне
+    человека», and a group request is no reason to make that list longer. §15, though, forms a group
+    out of the slate it is handed and never retrieves for itself, so a company of twelve cannot be
+    assembled from eight candidates: the group ceiling has to be matched by the slate feeding it.
+    A little headroom above the seats keeps the choice a choice rather than "everyone we found"."""
+    if _decision_type(intent) != "group_formation":
+        return None                                        # None -> the engine's own TOP_N
+    try:
+        total = int((intent or {}).get("groupSize") or 0)
+    except (TypeError, ValueError):
+        total = 0
+    seats = max(0, total - 1) or kg._MAX_MVP_SIZE
+    return max(_core.TOP_N, min(2 * kg._MAX_MVP_SIZE, seats + 4))
+
+
 def match_candidates(intent, prof, ctx=None, diag=None):
     """Entry point. Policy hard gates run HERE (scoring only after ALLOW — spec §8), then §7 staged
     retrieval assembles the pool, then Core v2 scores it. KLEAL_CORE_V2=0 or an invalid config -> legacy
@@ -1402,7 +1427,8 @@ def match_candidates(intent, prof, ctx=None, diag=None):
         # What the ranker was actually handed. The old funnel asserted scored._in == eligible; that
         # identity only held before staged retrieval existed.
         diag['scored'] = {'_in': len(retrieved), 'budget_dropped': max(0, len(eligible) - len(retrieved))}
-    slate, _meta = _core.search(intent, prof or {}, ctx, retrieved, _H, _CORE_CFG)
+    slate, _meta = _core.search(intent, prof or {}, ctx, retrieved, _H, _CORE_CFG,
+                                top_n=_slate_budget(intent))
     if not slate and eligible:                             # never dead-end while anyone is eligible (§12) —
         slate = _expand_fallback(intent, prof or {}, ctx, eligible)   # over the FULL pool, never budget-starved
     slate = _apply_policy(slate, policy_by)

@@ -30,7 +30,7 @@ def greedy_marginal_add(seed, feasible, pair_rel, gc, weights):
     """Жадно добавлять кандидата с макс. marginal gain, пока не size_max / нет улучшения при feasible."""
     group = list(seed)
     used = {_mid(m) for m in group}
-    smax = int(gc.get("size_max", 8))
+    smax = int(gc.get("size_max", C.MAX_MVP_SIZE))
     while len(group) < smax:
         best, best_gain = None, 1e-9
         base = _build_score(group, pair_rel, gc, weights)

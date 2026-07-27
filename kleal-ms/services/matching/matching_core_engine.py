@@ -51,7 +51,7 @@ _TYPE2DOMAIN = {"social": "social_meet", "social_meet": "social_meet", "walk": "
 
 # ------------------------------------------------------------------ config
 def load_config(path=None, expect_sha=None):
-    """Same sha-pinned YAML as core_v2 (config_version matching-core-2.0.0, PINNED_SHA d804df8e…)."""
+    """Same sha-pinned YAML as core_v2 (config_version matching-core-2.0.0, PINNED_SHA 2b7c24eb…)."""
     if expect_sha:
         return _V.load_config(path, expect_sha=expect_sha)
     return _V.load_config(path)
@@ -125,10 +125,13 @@ def _presentation(F, d_ab, dom_cfg):
     return rs_ru, rs_en, (rs_en or rs_ru), p.get("gap_ru"), p.get("gap_en")
 
 
-def _slate(items):
-    """Diversify by bucket + cap TOP_N (identical to core_v2._slate)."""
+def _slate(items, top_n=None):
+    """Diversify by bucket + cap TOP_N (identical to core_v2._slate, including the `top_n` widening
+    that lets §15 assemble a group larger than the eight-person 1:1 slate)."""
+    n = int(top_n or TOP_N)
+    per = PER_BUCKET if n <= TOP_N else max(PER_BUCKET, -(-n // 2))
     buckets = {it.get("bucket") or "other" for it in items}
-    cap = PER_BUCKET if len(buckets) > 2 else TOP_N
+    cap = per if len(buckets) > 2 else n
     seen, out = {}, []
     for it in items:
         b = it.get("bucket") or "other"
@@ -136,13 +139,13 @@ def _slate(items):
             continue
         seen[b] = seen.get(b, 0) + 1
         out.append(it)
-        if len(out) >= TOP_N:
+        if len(out) >= n:
             break
     return out
 
 
 # ------------------------------------------------------------------ main entry: search()
-def search(intent, prof, ctx, candidates, H, cfg):
+def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
     """Score policy-ALLOWED candidates via matching_core, emit the core_v2 card shape + (slate, meta).
     `candidates` are already hard-gated by app.py; H injects app.py taxonomy (used only for the bucket
     label). matching_core does the relevance/reciprocity/readiness/band math (+ critical-unknown gate)."""
@@ -225,7 +228,7 @@ def search(intent, prof, ctx, candidates, H, cfg):
                             -x["lcb"], -x["coverage"], str(x["name"])))
     meta = {"core": ENGINE_NAME, "config_version": cfg.get("config_version"), "domain": domain,
             "config_sha": (cfg.get("_sha256") or "")[:12]}
-    return _slate(out), meta
+    return _slate(out, top_n), meta
 
 
 # ---------------------------------------------------------------- adapter completeness

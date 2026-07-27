@@ -25,7 +25,14 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 FILES="
 shared/config.py
 shared/contracts.md
+shared/llm_client.py
+shared/http_util.py
+shared/kleal_lib.py
+config/Kleal_Matching_Core_Config_v2.yaml
 matching_core/config/validator.py
+matching_core/group_formation/constraints.py
+matching_core/group_formation/former.py
+matching_core/group_formation/utility.py
 services/matching/core_v2.py
 services/matching/matching_core_engine.py
 services/matching/kleal_candidates.py
