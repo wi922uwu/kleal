@@ -162,3 +162,11 @@ worse than the current 404.
 **The `core_v2.py` rollback path has no tests.** Its three suites tested pre-rewrite internals
 (`propose()`, `group_create()`, old `_hard_gates` arity) and were removed rather than bent to
 agree with code they were not written for.
+
+**The inbox / threads / messages endpoints are unauthenticated.** `self` arrives as an ordinary
+query parameter, so anyone who knows a name can read that person's inbox, their thread list and
+the full text of their private messages. Verified against prod: a message was planted between two
+people and read back by a third, unauthenticated call. This is not a regression — the endpoints
+behaved this way before the rewrite too. There is no session anywhere in the stack: sign-in lives
+in onboarding and matching never learns who is calling. Closing it means carrying a session or
+token across services, which is a design decision, not a patch.
