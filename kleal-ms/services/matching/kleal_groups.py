@@ -693,7 +693,12 @@ def form_group(intent, candidates, constraints, params, pair_rel=None, now_ts=No
     members, utility = best
     gu = group_utility(members, constraints, params, pair_rel=pair_rel)
     roles = sorted({r for m in members for r in _member_roles(m)})
-    grp = kc.build_group(int((params or _SPEC_DEFAULT_PARAMS)["quorum_default"]), roles, (constraints or {}).get("pair_blocks"))
+    # The quorum this group actually ran under — check_set_constraints reads constraints["quorum"]
+    # first everywhere else, so reporting the config default here described a 4-seat padel court as
+    # needing 3 and made the returned group disagree with the rule it was built to.
+    _q = (constraints or {}).get("quorum")
+    grp = kc.build_group(int(_q if _q else (params or _SPEC_DEFAULT_PARAMS)["quorum_default"]),
+                         roles, (constraints or {}).get("pair_blocks"))
     return {"decision_type": "group_formation", "enabled": False, "override": True, "group": grp,
             "members": [_member_id(m) for m in members], "utility": utility,
             "components": gu["components"], "weighted": gu["weighted"], "feasible": True, "violations": []}

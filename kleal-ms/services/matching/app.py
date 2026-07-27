@@ -669,8 +669,43 @@ Return ONLY compact JSON (no prose, no markdown), keys:
  mode   (offline | online),
  format (short, e.g. "1:1 or small group"),
  time   (short, infer from text, default "Flexible"),
- place  (short, infer, default "Public places nearby").
+ place  (short, infer, default "Public places nearby"),
+ groupSize (integer 2-8 = how many people in TOTAL should be at the meetup, the asker INCLUDED;
+            null unless the user asks for a group/team/company or names a headcount),
+ group  (true if they want several people rather than one, but gave no number; else null).
 English only.'''
+
+# Group headcount, read from the words people actually use. Until this existed, `groupSize` had no
+# producer anywhere in the product: the screen that asks «Один на один / Малая группа / Компания»
+# dropped the answer, and the parser had no such key, so §15 group formation was unreachable and
+# every group request was silently served as one-person-at-a-time matching.
+_GROUP_WORDS = ('групп', 'компани', 'команд', 'вместе', 'втро', 'вчетвер', 'впятер', 'вшестер',
+                'group', 'team', 'crew', 'squad', 'together', 'grupo', 'equipo', 'juntos')
+_GROUP_NUM_WORDS = {'вдвоем': 2, 'вдвоём': 2, 'двоем': 2, 'двоём': 2, 'втроем': 3, 'втроём': 3,
+                    'троем': 3, 'троём': 3, 'вчетвером': 4, 'впятером': 5, 'вшестером': 6}
+# A headcount sits next to a people-word, in either order — Russian puts it on both sides
+# («4 человека», «человека 4») and so does Spanish («4 personas», «somos 4»).
+_PEOPLE_NUM = re.compile(
+    r"(\d{1,2})\s*(?:чел\w*|людей|человек\w*|игрок\w*|people|persons?|players?|personas?|jugadores)"
+    r"|(?:чел\w*|людей|человек\w*|people|persons?|personas?|somos|нас)\s*(\d{1,2})", re.U)
+# A bare number is a headcount only in a sentence that already said "group" — and never when it is
+# really a clock ("в 18:00", "at 7pm"), a distance or a price.
+_BARE_NUM = re.compile(r"(?<![:\d.,])(\d{1,2})(?![:\d])"
+                       r"(?!\s*(?:час|утра|вечера|дня|ночи|:|h\b|am\b|pm\b|мин|min|км|km|€|\$|%))", re.U)
+
+
+def _parse_group_size(ql):
+    """(groupSize, wants_a_group) from free text. The number is the TOTAL at the meetup, asker included."""
+    wants = any(w in ql for w in _GROUP_WORDS)
+    for w, n in _GROUP_NUM_WORDS.items():
+        if w in ql:
+            return n, True
+    m = _PEOPLE_NUM.search(ql) or (_BARE_NUM.search(ql) if wants else None)
+    if m:
+        n = int(next(g for g in m.groups() if g))
+        if 2 <= n <= 12:
+            return n, True
+    return None, wants
 
 def _fallback_parse(q):
     ql = (q or '').lower()
@@ -693,9 +728,13 @@ def _fallback_parse(q):
           {'sports':'sport','games':'gaming','tech':'networking','learning':'language'}.get(broad, 'social')
     title = ('Date' if dating else (topics[0].capitalize() + ' meetup')) if (dating or topics) else 'New plan'
     online = any(w in ql for w in ('online','remote','voice','video','call','stream'))
+    gsize, gwant = _parse_group_size(ql)
     return {"title": title, "type": typ, "topics": topics or (['dating'] if dating else ['social']),
             "role": role, "mode": ('online' if online else 'offline'),
             "format": "1:1 or small group", "time": tm, "place": "Public places nearby",
+            # §15 routing: a size, or — when they asked for company without naming a number — the bare
+            # flag, which lets the domain pack / config decide how many seats a padel court has.
+            "groupSize": gsize, "group": (True if (gwant and not gsize) else None),
             # gate parameters (owner's search scope) — sensible defaults; dating tightens age/verification
             "radiusKm": 15, "verifiedOnly": bool(dating), "minAge": (18 if dating else None), "maxAge": None,
             "requiredLanguages": [], "exactMatchRequired": False, "adjacentAllowed": True, "broadAllowed": True}
@@ -715,6 +754,11 @@ def parse_intent(q):
             fb = _fallback_parse(q)
             for k, v in fb.items(): obj.setdefault(k, v)
             if not isinstance(obj.get('topics'), list) or not obj['topics']: obj['topics'] = fb['topics']
+            # setdefault cannot help when the model EMITS the key as null, which it does for
+            # groupSize far more often than it reads «человека 4» correctly. A regex that found a
+            # headcount beats a model that returned nothing; a model that found one still wins.
+            for k in ('groupSize', 'group'):
+                if not obj.get(k) and fb.get(k): obj[k] = fb[k]
             return ki.validate_and_normalize(obj, source='llm')[0]
     except Exception:
         pass
@@ -3377,6 +3421,64 @@ def reset_fatigue(name):
     return {"ok": True, "name": name, "cleared": had}
 
 
+def _group_slate(cands):
+    """§15 reads each candidate's directed fit from `relevance`; a core_v2 slate card carries it as
+    `lcb`. Map it losslessly (every other field, including any diversity axis, is preserved).
+
+    This lived in /api/agent/group and nowhere else, so the SAME slate produced a sensible group
+    through that door and a hash-ordered one through /api/agent/match — with relevance missing, every
+    utility component that depends on it is 0 and selection falls back to the id-hash tiebreak. On
+    prod that put a 0.665 candidate in the group and left the 0.883 one out. One helper, both doors."""
+    return [dict(c, relevance=(c.get("relevance") if c.get("relevance") is not None else c.get("lcb", 0)))
+            for c in (cands or []) if isinstance(c, dict)]
+
+
+# §15.4 domain packs, restricted to the keys the DATA can satisfy. The packs also carry
+# required_equipment, max_skill_spread and mandatory_roles; users.json has no equipment, level or
+# per-person role field, so applying those verbatim makes every candidate violate a hard gate and
+# "padel for four" answers NO_FEASIBLE_GROUP. Seat counts are wired now; the rest waits for profiles
+# that actually carry equipment and skill.
+_PACK_SIZE_KEYS = ("size_min", "size_max", "quorum", "capacity")
+
+
+def _group_constraints(intent, caller=None):
+    """An intent's §15 set-constraints.
+
+    `groupSize` is the TOTAL headcount asked for, THE ASKER INCLUDED — they are never in their own
+    candidate slate, so the group being assembled is one seat smaller than the number they said.
+
+    Precedence: explicit caller constraints > the stated size > the domain pack > config defaults.
+    The floor matters more than the ceiling: §15 grows a seed only while a size/quorum SHORTFALL is
+    outstanding and then stops (adding a weaker member always lowers least_misery, so nothing is ever
+    added for utility alone). Group size is therefore decided by size_min, which is why leaving it at
+    the config default returned exactly three people whatever was asked for."""
+    intent = intent or {}
+    pack = {}
+    for name in list(intent.get("topics") or []) + [intent.get("type"), intent.get("activity")]:
+        p = kg.pack_for(name)
+        if p:
+            # Pack numbers are TOTAL headcount — a padel court holds four PLAYERS. §15 counts the
+            # seats it is filling, and the asker is never in their own candidate slate, so each of
+            # those numbers is one smaller here. Copying them across units capped a padel group at
+            # four strangers PLUS you — five on a four-seat court — and made a request for six
+            # collide with the pack's capacity and fall all the way back to three.
+            pack = {k: max(1, int(v) - 1) for k, v in p.items() if k in _PACK_SIZE_KEYS}
+            break
+    out = dict(pack)
+    try:
+        total = int(intent.get("groupSize")) if intent.get("groupSize") is not None else None
+    except (TypeError, ValueError):
+        total = None
+    if total:
+        seats = max(1, min(kg._MAX_MVP_SIZE, total - 1))
+        ceiling = pack.get("size_max") or pack.get("capacity")
+        if ceiling:
+            seats = min(seats, int(ceiling))   # a padel court does not grow because you asked it to
+        out["size_min"] = out["quorum"] = out["size_max"] = seats
+    out.update({k: v for k, v in (caller or {}).items() if v is not None})
+    return out
+
+
 def form_group_from_slate(intent, cands, constraints=None, now_ts=None, pair_rel=None, reserve=False):
     """Assemble a group out of an already-ranked slate (§15.3).
 
@@ -3399,16 +3501,46 @@ def form_group_from_slate(intent, cands, constraints=None, now_ts=None, pair_rel
     if not cands:
         return dict(kg.dormant_response(intent, constraints or {}, note="no candidates to form a group from"),
                     feasible=False)
+    slate = _group_slate(cands)
+    cons = _group_constraints(intent, constraints)
+    now_ts = now_ts or time.time()
+
+    def _run(c, ledger=None):
+        return kg.run_group_formation(intent, slate, c, _CORE_CFG, override=_GROUP_OVERRIDE,
+                                      now_ts=now_ts, ledger=ledger, pair_rel=pair_rel)
+
+    def _finish(res, c):
+        """Say what was asked for, what the rules allowed, and what was filled — all as TOTAL
+        headcount, the asker included, because that is the number they typed.
+
+        `asked` is their own number, not the clamped one: a request for eight padel players is
+        answered with four, and the UI can only explain that ("a court seats four") if it can still
+        see that eight was asked. `allowed` is the ceiling after the §15.4 pack, `formed` the result."""
+        allowed = cons.get("size_min")
+        res["seats"] = {"asked": intent.get("groupSize"),
+                        "allowed": (allowed + 1) if allowed else None,
+                        "formed": (len(res.get("members") or []) + 1) if res.get("members") else 0,
+                        "relaxed": c is not cons}
+        res["group_formation_live"] = True
+        return res
+
     if not reserve:
-        return dict(kg.run_group_formation(intent, cands, constraints or {}, _CORE_CFG,
-                                           override=_GROUP_OVERRIDE, now_ts=now_ts or time.time(),
-                                           ledger=None, pair_rel=pair_rel),
-                    group_formation_live=True, reserved=False)
+        res = _run(cons)
+        # A thin pool must degrade to a smaller REAL group, never to nothing: §15 treats size_min as
+        # hard, so a request for six in a city with four padel players answered NO_FEASIBLE_GROUP —
+        # which reads as "groups are broken" and is really "we could only find four". Relax the floor
+        # ONCE, to the config default, and label the result.
+        if not res.get("members") and (cons.get("size_min") or 0) > 2:
+            relaxed = dict(cons)
+            relaxed.pop("size_min", None); relaxed.pop("quorum", None)
+            alt = _run(relaxed)
+            if alt.get("members"):
+                res = _finish(alt, relaxed)
+                return dict(res, reserved=False)
+        return dict(_finish(res, cons), reserved=False)
     with _STORE_LOCK:
         led = SESSION.setdefault("_group_ledger", {})
-        res = kg.run_group_formation(intent, cands, constraints or {}, _CORE_CFG,
-                                     override=_GROUP_OVERRIDE, now_ts=now_ts or time.time(),
-                                     ledger=led, pair_rel=pair_rel)
+        res = _finish(_run(cons, ledger=led), cons)
         _save_store()
     res["reserved"] = True
     # kg always reports enabled:False (it is scaffolding and says so). The PRODUCT-level answer is
@@ -3828,11 +3960,8 @@ class H(BaseHTTPRequestHandler):
                     cands = match_candidates(intent, prof, ctx)
                 except Exception:
                     cands = []
-            # wiring adapter: a core_v2 slate card carries the DIRECTED conservative estimate as `lcb`; the group
-            # star-fallback reads `relevance`. Map lcb->relevance LOSSLESSLY (all other fields, incl. any
-            # diversity axis, preserved) unless the caller already supplied a full pair_rel matrix + relevance.
-            cands = [dict(c, relevance=(c.get("relevance") if c.get("relevance") is not None else c.get("lcb", 0)))
-                     for c in cands if isinstance(c, dict)]
+            cands = _group_slate(cands)               # lcb -> relevance, the §15 star-fallback input
+            constraints = _group_constraints(intent, constraints)   # groupSize + §15.4 pack -> seat counts
             reserve = bool(body.get("reserve"))       # claiming seats is a commit, never a preview
             try:
                 if kg.is_override_enabled(override) and reserve:   # real seat ledger + reservations

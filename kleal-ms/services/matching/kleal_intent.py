@@ -26,6 +26,9 @@ TYPE_ALLOWLIST = {"dinner", "sport", "gaming", "networking", "dating", "language
 ROLE_ALLOWLIST = {"play", "watch", "discuss", "practise", "attend", "meet"}
 MODE_ALLOWLIST = {"offline", "online"}
 RADIUS_MAX_KM, AGE_FLOOR, AGE_CEIL, TOPIC_CAP = 500.0, 18, 120, 4
+# §15 MVP seat band, on TOTAL headcount (the asker included). Mirrors kleal_groups._MAX_MVP_SIZE; the
+# value is duplicated rather than imported because this module deliberately depends on nothing but kc.
+GROUP_SIZE_MIN, GROUP_SIZE_MAX = 2, 8
 
 def _domain_critical(domain, role):
     """§5.3 minimal domain-critical fields, keyed by the ACTUAL core_v2 domain (infer_domain emits
@@ -105,6 +108,30 @@ def validate_and_normalize(intent, source="llm"):
     out["requiredLanguages"] = langs
     for b in ("verifiedOnly", "exactMatchRequired", "adjacentAllowed", "broadAllowed"):
         out[b] = bool(out.get(b))
+
+    # groupSize — the §15 routing key, written by an untrusted parser, so coerce and clamp to the MVP
+    # band. Absent stays ABSENT (never materialised as None): the key is outside the 16-key contract
+    # and every non-group intent must normalise to the bytes it did before groups existed, or every
+    # intent_id in the store shifts.
+    if "groupSize" in out:
+        gs = out.get("groupSize")
+        if gs is None or gs == "":
+            gs = None
+        else:
+            try:
+                gs = int(float(gs))
+            except (TypeError, ValueError):
+                report.append("groupSize %r not a number -> dropped" % out.get("groupSize")); gs = None
+            else:
+                if not (GROUP_SIZE_MIN <= gs <= GROUP_SIZE_MAX):
+                    report.append("groupSize %d outside [%d,%d] -> clamped" % (gs, GROUP_SIZE_MIN, GROUP_SIZE_MAX))
+                    gs = max(GROUP_SIZE_MIN, min(GROUP_SIZE_MAX, gs))
+        if gs is None:
+            out.pop("groupSize", None)
+        else:
+            out["groupSize"] = gs
+    if "group" in out and not out.get("group"):
+        out.pop("group", None)                     # same reason: a falsy flag must not survive as a key
 
     errs = kc.validate_intent(out)                 # read-only guard: no key dropped/renamed
     if errs:

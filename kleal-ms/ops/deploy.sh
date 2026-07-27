@@ -16,12 +16,28 @@ LOCAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_ROOT="/root/kleal-ms"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 
+# One path per line, no comments and no blanks — the loop below word-splits this string, so anything
+# that is not a path becomes a "MISSING LOCALLY" failure.
+#
+# The kleal_* modules ARE the matching service; app.py is a dispatcher over them. They were absent
+# from this list, so editing kleal_intent.py uploaded nothing and prod ran a new app.py against the
+# old engine, with no error anywhere to say so.
 FILES="
 shared/config.py
 shared/contracts.md
 matching_core/config/validator.py
 services/matching/core_v2.py
 services/matching/matching_core_engine.py
+services/matching/kleal_candidates.py
+services/matching/kleal_completion.py
+services/matching/kleal_contract_registry.py
+services/matching/kleal_contracts.py
+services/matching/kleal_groups.py
+services/matching/kleal_intent.py
+services/matching/kleal_ml_boundary.py
+services/matching/kleal_protocol.py
+services/matching/kleal_states.py
+services/matching/kleal_taxonomy.py
 services/matching/app.py
 services/gateway/app.py
 services/llm/app.py
@@ -37,6 +53,8 @@ tools/e2e_smoke.py
 tools/flows_smoke.py
 tools/age_range_test.js
 tools/card_tags_test.js
+tools/gsize_test.js
+tools/meetups_tabs_test.js
 tools/groups_smoke.py
 ops/run.sh
 "
