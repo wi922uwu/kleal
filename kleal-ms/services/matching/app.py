@@ -595,6 +595,19 @@ PILOT_DECISION_TYPES = {
     "intent_to_venue": False,           # §1.1 — post-pilot (§16); additive, declared-but-disabled (never flipped True)
     "relationship_continuation": False, # §1.1 — post-pilot (§14)
 }
+# ---- §15 group formation: the PRODUCT switch -----------------------------------------------------
+# kleal_groups.py is deliberate conformance scaffolding: its payloads hard-code enabled:False and the
+# algorithm only runs behind an exact, test-only override. That design stays — it is what keeps a
+# post-pilot layer from activating itself. What was missing is a switch ABOVE it, so the feature can
+# be turned on as a product without editing §15's semantics, and turned off again with one variable.
+#
+# Off, asking for a group was a silent zero: `groupSize` routes the intent to group_formation, the
+# pilot gate rejected it, and /api/agent/match returned ZERO PEOPLE. The same query without that one
+# field returned eight. Whatever the switch says, a group request must never cost you the people.
+GROUPS_ENABLED = os.environ.get("KLEAL_GROUPS", "0") != "0"
+_GROUP_OVERRIDE = {"enable_group_formation": True}   # the exact shape kg.is_override_enabled demands
+
+
 def _decision_type(intent):
     """Which §1.1 decision type an intent asks for. Explicit `decisionType` wins; otherwise inferred from
     group/event/room signals, defaulting to person_to_person (the pilot path)."""
@@ -607,6 +620,10 @@ def _decision_type(intent):
     if intent.get("roomId"):                                  return "intent_to_room"
     if intent.get("venueId") or str(intent.get("type") or "") == "venue": return "intent_to_venue"   # §16 (pilot-off)
     return "person_to_person"
+if GROUPS_ENABLED:
+    PILOT_DECISION_TYPES["group_formation"] = True    # §15 live: set at import, never per-request
+
+
 def _pilot_enabled(intent):
     return bool(PILOT_DECISION_TYPES.get(_decision_type(intent), False))
 
@@ -3351,6 +3368,46 @@ def reset_fatigue(name):
     return {"ok": True, "name": name, "cleared": had}
 
 
+def form_group_from_slate(intent, cands, constraints=None, now_ts=None, pair_rel=None, reserve=False):
+    """Assemble a group out of an already-ranked slate (§15.3).
+
+    The §15 core takes candidates as an ARGUMENT — it never retrieves. That is why calling
+    /api/agent/group without a slate answered NO_FEASIBLE_GROUP: there was nothing to form a group
+    from, which looked like the algorithm failing and was really an empty input.
+
+    Runs only when GROUPS_ENABLED. The override is supplied here, by the service, rather than by the
+    caller: kg's switch stays the exact test-only key it was written as, and whether the product
+    offers groups is decided in one place instead of by whoever crafts the request body.
+
+    `reserve` defaults to FALSE and that is the important part. §15.3.5 reserve_members CLAIMS SEATS
+    in a persisted ledger, so forming a group with a ledger attached is a write. Wiring that into
+    the search path made every search silently hold seats for people who had agreed to nothing —
+    visible immediately as a second identical request returning a different company, because the
+    first one had already taken the first three. A search is a read. Seats are claimed only when a
+    caller explicitly asks to commit."""
+    if not GROUPS_ENABLED:
+        return kg.dormant_response(intent, constraints or {})
+    if not cands:
+        return dict(kg.dormant_response(intent, constraints or {}, note="no candidates to form a group from"),
+                    feasible=False)
+    if not reserve:
+        return dict(kg.run_group_formation(intent, cands, constraints or {}, _CORE_CFG,
+                                           override=_GROUP_OVERRIDE, now_ts=now_ts or time.time(),
+                                           ledger=None, pair_rel=pair_rel),
+                    group_formation_live=True, reserved=False)
+    with _STORE_LOCK:
+        led = SESSION.setdefault("_group_ledger", {})
+        res = kg.run_group_formation(intent, cands, constraints or {}, _CORE_CFG,
+                                     override=_GROUP_OVERRIDE, now_ts=now_ts or time.time(),
+                                     ledger=led, pair_rel=pair_rel)
+        _save_store()
+    res["reserved"] = True
+    # kg always reports enabled:False (it is scaffolding and says so). The PRODUCT-level answer is
+    # this switch, so state it plainly next to kg's own field rather than rewriting kg's contract.
+    res["group_formation_live"] = True
+    return res
+
+
 # ---------------------------------------------------------------- HTTP dispatcher (matching only)
 class H(BaseHTTPRequestHandler):
     # ---- restored routes: the names the profile frontend actually calls (see the block above) ----
@@ -3611,16 +3668,27 @@ class H(BaseHTTPRequestHandler):
             try:
                 intent = kc.compile_intent(intent, _intent_identity(intent), ctx, ctx.get('now') or time.time())  # §4.3 blocks
                 snap = _request_snapshot(intent)
-                if not _pilot_enabled(intent):             # §1.2: non-pilot decision type -> honest empty, not a fake match
-                    send_json(self, 200, {"intent": intent, "candidates": [], "snapshot": snap,
+                if not _pilot_enabled(intent):             # §1.2: a non-pilot decision type
+                    # ...but STILL rank the people. Returning an empty slate here meant that adding
+                    # `groupSize` to a request that found eight people found nobody, with the reason
+                    # buried in a `pilot` field the UI never showed. The layer being off is a reason
+                    # not to ASSEMBLE a group — never a reason to hide the people who fit.
+                    ppl = match_candidates(dict(intent, groupSize=None, group=None,
+                                                decisionType="person_to_person"), prof, ctx)
+                    send_json(self, 200, {"intent": intent, "candidates": ppl, "snapshot": snap,
                                           "pilot": {"enabled": False, "decision_type": snap["decision_type"],
                                                     "note": "%s is not enabled in this pilot (%s)"
-                                                            % (snap["decision_type"], RELEASE_STATUS)}}); return
+                                                            % (snap["decision_type"], RELEASE_STATUS),
+                                                    "people_shown_anyway": len(ppl)}}); return
                 cands = match_candidates(intent, prof, ctx)
                 res = {"intent": intent, "candidates": cands, "snapshot": snap}
                 res.update(_section5_addendum(intent, str(body.get("query") or ""), cands))  # §5.1/§5.2
                 res["retrieval"] = _retrieval_report(cands)                                    # §7
                 res["expansion"] = expansion_ladder(intent, ctx)                               # §12
+                if snap["decision_type"] == "group_formation":     # §15: the slate becomes a group
+                    res["group"] = form_group_from_slate(intent, cands,
+                                                         body.get("constraints") if isinstance(body.get("constraints"), dict) else None,
+                                                         now_ts=ctx.get("now"))
                 if not cands:
                     res["fallback"] = _online_fallback(intent)
                     if kc.is_expired(intent, ctx.get('now')):     # §4.3 Lifecycle: distinguish expired from no-match
@@ -3739,19 +3807,38 @@ class H(BaseHTTPRequestHandler):
             cands = body.get("candidates") if isinstance(body.get("candidates"), list) else []
             constraints = body.get("constraints") if isinstance(body.get("constraints"), dict) else {}
             override = body.get("override")
+            if GROUPS_ENABLED and not kg.is_override_enabled(override):
+                override = _GROUP_OVERRIDE      # the product switch decides, not the request body
+            if not cands:
+                # §15 forms a group out of a slate it is GIVEN; it never retrieves. An empty body
+                # therefore answered NO_FEASIBLE_GROUP, which reads as the algorithm rejecting the
+                # request when it had simply been handed nobody. Rank first, then form.
+                prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+                ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
+                try:
+                    cands = match_candidates(intent, prof, ctx)
+                except Exception:
+                    cands = []
             # wiring adapter: a core_v2 slate card carries the DIRECTED conservative estimate as `lcb`; the group
             # star-fallback reads `relevance`. Map lcb->relevance LOSSLESSLY (all other fields, incl. any
             # diversity axis, preserved) unless the caller already supplied a full pair_rel matrix + relevance.
             cands = [dict(c, relevance=(c.get("relevance") if c.get("relevance") is not None else c.get("lcb", 0)))
                      for c in cands if isinstance(c, dict)]
+            reserve = bool(body.get("reserve"))       # claiming seats is a commit, never a preview
             try:
-                if kg.is_override_enabled(override):        # override-only: real seat ledger + reservations
+                if kg.is_override_enabled(override) and reserve:   # real seat ledger + reservations
                     with _STORE_LOCK:
                         led = SESSION.setdefault("_group_ledger", {})
-                        res = kg.run_group_formation(intent, cands, constraints, _CORE_CFG, override=override,
-                                                     now_ts=body.get("now") or time.time(), ledger=led,
-                                                     pair_rel=body.get("pair_rel"))
+                        res = dict(kg.run_group_formation(intent, cands, constraints, _CORE_CFG, override=override,
+                                                          now_ts=body.get("now") or time.time(), ledger=led,
+                                                          pair_rel=body.get("pair_rel")),
+                                   group_formation_live=GROUPS_ENABLED, reserved=True)
                         _save_store()
+                elif kg.is_override_enabled(override):
+                    res = dict(kg.run_group_formation(intent, cands, constraints, _CORE_CFG,
+                                                      override=override, now_ts=body.get("now") or time.time(),
+                                                      ledger=None, pair_rel=body.get("pair_rel")),
+                               group_formation_live=GROUPS_ENABLED, reserved=False)
                 else:
                     res = kg.run_group_formation(intent, cands, constraints, _CORE_CFG, override=override)
                 send_json(self, 200, res)

@@ -3134,6 +3134,37 @@ function drawExploreMarkers(){
   else xPaintSelection();
 }
 
+// «Собрать эту компанию» — turn the group §15 proposed into a real one. Two steps, in this order:
+// open the group (so there is something to join and a seat ledger to hold), then invite exactly the
+// people the engine picked. Nothing is sent until this button is pressed: an assembled group is a
+// suggestion, and inviting four strangers on a person's behalf is not something to do implicitly.
+async function formAssembledGroup(){
+  const g=(FLOW&&FLOW.group)||null, members=(g&&g.members)||[];
+  if(!members.length){ toast(T('Компания ещё не собрана','No group assembled yet')); return; }
+  const it=flowIntent(), me=(DATA.name||'').trim();
+  let r=null;
+  try{
+    r=await fetch('/api/agent/group-create',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({host:me, title:(FLOW.intent&&FLOW.intent.title)||FLOW.request||FLOW.text||'',
+        topics:it.topics||[], when:it.time||'', area:String(myArea()||'').split('·')[0].trim(),
+        mode:it.mode||'offline', min_size:2, max_size:Math.max(2,members.length+1),
+        idem:idemKey('gf:'+members.join('|'))})}).then(x=>x.json());
+  }catch(e){ r=null; }
+  if(!r||!r.ok){ toast(T('Не удалось открыть группу','Could not open the group')); return; }
+  let sent=0;
+  for(const nm of members){
+    try{
+      const q=await fetch('/api/agent/propose',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({from:me, to:nm, intent:it,
+          note:(FLOW.request||FLOW.text||''), idem:idemKey('gp:'+nm+':'+(r.group&&r.group.gid||''))})}).then(x=>x.json());
+      if(q&&q.ok) sent++;
+    }catch(e){}
+  }
+  toast(sent?T('Группа открыта, приглашения отправлены: ','Group opened, invitations sent: ')+sent
+            :T('Группа открыта — приглашения не ушли','Group opened — invitations did not go out'));
+  exploreLoaded=false; await loadExplore(); render(); saveState();
+}
+
 async function joinGroup(i){
   const p=PUBLIC_INTENTS[i]; if(!p||!p.gid) return;
   if(p.mine){ toast(T('Ты уже в этой группе','You are already in')); return; }
@@ -4162,6 +4193,10 @@ async function flowSearch(isRetry){
   FLOW.fbRelated=(typeof _fb.relatedCount==='number')?_fb.relatedCount:null;
   if(cands.length) seenAdd(_fsSig, cands.map(c=>c.name));
   FLOW.res=cands;
+  // §15: when the request asks for a group, the engine assembles one out of the same slate and
+  // returns it alongside the people. Keep it — the Groups tab is the only place it can be seen.
+  FLOW.group=(r&&r.group)||null;
+  FLOW.groupPilot=(r&&r.pilot)||null;      // set when the group layer is switched off, with the reason
   persistIntent();                 // the tab must show what Kleal is actually working on
   render();
   setTimeout(()=>{
@@ -5395,13 +5430,65 @@ function broadenBanner(){
                             'No exact match nearby — here are people doing related activities.');
   return `<div class="kbub ag" style="background:#FFF6E5;border-color:#F2D08A">${esc(note)}</div>`;
 }
+// The Groups tab. It used to print one hardcoded line — «Здесь пока пусто, Kleal ищет только людей» —
+// for ANY tab that was not People, while the app had already fetched real, joinable groups into
+// GROUPS. Two live groups were sitting in memory, invisible, behind a placeholder.
+//
+// Two different things belong here and they must not be confused: a company Kleal ASSEMBLED for this
+// request (a proposal — nobody has agreed to anything yet), and groups that already EXIST and are
+// open to join. Events stay honestly empty: that layer really is off (§16).
+function groupsTabBody(){
+  if(!GROUPS.length && !exploreLoaded && !exploreLoading) loadExplore();   // the tab is often the first to need it
+  const g=(FLOW&&FLOW.group)||null;
+  const members=(g&&g.members)||[];
+  const off=(FLOW&&FLOW.groupPilot&&FLOW.groupPilot.enabled===false)?FLOW.groupPilot:null;
+  const open=(PUBLIC_INTENTS||[]).map((p,i)=>({p,i})).filter(x=>x.p&&x.p.gid&&!x.p.mine);
+
+  const formed = members.length ? `<div style="display:flex;flex-direction:column;gap:12px">
+      <div class="k-h3">${T('Kleal собрал компанию','Kleal put a group together')}</div>
+      <div class="rcard">
+        <div class="rbd" style="padding:2px 0 8px">
+          <div class="rnm">${esc(members.join(', '))}</div>
+          <div class="k-cap" style="color:var(--muted);margin-top:4px">${
+            T('Подобраны друг под друга и под твой запрос. Никто пока ничего не знает — приглашения уйдут только по твоей команде.',
+              'Chosen to fit each other and your request. Nobody has been contacted — invitations go out only when you say so.')}</div>
+        </div>
+        <button class="kbtn pri" data-act="group-form">${T('Собрать эту компанию','Open this group')}</button>
+      </div></div>` : '';
+
+  const joinable = open.length ? `<div style="display:flex;flex-direction:column;gap:12px">
+      <div class="k-h3">${T('Открытые группы','Open groups')}</div>
+      ${open.map(({p,i})=>`<div class="rcard">
+        <div class="rbd" style="padding:2px 0 8px">
+          <div class="rnm">${esc(p.title||T('Без названия','Untitled'))}</div>
+          <div class="k-cap" style="color:var(--muted);margin-top:2px">${esc([
+            p.who?T('Хост: ','Host: ')+p.who:'',
+            (p.topics||[]).map(locTopic).join(', '),
+            p.when||'', p.area||''].filter(Boolean).join(' · '))}</div>
+          ${p.size!=null?`<div class="k-cap" style="color:var(--muted)">${
+            T('Участников: ','Members: ')+p.size+(p.max_size?(' / '+p.max_size):'')+
+            (p.state==='confirmed'?' · '+T('состав собран','confirmed'):'')}</div>`:''}
+        </div>
+        <button class="kbtn pri" data-act="join" data-pi="${i}">${T('Присоединиться','Join')}</button>
+      </div>`).join('')}</div>` : '';
+
+  if(formed||joinable) return [formed,joinable].filter(Boolean).join('');
+  if(off) return `<div class="k-cap" style="color:var(--muted);padding:8px 2px">${
+    T('Сбор групп сейчас выключен — показываю людей по этому запросу на вкладке «Люди».',
+      'Group assembly is switched off — the People tab shows who fits this request.')}</div>`;
+  return `<div class="k-cap" style="color:var(--muted);padding:8px 2px">${
+    T('Под этот запрос группы пока нет. Собери свою на экране интента — люди смогут присоединиться.',
+      'No group for this request yet. Open one from the intent screen and people can join.')}</div>`;
+}
 function scr_options(){
   const all=(FLOW&&FLOW.res)||[];
   // was slice(1,6): the server sends eight and the last two were fetched and silently dropped
   const top=all[0], rest=all.slice(1);
   const tabs=[['people',T('Люди','People')],['groups',T('Группы','Groups')],['events',T('События и места','Events & places')]];
-  const body = OPTTAB!=='people'
-    ? `<div class="k-cap" style="color:var(--muted);padding:8px 2px">${T('Здесь пока пусто — Kleal ищет только людей на этом этапе.','Nothing here yet — Kleal is matching people at this stage.')}</div>`
+  const body = OPTTAB==='groups'
+    ? groupsTabBody()
+    : OPTTAB!=='people'
+    ? `<div class="k-cap" style="color:var(--muted);padding:8px 2px">${T('События и места Kleal пока не ищет — этот слой ещё не включён.','Events and places are not searched yet — that layer is still off.')}</div>`
     : `${top?`<div style="display:flex;flex-direction:column;gap:12px">
           <div class="k-h3">${T('Рекомендуем','Recommended')}</div>${personRow(top,0,'top')}</div>`:''}
        ${rest.length?`<div style="display:flex;flex-direction:column;gap:12px">
@@ -6125,6 +6212,7 @@ function doAct(act, ds){
     case 'join': { const p=PUBLIC_INTENTS[+ds.pi];
       if(p&&p.gid) joinGroup(+ds.pi); else joinPublic(+ds.pi); break; }
     case 'group-leave': leaveGroup(ds.gid); break;
+    case 'group-form': formAssembledGroup(); break;
     case 'group-host': hostGroup((DATA.intents||[]).find(x=>String(x.id)===String(ds.id))); break;
     case 'join-plan': joinPublic(+ds.pi); break;   // "Позвать" on a For-you-today card
     // Agent Home

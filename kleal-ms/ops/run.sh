@@ -24,6 +24,11 @@ PY="${PYTHON:-python3}"
 # door and should not be open before what it proxies to is up).
 ALL="llm filtration matching buddy onboarding profile admin gateway"
 
+# §15 group formation. Off by default in the spec (post-pilot); set KLEAL_GROUPS=0 to switch the
+# whole feature back off in one place — matching then still ranks people for a group request, it
+# just does not assemble anyone.
+export KLEAL_GROUPS="${KLEAL_GROUPS:-1}"
+
 port_of() {
   "$PY" - "$1" <<'EOF'
 import sys, os

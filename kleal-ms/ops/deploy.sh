@@ -37,6 +37,7 @@ tools/e2e_smoke.py
 tools/flows_smoke.py
 tools/age_range_test.js
 tools/card_tags_test.js
+tools/groups_smoke.py
 ops/run.sh
 "
 
