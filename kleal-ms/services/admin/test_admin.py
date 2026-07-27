@@ -146,9 +146,17 @@ def test_funnel_arithmetic():
           f.get("pool", 0) - f.get("self", 0) - gates == f.get("eligible"),
           "pool=%s self=%s gated=%s eligible=%s" % (f.get("pool"), f.get("self"), gates, f.get("eligible")))
     scored = f.get("scored") or {}
-    check("everything eligible reached scoring", scored.get("_in") == f.get("eligible"),
-          "_in=%s eligible=%s" % (scored.get("_in"), f.get("eligible")))
-    drops = sum(v for k, v in scored.items() if k != "_in")
+    # §7.2 staged retrieval caps the eligible pool at a budget BEFORE scoring, so "everything
+    # eligible reached scoring" stopped being true when that stage was introduced — people are
+    # legitimately lost between the gates and the ranker, and the funnel must say so.
+    check("eligible − budget drops == what reached scoring",
+          f.get("eligible", 0) - scored.get("budget_dropped", 0) == scored.get("_in"),
+          "eligible=%s dropped=%s _in=%s retrieved=%s"
+          % (f.get("eligible"), scored.get("budget_dropped"), scored.get("_in"), f.get("retrieved")))
+    check("the retrieval budget is reported, not hidden",
+          isinstance(f.get("retrieval_budget"), int) and f.get("retrieved") == scored.get("_in"),
+          "budget=%s retrieved=%s" % (f.get("retrieval_budget"), f.get("retrieved")))
+    drops = sum(v for k, v in scored.items() if k not in ("_in", "budget_dropped"))
     check("scored − engine drops == slate (or the slate cap of 8)",
           scored.get("_in", 0) - drops >= f.get("slate", 0) and f.get("slate", 0) <= 8,
           "in=%s drops=%s slate=%s" % (scored.get("_in"), drops, f.get("slate")))
@@ -483,8 +491,11 @@ def test_edit_form_does_not_fabricate():
     for f in ("lat", "lon", "age", "interests", "langs", "area"):
         check("edit leaves %s exactly as it was" % f, b.get(f) == a.get(f),
               "%r -> %r" % (b.get(f), a.get(f)))
-    # The specific fabrications, named. Nadia has no coordinates; an edit must not give her any.
-    check("an edit never invents coordinates", a.get("lat") is None and a.get("lon") is None,
+    # The specific fabrication, named: an edit must never CONJURE coordinates for someone who had
+    # none. (Written when the fixture person had no lat/lon; the pool is picked at runtime now, so
+    # the invariant is stated as "absent stays absent" rather than "always absent".)
+    check("an edit never invents coordinates",
+          (b.get("lat") is None) == (a.get("lat") is None) and (b.get("lon") is None) == (a.get("lon") is None),
           "%r %r" % (a.get("lat"), a.get("lon")))
 
 

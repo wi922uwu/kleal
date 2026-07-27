@@ -265,3 +265,87 @@ def _in_quiet_hours(now_min, start, end):
     if a <= b:
         return a <= now_min < b
     return now_min >= a or now_min < b
+
+
+def explain(intent, prof, ctx, cand, H, cfg):
+    """Per-pair decision trace (§21.3) — the admin lab's answer to «почему мне не попадается X».
+
+    Neither this adapter nor the trimmed core_v2 on the pod had it, so the panel's pair view had
+    been returning the slate-wide diagnostic and failing to find a trace in it. It re-runs the SAME
+    calculation `search()` does for one candidate and records each gate as it is applied, so the
+    steps cannot drift from the ranking: every early `continue` in search() has a step here.
+
+    Returns {"name", "shown", "steps": [{"step", "ok", "detail"}], "drop_reason"}.
+    """
+    intent, prof, ctx = intent or {}, prof or {}, ctx or {}
+    cat_of = (H or {}).get("cat_of")
+    domain = infer_domain(intent, cat_of)
+    dom_cfg = cfg["domains"].get(domain) or cfg["domains"]["social_meet"]
+    priors = _RL.priors_from_config(cfg)
+    bands = cfg["user_facing_bands"]
+    now_ts = ctx.get("now") or time.time()
+    received24 = ctx.get("received24") or {}
+    steps = []
+
+    def step(name, ok, detail):
+        steps.append({"step": name, "ok": bool(ok), "detail": str(detail)})
+
+    def done(reason):
+        return {"name": cand.get("name"), "shown": False, "steps": steps, "drop_reason": reason}
+
+    step("domain", True, "%s (weights from %s)" % (domain, cfg.get("config_version")))
+
+    if is_paused(cand, now_ts):
+        step("availability", False, "opted out of retrieval (paused / receiving.status)")
+        return done("paused: not in the searchable pool")
+    step("availability", True, "active")
+
+    tier = assign_tier(intent, cand)
+    if tier == "T5":
+        step("semantic tier", False, "T5 — no topical overlap with the request")
+        return done("no meaningful overlap with the requested topic")
+    if tier == "T3" and not intent.get("adjacentAllowed", True):
+        step("semantic tier", False, "T3 (adjacent) but the request disallows adjacent matches")
+        return done("adjacent match, and the request asked for exact only")
+    if tier == "T2" and intent.get("exactMatchRequired"):
+        step("semantic tier", False, "T2 (related) but exactMatchRequired is set")
+        return done("related match, and the request asked for exact only")
+    step("semantic tier", True, "%s — %s" % (tier, TIER_KIND.get(tier, tier)))
+
+    F = build_features(intent, prof, cand, domain)
+    d_ab = directional_score(F, dom_cfg, priors)
+    d_ba = directional_score(reverse_features(intent, prof, cand, domain), dom_cfg, priors)
+    rec = reciprocal_score(d_ab, d_ba)
+    step("relevance a->b", True, "lcb=%.3f coverage=%.3f mean=%.3f"
+         % (d_ab["lcb"], d_ab["coverage"], d_ab.get("mean", 0.0)))
+    step("relevance b->a", True, "lcb=%.3f coverage=%.3f" % (d_ba["lcb"], d_ba["coverage"]))
+    step("reciprocal", True, "%.3f = 0.70*min(lcb) + 0.30*mean(lcb)" % rec)
+
+    disc_ok = (d_ab["lcb"] >= float(dom_cfg["discovery_min_lcb"]) and
+               d_ab["coverage"] >= float(dom_cfg["discovery_min_coverage"]))
+    if not disc_ok and tier not in ("T0", "T1"):
+        step("discovery threshold", False,
+             "lcb %.3f < %.3f or coverage %.3f < %.3f, and the tier is not exact"
+             % (d_ab["lcb"], float(dom_cfg["discovery_min_lcb"]),
+                d_ab["coverage"], float(dom_cfg["discovery_min_coverage"])))
+        return done("below the discovery floor for this domain")
+    step("discovery threshold", True,
+         "passed" if disc_ok else "below the floor, kept because the tier is %s (exact)" % tier)
+
+    band = assign_band(d_ab["lcb"], d_ab["coverage"], bands) if disc_ok else "needs_clarification"
+    readiness = readiness_state(cand, domain, now_ts, cfg,
+                               received24.get(str(cand.get("name", "")).strip().lower(), 0))
+    step("band", True, "%s" % band)
+    step("readiness", readiness == "open_now", "%s" % readiness)
+
+    crit = _UNK.high_impact_unknown(F, intent, domain)
+    step("critical unknowns", not crit, "none" if not crit else str(crit))
+    outreach_tier_ok = tier in ("T0", "T1") or (tier == "T2" and bool(intent.get("broadConsent")))
+    can_outreach = (outreach_tier_ok and readiness == "open_now" and not crit and
+                    d_ab["lcb"] >= float(dom_cfg["outreach_min_lcb"]) and
+                    d_ab["coverage"] >= float(dom_cfg["outreach_min_coverage"]))
+    step("outreach permission", can_outreach,
+         "may be proposed to" if can_outreach else "discoverable, but not auto-proposable")
+    return {"name": cand.get("name"), "shown": True, "steps": steps, "drop_reason": None,
+            "band": band, "readiness": readiness, "tier": tier, "reciprocal": rec,
+            "lcb": d_ab["lcb"], "coverage": d_ab["coverage"], "can_outreach": can_outreach}

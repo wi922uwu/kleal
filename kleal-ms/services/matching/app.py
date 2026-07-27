@@ -1275,10 +1275,17 @@ def _retrieval_report(slate):
             "top_n": (_core.TOP_N if CORE_V2 else None)}
 
 
-def match_candidates(intent, prof, ctx=None):
+def match_candidates(intent, prof, ctx=None, diag=None):
     """Entry point. Policy hard gates run HERE (scoring only after ALLOW — spec §8), then §7 staged
     retrieval assembles the pool, then Core v2 scores it. KLEAL_CORE_V2=0 or an invalid config -> legacy
-    scorer above, unchanged. The response is a superset of the legacy card contract."""
+    scorer above, unchanged. The response is a superset of the legacy card contract.
+
+    `diag`, when a dict is passed, is filled with the per-stage counts behind «почему никого нет».
+    The rewrite dropped this parameter, which broke the admin funnel outright (TypeError: 4 args).
+    It is restored with one stage the old funnel did not have and could not have shown: §7.2
+    retrieval now caps the eligible pool at a budget BEFORE scoring, so `eligible` and `scored._in`
+    legitimately differ and people can be lost between the gates and the ranker. A funnel that
+    hides its narrowest stage is decoration."""
     if not CORE_V2:
         return match_candidates_legacy(intent, prof, ctx)
     ctx = ctx or {}
@@ -1289,19 +1296,42 @@ def match_candidates(intent, prof, ctx=None):
     intent = kc.compile_intent(intent, _intent_identity(intent), ctx, now)  # §4.3 canonical blocks + TTL
     gate_ctx, self_name = _gate_ctx_and_self(ctx, prof)
     eligible, policy_by = [], {}                            # ALLOW + REVIEW are both discoverable (§8/§0)
-    for c in load_candidates():
+    _pool = load_candidates()
+    if diag is not None:
+        diag['pool'] = len(_pool)
+        diag['gates'] = {}
+        diag['self'] = 0
+        diag['review'] = 0
+    for c in _pool:
         if self_name and str(c.get('name', '')).strip().lower() == self_name:
+            if diag is not None:
+                diag['self'] += 1
             continue                                       # the searcher never matches themselves
         decision, _why = _policy_decision(intent, c, gate_ctx)
         if decision == "BLOCK":
+            if diag is not None:
+                # _hard_gates has always returned the exact reason; both call sites threw it away.
+                # It is the whole answer to «почему никого нет», and it costs a dict.
+                k = str(_why or 'gate')
+                diag['gates'][k] = diag['gates'].get(k, 0) + 1
             continue
+        if decision == "REVIEW" and diag is not None:
+            diag['review'] += 1
         policy_by[str(c.get('name', '')).strip().lower()] = decision
         eligible.append(c)
+    if diag is not None:
+        diag['eligible'] = len(eligible)
     ctx = dict(ctx)
     ctx.setdefault('now', now)                              # pinnable for deterministic replay
     ctx.setdefault('received24', _proposals_received_24h())  # proposal-fatigue counts -> readiness
     budget = int(ctx.get('retrieval_budget') or RETRIEVAL_BUDGET['structured'])   # §7.2 (test-overridable)
     retrieved, source_by, _rstats = _retrieve(intent, eligible, budget)           # §7.1 source order + §7.2 budget
+    if diag is not None:
+        diag['retrieved'] = len(retrieved)
+        diag['retrieval_budget'] = budget
+        # What the ranker was actually handed. The old funnel asserted scored._in == eligible; that
+        # identity only held before staged retrieval existed.
+        diag['scored'] = {'_in': len(retrieved), 'budget_dropped': max(0, len(eligible) - len(retrieved))}
     slate, _meta = _core.search(intent, prof or {}, ctx, retrieved, _H, _CORE_CFG)
     if not slate and eligible:                             # never dead-end while anyone is eligible (§12) —
         slate = _expand_fallback(intent, prof or {}, ctx, eligible)   # over the FULL pool, never budget-starved
@@ -1311,6 +1341,9 @@ def match_candidates(intent, prof, ctx=None):
     for c in slate:                                        # §7.1 retrieval-source provenance (additive)
         c.setdefault("retrieval_source", source_by.get(str(c.get("name", "")).strip().lower(), 0))
     _stamp_allocation_trace(slate, ctx, _alloc_cfg(ctx))  # §11.2 step 6 allocation reasons (additive, read-only)
+    if diag is not None:
+        diag['slate'] = len(slate)
+        diag['meta'] = dict(_meta or {})                   # engine, config_version, domain, config_sha
     return slate
 
 def _apply_policy(slate, policy_by):
@@ -3612,14 +3645,53 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
         elif p == "/api/agent/explain":
-            # full diagnostic (matched + gated-out + considered + per-feature breakdown) for a test panel
+            # TWO tools under one name, chosen by whether a `candidate` is named:
+            #   with candidate -> the per-pair decision trace (§21.3), «почему мне не попадается X»;
+            #   without        -> the slate-wide diagnostic (matched + gated-out + per-feature).
+            # The rewrite kept only the second, so the admin pair view silently got a slate dump and
+            # found no trace in it. Both are real tools; neither is a rename of the other.
             intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
+            who = str(body.get("candidate") or "").strip().lower()
+            if not who:
+                try:
+                    send_json(self, 200, explain_match(intent, prof, ctx))
+                except Exception as e:
+                    send_json(self, 200, {"error": str(e)[:200], "matched": [], "excluded": [], "considered": []})
+                return
             try:
-                send_json(self, 200, explain_match(intent, prof, ctx))
+                cand = next((c for c in load_candidates()
+                             if str(c.get("name", "")).strip().lower() == who), None)
+                if cand is None:
+                    send_json(self, 200, {"ok": False, "error": "candidate not found in store"})
+                elif not CORE_V2:
+                    send_json(self, 200, {"ok": False, "error": "core v2 disabled (KLEAL_CORE_V2=0)"})
+                else:
+                    gate_ctx, self_name = _gate_ctx_and_self(ctx, prof)
+                    ctx2 = dict(ctx)
+                    ctx2.setdefault("now", time.time())
+                    ctx2.setdefault("received24", _proposals_received_24h())
+                    if self_name and str(cand.get("name", "")).strip().lower() == self_name:
+                        send_json(self, 200, {"ok": True, "trace": {
+                            "name": cand.get("name"), "shown": False, "steps": [
+                                {"step": "self-match guard", "ok": False,
+                                 "detail": "the searcher is never matched to themselves"}],
+                            "drop_reason": "self-match: searcher == candidate"}})
+                    else:
+                        decision, why = _policy_decision(intent, cand, gate_ctx)
+                        if decision == "BLOCK":
+                            send_json(self, 200, {"ok": True, "trace": {
+                                "name": cand.get("name"), "shown": False, "steps": [
+                                    {"step": "eligibility hard gates", "ok": False, "detail": why}],
+                                "drop_reason": "blocked by policy: %s" % why}})
+                        else:
+                            tr = _core.explain(intent, prof, ctx2, cand, _H, _CORE_CFG)
+                            tr["steps"].insert(0, {"step": "eligibility hard gates", "ok": True,
+                                                   "detail": decision})
+                            send_json(self, 200, {"ok": True, "trace": tr})
             except Exception as e:
-                send_json(self, 200, {"error": str(e)[:200], "matched": [], "excluded": [], "considered": []})
+                send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         elif p == "/api/agent/feedback":
             def _do_feedback():                                # §23.2.13 idempotent write (opt-in idempotency_key)
                 ok = record_feedback(body.get("name"), body.get("decision"), body.get("uid", "me"),
