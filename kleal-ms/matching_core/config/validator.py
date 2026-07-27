@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """§9.5 / §21.4 — Canonical configuration validator.
 
-Единственный источник весов/приоров/порогов — sha-pinned `config/matching-core.yaml` (§23.2 п.11).
+Единственный источник весов/приоров/порогов — sha-pinned `<kleal-ms>/config/Kleal_Matching_Core_Config_v2.yaml` (§23.2 п.11).
 Загрузка проверяет sha256 и валидирует структуру; при ЛЮБОМ рассогласовании бросает `ConfigError`
 (§21.4: config/taxonomy mismatch → stop, не смешивать версии). Парсер — детерминированный мини-YAML
 (ограниченное подмножество), чтобы не тянуть PyYAML и не словить YAML-1.1 сюрприз (неквотированный

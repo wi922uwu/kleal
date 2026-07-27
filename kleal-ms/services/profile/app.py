@@ -1506,18 +1506,18 @@ function locTopic(w){ if(UILANG!=='ru'||!w) return w||''; const k=String(w).trim
 function locTopicList(s){ if(UILANG!=='ru'||!s) return s||'';
   return String(s).split(/\s*,\s*/).filter(Boolean).map(locTopic).join(', '); }
 function setUILang(l){ UILANG=(l==='en'?'en':'ru'); try{localStorage.setItem('kleal_uilang',UILANG);}catch(_e){} render(); }
-// ---- receiving policy (доступность): читаем/пишем свой статус через onboarding /api/v2/receiving ----
+// ---- receiving policy (доступность): читаем/пишем свой статус через onboarding /api/onboarding/receiving ----
 // RECV_ERR: the profile may not exist in the matching store at all — the demo identity never does, and
 // a user who hasn't finished onboarding doesn't either. Without this the screen drew three availability
 // buttons that silently could not work: none selected, nothing saved, no reason given.
 let RECV=null, RECV_BUSY=false, RECV_ERR=null;
 function loadRecv(){ if(RECV||RECV_ERR||RECV_BUSY||!(DATA&&DATA.name)) return; RECV_BUSY=true;
-  fetch('/api/v2/receiving',{method:'POST',headers:{'Content-Type':'application/json'},
+  fetch('/api/onboarding/receiving',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:DATA.name})}).then(x=>x.json())
     .then(r=>{ RECV_BUSY=false; if(r&&r.ok){ RECV=r.receiving; } else { RECV_ERR=(r&&r.error)||'unavailable'; } render(); })
     .catch(()=>{ RECV_BUSY=false; RECV_ERR='network'; render(); }); }
 function setAvail(st){ if(!(DATA&&DATA.name)) return;
-  fetch('/api/v2/receiving',{method:'POST',headers:{'Content-Type':'application/json'},
+  fetch('/api/onboarding/receiving',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:DATA.name,receiving:{status:st}})}).then(x=>x.json())
     .then(r=>{ if(r&&r.ok){ RECV=r.receiving; toast(T('Доступность обновлена','Availability updated')); }
                else toast(T('Не удалось сохранить','Could not save')); render(); })

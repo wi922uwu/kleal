@@ -52,7 +52,7 @@ _EDGE_NOTE = {
 }
 CONTRACTS_VERSION = "taxonomy-6.0.0"
 ENGINE_VERSION = "matching-core-2.0.0"
-ENGINE_SHA = "21505ccb"
+ENGINE_SHA = "d804df8e"   # follows the live config; 21505ccb was the pre-retune pin (see shared/contracts.md)
 
 # ------------------------------------------------------------------ lazy, guarded ontology load
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "taxonomy")

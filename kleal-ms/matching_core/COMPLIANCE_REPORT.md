@@ -12,7 +12,7 @@
 | **by_design** | 9 | соблюдается структурно (детерминизм, изоляция слоёв), без отдельного модуля/теста |
 | **doc_only** | 13 | документные разделы (метрики, план пилота, самооценка, библиография) — кода не требуют |
 
-Тестовая база — **20 файлов** `tests/*.py` (+ подкаталоги `fixtures/property/race/safety/domains`), включающие все **24 acceptance-теста Приложения C** (21 явным тестом, C#16 частично, C#21/C#22 by-design). Ключевые архитектурные инварианты подтверждены чтением кода: единого `FinalUtility` в коде **нет** (grep пуст); `reciprocal()` в `relevance_engine/relevance.py:52` реализует ровно `0.70·min(lcb) + 0.30·mean(lcb)`; конфиг sha-пинован (`PINNED_SHA=21505ccb…`, `config/validator.py:21`), совпадает со спекой; веса/пороги читаются только из `config/matching-core.yaml`. Общая оценка: **срез §0–§17 (архитектура, контракты, policy, relevance, readiness, allocation, agent-protocol, FSM, dating) реализован точно и хорошо покрыт**; основные слабые места — упрощение части hard-gate'ов до булевых флагов (время/язык/privacy), несколько несведённых предикатов таксономии, и целиком документные §20/§22/§24, которые кода не требуют.
+Тестовая база — **20 файлов** `tests/*.py` (+ подкаталоги `fixtures/property/race/safety/domains`), включающие все **24 acceptance-теста Приложения C** (21 явным тестом, C#16 частично, C#21/C#22 by-design). Ключевые архитектурные инварианты подтверждены чтением кода: единого `FinalUtility` в коде **нет** (grep пуст); `reciprocal()` в `relevance_engine/relevance.py:52` реализует ровно `0.70·min(lcb) + 0.30·mean(lcb)`; конфиг sha-пинован (`PINNED_SHA=d804df8e…`, `config/validator.py:27`); веса/пороги читаются только из единственного `config/Kleal_Matching_Core_Config_v2.yaml` (локальная вторая копия matching-core.yaml удалена — она отличалась весами social_meet и гасила движок). Общая оценка: **срез §0–§17 (архитектура, контракты, policy, relevance, readiness, allocation, agent-protocol, FSM, dating) реализован точно и хорошо покрыт**; основные слабые места — упрощение части hard-gate'ов до булевых флагов (время/язык/privacy), несколько несведённых предикатов таксономии, и целиком документные §20/§22/§24, которые кода не требуют.
 
 ## 2. Сводная таблица по разделам
 
@@ -61,7 +61,7 @@
 | §22 | План пилота Барселоны | — | — | doc_only |
 | §23 | Модульная структура, 15 запретов, DoD, порядок сборки | дерево пакетов + инвариант-тесты | распределённо | done/by_design |
 | §24 | Самооценка спеки | — | — | doc_only |
-| Прил.A | Canonical config | `config/matching-core.yaml`+validator | test_config | done |
+| Прил.A | Canonical config | `config/Kleal_Matching_Core_Config_v2.yaml`+validator | test_config | done |
 | Прил.B | Псевдокод search/accept/form_group | search.py/transitions.py/former.py | domain/state/group тесты | done |
 | Прил.C | 24 acceptance-теста | по всем модулям | test_* C#1-24 | 21 done / 1 partial / 2 by_design |
 | Прил.D | Матрица purpose-binding 11×5 | `contracts/profile.py` _MATRIX | C#12,C#14,DA5-9 | partial |
@@ -74,7 +74,7 @@
 ### §0 — Ключевые архитектурные решения
 - **6 изолированных слоёв, ни один не компенсирует другой** — структурно: policy_engine/retrieval/relevance_engine/reciprocity_readiness/allocation/orchestrator = отдельные пакеты, единого score нет. Тест «слой не компенсирует» отдельный отсутствует. **by_design**.
 - **Запрет FinalUtility (склад relevance+safety+…)** — `contracts/decision_trace.build_decision_trace` держит policy/semantic_tier/evidence/directional/reciprocal_relevance/readiness/allocation/reason_keys раздельно; grep `FinalUtility` по коду **пуст**. Тест: test_contracts C#24. **done**.
-- **Веса/пороги только в versioned YAML** — `config/matching-core.yaml` (sha-pin) + `config/validator.py` load_config/validate. Тест CFG1-3. **done**.
+- **Веса/пороги только в versioned YAML** — `config/Kleal_Matching_Core_Config_v2.yaml` (sha-pin) + `config/validator.py` load_config/validate. Тест CFG1-3. **done**.
 - **semantic_tier — происхождение T0–T5, не из score** — `contracts/candidate.py` TIERS immutable + config semantic_tiers; фактическое присвоение — retrieval §7; явного теста «tier≠score» на уровне §0 нет. **partial**.
 - **unknown/mismatch/not_applicable — разные состояния** — на уровне §0/config только `unknown_prior`; сами 4 состояния — §9.1 feature_builder. **partial**.
 - **relevance — internal 0–1 heuristic, не процент** — декларация в config score_semantics/user_facing_bands; реализация в §9. **doc_only** (для §0).
@@ -158,7 +158,7 @@
 - **§9.2** adjusted=conf·obs+(1−conf)·prior; unknown→prior; NA→вес 0 — `relevance._adjusted/_clamp01`. Ветка conf<1 в тестах не прогоняется. Тест C#1,C#2. **done**.
 - **§9.3** R_mean/Coverage/R_lcb=clamp(mean−λ(1−Cov)); λ из config (dating 0.35>social 0.25) — `relevance.directional_score`. Тест RL1,RL2,C#1,C#2. **done**.
 - **§9.4** R_A_to_B/R_B_to_A раздельно; R_reciprocal=0.70·min+0.30·mean; штраф односторонних; P_accept только после калибровки — `relevance.reciprocal` (по lcb) + `search._reverse_features`. B→A реализован как relevance-proxy (реверс признаков), а fit к receiving policy B — в readiness §10. P_accept отсутствует (by_design). Тест RL3,RL4. **done**.
-- **§9.5** Канонические веса в YAML — `config/matching-core.yaml`+`validator.load_config` (sha==PINNED). Тест CFG1-3,10,11. **done**.
+- **§9.5** Канонические веса в YAML — `config/Kleal_Matching_Core_Config_v2.yaml`+`validator.load_config` (sha==PINNED). Тест CFG1-3,10,11. **done**.
 - **§9.5** CI-проверки config — `validator.validate` покрывает 3 из 5 (сумма весов=1.0, extra-keys, диапазоны priors/λ/thresholds). **ОТСУТСТВУЮТ**: (а) уникальность evidence_id внутри feature groups (сделано как runtime-дедуп, не config-CI); (б) совместимость config version с model/policy version (validate проверяет лишь наличие config_version, кросс-версия делегирована «вызывающему»). Тест CFG4,5,7,8,9. **partial**.
 - **§9.6** 5 decision thresholds (strong/usable/discovery/clarification/no_outreach) по lcb+coverage+tier; T2→broad consent; policy≠ALLOW→no_outreach; high-impact unknown→probe — `relevance_engine/decision.decision_class`. Пороги из per-domain config. Тест DC1-7. **done**.
 - **§9.7** Запрет «92%», качественный band + 2-3 known причины + 1 компромисс + метка «не подтверждено» — `decision.band/BAND_LABELS/presentation`; причины **только из known_match** (C#23). Коммит fcdc31b подтверждает переход band вместо raw-percent. Тест C#23,BD1,BD2. **done**.
@@ -232,7 +232,7 @@
 - **§17.3** Pilot gate (UX/safety/moderation/DPIA/incident/abuse) — `dating.pilot_gate/PILOT_REQUIRED(6)`. Тест DA12,DA13. **done**.
 
 ### §18 — Домены и сценарии
-- **§18.1** Таблица 10 доменов — `config/matching-core.yaml`(10)+`search._TYPE2DOMAIN`; per-domain slots/hard/fallback **не единый артефакт**, размазаны по слоям; не все домены имеют e2e-тест. **partial**.
+- **§18.1** Таблица 10 доменов — `config/Kleal_Matching_Core_Config_v2.yaml`(10)+`search._TYPE2DOMAIN`; per-domain slots/hard/fallback **не единый артефакт**, размазаны по слоям; не все домены имеют e2e-тест. **partial**.
 - **§18.2** Dota 2 (T0 exact/T2 LoL parent/детерминизм/no-percent) — search+retriever+decision. Тест D1-6,C#15. **done**.
 - **§18.3** Прогулка Eixample — домен walk в конфиге + gates, но **отдельного e2e-теста прогулки нет**. **partial**.
 - **§18.4** Испанский (native↔learner комплементарность) — реализовано как **ранжирование, не hard role-gate** (C#16). Тест L1. **partial**.
@@ -266,7 +266,7 @@
 ### §24 — Самооценка — **doc_only** (таблица баллов документа).
 
 ### Приложение A — Canonical config
-- score_semantics, reciprocal 0.7/0.3, bands, outreach caps, monetization=false, sha-pin — `config/matching-core.yaml`+`validator.py`. Имена полей отличаются от сокращённого YAML §A (default_parallel_proposals:2+urgent:3 вместо max_parallel:3; monetization как currency_or_paid_priority). PINNED_SHA=21505ccb… совпадает. Тест test_config. **done**.
+- score_semantics, reciprocal 0.7/0.3, bands, outreach caps, monetization=false, sha-pin — `config/Kleal_Matching_Core_Config_v2.yaml`+`validator.py`. Имена полей отличаются от сокращённого YAML §A (default_parallel_proposals:2+urgent:3 вместо max_parallel:3; monetization как currency_or_paid_priority). PINNED_SHA=d804df8e… (следует за живым конфигом). Тест test_config. **done**.
 
 ### Приложение B — Псевдокод
 - **B.1** search pipeline — `orchestrator/search.search` (BLOCK до feature build; A→B и B→A; decision traces). **done**.

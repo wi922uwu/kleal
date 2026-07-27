@@ -846,7 +846,7 @@ function set(path,val){ const ks=path.split('.'); let o=st.profile; for(let i=0;
 function clock(){ const d=new Date(); let h=d.getHours(); const m=d.getMinutes(); const ap=h>=12?'PM':'AM'; h=h%12||12; return h+':'+(m<10?'0':'')+m+' '+ap; }
 function profileForServer(){ const c=Object.assign({},st.profile); delete c.photo; return c; }
 async function refreshCrit(){
-  try{ st.crit=await fetch('/api/v2/state',{method:'POST',headers:{'Content-Type':'application/json'},
+  try{ st.crit=await fetch('/api/onboarding/state',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({profile:profileForServer()})}).then(r=>r.json()); }catch(e){}
   updateHeader();
 }
@@ -1596,7 +1596,7 @@ async function funnelTurn(text, first){
   st.busy=true; refreshSendState(); const t=thread();
   const typ=document.createElement('div'); typ.className='typing fade'; typ.innerHTML='<i></i><i></i><i></i>'; t.appendChild(typ); scrollDown();
   try{
-    const r=await fetch('/api/v2/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+    const r=await fetch('/api/onboarding/chat',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({messages:st.funnel, profile:profileForServer(), lang:UILANG})}).then(x=>x.json());
     typ.remove();
     st.funnel.push({role:'assistant',content:r.reply});
@@ -1681,7 +1681,7 @@ function goSummary(){ st.phase='summary'; const rows=summaryRows();
 }
 // the stored artifact: one continuous text describing the user (kept in profile.summary)
 function fetchSummary(){
-  fetch('/api/v2/summary',{method:'POST',headers:{'Content-Type':'application/json'},
+  fetch('/api/onboarding/summary',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({profile:profileForServer(), lang:UILANG})}).then(r=>r.json()).then(r=>{
       if(r.summary) st.profile.summary=r.summary;
       if(st.phase!=='summary')return;
@@ -2255,11 +2255,21 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = read_json(self)
+        # ONE canonical name per endpoint. Every route used to be spelled out twice — under
+        # /api/onboarding/* and under the /api/v2/* alias left from the kleal_v2 era — and the
+        # callers picked between them at random: this service's own UI called /api/v2/chat but
+        # /api/onboarding/register, the profile UI called /api/v2/receiving but
+        # /api/onboarding/profile. The result was ten endpoints that were served and never
+        # called, and no way to tell which spelling was real. The alias is now rewritten once,
+        # here, so old clients (a phone holding a cached bundle) keep working while the
+        # dispatcher below knows exactly one name for each thing.
         p = self.path
-        if p in ("/api/onboarding/state", "/api/v2/state"):
+        if p.startswith("/api/v2/"):
+            p = "/api/onboarding/" + p[len("/api/v2/"):]
+        if p == "/api/onboarding/state":
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             send_json(self, 200, critical_status_v2(prof))
-        elif p in ("/api/onboarding/chat", "/api/v2/chat"):
+        elif p == "/api/onboarding/chat":
             prior = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             msgs = body.get("messages") if isinstance(body.get("messages"), list) else []
             try:
@@ -2268,34 +2278,34 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, {"reply": "I lost the connection for a second. Say that again?",
                                       "options": [], "profile": prior, "crit": critical_status_v2(prior),
                                       "error": str(e)[:200]})
-        elif p in ("/api/onboarding/summary", "/api/v2/summary"):
+        elif p == "/api/onboarding/summary":
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             try:
                 send_json(self, 200, v2_summary(prof, body.get("lang") or "ru"))
             except Exception as e:
                 send_json(self, 200, {"summary": "", "error": str(e)[:200]})
-        elif p in ("/api/onboarding/signup", "/api/v2/signup"):
+        elif p == "/api/onboarding/signup":
             return send_json(self, 200, signup(body.get("login"), body.get("password"), body.get("name")))
-        elif p in ("/api/onboarding/signin", "/api/v2/signin"):
+        elif p == "/api/onboarding/signin":
             return send_json(self, 200, signin(body.get("login"), body.get("password")))
-        elif p in ("/api/onboarding/attach", "/api/v2/attach"):
+        elif p == "/api/onboarding/attach":
             return send_json(self, 200, attach_profile(body.get("login"), body.get("name"), body.get("profile")))
-        elif p in ("/api/onboarding/register", "/api/v2/register"):
+        elif p == "/api/onboarding/register":
             # everyone who finishes onboarding is written into the shared user store (matchable + in admin)
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             try:
                 send_json(self, 200, {"ok": True, "user": register_profile(prof)})
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
-        elif p in ("/api/onboarding/profile", "/api/v2/profile"):
+        elif p == "/api/onboarding/profile":
             send_json(self, 200, {"user": get_user(body.get("name"))})
-        elif p in ("/api/onboarding/profile-update", "/api/v2/profile-update"):
+        elif p == "/api/onboarding/profile-update":
             try:
                 send_json(self, 200, update_user(body.get("name"),
                                                  body.get("patch") if isinstance(body.get("patch"), dict) else {}))
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
-        elif p in ("/api/onboarding/receiving", "/api/v2/receiving"):
+        elif p == "/api/onboarding/receiving":
             # availability settings = the user's receiving policy (Matching Core spec §4.4).
             # {name} alone reads the current policy; whitelisted fields update it atomically.
             try:

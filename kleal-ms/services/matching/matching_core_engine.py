@@ -51,7 +51,7 @@ _TYPE2DOMAIN = {"social": "social_meet", "social_meet": "social_meet", "walk": "
 
 # ------------------------------------------------------------------ config
 def load_config(path=None, expect_sha=None):
-    """Same sha-pinned YAML as core_v2 (config_version matching-core-2.0.0, PINNED_SHA 21505ccb…)."""
+    """Same sha-pinned YAML as core_v2 (config_version matching-core-2.0.0, PINNED_SHA d804df8e…)."""
     if expect_sha:
         return _V.load_config(path, expect_sha=expect_sha)
     return _V.load_config(path)

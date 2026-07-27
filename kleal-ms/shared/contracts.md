@@ -1,0 +1,164 @@
+# Kleal cross-service contracts
+
+The frozen part of the system. Four source files point here (`services/matching/app.py`,
+`services/onboarding/app.py`, `shared/kleal_lib.py`, `shared/llm_client.py`) and until now the
+file did not exist. Read this before renaming anything under `/api/`, changing a user-store
+field, or editing `shared/`.
+
+Everything here is verified against the running services, not against intent.
+
+---
+
+## 1. Topology
+
+One public door. Every service binds `127.0.0.1`; only the gateway binds `0.0.0.0`, and exactly
+one tunnel points at it.
+
+```
+browser ──► gateway :7080 ──► onboarding :7072   (also the default route for "/")
+                          ├─► profile    :7073
+                          ├─► matching   :7074
+                          ├─► buddy      :7075
+                          └─► filtration :7076
+                                  │
+   admin :7077 (own tunnel, token-gated, NOT proxied by the gateway)
+                                  │
+   every service ──► llm :7071 ──► vLLM :8002   (the only holder of model keys)
+```
+
+Ports, URLs and store paths come from **`shared/config.py`** and nowhere else. Old environment
+variable names (`HUB_ONB`, `HUB_FILTER`, …) are still honoured as aliases.
+
+The gateway does **not** proxy `/api/admin/*`. The admin panel is reached on its own tunnel.
+
+---
+
+## 2. Endpoint names are frozen
+
+The profile-service frontend hard-codes matching's endpoint names, and the onboarding frontend
+hard-codes onboarding's. Renaming a route silently breaks a screen — there is no shared client
+and no compile step to catch it. **If a route must be renamed, keep the old name as an alias in
+the same dispatcher.**
+
+### onboarding — canonical name is `/api/onboarding/*`
+
+`state · chat · summary · signup · signin · attach · register · profile · profile-update · receiving`
+
+`/api/v2/*` is a compatibility alias from the pre-split `kleal_v2.py` era. It is rewritten to the
+canonical name once, at the top of `do_POST`, so a phone still holding a cached bundle keeps
+working. Do not add new routes under `/api/v2/`.
+
+### buddy — served under both `/api/buddy/*` and bare `/*`
+
+`chat · intent-build · launch · intro · persona · ghostwrite · resummary · profile-edit ·
+feedback · onboard · state · health`
+
+### filtration
+
+`POST /api/filter/categorize` — `{text}` → `{topics, category, subcategory, type, domain, role, isNew, note}`.
+This is the shared vocabulary: matching resolves candidate interests through it, so a change to
+`topics` output changes ranking.
+`GET /api/filter/categories` — the category list. Introspection only, nothing calls it.
+
+### matching — `/api/agent/*`
+
+⚠️ **The deployed matching service no longer serves 16 of the routes the profile UI calls.**
+See §6.
+
+---
+
+## 3. The user store
+
+One file, `kleal-ms/users.json`, resolved by `config.USERS`. **Onboarding is its only writer**
+on the registration path; the admin panel also edits it; matching reads it.
+
+This has broken twice by drift: two services independently computed the path, one landed on
+`services/matching/users.json` and the others on `<kleal-ms>/users.json`, so a restart without
+`KLEAL_USERS` split the store — registrations went into a file the matcher never read, and
+nothing reported it. Never recompute this path locally; import it.
+
+Row shape (34 fields, all of which have at least one reader — audited 2026-07-27):
+
+| group | fields |
+|---|---|
+| identity | `id` `name` `age` `gender` `verified` `source` |
+| interests | `interests` `vibe` `goals` `role` `formats` `langs` |
+| geo | `area` `lat` `lon` `radiusKm` `km` |
+| availability | `open` `paused` `pending` `lastActiveDays` `receiving` |
+| safety | `safety` `datingOk` `dealBreakers` `blocksMe` `declinedOwnerDaysAgo` |
+| agent memory | `summary` `story` `personality` `persona` `intents` `entities` |
+
+Notes that matter:
+
+- **`km` is `None` for every real person, by design.** A stored distance is meaningless — it
+  depends on who is looking. It is computed only for the demo pool. Comparing it to a float
+  raised `TypeError` and made every search return zero candidates; guard with `isinstance`.
+- **`gender` has no reader in matching.** Onboarding collects it and `tools/` writes it, but the
+  ranking never consults it, so the "Кто" selector in the UI currently does nothing.
+- `summary` / `story` / `personality` / `persona` / `intents` / `entities` are empty across the
+  whole seeded pool. They are written on real registrations, not by the seeder — do not conclude
+  from a seeded store that they are unused.
+- `source` distinguishes seeded rows (`"seed"`) from real sign-ups. `tools/seed_barcelona.py`
+  replaces only `source == "seed"` rows and never touches real ones.
+
+`accounts.json` (login → password hash → attached profile) is separate and is **never** committed.
+
+---
+
+## 4. `shared/` is a frozen contract
+
+| module | who imports it | rule |
+|---|---|---|
+| `config.py` | every service | the only place a port, URL or store path is written down |
+| `kleal_lib.py` | onboarding, matching, buddy, filtration | keyless helpers + the extractor prompt |
+| `llm_client.py` | onboarding, matching, buddy, filtration | the only way to reach a model |
+| `http_util.py` | everyone | JSON request/response boilerplate |
+
+`shared/` wins over a service-local file of the same name: each service does
+`sys.path.insert(0, ../../shared)` **after** Python has put the script's own directory on the
+path, so the explicit insert takes precedence. Service-local copies of these modules are
+therefore dead weight, not overrides — three such stale copies were found in
+`services/matching/` and removed.
+
+Editing `shared/` is a cross-service event: `kleal_lib.py` carries the extractor prompt that
+defines the profile schema, so a change there changes what every service stores about a person.
+
+---
+
+## 5. Model access
+
+No service except `llm-service` may hold a key or a model base URL. Everyone else calls
+`llm_complete(model_id, messages, temperature)` or `llm_stream(...)` from `shared/llm_client.py`,
+where `model_id` is a key of llm-service's `MODELS` table (`config.MODEL_ID`, default
+`llama_self`), never a provider model name.
+
+`llm_complete` **raises** on transport failure. That is deliberate: callers have their own
+fallbacks (filtration degrades to its keyword magnet, buddy to a canned reply), and swallowing
+the error inside the client would disable all of them at once.
+
+---
+
+## 6. Known contract violations (open)
+
+**Matching dropped 16 endpoints the profile UI still calls.** Verified by probing the running
+service — all return 404:
+
+| screen | dead endpoints |
+|---|---|
+| My Intents | `intents` `intent-save` `intent-delete` |
+| Messages | `inbox` `outbox` `thread` `threads` `message` `respond` `withdraw` `request-archive` `propose` |
+| Groups | `groups` `group-create` `group-join` `group-leave` |
+
+The rewrite appears to have renamed them rather than removed the features —
+`propose → proposal`, `respond → proposal/respond`,
+`intents/intent-save/intent-delete → saved_searches/save_search/save_search/delete`,
+`groups/group-* → group` — but the frontend was never updated. The admin panel is hit too:
+`/api/agent/admin/*` and `/api/agent/funnel` 404, which fails 25 of its 87 checks.
+
+Fixing this means choosing which spelling wins and updating the other side. Payload shapes
+differ, so aliasing the old names onto the new handlers would return 200 with the wrong body —
+worse than the current 404.
+
+**The `core_v2.py` rollback path has no tests.** Its three suites tested pre-rewrite internals
+(`propose()`, `group_create()`, old `_hard_gates` arity) and were removed rather than bent to
+agree with code they were not written for.
