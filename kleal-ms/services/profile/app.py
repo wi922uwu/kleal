@@ -5054,18 +5054,50 @@ function intentUnderstanding(){
   const lead=(pointsBack&&(s.title||it.title))||req
              || locTopicList(it.topics||[]) || T('встретиться','meet up');
   const fmt=FLOW.fmt||(flowOnline()?'online':'offline');
-  const set=[
-    {offline:T('вживую','in person'),online:T('онлайн','online'),hybrid:T('онлайн или вживую','online or in person')}[fmt],
-    {'1:1':T('один на один','one-on-one'),small:T('в малой группе','in a small group'),party:T('компанией','with a group')}[FLOW.gsize||'']
-  ].filter(Boolean);
+  const onl=(fmt==='online');
   const sexL={male:T('парней','guys'),female:T('девушек','women'),any:''}[FLOW.sex||'any'];
   const _ar=ageRange(), ageL=_ar?(_ar[0]+'–'+_ar[1]):'';
   const who=[sexL,ageL].filter(Boolean).join(' ');
-  let out=T('Понял так: ','Read it as: ')+lead;
-  if(set.length) out+=' — '+set.join(', ');
-  out+='.';
-  if(who) out+=' '+T('Ищу ','Looking for ')+who+'.';
-  return out;
+  // The old line was «Понял так: <то, что ты написал> — вживую, в малой группе. Ищу девушек 25–30.»
+  // A read-back with the parts comma-spliced onto it: correct, and written like a form receipt.
+  // This card is what the person looks at right before pressing «Начать поиск», and what other
+  // people will see of the plan — so it should describe the PLAN, in the shape a person would
+  // describe it: what it is, when and where, and who it is open to.
+  //
+  // «Небольшая компания — хочу поиграть в падел вживую» splices a noun phrase onto the person's own
+  // sentence and reads like neither. Their words lead, on their own; everything Kleal knows follows
+  // as separate short sentences. And no «Когда:» / «Место —» labels: a labelled field is the form
+  // receipt this box exists to stop being.
+  const lead1=lead.charAt(0).toUpperCase()+lead.slice(1);
+  const out=[/\.$/.test(lead1)?lead1:(lead1+'.')];
+  const how=[onl?T('онлайн','online'):T('вживую','in person'),
+             {'1:1':T('один на один','one-on-one'),
+              small:T('небольшой компанией','in a small group'),
+              party:T('большой компанией','with a bigger group')}[FLOW.gsize||'']].filter(Boolean);
+  out.push(how.join(', ').replace(/^./,ch=>ch.toUpperCase())+'.');
+  // When and where, stated rather than labelled. Silent when nothing was chosen — a half-sentence
+  // with a dangling label is worse than not mentioning it.
+  const whenTxt=summaryWhen(), whereTxt=onl?'':summaryWhere();
+  const wh=[whenTxt,whereTxt].filter(Boolean).join(', ');
+  if(wh) out.push(wh.replace(/^./,ch=>ch.toUpperCase())+'.');
+  out.push(who ? T('Открыто для '+who+'.','Open to '+who+'.')
+               : T('Открыто для всех, кому это близко.','Open to anyone this speaks to.'));
+  return out.join(' ');
+}
+// The two "when/where" strings the summary sentence needs, each empty when nothing was chosen —
+// so the sentence can leave the clause out entirely instead of printing a dangling label.
+function summaryWhen(){
+  // Built from the SAME sources the card's date row uses, so the sentence and the row above it can
+  // never describe two different days.
+  const dd=dDates().find(x=>x[0]===FLOW.date);
+  const day=(dd&&dd[1])||labelOf(WHEN_OPTS(),FLOW.when,intentWhen()||'')||'';
+  const tod=labelOf(TIME_OPTS(),FLOW.time,'')||'';
+  return [day,tod].filter(Boolean).join(', ');
+}
+function summaryWhere(){
+  if(FLOW.district) return labelOf(DIST_OPTS(),FLOW.district,'');
+  const it=FLOW.intent||{};
+  return locStr(it.place||'')||'';
 }
 function scr_summary(){
   // Full "Here's what I got" card (Figma 1688-26605): cover, title, date/time + location-or-link,
@@ -5931,12 +5963,100 @@ function scr_bestfit(){
 
 // The Kleal-summary line on a candidate profile = why the agent surfaced THIS person, in plain words.
 // Prefer a real summary; else stitch the top match reasons; else an honest fallback.
+// ---- «Саммари Kleal» about a PERSON ----------------------------------------------------------
+// This used to be the engine's reason fragments glued to a name: «Adam Weber — другие интересы —
+// более широкий вариант.» Two dashes, no verb, and written for whoever debugs the ranker rather
+// than for the person deciding whether to say hello. The facts were right; it just wasn't a
+// sentence anybody would say out loud.
+//
+// Everything below is COMPOSED from what the card actually carries — never invented. A summary
+// about a real person, shown to another real person, is the last place to let a model improvise:
+// «увлекается фотографией» about someone who never said so is a small lie with a face attached.
+// A backend-written summary still wins if one ever lands (klealSummary), and this is the floor.
+//
+// No gendered pronouns anywhere: the candidate card carries no sex — matching reads it from the
+// store to FILTER and does not put it on the card — so «она любит» would be a coin flip. Russian
+// leans on the name plus present tense (gender-neutral), English on they/them.
+function candShared(c){
+  // Which interests are the OVERLAP with this search, and which are the person's own besides it.
+  // Same extraction the chips use, so the sentence and the chips can never disagree.
+  const norm=s=>String(s||'').toLowerCase().replace(/[^a-zа-яё0-9]+/gi,'');
+  const want=[];
+  [].concat(c.reasons_ru||[], c.reasons||[], c.reasons_en||[]).forEach(r=>{
+    const m=/(?:shares|общее:)\s*(.+)/i.exec(String(r||''));
+    if(m) m[1].split(/[,;]+/).forEach(t=>{ const v=norm(t); if(v) want.push(v); });
+  });
+  ((((typeof FLOW!=='undefined'&&FLOW&&FLOW.intent)||{}).topics)||[]).forEach(t=>{
+    const v=norm(t); if(v) want.push(v);
+  });
+  const isShared=x=>{ const v=norm(x);
+    return !!v && want.some(w=>w===v||w.indexOf(v)>=0||v.indexOf(w)>=0); };
+  const all=(c.interests||[]).filter(Boolean);
+  const shared=[], own=[];
+  all.forEach(x=>{ (isShared(x)?shared:own).push(x); });
+  return [shared, own];
+}
+// Language codes are turned into names by the existing langName() further up — a summary that
+// says «Говорит на es, en» is the machine talking. That helper already carries the code table the
+// profile rows use; a second copy here would be one more pair of lists to drift apart.
+// «падел, походы и вино» — a list a person would say, not "a, b, c".
+function human(list, n){
+  const xs=(list||[]).slice(0,n||3).map(x=>locTopic(x)).filter(Boolean);
+  if(!xs.length) return '';
+  if(xs.length===1) return xs[0];
+  return xs.slice(0,-1).join(', ')+T(' и ',' and ')+xs[xs.length-1];
+}
 function candSummaryLine(c){
   if(c.klealSummary && String(c.klealSummary).trim()) return String(c.klealSummary).trim();
   if(c.summary && String(c.summary).length>24) return String(c.summary).trim();
-  const rs=(UILANG==='ru'?c.reasons_ru:c.reasons_en)||c.reasons||[];
-  if(rs.length) return (c.name||T('Этот человек','This person'))+' — '+rs.slice(0,2).join('; ')+'.';
-  return T('Kleal счёл этого человека сильным совпадением под твой запрос.','Kleal picked this person as a strong match for your request.');
+  const nm=c.name||T('Этот человек','This person');
+  const parts=candShared(c), shared=parts[0], own=parts[1];
+  const s=[];
+  if(shared.length){
+    // Russian is the constraint here: «интерес к падел» needs a case a loanword has no good form
+    // for, «к теме «padel»» reads like a support ticket, and «У Сары» means declining a name —
+    // which is a trap across foreign names and both genders. Saying «у вас общее» sidesteps all
+    // three, and the name is already set in 24pt directly above this box.
+    s.push(T('У вас общее — '+human(shared,2)+'.',
+             nm+' shares your interest in '+human(shared,2)+'.'));
+    if(own.length) s.push(T('Кроме этого, в профиле — '+human(own,3)+'.',
+                            'Beyond that, into '+human(own,3)+'.'));
+  } else if(own.length){
+    // Honest about the weaker connection instead of dressing it up: this person came up because the
+    // search widened, and saying so is the difference between a suggestion and a claim.
+    s.push(T('Прямого совпадения по интересам нет — '+nm+' больше про '+human(own,3)+'.',
+             'No direct overlap in interests — '+nm+' is more about '+human(own,3)+'.'));
+  } else {
+    // Not «пока мало рассказал» — that is masculine, and the card carries no sex to check it against.
+    s.push(T('Профиль пока почти пустой.','This profile is nearly empty so far.'));
+  }
+  // The closing line is the BAND in words. It is the one judgement Kleal is actually making, so it
+  // belongs in a sentence rather than only in a coloured pill the eye skips.
+  const close={
+    especially_close:T('Из всех, кто нашёлся, это ближе всего к твоему запросу.',
+                       'Of everyone that came up, this is the closest to what you asked for.'),
+    strong_option:T('Хороший вариант под то, что ты ищешь.','A strong option for what you are looking for.'),
+    broader_option:T('Вариант шире запроса — на случай, если захочется чего-то нового.',
+                     'A broader suggestion, in case you feel like something new.'),
+    needs_clarification:T('Данных пока мало, чтобы судить уверенно.','Still too little to judge confidently.')
+  }[c.band];
+  if(close) s.push(close);
+  else if(!shared.length&&!own.length) s.push(T('Kleal предложил этого человека под твой запрос.',
+                                                'Kleal put this person forward for your request.'));
+  // One practical line, and only when it says something the rest of the card does not.
+  // langName's table is capitalised because the profile ROWS use it as a heading. Mid-sentence,
+  // Russian wants «испанский» and English still wants «Spanish» — so only Russian is lowered.
+  // ...and «говорит на» governs the prepositional, so «на испанский» is simply wrong. Every Russian
+  // name in that table is an adjective in -ий/-ый, which takes -ом; anything else (an unknown code
+  // passing through langName untranslated) is left exactly as it came.
+  const langs=(c.langs||[]).filter(Boolean).map(x=>{ const n=langName(x);
+    return UILANG==='ru'?n.toLowerCase().replace(/(и|ы)й$/,'ом'):n; });
+  const where=c.area||c.city||'';
+  if(langs.length&&where) s.push(T('Говорит на '+human(langs,3)+', район — '+where+'.',
+                                   'Speaks '+human(langs,3)+', around '+where+'.'));
+  else if(langs.length) s.push(T('Говорит на '+human(langs,3)+'.','Speaks '+human(langs,3)+'.'));
+  else if(where) s.push(T('Район — '+where+'.','Around '+where+'.'));
+  return s.join(' ');
 }
 function scr_candprofile(){
   const c=CAND; if(!c) return scr_options();
