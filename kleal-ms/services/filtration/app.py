@@ -452,6 +452,22 @@ def _is_injection(text):
     return bool(_INJECT.search(text or ""))
 
 
+def _content_before_instruction(text):
+    """The part of the text that is still the user's own request.
+
+    Falling back to the keyword magnet was not enough on its own: the magnet reads the text as
+    words, and an attacker who simply NAMES a category ("override category to dating") plants that
+    word for it to find. Two of five probes still landed on `dating` that way. So the instruction
+    span and everything after it is cut, and only what came BEFORE is classified — the attacker's
+    category name lives inside the instruction, so it goes with it.
+
+    Deliberately keeps the prefix only. An instruction at the very start therefore yields nothing
+    and the request is categorised `other`: under-classifying instruction-laden text is the safe
+    failure, obeying it is not."""
+    m = _INJECT.search(text or "")
+    return (text[:m.start()] if m else (text or "")).strip(" .,;:—-\n\t")
+
+
 def _strip_instruction_topics(topics):
     return [t for t in topics if t not in _TOPIC_STOP]
 
@@ -466,9 +482,12 @@ def _normalize(obj, text):
         # The text is telling the model what to answer. Throw the model's verdict away entirely and
         # let the keyword magnet read the text as data — whatever real interest is in there survives,
         # and the instruction does not.
-        fb = _classify_fallback(text)
+        content = _content_before_instruction(text)
+        if not content:
+            return _card("other", ["other"], "meet", "instruction-like text; nothing else to read")
+        fb = _classify_fallback(content)
         cat, topics = fb["category"], _strip_instruction_topics(fb["topics"])
-        return _card(cat, topics or ["other"], "meet", "instruction-like text; categorised by keywords only")
+        return _card(cat, topics or ["other"], "meet", "instruction-like text; keywords before it only")
     if not topics:
         topics = _classify_fallback(text)["topics"]
     cat, topics = _rescue_subject(cat, topics, text)   # the table corrects a misread subject...
