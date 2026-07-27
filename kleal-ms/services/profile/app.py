@@ -5333,12 +5333,17 @@ function candTags(c, n){
     }
     return d+(a.length-i)+(b.length-j)<=1;
   };
+  // Dedupe on what will be DRAWN, not only on the stored value: football and soccer are different
+  // interests but locTopic() renders both as «футбол», so a card led with «футбол, футбол, йога»
+  // until this compared the localised label too.
   const seen=[], lead=[], rest=[];
   (c.interests||[]).forEach(x=>{
     if(!x) return;
-    const v=norm(x); if(!v) return;
-    if(seen.some(s=>s===v||near(s,v))) return;
-    seen.push(v); (hit(x)?lead:rest).push(x);
+    const v=norm(x), lv=norm(typeof locTopic==='function'?locTopic(x):x);
+    if(!v) return;
+    if(seen.some(s=>s===v||s===lv||near(s,v)||near(s,lv))) return;
+    seen.push(v); if(lv&&lv!==v) seen.push(lv);
+    (hit(x)?lead:rest).push(x);
   });
   return lead.concat(rest).slice(0,n);
 }

@@ -18,6 +18,12 @@ function grab(name) {
   }
 }
 let FLOW = { intent: { topics: ["beer", "football", "playstation"] } };
+// the page localises chips through locTopic(); several English words collapse onto ONE Russian
+// label (football and soccer are both «футбол»), so the test has to model that or it will miss
+// duplicate chips that only appear once drawn.
+let UILANG = "ru";
+const _RU = { football: "футбол", soccer: "футбол", chess: "шахматы", beer: "пиво", gym: "зал" };
+function locTopic(w) { return (UILANG === "ru" && _RU[String(w || "").toLowerCase()]) || w || ""; }
 eval(grab("candTags"));
 
 let fails = 0;
@@ -37,7 +43,15 @@ const erik = { name: "Erik Ferrer",
   interests: ["language cafes", "labubu", "фотография", "football", "soccer"],
   reasons_ru: ["общее: football, soccer", "совпали условия (complementary)"] };
 t = candTags(erik, 3);
-check("Erik leads with both matched tokens", t[0] === "football" && t[1] === "soccer", t);
+// In Russian «football» and «soccer» both draw as «футбол», so the second collapses and the freed
+// slot goes to a real interest — leading with «футбол, футбол» would be worse than the bug.
+check("Erik leads with the matched interest", t[0] === "football", t);
+check("no chip is a visual duplicate",
+      t.map(locTopic).filter((v, i, a) => a.indexOf(v) === i).length === t.length, t.map(locTopic));
+UILANG = "en";
+const te = candTags(erik, 3);
+check("in English both matched tokens are shown", te[0] === "football" && te[1] === "soccer", te);
+UILANG = "ru";
 
 // Mia: her own wording was shown, but second
 const mia = { name: "Mia Melnyk",
@@ -76,6 +90,17 @@ FLOW = { intent: { topics: ["opera"] } };
 check("nothing matched -> original order, no crash",
       JSON.stringify(candTags(nothing, 3)) === JSON.stringify(["gym", "chess"]), candTags(nothing, 3));
 check("an empty card does not throw", JSON.stringify(candTags({}, 3)) === "[]", candTags({}, 3));
+
+console.log("\nlocalisation collapse");
+const collapse = { interests: ["football", "soccer", "yoga"], reasons_ru: ["общее: football, soccer"] };
+const cc = candTags(collapse, 3);
+check("football and soccer both render as «футбол» -> only one chip",
+      cc.map(locTopic).filter((v, i, a) => a.indexOf(v) === i).length === cc.length, cc.map(locTopic));
+check("the slot freed by the collapse is given to a real third interest",
+      cc.map(locTopic).join(",") === "футбол,йога" || cc.length === 2, cc.map(locTopic));
+UILANG = "en";
+check("in English nothing collapses, both survive", candTags(collapse, 3).length === 3, candTags(collapse, 3));
+UILANG = "ru";
 
 console.log("\n" + (fails ? "FAILED " + fails : "ALL PASS"));
 process.exit(fails ? 1 : 0);
