@@ -751,10 +751,20 @@ def _post(base_url, path, payload, timeout=30):
         return json.loads(r.read().decode("utf-8"))
 
 
+# Fire-and-forget teaching either works or it does not, and for weeks it did not: /api/agent/learn
+# was 404 after the matching rewrite and the only evidence was a traceback in this service's log,
+# which nobody reads. Count the outcomes so /health can say it out loud.
+TEACH_STATS = {"sent": 0, "failed": 0, "last_error": None}
+
+
 def _teach(cat):
     """Hand filtration's verdict to matching so BOTH sides of a future search can resolve the word.
     Fire-and-forget on purpose: teaching is an optimisation, and a slow or dead matcher must never
-    delay the answer the user is waiting for."""
+    delay the answer the user is waiting for.
+
+    The guard has to be INSIDE the thread. It used to wrap only the .start() call, so a failing
+    POST raised on the new thread — outside the try — and printed a full traceback per turn while
+    the request itself looked fine. Silent-but-counted beats loud-and-ignored."""
     try:
         cname = str((cat or {}).get("category") or "").lower().strip()
         if not cname or cname == "other":
@@ -762,9 +772,18 @@ def _teach(cat):
         sub = str((cat or {}).get("subcategory") or "").lower().strip()
         items = [{"word": str(t).lower(), "category": cname, "subcategory": sub}
                  for t in ((cat or {}).get("topics") or []) if str(t).strip()][:4]
-        if items:
-            threading.Thread(target=lambda: _post(MATCH_URL, "/api/agent/learn", {"items": items}, timeout=10),
-                             daemon=True).start()
+        if not items:
+            return
+
+        def _send():
+            try:
+                _post(MATCH_URL, "/api/agent/learn", {"items": items}, timeout=10)
+                TEACH_STATS["sent"] += 1
+            except Exception as e:
+                TEACH_STATS["failed"] += 1
+                TEACH_STATS["last_error"] = "%s: %s" % (type(e).__name__, str(e)[:120])
+
+        threading.Thread(target=_send, daemon=True).start()
     except Exception:
         pass
 
@@ -2233,7 +2252,8 @@ class H(BaseHTTPRequestHandler):
         if r in ("/", "/health"):
             return send_json(self, 200, {"service": "buddy", "ok": True, "model": MODEL_ID,
                                          "filter_url": FILTER_URL, "match_url": MATCH_URL,
-                                         "sessions": len(SESSIONS)})
+                                         "sessions": len(SESSIONS),
+                                         "teach": dict(TEACH_STATS)})
         if r == "/state":
             q = (self.path.split("?", 1) + [""])[1]
             uid = dict(kv.split("=", 1) for kv in q.split("&") if "=" in kv).get("user_id", "")
