@@ -62,8 +62,14 @@ This is the shared vocabulary: matching resolves candidate interests through it,
 
 ### matching — `/api/agent/*`
 
-⚠️ **The deployed matching service no longer serves 16 of the routes the profile UI calls.**
-See §6.
+`match · plan · explain · explore · intro · negotiate · feedback · save · weights · pool` plus the
+restored `intents · intent-save · intent-delete · propose · respond · withdraw · request-archive ·
+message · inbox · outbox · thread · threads · groups · group-create · group-join · group-leave`
+and the diagnostics `funnel · stability · diversity · learn · admin/person · admin/cohorts ·
+admin/proposals · admin/compare · admin/fatigue-reset`.
+
+`explain` is two tools chosen by whether a `candidate` is named: with one, the per-pair decision
+trace; without, the slate-wide diagnostic. See §6.
 
 ---
 
@@ -138,35 +144,47 @@ the error inside the client would disable all of them at once.
 
 ---
 
-## 6. Known contract violations (open)
+## 6. Known issues
 
-**Matching dropped 16 endpoints the profile UI still calls.** Verified by probing the running
-service — all return 404:
+### Fixed 2026-07-27 — kept here because the failure mode will recur
 
-| screen | dead endpoints |
-|---|---|
-| My Intents | `intents` `intent-save` `intent-delete` |
-| Messages | `inbox` `outbox` `thread` `threads` `message` `respond` `withdraw` `request-archive` `propose` |
-| Groups | `groups` `group-create` `group-join` `group-leave` |
+The rewrite of matching **renamed its API** and the profile frontend was never updated, so 16
+routes 404'd and three screens (My Intents, Messages, Groups) were dead in the shipped build,
+along with 9 diagnostic routes the admin panel proxies to. All 25 are restored, verified against
+the running service.
 
-The rewrite appears to have renamed them rather than removed the features —
-`propose → proposal`, `respond → proposal/respond`,
+The renames were: `propose → proposal`, `respond → proposal/respond`,
 `intents/intent-save/intent-delete → saved_searches/save_search/save_search/delete`,
-`groups/group-* → group` — but the frontend was never updated. The admin panel is hit too:
-`/api/agent/admin/*` and `/api/agent/funnel` 404, which fails 25 of its 87 checks.
+`groups/group-* → group`. Both spellings now exist; the restored ones are what the UI calls.
 
-Fixing this means choosing which spelling wins and updating the other side. Payload shapes
-differ, so aliasing the old names onto the new handlers would return 200 with the wrong body —
-worse than the current 404.
+**This is why §2 says endpoint names are frozen.** There is no shared client and no compile step,
+so a rename is only discovered by a person clicking the screen — or by `tools/e2e_smoke.py`, which
+exists now and goes through the gateway exactly like a browser. Run it after touching any route.
 
-**The `core_v2.py` rollback path has no tests.** Its three suites tested pre-rewrite internals
-(`propose()`, `group_create()`, old `_hard_gates` arity) and were removed rather than bent to
-agree with code they were not written for.
+Two engine-level gaps came from the same rewrite and are also fixed: `matching_core_engine` is a
+drop-in for `core_v2`, and app.py reaches the engine only through `_core.*`, so any name `core_v2`
+exports and the adapter does not is a crash waiting for its code path (`_in_quiet_hours`,
+`ALL_DOMAINS`, `explain` were all missing). And `match_candidates` had lost its `diag` parameter,
+which broke the admin funnel outright.
 
-**The inbox / threads / messages endpoints are unauthenticated.** `self` arrives as an ordinary
-query parameter, so anyone who knows a name can read that person's inbox, their thread list and
-the full text of their private messages. Verified against prod: a message was planted between two
-people and read back by a third, unauthenticated call. This is not a regression — the endpoints
-behaved this way before the rewrite too. There is no session anywhere in the stack: sign-in lives
-in onboarding and matching never learns who is calling. Closing it means carrying a session or
-token across services, which is a design decision, not a patch.
+### Open: the message endpoints are unauthenticated
+
+`inbox`, `outbox`, `threads`, `thread` take `self` as an ordinary query parameter, so anyone who
+knows a name can read that person's inbox, their thread list and the **full text of their private
+messages**. Verified against prod: a message was planted between two people and read back by a
+third, unauthenticated call.
+
+Not a regression — they behaved this way before the rewrite too. There is no session anywhere in
+the stack: sign-in lives in onboarding and matching never learns who is calling. Closing it means
+carrying a session or token across services, which is a design decision, not a patch.
+
+### Open: `gender` is collected and never used
+
+Onboarding stores it and `tools/` writes it, but matching contains no reference to it at all, so
+the "Кто" selector in the UI has no effect on results.
+
+### Open: the `core_v2.py` rollback path has no tests
+
+Its three suites tested pre-rewrite internals (`propose()`, `group_create()`, the old `_hard_gates`
+arity) and were removed rather than bent to agree with code they were not written for. The engine
+in use (`matching_core`) has 543 of its own checks; the rollback path has none.
