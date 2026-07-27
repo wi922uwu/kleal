@@ -3141,7 +3141,14 @@ def learn_topics(pairs):
             except Exception:
                 pass
     if added:
-        same_topic.cache_clear()   # cat_of is not memoised; same_topic is, and it reads categories
+        # Invalidate the topic-similarity memo, because it reads the category map we just changed.
+        # Conditional on purpose: `same_topic` carried @lru_cache before the matching rewrite and
+        # does not now, so this line raised AttributeError on every learn that stored a word —
+        # i.e. the whole learning path 500'd — after learn_topics was restored alongside it.
+        # Nothing to invalidate when nothing is cached, and the guard picks the cache back up
+        # automatically if the decorator returns.
+        if hasattr(same_topic, "cache_clear"):
+            same_topic.cache_clear()
     return added
 
 
