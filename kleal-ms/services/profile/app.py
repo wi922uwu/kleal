@@ -532,6 +532,44 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .reddot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--primary);margin-left:6px;vertical-align:middle}
 /* ---- Agent Home (main landing) ---- */
 .ahome{padding:4px 0 14px}
+
+/* ---- "No exact matches yet" + the search-preferences sheet (Figma) ------------------------- */
+.nfx{display:flex;flex-direction:column;align-items:center;gap:14px;padding:34px 0 10px}
+.nfx .ph{width:132px;height:132px;border-radius:999px;background:var(--neutral100,#F1F2F5);
+ display:flex;align-items:center;justify-content:center;color:var(--neutral300,#C7CAD1)}
+.nfx .ph svg{width:44px;height:44px}
+.nfx .ti{font-size:22px;line-height:28px;font-weight:700;text-align:center}
+.nfx .su{font-size:14px;line-height:19px;color:var(--muted);text-align:center;max-width:280px}
+.prefs{background:var(--card);border-radius:22px 22px 0 0;box-shadow:0 -8px 28px #0000000f;
+ padding:10px 18px 18px;margin:14px -18px -18px;display:flex;flex-direction:column;gap:16px}
+.prefs .grab{width:38px;height:4px;border-radius:999px;background:var(--neutral200,#E2E5EC);margin:2px auto 4px}
+.prefs .hd{display:flex;align-items:center;justify-content:space-between}
+.prefs .hd .t{font-size:17px;font-weight:700}
+.prefs .hd button{border:0;background:none;color:var(--muted);padding:4px;cursor:pointer}
+.prefs .sec{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
+.prefs .sec svg{width:18px;height:18px;color:var(--primary)}
+.prefs .chips{display:flex;gap:8px;flex-wrap:wrap}
+.prefs .chips .c{padding:9px 16px;border-radius:999px;border:1px solid var(--border);background:var(--card);
+ font-size:14px;cursor:pointer;transition:.14s}
+.prefs .chips .c.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.prefs .bub{display:flex;justify-content:space-between;align-items:center}
+.prefs .bub span{min-width:46px;height:32px;border-radius:999px;display:flex;align-items:center;justify-content:center;
+ font-size:14px;font-weight:600;background:var(--neutral100,#F1F2F5);color:var(--fg)}
+.prefs .bub span.hi{background:var(--primary);color:#fff}
+.rng{position:relative;height:26px}
+.rng input{position:absolute;left:0;top:0;width:100%;height:26px;margin:0;background:none;
+ -webkit-appearance:none;appearance:none;pointer-events:none}
+.rng input::-webkit-slider-runnable-track{height:3px;background:var(--neutral200,#E2E5EC);border-radius:999px}
+.rng input::-moz-range-track{height:3px;background:var(--neutral200,#E2E5EC);border-radius:999px}
+.rng input::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:999px;
+ background:var(--primary);border:0;margin-top:-8.5px;pointer-events:auto;cursor:pointer}
+.rng input::-moz-range-thumb{width:20px;height:20px;border-radius:999px;background:var(--primary);
+ border:0;pointer-events:auto;cursor:pointer}
+.rng .trk{position:absolute;left:0;right:0;top:11px;height:3px;border-radius:999px;background:var(--neutral200,#E2E5EC)}
+.rng .sel{position:absolute;top:11px;height:3px;border-radius:999px;background:var(--primary)}
+.prefs .kmrow{display:flex;justify-content:space-between;align-items:center;font-size:14px}
+.prefs .kmrow b{color:var(--primary);font-weight:600}
+
 /* home -> buddy chat transition: the side blocks fade + slide away, then the chat opens */
 .a-leaving{opacity:0;transform:translateY(-8px);transition:opacity .22s ease,transform .22s ease;pointer-events:none}
 .asearch.a-lift{transform:translateY(-6px);transition:transform .22s ease}
@@ -807,6 +845,20 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .cpub .cinv .lb{flex:1;text-align:center;font-size:16px;font-weight:600;color:var(--fg)}
 .cpub .cinv .ch{display:flex;color:var(--neutral300);padding-right:14px}
 .cpub .cinv .ch svg{width:15px;height:15px;margin-left:-5px}
+/* Slide to invite. It already LOOKED like a slider — a knob, a label, three chevrons pointing the
+   way — but it was a plain button, so the affordance was a lie and one stray tap sent a real
+   invitation to a real person. Now the gesture the control advertises is the gesture that sends. */
+.cpub .cinv{position:relative;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab}
+.cpub .cinv.armed{cursor:grabbing}
+.cpub .cinv .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--primary);opacity:.10;
+ border-radius:999px;pointer-events:none;transition:width .18s ease}
+.cpub .cinv.armed .fill{transition:none}
+.cpub .cinv .ck{position:relative;z-index:2;transition:transform .18s cubic-bezier(.2,.8,.2,1)}
+.cpub .cinv.armed .ck{transition:none}
+.cpub .cinv .lb,.cpub .cinv .ch{position:relative;z-index:1;transition:opacity .18s ease}
+.cpub .cinv.done .ck{transform:translateX(0)!important}
+.cpub .cinv.done{background:var(--primary)}
+.cpub .cinv.done .lb{color:#fff}
 .cpub .bnav{flex:none}
 /* Profile options bottom sheet */
 .ksheet.copts{display:flex;flex-direction:column;gap:10px}
@@ -1562,6 +1614,7 @@ const IC={
   chain:svg('<path d="M9.5 14.5l5-5"/><path d="M11.5 6.5l1.2-1.2a3.7 3.7 0 0 1 5.2 5.2l-2 2a3.7 3.7 0 0 1-5.2 0"/><path d="M12.5 17.5l-1.2 1.2a3.7 3.7 0 0 1-5.2-5.2l2-2a3.7 3.7 0 0 1 5.2 0"/>'),
   users:svg('<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M16 6.2a3 3 0 0 1 0 5.6M20.5 19a5.5 5.5 0 0 0-3.5-5.1"/>'),
   clock:svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>'),
+  close:svg('<path d="M6 6l12 12M18 6L6 18"/>'),
   shield:svg('<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/>'),
   football:svg('<circle cx="12" cy="12" r="9"/><path d="M12 8l3.2 2.3-1.2 3.7h-4L8.8 10.3 12 8z"/><path d="M12 3v3M4.5 8.5l2.5 1.8M19.5 8.5l-2.5 1.8M7.5 19l1.3-3M16.5 19l-1.3-3"/>'),
   rocket:svg('<path d="M14 4c3 1 5 3 6 6-2 3-6 6-9 7l-3-3c1-3 3-7 6-9z"/><path d="M9 15l-2 4M6 12l-3 1M8 18l-3 1"/><circle cx="14.5" cy="9.5" r="1.4"/>'),
@@ -4100,6 +4153,10 @@ function flowIntent(){
   // returns 21-25, 60-75 returns 61). It just never received a range, so it returned every age.
   const _age=ageRange();
   if(_age){ it.minAge=_age[0]; it.maxAge=_age[1]; }
+  // Sex, same story as the age dial: the screen has always had the selector, matching has always
+  // had the field on every person, and nothing ever carried the choice from one to the other — so
+  // «Кто» changed nothing. 'any' is the default and means DO NOT filter, so it is not sent.
+  if(FLOW.sex&&FLOW.sex!=='any') it.sex=FLOW.sex;
   it.mode=it.mode||'offline';
   if(it.mode==='online'){
     it.place=T('Онлайн','Online');                       // no district, no radius — it's over the net
@@ -4447,6 +4504,53 @@ function redrawDial(id){
 // had implicitly captured and kill the drag after one step — the exact reason it worked with a mouse
 // (no implicit capture; window listeners) but not under a finger. Listeners live on the SVG, which
 // survives the innerHTML swap, so the whole drag keeps flowing.
+// Slide-to-confirm. Sending an invitation is an outward-facing act aimed at a real person, so it
+// asks for a deliberate gesture rather than a tap that can happen by accident in a scrolling list.
+// The knob follows the finger, a fill trails it, and the action fires only past 82% of the track;
+// released short of that, everything springs back and nothing is sent.
+function wireSlide(){
+  document.querySelectorAll('[data-slide]').forEach(function(el){
+    if(el._wired) return; el._wired=true;
+    const knob=el.querySelector('.ck'), fill=el.querySelector('.fill'),
+          lb=el.querySelector('.lb'), ch=el.querySelector('.ch');
+    let dragging=false, x0=0, travel=0;
+    const span=()=>Math.max(1, el.clientWidth - (knob?knob.offsetWidth:48) - 12);
+    function paint(dx){
+      const t=Math.max(0, Math.min(span(), dx));
+      if(knob) knob.style.transform='translateX('+t+'px)';
+      if(fill) fill.style.width=(t+(knob?knob.offsetWidth:48)+6)+'px';
+      const p=t/span();
+      if(lb) lb.style.opacity=String(1-Math.min(1,p*1.35));
+      if(ch) ch.style.opacity=String(1-Math.min(1,p*1.35));
+      return p;
+    }
+    function reset(){ if(knob) knob.style.transform=''; if(fill) fill.style.width='';
+                      if(lb) lb.style.opacity=''; if(ch) ch.style.opacity=''; }
+    function fire(){
+      el.classList.add('done');
+      if(el.getAttribute('data-slide')==='invite') sendInterest();
+    }
+    el.addEventListener('pointerdown', function(e){
+      dragging=true; x0=e.clientX; travel=0; el.classList.add('armed');
+      try{ el.setPointerCapture(e.pointerId); }catch(_e){}
+    });
+    el.addEventListener('pointermove', function(e){
+      if(!dragging) return; e.preventDefault(); travel=paint(e.clientX-x0);
+    });
+    function end(e){
+      if(!dragging) return; dragging=false; el.classList.remove('armed');
+      try{ el.releasePointerCapture(e.pointerId); }catch(_e){}
+      if(travel>=0.82){ paint(span()); fire(); } else { reset(); }
+    }
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointercancel', end);
+    // Keyboard and assistive tech cannot drag. Enter/Space is the same commitment, made another way.
+    el.addEventListener('keydown', function(e){
+      if(e.key==='Enter'||e.key===' '){ e.preventDefault(); paint(span()); fire(); }
+    });
+  });
+}
+
 function wireDial(){
   document.querySelectorAll('svg.dial[data-dial]').forEach(function(svg){
     const id=svg.getAttribute('data-dial');
@@ -4801,48 +4905,88 @@ function scr_searching(){
 // ---- 5. Few matches → recommended adjustment ----
 function scr_fewmatches(){
   const n=(FLOW.res||[]).length;
-  // Nobody does this AND nothing adjacent exists (broaden already ran server-side and found none),
-  // so widening the radius cannot help — the honest move is a standing intent. When the server said
-  // there ARE related people, this screen is not reached (they are shown instead).
-  const noSupply = (FLOW.fbRelated===0);
-  const opt=(key,icon,ti,su)=>`<div class="kopt ${FLOW.adjust===key?'sel':''}" data-act="flow-adjust" data-k="${key}">
-    <div class="ic">${icon}</div><div class="bd"><div class="ti">${esc(ti)}</div><div class="su">${esc(su)}</div></div>
-    ${FLOW.adjust===key?`<div class="ck">${IC.check2||IC.chevR}</div>`:''}</div>`;
-  const head = noSupply ? T('Пока рядом этим никто не занят','Nobody nearby is into this yet')
-                        : T('Точных совпадений пока немного','Not many exact matches yet');
-  const msg = FLOW.fbNote || T('По твоему запросу с текущими фильтрами вариантов мало.',
-                              'For your request with the current filters, options are limited.');
-  if(noSupply){
-    return `<div class="kflow fade">${kbar()}
-    <div class="kcont">
-      ${kprompt(head)}
-      <div class="kbub ag">${esc(msg)}</div>
-      <div class="kplan tight" style="gap:4px">
-        <div class="kopt sel" data-act="flow-save-intent"><div class="ic">${IC.spark||IC.check2||''}</div>
-          <div class="bd"><div class="ti">${T('Создать интент','Create an intent')}</div>
-            <div class="su">${T('Сохраню и подберу, как только кто-то появится','I will save it and match you the moment someone appears')}</div></div></div>
-        ${opt('wide',IC.groups,T('Всё равно расширить радиус','Widen the radius anyway'),T('На случай, если кто-то есть чуть дальше','In case someone is a bit further out'))}
-      </div>
-    </div>
-    <div class="kfoot"><button class="kbtn pri" data-act="flow-save-intent">${T('Создать интент','Create an intent')}</button></div></div>`;
-  }
+  // Zero supply is a different fact from "few matches": broadening already ran server-side and found
+  // nothing adjacent either, so widening cannot help and saying "try a bigger radius" would be a lie.
+  const noSupply=(FLOW.fbRelated===0);
+  const e=ageEnds(), a0=e[0], a1=e[1];
+  const km=(FLOW&&FLOW.dkm!=null)?FLOW.dkm:19;
+  const sexes=[['male',T('Мужчины','Male')],['female',T('Женщины','Female')],['any',T('Не важно','Any is fine')]];
+  const sel=FLOW.sex||'any';
+  const head=noSupply?T('Пока рядом этим никто не занят','Nobody nearby is into this yet')
+                     :T('Точных совпадений пока нет','No exact matches yet');
+  const sub=noSupply?T('Сохраню запрос и подберу, как только кто-то появится.',
+                       'I will keep the request and match you the moment someone appears.')
+                    :(FLOW.fbNote||T('Поменяй настройки — и попробуем ещё раз.',
+                                     'Adjust the preferences and we will try again.'));
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
-      ${kprompt(head)}
-      <div class="kbub ag">${esc(msg)}</div>
-      <div class="k-title">${T('Рекомендуемая настройка','Recommended adjustment')}</div>
-      <div class="kplan tight" style="gap:4px">
-        ${opt('wide',IC.groups,T('Расширить радиус поиска','Widen the search radius'),T('Люди и места за пределами района','Include places and people beyond your district'))}
-        ${opt('radius',IC.radius,T('+5 км к радиусу','+5 km to radius'),T('Рядом появятся новые варианты','New options appear nearby'))}
-        ${opt('keep',IC.homeSm,T('Оставить как есть','Keep it as is'),T('Искать только в текущем районе','Search only in the current district'))}
-        <div class="kopt" style="cursor:default">
-          <div class="bd"><div class="ti">${T('Также включить группы','Also include groups')}</div>
-            <div class="su">${T('Откроет больше форматов встреч','Opens more formats of meeting people')}</div></div>
-          <div class="ktog ${FLOW.groups?'on':''}" data-act="flow-groups"><i></i></div></div>
+      <div class="nfx">
+        <div class="ph">${IC.photo||''}</div>
+        <div class="ti">${esc(head)}</div>
+        <div class="su">${esc(sub)}</div>
+        ${n?`<div class="k-cap" style="color:var(--muted)">${T('Сейчас найдено','Found so far')}: ${n}</div>`:''}
       </div>
-      ${n?`<div class="k-cap" style="color:var(--muted)">${T('Сейчас найдено','Found so far')}: ${n}</div>`:''}
-    </div>
-    <div class="kfoot"><button class="kbtn pri" data-act="flow-apply">${T('Применить и обновить','Apply & refresh')}</button></div></div>`;
+      <div class="prefs">
+        <div class="grab"></div>
+        <div class="hd"><div class="t">${T('Изменить настройки поиска','Change search preferences')}</div>
+          <button data-act="flow-restart" aria-label="${T('Закрыть','Close')}">${IC.close||'✕'}</button></div>
+
+        <div class="sec">${IC.person||''}<span>${T('Пол','Sex')}</span></div>
+        <div class="chips">${sexes.map(x=>`<div class="c ${sel===x[0]?'on':''}" data-act="d-sex" data-k="${x[0]}">${esc(x[1])}</div>`).join('')}</div>
+
+        <div class="sec">${IC.clock||''}<span>${T('Возраст','Age')}</span></div>
+        <div class="bub"><span>${a0}</span><span class="hi">${a1}</span></div>
+        <div class="rng" data-rng="age">
+          <div class="trk"></div><div class="sel"></div>
+          <input type="range" min="16" max="80" value="${a0}" data-k="a0" aria-label="${T('Возраст от','Age from')}">
+          <input type="range" min="16" max="80" value="${a1}" data-k="a1" aria-label="${T('Возраст до','Age to')}">
+        </div>
+
+        <div class="kmrow"><span>${T('Как далеко готов(а) ехать?','How far are you happy to go?')}</span><b>${km} ${T('км','km')}</b></div>
+        <div class="rng" data-rng="km">
+          <div class="trk"></div><div class="sel"></div>
+          <input type="range" min="1" max="60" value="${km}" data-k="km" aria-label="${T('Радиус','Distance')}">
+        </div>
+
+        <button class="kbtn pri" data-act="flow-apply">${T('Начать поиск','Start search')}</button>
+        <!-- Figma has "Create Event" here. The events layer (§16) is genuinely off, so this is the
+             working equivalent: park the request and be matched the moment someone appears. A button
+             labelled Create Event that cannot create an event is the thing we keep removing. -->
+        <button class="kbtn dark" data-act="flow-save-intent">${T('Создать интент','Create an intent')}</button>
+      </div>
+    </div></div>`;
+}
+
+// Both sliders write straight into FLOW and repaint their own labels, so dragging feels live instead
+// of re-rendering the whole screen on every pixel. The age pair cannot invert: each thumb pushes the
+// other, the same rule the round dial uses, so the two controls never disagree about the range.
+function wireRanges(){
+  const box=document.querySelector('.prefs'); if(!box) return;
+  const age=box.querySelector('[data-rng="age"]'), km=box.querySelector('[data-rng="km"]');
+  if(age&&!age._wired){
+    age._wired=true;
+    const [lo,hi]=Array.from(age.querySelectorAll('input'));
+    const bub=box.querySelectorAll('.bub span'), selBar=age.querySelector('.sel');
+    const paint=()=>{
+      const a=+lo.value, b=+hi.value;
+      if(bub[0]) bub[0].textContent=a;
+      if(bub[1]) bub[1].textContent=b;
+      if(selBar){ const L=(a-16)/64*100, R=(b-16)/64*100;
+                  selBar.style.left=L+'%'; selBar.style.width=Math.max(0,R-L)+'%'; }
+    };
+    const commit=()=>{ FLOW.ageA=Math.min(+lo.value,+hi.value); FLOW.ageB=Math.max(+lo.value,+hi.value); };
+    lo.oninput=()=>{ if(+lo.value>+hi.value) hi.value=lo.value; commit(); paint(); };
+    hi.oninput=()=>{ if(+hi.value<+lo.value) lo.value=hi.value; commit(); paint(); };
+    paint();
+  }
+  if(km&&!km._wired){
+    km._wired=true;
+    const inp=km.querySelector('input'), lbl=box.querySelector('.kmrow b'), selBar=km.querySelector('.sel');
+    const paint=()=>{ if(lbl) lbl.textContent=inp.value+' '+T('км','km');
+                      if(selBar){ selBar.style.left='0'; selBar.style.width=((inp.value-1)/59*100)+'%'; } };
+    inp.oninput=()=>{ FLOW.dkm=+inp.value; paint(); };
+    paint();
+  }
 }
 
 // ================= Figma batch 3: request → mutual → meetup plan → meetup day =================
@@ -5578,10 +5722,12 @@ function scr_candprofile(){
       <div class="cpriv">${IC.shield}<span>${T('Тебя видят только те, кого рекомендовал твой агент. Ты управляешь этим.',"Only people your agent recommended can see your profile. You're in control.")}</span></div>
     </div>
     <div class="cfoot">
-      <button class="cinv" data-act="cand-interest">
+      <div class="cinv" data-slide="invite" role="button" tabindex="0"
+           aria-label="${T('Проведи, чтобы пригласить','Slide to invite')}">
+        <span class="fill"></span>
         <span class="ck">${IC.check}</span>
         <span class="lb">${T('Пригласить','Invite')}</span>
-        <span class="ch">${IC.chevR}${IC.chevR}${IC.chevR}</span></button>
+        <span class="ch">${IC.chevR}${IC.chevR}${IC.chevR}</span></div>
     </div>
     <div class="bnav">${bnavHTML()}</div></div>`;
 }
@@ -6025,6 +6171,8 @@ function render(){
   // status bar and the (now frosted) bottom nav — full-bleed, no white band.
   const ph=document.querySelector('.phone'); if(ph) ph.classList.toggle('homebg', cur==='agenthome');
   if(cur==='agenthome') setTimeout(wireIdeaCarousel,0);
+  setTimeout(wireSlide,0);          // the invite control is a gesture, so it has to be re-armed on every render
+  setTimeout(wireRanges,0);         // the preference sliders repaint themselves, not the screen
   if(cur==='detail') setTimeout(()=>{
     dMapDraw();
     wireDial();

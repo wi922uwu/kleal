@@ -777,6 +777,15 @@ def _hard_gates(intent, c, gate_ctx):
         if age is None:                                           return False, 'age unknown'
         if mn and age < mn:                                       return False, 'below age range'
         if mx and age > mx:                                       return False, 'above age range'
+    # Gender. Onboarding has always collected it and tools/ has always written it, but NOTHING in
+    # matching ever read the field — so the "Кто / Sex" selector was a control that changed nothing.
+    # Gated exactly like age: absent from the intent means no filter at all, and `any` is an explicit
+    # "do not filter" rather than a value to match against.
+    want_g = str(intent.get('gender') or intent.get('sex') or '').strip().lower()
+    if want_g and want_g not in ('any', 'any is fine', 'не важно', 'любой', 'all'):
+        cand_g = str(c.get('gender') or '').strip().lower()
+        if not cand_g:                                            return False, 'gender unknown'
+        if cand_g != want_g:                                      return False, 'different gender'
     reql = {str(l)[:2].lower() for l in (intent.get('requiredLanguages') or [])}
     if reql and not reql.issubset({str(l)[:2].lower() for l in (c.get('langs') or [])}):
         return False, 'missing a required language'
