@@ -1912,6 +1912,7 @@ const TITLES=()=>({interests:T('Интересы','Interests'), social:T('Лич
   knows:T('Что Kleal знает','What Kleal knows'),
   memory:T('Что Kleal помнит','What Kleal remembers'), intents:T('Интенты','Plans'), search:T('Обзор','Explore'), messages:T('Сообщения','Messages'), agenthome:T('Главная','Home'), notifs:T('Уведомления','Notifications'),
   settings:T('Настройки','Settings'), help:T('Помощь и поддержка','Help & Support'),
+  talks:T('История разговоров','Conversation history'),
   privacy:T('Приватность и безопасность','Privacy & Security')});   // functions so language switch re-evaluates
 if(!DATA.notifs) DATA.notifs=[]; if(!DATA.intents) DATA.intents=[];   // buddy-agent stores
 function setTab(id){ detail=null; cur=id; render(); }
@@ -4168,6 +4169,7 @@ const BACK_MAP = {
   picktime:'suggestion', pickplace:'picktime', awaiting:'pickplace', planok:'awaiting',
   meetstate:'agenthome', mymeetup:'meetstate',
   notifs:'agenthome',
+  talks:'agenthome',
   help:'settings',
   persona:'social',        // the test carries its own back arrow (kbar) — send it home, not to agenthome
 };
@@ -4210,7 +4212,7 @@ async function flowSay(text, fromSeed){
   text=String(text||'').trim(); if(!text||FLOW.busy) return;
   if(!fromSeed){ const el=document.getElementById('flowinp')||document.getElementById('flowinp2'); if(el)el.value=''; }
   FLOW.text=text;
-  const meIdx=FLOW.msgs.push({who:'me',text:text,t:Date.now()})-1;
+  const meIdx=flowPush({who:'me',text:text,t:Date.now()});
   FLOW.busy=true; render();
   let r=null;
   try{
@@ -4226,14 +4228,14 @@ async function flowSay(text, fromSeed){
   }catch(e){ r=null; }
   FLOW.busy=false;
   if(!r||!r.reply){ FLOW.lastFailed=true;
-    FLOW.msgs.push({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),hints:[],t:Date.now()}); render(); return; }
+    flowPush({who:'ag',text:T('Связь пропала — повтори, пожалуйста.','I lost the connection — say that again?'),hints:[],t:Date.now()}); render(); return; }
   FLOW.lastFailed=false;
   if(r.conversational && FLOW.mode==='intent'){
     // This conversation exists to build an intent, so an off-topic turn is steered back once and then
     // pointed at the buddy chat, where conversation belongs.
     FLOW.msgs[meIdx].chat=true;
     const said=FLOW.msgs.filter(m=>m.chat&&m.who==='ag').length;
-    FLOW.msgs.push({who:'ag',chat:true,hints:[],t:Date.now(),
+    flowPush({who:'ag',chat:true,hints:[],t:Date.now(),
       text: said===0
         ? T('Здесь я собираю интент. Напиши, чем хочешь заняться — например «сходить на джаз в пятницу».',
              "This chat builds an intent. Tell me what you'd like to do — e.g. \u201cgo to a jazz gig on Friday\u201d.")
@@ -4248,13 +4250,13 @@ async function flowSay(text, fromSeed){
     // Marking the turn `chat` keeps it out of the builder's context — greeting Kleal and then asking
     // about bonds used to produce an intent whose vibe was "finance, economy".
     FLOW.msgs[meIdx].chat=true;
-    FLOW.msgs.push({who:'ag',text:r.reply,chat:true,hints:okHints(r.hints),t:Date.now()});
+    flowPush({who:'ag',text:r.reply,chat:true,hints:okHints(r.hints),t:Date.now()});
     render(); return;
   }
   // the request is the first turn that actually asked for something — never the greeting that opened
   // the conversation, which is what used to end up quoted as «Запрос: привет»
   if(!FLOW.request) FLOW.request=text;
-  FLOW.msgs.push({who:'ag',text:r.reply,hints:okHints(r.hints),t:Date.now()});
+  flowPush({who:'ag',text:r.reply,hints:okHints(r.hints),t:Date.now()});
   if(r.ready&&r.intent){                       // enough detail -> one clarification, then the summary
     FLOW.intent=r.intent;
     intentPrefill();                           // a day named in the dialog must light its chip, not be re-asked
@@ -4449,6 +4451,82 @@ function flowInit(seed, mode){
   FLOW = { text:seed||'', msgs:[], when:null, time:null, district:null, mode:mode||'buddy',
            intent:null, summary:null, steps:0, res:null, adjust:'radius', groups:true,
            hintSeed:(new Date()).getDate(), busy:false };
+}
+// ---- «Открыть историю разговоров» -------------------------------------------------------------
+// The button under the composer called flowStart(''), which runs flowInit() — so it RESET FLOW.msgs
+// to [] and opened the empty composer. It did not open history; it threw the current conversation
+// away. There was nothing to open either: FLOW never left memory (saveState persists DATA and UI
+// only, and FLOW is neither), and buddy keeps a server-side thread only for THIN clients — the
+// profile UI is the stateless one, it posts the whole thread on every turn and buddy stores none
+// of it. So the promise had no screen, no store and no data behind it.
+//
+// Conversations are kept here, beside the rest of the client-side state, and bounded exactly the
+// way DATA.seen is: DATA rides into localStorage AND to /api/agent/save wholesale, so an unbounded
+// transcript would grow until saving quietly starts failing.
+const TALK_MAX=20, TALK_MAX_MSGS=60, TALK_TTL=30*864e5;
+function talkPrune(){
+  const l=Array.isArray(DATA.talks)?DATA.talks:[], now=Date.now();
+  return l.filter(t=>t&&t.id&&Array.isArray(t.msgs)&&t.msgs.length&&(now-(t.t||0))<TALK_TTL)
+          .sort((a,b)=>(b.t||0)-(a.t||0)).slice(0,TALK_MAX);
+}
+// Called on every message rather than at some "end" of a conversation, because a conversation has
+// no end — the user closes the app mid-sentence, which is precisely the transcript worth keeping.
+function talkSave(){
+  if(!FLOW||!Array.isArray(FLOW.msgs)||!FLOW.msgs.length) return;
+  if(!FLOW.tid) FLOW.tid='t'+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36);
+  const list=talkPrune(), prev=list.find(t=>t.id===FLOW.tid);
+  // The title is the first thing the PERSON said. Not the agent's opener, which is identical in
+  // every intent conversation and would make the whole list read "Давай соберём интент".
+  const first=(FLOW.msgs.find(m=>m.who==='me')||{}).text||'';
+  const e={id:FLOW.tid, mode:FLOW.mode||'buddy', t:Date.now(),
+           started:(prev&&prev.started)||Date.now(),
+           title:String(first||T('Разговор','Conversation')).slice(0,90),
+           msgs:FLOW.msgs.slice(-TALK_MAX_MSGS).map(m=>({who:m.who,text:m.text,t:m.t,chat:!!m.chat}))};
+  DATA.talks=[e].concat(list.filter(t=>t.id!==FLOW.tid)).slice(0,TALK_MAX);
+  saveState();
+}
+// Every write to FLOW.msgs goes through here, so no branch of flowSay can add a turn the history
+// never sees — the failure reply and the steered-back reply are part of the conversation too.
+function flowPush(m){ const i=FLOW.msgs.push(m)-1; talkSave(); return i; }
+function talkOpen(id){
+  const t=talkPrune().find(x=>x.id===id);
+  if(!t){ toast(T('Этот разговор уже не хранится','That conversation is no longer kept')); return; }
+  flowInit('', t.mode);
+  FLOW.tid=t.id;
+  FLOW.msgs=t.msgs.map(m=>({who:m.who,text:m.text,t:m.t,chat:!!m.chat}));
+  // Reopening continues the SAME record (tid is kept), so a resumed conversation does not fork into
+  // a second entry that shadows the first in the list.
+  const lastMe=FLOW.msgs.slice().reverse().find(m=>m.who==='me'&&!m.chat);
+  if(lastMe){ FLOW.text=lastMe.text; FLOW.request=lastMe.text; }
+  cur='reqcomposer'; render();
+}
+function talkWhen(ts){
+  if(!ts) return '';
+  const d=Math.floor((Date.now()-ts)/864e5);
+  if(d<=0) return T('сегодня','today');
+  if(d===1) return T('вчера','yesterday');
+  if(d<7) return T(d+' дн. назад',d+' days ago');
+  const dt=new Date(ts);
+  return dt.toLocaleDateString(T('ru-RU','en-GB'),{day:'numeric',month:'short'});
+}
+function scr_talks(){
+  const list=talkPrune();
+  if(!list.length) return `<div class="stack fade">${emptyState(
+    T('Разговоров пока нет','No conversations yet'),
+    T('Напиши Kleal в строке на главной — разговор сохранится здесь.',
+      'Write to Kleal from the bar on Home — the conversation will be kept here.'))}
+    <button class="kbtn pri" data-act="talk-new">${T('Начать разговор','Start a conversation')}</button></div>`;
+  return `<div class="stack fade" style="gap:12px">
+    ${list.map(t=>{
+      const turns=t.msgs.filter(m=>m.who==='me').length;
+      return `<div class="prow" data-act="talk-open" data-tid="${esc(t.id)}">
+      <div class="ph">${IC.chat}</div>
+      <div class="bd">
+        <div class="nm"><b>${esc(t.title)}</b>${t.mode==='intent'
+          ?`<span class="kbadge mut">${T('интент','intent')}</span>`:''}</div>
+        <div class="meta">${esc(talkWhen(t.t))} · ${esc(T(turns+' реплик',turns+' turns'))}</div>
+      </div>${IC.chevR}</div>`;}).join('')}
+    <button class="kbtn pri" data-act="talk-new">${T('Новый разговор','New conversation')}</button></div>`;
 }
 // «+ Создать интент» — a fresh conversation whose only job is to build one.
 function intentStart(){
@@ -6256,7 +6334,7 @@ const SCREENS={agenthome:scr_agenthome,overview:scr_overview,interests:scr_inter
   sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
   picktime:scr_picktime,pickplace:scr_pickplace,awaiting:scr_awaiting,planok:scr_planok,
   meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved,
-  settings:scr_settings,help:scr_help,privacy:scr_privacy};
+  settings:scr_settings,help:scr_help,privacy:scr_privacy,talks:scr_talks};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
 function intKind(name){ const n=(name||'').toLowerCase();
@@ -6688,7 +6766,11 @@ function doAct(act, ds){
     // This block sits directly above the composer and says the same thing ("опиши, кого ищешь"), so it
     // must open the same screen the composer does. It used to call openBuddy(), the pre-flow free-chat
     // screen — the same stale entry point the Enter key had. Kleal converses on the new screen now.
-    case 'talk-buddy': flowStart(''); break;
+    // Was flowStart(''), i.e. flowInit() -> FLOW.msgs=[] -> empty composer: the button labelled
+    // «Открыть историю разговоров» wiped the conversation instead of showing it.
+    case 'talk-buddy': navTo('talks'); break;
+    case 'talk-open': talkOpen(ds.tid); break;
+    case 'talk-new': flowStart(''); break;
     case 'see-all': setTab('search'); break;
     case 'add-interests': openSheet('interests'); break;
     case 'edit-personality': openSheet('personality'); break;
