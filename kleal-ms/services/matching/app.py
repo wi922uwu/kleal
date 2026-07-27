@@ -2307,9 +2307,1192 @@ def explain_match(intent, prof, ctx=None):
         "payment_invariant": PAYMENT_INVARIANT,     # §0 dec.10 / §11.3
     }
 
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# RESTORED: intents, messages/proposals and groups.
+#
+# The rewrite of this service RENAMED its API surface — propose→proposal, respond→proposal/respond,
+# intents/intent-save/intent-delete→saved_searches/save_search/save_search/delete, group-*→group —
+# but the profile frontend was never updated, so it kept calling the old names and got 404. Three
+# whole screens (My Intents, Messages, Groups) were dead in the shipped build, and the admin panel
+# lost 25 of its 87 checks with them.
+#
+# These handlers are restored verbatim from the pre-rewrite service rather than the frontend being
+# repointed at the new names: the payload shapes differ, so aliasing old names onto the new
+# handlers would answer 200 with a body the UI cannot read — worse than an honest 404.
+#
+# This is state-machine and store code (SESSION / kleal_store.json, §14 transactional guarantees
+# with idempotency keys and optimistic versions). It does NOT touch the ranking engine, so nothing
+# here can change who matches whom.
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+# transplanted symbols in dependency order (35):
+#   PROPOSAL_TTL_S, _requests, _expire_due, _idem, _idem_get, _idem_put, _norm_name, propose, inbox, outbox, archive_request, _num, _policy_ok_now, respond, withdraw_request, _messages, _pair_key, send_message, thread, threads_for, _intents, save_intent, delete_intent, _normalize_intent, list_intents, _gnorm, _group_state, _group_public, _groups, group_create, group_join, group_leave, _pair_fit, group_utility, group_list
+
+# ---- §14 transactional guarantees ------------------------------------------------------------------
+# A proposal used to be a row with a status string: no version, no expiry, no idempotency, and policy
+# was checked only when SENDING. So a retry created a duplicate, a three-week-old request was still
+# acceptable, and — the real defect — if the recipient paused or blocked the sender between SENT and
+# ACCEPT, the accept still went through. §14.2 requires the policy re-check to happen INSIDE the same
+# transaction as the acceptance.
+PROPOSAL_TTL_S = int(os.environ.get("KLEAL_PROPOSAL_TTL_S", 72 * 3600))   # spec §14.2 reservation TTL
+
+def _requests():
+    return SESSION.setdefault("_requests", [])
+
+def _expire_due(now=None):
+    """Mark overdue proposals EXPIRED. Called on every read and before every write, so an expired
+    proposal can never be accepted (acceptance test #9)."""
+    now = now or time.time()
+    changed = False
+    for r in _requests():
+        if r.get("status") == "pending" and (r.get("expires_at") or 0) and now > r["expires_at"]:
+            r["status"] = "expired"
+            r["updated"] = now
+            r["version"] = int(r.get("version") or 1) + 1
+            changed = True
+    return changed
+
+def _idem():
+    return SESSION.setdefault("_idem", {})
+
+def _idem_get(key):
+    row = _idem().get(str(key)) if key else None
+    return row.get("result") if row else None
+
+def _idem_put(key, result):
+    """Same idempotency key -> same answer (spec §14.2, acceptance test #7)."""
+    if not key:
+        return result
+    d = _idem()
+    d[str(key)] = {"result": result, "at": time.time()}
+    if len(d) > 2000:                                   # bounded; oldest keys fall off
+        for k in sorted(d, key=lambda k: d[k].get("at") or 0)[:600]:
+            d.pop(k, None)
+    return result
+
+# ---- real proposal delivery (was missing entirely) -------------------------------------------------
+# Sending a request used to be local: the client posted feedback, asked an LLM to ROLE-PLAY the
+# recipient's agent, and showed "мы отправили твой запрос <name>" plus a mutual match based on that
+# simulation. Nothing ever reached the other account — logging in as the recipient showed no request.
+# These endpoints are the actual delivery: a proposal is stored, the recipient reads and answers it,
+# and the sender sees the real answer instead of a generated one.
+def _norm_name(n):
+    return str(n or "").strip().lower()
+
+def propose(frm, to, intent, note, idem=None):
+    frm, to = str(frm or "").strip(), str(to or "").strip()
+    if not frm or not to or _norm_name(frm) == _norm_name(to):
+        return {"ok": False, "error": "sender and recipient required and must differ"}
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached                                    # retry-safe: same key, same answer
+    now = time.time()
+    with _STORE_LOCK:
+        _expire_due(now)
+        rs = _requests()
+        # one open proposal per pair per direction — re-sending updates it rather than stacking
+        for r in rs:
+            if (_norm_name(r.get("from")) == _norm_name(frm) and _norm_name(r.get("to")) == _norm_name(to)
+                    and r.get("status") == "pending"):
+                r.update({"intent": intent or {}, "note": str(note or "")[:400], "updated": now,
+                          "expires_at": now + PROPOSAL_TTL_S,
+                          "version": int(r.get("version") or 1) + 1})
+                _save_store()
+                return _idem_put(idem, {"ok": True, "id": r["id"], "status": "pending",
+                                        "version": r["version"], "expires_at": r["expires_at"], "resent": True})
+        # The id was time-in-ms + hash(pair), so two proposals for the SAME pair inside one
+        # millisecond collided — and every later lookup by id hit whichever row came first.
+        base = "rq_%d_%s" % (int(now * 1000), hashlib.sha1((frm + to).encode("utf-8")).hexdigest()[:6])
+        taken = {r.get("id") for r in rs}
+        rid, n = base, 1
+        while rid in taken:
+            rid, n = "%s_%d" % (base, n), n + 1
+        rs.append({"id": rid, "from": frm, "to": to, "intent": intent or {},
+                   "note": str(note or "")[:400], "status": "pending", "created": now, "updated": now,
+                   "version": 1, "expires_at": now + PROPOSAL_TTL_S,
+                   "config_version": (_CORE_CFG or {}).get("config_version")})   # immutable trace stamp
+    _save_store()
+    _log_proposal(to)                       # feeds the receiving-policy budget, spec 4.4
+    return _idem_put(idem, {"ok": True, "id": rid, "status": "pending", "version": 1,
+                            "expires_at": now + PROPOSAL_TTL_S})
+
+def inbox(self_name):
+    me = _norm_name(self_name)
+    if not me:
+        return []
+    if _expire_due():
+        _save_store()
+    out = [dict(r) for r in _requests() if _norm_name(r.get("to")) == me]
+    out.sort(key=lambda r: -(r.get("updated") or 0))
+    return out[:50]
+
+def outbox(self_name):
+    me = _norm_name(self_name)
+    if not me:
+        return []
+    if _expire_due():
+        _save_store()
+    out = [dict(r) for r in _requests() if _norm_name(r.get("from")) == me]
+    out.sort(key=lambda r: -(r.get("updated") or 0))
+    return out[:50]
+
+# A meetup leaves the active list only when someone says so. Deriving "past" from a timestamp would
+# be a guess: the request carries the intent's loose time ("tomorrow evening"), never a real date.
+def archive_request(rid, who):
+    me = _norm_name(who)
+    with _STORE_LOCK:
+        for r in _requests():
+            if r.get("id") == rid:
+                if me and me not in (_norm_name(r.get("to")), _norm_name(r.get("from"))):
+                    return {"ok": False, "error": "not your request"}
+                if r.get("status") != "accepted":
+                    return {"ok": False, "error": "only an accepted meetup can be archived"}
+                r["status"] = "archived"
+                r["updated"] = time.time()
+                _save_store()
+                return {"ok": True, "id": rid, "status": "archived"}
+    return {"ok": False, "error": "not found"}
+
+def _num(v):
+    """Numeric coercion that tolerates strings ('28') and refuses junk — a single profile with a
+    string-typed age/km used to raise inside a gate and kill the search for EVERY user."""
+    if isinstance(v, bool) or v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+def _policy_ok_now(frm, to, blocked=None):
+    """Re-resolve BOTH sides against the live store and re-run the hard gates. Returns (ok, reason).
+    Safe to call while _STORE_LOCK is held: load_candidates() and plain SESSION reads never take it
+    (_session() does — calling that here would deadlock on the non-reentrant lock)."""
+    by = {}
+    for c in load_candidates():
+        by[_norm_name(c.get("name"))] = c
+    a, b = by.get(_norm_name(frm)), by.get(_norm_name(to))
+    if not a or not b:
+        return True, ""                                  # unknown to the store: nothing to revoke on
+    if b.get("open") is False or b.get("paused"):
+        return False, "recipient is not accepting requests"
+    if a.get("paused"):
+        return False, "sender is paused"
+    # Only CONSENT and SAFETY gates are re-checked here. Outreach budgets (fatigue, cooldown,
+    # "too many open invites") governed whether the proposal could be SENT; re-applying them now
+    # would revoke perfectly consensual acceptances just because the sender got popular meanwhile.
+    bl = {str(x).strip().lower() for x in (blocked or ())}
+    if _norm_name(frm) in bl or a.get("blocksMe") or b.get("blocksMe"):
+        return False, "blocked"
+    for side, tag in ((a, "sender"), (b, "recipient")):
+        age = _num(side.get("age"))
+        if age is not None and age < MIN_AGE:
+            return False, "%s under %d" % (tag, MIN_AGE)
+    return True, ""
+
+def respond(rid, decision, who, idem=None, version=None):
+    """Accept/decline INSIDE one transaction that re-checks expiry, version and LIVE policy (§14.2).
+    Before this, policy was validated only when SENDING: if the recipient paused, blocked the sender
+    or closed the domain between SENT and ACCEPT, the accept still went through."""
+    dec = "accepted" if str(decision).lower() in ("accept", "accepted", "yes") else "declined"
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached                                    # same key -> same answer (acceptance test #7)
+    with _STORE_LOCK:
+        now = time.time()
+        _expire_due(now)
+        for r in _requests():
+            if r.get("id") != rid:
+                continue
+            if who and _norm_name(who) != _norm_name(r.get("to")):
+                return {"ok": False, "error": "only the recipient can answer this request"}
+            st = r.get("status")
+            if st == "expired":
+                _save_store()
+                return _idem_put(idem, {"ok": False, "error": "EXPIRED", "id": rid, "status": "expired"})
+            if st != "pending":
+                # already settled: report the settled state, never flip it (concurrent-accept, §14.3)
+                return _idem_put(idem, {"ok": False, "error": "ALREADY_RESOLVED", "id": rid,
+                                        "status": st, "version": r.get("version")})
+            # optimistic concurrency: a stale version means someone else moved this row first
+            if version is not None and str(version) != str(r.get("version") or 1):
+                return {"ok": False, "error": "VERSION_CONFLICT", "id": rid,
+                        "status": st, "version": r.get("version")}
+            if dec == "accepted":
+                # the responder IS the local user, so their block list is session "me"
+                mine = (SESSION.get("me") or {}).get("blocked") or []
+                ok, why = _policy_ok_now(r.get("from"), r.get("to"), mine)
+                if not ok:
+                    r["status"] = "policy_revoked"
+                    r["updated"] = now
+                    r["version"] = int(r.get("version") or 1) + 1
+                    r["trace"] = {"decision": "policy_revoked", "at": now, "reason": why}
+                    _save_store()
+                    return _idem_put(idem, {"ok": False, "error": "POLICY_CHANGED", "id": rid,
+                                            "status": "policy_revoked", "reason": why})
+            r["status"] = dec
+            r["updated"] = now
+            r["version"] = int(r.get("version") or 1) + 1
+            r["trace"] = {"decision": dec, "at": now, "by": who or r.get("to"),
+                          "config_version": r.get("config_version")}   # immutable decision trace
+            _save_store()
+            return _idem_put(idem, {"ok": True, "id": rid, "status": dec, "version": r["version"]})
+    return {"ok": False, "error": "not found"}
+
+def withdraw_request(rid, who, idem=None):
+    """The SENDER pulls a proposal back before it is answered (§14.1 WITHDRAWN)."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        _expire_due()
+        for r in _requests():
+            if r.get("id") != rid:
+                continue
+            if who and _norm_name(who) != _norm_name(r.get("from")):
+                return {"ok": False, "error": "only the sender can withdraw"}
+            if r.get("status") != "pending":
+                return _idem_put(idem, {"ok": False, "error": "ALREADY_RESOLVED",
+                                        "id": rid, "status": r.get("status")})
+            r["status"] = "withdrawn"
+            r["updated"] = time.time()
+            r["version"] = int(r.get("version") or 1) + 1
+            _save_store()
+            return _idem_put(idem, {"ok": True, "id": rid, "status": "withdrawn", "version": r["version"]})
+    return {"ok": False, "error": "not found"}
+
+# ---- real message delivery ------------------------------------------------------------------------
+# Same gap as proposals had: the chat pushed the typed text into local state only, so the recipient's
+# account never received it. Messages are stored per pair and read back by either side.
+def _messages():
+    return SESSION.setdefault("_messages", [])
+
+def _pair_key(a, b):
+    return "|".join(sorted([_norm_name(a), _norm_name(b)]))
+
+def send_message(frm, to, text):
+    frm, to, text = str(frm or "").strip(), str(to or "").strip(), str(text or "").strip()[:2000]
+    if not frm or not to or not text or _norm_name(frm) == _norm_name(to):
+        return {"ok": False, "error": "from, to and text are required and the two must differ"}
+    m = {"id": "m_%d" % int(time.time() * 1000), "pair": _pair_key(frm, to),
+         "from": frm, "to": to, "text": text, "t": time.time()}
+    with _STORE_LOCK:
+        ms = _messages()
+        ms.append(m)
+        del ms[:-4000]                       # keep the store bounded
+    _save_store()
+    return {"ok": True, "id": m["id"], "t": m["t"]}
+
+def thread(self_name, other, since=0.0):
+    """Every message between the two, oldest first. `since` lets a client poll for new ones only."""
+    if not str(self_name or "").strip() or not str(other or "").strip():
+        return []
+    key = _pair_key(self_name, other)
+    try:
+        since = float(since or 0)
+    except (TypeError, ValueError):
+        since = 0.0
+    out = [dict(m) for m in _messages() if m.get("pair") == key and (m.get("t") or 0) > since]
+    out.sort(key=lambda m: m.get("t") or 0)
+    return out[-200:]
+
+def threads_for(self_name):
+    """Latest message per conversation, so the Messages tab reflects what actually exists."""
+    me = _norm_name(self_name)
+    if not me:
+        return []
+    last = {}
+    for m in _messages():
+        if me not in (_norm_name(m.get("from")), _norm_name(m.get("to"))):
+            continue
+        other = m.get("to") if _norm_name(m.get("from")) == me else m.get("from")
+        cur = last.get(_norm_name(other))
+        if not cur or (m.get("t") or 0) > (cur.get("t") or 0):
+            last[_norm_name(other)] = {"who": other, "last": m.get("text"), "t": m.get("t"),
+                                       "mine": _norm_name(m.get("from")) == me}
+    return sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50]
+
+# ---- intents as LIVE server-side standing searches ------------------------------------------------
+# Intents used to live only in the sender's localStorage, holding a FROZEN copy of the candidates from
+# the moment they were created — so a saved intent was a private note that never re-searched, while the
+# requests and messages it supposedly drove were already shared server state. Stored here instead, and
+# re-ranked on read so opening one shows who fits NOW, not who fitted then.
+def _intents():
+    return SESSION.setdefault("_intents", [])
+
+def save_intent(owner, intent, title, iid=None, launched=None):
+    owner = str(owner or "").strip()
+    if not owner or not isinstance(intent, dict):
+        return {"ok": False, "error": "owner and intent required"}
+    now = time.time()
+    with _STORE_LOCK:
+        rows = _intents()
+        if iid:
+            for r in rows:
+                if r.get("id") == iid and _norm_name(r.get("owner")) == _norm_name(owner):
+                    r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+                    # once a search has actually run this never flips back to "not started"
+                    if launched:
+                        r["launched"] = now
+                    _save_store()
+                    return {"ok": True, "id": iid}
+        # the same request twice should update, not pile up a second identical card
+        key = json.dumps(intent.get("topics") or [], sort_keys=True) + "|" + str(intent.get("role") or "")
+        for r in rows:
+            if _norm_name(r.get("owner")) == _norm_name(owner) and r.get("key") == key:
+                r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+                if launched:
+                    r["launched"] = now
+                _save_store()
+                return {"ok": True, "id": r["id"], "merged": True}
+        nid = "in_%d" % int(now * 1000)
+        rows.append({"id": nid, "owner": owner, "title": title or "", "intent": intent,
+                     "key": key, "created": now, "updated": now,
+                     "launched": now if launched else None})
+    _save_store()
+    return {"ok": True, "id": nid}
+
+def delete_intent(owner, iid):
+    with _STORE_LOCK:
+        rows = _intents()
+        keep = [r for r in rows
+                if not (r.get("id") == iid and _norm_name(r.get("owner")) == _norm_name(owner))]
+        removed = len(rows) - len(keep)
+        rows[:] = keep
+    _save_store()
+    return {"ok": removed > 0}
+
+def _normalize_intent(raw):
+    """Accept the shapes clients actually send. The profile UI posts its CARD object, where the
+    topics live in `tags` and the real intent is nested under `intent` — so the engine saw an
+    intent with NO topics, tiered everyone as T5 ("no meaningful topical overlap") and declined
+    the whole slate. Be liberal here: a missing topic list is never a legitimate search."""
+    if not isinstance(raw, dict):
+        return {}
+    it = dict(raw)
+    inner = raw.get("intent")
+    if isinstance(inner, dict):                       # card wrapper -> use the real intent
+        merged = dict(inner)
+        for k, v in it.items():
+            if k != "intent" and k not in merged:
+                merged[k] = v
+        it = merged
+    if not it.get("topics"):
+        for alt in ("tags", "keywords"):
+            v = it.get(alt)
+            if isinstance(v, list) and v:
+                it["topics"] = [str(x) for x in v]
+                break
+    return it
+
+def list_intents(owner, profile=None, live=True):
+    """Every intent this user owns. With live=True each one is re-ranked now, so the count and the
+    top band reflect the current pool rather than a snapshot taken when the card was made."""
+    me = _norm_name(owner)
+    if not me:
+        return []
+    out = []
+    for r in [x for x in _intents() if _norm_name(x.get("owner")) == me]:
+        row = {"id": r["id"], "title": r.get("title"), "intent": r.get("intent") or {},
+               "created": r.get("created"), "updated": r.get("updated"),
+               "launched": r.get("launched"), "candidates": []}
+        if live:
+            try:
+                row["candidates"] = match_candidates(_normalize_intent(r.get("intent") or {}),
+                                                     profile or {}, {"self": owner}) or []
+            except Exception as e:
+                row["error"] = str(e)[:120]        # a failed re-rank must not hide the intent
+        out.append(row)
+    out.sort(key=lambda x: -(x.get("updated") or 0))
+    return out
+
+# Group size bounds (§15). Restored with the group handlers: this was a tuple assignment in the
+# pre-rewrite file, which the transplant's dependency scan did not follow.
+GROUP_MIN, GROUP_MAX = 2, 8
+
+
+def _gnorm(seq):
+    return [_norm_name(x) for x in (seq or [])]
+
+def _group_state(g):
+    """Derived, never stored twice: forming -> confirmed at quorum, full at capacity."""
+    if g.get("state") == "cancelled":
+        return "cancelled"
+    n = len(g.get("members") or [])
+    if n >= int(g.get("max_size") or GROUP_MAX):
+        return "full"
+    return "confirmed" if n >= int(g.get("min_size") or GROUP_MIN) else "forming"
+
+def _group_public(g, me=""):
+    mem = list(g.get("members") or [])
+    return {"gid": g.get("id"), "title": g.get("title"), "host": g.get("host"),
+            "topics": list(g.get("topics") or []), "when": g.get("when") or "",
+            "area": g.get("area") or "", "lat": g.get("lat"), "lon": g.get("lon"),
+            "mode": g.get("mode") or "offline",
+            "min_size": int(g.get("min_size") or GROUP_MIN), "max_size": int(g.get("max_size") or GROUP_MAX),
+            "members": mem, "size": len(mem), "waitlist": list(g.get("waitlist") or []),
+            "state": _group_state(g), "version": int(g.get("version") or 1),
+            "mine": bool(me) and _norm_name(me) in _gnorm(mem),
+            "hosting": bool(me) and _norm_name(me) == _norm_name(g.get("host")),
+            "waiting": bool(me) and _norm_name(me) in _gnorm(g.get("waitlist"))}
+
+def _groups():
+    return SESSION.setdefault("_groups", [])
+
+def group_create(host, title, topics, when="", area="", mode="offline",
+                 min_size=GROUP_MIN, max_size=GROUP_MAX, lat=None, lon=None, idem=None):
+    host = str(host or "").strip()
+    if not host:
+        return {"ok": False, "error": "host required"}
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    try:
+        mn, mx = int(min_size or GROUP_MIN), int(max_size or GROUP_MAX)
+    except Exception:
+        mn, mx = GROUP_MIN, GROUP_MAX
+    mn = max(2, min(mn, GROUP_MAX))
+    mx = max(mn, min(mx, GROUP_MAX))
+    now = time.time()
+    with _STORE_LOCK:
+        gs = _groups()
+        gid = "gr_%d_%s" % (int(now * 1000), hashlib.sha1(host.encode("utf-8")).hexdigest()[:6])
+        taken = {g.get("id") for g in gs}
+        base, n = gid, 1
+        while gid in taken:
+            gid, n = "%s_%d" % (base, n), n + 1
+        g = {"id": gid, "host": host, "title": str(title or "").strip()[:120] or "Meetup",
+             "topics": [str(t).lower() for t in (topics or [])][:6], "when": str(when or "")[:80],
+             "area": str(area or "")[:80], "mode": str(mode or "offline"), "lat": lat, "lon": lon,
+             "min_size": mn, "max_size": mx, "members": [host], "waitlist": [], "state": "forming",
+             "created": now, "updated": now, "version": 1,
+             "config_version": (_CORE_CFG or {}).get("config_version")}
+        gs.append(g)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _group_public(g, host)})
+
+def group_join(gid, who, idem=None, version=None):
+    """Joining is a transaction, exactly like accepting a proposal: capacity, state and pairwise
+    safety are re-checked under the lock, so two people racing for the last seat cannot both win."""
+    who = str(who or "").strip()
+    if not who:
+        return {"ok": False, "error": "name required"}
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        for g in _groups():
+            if g.get("id") != gid:
+                continue
+            if g.get("state") == "cancelled":
+                return _idem_put(idem, {"ok": False, "error": "CANCELLED", "gid": gid})
+            if version is not None and str(version) != str(g.get("version") or 1):
+                return {"ok": False, "error": "VERSION_CONFLICT", "gid": gid,
+                        "version": g.get("version"), "group": _group_public(g, who)}
+            if _norm_name(who) in _gnorm(g.get("members")):
+                return _idem_put(idem, {"ok": True, "gid": gid, "already": True,
+                                        "group": _group_public(g, who)})
+            # §15.1 safety exclusions are PAIRWISE: the joiner must be acceptable to every member
+            # already in, and every member to them. Checking only the host would let a blocked
+            # person walk in through someone else's group.
+            mine = (SESSION.get("me") or {}).get("blocked") or []
+            for m in (g.get("members") or []):
+                ok, why = _policy_ok_now(who, m, mine)
+                if not ok:
+                    return _idem_put(idem, {"ok": False, "error": "NOT_ELIGIBLE", "gid": gid,
+                                            "reason": why})
+            if len(g.get("members") or []) >= int(g.get("max_size") or GROUP_MAX):
+                wl = g.setdefault("waitlist", [])
+                if _norm_name(who) not in _gnorm(wl):
+                    wl.append(who)
+                g["updated"] = time.time()
+                g["version"] = int(g.get("version") or 1) + 1
+                _save_store()
+                return _idem_put(idem, {"ok": True, "gid": gid, "waitlisted": True,
+                                        "group": _group_public(g, who)})
+            g.setdefault("members", []).append(who)
+            g["waitlist"] = [w for w in (g.get("waitlist") or []) if _norm_name(w) != _norm_name(who)]
+            g["updated"] = time.time()
+            g["version"] = int(g.get("version") or 1) + 1
+            _save_store()
+            return _idem_put(idem, {"ok": True, "gid": gid, "group": _group_public(g, who)})
+    return {"ok": False, "error": "not found"}
+
+def group_leave(gid, who, idem=None):
+    """§15.3 step 7: on a drop, promote from the waitlist; losing quorum re-forms the group rather
+    than cancelling it. The host leaving hands the group to the next member — an empty group ends."""
+    who = str(who or "").strip()
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        for g in _groups():
+            if g.get("id") != gid:
+                continue
+            mem = [m for m in (g.get("members") or []) if _norm_name(m) != _norm_name(who)]
+            wl = [w for w in (g.get("waitlist") or []) if _norm_name(w) != _norm_name(who)]
+            if len(mem) == len(g.get("members") or []) and len(wl) == len(g.get("waitlist") or []):
+                return _idem_put(idem, {"ok": False, "error": "NOT_A_MEMBER", "gid": gid})
+            promoted = None
+            if len(mem) < int(g.get("max_size") or GROUP_MAX) and wl and len(mem) < len(g.get("members") or []):
+                promoted = wl.pop(0)
+                mem.append(promoted)
+            g["members"], g["waitlist"] = mem, wl
+            if not mem:
+                g["state"] = "cancelled"
+            elif _norm_name(g.get("host")) == _norm_name(who):
+                g["host"] = mem[0]                       # the group survives its host leaving
+            g["updated"] = time.time()
+            g["version"] = int(g.get("version") or 1) + 1
+            _save_store()
+            return _idem_put(idem, {"ok": True, "gid": gid, "promoted": promoted,
+                                    "group": _group_public(g, who)})
+    return {"ok": False, "error": "not found"}
+
+def _pair_fit(intent, a, b):
+    """Directed relevance a->b combined reciprocally, on the SAME engine the slate uses. Returns
+    0..1, or None when the engine is off — callers must treat None as 'unknown', never as 0."""
+    if not (CORE_V2 and _CORE_CFG):
+        return None
+    try:
+        # A stored user row and a searcher PROFILE are not the same shape (languages is a list on one
+        # and {comfortable:[...]} on the other). Feeding a row in as a profile made reverse_features
+        # throw, and _pair_fit swallowed it as "unknown" — every group utility came back null.
+        a = dict(a or {})
+        if isinstance(a.get("languages"), list):
+            a["languages"] = {"comfortable": list(a["languages"])}
+        H = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
+        domain = _core.infer_domain(intent, cat_of)
+        dom_cfg = _CORE_CFG["domains"].get(domain) or _CORE_CFG["domains"]["social_meet"]
+        priors = {k: (_CORE_CFG["feature_groups"][k] or {}).get("unknown_prior", 0.5)
+                  for k in _core.FEATURE_KEYS}
+        f_ab = _core.build_features(intent, a, b, domain, H, ROLE_CONFLICT)
+        d_ab = _core.directional_score(f_ab, dom_cfg, priors)
+        f_ba = _core.reverse_features(intent, a, b, domain, H, ROLE_CONFLICT)
+        d_ba = _core.directional_score(f_ba, dom_cfg, priors)
+        return float(_core.reciprocal_score(d_ab, d_ba))
+    except Exception:
+        return None
+
+def group_utility(g, rows=None):
+    """Spec §15.2: 0.35*least_misery + 0.25*mean_pair_fit + 0.20*role_coverage + 0.10*time_overlap
+    + 0.10*diversity_value. Only the terms we can actually evidence are scored; the rest stay out of
+    the denominator instead of being invented (same unknown discipline as the pair engine)."""
+    by = {}
+    for c in (rows if rows is not None else load_candidates()):
+        by[_norm_name(c.get("name"))] = c
+    mem = [by.get(n) for n in _gnorm(g.get("members"))]
+    mem = [m for m in mem if m]
+    if len(mem) < 2:
+        return {"utility": None, "least_misery": None, "mean_pair_fit": None, "pairs": 0}
+    intent = {"topics": list(g.get("topics") or []), "type": g.get("type") or "social",
+              "role": "meet", "mode": g.get("mode") or "offline", "time": g.get("when") or ""}
+    fits = []
+    for i in range(len(mem)):
+        for j in range(len(mem)):
+            if i == j:
+                continue
+            f = _pair_fit(intent, mem[i], mem[j])
+            if f is not None:
+                fits.append(f)
+    if not fits:
+        return {"utility": None, "least_misery": None, "mean_pair_fit": None, "pairs": 0}
+    least, mean = min(fits), sum(fits) / len(fits)
+    langs = set()
+    for m in mem:
+        langs |= {str(x).lower() for x in (m.get("languages") or [])}
+    diversity = min(1.0, len(langs) / 3.0) if langs else None
+    parts, weights = [(least, 0.35), (mean, 0.25)], []
+    if diversity is not None:
+        parts.append((diversity, 0.10))
+    tot = sum(w for _v, w in parts)
+    util = sum(v * w for v, w in parts) / tot if tot else None
+    return {"utility": round(util, 4) if util is not None else None,
+            "least_misery": round(least, 4), "mean_pair_fit": round(mean, 4), "pairs": len(fits)}
+
+def group_list(self_name="", limit=30, open_only=False):
+    me = str(self_name or "").strip()
+    out = []
+    rows = load_candidates()
+    for g in _groups():
+        if g.get("state") == "cancelled":
+            continue
+        pub = _group_public(g, me)
+        if open_only and (pub["mine"] or pub["state"] == "full"):
+            continue
+        pub["fit"] = group_utility(g, rows)
+        out.append(pub)
+    # mine first, then the ones closest to happening, then group utility — never a raw percentage
+    out.sort(key=lambda p: (not p["mine"], -(p["size"] or 0), -((p["fit"] or {}).get("utility") or 0)))
+    return out[:max(1, int(limit or 30))]
+
+
+# ---- helpers for the restored admin/diagnostic routes (verbatim from the pre-rewrite service)
+# ── Learned categories ────────────────────────────────────────────────────────────────────────────
+# The hand-written taxonomy is 165 words; interests are not a closed set. Filtration already decides
+# a (category, subcategory) for text nobody has seen before — «лабубу» -> toys_collectibles, «улитки»
+# -> pets/breeding — and that answer used to be computed, put on the intent and then ignored, because
+# nothing on the CANDIDATE side had a category to compare against.
+#
+# This is that missing half: one shared word -> (broad, sub) map that both sides resolve through.
+# Because it is consulted from cat_of(), the existing level logic (4 exact / 3 sub / 2 broad /
+# 1 adjacent) applies to new interests unchanged — no new scoring path, no new weights.
+#
+# Only filtration writes here, and only its own vocabulary is accepted, so a malformed answer cannot
+# invent a category. Entries are per-word and bounded; the file is small and human-readable on
+# purpose, because a wrong category here is invisible in a slate and obvious in a list.
+LEARNED_PATH = os.environ.get("KLEAL_LEARNED",
+                              os.path.join(os.path.dirname(os.path.abspath(__file__)), "learned_topics.json"))
+
+
+_FILTRATION_CATS = {"sports", "gaming", "esports", "tabletop", "music", "film_tv", "art_culture",
+                    "books", "food_drink", "coffee", "nightlife", "outdoors", "travel", "tech",
+                    "startups", "career", "languages", "wellness", "fashion", "toys_collectibles",
+                    "pets", "photography", "dating", "social"}
+
+
+def _load_learned():
+    try:
+        with open(LEARNED_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return {str(k).lower(): (str(v[0]), str(v[1])) for k, v in d.items()
+                if isinstance(v, (list, tuple)) and len(v) == 2 and str(v[0]) in _FILTRATION_CATS}
+    except Exception:
+        return {}
+
+
+LEARNED = _load_learned()
+
+
+# ---------------------------------------------------------------- one person, every reason (admin)
+def _raw_store_rows():
+    """The store as written, WITHOUT the loadtest filter — the admin has to be able to look at a
+    row precisely because it was excluded from the pool."""
+    try:
+        with open(USERS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        lst = data.get("users") if isinstance(data, dict) else data
+        return lst if isinstance(lst, list) else []
+    except Exception:
+        return []
+
+
+def cohorts():
+    """The saved queries that a 3000-row table cannot answer. Counts + names, computed over the raw
+    store so a cohort can be ABOUT the rows retrieval drops."""
+    rows = _raw_store_rows()
+    now_ts = time.time()
+    defs = [
+        ("no_interests", "Без интересов — навсегда T5", lambda u: not [x for x in (u.get("interests") or []) if str(x).strip()]),
+        ("no_intents", "Без своих интентов — никогда не T0", lambda u: not (u.get("intents") or [])),
+        ("no_age", "Без возраста — нет dating и возрастных запросов", lambda u: _num(u.get("age")) is None),
+        ("no_coords", "Без координат — нет поиска по радиусу", lambda u: _num(u.get("lat")) is None or _num(u.get("lon")) is None),
+        ("paused", "На паузе — вне выдачи", lambda u: _core.is_paused(u, now_ts)),
+        ("no_domains", "allowed_domains пуст — ни одного предложения", lambda u: isinstance(((u.get("receiving") or {}) if isinstance(u.get("receiving"), dict) else {}).get("allowed_domains"), list) and not ((u.get("receiving") or {}).get("allowed_domains"))),
+        ("budget_zero", "Нулевой бюджет предложений", lambda u: (((u.get("receiving") or {}) if isinstance(u.get("receiving"), dict) else {}).get("proposal_budget") or {}).get("per_24h") == 0),
+        ("unverified", "Не верифицированы", lambda u: not u.get("verified")),
+        ("loadtest", "source=loadtest — вне поиска", lambda u: u.get("source") == "loadtest"),
+    ]
+    out = []
+    for key, label, fn in defs:
+        names = []
+        n = 0
+        for u in rows:
+            try:
+                if fn(u):
+                    n += 1
+                    if len(names) < 40:
+                        names.append(u.get("name") or "?")
+            except Exception:
+                pass
+        out.append({"key": key, "label": label, "count": n, "total": len(rows), "sample": names})
+    return {"ok": True, "total": len(rows), "cohorts": out}
+
+
+def compare_scorers(intent, prof, ctx=None):
+    """Same query, both scorers, side by side — the shipped Core v2 and the legacy scorer that
+    KLEAL_CORE_V2=0 falls back to.
+
+    This exists because the fallback is silent. A config whose sha does not match drops the whole
+    system onto the legacy scorer without an error anywhere, and the only visible symptom is that
+    different people start appearing. Before this you could not answer «насколько вообще разные
+    эти два движка» without editing an env var on a live box.
+    """
+    ctx = dict(ctx or {})
+    try:
+        new = match_candidates(intent, prof, ctx) if CORE_V2 else []
+    except Exception as e:
+        new = []
+        ctx["_new_error"] = str(e)[:160]
+    try:
+        old = match_candidates_legacy(intent, prof, ctx)
+    except Exception as e:
+        old = []
+        ctx["_old_error"] = str(e)[:160]
+    nn = [str(c.get("name") or "") for c in new]
+    on = [str(c.get("name") or "") for c in old]
+    sn, so = set(nn), set(on)
+    both = sn & so
+    denom = float(len(sn | so)) or 1.0
+    # Rank movement for the people BOTH scorers show — a slate can have identical membership and
+    # still be a different product if the order is inverted.
+    moved = []
+    for name in both:
+        a, b = nn.index(name), on.index(name)
+        if a != b:
+            moved.append({"name": name, "new": a + 1, "old": b + 1, "delta": b - a})
+    moved.sort(key=lambda m: -abs(m["delta"]))
+    return {"ok": True,
+            "core": {"enabled": CORE_V2, "config_version": (_CORE_CFG or {}).get("config_version"),
+                     "config_sha": ((_CORE_CFG or {}).get("_sha256") or "")[:12], "error": _CORE_ERR},
+            "new": {"n": len(nn), "names": nn}, "old": {"n": len(on), "names": on},
+            "shared": sorted(both), "onlyNew": [n for n in nn if n not in so],
+            "onlyOld": [n for n in on if n not in sn],
+            "jaccard": round(len(both) / denom, 3),
+            "topChanged": bool(nn[:1] != on[:1]),
+            "moved": moved[:8],
+            "errors": {k: v for k, v in ctx.items() if k.startswith("_") and k.endswith("error")}}
+
+
+_LEARNED_CAPS = 4000
+
+
+_LEARNED_LOCK = threading.Lock()
+
+
+# Generic descriptor words filtration emits alongside the real interest. Stored as categories they
+# match everyone: «money» -> startups/investing would pair every uncategorised person who typed
+# money, «find»/«search» are worse. A learned entry is permanent and invisible in a slate, so the
+# writer — this service — is where the guard belongs, whatever the source.
+_LEARN_STOP = {
+    "hobby", "hobbies", "fun", "day", "days", "time", "people", "person", "friend", "friends",
+    "company", "someone", "somebody", "group", "meet", "meetup", "socialize", "social", "find",
+    "search", "looking", "want", "wanna", "activity", "activities", "thing", "things", "stuff",
+    "money", "cash", "finance", "discussion", "chat", "talk", "collect", "collecting", "watching",
+    "throwing", "playing", "doing", "making", "sport", "sports", "game", "games", "gaming",
+    "interest", "interests", "new", "cool", "nice", "good", "best", "любой", "разное", "хобби",
+    "деньги", "компания", "человек", "люди", "друзья", "встреча", "общение", "интерес",
+}
+
+
+def cat_of_fixed(word):
+    """Taxonomy only, no learned entries — used to decide whether a word still needs teaching."""
+    w = _norm(word)
+    return _IDX.get(w, (None, None))
+
+
+def learn_topics(pairs):
+    """pairs: [(word, category, subcategory)]. Returns how many are new. `other` is filtration's
+    honest "nothing here" and is never stored — an unknown word must stay unknown, not become a
+    category that matches everyone else who is also uncategorised."""
+    added = 0
+    with _LEARNED_LOCK:
+        for w, c, sub in pairs or []:
+            w = str(w or "").strip().lower()[:40]
+            c = str(c or "").strip().lower()
+            sub = str(sub or "").strip().lower()[:40]
+            if not w or c not in _FILTRATION_CATS or w in LEARNED or len(LEARNED) >= _LEARNED_CAPS:
+                continue
+            if w in _LEARN_STOP or len(w) < 3:
+                continue                       # a generic descriptor, not an interest
+            if cat_of_fixed(w)[0]:
+                continue                       # the hand-written taxonomy already owns this word
+            LEARNED[w] = (c, sub)
+            added += 1
+        if added:
+            try:
+                tmp = LEARNED_PATH + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({k: list(v) for k, v in LEARNED.items()}, f, ensure_ascii=False)
+                os.replace(tmp, LEARNED_PATH)   # atomic: this file is read on every search
+            except Exception:
+                pass
+    if added:
+        same_topic.cache_clear()   # cat_of is not memoised; same_topic is, and it reads categories
+    return added
+
+
+# tools/gen_test_users.py stamps source="loadtest" on its 1000-person load pool. Only the Explore map
+# ever filtered them out, so a real user's SEARCH was ranked against ~982 synthetic people (every
+# result surnamed Volkov/Petrov/Garcia). They are fixtures, not people, and must not be proposed to
+# anyone. The eval and fuzz harnesses run ON that pool, so they flip this back on.
+INCLUDE_LOADTEST = os.environ.get("KLEAL_INCLUDE_LOADTEST", "0") != "0"
+
+
+def person_report(name, now_ts=None):
+    """Why is this person invisible, and why do they see nobody? Two different questions with two
+    different answers, and until this endpoint existed both looked like "the ranker is bad".
+
+    Every field is reported as the store actually holds it. A missing value is reported as None
+    (the panel renders «не собрано») and NEVER as a default — a fabricated `age: 30` here would
+    hide the exact gate that is dropping the person.
+    """
+    now_ts = now_ts or time.time()
+    want = _norm_name(name)
+    row = None
+    for u in _raw_store_rows():
+        if _norm_name(u.get("name")) == want:
+            row = u
+            break
+    if row is None:
+        for u in CANDIDATES:                      # demo pool, only reachable with KLEAL_MERGE_DEMO
+            if _norm_name(u.get("name")) == want:
+                row = dict(u, source="demo")
+                break
+    if row is None:
+        return {"ok": False, "error": "no such person", "name": name}
+
+    in_pool = any(_norm_name(c.get("name")) == want for c in load_candidates())
+    ints = [str(x).lower() for x in (row.get("interests") or []) if str(x).strip()]
+    lat, lon = _num(row.get("lat")), _num(row.get("lon"))
+    age = _num(row.get("age"))
+    langs = [str(l)[:2].lower() for l in (row.get("langs") or []) if str(l).strip()]
+    r = row.get("receiving") if isinstance(row.get("receiving"), dict) else None
+    received = (_proposals_received_24h() or {}).get(want, 0)
+
+    # ---- inbound: can anyone find them at all
+    blocks = []                                    # hard, absolute — no search reaches them
+    warns = []                                     # narrows them to a subset of searches
+    if row.get("source") == "loadtest" and not INCLUDE_LOADTEST:
+        blocks.append({"key": "loadtest", "ru": "строка помечена source=loadtest — исключена из поиска",
+                       "en": "row is source=loadtest — excluded from retrieval"})
+    if _core.is_paused(row, now_ts):
+        why = ("флаг paused" if row.get("paused") else
+               ("receiving.status=paused" if str((r or {}).get("status") or "").lower() == "paused"
+                else "receiving.paused_until в будущем"))
+        blocks.append({"key": "paused", "ru": "на паузе (%s)" % why, "en": "paused (%s)" % why})
+    if not ints:
+        blocks.append({"key": "no_interests",
+                       "ru": "нет интересов — тир T5 при ЛЮБОМ запросе, никогда не показывается",
+                       "en": "no interests — tier T5 for every query, never shown"})
+    if row.get("open") is False and not r:
+        warns.append({"key": "open_false", "ru": "open=false — готовность «занят(а)»",
+                      "en": "open=false — readiness 'busy'"})
+    if age is None:
+        warns.append({"key": "no_age",
+                      "ru": "возраст не собран — выпадает из dating и из любого запроса с возрастным диапазоном",
+                      "en": "age unknown — dropped from dating and any age-range query"})
+    elif age < MIN_AGE:
+        blocks.append({"key": "under_age", "ru": "младше 18 — жёсткий отказ", "en": "under 18 — hard gate"})
+    if lat is None or lon is None:
+        warns.append({"key": "no_coords",
+                      "ru": "нет координат — выпадает из любого запроса с радиусом",
+                      "en": "no coordinates — dropped from any query with a radius"})
+    if not langs:
+        warns.append({"key": "no_langs", "ru": "языки не собраны — выпадает при requiredLanguages",
+                      "en": "no languages — dropped when a language is required"})
+    if not row.get("verified"):
+        warns.append({"key": "unverified", "ru": "не верифицирован — выпадает при «только проверенные»",
+                      "en": "unverified — dropped when the search asks for verified only"})
+    if not row.get("datingOk"):
+        warns.append({"key": "no_dating", "ru": "нет согласия на dating — выпадает из dating-запросов",
+                      "en": "no dating opt-in — dropped from dating queries"})
+    if (_num(row.get("pending")) or 0) >= MAX_PENDING:
+        blocks.append({"key": "pending", "ru": "слишком много открытых приглашений (%s)" % row.get("pending"),
+                       "en": "too many open invites (%s)" % row.get("pending")})
+
+    # ---- receiving policy, read the same way readiness_state reads it (opt-outs fail closed)
+    out_cfg = (_CORE_CFG or {}).get("outreach") or {}
+    pb = ((r or {}).get("proposal_budget") or {}).get("per_24h")
+    cap = pb if isinstance(pb, (int, float)) and not isinstance(pb, bool) else \
+        (out_cfg.get("max_proposals_received_per_user_24h") or 4)
+    q = (r or {}).get("quiet_hours") or {}
+    tzoff = int(q.get("tz_offset_min", 120))
+    local_min = int((now_ts // 60 + tzoff) % 1440)
+    defaults = out_cfg.get("quiet_hours_local") or ["22:00", "09:00"]
+    quiet_now = _core._in_quiet_hours(local_min, q.get("start") or defaults[0], q.get("end") or defaults[-1])
+    policy = {
+        "hasPolicy": r is not None,
+        "status": (r or {}).get("status"),
+        "allowedDomains": (r or {}).get("allowed_domains"),
+        "passiveOutreach": (r or {}).get("passive_outreach"),
+        "budgetPer24h": cap, "budgetExplicit": pb is not None,
+        "received24h": received,
+        "budgetSpent": received >= int(cap),
+        "quietHours": {"start": q.get("start") or defaults[0], "end": q.get("end") or defaults[-1],
+                       "tzOffsetMin": tzoff,
+                       "localTime": "%02d:%02d" % (local_min // 60, local_min % 60),
+                       "inQuietNow": bool(quiet_now)},
+    }
+    if isinstance(policy["allowedDomains"], list) and not policy["allowedDomains"]:
+        blocks.append({"key": "no_domains", "ru": "allowed_domains пуст — ни одного личного предложения",
+                       "en": "allowed_domains is empty — no personal proposal in any domain"})
+    if policy["budgetSpent"]:
+        warns.append({"key": "budget", "ru": "лимит предложений на сутки исчерпан (%s из %s)" % (received, cap),
+                      "en": "24h proposal budget spent (%s of %s)" % (received, cap)})
+
+    readiness = {}
+    for d in _core.ALL_DOMAINS:
+        readiness[d] = _core.readiness_state(row, d, now_ts, _CORE_CFG, received)
+
+    # ---- outbound: what THIS person's own requests can reach
+    own_intents = row.get("intents") if isinstance(row.get("intents"), list) else []
+    outbound = []
+    if not own_intents:
+        outbound.append({"key": "no_intents",
+                         "ru": "нет собственных интентов — этот человек никогда не станет T0 "
+                               "(взаимным совпадением) ни для кого",
+                         "en": "no own intents — this person can never be a T0 reciprocal match for anybody"})
+    if not ints:
+        outbound.append({"key": "no_interests_out",
+                         "ru": "нет интересов — его собственный поиск не на чем строить",
+                         "en": "no interests — nothing to build their own search on"})
+    if lat is None or lon is None:
+        outbound.append({"key": "no_coords_out",
+                         "ru": "нет координат — его поиск не может отфильтровать по расстоянию",
+                         "en": "no coordinates — their own search cannot filter by distance"})
+
+    return {"ok": True, "name": row.get("name"), "inPool": in_pool,
+            "verdict": ("невидим" if blocks else ("виден" if in_pool else "не в пуле")),
+            "identity": {"source": row.get("source"), "area": row.get("area") or None,
+                         "age": age, "verified": bool(row.get("verified")),
+                         "datingOk": bool(row.get("datingOk")),
+                         "lat": lat, "lon": lon, "radiusKm": _num(row.get("radiusKm")),
+                         "langs": langs or None, "interests": ints or None,
+                         "ownIntents": len(own_intents), "entities": len(row.get("entities") or [])},
+            "blocks": blocks, "warnings": warns, "outbound": outbound,
+            "policy": policy, "readiness": readiness}
+
+
+def proposals_registry(limit=300):
+    """Stage 3: the proposal ledger. Four failures look identical from outside — declined, expired
+    unanswered, revoked by policy at accept time, and never created at all — and only the trace
+    separates them. Read-only: _save_store() writes this file without tmp+replace, so a reader that
+    ever wrote could truncate a request mid-flight."""
+    now = time.time()
+    rows = []
+    for r in (SESSION.get("_requests") or []):
+        if not isinstance(r, dict):
+            continue
+        trace = r.get("trace") if isinstance(r.get("trace"), list) else []
+        exp = r.get("expires_at")
+        try:
+            exp_f = float(exp) if exp is not None else None
+        except (TypeError, ValueError):
+            exp_f = None
+        st = str(r.get("status") or "").lower()
+        rows.append({
+            "id": r.get("id"), "from": r.get("from"), "to": r.get("to"),
+            "note": (str(r.get("note") or "")[:160] or None),
+            "status": st or "unknown",
+            "domain": r.get("domain") or (r.get("intent") or {}).get("type"),
+            "createdAt": r.get("created_at") or r.get("ts"),
+            "ageHours": (round((now - float(r.get("created_at") or r.get("ts") or now)) / 3600.0, 1)
+                         if (r.get("created_at") or r.get("ts")) else None),
+            "expiresAt": exp_f,
+            "expiresInHours": (round((exp_f - now) / 3600.0, 1) if exp_f else None),
+            "expired": bool(exp_f and exp_f <= now and st in ("pending", "sent", "")),
+            "configVersion": r.get("config_version"),
+            "trace": [str(t) for t in trace][-8:],
+            "policyRevoked": st == "policy_revoked" or any("policy_revoked" in str(t) for t in trace),
+        })
+    rows.sort(key=lambda x: (x["createdAt"] or 0), reverse=True)
+    by_status = {}
+    for r in rows:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    return {"ok": True, "total": len(rows), "byStatus": by_status,
+            "expiringSoon": sum(1 for r in rows
+                                if r["expiresInHours"] is not None and 0 < r["expiresInHours"] < 12
+                                and r["status"] in ("pending", "sent")),
+            "expiredUnanswered": sum(1 for r in rows if r["expired"]),
+            "policyRevoked": sum(1 for r in rows if r["policyRevoked"]),
+            "requests": rows[:limit]}
+
+
+def reset_fatigue(name):
+    """Clear one person's received-proposal log. The ONLY write this admin surface makes, and it
+    touches matching's own kleal_store.json — never users.json."""
+    key = _norm_name(name)
+    with _STORE_LOCK:
+        log = SESSION.setdefault("_proposals", {})
+        had = len(log.get(key) or [])
+        log[key] = []
+    _save_store()
+    return {"ok": True, "name": name, "cleared": had}
+
+
 # ---------------------------------------------------------------- HTTP dispatcher (matching only)
 class H(BaseHTTPRequestHandler):
+    # ---- restored routes: the names the profile frontend actually calls (see the block above) ----
+    def _restored_get(self):
+        """The GET half of the restored screens. Returns True when it handled the request."""
+        from urllib.parse import unquote
+        base = self.path.split("?")[0]
+        if base not in ("/api/agent/thread", "/api/agent/threads",
+                        "/api/agent/inbox", "/api/agent/outbox", "/api/agent/groups"):
+            return False
+        q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
+            if "?" in self.path else {}
+        me = unquote(q.get("self", "").replace("+", " "))
+        if base == "/api/agent/threads":
+            send_json(self, 200, {"threads": threads_for(me)})
+        elif base == "/api/agent/thread":
+            try:
+                since = float(q.get("since", 0) or 0)
+            except (TypeError, ValueError):
+                since = 0.0
+            send_json(self, 200, {"messages": thread(me, unquote(q.get("with", "").replace("+", " ")), since)})
+        elif base in ("/api/agent/inbox", "/api/agent/outbox"):
+            fn = inbox if base.endswith("inbox") else outbox
+            send_json(self, 200, {"requests": fn(me)})
+        else:
+            try:
+                lim = max(1, min(100, int(q.get("limit", 30))))
+            except (TypeError, ValueError):
+                lim = 30
+            send_json(self, 200, {"groups": group_list(me, lim, q.get("open") in ("1", "true"))})
+        return True
+
+    def _restored_post(self, p, body):
+        """The POST half of the restored screens. Returns True when it handled the request."""
+        if p == "/api/agent/intent-save":
+            send_json(self, 200, save_intent(body.get("self"), body.get("intent") or {},
+                                             body.get("title"), body.get("id"),
+                                             bool(body.get("launched"))))
+        elif p == "/api/agent/intent-delete":
+            send_json(self, 200, delete_intent(body.get("self"), body.get("id")))
+        elif p == "/api/agent/intents":
+            send_json(self, 200, {"intents": list_intents(body.get("self"), body.get("profile") or {},
+                                                          body.get("live") is not False)})
+        elif p == "/api/agent/message":
+            send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text")))
+        elif p == "/api/agent/propose":
+            send_json(self, 200, propose(body.get("from"), body.get("to"), body.get("intent") or {},
+                                         body.get("note"), body.get("idem")))
+        elif p == "/api/agent/respond":
+            send_json(self, 200, respond(body.get("id"), body.get("decision"), body.get("self"),
+                                         body.get("idem"), body.get("version")))
+        elif p == "/api/agent/withdraw":
+            send_json(self, 200, withdraw_request(body.get("id"), body.get("self"), body.get("idem")))
+        elif p == "/api/agent/request-archive":
+            send_json(self, 200, archive_request(body.get("id"), body.get("self")))
+        elif p == "/api/agent/group-create":
+            send_json(self, 200, group_create(body.get("host"), body.get("title"), body.get("topics"),
+                                              body.get("when"), body.get("area"), body.get("mode"),
+                                              body.get("min_size"), body.get("max_size"),
+                                              body.get("lat"), body.get("lon"), body.get("idem")))
+        elif p == "/api/agent/group-join":
+            send_json(self, 200, group_join(body.get("gid"), body.get("self"),
+                                            body.get("idem"), body.get("version")))
+        elif p == "/api/agent/group-leave":
+            send_json(self, 200, group_leave(body.get("gid"), body.get("self"), body.get("idem")))
+        else:
+            return False
+        return True
+
+
+    # ---- restored diagnostics: what the admin panel proxies to (person card, cohorts, proposal
+    # registry, scorer compare, fatigue reset, stability/diversity probes, the funnel). The rewrite
+    # dropped these with the rest; without them 23 of the panel's 87 checks fail and its Cohorts,
+    # Person, Compare, Funnel and Stability views are blank. Bodies are verbatim from the
+    # pre-rewrite service — read-only diagnostics, they never write to the store or send anything.
+    def _restored_admin_get(self):
+        """Returns True when it handled the request."""
+        if self.path.split("?")[0] == "/api/agent/admin/person":
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
+            from urllib.parse import unquote
+            send_json(self, 200, person_report(unquote(q.get("name", "").replace("+", " "))))
+        elif self.path.split("?")[0] == "/api/agent/admin/cohorts":
+            send_json(self, 200, cohorts())
+        elif self.path.split("?")[0] == "/api/agent/admin/proposals":
+            send_json(self, 200, proposals_registry())
+        else:
+            return False
+        return True
+
+    def _restored_admin_post(self, p, body):
+        """Returns True when it handled the request."""
+        if p == "/api/agent/admin/compare":
+            send_json(self, 200, compare_scorers(_normalize_intent(body.get("intent")),
+                                                 body.get("profile") if isinstance(body.get("profile"), dict) else {},
+                                                 body.get("ctx") if isinstance(body.get("ctx"), dict) else {}))
+        elif p == "/api/agent/learn":
+            # Teach the shared word -> (category, subcategory) map. Buddy calls this with what
+            # filtration already worked out, so no extra model call is spent here.
+            pairs = [(x.get("word"), x.get("category"), x.get("subcategory"))
+                     for x in (body.get("items") or []) if isinstance(x, dict)]
+            send_json(self, 200, {"ok": True, "added": learn_topics(pairs), "known": len(LEARNED)})
+        elif p == "/api/agent/admin/fatigue-reset":
+            send_json(self, 200, reset_fatigue(body.get("name")))
+        elif p == "/api/agent/stability":
+            # Ported capability (not code) from the PROD|OLD|NEW bench: run the SAME search N times
+            # and check the slate does not move. Our tie-break is a name hash, so drift can only come
+            # from something time-dependent — readiness, quiet hours, proposal fatigue — and drift is
+            # indistinguishable, from the outside, from "random people".
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            intent = _normalize_intent(body.get("intent"))
+            runs = max(2, min(8, int(body.get("runs") or 4)))
+            pin = body.get("now")
+            outs = []
+            for _i in range(runs):
+                # `seen` pinned empty ON PURPOSE. Paging is a deterministic function of the seen-set,
+                # so this probe answers the question it was written to answer — can the RANKER drift
+                # on its own — rather than accidentally measuring rotation.
+                ctx = {"self": (prof.get("name") or ""), "uid": "admin-stab", "seen": []}
+                if pin:
+                    ctx["now"] = float(pin)
+                try:
+                    outs.append([c.get("name") for c in match_candidates(intent, prof, ctx)])
+                except Exception as e:
+                    outs.append(["__error__: " + str(e)[:80]])
+            first = outs[0]
+            same_order = all(o == first for o in outs)
+            same_set = all(set(o) == set(first) for o in outs)
+            drift = sorted(set().union(*[set(o) for o in outs]) - set(first)) if not same_set else []
+            send_json(self, 200, {"ok": True, "runs": runs, "n": len(first),
+                                  "stableOrder": same_order, "stableSet": same_set,
+                                  "pinnedNow": bool(pin), "drift": drift[:10],
+                                  "slates": [o[:8] for o in outs]})
+        elif p == "/api/agent/diversity":
+            # «Мне попадаются одни и те же люди, какой бы запрос я ни написал.» That is a claim about
+            # a SET of searches, so no single search can confirm or refute it. Run N topics as one
+            # person and report how many distinct people came back and who keeps reappearing.
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            topics = [str(t).strip() for t in (body.get("topics") or []) if str(t).strip()][:24]
+            base = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            ctx = {"self": (prof.get("name") or ""), "uid": "admin-div"}
+            seen, per, empty = {}, [], []
+            for t in topics:
+                it = _normalize_intent(dict(base, topics=[t]))
+                try:
+                    cands = match_candidates(it, prof, dict(ctx))
+                except Exception:
+                    cands = []
+                names = [c.get("name") for c in cands]
+                per.append({"topic": t, "n": len(names), "names": names[:8]})
+                if not names:
+                    empty.append(t)
+                for n in names:
+                    seen[n] = seen.get(n, 0) + 1
+            runs = max(1, len([p for p in per if p["n"]]))
+            repeats = sorted(((v, k) for k, v in seen.items() if v > 1), reverse=True)[:10]
+            send_json(self, 200, {"ok": True, "queries": len(topics), "withResults": runs,
+                                  "distinctPeople": len(seen),
+                                  "shownMoreThanOnce": sum(1 for v in seen.values() if v > 1),
+                                  "topRepeats": [{"name": k, "times": v} for v, k in repeats],
+                                  "emptyTopics": empty, "per": per})
+        elif p == "/api/agent/funnel":
+            # «Почему никого нет», as a shape rather than a slate: how the pool collapses, stage by
+            # stage, with the exact gate string for each drop. Read-only, writes nothing, sends nothing.
+            intent = _normalize_intent(body.get("intent"))
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
+            if body.get("now"):
+                ctx["now"] = float(body["now"])
+            diag = {}
+            try:
+                cands = match_candidates(intent, prof, ctx, diag)
+                send_json(self, 200, {"ok": True, "intent": intent, "funnel": diag,
+                                      "names": [c.get("name") for c in cands]})
+            except Exception as e:
+                send_json(self, 200, {"ok": False, "error": str(e)[:200], "funnel": diag})
+        else:
+            return False
+        return True
+
     def do_GET(self):
+        if self._restored_get() or self._restored_admin_get():
+            return
         if self.path == "/api/agent/weights":
             send_json(self, 200, {"weights": get_weights(),
                                   "core": {"enabled": CORE_V2,
@@ -2340,8 +3523,23 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/api/agent/load":
             send_json(self, 200, {"state": _session("me").get("state")})
         elif self.path == "/api/agent/pool":
+            # `bySource` and `store` are not decoration: the admin health bar compares the path the
+            # ENGINE reports here against the path the PANEL uses, and that comparison is the only
+            # automatic detector of the split-store failure (two services resolving users.json
+            # differently, registrations landing in a file the matcher never reads). The rewrite
+            # dropped both fields, so the detector had been silently reporting engine=None.
             c = load_candidates()
-            send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None, "users": c})
+            src = {}
+            for u in c:
+                k = str(u.get("source") or "unknown")
+                src[k] = src.get(k, 0) + 1
+            try:
+                st = os.stat(USERS_PATH)
+                store = {"path": os.path.abspath(USERS_PATH), "mtime": int(st.st_mtime), "bytes": st.st_size}
+            except Exception as e:
+                store = {"path": os.path.abspath(USERS_PATH), "error": str(e)[:120]}
+            send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None,
+                                  "bySource": src, "store": store, "users": c})
         elif self.path.split("?")[0] == "/api/agent/explore":
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
@@ -2354,6 +3552,8 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         body = read_json(self)
         p = self.path
+        if self._restored_post(p, body) or self._restored_admin_post(p, body):
+            return
         if p == "/api/agent/plan":
             q = str(body.get("query") or "")
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}

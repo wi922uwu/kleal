@@ -4,7 +4,10 @@
 # could not be brought up from a checkout alone.
 #
 #   ops/run.sh <service>      run one in the FOREGROUND (what a start script does)
+#   ops/run.sh start <svc>    start ONE detached, log in ops/logs/ — use this to restart a single
+#                             service after an edit; the bare form above dies with its caller
 #   ops/run.sh all            start every service detached, logs in ops/logs/
+#   ops/run.sh restart <svc>  stop then start one, detached
 #   ops/run.sh stop [svc]     stop one, or all
 #   ops/run.sh status         what is listening, and on which port
 #
@@ -71,6 +74,14 @@ stop_one() {
 
 case "${1:-}" in
   ""|-h|--help|help) usage ;;
+  start)
+    [ $# -ge 2 ] || { echo "usage: ops/run.sh start <service>" >&2; exit 1; }
+    start_one "$2" bg
+    ;;
+  restart)
+    [ $# -ge 2 ] || { echo "usage: ops/run.sh restart <service>" >&2; exit 1; }
+    stop_one "$2"; sleep 1; start_one "$2" bg
+    ;;
   all)
     for s in $ALL; do start_one "$s" bg; sleep 0.4; done
     echo; echo "waiting for listeners…"; sleep 3

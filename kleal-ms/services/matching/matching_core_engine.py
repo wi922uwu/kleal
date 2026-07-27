@@ -226,3 +226,42 @@ def search(intent, prof, ctx, candidates, H, cfg):
     meta = {"core": ENGINE_NAME, "config_version": cfg.get("config_version"), "domain": domain,
             "config_sha": (cfg.get("_sha256") or "")[:12]}
     return _slate(out), meta
+
+
+# ---------------------------------------------------------------- adapter completeness
+# This module is a DROP-IN for core_v2: app.py reaches the engine only through `_core.*`, so any
+# name core_v2 exports and this one does not is a crash waiting for the code path that uses it.
+# Two were missing and only surfaced when the admin person-card route was restored:
+# `_in_quiet_hours` (crashed with AttributeError) and `ALL_DOMAINS` (used by the same report, one
+# line further down, so it would have crashed on the next request anyway).
+#
+# Both are engine-independent: a domain list from the spec, and plain wall-clock arithmetic. They
+# are implemented here rather than imported from core_v2 on purpose — the whole point of the
+# KLEAL_ENGINE switch is that the two engines do not depend on each other.
+
+# §18.1 domain table. Kept identical to core_v2.ALL_DOMAINS; the config's `domains` section is the
+# runtime source, this tuple is the enumeration order the reports iterate in.
+ALL_DOMAINS = ("social_meet", "walk", "games", "language_exchange", "sport_activity",
+               "culture_event", "professional_networking", "watch_together", "coworking", "dating")
+
+
+def _hhmm_to_min(s):
+    """'22:00' -> 1320. None when unparseable, so a malformed policy disables the check rather
+    than raising inside a ranking request."""
+    try:
+        h, m = str(s).split(":")
+        return int(h) * 60 + int(m)
+    except Exception:
+        return None
+
+
+def _in_quiet_hours(now_min, start, end):
+    """Is `now_min` (minutes since local midnight) inside the [start, end) quiet window?
+    The window may wrap midnight — 22:00→09:00 is the default receiving policy — so the wrapped
+    case is tested as two half-open ranges, not as a single comparison."""
+    a, b = _hhmm_to_min(start), _hhmm_to_min(end)
+    if a is None or b is None or now_min is None:
+        return False
+    if a <= b:
+        return a <= now_min < b
+    return now_min >= a or now_min < b
