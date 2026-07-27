@@ -13,16 +13,24 @@
 #   /onboarding /onboarding/*   -> onboarding-service (strip /onboarding)
 #   / and everything else       -> onboarding-service (path unchanged)  [site opens at onboarding]
 import os
+import sys
 import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-ONB = os.environ.get("HUB_ONB", "http://127.0.0.1:7072")
-PROF = os.environ.get("HUB_PROF", "http://127.0.0.1:7073")
-MATCH = os.environ.get("HUB_MATCH", "http://127.0.0.1:7074")
-BUDDY = os.environ.get("HUB_BUDDY", "http://127.0.0.1:7075")
-FILTER = os.environ.get("HUB_FILTER", "http://127.0.0.1:7076")
-PORT = int(os.environ.get("HUB_PORT", "7080"))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
+    if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
+import config                                  # the one topology table (ports/URLs); keyless
+
+# Upstreams come from shared/config.py, so the gateway no longer carries its own copy of the port
+# map. The old HUB_* variables still work — config.py reads them as aliases.
+ONB = config.ONBOARDING_URL
+PROF = config.PROFILE_URL
+MATCH = config.MATCH_URL
+BUDDY = config.BUDDY_URL
+FILTER = config.FILTER_URL
+PORT = config.PORTS["gateway"]
 
 LANDING = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -150,5 +158,6 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("Kleal gateway on http://0.0.0.0:%d  (onb=%s prof=%s match=%s buddy=%s filter=%s)" % (PORT, ONB, PROF, MATCH, BUDDY, FILTER))
-    ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
+    print("Kleal gateway on http://%s:%d  (onb=%s prof=%s match=%s buddy=%s filter=%s)"
+          % (config.GATEWAY_BIND_HOST, PORT, ONB, PROF, MATCH, BUDDY, FILTER))
+    ThreadingHTTPServer((config.GATEWAY_BIND_HOST, PORT), H).serve_forever()

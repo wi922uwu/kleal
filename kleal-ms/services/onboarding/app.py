@@ -7,13 +7,14 @@ import os, sys, json, re, threading, hashlib, hmac, time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
-import kleal_lib as base                      # keyless shared helpers/prompts (was `import llm_demo_local as base`)
+import kleal_lib as base                      # keyless shared helpers/prompts
+import config                                  # the one topology table (ports/URLs/store paths)
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send, send_json, read_json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PORT = int(os.environ.get("ONBOARDING_PORT", "7072"))
-MODEL_ID = os.environ.get("V2_MODEL", "llama_self")
+PORT = config.PORTS["onboarding"]
+MODEL_ID = config.MODEL_ID
 
 
 # ---------------------------------------------------------------- restructured gate (V2)
@@ -1747,13 +1748,13 @@ HTML = HTML.replace("__PROFILE_URL__", os.environ.get("PROFILE_URL", "").rstrip(
 # ---------------------------------------------------------------- REGISTRATION: onboarding -> shared user store
 # Everyone who finishes onboarding is written into the same store the matching agent reads and the admin
 # panel shows, so they immediately become matchable and visible. Store format matches services/admin.
-# Default must be THE SAME file matching's default resolves to (kleal-ms/users.json). They used to
-# differ — matching read <root>/users.json while this service wrote services/matching/users.json —
-# and only a KLEAL_USERS env var kept them aligned; one restart without it split the store in two:
-# registrations landed in a file the matcher never read.
-USERS_PATH = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "..", "users.json"))
+# The path is resolved ONCE, in shared/config.py, and every reader/writer imports it from there.
+# It used to be recomputed here, in matching and in admin, and the copies disagreed — matching read
+# <root>/users.json while this service wrote services/matching/users.json — so a single restart
+# without KLEAL_USERS split the store in two and registrations landed in a file the matcher never read.
+USERS_PATH = config.USERS
 _REG_LOCK = threading.Lock()
-FILTER_URL = os.environ.get("FILTER_URL", "http://127.0.0.1:7076")
+FILTER_URL = config.FILTER_URL
 
 
 def _canon_interests(words):
@@ -1802,7 +1803,7 @@ def _canon_interests(words):
 # A SEPARATE file from users.json on purpose. users.json is the matching store: it is read by the
 # matcher, served to the admin screen and handed around as candidate data. Credentials must not ride
 # along with something that is already being passed about, even hashed.
-ACCOUNTS_PATH = os.environ.get("KLEAL_ACCOUNTS", os.path.join(_HERE, "..", "..", "accounts.json"))
+ACCOUNTS_PATH = config.ACCOUNTS
 _ACC_LOCK = threading.Lock()
 _PBKDF_ROUNDS = 200_000
 
@@ -2311,4 +2312,4 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print("Kleal onboarding-service on http://127.0.0.1:%d  (LLM via llm-service)" % PORT)
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    ThreadingHTTPServer((config.BIND_HOST, PORT), H).serve_forever()

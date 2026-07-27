@@ -32,12 +32,13 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 import kleal_lib as base                      # base._extract_json (keyless)
+import config                                  # the one topology table (ports/URLs)
 from llm_client import llm_complete
 from http_util import send_json, read_json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PORT = int(os.environ.get("FILTER_PORT", "7076"))
-MODEL_ID = os.environ.get("V2_MODEL", "llama_self")
+PORT = config.PORTS["filtration"]
+MODEL_ID = config.MODEL_ID
 LLM_TIMEOUT_S = float(os.environ.get("FILTER_LLM_TIMEOUT", "5"))   # hard cap on the model call
 CACHE_MAX = int(os.environ.get("FILTER_CACHE_MAX", "512"))
 
@@ -480,4 +481,4 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print("Kleal filtration-service on http://127.0.0.1:%d  (%d categories, LLM<=%.1fs via llm-service)"
           % (PORT, len(CATEGORIES), LLM_TIMEOUT_S))
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    ThreadingHTTPServer((config.BIND_HOST, PORT), H).serve_forever()

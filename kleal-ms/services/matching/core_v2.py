@@ -28,7 +28,7 @@ import hashlib, math, time
 # the unquoted quiet-hour 09:00 as sexagesimal int 540). The file is sha-pinned, so the exact
 # bytes this parser was written against are guaranteed.
 
-PINNED_SHA = "21505ccb4add960291a742084b36d25289ffc93c9870a80b8cba3295010e9c5b"
+PINNED_SHA = "d804df8e2d14c0b306263d5178eb39d98f284335a2fb671bbd413b49435cb197"
 
 FEATURE_KEYS = ("semantic_activity", "time_feasibility", "location_feasibility", "mode_format",
                 "directed_preferences", "social_context", "domain_constraints")

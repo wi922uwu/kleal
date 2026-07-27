@@ -39,8 +39,11 @@ start_one() {
   if [ "$bg" = "bg" ]; then
     mkdir -p "$LOGS"
     # setsid + </dev/null: without them the process dies when the SSH session closes, and it dies
-    # leaving an EMPTY log, which reads like a crash that never happened.
-    ( cd "$ROOT" && nohup setsid "$PY" -u "services/$svc/app.py" \
+    # leaving an EMPTY log, which reads like a crash that never happened. macOS has no setsid, so
+    # detach with nohup alone there — the pod (Linux) is where the SSH-close problem actually bites.
+    local SETSID=""
+    command -v setsid >/dev/null 2>&1 && SETSID="setsid"
+    ( cd "$ROOT" && nohup $SETSID "$PY" -u "services/$svc/app.py" \
         > "$LOGS/$svc.log" 2>&1 < /dev/null & )
     echo "started $svc  (log: ops/logs/$svc.log)"
   else

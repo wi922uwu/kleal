@@ -18,23 +18,24 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
+import config                                  # the one topology table (ports/URLs/store paths)
 from http_util import send, send_json, read_json
 
-PORT = int(os.environ.get("ADMIN_PORT", "7077"))
-MATCH_URL = os.environ.get("MATCH_URL", "http://127.0.0.1:7074").rstrip("/")
-BUDDY_URL = os.environ.get("BUDDY_URL", "http://127.0.0.1:7075").rstrip("/")
-# Two-up, the SAME default onboarding and matching resolve to. It used to point at
-# services/matching/users.json, so a restart without KLEAL_USERS silently split the store: the panel
-# edited one file while the matcher read another, and nothing said so. (The new health bar now says
-# so anyway — but a default that cannot go wrong beats a warning that it did.)
-STORE = os.environ.get("KLEAL_USERS", os.path.join(_HERE, "..", "..", "users.json"))
+PORT = config.PORTS["admin"]
+MATCH_URL = config.MATCH_URL
+BUDDY_URL = config.BUDDY_URL
+# THE shared store, resolved once in shared/config.py. This used to be computed here as well, and
+# pointed at services/matching/users.json, so a restart without KLEAL_USERS silently split the store:
+# the panel edited one file while the matcher read another, and nothing said so. (The health bar now
+# says so anyway — but a path that cannot disagree beats a warning that it did.)
+STORE = config.USERS
 _LOCK = threading.Lock()
 _seeded = {"done": False}
 
 # The panel can edit and delete real people and can run searches as them. It was open to anyone with
 # the URL. A token is the minimum; it is generated and printed once rather than defaulted to
 # something, so the panel is never accidentally open — and never accidentally locked out either.
-_TOKEN_FILE = os.environ.get("KLEAL_ADMIN_TOKEN_FILE", os.path.join(_HERE, "..", "..", "admin_token.txt"))
+_TOKEN_FILE = config.ADMIN_TOKEN_FILE
 
 
 def _admin_token():
@@ -1463,4 +1464,4 @@ if(TOK) load().catch(()=>toast('Load failed — is the server up?')); else gate(
 if __name__ == "__main__":
     print("Kleal admin-service on http://127.0.0.1:%d  (store=%s, seed from %s)" % (PORT, STORE, MATCH_URL))
     print("ADMIN TOKEN: %s   (from %s — set KLEAL_ADMIN_TOKEN to override)" % (ADMIN_TOKEN, _TOKEN_FILE))
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    ThreadingHTTPServer((config.BIND_HOST, PORT), H).serve_forever()

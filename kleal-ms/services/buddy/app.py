@@ -53,15 +53,16 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 import kleal_lib as base                      # base._extract_json (keyless)
+import config                                  # the one topology table (ports/URLs/store paths)
 from llm_client import llm_complete, llm_stream
 from http_util import send_json, read_json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PORT = int(os.environ.get("BUDDY_PORT", "7075"))
-MODEL_ID = os.environ.get("V2_MODEL", "llama_self")
-MATCH_URL = os.environ.get("MATCH_URL", "http://127.0.0.1:7074").rstrip("/")
-FILTER_URL = os.environ.get("FILTER_URL", "http://127.0.0.1:7076").rstrip("/")
-STORE_PATH = os.environ.get("BUDDY_STORE", os.path.join(_HERE, "buddy_store.json"))
+PORT = config.PORTS["buddy"]
+MODEL_ID = config.MODEL_ID
+MATCH_URL = config.MATCH_URL
+FILTER_URL = config.FILTER_URL
+STORE_PATH = config.BUDDY_STORE
 
 SIGNAL_KEYS = ("topics", "role", "type", "vibe", "languages", "time", "area", "datingOk", "dealBreakers", "interest")
 LIST_KEYS = ("topics", "languages", "dealBreakers")
@@ -2378,4 +2379,4 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print("Kleal buddy-service on http://127.0.0.1:%d  (LLM llm-service, filter %s, match %s)"
           % (PORT, FILTER_URL, MATCH_URL))
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    ThreadingHTTPServer((config.BIND_HOST, PORT), H).serve_forever()

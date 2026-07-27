@@ -17,15 +17,24 @@ CI-проверки (§9.5):
 import os
 import hashlib
 
-# sha256 канонического config/matching-core.yaml (пин спеки, Приложение A).
-PINNED_SHA = "21505ccb4add960291a742084b36d25289ffc93c9870a80b8cba3295010e9c5b"
+# sha256 канонического конфига — ЖИВОГО файла config/Kleal_Matching_Core_Config_v2.yaml, а не
+# исходного пина Приложения A (21505ccb…). 22.07 веса social_meet были осознанно перевешены
+# (semantic_activity 0.18 -> 0.30, коммит «Больше тем = выше»), и core_v2 тогда перепиновали вместе
+# с ними. Пакет matching_core собирался «начисто по спеке» и взял sha ИЗ ДОКУМЕНТА, то есть
+# доретюнинговый. С этого момента sha-проверка падала на живом конфиге, оба движка уходили в
+# fail-safe (§21.4) и ранжировал легаси-скорер v1 — то есть перевес, ради которого всё делалось,
+# не действовал ни дня. Пин обязан следовать за конфигом, иначе он ловит не дрейф, а сам себя.
+PINNED_SHA = "d804df8e2d14c0b306263d5178eb39d98f284335a2fb671bbd413b49435cb197"
 
 # 7 канонических feature groups (§6.1 / §9.1) — единственно допустимые ключи весов домена.
 FEATURE_KEYS = ("semantic_activity", "time_feasibility", "location_feasibility", "mode_format",
                 "directed_preferences", "social_context", "domain_constraints")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CONFIG_PATH = os.path.join(_HERE, "matching-core.yaml")
+# ОДИН файл на весь проект. Здесь лежала вторая копия (matching-core.yaml), отличавшаяся ровно
+# шестью весами social_meet: app.py грузил канонический, а load_config() без аргумента — локальный,
+# так что «единственный источник истины» существовал в двух экземплярах с разными числами.
+DEFAULT_CONFIG_PATH = os.path.join(_HERE, "..", "..", "config", "Kleal_Matching_Core_Config_v2.yaml")
 
 
 class ConfigError(Exception):

@@ -6,11 +6,17 @@
 # Config comes from env only (AITUNNEL_KEY / AITUNNEL_BASE / SELF_BASE / SELF_KEY). See .env.example.
 # Owner: Dev A. This is the ONLY place `Authorization: Bearer <key>` is ever set.
 import os
+import sys
 import json
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-PORT = int(os.environ.get("LLM_PORT", "7071"))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
+    if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
+import config                                  # ports only — model keys stay in the env, below
+
+PORT = config.PORTS["llm"]
 
 AITUNNEL_KEY = os.environ.get("AITUNNEL_KEY", "")   # set your own key in the env / .env
 AITUNNEL_BASE = os.environ.get("AITUNNEL_BASE", "https://api.aitunnel.ru/v1")
@@ -274,4 +280,4 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print("Kleal llm-service on http://127.0.0.1:%d  (%d models, keys %s)" % (
         PORT, len(MODELS), "set" if AITUNNEL_KEY or SELF_KEY != "x" else "from env"))
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    ThreadingHTTPServer((config.BIND_HOST, PORT), H).serve_forever()
