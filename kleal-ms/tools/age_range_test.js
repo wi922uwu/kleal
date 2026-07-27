@@ -33,9 +33,9 @@ eval(grab("ageRange"));
 
 // the age branch of wireDial's apply(), verbatim in behaviour
 function dragHandle(hand, age) {
-  const e = ageEnds(), a0 = e[0], a1 = e[1];
-  if (hand === 0) { FLOW.ageA = age; FLOW.ageB = Math.max(a1, age); }
-  else { FLOW.ageB = age; FLOW.ageA = Math.min(a0, age); }
+  const e = ageEnds(), a0 = e[0], a1 = e[1], span = Math.max(1, a1 - a0);
+  if (hand === 0) { FLOW.ageA = age; FLOW.ageB = (age > a1) ? Math.min(80, age + span) : a1; }
+  else { FLOW.ageB = age; FLOW.ageA = (age < a0) ? Math.max(16, age - span) : a0; }
 }
 
 // what flowIntent() now does with the range
@@ -79,15 +79,30 @@ dragHandle(0, 30); dragHandle(1, 45);
 const a4 = intentAge();
 check("30-45 survives", a4.minAge === 30 && a4.maxAge === 45, a4);
 
-console.log("\n5. a crossed handle PUSHES the other, it never inverts the range");
+console.log("\n5. a crossed handle pushes the other AND CARRIES THE SPAN — never a single-age range");
 FLOW = { intent: {} };
-dragHandle(0, 60);                              // lower handle dragged past the upper default 28
-check("dragging the lower end to 60 keeps 60, pushing the upper",
-      FLOW.ageA === 60 && FLOW.ageB === 60, [FLOW.ageA, FLOW.ageB]);
+dragHandle(0, 31);            // lower handle dragged past the 28 placeholder; span 18-28 is 10
+check("31 with the 10-wide span becomes 31-41, not 31-31",
+      FLOW.ageA === 31 && FLOW.ageB === 41, [FLOW.ageA, FLOW.ageB]);
 FLOW = { intent: {} };
-dragHandle(1, 20);                              // upper handle dragged below the lower default 18
-check("dragging the upper end to 20 keeps the lower at 18",
+dragHandle(0, 60);
+check("60 becomes 60-70, still a real range", FLOW.ageA === 60 && FLOW.ageB === 70, [FLOW.ageA, FLOW.ageB]);
+FLOW = { intent: {} };
+dragHandle(0, 78);
+check("the upper end is capped at 80", FLOW.ageB <= 80 && FLOW.ageA === 78, [FLOW.ageA, FLOW.ageB]);
+FLOW = { intent: {} };
+dragHandle(1, 20);            // 20 is ABOVE the lower default 18 — no crossing at all
+check("a drag that does not cross leaves the lower end at 18",
       FLOW.ageA === 18 && FLOW.ageB === 20, [FLOW.ageA, FLOW.ageB]);
+FLOW = { intent: {} };
+dragHandle(1, 17);            // 17 IS below the lower default — this one crosses
+check("17 pushes the lower down, floored at 16",
+      FLOW.ageB === 17 && FLOW.ageA === 16, [FLOW.ageA, FLOW.ageB]);
+FLOW = { intent: {} };
+dragHandle(1, 45);            // no crossing — the lower end must not move
+check("a non-crossing drag leaves the other end alone",
+      FLOW.ageA === 18 && FLOW.ageB === 45, [FLOW.ageA, FLOW.ageB]);
+check("the range is never inverted", FLOW.ageA <= FLOW.ageB, [FLOW.ageA, FLOW.ageB]);
 
 console.log("\n5b. the result does not depend on the ORDER the handles are moved");
 FLOW = { intent: {} }; dragHandle(0, 30); dragHandle(1, 45);

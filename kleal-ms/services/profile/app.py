@@ -4432,14 +4432,16 @@ function wireDial(){
         // undefined, so the range was never complete and never sent. Touching the dial is the act
         // of choosing a range — after it, what the dial shows is exactly what the search carries.
         //
-        // A crossed handle PUSHES the other one; it used to be clamped against it. Clamping was
-        // invisible while no filter was ever sent, and wrong as soon as one was: dragging the
-        // lower handle to 30 against the 28 placeholder silently produced 28, and dragging it to
-        // 60 produced the range 28-28 — a filter for a single age nobody asked for. Pushing also
-        // makes the result independent of the order the two handles are moved in.
-        const e=ageEnds(), a0=e[0], a1=e[1];
-        if(hand===0){ FLOW.ageA=age; FLOW.ageB=Math.max(a1, age); }
-        else        { FLOW.ageB=age; FLOW.ageA=Math.min(a0, age); }
+        // A crossed handle PUSHES the other and CARRIES THE SPAN with it. Two earlier shapes were
+        // both wrong: clamping against the other handle turned a drag to 30 into 28 (invisible
+        // while no filter was ever sent, wrong the moment one was), and a bare push turned a drag
+        // of the lower handle to 31 into the range 31-31 — a filter for a single age, when the
+        // person was plainly asking for "about 31 and up". Keeping the width means the range on
+        // screen stays the shape they are looking at, and the result does not depend on the order
+        // the two handles are moved in.
+        const e=ageEnds(), a0=e[0], a1=e[1], span=Math.max(1, a1-a0);
+        if(hand===0){ FLOW.ageA=age; FLOW.ageB=(age>a1)?Math.min(80, age+span):a1; }
+        else        { FLOW.ageB=age; FLOW.ageA=(age<a0)?Math.max(16, age-span):a0; }
         redrawDial(id);
       }
     }

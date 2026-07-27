@@ -35,6 +35,7 @@ services/buddy/test_buddy.py
 services/filtration/test_filtration.py
 tools/e2e_smoke.py
 tools/flows_smoke.py
+tools/age_range_test.js
 ops/run.sh
 "
 
