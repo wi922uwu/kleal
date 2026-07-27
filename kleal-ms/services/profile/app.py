@@ -4036,6 +4036,26 @@ function flowToSummary(){
 // clarify screen, the summary and the search itself all key off this instead of always assuming a
 // place. mode comes from the buddy (esports/online cues -> "online"); default is offline.
 function flowOnline(){ return !!(FLOW && FLOW.intent && FLOW.intent.mode==='online'); }
+// ---- age range: what the dial SHOWS vs what the search actually carries ----------------------
+// These two were conflated and that is why the age filter did nothing. The dial displays 18-28 as
+// a placeholder, but only the handle a person actually dragged was stored — so after moving one
+// handle the screen read "25-28" while FLOW.ageB was still undefined, flowIntent()'s
+// `if(ageA&&ageB)` was false, and the request went out with NO age filter at all. The dial showed
+// a range the system did not have.
+//
+// ageEnds()  — the two numbers to DRAW (placeholders included), never a promise that a filter is set.
+// ageRange() — the range actually chosen, or null. Null must stay possible: a dial nobody touched
+//              must not silently impose 18-28 on the search.
+function ageEnds(){
+  const it=(FLOW&&FLOW.intent)||{};
+  return [(FLOW&&FLOW.ageA)||it.minAge||18, (FLOW&&FLOW.ageB)||it.maxAge||28];
+}
+function ageRange(){
+  if(FLOW&&FLOW.ageA&&FLOW.ageB) return [Math.min(FLOW.ageA,FLOW.ageB), Math.max(FLOW.ageA,FLOW.ageB)];
+  const it=(FLOW&&FLOW.intent)||{};                 // re-opened saved intent: the range lives on it
+  if(it.minAge&&it.maxAge) return [it.minAge, it.maxAge];
+  return null;
+}
 function flowIntent(){
   // merge the clarification answers into the intent the buddy compiled
   const it=Object.assign({}, FLOW.intent||{});
@@ -4045,11 +4065,10 @@ function flowIntent(){
   const whenTxt={today:'today',tonight:'today',tomorrow:'tomorrow',weekend:'this weekend',pick:'Flexible'}[FLOW.when];
   const timeTxt={morning:'morning',afternoon:'afternoon',evening:'evening','20-22':'evening',late:'late evening'}[FLOW.time];
   it.time=[whenTxt,timeTxt].filter(Boolean).join(' ')||it.time||'Flexible';
-  // The age dial wrote FLOW.ageA/ageB and the summary showed them back — but nothing ever copied
-  // them into the intent, so the ranker (which HAS a minAge/maxAge gate and enforces it) never saw
-  // a range and returned people of every age. Only sent when the person actually moved the dial:
-  // ageA/ageB stay undefined until then, and defaulting them here would impose a filter nobody set.
-  if(FLOW.ageA&&FLOW.ageB){ it.minAge=Math.min(FLOW.ageA,FLOW.ageB); it.maxAge=Math.max(FLOW.ageA,FLOW.ageB); }
+  // The ranker HAS a minAge/maxAge gate and enforces it (verified against the live pool: 20-25
+  // returns 21-25, 60-75 returns 61). It just never received a range, so it returned every age.
+  const _age=ageRange();
+  if(_age){ it.minAge=_age[0]; it.maxAge=_age[1]; }
   it.mode=it.mode||'offline';
   if(it.mode==='online'){
     it.place=T('Онлайн','Online');                       // no district, no radius — it's over the net
@@ -4382,7 +4401,7 @@ function redrawDial(id){
     const lab=String(Math.floor(t/60)).padStart(2,'0')+':'+String(t%60).padStart(2,'0');
     svg.innerHTML=ringInner(t/1440, null, lab);
   } else {
-    const a0=(FLOW&&FLOW.ageA)||18, a1=(FLOW&&FLOW.ageB)||28;
+    const e=ageEnds(), a0=e[0], a1=e[1];        // placeholders included — drawing is not choosing
     svg.innerHTML=ringInner((a0-16)/64, (a1-16)/64, a0+'-'+a1);
   }
 }
@@ -4408,8 +4427,19 @@ function wireDial(){
         FLOW.tmin=t; redrawDial(id);
       } else {
         let age=Math.round(16+f*64); if(age<16)age=16; if(age>80)age=80;
-        const a0=(FLOW.ageA||18), a1=(FLOW.ageB||28);
-        if(hand===0) FLOW.ageA=Math.min(age, a1); else FLOW.ageB=Math.max(age, a0);
+        // BOTH ends are committed the moment the dial is touched, not just the handle being
+        // dragged. Storing only the dragged end is what broke the filter: the other end stayed
+        // undefined, so the range was never complete and never sent. Touching the dial is the act
+        // of choosing a range — after it, what the dial shows is exactly what the search carries.
+        //
+        // A crossed handle PUSHES the other one; it used to be clamped against it. Clamping was
+        // invisible while no filter was ever sent, and wrong as soon as one was: dragging the
+        // lower handle to 30 against the 28 placeholder silently produced 28, and dragging it to
+        // 60 produced the range 28-28 — a filter for a single age nobody asked for. Pushing also
+        // makes the result independent of the order the two handles are moved in.
+        const e=ageEnds(), a0=e[0], a1=e[1];
+        if(hand===0){ FLOW.ageA=age; FLOW.ageB=Math.max(a1, age); }
+        else        { FLOW.ageB=age; FLOW.ageA=Math.min(a0, age); }
         redrawDial(id);
       }
     }
@@ -4417,7 +4447,7 @@ function wireDial(){
       e.preventDefault(); dragging=true;
       try{ svg.setPointerCapture(e.pointerId); }catch(_e){}
       const f=fracAt(e);
-      if(id==='dialAge'){ const fa=((FLOW.ageA||18)-16)/64, fb=((FLOW.ageB||28)-16)/64;
+      if(id==='dialAge'){ const _e=ageEnds(), fa=(_e[0]-16)/64, fb=(_e[1]-16)/64;
         hand = Math.abs(f-fa)<=Math.abs(f-fb) ? 0 : 1; }
       apply(f);
     });
@@ -4455,7 +4485,7 @@ function scr_detail(){
   const st=dstep(), fmt=(FLOW&&FLOW.fmt)||'offline';
   const tm=(FLOW&&FLOW.tmin!=null)?FLOW.tmin:885;                 // 14:45
   const hh=String(Math.floor(tm/60)).padStart(2,'0'), mm=String(tm%60).padStart(2,'0');
-  const a0=(FLOW&&FLOW.ageA)||18, a1=(FLOW&&FLOW.ageB)||28;
+  const _ae=ageEnds(), a0=_ae[0], a1=_ae[1];
   const km=(FLOW&&FLOW.dkm!=null)?FLOW.dkm:19;
   let body='';
   if(st===1){
@@ -4642,7 +4672,7 @@ function intentUnderstanding(){
     {'1:1':T('один на один','one-on-one'),small:T('в малой группе','in a small group'),party:T('компанией','with a group')}[FLOW.gsize||'']
   ].filter(Boolean);
   const sexL={male:T('парней','guys'),female:T('девушек','women'),any:''}[FLOW.sex||'any'];
-  const ageL=(FLOW.ageA&&FLOW.ageB)?(FLOW.ageA+'–'+FLOW.ageB):'';
+  const _ar=ageRange(), ageL=_ar?(_ar[0]+'–'+_ar[1]):'';
   const who=[sexL,ageL].filter(Boolean).join(' ');
   let out=T('Понял так: ','Read it as: ')+lead;
   if(set.length) out+=' — '+set.join(', ');
@@ -4679,7 +4709,7 @@ function scr_summary(){
   const szL=(SIZE_OPTS().find(o=>o[0]===FLOW.gsize)||[])[2]||'';
   const format=[fmtL,szL].filter(Boolean).join(', ')||s.format||T('Встреча, неформально','Casual meetup');
   const sexL={male:T('Мужчины','Male'),female:T('Женщины','Female'),any:T('Не важно','Any')}[FLOW.sex||'any'];
-  const ageL=(FLOW.ageA&&FLOW.ageB)?(FLOW.ageA+'–'+FLOW.ageB):'';
+  const _ar=ageRange(), ageL=_ar?(_ar[0]+'–'+_ar[1]):'';
   const persona=[sexL,ageL].filter(Boolean).join(', ');
   const summ=esc(intentUnderstanding());
   const kv=(k,v)=>v?`<div class="r"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`:'';
