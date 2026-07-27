@@ -36,6 +36,7 @@ services/filtration/test_filtration.py
 tools/e2e_smoke.py
 tools/flows_smoke.py
 tools/age_range_test.js
+tools/card_tags_test.js
 ops/run.sh
 "
 

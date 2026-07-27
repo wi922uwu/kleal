@@ -4897,7 +4897,7 @@ function scr_waiting(){
 function scr_mutual(){
   const c=PLAN&&PLAN.cand; if(!c) return scr_options();
   const meInts=(DATA.interests||[]).map(i=>i.name).slice(0,2).join(', ');
-  const theirs=(c.interests||[]).slice(0,2).join(', ');
+  const theirs=candTags(c,2).map(locTopic).join(', ');   // this screen IS about what you share
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
       <div class="kstate"><div class="hero sm">${masc('match')}</div>
@@ -5164,7 +5164,7 @@ function scr_saved(){
     ${list.map(x=>`<div class="prow" data-act="cand-open" data-n="${esc(x.name)}">
       <div class="ph">${IC.person}</div>
       <div class="bd"><div class="nm"><b>${esc(x.name)}</b>${x.band?`<span class="kbadge ${x.band==='especially_close'||x.band==='strong_option'?'ok':'mut'}">${esc(bandLabel(x))}</span>`:''}</div>
-        ${(x.interests||[]).length?`<div class="meta">${(x.interests||[]).slice(0,3).map(i=>`<span class="ktag">${esc(locTopic(i))}</span>`).join('')}</div>`:''}</div>
+        ${(x.interests||[]).length?`<div class="meta">${candTags(x,3).map(i=>`<span class="ktag">${esc(locTopic(i))}</span>`).join('')}</div>`:''}</div>
       <div class="bm" data-act="cand-save" data-n="${esc(x.name)}">${IC.bookmark}</div></div>`).join('')}</div>`;
 }
 
@@ -5295,11 +5295,58 @@ function candMeta(c){
   else if(c.readiness_ru) bits.push(`<span class="mi">${IC.clock}${esc(UILANG==='ru'?c.readiness_ru:(c.readiness_en||''))}</span>`);
   return bits.join('');
 }
+// The chips on a card were simply the person's FIRST three interests, which has nothing to do with
+// why they were found. A card could read «общее: football» and then show birdwatching, шахматы,
+// castellano — the one thing that actually matched the request was not on the card at all, so the
+// slate looked random even when the ranking was right.
+//
+// The card already carries the engine's own answer: reasons «общее: craftbeer» / "shares craftbeer".
+// Lead with the interests those name, then whatever the request asked for, then the rest. Matching
+// is normalised and two-way on substrings because the store holds BOTH the person's own wording and
+// the canonical handle appended by tools/canonicalise_interests.py («крафтовое пиво» + craftbeer),
+// and the reason token is the canonical one.
+function candTags(c, n){
+  n=n||3;
+  const norm=s=>String(s||'').toLowerCase().replace(/[^a-zа-яё0-9]+/gi,'');
+  const want=[];
+  [].concat(c.reasons_ru||[], c.reasons||[], c.reasons_en||[]).forEach(r=>{
+    const m=/(?:shares|общее:)\s*(.+)/i.exec(String(r||''));
+    if(m) m[1].split(/[,;]+/).forEach(t=>{ const v=norm(t); if(v) want.push(v); });
+  });
+  ((((typeof FLOW!=='undefined'&&FLOW&&FLOW.intent)||{}).topics)||[]).forEach(t=>{
+    const v=norm(t); if(v) want.push(v);
+  });
+  const hit=x=>{ const v=norm(x);
+    return !!v && want.some(w=>w===v||w.indexOf(v)>=0||v.indexOf(w)>=0); };
+  // The store legitimately holds spelling variants of one interest (watercolour AND watercolor),
+  // because canonicalisation appends an English handle next to the person's own wording. Two chips
+  // for one interest waste a slot on a card that only has three. An edit distance of 1 on a word of
+  // six or more characters is a spelling variant, not a different hobby.
+  const near=(a,b)=>{
+    if(Math.abs(a.length-b.length)>1) return false;
+    if(a.length<6&&b.length<6) return false;
+    let i=0,j=0,d=0;
+    while(i<a.length&&j<b.length){
+      if(a[i]===b[j]){ i++; j++; continue; }
+      if(++d>1) return false;
+      if(a.length>b.length) i++; else if(b.length>a.length) j++; else { i++; j++; }
+    }
+    return d+(a.length-i)+(b.length-j)<=1;
+  };
+  const seen=[], lead=[], rest=[];
+  (c.interests||[]).forEach(x=>{
+    if(!x) return;
+    const v=norm(x); if(!v) return;
+    if(seen.some(s=>s===v||near(s,v))) return;
+    seen.push(v); (hit(x)?lead:rest).push(x);
+  });
+  return lead.concat(rest).slice(0,n);
+}
 // Recommendation card (Figma "Best fit for your request"): photo, name, role/location, tags, band
 // badge, a Kleal-summary line, and an Invite CTA. Used both in the results list and the best-fit view.
 function personRow(c,i,cls){
   const photo=c.photo||'assets/match-anna.jpg';                 // demo placeholder until real photos exist
-  const tags=(c.interests||[]).slice(0,3).map(x=>`<span class="rtag">${esc(x)}</span>`).join('');
+  const tags=candTags(c,3).map(x=>`<span class="rtag">${esc(locTopic(x))}</span>`).join('');
   const role=(c.tagline||c.about||'').trim();
   const loc=c.area||c.city||(c.km!=null?(c.km+' '+T('км','km')):'');
   return `<div class="rcard ${cls||''}">
@@ -5412,7 +5459,7 @@ function candSummaryLine(c){
 function scr_candprofile(){
   const c=CAND; if(!c) return scr_options();
   const photo=c.photo||'assets/match-anna.jpg';                 // demo placeholder until real photos exist
-  const tags=(c.interests||[]).slice(0,6).map(x=>`<span class="tg">${esc(x)}</span>`).join('');
+  const tags=candTags(c,6).map(x=>`<span class="tg">${esc(locTopic(x))}</span>`).join('');
   const langs=(c.langs||[]).join(', ');
   const loc=c.area||c.city||(c.km!=null?(c.km+' '+T('км','km')):'');
   const bio=esc(c.tagline||c.about||c.summary||'');
@@ -5472,7 +5519,7 @@ function candProfilePane(c){
   return `<div class="cprof"><div class="av">${IC.person}${c.readiness==='open_now'?'<i class="dot"></i>':''}</div>
       <div class="bd"><div class="k-h3">${esc(c.name)}${c.age?(', '+c.age):''}</div>
         ${bandBadge(c)}
-        <div class="k-cap" style="color:var(--muted)">${esc((c.interests||[]).slice(0,2).join(' · '))}</div></div></div>
+        <div class="k-cap" style="color:var(--muted)">${esc(candTags(c,2).map(locTopic).join(' · '))}</div></div></div>
     <div class="kplan flat">
       <div class="kblk"><div class="hd">${T('О себе','About')}</div>
         <div class="tx">${esc(c.about||c.summary||T('Пока без описания — этот человек ещё не заполнил его.','No bio yet — this person hasn’t written one.'))}</div></div>
