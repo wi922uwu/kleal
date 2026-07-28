@@ -32,7 +32,7 @@ def run():
         {"name": "p_watch", "interests": ["dota2"], "role": "watch", "open": True, "langs": ["en"]},
     ]
     tl = OB.TraceLog()
-    slate = S.search(intent, me, pool, cfg, purpose="games", trace_log=tl, search_id="dota")
+    slate = S.search(intent, me, pool, cfg, purpose="games", now=0.0, trace_log=tl, search_id="dota")
     d = _by(slate, "p_dota"); l = _by(slate, "p_lol")
     check("D1 Dota reciprocal -> T0", d and d["tier"] == "T0")
     # Вердикт-review#1 регресс: сильный T0-мэтч (без опциональных formats/entities) НЕ должен молча уходить
@@ -52,8 +52,8 @@ def run():
     check("D5 band — текстовый уровень (§9.7)", d and d["band_label"] in ("Especially close to your request", "Strong option", "Broader option", "Needs clarification"))
 
     # детерминизм: два прогона идентичны
-    s1 = S.search(intent, me, pool, cfg, purpose="games")
-    s2 = S.search(intent, me, pool, cfg, purpose="games")
+    s1 = S.search(intent, me, pool, cfg, purpose="games", now=0.0, search_id="det1")
+    s2 = S.search(intent, me, pool, cfg, purpose="games", now=0.0, search_id="det2")
     check("D6 детерминизм: два прогона идентичны", [x["name"] for x in s1] == [x["name"] for x in s2]
           and [x["reciprocal"] for x in s1] == [x["reciprocal"] for x in s2])
 
@@ -65,7 +65,7 @@ def run():
         {"name": "native", "interests": ["spanish"], "role": "native", "langs": ["es", "en"], "open": True, "km": 2, "vibe": "chill"},
         {"name": "learner", "interests": ["spanish"], "role": "learner", "langs": ["es", "en"], "open": True, "km": 2, "vibe": "chill"},
     ]
-    ls = S.search(lang_intent, lang_me, lang_pool, cfg, purpose="language")
+    ls = S.search(lang_intent, lang_me, lang_pool, cfg, purpose="language", now=0.0, search_id="lang")
     nat, lrn = _by(ls, "native"), _by(ls, "learner")
     # native (комплементарен ищущему-native? role=native ищет... ) — комплементарность даёт роль-match выше
     check("L1 native выше learner (комплементарность важнее similarity §18.4)",
@@ -75,7 +75,7 @@ def run():
     net_intent = {"type": "networking", "topics": ["startups"], "mode": "offline", "role": "founder", "version": 1}
     net_me = {"name": "me", "interests": ["startups"], "profession": "student", "langs": ["en"], "vibe": "social"}
     net_pool = [{"name": "founder_x", "interests": ["startups"], "role": "founder", "open": True, "langs": ["en"], "km": 3, "vibe": "social"}]
-    ns = S.search(net_intent, net_me, net_pool, cfg, purpose="networking")
+    ns = S.search(net_intent, net_me, net_pool, cfg, purpose="networking", now=0.0, search_id="net")
     fx = _by(ns, "founder_x")
     check("C#17 founder target матчится по роли кандидата (self profession не мешает)",
           fx is not None and fx["tier"] in ("T0", "T1", "T2"))

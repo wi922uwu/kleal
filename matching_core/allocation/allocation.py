@@ -7,6 +7,10 @@ Allocation определяет, кому/сколько экспозиции д
 import zlib
 from ..reciprocity_readiness.readiness import READINESS_RANK
 
+# Аудит #11 — quality floor: сортировать сначала по классу решения (качество+право на outreach), затем
+# по reciprocal, и лишь потом по readiness (исполнимость, НЕ качество человека).
+DCLASS_RANK = {"strong_personal": 0, "usable_personal": 1, "discovery_only": 2, "clarification": 3, "no_outreach": 4}
+
 TOP_N = 8
 PER_BUCKET = 3                                    # diversity ось 1: интерес-bucket
 PER_TIER = 4                                      # diversity ось 2: semantic tier (§11.2)
@@ -14,11 +18,22 @@ PER_SOURCE = 5                                    # diversity ось 3: retrieva
 POPULARITY_CAP = 3                                # popularity concentration guard
 EXPOSURE_CAP_DEFAULT = 50                         # per-user exposure cap за окно
 EXPLORATION_QUOTA = 2                             # квота exploration-позиций (не один слот)
+EXPLORATION_MIN_LCB = 0.4                         # Аудит #12: quality floor — не ниже min relevance…
+EXPLORATION_MIN_COVERAGE = 0.4                    # …и min coverage (переопределяется доменным floor из ctx)
 AREA_CAP_DEFAULT = 4                              # city/area supply balancing: не более N из одной зоны
 
 
 class MonetizationViolation(Exception):
     pass
+
+
+def exploration_eligible(item, min_lcb=EXPLORATION_MIN_LCB, min_coverage=EXPLORATION_MIN_COVERAGE):
+    """Аудит #12 — quality floor для exploration. exploration может лишь ПЕРЕСТАВИТЬ позицию, поэтому
+    кандидат допустим только если: не ниже min relevance (lcb) и min coverage floor И не `no_outreach`.
+    policy/consent/tier/decision_class при этом НЕ меняются (переносятся as-is вызывающим _take)."""
+    return (float(item.get("lcb") or 0) >= float(min_lcb)
+            and float(item.get("coverage") or 0) >= float(min_coverage)
+            and item.get("decision_class") != "no_outreach")
 
 
 def assert_no_payment_feature(item):
@@ -80,12 +95,14 @@ def rerank(items, intent, cfg=None, ctx=None):
             continue                                # reservation capacity исчерпана (§11.1)
         live.append(it)
 
-    # (2) сорт: readiness class (ordering, НЕ relevance) -> reciprocal -> lcb -> coverage -> rotation -> name.
-    # rotation — тай-брейк при РАВНЫХ score (Вердикт#16): стабилен внутри request, но не «вечно те же 8».
-    live.sort(key=lambda x: (READINESS_RANK.get(x.get("readiness", "unknown"), 2),
-                             -float(x.get("reciprocal") or 0), -float(x.get("lcb") or 0),
-                             -float(x.get("coverage") or 0), _rotation_rank(x, rotation_seed),
-                             str(x["cand"].get("name", ""))))
+    # (2) сорт (Аудит #11): quality floor (decision_class) -> reciprocal relevance -> readiness -> relevance
+    # -> coverage -> rotation -> name. readiness — ИСПОЛНИМОСТЬ, а не качество: «open_now» больше не делает
+    # посредственного кандидата лучшим. rotation — тай-брейк при равенстве (стабилен внутри request).
+    live.sort(key=lambda x: (DCLASS_RANK.get(x.get("decision_class"), 5),
+                             -float(x.get("reciprocal") or 0),
+                             READINESS_RANK.get(x.get("readiness", "unknown"), 2),
+                             -float(x.get("lcb") or 0), -float(x.get("coverage") or 0),
+                             _rotation_rank(x, rotation_seed), str(x["cand"].get("name", ""))))
 
     # near-dup dedup — ПОСЛЕ сортировки (Вердикт#16), чтобы оставались ЛУЧШИЕ представители группы, а не
     # первые по входному порядку (retriever-порядок = source/best, НЕ reciprocal).
@@ -129,13 +146,21 @@ def rerank(items, intent, cfg=None, ctx=None):
             it = dict(it); it["exploration"] = True
         out.append(it)
 
+    # review#C: РЕЗЕРВИРУЕМ EXPLORATION_QUOTA слотов — главный цикл берёт до (TOP_N - QUOTA), оставляя
+    # место exploration'у. Так exploration реально срабатывает, НЕ ослабляя diversity-caps (_passes),
+    # т.е. tier/bucket/area инварианты сохраняются; backfill ниже добивает слейт до TOP_N без потери длины.
+    main_cap = max(0, TOP_N - EXPLORATION_QUOTA)
     for it in live:
-        if len(out) >= TOP_N:
+        if len(out) >= main_cap:
             break
         if _passes(it):
             _take(it)
 
-    # (5) exploration QUOTA: до EXPLORATION_QUOTA новых (нулевая экспозиция) — не ломая diversity
+    # (5) exploration QUOTA + QUALITY FLOOR (Аудит #12). exploration ТОЛЬКО переставляет: кандидаты уже из
+    # `live` (policy-eligible + present-permitted), tier/decision_class переносятся as-is (не повышаются, не
+    # промоутятся в personal), и НЕ ниже min relevance/coverage floor; no_outreach не берём.
+    expl_lcb = float(ctx.get("exploration_min_lcb", EXPLORATION_MIN_LCB))
+    expl_cov = float(ctx.get("exploration_min_coverage", EXPLORATION_MIN_COVERAGE))
     if len(out) < TOP_N:
         chosen = {id(x) for x in out}
         explored = 0
@@ -145,8 +170,20 @@ def rerank(items, intent, cfg=None, ctx=None):
             if id(it) in chosen:
                 continue
             nm = str(it["cand"].get("name", "")).strip().lower()
-            if exposure_ledger.get(nm, 0) == 0 and float(it.get("coverage") or 0) >= 0.4 and _passes(it):
+            if exposure_ledger.get(nm, 0) == 0 and exploration_eligible(it, expl_lcb, expl_cov) and _passes(it):
                 _take(it, exploration=True); explored += 1
+
+    # backfill: если exploration не заполнил зарезервированные слоты (нет свежих кандидатов), добираем
+    # слейт до TOP_N обычными (не-exploration) кандидатами — резерв НЕ укорачивает результат.
+    if len(out) < TOP_N:
+        chosen = {id(x) for x in out}
+        for it in live:
+            if len(out) >= TOP_N:
+                break
+            if id(it) in chosen:
+                continue
+            if _passes(it):
+                _take(it)
 
     # (6) propensity + причины
     for pos, it in enumerate(out):

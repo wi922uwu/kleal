@@ -4,7 +4,11 @@
 Класс вопроса: P0 mandatory (без ответа нельзя безопасно/корректно определить eligibility) · P1 high
 value (>30% pool / новый tier / предотвращает провал) · P2 ranking only · P3 cosmetic. В MVP вопрос
 выбирается RULE-BASED (не формулой EVI) из 4 ordinal факторов (safety, pool-split, supply-unlock,
-user-control) минус friction. Не более ОДНОГО вопроса до первых результатов, кроме mandatory safety.
+user-control) минус friction.
+
+Аудит #14: правило — не более ОДНОГО основного вопроса ЗА TURN (а не «один за весь pre-search»). Если
+обязательных unknown несколько, они разрешаются за несколько turn'ов: после КАЖДОГО ответа missing/EVI
+пересчитывается и при необходимости задаётся следующий (см. `next_question_turn` / `clarification_sequence`).
 """
 
 # действие при отказе пользователя ответить (§5.2).
@@ -89,3 +93,28 @@ def select_question(missing_keys, *, before_results=True):
         return max(p1, key=lambda s: s["priority"]) if p1 else None
     p12 = [s for s in specs if s["klass"] in ("P1", "P2")]
     return max(p12, key=lambda s: s["priority"]) if p12 else None
+
+
+# ---------------- Аудит #14: один вопрос ЗА TURN (не один за весь pre-search) ----------------
+def next_question_turn(missing_keys, *, answered=None):
+    """Аудит #14: следующий ОДИН вопрос за текущий turn — из ЕЩЁ НЕ отвеченных missing (P0 mandatory
+    раньше P1/P2). None, когда все обязательные покрыты. В проде вызывается после каждого ответа с
+    пересчитанным missing/answered (пересчёт EVI)."""
+    answered = set(answered or [])
+    remaining = [k for k in (missing_keys or []) if k not in answered]
+    return select_question(remaining, before_results=False)
+
+
+def clarification_sequence(missing_keys, *, max_turns=None):
+    """Аудит #14: детерминированная развёртка «по одному вопросу за turn» (для симуляции/тестов): P0
+    раньше P1/P2, каждый вопрос — свой turn, после него слот считается покрытым. В проде следующий вопрос
+    выбирается ПОСЛЕ реального ответа (пересчёт missing/EVI)."""
+    seq, remaining = [], list(missing_keys or [])
+    limit = len(remaining) if max_turns is None else min(int(max_turns), len(remaining))
+    for _ in range(limit):
+        q = select_question(remaining, before_results=False)
+        if not q:
+            break
+        seq.append(q)
+        remaining = [k for k in remaining if k != q["key"]]
+    return seq

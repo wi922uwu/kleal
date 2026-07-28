@@ -13,15 +13,23 @@ INTENT_BLOCKS = ("identity", "goal", "time", "location", "mode", "target",
 SEARCH_AFFECTING = ("domain", "activity", "purpose", "topics", "time", "location", "mode",
                     "format", "target", "role", "requiredLanguages", "radiusKm")
 
-# Вердикт#10: полный набор lifecycle-состояний intent (11). Даже без транзакций TTL/active/paused/expired
-# нужны уже сейчас — иначе устаревшие запросы и повторные приглашения в большом пуле.
+# Вердикт#10 + Аудит#15: ЕДИНЫЙ канонический набор lifecycle-состояний intent (11). Это single source
+# набора состояний; `orchestrator.state_machines` строит автомат intent_lifecycle РОВНО над ним и при
+# импорте проверяет, что не разошёлся (двух независимых списков состояний больше нет).
 LIFECYCLE_STATES = ("draft", "clarification_required", "active", "searching", "paused", "reserved",
                     "matched", "planned", "completed", "expired", "cancelled")
 _ACTIVE_LIFECYCLE = frozenset({"active", "searching", "paused", "reserved"})
 
+# Аудит#15: авторитет состояния — state machine. lifecycle_state() ниже — ТОЛЬКО read-only проекция;
+# менять состояние можно ЛИШЬ через orchestrator.state_machines.advance_intent_lifecycle (assert_transition).
+LIFECYCLE_STATE_IS_PROJECTION = True
+LIFECYCLE_AUTHORITY = "orchestrator.state_machines.intent_lifecycle"
+
 
 def lifecycle_state(intent, now=None):
-    """Вердикт#10: текущее lifecycle-состояние. expired имеет приоритет по TTL; иначе — сохранённое поле."""
+    """Аудит#15: READ-ONLY ПРОЕКЦИЯ авторитетного состояния (transitions — только через state_machines).
+    Читает сохранённое `lifecycle.state` (обновляемое ТОЛЬКО автоматом) и накладывает TTL-overlay: истёкший
+    по времени intent проецируется как 'expired'. Сам по себе состояние НЕ меняет."""
     if now is not None and is_expired(intent, now):
         return "expired"
     lc = (intent.get("lifecycle") or {})

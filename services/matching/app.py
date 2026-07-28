@@ -518,9 +518,19 @@ def load_candidates():
 # ---------------- Matching Core v2 (spec-faithful engine; core_v2.py + ../../config/*.yaml) ----------------
 # Scoring per "Kleal_Matching_Core_Final_Spec_RU_v2": feature groups with unknown/coverage, R_lcb,
 # tier-as-provenance, user-facing bands. Weights/thresholds live ONLY in the sha-pinned YAML.
+# Engine select (full replacement path): KLEAL_ENGINE=matching_core (default) loads the clean-rebuild
+# package `matching_core/` via the drop-in adapter; KLEAL_ENGINE=core_v2 restores Dev B's engine instantly.
 # Rollback for Dev A/B: KLEAL_CORE_V2=0 -> the legacy scorer below runs unchanged. A missing or
 # tampered config also falls back automatically (fail-safe, spec §21.4) — see /api/agent/weights.
-import core_v2 as _core
+_ENGINE = os.environ.get("KLEAL_ENGINE", "matching_core").strip().lower()
+if _ENGINE == "core_v2":
+    import core_v2 as _core
+else:
+    try:
+        import matching_core_engine as _core          # full replacement: matching_core is the engine
+    except Exception as _ee:
+        import core_v2 as _core                        # safety net if the package is missing/broken
+        _ENGINE = "core_v2(fallback:%s)" % type(_ee).__name__
 _CORE_CFG, _CORE_ERR = None, None
 try:
     _CORE_CFG = _core.load_config(os.environ.get(
@@ -2111,36 +2121,153 @@ def expand_one_axis(body):
 # carries an OPEN own-intent becomes a public plan (title from ENTITY_MAP, distance from their geo). Draws
 # from load_candidates() so it honours the store, and returns [] when nobody is posting — the client then
 # shows an empty state instead of invented pins.
-_EXPLORE_WHEN = ("Today 18:00", "Tonight 21:00", "Tomorrow 08:00", "Tomorrow 19:00", "Sat 11:00",
-                 "Sun 10:00", "Wed 17:00", "Fri 20:00", "Thu 20:00", "Sat 17:00")
+_INACTIVE_INTENT_STATUSES = frozenset({
+    "archived", "cancelled", "canceled", "completed", "declined", "draft",
+    "expired", "failed", "paused", "withdrawn",
+})
 
 
-def explore_plans(limit=12, self_name=""):
+def _public_intents(candidate):
+    """Yield only actual active intents. Interests alone are not public plans."""
+    for intent in candidate.get("intents") or []:
+        if not isinstance(intent, dict) or intent.get("open") is False:
+            continue
+        status = str(intent.get("status") or "active").strip().lower()
+        if status in _INACTIVE_INTENT_STATUSES:
+            continue
+        topics = [
+            str(topic).strip().lower()
+            for topic in (intent.get("topics") or intent.get("tags") or [])
+            if str(topic).strip()
+        ]
+        if topics:
+            yield intent, topics[:3]
+
+
+def _saved_public_intents():
+    """Yield persisted intents with their owner, preserving only stored facts."""
+    for row in list(SESSION.get("_intents") or []):
+        if not isinstance(row, dict):
+            continue
+        owner = str(row.get("owner") or "").strip()
+        raw = row.get("intent")
+        if not owner or not isinstance(raw, dict):
+            continue
+        intent = dict(raw)
+        if row.get("id") is not None:
+            intent.setdefault("id", row.get("id"))
+        if row.get("title"):
+            intent.setdefault("title", row.get("title"))
+        if row.get("status"):
+            intent.setdefault("status", row.get("status"))
+        for public_intent, topics in _public_intents({"intents": [intent]}):
+            yield owner, public_intent, topics
+
+
+def _viewer_candidate(profile):
+    """Convert a client profile to the candidate shape expected by policy gates."""
+    profile = profile if isinstance(profile, dict) else {}
+    raw_interests = profile.get("interests") or []
+    interests = [
+        str(item.get("name") if isinstance(item, dict) else item).strip().lower()
+        for item in raw_interests
+        if str(item.get("name") if isinstance(item, dict) else item).strip()
+    ]
+    languages = profile.get("languages") if isinstance(profile.get("languages"), dict) else {}
+    return {
+        "name": str(profile.get("name") or "viewer"),
+        "age": profile.get("age"),
+        "gender": profile.get("gender"),
+        "interests": interests,
+        "langs": profile.get("langs") or languages.get("comfortable") or [],
+        "verified": bool(profile.get("verified") or profile.get("ageVerified18")),
+        "pending": 0,
+        "intents": profile.get("intents") or [],
+    }
+
+
+def _potential_fit(intent, topics, viewer):
+    """Require topical relevance and permission from the plan owner's hard gates."""
+    if not viewer or not viewer.get("interests"):
+        return False
+    decision, _ = _policy_decision(intent, viewer, {"blocked": set(), "feedback": {}}, _CORE_CFG)
+    if decision != "ALLOW":
+        return False
+    best, _ = topical(topics, viewer["interests"])
+    if best <= 0:
+        return False
+    if best == 1 and intent.get("adjacentAllowed") is False:
+        return False
+    if best < 4 and intent.get("exactMatchRequired"):
+        return False
+    return True
+
+
+def explore_plans(limit=12, self_name="", viewer_profile=None):
     sn = str(self_name or "").strip().lower()
     users = [c for c in load_candidates() if not (sn and str(c.get("name", "")).strip().lower() == sn)]
-    # Explore shows ONLY real registered users (source == "onboarding") — a plan from their own-intent, or,
-    # if none, their top interest. Demo pool users are NEVER surfaced here (they exist only so matching has a
-    # non-empty pool to rank against); when there are no real users, the client shows an empty state.
+    # Seed users exist only to keep matching non-empty. They are never public content.
     ordered = [c for c in users if c.get("source") == "onboarding"]
+    owners = {
+        str(c.get("name") or "").strip().lower(): c
+        for c in ordered
+        if str(c.get("name") or "").strip()
+    }
+    viewer = _viewer_candidate(viewer_profile) if viewer_profile is not None else None
     out = []
-    for i, c in enumerate(ordered):
-        # paused (incl. receiving.status/paused_until) leaves retrieval entirely (spec §10.1);
-        # busy/quiet-hours people STAY discoverable — receiving policy blocks proposals, not visibility
+    seen = set()
+
+    def append_plan(c, intent, topics):
+        intent_id = intent.get("id") or intent.get("intent_id")
+        if intent_id and intent_id in seen:
+            return
         if _core.is_paused(c) or c.get("open") is False:
+            return
+        if viewer is not None and not _potential_fit(intent, topics, viewer):
+            return
+        km = c.get("km")
+        plan = {
+            "intentId": intent_id,
+            "title": intent.get("title") or ENTITY_MAP.get(topics[0]) or (topics[0].capitalize() + " meetup"),
+            "who": c.get("name") or "Someone",
+            "age": c.get("age"),
+            "topics": topics,
+            "role": intent.get("role") or "meet",
+            "when": intent.get("when") or intent.get("time") or "",
+            "area": intent.get("area") or intent.get("place") or c.get("city") or "",
+            "verified": bool(c.get("verified")),
+        }
+        if km is not None:
+            try:
+                plan["dist"] = round(float(km), 1)
+            except (TypeError, ValueError):
+                pass
+        if c.get("lat") is not None and c.get("lon") is not None:
+            plan["lat"], plan["lon"] = c["lat"], c["lon"]
+        out.append(plan)
+        if intent_id:
+            seen.add(intent_id)
+
+    for c in ordered:
+        for intent, topics in _public_intents(c):
+            append_plan(c, intent, topics)
+
+    for owner, intent, topics in _saved_public_intents():
+        owner_key = owner.lower()
+        if sn and owner_key == sn:
             continue
-        oi = (c.get("intents") or [None])[0]
-        topics = [str(t).lower() for t in ((oi.get("topics") if oi else None) or c.get("interests") or []) if t][:3]
-        if not topics:
-            continue
-        lat, lon, km = c.get("lat"), c.get("lon"), c.get("km")
-        if lat is None or lon is None:                 # real user without precise coords -> place around the area centre
-            km = float(km if km is not None else round(0.5 + (i * 0.9) % 6.5, 1))
-            lat, lon = _offset(ME_LATLON, km, (i * 137.5) % 360)
-        out.append({"title": ENTITY_MAP.get(topics[0]) or (topics[0].capitalize() + " meetup"),
-                    "who": c.get("name") or "Someone", "topics": topics, "role": (oi or {}).get("role") or "meet",
-                    "when": _EXPLORE_WHEN[i % len(_EXPLORE_WHEN)], "dist": round(float(km or 0), 1),
-                    "lat": lat, "lon": lon, "verified": bool(c.get("verified"))})
-    out.sort(key=lambda p: p["dist"])
+        candidate = owners.get(owner_key) or {
+            "name": owner,
+            "source": "saved_intent",
+            "open": True,
+        }
+        append_plan(candidate, intent, topics)
+
+    out.sort(key=lambda p: (
+        p.get("dist") is None,
+        p.get("dist", 0),
+        str(p.get("title") or "").lower(),
+    ))
     return out[:limit]
 
 # ---------------------------------------------------------------- explain: full diagnostic of one search
@@ -2338,6 +2465,13 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, agent_plan(q, prof, ctx, override))
             except Exception as e:
                 send_json(self, 200, {"intent": _fallback_parse(q), "candidates": [], "error": str(e)[:200]})
+        elif p == "/api/agent/explore":
+            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+            send_json(self, 200, {"plans": explore_plans(
+                limit=int(body.get("limit") or 12),
+                self_name=body.get("self") or prof.get("name") or "",
+                viewer_profile=prof,
+            )})
         elif p == "/api/agent/match":
             # structured entry: caller (e.g. the buddy agent) already assembled the intent/signals -> skip LLM parse
             intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}

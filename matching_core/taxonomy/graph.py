@@ -105,14 +105,28 @@ def _wshare(a, b):
 
 
 def similarity(topics, interests):
-    """§6: лучший уровень (4 exact/alias > 3 sibling(sub) > 2 parent(broad) > 1 adjacent > 0) + matched-набор.
-    Complementary roles и negative edges сюда НЕ входят (это отдельные матрицы/constraints)."""
+    """§6 + Аудит #4 — ЕДИНЫЙ semantic resolver. Canonical taxonomy (405 nodes) — авторитетный источник:
+    если ОБЕ стороны пары резолвятся в каноне, уровень берётся из `canonical.similarity_nodes`. Seed-граф
+    ниже — только bootstrap/fallback для концептов, которых в каноне нет. Уровни: 4 exact/alias >
+    3 sibling > 2 parent > 1 adjacent > 0. Complementary roles и negative edges — отдельные матрицы."""
+    from . import canonical as C
+    canon = C.AVAILABLE
     matched, best = set(), 0
     xb = [(x, resolve(x)) for x in interests]
     for t in topics:
         bt, st = resolve(t)
         nt = norm(t)
+        t_in_canon = C.resolve_node(t) if canon else None
         for x, (bx, sx) in xb:
+            # --- Аудит #4: canonical АВТОРИТЕТНО решает пару, если резолвит обе стороны ---
+            if t_in_canon and C.resolve_node(x):
+                lvl = C.similarity_nodes(t, x)
+                if lvl >= 4:
+                    matched.add(norm(x)); best = max(best, 4)
+                elif lvl:
+                    best = max(best, lvl)
+                continue
+            # --- seed fallback: концепт вне канона (bootstrap для unknown) ---
             if norm(x) == nt:
                 matched.add(norm(x)); best = max(best, 4)          # exact/alias
             elif st and st == sx:
@@ -126,7 +140,7 @@ def similarity(topics, interests):
                 if lvl >= 4:
                     matched.add(norm(x)); best = max(best, 4)
                 elif lvl:
-                    best = max(best, lvl)                           # родственно, но НЕ фальшивый exact
+                    best = max(best, lvl)
     return best, matched
 
 

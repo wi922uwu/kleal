@@ -37,6 +37,18 @@ _GAP = {
 }
 
 
+# Аудит #8: явная семантика policy для decision_class. personal outreach — только при ALLOW.
+PERSONAL_CLASSES = ("strong_personal", "usable_personal")
+POLICY_SEMANTICS = {"BLOCK": "never score/present/outreach",
+                    "REVIEW": "never personal outreach; optional quarantined discovery / manual review",
+                    "ALLOW": "normal pipeline"}
+
+
+def is_personal(decision_class):
+    """Аудит #8: является ли класс личным outreach (strong_personal / usable_personal)."""
+    return decision_class in PERSONAL_CLASSES
+
+
 def band(lcb, coverage, bands_cfg):
     """§9.7: качественный уровень из lcb + coverage (пороги из config user_facing_bands)."""
     for name in ("especially_close", "strong_option", "broader_option"):

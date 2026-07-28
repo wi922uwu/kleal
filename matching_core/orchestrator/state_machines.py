@@ -85,3 +85,25 @@ def assert_transition(machine, frm, to):
 
 def next_states(machine, frm):
     return set(MACHINES[machine].get(frm, set()))
+
+
+# ---------------- Аудит #15: state machine — АВТОРИТЕТНЫЙ источник lifecycle-состояния ----------------
+from ..contracts import intent as _IC   # noqa: E402  (single-source набора состояний, слой ниже)
+
+# Набор состояний автомата intent_lifecycle обязан совпадать с intent.LIFECYCLE_STATES. Расхождение
+# ловится ЗДЕСЬ при импорте — двух независимых списков состояний, которые «со временем разъедутся», нет.
+_ILC_DRIFT = set(MACHINES["intent_lifecycle"].keys()) ^ set(_IC.LIFECYCLE_STATES)
+if _ILC_DRIFT:
+    raise RuntimeError("intent_lifecycle machine diverged from intent.LIFECYCLE_STATES: %s" % _ILC_DRIFT)
+
+
+def advance_intent_lifecycle(intent, to_state, *, now=None):
+    """Аудит #15: ЕДИНСТВЕННЫЙ санкционированный способ сменить lifecycle-состояние intent — через
+    авторитетный автомат. Транзиция проверяется `assert_transition`; `intent.lifecycle_state()` затем лишь
+    ПРОЕЦИРУЕТ результат. Возвращает новый intent с обновлённым lifecycle.state."""
+    frm = _IC.lifecycle_state(intent, now)
+    assert_transition("intent_lifecycle", frm, to_state)
+    it = dict(intent)
+    it["lifecycle"] = dict(it.get("lifecycle") or {})
+    it["lifecycle"]["state"] = to_state
+    return it
