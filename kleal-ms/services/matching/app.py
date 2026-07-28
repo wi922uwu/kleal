@@ -1352,6 +1352,37 @@ def _retrieval_report(slate):
             "top_n": (_core.TOP_N if CORE_V2 else None)}
 
 
+def _photo_by_name():
+    """name (normalised) -> photo URL, for everything that shows a person by name."""
+    out = {}
+    for u in load_candidates():
+        ph = u.get("photo")
+        if ph:
+            out[str(u.get("name", "")).strip().lower()] = ph
+    return out
+
+
+def _stamp_photo(cards):
+    """Put each person's real photo onto their card, in ONE place.
+
+    Cards are assembled in four different code paths (core_v2, the matching_core adapter, the legacy
+    scorer and the §12 expansion fallback), and none of them carried a photo — so every candidate
+    screen in the app fell back to the same stock portrait, shown under whatever name was ranked.
+    Stamping here, after the slate is final, covers all four and cannot drift apart from them.
+
+    The value is a short URL, never image bytes: users.json is re-read and held in memory to rank
+    with, and a slate carrying base64 avatars would put the photo album on every search response."""
+    by_name = _photo_by_name()
+    if not by_name:
+        return cards
+    for c in cards or []:
+        if isinstance(c, dict) and not c.get("photo"):
+            ph = by_name.get(str(c.get("name", "")).strip().lower())
+            if ph:
+                c["photo"] = ph
+    return cards
+
+
 def _slate_budget(intent):
     """How many people the slate may hold for THIS request.
 
@@ -1436,6 +1467,7 @@ def match_candidates(intent, prof, ctx=None, diag=None):
     slate = _stamp_contracts(slate, intent, ctx)          # §4.6/§8.3/§4.12 additive contract overlays
     for c in slate:                                        # §7.1 retrieval-source provenance (additive)
         c.setdefault("retrieval_source", source_by.get(str(c.get("name", "")).strip().lower(), 0))
+    _stamp_photo(slate)                                    # the person's real face, from the store row
     _stamp_allocation_trace(slate, ctx, _alloc_cfg(ctx))  # §11.2 step 6 allocation reasons (additive, read-only)
     if diag is not None:
         diag['slate'] = len(slate)
@@ -2293,7 +2325,8 @@ def explore_plans(limit=12, self_name=""):
         out.append({"title": ENTITY_MAP.get(topics[0]) or (topics[0].capitalize() + " meetup"),
                     "who": c.get("name") or "Someone", "topics": topics, "role": (oi or {}).get("role") or "meet",
                     "when": _EXPLORE_WHEN[i % len(_EXPLORE_WHEN)], "dist": round(float(km or 0), 1),
-                    "lat": lat, "lon": lon, "verified": bool(c.get("verified"))})
+                    "lat": lat, "lon": lon, "verified": bool(c.get("verified")),
+                    "photo": c.get("photo") or None})
     out.sort(key=lambda p: p["dist"])
     return out[:limit]
 
@@ -2546,6 +2579,19 @@ def propose(frm, to, intent, note, idem=None):
     return _idem_put(idem, {"ok": True, "id": rid, "status": "pending", "version": 1,
                             "expires_at": now + PROPOSAL_TTL_S})
 
+def _with_photos(rows, name_key):
+    """Attach the photo of the person named under `name_key` — an invitation and a message thread are
+    both a PERSON, and a row that knows only their name renders a blank circle beside it."""
+    by = _photo_by_name()
+    if by:
+        for r in rows or []:
+            if isinstance(r, dict) and not r.get("photo"):
+                ph = by.get(str(r.get(name_key) or "").strip().lower())
+                if ph:
+                    r["photo"] = ph
+    return rows
+
+
 def inbox(self_name):
     me = _norm_name(self_name)
     if not me:
@@ -2554,7 +2600,7 @@ def inbox(self_name):
         _save_store()
     out = [dict(r) for r in _requests() if _norm_name(r.get("to")) == me]
     out.sort(key=lambda r: -(r.get("updated") or 0))
-    return out[:50]
+    return _with_photos(out[:50], "from")
 
 def outbox(self_name):
     me = _norm_name(self_name)
@@ -2564,7 +2610,7 @@ def outbox(self_name):
         _save_store()
     out = [dict(r) for r in _requests() if _norm_name(r.get("from")) == me]
     out.sort(key=lambda r: -(r.get("updated") or 0))
-    return out[:50]
+    return _with_photos(out[:50], "to")
 
 # A meetup leaves the active list only when someone says so. Deriving "past" from a timestamp would
 # be a guess: the request carries the intent's loose time ("tomorrow evening"), never a real date.
@@ -2739,7 +2785,7 @@ def threads_for(self_name):
         if not cur or (m.get("t") or 0) > (cur.get("t") or 0):
             last[_norm_name(other)] = {"who": other, "last": m.get("text"), "t": m.get("t"),
                                        "mine": _norm_name(m.get("from")) == me}
-    return sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50]
+    return _with_photos(sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50], "who")
 
 # ---- intents as LIVE server-side standing searches ------------------------------------------------
 # Intents used to live only in the sender's localStorage, holding a FROZEN copy of the candidates from

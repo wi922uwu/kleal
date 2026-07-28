@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (onboarding half, lines 16-301 + the embedded HTML).
 # Talks to llm-service over HTTP for every extract/reply/summary turn; holds NO model keys.
 # Contract: ../../shared/contracts.md. Owner: Dev A.
-import os, sys, json, re, threading, hashlib, hmac, time
+import os, sys, json, re, threading, hashlib, hmac, time, base64
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
@@ -844,7 +844,14 @@ const st={ phase:'splash', slide:0, profile:{}, crit:null, thread:[], step:-1,
            editing:false, sumEdited:false };
 function set(path,val){ const ks=path.split('.'); let o=st.profile; for(let i=0;i<ks.length-1;i++){o=o[ks[i]]=o[ks[i]]||{};} o[ks[ks.length-1]]=val; }
 function clock(){ const d=new Date(); let h=d.getHours(); const m=d.getMinutes(); const ap=h>=12?'PM':'AM'; h=h%12||12; return h+':'+(m<10?'0':'')+m+' '+ap; }
+// The photo is stripped from the CHATTY payloads on purpose — /state, the funnel and the summary
+// run on almost every turn, and a 40 KB data URL on each of them is pure waste. It is sent exactly
+// once, by profileForRegister() below, which is the call that actually persists the person.
 function profileForServer(){ const c=Object.assign({},st.profile); delete c.photo; return c; }
+// ...and this is where it must NOT be stripped. It used to be: every payload dropped the photo, so
+// the store held none for anybody and every candidate card in the app showed the same stock face.
+function profileForRegister(){ const c=Object.assign({},st.profile);
+  if(!c.photo) delete c.photo; return c; }
 async function refreshCrit(){
   try{ st.crit=await fetch('/api/onboarding/state',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({profile:profileForServer()})}).then(r=>r.json()); }catch(e){}
@@ -1704,7 +1711,7 @@ function editStep(id){ const i=SCRIPT.findIndex(s=>s.id===id); if(i<0)return goS
 function rDone(){ st.phase='done';
   // register the finished profile into the shared user store -> becomes matchable + shows in admin (fire-and-forget)
   try{ fetch('/api/onboarding/register',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({profile:profileForServer()})}).catch(()=>{}); }catch(_e){}
+    body:JSON.stringify({profile:profileForRegister()})}).catch(()=>{}); }catch(_e){}
   // and bind it to the login, so the next sign-in lands in the app instead of back here
   if(st.login){ const pf=Object.assign({},st.profile); delete pf.photo;
     try{ fetch('/api/onboarding/attach',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -1755,6 +1762,64 @@ HTML = HTML.replace("__PROFILE_URL__", os.environ.get("PROFILE_URL", "").rstrip(
 USERS_PATH = config.USERS
 _REG_LOCK = threading.Lock()
 FILTER_URL = config.FILTER_URL
+
+# ---------------------------------------------------------------- profile photos
+# The photo a person uploads during onboarding used to be thrown away: the client deleted it from
+# every payload (profileForServer) and nothing here ever stored one, so all 602 rows in the store had
+# no photo and every candidate card in the app fell back to the SAME stock face. People were looking
+# at a stranger's stock portrait under someone else's name.
+#
+# Photos are files, not fields. A 480px JPEG data URL is ~40 KB; multiplied by the store that is tens
+# of megabytes of base64 inside the one JSON file the matcher re-reads and holds in memory to rank
+# with — it would make every search carry the photo album. So the bytes go to disk and the row keeps
+# a short URL, which is all any client needs.
+PHOTOS_DIR = os.path.join(os.path.dirname(os.path.abspath(USERS_PATH)), "photos")
+PHOTO_MAX_BYTES = 600 * 1024          # a 480px JPEG is ~40 KB; this is a sanity ceiling, not a target
+_DATA_URL = re.compile(r"^data:image/(jpeg|jpg|png|webp);base64,(.+)$", re.I | re.S)
+
+
+def photo_url(uid):
+    """The path a client fetches. Served by THIS service, and the gateway already forwards
+    /api/onboarding/* here untouched — so no new route anywhere in the topology."""
+    return "/api/onboarding/photo/%s.jpg" % uid
+
+
+def save_photo(uid, data_url):
+    """Persist a data-URL photo and return its URL, or None if there is nothing usable to save.
+
+    Never raises: a photo that fails to store must not fail the registration that carried it — the
+    person finished onboarding, and losing the whole profile over an avatar would be the worse bug."""
+    m = _DATA_URL.match(str(data_url or "").strip())
+    if not m:
+        return None
+    try:
+        raw = base64.b64decode(re.sub(r"\s+", "", m.group(2)), validate=False)
+    except Exception:
+        return None
+    if not raw or len(raw) > PHOTO_MAX_BYTES:
+        return None
+    try:
+        os.makedirs(PHOTOS_DIR, exist_ok=True)
+        dst = os.path.join(PHOTOS_DIR, "%s.jpg" % uid)
+        tmp = dst + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(raw)
+        os.replace(tmp, dst)                 # atomic: a half-written photo is never served
+    except Exception:
+        return None
+    return photo_url(uid)
+
+
+def read_photo(uid):
+    """Bytes of a stored photo, or None. The id is used as a filename, so it is checked against the
+    exact shape ids have — a path fragment must never reach the filesystem."""
+    if not re.match(r"^[A-Za-z0-9_-]{1,64}$", str(uid or "")):
+        return None
+    try:
+        with open(os.path.join(PHOTOS_DIR, "%s.jpg" % uid), "rb") as f:
+            return f.read()
+    except Exception:
+        return None
 
 
 def _canon_interests(words):
@@ -2204,6 +2269,14 @@ def register_profile(profile):
     """Append/replace this person in the shared store (de-dupe by name). Atomic write."""
     u = _profile_to_user(profile)
     u["interests"] = _canon_interests(u.get("interests")) or u.get("interests")
+    # The photo arrives as a data URL and becomes a file. Re-onboarding replaces the whole row, so a
+    # second pass that carries no photo must KEEP the one already on disk — same reason the story is
+    # carried through _profile_to_user rather than left to be silently wiped.
+    saved = save_photo(u["id"], (profile or {}).get("photo"))
+    if saved:
+        u["photo"] = saved
+    elif read_photo(u["id"]):
+        u["photo"] = photo_url(u["id"])
     with _REG_LOCK:
         try:
             with open(USERS_PATH, "r", encoding="utf-8") as f:
@@ -2240,6 +2313,22 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/":
             send(self, 200, HTML, "text/html")
+        elif self.path.split("?")[0].startswith("/api/onboarding/photo/"):
+            # Profile photos. Served from here because this service owns the user store and therefore
+            # owns the write; the gateway already forwards /api/onboarding/* untouched, so a photo is
+            # reachable from every screen in the app without a new route anywhere.
+            uid = self.path.split("?")[0][len("/api/onboarding/photo/"):]
+            raw = read_photo(uid[:-len(".jpg")] if uid.endswith(".jpg") else uid)
+            if raw is None:
+                return send_json(self, 404, {})
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(raw)))
+            # A photo is immutable for as long as it is that person's photo, and re-uploading writes
+            # the same path — so revalidate rather than cache hard, or a changed avatar would stick.
+            self.send_header("Cache-Control", "public, max-age=300")
+            self.end_headers()
+            self.wfile.write(raw)
         elif self.path.startswith("/assets/") and self.path.endswith(".svg"):
             art = ASSETS.get(self.path[len("/assets/"):-len(".svg")])
             if not art:

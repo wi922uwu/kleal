@@ -926,6 +926,12 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .rcard .rtop{display:flex;gap:12px;align-items:flex-start;cursor:pointer}
 .rcard .rph{width:64px;height:64px;flex:none;border-radius:999px;background:var(--neutral100);overflow:hidden}
 .rcard .rph img{width:100%;height:100%;object-fit:cover;display:block}
+/* No photo is a STATE, not a missing file: the initial on the brand gradient. The old fallback was
+   a stock portrait (assets/match-anna.jpg), so everyone without a photo wore the same face. */
+.ini{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#FF7A8A,#F5455C);color:#fff;font-weight:700;letter-spacing:.5px}
+.rcard .rph .ini{font-size:24px}
+.cpub .chero .ini{font-size:96px}
 .rcard .rbd{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .rcard .rnm{font-size:16px;line-height:20px;font-weight:700;color:var(--fg)}
 .rcard .rrole{font-size:13px;line-height:18px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2660,11 +2666,15 @@ function scr_matchchat(){
   // the live path only), and reading m.cand.name then threw, taking the whole Messages tab down.
   if(!m.cand) m.cand={name:m.who||T('Собеседник','Someone')};
   m.msgs=m.msgs||[];
-  const mine=m.msgs.filter(x=>x.who==='me').length; const blur=Math.max(0, 9-mine*3);
+  // The avatar here used to be blurred and to clear as you talked (filter:blur(9-3*turns)). There was
+  // never a photo underneath — just the coral gradient behind a blur — so it read as a broken image
+  // rather than as a privacy step, and after three messages the "reveal" revealed nothing. The real
+  // face goes here now, unblurred, and the promise leaves the privacy copy too.
   const hd=chatHead(m.cand.name||m.who||'', {back:'chat-back', sub:(m.cand.band?bandLabel(m.cand,true):null)});
+  const av=avatarHTML(m.cand);
   const thread=m.msgs.map(x=>x.who==='me'?`<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`
-    :`<div class="krow"><div class="kav" style="filter:blur(${Math.min(blur,4)}px)"></div><div class="kcol"><div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div></div></div>`).join('');
-  const hint=blur>0?`<div class="candbusy" style="text-align:center;padding:2px 0 6px">${T('Фото проявится по мере общения','The photo unblurs as you talk')}</div>`:'';
+    :`<div class="krow">${av}<div class="kcol"><div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div></div></div>`).join('');
+  const hint='';
   // A suggested opener is Kleal's draft FOR THE USER — labelled as such, and tapping it fills the input
   // rather than sending anything on its own.
   const sugg=(!m.msgs.length&&m.suggest)?`<div style="padding:8px 2px">
@@ -3488,6 +3498,32 @@ function assetUrl(p){
   return (m?m[1]+'/':'')+String(p||'')+'?v='+ASSET_VER;
 }
 const ASSET_VER='__ASSET_VER__';
+// ---- one place that turns a person into an avatar -------------------------------------------
+// Photos live at /api/onboarding/photo/<id>.jpg — an absolute path from the origin, served by the
+// service that owns the user store. assetUrl() must NOT touch those: it prefixes the /profile base
+// for assets THIS service serves, and would send a photo request to the wrong door.
+function photoSrc(p){
+  const u=String((p&&(p.photo||p.photoUrl))||'').trim();
+  if(!u) return '';
+  if(u.indexOf('data:')===0||u.indexOf('http')===0||u.charAt(0)==='/') return u;
+  return assetUrl(u);
+}
+// A person with no photo gets their initial on the coral gradient — NOT a stock portrait. The old
+// fallback was assets/match-anna.jpg, so every candidate without a photo (which, until now, was
+// every candidate) showed the same stranger's face under a different name.
+function avatarCss(p){
+  const u=photoSrc(p);
+  return u?`background-image:url('${u}');background-size:cover;background-position:center`:'';
+}
+function initialOf(p){
+  const n=String((p&&(p.name||p.who))||'').trim();
+  return n?esc(n.charAt(0).toUpperCase()):'';
+}
+// The round avatar used in lists and chat rows: photo when there is one, initial when there is not.
+function avatarHTML(p, cls){
+  const u=photoSrc(p);
+  return `<div class="${cls||'kav'}${u?' hasphoto':''}"${u?` style="${avatarCss(p)}"`:''}>${u?'':initialOf(p)}</div>`;
+}
 const TILE_COVER={"art": "art", "baking": "food", "basketball": "sport", "boardgames": "games", "books": "books", "boxing": "sport", "camping": "outdoors", "chess": "games", "cinema": "stage", "climbing": "outdoors", "coffee": "coffee", "concert": "nightlife", "cooking": "food", "cycling": "fitness", "dinner": "food", "dj": "nightlife", "dnd": "games", "drinks": "drinks", "festival": "nightlife", "fishing": "outdoors", "football": "sport", "gaming": "gaming", "guitar": "music", "gym": "fitness", "hiking": "outdoors", "karaoke": "nightlife", "photography": "art", "running": "fitness", "skiing": "outdoors", "social": "social", "surfing": "outdoors", "swimming": "fitness", "tennis": "sport", "theatre": "stage", "travel": "travel", "walk": "outdoors", "wine": "drinks", "yoga": "yoga"};
 function intentTile(it){
   // Topics are the authoritative signal — match them first so an «AI reading group» reads as coding,
@@ -3877,6 +3913,10 @@ async function loadThreads(){
         (DATA.messages=DATA.messages||[]).unshift(local); changed=true;
       }
       const prev=local.last;
+      // The face travels with the thread, and onto the chat partner too — scr_matchchat draws its
+      // avatar from m.cand, so without this the list would show a photo and the chat a blank circle.
+      if(t.photo && local.photo!==t.photo){ local.photo=t.photo;
+        local.cand=Object.assign({}, local.cand||{}, {name:t.who, photo:t.photo}); changed=true; }
       local.last=t.last; local.time=fmtTime((t.t||0)*1000)||'now';
       if(prev!==t.last) changed=true;
     });
@@ -3889,7 +3929,7 @@ function scr_messages(){
   const list=DATA.messages||[];
   if(!list.length) return emptyState(T("Пока нет сообщений","No messages yet"),T("Когда Kleal устроит знакомство, переписки появятся здесь.","When Kleal lines up an intro, your chats show up here."));
   return `<div class="stack fade" style="padding-top:4px">${list.map((m,i)=>`<div class="card" style="padding:0">
-    <div class="msgrow" data-msg="${i}"><div class="msgav ${m.kleal?'k':''}">${m.kleal?'K':esc(String(m.who||'?')[0])}</div>
+    <div class="msgrow" data-msg="${i}"><div class="msgav ${m.kleal?'k':''}"${(!m.kleal&&photoSrc(m))?` style="${avatarCss(m)}"`:''}>${m.kleal?'K':((photoSrc(m))?'':esc(String(m.who||'?')[0]))}</div>
     <div class="msgt"><div class="mn">${esc(m.who)}${m.kleal?'<span class="reddot"></span>':''}</div><div class="ml">${esc(m.last)}</div></div>
     <div class="msgtime">${esc(m.time)}</div></div></div>`).join('')}</div>`;
 }
@@ -4080,7 +4120,7 @@ function scr_agenthome(){
   const mWhen=inv?locStr(ioi.when||ioi.time||''):'';
   const mWhere=inv?(ioi.area||ioi.place||''):'';
   const mAge=(inv&&inv.age)?', '+inv.age:'';
-  const mPhoto=(inv&&inv.photo)||'';
+  const mPhoto=photoSrc(inv);      // resolves both a stored /api/... photo and a bundled asset path
   const matchCard = inv ? `<div class="emeet" data-act="go-inbox">
       <div class="ava${mPhoto?'':' init'}">${mPhoto?`<img src="${esc(mPhoto)}" alt="">`:esc(String(inv.from||'?').slice(0,1).toUpperCase())}</div>
       <div class="mbd">
@@ -5807,13 +5847,13 @@ function candTags(c, n){
 // Recommendation card (Figma "Best fit for your request"): photo, name, role/location, tags, band
 // badge, a Kleal-summary line, and an Invite CTA. Used both in the results list and the best-fit view.
 function personRow(c,i,cls){
-  const photo=c.photo||assetUrl('assets/match-anna.jpg');                 // demo placeholder until real photos exist
+  const photo=photoSrc(c);
   const tags=candTags(c,3).map(x=>`<span class="rtag">${esc(locTopic(x))}</span>`).join('');
   const role=(c.tagline||c.about||'').trim();
   const loc=c.area||c.city||(c.km!=null?(c.km+' '+T('км','km')):'');
   return `<div class="rcard ${cls||''}">
     <div class="rtop" data-act="cand-open" data-n="${esc(c.name)}">
-      <div class="rph"><img src="${esc(photo)}" alt="" onerror="this.style.display='none'"></div>
+      <div class="rph">${photo?`<img src="${esc(photo)}" alt="${esc(c.name||'')}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ini',textContent:'${initialOf(c)}'}))">`:`<div class="ini">${initialOf(c)}</div>`}</div>
       <div class="rbd">
         <div class="rnm">${esc(c.name)}${c.age?(', '+c.age):''}</div>
         ${role?`<div class="rrole">${esc(role.slice(0,60))}</div>`:''}
@@ -6060,14 +6100,14 @@ function candSummaryLine(c){
 }
 function scr_candprofile(){
   const c=CAND; if(!c) return scr_options();
-  const photo=c.photo||assetUrl('assets/match-anna.jpg');                 // demo placeholder until real photos exist
+  const photo=photoSrc(c);
   const tags=candTags(c,6).map(x=>`<span class="tg">${esc(locTopic(x))}</span>`).join('');
   const langs=(c.langs||[]).join(', ');
   const loc=c.area||c.city||(c.km!=null?(c.km+' '+T('км','km')):'');
   const bio=esc(c.tagline||c.about||c.summary||'');
   return `<div class="kflow cpub fade">
     <div class="chero">
-      <img src="${esc(photo)}" alt="" onerror="this.style.display='none'">
+      ${photo?`<img src="${esc(photo)}" alt="${esc(c.name||'')}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ini',textContent:'${initialOf(c)}'}))">`:`<div class="ini">${initialOf(c)}</div>`}
       <div class="cnav">
         <div class="cbtn" data-act="cand-back">${IC.back}</div>
         <div class="cbtn" data-act="cand-opts" data-n="${esc(c.name)}">${IC.dots}</div>
@@ -6437,8 +6477,8 @@ function scr_help(){
         'Describe in your own words who or what you are looking for. Kleal turns it into a request, finds people with close interests and talks to their agents for you. You only see people who are open to meeting too.')}</div></div>
     <div class="card pad" style="margin-top:10px"><div class="seclbl">${T('Что видят другие','What others see')}</div>
       <div class="sumtxt" style="font-size:13.5px;color:var(--muted);margin-top:6px">${T(
-        'Имя, возраст, район города и общие интересы. Точное местоположение не показывается никогда. Фото открывается постепенно, по мере общения.',
-        'Your name, age, city area and shared interests. Your exact location is never shown. Photos unblur gradually as you talk.')}</div></div>
+        'Имя, возраст, район города, фото и общие интересы. Точное местоположение не показывается никогда.',
+        'Your name, age, city area, photo and shared interests. Your exact location is never shown.')}</div></div>
     <div class="card pad" style="margin-top:10px"><div class="seclbl">${T('Если что-то не так','If something is wrong')}</div>
       <div class="sumtxt" style="font-size:13.5px;color:var(--muted);margin-top:6px">${T(
         'Настройки приватности и блокировки собраны в разделе «Приватность и безопасность». Канал поддержки ещё не подключён — он появится вместе с аккаунтами.',

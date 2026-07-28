@@ -68,6 +68,18 @@ tools/groups_smoke.py
 ops/run.sh
 "
 
+# Named files win over the whole list:  ops/deploy.sh services/profile/app.py
+#
+# Deploying everything is the right move when this repo is the only thing writing to the pod, and the
+# wrong one when it is not. A second agent has twice pushed its own tree here, and a full upload from
+# either side silently reverts the other's work — so when someone else is working, push only what you
+# actually touched and leave the rest of the pod alone.
+if [ $# -gt 0 ]; then
+  FILES="$*"
+  echo "выборочный деплой: $# файл(ов) — остальное на поде не трогаю"
+  echo
+fi
+
 fail=0
 for rel in $FILES; do
   src="$LOCAL_ROOT/$rel"
