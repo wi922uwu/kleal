@@ -1263,6 +1263,10 @@ WIDGETS.basics=function(slot){
 // A raw phone photo is several MB as a dataURL — too big to keep in st.profile, to stash in
 // localStorage (≈5MB quota), or to move around. Downscale to a 480px JPEG avatar first; that makes
 // the upload reliable and small enough to hand to the profile app.
+// One coral pin, inline so the step needs no image asset to show where the person is.
+const LPIN_SVG='<svg viewBox="0 0 26 34" width="26" height="34" xmlns="http://www.w3.org/2000/svg">'
+  +'<path d="M13 33C13 33 24 21.5 24 13A11 11 0 1 0 2 13c0 8.5 11 20 11 20Z" fill="#F5455C" stroke="#fff" stroke-width="2"/>'
+  +'<circle cx="13" cy="13" r="4.2" fill="#fff"/></svg>';
 function _downscalePhoto(dataURL, cb){
   const img=new Image();
   img.onload=function(){ const MAX=480; let w=img.width, h=img.height;
@@ -1324,6 +1328,8 @@ WIDGETS.location=function(slot){
   const area=(g.comfortableAreas&&g.comfortableAreas[0])||st.profile.city||'';
   const hasL=(typeof L!=='undefined');
   const mapHtml = hasL ? '<div class="map" id="lmap"></div>'
+      + '<div class="hint" style="margin-top:6px">'
+      + T('Пин можно перетащить — район важнее города','Drag the pin — the district matters more than the city') + '</div>'
                        : '<div class="map"><div class="ring"></div><div class="pin">'+IC.pin+'</div></div>';
   // Figma order: the place field first, then the distance with its value on the right, then the
   // dark "detect" action, and the map underneath as confirmation of what was chosen. The field
@@ -1344,14 +1350,28 @@ WIDGETS.location=function(slot){
     <div class="acts"><button class="btn pri" id="cont" ${area?'':'disabled'}>${T('Почти закончили','We\'re almost done')}</button></div>`;
   const rad=slot.querySelector('#rad'), area_in=slot.querySelector('#area'), cont=slot.querySelector('#cont');
   // ---- real map (Leaflet + Carto light tiles). A radius circle marks the AREA; no exact pin, no attribution bar. ----
-  let lmap=null, circle=null;
+  let lmap=null, circle=null, lpin=null;
   function fit(){ if(lmap&&circle) lmap.fitBounds(circle.getBounds(),{padding:[16,16]}); }
-  function recenter(c){ if(!lmap||!circle)return; circle.setLatLng(c); fit(); }
+  function recenter(c){ if(!lmap||!circle)return; circle.setLatLng(c); if(lpin) lpin.setLatLng(c); fit(); }
   if(hasL){
     const center=(g.coarseLat&&g.coarseLon)?[g.coarseLat,g.coarseLon]:[41.3874,2.1686];
     lmap=L.map('lmap',{zoomControl:false,scrollWheelZoom:false,attributionControl:false});
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',{maxZoom:19}).addTo(lmap);
     circle=L.circle(center,{radius:(r||10)*1000,color:'#F5455C',weight:2,fillColor:'#F5455C',fillOpacity:.12}).addTo(lmap);
+    // The map only ever showed a circle around whatever city was typed or detected. A person lives in
+    // a district, and these coordinates are what the distance gate ranks on — so there is a pin, and
+    // it can be moved. Two decimals ≈ a kilometre: this is the COARSE location the step promises,
+    // and a pin storing six decimals would turn "город" into a street address.
+    lpin=L.marker(center,{draggable:true,autoPan:true,
+      icon:L.divIcon({className:'',iconSize:[26,34],iconAnchor:[13,32],html:LPIN_SVG})}).addTo(lmap);
+    lpin.on('drag',()=>{ const ll=lpin.getLatLng(); if(circle) circle.setLatLng(ll); });
+    lpin.on('dragend',()=>{
+      const ll=lpin.getLatLng();
+      set('geo.coarseLat', +ll.lat.toFixed(2)); set('geo.coarseLon', +ll.lng.toFixed(2));
+      set('geo.located', true);
+      stat(T('Точка выбрана вручную','Spot picked by hand'));
+      cont.disabled=false;
+    });
     lmap.setView(center,12); fit();
     setTimeout(()=>{ if(lmap){ lmap.invalidateSize(); fit(); } }, 80);
   }

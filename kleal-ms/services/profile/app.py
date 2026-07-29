@@ -144,6 +144,7 @@ HTML_HEAD = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 html,body{height:100%}
 body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--fg)}
+:root{--navh:92px}
 .phone{width:390px;height:844px;max-height:100vh;background:var(--bg);border-radius:44px;overflow:hidden;
   position:relative;display:flex;flex-direction:column;box-shadow:0 30px 90px #0008}
 @media(max-width:430px){body{background:var(--bg)}.phone{width:100vw;height:100vh;border-radius:0}}
@@ -216,7 +217,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .storyta::placeholder{color:var(--muted)}
 .storyta:focus{border-color:var(--primary)}
 /* body */
-.body{flex:1;overflow-y:auto;padding:2px 16px 20px;scrollbar-width:none}
+.body{flex:1;overflow-y:auto;padding:2px 16px calc(20px + var(--navh));scrollbar-width:none}
 .body::-webkit-scrollbar{display:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 24px #0000000d}
 .pad{padding:16px}
@@ -358,8 +359,15 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 /* Bottom nav (Figma "Bottom Nav"): a floating white pill, not an edge-to-edge bar, with the coral
    ai-spark FAB raised over its centre. The pill floats over whatever is behind it — clouds on Home,
    the page on every other screen. */
-.bnav{flex:none;position:relative;display:flex;align-items:flex-end;justify-content:center;
-  height:92px;background:transparent;border:0;padding:0 15px calc(16px + env(safe-area-inset-bottom))}
+/* The nav pill FLOATS over the screen instead of standing under it. It used to be a flex item in
+   the phone column, so it owned 92px that no screen could use and every list ended in a dead band
+   above it. Absolute + pointer-events:none means content runs full height and scrolls beneath the
+   pill, while only the pill itself takes taps. Scroll containers below get that height back as
+   bottom padding, so the last row still clears it. */
+.bnav{position:absolute;left:0;right:0;bottom:0;z-index:60;pointer-events:none;
+  display:flex;align-items:flex-end;justify-content:center;
+  height:var(--navh);background:transparent;border:0;padding:0 15px calc(16px + env(safe-area-inset-bottom))}
+.navpill{pointer-events:auto}
 .navpill{width:100%;max-width:360px;height:64px;display:flex;align-items:center;justify-content:space-between;
   gap:6px;padding:0 20px;background:#fff;border-radius:36px;box-shadow:0 8px 24px rgba(0,0,0,.10)}
 .navpill a{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;
@@ -678,7 +686,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .ah2 .bell{width:44px;height:44px;border:.5px solid rgba(226,229,236,.75);border-radius:999px;display:flex;
   align-items:center;justify-content:center;flex:none;cursor:pointer;position:relative;
   background:rgba(255,255,255,.22);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
-.ah2 .body{flex:1;min-height:0;overflow-y:auto;padding:0 20px 12px;display:flex;flex-direction:column;gap:20px}
+.ah2 .body{flex:1;min-height:0;overflow-y:auto;padding:0 20px calc(12px + var(--navh));display:flex;flex-direction:column;gap:20px}
 .aintro2{display:flex;gap:12px;align-items:center;padding:12px 16px;border-radius:16px}
 /* ── Home, rebuilt to the mockup ────────────────────────────────────────────────────────────────
    Two honest substitutions, both forced by what the app actually has:
@@ -910,7 +918,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .cpub .cinv.done .ck{transform:translateX(0)!important}
 .cpub .cinv.done{background:var(--primary)}
 .cpub .cinv.done .lb{color:#fff}
-.cpub .bnav{flex:none}
+.cpub .bnav{position:relative;flex:none;pointer-events:auto}   /* this screen embeds its own, in flow */
 /* Profile options bottom sheet */
 .ksheet.copts{display:flex;flex-direction:column;gap:10px}
 .copts .chdr{display:flex;align-items:center;justify-content:space-between;margin:2px 0 6px}
@@ -6265,7 +6273,11 @@ let ESHEET=null;
 // The Location sheet used to show a decorative CSS circle that grew by pixels — it carried no scale,
 // so "32 км" meant nothing visually. It is a real Leaflet map now: the radius drawn over the actual
 // city, the view always fitted to the circle, and a metric scale bar, so you can see how far it is.
-let eshMap=null, eshCircle=null;
+let eshMap=null, eshCircle=null, eshPin=null;
+// One coral pin, drawn inline so the map needs no image asset and no network round-trip to show it.
+const PIN_SVG='<svg viewBox="0 0 26 34" width="26" height="34" xmlns="http://www.w3.org/2000/svg">'
+  +'<path d="M13 33C13 33 24 21.5 24 13A11 11 0 1 0 2 13c0 8.5 11 20 11 20Z" fill="#F5455C" stroke="#fff" stroke-width="2"/>'
+  +'<circle cx="13" cy="13" r="4.2" fill="#fff"/></svg>';
 function locSheetCenter(area){
   const k=cityKey(area||'');                       // reuse the Explore map's city table
   if(k&&CITY_LATLON[k]) return CITY_LATLON[k];
@@ -6274,18 +6286,21 @@ function locSheetCenter(area){
 }
 function initLocSheetMap(){
   const el=document.getElementById('eshMap'); if(!el) return;
-  if(eshMap){ try{ eshMap.remove(); }catch(_e){} eshMap=null; eshCircle=null; }
+  if(eshMap){ try{ eshMap.remove(); }catch(_e){} eshMap=null; eshCircle=null; eshPin=null; }
   if(typeof L==='undefined') return;
   const d=(ESHEET&&ESHEET.draft)||{};
-  const c=locSheetCenter(d.area);
+  const c=(d.lat!=null&&d.lon!=null)?[d.lat,d.lon]:locSheetCenter(d.area);
   if(!c){                                          // unknown city: say so instead of drawing a fake map
     el.innerHTML=`<div class="k-cap" style="color:var(--muted);height:100%;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 14px">${
       T('Не знаю такой город — радиус всё равно сохранится','City not recognised — the radius is still saved')}</div>`;
     return;
   }
   el.innerHTML='';
-  const map=L.map(el,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,
-                      doubleClickZoom:false,touchZoom:false,boxZoom:false,keyboard:false});
+  // The map was fully locked and the pin was a painted dot, so "where I am" could only ever be the
+  // centre of whatever city was typed. A person lives in a district, not in a city centroid, and the
+  // distance gate ranks on these exact coordinates — so the pin is draggable and the map pans.
+  const map=L.map(el,{zoomControl:false,attributionControl:false,dragging:true,scrollWheelZoom:false,
+                      doubleClickZoom:false,touchZoom:true,boxZoom:false,keyboard:false});
   // A view MUST exist before layers are added: circle.getBounds() projects through the map, so
   // fitBounds on a view-less map throws and (inside the try/catch) silently left a blank container.
   map.setView(c, 11);
@@ -6293,7 +6308,18 @@ function initLocSheetMap(){
   L.control.scale({metric:true,imperial:false,position:'bottomleft'}).addTo(map);
   eshCircle=L.circle(c,{radius:(+d.radiusKm||10)*1000,color:'#F5455C',weight:2,
                         fillColor:'#F5455C',fillOpacity:.12}).addTo(map);
-  L.circleMarker(c,{radius:4,color:'#F5455C',fillColor:'#F5455C',fillOpacity:1,weight:2}).addTo(map);
+  eshPin=L.marker(c,{draggable:true,autoPan:true,
+    icon:L.divIcon({className:'',iconSize:[26,34],iconAnchor:[13,32],html:PIN_SVG})}).addTo(map);
+  // Dragging moves the circle with the pin and stores the coordinates on the draft. Rounded to two
+  // decimals — about a kilometre — because this is the COARSE location the product promises; a pin
+  // that recorded six decimals would quietly turn "район" into a street address.
+  eshPin.on('drag', ()=>{ const ll=eshPin.getLatLng(); if(eshCircle) eshCircle.setLatLng(ll); });
+  eshPin.on('dragend', ()=>{
+    const ll=eshPin.getLatLng();
+    ESHEET.draft.lat=+ll.lat.toFixed(2); ESHEET.draft.lon=+ll.lng.toFixed(2);
+    const h=document.getElementById('eshPinHint');
+    if(h) h.textContent=T('Точка сохранится вместе с радиусом','This spot is saved with the radius');
+  });
   const fit=()=>{ try{ map.invalidateSize(); map.fitBounds(eshCircle.getBounds(),{padding:[16,16]}); }catch(_e){} };
   fit(); setTimeout(fit,80);
   eshMap=map;
@@ -6307,7 +6333,9 @@ function locSheetRadius(km){
 const GENDER_OPTS=()=>[['Male',T('Мужчина','Male')],['Female',T('Женщина','Female')],['Other',T('Другое','Other')]];
 const SHEET_LANGS=['en','es','ru','fr','de','it','ca','pt','sr','uk','pl','sv'];
 function openSheet(kind, idx){
-  if(kind==='location') ESHEET={kind, draft:{area:DATA.area||'', radiusKm:DATA.radiusKm||10}};
+  if(kind==='location') ESHEET={kind, draft:{area:DATA.area||'', radiusKm:DATA.radiusKm||10,
+    lat:(DATA.geo&&DATA.geo.coarseLat!=null)?DATA.geo.coarseLat:null,
+    lon:(DATA.geo&&DATA.geo.coarseLon!=null)?DATA.geo.coarseLon:null}};
   else if(kind==='languages') ESHEET={kind, draft:(DATA.langsList||[]).slice()};
   else if(kind==='basics') ESHEET={kind, draft:{age:DATA.age||'', gender:DATA.gender||''}};
   // The section sheets (Figma: Interests Edit / Personality Edit / Safety). Each
@@ -6332,7 +6360,9 @@ function eSheetHTML(){
         <span class="k-small" id="eshKmL" style="color:var(--primary);font-weight:700">${kmTxt(km)}</span></div>
       <input id="eshKm" type="range" min="1" max="50" value="${km}" style="width:100%;accent-color:var(--primary)"
         oninput="ESHEET.draft.radiusKm=+this.value;document.getElementById('eshKmL').textContent=this.value+' ${T('км','km')}';locSheetRadius(this.value)">
-      <div id="eshMap" class="eshmap"></div>`;
+      <div id="eshMap" class="eshmap"></div>
+      <div class="k-cap" id="eshPinHint" style="color:var(--muted);margin-top:6px">${
+        T('Перетащи пин туда, откуда тебе удобно добираться','Drag the pin to where you actually start from')}</div>`;
   } else if(e.kind==='languages'){
     title=T('Языки','Languages');
     body='<div class="kchips">'+SHEET_LANGS.map(c=>`<div class="kchip ${e.draft.includes(c)?'on':''}" data-act="esheet-lang" data-v="${c}">${esc(langName(c))}</div>`).join('')+'</div>';
@@ -6404,7 +6434,14 @@ function acceptSheet(){
     const a=document.getElementById('eshArea'), km=document.getElementById('eshKm');
     if(a&&a.value.trim()) DATA.area=a.value.trim();
     if(km) DATA.radiusKm=+km.value;
-    pushProfile({area:DATA.area, radiusKm:DATA.radiusKm});
+    const patch={area:DATA.area, radiusKm:DATA.radiusKm};
+    // A dragged pin is the whole point of the map; without this it moved on screen and changed
+    // nothing, and matching kept ranking from the city centroid.
+    if(e.draft.lat!=null&&e.draft.lon!=null){
+      DATA.geo=Object.assign({}, DATA.geo||{}, {coarseLat:e.draft.lat, coarseLon:e.draft.lon});
+      patch.lat=e.draft.lat; patch.lon=e.draft.lon;
+    }
+    pushProfile(patch);
   }
   else if(e.kind==='languages'){ DATA.langsList=e.draft.slice(); pushProfile({langs:DATA.langsList}); }
   else if(e.kind==='basics'){
@@ -6642,7 +6679,7 @@ function render(){
   if(ESHEET) A.insertAdjacentHTML('beforeend', eSheetHTML());
   // the Location sheet carries a live Leaflet map; build it after its node exists, tear it down on close
   if(ESHEET&&ESHEET.kind==='location') setTimeout(initLocSheetMap,0);
-  else if(eshMap){ try{ eshMap.remove(); }catch(_e){} eshMap=null; eshCircle=null; }
+  else if(eshMap){ try{ eshMap.remove(); }catch(_e){} eshMap=null; eshCircle=null; eshPin=null; }
   // A chat owns the full height: the app area becomes a flex column so the thread scrolls INTERNALLY and the
   // composer stays pinned. Resetting scrollTop to 0 on every render is what made the intent chat jump — so
   // only non-chat screens reset, and chats auto-scroll their thread to the newest message.
@@ -6778,11 +6815,30 @@ function doAct(act, ds){
       if(exploreMap) exploreMap.flyTo(c, 12, {duration:.6}); break; }
     // The pencil on an intent card reopens the composer with that intent loaded, so editing is
     // editing — the old card wired this to DELETE, one slip away from losing the request.
+    // The pencil on an intent card opens the AGENT CHAT to edit that card. It used to drop the person
+    // into the composer with msgs:[] — a chat screen with no conversation in it and nothing saying
+    // what it was for, which reads as a blank screen rather than as "let's change this plan".
+    // Kleal opens the conversation, names the card, and the edit happens by talking, like everywhere
+    // else in the product. flowInit() supplies the fields the flow screens expect (mode/steps/busy/
+    // adjust/…); building FLOW by hand here is what left them undefined.
     case 'intent-edit': { const it=(DATA.intents||[]).find(x=>String(x.id)===String(ds.id));
       if(!it){ toast(T('Интент не найден','Intent not found')); break; }
-      FLOW={text:it.title||'', request:it.title||'', msgs:[], intent:Object.assign({},it.intent||{}),
-            res:it.candidates||[], summary:{request:it.title||''}, fromIntent:it.id};
-      cur='reqcomposer'; render(); break; }
+      flowInit(it.title||'', 'intent');
+      FLOW.request=it.title||'';
+      FLOW.intent=Object.assign({}, it.intent||{});
+      FLOW.res=it.candidates||[];
+      FLOW.summary={request:it.title||'', title:it.title||null};
+      FLOW.fromIntent=it.id;
+      intentPrefill();                       // day/time/district chips light up from the saved intent
+      const _w=mWhen(it.intent), _p=mWhere(it.intent);
+      FLOW.msgs=[{who:'ag',t:Date.now(),text:
+        T('Меняем «'+(it.title||T('этот интент','this intent'))+'»'+((_w||_p)?' — '+[_w,_p].filter(Boolean).join(', '):'')+
+          '. Скажи, что поправить: тему, время, место или кого ищем.',
+          'Editing “'+(it.title||'this intent')+'”'+((_w||_p)?' — '+[_w,_p].filter(Boolean).join(', '):'')+
+          '. Tell me what to change: the topic, the time, the place, or who you are looking for.')}];
+      cur='reqcomposer'; render();
+      setTimeout(()=>{const e=document.getElementById('flowinp'); if(e)e.focus();},60);
+      break; }
     case 'mtab': MTAB=ds.k; if(ds.k!=='archive') ARCHTAB='all'; render(); break;
     // «Посмотреть приглашение» opens the thread with the person who sent it: their message, their
     // name and the reply box in one place. There is no separate review screen and inventing a
