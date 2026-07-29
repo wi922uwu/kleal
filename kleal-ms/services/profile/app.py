@@ -765,6 +765,8 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .emeet .mmeta span{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .emeet .mmeta svg{width:14px;height:14px;flex:none;color:var(--primary)}
+.emeet .pintent{font-size:12px;line-height:16px;color:var(--muted);overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
 .emeet .mbtn{margin-top:2px;height:32px;border:0;border-radius:999px;background:var(--primary);color:#fff;
   font:inherit;font-size:13px;font-weight:500;cursor:pointer}
 
@@ -2918,13 +2920,15 @@ async function adaptSummary(){
 // ---------- Phase 3: public intents on the Explore map ----------
 const ME_LATLON=[41.3874, 2.1686];   // Barcelona (demo user's coarse area)
 // Explore plans are REAL — pulled from the matching pool (/api/agent/explore), not hard-coded here.
-let PUBLIC_INTENTS=[], exploreLoaded=false, exploreLoading=false;
+let PUBLIC_INTENTS=[], FOR_YOU_PLANS=[], exploreLoaded=false, exploreLoading=false;
 async function loadExplore(){
   if(exploreLoading) return; exploreLoading=true;
   // The map wants a populated world; the old default of 12 rows left it almost empty.
   const me=encodeURIComponent(DATA.name||'');
-  let r,gr; try{ [r,gr]=await Promise.all([
+  let r,fr,gr; try{ [r,fr,gr]=await Promise.all([
     fetch('/api/agent/explore?limit=300&self='+me).then(x=>x.json()),
+    fetch('/api/agent/explore',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({limit:30,self:DATA.name||'',profile:matchProfileForHints()})}).then(x=>x.json()),
     fetch('/api/agent/groups?limit=60&self='+me).then(x=>x.json())]); }catch(e){ r=null; gr=null; }
   exploreLoading=false; exploreLoaded=true;
   // Real groups are plans you can actually join, so they lead — a synthesized "X likes football"
@@ -2932,13 +2936,18 @@ async function loadExplore(){
   GROUPS=(gr&&gr.groups)||[];
   PUBLIC_INTENTS=GROUPS.map(g=>({gid:g.gid, title:g.title, who:g.host, topics:g.topics||[],
       when:g.when||'', area:g.area||'', lat:g.lat, lon:g.lon, size:g.size, max_size:g.max_size,
-      state:g.state, mine:g.mine, hosting:g.hosting, waiting:g.waiting, version:g.version}))
+      going:g.size||0, state:g.state, mine:g.mine, hosting:g.hosting, waiting:g.waiting, version:g.version}))
     .concat((r&&r.plans)||[]);
   PUBLIC_INTENTS.forEach((p,i)=>{ p._i=i; });     // stable id; indexOf per pin was O(n^2) over 2000 rows
-  // Agent Home's "For you today" shows the same REAL plans (the seed carries none)
-  DATA.plans=PUBLIC_INTENTS.map(p=>({title:p.title||p.who||'', who:p.who||'',
-    when:p.when||'', area:p.area||'', topics:p.topics||[],
-    dist:(p.km!=null?(p.km+' '+T('км','km')):''), going:p.going||p.participants||0}));
+  // Agent Home is stricter than Explore: only real intents compatible with this profile.
+  FOR_YOU_PLANS=((fr&&fr.plans)||[]).map(p=>{
+    const pi=PUBLIC_INTENTS.findIndex(x=>
+      (p.intentId&&x.intentId===p.intentId) ||
+      (!p.intentId&&x.who===p.who&&x.title===p.title));
+    return {intentId:p.intentId, title:p.title||p.who||'', who:p.who||'',
+      age:p.age, photo:p.photo||'', when:p.when||'', area:p.area||'', topics:p.topics||[],
+      dist:(p.dist!=null?(p.dist+' '+T('км','km')):''), going:p.going||p.participants||0, _pi:pi};
+  }).filter(p=>p._pi>=0);
   if(cur==='search'){ xSyncList(); if(exploreMap) drawExploreMarkers(); else render(); }
   else if(cur==='agenthome') render();
 }
@@ -3328,30 +3337,24 @@ async function hostGroup(it){
   exploreLoaded=false; await loadExplore(); render(); saveState();
 }
 async function joinPublic(i){
-  // This used to only write a local notification claiming the host's agent had been asked.
-  // Nothing was sent. Now it really asks their agent, and reports what actually happened.
   const p=PUBLIC_INTENTS[i]; if(!p) return;
   const who=p.who||p.name||'';
   if(!who){ toast(T('У этого плана нет владельца','This plan has no host')); return; }
-  toast(T('Спрашиваю агента…','Asking their agent…'));
+  toast(T('Отправляю отклик…','Sending your response…'));
   let r=null;
   try{
-    r=await fetch('/api/agent/negotiate',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({intent:{topics:p.topics||[p.title||''],type:p.type||'social',
-                                   time:p.when||'Flexible',mode:'offline',title:p.title||''},
-                           profile:matchProfile(), candidates:[{name:who}]})}).then(x=>x.json());
+    const intent={id:p.intentId||null, topics:p.topics||[p.title||''], type:p.type||'social',
+                  role:p.role||'meet', time:p.when||'Flexible', area:p.area||'',
+                  mode:p.mode||'offline', title:p.title||''};
+    r=await fetch('/api/agent/propose',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({from:DATA.name||'', to:who, intent,
+                           note:p.title||'', idem:idemKey('jp:'+(p.intentId||p.title||who))})}).then(x=>x.json());
   }catch(e){ r=null; }
-  const v=(r&&r.candidates&&r.candidates[0])||null;
-  if(!v){ toast(T('Не удалось связаться — попробуй позже','Could not reach them — try later')); return; }
-  if(v.agree){
-    addNotif('intent',T('Заявка принята','Request accepted')+': “'+(p.title||'')+'”',
-             who+' — '+(v.reason||T('агент согласился','their agent agreed')), null);
-    toast(T('Агент согласился','Their agent agreed'));
-  } else {
-    addNotif('intent',T('Пока отказ','Not this time')+': “'+(p.title||'')+'”',
-             who+' — '+(v.reason||''), null);
-    toast(v.reason||T('Пока не сложилось','Not this time'));
-  }
+  if(!r||!r.ok){ toast(T('Не удалось отправить отклик — попробуй позже','Could not send your response — try later')); return; }
+  addNotif('intent',T('Отклик отправлен','Response sent')+': “'+(p.title||'')+'”',
+           T('Ждём ответа от ','Waiting for a response from ')+who, null);
+  toast(r.resent ? T('Отклик обновлён','Response updated') : T('Отклик отправлен','Response sent'));
+  loadRequests();
   saveState(); render();
 }
 
@@ -3396,11 +3399,24 @@ async function deleteIntent(id){
 // Every launched request becomes a standing intent, so the tab reflects what Kleal is actually doing.
 async function persistIntent(){
   const me=(DATA.name||'').trim(); if(!me||!FLOW||!FLOW.intent) return;
+  const intent=flowIntent();
+  let saved=null;
   try{
-    await fetch('/api/agent/intent-save',{method:'POST',headers:{'Content-Type':'application/json'},
+    saved=await fetch('/api/agent/intent-save',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({self:me, id:FLOW.fromIntent||null,
-        title:(FLOW.intent.title)||FLOW.request||'', intent:FLOW.intent, launched:true})});
+        title:(intent.title)||FLOW.request||'', intent, launched:true})}).then(x=>x.json());
   }catch(e){}
+  // A selected group size is a public, joinable group, not a personal proposal dressed as one.
+  // The intent id is the stable idempotency key, so rerunning the same search cannot duplicate it.
+  if(saved&&saved.ok&&Number(intent.groupSize)>2){
+    try{
+      await fetch('/api/agent/group-create',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({host:me, title:intent.title||FLOW.request||'', topics:intent.topics||[],
+          when:intent.time||'', area:intent.area||intent.place||String(myArea()||'').split('·')[0].trim(),
+          mode:intent.mode||'offline', min_size:2, max_size:Number(intent.groupSize),
+          idem:'intent-group:'+saved.id})});
+    }catch(e){}
+  }
   loadIntents();
 }
 // Every request touching this account, both directions and all statuses — the Intents tab needs
@@ -4068,20 +4084,12 @@ function goingPill(n){
   return `<div class="gpill"><div class="avg">${a}</div><span>${n} ${T('идут','going')}</span></div>`;
 }
 let IDEA_I=0;
-// Placeholder feed shown while the matcher is being rebuilt and returns nothing yet — TEMPORARY demo
-// content, replaced the moment real plans/invites arrive. Remove MOCK_* to go back to the empty state.
-const MOCK_PLANS=[
-  {title:'Sunset Rooftop Party', who:'Marco', when:'Sat, 24 June 9:00 PM', area:'Gràcia rooftop', topics:['music'], dist:'15 min', going:8},
-  {title:'Утренний бег у моря', who:'Elena', when:'завтра 8:00', area:'Barceloneta', topics:['running'], dist:'2 км', going:5},
-  {title:'Испанский за кофе', who:'Pau', when:'today 18:00', area:'El Born', topics:['language','coffee'], dist:'1.2 км', going:3},
-];
-const MOCK_INVITE={id:'mock1', from:'Anna', age:28, status:'pending', photo:'assets/match-anna.jpg',
-  intent:{when:'Today 18:00', area:'Gràcia rooftop', title:'Coffee'}};
 function scr_agenthome(){
   if(!exploreLoaded) loadExplore();          // real plans behind "New ideas for you"
   const nm=(DATA.name||'there').split(' ')[0];
-  const plans=((DATA.plans&&DATA.plans.length)?DATA.plans:MOCK_PLANS).slice(0,5);
-  if(IDEA_I>=plans.length) IDEA_I=0;
+  const groups=PUBLIC_INTENTS.filter(p=>p.gid&&!p.mine&&!p.waiting&&p.state!=='full').slice(0,5);
+  const personal=FOR_YOU_PLANS.slice(0,3);
+  if(IDEA_I>=groups.length) IDEA_I=0;
   const ideaCard=(p,i)=>{
     const key=tileKeyFor((p.topics||[]).join(' ')||String(p.title||''));
     const [cat,near]=ideaCat(p,key);
@@ -4096,7 +4104,7 @@ function scr_agenthome(){
       : '');
     // Cover is a photo (Figma 1615-21279). The illustration atlas stays as the fallback for any
     // plan whose photo fails to load, so a card is never a blank grey box.
-    return `<div class="idea ${i===IDEA_I?'on':''}" data-act="join-plan" data-pi="${i}">
+    return `<div class="idea ${i===IDEA_I?'on':''}" data-act="join" data-pi="${p._i}">
       <div class="cov"><img src=assetUrl("assets/event-cover.jpg") alt="" onerror="this.remove()">${TILE_SVG[key]||TILE_SVG.social}
         <div class="bm ${saved?'on':''}" data-act="cand-save" data-n="${esc(host)}">${IC.bookmark}</div></div>
       <div class="bd">
@@ -4106,21 +4114,48 @@ function scr_agenthome(){
         ${foot?`<div class="ft">${foot}</div>`:''}
       </div></div>`;
   };
-  const ideas = plans.length
-    ? `<div class="icar" id="icar">${plans.map(ideaCard).join('')}</div>
-       <div class="idots">${plans.map((_,i)=>`<i class="${i===IDEA_I?'on':''}"></i>`).join('')}</div>`
+  const ideas = groups.length
+    ? `<div class="icar" id="icar">${groups.map(ideaCard).join('')}</div>
+       <div class="idots">${groups.map((_,i)=>`<i class="${i===IDEA_I?'on':''}"></i>`).join('')}</div>`
     : `<div class="k-cap" style="color:var(--muted);padding:4px 2px">${T(
-        'Пока идей нет — опиши, чего хочешь, и я поищу.',"No ideas yet — tell me what you want and I'll look.")}</div>`;
+        'Пока нет открытых групповых мероприятий.','No open group events yet.')}</div>`;
+  const personalCards=personal.map(p=>{
+    const w=ideaWhen(p);
+    const age=(p.age!=null&&p.age!=='')?', '+p.age:'';
+    const photo=String(p.photo||'');
+    const where=p.area||p.dist||'';
+    return `<div class="emeet" data-act="join-plan" data-pi="${p._pi}">
+      <div class="ava${photo?'':' init'}">${photo
+        ?`<img src="${esc(photo)}" alt="">`
+        :esc(String(p.who||'?').slice(0,1).toUpperCase())}</div>
+      <div class="mbd">
+        <div class="mtop">
+          <div class="mt-title">${esc(p.who||'')}${esc(age)}</div>
+          <div class="sbadge ok">${T('Подходит','Match')}</div></div>
+        <div class="pintent">${esc(p.title||'')}</div>
+        <div class="mmeta">
+          <span>${IC.clock}${esc(w.date)}${w.time?' · '+esc(w.time):''}</span>
+          ${where?`<span>${IC.pin}${esc(where)}</span>`:''}</div>
+        <button class="mbtn" data-act="join-plan" data-pi="${p._pi}">${T('Откликнуться','Respond')}</button>
+      </div></div>`;
+  }).join('');
+  const groupSection=groups.length?`<div style="flex:none;display:flex;flex-direction:column;gap:10px">
+    <div class="seclbl2">${IC.groups}${T('Групповые мероприятия','Group events')}</div>
+    ${ideas}</div>`:'';
+  const personalSection=personalCards?`<div style="flex:none;display:flex;flex-direction:column;gap:10px">
+    <div class="seclbl2">${IC.person}${T('Подходящие люди','People who fit')}</div>
+    ${personalCards}</div>`:'';
+  const feedSections=(groupSection||personalSection)?groupSection+personalSection:ideas;
   // The invite row shows the FIRST pending request; the rest stay in the full list behind it.
   // The first pending invite becomes the rich "match" card from Figma 1615-21279: photo, name+age,
   // green Match badge, when/where meta, "Review invite". The avatar binds to a real photo when the
   // person has one (the product has none yet), else an initial disc — never a stock face for everyone.
-  const inv=(INBOX&&INBOX.length)?INBOX[0]:MOCK_INVITE;
+  const inv=(INBOX&&INBOX.length)?INBOX[0]:null;
   const ioi=(inv&&inv.intent)||{};
   const mWhen=inv?locStr(ioi.when||ioi.time||''):'';
   const mWhere=inv?(ioi.area||ioi.place||''):'';
   const mAge=(inv&&inv.age)?', '+inv.age:'';
-  const mPhoto=photoSrc(inv);      // resolves both a stored /api/... photo and a bundled asset path
+  const mPhoto=(inv&&inv.photo)||'';
   const matchCard = inv ? `<div class="emeet" data-act="go-inbox">
       <div class="ava${mPhoto?'':' init'}">${mPhoto?`<img src="${esc(mPhoto)}" alt="">`:esc(String(inv.from||'?').slice(0,1).toUpperCase())}</div>
       <div class="mbd">
@@ -4141,10 +4176,7 @@ function scr_agenthome(){
         'Это демо-профиль. Пройди онбординг, чтобы Kleal искал для тебя.',
         'This is a sample profile. Complete onboarding so Kleal searches for you.')}
         <span style="color:var(--primary);font-weight:600;cursor:pointer" data-act="go-onboarding"> ${T('Начать','Start')} →</span></div></div>`:''}
-      <div style="flex:none;display:flex;flex-direction:column;gap:10px">
-        <div class="seclbl2">${IC.spark}${T('Новые идеи для тебя','New ideas for you')}</div>
-        ${ideas}
-      </div>
+      ${feedSections}
       ${inv ? matchCard : ((PLAN&&PLAN.confirmed)?`<div class="emeet" data-act="meet-open">
         <div class="ava">${IC.coffee}</div>
         <div class="mbd">
