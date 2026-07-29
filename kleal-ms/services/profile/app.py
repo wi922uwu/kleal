@@ -367,7 +367,9 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .bnav{position:absolute;left:0;right:0;bottom:0;z-index:60;pointer-events:none;
   display:flex;align-items:flex-end;justify-content:center;
   height:var(--navh);background:transparent;border:0;padding:0 15px calc(16px + env(safe-area-inset-bottom))}
-.navpill{pointer-events:auto}
+.navpill,.bnav .fab{pointer-events:auto}   /* .fab is a SIBLING of the pill, not a child of it —
+   listing only .navpill here left the centre button inheriting pointer-events:none from .bnav,
+   i.e. visible, raised, and completely dead to taps. */
 .navpill{width:100%;max-width:360px;height:64px;display:flex;align-items:center;justify-content:space-between;
   gap:6px;padding:0 20px;background:#fff;border-radius:36px;box-shadow:0 8px 24px rgba(0,0,0,.10)}
 .navpill a{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px;
