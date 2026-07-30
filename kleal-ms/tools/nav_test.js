@@ -73,5 +73,22 @@ const bodyRule = (src.match(/\n\.body\{[^}]*\}/) || [""])[0];
 check("the main scroll area reserves room for it", /padding[^;]*var\(--navh\)/.test(bodyRule),
       bodyRule.slice(0, 90));
 
+console.log("\n5. anything modal sits ABOVE the floating pill");
+// The pill only started covering things when it began to float. A bottom sheet at z-index 40 against
+// a pill at 60 had its last control — «Добавить», the save row — hidden underneath it.
+const zOf = (sel) => {
+  const rule = (src.match(new RegExp("\\n\\" + sel + "\\{[^}]*\\}")) || [""])[0];
+  const z = rule.match(/z-index:\s*([^;}]+)/);
+  return z ? z[1].trim() : null;
+};
+const navZ = zOf(".bnav"), scrimZ = zOf(".kscrim");
+check("the pill declares its layer", !!navZ, navZ);
+check("the modal scrim declares its layer", !!scrimZ, scrimZ);
+check("both read from the same named variables, not magic numbers",
+      /var\(--z-nav\)/.test(navZ || "") && /var\(--z-modal\)/.test(scrimZ || ""), [navZ, scrimZ]);
+const nums = {};
+for (const m of src.matchAll(/--z-(nav|modal):\s*(\d+)/g)) nums[m[1]] = +m[2];
+check("modal is above nav", nums.modal > nums.nav, nums);
+
 console.log(fails ? "\n" + fails + " FAILED" : "\nALL PASS");
 process.exit(fails ? 1 : 0);

@@ -144,7 +144,9 @@ HTML_HEAD = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 html,body{height:100%}
 body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
   font-family:"Geist",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--fg)}
-:root{--navh:92px}
+/* One place for what sits on top of what. The pill floats over the screens; anything modal floats
+   over the pill. */
+:root{--navh:92px;--z-nav:60;--z-modal:700}
 .phone{width:390px;height:844px;max-height:100vh;background:var(--bg);border-radius:44px;overflow:hidden;
   position:relative;display:flex;flex-direction:column;box-shadow:0 30px 90px #0008}
 @media(max-width:430px){body{background:var(--bg)}.phone{width:100vw;height:100vh;border-radius:0}}
@@ -364,7 +366,7 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
    above it. Absolute + pointer-events:none means content runs full height and scrolls beneath the
    pill, while only the pill itself takes taps. Scroll containers below get that height back as
    bottom padding, so the last row still clears it. */
-.bnav{position:absolute;left:0;right:0;bottom:0;z-index:60;pointer-events:none;
+.bnav{position:absolute;left:0;right:0;bottom:0;z-index:var(--z-nav);pointer-events:none;
   display:flex;align-items:flex-end;justify-content:center;
   height:var(--navh);background:transparent;border:0;padding:0 15px calc(16px + env(safe-area-inset-bottom))}
 .navpill,.bnav .fab{pointer-events:auto}   /* .fab is a SIBLING of the pill, not a child of it —
@@ -1320,8 +1322,12 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .kbullet .tx{flex:1;min-width:0;font-size:13px;line-height:18px}
 .kbullet.neg .dot{background:var(--neutral300)}
 /* modal sheet */
+/* A sheet is a MODAL: it must sit above the persistent chrome, including the floating nav pill.
+   This was z-index:40 against the pill's 60, which was harmless while the pill was a flex item in
+   the column and covered nothing — the moment it started floating, every bottom sheet had its last
+   control (the «Добавить» button, the save row) hidden underneath it. */
 .kscrim{position:absolute;inset:0;background:rgba(0,0,0,.4);backdrop-filter:blur(2px);
-  display:flex;align-items:center;justify-content:center;padding:16px;z-index:40}
+  display:flex;align-items:center;justify-content:center;padding:16px;z-index:var(--z-modal)}
 .ksheet{width:100%;background:var(--card);border-radius:16px;box-shadow:0 -4px 32px rgba(0,0,0,.10);
   padding:24px 20px 20px;display:flex;flex-direction:column;gap:24px;align-items:center;text-align:center}
 .kmedal{width:88px;height:88px;border-radius:999px;background:#F7E3E7;display:flex;align-items:center;
@@ -6751,12 +6757,16 @@ function doAct(act, ds){
     case 'cancelsum': editingSummary=false; render(); break;
     case 'savesum': { const el=document.getElementById('sumta'); setSummary(el?el.value:''); editingSummary=false; render(); toast('Summary saved'); break; }
     case 'editrow': {
-      // «Личность» is a screen now, not a sheet: the story and the test live there, and the prose
-      // sheet is the step AFTER it. Jumping the hub row straight into the sheet skipped the page
-      // the section is actually about.
-      if(ds.row==='social'){ setTab('social'); break; }
-      const rt={'Basics':'basics','Location':'location','Languages':'languages',
-        interests:'interests', safety:'safety'}[ds.row||''];
+      // Every hub section is a SCREEN, and the card already opens it — so «Изменить» beside it must
+      // open the same thing. It used to open a bottom sheet instead, which meant one row offered two
+      // different editors for one section: tapping the card gave the full page (per-interest toggles,
+      // Kleal's summary, add), tapping the button gave a stripped list. «Личность» had already been
+      // special-cased here for exactly this reason; the rule just was not general.
+      //
+      // Summary rows (Basics / Location / Languages) keep the sheet: those have no screen behind
+      // them, and a sheet is the whole editor rather than a second one.
+      if(TABS.some(t=>t[0]===ds.row)){ setTab(ds.row); break; }
+      const rt={'Basics':'basics','Location':'location','Languages':'languages'}[ds.row||''];
       openSheet(rt||'basics'); break; }
     case 'edit-int': openEditInterest(ds.int); break;
     case 'dontuse-int': toast('"'+(ds.int||'')+'" will not be used for matching'); break;
