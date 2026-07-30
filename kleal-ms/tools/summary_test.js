@@ -43,6 +43,8 @@ const ageRange = () => (FLOW && FLOW.ageA && FLOW.ageB) ? [FLOW.ageA, FLOW.ageB]
 // langName + its code table already existed in the page; the summary reuses them rather than
 // carrying a second list that could drift.
 eval(src.slice(src.indexOf("const _LANG_NAMES="), src.indexOf("function langName(")).replace("const ", ""));
+eval(src.slice(src.indexOf("const GSIZE_ALIAS="), src.indexOf("function gsizeOf(")).replace("const ", ""));
+eval(grab("gsizeOf"));
 eval(grab("langName"));
 eval(grab("candShared"));
 eval(grab("human"));
@@ -110,12 +112,12 @@ check("klealSummary takes precedence",
 
 console.log("\n6. the INTENT box describes the plan, not the parse");
 FLOW = { intent: { topics: ["padel"], mode: "offline" }, request: "хочу поиграть в падел",
-         fmt: "offline", gsize: "small", date: "d0", time: "evening", district: "gracia",
+         fmt: "offline", gsize: "group", date: "d0", time: "evening", district: "gracia",
          sex: "female", ageA: 25, ageB: 30, summary: {} };
 const i1 = intentUnderstanding();
 console.log("     " + i1);
 check("the read-back preamble is gone", !/Понял так:/.test(i1), i1);
-check("it says how it happens and at what size", /Вживую, небольшой компанией/.test(i1), i1);
+check("it says how it happens and at what size", /Вживую, компанией/.test(i1), i1);
 check("it says when", /24 июня|вечером/.test(i1), i1);
 check("it says where", /Gràcia/.test(i1), i1);
 check("it says who it is open to", /Открыто для/.test(i1) && /25–30/.test(i1), i1);
@@ -123,7 +125,7 @@ check("three sentences", sentences(i1).length >= 3, sentences(i1).length);
 
 console.log("\n7. an online plan has no district, and does not pretend to");
 FLOW = { intent: { topics: ["dota"], mode: "online" }, request: "поиграть в доту",
-         fmt: "online", gsize: "party", sex: "any", summary: {} };
+         fmt: "online", gsize: "group", sex: "any", summary: {} };
 const i2 = intentUnderstanding();
 console.log("     " + i2);
 check("says online", /Онлайн/i.test(i2), i2);

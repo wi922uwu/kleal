@@ -4408,7 +4408,9 @@ function flowIntent(){
   // «Малая группа» is labelled 2–5 and «Компания» 10+; the engine ceiling is 12 seats, so both
   // labels are askable as written. The 8 that used to cap this is the person-to-person SLATE size —
   // how many people a 1:1 search returns — and was never a statement about how big a company may be.
-  if(FLOW.gsize==='small'||FLOW.gsize==='party') it.groupSize=(FLOW.gsize==='party'?10:4);
+  // «Группа» = three or more, and three is the floor the product offers, so that is what the request
+  // asks for. A bigger exact company still goes through free text («компания из шести»).
+  if(gsizeOf()==='group') it.groupSize=GROUP_MIN_TOTAL;
   it.mode=it.mode||'offline';
   if(it.mode==='online'){
     it.place=T('Онлайн','Online');                       // no district, no radius — it's over the net
@@ -4752,10 +4754,18 @@ const FMT_OPTS=()=>[
   ['offline', IC.pin,        T('Офлайн','Offline'),  T('Вживую','In person')],
   ['online',  IC.globe,      T('Онлайн','Online'),   T('Видео / голос','Video / voice')],
   ['hybrid',  IC.plusCircle, T('Гибрид','Hybrid'),   T('И онлайн, и вживую','Both online & offline')]];
+// Spec §1: «Минимум группы — 3 человека всего, включая создателя.» This is the one number the
+// screen, the request and every «нужен ещё один» line are built from.
+const GROUP_MIN_TOTAL=3;
+// Two answers, not three: a party of two «не является групповым результатом», so the middle bucket
+// («Малая группа, 2–5») straddled the only line that matters and overlapped both neighbours.
 const SIZE_OPTS=()=>[
-  ['1:1',   IC.person, T('1:1','1:1'),                 T('Один на один','One-on-one')],
-  ['small', IC.users,  T('Малая группа','Small group'), T('2–5 человек','2–5 people')],
-  ['party', IC.groups, T('Компания','Party'),           T('10+ человек','10+ people')]];
+  ['1:1',   IC.person, T('Один на один','One-on-one'), T('Только вы вдвоём','Just the two of you')],
+  ['group', IC.groups, T('Группа','Group'),            T('От 3 человек','3 people or more')]];
+// Answers stored before that change still sit in saved state. «party» was unambiguously a group;
+// «small» could have meant a pair, so it is NOT silently promoted — the screen asks again.
+const GSIZE_ALIAS={party:'group'};
+function gsizeOf(){ const v=(FLOW&&FLOW.gsize)||''; return GSIZE_ALIAS[v]||v; }
 function chRows(opts, sel, act){
   return opts.map(o=>`<div class="chrow ${sel===o[0]?'on':''}" data-act="${act}" data-k="${o[0]}">
     <div class="ic">${o[1]}</div><div class="bd"><div class="ti">${esc(o[2])}</div><div class="su">${esc(o[3])}</div></div>
@@ -4774,7 +4784,7 @@ function scr_gsize(){
   return `<div class="kflow fade">${kbar(true)}
     <div class="kcont">
       ${kprompt(T('Сколько вас будет?','How many people will there be?'))}
-      <div style="margin-top:4px">${chRows(SIZE_OPTS(), FLOW&&FLOW.gsize, 'flow-gsize')}</div>
+      <div style="margin-top:4px">${chRows(SIZE_OPTS(), gsizeOf(), 'flow-gsize')}</div>
       ${(FLOW&&FLOW.gsize)?`<div class="kbub ag" style="width:max-content">${T('Отлично!','Awesome!')}</div>`:''}
     </div>
     ${kcomposer('flowinp4',T('Сообщение…','Message…'))}</div>`;
@@ -5154,8 +5164,7 @@ function intentUnderstanding(){
   const out=[/\.$/.test(lead1)?lead1:(lead1+'.')];
   const how=[onl?T('онлайн','online'):T('вживую','in person'),
              {'1:1':T('один на один','one-on-one'),
-              small:T('небольшой компанией','in a small group'),
-              party:T('большой компанией','with a bigger group')}[FLOW.gsize||'']].filter(Boolean);
+              group:T('компанией','as a group')}[gsizeOf()]].filter(Boolean);
   out.push(how.join(', ').replace(/^./,ch=>ch.toUpperCase())+'.');
   // When and where, stated rather than labelled. Silent when nothing was chosen — a half-sentence
   // with a dangling label is worse than not mentioning it.
@@ -5207,7 +5216,7 @@ function scr_summary(){
   // Category / Format / Personality
   const cats=locTopicList(topics.length?topics:(s.vibe||[]))||T('пока не задано','not set yet');
   const fmtL=(FMT_OPTS().find(o=>o[0]===FLOW.fmt)||[])[2]||'';
-  const szL=(SIZE_OPTS().find(o=>o[0]===FLOW.gsize)||[])[2]||'';
+  const szL=(SIZE_OPTS().find(o=>o[0]===gsizeOf())||[])[2]||'';
   const format=[fmtL,szL].filter(Boolean).join(', ')||s.format||T('Встреча, неформально','Casual meetup');
   const sexL={male:T('Мужчины','Male'),female:T('Женщины','Female'),any:T('Не важно','Any')}[FLOW.sex||'any'];
   const _ar=ageRange(), ageL=_ar?(_ar[0]+'–'+_ar[1]):'';

@@ -30,6 +30,9 @@ const T = (ru, en) => ru;
 const labelOf = () => "Gràcia";
 const DIST_OPTS = () => [];
 const flowOnline = () => false;
+eval(src.slice(src.indexOf("const GSIZE_ALIAS="), src.indexOf("function gsizeOf(")).replace("const ", ""));
+eval(grab("gsizeOf"));
+eval(src.match(/const GROUP_MIN_TOTAL=\d+;/)[0].replace("const ", ""));
 eval(grab("ageRange"));
 eval(grab("flowIntent"));
 
@@ -40,14 +43,21 @@ function check(name, cond, detail) {
 }
 
 console.log("1. THE BUG: the size question is answered and the request forgets it");
-FLOW = { intent: { topics: ["padel"] }, gsize: "small" };
-const small = flowIntent();
-check("«Малая группа» reaches the request as a size", small.groupSize > 1, small.groupSize);
+FLOW = { intent: { topics: ["padel"] }, gsize: "group" };
+const group = flowIntent();
+check("«Группа» reaches the request as a size", group.groupSize >= 3, group.groupSize);
+check("and that size is the product's floor of three", group.groupSize === GROUP_MIN_TOTAL, group.groupSize);
 
-FLOW = { intent: { topics: ["padel"] }, gsize: "party" };
-const party = flowIntent();
-check("«Компания» reaches the request as a bigger size", party.groupSize > small.groupSize,
-      [small.groupSize, party.groupSize]);
+console.log("\n1b. the middle bucket is gone — a pair is not a small group");
+const opts = src.slice(src.indexOf("const SIZE_OPTS="), src.indexOf("function chRows("));
+check("the screen offers exactly two answers", (opts.match(/\['[^']+',/g) || []).length === 2, opts.match(/\['[^']+',/g));
+check("«Малая группа» is no longer offered", !/Малая группа/.test(opts));
+check("the group option says three or more", /От 3 человек/.test(opts));
+FLOW = { intent: {}, gsize: "party" };
+check("an old «party» answer still reads as a group", flowIntent().groupSize === GROUP_MIN_TOTAL, flowIntent().groupSize);
+FLOW = { intent: {}, gsize: "small" };
+check("an old «small» answer is NOT promoted — it may have meant a pair",
+      flowIntent().groupSize === undefined, flowIntent().groupSize);
 
 console.log("\n2. 1:1 must NOT become a group");
 // groupSize is what routes an intent to §15; sending one for a one-on-one would push a person who
@@ -61,23 +71,16 @@ check("no answer, no groupSize", flowIntent().groupSize === undefined, flowInten
 FLOW = { intent: { topics: ["coffee"] }, gsize: "" };
 check("an empty answer, no groupSize", flowIntent().groupSize === undefined, flowIntent().groupSize);
 
-console.log("\n4. the size stays inside the §15 MVP band, and matches the label on screen");
-// The ceiling is kleal_groups._MAX_MVP_SIZE = 12 SEATS, i.e. 13 people counting the asker. It used
-// to be 8 — which is core_v2.TOP_N, how many people a 1:1 search returns, and never a statement
-// about how large a company may be. With both at 8 the «10+ человек» option could not be honoured.
-for (const k of ["small", "party"]) {
-  FLOW = { intent: {}, gsize: k };
-  const n = flowIntent().groupSize;
-  check(k + " asks for a size the engine can serve (2..13)", n >= 2 && n <= 13, n);
-}
-FLOW = { intent: {}, gsize: "party" };
-check("«Компания» asks for the 10+ its own label promises", flowIntent().groupSize >= 10,
-      flowIntent().groupSize);
-FLOW = { intent: {}, gsize: "small" };
-check("«Малая группа» stays inside its 2–5 label", flowIntent().groupSize <= 5, flowIntent().groupSize);
+console.log("\n4. the size stays inside the band the engine can serve");
+// Floor is spec §1 (three total, the asker included); the ceiling is kleal_groups._MAX_MVP_SIZE = 12
+// SEATS, i.e. 13 people. Not to be confused with core_v2.TOP_N = 8, which is how many people a 1:1
+// search returns and says nothing about how large a company may be.
+FLOW = { intent: {}, gsize: "group" };
+const n = flowIntent().groupSize;
+check("«Группа» asks for a size the engine can serve (3..13)", n >= 3 && n <= 13, n);
 
 console.log("\n5. the size does not disturb the rest of the intent");
-FLOW = { intent: { topics: ["padel"], mode: "offline" }, gsize: "small", ageA: 25, ageB: 35, sex: "female" };
+FLOW = { intent: { topics: ["padel"], mode: "offline" }, gsize: "group", ageA: 25, ageB: 35, sex: "female" };
 const full = flowIntent();
 check("age still carried", full.minAge === 25 && full.maxAge === 35, [full.minAge, full.maxAge]);
 check("sex still carried", full.sex === "female", full.sex);

@@ -615,6 +615,10 @@ GROUPS_ENABLED = os.environ.get("KLEAL_GROUPS", "0") != "0"
 _GROUP_OVERRIDE = {"enable_group_formation": True}   # the exact shape kg.is_override_enabled demands
 
 
+# Spec §1 — the product's group floor, in TOTAL people including whoever is asking.
+GROUP_MIN_TOTAL = 3
+
+
 def _decision_type(intent):
     """Which §1.1 decision type an intent asks for. Explicit `decisionType` wins; otherwise inferred from
     group/event/room signals, defaulting to person_to_person (the pilot path)."""
@@ -622,7 +626,15 @@ def _decision_type(intent):
     dt = str(intent.get("decisionType") or "").strip()
     if dt in PILOT_DECISION_TYPES:
         return dt
-    if intent.get("groupSize") or intent.get("group"):        return "group_formation"
+    # The floor is applied HERE because this is where the routing decision is made. The structured
+    # /match entry never passes through ki.validate_and_normalize before this point — that runs later,
+    # inside ranking — so a caller asking for a "group of 2" was routed to §15 and got a pair dressed
+    # as a group, which is exactly the hidden-1:1 shape spec §1 forbids.
+    try:
+        _gs = int(intent.get("groupSize") or 0)
+    except (TypeError, ValueError):
+        _gs = 0
+    if _gs >= GROUP_MIN_TOTAL or intent.get("group"): return "group_formation"
     if intent.get("eventId") or str(intent.get("type") or "") == "event": return "intent_to_event"
     if intent.get("roomId"):                                  return "intent_to_room"
     if intent.get("venueId") or str(intent.get("type") or "") == "venue": return "intent_to_venue"   # §16 (pilot-off)
@@ -688,8 +700,9 @@ English only.'''
 # every group request was silently served as one-person-at-a-time matching.
 _GROUP_WORDS = ('групп', 'компани', 'команд', 'вместе', 'втро', 'вчетвер', 'впятер', 'вшестер',
                 'group', 'team', 'crew', 'squad', 'together', 'grupo', 'equipo', 'juntos')
-_GROUP_NUM_WORDS = {'вдвоем': 2, 'вдвоём': 2, 'двоем': 2, 'двоём': 2, 'втроем': 3, 'втроём': 3,
-                    'троем': 3, 'троём': 3, 'вчетвером': 4, 'впятером': 5, 'вшестером': 6}
+# «вдвоём» is deliberately absent: two people are a 1:1, not a small group.
+_GROUP_NUM_WORDS = {'втроем': 3, 'втроём': 3, 'троем': 3, 'троём': 3,
+                    'вчетвером': 4, 'впятером': 5, 'вшестером': 6}
 # A headcount sits next to a people-word, in either order — Russian puts it on both sides
 # («4 человека», «человека 4») and so does Spanish («4 personas», «somos 4»).
 _PEOPLE_NUM = re.compile(
@@ -710,7 +723,12 @@ def _parse_group_size(ql):
     m = _PEOPLE_NUM.search(ql) or (_BARE_NUM.search(ql) if wants else None)
     if m:
         n = int(next(g for g in m.groups() if g))
-        if 2 <= n <= 12:
+        # Spec §1: a group is three people minimum, the asker included. «вдвоём» and «нас двое» are
+        # one-on-one, so they must not route to group formation at all — a pair dressed as a group
+        # is exactly the hidden-1:1 shape the spec forbids.
+        if n == 2:
+            return None, False
+        if GROUP_MIN_TOTAL <= n <= 12:
             return n, True
     return None, wants
 
@@ -3667,7 +3685,9 @@ def _group_constraints(intent, caller=None):
     except (TypeError, ValueError):
         total = None
     if total:
-        seats = max(1, min(kg._MAX_MVP_SIZE, total - 1))
+        # seats = people to find; the asker holds one of the places. §1's floor of three total is
+        # therefore two seats, and nothing may ask this layer for a smaller "group".
+        seats = max(GROUP_MIN_TOTAL - 1, min(kg._MAX_MVP_SIZE, total - 1))
         ceiling = pack.get("size_max") or pack.get("capacity")
         if ceiling:
             seats = min(seats, int(ceiling))   # a padel court does not grow because you asked it to

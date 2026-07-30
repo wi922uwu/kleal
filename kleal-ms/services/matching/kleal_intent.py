@@ -30,7 +30,10 @@ RADIUS_MAX_KM, AGE_FLOOR, AGE_CEIL, TOPIC_CAP = 500.0, 18, 120, 4
 # which counts SEATS. The value is duplicated rather than imported because this module deliberately
 # depends on nothing but kc. Not to be confused with core_v2.TOP_N — that is how many people a
 # person-to-person search returns, and it stays at 8.
-GROUP_SIZE_MIN, GROUP_SIZE_MAX = 2, 13
+# Spec §1: three people minimum, the asker included. A stated 2 is DROPPED rather than clamped to 3 —
+# raising it would silently add a person the user never asked for; dropping it routes the request
+# back to one-on-one, which is what a pair actually is.
+GROUP_SIZE_MIN, GROUP_SIZE_MAX = 3, 13
 
 def _domain_critical(domain, role):
     """§5.3 minimal domain-critical fields, keyed by the ACTUAL core_v2 domain (infer_domain emits
@@ -125,9 +128,12 @@ def validate_and_normalize(intent, source="llm"):
             except (TypeError, ValueError):
                 report.append("groupSize %r not a number -> dropped" % out.get("groupSize")); gs = None
             else:
-                if not (GROUP_SIZE_MIN <= gs <= GROUP_SIZE_MAX):
-                    report.append("groupSize %d outside [%d,%d] -> clamped" % (gs, GROUP_SIZE_MIN, GROUP_SIZE_MAX))
-                    gs = max(GROUP_SIZE_MIN, min(GROUP_SIZE_MAX, gs))
+                if gs < GROUP_SIZE_MIN:
+                    report.append("groupSize %d is below the group floor -> dropped (this is a 1:1)" % gs)
+                    gs = None
+                elif gs > GROUP_SIZE_MAX:
+                    report.append("groupSize %d above %d -> clamped" % (gs, GROUP_SIZE_MAX))
+                    gs = GROUP_SIZE_MAX
         if gs is None:
             out.pop("groupSize", None)
         else:
