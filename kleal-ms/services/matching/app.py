@@ -3026,6 +3026,355 @@ def list_intents(owner, profile=None, live=True):
 
 # Group size bounds (§15). Restored with the group handlers: this was a tuple assignment in the
 # pre-rewrite file, which the transplant's dependency scan did not follow.
+# -*- coding: utf-8 -*-
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# GROUP INTENTS — individual invites and ONE shared chat   (Group Chats & Group Plans spec, §1–§6.7)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# The UX invariant this whole block exists to hold: there is no lobby, no waiting room and no private
+# chat between the organiser and a member. A group intent has exactly ONE thread. The first person to
+# accept opens it; everyone who accepts after that is added to the same one automatically.
+#
+# Candidates are invited ONE AT A TIME — there is deliberately no batch invite. Batch invite turns a
+# group intent into a casting call: send twenty, keep three. Every check below (capacity, pending cap,
+# policy) is therefore per-candidate and re-run at ACCEPT as well as at SEND, because the group can
+# fill up in between.
+#
+# What is NOT here, on purpose: no remove-participant. A member leaves on their own, or safety removes
+# them. An organiser who can evict people is running a casting flow, and the spec forbids it (§16).
+GI_MIN_TOTAL = 3          # §1: three people INCLUDING the organiser; two is not a group result
+GI_MAX_TOTAL = 6          # §12 Free tier; Plus raises this, which is why it is a name and not a 6
+GI_PENDING_CAP = 3        # §12: how many invites may be outstanding at once on one group intent
+GI_INVITE_TTL = 72 * 3600  # an invite nobody answers stops being a held seat
+
+
+def _gintents():
+    return SESSION.setdefault("_gintents", [])
+
+
+def _ginvites():
+    return SESSION.setdefault("_ginvites", [])
+
+
+def _gmsgs():
+    return SESSION.setdefault("_gmsgs", [])
+
+
+def _gi_find(gid):
+    for g in _gintents():
+        if g.get("id") == gid:
+            return g
+    return None
+
+
+def _gi_active(g):
+    """Members who are actually in the room right now. LEFT and SAFETY_REMOVED stay on the record —
+    a roster that forgets people cannot explain why the count changed."""
+    return [m for m in (g.get("members") or []) if m.get("state") in ("joined", "active")]
+
+
+def _gi_pending(gid):
+    return [i for i in _ginvites() if i.get("gid") == gid and i.get("state") in ("sent", "viewed")]
+
+
+def _gi_expire(now=None):
+    """Invites go stale. Run before every read and every write, so a seat can never be held by an
+    invitation nobody ever answered."""
+    now = now or time.time()
+    changed = False
+    for i in _ginvites():
+        if i.get("state") in ("sent", "viewed") and (i.get("expires_at") or 0) and now > i["expires_at"]:
+            i["state"] = "expired"
+            i["updated"] = now
+            changed = True
+    return changed
+
+
+def _gi_public(g, me=""):
+    """What a client may see. The roster is names and states — never contact details, and never a
+    per-member action, because there is no per-member action to offer."""
+    act = _gi_active(g)
+    n = len(act)
+    mine = _norm_name(me)
+    return {
+        "gid": g.get("id"), "title": g.get("title"), "topics": g.get("topics") or [],
+        "when": g.get("when") or "", "area": g.get("area") or "", "mode": g.get("mode") or "offline",
+        "owner": g.get("owner"), "state": g.get("state"),
+        "min_total": g.get("min_total"), "max_total": g.get("max_total"),
+        "members": [{"name": m.get("name"), "state": m.get("state"),
+                     "photo": _photo_by_name().get(_norm_name(m.get("name")))} for m in act],
+        "joined_count": n,
+        "pending_count": len(_gi_pending(g.get("id"))),
+        "seats_left": max(0, int(g.get("max_total") or GI_MAX_TOTAL) - n),
+        "i_am_owner": bool(mine) and mine == _norm_name(g.get("owner")),
+        "i_am_member": any(_norm_name(m.get("name")) == mine for m in act),
+        # §6.6/§6.7: the ONE thing the screen keys off. Below the floor the chat is a coordination
+        # room and nothing more; the plan CTA is disabled with a reason, never hidden.
+        "planning_allowed": n >= int(g.get("min_total") or GI_MIN_TOTAL)
+                            and g.get("state") not in ("cancelled", "expired", "converted_1to1"),
+        "need_more": max(0, int(g.get("min_total") or GI_MIN_TOTAL) - n),
+        "full": n >= int(g.get("max_total") or GI_MAX_TOTAL),
+    }
+
+
+def _gi_say(g, text, kind="system"):
+    """System messages ARE the group's history — «X joined», «time changed» — so they live in the
+    same thread as everything else rather than in a side channel the next joiner cannot see."""
+    _gmsgs().append({"id": "gm_%d_%s" % (int(time.time() * 1000), hashlib.sha1(text.encode("utf-8")).hexdigest()[:4]),
+                     "gid": g.get("id"), "frm": "", "text": text, "t": time.time(), "kind": kind})
+
+
+def gi_create(owner, intent, title="", min_total=None, max_total=None, idem=None):
+    """Open a group intent. The organiser is member number one from the very first moment — §1 counts
+    them in the minimum, so a roster that started empty would make «3 total» mean four people."""
+    owner = str(owner or "").strip()
+    if not owner:
+        return {"ok": False, "error": "owner required"}
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    intent = intent if isinstance(intent, dict) else {}
+    try:
+        mn = int(min_total or GI_MIN_TOTAL)
+    except (TypeError, ValueError):
+        mn = GI_MIN_TOTAL
+    try:
+        mx = int(max_total or GI_MAX_TOTAL)
+    except (TypeError, ValueError):
+        mx = GI_MAX_TOTAL
+    mn = max(GI_MIN_TOTAL, mn)
+    mx = max(mn, min(GI_MAX_TOTAL, mx))
+    now = time.time()
+    with _STORE_LOCK:
+        gid = "gi_%d_%s" % (int(now * 1000), hashlib.sha1(owner.encode("utf-8")).hexdigest()[:6])
+        g = {"id": gid, "owner": owner, "intent": intent,
+             "title": str(title or intent.get("title") or "").strip()[:120] or "Meetup",
+             "topics": [str(t).lower() for t in (intent.get("topics") or [])][:6],
+             "when": str(intent.get("time") or "")[:80],
+             "area": str(intent.get("place") or intent.get("area") or "")[:80],
+             "mode": str(intent.get("mode") or "offline"),
+             "min_total": mn, "max_total": mx,
+             "state": "searching",           # §7: SEARCHING -> CHAT_OPEN -> READY_TO_PLAN -> ...
+             "members": [{"name": owner, "state": "joined", "joined": now}],
+             "created": now, "updated": now, "version": 1}
+        _gintents().append(g)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _gi_public(g, owner)})
+
+
+def gi_invite(gid, frm, to, note="", idem=None):
+    """Invite ONE candidate. Everything that could have changed since the slate was drawn is checked
+    here — and checked again at accept, because the group can fill in between."""
+    frm, to = str(frm or "").strip(), str(to or "").strip()
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    if not frm or not to or _norm_name(frm) == _norm_name(to):
+        return {"ok": False, "error": "sender and recipient required and must differ"}
+    now = time.time()
+    with _STORE_LOCK:
+        _gi_expire(now)
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(frm) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if g.get("state") in ("cancelled", "expired", "converted_1to1"):
+            return _idem_put(idem, {"ok": False, "error": "CLOSED", "gid": gid})
+        # §5: while a plan proposal is out, recruitment is locked — the roster the plan was sent to
+        # must not change underneath the people confirming it.
+        if g.get("state") == "planning":
+            return _idem_put(idem, {"ok": False, "error": "PLANNING_LOCKED", "gid": gid})
+        act = _gi_active(g)
+        if any(_norm_name(m.get("name")) == _norm_name(to) for m in act):
+            return _idem_put(idem, {"ok": False, "error": "ALREADY_MEMBER", "gid": gid})
+        if len(act) >= int(g.get("max_total") or GI_MAX_TOTAL):
+            return _idem_put(idem, {"ok": False, "error": "GROUP_FULL", "gid": gid})
+        pend = _gi_pending(gid)
+        if any(_norm_name(i.get("to")) == _norm_name(to) for i in pend):
+            return _idem_put(idem, {"ok": False, "error": "ALREADY_INVITED", "gid": gid})
+        if len(pend) >= GI_PENDING_CAP:
+            return _idem_put(idem, {"ok": False, "error": "PENDING_CAP", "gid": gid,
+                                    "cap": GI_PENDING_CAP})
+        # Deliberately NO "forecast" check here — outstanding invites do NOT reserve seats. Blocking
+        # an invite because everyone MIGHT say yes sounds prudent and is wrong: §20 requires the case
+        # where two candidates accept the last seat at the same moment to be handled, and a forecast
+        # makes that case unreachable, so the atomic claim below would never be exercised in real
+        # use. Over-inviting is bounded by the pending cap above; who actually gets in is decided by
+        # the claim at accept, which is the only count that can be authoritative.
+        # pairwise safety, against every person already in the room — not only the organiser
+        mine = (SESSION.get("me") or {}).get("blocked") or []
+        for m in act:
+            ok, why = _policy_ok_now(to, m.get("name"), mine)
+            if not ok:
+                return _idem_put(idem, {"ok": False, "error": "NOT_ELIGIBLE", "reason": why})
+        inv = {"id": "gv_%d_%s" % (int(now * 1000), hashlib.sha1((gid + to).encode("utf-8")).hexdigest()[:6]),
+               "gid": gid, "frm": frm, "to": to, "note": str(note or "")[:400],
+               "state": "sent", "created": now, "updated": now,
+               "expires_at": now + GI_INVITE_TTL,
+               "intent_version": int(g.get("version") or 1)}
+        _ginvites().append(inv)
+        g["updated"] = now
+        _save_store()
+        return _idem_put(idem, {"ok": True, "invite": {"id": inv["id"], "to": to, "state": "sent"},
+                                "group": _gi_public(g, frm)})
+
+
+def gi_respond(inv_id, who, accept, idem=None):
+    """Accept or decline. Accepting is one transaction: revalidate, claim a seat, become a member and
+    get chat access — all under the lock, so two people racing for the last seat cannot both win and
+    nobody ever sees the thread without holding a place in it."""
+    who = str(who or "").strip()
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        _gi_expire(now)
+        inv = next((i for i in _ginvites() if i.get("id") == inv_id), None)
+        if not inv:
+            return {"ok": False, "error": "NO_SUCH_INVITE"}
+        if _norm_name(inv.get("to")) != _norm_name(who):
+            return {"ok": False, "error": "NOT_YOURS"}
+        if inv.get("state") not in ("sent", "viewed"):
+            return _idem_put(idem, {"ok": False, "error": inv.get("state", "").upper() or "CLOSED",
+                                    "invite": {"id": inv_id, "state": inv.get("state")}})
+        g = _gi_find(inv.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if not accept:
+            inv["state"] = "declined"; inv["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": True, "invite": {"id": inv_id, "state": "declined"}})
+        if g.get("state") in ("cancelled", "expired", "converted_1to1"):
+            inv["state"] = "withdrawn"; inv["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": False, "error": "CLOSED", "gid": g.get("id")})
+        act = _gi_active(g)
+        if any(_norm_name(m.get("name")) == _norm_name(who) for m in act):
+            return _idem_put(idem, {"ok": True, "already": True, "group": _gi_public(g, who)})
+        # THE atomic claim. Capacity is re-read here rather than trusted from send time.
+        if len(act) >= int(g.get("max_total") or GI_MAX_TOTAL):
+            inv["state"] = "group_full"; inv["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": False, "error": "GROUP_FULL", "gid": g.get("id")})
+        mine = (SESSION.get("me") or {}).get("blocked") or []
+        for m in act:
+            ok, why = _policy_ok_now(who, m.get("name"), mine)
+            if not ok:
+                inv["state"] = "policy_revoked"; inv["updated"] = now
+                _save_store()
+                return _idem_put(idem, {"ok": False, "error": "NOT_ELIGIBLE", "reason": why})
+        inv["state"] = "accepted"; inv["updated"] = now
+        g.setdefault("members", []).append({"name": who, "state": "joined", "joined": now})
+        n = len(_gi_active(g))
+        # §7 state: the thread opens on the FIRST acceptance and is the same thread from then on.
+        if g.get("state") == "searching":
+            g["state"] = "chat_open"
+        if n >= int(g.get("min_total") or GI_MIN_TOTAL) and g.get("state") == "chat_open":
+            g["state"] = "ready_to_plan"
+        g["updated"] = now
+        g["version"] = int(g.get("version") or 1) + 1
+        _gi_say(g, "%s joined the group." % who)
+        if n == int(g.get("min_total") or GI_MIN_TOTAL):
+            _gi_say(g, "You have enough people to make a plan.")
+        # Every remaining invite is re-checked against the new capacity: once the room is full the
+        # people still holding an invitation are told so, instead of finding out by tapping Join.
+        if n >= int(g.get("max_total") or GI_MAX_TOTAL):
+            for i in _gi_pending(g.get("id")):
+                i["state"] = "group_full"; i["updated"] = now
+            _gi_say(g, "This group is full. Pending invites are no longer available.")
+        _save_store()
+        return _idem_put(idem, {"ok": True, "gid": g.get("id"), "group": _gi_public(g, who)})
+
+
+def gi_leave(gid, who, idem=None):
+    """Voluntary exit — the only way out that is not a safety action (§16). The record keeps the
+    person with state LEFT so the count can be explained; the roster no longer contains them."""
+    who = str(who or "").strip()
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        m = next((x for x in (g.get("members") or [])
+                  if _norm_name(x.get("name")) == _norm_name(who) and x.get("state") in ("joined", "active")), None)
+        if not m:
+            return _idem_put(idem, {"ok": False, "error": "NOT_A_MEMBER", "gid": gid})
+        m["state"] = "left"; m["left"] = now
+        n = len(_gi_active(g))
+        if n < int(g.get("min_total") or GI_MIN_TOTAL) and g.get("state") in ("ready_to_plan", "planning"):
+            g["state"] = "below_quorum"          # §6.13 — layer 3 gives this its own screen
+        g["updated"] = now
+        g["version"] = int(g.get("version") or 1) + 1
+        _gi_say(g, "%s left the group." % who)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, who)})
+
+
+def gi_thread(gid, who, since=0.0):
+    """The shared chat. Membership IS the ACL: a person who is not in the room does not get the
+    history, and there is no other thread to be in."""
+    g = _gi_find(gid)
+    if not g:
+        return {"ok": False, "error": "NO_SUCH_GROUP"}
+    if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
+        return {"ok": False, "error": "NOT_A_MEMBER"}
+    try:
+        since = float(since or 0)
+    except (TypeError, ValueError):
+        since = 0.0
+    msgs = [m for m in _gmsgs() if m.get("gid") == gid and (m.get("t") or 0) > since]
+    msgs.sort(key=lambda m: m.get("t") or 0)
+    return {"ok": True, "group": _gi_public(g, who), "messages": msgs[-200:]}
+
+
+def gi_post(gid, who, text, idem=None):
+    who, text = str(who or "").strip(), str(text or "").strip()
+    if not text:
+        return {"ok": False, "error": "empty message"}
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
+            return {"ok": False, "error": "NOT_A_MEMBER"}
+        if g.get("state") in ("cancelled", "expired"):
+            return {"ok": False, "error": "CLOSED"}
+        now = time.time()
+        msg = {"id": "gm_%d" % int(now * 1000), "gid": gid, "frm": who,
+               "text": text[:2000], "t": now, "kind": "msg"}
+        _gmsgs().append(msg)
+        g["updated"] = now
+        _save_store()
+        return _idem_put(idem, {"ok": True, "message": msg})
+
+
+def gi_for(who):
+    """Every group intent this person is in or has been invited to — the Intents tab reads this."""
+    _gi_expire()
+    me = _norm_name(who)
+    mine, invited = [], []
+    for g in _gintents():
+        if any(_norm_name(m.get("name")) == me for m in _gi_active(g)):
+            mine.append(_gi_public(g, who))
+    for i in _ginvites():
+        if _norm_name(i.get("to")) == me and i.get("state") in ("sent", "viewed"):
+            g = _gi_find(i.get("gid"))
+            if g:
+                invited.append({"invite": {"id": i.get("id"), "from": i.get("frm"),
+                                           "note": i.get("note"), "state": i.get("state"),
+                                           "expires_at": i.get("expires_at")},
+                                "group": _gi_public(g, who)})
+    mine.sort(key=lambda x: -(x.get("joined_count") or 0))
+    return {"ok": True, "groups": mine, "invites": invited}
+
+
 GROUP_MIN, GROUP_MAX = 2, 8
 
 
@@ -3773,6 +4122,25 @@ class H(BaseHTTPRequestHandler):
         """The GET half of the restored screens. Returns True when it handled the request."""
         from urllib.parse import unquote
         base = self.path.split("?")[0]
+        # Group intents (spec: individual invites, one shared chat). Handled first so their own
+        # membership ACL applies rather than the 1:1 thread rules below.
+        if base in ("/api/agent/gintent", "/api/agent/gintent-thread", "/api/agent/gintents"):
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
+                if "?" in self.path else {}
+            me = unquote(q.get("self", "").replace("+", " "))
+            gid = unquote(q.get("gid", "").replace("+", " "))
+            if base == "/api/agent/gintents":
+                send_json(self, 200, gi_for(me))
+            elif base == "/api/agent/gintent-thread":
+                try:
+                    since = float(q.get("since", 0) or 0)
+                except (TypeError, ValueError):
+                    since = 0.0
+                send_json(self, 200, gi_thread(gid, me, since))
+            else:
+                g = _gi_find(gid)
+                send_json(self, 200, {"ok": bool(g), "group": _gi_public(g, me) if g else None})
+            return True
         if base not in ("/api/agent/thread", "/api/agent/threads",
                         "/api/agent/inbox", "/api/agent/outbox", "/api/agent/groups"):
             return False
@@ -3821,6 +4189,25 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, withdraw_request(body.get("id"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/request-archive":
             send_json(self, 200, archive_request(body.get("id"), body.get("self")))
+        elif p == "/api/agent/gintent-create":
+            send_json(self, 200, gi_create(body.get("self") or body.get("owner"),
+                                           body.get("intent"), body.get("title"),
+                                           body.get("min_total"), body.get("max_total"),
+                                           body.get("idem")))
+        elif p == "/api/agent/gintent-invite":
+            # ONE candidate per call, by design — see the block header. A caller wanting five invites
+            # makes five calls and gets five independent answers, which is what per-candidate policy,
+            # capacity forecast and the pending cap all need.
+            send_json(self, 200, gi_invite(body.get("gid"), body.get("self") or body.get("from"),
+                                           body.get("to"), body.get("note"), body.get("idem")))
+        elif p == "/api/agent/ginvite-respond":
+            send_json(self, 200, gi_respond(body.get("id"), body.get("self"),
+                                            bool(body.get("accept")), body.get("idem")))
+        elif p == "/api/agent/gintent-post":
+            send_json(self, 200, gi_post(body.get("gid"), body.get("self"),
+                                         body.get("text"), body.get("idem")))
+        elif p == "/api/agent/gintent-leave":
+            send_json(self, 200, gi_leave(body.get("gid"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/group-create":
             send_json(self, 200, group_create(body.get("host"), body.get("title"), body.get("topics"),
                                               body.get("when"), body.get("area"), body.get("mode"),
