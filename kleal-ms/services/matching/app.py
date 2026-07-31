@@ -3428,6 +3428,7 @@ def gi_remove(gid, frm, who, reason="", idem=None):
         g["version"] = int(g.get("version") or 1) + 1
         # Neutral in the room: the group is told somebody left, never why or by whom.
         _gi_say(g, "%s is no longer in the group." % who)
+        _gp_recount(gid, now)
         _save_store()
         return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, frm)})
 
@@ -3449,12 +3450,24 @@ def gi_leave(gid, who, idem=None):
         if not m:
             return _idem_put(idem, {"ok": False, "error": "NOT_A_MEMBER", "gid": gid})
         m["state"] = "left"; m["left"] = now
-        n = len(_gi_active(g))
+        rest = _gi_active(g)
+        # The organiser may leave — but the group must not be left with nobody who can invite, plan
+        # or close it. Every organiser-only action checks one name, so an orphaned group is simply
+        # frozen: three people in a room where no button works. Hand it to whoever has been there
+        # longest instead; forbidding the exit would trap the organiser in a group they want out of,
+        # and closing the group would destroy a plan the others may already have confirmed.
+        if _norm_name(who) == _norm_name(g.get("owner")) and rest:
+            heir = sorted(rest, key=lambda x: x.get("joined") or 0)[0]
+            g["owner"] = heir.get("name")
+            _gi_say(g, "%s left. %s is now the organiser." % (who, heir.get("name")))
+        else:
+            _gi_say(g, "%s left the group." % who)
+        n = len(rest)
         if n < int(g.get("min_total") or GI_MIN_TOTAL) and g.get("state") in ("ready_to_plan", "planning"):
-            g["state"] = "below_quorum"          # §6.13 — layer 3 gives this its own screen
+            g["state"] = "below_quorum"
         g["updated"] = now
         g["version"] = int(g.get("version") or 1) + 1
-        _gi_say(g, "%s left the group." % who)
+        _gp_recount(gid, now)
         _save_store()
         return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, who)})
 
@@ -3562,17 +3575,44 @@ def _gp_find(pid):
 def _gp_of(gid):
     """The plan currently in force for a group intent, if any. One at a time, by construction."""
     for p in _gplans():
-        if p.get("gid") == gid and p.get("state") in ("proposed", "confirmed", "locked"):
+        if p.get("gid") == gid and p.get("state") in ("proposed", "confirmed", "locked", "below_quorum"):
             return p
     return None
 
 
 def _gp_confirms(p):
-    """Who has confirmed THIS version. A counter-proposal bumps the version precisely so that older
-    confirmations stop counting — people agreed to a different evening."""
+    """Who has confirmed THIS version AND is still in the group.
+
+    Both halves matter. The version half: a counter-proposal bumps it precisely so older
+    confirmations stop counting — people agreed to a different evening. The membership half: a
+    confirmation is not a signature that outlives leaving. Without it a plan kept listing someone
+    who had walked out, stayed at three when it was really two, and never noticed it had fallen
+    below quorum."""
     v = int(p.get("version") or 1)
-    return [n for n, r in (p.get("responses") or {}).items()
-            if r.get("state") == "confirmed" and int(r.get("version") or 0) == v]
+    said_yes = [n for n, r in (p.get("responses") or {}).items()
+                if r.get("state") == "confirmed" and int(r.get("version") or 0) == v]
+    g = _gi_find(p.get("gid"))
+    if not g:
+        return said_yes
+    live = {_norm_name(m.get("name")) for m in _gi_active(g)}
+    return [n for n in said_yes if _norm_name(n) in live]
+
+
+def _gp_recount(gid, now=None):
+    """Re-derive a plan's standing after the roster changed. Called from every exit path, because
+    losing a confirmed participant is exactly when a plan stops being a group plan."""
+    now = now or time.time()
+    p = _gp_of(gid)
+    if not p or p.get("state") not in ("proposed", "confirmed"):
+        return
+    n = len(_gp_confirms(p))
+    g = _gi_find(gid)
+    if p.get("state") == "confirmed" and n < GP_MIN_CONFIRMS:
+        p["state"] = "below_quorum"
+        p["updated"] = now
+        if g:
+            g["state"] = "below_quorum"
+            _gi_say(g, "Only %d confirmed remain. This is no longer a group plan." % n)
 
 
 def _gp_lock_due(now=None):
@@ -3692,6 +3732,12 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
         if p.get("state") in ("cancelled", "done"):
             return _idem_put(idem, {"ok": False, "error": "CLOSED"})
         v = int(p.get("version") or 1)
+        if action == "counter" and p.get("state") != "proposed":
+            # Once the plan is agreed, changing it is not one person's move any more — it goes to a
+            # vote. Without this guard a single «внести своё предложение» tore up a confirmed plan
+            # and sent three people back to square one on their own.
+            return _idem_put(idem, {"ok": False, "error": "ALREADY_CONFIRMED",
+                                    "note": "open a vote to change an agreed plan"})
         if action == "counter":
             p["version"] = v + 1
             if when:

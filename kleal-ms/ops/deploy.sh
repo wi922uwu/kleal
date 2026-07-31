@@ -69,6 +69,7 @@ tools/meetups_tabs_test.js
 tools/groups_smoke.py
 tools/gintents_smoke.py
 tools/gplans_smoke.py
+tools/ghunt_smoke.py
 ops/run.sh
 "
 
