@@ -87,7 +87,7 @@ for i in (1, 2):
     inv[i] = ((r or {}).get("invite") or {}).get("id")
 check("три приглашения в воздухе", all(inv.get(i) for i in (0, 1, 2)), inv)
 cap = call("/api/agent/gintent-invite", {"gid": GID, "self": OWNER, "to": GUESTS[3]})
-check("сверх лимита ожидающих — отказ", cap.get("error") == "PENDING_CAP", cap)
+check("четвёртое приглашение проходит — batch разрешён", cap.get("ok") is True, cap)
 
 print()
 print("=" * 76)
@@ -213,6 +213,78 @@ inbox = call("/api/agent/gintents?self=%s" % GUESTS[2].replace(" ", "+"))
 check("отказавшийся не числится ни в группе, ни во входящих",
       not (inbox.get("groups") or []) and not (inbox.get("invites") or []),
       [len(inbox.get("groups") or []), len(inbox.get("invites") or [])])
+
+print()
+print("=" * 76)
+print("8. BATCH-ИНВАЙТЫ — ВСЕЙ ВЫДАЧЕ СРАЗУ (регламент)")
+print("=" * 76)
+cb = call("/api/agent/gintent-create", {"self": OWNER, "title": "Батч",
+                                        "intent": {"topics": ["coffee"]}, "max_total": 6,
+                                        "idem": "gi-cb-%d" % STAMP})
+GB = ((cb or {}).get("group") or {}).get("gid")
+batch = call("/api/agent/gintent-invite", {"gid": GB, "self": OWNER,
+                                           "to": GUESTS[:4] + [OWNER, GUESTS[0]],
+                                           "idem": "gi-b-%d" % STAMP})
+check("батч ушёл одним вызовом", batch.get("ok") is True, len(batch.get("sent") or []))
+check("приглашены все годные", len(batch.get("sent") or []) == 4, batch.get("sent"))
+check("негодные названы поимённо, а не срезали батч",
+      len(batch.get("refused") or []) == 2, batch.get("refused"))
+check("себя в батче не приглашает",
+      any(x.get("to") == OWNER for x in (batch.get("refused") or [])), batch.get("refused"))
+check("повтор батча по ключу — тот же ответ",
+      len((call("/api/agent/gintent-invite", {"gid": GB, "self": OWNER, "to": GUESTS[:4],
+                                              "idem": "gi-b-%d" % STAMP}).get("sent") or [])) == 4)
+
+print()
+print("=" * 76)
+print("9. НА ЭТАПЕ ПЛАНА — ЧЕРЕЗ АПРУВ СОЗДАТЕЛЯ")
+print("=" * 76)
+ids = {x["to"]: x["id"] for x in (batch.get("sent") or [])}
+for nm in list(ids)[:2]:
+    call("/api/agent/ginvite-respond", {"id": ids[nm], "self": nm, "accept": True})
+st = call("/api/agent/gintent?gid=%s&self=%s" % (GB, OWNER.replace(" ", "+")))
+gb = (st or {}).get("group") or {}
+check("трое в чате — план доступен", gb.get("planning_allowed") is True, gb.get("joined_count"))
+# организатор начал план: дальше вход только через апрув
+call("/api/agent/gintent-post", {"gid": GB, "self": OWNER, "text": "давайте в субботу"})
+mark = call("/api/agent/gintent-plan-begin", {"gid": GB, "self": OWNER})
+if not mark.get("ok"):
+    print("  (этап плана ещё не реализован — слой 2; проверяю апрув напрямую)")
+third = list(ids)[2]
+acc = call("/api/agent/ginvite-respond", {"id": ids[third], "self": third, "accept": True})
+if acc.get("awaiting_approval"):
+    check("принявший на этапе плана ждёт апрува", True, acc)
+    ap = call("/api/agent/gintent-approve", {"gid": GB, "self": third, "who": third})
+    check("апрувить может только создатель", ap.get("error") == "NOT_ORGANIZER", ap)
+    ap = call("/api/agent/gintent-approve", {"gid": GB, "self": OWNER, "who": third,
+                                             "idem": "gi-ap-%d" % STAMP})
+    check("создатель заапрувил — человек в группе", ap.get("ok") is True, ap)
+else:
+    check("до этапа плана вход остаётся автоматическим", acc.get("ok") is True, acc)
+
+print()
+print("=" * 76)
+print("10. УДАЛЕНИЕ УЧАСТНИКА — ТОЛЬКО С ПРИЧИНОЙ (регламент)")
+print("=" * 76)
+victim = list(ids)[0]
+nore = call("/api/agent/gintent-remove", {"gid": GB, "self": OWNER, "who": victim})
+check("без причины удалить нельзя", nore.get("error") == "REASON_REQUIRED", nore)
+notown = call("/api/agent/gintent-remove", {"gid": GB, "self": victim, "who": list(ids)[1],
+                                            "reason": "не нравится"})
+check("удалять может только создатель", notown.get("error") == "NOT_ORGANIZER", notown)
+self_rm = call("/api/agent/gintent-remove", {"gid": GB, "self": OWNER, "who": OWNER,
+                                             "reason": "x"})
+check("себя создатель не удаляет", self_rm.get("error") == "CANNOT_REMOVE_ORGANIZER", self_rm)
+rm = call("/api/agent/gintent-remove", {"gid": GB, "self": OWNER, "who": victim,
+                                        "reason": "слал непристойности", "idem": "gi-rm-%d" % STAMP})
+check("удалён с причиной", rm.get("ok") is True, rm)
+gone = call("/api/agent/gintent-thread?gid=%s&self=%s" % (GB, victim.replace(" ", "+")))
+check("удалённый теряет доступ к чату", gone.get("error") == "NOT_A_MEMBER", gone)
+th = call("/api/agent/gintent-thread?gid=%s&self=%s" % (GB, OWNER.replace(" ", "+")))
+last = [m.get("text") for m in (th.get("messages") or [])][-1:]
+check("группе сказано нейтрально, без причины и без имени удалившего",
+      any("no longer in the group" in str(t) for t in last)
+      and not any("непристойн" in str(t) for t in last), last)
 
 print()
 print("=" * 76)

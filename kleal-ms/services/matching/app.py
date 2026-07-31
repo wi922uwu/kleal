@@ -3041,10 +3041,25 @@ def list_intents(owner, profile=None, live=True):
 #
 # What is NOT here, on purpose: no remove-participant. A member leaves on their own, or safety removes
 # them. An organiser who can evict people is running a casting flow, and the spec forbids it (§16).
-GI_MIN_TOTAL = 3          # §1: three people INCLUDING the organiser; two is not a group result
-GI_MAX_TOTAL = 6          # §12 Free tier; Plus raises this, which is why it is a name and not a 6
-GI_PENDING_CAP = 3        # §12: how many invites may be outstanding at once on one group intent
+GI_MIN_TOTAL = 3          # three people INCLUDING the organiser; two is not a group result
+GI_MAX_TOTAL = 6
+# The daily is the governing document here and it overrides the written spec on two points.
+#
+#  1. INVITES GO OUT IN A BATCH. «Ему в формате мэтчинга показывается определённый набор людей. Он
+#     может им всем отправить инвайт. Например, отправить 10 инвайтов.» The written spec forbade
+#     batch invite; the product decision is that the organiser invites the slate at once. This cap
+#     is therefore not a product limit any more — it is only an abuse ceiling, so one account cannot
+#     hold hundreds of seats open across the pool.
+#  2. While the intent is still in its INVITE phase every acceptance auto-joins: «Все остальные люди
+#     также без ограничений сразу проваливаются в группу, но только в тот момент, когда у нас статус
+#     нашей встречи именно "инвайт".» Once planning starts, acceptance needs the organiser's approval
+#     instead — see GI_PHASES below.
+GI_PENDING_CAP = 20
 GI_INVITE_TTL = 72 * 3600  # an invite nobody answers stops being a held seat
+# The phases where an accepted invite still drops straight into the chat. After that the roster is
+# what a plan is being confirmed against, so a newcomer is approved by the organiser, not admitted
+# automatically — «он уже не автоматически попадает в чат, а создатель должен сделать аппрув».
+GI_OPEN_PHASES = ("searching", "chat_open", "ready_to_plan")
 
 
 def _gintents():
@@ -3104,6 +3119,10 @@ def _gi_public(g, me=""):
                      "photo": _photo_by_name().get(_norm_name(m.get("name")))} for m in act],
         "joined_count": n,
         "pending_count": len(_gi_pending(g.get("id"))),
+        # People who accepted after planning started and are waiting on the organiser. Surfaced on
+        # the group object because there is no other screen where the organiser would find them.
+        "awaiting_approval": [i.get("to") for i in _ginvites()
+                              if i.get("gid") == g.get("id") and i.get("state") == "awaiting_approval"],
         "seats_left": max(0, int(g.get("max_total") or GI_MAX_TOTAL) - n),
         "i_am_owner": bool(mine) and mine == _norm_name(g.get("owner")),
         "i_am_member": any(_norm_name(m.get("name")) == mine for m in act),
@@ -3161,9 +3180,36 @@ def gi_create(owner, intent, title="", min_total=None, max_total=None, idem=None
         return _idem_put(idem, {"ok": True, "group": _gi_public(g, owner)})
 
 
+def gi_invite_many(gid, frm, names, note="", idem=None):
+    """Invite the slate. The organiser sends to everyone matching showed them — «отправить 10
+    инвайтов» — so the CALL takes a list, while every check stays per candidate: one person being
+    blocked, already invited or already in must not cost the other nine their invitation.
+
+    The answer is per candidate too. A batch that silently half-failed would leave the organiser
+    thinking ten people were asked when three were."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    names = [n for n in (names or []) if str(n or "").strip()]
+    if not names:
+        return {"ok": False, "error": "no candidates"}
+    sent, refused = [], []
+    for n in names:
+        r = gi_invite(gid, frm, n, note, None)
+        if r.get("ok"):
+            sent.append({"to": n, "id": (r.get("invite") or {}).get("id")})
+        else:
+            refused.append({"to": n, "error": r.get("error"), "reason": r.get("reason")})
+    g = _gi_find(gid)
+    out = {"ok": bool(sent), "sent": sent, "refused": refused,
+           "group": _gi_public(g, frm) if g else None}
+    return _idem_put(idem, out)
+
+
 def gi_invite(gid, frm, to, note="", idem=None):
-    """Invite ONE candidate. Everything that could have changed since the slate was drawn is checked
-    here — and checked again at accept, because the group can fill in between."""
+    """Invite ONE candidate — the unit every check works on. Everything that could have changed since
+    the slate was drawn is checked here, and checked again at accept, because the group can fill in
+    between."""
     frm, to = str(frm or "").strip(), str(to or "").strip()
     cached = _idem_get(idem)
     if cached is not None:
@@ -3180,10 +3226,12 @@ def gi_invite(gid, frm, to, note="", idem=None):
             return {"ok": False, "error": "NOT_ORGANIZER"}
         if g.get("state") in ("cancelled", "expired", "converted_1to1"):
             return _idem_put(idem, {"ok": False, "error": "CLOSED", "gid": gid})
-        # §5: while a plan proposal is out, recruitment is locked — the roster the plan was sent to
-        # must not change underneath the people confirming it.
-        if g.get("state") == "planning":
-            return _idem_put(idem, {"ok": False, "error": "PLANNING_LOCKED", "gid": gid})
+        # Recruitment is NOT locked during planning. The daily keeps inviting open and moves the
+        # gate to acceptance instead: a person who accepts once a plan is being confirmed waits for
+        # the organiser's approval rather than walking into the roster mid-confirmation. Two hours
+        # before the meeting everything stops — that is the only hard freeze.
+        if g.get("state") in ("locked", "done"):
+            return _idem_put(idem, {"ok": False, "error": "LOCKED", "gid": gid})
         act = _gi_active(g)
         if any(_norm_name(m.get("name")) == _norm_name(to) for m in act):
             return _idem_put(idem, {"ok": False, "error": "ALREADY_MEMBER", "gid": gid})
@@ -3264,6 +3312,14 @@ def gi_respond(inv_id, who, accept, idem=None):
                 inv["state"] = "policy_revoked"; inv["updated"] = now
                 _save_store()
                 return _idem_put(idem, {"ok": False, "error": "NOT_ELIGIBLE", "reason": why})
+        # «Все остальные люди также без ограничений сразу проваливаются в группу, но только в тот
+        # момент, когда у нас статус нашей встречи именно "инвайт".» Once a plan is being confirmed
+        # the roster is what people are confirming AGAINST, so a late acceptance waits for approval.
+        if g.get("state") not in GI_OPEN_PHASES:
+            inv["state"] = "awaiting_approval"; inv["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": True, "awaiting_approval": True, "gid": g.get("id"),
+                                    "note": "the organiser approves joiners once planning has started"})
         inv["state"] = "accepted"; inv["updated"] = now
         g.setdefault("members", []).append({"name": who, "state": "joined", "joined": now})
         n = len(_gi_active(g))
@@ -3285,6 +3341,94 @@ def gi_respond(inv_id, who, accept, idem=None):
             _gi_say(g, "This group is full. Pending invites are no longer available.")
         _save_store()
         return _idem_put(idem, {"ok": True, "gid": g.get("id"), "group": _gi_public(g, who)})
+
+
+def gi_approve(gid, frm, who, accept=True, idem=None):
+    """Approve (or refuse) somebody who accepted after planning began.
+
+    «Тот человек, которого мы пригласили ранее в intent, присоединяется на этапе плана — его нужно
+    заапрувить.» The seat is claimed HERE, not when they tapped accept, so the same atomic capacity
+    rule applies and an approval cannot overfill a room that filled while it was pending."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(frm) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        inv = next((i for i in _ginvites()
+                    if i.get("gid") == gid and _norm_name(i.get("to")) == _norm_name(who)
+                    and i.get("state") == "awaiting_approval"), None)
+        if not inv:
+            return _idem_put(idem, {"ok": False, "error": "NOTHING_TO_APPROVE"})
+        if not accept:
+            inv["state"] = "declined_by_organizer"; inv["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": True, "approved": False, "who": who})
+        if len(_gi_active(g)) >= int(g.get("max_total") or GI_MAX_TOTAL):
+            inv["state"] = "group_full"; inv["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": False, "error": "GROUP_FULL"})
+        inv["state"] = "accepted"; inv["updated"] = now
+        g.setdefault("members", []).append({"name": inv.get("to"), "state": "joined", "joined": now})
+        g["updated"] = now
+        g["version"] = int(g.get("version") or 1) + 1
+        _gi_say(g, "%s joined the group." % inv.get("to"))
+        _save_store()
+        return _idem_put(idem, {"ok": True, "approved": True, "who": inv.get("to"),
+                                "group": _gi_public(g, frm)})
+
+
+def gi_remove(gid, frm, who, reason="", idem=None):
+    """The organiser removes a participant, WITH a reason.
+
+    «Если мы удаляем человека из интента, у нас открывается окошко со сбором обратной связи. Почему
+    мы этого человека удалили. Это поможет нам в будущем правильно принимать решения — если человек
+    10 раз удалили из-за того, что он отправлял дикпики.» So the reason is not a courtesy field: it
+    is the signal, and a removal without one is refused rather than recorded as an anonymous ejection.
+
+    Only before a plan is approved. «После того, как у нас апрувнутый план приходит в действие, у нас
+    блокируется кнопка удаления участников плана из общего чата.»"""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    reason = str(reason or "").strip()
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(frm) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if _norm_name(who) == _norm_name(g.get("owner")):
+            return {"ok": False, "error": "CANNOT_REMOVE_ORGANIZER"}
+        if g.get("state") in ("planned", "locked", "done"):
+            return _idem_put(idem, {"ok": False, "error": "PLAN_APPROVED",
+                                    "note": "removal is blocked once a plan is in force"})
+        if not reason:
+            return {"ok": False, "error": "REASON_REQUIRED"}
+        m = next((x for x in (g.get("members") or [])
+                  if _norm_name(x.get("name")) == _norm_name(who)
+                  and x.get("state") in ("joined", "active")), None)
+        if not m:
+            return _idem_put(idem, {"ok": False, "error": "NOT_A_MEMBER"})
+        m["state"] = "removed"; m["left"] = now
+        m["removed_by"] = g.get("owner"); m["reason"] = reason[:400]
+        # The reason is kept as a record about the PERSON, not only inside this one group, because
+        # that is the whole point of collecting it — a pattern is only visible across groups.
+        SESSION.setdefault("_gremovals", []).append(
+            {"gid": gid, "who": who, "by": g.get("owner"), "reason": reason[:400], "t": now})
+        if len(_gi_active(g)) < int(g.get("min_total") or GI_MIN_TOTAL) and g.get("state") == "ready_to_plan":
+            g["state"] = "chat_open"
+        g["updated"] = now
+        g["version"] = int(g.get("version") or 1) + 1
+        # Neutral in the room: the group is told somebody left, never why or by whom.
+        _gi_say(g, "%s is no longer in the group." % who)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, frm)})
 
 
 def gi_leave(gid, who, idem=None):
@@ -4195,11 +4339,21 @@ class H(BaseHTTPRequestHandler):
                                            body.get("min_total"), body.get("max_total"),
                                            body.get("idem")))
         elif p == "/api/agent/gintent-invite":
-            # ONE candidate per call, by design — see the block header. A caller wanting five invites
-            # makes five calls and gets five independent answers, which is what per-candidate policy,
-            # capacity forecast and the pending cap all need.
-            send_json(self, 200, gi_invite(body.get("gid"), body.get("self") or body.get("from"),
-                                           body.get("to"), body.get("note"), body.get("idem")))
+            # `to` takes a name OR a list: the organiser invites the whole slate at once, and gets
+            # a per-candidate answer back rather than one verdict for the batch.
+            _to = body.get("to")
+            if isinstance(_to, list):
+                send_json(self, 200, gi_invite_many(body.get("gid"), body.get("self") or body.get("from"),
+                                                    _to, body.get("note"), body.get("idem")))
+            else:
+                send_json(self, 200, gi_invite(body.get("gid"), body.get("self") or body.get("from"),
+                                               _to, body.get("note"), body.get("idem")))
+        elif p == "/api/agent/gintent-approve":
+            send_json(self, 200, gi_approve(body.get("gid"), body.get("self"), body.get("who"),
+                                            body.get("accept", True), body.get("idem")))
+        elif p == "/api/agent/gintent-remove":
+            send_json(self, 200, gi_remove(body.get("gid"), body.get("self"), body.get("who"),
+                                           body.get("reason"), body.get("idem")))
         elif p == "/api/agent/ginvite-respond":
             send_json(self, 200, gi_respond(body.get("id"), body.get("self"),
                                             bool(body.get("accept")), body.get("idem")))
