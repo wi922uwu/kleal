@@ -3132,6 +3132,7 @@ def _gi_public(g, me=""):
                             and g.get("state") not in ("cancelled", "expired", "converted_1to1"),
         "need_more": max(0, int(g.get("min_total") or GI_MIN_TOTAL) - n),
         "full": n >= int(g.get("max_total") or GI_MAX_TOTAL),
+        "plan": _gp_public(_gp_of(g.get("id")), me),
     }
 
 
@@ -3517,6 +3518,416 @@ def gi_for(who):
                                 "group": _gi_public(g, who)})
     mine.sort(key=lambda x: -(x.get("joined_count") or 0))
     return {"ok": True, "groups": mine, "invites": invited}
+
+
+# -*- coding: utf-8 -*-
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# GROUP PLANS — confirmation, counter-proposals, votes, the two-hour lock, feedback
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# Per the daily. The shape of the thing:
+#
+#   3+ in the chat -> organiser presses «Создать план» -> a draft of time and place goes to everyone
+#   -> each person confirms, or makes a COUNTER-PROPOSAL, which puts it back to the room and restarts
+#   approval from scratch -> once three have confirmed the CURRENT version, the plan exists.
+#
+# Three is the whole rule, not a fallback: «в тот момент, когда все участники встречи, а минимум
+# трое, договорились... у нас создаётся план». Waiting for silent members would let one person who
+# stopped reading hold four others hostage.
+#
+# After the plan exists nobody can be removed, and changing or cancelling it is not the organiser's
+# call any more — it goes to a VOTE, decided by a majority OF THOSE WHO VOTED. A tie fails: a plan
+# people already agreed to does not fall apart because the room split evenly.
+#
+# Two hours before it starts everything freezes. «Убираются все кнопки, и этот план считается, что
+# он точно состоялся» — no edits, no cancels, no new people.
+GP_LOCK_BEFORE = 2 * 3600      # the freeze window, in seconds before the meeting starts
+GP_MIN_CONFIRMS = GI_MIN_TOTAL  # three, the same three that make a group a group
+
+
+def _gplans():
+    return SESSION.setdefault("_gplans", [])
+
+
+def _gvotes():
+    return SESSION.setdefault("_gvotes", [])
+
+
+def _gp_find(pid):
+    for p in _gplans():
+        if p.get("id") == pid:
+            return p
+    return None
+
+
+def _gp_of(gid):
+    """The plan currently in force for a group intent, if any. One at a time, by construction."""
+    for p in _gplans():
+        if p.get("gid") == gid and p.get("state") in ("proposed", "confirmed", "locked"):
+            return p
+    return None
+
+
+def _gp_confirms(p):
+    """Who has confirmed THIS version. A counter-proposal bumps the version precisely so that older
+    confirmations stop counting — people agreed to a different evening."""
+    v = int(p.get("version") or 1)
+    return [n for n, r in (p.get("responses") or {}).items()
+            if r.get("state") == "confirmed" and int(r.get("version") or 0) == v]
+
+
+def _gp_lock_due(now=None):
+    """Freeze anything inside the two-hour window, and close whatever was still being voted on —
+    an open vote at that point can no longer change a meeting people are already travelling to."""
+    now = now or time.time()
+    changed = False
+    for p in _gplans():
+        if p.get("state") in ("confirmed", "proposed") and p.get("starts_at"):
+            if now >= float(p["starts_at"]) - GP_LOCK_BEFORE:
+                p["state"] = "locked"
+                p["updated"] = now
+                changed = True
+                for v in _gvotes():
+                    if v.get("plan_id") == p.get("id") and v.get("state") == "open":
+                        v["state"] = "failed"
+                        v["closed"] = now
+                        v["why"] = "locked"
+                g = _gi_find(p.get("gid"))
+                if g:
+                    g["state"] = "locked"
+                    _gi_say(g, "The plan is locked — it starts in less than two hours.")
+    return changed
+
+
+def _gp_public(p, me=""):
+    if not p:
+        return None
+    conf = _gp_confirms(p)
+    g = _gi_find(p.get("gid"))
+    act = [m.get("name") for m in _gi_active(g)] if g else []
+    return {
+        "id": p.get("id"), "gid": p.get("gid"), "version": p.get("version"),
+        "when": p.get("when"), "place": p.get("place"), "note": p.get("note"),
+        "starts_at": p.get("starts_at"), "state": p.get("state"),
+        "confirmed": conf, "confirmed_count": len(conf),
+        # Who has not answered THIS version — the counter is meaningless without it.
+        "waiting": [n for n in act if n not in conf
+                    and (p.get("responses") or {}).get(n, {}).get("version") != p.get("version")],
+        "declined": [n for n, r in (p.get("responses") or {}).items() if r.get("state") == "declined"],
+        "my_response": (p.get("responses") or {}).get(str(me or ""), {}).get("state"),
+        "needs": max(0, GP_MIN_CONFIRMS - len(conf)),
+        "editable": p.get("state") in ("proposed", "confirmed"),
+        "locked": p.get("state") == "locked",
+    }
+
+
+def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None):
+    """«Создать план» — available only at three. Sends ONE draft to the whole current roster; the
+    organiser does not choose who it goes to, because choosing would make this a casting call."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if len(_gi_active(g)) < GP_MIN_CONFIRMS:
+            return _idem_put(idem, {"ok": False, "error": "NEED_THREE",
+                                    "need": GP_MIN_CONFIRMS - len(_gi_active(g))})
+        if _gp_of(gid):
+            return _idem_put(idem, {"ok": False, "error": "PLAN_EXISTS"})
+        try:
+            sa = float(starts_at) if starts_at else None
+        except (TypeError, ValueError):
+            sa = None
+        # A plan starting inside the freeze window cannot be confirmed by anybody: the two-hour lock
+        # would close it on the very next request, leaving a "plan" that only its author agreed to
+        # and that the system nonetheless treats as definitely happening. Refuse it instead.
+        if sa is not None and sa - GP_LOCK_BEFORE <= now:
+            return _idem_put(idem, {"ok": False, "error": "TOO_LATE",
+                                    "note": "a plan must start more than two hours from now, "
+                                            "or nobody can confirm it"})
+        p = {"id": "gp_%d_%s" % (int(now * 1000), hashlib.sha1(gid.encode("utf-8")).hexdigest()[:6]),
+             "gid": gid, "owner": g.get("owner"), "version": 1,
+             "when": str(when or "")[:120], "place": str(place or "")[:160],
+             "note": str(note or "")[:400], "starts_at": sa,
+             "state": "proposed", "responses": {}, "created": now, "updated": now}
+        # The organiser proposing it IS their confirmation — asking them to agree with themselves
+        # would be theatre, and it would make three people impossible with a group of exactly three.
+        p["responses"][g.get("owner")] = {"state": "confirmed", "t": now, "version": 1}
+        _gplans().append(p)
+        g["state"] = "planning"
+        g["updated"] = now
+        _gi_say(g, "A group plan is ready. Confirm to join it.")
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
+def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, idem=None):
+    """confirm | decline | counter.
+
+    A COUNTER is not a vote against the plan — it is «внести своё предложение»: it replaces the
+    terms, bumps the version and sends everyone back to confirming, exactly as the daily describes
+    («это выносится на общее обсуждение, и процесс утверждения плана запускается по новой»)."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    action = str(action or "").strip().lower()
+    now = time.time()
+    with _STORE_LOCK:
+        _gp_lock_due(now)
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
+            return {"ok": False, "error": "NOT_A_MEMBER"}
+        if p.get("state") == "locked":
+            return _idem_put(idem, {"ok": False, "error": "LOCKED"})
+        if p.get("state") in ("cancelled", "done"):
+            return _idem_put(idem, {"ok": False, "error": "CLOSED"})
+        v = int(p.get("version") or 1)
+        if action == "counter":
+            p["version"] = v + 1
+            if when:
+                p["when"] = str(when)[:120]
+            if place:
+                p["place"] = str(place)[:160]
+            if note:
+                p["note"] = str(note)[:400]
+            if starts_at:
+                try:
+                    p["starts_at"] = float(starts_at)
+                except (TypeError, ValueError):
+                    pass
+            # Everything confirmed against the old terms is void — including the organiser's own.
+            p["responses"] = {who: {"state": "confirmed", "t": now, "version": p["version"]}}
+            p["state"] = "proposed"
+            p["updated"] = now
+            _gi_say(g, "%s suggested a change: %s%s. Everyone confirms again."
+                    % (who, p.get("when") or "", (", " + p.get("place")) if p.get("place") else ""))
+            _save_store()
+            return _idem_put(idem, {"ok": True, "countered": True, "plan": _gp_public(p, who)})
+        if action == "decline":
+            p["responses"][who] = {"state": "declined", "t": now, "version": v}
+            p["updated"] = now
+            _gi_say(g, "%s will not join this plan." % who)
+            _save_store()
+            return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+        if action != "confirm":
+            return {"ok": False, "error": "BAD_ACTION"}
+        p["responses"][who] = {"state": "confirmed", "t": now, "version": v}
+        p["updated"] = now
+        conf = _gp_confirms(p)
+        # Three is enough. Not «everyone», not «everyone who is still reading» — three.
+        if len(conf) >= GP_MIN_CONFIRMS and p.get("state") == "proposed":
+            p["state"] = "confirmed"
+            g["state"] = "planned"
+            _gi_say(g, "The plan is set with the people who confirmed: %s." % ", ".join(conf))
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
+def gp_vote_open(pid, who, kind, when="", place="", note="", starts_at=None, idem=None):
+    """Once a plan is in force the organiser cannot simply change or drop it — «при нажатии на эту
+    кнопку у нас выносится голосование». kind is 'edit' or 'cancel'."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    kind = str(kind or "").strip().lower()
+    if kind not in ("edit", "cancel"):
+        return {"ok": False, "error": "BAD_KIND"}
+    now = time.time()
+    with _STORE_LOCK:
+        _gp_lock_due(now)
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if p.get("state") != "confirmed":
+            return _idem_put(idem, {"ok": False,
+                                    "error": "LOCKED" if p.get("state") == "locked" else "NOT_CONFIRMED"})
+        g = _gi_find(p.get("gid"))
+        if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g or {})):
+            return {"ok": False, "error": "NOT_A_MEMBER"}
+        if any(v.get("plan_id") == pid and v.get("state") == "open" for v in _gvotes()):
+            return _idem_put(idem, {"ok": False, "error": "VOTE_IN_PROGRESS"})
+        vote = {"id": "gvo_%d" % int(now * 1000), "gid": p.get("gid"), "plan_id": pid,
+                "kind": kind, "by": who, "state": "open", "created": now,
+                "proposal": {"when": str(when or "")[:120], "place": str(place or "")[:160],
+                             "note": str(note or "")[:400], "starts_at": starts_at},
+                # Whoever calls the vote has cast the first one, by calling it.
+                "votes": {who: True}}
+        _gvotes().append(vote)
+        _gi_say(g, "%s asked the group to %s the plan. Please vote."
+                % (who, "change" if kind == "edit" else "cancel"))
+        _save_store()
+        return _idem_put(idem, _gp_vote_view(vote, who))
+
+
+def _gp_vote_view(v, me=""):
+    g = _gi_find(v.get("gid"))
+    act = [m.get("name") for m in _gi_active(g)] if g else []
+    votes = v.get("votes") or {}
+    yes = [n for n, b in votes.items() if b]
+    no = [n for n, b in votes.items() if not b]
+    return {"ok": True, "vote": {"id": v.get("id"), "kind": v.get("kind"), "state": v.get("state"),
+                                 "yes": len(yes), "no": len(no),
+                                 "waiting": [n for n in act if n not in votes],
+                                 "my_vote": votes.get(str(me or "")),
+                                 "why": v.get("why"), "proposal": v.get("proposal")}}
+
+
+def gp_vote(vote_id, who, yes, idem=None):
+    """One vote each. The result is a majority OF THOSE WHO VOTED — a tie is not a majority, so the
+    plan stands. Resolved once everyone has answered; the two-hour lock closes it either way."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        _gp_lock_due(now)
+        v = next((x for x in _gvotes() if x.get("id") == vote_id), None)
+        if not v:
+            return {"ok": False, "error": "NO_SUCH_VOTE"}
+        if v.get("state") != "open":
+            return _idem_put(idem, _gp_vote_view(v, who))
+        g = _gi_find(v.get("gid"))
+        act = [m.get("name") for m in _gi_active(g)] if g else []
+        if not any(_norm_name(n) == _norm_name(who) for n in act):
+            return {"ok": False, "error": "NOT_A_MEMBER"}
+        v.setdefault("votes", {})[who] = bool(yes)
+        if len(v["votes"]) >= len(act):
+            _gp_close_vote(v, now)
+        _save_store()
+        return _idem_put(idem, _gp_vote_view(v, who))
+
+
+def _gp_close_vote(v, now=None):
+    """Apply the outcome. Called when everyone has voted, or by the organiser closing it early."""
+    now = now or time.time()
+    votes = v.get("votes") or {}
+    yes = sum(1 for b in votes.values() if b)
+    no = len(votes) - yes
+    p = _gp_find(v.get("plan_id"))
+    g = _gi_find(v.get("gid"))
+    v["closed"] = now
+    if yes <= no:                      # a tie is NOT a majority — the plan people agreed to stands
+        v["state"] = "failed"
+        v["why"] = "tie" if yes == no else "majority against"
+        if g:
+            _gi_say(g, "The group voted to keep the plan as it is.")
+        return v
+    v["state"] = "passed"
+    if not p:
+        return v
+    if v.get("kind") == "cancel":
+        p["state"] = "cancelled"
+        p["updated"] = now
+        if g:
+            g["state"] = "chat_open"
+            _gi_say(g, "The group voted to cancel the plan.")
+        return v
+    pr = v.get("proposal") or {}
+    if pr.get("when"):
+        p["when"] = pr["when"]
+    if pr.get("place"):
+        p["place"] = pr["place"]
+    if pr.get("note"):
+        p["note"] = pr["note"]
+    if pr.get("starts_at"):
+        try:
+            p["starts_at"] = float(pr["starts_at"])
+        except (TypeError, ValueError):
+            pass
+    p["version"] = int(p.get("version") or 1) + 1
+    p["updated"] = now
+    # The change was agreed by a majority, so it does NOT go back round for re-confirmation — that
+    # is the difference between a vote and a counter-proposal.
+    p["responses"] = {n: {"state": "confirmed", "t": now, "version": p["version"]}
+                      for n, b in votes.items() if b}
+    if g:
+        _gi_say(g, "The group voted to change the plan: %s%s."
+                % (p.get("when") or "", (", " + p.get("place")) if p.get("place") else ""))
+    return v
+
+
+def gp_vote_close(vote_id, who, idem=None):
+    """Close a vote before everyone has answered. Only the organiser, and the same majority rule."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        v = next((x for x in _gvotes() if x.get("id") == vote_id), None)
+        if not v:
+            return {"ok": False, "error": "NO_SUCH_VOTE"}
+        g = _gi_find(v.get("gid"))
+        if not g or _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if v.get("state") == "open":
+            _gp_close_vote(v)
+        _save_store()
+        return _idem_put(idem, _gp_vote_view(v, who))
+
+
+def gp_feedback(pid, who, happened=None, reason="", text="", idem=None):
+    """After the meeting: did it happen, and how was it. «Когда человек отправляет, этот план у нас
+    переносится в историю планов.» The plan moves to history for THAT person as soon as they answer;
+    it is marked done for everyone once every confirmed participant has."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if p.get("state") not in ("locked", "confirmed", "done"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_YET"})
+        conf = _gp_confirms(p)
+        if who not in conf:
+            return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        fb = p.setdefault("feedback", {})
+        fb[who] = {"happened": (None if happened is None else bool(happened)),
+                   "reason": str(reason or "")[:400], "text": str(text or "")[:1000], "t": now}
+        if all(n in fb for n in conf):
+            p["state"] = "done"
+            g = _gi_find(p.get("gid"))
+            if g:
+                g["state"] = "done"
+        p["updated"] = now
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who),
+                                "answered": len(fb), "of": len(conf)})
+
+
+def gp_for(who):
+    """This person's plans — active and history — plus any vote waiting on them."""
+    _gp_lock_due()
+    me = _norm_name(who)
+    active, history, votes = [], [], []
+    for p in _gplans():
+        g = _gi_find(p.get("gid"))
+        if not g:
+            continue
+        inside = any(_norm_name(m.get("name")) == me for m in _gi_active(g)) or \
+            any(_norm_name(n) == me for n in _gp_confirms(p))
+        if not inside:
+            continue
+        view = _gp_public(p, who)
+        view["title"] = g.get("title")
+        (history if p.get("state") in ("done", "cancelled") else active).append(view)
+    for v in _gvotes():
+        if v.get("state") != "open":
+            continue
+        g = _gi_find(v.get("gid"))
+        if g and any(_norm_name(m.get("name")) == me for m in _gi_active(g)):
+            votes.append(_gp_vote_view(v, who)["vote"])
+    return {"ok": True, "plans": active, "history": history, "votes": votes}
 
 
 GROUP_MIN, GROUP_MAX = 2, 8
@@ -4268,12 +4679,15 @@ class H(BaseHTTPRequestHandler):
         base = self.path.split("?")[0]
         # Group intents (spec: individual invites, one shared chat). Handled first so their own
         # membership ACL applies rather than the 1:1 thread rules below.
-        if base in ("/api/agent/gintent", "/api/agent/gintent-thread", "/api/agent/gintents"):
+        if base in ("/api/agent/gintent", "/api/agent/gintent-thread", "/api/agent/gintents",
+                    "/api/agent/gplans"):
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
                 if "?" in self.path else {}
             me = unquote(q.get("self", "").replace("+", " "))
             gid = unquote(q.get("gid", "").replace("+", " "))
-            if base == "/api/agent/gintents":
+            if base == "/api/agent/gplans":
+                send_json(self, 200, gp_for(me))
+            elif base == "/api/agent/gintents":
                 send_json(self, 200, gi_for(me))
             elif base == "/api/agent/gintent-thread":
                 try:
@@ -4360,6 +4774,26 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/gintent-post":
             send_json(self, 200, gi_post(body.get("gid"), body.get("self"),
                                          body.get("text"), body.get("idem")))
+        elif p == "/api/agent/gplan-begin":
+            send_json(self, 200, gp_begin(body.get("gid"), body.get("self"), body.get("when"),
+                                          body.get("place"), body.get("note"),
+                                          body.get("starts_at"), body.get("idem")))
+        elif p == "/api/agent/gplan-respond":
+            send_json(self, 200, gp_respond(body.get("id"), body.get("self"), body.get("action"),
+                                            body.get("when"), body.get("place"), body.get("note"),
+                                            body.get("starts_at"), body.get("idem")))
+        elif p == "/api/agent/gplan-vote-open":
+            send_json(self, 200, gp_vote_open(body.get("id"), body.get("self"), body.get("kind"),
+                                              body.get("when"), body.get("place"), body.get("note"),
+                                              body.get("starts_at"), body.get("idem")))
+        elif p == "/api/agent/gplan-vote":
+            send_json(self, 200, gp_vote(body.get("id"), body.get("self"),
+                                         bool(body.get("yes")), body.get("idem")))
+        elif p == "/api/agent/gplan-vote-close":
+            send_json(self, 200, gp_vote_close(body.get("id"), body.get("self"), body.get("idem")))
+        elif p == "/api/agent/gplan-feedback":
+            send_json(self, 200, gp_feedback(body.get("id"), body.get("self"), body.get("happened"),
+                                             body.get("reason"), body.get("text"), body.get("idem")))
         elif p == "/api/agent/gintent-leave":
             send_json(self, 200, gi_leave(body.get("gid"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/group-create":
