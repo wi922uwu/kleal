@@ -3976,6 +3976,338 @@ def gp_for(who):
     return {"ok": True, "plans": active, "history": history, "votes": votes}
 
 
+# ============================================================================ 1:1 meeting plans (борд «1:1 Offline»)
+# The group side has had a real plan object for a while — propose, confirm, counter, lock, feedback.
+# The 1:1 side had NOTHING. The whole meeting lived in a client-side `PLAN` variable, which is why the
+# app could say «Марта получит уведомление» and «статус видит только твой собеседник» while nothing at
+# all left the device: the other account had no plan, no time, no address and no idea anyone was late.
+#
+# The board sets the rules. From OF.C3, verbatim: «Confirm and the exact address opens for you. Until
+# then you only see the district — that works both ways.» So the address is a per-VIEWER field released
+# by that viewer's own confirmation — not by the plan's overall state, and not by being the host.
+MP_LIVE = ("otw", "late", "here")        # OF.22 on the way / OF.22a running late / OF.23 I'm here
+MP_MODES = ("offline", "online", "hybrid")
+MP_MAX_AHEAD = 365 * 24 * 3600           # a first coffee is not scheduled for the year 31 billion
+MP_KEEP_AFTER = 24 * 3600                # a plan stays "active" for a day past its start, then history
+
+
+def _mplans():
+    return SESSION.setdefault("_mplans", [])
+
+
+def _mp_find(pid):
+    for p in _mplans():
+        if p.get("id") == pid:
+            return p
+    return None
+
+
+def _mp_of(a, b):
+    """The plan in force between two people — one at a time, like the single open proposal per pair."""
+    key = _pair_key(a, b)
+    for p in _mplans():
+        if p.get("pair") == key and p.get("state") in ("proposed", "confirmed"):
+            return p
+    return None
+
+
+def _mp_matched(a, b):
+    """A plan may only go to someone who ACCEPTED an invitation. Without this gate the exact address of
+    a first date is one POST away from any name in the pool."""
+    pair = {_norm_name(a), _norm_name(b)}
+    for r in _requests():
+        if r.get("status") == "accepted" and {_norm_name(r.get("from")), _norm_name(r.get("to"))} == pair:
+            return True
+    return False
+
+
+def _mp_is_in(p, who):
+    return _norm_name(who) in (_norm_name(p.get("host")), _norm_name(p.get("guest")))
+
+
+def _mp_answer(p, who):
+    """This person's answer to the CURRENT version. An answer to an older version is not an answer:
+    a counter-proposal bumps the version precisely so an old yes stops counting — they agreed to a
+    different evening."""
+    r = (p.get("responses") or {}).get(_norm_name(who)) or {}
+    return r.get("state") if int(r.get("version") or 0) == int(p.get("version") or 1) else None
+
+
+def _mp_confirmed(p):
+    """Normalised names of everyone who has confirmed this version."""
+    return [n for n in ((p.get("responses") or {}).keys())
+            if _mp_answer(p, n) == "confirmed"]
+
+
+def _mp_other(p, who):
+    return p.get("guest") if _norm_name(who) == _norm_name(p.get("host")) else p.get("host")
+
+
+def _mp_public(p, me=""):
+    if not p:
+        return None
+    who = _norm_name(me)
+    conf = set(_mp_confirmed(p))
+    by = _photo_by_name()
+    people = []
+    for nm, role in ((p.get("host"), "host"), (p.get("guest"), "guest")):
+        k = _norm_name(nm)
+        people.append({"name": nm, "role": role, "is_me": k == who, "photo": by.get(k),
+                       "status": _mp_answer(p, nm) or "pending", "confirmed": k in conf,
+                       "live": (p.get("live") or {}).get(k)})
+    # OF.C3: released by the viewer's OWN confirmation — plus, always, to whoever typed it. Without
+    # that second half a counter-proposal (which resets every confirmation) would hide the address
+    # from the very person who wrote it, which is not privacy, just a broken screen.
+    opened = who in conf or who == _norm_name(p.get("address_by"))
+    return {
+        "id": p.get("id"), "version": p.get("version"), "state": p.get("state"),
+        "title": p.get("title"), "mode": p.get("mode"),
+        "starts_at": p.get("starts_at"), "when": p.get("when"),
+        "district": p.get("district"),
+        "address": (p.get("address") or "") if opened else "",
+        "address_set": bool(p.get("address")),
+        "address_visible_to_me": bool(opened and p.get("address")),
+        "note": p.get("note"), "cover": p.get("cover"),
+        "host": p.get("host"), "guest": p.get("guest"), "other": _mp_other(p, me),
+        "participants": people,
+        "confirmed_count": len(conf), "both_confirmed": len(conf) >= 2,
+        "my_response": _mp_answer(p, me),
+        "waiting_on": [x["name"] for x in people if not x["confirmed"]],
+        "my_live": (p.get("live") or {}).get(who),
+        "their_live": (p.get("live") or {}).get(_norm_name(_mp_other(p, me))),
+        "outcome": p.get("outcome"), "my_feedback": (p.get("feedback") or {}).get(who),
+        "due": bool(p.get("starts_at") and time.time() >= float(p["starts_at"])),
+        "created": p.get("created"), "updated": p.get("updated"),
+    }
+
+
+def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", district="",
+               address="", note="", cover="", idem=None):
+    """OF.20 — one side sends the meeting: when, which district, and (optionally) the exact address."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    frm, to = str(frm or "").strip(), str(to or "").strip()
+    if not frm or not to or _norm_name(frm) == _norm_name(to):
+        return {"ok": False, "error": "TWO_PEOPLE_REQUIRED"}
+    if not _mp_matched(frm, to):
+        return {"ok": False, "error": "NOT_MATCHED",
+                "note": "a plan can only go to someone who accepted an invitation"}
+    now = time.time()
+    try:
+        sa = float(starts_at) if starts_at else None
+    except (TypeError, ValueError):
+        sa = None
+    if sa is not None and sa <= now:
+        return _idem_put(idem, {"ok": False, "error": "IN_THE_PAST"})
+    if sa is not None and sa > now + MP_MAX_AHEAD:
+        return _idem_put(idem, {"ok": False, "error": "TOO_FAR_AHEAD"})
+    md = str(mode or "offline").strip().lower()
+    with _STORE_LOCK:
+        if _mp_of(frm, to):
+            return _idem_put(idem, {"ok": False, "error": "PLAN_EXISTS"})
+        base = "mp_%d_%s" % (int(now * 1000),
+                             hashlib.sha1(_pair_key(frm, to).encode("utf-8")).hexdigest()[:6])
+        taken = {x.get("id") for x in _mplans()}
+        pid, n = base, 1
+        while pid in taken:
+            pid, n = "%s_%d" % (base, n), n + 1
+        p = {"id": pid, "pair": _pair_key(frm, to), "host": frm, "guest": to,
+             "title": str(title or "")[:120], "mode": md if md in MP_MODES else "offline",
+             "starts_at": sa, "when": str(when or "")[:120],
+             "district": str(district or "")[:120], "address": str(address or "")[:200],
+             "address_by": frm if address else "",
+             "note": str(note or "")[:400], "cover": str(cover or "")[:400],
+             "state": "proposed", "version": 1,
+             # Proposing IS confirming. Asking the sender to agree with themselves would be theatre.
+             "responses": {_norm_name(frm): {"state": "confirmed", "t": now, "version": 1}},
+             "live": {}, "feedback": {}, "created": now, "updated": now}
+        _mplans().append(p)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _mp_public(p, frm)})
+
+
+def mp_respond(pid, who, action, starts_at=None, when="", district="", address="",
+               title="", note="", version=None, idem=None):
+    """confirm | decline | counter.
+
+    OF.21a «Suggest another time» is a COUNTER: it replaces the terms, bumps the version and sends both
+    sides back to confirming — the same rule the group plans follow. Confirming an evening nobody has
+    agreed to any more is exactly the bug the version guard exists to prevent."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    act = str(action or "").strip().lower()
+    if act not in ("confirm", "decline", "counter"):
+        return {"ok": False, "error": "BAD_ACTION"}
+    now = time.time()
+    with _STORE_LOCK:
+        p = _mp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if not _mp_is_in(p, who):
+            return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        if p.get("state") not in ("proposed", "confirmed"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+        if version is not None and str(version) != str(p.get("version") or 1):
+            return {"ok": False, "error": "VERSION_CONFLICT", "version": p.get("version")}
+        k = _norm_name(who)
+        v = int(p.get("version") or 1)
+        if act == "decline":
+            p["state"] = "cancelled"
+            p["cancelled_by"] = who
+            p["cancel_reason"] = str(note or "")[:400]
+            p.setdefault("responses", {})[k] = {"state": "declined", "t": now, "version": v}
+        elif act == "confirm":
+            p.setdefault("responses", {})[k] = {"state": "confirmed", "t": now, "version": v}
+            if len(_mp_confirmed(p)) >= 2:
+                p["state"] = "confirmed"
+        else:                                     # counter — new terms, everyone answers again
+            try:
+                sa = float(starts_at) if starts_at else p.get("starts_at")
+            except (TypeError, ValueError):
+                sa = p.get("starts_at")
+            if sa is not None and sa <= now:
+                return _idem_put(idem, {"ok": False, "error": "IN_THE_PAST"})
+            if sa is not None and sa > now + MP_MAX_AHEAD:
+                return _idem_put(idem, {"ok": False, "error": "TOO_FAR_AHEAD"})
+            p["version"] = v + 1
+            p["starts_at"] = sa
+            if when:
+                p["when"] = str(when)[:120]
+            if district:
+                p["district"] = str(district)[:120]
+            if address:
+                p["address"] = str(address)[:200]
+                p["address_by"] = who
+            if title:
+                p["title"] = str(title)[:120]
+            if note:
+                p["note"] = str(note)[:400]
+            p["state"] = "proposed"
+            # Proposing the new time IS confirming it, and it is the ONLY answer that survives the bump.
+            p["responses"] = {k: {"state": "confirmed", "t": now, "version": p["version"]}}
+            p["live"] = {}                        # nobody is on their way to the old time any more
+        p["updated"] = now
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
+
+
+def mp_cancel(pid, who, reason="", idem=None):
+    """Either side calls it off. A cancelled plan is terminal — the pair make a new one if they want."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        p = _mp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if not _mp_is_in(p, who):
+            return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        if p.get("state") not in ("proposed", "confirmed"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+        p["state"] = "cancelled"
+        p["cancelled_by"] = who
+        p["cancel_reason"] = str(reason or "")[:400]
+        p["updated"] = time.time()
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
+
+
+def mp_status(pid, who, status, eta_min=None, idem=None):
+    """OF.22 / OF.22a / OF.23 — «уже иду», «опаздываю», «я на месте».
+
+    This is the endpoint the copy «статус видит только твой собеседник» was always promising. It only
+    means anything once both sides are coming: broadcasting «I'm on my way» to a meeting the other
+    person has not agreed to is a claim about a plan that does not exist yet."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    st = str(status or "").strip().lower()
+    if st not in MP_LIVE:
+        return {"ok": False, "error": "BAD_STATUS", "allowed": list(MP_LIVE)}
+    try:
+        eta = int(eta_min) if eta_min not in (None, "") else None
+    except (TypeError, ValueError):
+        eta = None
+    if eta is not None:
+        eta = max(0, min(180, eta))
+    with _STORE_LOCK:
+        p = _mp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if not _mp_is_in(p, who):
+            return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        if p.get("state") != "confirmed":
+            return _idem_put(idem, {"ok": False, "error": "NOT_CONFIRMED", "state": p.get("state")})
+        p.setdefault("live", {})[_norm_name(who)] = {"status": st, "eta_min": eta, "t": time.time()}
+        p["updated"] = time.time()
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
+
+
+def mp_feedback(pid, who, happened=None, reason="", rating=None, text="", idem=None):
+    """OF.24 «Did it happen» → OF.24a reason, or OF.25 feedback. Two screens, one record: the second
+    call MERGES into the first instead of replacing it, or rating a meetup would erase the answer to
+    whether it took place at all."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        p = _mp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if not _mp_is_in(p, who):
+            return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        if p.get("state") not in ("confirmed", "done"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_YET", "state": p.get("state")})
+        k = _norm_name(who)
+        row = dict((p.setdefault("feedback", {})).get(k) or {})
+        if happened is not None:
+            row["happened"] = bool(happened)
+        if reason:
+            row["reason"] = str(reason)[:400]
+        if rating not in (None, ""):
+            try:
+                row["rating"] = max(1, min(5, int(rating)))
+            except (TypeError, ValueError):
+                pass
+        if text:
+            row["text"] = str(text)[:1000]
+        row["t"] = now
+        p["feedback"][k] = row
+        # It took place if either side says so; it did not only when someone says it did not and
+        # nobody contradicts them. One person's silence is not evidence of anything.
+        said = [r.get("happened") for r in p["feedback"].values() if r.get("happened") is not None]
+        if said:
+            p["outcome"] = {"happened": any(said), "at": now,
+                            "reason": next((r.get("reason") for r in p["feedback"].values()
+                                            if r.get("happened") is False and r.get("reason")), "")}
+        if len(p["feedback"]) >= 2 or (said and not any(said)):
+            p["state"] = "done"
+        p["updated"] = now
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who),
+                                "answered": len(p["feedback"])})
+
+
+def mp_for(who):
+    """Every 1:1 plan this person is part of — live ones first, then history."""
+    me = _norm_name(who)
+    now = time.time()
+    active, history = [], []
+    for p in _mplans():
+        if not _mp_is_in(p, me):
+            continue
+        view = _mp_public(p, who)
+        stale = p.get("starts_at") and now > float(p["starts_at"]) + MP_KEEP_AFTER
+        (history if p.get("state") in ("done", "cancelled") or stale else active).append(view)
+    active.sort(key=lambda x: x.get("starts_at") or x.get("updated") or 0)
+    history.sort(key=lambda x: -(x.get("updated") or 0))
+    return {"ok": True, "plans": active, "history": history}
+
+
 GROUP_MIN, GROUP_MAX = 2, 8
 
 
@@ -4723,6 +5055,21 @@ class H(BaseHTTPRequestHandler):
         """The GET half of the restored screens. Returns True when it handled the request."""
         from urllib.parse import unquote
         base = self.path.split("?")[0]
+        # 1:1 meeting plans. Read-your-own-only: the view is built FOR the caller, because the exact
+        # address is released per viewer (OF.C3) — handing back an unfiltered row would leak it.
+        if base in ("/api/agent/mplans", "/api/agent/mplan"):
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
+                if "?" in self.path else {}
+            me = unquote(q.get("self", "").replace("+", " "))
+            if base == "/api/agent/mplans":
+                send_json(self, 200, mp_for(me))
+            else:
+                pl = _mp_find(unquote(q.get("id", "").replace("+", " ")))
+                if pl and not _mp_is_in(pl, me):
+                    send_json(self, 200, {"ok": False, "error": "NOT_A_PARTICIPANT"})
+                else:
+                    send_json(self, 200, {"ok": bool(pl), "plan": _mp_public(pl, me) if pl else None})
+            return True
         # Group intents (spec: individual invites, one shared chat). Handled first so their own
         # membership ACL applies rather than the 1:1 thread rules below.
         if base in ("/api/agent/gintent", "/api/agent/gintent-thread", "/api/agent/gintents",
@@ -4840,6 +5187,28 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/gplan-feedback":
             send_json(self, 200, gp_feedback(body.get("id"), body.get("self"), body.get("happened"),
                                              body.get("reason"), body.get("text"), body.get("idem")))
+        elif p == "/api/agent/mplan-propose":
+            send_json(self, 200, mp_propose(body.get("self") or body.get("from"), body.get("to"),
+                                            body.get("title"), body.get("mode") or "offline",
+                                            body.get("starts_at"), body.get("when"),
+                                            body.get("district"), body.get("address"),
+                                            body.get("note"), body.get("cover"), body.get("idem")))
+        elif p == "/api/agent/mplan-respond":
+            send_json(self, 200, mp_respond(body.get("id"), body.get("self"), body.get("action"),
+                                            body.get("starts_at"), body.get("when"),
+                                            body.get("district"), body.get("address"),
+                                            body.get("title"), body.get("note"),
+                                            body.get("version"), body.get("idem")))
+        elif p == "/api/agent/mplan-cancel":
+            send_json(self, 200, mp_cancel(body.get("id"), body.get("self"),
+                                           body.get("reason"), body.get("idem")))
+        elif p == "/api/agent/mplan-status":
+            send_json(self, 200, mp_status(body.get("id"), body.get("self"), body.get("status"),
+                                           body.get("eta_min"), body.get("idem")))
+        elif p == "/api/agent/mplan-feedback":
+            send_json(self, 200, mp_feedback(body.get("id"), body.get("self"), body.get("happened"),
+                                             body.get("reason"), body.get("rating"),
+                                             body.get("text"), body.get("idem")))
         elif p == "/api/agent/gintent-leave":
             send_json(self, 200, gi_leave(body.get("gid"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/group-create":
