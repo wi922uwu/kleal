@@ -863,7 +863,11 @@ def _with_km(pool, prof, ctx=None):
 def _hard_gates(intent, c, gate_ctx):
     """Cheap, deterministic exclusions applied BEFORE scoring. Returns (ok, reason_if_blocked)."""
     if c.get('paused'):                                            return False, 'on a break'
-    if c['name'] in gate_ctx['blocked'] or c.get('blocksMe'):     return False, 'blocked'
+    # `blocked_norm` holds BOTH directions and is case-insensitive: the exact-string check alone
+    # missed «marta» vs «Marta», and the one-way check let the blocked person keep seeing you.
+    if (c['name'] in gate_ctx['blocked'] or c.get('blocksMe')
+            or str(c.get('name', '')).strip().lower() in (gate_ctx.get('blocked_norm') or ())):
+        return False, 'blocked'
     d = c.get('declinedOwnerDaysAgo')
     if d is not None and d < COOLDOWN_DAYS:                        return False, 'recently declined (cooldown)'
     if (c.get('pending') or 0) >= MAX_PENDING:                     return False, 'too many open invites'
@@ -1180,14 +1184,38 @@ def match_candidates_legacy(intent, prof, ctx=None):
 _H = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_conflict': ROLE_CONFLICT}
 
 
+def _blocks():
+    """who (normalised) -> the set of names they have blocked, as a list. Stored per NAME, like
+    requests and messages, because SESSION['me'] is a single shared session and a block list living
+    there would be one global block list for the whole product."""
+    return SESSION.setdefault("_blocks", {})
+
+
+def _blocked_by(who):
+    return set(_blocks().get(_norm_name(who)) or [])
+
+
+def _blocks_me(who, other):
+    """Two-sided by construction: a block hides each from the other. A one-way block is a peephole —
+    the blocked person keeps seeing the profile, keeps sending invitations, and only the answers stop."""
+    return _norm_name(who) in set(_blocks().get(_norm_name(other)) or [])
+
+
 def _gate_ctx_and_self(ctx, prof=None):
     """Owner session -> (hard-gate context, self-name), shared by match_candidates / _negotiate_precheck /
     explain_match so the eligibility inputs never drift between the real slate and the diagnostic."""
     ctx = ctx or {}
     sess = _session(ctx.get('uid', 'me'))
-    gate_ctx = {'feedback': dict(sess.get('feedback') or {}),
-                'blocked': set(sess.get('blocked') or []) | set(ctx.get('blocked') or [])}
     self_name = str(ctx.get('self') or (prof or {}).get('name') or ctx.get('uid') or '').strip().lower()
+    # _hard_gates compares c['name'] against this set, so it has to hold names as WRITTEN, not
+    # normalised — and the reverse direction is stamped onto the candidates as `blocksMe`.
+    blocked = set(sess.get('blocked') or []) | set(ctx.get('blocked') or []) | _blocked_by(self_name)
+    # The other direction, resolved ONCE per search rather than per candidate: everyone who has
+    # blocked me. Without it the gate depends on a `blocksMe` flag that only the demo pool carries.
+    blocked_me = {k for k, v in _blocks().items() if self_name and self_name in set(v or [])} \
+        if self_name else set()
+    gate_ctx = {'feedback': dict(sess.get('feedback') or {}), 'blocked': blocked,
+                'blocked_norm': {_norm_name(b) for b in blocked} | blocked_me, 'self': self_name}
     return gate_ctx, self_name
 
 
@@ -2715,10 +2743,21 @@ def _idem_put(key, result):
 def _norm_name(n):
     return str(n or "").strip().lower()
 
+
+def _blocked_pair(a, b):
+    """True if either has blocked the other. Checked at every point where one person can reach the
+    other — search, invitation, message, plan — because a block that only filters search results
+    still leaves every direct route open."""
+    na, nb = _norm_name(a), _norm_name(b)
+    bl = SESSION.get("_blocks") or {}
+    return nb in set(bl.get(na) or []) or na in set(bl.get(nb) or [])
+
 def propose(frm, to, intent, note, idem=None):
     frm, to = str(frm or "").strip(), str(to or "").strip()
     if not frm or not to or _norm_name(frm) == _norm_name(to):
         return {"ok": False, "error": "sender and recipient required and must differ"}
+    if _blocked_pair(frm, to):
+        return {"ok": False, "error": "BLOCKED"}
     cached = _idem_get(idem)
     if cached is not None:
         return cached                                    # retry-safe: same key, same answer
@@ -2922,6 +2961,8 @@ def send_message(frm, to, text):
     frm, to, text = str(frm or "").strip(), str(to or "").strip(), str(text or "").strip()[:2000]
     if not frm or not to or not text or _norm_name(frm) == _norm_name(to):
         return {"ok": False, "error": "from, to and text are required and the two must differ"}
+    if _blocked_pair(frm, to):
+        return {"ok": False, "error": "BLOCKED"}
     m = {"id": "m_%d" % int(time.time() * 1000), "pair": _pair_key(frm, to),
          "from": frm, "to": to, "text": text, "t": time.time()}
     with _STORE_LOCK:
@@ -4124,6 +4165,8 @@ def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", distr
     frm, to = str(frm or "").strip(), str(to or "").strip()
     if not frm or not to or _norm_name(frm) == _norm_name(to):
         return {"ok": False, "error": "TWO_PEOPLE_REQUIRED"}
+    if _blocked_pair(frm, to):
+        return {"ok": False, "error": "BLOCKED"}
     if not _mp_matched(frm, to):
         return {"ok": False, "error": "NOT_MATCHED",
                 "note": "a plan can only go to someone who accepted an invitation"}
@@ -4372,6 +4415,88 @@ def mp_feedback(pid, who, happened=None, reason="", rating=None, text="", idem=N
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who),
                                 "answered": len(p["feedback"])})
+
+
+# ============================================================================ safety (OF.13b)
+# «Заблокировать» and «Пожаловаться» were toasts. Block dropped the person from the local candidate
+# array and said «Заблокировано»; report said «Спасибо. Центр безопасности посмотрит.» Neither sent
+# anything anywhere. The blocked person kept seeing the profile, kept being able to invite, and came
+# back in the next search — the list was local and the next /match rebuilt it from the server.
+REPORT_REASONS = ("fake", "harassment", "spam", "unsafe", "underage", "other")
+
+
+def _reports():
+    return SESSION.setdefault("_reports", [])
+
+
+def block_user(who, name, on=True, idem=None):
+    """Blocking is not hiding. It closes everything open between the two: a pending invitation is
+    withdrawn, a live plan is cancelled. Leaving those standing would mean a blocked person still had
+    a meeting in their calendar with someone who wanted nothing more to do with them."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    me, them = _norm_name(who), str(name or "").strip()
+    if not me or not them or me == _norm_name(them):
+        return {"ok": False, "error": "TWO_PEOPLE_REQUIRED"}
+    now = time.time()
+    with _STORE_LOCK:
+        lst = _blocks().setdefault(me, [])
+        tn = _norm_name(them)
+        if on and tn not in lst:
+            lst.append(tn)
+        elif not on and tn in lst:
+            lst.remove(tn)
+        closed = {"requests": 0, "plans": 0}
+        if on:
+            for r in _requests():
+                if r.get("status") == "pending" and \
+                        {_norm_name(r.get("from")), _norm_name(r.get("to"))} == {me, tn}:
+                    r["status"] = "withdrawn" if _norm_name(r.get("from")) == me else "declined"
+                    r["updated"] = now
+                    r["version"] = int(r.get("version") or 1) + 1
+                    closed["requests"] += 1
+            for p in _mplans():
+                if p.get("pair") == _pair_key(me, tn) and p.get("state") in ("proposed", "confirmed"):
+                    p["state"] = "cancelled"
+                    p["cancelled_by"] = who
+                    p["cancel_reason"] = "blocked"
+                    p["updated"] = now
+                    closed["plans"] += 1
+        _save_store()
+        return _idem_put(idem, {"ok": True, "blocked": list(lst), "closed": closed})
+
+
+def report_user(who, name, reason="", text="", idem=None):
+    """A report is stored and queued for review. «Спасибо, посмотрим» has to correspond to a row that
+    somebody can actually open, or it is a sentence that calms the person and protects nobody."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    me, them = str(who or "").strip(), str(name or "").strip()
+    if not me or not them or _norm_name(me) == _norm_name(them):
+        return {"ok": False, "error": "TWO_PEOPLE_REQUIRED"}
+    rs = str(reason or "other").strip().lower()
+    now = time.time()
+    with _STORE_LOCK:
+        rows = _reports()
+        rid = "rp_%d_%s" % (int(now * 1000),
+                            hashlib.sha1((me + them).encode("utf-8")).hexdigest()[:6])
+        rows.append({"id": rid, "by": me, "about": them,
+                     "reason": rs if rs in REPORT_REASONS else "other",
+                     "text": str(text or "")[:1000], "at": now, "state": "open"})
+        del rows[:-2000]
+        _save_store()
+    # Reporting someone you must keep meeting is not a safety feature. The block is part of the act.
+    block_user(me, them, True)
+    return _idem_put(idem, {"ok": True, "id": rid, "reasons": list(REPORT_REASONS)})
+
+
+def safety_for(who):
+    me = _norm_name(who)
+    return {"ok": True, "blocked": list(_blocks().get(me) or []),
+            "reports": [dict(r) for r in _reports() if _norm_name(r.get("by")) == me][-50:],
+            "reasons": list(REPORT_REASONS)}
 
 
 def mp_for(who):
@@ -5139,11 +5264,13 @@ class H(BaseHTTPRequestHandler):
         base = self.path.split("?")[0]
         # 1:1 meeting plans. Read-your-own-only: the view is built FOR the caller, because the exact
         # address is released per viewer (OF.C3) — handing back an unfiltered row would leak it.
-        if base in ("/api/agent/mplans", "/api/agent/mplan"):
+        if base in ("/api/agent/mplans", "/api/agent/mplan", "/api/agent/safety"):
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
                 if "?" in self.path else {}
             me = unquote(q.get("self", "").replace("+", " "))
-            if base == "/api/agent/mplans":
+            if base == "/api/agent/safety":
+                send_json(self, 200, safety_for(me))
+            elif base == "/api/agent/mplans":
                 send_json(self, 200, mp_for(me))
             else:
                 pl = _mp_find(unquote(q.get("id", "").replace("+", " ")))
@@ -5282,6 +5409,12 @@ class H(BaseHTTPRequestHandler):
                                             body.get("district"), body.get("title"),
                                             body.get("note"),
                                             body.get("version"), body.get("idem")))
+        elif p == "/api/agent/block":
+            send_json(self, 200, block_user(body.get("self"), body.get("name"),
+                                            body.get("on", True), body.get("idem")))
+        elif p == "/api/agent/report":
+            send_json(self, 200, report_user(body.get("self"), body.get("name"),
+                                             body.get("reason"), body.get("text"), body.get("idem")))
         elif p == "/api/agent/mplan-address":
             send_json(self, 200, mp_address(body.get("id"), body.get("self"), body.get("address"),
                                             body.get("venue"), body.get("idem")))

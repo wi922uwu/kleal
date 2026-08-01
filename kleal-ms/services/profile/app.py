@@ -6201,9 +6201,45 @@ function scr_candprofile(){
     <div class="bnav">${bnavHTML()}</div></div>`;
 }
 function dropCand(n){ if(n&&FLOW&&FLOW.res) FLOW.res=FLOW.res.filter(x=>x&&x.name!==n); }
-// Profile-options bottom sheet (Not interested / Report / Block / Cancel). Report/block have no
-// backend yet — they hide the person locally and acknowledge; wiring to a real safety endpoint is a
-// backend task, flagged rather than faked as "done".
+// Block and report are the two controls where a cheerful toast over a failed request is worse than
+// nothing: the person believes they are protected and they are not. So the result is reported honestly.
+async function safetyCall(path, body){
+  const me=(DATA.name||'').trim();
+  if(!me||!body||!body.name) return false;
+  try{
+    const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(Object.assign({self:me, idem:idemKey(path+'|'+body.name+'|'+(body.reason||''))}, body))})
+      .then(x=>x.json());
+    return !!(r&&r.ok);
+  }catch(e){ return false; }
+}
+// Profile-options bottom sheet (Not interested / Report / Block / Cancel).
+//
+// Report and block used to be toasts over nothing: «Заблокировано» dropped the person from FLOW.res
+// and said so, and the next /match rebuilt that array from the server with them back in it. They are
+// wired to /api/agent/block and /api/agent/report now — the block is two-sided, closes any open
+// invitation and cancels any live plan, and the report is a stored row with a reason.
+const REPORT_REASONS=[['harassment',['Домогательства или угрозы','Harassment or threats']],
+  ['fake',['Фейковый профиль','Fake profile']],
+  ['spam',['Спам или реклама','Spam or advertising']],
+  ['unsafe',['Небезопасное поведение','Unsafe behaviour']],
+  ['underage',['Несовершеннолетний','Under 18']],
+  ['other',['Другое','Something else']]];
+function candReportSheet(){
+  if(SHEET!=='candreport') return '';
+  const nm=(CAND&&CAND.name)||'';
+  return `<div class="kscrim bot" data-act="sheet-close"><div class="ksheet bottom copts" onclick="event.stopPropagation()">
+    <div class="kgrab"></div>
+    <div class="chdr"><div class="k-h3">${T('Что случилось?','What happened?')}</div>
+      <div data-act="sheet-close" class="x">${IC.ban}</div></div>
+    <div class="k-cap" style="color:var(--muted);padding:0 4px 4px">${
+      T('Мы посмотрим жалобу. '+(nm?nm+' ':'')+'больше не сможет с тобой связаться.',
+        'We’ll review it. '+(nm?nm+' ':'They ')+'won’t be able to reach you any more.')}</div>
+    ${/* neutral, not six red buttons: picking a reason is not itself the destructive act */''}
+    ${REPORT_REASONS.map(([k,l])=>`<button class="coptbtn mute" data-act="cand-report-send" data-r="${k}">${esc(T(l[0],l[1]))}</button>`).join('')}
+    <button class="coptbtn dark" data-act="sheet-close">${T('Отмена','Cancel')}</button>
+  </div></div>`;
+}
 function candOptsSheet(){
   if(SHEET!=='candopts') return '';
   const nm=(CAND&&CAND.name)||'';
@@ -6699,6 +6735,7 @@ function render(){
   }
   if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
   if(SHEET==='candopts') A.insertAdjacentHTML('beforeend', candOptsSheet());
+  if(SHEET==='candreport') A.insertAdjacentHTML('beforeend', candReportSheet());
   if(ESHEET) A.insertAdjacentHTML('beforeend', eSheetHTML());
   // the Location sheet carries a live Leaflet map; build it after its node exists, tear it down on close
   if(ESHEET&&ESHEET.kind==='location') setTimeout(initLocSheetMap,0);
@@ -6978,10 +7015,19 @@ function doAct(act, ds){
     case 'cand-opts': SHEET='candopts'; render(); break;
     case 'cand-notint': { const n=(CAND&&CAND.name)||ds.n; dropCand(n); SHEET=null;
       toast(T('Скрыто — больше не покажу','Hidden — you won’t see them again')); flowBack(); break; }
-    case 'cand-report': { SHEET=null; render();
-      toast(T('Спасибо. Центр безопасности посмотрит.','Thanks — our safety team will review.')); break; }
-    case 'cand-block': { const n=(CAND&&CAND.name)||ds.n; dropCand(n); SHEET=null;
-      toast(T('Заблокировано','Blocked')); flowBack(); break; }
+    case 'cand-report': SHEET='candreport'; render(); break;
+    case 'cand-report-send': { const n=(CAND&&CAND.name)||ds.n; SHEET=null; dropCand(n); render();
+      safetyCall('/api/agent/report',{name:n, reason:ds.r}).then(ok=>{
+        toast(ok?T('Спасибо. Мы посмотрим.','Thanks — we’ll review it.')
+                :T('Не удалось отправить. Попробуй ещё раз.','Couldn’t send it. Try again.'));
+        if(ok) flowBack(); });
+      break; }
+    case 'cand-block': { const n=(CAND&&CAND.name)||ds.n; SHEET=null; dropCand(n); render();
+      safetyCall('/api/agent/block',{name:n, on:true}).then(ok=>{
+        toast(ok?T('Заблокировано','Blocked')
+                :T('Не удалось заблокировать. Попробуй ещё раз.','Couldn’t block. Try again.'));
+        if(ok) flowBack(); });
+      break; }
     case 'sheet-close': SHEET=null; render(); break;
     case 'esheet-close': ESHEET=null; render(); break;
     case 'esheet-accept': acceptSheet(); break;
