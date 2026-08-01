@@ -120,26 +120,51 @@ check("a stranger cannot read the plan", oo.get("error") == "NOT_A_PARTICIPANT",
 dup = plan(HOST, GUEST, "dup")
 check("one live plan per pair", dup.get("error") == "PLAN_EXISTS", dup)
 
-# ---------------------------------------------------------------- OF.21a: suggest another time
-print("\n-- OF.21a «Suggest another time» is a counter, not a nudge --")
+# ---------------------------------------------------------------- OF.21a / OF.21b / OF.C5
+# «The current time stays until she does — nothing is cancelled.»  «The old time holds until you
+# answer, so there is no rush and nothing is lost if you say no.»  A counter must NOT move the meeting.
+print("\n-- OF.21b «until then the old time still stands — nothing is cancelled» --")
+OLD = (get(HOST, PID).get("plan") or {}).get("starts_at")
 NEW = time.time() + 72 * HOUR
 c = call("/api/agent/mplan-respond", {"id": PID, "self": GUEST, "action": "counter",
                                       "starts_at": NEW})
 cp = c.get("plan") or {}
 check("counter accepted", c.get("ok"), c)
-check("version bumped", int(cp.get("version") or 0) == 2, cp.get("version"))
-check("plan is back to proposed", cp.get("state") == "proposed", cp.get("state"))
-check("the counter-proposer is confirmed", cp.get("my_response") == "confirmed")
+check("the meeting does NOT move yet", abs(float(cp.get("starts_at") or 0) - float(OLD)) < 2,
+      (cp.get("starts_at"), OLD))
+check("the plan stays confirmed — nothing is cancelled", cp.get("state") == "confirmed", cp.get("state"))
+check("nobody's confirmation is torn up", cp.get("both_confirmed") is True)
+check("the suggested time is parked beside it",
+      abs(float((cp.get("pending") or {}).get("starts_at") or 0) - NEW) < 2, cp.get("pending"))
+check("the proposer knows it is theirs", (cp.get("pending") or {}).get("mine") is True)
 hp = (get(HOST, PID).get("plan") or {})
-check("the host's yes to the OLD time no longer counts", hp.get("my_response") is None, hp.get("my_response"))
-check("host is on the waiting list", HOST in (hp.get("waiting_on") or []), hp.get("waiting_on"))
+check("the other side sees the suggestion as not theirs", (hp.get("pending") or {}).get("mine") is False)
+check("and their own confirmation is untouched", hp.get("my_response") == "confirmed")
 check("the address stays visible to whoever typed it", hp.get("address") == "Carrer Verdi 12", hp.get("address"))
-check("starts_at really moved", abs(float(cp.get("starts_at") or 0) - NEW) < 2, cp.get("starts_at"))
+
+own = call("/api/agent/mplan-respond", {"id": PID, "self": GUEST, "action": "accept_change"})
+check("you cannot accept your own suggestion", own.get("error") == "YOUR_OWN_CHANGE", own)
+nt = call("/api/agent/mplan-respond", {"id": PID, "self": GUEST, "action": "counter"})
+check("a counter without a new time is refused", nt.get("error") == "NO_NEW_TIME", nt)
+
+rej = call("/api/agent/mplan-respond", {"id": PID, "self": HOST, "action": "reject_change"})
+rp = rej.get("plan") or {}
+check("saying no to a new time loses nothing", rp.get("state") == "confirmed", rp.get("state"))
+check("the original time survives", abs(float(rp.get("starts_at") or 0) - float(OLD)) < 2)
+check("the suggestion is gone", rp.get("pending") is None)
+none = call("/api/agent/mplan-respond", {"id": PID, "self": HOST, "action": "accept_change"})
+check("nothing to accept once it is rejected", none.get("error") == "NO_PENDING_CHANGE", none)
+
+call("/api/agent/mplan-respond", {"id": PID, "self": GUEST, "action": "counter", "starts_at": NEW})
+acc = call("/api/agent/mplan-respond", {"id": PID, "self": HOST, "action": "accept_change"})
+ap = acc.get("plan") or {}
+check("accepting moves the meeting", abs(float(ap.get("starts_at") or 0) - NEW) < 2, ap.get("starts_at"))
+check("version bumps only when it actually changes", int(ap.get("version") or 0) == 2, ap.get("version"))
+check("both are confirmed on the new hour", ap.get("both_confirmed") is True)
+check("plan is confirmed", ap.get("state") == "confirmed")
 
 stale = call("/api/agent/mplan-respond", {"id": PID, "self": HOST, "action": "confirm", "version": 1})
 check("a stale version is refused", stale.get("error") == "VERSION_CONFLICT", stale)
-ok2 = call("/api/agent/mplan-respond", {"id": PID, "self": HOST, "action": "confirm", "version": 2})
-check("confirming the current version works", (ok2.get("plan") or {}).get("state") == "confirmed", ok2)
 
 # ---------------------------------------------------------------- OF.22 / OF.22a / OF.23
 print("\n-- «only your companion sees your status» now actually leaves the device --")
@@ -233,8 +258,10 @@ lst4 = call("/api/agent/mplans?self=" + H4)
 check("and only one plan exists for the pair",
       len([x for x in (lst4.get("plans") or []) if x.get("state") == "proposed"]) == 1, lst4)
 
-# ---------------------------------------------------------------- missing address (OF.20a)
-print("\n-- OF.20a: a plan whose exact address is not set yet --")
+# ---------------------------------------------------------------- OF.20a
+# «Thursday 19:00 in Gràcia is agreed. Marta only sees the district until you name a place.»
+# Filling in WHERE exactly must not un-agree WHEN.
+print("\n-- OF.20a: naming the place does not un-agree the time --")
 H5, G5 = HOST + "e", GUEST + "e"
 match(H5, G5, "e")
 p5 = plan(H5, G5, "e", address="")
@@ -244,12 +271,29 @@ check("address_set is false", (p5.get("plan") or {}).get("address_set") is False
 call("/api/agent/mplan-respond", {"id": PID5, "self": G5, "action": "confirm"})
 g5 = (get(G5, PID5).get("plan") or {})
 check("confirming does not invent an address", g5.get("address") == "" and g5.get("address_set") is False, g5)
-upd = call("/api/agent/mplan-respond", {"id": PID5, "self": H5, "action": "counter",
-                                        "address": "Carrer Nou 3"})
-check("the host can add the address later", (upd.get("plan") or {}).get("address_set") is True, upd)
+upd = call("/api/agent/mplan-address", {"id": PID5, "self": H5,
+                                        "address": "Carrer Nou 3", "venue": "Nomad"})
+up = upd.get("plan") or {}
+check("the host can name the place later", up.get("address_set") is True, upd)
+check("the venue is stored", up.get("venue") == "Nomad", up.get("venue"))
+check("the agreed time is untouched", up.get("state") == "confirmed" and up.get("both_confirmed") is True, up)
+check("no version churn", int(up.get("version") or 0) == 1, up.get("version"))
 g5b = (get(G5, PID5).get("plan") or {})
-check("adding an address re-opens confirmation", g5b.get("my_response") is None, g5b.get("my_response"))
-check("and the guest does not see it until they confirm again", g5b.get("address") == "", g5b.get("address"))
+check("the guest, who already confirmed, sees it at once",
+      g5b.get("address") == "Carrer Nou 3", g5b.get("address"))
+check("and did not have to confirm again", g5b.get("my_response") == "confirmed", g5b.get("my_response"))
+str5 = call("/api/agent/mplan-address", {"id": PID5, "self": OTHER, "address": "x"})
+check("a stranger cannot set the address", str5.get("error") == "NOT_A_PARTICIPANT", str5)
+
+# A guest who has NOT confirmed must still be kept out of an address someone adds later.
+H6, G6 = HOST + "f", GUEST + "f"
+match(H6, G6, "f")
+p6 = plan(H6, G6, "f", address="")
+PID6 = (p6.get("plan") or {}).get("id")
+call("/api/agent/mplan-address", {"id": PID6, "self": H6, "address": "Carrer Secret 9"})
+g6 = (get(G6, PID6).get("plan") or {})
+check("an unconfirmed guest still sees no address", g6.get("address") == "", g6.get("address"))
+check("but is told there is one now", g6.get("address_set") is True)
 
 print("\n" + "=" * 76)
 print("РЕЗУЛЬТАТ: %d ok, %d проблем" % (R["ok"], R["fail"]))

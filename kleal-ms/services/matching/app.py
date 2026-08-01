@@ -4063,7 +4063,11 @@ def _mp_public(p, me=""):
         "id": p.get("id"), "version": p.get("version"), "state": p.get("state"),
         "title": p.get("title"), "mode": p.get("mode"),
         "starts_at": p.get("starts_at"), "when": p.get("when"),
-        "district": p.get("district"),
+        "district": p.get("district"), "venue": p.get("venue"),
+        # OF.21b: a proposed change sits BESIDE the plan, it does not replace it. Both sides need to
+        # see the old hour and the suggested one at once, or «nothing is cancelled» is a lie.
+        "pending": (dict(p["pending"], mine=(_norm_name(p["pending"].get("by")) == who))
+                    if p.get("pending") else None),
         "address": (p.get("address") or "") if opened else "",
         "address_set": bool(p.get("address")),
         "address_visible_to_me": bool(opened and p.get("address")),
@@ -4082,7 +4086,7 @@ def _mp_public(p, me=""):
 
 
 def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", district="",
-               address="", note="", cover="", idem=None):
+               address="", note="", cover="", venue="", idem=None):
     """OF.20 — one side sends the meeting: when, which district, and (optionally) the exact address."""
     cached = _idem_get(idem)
     if cached is not None:
@@ -4116,7 +4120,8 @@ def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", distr
              "title": str(title or "")[:120], "mode": md if md in MP_MODES else "offline",
              "starts_at": sa, "when": str(when or "")[:120],
              "district": str(district or "")[:120], "address": str(address or "")[:200],
-             "address_by": frm if address else "",
+             "venue": str(venue or "")[:120], "address_by": frm if address else "",
+             "pending": None,
              "note": str(note or "")[:400], "cover": str(cover or "")[:400],
              "state": "proposed", "version": 1,
              # Proposing IS confirming. Asking the sender to agree with themselves would be theatre.
@@ -4127,18 +4132,25 @@ def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", distr
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, frm)})
 
 
-def mp_respond(pid, who, action, starts_at=None, when="", district="", address="",
+def mp_respond(pid, who, action, starts_at=None, when="", district="",
                title="", note="", version=None, idem=None):
-    """confirm | decline | counter.
+    """confirm | decline | counter | accept_change | reject_change.
 
-    OF.21a «Suggest another time» is a COUNTER: it replaces the terms, bumps the version and sends both
-    sides back to confirming — the same rule the group plans follow. Confirming an evening nobody has
-    agreed to any more is exactly the bug the version guard exists to prevent."""
+    A COUNTER here is NOT what a counter is on the group side. The group rule tears the plan up and
+    restarts confirmation; the 1:1 board says the opposite, three times over:
+
+      OF.21a  «Marta confirms again after this. The current time stays until she does — nothing is cancelled.»
+      OF.21b  «Until then the old time still stands — nothing is cancelled and nobody has to do anything.»
+      OF.C5   «The old time holds until you answer, so there is no rush and nothing is lost if you say no.»
+
+    So a counter parks a PENDING CHANGE beside a plan that keeps running. Accepting it applies it;
+    rejecting it drops the change and leaves the meeting exactly as it was. Nobody is ever left with a
+    cancelled evening because the other person floated a different hour."""
     cached = _idem_get(idem)
     if cached is not None:
         return cached
     act = str(action or "").strip().lower()
-    if act not in ("confirm", "decline", "counter"):
+    if act not in ("confirm", "decline", "counter", "accept_change", "reject_change"):
         return {"ok": False, "error": "BAD_ACTION"}
     now = time.time()
     with _STORE_LOCK:
@@ -4153,6 +4165,7 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="", address="
             return {"ok": False, "error": "VERSION_CONFLICT", "version": p.get("version")}
         k = _norm_name(who)
         v = int(p.get("version") or 1)
+        pend = p.get("pending") or None
         if act == "decline":
             p["state"] = "cancelled"
             p["cancelled_by"] = who
@@ -4162,33 +4175,72 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="", address="
             p.setdefault("responses", {})[k] = {"state": "confirmed", "t": now, "version": v}
             if len(_mp_confirmed(p)) >= 2:
                 p["state"] = "confirmed"
-        else:                                     # counter — new terms, everyone answers again
+        elif act == "counter":
             try:
-                sa = float(starts_at) if starts_at else p.get("starts_at")
+                sa = float(starts_at) if starts_at else None
             except (TypeError, ValueError):
-                sa = p.get("starts_at")
-            if sa is not None and sa <= now:
+                sa = None
+            if sa is None:
+                return _idem_put(idem, {"ok": False, "error": "NO_NEW_TIME"})
+            if sa <= now:
                 return _idem_put(idem, {"ok": False, "error": "IN_THE_PAST"})
-            if sa is not None and sa > now + MP_MAX_AHEAD:
+            if sa > now + MP_MAX_AHEAD:
                 return _idem_put(idem, {"ok": False, "error": "TOO_FAR_AHEAD"})
-            p["version"] = v + 1
-            p["starts_at"] = sa
-            if when:
-                p["when"] = str(when)[:120]
-            if district:
-                p["district"] = str(district)[:120]
-            if address:
-                p["address"] = str(address)[:200]
-                p["address_by"] = who
-            if title:
-                p["title"] = str(title)[:120]
-            if note:
-                p["note"] = str(note)[:400]
-            p["state"] = "proposed"
-            # Proposing the new time IS confirming it, and it is the ONLY answer that survives the bump.
-            p["responses"] = {k: {"state": "confirmed", "t": now, "version": p["version"]}}
-            p["live"] = {}                        # nobody is on their way to the old time any more
+            # The plan itself is untouched: same state, same starts_at, same confirmations.
+            p["pending"] = {"by": who, "starts_at": sa, "when": str(when or "")[:120],
+                            "district": str(district or "")[:120], "title": str(title or "")[:120],
+                            "note": str(note or "")[:400], "at": now}
+        elif act in ("accept_change", "reject_change"):
+            if not pend:
+                return _idem_put(idem, {"ok": False, "error": "NO_PENDING_CHANGE"})
+            if _norm_name(pend.get("by")) == k:
+                # Rubber-stamping your own proposal is not the other person agreeing to it.
+                return {"ok": False, "error": "YOUR_OWN_CHANGE"}
+            if act == "reject_change":
+                p["pending"] = None
+                p["last_change"] = {"state": "rejected", "by": who, "at": now}
+            else:
+                p["starts_at"] = pend.get("starts_at")
+                for f in ("when", "district", "title", "note"):
+                    if pend.get(f):
+                        p[f] = pend[f]
+                p["pending"] = None
+                p["version"] = v + 1
+                # Both have now agreed to this hour: the proposer by proposing, this side by accepting.
+                p["responses"] = {_norm_name(pend.get("by")): {"state": "confirmed", "t": pend.get("at"),
+                                                              "version": p["version"]},
+                                  k: {"state": "confirmed", "t": now, "version": p["version"]}}
+                p["state"] = "confirmed"
+                p["live"] = {}                    # nobody is on their way to the old hour any more
+                p["last_change"] = {"state": "accepted", "by": who, "at": now}
         p["updated"] = now
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
+
+
+def mp_address(pid, who, address="", venue="", idem=None):
+    """OF.20a «Pick the exact place» — naming the venue for a time both sides already agreed to.
+
+    This deliberately does NOT go through counter. «Thursday 19:00 in Gràcia is agreed» — filling in
+    where exactly must not un-agree when. It bumps nothing and resets nobody; the address simply
+    becomes visible to whoever has already confirmed, which is what OF.21 then reports."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        p = _mp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if not _mp_is_in(p, who):
+            return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        if p.get("state") not in ("proposed", "confirmed"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+        if address:
+            p["address"] = str(address)[:200]
+            p["address_by"] = who
+        if venue:
+            p["venue"] = str(venue)[:120]
+        p["updated"] = time.time()
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
 
@@ -5192,13 +5244,17 @@ class H(BaseHTTPRequestHandler):
                                             body.get("title"), body.get("mode") or "offline",
                                             body.get("starts_at"), body.get("when"),
                                             body.get("district"), body.get("address"),
-                                            body.get("note"), body.get("cover"), body.get("idem")))
+                                            body.get("note"), body.get("cover"),
+                                            body.get("venue"), body.get("idem")))
         elif p == "/api/agent/mplan-respond":
             send_json(self, 200, mp_respond(body.get("id"), body.get("self"), body.get("action"),
                                             body.get("starts_at"), body.get("when"),
-                                            body.get("district"), body.get("address"),
-                                            body.get("title"), body.get("note"),
+                                            body.get("district"), body.get("title"),
+                                            body.get("note"),
                                             body.get("version"), body.get("idem")))
+        elif p == "/api/agent/mplan-address":
+            send_json(self, 200, mp_address(body.get("id"), body.get("self"), body.get("address"),
+                                            body.get("venue"), body.get("idem")))
         elif p == "/api/agent/mplan-cancel":
             send_json(self, 200, mp_cancel(body.get("id"), body.get("self"),
                                            body.get("reason"), body.get("idem")))
