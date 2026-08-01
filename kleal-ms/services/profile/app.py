@@ -4220,7 +4220,7 @@ function scr_agenthome(){
           mWhen?`<span>${IC.clock}${esc(mWhen)}</span>`:''}${
           mWhere?`<span>${IC.pin}${esc(mWhere)}</span>`:''}</div>`
           :`<div class="mmeta"><span>${esc(String(inv.note||T('хочет встретиться','wants to meet')).slice(0,44))}</span></div>`}
-        <button class="mbtn" data-act="go-inbox">${T('Посмотреть приглашение','Review invite')}</button>
+        <button class="mbtn" data-act="inv-open" data-id="${esc(inv.id||'')}">${T('Посмотреть приглашение','Review invite')}</button>
       </div></div>` : '';
   return `<div class="ah2 fade">
     <div class="ahd"><div class="nm serif">${T('Привет','Hey')}, ${esc(nm)} 👋</div>
@@ -5713,8 +5713,10 @@ function mpLive(status, eta){ mpPost('/api/agent/mplan-status', {status, eta_min
 function mpFeedback(body){ mpPost('/api/agent/mplan-feedback', body); }
 function mpPlanWith(name){ return MPLANS.find(p=>p.other&&p.other.toLowerCase()===String(name||'').toLowerCase()); }
 
-function mpWhen(ts){
-  if(!ts) return (MPLAN&&MPLAN.when)||'';
+// The fallback is the CALLER's loose time, never the globally-open plan's. Reading MPLAN here meant
+// an invitation with no exact hour borrowed the hour of whatever plan happened to be on screen.
+function mpWhen(ts, loose){
+  if(!ts) return loose||'';
   const d=new Date(ts*1000), loc=UILANG==='ru'?'ru-RU':'en-GB';
   const day=d.toLocaleDateString(loc,{weekday:'short',day:'numeric',month:'long'});
   const hm=d.toLocaleTimeString(loc,{hour:'2-digit',minute:'2-digit',hour12:false});
@@ -5802,7 +5804,7 @@ function mpCard(p){
   return `<div class="pcard"><div class="cov">${p.cover?`<img src="${esc(p.cover)}" alt="">`:''}</div>
     <div class="in"><div class="ti">${esc(p.title||T('Встреча','Meetup'))}</div>
       <div class="rows">
-        <div class="r">${IC.calen}<span>${esc(mpWhen(p.starts_at))}</span></div>
+        <div class="r">${IC.calen}<span>${esc(mpWhen(p.starts_at, p.when))}</span></div>
         <div class="r">${p.mode==='online'?(IC.video||IC.pin):IC.pin}<span>${esc(mpWhereText(p))}</span></div>
         ${/* Both hours on screen at once. The heading names the suggested one and the card kept the
              agreed one, so without this row the two never appear together — and the whole point of
@@ -5942,6 +5944,40 @@ function mpReasonSheet(){
      ['moved',T('Перенесли на другой день','We moved it to another day')],
      ['other',T('Другое','Something else')]].map(([k,l])=>
       `<button class="coptbtn mute" data-act="mp-reason" data-r="${k}">${esc(l)}</button>`).join(''));
+}
+
+// OF.C1 «Incoming invite · Marta's side». Structurally the same frame as OF.C3 — title, explainer,
+// Plan Card, two member rows, two buttons — because on the board it IS the same components. So the
+// invitation is dressed as a plan-shaped object and rendered by the same card.
+let INVITE=null;
+function invAsPlan(r){
+  const it=(r&&r.intent)||{};
+  return {title:it.title||T('Встреча','Meetup'), mode:it.mode==='online'?'online':'offline',
+          starts_at:null, when:locStr(it.when||it.time||''), district:it.area||it.place||'',
+          venue:'', address:'', address_set:false, address_visible_to_me:false, cover:'', pending:null};
+}
+function scr_invite(){
+  const r=INVITE; if(!r) return scr_agenthome();
+  const p=invAsPlan(r), who=r.from||'';
+  const what=((r.intent&&r.intent.title)||'').trim();
+  // «Coffee in Gràcia on Thursday evening.» — English strings this together with prepositions, Russian
+  // with commas. Joining both with ', ' gave «Coffee, in Gràcia, Thursday evening», which is neither.
+  const ru=[what, p.district, p.when].filter(Boolean).join(', ');
+  const en=[what, p.district?'in '+p.district:'', p.when?'on '+p.when:''].filter(Boolean).join(' ');
+  return `<div class="mp fade">
+    <div class="h1">${esc(T(who+' приглашает тебя', who+' invited you'))}</div>
+    <div class="ex">${esc(T((ru?ru+'. ':'')+'Если согласишься, откроется чат — точное место договоритесь там.',
+      (en?en+'. ':'')+'If you join, a chat with '+who+' opens and you agree the exact place there.'))}</div>
+    ${mpCard(p)}
+    <div class="pmem"><div class="av">${r.photo?`<img src="${esc(r.photo)}" alt="">`:IC.person}</div>
+      <div class="bd"><div class="nm">${esc(who)}</div>
+        <div class="st ok">${T('Пригласил(а) тебя','Invited you')}</div></div></div>
+    <div class="pmem"><div class="av">${photoSrc(DATA)?`<img src="${esc(photoSrc(DATA))}" alt="">`:IC.person}</div>
+      <div class="bd"><div class="nm">${T('Ты','You')}</div>
+        <div class="st">${T('Твой ход','Your turn')}</div></div></div>
+    <button class="kbtn pri" data-act="req-yes" data-id="${esc(r.id)}">${T('Согласиться','Join')}</button>
+    <button class="kbtn sec" data-act="req-no" data-id="${esc(r.id)}">${T('Не в этот раз','Not this time')}</button>
+    <div class="sp"></div></div>`;
 }
 
 function scr_mplan(){
@@ -6956,7 +6992,7 @@ const SCREENS={agenthome:scr_agenthome,overview:scr_overview,interests:scr_inter
   options:scr_options,bestfit:scr_bestfit,candprofile:scr_candprofile,
   sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
   picktime:scr_picktime,pickplace:scr_pickplace,awaiting:scr_awaiting,planok:scr_planok,
-  meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved,mplan:scr_mplan,
+  meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved,mplan:scr_mplan,invite:scr_invite,
   settings:scr_settings,help:scr_help,privacy:scr_privacy,talks:scr_talks};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
@@ -7016,7 +7052,7 @@ function render(){
   const meta=TABS.find(t=>t[0]===cur)||TABS[0];
   const isHome = !editSig && !detail && cur==='overview';
   const isRoot = !editSig && !detail && ROOTS.includes(cur);
-  const titleFor = cur==='mplan' ? ((MPLAN&&MPLAN.title)||T('Встреча','Meetup')) : cur==='matchchat' ? ((matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'Chat')
+  const titleFor = cur==='invite' ? ((INVITE&&INVITE.from)||T('Приглашение','Invitation')) : cur==='mplan' ? ((MPLAN&&MPLAN.title)||T('Встреча','Meetup')) : cur==='matchchat' ? ((matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'Chat')
     : (cur==='overview'?T('Мой профиль Kleal','My Kleal Profile'):(TITLES()[cur]||meta[2]));
   document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : titleFor);
   document.getElementById('back').style.visibility= (editSig||detail||!ROOTS.includes(cur))? 'visible' : 'hidden';
@@ -7061,6 +7097,8 @@ function render(){
     startLive();                       // one live loop for the whole app, whatever screen is open
   const NEEDS_FLOW=['reqcomposer','clarify','summary','searching','fewmatches','bestfit','options'];
     const NEEDS_CAND=['candprofile'];
+    if(cur==='invite'&&!INVITE) cur='messages';
+    if(cur==='mplan'&&!MPLAN) cur='agenthome';
     const NEEDS_PLAN=['sendreq','waiting','mutual','suggestion','picktime','pickplace','awaiting','planok','meetstate','mymeetup'];
     if(NEEDS_FLOW.includes(cur)&&!FLOW) cur='agenthome';
     else if(NEEDS_CAND.includes(cur)&&!CAND) cur=(FLOW&&FLOW.res&&FLOW.res.length)?'bestfit':'agenthome';
@@ -7259,8 +7297,8 @@ function doAct(act, ds){
     case 'arch-tab': ARCHTAB=ds.v; render(); break;
     case 'meet-archive': archiveMeet(ds.id); break;
     case 'meet-msg': openMeetThread(ds.who); break;
-    case 'req-yes': answerReq(ds.id,'accepted'); break;
-    case 'req-no':  answerReq(ds.id,'declined'); break;
+    case 'req-yes': { if(cur==='invite'){ INVITE=null; cur='messages'; } answerReq(ds.id,'accepted'); break; }
+    case 'req-no':  { if(cur==='invite'){ INVITE=null; cur='messages'; } answerReq(ds.id,'declined'); break; }
     case 'req-withdraw': withdrawReq(); break;
     case 'kleal-help': klealHelp(); break;
     case 'use-suggest': { const e=document.getElementById('mcin');
@@ -7283,7 +7321,11 @@ function doAct(act, ds){
     case 'join-plan': joinPublic(+ds.pi); break;   // "Позвать" on a For-you-today card
     // Agent Home
     case 'notif': setTab('notifs'); break;
-    case 'go-inbox': setTab('messages'); break;
+    case 'go-inbox': { // OF.C1 — the guest's way in. One pending invite gets its own screen; several
+      // still go to the list, because picking between them is the list's job.
+      if(INBOX.length===1){ INVITE=INBOX[0]; cur='invite'; render(); saveState(); }
+      else setTab('messages'); break; }
+    case 'inv-open': { INVITE=INBOX.find(r=>r.id===ds.id)||null; if(INVITE){ cur='invite'; render(); saveState(); } break; }
     case 'go-onboarding': location.href='/'; break;
     // Both home entries open the buddy CHAT. Routing them straight into the intent builder turned a
     // friendly agent into a matching form: «привет» got a canned "tell me what you want to do".

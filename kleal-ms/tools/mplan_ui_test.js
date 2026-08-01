@@ -210,7 +210,47 @@ check("and the suggested one is too", cardHtml.includes("Suggested: " + mpWhen(p
   cardHtml.slice(cardHtml.indexOf("Suggested"), cardHtml.indexOf("Suggested") + 60));
 check("a plan with no suggestion has no extra row", !mpCard(plan({})).includes("Suggested:"));
 
-console.log("\n11. Wiring");
+console.log("\n11. OF.C1 — the guest's way in");
+// The board draws the incoming invite with the SAME parts as the plan to confirm: title, explainer,
+// Plan Card, two member rows, two buttons. So it is built from the same components, and what matters
+// is that an invitation — which has no exact time and no address — does not pretend to have them.
+let locStr = (x) => String(x || "");
+let INVITE = null;
+const scr_agenthome = () => "HOME";
+let photoSrc = () => "";
+eval(grab("invAsPlan"));
+const invite = { id: "rq_1", from: "Dmitry", photo: null,
+  intent: { title: "Coffee", place: "Gràcia", time: "Thursday evening" } };
+const asPlan = invAsPlan(invite);
+INVITE = invite;
+check("an invitation carries no exact hour", asPlan.starts_at === null, asPlan.starts_at);
+check("it keeps the loose time it does have", asPlan.when === "Thursday evening", asPlan.when);
+check("it shows the district", asPlan.district === "Gràcia", asPlan.district);
+check("and claims no address", asPlan.address_set === false && asPlan.address === "");
+UILANG = "en";
+check("the card falls back to the loose time, not a blank line",
+  mpCard(asPlan).includes("Thursday evening"), mpCard(asPlan).slice(0, 200));
+check("and says the district is all there is, not «opens when you confirm»",
+  mpCard(asPlan).includes("Gràcia") && !mpCard(asPlan).includes("address opens"));
+eval(grab("scr_invite"));
+UILANG = "en";
+const invHtml = scr_invite.call(null);
+check("English strings the invite together with prepositions",
+  /Coffee in Gr.?cia on Thursday evening\./.test(invHtml.replace(/<[^>]+>/g, "")),
+  invHtml.replace(/<[^>]+>/g, " ").slice(0, 200));
+UILANG = "ru";
+check("Russian uses commas, not «in»/«on»",
+  /Coffee, Gr.?cia, Thursday evening\./.test(scr_invite().replace(/<[^>]+>/g, "")),
+  scr_invite().replace(/<[^>]+>/g, " ").slice(0, 200));
+UILANG = "en";
+check("the screen is registered", /invite:scr_invite/.test(src));
+check("answering leaves the screen behind", /if\(cur==='invite'\)\{ INVITE=null/.test(src));
+check("and an empty invite screen redirects instead of rendering blank",
+  /if\(cur==='invite'&&!INVITE\) cur='messages'/.test(src));
+check("the same guard exists for the plan screen",
+  /if\(cur==='mplan'&&!MPLAN\) cur='agenthome'/.test(src));
+
+console.log("\n12. Wiring");
 check("the screen is registered", /mplan:scr_mplan/.test(src));
 check("plans are polled, so the other side's move arrives", /loadMplans\(\)/.test(src));
 check("actions send the version, so a stale screen cannot overwrite", /version:MPLAN\.version/.test(src));
