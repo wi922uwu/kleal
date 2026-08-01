@@ -4266,8 +4266,10 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
         elif act in ("accept_change", "reject_change"):
             if not pend:
                 return _idem_put(idem, {"ok": False, "error": "NO_PENDING_CHANGE"})
-            if _norm_name(pend.get("by")) == k:
-                # Rubber-stamping your own proposal is not the other person agreeing to it.
+            # Rubber-stamping your own proposal is not the other person agreeing to it. Taking it
+            # BACK is a different act, and there has to be a way to do it — otherwise a suggestion
+            # sits on the other person's screen until they answer something you no longer mean.
+            if act == "accept_change" and _norm_name(pend.get("by")) == k:
                 return {"ok": False, "error": "YOUR_OWN_CHANGE"}
             if act == "reject_change":
                 p["pending"] = None

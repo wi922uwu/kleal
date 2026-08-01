@@ -144,6 +144,12 @@ check("the address stays visible to whoever typed it", hp.get("address") == "Car
 
 own = call("/api/agent/mplan-respond", {"id": PID, "self": GUEST, "action": "accept_change"})
 check("you cannot accept your own suggestion", own.get("error") == "YOUR_OWN_CHANGE", own)
+# Taking it back is a different act: without it a suggestion sits on the other person's screen
+# until they answer something you no longer mean.
+wd = call("/api/agent/mplan-respond", {"id": PID, "self": GUEST, "action": "reject_change"})
+check("but you can withdraw it", (wd.get("plan") or {}).get("pending") is None, wd)
+check("and withdrawing changes nothing else", (wd.get("plan") or {}).get("state") == "confirmed")
+call("/api/agent/mplan-respond", {"id": PID, "self": GUEST, "action": "counter", "starts_at": NEW})
 nt = call("/api/agent/mplan-respond", {"id": PID, "self": GUEST, "action": "counter"})
 check("a counter without a new time is refused", nt.get("error") == "NO_NEW_TIME", nt)
 

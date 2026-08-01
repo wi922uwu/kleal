@@ -74,6 +74,7 @@ tools/mplan_smoke.py
 tools/radius_test.js
 tools/safety_smoke.py
 tools/safety_ui_test.js
+tools/mplan_ui_test.js
 ops/run.sh
 "
 

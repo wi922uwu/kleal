@@ -1364,6 +1364,36 @@ body{background:#2b2d33;display:flex;align-items:center;justify-content:center;
 .klist .su{font-size:12px;line-height:16px;color:var(--muted)}
 .klist .ch{color:var(--neutral300);flex:none}
 /* two participant cards */
+/* ---- 1:1 meeting plan strip (Figma «1:1 Offline»: OF.20–OF.25, OF.C3–OF.C5) ----------------------
+   One layout for the whole strip, because that is what the board is: the same Plan Card, the same two
+   participant rows and the same two-button stack on fourteen frames, with the copy swapped. Measurements
+   are from the OF.21 and OF.C3 specs — content 16/20/0 padding, 14px between every child, card radius 20
+   with a 72px cover, rows 56 tall with a 40px avatar, buttons 48 tall and fully round. */
+.mp{display:flex;flex-direction:column;gap:14px;padding:16px 20px 0;flex:1;min-height:0;overflow-y:auto}
+.mp .h1{font-size:17px;line-height:24px;font-weight:600;color:var(--fg)}
+.mp .ex{font-size:13px;line-height:18px;color:var(--muted)}
+.pcard{background:var(--card);border-radius:20px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.06);flex:none}
+.pcard .cov{height:72px;background:linear-gradient(135deg,#F5455C 0%,#F79E5C 100%);position:relative}
+.pcard .cov img{width:100%;height:100%;object-fit:cover;display:block}
+.pcard .in{padding:16px;display:flex;flex-direction:column;gap:20px}
+.pcard .ti{font-size:17px;line-height:24px;font-weight:600;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pcard .rows{display:flex;flex-direction:column;gap:16px}
+.pcard .r{display:flex;align-items:center;gap:8px;font-size:13px;line-height:18px;color:var(--fg)}
+.pcard .r svg{width:18px;height:18px;flex:none;color:var(--muted)}
+.pcard .r.pend{color:var(--accent);font-weight:500}
+.pcard .r.pend svg{color:var(--accent)}
+.pmem{display:flex;flex-direction:row;align-items:center;gap:12px;height:56px;padding:0 4px;flex:none}
+.pmem .av{width:40px;height:40px;border-radius:999px;flex:none;overflow:hidden;background:var(--neutral100);
+  display:flex;align-items:center;justify-content:center;color:var(--neutral400)}
+.pmem .av img{width:100%;height:100%;object-fit:cover;display:block}
+.pmem .av svg{width:20px;height:20px}
+.pmem .bd{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0}
+.pmem .nm{font-size:13px;line-height:16px;font-weight:500;color:var(--fg)}
+.pmem .st{font-size:11px;line-height:16px;font-weight:500;color:var(--muted)}
+.pmem .st.ok{color:var(--success-text)}
+.pmem .st.late{color:var(--warn-text)}
+.mp .sp{flex:1;min-height:14px}
+.mp .kbtn{flex:none}
 .kpair{display:flex;gap:12px}
 .kpair .p{flex:1;min-width:0;background:var(--card);border-radius:16px;padding:16px 12px;
   display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
@@ -2688,7 +2718,14 @@ function scr_matchchat(){
   // never a photo underneath — just the coral gradient behind a blur — so it read as a broken image
   // rather than as a privacy step, and after three messages the "reveal" revealed nothing. The real
   // face goes here now, unblurred, and the promise leaves the privacy copy too.
-  const hd=chatHead(m.cand.name||m.who||'', {back:'chat-back', sub:(m.cand.band?bandLabel(m.cand,true):null)});
+  // OF.18: the chat is titled by the MEETUP, with the person underneath — «Coffee & AI talk» over
+  // «Paula, 27». Until a plan exists there is no meetup to name, so it falls back to the person.
+  const who=m.cand.name||m.who||'';
+  const mp=mpPlanWith(who);
+  const hd=chatHead(mp?(mp.title||who):who, {back:'chat-back',
+    sub: mp?(who+(m.cand.age?', '+m.cand.age:'')):(m.cand.band?bandLabel(m.cand,true):null),
+    actions:[mp?{act:'mp-open', icon:IC.calen, label:T('План','Plan')}
+               :{act:'mp-new',  icon:IC.calen, label:T('План','Plan')}]});
   const av=avatarHTML(m.cand);
   const thread=m.msgs.map(x=>x.who==='me'?`<div class="mrow"><div class="mbub">${esc(x.text)}</div></div>`
     :`<div class="krow">${av}<div class="kcol"><div class="kbub">${m.loading&&x.text==='…'?'<span class="typing3"><i></i><i></i><i></i></span>':esc(x.text)}</div></div></div>`).join('');
@@ -3978,6 +4015,7 @@ function startLive(){
       try{ await loadThreads(); }catch(e){}          // conversation list + previews
       if(cur==='matchchat' && matchWith){ try{ await pollThread(); }catch(e){} }
       try{ await loadInbox(); }catch(e){}            // incoming requests
+      try{ await loadMplans(); }catch(e){}           // 1:1 plans — the other side moves them too
     }
     _liveT=setTimeout(tick, 3000);
   };
@@ -5621,6 +5659,303 @@ function scr_planok(){
     </div></div>`;
 }
 
+// ================= 1:1 meeting plan (Figma «1:1 Offline»: OF.20–OF.25, OF.C3–OF.C5) =================
+// Fourteen frames on the board, one screen here, because that is what the board is: the same Plan Card,
+// the same two participant rows and the same two-button stack, with the copy swapped by state. Which
+// state you are in is decided by the SERVER's plan object, not by where you tapped — the other person
+// can confirm, suggest another time or say they are late while you are looking at the screen.
+//
+// English copy is the board's, word for word. Where the board hardcodes «Marta»/«Dmitry» the name is a
+// parameter; where it says «her», this says «they», because we are not told anyone's pronouns.
+let MPLAN=null, MPLANS=[], _mpT=null;
+
+async function loadMplans(){
+  const me=(DATA.name||'').trim(); if(!me) return;
+  try{
+    const r=await fetch('/api/agent/mplans?self='+encodeURIComponent(me)).then(x=>x.json());
+    const prev=MPLAN&&MPLAN.id, prevState=MPLAN&&mpPhase(MPLAN);
+    MPLANS=(r&&r.plans)||[];
+    if(MPLAN) MPLAN=MPLANS.find(p=>p.id===MPLAN.id)||((r&&r.history)||[]).find(p=>p.id===MPLAN.id)||MPLAN;
+    // The other side moved while this screen was open — repaint, and say so once.
+    if(cur==='mplan'&&MPLAN&&MPLAN.id===prev&&mpPhase(MPLAN)!==prevState) render();
+  }catch(e){}
+}
+function mpOpen(p){ MPLAN=p; cur='mplan'; render(); saveState(); }
+
+// One call site for every plan action, so the screen can never repaint from an assumption. The server
+// answers with the whole plan; that answer IS the new screen. A refusal is shown as a refusal.
+const MP_ERR={
+  NOT_OPEN:      ['Эта встреча уже закрыта','This meetup is already closed'],
+  VERSION_CONFLICT:['Встреча изменилась — обнови экран','The plan changed — refresh'],
+  NO_PENDING_CHANGE:['Предложения больше нет','That suggestion is gone'],
+  YOUR_OWN_CHANGE:['Это твоё предложение','That’s your own suggestion'],
+  IN_THE_PAST:   ['Это время уже прошло','That time has passed'],
+  TOO_FAR_AHEAD: ['Слишком далеко','Too far ahead'],
+  NOT_CONFIRMED: ['Сначала обе стороны подтверждают','Both of you confirm first'],
+  NOT_A_PARTICIPANT:['Это не твоя встреча','Not your meetup'],
+  BLOCKED:       ['Связь с этим человеком закрыта','Contact with this person is closed'],
+  NOT_YET:       ['Ещё рано','Not yet'],
+};
+async function mpPost(path, body){
+  const me=(DATA.name||'').trim(); if(!me||!MPLAN) return null;
+  try{
+    const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(Object.assign({self:me, id:MPLAN.id}, body))}).then(x=>x.json());
+    if(r&&r.ok&&r.plan){ MPLAN=r.plan; render(); loadMplans(); return r; }
+    const e=r&&r.error;
+    toast(e&&MP_ERR[e]?T(MP_ERR[e][0],MP_ERR[e][1]):T('Не получилось. Попробуй ещё раз.','That didn’t work. Try again.'));
+    if(e==='VERSION_CONFLICT'||e==='NOT_OPEN') loadMplans();
+    return null;
+  }catch(err){ toast(T('Нет связи','No connection')); return null; }
+}
+function mpAct(body){ if(MPLAN) mpPost('/api/agent/mplan-respond', Object.assign({version:MPLAN.version}, body)); }
+function mpLive(status, eta){ mpPost('/api/agent/mplan-status', {status, eta_min:eta==null?null:eta}); }
+function mpFeedback(body){ mpPost('/api/agent/mplan-feedback', body); }
+function mpPlanWith(name){ return MPLANS.find(p=>p.other&&p.other.toLowerCase()===String(name||'').toLowerCase()); }
+
+function mpWhen(ts){
+  if(!ts) return (MPLAN&&MPLAN.when)||'';
+  const d=new Date(ts*1000), loc=UILANG==='ru'?'ru-RU':'en-GB';
+  const day=d.toLocaleDateString(loc,{weekday:'short',day:'numeric',month:'long'});
+  const hm=d.toLocaleTimeString(loc,{hour:'2-digit',minute:'2-digit',hour12:false});
+  return day+' · '+hm;
+}
+function mpTime(ts){ if(!ts) return ''; const d=new Date(ts*1000);
+  return d.toLocaleTimeString(UILANG==='ru'?'ru-RU':'en-GB',{hour:'2-digit',minute:'2-digit',hour12:false}); }
+function mpMins(ts){ return ts? Math.round((ts*1000-Date.now())/60000) : null; }
+
+// One state per board frame. Order matters: a suggested time and someone running late both outrank
+// «confirmed», because they are the thing the person needs to answer.
+function mpPhase(p){
+  if(!p) return 'none';
+  if(p.state==='cancelled') return 'cancelled';
+  if(p.state==='done') return 'done';
+  if(p.pending) return p.pending.mine?'change_out':'change_in';          // OF.21b / OF.C5
+  if(p.state==='proposed') return p.my_response==='confirmed'?'waiting':'to_confirm';  // OF.20 / OF.C3
+  const mins=mpMins(p.starts_at);
+  if(p.their_live&&p.their_live.status==='late') return 'their_late';    // OF.C4
+  if(p.my_live&&p.my_live.status==='late') return 'my_late';             // OF.22a
+  if(mins!=null&&mins<=-30) return 'over';                               // OF.24
+  if(mins!=null&&mins<=0) return 'now';                                  // OF.23
+  if(!p.address_set&&p.host===(DATA.name||'').trim()) return 'no_address';  // OF.20a
+  if(mins!=null&&mins<=60) return 'soon';                                // OF.22
+  return 'confirmed';                                                    // OF.21
+}
+
+function mpHead(p){
+  const o=p.other||'', ph=mpPhase(p), venue=p.venue||p.address||'';
+  const when=mpWhen(p.starts_at), dist=p.district||'';
+  const deadline=p.starts_at?mpTime(p.starts_at-3600):'';
+  switch(ph){
+    case 'to_confirm': return [T('План встречи от '+o, o+' sent a plan'),
+      T('Подтверди — и откроется точный адрес. До этого виден только район; это работает в обе стороны.',
+        'Confirm and the exact address opens for you. Until then you only see the district — that works both ways.')];
+    // Russian and a Latin name do not mix in the oblique cases: «Отправлено Marta» wants the dative
+    // («Марте»), and the server hands over a name it cannot decline. Every RU string here is built to
+    // keep the name in the nominative — a label after a colon, or the subject of the sentence.
+    case 'waiting': return [T('Отправлено: '+o, 'Sent to '+o),
+      T(o+' видит район и время. Точный адрес откроется, только когда подтвердит.',
+        o+' sees the district and the time. The exact address opens for them only when they confirm.')];
+    case 'no_address': return [T('Выбери точное место','Pick the exact place'),
+      T(when+' в районе '+dist+' — договорились. '+o+' видит только район, пока ты не назовёшь место. Выбери его'
+        +(deadline?' до '+deadline:'')+', чтобы было время доехать.',
+        when+' in '+dist+' is agreed. '+o+' only sees the district until you name a place — pick one'
+        +(deadline?' before '+deadline:'')+' so they can plan the trip.')];
+    case 'confirmed': return [T('Подтверждено','Confirmed'),
+      T(o+' теперь видит точный адрес.'+(venue?' '+venue+'.':''),
+        o+' has the exact address now.'+(venue?' '+venue+'.':''))];
+    case 'change_out': return [T('Новое время отправлено: '+o, 'New time sent to '+o),
+      T(o+' увидит новое время и подтвердит его заново. До этого остаётся прежнее — ничего не отменено и делать ничего не нужно.',
+        o+' sees the new time and confirms again. Until then the old time still stands — nothing is cancelled and nobody has to do anything.')];
+    case 'change_in': return [T(o+' предлагает '+mpTime(p.pending.starts_at), o+' suggests '+mpTime(p.pending.starts_at)),
+      T(o+' хочет перенести. Прежнее время держится, пока ты не ответишь, так что спешить некуда и отказ ничего не ломает.',
+        o+' wants to move it. The old time holds until you answer, so there is no rush and nothing is lost if you say no.')];
+    case 'soon': return [T('Начало через '+mpMins(p.starts_at)+' мин','Starts in '+mpMins(p.starts_at)+' minutes'),
+      T('Если опаздываешь — предупреди, и '+o+' подождёт на том же месте.',
+        'If you’re running late, tell '+o+' — they wait at the same place.')];
+    case 'my_late': return [T(o+' знает, что ты опаздываешь', o+' knows you’re late'),
+      T((venue?o+' на месте, в '+venue+'. ':'')+'Ничего не отменено — встреча в силе, просто никто не сидит в неведении.',
+        (venue?'They’re at '+venue+'. ':'')+'You didn’t cancel anything — the meetup is still on, they just aren’t waiting in the dark.')];
+    case 'their_late': return [T(o+' опаздывает', o+' is running late'),
+      T((venue?'Уже в пути к '+venue+'. ':'')+'Ничего не отменяется — займи столик, скоро будет.',
+        (venue?'They’re on their way to '+venue+'. ':'')+'Nothing is cancelled — grab a table, they’ll be there.')];
+    case 'now': return [T('Твоя встреча сейчас','Your meetup is now'), ''];
+    case 'over': return [T('Встреча состоялась?','Did it happen?'),
+      T('Ответ виден только нам — он помогает искать лучше и никому не показывается.',
+        'Only we see the answer — it helps us match better and is never shown to anyone.')];
+    case 'done': return [T('Встреча в истории','This meetup is in your history'), ''];
+    case 'cancelled': return [T('Встреча отменена','This meetup was cancelled'),
+      p.cancel_reason||''];
+    default: return ['',''];
+  }
+}
+
+// The Where row is the one the Plan Card component warns about by name: the offline board must use the
+// map pin, never the camera. It also carries the address rule — district until you confirm.
+function mpWhereText(p){
+  if(p.mode==='online') return T('Онлайн','Online');
+  if(p.address_visible_to_me&&p.address) return (p.venue?p.venue+' · ':'')+p.address;
+  if(p.address_set) return (p.district||'')+T(' · адрес откроется после подтверждения',' · address opens when you confirm');
+  return p.district||T('Район ещё не выбран','District not set yet');
+}
+function mpCard(p){
+  return `<div class="pcard"><div class="cov">${p.cover?`<img src="${esc(p.cover)}" alt="">`:''}</div>
+    <div class="in"><div class="ti">${esc(p.title||T('Встреча','Meetup'))}</div>
+      <div class="rows">
+        <div class="r">${IC.calen}<span>${esc(mpWhen(p.starts_at))}</span></div>
+        <div class="r">${p.mode==='online'?(IC.video||IC.pin):IC.pin}<span>${esc(mpWhereText(p))}</span></div>
+        ${/* Both hours on screen at once. The heading names the suggested one and the card kept the
+             agreed one, so without this row the two never appear together — and the whole point of
+             «the old time holds until you answer» is that you are comparing them. */''}
+        ${p.pending?`<div class="r pend">${IC.clock||IC.calen}<span>${esc(
+          T('Предложено: ','Suggested: ')+mpWhen(p.pending.starts_at))}</span></div>`:''}
+      </div></div></div>`;
+}
+function mpStatusLine(m,p){
+  const live=m.live&&m.live.status;
+  if(live==='late') return [T('Опаздывает'+(m.live.eta_min?' на '+m.live.eta_min+' мин':''),
+                             'Running late'+(m.live.eta_min?' by '+m.live.eta_min+' min':'')),'late'];
+  if(live==='here') return [T('На месте','Here'),'ok'];
+  if(live==='otw')  return [T('В пути','On the way'),''];
+  if(m.confirmed)   return [T('Подтвердил(а)','Confirmed'),'ok'];
+  if(m.is_me)       return [T('Твой ход','Your turn'),''];
+  return [T('Ждём подтверждения','Awaiting confirmation'),''];
+}
+function mpMembers(p){
+  return (p.participants||[]).map(m=>{
+    const [txt,cls]=mpStatusLine(m,p);
+    const nm=m.is_me?T('Ты','You'):(m.name+(m.age?', '+m.age:''));
+    return `<div class="pmem"><div class="av">${m.photo?`<img src="${esc(m.photo)}" alt="">`:IC.person}</div>
+      <div class="bd"><div class="nm">${esc(nm)}</div><div class="st ${cls}">${esc(txt)}</div></div></div>`;
+  }).join('');
+}
+function mpCTAs(p){
+  const b=(cls,act,label,extra)=>`<button class="kbtn ${cls}" data-act="${act}"${extra||''}>${esc(label)}</button>`;
+  const chat=b('sec','mp-chat',T('Открыть чат','Open chat'));
+  switch(mpPhase(p)){
+    case 'to_confirm': return b('pri','mp-confirm',T('Подтвердить','Confirm'))
+                            +b('sec','mp-reschedule',T('Предложить другое время','Suggest another time'));
+    case 'waiting':    return b('pri','mp-chat',T('Открыть чат','Open chat'))
+                            +b('sec','mp-reschedule',T('Предложить другое время','Suggest another time'));
+    case 'no_address': return b('pri','mp-address',T('Выбрать место','Pick the place'))+chat;
+    case 'confirmed':  return b('pri','mp-chat',T('Открыть чат','Open chat'))
+                            +b('sec','mp-reschedule',T('Предложить другое время','Suggest another time'));
+    case 'change_in':  return b('pri','mp-accept-change',T('Принять новое время','Accept the new time'))
+                            +b('sec','mp-reject-change',T('Оставить прежнее','Keep the old one'));
+    case 'change_out': return chat+b('sec','mp-reject-change',T('Отозвать предложение','Withdraw the suggestion'));
+    case 'soon':       return b('pri','mp-otw',T('Уже иду','I’m on my way'))
+                            +b('sec','mp-late',T('Опаздываю','Running late'));
+    case 'my_late':
+    case 'their_late': return b('pri','mp-here',T('Я на месте','I’m here'))+chat;
+    case 'now':        return b('pri','mp-here',T('Я на месте','I’m here'))+chat;
+    case 'over':       return b('pri','mp-happened',T('Да, встретились','Yes, we met'))
+                            +b('sec','mp-nothappened',T('Не состоялась','It didn’t happen'));
+    default:           return chat;
+  }
+}
+// The three sheets the strip needs. OF.21a picks a new time, OF.22a says how late, OF.25 rates it —
+// and OF.24a asks why it didn't happen. All four are the same bottom sheet with different rows.
+function mpSheetShell(title, note, rows){
+  return `<div class="kscrim bot" data-act="sheet-close"><div class="ksheet bottom copts" onclick="event.stopPropagation()">
+    <div class="kgrab"></div>
+    <div class="chdr"><div class="k-h3">${esc(title)}</div>
+      <div data-act="sheet-close" class="x">${IC.ban}</div></div>
+    ${note?`<div class="k-cap" style="color:var(--muted);padding:0 4px 4px">${esc(note)}</div>`:''}
+    ${rows}
+    <button class="coptbtn dark" data-act="sheet-close">${T('Отмена','Cancel')}</button>
+  </div></div>`;
+}
+function mpTimeOpts(p){
+  const base=p.starts_at||(Date.now()/1000+3600);
+  return [[-3600,T('На час раньше','An hour earlier')],[1800,T('На полчаса позже','Half an hour later')],
+          [3600,T('На час позже','An hour later')],[7200,T('На два часа позже','Two hours later')],
+          [86400,T('Завтра в это же время','Tomorrow, same time')]]
+    .map(([d,l])=>[base+d,l]).filter(([t])=>t>Date.now()/1000+300);
+}
+function mpTimeSheet(){
+  if(SHEET!=='mptime'||!MPLAN) return '';
+  const o=MPLAN.other||'';
+  return mpSheetShell(T('Предложить другое время','Suggest another time'),
+    T(o+' подтвердит заново. Прежнее время остаётся, пока не подтвердит — ничего не отменяется.',
+      o+' confirms again after this. The current time stays until they do — nothing is cancelled.'),
+    mpTimeOpts(MPLAN).map(([t,l])=>
+      `<button class="coptbtn mute" data-act="mp-counter" data-t="${t}">${esc(l)} · ${esc(mpTime(t))}</button>`).join(''));
+}
+function mpLateSheet(){
+  if(SHEET!=='mplate'||!MPLAN) return '';
+  return mpSheetShell(T('На сколько опаздываешь?','How late are you?'),
+    T('Скажем сразу. Встреча не отменяется — просто никто не сидит в неведении.',
+      'We’ll say so right away. Nothing is cancelled — they just aren’t waiting in the dark.'),
+    [5,10,15,30,45].map(m=>
+      `<button class="coptbtn mute" data-act="mp-late-send" data-m="${m}">${T('на '+m+' минут','about '+m+' minutes')}</button>`).join(''));
+}
+function mpRateSheet(){
+  if(SHEET!=='mprate'||!MPLAN) return '';
+  return mpSheetShell(T('Как прошло?','How was it?'),
+    T('Это видим только мы. Помогает искать лучше и второму человеку не показывается.',
+      'Only we see this. It helps us match better and is never shown to the other person.'),
+    [[5,T('Отлично','Great')],[4,T('Хорошо','Good')],[3,T('Нормально','Fine')],
+     [2,T('Так себе','Not great')],[1,T('Плохо','Bad')]].map(([n,l])=>
+      `<button class="coptbtn mute" data-act="mp-rate" data-n="${n}">${esc(l)}</button>`).join(''));
+}
+// OF.19 «Chat · actions» — the way a plan gets started at all. The district and the title come from
+// what the two were already talking about; only the hour is asked, because that is the one thing the
+// other person has to agree to.
+function mpNewSheet(){
+  if(SHEET!=='mpnew') return '';
+  const who=(matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'';
+  const base=Math.floor(Date.now()/1000/3600)*3600+3600;
+  const opts=[[3,T('Сегодня','Today')],[24,T('Завтра','Tomorrow')],[48,T('Послезавтра','In two days')],
+              [72,T('Через три дня','In three days')]]
+    .map(([h,l])=>{ const t=base+h*3600; return [t, l+' · '+mpTime(t)]; });
+  return mpSheetShell(T('Предложить встречу','Propose a meetup'),
+    T(who+' увидит район и время. Точный адрес откроется, только когда подтвердит.',
+      who+' sees the district and the time. The exact address opens for them only when they confirm.'),
+    opts.map(([t,l])=>`<button class="coptbtn mute" data-act="mp-create" data-t="${t}">${esc(l)}</button>`).join(''));
+}
+async function mpCreate(ts){
+  const me=(DATA.name||'').trim();
+  const who=(matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'';
+  if(!me||!who) return;
+  const it=curIntent||{};
+  try{
+    const r=await fetch('/api/agent/mplan-propose',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({self:me, to:who, title:(it.title||T('Встреча','Meetup')),
+        mode:(it.mode==='online'?'online':'offline'), starts_at:ts,
+        district:(it.place||(DATA.location&&DATA.location.area)||''),
+        idem:idemKey('mpnew|'+who+'|'+ts)})}).then(x=>x.json());
+    if(r&&r.ok&&r.plan){ await loadMplans(); mpOpen(r.plan); return; }
+    const e=r&&r.error;
+    toast(e==='NOT_MATCHED'?T('Сначала он должен принять приглашение','They need to accept your invite first')
+         :e==='PLAN_EXISTS'?T('План уже есть','There is already a plan')
+         :(e&&MP_ERR[e]?T(MP_ERR[e][0],MP_ERR[e][1]):T('Не получилось','That didn’t work')));
+  }catch(err){ toast(T('Нет связи','No connection')); }
+}
+function mpReasonSheet(){
+  if(SHEET!=='mpreason'||!MPLAN) return '';
+  const o=MPLAN.other||'';
+  return mpSheetShell(T('Что произошло?','What happened?'),
+    T('Ответ виден только нам. '+o+' его не увидит.','Only we see this. '+o+' will not.'),
+    [['no_show',T('Никто не пришёл','Nobody showed up')],
+     ['they_cancelled',T(o+' отменил(а) в последний момент', o+' cancelled at the last minute')],
+     ['i_cancelled',T('Я не смог(ла) прийти','I couldn’t make it')],
+     ['moved',T('Перенесли на другой день','We moved it to another day')],
+     ['other',T('Другое','Something else')]].map(([k,l])=>
+      `<button class="coptbtn mute" data-act="mp-reason" data-r="${k}">${esc(l)}</button>`).join(''));
+}
+
+function scr_mplan(){
+  const p=MPLAN; if(!p) return scr_agenthome();
+  const [h,ex]=mpHead(p);
+  return `<div class="mp fade">
+    <div class="h1">${esc(h)}</div>
+    ${ex?`<div class="ex">${esc(ex)}</div>`:''}
+    ${mpCard(p)}
+    ${mpMembers(p)}
+    ${mpCTAs(p)}
+    <div class="sp"></div></div>`;
+}
+
 // ---- 10. How is it going (status) ----
 function scr_meetstate(){
   const c=PLAN&&PLAN.cand; if(!c) return scr_agenthome();
@@ -6621,7 +6956,7 @@ const SCREENS={agenthome:scr_agenthome,overview:scr_overview,interests:scr_inter
   options:scr_options,bestfit:scr_bestfit,candprofile:scr_candprofile,
   sendreq:scr_sendreq,waiting:scr_waiting,mutual:scr_mutual,suggestion:scr_suggestion,
   picktime:scr_picktime,pickplace:scr_pickplace,awaiting:scr_awaiting,planok:scr_planok,
-  meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved,
+  meetstate:scr_meetstate,mymeetup:scr_mymeetup,saved:scr_saved,mplan:scr_mplan,
   settings:scr_settings,help:scr_help,privacy:scr_privacy,talks:scr_talks};
 
 // ---------- Edit Signal screen (Figma "Edit Signal") ----------
@@ -6681,7 +7016,7 @@ function render(){
   const meta=TABS.find(t=>t[0]===cur)||TABS[0];
   const isHome = !editSig && !detail && cur==='overview';
   const isRoot = !editSig && !detail && ROOTS.includes(cur);
-  const titleFor = cur==='matchchat' ? ((matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'Chat')
+  const titleFor = cur==='mplan' ? ((MPLAN&&MPLAN.title)||T('Встреча','Meetup')) : cur==='matchchat' ? ((matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'Chat')
     : (cur==='overview'?T('Мой профиль Kleal','My Kleal Profile'):(TITLES()[cur]||meta[2]));
   document.getElementById('title').textContent= editSig? editSig.name : (detail? detail.name : titleFor);
   document.getElementById('back').style.visibility= (editSig||detail||!ROOTS.includes(cur))? 'visible' : 'hidden';
@@ -6736,6 +7071,11 @@ function render(){
   if(SHEET==='security') A.insertAdjacentHTML('beforeend', securitySheet());
   if(SHEET==='candopts') A.insertAdjacentHTML('beforeend', candOptsSheet());
   if(SHEET==='candreport') A.insertAdjacentHTML('beforeend', candReportSheet());
+  if(SHEET==='mptime') A.insertAdjacentHTML('beforeend', mpTimeSheet());
+  if(SHEET==='mplate') A.insertAdjacentHTML('beforeend', mpLateSheet());
+  if(SHEET==='mprate') A.insertAdjacentHTML('beforeend', mpRateSheet());
+  if(SHEET==='mpreason') A.insertAdjacentHTML('beforeend', mpReasonSheet());
+  if(SHEET==='mpnew') A.insertAdjacentHTML('beforeend', mpNewSheet());
   if(ESHEET) A.insertAdjacentHTML('beforeend', eSheetHTML());
   // the Location sheet carries a live Leaflet map; build it after its node exists, tear it down on close
   if(ESHEET&&ESHEET.kind==='location') setTimeout(initLocSheetMap,0);
@@ -7015,6 +7355,32 @@ function doAct(act, ds){
     case 'cand-opts': SHEET='candopts'; render(); break;
     case 'cand-notint': { const n=(CAND&&CAND.name)||ds.n; dropCand(n); SHEET=null;
       toast(T('Скрыто — больше не покажу','Hidden — you won’t see them again')); flowBack(); break; }
+    // ---- 1:1 meeting plan (OF.20–OF.25, OF.C3–OF.C5) ----
+    // Every one of these is a server call. The screen repaints from the ANSWER, never from a guess
+    // about what the answer will be: the other person can have moved the plan a second earlier, and
+    // a screen that shows what you hoped happened is how «nothing is cancelled» becomes a lie.
+    case 'mp-open': { const who=(matchWith&&((matchWith.cand&&matchWith.cand.name)||matchWith.who))||'';
+      const p=mpPlanWith(who); if(p) mpOpen(p); else toast(T('План не найден','No plan found')); break; }
+    case 'mp-new': SHEET='mpnew'; render(); break;
+    case 'mp-create': { const t=+ds.t; SHEET=null; render(); mpCreate(t); break; }
+    case 'mp-chat': { const p=MPLAN; if(!p||!p.other) break;
+      const t=(DATA.messages||[]).find(x=>x&&!x.kleal&&(x.who===p.other));
+      matchWith=t||{who:p.other, cand:{name:p.other}, msgs:[]};
+      matchWith.fromMessages=true; cur='matchchat'; render(); saveState(); break; }
+    case 'mp-confirm':       mpAct({action:'confirm'}); break;
+    case 'mp-accept-change': mpAct({action:'accept_change'}); break;
+    case 'mp-reject-change': mpAct({action:'reject_change'}); break;
+    case 'mp-reschedule': SHEET='mptime'; render(); break;
+    case 'mp-counter': { SHEET=null; mpAct({action:'counter', starts_at:+ds.t}); break; }
+    case 'mp-address': openSheet('location'); toast(T('Выбери точку — я передам адрес','Drop a pin — I’ll pass the address on')); break;
+    case 'mp-otw':  mpLive('otw'); break;
+    case 'mp-here': mpLive('here'); break;
+    case 'mp-late': SHEET='mplate'; render(); break;
+    case 'mp-late-send': { SHEET=null; mpLive('late', +ds.m); break; }
+    case 'mp-happened': { SHEET='mprate'; render(); mpFeedback({happened:true}); break; }
+    case 'mp-nothappened': SHEET='mpreason'; render(); break;
+    case 'mp-rate':   { SHEET=null; mpFeedback({rating:+ds.n}); break; }
+    case 'mp-reason': { SHEET=null; mpFeedback({happened:false, reason:ds.r}); break; }
     case 'cand-report': SHEET='candreport'; render(); break;
     case 'cand-report-send': { const n=(CAND&&CAND.name)||ds.n; SHEET=null; dropCand(n); render();
       safetyCall('/api/agent/report',{name:n, reason:ds.r}).then(ok=>{
