@@ -4824,7 +4824,7 @@ function chRows(opts, sel, act){
 function scr_fmt(){
   return `<div class="kflow fade">${kbar(true)}
     <div class="kcont">
-      ${kprompt(T('В каком формате удобнее?','What format do you prefer?'))}
+      ${kprompt(T('Как хочешь встретиться?','How do you want to meet?'))}
       <div style="margin-top:4px">${chRows(FMT_OPTS(), FLOW&&FLOW.fmt, 'flow-fmt')}</div>
       ${(FLOW&&FLOW.fmt)?`<div class="kbub ag" style="width:max-content">${T('Отлично!','Awesome!')}</div>`:''}
     </div>
@@ -5142,7 +5142,7 @@ function scr_clarify(){
   const showWhen=FLOW.editAll||!FLOW.knownWhen, showTime=FLOW.editAll||!FLOW.knownTime;
   return `<div class="kflow fade">${kbar()}
     <div class="kcont">
-      ${kprompt(T('Чтобы точнее подобрать — один момент:','To match you better, one thing:'))}
+      ${kprompt(T('Ещё одно — чтобы подобрать точнее','To match you better, one thing'))}
       <div class="kbub ag">${
         showWhen?(online?T('Когда удобнее?','When works best?'):T('Когда и где удобнее?','When and where works best?'))
         :(showTime?(online?T('Понял, когда. Во сколько удобно?','Got the day. What time works?')
@@ -5275,7 +5275,7 @@ function scr_summary(){
   const kv=(k,v)=>v?`<div class="r"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`:'';
   return `<div class="kflow fade">${kbar(true)}
     <div class="kcont">
-      ${kprompt(T('Вот что получилось',"Here's what I got"))}
+      ${kprompt(T('Вот что получилось','Here’s what I got'))}
       <div class="kbub ag">${T('Проверь — что-то можно поправить. Настроим поиск под твой профиль и этот интент.','Check it — edit anything if needed. We will tailor the search to your profile settings and this intent.')}</div>
       <div class="isumm">
         <div class="cov">${TILE_SVG[key]||TILE_SVG.social}</div>
@@ -6197,12 +6197,15 @@ function pollReply(){
       PLAN.mutual=(mine.status==='accepted');
       PLAN.answered=mine.status;
       const gone=(mine.status==='expired');
-      addNotif('match', PLAN.mutual?T('Согласие: ','Accepted: ')+PLAN.cand.name
-                       :gone?T('Истёк запрос: ','Request expired: ')+PLAN.cand.name
-                            :T('Отказ: ','Declined: ')+PLAN.cand.name,
+      // OF.16 says «Marta can’t this time» — a person who is busy, not a verdict on you. «Отказ:»
+      // read as the second thing, which is why the board words it as the other person's sentence.
+      const _nm=PLAN.cand.name;
+      addNotif('match', PLAN.mutual?T('Согласие: ','Accepted: ')+_nm
+                       :gone?T('Истёк запрос: ','Request expired: ')+_nm
+                            :T(_nm+' не сможет в этот раз', _nm+' can’t this time'),
                PLAN.mutual?T('Можно договариваться о встрече','You can plan the meetup')
                  :gone?T('Ответа не было — запрос закрылся','No reply — the request closed')
-                      :T('В этот раз не сложилось','Not this time'), null);
+                      :T('Бывает. Ниже — кто ещё подходит.','It happens. Below is who else fits.'), null);
       if(cur==='waiting'){ cur=PLAN.mutual?'mutual':'fewmatches'; }
       render(); saveState(); return;
     }
