@@ -4422,6 +4422,12 @@ function flowIntent(){
     it.place=T('Онлайн','Online');                       // no district, no radius — it's over the net
   } else {
     if(FLOW.district) it.place=labelOf(DIST_OPTS(),FLOW.district);
+    // «How far are you happy to go?» (OF.09) — the fourth dead dial, after age, sex and group size.
+    // The slider has always been there, matching has always treated radiusKm as a HARD gate
+    // (app.py: km > radiusKm -> 'outside the radius'), and nothing ever carried the number across.
+    // So everyone silently searched the 15 km default: asking for 3 km still returned people 15 km
+    // away. Set the base BEFORE the expansion ladder below, so «шире» still widens what you chose.
+    if(FLOW.dkm!=null) it.radiusKm=+FLOW.dkm;
     if(FLOW.adjust==='radius') it.radiusKm=(it.radiusKm||15)+5;
     if(FLOW.adjust==='wide'){ it.radiusKm=(it.radiusKm||15)+15; it.broadConsent=true; it.adjacentAllowed=true; }
   }

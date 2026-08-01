@@ -830,6 +830,36 @@ def _cross_purpose_blocked(intent, c):
 # exclusion (games server/platform, event ticket, networking industry). Absent-permissive by construction.
 _DOMAIN_CRITICAL_SLOTS = ("server", "platform", "ticket", "industry")
 
+def _latlon(d):
+    try:
+        la, lo = float((d or {}).get("lat")), float((d or {}).get("lon"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return None if (la == 0 and lo == 0) else (la, lo)
+
+
+def _with_km(pool, prof, ctx=None):
+    """Distance from the SEARCHER to each candidate, stamped BEFORE the gates run.
+
+    The radius gate in _hard_gates reads c['km'], and for everyone in the real store that key simply
+    did not exist: `km` is precomputed only on the synthetic demo pool (against a fixed city-centre
+    constant), while for registered people distance is derived much later, inside the scorer, as a
+    soft feature. So `intent.radiusKm` — a HARD gate on paper — never once fired for a real user.
+    Asking for 3 km and asking for 40 returned the same eight people.
+
+    Rows are copied, never mutated: load_candidates() hands back a cached list shared across requests,
+    and stamping one searcher's distances onto it would hand them to the next.
+    """
+    me = _latlon(prof) or _latlon(ctx)
+    if not me:
+        return pool                                  # no coordinates for the searcher -> no distance
+    out = []
+    for c in pool:
+        there = _latlon(c)
+        out.append(dict(c, km=round(_haversine(me, there), 1)) if there else c)
+    return out
+
+
 def _hard_gates(intent, c, gate_ctx):
     """Cheap, deterministic exclusions applied BEFORE scoring. Returns (ok, reason_if_blocked)."""
     if c.get('paused'):                                            return False, 'on a break'
@@ -1069,7 +1099,7 @@ def match_candidates_legacy(intent, prof, ctx=None):
     # the searcher must never match themselves — identify them by name (or uid) and skip that candidate
     self_name = str(ctx.get('self') or prof.get('name') or ctx.get('uid') or '').strip().lower()
     out = []
-    for c in load_candidates():
+    for c in _with_km(load_candidates(), prof, ctx):        # same radius fix as the Core v2 path
         if self_name and str(c.get('name', '')).strip().lower() == self_name:
             continue
         # ── 1. HARD GATES ──
@@ -1440,7 +1470,7 @@ def match_candidates(intent, prof, ctx=None, diag=None):
     intent = kc.compile_intent(intent, _intent_identity(intent), ctx, now)  # §4.3 canonical blocks + TTL
     gate_ctx, self_name = _gate_ctx_and_self(ctx, prof)
     eligible, policy_by = [], {}                            # ALLOW + REVIEW are both discoverable (§8/§0)
-    _pool = load_candidates()
+    _pool = _with_km(load_candidates(), prof, ctx)          # distance must exist before the radius gate
     if diag is not None:
         diag['pool'] = len(_pool)
         diag['gates'] = {}

@@ -71,6 +71,7 @@ tools/gintents_smoke.py
 tools/gplans_smoke.py
 tools/ghunt_smoke.py
 tools/mplan_smoke.py
+tools/radius_test.js
 ops/run.sh
 "
 
