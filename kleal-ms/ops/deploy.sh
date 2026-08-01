@@ -76,6 +76,7 @@ tools/safety_smoke.py
 tools/safety_ui_test.js
 tools/mplan_ui_test.js
 tools/board_copy_test.js
+tools/board_e2e.py
 ops/run.sh
 "
 

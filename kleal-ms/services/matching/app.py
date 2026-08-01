@@ -2810,7 +2810,12 @@ def inbox(self_name):
         return []
     if _expire_due():
         _save_store()
-    out = [dict(r) for r in _requests() if _norm_name(r.get("to")) == me]
+    # A WITHDRAWN invitation is one the sender pulled back — the recipient was never meant to act on
+    # it, so it has no business in their inbox at all. Until now only the client's «status===pending»
+    # filter kept it off the screen, which means the invitation was still being delivered and merely
+    # not drawn. Declined and expired ones stay: those are the recipient's own history.
+    out = [dict(r) for r in _requests()
+           if _norm_name(r.get("to")) == me and r.get("status") != "withdrawn"]
     out.sort(key=lambda r: -(r.get("updated") or 0))
     return _with_photos(out[:50], "from")
 
