@@ -1195,12 +1195,6 @@ def _blocked_by(who):
     return set(_blocks().get(_norm_name(who)) or [])
 
 
-def _blocks_me(who, other):
-    """Two-sided by construction: a block hides each from the other. A one-way block is a peephole —
-    the blocked person keeps seeing the profile, keeps sending invitations, and only the answers stop."""
-    return _norm_name(who) in set(_blocks().get(_norm_name(other)) or [])
-
-
 def _gate_ctx_and_self(ctx, prof=None):
     """Owner session -> (hard-gate context, self-name), shared by match_candidates / _negotiate_precheck /
     explain_match so the eligibility inputs never drift between the real slate and the diagnostic."""
