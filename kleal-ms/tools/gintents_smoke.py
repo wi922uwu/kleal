@@ -190,7 +190,6 @@ print()
 print("=" * 76)
 print("6. ВЫХОД — ЕДИНСТВЕННЫЙ СПОСОБ УМЕНЬШИТЬ СОСТАВ")
 print("=" * 76)
-paths = [p for p in ("/api/agent/gintent-remove", "/api/agent/gintent-kick") ]
 gone = call("/api/agent/gintent-leave", {"gid": GID, "self": GUESTS[1], "idem": "gi-l-%d" % STAMP})
 g = (gone or {}).get("group") or {}
 check("участник вышел сам", gone.get("ok") is True, gone)
@@ -245,22 +244,27 @@ for nm in list(ids)[:2]:
 st = call("/api/agent/gintent?gid=%s&self=%s" % (GB, OWNER.replace(" ", "+")))
 gb = (st or {}).get("group") or {}
 check("трое в чате — план доступен", gb.get("planning_allowed") is True, gb.get("joined_count"))
-# организатор начал план: дальше вход только через апрув
+# Организатор начинает план — после этого вход только через апрув.
+#
+# Это место было холостым. Эндпоинт назывался «/api/agent/gintent-plan-begin», а такого нет: план
+# начинает «gplan-begin». Вызов всегда падал, печаталось «этап плана ещё не реализован — слой 2»
+# (неправда, слой 2 давно есть), группа оставалась в открытой фазе, вход шёл автоматически — и весь
+# раздел отчитывался запасной веткой. Три проверки апрува не выполнялись НИ РАЗУ, а тест был зелёный.
 call("/api/agent/gintent-post", {"gid": GB, "self": OWNER, "text": "давайте в субботу"})
-mark = call("/api/agent/gintent-plan-begin", {"gid": GB, "self": OWNER})
-if not mark.get("ok"):
-    print("  (этап плана ещё не реализован — слой 2; проверяю апрув напрямую)")
+mark = call("/api/agent/gplan-begin", {"gid": GB, "self": OWNER, "when": "суббота 19:00",
+                                       "place": "Gracia", "starts_at": time.time() + 48 * 3600,
+                                       "idem": "gi-pb-%d" % STAMP})
+check("организатор начал план", mark.get("ok") is True, mark)
 third = list(ids)[2]
 acc = call("/api/agent/ginvite-respond", {"id": ids[third], "self": third, "accept": True})
-if acc.get("awaiting_approval"):
-    check("принявший на этапе плана ждёт апрува", True, acc)
-    ap = call("/api/agent/gintent-approve", {"gid": GB, "self": third, "who": third})
-    check("апрувить может только создатель", ap.get("error") == "NOT_ORGANIZER", ap)
-    ap = call("/api/agent/gintent-approve", {"gid": GB, "self": OWNER, "who": third,
-                                             "idem": "gi-ap-%d" % STAMP})
-    check("создатель заапрувил — человек в группе", ap.get("ok") is True, ap)
-else:
-    check("до этапа плана вход остаётся автоматическим", acc.get("ok") is True, acc)
+# Без ветвления: если апрув снова перестанет требоваться, это должно упасть, а не тихо перейти
+# на другую проверку.
+check("принявший на этапе плана ждёт апрува", acc.get("awaiting_approval") is True, acc)
+ap = call("/api/agent/gintent-approve", {"gid": GB, "self": third, "who": third})
+check("апрувить может только создатель", ap.get("error") == "NOT_ORGANIZER", ap)
+ap = call("/api/agent/gintent-approve", {"gid": GB, "self": OWNER, "who": third,
+                                         "idem": "gi-ap-%d" % STAMP})
+check("создатель заапрувил — человек в группе", ap.get("ok") is True, ap)
 
 print()
 print("=" * 76)
