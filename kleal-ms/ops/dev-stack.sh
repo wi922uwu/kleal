@@ -5,6 +5,7 @@
 #   ops/dev-stack.sh sync             обновить в стенде ТОЛЬКО код из прод-дерева, данные не трогать
 #   ops/dev-stack.sh start|stop|restart [сервис]
 #   ops/dev-stack.sh status           кто слушает и на чём
+#   ops/dev-stack.sh tunnel           публичный адрес стенда (cloudflare, эфемерный)
 #   ops/dev-stack.sh seed             перезалить пул людей из прода, стор обнулить
 #   ops/dev-stack.sh nuke             снести стенд целиком (спросит подтверждение)
 #
@@ -127,6 +128,25 @@ start|stop|restart|status)
     restart) if [ -n "$svc" ]; then bash ops/run.sh restart "$svc"
              else bash ops/run.sh stop; sleep 1; bash ops/run.sh all; fi ;;
   esac
+  ;;
+
+tunnel)
+  require_dev
+  # shellcheck disable=SC1090
+  . "$DEV/ops/dev.env"
+  CF="${CLOUDFLARED:-/root/cloudflared-linux-amd64}"
+  LOG="/root/cf${HUB_PORT}_dev.log"
+  [ -x "$CF" ] || { echo "нет cloudflared: $CF"; exit 1; }
+  # НЕ через `pgrep -f` по строке с портом: шаблон совпадает с собственной командой оболочки,
+  # и проверка радостно находит саму себя, отвечая «уже поднят» на пустом месте.
+  if ps ax -o args= | grep -v grep | grep -q "tunnel --url http://localhost:$HUB_PORT"; then
+    echo "туннель уже поднят:"
+  else
+    nohup "$CF" tunnel --url "http://localhost:$HUB_PORT" > "$LOG" 2>&1 &
+    sleep 15
+  fi
+  grep -ho 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG" | head -1
+  echo "(адрес эфемерный: умирает вместе с процессом, после рестарта поднимать заново)"
   ;;
 
 nuke)
