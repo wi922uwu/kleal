@@ -18,7 +18,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, TextInput,
-  ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform,
+  ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform, Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -55,6 +55,20 @@ export default function Home() {
    * безопасной зоны, которая на разных телефонах разная.
    */
   const [navH, setNavH] = useState(96);
+  /**
+   * Открыта ли клавиатура.
+   *
+   * Док отступает снизу на высоту панели, чтобы не налезать на неё. Но когда клавиатура поднимает
+   * док, панель уже под клавиатурой — и этот отступ становится пустым зазором, на который ввод
+   * улетает выше клавиатуры. Пока клавиатура открыта, отступа нет.
+   */
+  const [kb, setKb] = useState(false);
+  useEffect(() => {
+    const ios = Platform.OS === 'ios';
+    const show = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', () => setKb(true));
+    const hide = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', () => setKb(false));
+    return () => { show.remove(); hide.remove(); };
+  }, []);
 
   /**
    * Три запроса разом, и каждый со своим catch: одна упавшая лента не должна уносить остальные.
@@ -151,7 +165,7 @@ export default function Home() {
           )}
         </ScrollView>
 
-        <View style={[s.dock, { paddingBottom: navH + 6 }]}>
+        <View style={[s.dock, { paddingBottom: kb ? 6 : navH + 6 }]}>
           <View style={s.askRow}>
             <View style={s.askAvatar}>
               <IconImagePlaceholder size={22} />
