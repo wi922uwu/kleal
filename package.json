@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "eas-cli": "^21.5.0"
+  }
+}
