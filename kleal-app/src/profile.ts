@@ -55,16 +55,36 @@ export const HUB = {
 };
 
 /** Статусы приёма — те же три, что понимает /api/onboarding/receiving. */
+/**
+ * Выход.
+ *
+ * Показывается ВСЕГДА, а не только при заведённом логине. Быстрый вход (app/auth.tsx) логина не
+ * создаёт вовсе — он ставит только способ входа и уводит в анкету, — так что привязка кнопки к
+ * логину прятала её ровно от тех, у кого другого выхода нет.
+ *
+ * Отсюда и два текста подтверждения. С логином профиль лежит на сервере и вернётся при входе. Без
+ * логина возвращать его нечем: он записан по имени, но ключа к нему нет, и стирание устройства
+ * действительно означает потерю. Об этом надо сказать прямо, а не одной формулировкой на оба
+ * случая.
+ */
 export const SIGNOUT = {
-  label: () => T('Выйти из аккаунта', 'Sign out'),
-  ask: () =>
-    T(
-      'Выйти из аккаунта? Профиль останется на сервере и вернётся при следующем входе.',
-      'Sign out? Your profile stays on the server and comes back when you sign in.'
-    ),
+  label: (hasLogin: boolean) =>
+    hasLogin ? T('Выйти из аккаунта', 'Sign out') : T('Выйти и начать заново', 'Sign out and start over'),
+  ask: (hasLogin: boolean) =>
+    hasLogin
+      ? T(
+          'Выйти из аккаунта? Профиль останется на сервере и вернётся при следующем входе.',
+          'Sign out? Your profile stays on the server and comes back when you sign in.'
+        )
+      : T(
+          'У этого профиля нет логина, поэтому вернуть его будет нечем — он сотрётся вместе со всем, что собрано на этом телефоне. Выйти?',
+          'This profile has no login, so there is nothing to restore it with — it will be erased along with everything collected on this phone. Sign out?'
+        ),
   yes: () => T('Выйти', 'Sign out'),
   no: () => T('Отмена', 'Cancel'),
-  who: (login: string) => T(`Вход выполнен как ${login}`, `Signed in as ${login}`),
+  who: (login: string | null) =>
+    login ? T(`Вход выполнен как ${login}`, `Signed in as ${login}`)
+          : T('Аккаунт не подключён', 'No account connected'),
 };
 
 export const AVAIL: [string, () => string][] = [

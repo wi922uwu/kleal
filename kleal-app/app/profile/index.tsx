@@ -79,14 +79,15 @@ export default function ProfileHub() {
   };
 
   const signOut = () => {
+    const has = !!st.login;
     const go = () => { reset(); router.replace('/'); };
     if (Platform.OS === 'web') {
       // Alert.alert на вебе рисуется без кнопок — там это window.confirm.
       // eslint-disable-next-line no-alert
-      if (typeof confirm === 'function' && confirm(SIGNOUT.ask())) go();
+      if (typeof confirm === 'function' && confirm(SIGNOUT.ask(has))) go();
       return;
     }
-    Alert.alert(SIGNOUT.ask(), undefined, [
+    Alert.alert(SIGNOUT.ask(has), undefined, [
       { text: SIGNOUT.no(), style: 'cancel' },
       { text: SIGNOUT.yes(), style: 'destructive', onPress: go },
     ]);
@@ -203,17 +204,15 @@ export default function ProfileHub() {
 
       {/*
         Выход стирает состояние на устройстве целиком — и профиль тоже. Оставить его лежать значило
-        бы показать его следующему, кто войдёт на этом телефоне. Потери при этом нет: сервер отдаёт
-        сохранённый профиль обратно при входе, поэтому в вопросе так и написано.
+        бы показать его следующему, кто возьмёт этот телефон. Карточка показывается всегда: см.
+        SIGNOUT — привязка к логину прятала кнопку от тех, у кого логина нет.
       */}
-      {st.login ? (
-        <Card>
-          <Text style={s.basicTitle}>{SIGNOUT.who(st.login)}</Text>
-          <Pressable accessibilityRole="button" style={s.signout} onPress={signOut}>
-            <Text style={s.signoutText}>{SIGNOUT.label()}</Text>
-          </Pressable>
-        </Card>
-      ) : null}
+      <Card>
+        <Text style={s.basicTitle}>{SIGNOUT.who(st.login)}</Text>
+        <Pressable accessibilityRole="button" style={s.signout} onPress={signOut}>
+          <Text style={s.signoutText}>{SIGNOUT.label(!!st.login)}</Text>
+        </Pressable>
+      </Card>
     </ProfileShell>
   );
 }
