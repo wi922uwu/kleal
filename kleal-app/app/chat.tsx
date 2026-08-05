@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable,
+  View, Text, StyleSheet, ScrollView, Pressable, Alert,
   KeyboardAvoidingView, Platform, ActivityIndicator, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,10 +23,10 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import {
   STEP_PROGRESS, HEADER_TITLE, COMPOSER_PLACEHOLDER, STEP_START, STEP_BASICS, SEXES, sexLabel,
   STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES, HOBBIES, hobbyLabel,
-  hobbyPlain, STEP_PHOTO, StepId,
+  hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME,
 } from '../src/onboarding';
 import { useLang, T, getLang } from '../src/i18n';
-import { useOnb, set, patch } from '../src/state';
+import { useOnb, set, patch, reset } from '../src/state';
 import { onboarding } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area } from '../src/components/AreaPicker';
@@ -62,15 +62,56 @@ export default function Chat() {
 
   // Первая реплика. Ref, а не состояние: в строгом режиме эффект выполняется дважды, и без
   // защиты приветствие приходит два раза — это видно.
+  //
+  // Если онбординг уже начинали — продолжаем с нужного шага, а не с первого вопроса. Раньше здесь
+  // всегда задавался вопрос из A.04, а виджет под ним прятался, потому что имя уже было: человек
+  // возвращался и получал вопрос без единой кнопки под ним.
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    const resumed = hasProgress(st.profile);
+    const at = resumeStep(st.profile);
+    setStep(at);
     setTyping(true);
     setTimeout(() => {
       setTyping(false);
-      say('bot', STEP_START.ask());
+      if (resumed) {
+        say('bot', RESUME.line(st.profile.name || ''));
+        const line =
+          at === 'basics' ? STEP_BASICS.bot()
+          : at === 'area' ? STEP_AREA.bot()
+          : at === 'languages' ? STEP_LANGUAGES.bot()
+          : at === 'hobbies' ? STEP_HOBBIES.bot()
+          : STEP_PHOTO.ask();
+        setTimeout(() => say('bot', line), 700);
+      } else {
+        say('bot', STEP_START.ask());
+      }
     }, 500);
   }, [say]);
+
+  /** Начать онбординг заново. Спрашиваем: это стирает всё, что человек уже ввёл. */
+  const restart = () => {
+    const wipe = () => {
+      reset();
+      setThread([]);
+      setFunnel([]);
+      setStep('start');
+      started.current = false;
+      setTyping(true);
+      setTimeout(() => { setTyping(false); say('bot', STEP_START.ask()); started.current = true; }, 400);
+    };
+    if (Platform.OS === 'web') {
+      // Alert.alert на вебе не показывает кнопок — там это window.confirm.
+      // eslint-disable-next-line no-alert
+      if (typeof confirm === 'function' && confirm(RESUME.restartAsk())) wipe();
+      return;
+    }
+    Alert.alert(RESUME.restartAsk(), undefined, [
+      { text: RESUME.restartNo(), style: 'cancel' },
+      { text: RESUME.restartYes(), style: 'destructive', onPress: wipe },
+    ]);
+  };
 
   useEffect(() => {
     const id = setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 80);
@@ -130,6 +171,11 @@ export default function Chat() {
         <View style={s.head}>
           <View style={s.avatar} />
           <Text style={s.headTitle}>{HEADER_TITLE()}</Text>
+          {hasProgress(st.profile) ? (
+            <Pressable accessibilityRole="button" onPress={restart} hitSlop={10}>
+              <Text style={s.restart}>{RESUME.restart()}</Text>
+            </Pressable>
+          ) : null}
           <Text style={s.headPct}>{pct}%</Text>
         </View>
         <View style={s.track}>
@@ -457,6 +503,7 @@ const s = StyleSheet.create({
   avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: color.primary },
   headTitle: { flex: 1, ...type.title, color: color.fg, fontWeight: '700' } as any,
   headPct: { ...type.labelMedium, color: color.muted } as any,
+  restart: { ...type.caption, color: color.primary } as any,
   track: { height: 3, backgroundColor: color.neutral100, marginHorizontal: 20, borderRadius: 2 },
   trackFill: { height: 3, backgroundColor: color.primary, borderRadius: 2 },
 

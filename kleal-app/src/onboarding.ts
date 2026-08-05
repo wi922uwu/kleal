@@ -227,3 +227,32 @@ export const NAV = () => [
   T('Сообщения', 'Messages'),
   T('Профиль', 'Profile'),
 ];
+
+/**
+ * На каком шаге продолжать. Онбординг можно закрыть на середине — телефон разрядился, отвлекли, —
+ * и вернувшись человек должен попасть туда, где остановился, а не в начало и уж точно не в тупик.
+ *
+ * Первая версия делала именно тупик: чипы первого шага прятались, если имя уже сохранено, а сам шаг
+ * оставался первым. На экране висел вопрос и ни одной кнопки под ним.
+ */
+export function resumeStep(p: any): StepId {
+  if (!p || !p.name) return 'start';
+  if (!p.age || !p.gender) return 'basics';
+  if (!p.city) return 'area';
+  if (!(p.languages?.comfortable || []).length) return 'languages';
+  if (!(p.interests?.explicit || []).length) return 'hobbies';
+  return 'photo';
+}
+
+/** Есть ли вообще что продолжать. */
+export function hasProgress(p: any): boolean {
+  return !!(p && p.name);
+}
+
+export const RESUME = {
+  line: (name: string) => T('С возвращением, ' + name + '! Продолжим с того места.', 'Welcome back, ' + name + '! Let’s pick up where we left off.'),
+  restart: () => T('Начать заново', 'Start over'),
+  restartAsk: () => T('Начать онбординг заново? Всё, что уже введено, сотрётся.', 'Start onboarding over? Everything you have entered will be erased.'),
+  restartYes: () => T('Да, заново', 'Yes, start over'),
+  restartNo: () => T('Отмена', 'Cancel'),
+};
