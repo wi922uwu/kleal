@@ -1,20 +1,18 @@
 /**
- * Сводка профиля перед отправкой. Порт «goSummary».
+ * Сводка профиля — кадр A.14.
  *
- * Текст про человека пишет агент (/api/onboarding/summary) — но экран не должен зависеть от того,
- * ответила ли модель: если она молчит или упала, сводка собирается из уже введённых полей. Пустой
- * экран на последнем шаге онбординга стоит дороже, чем неидеальная формулировка.
+ * Шапка меняет заголовок на «What Kleal knows about you» и показывает 100 %: онбординг закончен,
+ * дальше речь уже не о заполнении, а о том, что из этого понято.
  */
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, Text, ScrollView, Image } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, profileForRegister, profileForAttach } from '../src/state';
 import { onboarding } from '../src/api';
-import { genderLabel, langLabel, intLabel } from '../src/onboarding';
-import { Btn } from '../src/components/ui';
-import { color, radius, space, type } from '../src/theme';
+import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';
+import { color, radius as rad, space, type } from '../src/theme';
 
 export default function Summary() {
   useLang();
@@ -22,9 +20,24 @@ export default function Summary() {
   const st = useOnb();
   const insets = useSafeAreaInsets();
   const p = st.profile;
+
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
+
+  /**
+   * «Profile confidence» на борде — 74 %, без объяснения, откуда. Считаю по тому, что реально
+   * заполнено, а не показываю красивое число: полоса, которая всегда 74 %, ничего не сообщает.
+   */
+  const confidence = useMemo(() => {
+    const have = [
+      !!p.name, !!p.age, !!p.gender, !!p.city,
+      !!(p.languages?.comfortable || []).length,
+      !!(p.interests?.explicit || []).length,
+      !!p.photo,
+    ];
+    return Math.round((have.filter(Boolean).length / have.length) * 100);
+  }, [p]);
 
   useEffect(() => {
     let alive = true;
@@ -32,18 +45,24 @@ export default function Summary() {
       .summary(profileForAttach())
       .then((r: any) => alive && setText(String(r?.summary || '')))
       .catch(() => {});
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, []);
 
-  const rows: [string, string][] = [
-    [T('Имя', 'Name'), p.name || '—'],
-    [T('О себе', 'About'), [p.gender ? genderLabel(p.gender) : '', p.age ? String(p.age) : ''].filter(Boolean).join(', ') || '—'],
-    [T('Где', 'Where'), p.city || '—'],
-    [T('Языки', 'Languages'), (p.languages?.comfortable || []).map(langLabel).join(', ') || '—'],
-    [T('Интересы', 'Interests'), (p.interests?.explicit || []).map(intLabel).join(', ') || '—'],
-  ];
+  // Если модель молчит или упала — собираем фразу из того, что известно. Пустая карточка на
+  // последнем шаге онбординга хуже, чем неидеальная формулировка.
+  // Русский собирается ТОЛЬКО через двоеточия: названия языков и городов приходят готовыми
+  // строками, склонять их нечем, и «говорит на Английский» — сломанный русский. Английский
+  // при этом строится нормальной фразой, ему падежи не нужны.
+  const fallback = useMemo(() => {
+    const h = (p.interests?.explicit || []).map(hobbyPlain);
+    const l = (p.languages?.comfortable || []).map(langPlain);
+    const bits = [
+      h.length ? T('Интересы: ' + h.join(', '), 'Into ' + h.join(', ')) : '',
+      l.length ? T('Языки: ' + l.join(', '), 'speaks ' + l.join(', ')) : '',
+      p.city ? T('Обычно бывает: ' + p.city, 'usually around ' + p.city) : '',
+    ].filter(Boolean);
+    return bits.join('. ') + (bits.length ? '.' : '');
+  }, [p]);
 
   const finish = async () => {
     setSending(true);
@@ -51,62 +70,78 @@ export default function Summary() {
     try {
       const r: any = await onboarding.register(profileForRegister());
       if (!r?.ok) throw new Error(r?.error || 'register failed');
-      // Привязываем к логину, чтобы следующий вход вёл в приложение, а не сюда же.
-      if (st.login) {
-        await onboarding.attach(st.login, p.name || '', profileForAttach()).catch(() => {});
-      }
+      if (st.login) await onboarding.attach(st.login, p.name || '', profileForAttach()).catch(() => {});
       router.replace('/done');
     } catch {
-      // Молча «завершить» нельзя: профиль не доехал, и человек будет думать, что он в системе.
       setErr(T('Профиль не сохранился. Проверь связь и попробуй ещё раз.',
-               "Your profile didn't save. Check your connection and try again."));
+               'Your profile didn’t save. Check your connection and try again.'));
     } finally {
       setSending(false);
     }
   };
 
   return (
-    <View style={[s.wrap, { paddingTop: insets.top + 16 }]}>
-      <ScrollView contentContainerStyle={s.scroll}>
-        <Text style={s.h}>{T('Вот что получилось', "Here's what I got")}</Text>
+    <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
+      <View style={s.head}>
+        <View style={s.avatar} />
+        <Text style={s.headTitle}>{SUMMARY_TITLE()}</Text>
+        <Text style={s.headPct}>100%</Text>
+      </View>
+      <View style={s.track}><View style={[s.trackFill, { width: '100%' }]} /></View>
 
+      <ScrollView contentContainerStyle={s.scroll}>
         <View style={s.card}>
           <View style={s.idRow}>
             {p.photo ? (
-              <Image source={{ uri: p.photo }} style={s.av} />
+              <Image source={{ uri: p.photo }} style={s.idAvatar} />
             ) : (
-              <View style={[s.av, s.avEmpty]}>
-                <Text style={s.avLetter}>{(p.name || '?').slice(0, 1).toUpperCase()}</Text>
+              <View style={[s.idAvatar, s.idAvatarEmpty]}>
+                <Text style={s.idLetter}>{(p.name || '?').slice(0, 1).toUpperCase()}</Text>
               </View>
             )}
             <View style={{ flex: 1 }}>
-              <Text style={s.name}>{p.name || '—'}</Text>
-              <Text style={s.sub}>{[p.city, p.age ? String(p.age) : ''].filter(Boolean).join(' · ')}</Text>
+              <View style={s.nameRow}>
+                <Text style={s.name}>{p.name || '—'}</Text>
+                <Text style={s.verified}>✓</Text>
+              </View>
+              <View style={s.confRow}>
+                <Text style={s.confLabel}>{SUMMARY.confidence()}</Text>
+                <Text style={s.confPct}>{confidence}%</Text>
+              </View>
+              <View style={s.confTrack}>
+                <View style={[s.confFill, { width: `${confidence}%` }]} />
+              </View>
             </View>
           </View>
         </View>
 
-        {text ? (
-          <View style={s.card}>
-            <Text style={s.blockTitle}>{T('Как тебя понял Kleal', 'How Kleal understood you')}</Text>
-            <Text style={s.para}>{text}</Text>
-          </View>
-        ) : null}
-
         <View style={s.card}>
-          {rows.map(([k, v]) => (
-            <View key={k} style={s.row}>
-              <Text style={s.rowKey}>{k}</Text>
-              <Text style={s.rowVal} numberOfLines={2}>{v}</Text>
-            </View>
-          ))}
+          <View style={s.cardHead}>
+            <Text style={s.cardTitle}>{SUMMARY.klealSummary()}</Text>
+            <Text style={s.cardMeta}>{SUMMARY.updatedToday()}</Text>
+          </View>
+          <Text style={s.para}>{text || fallback}</Text>
+          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/done')}>
+            <Text style={s.ctaText}>{SUMMARY.viewAll()}</Text>
+          </Pressable>
+        </View>
+
+        <View style={s.info}>
+          <Text style={s.infoTitle}>✦  {SUMMARY.planTitle()}</Text>
+          <Text style={s.infoBody}>{SUMMARY.planBody()}</Text>
         </View>
 
         {err ? <Text style={s.err}>{err}</Text> : null}
       </ScrollView>
 
-      <View style={[s.foot, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-        <Btn label={T('Всё верно', 'Looks right')} busy={sending} onPress={finish} />
+      <View style={[s.foot, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+        <Pressable accessibilityRole="button"
+          style={[s.cta, sending && { opacity: 0.6 }]}
+          onPress={sending ? undefined : finish}
+          accessibilityState={{ busy: sending }}
+        >
+          <Text style={s.ctaText}>{SUMMARY.done()}</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -114,20 +149,39 @@ export default function Summary() {
 
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.bg },
-  scroll: { paddingHorizontal: 20, paddingBottom: 24, gap: space.md },
-  h: { ...type.h2, color: color.fg, marginBottom: space.sm } as any,
-  card: { backgroundColor: color.card, borderRadius: radius.xl, padding: space.lg, gap: space.md, ...({} as any) },
+  head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingBottom: 10 },
+  avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: color.primary },
+  headTitle: { flex: 1, ...type.title, color: color.fg, fontWeight: '700' } as any,
+  headPct: { ...type.labelMedium, color: color.muted } as any,
+  track: { height: 3, backgroundColor: color.neutral100, marginHorizontal: 20, borderRadius: 2 },
+  trackFill: { height: 3, backgroundColor: color.primary, borderRadius: 2 },
+
+  scroll: { padding: 20, gap: space.md },
+  card: { backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg, gap: space.md },
   idRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  av: { width: 52, height: 52, borderRadius: radius.full },
-  avEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
-  avLetter: { ...type.title, color: color.muted } as any,
-  name: { ...type.title, color: color.fg } as any,
-  sub: { ...type.bodySmall, color: color.muted } as any,
-  blockTitle: { ...type.labelMedium, color: color.muted } as any,
+  idAvatar: { width: 52, height: 52, borderRadius: rad.full },
+  idAvatarEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+  idLetter: { ...type.title, color: color.muted } as any,
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  name: { fontSize: 20, fontWeight: '700', color: color.fg },
+  verified: { color: color.primary, fontWeight: '700' },
+  confRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  confLabel: { ...type.bodySmall, color: color.muted } as any,
+  confPct: { ...type.bodySmall, color: color.muted } as any,
+  confTrack: { height: 4, backgroundColor: color.neutral100, borderRadius: 2, marginTop: 5 },
+  confFill: { height: 4, backgroundColor: color.primary, borderRadius: 2 },
+
+  cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+  cardTitle: { fontSize: 18, fontWeight: '700', color: color.fg },
+  cardMeta: { ...type.caption, color: color.muted } as any,
   para: { ...type.body, color: color.fg } as any,
-  row: { flexDirection: 'row', justifyContent: 'space-between', gap: space.md },
-  rowKey: { ...type.bodySmall, color: color.muted } as any,
-  rowVal: { ...type.bodySmall, color: color.fg, flex: 1, textAlign: 'right' } as any,
+
+  info: { backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.lg, gap: 6 },
+  infoTitle: { ...type.title, color: color.infoText } as any,
+  infoBody: { ...type.bodySmall, color: color.infoText } as any,
+
+  cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  ctaText: { ...type.button, color: color.onPrimary } as any,
   err: { ...type.bodySmall, color: color.primary } as any,
   foot: { paddingHorizontal: 20, paddingTop: space.md },
 });
