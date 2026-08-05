@@ -89,9 +89,33 @@ def route(path):
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
+    # ---- CORS ----------------------------------------------------------------------------------
+    # Без этого браузерный клиент не может обратиться к API с другого источника: preflight OPTIONS
+    # уходил в 501 (обработчика просто не было), и запрос не начинался. На iOS и Android CORS нет,
+    # поэтому мобильное приложение работало бы, а веб-цель Expo — нет.
+    #
+    # Разрешено «*» и НАМЕРЕННО без allow-credentials. Само по себе это не открывает ничего нового:
+    # API и так без аутентификации, личность передаётся именем в теле, и злоумышленник отправит
+    # такой запрос со своего сервера, не трогая ничей браузер. CORS защищает только от чтения
+    # ответа чужим фронтендом от имени пользователя — а «имени пользователя» здесь пока не
+    # существует. Когда появятся сессии и куки, «*» придётся сменить на список источников,
+    # иначе это станет настоящей дырой.
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Max-Age", "86400")
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _serve(self, body, status=200, ctype="text/html; charset=utf-8"):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
+        self._cors()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -116,6 +140,7 @@ class H(BaseHTTPRequestHandler):
                     for k, v in r.headers.items():
                         if k.lower() not in _HOP and k.lower() != "content-length":
                             self.send_header(k, v)
+                    self._cors()
                     self.send_header("X-Accel-Buffering", "no")
                     self.send_header("Connection", "close")
                     self.end_headers()
@@ -136,6 +161,7 @@ class H(BaseHTTPRequestHandler):
                 for k, v in r.headers.items():
                     if k.lower() not in _HOP:
                         self.send_header(k, v)
+                self._cors()
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 if self.command != "HEAD":
@@ -143,6 +169,7 @@ class H(BaseHTTPRequestHandler):
         except urllib.error.HTTPError as e:
             body = e.read() or b""
             self.send_response(e.code)
+            self._cors()
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)

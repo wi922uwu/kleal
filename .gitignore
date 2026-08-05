@@ -17,6 +17,9 @@ buddy_local.db
 # node
 node_modules/
 package-lock.json
+# ...кроме мобильного приложения: локфайл — это воспроизводимая установка, без него
+# `npm ci` невозможен и сборка на другой машине приедет с другими версиями.
+!kleal-app/package-lock.json
 
 # build/ holds lots of scratch (base64 deploy scripts, figma screenshots, dumps, backups).
 # Ignore all of it EXCEPT the reusable deploy generators.
@@ -27,6 +30,8 @@ build/*
 
 # extracted content dumps + misc scratch
 *.png
+# ...кроме иконок приложения: без них не собирается ни один нативный билд.
+!kleal-app/assets/*.png
 docx_content.txt
 ods_content.txt
 xlsx_content.txt
@@ -53,3 +58,11 @@ kleal-ms/services/*/buddy_store.json
 kleal-ms/services/*/kleal_store.json
 kleal-ms/services/*/learned_topics.json
 kleal-ms/ops/logs/
+
+# expo / react-native
+kleal-app/node_modules/
+kleal-app/.expo/
+kleal-app/dist/
+kleal-app/ios/
+kleal-app/android/
+*.tsbuildinfo

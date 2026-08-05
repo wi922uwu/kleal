@@ -35,6 +35,13 @@
       "runtimeArgs": ["admin"],
       "port": 7077,
       "autoPort": false
+    },
+    {
+      "name": "kleal-app",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "kleal-app", "run", "web", "--", "--port", "8082"],
+      "port": 8082,
+      "autoPort": false
     }
   ]
 }

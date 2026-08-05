@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Kleal",
+    "slug": "kleal",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kleal.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Kleal uses your photos so you can set a profile picture people recognise you by at meetups."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.kleal.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-image-picker",
+      "expo-localization"
+    ],
+    "scheme": "kleal"
+  }
+}
