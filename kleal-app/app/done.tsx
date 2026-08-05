@@ -2,19 +2,21 @@
  * Финал онбординга — кадр A.15.
  *
  * Нижняя панель здесь появляется впервые и это не декорация: борд показывает её именно на этом
- * кадре, чтобы человек увидел, куда он попал, ещё до первого действия. Экраны за ней — следующий
- * этап переноса, поэтому кнопки пока не ведут никуда, и это видно по их состоянию.
+ * кадре, чтобы человек увидел, куда он попал, ещё до первого действия. Сами вкладки — следующий
+ * этап переноса; «Создать интент» уже ведёт в мастер OF.04–OF.10.
  */
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { IconIntents, IconSearch, IconMessages, IconProfile, IconSpark, IconImagePlaceholder } from '../src/components/icons';
 import { useLang } from '../src/i18n';
 import { DONE_SCREEN, NAV } from '../src/onboarding';
-import { color, radius as rad, space, type } from '../src/theme';
+import { color, radius as rad, type } from '../src/theme';
 
 export default function Done() {
   useLang();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const nav = NAV();
 
@@ -29,7 +31,7 @@ export default function Done() {
       </View>
 
       <View style={s.ctaWrap}>
-        <Pressable accessibilityRole="button" style={s.cta}>
+        <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/intent')}>
           <Text style={s.ctaText}>{DONE_SCREEN.cta()}</Text>
         </Pressable>
       </View>

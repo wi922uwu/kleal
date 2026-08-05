@@ -86,3 +86,28 @@ export const onboarding = {
 
   photoUrl: (uid: string) => `${API_BASE}/api/onboarding/photo/${encodeURIComponent(uid)}.jpg`,
 };
+
+// ---------------------------------------------------------------- интенты и поиск
+
+export const agent = {
+  /**
+   * Свободный текст → интент + кандидаты. Разбирает модель, поэтому это единственный вход,
+   * которому можно отдать «хочу посмотреть футбол вечером» как есть.
+   */
+  plan: (query: string, profile: Json, ctx: Json = {}, override?: Json) =>
+    api.post('/api/agent/plan', { query, profile, ctx, override }),
+
+  /** Уже собранный интент → кандидаты, без разбора текста. */
+  match: (intent: Json, profile: Json, ctx: Json = {}) =>
+    api.post('/api/agent/match', { intent, profile, ctx }),
+
+  /**
+   * §12 лестница расширения: на шаг шире по ОДНОЙ оси, а не «показать всех».
+   *
+   * axis обязателен по смыслу, хотя сервер и обходится без него: без параметра он молча берёт
+   * первую ось, и второе нажатие «Расширить поиск» возвращает ту же выдачу. Ступень выбирает
+   * клиент — он один знает, что уже пробовали.
+   */
+  expand: (intent: Json, profile: Json, axis: string, ctx: Json = {}) =>
+    api.post('/api/agent/expand', { intent, profile, axis, ctx }),
+};

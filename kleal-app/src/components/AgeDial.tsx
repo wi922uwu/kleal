@@ -32,7 +32,14 @@ function pointOf(frac: number) {
   return { x: CX + R * Math.cos(a), y: CY + R * Math.sin(a) };
 }
 
-export function AgeDial({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+export function AgeDial({
+  value, onChange, onDragChange,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  /** Пока крутят кольцо, лента под ним должна стоять. Подробнее — у PanResponder ниже. */
+  onDragChange?: (dragging: boolean) => void;
+}) {
   const frac = Math.max(0, Math.min(1, (value - MIN) / (MAX - MIN)));
 
   // Координаты берём ОТНОСИТЕЛЬНО самого круга (locationX/locationY), а не через замер его позиции
@@ -55,13 +62,32 @@ export function AgeDial({ value, onChange }: { value: number; onChange: (v: numb
     onChangeRef.current(Math.round(MIN + f * (MAX - MIN)));
   };
 
+  const dragRef = useRef(onDragChange);
+  dragRef.current = onDragChange;
+
+  /**
+   * Кольцо живёт внутри прокручиваемой ленты, и по умолчанию лента жест отбирает: палец идёт вниз —
+   * RN спрашивает у текущего «ответчика», отдаст ли он жест прокрутке, и ответ по умолчанию «да».
+   * Получалось, что кольцо крутится и вместе с ним едет весь экран.
+   *
+   * Отсюда три вещи сразу. Capture — забрать жест до детей. TerminationRequest false — не отдавать
+   * его ленте. onShouldBlockNativeResponder — то же самое для нативной прокрутки на Android, где
+   * одного JS-ответчика не хватает. И вдобавок лента на время выключается совсем: это единственное,
+   * что не зависит от версии RN.
+   */
   const pan = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: setFromTouch,
+        onStartShouldSetPanResponderCapture: () => true,
+        onMoveShouldSetPanResponderCapture: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
+        onPanResponderGrant: (e) => { dragRef.current?.(true); setFromTouch(e); },
         onPanResponderMove: setFromTouch,
+        onPanResponderRelease: () => dragRef.current?.(false),
+        onPanResponderTerminate: () => dragRef.current?.(false),
       }),
     []
   );

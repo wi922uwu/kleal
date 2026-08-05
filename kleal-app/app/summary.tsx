@@ -8,7 +8,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useLang, T, getLang } from '../src/i18n';
+import { useLang, T } from '../src/i18n';
 import { useOnb, profileForRegister, profileForAttach } from '../src/state';
 import { onboarding } from '../src/api';
 import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';

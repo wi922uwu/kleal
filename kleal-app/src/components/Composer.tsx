@@ -15,10 +15,13 @@ import { color, radius as rad, space } from '../theme';
 export function Composer({
   onBack,
   onSend,
+  placeholder,
   bottomInset = 0,
 }: {
   onBack?: () => void;
   onSend?: (text: string) => void;
+  /** Своя подсказка в поле. На шаге разговора про интересы это «Расскажи Kleal больше…». */
+  placeholder?: string;
   bottomInset?: number;
 }) {
   const [draft, setDraft] = useState('');
@@ -44,7 +47,7 @@ export function Composer({
           style={s.input}
           value={draft}
           onChangeText={setDraft}
-          placeholder={COMPOSER_PLACEHOLDER()}
+          placeholder={placeholder || COMPOSER_PLACEHOLDER()}
           placeholderTextColor={color.neutral400}
           onSubmitEditing={send}
           returnKeyType="send"
