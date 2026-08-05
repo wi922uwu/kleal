@@ -61,6 +61,21 @@ a.card:hover{border-color:#FECDD4;box-shadow:0 8px 24px rgba(245,69,92,.10);tran
 _HOP = {"host", "content-length", "connection", "keep-alive", "transfer-encoding",
         "te", "trailer", "upgrade", "accept-encoding", "content-encoding"}
 
+# Заголовки, которые шлюз выставляет САМ и потому не должен ещё и копировать сверху.
+#
+# Иначе они уезжают клиенту дважды, и для CORS это не косметика, а отказ: браузер видит
+# «Access-Control-Allow-Origin: *, *», считает значение недопустимым и роняет запрос целиком —
+# в консоли это выглядит как «Failed to fetch», без единого намёка на причину. Ловится только
+# так: buddy-service выставляет свой CORS, шлюз добавлял свой, и /api/buddy/* переставал
+# работать из веба, продолжая прекрасно работать из curl.
+_OWNED = {"server", "date", "access-control-allow-origin", "access-control-allow-headers",
+          "access-control-allow-methods", "access-control-max-age"}
+
+
+def _passthrough(k):
+    kl = k.lower()
+    return kl not in _HOP and kl not in _OWNED
+
 
 def route(path):
     """Resolve (upstream_base, forwarded_path). Order is load-bearing: API prefixes before the '/' default."""
@@ -138,7 +153,7 @@ class H(BaseHTTPRequestHandler):
                 if "text/event-stream" in (r.headers.get("Content-Type") or "").lower():
                     self.send_response(r.status)
                     for k, v in r.headers.items():
-                        if k.lower() not in _HOP and k.lower() != "content-length":
+                        if _passthrough(k) and k.lower() != "content-length":
                             self.send_header(k, v)
                     self._cors()
                     self.send_header("X-Accel-Buffering", "no")
@@ -159,7 +174,7 @@ class H(BaseHTTPRequestHandler):
                 body = r.read()
                 self.send_response(r.status)
                 for k, v in r.headers.items():
-                    if k.lower() not in _HOP:
+                    if _passthrough(k):
                         self.send_header(k, v)
                 self._cors()
                 self.send_header("Content-Length", str(len(body)))

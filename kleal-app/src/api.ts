@@ -87,6 +87,38 @@ export const onboarding = {
   photoUrl: (uid: string) => `${API_BASE}/api/onboarding/photo/${encodeURIComponent(uid)}.jpg`,
 };
 
+// ---------------------------------------------------------------- профиль
+
+export const profile = {
+  /** Прочитать сохранённую строку профиля. Ключ — имя: другого идентификатора у хранилища нет. */
+  get: (name: string) => api.post<{ user: Json | null }>('/api/onboarding/profile', { name }),
+
+  /**
+   * Изменить профиль. Сервер принимает только поля из своего белого списка (_PATCH_FIELDS) и молча
+   * выбрасывает остальные — то есть отправить сюда что попало не выйдет, но и узнать об этом можно
+   * только по ответу: {ok:false,"no editable fields in patch"}.
+   */
+  update: (name: string, patch: Json) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/onboarding/profile-update', { name, patch }),
+
+  /** Доступность (§4.4 receiving policy). Без `receiving` — просто чтение текущего статуса. */
+  receiving: (name: string, receiving: Json = {}) =>
+    api.post<{ ok?: boolean; status?: string; error?: string }>('/api/onboarding/receiving', { name, receiving }),
+};
+
+export const buddy = {
+  /**
+   * Переписать сводку под изменившийся профиль — адаптировать, а не дописать в конец.
+   * `personality` уезжает как материал, но НЕ как текст для копирования: это отдельное поле со
+   * своим владельцем (тест Kleal), и слипание этих двух текстов уже однажды съедало сводку.
+   */
+  resummary: (prof: Json, current: string, personality = '', lang = 'ru') =>
+    api.post<{ summary?: string }>('/api/buddy/resummary', { profile: prof, current, personality, lang }),
+
+  /** Итог теста личности: один вызов на все восемь ответов. */
+  persona: (payload: Json) => api.post<Json>('/api/buddy/persona', payload),
+};
+
 // ---------------------------------------------------------------- интенты и поиск
 
 export const agent = {

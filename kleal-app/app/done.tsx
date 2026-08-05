@@ -42,22 +42,37 @@ export default function Done() {
           <NavItem label={nav[1]} Icon={IconSearch} />
           <View style={{ width: 64 }} />
           <NavItem label={nav[2]} Icon={IconMessages} />
-          <NavItem label={nav[3]} Icon={IconProfile} />
+          {/* Из четырёх вкладок пока ведёт куда-то одна — остальные экраны ещё не перенесены.
+              Нажатие на нарисованную вкладку, которая молчит, читается как поломка, поэтому
+              работающая отличается цветом, а не только тем, что срабатывает. */}
+          <NavItem label={nav[3]} Icon={IconProfile} onPress={() => router.push('/profile')} />
         </View>
-        <View style={s.fab}>
+        <Pressable accessibilityRole="button" style={s.fab} onPress={() => router.push('/intent')}>
           <IconSpark size={28} />
-        </View>
+        </Pressable>
       </View>
     </View>
   );
 }
 
-function NavItem({ label, Icon }: { label: string; Icon: (p: any) => React.ReactElement }) {
+function NavItem({
+  label, Icon, onPress,
+}: {
+  label: string;
+  Icon: (p: any) => React.ReactElement;
+  onPress?: () => void;
+}) {
+  const live = !!onPress;
   return (
-    <View style={s.navItem}>
-      <Icon size={24} />
-      <Text style={s.navLabel}>{label}</Text>
-    </View>
+    <Pressable
+      accessibilityRole={live ? 'button' : undefined}
+      accessibilityState={{ disabled: !live }}
+      onPress={onPress}
+      style={({ pressed }) => [s.navItem, pressed && live && { opacity: 0.7 }]}
+    >
+      <Icon size={24} c={live ? color.fg : color.muted} />
+      <Text style={[s.navLabel, live && { color: color.fg }]}>{label}</Text>
+    </Pressable>
   );
 }
 
