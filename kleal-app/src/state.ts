@@ -124,6 +124,54 @@ export function applyDefaults() {
   set('permissions.rememberPreferences', false);
 }
 
+/**
+ * Слить профиль, вернувшийся от модели, с тем, что уже собрано.
+ *
+ * Модель отдаёт профиль ЦЕЛИКОМ, собранный из истории разговора, — и раньше он писался поверх.
+ * Пока разговор начинался со всех интересов сразу, это сходило с рук. Но «Добавить интересы» из
+ * профиля намеренно заводит разговор только про НОВОЕ, чтобы не переспрашивать про уже
+ * обсуждённое, — и профиль из такого разговора содержит одну йогу. Проверено: кофе, футбол и
+ * испанский исчезали молча.
+ *
+ * Поэтому слияние, а не замена: скаляры модель уточняет, списки только пополняются. Убрать
+ * что-либо из профиля можно на его же экране, явно, — но не побочным эффектом разговора.
+ */
+export function mergeProfile(cur: Profile, incoming: any): Profile {
+  const uniq = (a: any[], b: any[]) => Array.from(new Set([...(a || []), ...(b || [])]));
+  const out: any = { ...cur, ...(incoming || {}) };
+
+  out.interests = {
+    ...(cur.interests || {}),
+    ...((incoming && incoming.interests) || {}),
+    explicit: uniq(
+      (cur.interests || {}).explicit || [],
+      ((incoming && incoming.interests) || {}).explicit || []
+    ),
+    // Роли и опыт — словари по интересу: новые ключи добавляются, старые остаются.
+    roles: { ...((cur.interests as any) || {}).roles, ...(((incoming || {}).interests || {}).roles) },
+    experienceByInterest: {
+      ...((cur.interests as any) || {}).experienceByInterest,
+      ...(((incoming || {}).interests || {}).experienceByInterest),
+    },
+  };
+
+  out.languages = {
+    ...(cur.languages || {}),
+    ...((incoming && incoming.languages) || {}),
+    comfortable: uniq(
+      (cur.languages || {}).comfortable || [],
+      ((incoming && incoming.languages) || {}).comfortable || []
+    ),
+  };
+
+  out.geo = { ...(cur.geo || {}), ...((incoming && incoming.geo) || {}) };
+  out.safety = { ...(cur.safety || {}), ...((incoming && incoming.safety) || {}) };
+  out.permissions = { ...(cur.permissions || {}), ...((incoming && incoming.permissions) || {}) };
+  if (cur.photo) out.photo = cur.photo;          // фото модель не видит и вернуть не может
+
+  return out as Profile;
+}
+
 /** Профиль для /api/onboarding/register — с фото. */
 export function profileForRegister(): Profile {
   return { ...state.profile };

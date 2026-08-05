@@ -15,7 +15,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import {
@@ -24,7 +24,7 @@ import {
   hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME, FUNNEL, FUNNEL_OUT_RE,
 } from '../src/onboarding';
 import { useLang, T, getLang } from '../src/i18n';
-import { useOnb, set, patch, reset, profileForAttach } from '../src/state';
+import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area } from '../src/components/AreaPicker';
@@ -36,6 +36,9 @@ type Msg = { who: 'bot' | 'me'; text: string; at: string; photo?: string };
 /** Реплика в истории, которая уходит модели. Отличается от Msg: у неё роль, а не сторона экрана. */
 type Msg2 = { role: string; content: string };
 
+/** Порядок шагов — он же список допустимых значений для входа по ссылке. */
+const ORDER: StepId[] = ['start', 'basics', 'area', 'languages', 'hobbies', 'photo'];
+
 const now = () =>
   new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
     hour: '2-digit', minute: '2-digit', hour12: getLang() !== 'ru',
@@ -46,6 +49,17 @@ export default function Chat() {
   const router = useRouter();
   const st = useOnb();
   const scroller = useRef<ScrollView>(null);
+  /**
+   * Вход с конкретного шага — из профиля («Добавить интересы»). Без него кнопка вела просто в
+   * /chat, онбординг продолжал с того места, где человек остановился, и предложение добавить
+   * интересы заканчивалось просьбой сделать фото.
+   *
+   * `back` — куда вернуться, когда с этим шагом закончено. Пусто = обычный онбординг, дальше по
+   * сценарию.
+   */
+  const params = useLocalSearchParams<{ step?: string; back?: string }>();
+  const entry = ORDER.includes(String(params.step) as StepId) ? (String(params.step) as StepId) : null;
+  const back = params.back ? String(params.back) : '';
 
   const [thread, setThread] = useState<Msg[]>([]);
   const [step, setStep] = useState<StepId>('start');
@@ -76,8 +90,9 @@ export default function Chat() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    const resumed = hasProgress(st.profile);
-    const at = resumeStep(st.profile);
+    // Явный вход не «продолжает с того места»: человек пришёл за конкретной вещью.
+    const resumed = !entry && hasProgress(st.profile);
+    const at = entry || resumeStep(st.profile);
     setStep(at);
     setTyping(true);
     setTimeout(() => {
@@ -91,6 +106,13 @@ export default function Chat() {
           : at === 'hobbies' ? STEP_HOBBIES.bot()
           : STEP_PHOTO.ask();
         setTimeout(() => say('bot', line), 700);
+      } else if (entry) {
+        say('bot',
+          entry === 'hobbies' ? STEP_HOBBIES.bot()
+          : entry === 'languages' ? STEP_LANGUAGES.bot()
+          : entry === 'area' ? STEP_AREA.bot()
+          : entry === 'basics' ? STEP_BASICS.bot()
+          : STEP_START.ask());
       } else {
         say('bot', STEP_START.ask());
       }
@@ -169,9 +191,10 @@ export default function Chat() {
       } else {
         setFunnel(next);
       }
+      // Слияние, а не замена: подробности в mergeProfile. Замена стирала всё, о чём в ЭТОМ
+      // разговоре не заходила речь.
       if (r?.profile && typeof r.profile === 'object') {
-        const photo = st.profile.photo;                  // модель фото не возвращает — сохраняем своё
-        patch({ profile: photo ? { ...r.profile, photo } : r.profile });
+        patch({ profile: mergeProfile(getState().profile, r.profile) });
       }
       const opts: string[] = Array.isArray(r?.options) ? r.options.map(String) : [];
       setFunnelOpts(opts);
@@ -202,6 +225,9 @@ export default function Chat() {
 
   const leaveFunnel = () => {
     setFunnelOpts([]);
+    // Пришли из профиля — туда и возвращаемся. replace, а не push: разговор закончен, и «назад»
+    // из профиля не должно приводить обратно в него.
+    if (back) { router.replace(back as any); return; }
     setStep('photo');
     botAfter(STEP_PHOTO.greet(st.profile.name || ''));
     setTimeout(() => say('bot', STEP_PHOTO.ask()), 1900);
@@ -222,7 +248,9 @@ export default function Chat() {
     funnelTurn(text);
   };
 
-  const pct = STEP_PROGRESS[step] ?? 0;
+  // Процент — это «сколько пройдено онбординга». Для того, кто зашёл из профиля дополнить одну
+  // вещь, число не значит ничего, поэтому полосы там просто нет.
+  const pct = entry ? null : (STEP_PROGRESS[step] ?? 0);
 
   return (
     <ChatShell
@@ -284,7 +312,7 @@ function StepWidget({
   if (step === 'basics') return <BasicsW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'area') return <AreaW say={say} goto={goto} />;
   if (step === 'languages') return <LangW say={say} goto={goto} />;
-  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} />;
+  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} />;
   if (step === 'funnel') return <FunnelW {...funnel} say={say} />;
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -478,8 +506,17 @@ function FunnelW({ opts, done, ask, leave, say }: FunnelBits & { say: any }) {
   );
 }
 
-function HobbyW({ say, startFunnel }: any) {
-  const [sel, setSel] = useState<string[]>([]);
+/**
+ * A.08 — увлечения.
+ *
+ * Уже выбранное отмечено с самого начала, и это не удобство, а защита. Виджет писал
+ * `set('interests.explicit', sel)` из пустого списка, то есть при повторном заходе на этот шаг
+ * СТИРАЛ все интересы и заменял их новым выбором. Пока сюда нельзя было вернуться, это не
+ * проявлялось; кнопка «Добавить интересы» в профиле делает вход обычным делом.
+ */
+function HobbyW({ say, startFunnel, leaveFunnel }: any) {
+  const had: string[] = get('interests.explicit') || [];
+  const [sel, setSel] = useState<string[]>(had);
   const toggle = (k: string) => setSel((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
   return (
     <View style={cs.widget}>
@@ -496,13 +533,17 @@ function HobbyW({ say, startFunnel }: any) {
         onPress={() => {
           set('interests.explicit', sel);
           say('me', sel.map(hobbyPlain).join(', '));
+          // Расспрашиваем только про НОВОЕ: про то, что уже обсуждали, спрашивать заново — значит
+          // показывать, что услышанное не сохранилось.
+          const added = sel.filter((k) => !had.includes(k));
+          if (!added.length) { leaveFunnel(); return; }
           // Дальше не фото, а разговор: чипы говорят ЧТО выбрано, но не как человек этим занят.
           //
           // В затравку уходят КЛЮЧИ (coffee, photography), а не подписи («Кофе», «Фото»). Разговор
           // ведёт модель, и она же переписывает профиль целиком — с русскими подписями в истории
           // она и в interests.explicit кладёт «Кофе». Матчинг ищет по ключам: «Кофе» не совпадёт
           // с coffee ни у кого. Проверено — так и было, пока сюда уходили подписи.
-          startFunnel(sel);
+          startFunnel(added);
         }}
       />
     </View>

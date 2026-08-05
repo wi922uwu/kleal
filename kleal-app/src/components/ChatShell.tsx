@@ -18,7 +18,8 @@ export type Bubble = { who: 'bot' | 'me'; text: string; at: string; photo?: stri
 
 export const ChatShell = forwardRef<ScrollView, {
   title: string;
-  pct: number;
+  /** null — полосы и процента нет вовсе: шаг открыт не в рамках онбординга. */
+  pct: number | null;
   thread: Bubble[];
   typing?: boolean;
   /** Виджет текущего шага — живёт ВНУТРИ ленты, под последней репликой. */
@@ -46,11 +47,13 @@ export const ChatShell = forwardRef<ScrollView, {
           <View style={s.avatar} />
           <Text style={s.headTitle}>{title}</Text>
           {headerExtra}
-          <Text style={s.headPct}>{pct}%</Text>
+          {pct == null ? null : <Text style={s.headPct}>{pct}%</Text>}
         </View>
-        <View style={s.track}>
-          <View style={[s.trackFill, { width: `${pct}%` }]} />
-        </View>
+        {pct == null ? null : (
+          <View style={s.track}>
+            <View style={[s.trackFill, { width: `${pct}%` }]} />
+          </View>
+        )}
 
         <ScrollView
           ref={scroller as any}
