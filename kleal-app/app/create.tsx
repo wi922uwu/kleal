@@ -24,7 +24,7 @@ import { IconChevronLeft, IconMic, IconSpark } from '../src/components/icons';
 import { useLang, getLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { buddy as buddyApi } from '../src/api';
-import { CREATE, activityOf, Turn } from '../src/buddy';
+import { CREATE, activityOf, unpackHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string };
@@ -41,11 +41,19 @@ export default function Create() {
   const insets = useSafeAreaInsets();
   const scroller = useRef<ScrollView>(null);
 
-  /** Тема, с которой пришли из разговора с Бадди. Если она есть — вариантов не спрашиваем. */
-  const seed = String(useLocalSearchParams<{ seed?: string }>().seed || '').trim();
+  /**
+   * Что пришло из разговора с Бадди: тема и сам разговор.
+   *
+   * История не показывается в ленте — экран начинается с того, ради чего сюда пришли, — но уходит
+   * СЕРВЕРУ. Иначе фраза вроде «поговорить с кем-то об этом» приезжает без «этого», и построитель
+   * переспрашивает то, что человек уже рассказал в предыдущем чате.
+   */
+  const params = useLocalSearchParams<{ seed?: string; history?: string }>();
+  const seed = String(params.seed || '').trim();
+  const history = unpackHistory(params.history);
 
   const [thread, setThread] = useState<Msg[]>([]);
-  const [turns, setTurns] = useState<Turn[]>([]);
+  const [turns, setTurns] = useState<Turn[]>(history);
   const [draft, setDraft] = useState('');
   const [typing, setTyping] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -111,7 +119,7 @@ export default function Create() {
     started.current = true;
     if (seed) {
       say('me', seed);
-      ask(seed, []);
+      ask(seed, history);
     } else {
       loadSuggestions();
     }

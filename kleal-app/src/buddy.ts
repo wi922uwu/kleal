@@ -82,3 +82,33 @@ export function activityOf(res: any, fallback = ''): string {
 }
 
 export type Turn = { role: string; content: string };
+
+/**
+ * История разговора, которую создание интента получает вместе с темой.
+ *
+ * Без неё построитель видел одну последнюю фразу — а она сплошь и рядом ссылается назад: «я хочу
+ * поговорить с кем-то ОБ ЭТОМ». Что такое «это», знает только предыдущий разговор, и агент честно
+ * переспрашивал «о чём хочется поговорить?», забыв всё, что человек ему только что рассказал.
+ *
+ * Сервер к такому готов: intent_build распознаёт отсылку назад и достаёт предмет из истории. Ему
+ * нужно только эту историю дать.
+ *
+ * Режется, потому что едет параметром маршрута: восемь последних реплик по 400 символов хватает,
+ * чтобы «это» разрешилось, и не превращает переход в километровую ссылку.
+ */
+export function packHistory(turns: Turn[]): string {
+  const tail = (turns || []).slice(-8).map((t) => ({
+    role: String(t.role || 'user'),
+    content: String(t.content || '').slice(0, 400),
+  }));
+  return tail.length ? JSON.stringify(tail) : '';
+}
+
+export function unpackHistory(raw: unknown): Turn[] {
+  try {
+    const v = JSON.parse(String(raw || '[]'));
+    return Array.isArray(v) ? v.filter((t) => t && t.content) : [];
+  } catch {
+    return [];
+  }
+}

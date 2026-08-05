@@ -19,7 +19,7 @@ import { IconChevronLeft, IconMic } from '../src/components/icons';
 import { useLang, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { buddy as buddyApi } from '../src/api';
-import { BUDDY, SHEET, looksLikeIntent, Turn } from '../src/buddy';
+import { BUDDY, SHEET, looksLikeIntent, packHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string };
@@ -106,9 +106,21 @@ export default function Buddy() {
     send(t, turns);
   };
 
+  /**
+   * В создание уезжает не только последняя фраза, но и весь разговор до неё. «Поговорить с кем-то
+   * ОБ ЭТОМ» без истории не значит ничего — построитель переспрашивал «о чём?», хотя человек
+   * рассказывал ему это минуту назад.
+   */
   const toCreate = () => {
     setSheet(false);
-    router.push({ pathname: '/create', params: topic ? { seed: topic } : {} });
+    const params: Record<string, string> = {};
+    if (topic) params.seed = topic;
+    // Затравка уже лежит последней в turns — в историю для сервера она попадёт оттуда, поэтому
+    // здесь отрезаем её, чтобы не уехала дважды.
+    const hist = topic ? turns.filter((t) => t.content !== topic) : turns;
+    const packed = packHistory(hist);
+    if (packed) params.history = packed;
+    router.push({ pathname: '/create', params });
   };
 
   return (

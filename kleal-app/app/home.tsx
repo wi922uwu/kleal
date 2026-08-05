@@ -17,7 +17,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Image, TextInput,
+  View, Text, StyleSheet, ScrollView, Pressable, Image,
   ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform, Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -49,7 +49,6 @@ export default function Home() {
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [ask, setAsk] = useState('');
   /**
    * Высота нижней панели. Меряется, а не задаётся числом: она складывается из своей полосы и
    * безопасной зоны, которая на разных телефонах разная.
@@ -103,16 +102,13 @@ export default function Home() {
   };
 
   /**
-   * С главного экрана текст уходит в разговор с Бадди (O.01 → O.02), а не в мастер интента.
-   * Бадди просто отвечает; интент из сказанного заведётся только если человек сам этого захочет
-   * во всплывающем окне.
+   * Поле на главной — не поле, а кнопка.
+   *
+   * Печатать тут негде: разговор идёт в чате с Бадди, и набирать первую фразу на одном экране,
+   * чтобы дочитать ответ на другом, незачем. Нажатие сразу открывает чат, клавиатура поднимается
+   * уже там — под лентой, в которую человек и смотрит.
    */
-  const send = () => {
-    const q = ask.trim();
-    if (!q) return;
-    setAsk('');
-    router.push({ pathname: '/buddy', params: { q } });
-  };
+  const toBuddy = () => router.push('/buddy');
 
   const myArea = st.profile.city || '';
   const inv = invites[0];
@@ -174,20 +170,15 @@ export default function Home() {
             <View style={s.askAvatar}>
               <IconImagePlaceholder size={22} />
             </View>
-            <View style={s.askField}>
-              <TextInput
-                style={s.askInput}
-                value={ask}
-                onChangeText={setAsk}
-                placeholder={HOME.ask()}
-                placeholderTextColor={color.neutral400}
-                onSubmitEditing={send}
-                returnKeyType="send"
-              />
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={send}>
-                <IconMic />
-              </Pressable>
-            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={HOME.ask()}
+              style={({ pressed }) => [s.askField, pressed && { opacity: 0.85 }]}
+              onPress={toBuddy}
+            >
+              <Text style={s.askText}>{HOME.ask()}</Text>
+              <IconMic />
+            </Pressable>
           </View>
           <Pressable accessibilityRole="button" style={s.hist} onPress={() => router.push('/buddy')}>
             <IconChat />
@@ -408,7 +399,7 @@ const s = StyleSheet.create({
     flex: 1, height: 50, borderRadius: rad.full, backgroundColor: color.card,
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, gap: space.sm,
   },
-  askInput: { flex: 1, color: color.fg, fontSize: 15 },
+  askText: { flex: 1, color: color.neutral400, fontSize: 15 },
   navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   hist: {
     alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8,
