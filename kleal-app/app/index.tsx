@@ -27,7 +27,7 @@ export default function Splash() {
    * replace, а не push: интро не должно оставаться в истории позади главного экрана.
    */
   useEffect(() => {
-    if (st.login && st.done) router.replace('/done');
+    if (st.login && st.done) router.replace('/home');
   }, [st.login, st.done]);
 
   const slides = SLIDES();

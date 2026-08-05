@@ -54,7 +54,7 @@ export default function Login() {
         // сервере. Теперь профиль забирается, и онбординг пропускается.
         if (res.hasProfile && res.profile && typeof res.profile === 'object') {
           patch({ login: login.trim(), done: true, profile: res.profile });
-          router.replace('/done');
+          router.replace('/home');
           return;
         }
         patch({ login: login.trim() });

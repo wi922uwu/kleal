@@ -92,7 +92,7 @@ export default function Chat() {
     // Онбординг уже пройден, а сюда попали не за конкретным шагом — значит это перезапуск
     // приложения, а не продолжение анкеты. Expo Go после обновления открывает последний маршрут,
     // и человек, давно закончивший, каждый раз оказывался на шаге фото.
-    if (st.done && !entry) { router.replace('/done'); return; }
+    if (st.done && !entry) { router.replace('/home'); return; }
     started.current = true;
     // Явный вход не «продолжает с того места»: человек пришёл за конкретной вещью.
     const resumed = !entry && hasProgress(st.profile);

@@ -142,4 +142,27 @@ export const agent = {
    */
   expand: (intent: Json, profile: Json, axis: string, ctx: Json = {}) =>
     api.post('/api/agent/expand', { intent, profile, axis, ctx }),
+
+  /** Группы, к которым можно присоединиться. Это планы, а не «люди с похожими интересами». */
+  groups: (self: string, limit = 60) =>
+    api.get<{ groups?: Json[] }>(
+      `/api/agent/groups?limit=${limit}&self=${encodeURIComponent(self)}`
+    ),
+
+  /** Открытые планы вокруг. GET — общий список, без учёта профиля. */
+  explore: (self: string, limit = 60) =>
+    api.get<{ plans?: Json[] }>(
+      `/api/agent/explore?limit=${limit}&self=${encodeURIComponent(self)}`
+    ),
+
+  /**
+   * То же, но с профилем: сервер отбирает только совместимые интенты. Главный экран строже
+   * обзора — там показываются люди, к которым есть смысл обращаться, а не все подряд.
+   */
+  forYou: (self: string, prof: Json, limit = 30) =>
+    api.post<{ plans?: Json[] }>('/api/agent/explore', { limit, self, profile: prof }),
+
+  /** Входящие приглашения. Просроченные и отозванные сервер отсекает сам. */
+  inbox: (self: string) =>
+    api.get<{ requests?: Json[] }>(`/api/agent/inbox?self=${encodeURIComponent(self)}`),
 };

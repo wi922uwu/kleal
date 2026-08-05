@@ -76,9 +76,7 @@ export default function Summary() {
       // Отметка ставится ТОЛЬКО после успешной записи: иначе следующий запуск пустил бы человека
       // в приложение с профилем, которого на сервере нет.
       patch({ done: true });
-      // fresh=1 — «онбординг только что закончился». Без него главный экран поздравлял бы с
-      // завершением при каждом запуске приложения.
-      router.replace('/done?fresh=1');
+      router.replace('/done');
     } catch {
       setErr(T('Профиль не сохранился. Проверь связь и попробуй ещё раз.',
                'Your profile didn’t save. Check your connection and try again.'));

@@ -92,3 +92,48 @@ export const IconPerson = ({ size = 26, c = color.neutral400 }: P) => (
     <Path d="M5 19.5a7 7 0 0 1 14 0" />
   </Svg>
 );
+
+// ---------------------------------------------------------------- главный экран
+
+export const IconBell = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M18 8.5a6 6 0 1 0-12 0c0 5-2 6.5-2 6.5h16s-2-1.5-2-6.5z" />
+    <Path d="M13.7 19a2 2 0 0 1-3.4 0" />
+  </Svg>
+);
+
+export const IconCalendar = ({ size = 16, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round">
+    <Rect x={3.5} y={5} width={17} height={16} rx={3} />
+    <Line x1={3.5} y1={10} x2={20.5} y2={10} />
+    <Line x1={8} y1={3} x2={8} y2={6} />
+    <Line x1={16} y1={3} x2={16} y2={6} />
+  </Svg>
+);
+
+export const IconClock = ({ size = 16, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx={12} cy={12} r={8.6} />
+    <Path d="M12 7.4V12l3.1 1.9" />
+  </Svg>
+);
+
+export const IconBookmark = ({ size = 20, c = color.fg, filled = false }: P & { filled?: boolean }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? c : 'none'} stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M6.5 4.5h11a1 1 0 0 1 1 1V20l-6.5-4-6.5 4V5.5a1 1 0 0 1 1-1z" />
+  </Svg>
+);
+
+export const IconChat = ({ size = 18, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M20.5 11.4c0 3.9-3.8 7-8.5 7-1 0-1.9-.13-2.8-.37L4 20l1.2-3.2A6.9 6.9 0 0 1 3.5 11.4c0-3.9 3.8-7 8.5-7s8.5 3.1 8.5 7z" />
+  </Svg>
+);
+
+export const IconGroups = ({ size = 18, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx={9} cy={9} r={3.2} />
+    <Path d="M3.5 18.5a5.6 5.6 0 0 1 11 0" />
+    <Path d="M16 6.4a3.2 3.2 0 0 1 0 6.2M17.2 14.4a5.6 5.6 0 0 1 3.3 4.1" />
+  </Svg>
+);
