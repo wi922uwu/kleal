@@ -75,6 +75,12 @@ export default function Chat() {
   // чистого листа. Иначе внутри них остаётся своё состояние: спрятанные кнопки первого кадра,
   // выбранные увлечения, набранный возраст — всё от предыдущей попытки, которой уже нет.
   const [runId, setRunId] = useState(0);
+  /**
+   * «+ Добавить своё» ставит курсор в поле ввода. Раньше эти чипы были нарисованы и не нажимались
+   * вовсе: подсказка звала написать своё, а кнопка под ней ничего не делала.
+   */
+  const [focusN, setFocusN] = useState(0);
+  const focusComposer = () => setFocusN((n) => n + 1);
   const started = useRef(false);
 
   const say = useCallback((who: 'bot' | 'me', text: string, photo?: string) => {
@@ -267,6 +273,7 @@ export default function Chat() {
       onSend={send}
       scrollEnabled={!dragging}
       composerPlaceholder={step === 'funnel' ? FUNNEL.compose() : undefined}
+      focusSignal={focusN}
       headerExtra={
         hasProgress(st.profile) ? (
           <Pressable accessibilityRole="button" onPress={restart} hitSlop={10}>
@@ -277,6 +284,7 @@ export default function Chat() {
       widget={
         <StepWidget
           key={runId}
+          focusComposer={focusComposer}
           step={step}
           say={say}
           goto={goto}
@@ -300,7 +308,7 @@ type FunnelBits = {
 };
 
 function StepWidget({
-  step, say, goto, onDone, onDrag, startFunnel, funnel,
+  step, say, goto, onDone, onDrag, startFunnel, funnel, focusComposer,
 }: {
   step: StepId;
   say: (who: 'bot' | 'me', text: string, photo?: string) => void;
@@ -309,14 +317,15 @@ function StepWidget({
   onDrag: (dragging: boolean) => void;
   startFunnel: (picks: string[]) => void;
   funnel: FunnelBits;
+  focusComposer: () => void;
 }) {
   const st = useOnb();
 
   if (step === 'start') return <StartW say={say} goto={goto} />;
   if (step === 'basics') return <BasicsW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'area') return <AreaW say={say} goto={goto} />;
-  if (step === 'languages') return <LangW say={say} goto={goto} />;
-  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} />;
+  if (step === 'languages') return <LangW say={say} goto={goto} focusComposer={focusComposer} />;
+  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} focusComposer={focusComposer} />;
   if (step === 'funnel') return <FunnelW {...funnel} say={say} />;
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -451,7 +460,7 @@ function AreaW({ say, goto }: any) {
 }
 
 /** A.07 — языки с флагами. */
-function LangW({ say, goto }: any) {
+function LangW({ say, goto, focusComposer }: any) {
   const [sel, setSel] = useState<string[]>([]);
   const toggle = (k: string) => setSel((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
   return (
@@ -461,7 +470,7 @@ function LangW({ say, goto }: any) {
         {LANGS.map(([k]) => (
           <Chip key={k} label={langLabel(k)} on={sel.includes(k)} onPress={() => toggle(k)} />
         ))}
-        <Chip label={'+ ' + STEP_LANGUAGES.own()} />
+        <Chip label={'+ ' + STEP_LANGUAGES.own()} onPress={focusComposer} />
       </View>
       <Cta
         label={STEP_LANGUAGES.cta()}
@@ -518,7 +527,7 @@ function FunnelW({ opts, done, ask, leave, say }: FunnelBits & { say: any }) {
  * СТИРАЛ все интересы и заменял их новым выбором. Пока сюда нельзя было вернуться, это не
  * проявлялось; кнопка «Добавить интересы» в профиле делает вход обычным делом.
  */
-function HobbyW({ say, startFunnel, leaveFunnel }: any) {
+function HobbyW({ say, startFunnel, leaveFunnel, focusComposer }: any) {
   const had: string[] = get('interests.explicit') || [];
   const [sel, setSel] = useState<string[]>(had);
   const toggle = (k: string) => setSel((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
@@ -529,7 +538,7 @@ function HobbyW({ say, startFunnel, leaveFunnel }: any) {
         {HOBBIES.map(([k]) => (
           <Chip key={k} label={hobbyLabel(k)} on={sel.includes(k)} onPress={() => toggle(k)} />
         ))}
-        <Chip label={'+ ' + STEP_HOBBIES.own()} />
+        <Chip label={'+ ' + STEP_HOBBIES.own()} onPress={focusComposer} />
       </View>
       <Cta
         label={STEP_HOBBIES.cta()}

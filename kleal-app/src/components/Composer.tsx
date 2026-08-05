@@ -5,7 +5,7 @@
  * summary») показывает её под кнопкой «Done». Это осмысленно — разговор с агентом не заканчивается
  * на последнем шаге анкеты, сводку тоже можно поправить словами.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, TextInput, Pressable, StyleSheet } from 'react-native';
 import { COMPOSER_PLACEHOLDER } from '../onboarding';
 import { T } from '../i18n';
@@ -16,15 +16,26 @@ export function Composer({
   onBack,
   onSend,
   placeholder,
+  focusSignal,
   bottomInset = 0,
 }: {
   onBack?: () => void;
   onSend?: (text: string) => void;
   /** Своя подсказка в поле. На шаге разговора про интересы это «Расскажи Kleal больше…». */
   placeholder?: string;
+  /**
+   * Счётчик, по изменению которого поле получает фокус. Число, а не булево: «поставь курсор» —
+   * это событие, оно повторяется, и второе нажатие на ту же кнопку тоже должно сработать.
+   */
+  focusSignal?: number;
   bottomInset?: number;
 }) {
   const [draft, setDraft] = useState('');
+  const input = useRef<TextInput>(null);
+
+  useEffect(() => {
+    if (focusSignal) input.current?.focus();
+  }, [focusSignal]);
   const send = () => {
     const t = draft.trim();
     if (!t || !onSend) return;
@@ -44,6 +55,7 @@ export function Composer({
       </Pressable>
       <View style={s.field}>
         <TextInput
+          ref={input}
           style={s.input}
           value={draft}
           onChangeText={setDraft}

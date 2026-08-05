@@ -9,7 +9,7 @@ import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useLang, T } from '../src/i18n';
-import { useOnb, patch, profileForRegister, profileForAttach } from '../src/state';
+import { useOnb, patch, set, profileForRegister, profileForAttach } from '../src/state';
 import { onboarding } from '../src/api';
 import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';
 import { Composer } from '../src/components/Composer';
@@ -45,7 +45,15 @@ export default function Summary() {
     let alive = true;
     onboarding
       .summary(profileForAttach())
-      .then((r: any) => alive && setText(String(r?.summary || '')))
+      .then((r: any) => {
+        if (!alive) return;
+        const next = String(r?.summary || '').trim();
+        setText(next);
+        // Сводку надо СОХРАНИТЬ, а не только показать. Раньше она жила в состоянии этого экрана и
+        // пропадала при уходе с него: профиль потом навсегда показывал «Kleal опишет тебя здесь»,
+        // хотя описание уже было составлено минуту назад.
+        if (next) { set('summary', next); set('summaryUpdated', Date.now()); }
+      })
       .catch(() => {});
     return () => { alive = false; };
   }, []);

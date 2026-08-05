@@ -33,10 +33,12 @@ export const ChatShell = forwardRef<ScrollView, {
   scrollEnabled?: boolean;
   /** Подсказка в поле ввода, когда она зависит от шага. */
   composerPlaceholder?: string;
+  /** Поставить курсор в поле ввода — по кнопке «написать своё». */
+  focusSignal?: number;
   onBack?: () => void;
   onSend?: (text: string) => void;
 }>(function ChatShell(
-  { title, pct, thread, typing, widget, headerExtra, scrollEnabled = true, composerPlaceholder, onBack, onSend },
+  { title, pct, thread, typing, widget, headerExtra, scrollEnabled = true, composerPlaceholder, focusSignal, onBack, onSend },
   scroller
 ) {
   const insets = useSafeAreaInsets();
@@ -83,7 +85,7 @@ export const ChatShell = forwardRef<ScrollView, {
           {!typing ? widget : null}
         </ScrollView>
 
-        <Composer onBack={onBack} onSend={onSend} placeholder={composerPlaceholder} bottomInset={insets.bottom} />
+        <Composer onBack={onBack} onSend={onSend} placeholder={composerPlaceholder} focusSignal={focusSignal} bottomInset={insets.bottom} />
       </View>
     </KeyboardAvoidingView>
   );

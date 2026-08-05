@@ -7,7 +7,7 @@
  * Наполненность считается, а не показывается красивым числом: шесть признаков, доля заполненных.
  * Полоса, которая всегда одна и та же, ничего не сообщает.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, NavRow, Segments } from '../../src/components/ProfileShell';
@@ -97,6 +97,22 @@ export default function ProfileHub() {
   const summary = String((p as any).summary || '');
   const updated = fmtUpdated((p as any).summaryUpdated);
 
+  /**
+   * Сводки нет — составить её самому, один раз.
+   *
+   * Так же устроен веб (ensureSummary): пустая карточка на главном экране профиля означала бы, что
+   * Kleal ничего о человеке не понял, хотя профиль заполнен. Условие «есть что описывать» тоже
+   * оттуда: пока в профиле меньше двух содержательных вещей, описывать нечего, и просить у модели
+   * текст про пустоту — значит получить выдумку.
+   */
+  const autoTried = useRef(false);
+  useEffect(() => {
+    if (autoTried.current || busy || summary) return;
+    if (d.interests.length + d.basics.length < 2) return;
+    autoTried.current = true;
+    rewrite();
+  }, [summary, d.interests.length, d.basics.length, busy]);
+
   return (
     <ProfileShell title={PROFILE_TITLE()} onBack={() => router.back()} nav={<BottomNav active="profile" />}>
       <Card>
@@ -153,7 +169,9 @@ export default function ProfileHub() {
           </>
         ) : (
           <>
-            <Text style={s.sumText}>{summary || HUB.empty()}</Text>
+            <Text style={s.sumText}>
+              {summary || (busy ? HUB.writing() : HUB.empty())}
+            </Text>
             <View style={s.linkRow}>
               <Pressable accessibilityRole="button" onPress={() => { setDraft(summary); setEditing(true); }}>
                 <Text style={s.link}>{HUB.edit()}</Text>
