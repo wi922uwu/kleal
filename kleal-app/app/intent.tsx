@@ -8,7 +8,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { ChatShell, Bubble, chatStyles as cs } from '../src/components/ChatShell';
 import { AgeRange } from '../src/components/AgeRange';
 import {
@@ -64,17 +64,9 @@ export default function Intent() {
     setThread((t) => [...t, { who, text, at: now() }]);
   }, []);
 
-  /**
-   * Текст, написанный на главном экране. Он уже сказан вслух, и мастер обязан его услышать:
-   * открыть после него первый вопрос «что хочешь сделать?» значило бы переспросить ровно то, на
-   * что человек только что ответил.
-   */
-  const q = String(useLocalSearchParams<{ q?: string }>().q || '').trim();
-
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    if (q) { send(q); return; }
     setTyping(true);
     setTimeout(() => { setTyping(false); say('bot', STEP_WHAT.bot()); }, 450);
   }, [say]);

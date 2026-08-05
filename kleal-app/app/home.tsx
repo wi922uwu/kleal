@@ -102,13 +102,9 @@ export default function Home() {
     setRefreshing(false);
   };
 
-  /** Свободный текст с главного экрана — тот же вход, что и мастер интента, только сразу словами. */
-  const send = () => {
-    const q = ask.trim();
-    if (!q) return;
-    setAsk('');
-    router.push({ pathname: '/intent', params: { q } });
-  };
+  // Что происходит после отправки текста — пока не решено. Прежний переход вёл в мастер интента
+  // (OF.04–OF.10), и это оказался не тот экран. Поле осталось, отправка НИКУДА не ведёт: лучше
+  // видимое отсутствие продолжения, чем переход не туда.
 
   const myArea = st.profile.city || '';
   const inv = invites[0];
@@ -177,12 +173,8 @@ export default function Home() {
                 onChangeText={setAsk}
                 placeholder={HOME.ask()}
                 placeholderTextColor={color.neutral400}
-                onSubmitEditing={send}
-                returnKeyType="send"
               />
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={send}>
-                <IconMic />
-              </Pressable>
+              <IconMic />
             </View>
           </View>
           <Pressable accessibilityRole="button" style={s.hist} onPress={() => router.push('/chat')}>
