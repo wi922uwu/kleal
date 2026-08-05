@@ -58,7 +58,7 @@ export function BottomNav({ active }: { active?: Tab }) {
         accessibilityRole="button"
         accessibilityLabel={NAV_FAB()}
         style={s.fab}
-        onPress={() => router.push('/intent')}
+        onPress={() => router.replace('/home')}
       >
         <IconSpark size={28} />
       </Pressable>
@@ -66,7 +66,12 @@ export function BottomNav({ active }: { active?: Tab }) {
   );
 }
 
-const NAV_FAB = () => T('Создать интент', 'Create intent');
+/**
+ * Центральная кнопка — это «домой», а не «создать интент». Интент заводится текстом на главной
+ * («Чем хочешь заняться?») или карточкой, а самая крупная кнопка панели нужна, чтобы одним
+ * нажатием вернуться из любого места приложения.
+ */
+const NAV_FAB = () => T('Главная', 'Home');
 
 const s = StyleSheet.create({
   wrap: { paddingHorizontal: 14 },

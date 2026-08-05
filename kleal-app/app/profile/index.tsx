@@ -11,6 +11,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, NavRow, Segments } from '../../src/components/ProfileShell';
+import { BottomNav } from '../../src/components/BottomNav';
 import { IconPerson } from '../../src/components/icons';
 import { useLang, T, getLang, setLang } from '../../src/i18n';
 import { useOnb, set, reset, profileForAttach } from '../../src/state';
@@ -97,7 +98,7 @@ export default function ProfileHub() {
   const updated = fmtUpdated((p as any).summaryUpdated);
 
   return (
-    <ProfileShell title={PROFILE_TITLE()} onBack={() => router.back()}>
+    <ProfileShell title={PROFILE_TITLE()} onBack={() => router.back()} nav={<BottomNav active="profile" />}>
       <Card>
         <View style={s.idRow}>
           <Pressable accessibilityRole="button" accessibilityLabel={T('Фото профиля', 'Profile photo')}>

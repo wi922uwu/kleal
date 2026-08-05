@@ -50,6 +50,11 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [ask, setAsk] = useState('');
+  /**
+   * Высота нижней панели. Меряется, а не задаётся числом: она складывается из своей полосы и
+   * безопасной зоны, которая на разных телефонах разная.
+   */
+  const [navH, setNavH] = useState(96);
 
   /**
    * Три запроса разом, и каждый со своим catch: одна упавшая лента не должна уносить остальные.
@@ -146,7 +151,7 @@ export default function Home() {
           )}
         </ScrollView>
 
-        <View style={s.dock}>
+        <View style={[s.dock, { paddingBottom: navH + 6 }]}>
           <View style={s.askRow}>
             <View style={s.askAvatar}>
               <IconImagePlaceholder size={22} />
@@ -173,8 +178,20 @@ export default function Home() {
           </Pressable>
         </View>
 
-        <BottomNav />
       </KeyboardAvoidingView>
+
+      {/*
+        Панель ВНЕ KeyboardAvoidingView и прибита к низу экрана. Пока она была внутри, клавиатура
+        поднимала её вместе с полем ввода — а ей место внизу, под клавиатурой: наверх едет только то,
+        что человек в этот момент заполняет.
+      */}
+      <View
+        style={s.navFloat}
+        onLayout={(e) => setNavH(e.nativeEvent.layout.height)}
+        pointerEvents="box-none"
+      >
+        <BottomNav />
+      </View>
     </View>
   );
 }
@@ -374,6 +391,7 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, gap: space.sm,
   },
   askInput: { flex: 1, color: color.fg, fontSize: 15 },
+  navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   hist: {
     alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8,
     height: 36, paddingHorizontal: 16, borderRadius: rad.full, backgroundColor: color.card,

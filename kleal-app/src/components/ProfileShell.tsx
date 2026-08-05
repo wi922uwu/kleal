@@ -12,7 +12,7 @@ import { T } from '../i18n';
 import { color, radius as rad, space, type } from '../theme';
 
 export function ProfileShell({
-  title, onBack, right, children, footer,
+  title, onBack, right, children, footer, nav,
 }: {
   title: string;
   onBack?: () => void;
@@ -20,6 +20,12 @@ export function ProfileShell({
   children: React.ReactNode;
   /** Прибитая книзу кнопка, когда экран что-то сохраняет. */
   footer?: React.ReactNode;
+  /**
+   * Нижняя панель приложения. Есть у профиля, потому что это вкладка, и её нет у разделов внутри
+   * него: туда заходят кнопкой «назад», и у части из них снизу своя кнопка сохранения — две
+   * прибитые полосы одна под другой спорили бы за одно и то же место.
+   */
+  nav?: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   return (
@@ -34,12 +40,13 @@ export function ProfileShell({
         {right || <View style={{ width: 40 }} />}
       </View>
       <ScrollView
-        contentContainerStyle={[s.scroll, { paddingBottom: (footer ? 96 : 28) + insets.bottom }]}
+        contentContainerStyle={[s.scroll, { paddingBottom: (footer ? 96 : 28) + (nav ? 84 : 0) + insets.bottom }]}
         keyboardShouldPersistTaps="handled"
       >
         {children}
       </ScrollView>
       {footer ? <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>{footer}</View> : null}
+      {nav}
     </View>
   );
 }
