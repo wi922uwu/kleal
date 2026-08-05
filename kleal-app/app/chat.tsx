@@ -57,6 +57,10 @@ export default function Chat() {
   const [funnelDone, setFunnelDone] = useState(false);
   // Лента стоит, пока крутят кольцо возраста: иначе один и тот же жест двигает и то, и другое.
   const [dragging, setDragging] = useState(false);
+  // Номер прохода. Меняется при «Начать заново» и служит ключом виджетам, чтобы те начинали с
+  // чистого листа. Иначе внутри них остаётся своё состояние: спрятанные кнопки первого кадра,
+  // выбранные увлечения, набранный возраст — всё от предыдущей попытки, которой уже нет.
+  const [runId, setRunId] = useState(0);
   const started = useRef(false);
 
   const say = useCallback((who: 'bot' | 'me', text: string, photo?: string) => {
@@ -100,6 +104,7 @@ export default function Chat() {
       setThread([]);
       setFunnel([]);
       setStep('start');
+      setRunId((n) => n + 1);
       started.current = false;
       setTyping(true);
       setTimeout(() => { setTyping(false); say('bot', STEP_START.ask()); started.current = true; }, 400);
@@ -239,6 +244,7 @@ export default function Chat() {
       }
       widget={
         <StepWidget
+          key={runId}
           step={step}
           say={say}
           goto={goto}
@@ -322,24 +328,34 @@ function Cta({ label, onPress, disabled, kind = 'primary' }: {
 function StartW({ say }: any) {
   const st = useOnb();
   const [asked, setAsked] = useState(false);
-  if (st.profile.name) return null;
+  const [gone, setGone] = useState(false);
+
+  // Нажатая кнопка должна исчезать — как на всех остальных шагах, где виджет уступает место
+  // следующему вопросу. Здесь шаг не меняется (имя человек пишет в композер), поэтому прятать
+  // приходится вручную: «Зачем это нужно?» уходит, как только на него ответили, а «Поехали!»
+  // забирает с собой весь виджет. Без этого «Поехали!» жалось повторно, и агент каждый раз заново
+  // спрашивал имя, будто не услышал.
+  if (gone || st.profile.name) return null;
+
   return (
     <View style={cs.widget}>
       <Hint>{STEP_START.hint()}</Hint>
       <View style={cs.row}>
-        <Chip
-          label={STEP_START.why()}
-          onPress={() => {
-            if (asked) return;
-            setAsked(true);
-            say('me', STEP_START.why());
-            setTimeout(() => say('bot', STEP_START.whyAnswer()), 600);
-          }}
-        />
+        {asked ? null : (
+          <Chip
+            label={STEP_START.why()}
+            onPress={() => {
+              setAsked(true);
+              say('me', STEP_START.why());
+              setTimeout(() => say('bot', STEP_START.whyAnswer()), 600);
+            }}
+          />
+        )}
         <Chip
           label={STEP_START.go()}
           on
           onPress={() => {
+            setGone(true);
             say('me', STEP_START.go());
             setTimeout(() => say('bot', STEP_START.askName()), 600);
           }}
