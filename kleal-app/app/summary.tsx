@@ -12,6 +12,8 @@ import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, profileForRegister, profileForAttach } from '../src/state';
 import { onboarding } from '../src/api';
 import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';
+import { Composer } from '../src/components/Composer';
+import { IconPerson } from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
 
 export default function Summary() {
@@ -96,7 +98,7 @@ export default function Summary() {
               <Image source={{ uri: p.photo }} style={s.idAvatar} />
             ) : (
               <View style={[s.idAvatar, s.idAvatarEmpty]}>
-                <Text style={s.idLetter}>{(p.name || '?').slice(0, 1).toUpperCase()}</Text>
+                <IconPerson />
               </View>
             )}
             <View style={{ flex: 1 }}>
@@ -134,7 +136,7 @@ export default function Summary() {
         {err ? <Text style={s.err}>{err}</Text> : null}
       </ScrollView>
 
-      <View style={[s.foot, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+      <View style={s.foot}>
         <Pressable accessibilityRole="button"
           style={[s.cta, sending && { opacity: 0.6 }]}
           onPress={sending ? undefined : finish}
@@ -143,6 +145,8 @@ export default function Summary() {
           <Text style={s.ctaText}>{SUMMARY.done()}</Text>
         </Pressable>
       </View>
+      {/* Композер здесь есть на кадре A.14: разговор не заканчивается на последнем шаге анкеты. */}
+      <Composer onBack={() => router.back()} bottomInset={insets.bottom} />
     </View>
   );
 }
@@ -156,7 +160,8 @@ const s = StyleSheet.create({
   track: { height: 3, backgroundColor: color.neutral100, marginHorizontal: 20, borderRadius: 2 },
   trackFill: { height: 3, backgroundColor: color.primary, borderRadius: 2 },
 
-  scroll: { padding: 20, gap: space.md },
+  // Запас снизу, чтобы последний блок не уезжал под кнопку «Готово» и композер.
+  scroll: { padding: 20, paddingBottom: 130, gap: space.md },
   card: { backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg, gap: space.md },
   idRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   idAvatar: { width: 52, height: 52, borderRadius: rad.full },

@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
+  View, Text, StyleSheet, ScrollView, Pressable,
   KeyboardAvoidingView, Platform, ActivityIndicator, Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,6 +30,8 @@ import { useOnb, set, patch } from '../src/state';
 import { onboarding } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area } from '../src/components/AreaPicker';
+import { Composer } from '../src/components/Composer';
+import { IconCheckCircle } from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string; photo?: string };
@@ -51,7 +53,6 @@ export default function Chat() {
   const [thread, setThread] = useState<Msg[]>([]);
   const [step, setStep] = useState<StepId>('start');
   const [typing, setTyping] = useState(false);
-  const [draft, setDraft] = useState('');
   const [funnel, setFunnel] = useState<{ role: string; content: string }[]>([]);
   const started = useRef(false);
 
@@ -89,11 +90,8 @@ export default function Chat() {
     botAfter(botLine);
   };
 
-  /** Свободный текст — сюда отвечает модель, а не сценарий. */
-  const send = async () => {
-    const text = draft.trim();
-    if (!text) return;
-    setDraft('');
+  /** Свободный текст — сюда отвечает модель, а не сценарий. Поле ввода живёт в Composer. */
+  const send = async (text: string) => {
     say('me', text);
 
     // На шаге имени ответ разбирать не нужно: что написали, то и имя.
@@ -168,25 +166,7 @@ export default function Chat() {
           ) : null}
         </ScrollView>
 
-        <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-          <Pressable style={s.back} onPress={() => router.back()} accessibilityLabel={T('Назад', 'Back')}>
-            <Text style={s.backIcon}>‹</Text>
-          </Pressable>
-          <View style={s.composer}>
-            <TextInput
-              style={s.input}
-              value={draft}
-              onChangeText={setDraft}
-              placeholder={COMPOSER_PLACEHOLDER()}
-              placeholderTextColor={color.neutral400}
-              onSubmitEditing={send}
-              returnKeyType="send"
-            />
-            <Pressable onPress={send} accessibilityLabel={T('Отправить', 'Send')}>
-              <Text style={s.mic}>{draft.trim() ? '↑' : '🎙'}</Text>
-            </Pressable>
-          </View>
-        </View>
+        <Composer onBack={() => router.back()} onSend={send} bottomInset={insets.bottom} />
       </View>
     </KeyboardAvoidingView>
   );
@@ -406,7 +386,7 @@ function PhotoW({ say, onDone, name }: any) {
     const r = await ImagePicker.launchCameraAsync({ cameraType: ImagePicker.CameraType.front, allowsEditing: true, aspect: [1, 1], quality: 0.9 });
     if (r.canceled || !r.assets?.length) return;
     setBusy(true);
-    try { setUri(await shrink(r.assets[0].uri)); setStage('result'); } finally { setBusy(false); }
+    try { const u = await shrink(r.assets[0].uri); setUri(u); say('me', '', u); setStage('result'); } finally { setBusy(false); }
   };
 
   const upload = async () => {
@@ -415,7 +395,7 @@ function PhotoW({ say, onDone, name }: any) {
     const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.9 });
     if (r.canceled || !r.assets?.length) return;
     setBusy(true);
-    try { setUri(await shrink(r.assets[0].uri)); setStage('result'); } finally { setBusy(false); }
+    try { const u = await shrink(r.assets[0].uri); setUri(u); say('me', '', u); setStage('result'); } finally { setBusy(false); }
   };
 
   if (stage === 'ask') {
@@ -463,7 +443,7 @@ function PhotoW({ say, onDone, name }: any) {
           <Text style={s.doneTitle}>{STEP_PHOTO.cardTitle()}</Text>
           <Text style={s.doneSub}>{STEP_PHOTO.cardSub(name)}</Text>
         </View>
-        <Text style={s.check}>✓</Text>
+        <IconCheckCircle />
       </View>
       <View style={s.bubBot}><Text style={s.bubText}>{STEP_PHOTO.next()}</Text></View>
       <Cta label={STEP_PHOTO.cta()} onPress={onDone} />
@@ -486,7 +466,7 @@ const s = StyleSheet.create({
   bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderRadius: 16 },
   bubText: { ...type.body, color: color.fg } as any,
   time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
-  threadPhoto: { width: 150, height: 190, borderRadius: 14, marginTop: space.sm },
+  threadPhoto: { width: 178, height: 218, borderRadius: 16, marginTop: space.sm },
 
   widget: { gap: space.md, marginTop: space.md, width: '100%' },
   hint: { ...type.caption, color: color.muted } as any,
@@ -510,7 +490,6 @@ const s = StyleSheet.create({
   doneAvatar: { width: 40, height: 40, borderRadius: 20 },
   doneTitle: { ...type.title, color: color.fg } as any,
   doneSub: { ...type.bodySmall, color: color.muted } as any,
-  check: { color: color.successText, fontSize: 20, fontWeight: '700' },
 
   dock: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
