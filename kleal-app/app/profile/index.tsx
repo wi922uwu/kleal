@@ -183,7 +183,12 @@ export default function ProfileHub() {
           </>
         )}
 
-        <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/intent')}>
+        {/*
+          Ведёт в разговор создания интента, а не в мастер: мастер начинается с формата и времени,
+          то есть с того, что ставится руками ПОСЛЕ того, как тема собрана. Открывать его первым —
+          значит просить человека выбрать «онлайн или офлайн» раньше, чем он сказал, для чего.
+        */}
+        <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/create')}>
           <Text style={s.ctaText}>{HUB.createIntent()}</Text>
         </Pressable>
       </Card>

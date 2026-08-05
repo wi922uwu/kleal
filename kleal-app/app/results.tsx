@@ -118,7 +118,8 @@ export default function Results() {
             {T('Результаты поиска живут до перезагрузки. Давай поищем заново.',
                'Search results only live until the page reloads. Let’s search again.')}
           </Text>
-          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.replace('/intent')}>
+          {/* Новый поиск начинается там же, где и любой другой: с темы, а не с формата. */}
+          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.replace('/create')}>
             <Text style={s.ctaText}>{T('Новый поиск', 'New search')}</Text>
           </Pressable>
         </View>
