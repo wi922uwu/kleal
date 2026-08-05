@@ -21,7 +21,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import {
   STEP_PROGRESS, HEADER_TITLE, STEP_START, STEP_BASICS, SEXES, sexLabel,
   STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES, HOBBIES, hobbyLabel,
-  hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME, FUNNEL, FUNNEL_OUT_RE,
+  hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME, FUNNEL, FUNNEL_OUT_RE, FUNNEL_MORE_RE,
 } from '../src/onboarding';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
@@ -233,6 +233,14 @@ export default function Chat() {
     funnelTurn(undefined, seed);
   };
 
+  /** Из разговора обратно к чипам — за следующим интересом. */
+  const moreInterests = () => {
+    setFunnelOpts([]);
+    setFunnelDone(false);
+    setStep('hobbies');
+    botAfter(FUNNEL.back());
+  };
+
   const leaveFunnel = () => {
     setFunnelOpts([]);
     // Пришли из профиля — туда и возвращаемся. replace, а не push: разговор закончен, и «назад»
@@ -246,6 +254,17 @@ export default function Chat() {
   /** Свободный текст — сюда отвечает модель, а не сценарий. Поле ввода живёт в Composer. */
   const send = async (text: string) => {
     say('me', text);
+
+    // Шаг увлечений: написанное словами — это НОВЫЙ интерес, а не реплика в разговоре. Пока текст
+    // уходил в /api/onboarding/chat прямо отсюда, шаг не менялся, и сетка чипов с кнопкой «Дальше»
+    // оставалась висеть под каждым вопросом агента. Теперь интерес просто добавляется и загорается
+    // рядом с остальными, а разговор начинается по «Дальше».
+    if (step === 'hobbies') {
+      const key = text.trim();
+      const cur: string[] = get('interests.explicit') || [];
+      if (key && !cur.includes(key)) set('interests.explicit', [...cur, key]);
+      return;
+    }
 
     // На шаге имени ответ разбирать не нужно: что написали, то и имя.
     if (step === 'start' && !st.profile.name) {
@@ -291,7 +310,7 @@ export default function Chat() {
           onDrag={setDragging}
           onDone={() => router.push('/summary')}
           startFunnel={startFunnel}
-          funnel={{ opts: funnelOpts, done: funnelDone, ask: funnelTurn, leave: leaveFunnel }}
+          funnel={{ opts: funnelOpts, done: funnelDone, ask: funnelTurn, leave: leaveFunnel, more: moreInterests }}
         />
       }
     />
@@ -305,6 +324,7 @@ type FunnelBits = {
   done: boolean;
   ask: (text: string) => void;
   leave: () => void;
+  more: () => void;
 };
 
 function StepWidget({
@@ -495,11 +515,15 @@ function LangW({ say, goto, focusComposer }: any) {
  *
  * Пока модель спрашивает, отвечать можно и словами в композере — чипы это ускорение, а не рельсы.
  */
-function FunnelW({ opts, done, ask, leave, say }: FunnelBits & { say: any }) {
+function FunnelW({ opts, done, ask, leave, more, say }: FunnelBits & { say: any }) {
+  // Разговор про этот интерес окончен. Дальше два честных пути, и оба названы: рассказать про
+  // следующий интерес или закончить с интересами вовсе. Одна кнопка «Продолжить» не говорила, куда
+  // именно продолжает, и добавить второй интерес после разговора было нечем.
   if (done) {
     return (
       <View style={cs.widget}>
-        <Cta label={FUNNEL.cont()} onPress={leave} />
+        <Cta label={FUNNEL.more()} kind="muted" onPress={more} />
+        <Cta label={FUNNEL.finish()} onPress={leave} />
       </View>
     );
   }
@@ -507,11 +531,22 @@ function FunnelW({ opts, done, ask, leave, say }: FunnelBits & { say: any }) {
   // присылает, и без этого единственным способом закончить разговор оставался счётчик ходов:
   // человек отвечает на восьмой вопрос подряд и не видит ни одной кнопки «хватит».
   const hasOut = opts.some((o) => FUNNEL_OUT_RE.test(o));
+
+  // Вариант делает то, что на нём написано. «Добавить ещё интерес» возвращает к чипам, «это всё»
+  // заканчивает разговор — а не отправляет свой же текст обратно агенту, после чего тот
+  // переспрашивает словами и никакого выбора интересов не появляется.
+  const press = (o: string) => {
+    if (FUNNEL_MORE_RE.test(o)) { say('me', o); more(); return; }
+    if (FUNNEL_OUT_RE.test(o)) { say('me', o); leave(); return; }
+    say('me', o);
+    ask(o);
+  };
+
   return (
     <View style={cs.widget}>
       <View style={cs.row}>
         {opts.map((o) => (
-          <Chip key={o} label={o} onPress={() => { say('me', o); ask(o); }} />
+          <Chip key={o} label={o} onPress={() => press(o)} />
         ))}
         {hasOut ? null : <Chip label={FUNNEL.done()} onPress={leave} />}
       </View>
@@ -528,15 +563,32 @@ function FunnelW({ opts, done, ask, leave, say }: FunnelBits & { say: any }) {
  * проявлялось; кнопка «Добавить интересы» в профиле делает вход обычным делом.
  */
 function HobbyW({ say, startFunnel, leaveFunnel, focusComposer }: any) {
-  const had: string[] = get('interests.explicit') || [];
+  const st = useOnb();
+  const [had] = useState<string[]>(() => get('interests.explicit') || []);
   const [sel, setSel] = useState<string[]>(had);
   const toggle = (k: string) => setSel((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
+
+  // Написанное своими словами попадает в профиль из композера и должно тут же появиться среди
+  // чипов — зажжённым. Иначе человек написал «прогулки с кофе», а на экране ничего не изменилось.
+  const explicit: string[] = st.profile.interests?.explicit || [];
+  const key = explicit.join('|');
+  useEffect(() => {
+    setSel((p) => Array.from(new Set([...p, ...explicit])));
+  }, [key]);
+
+  // Свои интересы — те, которых нет в готовой десятке. Показываются отдельным рядом и всегда
+  // зажжёнными: сняв такой чип, человек потерял бы то, что сам только что написал.
+  const own = sel.filter((k) => !HOBBIES.some(([h]) => h === k));
+
   return (
     <View style={cs.widget}>
       <Hint>{STEP_HOBBIES.hint()}</Hint>
       <View style={cs.row}>
         {HOBBIES.map(([k]) => (
           <Chip key={k} label={hobbyLabel(k)} on={sel.includes(k)} onPress={() => toggle(k)} />
+        ))}
+        {own.map((k) => (
+          <Chip key={k} label={k} on onPress={() => toggle(k)} />
         ))}
         <Chip label={'+ ' + STEP_HOBBIES.own()} onPress={focusComposer} />
       </View>

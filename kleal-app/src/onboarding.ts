@@ -197,6 +197,10 @@ export const FUNNEL = {
   compose: () => T('Расскажи Kleal больше…', 'Tell Kleal more…'),
   done: () => T('Это всё', "That's enough"),
   cont: () => T('Продолжить', 'Continue'),
+  /** Разговор про интерес окончен: либо назад к чипам за следующим, либо дальше по анкете. */
+  more: () => T('Добавить ещё', 'Add another'),
+  finish: () => T('Завершить', 'Finish'),
+  back: () => T('Что ещё тебе нравится?', 'What else are you into?'),
 };
 
 /**
@@ -205,6 +209,16 @@ export const FUNNEL = {
  */
 export const FUNNEL_OUT_RE =
   /that'?s all|that'?s enough|that is all|\bfinish|\bdone\b|no more|nothing else|all set|это вс[её]|больше нет|хватит|достаточно/i;
+
+/**
+ * Вариант «добавить ещё интерес», который модель предлагает сама.
+ *
+ * Такую кнопку нельзя отправлять в разговор как обычную реплику: она обещает вернуть к выбору
+ * интересов, а на деле агент отвечал бы «какой ещё?» текстом, и чипы не возвращались бы никогда.
+ * Здесь она распознаётся и ведёт туда, куда написано.
+ */
+export const FUNNEL_MORE_RE =
+  /add another|another interest|add more|ещ[её] интерес|добавить ещ[её]|друг(ой|ое) интерес/i;
 
 export const STEP_PHOTO = {
   greet: (name: string) => T('Рад знакомству, ' + name + '!', 'Nice to meet you, ' + name + '!'),
