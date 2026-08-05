@@ -78,6 +78,7 @@ tools/mplan_ui_test.js
 tools/board_copy_test.js
 tools/board_e2e.py
 ops/run.sh
+ops/dev-stack.sh
 "
 
 # Named files win over the whole list:  ops/deploy.sh services/profile/app.py
