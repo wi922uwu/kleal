@@ -47,6 +47,16 @@ export default function Login() {
         ? await onboarding.signin(login.trim(), pw)
         : await onboarding.signup(login.trim(), pw);
       if (r && r.ok) {
+        const res: any = r;
+        // Сервер отдаёт вход ВМЕСТЕ с сохранённым профилем — «so the app can skip onboarding
+        // entirely». Клиент это игнорировал, и человек, входящий на новом устройстве или после
+        // выхода из аккаунта, проходил всю анкету заново поверх профиля, который уже лежит на
+        // сервере. Теперь профиль забирается, и онбординг пропускается.
+        if (res.hasProfile && res.profile && typeof res.profile === 'object') {
+          patch({ login: login.trim(), done: true, profile: res.profile });
+          router.replace('/done');
+          return;
+        }
         patch({ login: login.trim() });
         applyDefaults();
         router.push('/chat');

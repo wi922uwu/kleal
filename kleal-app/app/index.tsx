@@ -4,7 +4,7 @@
  * Волна снизу и тёмная кнопка на ней — узнаваемая часть экрана, поэтому нарисована фигурой, а не
  * заменена на обычную кнопку: та же кривая, что в SVG прототипа.
  */
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, StyleSheet, Pressable, Text, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -20,6 +20,15 @@ export default function Splash() {
   const st = useOnb();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+
+  /**
+   * Кто уже в аккаунте и прошёл онбординг — сразу в приложение, минуя интро и анкету.
+   *
+   * replace, а не push: интро не должно оставаться в истории позади главного экрана.
+   */
+  useEffect(() => {
+    if (st.login && st.done) router.replace('/done');
+  }, [st.login, st.done]);
 
   const slides = SLIDES();
   const i = Math.min(st.slide, slides.length - 1);

@@ -9,7 +9,7 @@ import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useLang, T } from '../src/i18n';
-import { useOnb, profileForRegister, profileForAttach } from '../src/state';
+import { useOnb, patch, profileForRegister, profileForAttach } from '../src/state';
 import { onboarding } from '../src/api';
 import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';
 import { Composer } from '../src/components/Composer';
@@ -73,7 +73,12 @@ export default function Summary() {
       const r: any = await onboarding.register(profileForRegister());
       if (!r?.ok) throw new Error(r?.error || 'register failed');
       if (st.login) await onboarding.attach(st.login, p.name || '', profileForAttach()).catch(() => {});
-      router.replace('/done');
+      // Отметка ставится ТОЛЬКО после успешной записи: иначе следующий запуск пустил бы человека
+      // в приложение с профилем, которого на сервере нет.
+      patch({ done: true });
+      // fresh=1 — «онбординг только что закончился». Без него главный экран поздравлял бы с
+      // завершением при каждом запуске приложения.
+      router.replace('/done?fresh=1');
     } catch {
       setErr(T('Профиль не сохранился. Проверь связь и попробуй ещё раз.',
                'Your profile didn’t save. Check your connection and try again.'));

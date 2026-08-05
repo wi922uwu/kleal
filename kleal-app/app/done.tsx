@@ -8,17 +8,20 @@
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { IconIntents, IconSearch, IconMessages, IconProfile, IconSpark, IconImagePlaceholder } from '../src/components/icons';
 import { useLang } from '../src/i18n';
+import { useOnb } from '../src/state';
 import { DONE_SCREEN, NAV } from '../src/onboarding';
 import { color, radius as rad, type } from '../src/theme';
 
 export default function Done() {
   useLang();
   const router = useRouter();
+  const st = useOnb();
   const insets = useSafeAreaInsets();
   const nav = NAV();
+  const fresh = !!useLocalSearchParams<{ fresh?: string }>().fresh;
 
   return (
     <View style={[s.wrap, { paddingTop: insets.top }]}>
@@ -27,7 +30,7 @@ export default function Done() {
           {/* Тот же значок-заглушка изображения, что на борде */}
           <IconImagePlaceholder size={64} />
         </View>
-        <Text style={s.title}>{DONE_SCREEN.title()}</Text>
+        <Text style={s.title}>{fresh ? DONE_SCREEN.title() : DONE_SCREEN.home(st.profile.name || '')}</Text>
       </View>
 
       <View style={s.ctaWrap}>

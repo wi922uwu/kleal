@@ -55,6 +55,18 @@ export const HUB = {
 };
 
 /** Статусы приёма — те же три, что понимает /api/onboarding/receiving. */
+export const SIGNOUT = {
+  label: () => T('Выйти из аккаунта', 'Sign out'),
+  ask: () =>
+    T(
+      'Выйти из аккаунта? Профиль останется на сервере и вернётся при следующем входе.',
+      'Sign out? Your profile stays on the server and comes back when you sign in.'
+    ),
+  yes: () => T('Выйти', 'Sign out'),
+  no: () => T('Отмена', 'Cancel'),
+  who: (login: string) => T(`Вход выполнен как ${login}`, `Signed in as ${login}`),
+};
+
 export const AVAIL: [string, () => string][] = [
   ['active', () => T('Открыт', 'Open')],
   ['busy', () => T('Занят', 'Busy')],

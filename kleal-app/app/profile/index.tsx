@@ -8,14 +8,14 @@
  * Полоса, которая всегда одна и та же, ничего не сообщает.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, NavRow, Segments } from '../../src/components/ProfileShell';
 import { IconPerson } from '../../src/components/icons';
 import { useLang, T, getLang, setLang } from '../../src/i18n';
-import { useOnb, set, profileForAttach } from '../../src/state';
+import { useOnb, set, reset, profileForAttach } from '../../src/state';
 import { profile as profileApi, buddy } from '../../src/api';
-import { PROFILE_TITLE, SECTIONS, HUB, AVAIL, profileData, fmtUpdated } from '../../src/profile';
+import { PROFILE_TITLE, SECTIONS, HUB, AVAIL, SIGNOUT, profileData, fmtUpdated } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function ProfileHub() {
@@ -76,6 +76,20 @@ export default function ProfileHub() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const signOut = () => {
+    const go = () => { reset(); router.replace('/'); };
+    if (Platform.OS === 'web') {
+      // Alert.alert на вебе рисуется без кнопок — там это window.confirm.
+      // eslint-disable-next-line no-alert
+      if (typeof confirm === 'function' && confirm(SIGNOUT.ask())) go();
+      return;
+    }
+    Alert.alert(SIGNOUT.ask(), undefined, [
+      { text: SIGNOUT.no(), style: 'cancel' },
+      { text: SIGNOUT.yes(), style: 'destructive', onPress: go },
+    ]);
   };
 
   const summary = String((p as any).summary || '');
@@ -186,6 +200,20 @@ export default function ProfileHub() {
           onChange={(v) => setLang(v as any)}
         />
       </Card>
+
+      {/*
+        Выход стирает состояние на устройстве целиком — и профиль тоже. Оставить его лежать значило
+        бы показать его следующему, кто войдёт на этом телефоне. Потери при этом нет: сервер отдаёт
+        сохранённый профиль обратно при входе, поэтому в вопросе так и написано.
+      */}
+      {st.login ? (
+        <Card>
+          <Text style={s.basicTitle}>{SIGNOUT.who(st.login)}</Text>
+          <Pressable accessibilityRole="button" style={s.signout} onPress={signOut}>
+            <Text style={s.signoutText}>{SIGNOUT.label()}</Text>
+          </Pressable>
+        </Card>
+      ) : null}
     </ProfileShell>
   );
 }
@@ -219,4 +247,10 @@ const s = StyleSheet.create({
 
   cta: { height: 48, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', marginTop: space.sm },
   ctaText: { ...type.button, color: color.onPrimary } as any,
+
+  signout: {
+    height: 46, borderRadius: rad.full, borderWidth: 1, borderColor: color.border,
+    alignItems: 'center', justifyContent: 'center', marginTop: space.sm,
+  },
+  signoutText: { ...type.button, color: color.danger } as any,
 });

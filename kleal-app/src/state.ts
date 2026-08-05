@@ -37,12 +37,20 @@ export type OnbState = {
   step: number;            // индекс в SCRIPT; -1 = ещё не начали
   login: string | null;
   authMethod: string | null;
+  /**
+   * Онбординг пройден и профиль записан на сервере.
+   *
+   * Отдельный флаг, а не «у профиля всё заполнено»: по заполненности не отличить того, кто
+   * закончил, от того, кто дошёл до последнего шага и закрыл приложение. Разница видна человеку —
+   * первого при следующем запуске надо пускать в приложение, а не в анкету.
+   */
+  done: boolean;
   profile: Profile;
 };
 
 const KEY = 'kleal.onboarding';
 
-const empty = (): OnbState => ({ slide: 0, step: -1, login: null, authMethod: null, profile: {} });
+const empty = (): OnbState => ({ slide: 0, step: -1, login: null, authMethod: null, done: false, profile: {} });
 
 let state: OnbState = empty();
 const listeners = new Set<(s: OnbState) => void>();
