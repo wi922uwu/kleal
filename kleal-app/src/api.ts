@@ -117,6 +117,29 @@ export const buddy = {
 
   /** Итог теста личности: один вызов на все восемь ответов. */
   persona: (payload: Json) => api.post<Json>('/api/buddy/persona', payload),
+
+  /**
+   * Разговор с Бадди — просто общение. Интент отсюда НЕ создаётся: сервер лишь сообщает, что
+   * распознал в сказанном план (поле `intent`), а решение принимает человек во всплывающем окне.
+   */
+  chat: (messages: Json[], prof: Json, signals: Json = {}) =>
+    api.post<{ reply?: string; intent?: Json | null; signals?: Json; lang?: string }>(
+      '/api/buddy/chat', { messages, profile: prof, signals }
+    ),
+
+  /**
+   * Построитель интента: уточняет ТЕМУ и ничего больше. Время, место, пол и размер компании он не
+   * спрашивает намеренно — их человек ставит руками на следующих экранах, и переспрашивать
+   * значило бы заставить отвечать дважды. Это правило живёт в системном промпте сервера.
+   */
+  intentBuild: (messages: Json[], prof: Json) =>
+    api.post<{ reply?: string; valid?: boolean; ready?: boolean; intent?: Json | null; hints?: string[] }>(
+      '/api/buddy/intent-build', { messages, profile: prof }
+    ),
+
+  /** Три варианта из профиля для пустого экрана создания. `seed` меняет выборку для «Ещё варианты». */
+  intentSuggest: (prof: Json, lang: string, seed = '') =>
+    api.post<{ suggestions?: string[] }>('/api/buddy/intent-suggest', { profile: prof, lang, seed }),
 };
 
 // ---------------------------------------------------------------- интенты и поиск

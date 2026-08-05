@@ -8,7 +8,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChatShell, Bubble, chatStyles as cs } from '../src/components/ChatShell';
 import { AgeRange } from '../src/components/AgeRange';
 import {
@@ -64,9 +64,22 @@ export default function Intent() {
     setThread((t) => [...t, { who, text, at: now() }]);
   }, []);
 
+  /**
+   * Тема, собранная в разговоре создания интента (O.04). Если она есть — первый вопрос «что хочешь
+   * сделать?» не задаётся: человек только что на него ответил. Мастер начинается с формата, то есть
+   * ровно с того, что и должно ставиться руками.
+   */
+  const topic = String(useLocalSearchParams<{ topic?: string }>().topic || '').trim();
+
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    if (topic) {
+      setDraft((d) => ({ ...d, topics: [topic] }));
+      say('me', topic);
+      goto('how', STEP_HOW.bot());
+      return;
+    }
     setTyping(true);
     setTimeout(() => { setTyping(false); say('bot', STEP_WHAT.bot()); }, 450);
   }, [say]);

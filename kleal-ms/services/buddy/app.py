@@ -2078,6 +2078,43 @@ def _builder_msgs(messages, keep_chat=False):
     return keep
 
 
+INTENT_SUGGEST_PROMPT = """You suggest what a person could set up with other people, based on their profile.
+
+Return ONE JSON object and nothing else: {"suggestions":["...","...","..."]}
+
+Rules:
+- EXACTLY 3 suggestions, each at most 8 words, written in __LANGNAME__.
+- Each is a THING TO DO WITH PEOPLE, phrased as the user's own wish: «Найти компанию на утренний кофе», not «Кофе» and not a question back at them.
+- Ground them in the PROFILE line: name their city, their interests, their languages. Three generic openers everyone could get are worthless — that is the whole reason this exists.
+- Never mention a day, a time, a district or a distance. The app asks all of that later with taps.
+- The three must be genuinely different from each other: not three ways to say «попить кофе»."""
+
+
+def intent_suggest(profile, lang="en", seed=""):
+    """Three things THIS person could propose, from their profile alone.
+
+    Feeds the «Suggestions» / «Regenerate» row on the intent-creation screen, which is shown BEFORE
+    the user has said anything — so intent_build cannot serve it: that one needs a message to react
+    to. `seed` only varies the sampling so «Regenerate» gives a different three rather than the same
+    list again.
+    """
+    sys_prompt = INTENT_SUGGEST_PROMPT.replace("__LANGNAME__", _LANGNAME.get(lang, "English"))
+    line = _profile_line(profile) or "PROFILE: (empty)\n"
+    for attempt in range(2):
+        try:
+            raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt},
+                                          {"role": "user", "content": line + (seed or "")}],
+                               0.9 if attempt == 0 else 0.6)
+            obj = _lenient_json(raw)
+            out = [str(s).strip() for s in (obj or {}).get("suggestions") or [] if str(s).strip()]
+            if len(out) >= 3:
+                return {"suggestions": out[:3], "lang": lang}
+        except Exception:
+            pass
+    # Молчание лучше выдумки: клиент покажет пустой ряд и оставит человеку поле ввода.
+    return {"suggestions": [], "lang": lang}
+
+
 def intent_build(messages, profile, on_text=None):
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     # The whole thread is the conversation's memory; the builder normally sees only the plan-relevant
@@ -2349,6 +2386,12 @@ class H(BaseHTTPRequestHandler):
                 except Exception as e:
                     emit("error", {"error": str(e)[:200]})
                 return
+
+            if r == "/intent-suggest":               # три варианта из профиля для экрана создания интента
+                return send_json(self, 200, intent_suggest(
+                    body.get("profile") if isinstance(body.get("profile"), dict) else {},
+                    str(body.get("lang") or "en"),
+                    str(body.get("seed") or "")))
 
             if r == "/ghostwrite":                   # Kleal drafts the user's OWN next message
                 return send_json(self, 200, ghostwrite(
