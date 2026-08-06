@@ -11,14 +11,15 @@
  * менял бы своё, а профиль — своё.
  */
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, ToggleRow, Segments, Divider } from '../../src/components/ProfileShell';
 import { useLang } from '../../src/i18n';
 import { useOnb, set, profileForAttach } from '../../src/state';
 import { profile as profileApi } from '../../src/api';
 import { profileData, SAFETY_GROUPS, SAFETY_LEAD, SAFETY_PATH, SECTIONS } from '../../src/profile';
-import { color, space, type } from '../../src/theme';
+import { BLOCKED } from '../../src/settings';
+import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function Safety() {
   const lang = useLang();
@@ -45,6 +46,19 @@ export default function Safety() {
         <Text style={s.leadTitle}>{SAFETY_LEAD.title()}</Text>
         <Text style={s.leadBody}>{SAFETY_LEAD.body()}</Text>
       </Card>
+
+      {/* Кадр B.11: заблокированные — первая строка экрана, до всех переключателей. */}
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => router.push('/settings/blocked')}
+        style={({ pressed }: { pressed: boolean }) => [s.blocked, pressed && { opacity: 0.9 }]}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={s.blockedTitle}>{BLOCKED.title()}</Text>
+          <Text style={s.blockedSub}>{BLOCKED.lead()}</Text>
+        </View>
+        <Text style={s.blockedChev}>›</Text>
+      </Pressable>
 
       {SAFETY_GROUPS.map((g, gi) => (
         <View key={gi} style={{ gap: space.sm }}>
@@ -93,6 +107,13 @@ export default function Safety() {
 }
 
 const s = StyleSheet.create({
+  blocked: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg,
+    borderRadius: rad.xl, backgroundColor: color.card,
+  },
+  blockedTitle: { ...type.title, color: color.fg } as any,
+  blockedSub: { ...type.caption, color: color.muted, marginTop: 2 } as any,
+  blockedChev: { fontSize: 22, color: color.neutral400 },
   leadTitle: { ...type.title, color: color.primary } as any,
   leadBody: { ...type.bodySmall, color: color.muted } as any,
   groupTitle: { ...type.title, color: color.fg, marginTop: space.sm, paddingHorizontal: 4 } as any,

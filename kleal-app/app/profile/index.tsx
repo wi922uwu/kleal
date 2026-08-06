@@ -13,7 +13,7 @@ import { useRouter } from 'expo-router';
 import { ProfileShell, Card, Segments, EditSheet } from '../../src/components/ProfileShell';
 import { BottomNav } from '../../src/components/BottomNav';
 import {
-  IconPerson, IconVerified, IconStar, IconFaceScan, IconUserLock, IconTranslate, IconPin, IconPencil,
+  IconPerson, IconVerified, IconStar, IconFaceScan, IconUserLock, IconTranslate, IconPin, IconPencil, IconGear,
 } from '../../src/components/icons';
 import { useLang, T, getLang, setLang } from '../../src/i18n';
 import { useOnb, set, reset, profileForAttach } from '../../src/state';
@@ -22,6 +22,7 @@ import {
   PROFILE_TITLE, HUB, AVAIL, SIGNOUT, HUB_ROWS, SHEETS, profileData, fmtUpdated,
 } from '../../src/profile';
 import { langName, langCode, searchLangs } from '../../src/languages';
+import { SETTINGS } from '../../src/settings';
 import { AreaPicker, Area } from '../../src/components/AreaPicker';
 import { color, radius as rad, space, type } from '../../src/theme';
 
@@ -153,7 +154,21 @@ export default function ProfileHub() {
   }, [summary, d.interests.length, d.basics.length, busy]);
 
   return (
-    <ProfileShell title={PROFILE_TITLE()} onBack={() => router.back()} nav={<BottomNav active="profile" />}>
+    <ProfileShell
+      title={PROFILE_TITLE()}
+      onBack={() => router.back()}
+      nav={<BottomNav active="profile" />}
+      right={
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={SETTINGS.title()}
+          style={s.gear}
+          onPress={() => router.push('/settings')}
+        >
+          <IconGear />
+        </Pressable>
+      }
+    >
       <Card>
         <View style={s.idRow}>
           <Pressable accessibilityRole="button" accessibilityLabel={T('Фото профиля', 'Profile photo')}>
@@ -322,6 +337,10 @@ const s = StyleSheet.create({
   link: { ...type.labelMedium, color: color.primary } as any,
   linkMuted: { ...type.labelMedium, color: color.muted } as any,
 
+  gear: {
+    width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border,
+    backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
+  },
   row: {
     flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16,
     borderRadius: rad.xl, backgroundColor: color.card,
@@ -382,7 +401,7 @@ function HubRowView({
 
 const ROW_ICON: Record<string, (p: any) => React.ReactElement> = {
   interests: IconStar,
-  social: IconFaceScan,
+  personality: IconFaceScan,
   safety: IconUserLock,
   languages: IconTranslate,
   location: IconPin,

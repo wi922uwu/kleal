@@ -80,7 +80,7 @@ export const HUB = {
  */
 export type RowKind = 'screen' | 'sheet';
 export type HubRow = {
-  id: 'interests' | 'social' | 'safety' | 'languages' | 'location';
+  id: 'interests' | 'personality' | 'safety' | 'languages' | 'location';
   kind: RowKind;
   title: () => string;
   sub: (p: any) => string;
@@ -96,7 +96,7 @@ export const HUB_ROWS: HubRow[] = [
     },
   },
   {
-    id: 'social', kind: 'screen',
+    id: 'personality', kind: 'screen',
     title: () => T('Твоя личность', 'Your personality'),
     sub: (p) =>
       String(p?.personality || '').trim()

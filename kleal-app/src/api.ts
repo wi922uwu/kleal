@@ -185,6 +185,21 @@ export const agent = {
   forYou: (self: string, prof: Json, limit = 30) =>
     api.post<{ plans?: Json[] }>('/api/agent/explore', { limit, self, profile: prof }),
 
+  /** Кого этот человек заблокировал, плюс его же жалобы. */
+  safety: (self: string) =>
+    api.get<{ blocked?: string[]; reports?: Json[] }>(
+      `/api/agent/safety?self=${encodeURIComponent(self)}`
+    ),
+
+  /**
+   * Заблокировать или разблокировать. `on: false` — снять блокировку.
+   *
+   * Себя сервер называет `self`, а не `who`: с `who` он молча отвечает TWO_PEOPLE_REQUIRED,
+   * потому что видит пустого отправителя. Проверено на живом стенде.
+   */
+  block: (self: string, name: string, on: boolean) =>
+    api.post<{ ok?: boolean; blocked?: string[] }>('/api/agent/block', { self, name, on }),
+
   /** Входящие приглашения. Просроченные и отозванные сервер отсекает сам. */
   inbox: (self: string) =>
     api.get<{ requests?: Json[] }>(`/api/agent/inbox?self=${encodeURIComponent(self)}`),
