@@ -63,5 +63,26 @@ npx expo start --tunnel
   (`*.trycloudflare.com`), а не на localhost. Поэтому телефону не нужна связь с ноутбуком ни для
   чего, кроме самого бандла.
 - **Туннель медленнее LAN.** Первая сборка бандла по туннелю занимает заметно дольше (7,5 МБ идут
-  через ngrok). Если телефон и ноутбук всё-таки в одной сети и нужна скорость — `npx expo start
+  через туннель). Если телефон и ноутбук всё-таки в одной сети и нужна скорость — `npx expo start
   --lan` остаётся быстрым вариантом.
+
+## Если ngrok не работает
+
+Бесплатный анонимный ngrok регулярно отваливается: сначала «Tunnel connection has been closed»,
+потом `--tunnel` вовсе перестаёт стартовать с «remote gone away». Это их сервис, а не проект.
+
+Обход — собственный туннель через cloudflared (он уже стоит и используется для бекенда). Expo
+поддерживает это официально: переменная `EXPO_PACKAGER_PROXY_URL` заставляет манифест сообщать
+телефону публичный адрес вместо localhost.
+
+```
+cloudflared tunnel --url http://localhost:8081        # даёт https://…trycloudflare.com
+EXPO_PACKAGER_PROXY_URL=https://…trycloudflare.com npx expo start --port 8081
+```
+
+Телефону при этом даётся `exp://…trycloudflare.com` (без https://). Проверять надо СНАРУЖИ, а не
+по localhost:
+
+```
+curl -H "expo-platform: ios" https://…trycloudflare.com/          # debuggerHost должен быть публичным
+```
