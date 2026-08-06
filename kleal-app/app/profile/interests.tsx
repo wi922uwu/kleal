@@ -14,7 +14,8 @@ import { View, Text, StyleSheet, Pressable, Switch, Alert, Platform } from 'reac
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card } from '../../src/components/ProfileShell';
 import { useLang, T } from '../../src/i18n';
-import { useOnb, set, get, profileForAttach } from '../../src/state';
+import { useOnb, set, get } from '../../src/state';
+import { patchFor } from '../../src/fields';
 import { profile as profileApi } from '../../src/api';
 import { profileData, INTERESTS_SCREEN as C, SECTIONS, adaptSummary } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
@@ -32,7 +33,10 @@ export default function Interests() {
    */
   const push = () => {
     const name = st.profile.name;
-    if (name) profileApi.update(name, { interests: profileForAttach().interests }).catch(() => {});
+    // patchFor шлёт ПЛОСКИЙ список без выключенных — форму, которую ждёт строка. Раньше отсюда
+    // уходил вложенный объект целиком, а сервер делает слепой row.update(): строка получала вместо
+    // списка словарь, и матчинг для этого человека ломался молча.
+    if (name) profileApi.update(name, patchFor(['interests'])).catch(() => {});
     adaptSummary();
   };
 

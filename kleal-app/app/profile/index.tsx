@@ -21,7 +21,8 @@ import { profile as profileApi } from '../../src/api';
 import {
   PROFILE_TITLE, HUB, AVAIL, SIGNOUT, HUB_ROWS, SHEETS, profileData, fmtUpdated, adaptSummary,
 } from '../../src/profile';
-import { langName, langCode, searchLangs } from '../../src/languages';
+import { langName, searchLangs } from '../../src/languages';
+import { writeFact, patchFor } from '../../src/fields';
 import { SETTINGS } from '../../src/settings';
 import { AreaPicker, Area } from '../../src/components/AreaPicker';
 import { color, radius as rad, space, type } from '../../src/theme';
@@ -90,26 +91,24 @@ export default function ProfileHub() {
    * всё остальное он молча выбрасывает.
    */
   const saveLanguages = async (list: string[]) => {
-    set('languages.comfortable', list);
+    writeFact('languages', list);
     setSheet(null);
-    if (p.name) {
-      // Код берётся из справочника, а не обрезкой имени: Spanish → «sp» вместо «es», а
-      // Estonian → «es», то есть испанский. Незнакомое имя кода не получает вовсе.
-      const codes = list.map(langCode).filter(Boolean) as string[];
-      await profileApi.update(p.name, { langs: codes }).catch(() => {});
-    }
+    // Имена и форма серверных полей — из реестра (src/fields.ts), не отсюда.
+    if (p.name) await profileApi.update(p.name, patchFor(['languages'])).catch(() => {});
     rewrite();                    // сводка называет языки вслух — она обязана догнать
   };
 
   const saveLocation = async (a: Area) => {
-    set('city', a.label);
-    set('geo.coarseLat', a.lat);
-    set('geo.coarseLon', a.lon);
-    set('geo.maxDistanceKm', a.km);
+    writeFact('location.area', a.label);
+    writeFact('location.lat', a.lat);
+    writeFact('location.lon', a.lon);
+    writeFact('location.radiusKm', a.km);
     setSheet(null);
     if (p.name) {
-      await profileApi.update(p.name, { area: a.label, lat: a.lat, lon: a.lon, radiusKm: a.km })
-        .catch(() => {});
+      await profileApi.update(
+        p.name,
+        patchFor(['location.area', 'location.lat', 'location.lon', 'location.radiusKm'])
+      ).catch(() => {});
     }
     rewrite();                    // «живёт в Барселоне» после переезда в Италию — неправда
   };

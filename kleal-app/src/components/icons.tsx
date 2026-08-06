@@ -200,3 +200,43 @@ export const IconVerified = ({ size = 20 }: { size?: number }) => (
     <Path d="M8.2 12.2l2.6 2.6 5-5.2" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
   </Svg>
 );
+
+// ---------------------------------------------------------------- мастер интента (O.05–O.09)
+
+/** Онлайн — видеокамера: подпись строки на борде «Video / voice». */
+export const IconVideo = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Rect x={3} y={6.5} width={12.5} height={11} rx={2.5} />
+    <Path d="M15.5 10.5l5-2.8v8.6l-5-2.8" />
+  </Svg>
+);
+
+/** Гибрид — плюс, как на кадре O.05. */
+export const IconPlusRound = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round">
+    <Line x1={12} y1={5} x2={12} y2={19} />
+    <Line x1={5} y1={12} x2={19} y2={12} />
+  </Svg>
+);
+
+export const IconGlobe = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.5} strokeLinecap="round">
+    <Circle cx={12} cy={12} r={8.6} />
+    <Path d="M3.4 12h17.2M12 3.4c2.5 2.3 3.8 5.2 3.8 8.6s-1.3 6.3-3.8 8.6c-2.5-2.3-3.8-5.2-3.8-8.6s1.3-6.3 3.8-8.6z" />
+  </Svg>
+);
+
+/** Ссылка — два звена, кадр O.09. */
+export const IconLink = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M10 13.5a4.2 4.2 0 0 0 6 0l3-3a4.24 4.24 0 0 0-6-6l-1.6 1.6" />
+    <Path d="M14 10.5a4.2 4.2 0 0 0-6 0l-3 3a4.24 4.24 0 0 0 6 6l1.6-1.6" />
+  </Svg>
+);
+
+/** Аудитория — треугольник-указатель, как метка «Audience» на кадре O.08. */
+export const IconPlay = ({ size = 18, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinejoin="round">
+    <Path d="M8 5.5l11 6.5-11 6.5V5.5z" />
+  </Svg>
+);

@@ -1,84 +1,69 @@
 /**
- * Создание интента — кадры борда «1:1 Offline», OF.04–OF.10.
+ * Мастер интента — новый борд «1:1 Online», кадры O.05–O.09.
  *
- * Английские вопросы агента взяты с борда дословно (они же лежат в
- * kleal-ms/docs/board_1to1_structure.txt — там имена текстовых слоёв, а в Figma имя текстового
- * слоя и есть его содержимое). Варианты ответов внутри компонентов борда не выгружались, поэтому
- * взяты из работающей веб-версии: там они уже согласованы с тем, что понимает матчинг.
+ * UX-каркас: копия и правила здесь, вид в app/intent.tsx. Английские строки взяты с кадров
+ * ДОСЛОВНО, русские написаны, а не переведены машинно.
+ *
+ * Устройство по борду:
+ *
+ *  O.05  «How do you want to meet?» — строки Offline / Online / Hybrid с галочкой. Кнопки «Дальше»
+ *        нет: выбор строки сам ведёт дальше, агент коротко отвечает «Awesome!».
+ *  O.06  «How many people will there be?» — 1:1 или группа, устроено так же.
+ *  O.07–O.09  «A few details, and I'll search» — три шага под степпером 1–2–3: когда (дата,
+ *        круглый циферблат времени, часовой пояс) → кого (аудитория и кольцо возраста) → где
+ *        происходит звонок (ссылка). Третий шаг зависит от типа: у офлайна вместо ссылки район и
+ *        радиус (кадр прежнего борда OF.09 — в новом наборе офлайн-кадра нет). Гибрид получает шаг
+ *        ссылки: онлайн-часть встречи без ссылки не существует, а место гибрид по определению
+ *        оставляет свободным. Кадра под гибрид на борде нет — это осознанное допущение, не факт.
+ *
+ * Тема сюда приходит ГОТОВОЙ из разговора создания (app/create.tsx): вопрос «что хочешь сделать?»
+ * здесь не задаётся — человек на него только что ответил.
  *
  * Ключи (offline/online/hybrid, 1:1/group, коды районов) НЕ придуманы заново — совпадают с теми,
  * что уходят в /api/agent/plan и /api/agent/match.
  */
-import { T } from './i18n';
+import { T, getLang } from './i18n';
 
-export type IntentStepId = 'what' | 'how' | 'size' | 'when' | 'who' | 'where' | 'summary';
+export type IntentStepId = 'how' | 'size' | 'when' | 'who' | 'place' | 'link';
 
-/** Порядок и проценты. Одна полоса на весь мастер, монотонно. */
-export const INTENT_ORDER: IntentStepId[] = ['what', 'how', 'size', 'when', 'who', 'where', 'summary'];
-export const INTENT_PROGRESS: Record<IntentStepId, number> = {
-  what: 0, how: 15, size: 30, when: 50, who: 65, where: 80, summary: 100,
+// ---------------------------------------------------------------- общее
+
+export const INTENT = {
+  allIntents: () => T('Все интенты', 'All intents'),
+  awesome: () => T('Отлично!', 'Awesome!'),
+  next: () => T('Дальше', 'Next'),
 };
 
-export const INTENT_TITLE = () => T('Новый интент', 'New intent');
+// ---------------------------------------------------------------- O.05 · тип встречи
 
-/** OF.04. Подсказка под вопросом — тоже с борда, слово в слово. */
-export const STEP_WHAT = {
-  bot: () => T('Что хочешь сделать?', 'What do you want to do?'),
-  hint: () =>
-    T(
-      'Без сложностей — кофе, партия, игра, прогулка или просто «не хочу сидеть дома».',
-      'Keep it simple — coffee, a match, a game, a walk, language practice, or just “don’t feel like staying in.”'
-    ),
-  pick: () => T('Выбери из предложенного', 'Choose from the suggested options'),
-  placeholder: () => T('Например: хочу посмотреть футбол вечером…', 'I want to watch football tonight…'),
-};
-
-/** Быстрые варианты. Ключи — обычные слова: матчинг разбирает темы буквально. */
-export const WHAT_SUGGESTIONS: [string, string, string][] = [
-  ['coffee', '☕', 'Кофе и разговор'],
-  ['walk', '🚶', 'Прогулка'],
-  ['football', '⚽', 'Футбол'],
-  ['gaming', '🎮', 'Поиграть'],
-  ['language', '🗣', 'Языковая практика'],
-  ['dinner', '🍽', 'Поужинать'],
-];
-const WHAT_EN: Record<string, string> = {
-  coffee: 'Coffee & a chat', walk: 'A walk', football: 'Football',
-  gaming: 'Play something', language: 'Language practice', dinner: 'Dinner',
-};
-export const whatLabel = (k: string) => {
-  const w = WHAT_SUGGESTIONS.find((x) => x[0] === k);
-  return w ? `${T(w[2], WHAT_EN[k])} ${w[1]}` : k;
-};
-export const whatPlain = (k: string) => {
-  const w = WHAT_SUGGESTIONS.find((x) => x[0] === k);
-  return w ? T(w[2], WHAT_EN[k]) : k;
-};
-
-/** OF.05. */
 export const STEP_HOW = {
-  bot: () => T('Как хочешь встретиться?', 'How do you want to meet?'),
+  ask: () => T('Как хочешь встретиться?', 'How do you want to meet?'),
 };
+
+/** [ключ, EN, RU, подпись EN, подпись RU]. Подписи — с кадра, дословно. */
 export const FORMATS: [string, string, string, string, string][] = [
-  ['offline', '📍', 'Офлайн', 'Offline', 'Вживую'],
-  ['online', '🌐', 'Онлайн', 'Online', 'Видео или голос'],
-  ['hybrid', '➕', 'Гибрид', 'Hybrid', 'И так, и так'],
+  ['offline', 'Offline', 'Офлайн', 'In person', 'Вживую'],
+  ['online', 'Online', 'Онлайн', 'Video / voice', 'Видео или голос'],
+  ['hybrid', 'Hybrid', 'Гибрид', 'Both online & offline', 'И онлайн, и вживую'],
 ];
-const FORMAT_SUB_EN: Record<string, string> = {
-  offline: 'In person', online: 'Video / voice', hybrid: 'Both online & offline',
-};
 export const formatLabel = (k: string) => {
   const f = FORMATS.find((x) => x[0] === k);
-  return f ? T(f[2], f[3]) : k;
+  return f ? T(f[2], f[1]) : k;
 };
 export const formatSub = (k: string) => {
   const f = FORMATS.find((x) => x[0] === k);
-  return f ? T(f[4], FORMAT_SUB_EN[k]) : '';
+  return f ? T(f[4], f[3]) : '';
+};
+
+// ---------------------------------------------------------------- O.06 · сколько людей
+
+export const STEP_SIZE = {
+  ask: () => T('Сколько вас будет?', 'How many people will there be?'),
 };
 
 /**
- * OF.06. Двa варианта, не три: «малой группы» в продукте больше нет — группа это три человека и
- * больше, включая тебя. Число GROUP_MIN_TOTAL — то же, из которого собран весь групповой слой.
+ * «Минимум 3» в подписи группы — то же GROUP_MIN_TOTAL, из которого собран групповой слой сервера:
+ * группа — это три человека и больше, включая тебя.
  *
  * Ключи совпадают с ALLOWED_FORMATS матчинга (matching_core/intent_compiler/compiler.py) и уходят
  * в intent.format НАПРЯМУЮ. Это не косметика: §5.3 считает интент достаточно описанным только когда
@@ -86,91 +71,130 @@ export const formatSub = (k: string) => {
  * minimally_sufficient.ok = false, то есть поиск идёт по недосказанному запросу.
  */
 export const GROUP_MIN_TOTAL = 3;
-export const STEP_SIZE = {
-  bot: () => T('Сколько вас будет?', 'How many people will there be?'),
-};
 export const SIZES: [string, string, string, string, string][] = [
-  ['1:1', '👤', 'Один на один', 'One-on-one', 'Только вы вдвоём'],
-  ['group', '👥', 'Группа', 'Group', 'От трёх человек'],
+  ['1:1', '1:1', '1:1', 'Just the two of us', 'Только вы вдвоём'],
+  ['group', 'Group', 'Группа', '3–5 people · free · needs at least 3', '3–5 человек · бесплатно · нужно минимум 3'],
 ];
-const SIZE_SUB_EN: Record<string, string> = {
-  '1:1': 'Just the two of you', group: '3 people or more',
-};
 export const sizeLabel = (k: string) => {
   const s = SIZES.find((x) => x[0] === k);
-  return s ? T(s[2], s[3]) : k;
+  return s ? T(s[2], s[1]) : k;
 };
 export const sizeSub = (k: string) => {
   const s = SIZES.find((x) => x[0] === k);
-  return s ? T(s[4], SIZE_SUB_EN[k]) : '';
+  return s ? T(s[4], s[3]) : '';
+};
+
+// ---------------------------------------------------------------- O.07–O.09 · детали
+
+export const DETAILS = {
+  title: () => T('Пара деталей — и я ищу', "A few details, and I'll search"),
+  subWhen: () => T('Когда и где удобно?', 'When and where works best?'),
+  subWho: () => T('Кого ты ищешь?', 'Who are you looking for?'),
+  subLink: () => T('Где пройдёт звонок?', 'Where does the call happen?'),
+  subPlace: () => T('Где удобно встретиться?', 'Where works best to meet?'),
+
+  date: () => T('Дата', 'Date'),
+  time: () => T('Время', 'Time'),
+  timeZone: () => T('Часовой пояс', 'Time Zone'),
+
+  audience: () => T('Аудитория', 'Audience'),
+  age: () => T('Возраст', 'Age'),
+
+  link: () => T('Ссылка', 'Link'),
+  linkPlaceholder: () => 'https://yourlink.com',
+  /** Дисклеймер с кадра O.09, дословно. */
+  linkNote: () =>
+    T(
+      'Ссылками делятся сами люди. Открывать её или нет — решаешь ты. Kleal не отвечает за сторонний контент и действия.',
+      'External links are shared by users. You choose whether to open them. Kleal isn’t responsible for third-party content or actions.'
+    ),
+
+  district: () => T('Район', 'District'),
+  radius: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),
 };
 
 /**
- * OF.07–OF.09 делят на борде ОДНУ подсказку — «To match you better, one thing».
- *
- * В статичных кадрах это незаметно, а в живой ленте все три реплики стоят подряд, и агент три раза
- * повторяет одно и то же — так разговаривает не собеседник, а заевшая пластинка. Общая фраза
- * произносится один раз, на первом из трёх шагов; дальше — свои короткие вопросы.
+ * Даты для чипов — от сегодня, как на кадре: «Wed Jul 22», по-русски «ср, 22 июл.». Интент живёт
+ * часы-дни, календарь на месяц ему не нужен.
  */
-export const STEP_DETAIL = {
-  bot: () => T('Ещё одно — чтобы подобрать точнее', 'To match you better, one thing'),
-  who: () => T('А кого искать?', 'And who should I look for?'),
-  where: () => T('И где тебе удобно?', 'And where suits you?'),
-};
+export function dateChips(n = 8, from = new Date()): { key: string; label: string }[] {
+  const out: { key: string; label: string }[] = [];
+  const loc = getLang() === 'ru' ? 'ru-RU' : 'en-US';
+  for (let i = 0; i < n; i++) {
+    const d = new Date(from);
+    d.setDate(d.getDate() + i);
+    out.push({
+      key: d.toISOString().slice(0, 10),
+      label: d.toLocaleDateString(loc, { weekday: 'short', month: 'short', day: 'numeric' }),
+    });
+  }
+  return out;
+}
 
-export const STEP_WHEN = {
-  label: () => T('Когда', 'When'),
-  timeLabel: () => T('Время', 'Time'),
-};
-/** Дни, а не календарь: интент живёт часы-дни, и «через месяц» ему не нужно. */
-export const DAYS: [string, string, string][] = [
-  ['today', 'Сегодня', 'Today'],
-  ['tomorrow', 'Завтра', 'Tomorrow'],
-  ['weekend', 'На выходных', 'This weekend'],
-  ['flexible', 'Когда угодно', 'Flexible'],
-];
-export const dayLabel = (k: string) => {
-  const d = DAYS.find((x) => x[0] === k);
-  return d ? T(d[1], d[2]) : k;
-};
-export const PARTS: [string, string, string][] = [
-  ['morning', 'Утро', 'Morning'],
-  ['afternoon', 'День', 'Afternoon'],
-  ['evening', 'Вечер', 'Evening'],
-  ['late', 'Поздний вечер', 'Late evening'],
-];
-export const partLabel = (k: string) => {
-  const p = PARTS.find((x) => x[0] === k);
-  return p ? T(p[1], p[2]) : k;
-};
+/** Минуты суток → «20:00». Одно место, чтобы циферблат, поля и запрос не разошлись в формате. */
+export function hhmm(minutes: number): string {
+  const m = ((Math.round(minutes) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
 
 /**
  * Строка времени, которая уходит В ЗАПРОС, — всегда английская, независимо от языка интерфейса.
  *
  * Срочность на той стороне определяется поиском слов в тексте: SOON_WORDS = today/tonight/evening/
- * tomorrow, _urgency() ищет now/asap/urgent/soon. Русских слов там нет ни одного. Отправить
- * «Сегодня Вечер» — значит получить urgency «none»: запрос на сегодняшний вечер ранжировался бы
- * как «когда-нибудь», и человек, пишущий по-русски, тихо терял бы всю срочность.
+ * tomorrow. Русских слов там нет ни одного. Отправить «сегодня 20:00» — значит получить urgency
+ * «none»: запрос на сегодняшний вечер ранжировался бы как «когда-нибудь».
  */
-export const timeQuery = (day?: string, part?: string) => {
-  const D: Record<string, string> = {
-    today: 'today', tomorrow: 'tomorrow', weekend: 'this weekend', flexible: 'flexible',
-  };
-  const P: Record<string, string> = {
-    morning: 'morning', afternoon: 'afternoon', evening: 'evening', late: 'late evening',
-  };
-  return [day && D[day], part && P[part]].filter(Boolean).join(' ');
-};
+export function timeQueryFromDate(dateKey: string, minutes: number, from = new Date()): string {
+  const t = hhmm(minutes);
+  const today = from.toISOString().slice(0, 10);
+  const tomorrow = new Date(from);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (dateKey === today) return `today ${t}`;
+  if (dateKey === tomorrow.toISOString().slice(0, 10)) return `tomorrow ${t}`;
+  const d = new Date(dateKey + 'T12:00:00');
+  return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${t}`;
+}
 
-export const STEP_WHO = {
-  sexLabel: () => T('Пол', 'Sex'),
-  ageLabel: () => T('Возраст', 'Age'),
-};
+/** Часовой пояс устройства — IANA-имя, оно же уходит в ctx.tz. */
+export function deviceTz(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
 
-export const STEP_WHERE = {
-  districtLabel: () => T('Район', 'District'),
-  radiusLabel: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),
-};
+/** Подпись пояса в духе кадра («Barcelona, Spain (GMT+2)») — имя зоны плюс смещение. */
+export function tzDisplay(tz: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+      .formatToParts(new Date());
+    const off = parts.find((p) => p.type === 'timeZoneName')?.value || '';
+    return `${tz.replace(/_/g, ' ').split('/').pop()} (${off})`;
+  } catch {
+    return tz;
+  }
+}
+
+/**
+ * Зоны для выпадающего списка: устройство первым, дальше несколько ходовых. Список короткий
+ * намеренно — это выбор «я сейчас не там, где телефон думает», а не справочник всех зон мира.
+ */
+export function tzOptions(): string[] {
+  const base = [deviceTz(), 'Europe/Madrid', 'Europe/London', 'Europe/Berlin', 'Europe/Moscow', 'UTC'];
+  return base.filter((v, i) => base.indexOf(v) === i);
+}
+
+/**
+ * Наивная проверка ссылки. Не валидатор: по дисклеймеру борда ссылка — ответственность человека,
+ * здесь отсекается только то, что заведомо не откроется.
+ */
+export function looksLikeUrl(s: string): boolean {
+  return /^https?:\/\/\S+\.\S+/.test(String(s || '').trim());
+}
+
+// ---------------------------------------------------------------- районы (офлайн, прежний кадр OF.09)
+
 export const DISTRICTS: [string, string, string][] = [
   ['center', 'Центр', 'Center'],
   ['west', 'Запад', 'West'],
@@ -188,12 +212,7 @@ export const districtQuery = (k?: string) => {
   return d ? d[2] : k || '';
 };
 
-/** OF.10. */
-export const STEP_SUMMARY = {
-  bot: () => T('Вот что получилось', 'Here’s what I got'),
-  send: () => T('Искать людей', 'Find people'),
-  edit: () => T('Поправить', 'Change something'),
-};
+// ---------------------------------------------------------------- поиск и выдача
 
 /** OF.11. */
 export const SEARCHING = {
