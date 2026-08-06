@@ -21,7 +21,7 @@
  * словами с кадра: человек увидит интент и профиль. Отправка идёт в /api/agent/propose; сервер
  * держит одно открытое приглашение на пару — повторная отправка обновляет его, а не плодит копии.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Modal,
 } from 'react-native';
@@ -29,6 +29,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { RESULTS, EXPAND_LADDER, ExpandAxis, axisExplain } from '../src/intent';
 import { CANDS, PREFS, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
+import { CHAT, Req, ReqStatus, byPerson, activeChatWith } from '../src/chat';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, setCandidate } from '../src/results-store';
 import { agent } from '../src/api';
@@ -64,6 +65,15 @@ export default function Results() {
   const [asking, setAsking] = useState<Cand | null>(null);
   const [sending, setSending] = useState(false);
   const [sendErr, setSendErr] = useState('');
+  /**
+   * Что стало с уже отправленными приглашениями. Тянется с сервера: ответ приходит не на этом
+   * экране, и без опроса карточка навсегда осталась бы в состоянии «Отправлено».
+   */
+  const [reqs, setReqs] = useState<Record<string, Req>>({});
+  /** Окно бесплатного тарифа (O.17): с кем уже идёт переписка, когда пробуешь открыть вторую. */
+  const [busyWith, setBusyWith] = useState('');
+  /** С кем реально идёт переписка — по сообщениям, а не по принятым приглашениям (см. activeChatWith). */
+  const [chatting, setChatting] = useState('');
   /**
    * Лист O.11a «Изменить условия поиска». Открывается сам, когда точных совпадений нет: борд
    * предлагает расширение сразу, а не прячет его за кнопкой. Черновик условий живёт отдельно от
@@ -192,6 +202,50 @@ export default function Results() {
     }
   };
 
+  /** Состояния приглашений живут на сервере — забираем их и обновляем, пока экран открыт. */
+  const loadReqs = useCallback(async () => {
+    if (!self) return;
+    try {
+      const [o, th]: any[] = await Promise.all([
+        agent.outbox(self),
+        agent.threads(self).catch(() => ({ threads: [] })),
+      ]);
+      setReqs(byPerson((o?.requests || []) as Req[]));
+      setChatting(activeChatWith((th?.threads || []) as any[]));
+    } catch {
+      /* тихо: фоновая дотяжка состояний */
+    }
+  }, [self]);
+
+  useEffect(() => { loadReqs(); }, [loadReqs]);
+  useEffect(() => {
+    const id = setInterval(loadReqs, 6000);
+    return () => clearInterval(id);
+  }, [loadReqs]);
+
+  /**
+   * Открыть переписку. Правило бесплатного тарифа с кадра O.17 — один живой чат за раз — живёт
+   * ЗДЕСЬ, потому что на сервере его нет: он позволяет писать любому, кто принял приглашение.
+   * Когда тариф появится на сервере, проверку надо перенести туда — иначе она обходится любым
+   * другим клиентом.
+   */
+  const openChat = (name: string, photo?: string) => {
+    const active = chatting;
+    if (active && active.toLowerCase() !== name.toLowerCase()) {
+      setBusyWith(active);
+      return;
+    }
+    router.push({
+      pathname: '/conversation',
+      params: { who: name, title: String(intent?.title || (intent?.topics || []).join(', ') || ''), photo: photo || '' },
+    });
+  };
+
+  /** O.16 «Убрать»: карточка уходит с экрана. Отклонённое приглашение сервер уже закрыл сам. */
+  const removeCard = (name: string) => {
+    setCands((prev) => prev.filter((c) => String(c.name || '') !== name));
+  };
+
   const openProfile = (c: Cand) => {
     setCandidate(c);
     router.push('/candidate');
@@ -269,9 +323,12 @@ export default function Results() {
             c={c}
             badge={(c as any).fallback ? '' : i === 0 ? CANDS.bestBadge() : CANDS.matchBadge()}
             invited={!!sent[String(c.name || '')]}
+            status={reqs[String(c.name || '')]?.status}
             onOpen={() => openProfile(c)}
             onInvite={() => { setSendErr(''); setAsking(c); }}
             onCancel={() => cancelInvite(String(c.name || ''))}
+            onOpenChat={() => openChat(String(c.name || ''), c.photo)}
+            onRemove={() => removeCard(String(c.name || ''))}
           />
         ))}
 
@@ -306,6 +363,36 @@ export default function Results() {
         bottomInset={insets.bottom}
       />
 
+      {/* Окно бесплатного тарифа — кадр O.17. Текст с кадра; ограничение клиентское, см. openChat. */}
+      <Modal visible={!!busyWith} transparent animationType="slide" onRequestClose={() => setBusyWith('')}>
+        <Pressable style={s.scrim} onPress={() => setBusyWith('')} accessibilityLabel={T('Закрыть', 'Close')} />
+        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+          <View style={s.sheetHead}>
+            <Text style={s.sheetTitle}>{CHAT.busyTitle(busyWith)}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setBusyWith('')} hitSlop={10}>
+              <Text style={s.sheetX}>✕</Text>
+            </Pressable>
+          </View>
+          <Text style={s.sheetBody}>{CHAT.busyBody()}</Text>
+          {/* Тарифа в продукте нет — кнопка честно выключена, как везде в каркасе. */}
+          <View style={[s.sheetSend, { opacity: 0.45 }]}>
+            <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
+          </View>
+          <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
+          <Pressable
+            accessibilityRole="button"
+            style={s.sheetNot}
+            onPress={() => {
+              const who = busyWith;
+              setBusyWith('');
+              router.push({ pathname: '/conversation', params: { who } });
+            }}
+          >
+            <Text style={s.sheetNotText}>{CHAT.endChatWith(busyWith)}</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
       <InviteSheet
         cand={asking}
         sending={sending}
@@ -320,14 +407,18 @@ export default function Results() {
 
 /** Карточка кандидата — кадр O.12. Нажатие на тело карточки открывает полный профиль (O.13). */
 function CandCard({
-  c, badge, invited, onOpen, onInvite, onCancel,
+  c, badge, invited, status, onOpen, onInvite, onCancel, onOpenChat, onRemove,
 }: {
   c: Cand;
   badge: string;
   invited: boolean;
+  /** Ответ на приглашение, как его называет сервер. Пусто — ответа ещё нет. */
+  status?: ReqStatus;
   onOpen: () => void;
   onInvite: () => void;
   onCancel: () => void;
+  onOpenChat: () => void;
+  onRemove: () => void;
 }) {
   const readiness = (ru() ? c.readiness_ru : c.readiness_en) || '';
   const where = candWhere(c);
@@ -384,8 +475,32 @@ function CandCard({
         ) : null}
       </Pressable>
 
-      {invited ? (
-        // O.15: приглашение ушло — слева спокойное состояние, справа настоящая «Отменить».
+      {/*
+        Четыре состояния приглашения, и каждое видно на своём кадре:
+          отклонили (O.16)  — «Отклонено» и «Убрать»;
+          приняли   (O.17)  — «Открыть чат» и «Отменить»;
+          отправлено (O.15) — «Отправлено» и «Отменить»;
+          ничего            — просто «Пригласить».
+      */}
+      {status === 'declined' ? (
+        <View style={s.invitedRow}>
+          <View style={[s.invite, s.invitedPill]}>
+            <Text style={[s.inviteText, { color: color.muted }]}>⊘  {CHAT.declined()}</Text>
+          </View>
+          <Pressable accessibilityRole="button" style={[s.invite, s.cancelPill]} onPress={onRemove}>
+            <Text style={s.inviteText}>{CHAT.remove()}</Text>
+          </Pressable>
+        </View>
+      ) : status === 'accepted' ? (
+        <View style={s.invitedRow}>
+          <Pressable accessibilityRole="button" style={[s.invite, { flex: 1 }]} onPress={onOpenChat}>
+            <Text style={s.inviteText}>{CHAT.openChat()}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={[s.invite, s.cancelPill]} onPress={onCancel}>
+            <Text style={s.inviteText}>{CANDS.cancel()}</Text>
+          </Pressable>
+        </View>
+      ) : invited || status === 'pending' ? (
         <View style={s.invitedRow}>
           <View style={[s.invite, s.invitedPill]}>
             <Text style={[s.inviteText, { color: color.fg }]}>{CANDS.invitedShort()}</Text>
@@ -602,6 +717,7 @@ const s = StyleSheet.create({
   prefFlexRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   prefFlexVal: { ...type.bodySmall, color: color.primary, fontWeight: '600' } as any,
 
+  plusPrice: { ...type.caption, color: color.muted, textAlign: 'center' } as any,
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,

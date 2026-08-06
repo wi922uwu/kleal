@@ -234,6 +234,40 @@ export const agent = {
   block: (self: string, name: string, on: boolean) =>
     api.post<{ ok?: boolean; blocked?: string[] }>('/api/agent/block', { self, name, on }),
 
+  /** Исходящие приглашения — по ним карточка выдачи знает, приняли её или отклонили. */
+  outbox: (self: string) =>
+    api.get<{ requests?: Json[] }>(`/api/agent/outbox?self=${encodeURIComponent(self)}`),
+
+  /**
+   * Последнее сообщение в каждой переписке. Одним запросом отвечает на вопрос «а с кем разговор
+   * реально идёт» — принятое приглашение это ещё не переписка.
+   */
+  threads: (self: string) =>
+    api.get<{ threads?: Json[] }>(`/api/agent/threads?self=${encodeURIComponent(self)}`),
+
+  /** Переписка с одним человеком, старые сверху. `since` — чтобы дотягивать только новое. */
+  thread: (self: string, other: string, since = 0) =>
+    api.get<{ messages?: Json[] }>(
+      `/api/agent/thread?self=${encodeURIComponent(self)}&with=${encodeURIComponent(other)}&since=${since}`
+    ),
+
+  /** Отправить сообщение. Доставка настоящая — сообщение появится и у собеседника. */
+  message: (from: string, to: string, text: string) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/message', { from, to, text }),
+
+  /**
+   * Предложить встречу (O.20). Сервер откажет, если человек ещё не принял приглашение
+   * (NOT_MATCHED) или если время уже прошло (IN_THE_PAST) — оба случая называются на экране.
+   */
+  planPropose: (self: string, to: string, p: Json) =>
+    api.post<{ ok?: boolean; id?: string; error?: string; plan?: Json }>(
+      '/api/agent/mplan-propose', { self, to, ...p }
+    ),
+
+  /** Планы этого человека: живые и прошедшие. */
+  plans: (self: string) =>
+    api.get<{ plans?: Json[]; history?: Json[] }>(`/api/agent/mplans?self=${encodeURIComponent(self)}`),
+
   /** Входящие приглашения. Просроченные и отозванные сервер отсекает сам. */
   inbox: (self: string) =>
     api.get<{ requests?: Json[] }>(`/api/agent/inbox?self=${encodeURIComponent(self)}`),
