@@ -12,7 +12,8 @@
  * хабе и строка «Общается на …» в памяти не могут разойтись между собой.
  */
 import { T, getLang } from './i18n';
-import { sexLabel, hobbyPlain, langPlain } from './onboarding';
+import { sexLabel, hobbyPlain } from './onboarding';
+import { langPlainName } from './languages';
 import type { Profile } from './state';
 
 // ---------------------------------------------------------------- разделы
@@ -111,7 +112,7 @@ export const HUB_ROWS: HubRow[] = [
     id: 'languages', kind: 'sheet',
     title: () => T('Языки', 'Languages'),
     sub: (p) => {
-      const list = (p?.languages?.comfortable || []).map((k: string) => langPlain(k));
+      const list = (p?.languages?.comfortable || []).map((k: string) => langPlainName(k, getLang() === 'ru'));
       return list.length ? list.join(' · ') : T('Пока не заполнено', 'Not set yet');
     },
   },
@@ -132,6 +133,9 @@ export const SHEETS = {
   languages: () => T('Языки', 'Languages'),
   location: () => T('Локация', 'Location'),
   accept: () => T('Принять изменения', 'Accept changes'),
+  search: () => T('Найти язык', 'Find a language'),
+  nothing: () => T('Ничего не нашлось', 'Nothing found'),
+  chosen: () => T('Выбрано', 'Selected'),
   close: () => T('Закрыть', 'Close'),
 };
 

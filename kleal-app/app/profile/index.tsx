@@ -21,7 +21,7 @@ import { profile as profileApi, buddy } from '../../src/api';
 import {
   PROFILE_TITLE, HUB, AVAIL, SIGNOUT, HUB_ROWS, SHEETS, profileData, fmtUpdated,
 } from '../../src/profile';
-import { LANGS, langLabel } from '../../src/onboarding';
+import { langName, langCode, searchLangs } from '../../src/languages';
 import { AreaPicker, Area } from '../../src/components/AreaPicker';
 import { color, radius as rad, space, type } from '../../src/theme';
 
@@ -99,9 +99,10 @@ export default function ProfileHub() {
     set('languages.comfortable', list);
     setSheet(null);
     if (p.name) {
-      await profileApi.update(p.name, {
-        langs: list.map((l) => String(l).slice(0, 2).toLowerCase()),
-      }).catch(() => {});
+      // Код берётся из справочника, а не обрезкой имени: Spanish → «sp» вместо «es», а
+      // Estonian → «es», то есть испанский. Незнакомое имя кода не получает вовсе.
+      const codes = list.map(langCode).filter(Boolean) as string[];
+      await profileApi.update(p.name, { langs: codes }).catch(() => {});
     }
   };
 
@@ -332,6 +333,10 @@ const s = StyleSheet.create({
   rowTitle: { fontSize: 18, fontWeight: '700', color: color.fg },
   rowSub: { ...type.bodySmall, color: color.muted, marginTop: 2 } as any,
 
+  search: {
+    height: 46, borderRadius: rad.full, backgroundColor: color.neutral100,
+    paddingHorizontal: 18, color: color.fg, fontSize: 15,
+  },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chip: {
     height: 44, paddingHorizontal: 16, borderRadius: rad.full, borderWidth: 1,
@@ -383,7 +388,13 @@ const ROW_ICON: Record<string, (p: any) => React.ReactElement> = {
   location: IconPin,
 };
 
-/** Языки — чипы с флагами, как на кадре. Правка идёт по черновику: закрыть крестиком = не сохранить. */
+/**
+ * Языки — полный список с поиском.
+ *
+ * Выбранные всегда сверху и видны сразу: иначе, набрав в поиске «швед», человек перестаёт видеть,
+ * что у него уже отмечено, и снимает нужное вслепую. Правка идёт по черновику — крестик не
+ * сохраняет.
+ */
 function LanguagesSheet({
   open, value, onClose, onAccept,
 }: {
@@ -392,9 +403,14 @@ function LanguagesSheet({
   onClose: () => void;
   onAccept: (list: string[]) => void;
 }) {
+  const ru = getLang() === 'ru';
   const [sel, setSel] = useState<string[]>(value);
-  useEffect(() => { if (open) setSel(value); }, [open]);
+  const [q, setQ] = useState('');
+  useEffect(() => { if (open) { setSel(value); setQ(''); } }, [open]);
+
   const toggle = (k: string) => setSel((x) => (x.includes(k) ? x.filter((y) => y !== k) : [...x, k]));
+  const found = searchLangs(q).filter((l) => !sel.includes(l[0]));
+
   return (
     <EditSheet
       open={open}
@@ -403,19 +419,49 @@ function LanguagesSheet({
       onAccept={() => onAccept(sel)}
       acceptLabel={SHEETS.accept()}
     >
-      <View style={s.chips}>
-        {LANGS.map(([k]) => (
-          <Pressable
-            key={k}
-            accessibilityRole="button"
-            accessibilityState={{ selected: sel.includes(k) }}
-            onPress={() => toggle(k)}
-            style={[s.chip, sel.includes(k) && s.chipOn]}
-          >
-            <Text style={[s.chipText, sel.includes(k) && { color: color.onPrimary }]}>{langLabel(k)}</Text>
-          </Pressable>
-        ))}
-      </View>
+      <TextInput
+        style={s.search}
+        value={q}
+        onChangeText={setQ}
+        placeholder={SHEETS.search()}
+        placeholderTextColor={color.neutral400}
+        autoCorrect={false}
+        accessibilityLabel={SHEETS.search()}
+      />
+
+      {sel.length ? (
+        <View style={s.chips}>
+          {sel.map((k) => (
+            <Pressable
+              key={k}
+              accessibilityRole="button"
+              accessibilityState={{ selected: true }}
+              onPress={() => toggle(k)}
+              style={[s.chip, s.chipOn]}
+            >
+              <Text style={[s.chipText, { color: color.onPrimary }]}>{langName(k, ru)}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {found.length ? (
+        <View style={s.chips}>
+          {found.map((l) => (
+            <Pressable
+              key={l[1]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: false }}
+              onPress={() => toggle(l[0])}
+              style={s.chip}
+            >
+              <Text style={s.chipText}>{langName(l[0], ru)}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : (
+        <Text style={s.basicValue}>{SHEETS.nothing()}</Text>
+      )}
     </EditSheet>
   );
 }
