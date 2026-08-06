@@ -194,6 +194,20 @@ export const agent = {
       '/api/agent/propose', { from, to, intent, note }
     ),
 
+  /**
+   * «Не интересно» (O.13b): решение уходит ранжированию как обратная связь — этого человека
+   * больше не предлагать первым. Это не блокировка: написать он по-прежнему может.
+   */
+  feedback: (name: string, decision: 'accept' | 'reject', uid: string) =>
+    api.post<{ ok?: boolean }>('/api/agent/feedback', { name, decision, uid }),
+
+  /**
+   * Жалоба (O.13b). Причина — из словаря сервера (fake/harassment/spam/unsafe/underage/other):
+   * «Спасибо, посмотрим» обязано соответствовать строке, которую кто-то реально откроет.
+   */
+  report: (self: string, name: string, reason: string, text = '') =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/report', { self, name, reason, text }),
+
   /** Отозвать НЕотвеченное приглашение (O.15 «Cancel»). Отозвать может только отправитель. */
   withdraw: (id: string, self: string) =>
     api.post<{ ok?: boolean; status?: string; error?: string }>('/api/agent/withdraw', { id, self }),

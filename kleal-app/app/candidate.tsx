@@ -17,13 +17,13 @@
  * класть нельзя. Открытый напрямую (обновлением страницы) экран честно говорит, что данных больше
  * нет, и ведёт назад к поиску.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { CANDS, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
+import { CANDS, OPTIONS, REPORT_REASONS, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, takeCandidate } from '../src/results-store';
 import { agent } from '../src/api';
@@ -41,6 +41,12 @@ export default function Candidate() {
   const handoff = useMemo(() => takeResults(), []);
 
   const [asking, setAsking] = useState(false);
+  /** Лист O.13b и его отсчёт. pending — действие, которое случится через n секунд, если не отменить. */
+  const [options, setOptions] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  const [pending, setPending] = useState<{ kind: 'reject' | 'block'; n: number } | null>(null);
+  const [optNote, setOptNote] = useState('');
+  const timer = useRef<any>(null);
   const [sending, setSending] = useState(false);
   /** Id отправленной заявки. По нему работает «Отменить» (O.15); пусто — не отправляли. */
   const [sentId, setSentId] = useState('');
@@ -96,6 +102,62 @@ export default function Candidate() {
     }
   };
 
+  /**
+   * O.13b: «Не интересно» и «Заблокировать» срабатывают через 4 секунды — отсчёт на борде, не
+   * выдумка. Обе вещи меняют, кого человек увидит, и случайное нажатие должно быть обратимым,
+   * пока не поздно. «Отменить» просто останавливает таймер — на сервер ничего не уходит.
+   */
+  const startPending = (kind: 'reject' | 'block') => {
+    if (pending) return;
+    setOptNote('');
+    setPending({ kind, n: 4 });
+  };
+
+  useEffect(() => {
+    if (!pending) return;
+    timer.current = setTimeout(async () => {
+      if (pending.n > 1) {
+        setPending({ ...pending, n: pending.n - 1 });
+        return;
+      }
+      const self = String(handoff?.profile?.name || '');
+      try {
+        if (pending.kind === 'block') {
+          const r: any = await agent.block(self, name, true);
+          if (!r?.ok) throw new Error(r?.error || 'block failed');
+        } else {
+          await agent.feedback(name, 'reject', self);
+        }
+        setPending(null);
+        setOptions(false);
+        // Человека из этой выдачи больше показывать нельзя — карточка закрывается.
+        router.back();
+      } catch {
+        setPending(null);
+        setOptNote(OPTIONS.failed());
+      }
+    }, 1000);
+    return () => clearTimeout(timer.current);
+  }, [pending]);
+
+  const undoPending = () => {
+    clearTimeout(timer.current);
+    setPending(null);
+  };
+
+  const sendReport = async (reason: string) => {
+    setOptNote('');
+    try {
+      const self = String(handoff?.profile?.name || '');
+      const r: any = await agent.report(self, name, reason);
+      if (!r?.ok) throw new Error(r?.error || 'report failed');
+      setReporting(false);
+      setOptNote(OPTIONS.reportSent());
+    } catch {
+      setOptNote(OPTIONS.failed());
+    }
+  };
+
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
@@ -103,11 +165,20 @@ export default function Candidate() {
           <Text style={s.backIcon}>‹</Text>
         </Pressable>
         <View style={{ flex: 1 }} />
+        {/* Кадр O.13b: за тремя точками — «Не интересно», жалоба и блокировка. */}
+        <Pressable accessibilityRole="button" accessibilityLabel={OPTIONS.title()} style={s.back} onPress={() => setOptions(true)}>
+          <Text style={s.dots}>⋮</Text>
+        </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={s.scroll}>
+        {/*
+          Кадр O.13a: фото — большим блоком на всю ширину, а не кружком. Точки-пейджер на кадре
+          подразумевают несколько фотографий; в данных фото ровно одно (или ни одного), и рисовать
+          пейджер на одну страницу значит обещать пролистывание, которого нет.
+        */}
         {c.photo ? (
-          <Image source={{ uri: c.photo }} style={s.photo} />
+          <Image source={{ uri: c.photo }} style={s.photoBig} resizeMode="cover" />
         ) : (
           <View style={[s.photo, s.photoEmpty]}><IconPerson size={54} /></View>
         )}
@@ -198,6 +269,58 @@ export default function Candidate() {
           </Pressable>
         </View>
       </Modal>
+
+      {/* Лист O.13b. Пока идёт отсчёт, лист закрыть нельзя — иначе отмена потеряется вместе с ним. */}
+      <Modal visible={options} transparent animationType="slide" onRequestClose={() => !pending && setOptions(false)}>
+        <Pressable style={s.scrim} onPress={() => !pending && setOptions(false)} accessibilityLabel={T('Закрыть', 'Close')} />
+        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+          <View style={s.sheetHead}>
+            <Text style={s.sheetTitle}>{OPTIONS.title()}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => !pending && setOptions(false)} hitSlop={10}>
+              <Text style={s.sheetX}>✕</Text>
+            </Pressable>
+          </View>
+
+          {optNote ? <Text style={s.optNote}>{optNote}</Text> : null}
+
+          {pending ? (
+            <View style={s.pendingRow}>
+              <Text style={s.pendingText}>
+                {OPTIONS.pending(pending.kind === 'block' ? OPTIONS.block(name) : OPTIONS.notInterested(), pending.n)}
+              </Text>
+              <Pressable accessibilityRole="button" style={s.undoBtn} onPress={undoPending}>
+                <Text style={s.undoText}>{OPTIONS.undo()}</Text>
+              </Pressable>
+            </View>
+          ) : reporting ? (
+            <>
+              {REPORT_REASONS.map(([k, ruL, enL]) => (
+                <Pressable key={k} accessibilityRole="button" style={s.reasonBtn} onPress={() => sendReport(k)}>
+                  <Text style={s.reasonText}>{T(ruL, enL)}</Text>
+                </Pressable>
+              ))}
+              <Pressable accessibilityRole="button" style={s.optCancel} onPress={() => setReporting(false)}>
+                <Text style={s.optCancelText}>{OPTIONS.cancel()}</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Pressable accessibilityRole="button" style={s.optDark} onPress={() => startPending('reject')}>
+                <Text style={s.optDarkText}>⊗  {OPTIONS.notInterested()}</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" style={s.optSoft} onPress={() => { setOptNote(''); setReporting(true); }}>
+                <Text style={s.optSoftText}>{OPTIONS.report()}</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" style={s.optSoft} onPress={() => startPending('block')}>
+                <Text style={s.optSoftText}>{OPTIONS.block(name)}</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" style={s.optCancel} onPress={() => setOptions(false)}>
+                <Text style={s.optCancelText}>{OPTIONS.cancel()}</Text>
+              </Pressable>
+            </>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -254,6 +377,25 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   ctaText: { ...type.button, color: color.onPrimary } as any,
+
+  dots: { fontSize: 20, color: color.fg, fontWeight: '700' },
+  photoBig: { alignSelf: 'stretch', height: 340, borderRadius: rad.xl, backgroundColor: color.neutral100 },
+  optNote: { ...type.bodySmall, color: color.primary } as any,
+  optDark: { height: 52, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
+  optDarkText: { ...type.button, color: '#fff' } as any,
+  optSoft: { height: 52, borderRadius: rad.full, backgroundColor: color.infoBg, alignItems: 'center', justifyContent: 'center' },
+  optSoftText: { ...type.button, color: color.primary } as any,
+  optCancel: { height: 44, alignItems: 'center', justifyContent: 'center' },
+  optCancelText: { ...type.button, color: color.fg } as any,
+  reasonBtn: {
+    height: 48, borderRadius: rad.lg, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  reasonText: { ...type.body, color: color.fg } as any,
+  pendingRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  pendingText: { flex: 1, ...type.body, color: color.fg } as any,
+  undoBtn: { height: 44, paddingHorizontal: 18, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  undoText: { ...type.button, color: color.onPrimary } as any,
 
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
   sheet: {

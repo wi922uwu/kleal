@@ -87,3 +87,48 @@ export function candSummary(c: Cand, ru: boolean): string {
   }
   return String(c.why || c.note || '');
 }
+
+/**
+ * Лист «Изменить условия поиска» — кадр O.11a. Показывается, когда точных совпадений нет:
+ * человек сам решает, чем поступиться — полом, возрастом или временем.
+ */
+export const PREFS = {
+  noMatches: () => T('Точных совпадений пока нет', 'No exact matches yet'),
+  title: () => T('Изменить условия поиска', 'Change search preferences'),
+  sex: () => T('Пол', 'Sex'),
+  age: () => T('Возраст', 'Age'),
+  flex: () => T('Насколько гибко по времени?', 'How flexible is the time?'),
+  flexVal: (h: number) => T(`± ${h} ч`, `± ${h} hours`),
+  start: () => T('Начать поиск', 'Start search'),
+  cancel: () => T('Отмена', 'Cancel'),
+};
+
+/**
+ * Лист «Profile options» — кадр O.13b.
+ *
+ * У «Не интересно» и «Заблокировать» есть 4-секундный обратный отсчёт с отменой — это НА БОРДЕ
+ * (аннотация кадра), не выдумка: оба действия меняют, кого человек увидит, и случайное нажатие
+ * должно быть обратимым, пока не поздно.
+ */
+export const OPTIONS = {
+  title: () => T('Действия с профилем', 'Profile options'),
+  notInterested: () => T('Не интересно', 'Not interested'),
+  report: () => T('Пожаловаться на профиль', 'Report profile'),
+  block: (name: string) => T(`Заблокировать ${name}`, `Block ${name}`),
+  cancel: () => T('Отмена', 'Cancel'),
+  /** Строка отсчёта: действие названо, секунды идут, отмена в одно касание. */
+  pending: (what: string, n: number) => T(`${what} через ${n}…`, `${what} in ${n}…`),
+  undo: () => T('Отменить', 'Undo'),
+  reportSent: () => T('Жалоба отправлена. Спасибо — её посмотрят.', 'Report sent. Thank you — it will be reviewed.'),
+  failed: () => T('Не получилось. Попробуй ещё раз.', 'That didn’t work. Try again.'),
+};
+
+/** Причины жалобы — словарь сервера (REPORT_REASONS). Подписи локальные, ключи его. */
+export const REPORT_REASONS: [string, string, string][] = [
+  ['fake', 'Фейковый профиль', 'Fake profile'],
+  ['harassment', 'Оскорбления или преследование', 'Harassment'],
+  ['spam', 'Спам', 'Spam'],
+  ['unsafe', 'Небезопасное поведение', 'Unsafe behaviour'],
+  ['underage', 'Похоже, несовершеннолетний', 'Looks underage'],
+  ['other', 'Другое', 'Other'],
+];

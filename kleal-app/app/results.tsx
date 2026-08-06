@@ -28,11 +28,14 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { RESULTS, EXPAND_LADDER, ExpandAxis, axisExplain } from '../src/intent';
-import { CANDS, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
+import { CANDS, PREFS, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, setCandidate } from '../src/results-store';
 import { agent } from '../src/api';
-import { IconPerson, IconPin } from '../src/components/icons';
+import { IconPerson, IconPin, IconClock } from '../src/components/icons';
+import { AgeRange } from '../src/components/AgeRange';
+import Slider from '@react-native-community/slider';
+import { SEXES, sexLabel } from '../src/onboarding';
 import { BottomNav } from '../src/components/BottomNav';
 import { color, radius as rad, space, type } from '../src/theme';
 
@@ -61,6 +64,24 @@ export default function Results() {
   const [asking, setAsking] = useState<Cand | null>(null);
   const [sending, setSending] = useState(false);
   const [sendErr, setSendErr] = useState('');
+  /**
+   * Лист O.11a «Изменить условия поиска». Открывается сам, когда точных совпадений нет: борд
+   * предлагает расширение сразу, а не прячет его за кнопкой. Черновик условий живёт отдельно от
+   * интента — «Отмена» не должна оставлять полурасширенный запрос.
+   */
+  const [prefsOpen, setPrefsOpen] = useState(() => {
+    const cs = initial?.candidates || [];
+    // «Точных совпадений нет» на этом сервере выглядит не как ноль карточек, а как пачка замен
+    // с пометкой fallback: он почти никогда не возвращает пусто. Лист предлагается в обоих случаях.
+    return cs.length === 0 || cs.every((c: any) => !!c.fallback);
+  });
+  const [prefs, setPrefs] = useState(() => ({
+    sex: String(initial?.intent?.sex || 'Any'),
+    minAge: Number(initial?.intent?.minAge || 18),
+    maxAge: Number(initial?.intent?.maxAge || 28),
+    flexH: 2,
+  }));
+  const [reSearching, setReSearching] = useState(false);
 
   const profile = initial?.profile || {};
   const self = String(profile?.name || '');
@@ -144,6 +165,33 @@ export default function Results() {
     }
   };
 
+  /** «Начать поиск» из листа O.11a: тот же /api/agent/match, но с условиями, которые человек ослабил сам. */
+  const reSearch = async () => {
+    if (reSearching) return;
+    setReSearching(true);
+    setNote('');
+    try {
+      const next: any = { ...intent, minAge: prefs.minAge, maxAge: prefs.maxAge };
+      if (prefs.sex && prefs.sex !== 'Any') next.sex = prefs.sex;
+      else delete next.sex;
+      // Гибкость по времени сервер сегодня НЕ читает — поле едет в интент честно помеченным
+      // ожиданием: когда матчинг научится, клиент уже отправляет. Врать «± 2 часа применены»
+      // мы не можем, поэтому в подписи ступени это и не утверждается.
+      next.timeFlexHours = prefs.flexH;
+      const r: any = await agent.match(next, profile, {
+        self, uid: self, city: profile?.city,
+      });
+      setIntent(r?.intent || next);
+      setCands((r?.candidates || []) as Cand[]);
+      setRung(0);                      // условия сменились — лестница §12 начинается заново
+      setPrefsOpen(false);
+    } catch {
+      setNote(T('Не получилось поискать. Попробуй ещё раз.', 'The search failed. Try again.'));
+    } finally {
+      setReSearching(false);
+    }
+  };
+
   const openProfile = (c: Cand) => {
     setCandidate(c);
     router.push('/candidate');
@@ -191,15 +239,29 @@ export default function Results() {
 
       <ScrollView contentContainerStyle={[s.scroll, { paddingBottom: 120 }]}>
         {onlyFallback ? (
-          <Text style={s.lead}>
-            {T('Никто не занимается ровно этим. Вот кто рядом и с кем это может получиться.',
-               'Nobody is doing exactly that. Here are people nearby it could work with.')}
-          </Text>
+          <View style={{ gap: space.sm }}>
+            <Text style={s.lead}>
+              {T('Никто не занимается ровно этим. Вот кто рядом и с кем это может получиться.',
+                 'Nobody is doing exactly that. Here are people nearby it could work with.')}
+            </Text>
+            <Pressable accessibilityRole="button" style={s.prefsBtn} onPress={() => setPrefsOpen(true)}>
+              <Text style={s.prefsBtnText}>{PREFS.title()}</Text>
+            </Pressable>
+          </View>
         ) : null}
 
         {note ? <Text style={s.note}>{note}</Text> : null}
 
-        {cands.length === 0 ? <Text style={s.lead}>{RESULTS.emptyNote()}</Text> : null}
+        {cands.length === 0 ? (
+          <View style={s.noMatch}>
+            <View style={s.noMatchArt}><IconPerson size={34} /></View>
+            <Text style={s.noMatchTitle}>{PREFS.noMatches()}</Text>
+            <Text style={s.lead}>{RESULTS.emptyNote()}</Text>
+            <Pressable accessibilityRole="button" style={s.cta} onPress={() => setPrefsOpen(true)}>
+              <Text style={s.ctaText}>{PREFS.title()}</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         {cands.map((c, i) => (
           <CandCard
@@ -233,6 +295,16 @@ export default function Results() {
       <View style={s.navFloat} pointerEvents="box-none">
         <BottomNav />
       </View>
+
+      <PrefsSheet
+        open={prefsOpen}
+        prefs={prefs}
+        setPrefs={setPrefs}
+        busy={reSearching}
+        onStart={reSearch}
+        onClose={() => setPrefsOpen(false)}
+        bottomInset={insets.bottom}
+      />
 
       <InviteSheet
         cand={asking}
@@ -331,6 +403,91 @@ function CandCard({
   );
 }
 
+/**
+ * Лист O.11a «Изменить условия поиска»: пол, возраст линейным диапазоном (на этом кадре — слайдер,
+ * не кольцо) и гибкость по времени. «Начать поиск» перезапускает матчинг с ослабленными условиями.
+ */
+function PrefsSheet({
+  open, prefs, setPrefs, busy, onStart, onClose, bottomInset,
+}: {
+  open: boolean;
+  prefs: { sex: string; minAge: number; maxAge: number; flexH: number };
+  setPrefs: React.Dispatch<React.SetStateAction<{ sex: string; minAge: number; maxAge: number; flexH: number }>>;
+  busy: boolean;
+  onStart: () => void;
+  onClose: () => void;
+  bottomInset: number;
+}) {
+  return (
+    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={s.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
+      <View style={[s.sheet, { paddingBottom: Math.max(bottomInset, 18) }]}>
+        <View style={s.sheetHead}>
+          <Text style={s.sheetTitle}>{PREFS.title()}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={onClose} hitSlop={10}>
+            <Text style={s.sheetX}>✕</Text>
+          </Pressable>
+        </View>
+
+        <View style={s.prefLabelRow}>
+          <IconPerson size={16} c={color.fg} />
+          <Text style={s.prefLabel}>{PREFS.sex()}</Text>
+        </View>
+        <View style={s.prefChips}>
+          {SEXES.map(([k]) => (
+            <Pressable
+              key={k}
+              accessibilityRole="button"
+              accessibilityState={{ selected: prefs.sex === k }}
+              onPress={() => setPrefs((p) => ({ ...p, sex: k }))}
+              style={[s.prefChip, prefs.sex === k && s.prefChipOn]}
+            >
+              <Text style={[s.prefChipText, prefs.sex === k && { color: color.onPrimary }]}>{sexLabel(k)}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={s.prefLabelRow}>
+          <IconClock size={16} c={color.fg} />
+          <Text style={s.prefLabel}>{PREFS.age()}</Text>
+        </View>
+        <AgeRange
+          min={prefs.minAge}
+          max={prefs.maxAge}
+          onChange={(lo, hi) => setPrefs((p) => ({ ...p, minAge: lo, maxAge: hi }))}
+        />
+
+        <View style={s.prefFlexRow}>
+          <Text style={s.prefLabel}>{PREFS.flex()}</Text>
+          <Text style={s.prefFlexVal}>{PREFS.flexVal(prefs.flexH)}</Text>
+        </View>
+        <Slider
+          minimumValue={0}
+          maximumValue={6}
+          step={1}
+          value={prefs.flexH}
+          onValueChange={(h) => setPrefs((p) => ({ ...p, flexH: Math.round(h) }))}
+          minimumTrackTintColor={color.primary}
+          maximumTrackTintColor={color.neutral100}
+          thumbTintColor={color.primary}
+        />
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ busy }}
+          style={s.sheetSend}
+          onPress={busy ? undefined : onStart}
+        >
+          {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.sheetSendText}>{PREFS.start()}</Text>}
+        </Pressable>
+        <Pressable accessibilityRole="button" style={s.sheetNot} onPress={onClose}>
+          <Text style={s.sheetNotText}>{PREFS.cancel()}</Text>
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
 /** Окно O.14: последствия названы словами, отправка — только отсюда. */
 function InviteSheet({
   cand, sending, err, onSend, onClose, bottomInset,
@@ -420,6 +577,30 @@ const s = StyleSheet.create({
   ctaText: { ...type.button, color: color.onPrimary } as any,
 
   navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+
+  noMatch: { alignItems: 'center', gap: space.md, paddingTop: space.xl },
+  noMatchArt: {
+    width: 96, height: 96, borderRadius: 48, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  noMatchTitle: { fontSize: 20, fontWeight: '700', color: color.fg, textAlign: 'center' },
+
+  prefsBtn: {
+    height: 44, borderRadius: rad.full, borderWidth: 1, borderColor: color.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  prefsBtnText: { ...type.labelMedium, color: color.primary, fontWeight: '600' } as any,
+  prefLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  prefLabel: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
+  prefChips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  prefChip: {
+    height: 38, paddingHorizontal: 16, borderRadius: rad.full, borderWidth: 1,
+    borderColor: color.border, backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
+  },
+  prefChipOn: { backgroundColor: color.primary, borderColor: color.primary },
+  prefChipText: { ...type.labelMedium, color: color.fg } as any,
+  prefFlexRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  prefFlexVal: { ...type.bodySmall, color: color.primary, fontWeight: '600' } as any,
 
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
   sheet: {
