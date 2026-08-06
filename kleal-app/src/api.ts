@@ -260,9 +260,33 @@ export const agent = {
    * (NOT_MATCHED) или если время уже прошло (IN_THE_PAST) — оба случая называются на экране.
    */
   planPropose: (self: string, to: string, p: Json) =>
-    api.post<{ ok?: boolean; id?: string; error?: string; plan?: Json }>(
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      // Ответ отдаёт план целиком в `plan`, id лежит ВНУТРИ него — сверху `id` нет.
+      // Ещё один отказ, о котором стоит знать: PLAN_EXISTS, у пары может быть только одна встреча.
       '/api/agent/mplan-propose', { self, to, ...p }
     ),
+
+  /**
+   * Ответ на план: confirm | decline | counter | accept_change | reject_change.
+   *
+   * Контрпредложение (counter) НЕ отменяет встречу — оно паркуется рядом, а старое время
+   * продолжает действовать, пока второй не ответит. Это правило борда, и оно живёт на сервере.
+   */
+  planRespond: (id: string, self: string, action: string, extra: Json = {}) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/mplan-respond', { id, self, action, ...extra }
+    ),
+
+  /** Место встречи или ссылка на звонок. Сервер открывает её только подтвердившим (OF.C3). */
+  planAddress: (id: string, self: string, address: string) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/mplan-address', { id, self, address }),
+
+  /**
+   * «Состоялось ли» и отзыв — ОДНА запись: второй вызов дописывается в первый, а не заменяет его.
+   * Иначе оценка встречи стёрла бы ответ на вопрос, была ли она вообще.
+   */
+  planFeedback: (id: string, self: string, v: Json) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/mplan-feedback', { id, self, ...v }),
 
   /** Планы этого человека: живые и прошедшие. */
   plans: (self: string) =>

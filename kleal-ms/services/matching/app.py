@@ -4150,6 +4150,10 @@ def _mp_public(p, me=""):
         "my_live": (p.get("live") or {}).get(who),
         "their_live": (p.get("live") or {}).get(_norm_name(_mp_other(p, me))),
         "outcome": p.get("outcome"), "my_feedback": (p.get("feedback") or {}).get(who),
+        # OF.24 говорит «пока не ответите оба, никому ничего не засчитывается» — значит экрану нужно
+        # знать сам ФАКТ ответа второго, но не его содержание. Пара their_*/my_* здесь та же, что у
+        # live: наружу уходит булево, чужая оценка и причина остаются внутри.
+        "their_feedback": bool((p.get("feedback") or {}).get(_norm_name(_mp_other(p, me)))),
         "due": bool(p.get("starts_at") and time.time() >= float(p["starts_at"])),
         "created": p.get("created"), "updated": p.get("updated"),
     }

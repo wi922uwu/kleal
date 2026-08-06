@@ -69,6 +69,7 @@ export const CHAT = {
     ),
   notAnswered: () => T('Ещё не ответил(а)', 'Hasn’t answered yet'),
   youProposed: () => T('Это предложил(а) ты', 'You proposed this'),
+  youProposedShort: () => T('твой план', 'your plan'),
   confirmed: () => T('Подтвердил(а)', 'Confirmed'),
   declinedPlan: () => T('Отказался(ась)', 'Declined'),
   changePlan: () => T('Поправить план', 'Change the plan'),
@@ -78,7 +79,138 @@ export const CHAT = {
   notMatched: () => T('План можно отправить только тому, кто принял приглашение.',
                       'A plan can only go to someone who accepted your invite.'),
   inThePast: () => T('Это время уже прошло. Выбери другое.', 'That time has already passed. Pick another.'),
+  /** У пары может быть только одна живая встреча — сервер не даст завести вторую. */
+  planExists: () => T('С этим человеком уже есть встреча. Поправь её, а не заводи вторую.',
+                      'You already have a meetup with this person. Change that one instead.'),
 };
+
+/**
+ * Кадры O.21–O.25 — жизнь плана после отправки.
+ *
+ *  O.21  Подтверждён: время, отметка, что ссылка откроется за десять минут, «Открыть чат» и
+ *        «Предложить другое время».
+ *  O.22  За десять минут до звонка ссылка открывается.
+ *  O.23  Время пришло.
+ *  O.24  После: «состоялось ли». Спрашивают обоих, и до ответа обоих никому ничего не засчитывают.
+ *  O.25  Отзыв — необязательный.
+ *
+ * Про десять минут. Сервер отдаёт ссылку тому, кто ПОДТВЕРДИЛ встречу (OF.C3), и времени в этом
+ * правиле нет. «Открывается за десять минут» — правило показа, и живёт оно в клиенте: ссылка уже
+ * пришла, экран просто не делает её кнопкой раньше срока. Это не защита, а фокус — в отличие от
+ * адреса, который сервер действительно скрывает.
+ */
+export const PLAN = {
+  confirmed: () => T('Подтверждено', 'Confirmed'),
+  /**
+   * На кадре здесь названы обе стороны и оба часовых пояса. Пояс собеседника мы не храним — ни в
+   * профиле, ни в плане, — поэтому время показывается ОДНО, своё, и подписано своим поясом.
+   * Выдумывать «19:00 в Лондоне» для человека, чей пояс никто не спрашивал, нельзя.
+   */
+  linkOpensAt: (hhmmStr: string) =>
+    T(`Ссылка откроется в ${hhmmStr}, не раньше.`, `The link opens at ${hhmmStr}, not now.`),
+  linkSaved: () => T('Видеозвонок · ссылка сохранена', 'Video call · link saved'),
+  linkOpensLabel: (hhmmStr: string) =>
+    T(`Видеозвонок · ссылка откроется в ${hhmmStr}`, `Video call · link opens ${hhmmStr}`),
+  /** Формат без обещаний про ссылку — для встречи, которая уже позади или отменена. */
+  modeOnline: () => T('Видеозвонок', 'Video call'),
+
+  startsIn: (min: number) => T(`Начало через ${min} мин`, `Starts in ${min} minutes`),
+  startsNow: () => T('Время звонка', 'Your call is now'),
+  linkOpenNow: () => T('Ссылка открыта', 'Your link is now open'),
+  linkNote: () =>
+    T(
+      'Звонок проходит по этой ссылке — Kleal хранит только её и время.',
+      'The call happens on this link — Kleal only keeps the link and the time.'
+    ),
+  openLink: () => T('Открыть ссылку', 'Open link'),
+  leavesKleal: () => T('Откроется вне Kleal', 'Opens outside Kleal'),
+  outsideNote: () =>
+    T(
+      'Звонок идёт вне Kleal. Мы его не видим и ничего о нём не записываем. Потом спросим у обоих, состоялся ли он.',
+      'The call happens outside Kleal. We can’t see it and nothing about it is recorded here. Afterwards we’ll ask you both whether it happened.'
+    ),
+  messageThem: (name: string) => T(`Написать ${name}`, `Message ${name}`),
+  cantMakeIt: () => T('Не смогу', 'I can’t make it'),
+  suggestAnother: () => T('Предложить другое время', 'Suggest another time'),
+
+  /** O.24. Формулировка с кадра: спрашивают обоих, и до ответа обоих никому ничего не засчитывают. */
+  didItHappen: () => T('Встреча состоялась?', 'Did it happen?'),
+  didItNote: (name: string) =>
+    T(
+      `Kleal не видит, что происходит вне приложения, поэтому спрашивает. ${name} получит тот же вопрос. Пока не ответите оба, никому ничего не засчитывается.`,
+      `Kleal can’t see outside the app, so we have to ask. ${name} gets the same question. Nothing is recorded against anyone until you both answer.`
+    ),
+  yesWeTalked: () => T('Да, встретились', 'Yes, we talked'),
+  noItDidnt: () => T('Нет, не состоялась', 'No, it didn’t happen'),
+  waitingBoth: () => T('Ждём ответа обоих', 'Waiting on both answers'),
+  youAnswered: () => T('Ты ответил(а)', 'You answered'),
+  theyNotAnswered: (name: string) => T(`${name} ещё не ответил(а)`, `${name} hasn’t answered yet`),
+
+  /** O.25. */
+  howWasIt: () => T('Как прошло?', 'How was it?'),
+  optional: () =>
+    T(
+      'Необязательно — это помогает агенту подбирать лучше в следующий раз.',
+      'Optional — it helps your agent find better matches next time.'
+    ),
+  great: () => T('Отлично', 'Great'),
+  fine: () => T('Нормально', 'Fine'),
+  notGreat: () => T('Так себе', 'Not great'),
+  send: () => T('Отправить', 'Send'),
+  reportProblem: () => T('Сообщить о проблеме', 'Report a problem'),
+  thanks: () => T('Спасибо — это поможет подбирать точнее.', 'Thank you — this helps us match you better.'),
+};
+
+/** Оценки — те же три, что на кадре. Ключи английские: их читает сервер. */
+/** Три чипа кадра O.25 и их значение на серверной шкале: mp_feedback принимает ТОЛЬКО int 1–5,
+ *  строковый ключ он молча отбрасывает — оценка выглядела бы отправленной, но не сохранялась. */
+export const RATINGS: [string, () => string, number][] = [
+  ['great', PLAN.great, 5],
+  ['fine', PLAN.fine, 3],
+  ['not_great', PLAN.notGreat, 1],
+];
+
+/**
+ * В каком состоянии план прямо сейчас. Одно место на все кадры O.20–O.25, чтобы экран не решал
+ * это в трёх разных условиях и не разошёлся сам с собой.
+ *
+ * `LINK_LEAD_MIN` — те самые десять минут с кадра O.21.
+ */
+export const LINK_LEAD_MIN = 10;
+
+export type PlanPhase = 'waiting' | 'confirmed' | 'soon' | 'now' | 'after' | 'cancelled';
+
+export function planPhase(plan: any, nowMs = Date.now()): PlanPhase {
+  const state = String(plan?.state || '');
+  if (state === 'cancelled') return 'cancelled';
+  // done — итоги уже подведены. Часам тут веры нет: сервер ставит done по факту ответов, и
+  // показывать такому плану «ссылка откроется в …» значило бы звать на прошедшую встречу.
+  if (state === 'done') return 'after';
+  const startsMs = typeof plan?.starts_at === 'number' ? plan.starts_at * 1000 : 0;
+  const bothConfirmed = (plan?.participants || []).every((p: any) => p?.confirmed);
+  if (!bothConfirmed && state !== 'confirmed') return 'waiting';
+  if (!startsMs) return 'confirmed';
+  const minsToStart = (startsMs - nowMs) / 60000;
+  // Встреча считается прошедшей через час после начала: до этого «состоялась ли» спрашивать рано.
+  if (minsToStart < -60) return 'after';
+  if (minsToStart <= 0) return 'now';
+  if (minsToStart <= LINK_LEAD_MIN) return 'soon';
+  return 'confirmed';
+}
+
+/** Сколько минут осталось до начала — для строки «начало через N мин». */
+export function minutesToStart(plan: any, nowMs = Date.now()): number {
+  const startsMs = typeof plan?.starts_at === 'number' ? plan.starts_at * 1000 : 0;
+  return startsMs ? Math.max(0, Math.round((startsMs - nowMs) / 60000)) : 0;
+}
+
+/** Время, когда откроется ссылка, — на десять минут раньше начала. */
+export function linkOpensAt(plan: any, ru = true): string {
+  const startsMs = typeof plan?.starts_at === 'number' ? plan.starts_at * 1000 : 0;
+  if (!startsMs) return '';
+  const d = new Date(startsMs - LINK_LEAD_MIN * 60000);
+  return d.toLocaleTimeString(ru ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: !ru });
+}
 
 export type Msg = { from?: string; to?: string; text?: string; t?: number };
 export type Req = {
@@ -140,11 +272,18 @@ export function planWhen(p: any, ru = true): string {
   return String(p?.when || '');
 }
 
-/** Подпись статуса участника плана — словами, а не кодом состояния. */
+/**
+ * Подпись статуса участника плана — словами, а не кодом состояния.
+ *
+ * Подтверждение важнее авторства. Своя строка сначала говорила «это предложил(а) ты» и умалчивала
+ * о том, что предложивший УЖЕ подтверждён — на сервере предложить и значит согласиться. Рядом со
+ * строкой собеседника «Подтвердил(а)» это читалось так, будто согласился только он.
+ */
 export function personStatus(p: any): string {
-  if (p?.is_me) return CHAT.youProposed();
   const s = String(p?.status || 'pending');
-  if (s === 'confirm' || p?.confirmed) return CHAT.confirmed();
   if (s === 'decline') return CHAT.declinedPlan();
-  return CHAT.notAnswered();
+  if (s === 'confirm' || s === 'confirmed' || p?.confirmed) {
+    return p?.is_me ? `${CHAT.confirmed()} · ${CHAT.youProposedShort()}` : CHAT.confirmed();
+  }
+  return p?.is_me ? CHAT.youProposed() : CHAT.notAnswered();
 }

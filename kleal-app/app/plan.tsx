@@ -1,28 +1,39 @@
 /**
- * План встречи — кадр O.20.
+ * Встреча — кадры O.20–O.25, от предложения до отзыва.
  *
- * UX-КАРКАС: вид натянется поверх; копия и разбор — в src/chat.ts.
+ * UX-КАРКАС: вид натянется поверх; копия, состояния и разбор — в src/chat.ts.
  *
- * Экран живёт в двух состояниях, и это одно и то же место намеренно: пока плана нет — форма
- * (когда и где), как только он отправлен — карточка ожидания с кадра O.20. Разводить их по двум
- * маршрутам значило бы, что «Поправить план» ведёт куда-то ещё, а он ведёт сюда же.
+ * Один экран на всю жизнь плана, а не шесть маршрутов. Так задумано: «Поправить план» и «Открыть
+ * ссылку» — это одно и то же место в разное время, и разводить их значило бы, что человек, глядя
+ * на встречу, каждый раз оказывается где-то ещё. Состояние считает planPhase:
  *
- * Правила плана — серверные, и оба называются словами:
- *   NOT_MATCHED — план можно отправить только тому, кто принял приглашение;
- *   IN_THE_PAST — время в прошлом сервер не принимает.
+ *   форма      — плана ещё нет, выбираем время и место (O.20, первая половина);
+ *   waiting    — отправлено, ждём ответа (O.20);
+ *   confirmed  — оба подтвердили; ссылка придёт позже (O.21);
+ *   soon       — за десять минут ссылка открывается (O.22);
+ *   now        — время пришло (O.23);
+ *   after      — «состоялось ли» и отзыв (O.24, O.25);
+ *   cancelled  — кто-то отказался.
  *
- * Адрес после отправки виден не всегда: сервер отдаёт его только тому, кто подтвердил встречу, и
- * всегда — тому, кто его вписал (OF.C3). Экран показывает то, что пришло, и не достраивает.
+ * Правила, которые держит СЕРВЕР, а не экран: ссылку он отдаёт только подтвердившим (OF.C3);
+ * контрпредложение не отменяет встречу, старое время держится, пока второй не ответит; «состоялось
+ * ли» и оценка пишутся одной записью, чтобы оценка не стёрла ответ про сам факт встречи.
+ *
+ * Правило, которое держит ЭКРАН: ссылка становится кнопкой за десять минут, не раньше. Она уже
+ * пришла с сервера — это не защита, а фокус, и в этом разница с адресом, который сервер прячет
+ * по-настоящему.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CHAT, planWhen, personStatus } from '../src/chat';
-import { DETAILS, dateChips, hhmm, deviceTz, tzOffsetLabel } from '../src/intent';
+import {
+  CHAT, PLAN, RATINGS, planWhen, personStatus, planPhase, minutesToStart, linkOpensAt,
+} from '../src/chat';
+import { DETAILS, dateChips, hhmm, deviceTz, tzOffsetLabel, looksLikeUrl } from '../src/intent';
 import { TimeDial } from '../src/components/Dials';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
@@ -39,11 +50,12 @@ export default function Plan() {
   const st = useOnb();
   const insets = useSafeAreaInsets();
 
-  const params = useLocalSearchParams<{ who?: string; title?: string; photo?: string; link?: string }>();
+  const params = useLocalSearchParams<{ who?: string; title?: string; photo?: string; link?: string; id?: string }>();
   const other = String(params.who || '').trim();
   const intentTitle = String(params.title || '').trim();
   const photo = String(params.photo || '');
-  const link = String(params.link || '').trim();
+  const linkFromIntent = String(params.link || '').trim();
+  const planId = String(params.id || '').trim();
 
   const me = String(st.profile.name || '');
   const ru = getLang() === 'ru';
@@ -51,29 +63,44 @@ export default function Plan() {
   const [date, setDate] = useState(() => dateChips(1)[0].key);
   const [minutes, setMinutes] = useState(20 * 60);
   const [district, setDistrict] = useState(String(st.profile.city || ''));
+  const [link, setLink] = useState(linkFromIntent);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  /** Отправленный план в виде, в котором его отдаёт сервер. null — ещё форма. */
   const [plan, setPlan] = useState<any>(null);
-  const polling = useRef<any>(null);
-
+  /** Часы идут — экран сам переходит из «подтверждено» в «через десять минут» и дальше. */
+  const [tick, setTick] = useState(Date.now());
+  /** Ответы O.24/O.25, пока не отправлены. */
+  const [rating, setRating] = useState('');
+  const [thanks, setThanks] = useState('');
   const dates = useMemo(() => dateChips(), []);
 
-  /** Ответ собеседника приходит не мгновенно — экран ожидания подтягивает состояние сам. */
+  const load = useCallback(async () => {
+    if (!me) return;
+    try {
+      const r: any = await agent.plans(me);
+      const all = [...(r?.plans || []), ...(r?.history || [])];
+      const mine = planId
+        ? all.find((p: any) => p.id === planId)
+        : all.find((p: any) => (p.participants || []).some((x: any) => String(x.name || '') === other));
+      if (mine) setPlan(mine);
+    } catch {
+      /* тихо: фоновая дотяжка */
+    }
+  }, [me, other, planId]);
+
+  // Открытый по ссылке экран должен найти свой план сам — иначе «Открыть» из уведомления показывал
+  // бы пустую форму поверх уже существующей встречи.
+  useEffect(() => { if (planId || other) load(); }, [planId, other]);
+
   useEffect(() => {
-    if (!plan || !me) return;
-    polling.current = setInterval(async () => {
-      try {
-        const r: any = await agent.plans(me);
-        const mine = (r?.plans || []).find((p: any) => p.id === plan.id);
-        if (mine) setPlan(mine);
-      } catch {
-        /* тихо: фоновая дотяжка */
-      }
-    }, 5000);
-    return () => clearInterval(polling.current);
-  }, [plan?.id, me]);
+    const id = setInterval(() => { setTick(Date.now()); load(); }, 15000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const phase = plan ? planPhase(plan, tick) : null;
+  const mine = plan ? myAnswer(plan) : undefined;
+  const bothAnswered = !!plan?.their_feedback && mine !== undefined;
 
   const propose = async () => {
     if (busy || !me || !other) return;
@@ -86,26 +113,67 @@ export default function Plan() {
         title: intentTitle || T('Встреча', 'Meetup'),
         mode: link ? 'online' : 'offline',
         starts_at: Math.floor(d.getTime() / 1000),
-        when: `${planWhenLabel(date, minutes, ru)}`,
-        district,
+        when: planWhenLabel(date, minutes, ru),
+        district: link ? '' : district,
+        // Ссылка живёт в поле адреса: сервер открывает адрес только подтвердившим, и для звонка
+        // это ровно то поведение, которое нужно.
+        address: link,
       });
       if (!r?.ok) {
         if (r?.error === 'NOT_MATCHED') throw new Error(CHAT.notMatched());
         if (r?.error === 'IN_THE_PAST') throw new Error(CHAT.inThePast());
+        if (r?.error === 'PLAN_EXISTS') throw new Error(CHAT.planExists());
         throw new Error(CHAT.planFailed());
       }
-      // Сервер отдаёт план целиком; если нет — тянем его списком, чтобы показать настоящие статусы.
-      if (r.plan) setPlan(r.plan);
-      else {
-        const list: any = await agent.plans(me);
-        setPlan((list?.plans || []).find((p: any) => p.id === r.id) || { id: r.id });
-      }
+      // Сервер вернул план целиком — берём его сразу, не дожидаясь опроса.
+      if (r.plan) setPlan(r.plan); else await load();
     } catch (e: any) {
       setErr(String(e?.message || CHAT.planFailed()));
     } finally {
       setBusy(false);
     }
   };
+
+  const respond = async (action: string, extra: any = {}) => {
+    if (!plan?.id) return;
+    setErr('');
+    try {
+      const r: any = await agent.planRespond(plan.id, me, action, { version: plan.version, ...extra });
+      if (!r?.ok) throw new Error(r?.error || 'failed');
+      await load();
+    } catch {
+      setErr(CHAT.planFailed());
+    }
+  };
+
+  const answerHappened = async (happened: boolean) => {
+    if (!plan?.id) return;
+    try {
+      await agent.planFeedback(plan.id, me, { happened });
+      await load();
+    } catch {
+      setErr(CHAT.planFailed());
+    }
+  };
+
+  const sendRating = async () => {
+    if (!plan?.id) return;
+    try {
+      const value = RATINGS.find(([k]) => k === rating)?.[2];
+      await agent.planFeedback(plan.id, me, { rating: value });
+      setThanks(PLAN.thanks());
+      await load();
+    } catch {
+      setErr(CHAT.planFailed());
+    }
+  };
+
+  const openChat = () =>
+    router.push({ pathname: '/conversation', params: { who: other, title: intentTitle, photo } });
+
+  /** Ссылка, как её отдал сервер: до подтверждения её просто нет в ответе. */
+  const serverLink = String(plan?.address || '');
+  const linkReady = phase === 'soon' || phase === 'now';
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -119,37 +187,62 @@ export default function Plan() {
         </View>
 
         <ScrollView contentContainerStyle={[s.body, { paddingBottom: 130 }]} keyboardShouldPersistTaps="handled" scrollEnabled={!dragging}>
-          {plan ? (
+          {!plan ? (
+            <PlanForm
+              dates={dates} date={date} setDate={setDate}
+              minutes={minutes} setMinutes={setMinutes} setDragging={setDragging}
+              district={district} setDistrict={setDistrict}
+              link={link} setLink={setLink}
+              busy={busy} err={err} onPropose={propose}
+            />
+          ) : (
             <>
-              <Text style={s.sentTo}>{CHAT.sentTo(other)}</Text>
-              <Text style={s.sentNote}>{CHAT.sentNote(other)}</Text>
+              <Text style={s.title}>{headline(phase!, other, plan)}</Text>
+              <Text style={s.note}>{subline(phase!, other, plan, ru)}</Text>
 
               <View style={s.card}>
                 <View style={s.cover}><IconImagePlaceholder size={40} /></View>
                 <View style={s.metaRow}>
                   <IconCalendar />
-                  <Text style={s.metaText}>{planWhen(plan, ru) || planWhenLabel(date, minutes, ru)}</Text>
+                  <Text style={s.metaText}>{planWhen(plan, ru)} {tzOffsetLabel(deviceTz())}</Text>
                 </View>
-                {plan.district || district ? (
+                {plan.district ? (
                   <View style={s.metaRow}>
                     <IconPin size={16} c={color.muted} />
-                    <Text style={s.metaText}>{plan.district || district}</Text>
+                    <Text style={s.metaText}>{plan.district}</Text>
                   </View>
                 ) : null}
-                {/* Адрес виден только тому, кому его открыл сервер (OF.C3) — не достраиваем. */}
-                {plan.address_visible_to_me && plan.address ? (
-                  <View style={s.metaRow}>
-                    <IconPin size={16} c={color.muted} />
-                    <Text style={s.metaText}>{plan.address}</Text>
-                  </View>
-                ) : null}
-                {link ? (
+                {plan.mode === 'online' || serverLink ? (
                   <View style={s.metaRow}>
                     <IconLink size={16} c={color.muted} />
-                    <Text style={s.metaText}>{CHAT.videoCall()}</Text>
+                    {/* Когда ссылка открыта, об этом говорит зелёная карточка ниже — здесь только факт
+                        формата, иначе одна и та же фраза стоит на экране дважды. */}
+                    <Text style={s.metaText}>
+                      {phase === 'after' || phase === 'cancelled'
+                        // Встреча позади — обещать, что ссылка «откроется в 18:14», уже неправда.
+                        ? PLAN.modeOnline()
+                        : linkReady ? PLAN.linkSaved() : PLAN.linkOpensLabel(linkOpensAt(plan, ru))}
+                    </Text>
                   </View>
                 ) : null}
               </View>
+
+              {/* O.22/O.23: ссылка становится кнопкой только теперь — см. шапку файла. */}
+              {linkReady && serverLink ? (
+                <View style={s.linkCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.linkTitle}>{PLAN.linkOpenNow()}</Text>
+                    <Text style={s.linkSub}>{PLAN.leavesKleal()}</Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    style={s.linkBtn}
+                    onPress={() => Linking.openURL(serverLink).catch(() => setErr(CHAT.planFailed()))}
+                  >
+                    <Text style={s.linkBtnText}>{PLAN.openLink()}</Text>
+                  </Pressable>
+                </View>
+              ) : null}
 
               {(plan.participants || []).map((p: any, i: number) => (
                 <View key={(p.name || '') + i} style={s.person}>
@@ -166,78 +259,90 @@ export default function Plan() {
                 </View>
               ))}
 
-              <Pressable
-                accessibilityRole="button"
-                style={s.cta}
-                onPress={() => router.push({ pathname: '/conversation', params: { who: other, title: intentTitle, photo } })}
-              >
-                <Text style={s.ctaText}>{CHAT.openChat()}</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setPlan(null)}>
-                <Text style={s.ctaDarkText}>{CHAT.changePlan()}</Text>
-              </Pressable>
-            </>
-          ) : (
-            <>
-              <View style={s.card}>
-                <View style={s.labelRow}>
-                  <IconCalendar />
-                  <Text style={s.label}>{DETAILS.date()}</Text>
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
-                  {dates.map((d) => (
-                    <Pressable
-                      key={d.key}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: date === d.key }}
-                      onPress={() => setDate(d.key)}
-                      style={[s.chip, date === d.key && s.chipOn]}
-                    >
-                      <Text style={[s.chipText, date === d.key && { color: color.onPrimary }]}>{d.label}</Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
+              {phase === 'soon' || phase === 'now' ? (
+                <View style={s.infoBox}><Text style={s.infoText}>{PLAN.outsideNote()}</Text></View>
+              ) : null}
 
-                <View style={s.labelRow}>
-                  <IconClock />
-                  <Text style={s.label}>{DETAILS.time()}</Text>
-                </View>
-                <TimeDial minutes={minutes} onChange={setMinutes} onDragChange={setDragging} />
-                <Text style={s.tz}>{hhmm(minutes)} {tzOffsetLabel(deviceTz())}</Text>
+              {err ? <Text style={s.err}>{err}</Text> : null}
 
-                {!link ? (
-                  <>
-                    <View style={s.labelRow}>
-                      <IconPin size={18} c={color.fg} />
-                      <Text style={s.label}>{DETAILS.district()}</Text>
-                    </View>
-                    <TextInput
-                      style={s.input}
-                      value={district}
-                      onChangeText={setDistrict}
-                      placeholder={String(st.profile.city || 'Barcelona')}
-                      placeholderTextColor={color.neutral400}
-                      accessibilityLabel={DETAILS.district()}
-                    />
-                  </>
+              {/* O.24: спрашиваем оба факта до оценки — оценка без ответа про сам факт бессмысленна. */}
+              {phase === 'after' && mine === undefined ? (
+                <>
+                  <View style={s.infoBox}><Text style={s.infoText}>{PLAN.didItNote(other)}</Text></View>
+                  <Pressable accessibilityRole="button" style={s.cta} onPress={() => answerHappened(true)}>
+                    <Text style={s.ctaText}>{PLAN.yesWeTalked()}</Text>
+                  </Pressable>
+                  <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => answerHappened(false)}>
+                    <Text style={s.ctaDarkText}>{PLAN.noItDidnt()}</Text>
+                  </Pressable>
+                </>
+              ) : null}
+
+              {/* O.25: отзыв — только после того, как сам ответил про факт встречи. */}
+              {phase === 'after' && mine === true ? (
+                thanks || myRated(plan) ? (
+                  // «Спасибо» уже стоит в заголовке — здесь остаётся только то, чего там нет.
+                  !bothAnswered ? <Text style={s.note}>{PLAN.waitingBoth()}</Text> : null
                 ) : (
-                  <View style={s.metaRow}>
-                    <IconLink size={16} c={color.muted} />
-                    <Text style={s.metaText}>{CHAT.videoCall()}</Text>
-                  </View>
-                )}
+                  <>
+                    <Text style={s.note}>{PLAN.optional()}</Text>
+                    <View style={s.chipRowWrap}>
+                      {RATINGS.map(([k, label]) => (
+                        <Pressable
+                          key={k}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: rating === k }}
+                          onPress={() => setRating(k)}
+                          style={[s.chip, rating === k && s.chipOn]}
+                        >
+                          <Text style={[s.chipText, rating === k && { color: color.onPrimary }]}>{label()}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    <Pressable accessibilityRole="button" style={s.cta} onPress={sendRating}>
+                      <Text style={s.ctaText}>{PLAN.send()}</Text>
+                    </Pressable>
+                    <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => router.push('/profile/safety')}>
+                      <Text style={s.ctaDarkText}>{PLAN.reportProblem()}</Text>
+                    </Pressable>
+                  </>
+                )
+              ) : null}
 
-                {err ? <Text style={s.err}>{err}</Text> : null}
+              {phase === 'after' && mine === false ? (
+                <Text style={s.note}>{bothAnswered ? PLAN.thanks() : PLAN.waitingBoth()}</Text>
+              ) : null}
 
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ busy }}
-                  style={s.cta}
-                  onPress={busy ? undefined : propose}
-                >
-                  {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.ctaText}>{CHAT.createPlan()}</Text>}
+              {/* Действия до встречи: до звонка — чат и отказ, после подтверждения — ещё и новое время. */}
+              {phase === 'waiting' || phase === 'confirmed' ? (
+                <>
+                  <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
+                    <Text style={s.ctaText}>{CHAT.openChat()}</Text>
+                  </Pressable>
+                  <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setPlan(null)}>
+                    <Text style={s.ctaDarkText}>
+                      {phase === 'confirmed' ? PLAN.suggestAnother() : CHAT.changePlan()}
+                    </Text>
+                  </Pressable>
+                </>
+              ) : null}
+
+              {phase === 'soon' || phase === 'now' ? (
+                <>
+                  <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
+                    <Text style={s.ctaText}>{PLAN.messageThem(other)}</Text>
+                  </Pressable>
+                  <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => respond('decline')}>
+                    <Text style={s.ctaDarkText}>{PLAN.cantMakeIt()}</Text>
+                  </Pressable>
+                </>
+              ) : null}
+
+              {phase === 'confirmed' && !myConfirmed(plan, me) ? (
+                <Pressable accessibilityRole="button" style={s.cta} onPress={() => respond('confirm')}>
+                  <Text style={s.ctaText}>{PLAN.confirmed()}</Text>
                 </Pressable>
-              </View>
+              ) : null}
             </>
           )}
         </ScrollView>
@@ -247,6 +352,140 @@ export default function Plan() {
         </View>
       </View>
     </KeyboardAvoidingView>
+  );
+}
+
+/** Ответил ли я сам про факт встречи. undefined — ещё нет.
+ *  Читаем `my_feedback`: сервер отдаёт наружу только МОЮ строку отзыва, чужая не покидает сервер. */
+function myAnswer(plan: any): boolean | undefined {
+  const row = plan?.my_feedback;
+  if (!row || row.happened === undefined || row.happened === null) return undefined;
+  return !!row.happened;
+}
+
+/** Оценку я уже отправил. Держим это по серверу, а не по локальному флагу: иначе после обновления
+ *  экрана форма оценки просилась бы во второй раз, хотя оценка уже записана. */
+function myRated(plan: any): boolean {
+  const row = plan?.my_feedback;
+  return !!(row && (row.rating || row.text));
+}
+
+function myConfirmed(plan: any, me: string): boolean {
+  return (plan?.participants || []).some(
+    (p: any) => String(p.name || '').toLowerCase() === String(me).toLowerCase() && p.confirmed
+  );
+}
+
+function headline(phase: string, other: string, plan: any): string {
+  switch (phase) {
+    case 'waiting': return CHAT.sentTo(other);
+    case 'confirmed': return PLAN.confirmed();
+    case 'soon': return PLAN.startsIn(minutesToStart(plan));
+    case 'now': return PLAN.startsNow();
+    // O.24 и O.25 — это один экран в двух состояниях, и заголовок должен показывать, на каком
+    // вопросе мы стоим: сперва «состоялась ли», потом «как прошло», потом благодарность.
+    case 'after': {
+      const mine = myAnswer(plan);
+      if (mine === undefined) return PLAN.didItHappen();
+      if (mine === true && !myRated(plan)) return PLAN.howWasIt();
+      return PLAN.thanks();
+    }
+    case 'cancelled': return T('Встреча отменена', 'The meetup is off');
+    default: return '';
+  }
+}
+
+function subline(phase: string, other: string, plan: any, ru: boolean): string {
+  switch (phase) {
+    case 'waiting': return CHAT.sentNote(other);
+    case 'confirmed': return PLAN.linkOpensAt(linkOpensAt(plan, ru));
+    case 'soon':
+    case 'now': return PLAN.linkNote();
+    case 'after': return '';
+    case 'cancelled':
+      return T('Время освободилось. Можно предложить другое.', 'The slot is free. You can suggest another time.');
+    default: return '';
+  }
+}
+
+/** Форма плана — первая половина кадра O.20. */
+function PlanForm({
+  dates, date, setDate, minutes, setMinutes, setDragging,
+  district, setDistrict, link, setLink, busy, err, onPropose,
+}: any) {
+  return (
+    <View style={s.card}>
+      <View style={s.labelRow}>
+        <IconCalendar />
+        <Text style={s.label}>{DETAILS.date()}</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
+        {dates.map((d: any) => (
+          <Pressable
+            key={d.key}
+            accessibilityRole="button"
+            accessibilityState={{ selected: date === d.key }}
+            onPress={() => setDate(d.key)}
+            style={[s.chip, date === d.key && s.chipOn]}
+          >
+            <Text style={[s.chipText, date === d.key && { color: color.onPrimary }]}>{d.label}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+
+      <View style={s.labelRow}>
+        <IconClock />
+        <Text style={s.label}>{DETAILS.time()}</Text>
+      </View>
+      <TimeDial minutes={minutes} onChange={setMinutes} onDragChange={setDragging} />
+      <Text style={s.tz}>{hhmm(minutes)} {tzOffsetLabel(deviceTz())}</Text>
+
+      <View style={s.labelRow}>
+        <IconLink size={18} c={color.fg} />
+        <Text style={s.label}>{DETAILS.link()}</Text>
+      </View>
+      <TextInput
+        style={s.input}
+        value={link}
+        onChangeText={setLink}
+        placeholder={DETAILS.linkPlaceholder()}
+        placeholderTextColor={color.neutral400}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        accessibilityLabel={DETAILS.link()}
+      />
+
+      {/* Место спрашиваем только у встречи вживую: у звонка его нет. */}
+      {!link ? (
+        <>
+          <View style={s.labelRow}>
+            <IconPin size={18} c={color.fg} />
+            <Text style={s.label}>{DETAILS.district()}</Text>
+          </View>
+          <TextInput
+            style={s.input}
+            value={district}
+            onChangeText={setDistrict}
+            placeholder="Gràcia"
+            placeholderTextColor={color.neutral400}
+            accessibilityLabel={DETAILS.district()}
+          />
+        </>
+      ) : null}
+
+      {err ? <Text style={s.err}>{err}</Text> : null}
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ busy, disabled: !!link && !looksLikeUrl(link) }}
+        disabled={!!link && !looksLikeUrl(link)}
+        style={[s.cta, !!link && !looksLikeUrl(link) && { opacity: 0.45 }]}
+        onPress={busy ? undefined : onPropose}
+      >
+        {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.ctaText}>{CHAT.createPlan()}</Text>}
+      </Pressable>
+    </View>
   );
 }
 
@@ -269,8 +508,8 @@ const s = StyleSheet.create({
   headTitle: { flex: 1, ...type.title, color: color.fg, textAlign: 'center' } as any,
 
   body: { paddingHorizontal: 20, gap: space.md },
-  sentTo: { fontSize: 20, fontWeight: '700', color: color.fg, marginTop: space.sm },
-  sentNote: { ...type.bodySmall, color: color.muted } as any,
+  title: { fontSize: 20, fontWeight: '700', color: color.fg, marginTop: space.sm },
+  note: { ...type.bodySmall, color: color.muted } as any,
 
   card: { backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg, gap: space.md },
   cover: { height: 110, borderRadius: rad.lg, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
@@ -280,7 +519,20 @@ const s = StyleSheet.create({
   metaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
   tz: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
 
+  linkCard: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.md,
+  },
+  linkTitle: { ...type.labelMedium, color: color.successText, fontWeight: '700' } as any,
+  linkSub: { ...type.caption, color: color.successText } as any,
+  linkBtn: { height: 40, paddingHorizontal: 18, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  linkBtnText: { ...type.labelMedium, color: color.onPrimary, fontWeight: '700' } as any,
+
+  infoBox: { backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.md },
+  infoText: { ...type.bodySmall, color: color.infoText } as any,
+
   chipRow: { gap: space.sm, paddingVertical: 2 },
+  chipRowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chip: {
     height: 38, paddingHorizontal: 14, borderRadius: rad.full, borderWidth: 1,
     borderColor: color.border, backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
