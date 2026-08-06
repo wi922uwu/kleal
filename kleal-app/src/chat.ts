@@ -45,6 +45,8 @@ export const CHAT = {
 
   /** O.18 — сам чат. */
   placeholder: () => T('Сообщение…', 'Message…'),
+  /** Композер MSG.06 обращается по имени: «Message Jane». */
+  placeholderTo: (name: string) => T(`Написать ${name}…`, `Message ${name}`),
   empty: (name: string) =>
     T(`${name} принял(а) приглашение. Напиши первым — это ваш общий разговор про интент.`,
       `${name} accepted your invite. Say hello — this chat belongs to your intent.`),
@@ -440,6 +442,16 @@ export function msgTime(t?: number, ru = true): string {
   return new Date(t * 1000).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', {
     hour: '2-digit', minute: '2-digit', hour12: !ru,
   });
+}
+
+/** Разделитель дня в ленте (MSG.06 «Today»): Сегодня / Вчера / короткая дата. */
+export function msgDayLabel(t: number, ru = true, nowMs = Date.now()): string {
+  const d = new Date(t * 1000);
+  const now = new Date(nowMs);
+  const yest = new Date(nowMs - 86400000);
+  if (d.toDateString() === now.toDateString()) return T('Сегодня', 'Today');
+  if (d.toDateString() === yest.toDateString()) return T('Вчера', 'Yesterday');
+  return d.toLocaleDateString(ru ? 'ru-RU' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
 /** Строка «Сегодня · 20:00 Barcelona» из плана. Часовых поясов у обоих сервер не хранит. */

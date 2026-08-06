@@ -19,12 +19,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, msgTime, planWhen } from '../src/chat';
+import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, msgTime, msgDayLabel, planWhen } from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
 import { agent } from '../src/api';
-import { IconChevronLeft, IconMic, IconSpark, IconPerson, IconCalendar } from '../src/components/icons';
+import {
+  IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
+} from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
 
 export default function Conversation() {
@@ -240,26 +242,24 @@ export default function Conversation() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
-        {/* Шапка интента: по стрелке — сам интент, ради которого этот разговор и существует. */}
-        <Pressable accessibilityRole="button" style={s.intentBar} onPress={() => setActions(true)}>
-          <View style={s.intentArt} />
-          <Text style={s.intentTitle} numberOfLines={1}>{intentTitle || T('Интент', 'Intent')}</Text>
-          <Text style={s.chev}>›</Text>
-        </Pressable>
-
+        {/* MSG.06: шапка одним рядом — назад, аватар, имя со статусом, многоточие. Отдельной
+            полосы интента больше нет: интент живёт в закреплённом плане и в листе за «•••». */}
         <View style={s.head}>
           <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
             <IconChevronLeft />
           </Pressable>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={s.name} numberOfLines={1}>{other}</Text>
-            {subtitle ? <Text style={s.sub} numberOfLines={1}>{subtitle}</Text> : null}
-          </View>
           {photo ? (
             <Image source={{ uri: photo }} style={s.ava} />
           ) : (
             <View style={[s.ava, s.avaEmpty]}><IconPerson size={20} /></View>
           )}
+          <View style={{ flex: 1 }}>
+            <Text style={s.name} numberOfLines={1}>{other}</Text>
+            {subtitle ? <Text style={s.sub} numberOfLines={1}>{subtitle}</Text> : null}
+          </View>
+          <Pressable accessibilityRole="button" accessibilityLabel={CHAT.actionsTitle()} style={s.dots} onPress={() => setActions(true)}>
+            <IconDots />
+          </Pressable>
         </View>
 
         {/* MSG.07 — живой план закреплён над лентой; тап открывает его экран. */}
@@ -269,12 +269,25 @@ export default function Conversation() {
             style={s.planCard}
             onPress={() => router.push({ pathname: '/plan', params: { id: livePlan.id, who: other, title: livePlan.title || intentTitle, photo } })}
           >
-            <View style={s.planIcon}><IconCalendar c={color.onPrimary} /></View>
+            <View style={s.planIcon}><IconCalendar size={20} c={color.onPrimary} /></View>
             <View style={{ flex: 1 }}>
               <Text style={s.planTitle} numberOfLines={1}>{livePlan.title || intentTitle}</Text>
               <Text style={s.planSub} numberOfLines={1}>
                 {planWhen(livePlan, ru)}{livePlan.district ? ` · ${livePlan.district}` : ''}
               </Text>
+            </View>
+            {/* Пара участников, как на MSG.07: собеседник и я, внахлёст. */}
+            <View style={s.pairWrap}>
+              {photo ? (
+                <Image source={{ uri: photo }} style={s.pairAva} />
+              ) : (
+                <View style={[s.pairAva, s.avaEmpty]}><IconPerson size={13} /></View>
+              )}
+              {st.profile.photo ? (
+                <Image source={{ uri: st.profile.photo }} style={[s.pairAva, s.pairAvaOverlap]} />
+              ) : (
+                <View style={[s.pairAva, s.pairAvaOverlap, s.avaEmpty]}><IconPerson size={13} /></View>
+              )}
             </View>
           </Pressable>
         ) : null}
@@ -329,25 +342,36 @@ export default function Conversation() {
 
           {msgs.map((m, i) => {
             const mine = String(m.from || '').trim().toLowerCase() === me.trim().toLowerCase();
+            const prev = msgs[i - 1];
+            const newDay = !!m.t && (!prev
+              || new Date((prev.t || 0) * 1000).toDateString() !== new Date(m.t * 1000).toDateString());
+            const read = peerRead >= (m.t || 0);
             return (
-              <View key={i} style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}>
-                <View style={[s.bub, mine ? s.bubMe : s.bubThem]}>
-                  <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
+              <React.Fragment key={i}>
+                {/* MSG.06: «Сегодня» над первой репликой дня. */}
+                {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
+                <View style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}>
+                  <View style={[s.bub, mine ? s.bubMe : s.bubThem]}>
+                    <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
+                  </View>
+                  <Text style={s.time}>
+                    {msgTime(m.t, ru)}
+                    {/* MSG.11: две галочки — собеседник открывал переписку после этого сообщения. */}
+                    {mine ? <Text style={read ? s.tickRead : s.tick}>{read ? '  ✓✓' : '  ✓'}</Text> : null}
+                  </Text>
                 </View>
-                <Text style={s.time}>
-                  {msgTime(m.t, ru)}
-                  {/* MSG.11: две галочки — собеседник открывал переписку после этого сообщения. */}
-                  {mine ? ` ${peerRead >= (m.t || 0) ? '✓✓' : '✓'}` : ''}
-                </Text>
-              </View>
+              </React.Fragment>
             );
           })}
 
           {/* MSG.09 — предложение ушло; ничего не забронировано до «да». */}
           {livePlan?.state === 'proposed' && norm(livePlan.host) === norm(me) ? (
             <View style={s.sysNote}>
-              <Text style={s.sysTitle}>{THREAD.sentAsProposal(other)}</Text>
-              <Text style={s.sysSub}>{THREAD.nothingBooked(other)}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={s.sysTitle}>{THREAD.sentAsProposal(other)}</Text>
+                <Text style={s.sysSub}>{THREAD.nothingBooked(other)}</Text>
+              </View>
+              <IconCheckCircle size={26} />
             </View>
           ) : null}
 
@@ -386,7 +410,8 @@ export default function Conversation() {
         ) : null}
 
         <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-          {/* Искра слева — вход в действия разговора (O.19), как на кадре. */}
+          {/* Искра слева — вход в действия разговора (O.19). На кадре в этом слоте скрепка,
+              но вложений в продукте нет — мёртвую кнопку не рисуем. */}
           <Pressable accessibilityRole="button" accessibilityLabel={CHAT.actionsTitle()} style={s.sparkBtn} onPress={() => setActions(true)}>
             <IconSpark size={20} c={color.primary} />
           </Pressable>
@@ -395,15 +420,23 @@ export default function Conversation() {
               style={s.input}
               value={draft}
               onChangeText={setDraft}
-              placeholder={CHAT.placeholder()}
+              placeholder={CHAT.placeholderTo(other)}
               placeholderTextColor={color.neutral400}
               onSubmitEditing={send}
               returnKeyType="send"
             />
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={send}>
-              <IconMic />
-            </Pressable>
           </View>
+          {/* MSG.06: отправка — красный круг с самолётиком, а не микрофон-обманка. */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={T('Отправить', 'Send')}
+            disabled={!draft.trim()}
+            accessibilityState={{ disabled: !draft.trim() }}
+            style={[s.sendBtn, !draft.trim() && { opacity: 0.45 }]}
+            onPress={send}
+          >
+            <IconSend size={18} />
+          </Pressable>
         </View>
 
         {/* Лист O.19. */}
@@ -475,38 +508,44 @@ export default function Conversation() {
 // ============================================================ вид
 // Оформление UX-каркаса: значения — из токенов темы; при натягивании UI меняется этот блок.
 
+// Дизайн-проход по кадрам MSG.06–MSG.11: шапка одним рядом, пузыри 18 с хвостовым скруглением,
+// разделители дней, красный круг отправки. Цвета и шрифты — только из токенов темы.
+
+/** Тень карточек — та же константа, что в «Сообщениях»: одна глубина на всё приложение. */
+const cardShadow = {
+  shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 12,
+  shadowOffset: { width: 0, height: 4 }, elevation: 2,
+} as const;
+
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.bg },
-  intentBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 16,
-    padding: 10, borderRadius: rad.lg, backgroundColor: color.card,
-  },
-  intentArt: { width: 40, height: 34, borderRadius: 8, backgroundColor: color.primary },
-  intentTitle: { flex: 1, ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
-  chev: { fontSize: 20, color: color.neutral400 },
 
   head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: space.sm },
   back: {
-    width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border,
+    width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border,
     backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
   },
-  name: { ...type.title, color: color.fg, textAlign: 'center' } as any,
-  sub: { ...type.caption, color: color.muted } as any,
+  dots: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  name: { fontSize: 17, fontWeight: '700', color: color.fg } as any,
+  sub: { fontSize: 13, color: color.muted, marginTop: 1 } as any,
   ava: { width: 40, height: 40, borderRadius: 20 },
   avaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
 
-  // MSG.07 — закреплённый план.
+  // MSG.07 — закреплённый план: карточка с тенью, красная плитка-иконка, пара участников справа.
   planCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    marginHorizontal: 16, marginBottom: space.sm, padding: 12,
-    borderRadius: rad.lg, backgroundColor: color.card, borderWidth: 1, borderColor: color.border,
+    marginHorizontal: 16, marginBottom: space.sm, paddingVertical: 12, paddingHorizontal: 14,
+    borderRadius: 18, backgroundColor: color.card, ...cardShadow,
   },
   planIcon: {
-    width: 40, height: 40, borderRadius: 12, backgroundColor: color.primary,
+    width: 44, height: 44, borderRadius: 14, backgroundColor: color.primary,
     alignItems: 'center', justifyContent: 'center',
   },
-  planTitle: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
-  planSub: { ...type.caption, color: color.muted } as any,
+  planTitle: { fontSize: 16, fontWeight: '700', color: color.fg } as any,
+  planSub: { fontSize: 13, color: color.muted, marginTop: 1 } as any,
+  pairWrap: { flexDirection: 'row', alignItems: 'center' },
+  pairAva: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: color.card },
+  pairAvaOverlap: { marginLeft: -10 },
 
   // MSG.18–MSG.21 — карточка приглашения в ленте.
   invCard: {
@@ -530,13 +569,14 @@ const s = StyleSheet.create({
   noteText: { ...type.caption, color: color.infoText } as any,
   sysLine: { ...type.caption, color: color.muted, textAlign: 'center', marginTop: space.sm } as any,
 
-  // MSG.09 — записка «отправлено как предложение».
+  // MSG.09 — записка «отправлено как предложение»: белая карточка с красной галкой-кружком.
   sysNote: {
-    alignSelf: 'flex-start', backgroundColor: color.neutral100, borderRadius: rad.lg,
-    padding: space.md, marginTop: space.sm, maxWidth: '86%',
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    alignSelf: 'flex-start', backgroundColor: color.card, borderRadius: 18,
+    padding: space.md, marginTop: space.md, maxWidth: '90%', ...cardShadow,
   },
-  sysTitle: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
-  sysSub: { ...type.caption, color: color.muted, marginTop: 2 } as any,
+  sysTitle: { fontSize: 15, color: color.fg, fontWeight: '700' } as any,
+  sysSub: { fontSize: 13, color: color.muted, marginTop: 2 } as any,
 
   // MSG.08 — подсказка Kleal.
   nudge: {
@@ -559,11 +599,16 @@ const s = StyleSheet.create({
 
   thread: { paddingHorizontal: 20, paddingBottom: space.lg, gap: 4 },
   empty: { ...type.bodySmall, color: color.muted, textAlign: 'center', marginTop: space.lg } as any,
-  bub: { maxWidth: '86%', paddingVertical: 12, paddingHorizontal: 14, marginTop: space.sm, borderRadius: 16 },
-  bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary },
-  bubThem: { alignSelf: 'flex-start', backgroundColor: color.neutral100 },
-  bubText: { ...type.body, color: color.fg } as any,
-  time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
+  /** MSG.06: «Сегодня» — маленькая серая метка по центру над первой репликой дня. */
+  day: { fontSize: 12, color: color.neutral400, textAlign: 'center', marginTop: space.md } as any,
+  bub: { maxWidth: '80%', paddingVertical: 12, paddingHorizontal: 16, marginTop: space.sm, borderRadius: 18 },
+  bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderBottomRightRadius: 6 },
+  bubThem: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderBottomLeftRadius: 6 },
+  bubText: { fontSize: 15, lineHeight: 21, color: color.fg } as any,
+  time: { fontSize: 11, color: color.neutral400, marginTop: 3 } as any,
+  /** MSG.11: одна галочка серая, две — красные, прочитано. */
+  tick: { fontSize: 11, color: color.neutral400 } as any,
+  tickRead: { fontSize: 11, color: color.primary, fontWeight: '700' } as any,
   err: { ...type.bodySmall, color: color.primary, marginTop: space.sm } as any,
 
   undoBar: {
@@ -576,15 +621,17 @@ const s = StyleSheet.create({
   undoAction: { ...type.labelMedium, color: color.onPrimary, fontWeight: '700' } as any,
 
   dock: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
-  sparkBtn: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: color.card,
-    borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center',
-  },
+  sparkBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   field: {
     flex: 1, height: 48, borderRadius: rad.full, backgroundColor: color.neutral100,
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, gap: space.sm,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18,
   },
   input: { flex: 1, color: color.fg, fontSize: 15 },
+  /** MSG.06: отправка — красный круг с самолётиком. */
+  sendBtn: {
+    width: 48, height: 48, borderRadius: 24, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center', ...cardShadow,
+  },
 
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
   sheet: {

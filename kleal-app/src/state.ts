@@ -70,10 +70,18 @@ const empty = (): OnbState => ({ slide: 0, step: -1, login: null, authMethod: nu
 let state: OnbState = empty();
 const listeners = new Set<(s: OnbState) => void>();
 
+/**
+ * Пока restore() не дочитал диск, писать на него нельзя: экран, успевший тронуть состояние в
+ * первые миллисекунды (markSeen из переписки), сохранял ПУСТОЙ стор поверх настоящего — пропадали
+ * пометки сообщений, а в худшей гонке мог пропасть и профиль. Память обновляется всегда; диск
+ * догоняет первой записью после восстановления.
+ */
+let restored = false;
+
 function emit() {
   state = { ...state };
   listeners.forEach((fn) => fn(state));
-  AsyncStorage.setItem(KEY, JSON.stringify(state)).catch(() => {});
+  if (restored) AsyncStorage.setItem(KEY, JSON.stringify(state)).catch(() => {});
 }
 
 export function getState(): OnbState {
@@ -97,6 +105,8 @@ export async function restore(): Promise<void> {
     if (raw) state = { ...empty(), ...JSON.parse(raw) };
   } catch {
     /* повреждённое состояние — начинаем заново, это онбординг, терять нечего */
+  } finally {
+    restored = true;
   }
   emit();
 }

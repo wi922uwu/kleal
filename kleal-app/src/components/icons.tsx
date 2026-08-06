@@ -240,3 +240,27 @@ export const IconPlay = ({ size = 18, c = color.fg }: P) => (
     <Path d="M8 5.5l11 6.5-11 6.5V5.5z" />
   </Svg>
 );
+
+/** Отправить — бумажный самолётик с композера MSG.06. */
+export const IconSend = ({ size = 20, c = '#fff' }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M21 3.5L3.5 10.2l6.9 2.9L13.3 20 21 3.5z" />
+    <Path d="M10.4 13.1L21 3.5" />
+  </Svg>
+);
+
+/** Скрепка — слот вложений в композере MSG.06. */
+export const IconClip = ({ size = 20, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.1-8.1a3.4 3.4 0 0 1 4.8 4.8l-8 8a1.8 1.8 0 0 1-2.5-2.5l7.4-7.4" />
+  </Svg>
+);
+
+/** Многоточие — кнопка меню в шапке треда MSG.06. */
+export const IconDots = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill={c}>
+    <Circle cx={5} cy={12} r={1.7} />
+    <Circle cx={12} cy={12} r={1.7} />
+    <Circle cx={19} cy={12} r={1.7} />
+  </Svg>
+);
