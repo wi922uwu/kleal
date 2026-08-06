@@ -144,6 +144,13 @@ export const langPlain = (k: string) => {
   return l ? T(l[2], l[0]) : k;
 };
 
+/** Поле «своё увлечение» прямо в виджете — см. HobbyW в app/chat.tsx. */
+export const OWN_INPUT = {
+  hobbyPlaceholder: () => T('Своё увлечение', 'Your own hobby'),
+  langPlaceholder: () => T('Свой язык', 'Your own language'),
+  add: () => T('Добавить', 'Add'),
+};
+
 export const STEP_HOBBIES = {
   bot: () => T('Класс! Чем увлекаешься?', 'Cool!\nWhat are your hobbies?'),
   hint: () =>

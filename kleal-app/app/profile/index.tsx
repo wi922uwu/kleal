@@ -11,15 +11,17 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, Segments, EditSheet } from '../../src/components/ProfileShell';
+import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { BottomNav } from '../../src/components/BottomNav';
 import {
   IconPerson, IconVerified, IconStar, IconFaceScan, IconUserLock, IconTranslate, IconPin, IconPencil, IconGear,
 } from '../../src/components/icons';
-import { useLang, T, getLang, setLang } from '../../src/i18n';
+import { useLang, getLang, setLang } from '../../src/i18n';
 import { useOnb, set, reset } from '../../src/state';
 import { profile as profileApi } from '../../src/api';
 import {
-  PROFILE_TITLE, HUB, AVAIL, SIGNOUT, HUB_ROWS, SHEETS, profileData, fmtUpdated, adaptSummary,
+  PROFILE_TITLE, HUB, SIGNOUT, HUB_ROWS, SHEETS, WHOAMI, profileData, fmtUpdated, adaptSummary,
 } from '../../src/profile';
 import { langName, searchLangs } from '../../src/languages';
 import { writeFact, patchFor } from '../../src/fields';
@@ -37,34 +39,8 @@ export default function ProfileHub() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
-  const [avail, setAvail] = useState<string | null>(null);
-  const [availErr, setAvailErr] = useState(false);
   /** Какой лист правки открыт. Пусто — ни один. */
-  const [sheet, setSheet] = useState<'languages' | 'location' | null>(null);
-
-  // Текущий статус приёма читается с сервера, а не хранится локально: его меняет не только этот
-  // экран (пауза приходит и из безопасности, и со стороны агента), и локальная копия разошлась бы.
-  useEffect(() => {
-    if (!p.name) return;
-    let alive = true;
-    profileApi
-      .receiving(p.name)
-      .then((r: any) => { if (alive) setAvail(r?.status || r?.receiving?.status || null); })
-      .catch(() => { if (alive) setAvailErr(true); });
-    return () => { alive = false; };
-  }, [p.name]);
-
-  const setAvailability = async (v: string) => {
-    const prev = avail;
-    setAvail(v);                                    // отклик сразу, откат по ошибке
-    try {
-      const r: any = await profileApi.receiving(p.name || '', { status: v });
-      if (r && r.ok === false) throw new Error(r.error || 'failed');
-    } catch {
-      setAvail(prev);
-      setAvailErr(true);
-    }
-  };
+  const [sheet, setSheet] = useState<'languages' | 'location' | 'whoami' | null>(null);
 
   const saveSummary = async (text: string) => {
     set('summary', text);
@@ -90,6 +66,20 @@ export default function ProfileHub() {
    * старое. Имена полей на сервере свои (`langs`, `area`, `radiusKm`) — они из его белого списка,
    * всё остальное он молча выбрасывает.
    */
+  /**
+   * Сохранить «кто ты». Возраст сервер принимает патчем; имя и фото — нет: строка пользователя
+   * ключуется именем, а фото едет отдельным путём при регистрации. См. WHOAMI в src/profile.ts —
+   * там записано, почему переименование не создаёт вторую строку молча.
+   */
+  const saveWhoAmI = async (v: { name: string; age: number; photo?: string }) => {
+    if (v.name.trim()) set('name', v.name.trim());
+    if (v.age) set('age', v.age);
+    set('photo', v.photo || '');
+    setSheet(null);
+    if (p.name && v.age) await profileApi.update(p.name, { age: v.age }).catch(() => {});
+    rewrite();                     // сводка называет возраст вслух
+  };
+
   const saveLanguages = async (list: string[]) => {
     writeFact('languages', list);
     setSheet(null);
@@ -163,16 +153,24 @@ export default function ProfileHub() {
         </Pressable>
       }
     >
+      {/* Верхняя карточка — кнопка: за ней имя, возраст и фото (кадр B.01 их не редактирует, но
+          менять их больше негде — «Основного» в списке ниже нет). */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={WHOAMI.title()}
+        onPress={() => setSheet('whoami')}
+        style={({ pressed }) => [pressed && { opacity: 0.92 }]}
+      >
       <Card>
         <View style={s.idRow}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Фото профиля', 'Profile photo')}>
+          <View>
             {p.photo ? (
               <Image source={{ uri: p.photo }} style={s.ava} />
             ) : (
               <View style={[s.ava, s.avaEmpty]}><IconPerson /></View>
             )}
-          </Pressable>
-          <Text style={s.name} numberOfLines={1}>{d.name}</Text>
+          </View>
+          <Text style={s.name} numberOfLines={1}>{d.name}{p.age ? `, ${p.age}` : ''}</Text>
           {/* Печать показывается только по-настоящему подтверждённым: нарисовать её всем значило
               бы сообщить о человеке то, чего никто не проверял. */}
           {d.verified ? <IconVerified /> : null}
@@ -183,6 +181,7 @@ export default function ProfileHub() {
         </View>
         <View style={s.track}><View style={[s.trackFill, { width: `${d.confidence}%` }]} /></View>
       </Card>
+      </Pressable>
 
       <Card>
         <View style={s.sumHead}>
@@ -252,20 +251,6 @@ export default function ProfileHub() {
         />
       ))}
 
-      <Card>
-        <Text style={s.basicTitle}>{HUB.avail()}</Text>
-        {availErr ? (
-          <Text style={s.basicValue}>
-            {T('Доступно после регистрации профиля', 'Available once your profile is registered')}
-          </Text>
-        ) : (
-          <Segments
-            options={AVAIL.map(([k, l]) => [k, l()] as [string, string])}
-            value={avail}
-            onChange={setAvailability}
-          />
-        )}
-      </Card>
 
       <Card>
         <Text style={s.basicTitle}>{HUB.lang()}</Text>
@@ -281,6 +266,12 @@ export default function ProfileHub() {
         бы показать его следующему, кто возьмёт этот телефон. Карточка показывается всегда: см.
         SIGNOUT — привязка к логину прятала кнопку от тех, у кого логина нет.
       */}
+      <WhoAmISheet
+        open={sheet === 'whoami'}
+        p={p}
+        onClose={() => setSheet(null)}
+        onAccept={saveWhoAmI}
+      />
       <LanguagesSheet
         open={sheet === 'languages'}
         value={p.languages?.comfortable || []}
@@ -346,6 +337,19 @@ const s = StyleSheet.create({
   rowTitle: { fontSize: 18, fontWeight: '700', color: color.fg },
   rowSub: { ...type.bodySmall, color: color.muted, marginTop: 2 } as any,
 
+  whoPhotoRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  whoPhoto: { width: 84, height: 84, borderRadius: 42 },
+  whoPhotoBtn: {
+    height: 42, borderRadius: rad.full, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,
+  },
+  whoPhotoBtnText: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
+  whoRemove: { ...type.caption, color: color.primary, textAlign: 'center' } as any,
+  whoInput: {
+    height: 48, borderRadius: rad.md, backgroundColor: color.neutral100,
+    paddingHorizontal: 14, color: color.fg, fontSize: 16,
+  },
+  whoNote: { ...type.caption, color: color.muted } as any,
   search: {
     height: 46, borderRadius: rad.full, backgroundColor: color.neutral100,
     paddingHorizontal: 18, color: color.fg, fontSize: 15,
@@ -400,6 +404,96 @@ const ROW_ICON: Record<string, (p: any) => React.ReactElement> = {
   languages: IconTranslate,
   location: IconPin,
 };
+
+/**
+ * Кто ты: имя, возраст, фото. Правка идёт по черновику — крестик не сохраняет.
+ *
+ * Фото берётся из галереи и сжимается перед сохранением: в состоянии оно лежит data-URL'ом, и
+ * несжатый снимок с телефона — это мегабайты в AsyncStorage на каждой записи профиля.
+ */
+function WhoAmISheet({
+  open, p, onClose, onAccept,
+}: {
+  open: boolean;
+  p: any;
+  onClose: () => void;
+  onAccept: (v: { name: string; age: number; photo?: string }) => void;
+}) {
+  const [name, setName] = useState(String(p.name || ''));
+  const [age, setAge] = useState(String(p.age || ''));
+  const [photo, setPhoto] = useState<string>(String(p.photo || ''));
+
+  useEffect(() => {
+    if (!open) return;
+    setName(String(p.name || ''));
+    setAge(String(p.age || ''));
+    setPhoto(String(p.photo || ''));
+  }, [open]);
+
+  const pick = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) return;
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.9,
+    });
+    if (res.canceled || !res.assets?.length) return;
+    const out = await ImageManipulator.manipulate(res.assets[0].uri)
+      .resize({ width: 512 })
+      .renderAsync();
+    const saved = await out.saveAsync({ compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true });
+    setPhoto(saved.base64 ? `data:image/jpeg;base64,${saved.base64}` : saved.uri);
+  };
+
+  return (
+    <EditSheet
+      open={open}
+      title={WHOAMI.title()}
+      onClose={onClose}
+      onAccept={() => onAccept({ name, age: parseInt(age, 10) || 0, photo })}
+      acceptLabel={SHEETS.accept()}
+    >
+      <View style={s.whoPhotoRow}>
+        {photo ? (
+          <Image source={{ uri: photo }} style={s.whoPhoto} />
+        ) : (
+          <View style={[s.whoPhoto, s.avaEmpty]}><IconPerson size={30} /></View>
+        )}
+        <View style={{ flex: 1, gap: space.sm }}>
+          <Pressable accessibilityRole="button" style={s.whoPhotoBtn} onPress={pick}>
+            <Text style={s.whoPhotoBtnText}>{WHOAMI.changePhoto()}</Text>
+          </Pressable>
+          {photo ? (
+            <Pressable accessibilityRole="button" onPress={() => setPhoto('')}>
+              <Text style={s.whoRemove}>{WHOAMI.removePhoto()}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
+      <Text style={s.basicTitle}>{WHOAMI.name()}</Text>
+      <TextInput
+        style={s.whoInput}
+        value={name}
+        onChangeText={setName}
+        placeholder={WHOAMI.name()}
+        placeholderTextColor={color.neutral400}
+        accessibilityLabel={WHOAMI.name()}
+      />
+      <Text style={s.whoNote}>{WHOAMI.nameNote()}</Text>
+
+      <Text style={s.basicTitle}>{WHOAMI.age()}</Text>
+      <TextInput
+        style={s.whoInput}
+        value={age}
+        onChangeText={(t) => setAge(t.replace(/[^0-9]/g, '').slice(0, 3))}
+        keyboardType="number-pad"
+        placeholder="30"
+        placeholderTextColor={color.neutral400}
+        accessibilityLabel={WHOAMI.age()}
+      />
+    </EditSheet>
+  );
+}
 
 /**
  * Языки — полный список с поиском.

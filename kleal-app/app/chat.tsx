@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image,
+  View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image, TextInput,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -22,6 +22,7 @@ import {
   STEP_PROGRESS, HEADER_TITLE, STEP_START, STEP_BASICS, SEXES, sexLabel,
   STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES, HOBBIES, hobbyLabel,
   hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME, FUNNEL, FUNNEL_OUT_RE, FUNNEL_MORE_RE,
+  OWN_INPUT,
 } from '../src/onboarding';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
@@ -75,12 +76,6 @@ export default function Chat() {
   // чистого листа. Иначе внутри них остаётся своё состояние: спрятанные кнопки первого кадра,
   // выбранные увлечения, набранный возраст — всё от предыдущей попытки, которой уже нет.
   const [runId, setRunId] = useState(0);
-  /**
-   * «+ Добавить своё» ставит курсор в поле ввода. Раньше эти чипы были нарисованы и не нажимались
-   * вовсе: подсказка звала написать своё, а кнопка под ней ничего не делала.
-   */
-  const [focusN, setFocusN] = useState(0);
-  const focusComposer = () => setFocusN((n) => n + 1);
   const started = useRef(false);
 
   const say = useCallback((who: 'bot' | 'me', text: string, photo?: string) => {
@@ -292,7 +287,6 @@ export default function Chat() {
       onSend={send}
       scrollEnabled={!dragging}
       composerPlaceholder={step === 'funnel' ? FUNNEL.compose() : undefined}
-      focusSignal={focusN}
       headerExtra={
         hasProgress(st.profile) ? (
           <Pressable accessibilityRole="button" onPress={restart} hitSlop={10}>
@@ -303,7 +297,6 @@ export default function Chat() {
       widget={
         <StepWidget
           key={runId}
-          focusComposer={focusComposer}
           step={step}
           say={say}
           goto={goto}
@@ -327,8 +320,41 @@ type FunnelBits = {
   more: () => void;
 };
 
+/**
+ * Поле «своё» рядом с чипами. Отдельный компонент, потому что нужен и увлечениям, и языкам, и в
+ * обоих местах правило одно: пустое не добавляем, повтор не добавляем, после добавления поле
+ * закрывается — иначе непонятно, сработало ли.
+ */
+function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: string) => void }) {
+  const [v, setV] = useState('');
+  const add = () => {
+    const t = v.trim();
+    if (!t) return;
+    setV('');
+    onAdd(t);
+  };
+  return (
+    <View style={s.ownRow}>
+      <TextInput
+        style={s.ownInput}
+        value={v}
+        onChangeText={setV}
+        placeholder={placeholder}
+        placeholderTextColor={color.neutral400}
+        onSubmitEditing={add}
+        returnKeyType="done"
+        autoFocus
+        accessibilityLabel={placeholder}
+      />
+      <Pressable accessibilityRole="button" style={s.ownAdd} onPress={add}>
+        <Text style={s.ownAddText}>{OWN_INPUT.add()}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function StepWidget({
-  step, say, goto, onDone, onDrag, startFunnel, funnel, focusComposer,
+  step, say, goto, onDone, onDrag, startFunnel, funnel,
 }: {
   step: StepId;
   say: (who: 'bot' | 'me', text: string, photo?: string) => void;
@@ -337,15 +363,14 @@ function StepWidget({
   onDrag: (dragging: boolean) => void;
   startFunnel: (picks: string[]) => void;
   funnel: FunnelBits;
-  focusComposer: () => void;
 }) {
   const st = useOnb();
 
   if (step === 'start') return <StartW say={say} goto={goto} />;
   if (step === 'basics') return <BasicsW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'area') return <AreaW say={say} goto={goto} />;
-  if (step === 'languages') return <LangW say={say} goto={goto} focusComposer={focusComposer} />;
-  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} focusComposer={focusComposer} />;
+  if (step === 'languages') return <LangW say={say} goto={goto} />;
+  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} />;
   if (step === 'funnel') return <FunnelW {...funnel} say={say} />;
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -480,7 +505,8 @@ function AreaW({ say, goto }: any) {
 }
 
 /** A.07 — языки с флагами. */
-function LangW({ say, goto, focusComposer }: any) {
+function LangW({ say, goto }: any) {
+  const [ownOpen, setOwnOpen] = useState(false);
   const [sel, setSel] = useState<string[]>([]);
   const toggle = (k: string) => setSel((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
   return (
@@ -490,8 +516,19 @@ function LangW({ say, goto, focusComposer }: any) {
         {LANGS.map(([k]) => (
           <Chip key={k} label={langLabel(k)} on={sel.includes(k)} onPress={() => toggle(k)} />
         ))}
-        <Chip label={'+ ' + STEP_LANGUAGES.own()} onPress={focusComposer} />
+        <Chip label={'+ ' + STEP_LANGUAGES.own()} onPress={() => setOwnOpen((o) => !o)} />
       </View>
+
+      {/* Своё поле — та же причина, что и у увлечений: курсор в композере снизу на телефоне не виден. */}
+      {ownOpen ? (
+        <OwnField
+          placeholder={OWN_INPUT.langPlaceholder()}
+          onAdd={(v) => {
+            setSel((p) => (p.includes(v) ? p : [...p, v]));
+            setOwnOpen(false);
+          }}
+        />
+      ) : null}
       <Cta
         label={STEP_LANGUAGES.cta()}
         disabled={!sel.length}
@@ -562,8 +599,9 @@ function FunnelW({ opts, done, ask, leave, more, say }: FunnelBits & { say: any 
  * СТИРАЛ все интересы и заменял их новым выбором. Пока сюда нельзя было вернуться, это не
  * проявлялось; кнопка «Добавить интересы» в профиле делает вход обычным делом.
  */
-function HobbyW({ say, startFunnel, leaveFunnel, focusComposer }: any) {
+function HobbyW({ say, startFunnel, leaveFunnel }: any) {
   const st = useOnb();
+  const [ownOpen, setOwnOpen] = useState(false);
   const [had] = useState<string[]>(() => get('interests.explicit') || []);
   const [sel, setSel] = useState<string[]>(had);
   const toggle = (k: string) => setSel((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
@@ -590,8 +628,24 @@ function HobbyW({ say, startFunnel, leaveFunnel, focusComposer }: any) {
         {own.map((k) => (
           <Chip key={k} label={k} on onPress={() => toggle(k)} />
         ))}
-        <Chip label={'+ ' + STEP_HOBBIES.own()} onPress={focusComposer} />
+        <Chip label={'+ ' + STEP_HOBBIES.own()} onPress={() => setOwnOpen((o) => !o)} />
       </View>
+
+      {/*
+        Поле прямо здесь, а не курсор в композере внизу.
+        Раньше кнопка лишь ставила фокус в строку сообщения — на телефоне это незаметно: человек
+        жмёт «добавить своё», visibly ничего не происходит, и он делает вывод, что не работает.
+        Поле рядом с кнопкой показывает, что от него хотят.
+      */}
+      {ownOpen ? (
+        <OwnField
+          placeholder={OWN_INPUT.hobbyPlaceholder()}
+          onAdd={(v) => {
+            setSel((p) => (p.includes(v) ? p : [...p, v]));
+            setOwnOpen(false);
+          }}
+        />
+      ) : null}
       <Cta
         label={STEP_HOBBIES.cta()}
         disabled={!sel.length}
@@ -707,6 +761,16 @@ function PhotoW({ say, onDone, name }: any) {
  * ровно один раз на оба чат-экрана, онбординг и создание интента.
  */
 const s = StyleSheet.create({
+  ownRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ownInput: {
+    flex: 1, height: 44, borderRadius: rad.full, backgroundColor: color.neutral100,
+    paddingHorizontal: 16, color: color.fg, fontSize: 15,
+  },
+  ownAdd: {
+    height: 44, paddingHorizontal: 18, borderRadius: rad.full, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  ownAddText: { ...type.button, color: color.onPrimary } as any,
   restart: { ...type.caption, color: color.primary } as any,
   chip: {
     height: 38, paddingHorizontal: 14, borderRadius: rad.full, borderWidth: 1,

@@ -91,10 +91,12 @@ export default function Interests() {
                     style={{ flex: 1 }}
                     onPress={() => setOpen(expanded ? null : it.name)}
                   >
+                    {/*
+                      «Уверенность» убрана намеренно. Она была не фактом о человеке, а внутренней
+                      оценкой derive-функции: первые два интереса «высокая», остальные — по наличию
+                      подробностей. Показывать это как свойство своего же увлечения бессмысленно.
+                    */}
                     <Text style={s.name}>{it.label}</Text>
-                    <Text style={s.conf}>
-                      {T('уверенность: ', 'confidence: ')}{C.confLabel(it.conf)}
-                    </Text>
                   </Pressable>
                   <Switch
                     value={it.used}
