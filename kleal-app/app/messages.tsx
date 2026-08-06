@@ -45,6 +45,10 @@ export default function Messages() {
   const [menuRow, setMenuRow] = useState<Row | null>(null);
   const [menuNote, setMenuNote] = useState('');
 
+  /** Настоящие счётчики непрочитанного по перепискам: сколько ЧУЖИХ реплик пришло после
+   *  последнего открытия треда на этом устройстве. Рисовать выдуманные числа нельзя. */
+  const [counts, setCounts] = useState<Record<string, number>>({});
+
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
     try {
@@ -52,13 +56,27 @@ export default function Messages() {
         agent.plans(me), agent.inbox(me), agent.outbox(me), agent.threads(me),
       ]);
       const arr = (r: any, k: string) => (Array.isArray(r) ? r : r?.[k] || []);
+      const threads = arr(th, 'threads');
       setData({
         plans: (pl as any)?.plans || [],
         history: (pl as any)?.history || [],
         inbox: arr(inb, 'requests'),
         outbox: arr(out, 'requests'),
-        threads: arr(th, 'threads'),
+        threads,
       });
+      const seen = (msgPrefs().seen || {}) as Record<string, number>;
+      const fresh = threads.filter((t: any) => (t.t || 0) > (seen[String(t.who || '').toLowerCase()] || 0)).slice(0, 10);
+      const pairs = await Promise.all(fresh.map(async (t: any) => {
+        const key = String(t.who || '').toLowerCase();
+        try {
+          const r: any = await agent.thread(me, t.who, seen[key] || 0);
+          const n = (r?.messages || []).filter((m: any) => String(m.from || '').toLowerCase() !== me.toLowerCase()).length;
+          return [key, n] as [string, number];
+        } catch {
+          return [key, 0] as [string, number];
+        }
+      }));
+      setCounts(Object.fromEntries(pairs.filter(([, n]) => n > 0)));
     } catch {
       /* тихо: фоновая дотяжка */
     } finally {
@@ -77,7 +95,10 @@ export default function Messages() {
     () => intentRows(me, data.plans, data.history, data.inbox, data.outbox, ru, planWhen),
     [me, data, ru]
   );
-  const privateRows = useMemo(() => threadRows(data.threads), [data.threads]);
+  const privateRows = useMemo(
+    () => threadRows(data.threads).map((r) => ({ ...r, count: counts[String(r.who || '').toLowerCase()] })),
+    [data.threads, counts]
+  );
 
   // Раскладка по локальным пометкам: покинутые исчезают, архив и «без уведомлений» — вниз.
   const split = (rows: Row[]) => {
@@ -147,11 +168,12 @@ export default function Messages() {
     }
   };
 
-  const rowView = (r: Row) => {
+  /** asMessage — режим раздела «Сообщения» в поиске (MSG.03): под заголовком время реплики. */
+  const rowView = (r: Row, asMessage = false) => {
     const unread = isUnread(r, prefs) && bucketOf(r, prefs) === 'normal';
     return (
       <Pressable
-        key={r.key}
+        key={(asMessage ? 'm:' : '') + r.key}
         accessibilityRole="button"
         style={s.row}
         onPress={() => open(r)}
@@ -161,16 +183,22 @@ export default function Messages() {
         {r.photo ? (
           <Image source={{ uri: r.photo }} style={s.ava} />
         ) : (
-          <View style={[s.ava, s.avaEmpty]}><IconPerson size={18} /></View>
+          <View style={[s.ava, s.avaEmpty]}><IconPerson size={22} /></View>
         )}
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, gap: 2 }}>
           <Text style={s.rowTitle} numberOfLines={1}>{r.title}</Text>
-          {r.sub ? <Text style={s.rowSub} numberOfLines={1}>{r.sub}</Text> : null}
+          {(asMessage ? rowTime(r.t) : r.sub) ? (
+            <Text style={s.rowSub} numberOfLines={1}>{asMessage ? rowTime(r.t) : r.sub}</Text>
+          ) : null}
           {r.teaser ? <Text style={s.rowTeaser} numberOfLines={1}>{r.teaser}</Text> : null}
         </View>
         <View style={s.rowRight}>
           <Text style={s.rowTime}>{rowTime(r.t)}</Text>
-          {unread ? <View style={s.badge} /> : null}
+          {r.count && unread ? (
+            <View style={s.badge}><Text style={s.badgeText}>{r.count > 9 ? '9+' : r.count}</Text></View>
+          ) : unread ? (
+            <View style={s.badgeDot} />
+          ) : null}
         </View>
       </Pressable>
     );
@@ -180,7 +208,7 @@ export default function Messages() {
     rows.length ? (
       <View key={label}>
         <Text style={s.section}>{label}</Text>
-        {rows.map(rowView)}
+        {rows.map((r) => rowView(r))}
       </View>
     ) : null;
 
@@ -215,18 +243,21 @@ export default function Messages() {
           />
         </View>
       ) : (
-        <View style={s.tabs}>
-          {([['intents', MSG.tabIntents()], ['private', MSG.tabPrivate()]] as const).map(([k, label]) => (
-            <Pressable
-              key={k}
-              accessibilityRole="button"
-              accessibilityState={{ selected: tab === k }}
-              style={[s.tab, tab === k && s.tabOn]}
-              onPress={() => setTab(k)}
-            >
-              <Text style={[s.tabText, tab === k && { color: color.onPrimary }]}>{label}</Text>
-            </Pressable>
-          ))}
+        // MSG.02: два сегмента в одной белой обойме, активный — красная пилюля.
+        <View style={s.tabsWrap}>
+          <View style={s.tabs}>
+            {([['intents', MSG.tabIntents()], ['private', MSG.tabPrivate()]] as const).map(([k, label]) => (
+              <Pressable
+                key={k}
+                accessibilityRole="button"
+                accessibilityState={{ selected: tab === k }}
+                style={[s.tab, tab === k && s.tabOn]}
+                onPress={() => setTab(k)}
+              >
+                <Text style={[s.tabText, tab === k && s.tabTextOn]}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
       )}
 
@@ -252,7 +283,13 @@ export default function Messages() {
               <Text style={s.note}>{MSG.nothingFound()}</Text>
             ) : null}
             {section(MSG.chats(), found.chats)}
-            {section(MSG.messages(), found.messages)}
+            {/* MSG.03: в разделе «Сообщения» под заголовком — время найденной реплики. */}
+            {found.messages.length ? (
+              <View>
+                <Text style={s.section}>{MSG.messages()}</Text>
+                {found.messages.map((r) => rowView(r, true))}
+              </View>
+            ) : null}
           </>
         ) : empty ? (
           // MSG.01 — пустое состояние.
@@ -274,7 +311,7 @@ export default function Messages() {
           </>
         ) : (
           <>
-            {pv.normal.map(rowView)}
+            {pv.normal.map((r) => rowView(r))}
             {section(MSG.muted(), pv.muted)}
             {section(MSG.archived(), pv.archived.map((r) => ({ ...r, teaser: MSG.readOnly() })))}
           </>
@@ -340,59 +377,82 @@ function MenuItem({ label, note, onPress }: { label: string; note: string; onPre
 }
 
 // ============================================================ вид
+// Дизайн-проход по кадрам MSG.02/MSG.03: карточки с мягкой тенью, крупный аватар, сегменты в
+// белой обойме, красный счётчик под временем. Цвета и шрифты — только из токенов темы.
+
+/** Тень карточек списка — одна на все, чтобы список не «мигал» разными глубинами. */
+const cardShadow = {
+  shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 12,
+  shadowOffset: { width: 0, height: 4 }, elevation: 2,
+} as const;
 
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.bg },
   head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingBottom: space.sm },
   back: {
-    width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border,
+    width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border,
     backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
   },
-  headTitle: { flex: 1, ...type.title, color: color.fg, textAlign: 'center' } as any,
+  headTitle: { flex: 1, fontSize: 22, fontWeight: '700', color: color.fg, textAlign: 'center' } as any,
 
-  tabs: { flexDirection: 'row', gap: space.sm, paddingHorizontal: 16, paddingBottom: space.sm },
-  tab: {
-    height: 36, paddingHorizontal: 18, borderRadius: rad.full, backgroundColor: color.card,
-    borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center',
+  // Сегменты MSG.02: белая обойма, активная пилюля красная.
+  tabsWrap: { paddingHorizontal: 16, paddingBottom: space.md, alignItems: 'center' },
+  tabs: {
+    flexDirection: 'row', backgroundColor: color.card, borderRadius: rad.full, padding: 4,
+    ...cardShadow,
   },
-  tabOn: { backgroundColor: color.primary, borderColor: color.primary },
-  tabText: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
+  tab: {
+    height: 40, paddingHorizontal: 26, borderRadius: rad.full,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  tabOn: { backgroundColor: color.primary },
+  tabText: { fontSize: 15, fontWeight: '600', color: color.fg } as any,
+  tabTextOn: { color: color.onPrimary } as any,
 
   searchBox: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginBottom: space.sm,
-    height: 42, borderRadius: rad.full, backgroundColor: color.neutral100, paddingHorizontal: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginBottom: space.md,
+    height: 48, borderRadius: rad.full, backgroundColor: color.neutral100, paddingHorizontal: 16,
   },
-  searchInput: { flex: 1, color: color.fg, fontSize: 15 },
+  searchInput: { flex: 1, color: color.fg, fontSize: 16 },
 
-  body: { paddingHorizontal: 16, gap: 6 },
-  section: { ...type.labelMedium, color: color.fg, fontWeight: '700', marginTop: space.md, marginBottom: 4 } as any,
+  body: { paddingHorizontal: 16, gap: 0 },
+  section: { fontSize: 19, fontWeight: '700', color: color.fg, marginTop: space.lg, marginBottom: 4 } as any,
   note: { ...type.caption, color: color.muted, marginTop: 6 } as any,
 
   row: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
-    backgroundColor: color.card, borderRadius: rad.lg, padding: space.md, marginTop: 6,
+    backgroundColor: color.card, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 14,
+    marginTop: 10, ...cardShadow,
   },
-  klealRow: { borderWidth: 1, borderColor: color.border },
-  klealAva: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
-  ava: { width: 40, height: 40, borderRadius: 20 },
+  klealRow: {},
+  klealAva: {
+    width: 52, height: 52, borderRadius: 26, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  ava: { width: 52, height: 52, borderRadius: 26 },
   avaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
-  rowTitle: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
-  rowSub: { ...type.caption, color: color.muted } as any,
-  rowTeaser: { ...type.caption, color: color.fg } as any,
-  rowRight: { alignItems: 'flex-end', gap: 6 },
-  rowTime: { ...type.caption, color: color.neutral400 } as any,
-  badge: { width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary },
+  rowTitle: { fontSize: 17, fontWeight: '700', color: color.fg } as any,
+  rowSub: { fontSize: 13, color: color.muted } as any,
+  rowTeaser: { fontSize: 14, color: color.fg, opacity: 0.75 } as any,
+  rowRight: { alignItems: 'flex-end', justifyContent: 'space-between', alignSelf: 'stretch', paddingVertical: 2 },
+  rowTime: { fontSize: 12, color: color.neutral400 } as any,
+  badge: {
+    minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 6,
+    backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center',
+  },
+  badgeText: { fontSize: 12, fontWeight: '700', color: color.onPrimary } as any,
+  badgeDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary, marginBottom: 4 },
 
   empty: { alignItems: 'center', gap: space.md, marginTop: 80, paddingHorizontal: 24 },
   emptyIcon: {
-    width: 56, height: 56, borderRadius: 28, backgroundColor: color.neutral100,
+    width: 64, height: 64, borderRadius: 32, backgroundColor: color.neutral100,
     alignItems: 'center', justifyContent: 'center',
   },
-  emptyTitle: { ...type.title, color: color.fg } as any,
-  emptyNote: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
+  emptyTitle: { fontSize: 19, fontWeight: '700', color: color.fg } as any,
+  emptyNote: { ...type.bodySmall, color: color.muted, textAlign: 'center', lineHeight: 20 } as any,
   cta: {
-    height: 48, paddingHorizontal: 28, borderRadius: rad.full, backgroundColor: color.primary,
-    alignItems: 'center', justifyContent: 'center', marginTop: space.sm,
+    height: 52, paddingHorizontal: 32, borderRadius: rad.full, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center', marginTop: space.sm, ...cardShadow,
   },
   ctaText: { ...type.button, color: color.onPrimary } as any,
 

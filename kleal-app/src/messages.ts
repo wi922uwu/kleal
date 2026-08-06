@@ -82,6 +82,9 @@ export type Row = {
   photo?: string;
   t?: number;           // время последнего события — для сортировки и бейджа
   unread?: boolean;
+  /** Число в красном кружке. Ставится только там, где оно настоящее: у переписок — сколько чужих
+   *  реплик пришло после последнего открытия, у входящего приглашения — 1. Без числа бейдж — точка. */
+  count?: number;
 };
 
 const norm = (s: string) => String(s || '').trim().toLowerCase();
@@ -127,7 +130,7 @@ export function intentRows(me: string, plans: any[], history: any[], inbox: any[
       key: 'in:' + r.id, kind: 'invite-in', id: r.id, who: r.from, photo: r.photo,
       title: String(r.intent?.title || (r.intent?.topics || []).join(', ') || r.from),
       sub: `${MSG.youWereInvited(r.from)}${h ? ' · ' + MSG.hoursLeft(h) : ''}`,
-      t: Number(r.updated || 0), unread: true,
+      t: Number(r.updated || 0), unread: true, count: 1,
     });
   }
 
