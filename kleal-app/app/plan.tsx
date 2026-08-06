@@ -23,7 +23,7 @@
  * пришла с сервера — это не защита, а фокус, и в этом разница с адресом, который сервер прячет
  * по-настоящему.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator,
   KeyboardAvoidingView, Platform, Linking,
@@ -78,6 +78,9 @@ export default function Plan() {
   const [hostAsked, setHostAsked] = useState(false);
   /** O.21b: форма встречного времени. НЕ новая встреча — план живёт, изменение ложится рядом. */
   const [countering, setCountering] = useState(false);
+  /** «Другое время» после отмены: составляем новую встречу, опрос не должен возвращать старую. */
+  const composing = useRef(false);
+  const startNewPlan = () => { composing.current = true; setPlan(null); };
   const dates = useMemo(() => dateChips(), []);
 
   const load = useCallback(async () => {
@@ -88,7 +91,9 @@ export default function Plan() {
       const mine = planId
         ? all.find((p: any) => p.id === planId)
         : all.find((p: any) => (p.participants || []).some((x: any) => String(x.name || '') === other));
-      if (mine) setPlan(mine);
+      // Пока человек сознательно составляет НОВУЮ встречу («Другое время» после отмены), фоновый
+      // опрос не имеет права вернуть на экран старый план — иначе форма исчезает из-под рук.
+      if (mine && !composing.current) setPlan(mine);
     } catch {
       /* тихо: фоновая дотяжка */
     }
@@ -139,6 +144,7 @@ export default function Plan() {
         throw new Error(CHAT.planFailed());
       }
       // Сервер вернул план целиком — берём его сразу, не дожидаясь опроса.
+      composing.current = false;                 // новая встреча создана — опросу снова можно всё
       if (r.plan) setPlan(r.plan); else await load();
     } catch (e: any) {
       setErr(String(e?.message || CHAT.planFailed()));
@@ -252,7 +258,7 @@ export default function Plan() {
             />
           ) : (
             <>
-              <Text style={s.title}>{headline(phase!, other, plan, me)}</Text>
+              <Text style={s.title}>{headline(phase!, other, plan, me, ru)}</Text>
               <Text style={s.note}>{subline(phase!, other, plan, ru, me)}</Text>
 
               <View style={s.card}>
@@ -282,9 +288,11 @@ export default function Plan() {
                     {/* Когда ссылка открыта, об этом говорит зелёная карточка ниже — здесь только факт
                         формата, иначе одна и та же фраза стоит на экране дважды. */}
                     <Text style={s.metaText}>
-                      {phase === 'after' || phase === 'cancelled'
+                      {phase === 'cancelled'
+                        // O.C4: формат + факт отмены одной строкой.
+                        ? PLAN.calledOff()
                         // Встреча позади — обещать, что ссылка «откроется в 18:14», уже неправда.
-                        ? PLAN.modeOnline()
+                        : phase === 'after' ? PLAN.modeOnline()
                         // O.20a: ссылки ещё нет — врать «откроется в …» нечем.
                         : !plan.address_set ? PLAN.noLinkYet()
                         : linkReady ? PLAN.linkSaved() : PLAN.linkOpensLabel(linkOpensAt(plan, ru))}
@@ -310,8 +318,9 @@ export default function Plan() {
                 </View>
               ) : null}
 
-              {/* O.23a: короткая строка факта — что, когда и кто отменил — и сразу выход в новое время. */}
-              {phase === 'cancelled' ? (
+              {/* O.23a: короткая строка факта — что, когда и кто отменил — и сразу выход в новое
+                  время. Только у автора отмены: на кадре второй стороны (O.C4) плашки нет. */}
+              {phase === 'cancelled' && cancelledByMe ? (
                 <View style={s.pillRow}>
                   <View style={s.pill}>
                     <Text style={s.pillText} numberOfLines={2}>
@@ -320,7 +329,7 @@ export default function Plan() {
                       {' · '}{cancelledByMe ? PLAN.calledOffByYou() : PLAN.calledOffBy(other)}
                     </Text>
                   </View>
-                  <Pressable accessibilityRole="button" style={s.pillBtn} onPress={() => setPlan(null)}>
+                  <Pressable accessibilityRole="button" style={s.pillBtn} onPress={startNewPlan}>
                     <Text style={s.pillBtnText}>{PLAN.anotherTime()}</Text>
                   </Pressable>
                 </View>
@@ -335,7 +344,7 @@ export default function Plan() {
                   )}
                   <View style={{ flex: 1 }}>
                     <Text style={s.personName}>{p.name}{p.age ? `, ${p.age}` : ''}</Text>
-                    <Text style={s.personStatus}>{statusFor(p, plan, phase!, pendingChange)}</Text>
+                    <Text style={s.personStatus}>{statusFor(p, plan, phase!, pendingChange, ru)}</Text>
                   </View>
                   <IconClock size={18} c={color.neutral400} />
                 </View>
@@ -468,8 +477,10 @@ export default function Plan() {
 
               {/* Действия до встречи. «Другое время» — это counter (O.21b), а не новая встреча:
                   propose на живом плане честно бьётся об PLAN_EXISTS. Пока экран просит ссылку
-                  (O.20a), на кадре стоят только её две кнопки — эти прячутся. */}
-              {(phase === 'waiting' || phase === 'confirmed') && !pendingChange && !countering && !needsLink ? (
+                  (O.20a), на кадре стоят только её две кнопки — эти прячутся. Получателю
+                  неподтверждённого плана здесь делать нечего — у него свой блок O.C3 ниже. */}
+              {(phase === 'waiting' || phase === 'confirmed') && !pendingChange && !countering && !needsLink
+                && !(phase === 'waiting' && !myConfirmed(plan, me)) ? (
                 <>
                   <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
                     <Text style={s.ctaText}>{CHAT.openChat()}</Text>
@@ -478,6 +489,18 @@ export default function Plan() {
                     <Text style={s.ctaDarkText}>
                       {phase === 'confirmed' ? PLAN.suggestAnother() : CHAT.changePlan()}
                     </Text>
+                  </Pressable>
+                </>
+              ) : null}
+
+              {/* O.C3: план прислали мне — подтвердить или предложить своё время. */}
+              {phase === 'waiting' && !pendingChange && !countering && !myConfirmed(plan, me) ? (
+                <>
+                  <Pressable accessibilityRole="button" style={s.cta} onPress={() => respond('confirm')}>
+                    <Text style={s.ctaText}>{PLAN.confirmAction()}</Text>
+                  </Pressable>
+                  <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => setCountering(true)}>
+                    <Text style={s.ctaSoftText}>{PLAN.suggestAnother()}</Text>
                   </Pressable>
                 </>
               ) : null}
@@ -494,15 +517,14 @@ export default function Plan() {
                 </>
               ) : null}
 
-              {/* Встречное время, пришедшее МНЕ. Кадра этой стороны в пачке нет — кнопки строго по
-                  контракту сервера (accept_change / reject_change), придёт кадр — уточним вид. */}
+              {/* O.C5: встречное время пришло мне — кнопки называют оба часа, решение очевидно. */}
               {(phase === 'waiting' || phase === 'confirmed') && pendingChange && !pendingChange.mine ? (
                 <>
                   <Pressable accessibilityRole="button" style={s.cta} onPress={() => respond('accept_change')}>
-                    <Text style={s.ctaText}>{PLAN.acceptNewTime()}</Text>
+                    <Text style={s.ctaText}>{PLAN.confirmTime(tOf(pendingChange.starts_at, ru))}</Text>
                   </Pressable>
-                  <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => respond('reject_change')}>
-                    <Text style={s.ctaDarkText}>{PLAN.keepOldTime()}</Text>
+                  <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => respond('reject_change')}>
+                    <Text style={s.ctaSoftText}>{PLAN.keepTime(tOf(plan.starts_at, ru))}</Text>
                   </Pressable>
                 </>
               ) : null}
@@ -518,14 +540,24 @@ export default function Plan() {
                 </>
               ) : null}
 
-              {/* O.23a: никого не оставили ждать; чат живёт — новое время договаривается там. */}
-              {phase === 'cancelled' ? (
+              {/* O.23a: моя отмена — записка «никто не ждёт» и чат. */}
+              {phase === 'cancelled' && cancelledByMe ? (
                 <>
-                  {cancelledByMe ? (
-                    <View style={s.infoBox}><Text style={s.infoText}>{PLAN.nobodyWaiting(other)}</Text></View>
-                  ) : null}
+                  <View style={s.infoBox}><Text style={s.infoText}>{PLAN.nobodyWaiting(other)}</Text></View>
                   <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
                     <Text style={s.ctaText}>{CHAT.openChat()}</Text>
+                  </Pressable>
+                </>
+              ) : null}
+
+              {/* O.C4: отменили мне — объяснение уже стоит под заголовком, здесь только выходы. */}
+              {phase === 'cancelled' && !cancelledByMe ? (
+                <>
+                  <Pressable accessibilityRole="button" style={s.cta} onPress={startNewPlan}>
+                    <Text style={s.ctaText}>{PLAN.suggestAnother()}</Text>
+                  </Pressable>
+                  <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={openChat}>
+                    <Text style={s.ctaSoftText}>{CHAT.openChat()}</Text>
                   </Pressable>
                 </>
               ) : null}
@@ -568,11 +600,15 @@ function myConfirmed(plan: any, me: string): boolean {
   );
 }
 
-function headline(phase: string, other: string, plan: any, me: string): string {
-  // O.21b важнее всего остального в шапке: пока висит встречное время, экран говорит о нём.
+function headline(phase: string, other: string, plan: any, me: string, ru: boolean): string {
+  // O.21b/O.C5 важнее всего остального в шапке: пока висит встречное время, экран говорит о нём.
   if ((phase === 'waiting' || phase === 'confirmed') && plan?.pending) {
-    return plan.pending.mine ? PLAN.newTimeSent(other) : PLAN.newTimeToYou(other);
+    return plan.pending.mine
+      ? PLAN.newTimeSent(other)
+      : PLAN.suggestsTime(other, tOf(plan.pending.starts_at, ru));
   }
+  // O.C3: план прислали мне — экран зовёт подтвердить, а не сообщает «отправлено».
+  if (phase === 'waiting' && !myConfirmed(plan, me)) return PLAN.sentPlan(other);
   // O.20a: согласовано, а звонку негде пройти — экран первым делом просит ссылку.
   if (phase === 'confirmed' && plan?.mode === 'online' && !plan?.address_set) {
     return PLAN.addLinkTitle();
@@ -605,9 +641,10 @@ function headline(phase: string, other: string, plan: any, me: string): string {
 
 function subline(phase: string, other: string, plan: any, ru: boolean, me: string): string {
   if ((phase === 'waiting' || phase === 'confirmed') && plan?.pending) {
-    // O.21b обеим сторонам объясняет одно и то же правило, каждой со своей стороны.
-    return plan.pending.mine ? PLAN.newTimeNote(other) : PLAN.oldTimeHolds();
+    // O.21b и O.C5 объясняют одно правило, каждой стороне со своей стороны.
+    return plan.pending.mine ? PLAN.newTimeNote(other) : PLAN.moveNote(other);
   }
+  if (phase === 'waiting' && !myConfirmed(plan, me)) return PLAN.sentPlanNote();
   if (phase === 'confirmed' && plan?.mode === 'online' && !plan?.address_set) {
     return PLAN.addLinkNote(planWhen(plan, ru), other);
   }
@@ -621,6 +658,8 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
       const by = String(plan?.cancelled_by || '').trim().toLowerCase();
       // Отменил я — записка «никто не ждёт» стоит ниже, в рамке; дублировать её здесь незачем.
       if (by && by === String(me).trim().toLowerCase()) return '';
+      // O.C4: отменили мне — объяснение стоит прямо под заголовком, как на кадре.
+      if (by) return PLAN.toldYouNote(other);
       return T('Время освободилось. Можно предложить другое.', 'The slot is free. You can suggest another time.');
     }
     default: return '';
@@ -628,22 +667,44 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
 }
 
 /**
- * Статус строки участника. Поверх обычного personStatus живут два особых случая:
- * O.21b — пока висит встречное время, у предложившего «ждёшь», у второго «не ответил(а)»;
- * O.23a — в отменённом плане у автора отмены «не сможет», у второго «узнал(а) только что».
+ * Статус строки участника. Поверх обычного personStatus живут особые случаи:
+ * O.21b/O.C5 — встречное время: у отправителя «ждёшь», у получателя «твой ход»;
+ * O.C3      — план прислали мне: у подтвердившего «подтвердил · час», у меня «твой ход»;
+ * O.23a/O.C4 — отмена: у автора «не сможет», у второго «узнал(а) только что» / «отвечать нечего».
  */
-function statusFor(p: any, plan: any, phase: string, pendingChange: any): string {
+function statusFor(p: any, plan: any, phase: string, pendingChange: any, ru: boolean): string {
   const name = String(p?.name || '').trim().toLowerCase();
   if (phase === 'cancelled') {
     const by = String(plan?.cancelled_by || '').trim().toLowerCase();
-    if (by) return name === by ? PLAN.cantMakeStatus() : PLAN.toldJustNow();
+    if (by) {
+      if (name === by) return PLAN.cantMakeStatus();
+      return p?.is_me ? PLAN.nothingToAnswer() : PLAN.toldJustNow();
+    }
     return personStatus(p);
   }
   if (pendingChange) {
     const by = String(pendingChange.by || '').trim().toLowerCase();
-    return name === by ? PLAN.waitingOldTime() : PLAN.notAnsweredNewTime();
+    if (pendingChange.mine) {
+      // O.21b, вид отправителя: я жду, второй не ответил.
+      return name === by ? PLAN.waitingOldTime() : PLAN.notAnsweredNewTime();
+    }
+    // O.C5, вид получателя: предложивший подписан предложившим, мой ход — мой.
+    return name === by ? PLAN.suggestedNewTime() : PLAN.yourTurn();
+  }
+  // O.C3: план ещё не подтверждён мной — «твой ход» против «подтвердил · час».
+  const meRow = (plan?.participants || []).find((x: any) => x?.is_me);
+  if (phase === 'waiting' && meRow && !meRow.confirmed) {
+    return p?.confirmed ? PLAN.confirmedAt(tOf(plan?.starts_at, ru)) : PLAN.yourTurn();
   }
   return personStatus(p);
+}
+
+/** Час встречи в поясе устройства: «20:00». Для заголовка O.C5 и кнопок «Подтвердить/Оставить». */
+function tOf(sa: any, ru: boolean): string {
+  if (typeof sa !== 'number' || !isFinite(sa)) return '';
+  return new Date(sa * 1000).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', {
+    hour: '2-digit', minute: '2-digit', hour12: !ru,
+  });
 }
 
 /** Форма плана — первая половина кадра O.20. */
@@ -808,6 +869,9 @@ const s = StyleSheet.create({
   ctaText: { ...type.button, color: color.onPrimary } as any,
   ctaDark: { height: 52, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
   ctaDarkText: { ...type.button, color: '#fff' } as any,
+  // Вторая кнопка кадров O.C3/O.C4/O.C5 — серая, не тёмная: отказ там не «опасное» действие.
+  ctaSoft: { height: 52, borderRadius: rad.full, backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+  ctaSoftText: { ...type.button, color: color.fg } as any,
   err: { ...type.bodySmall, color: color.primary } as any,
   navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 });

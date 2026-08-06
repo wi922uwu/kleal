@@ -204,6 +204,37 @@ export const PLAN = {
   hostAskedNote: () => T('Просьба отправлена в чат', 'Asked in chat'),
   sendNewTime: () => T('Отправить новое время', 'Send the new time'),
 
+  /** O.C3 — план прислали мне; подтверждение закрепляет время за обоими. */
+  sentPlan: (name: string) => T(`${name} прислал(а) план`, `${name} sent a plan`),
+  sentPlanNote: () =>
+    T(
+      'Подтверди — и время закреплено за вами обоими. Ссылка откроется за 10 минут, не сейчас.',
+      'Confirm and it is set for both of you. The link opens 10 minutes before, not now.'
+    ),
+  confirmAction: () => T('Подтвердить', 'Confirm'),
+  yourTurn: () => T('Твой ход', 'Your turn'),
+  confirmedAt: (t: string) => T(`Подтвердил(а) · ${t}`, `Confirmed · ${t}`),
+
+  /** O.C5 — встречное время пришло мне: заголовок называет час, кнопки — оба часа. */
+  suggestsTime: (name: string, t: string) => T(`${name} предлагает ${t}`, `${name} suggests ${t}`),
+  moveNote: (name: string) =>
+    T(
+      `${name} хочет перенести встречу. Старое время в силе, пока ты не ответишь, — спешки нет, и отказ ничего не отменяет.`,
+      `${name} wants to move it. The old time holds until you answer, so there is no rush and nothing is lost if you say no.`
+    ),
+  suggestedNewTime: () => T('Предложил(а) новое время', 'Suggested the new time'),
+  confirmTime: (t: string) => T(`Подтвердить ${t}`, `Confirm ${t}`),
+  keepTime: (t: string) => T(`Оставить ${t}`, `Keep ${t}`),
+
+  /** O.C4 — отменили мне; никто ничего не должен. */
+  toldYouNote: (name: string) =>
+    T(
+      `${name} предупредил(а), а не оставил(а) тебя в звонке в одиночестве. Никому ничего не засчитано — чат открыт, и новое время может предложить любой из вас.`,
+      `${name} told you rather than leaving you on the call alone. Nothing is held against you — your chat stays open and either of you can suggest a new time.`
+    ),
+  nothingToAnswer: () => T('Отвечать нечего', 'Nothing to answer'),
+  calledOff: () => T('Видеозвонок · отменён', 'Video call · called off'),
+
   /** O.23a — создатель отменил встречу. */
   youToldCantMake: (name: string) =>
     T(`Ты сказал(а) ${name}, что не сможешь`, `You told ${name} you can’t make it`),
@@ -225,6 +256,25 @@ export const UNDO_BAR = {
   creating: (name: string) => T(`Создаю план с ${name}`, `Creating the plan with ${name}`),
   ending: () => T('Завершаю чат. Можно вернуться снова', 'Ending chat. You can pick again'),
   undo: (n: number) => T(`Отменить · ${n}`, `Undo · ${n}`),
+};
+
+/** O.C1 — входящее приглашение, сторона гостя. */
+export const INVITE = {
+  title: (name: string) => T(`${name} пригласил(а) тебя`, `${name} invited you`),
+  note: (what: string, name: string) =>
+    T(
+      `${what ? what + '. ' : ''}Если присоединишься, откроется чат с ${name} — детали договорите там.`,
+      `${what ? what + '. ' : ''}If you join, a chat with ${name} opens and you two agree the details there.`
+    ),
+  /** Ссылки в приглашении нет и не должно быть: она приходит позже, через план (OF.C3). */
+  linkFrom: (name: string) => T(`Видеозвонок · ссылка у ${name}`, `Video call · link from ${name}`),
+  inPerson: () => T('Встреча вживую', 'In person'),
+  invitedYou: () => T('Пригласил(а) тебя', 'Invited you'),
+  join: () => T('Присоединиться', 'Join'),
+  notThisTime: () => T('Не в этот раз', 'Not this time'),
+  declinedNote: () => T('Ты отказал(ась/ся). Приглашение закрыто.', 'You passed. The invite is closed.'),
+  goneNote: () =>
+    T('Приглашение больше не действует: истекло или уже решено.', 'This invite is no longer live: it expired or was already settled.'),
 };
 
 /** Оценки — те же три, что на кадре. Ключи английские: их читает сервер. */
@@ -348,8 +398,11 @@ export function planWhen(p: any, ru = true): string {
 export function personStatus(p: any): string {
   const s = String(p?.status || 'pending');
   if (s === 'decline') return CHAT.declinedPlan();
+  // «Твой план» — про авторство, а не про то, чей это экран: план предлагает хост. Пока is_me
+  // подменяло роль, ГОСТЬ после подтверждения чужого плана читал у себя «твой план».
+  const meHost = !!p?.is_me && String(p?.role || '') === 'host';
   if (s === 'confirm' || s === 'confirmed' || p?.confirmed) {
-    return p?.is_me ? `${CHAT.confirmed()} · ${CHAT.youProposedShort()}` : CHAT.confirmed();
+    return meHost ? `${CHAT.confirmed()} · ${CHAT.youProposedShort()}` : CHAT.confirmed();
   }
-  return p?.is_me ? CHAT.youProposed() : CHAT.notAnswered();
+  return meHost ? CHAT.youProposed() : CHAT.notAnswered();
 }

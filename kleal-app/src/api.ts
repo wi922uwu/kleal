@@ -295,4 +295,11 @@ export const agent = {
   /** Входящие приглашения. Просроченные и отозванные сервер отсекает сам. */
   inbox: (self: string) =>
     api.get<{ requests?: Json[] }>(`/api/agent/inbox?self=${encodeURIComponent(self)}`),
+
+  /** Ответ получателя на приглашение (O.C1). Сервер пере-проверяет политику на момент ответа:
+   *  между отправкой и согласием человек мог заблокировать или закрыть направление. */
+  respondInvite: (id: string, self: string, decision: 'accept' | 'decline', version?: number) =>
+    api.post<{ ok?: boolean; error?: string; status?: string }>(
+      '/api/agent/respond', { id, self, decision, version }
+    ),
 };
