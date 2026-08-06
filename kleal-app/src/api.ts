@@ -194,6 +194,10 @@ export const agent = {
       '/api/agent/propose', { from, to, intent, note }
     ),
 
+  /** Отозвать НЕотвеченное приглашение (O.15 «Cancel»). Отозвать может только отправитель. */
+  withdraw: (id: string, self: string) =>
+    api.post<{ ok?: boolean; status?: string; error?: string }>('/api/agent/withdraw', { id, self }),
+
   /**
    * Категория темы для сводки O.10 («Category: Languages»). Это отдельный агент фильтрации;
    * пустой ответ — не ошибка, строка категории тогда просто не показывается.

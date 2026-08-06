@@ -28,6 +28,7 @@ import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, takeCandidate } from '../src/results-store';
 import { agent } from '../src/api';
 import { IconPerson, IconPin, IconUserLock } from '../src/components/icons';
+import { BottomNav } from '../src/components/BottomNav';
 import { color, radius as rad, space, type } from '../src/theme';
 
 const ru = () => getLang() === 'ru';
@@ -41,7 +42,8 @@ export default function Candidate() {
 
   const [asking, setAsking] = useState(false);
   const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
+  /** Id отправленной заявки. По нему работает «Отменить» (O.15); пусто — не отправляли. */
+  const [sentId, setSentId] = useState('');
   const [err, setErr] = useState('');
 
   if (!c) {
@@ -71,12 +73,26 @@ export default function Candidate() {
       const self = String(handoff?.profile?.name || '');
       const r: any = await agent.propose(self, name, handoff?.intent || {});
       if (!r?.ok) throw new Error(r?.error || 'propose failed');
-      setSent(true);
+      setSentId(String(r.id || ''));
       setAsking(false);
     } catch {
       setErr(CANDS.inviteFailed());
     } finally {
       setSending(false);
+    }
+  };
+
+  /** O.15 «Отменить»: отзыв НЕотвеченного приглашения. Уже отвеченное отзывать нечем. */
+  const cancel = async () => {
+    if (!sentId) return;
+    setErr('');
+    try {
+      const self = String(handoff?.profile?.name || '');
+      const r: any = await agent.withdraw(sentId, self);
+      if (!r?.ok && r?.error !== 'ALREADY_RESOLVED') throw new Error(r?.error || 'withdraw failed');
+      setSentId('');
+    } catch {
+      setErr(CANDS.cancelFailed());
     }
   };
 
@@ -135,18 +151,27 @@ export default function Candidate() {
 
         {err ? <Text style={s.err}>{err}</Text> : null}
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: sent }}
-          disabled={sent}
-          style={[s.invite, sent && s.invited]}
-          onPress={() => setAsking(true)}
-        >
-          <Text style={[s.inviteText, sent && { color: color.muted }]}>
-            {sent ? CANDS.invited() : `✓  ${CANDS.invite()}`}
-          </Text>
-        </Pressable>
+        {sentId ? (
+          // O.15: приглашение ушло — слева спокойное состояние, справа настоящая «Отменить».
+          <View style={s.invitedRow}>
+            <View style={[s.invite, s.invitedPill]}>
+              <Text style={[s.inviteText, { color: color.fg }]}>{CANDS.invitedShort()}</Text>
+            </View>
+            <Pressable accessibilityRole="button" style={[s.invite, s.cancelPill]} onPress={cancel}>
+              <Text style={s.inviteText}>{CANDS.cancel()}</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable accessibilityRole="button" style={s.invite} onPress={() => setAsking(true)}>
+            <Text style={s.inviteText}>{`✓  ${CANDS.invite()}`}</Text>
+          </Pressable>
+        )}
       </ScrollView>
+
+      {/* Панель есть и на карточке кандидата — кадр O.13. */}
+      <View style={s.navFloat} pointerEvents="box-none">
+        <BottomNav />
+      </View>
 
       {/* То же окно O.14, что и в списке: последствия приглашения называются всегда одинаково. */}
       <Modal visible={asking} transparent animationType="slide" onRequestClose={() => setAsking(false)}>
@@ -190,7 +215,7 @@ const s = StyleSheet.create({
   },
   backIcon: { fontSize: 24, color: color.fg, marginTop: -3 },
 
-  scroll: { paddingHorizontal: 20, paddingBottom: 40, gap: space.sm, alignItems: 'center' },
+  scroll: { paddingHorizontal: 20, paddingBottom: 130, gap: space.sm, alignItems: 'center' },
   photo: { width: 132, height: 132, borderRadius: 66 },
   photoEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: space.sm },
@@ -216,8 +241,11 @@ const s = StyleSheet.create({
     alignSelf: 'stretch', height: 52, borderRadius: rad.full, backgroundColor: color.primary,
     alignItems: 'center', justifyContent: 'center', marginTop: space.md,
   },
-  invited: { backgroundColor: color.neutral100 },
+  invitedRow: { alignSelf: 'stretch', flexDirection: 'row', gap: space.sm },
+  invitedPill: { flex: 1, backgroundColor: color.neutral100 },
+  cancelPill: { flex: 1, backgroundColor: color.ink },
   inviteText: { ...type.button, color: color.onPrimary } as any,
+  navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
   lead: { ...type.body, color: color.muted, textAlign: 'center' } as any,
   err: { ...type.bodySmall, color: color.primary } as any,

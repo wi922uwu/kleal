@@ -51,8 +51,12 @@ export default function Results() {
   const [note, setNote] = useState('');
   /** Следующая непройденная ступень лестницы. */
   const [rung, setRung] = useState(0);
-  /** Кому уже отправлено — кнопка на карточке гаснет, чтобы не слать дважды с одного экрана. */
-  const [sent, setSent] = useState<Set<string>>(new Set());
+  /**
+   * Кому уже отправлено: имя → id заявки. Id нужен не для красоты — «Отменить» на кадре O.15
+   * отзывает приглашение, а отзыв на сервере ходит по id, и потерять его значит оставить кнопку,
+   * которая ничего не может отменить.
+   */
+  const [sent, setSent] = useState<Record<string, string>>({});
   /** Кандидат, для которого открыто окно O.14. null — окна нет. */
   const [asking, setAsking] = useState<Cand | null>(null);
   const [sending, setSending] = useState(false);
@@ -112,12 +116,31 @@ export default function Results() {
     try {
       const r: any = await agent.propose(self, to, intent);
       if (!r?.ok) throw new Error(r?.error || 'propose failed');
-      setSent((prev) => new Set(prev).add(to));
+      setSent((prev) => ({ ...prev, [to]: String(r.id || '') }));
       setAsking(null);
     } catch {
       setSendErr(CANDS.inviteFailed());
     } finally {
       setSending(false);
+    }
+  };
+
+  /** O.15 «Cancel»: отозвать НЕотвеченное приглашение. Ответившее отозвать нельзя — скажет сервер. */
+  const cancelInvite = async (to: string) => {
+    const id = sent[to];
+    if (!id) return;
+    try {
+      const r: any = await agent.withdraw(id, self);
+      // ALREADY_RESOLVED — человек уже ответил, пока мы смотрели на экран. Кнопку всё равно
+      // убираем: отменять больше нечего, а правда живёт в списке интентов.
+      if (!r?.ok && r?.error !== 'ALREADY_RESOLVED') throw new Error(r?.error || 'withdraw failed');
+      setSent((prev) => {
+        const next = { ...prev };
+        delete next[to];
+        return next;
+      });
+    } catch {
+      setNote(CANDS.cancelFailed());
     }
   };
 
@@ -183,9 +206,10 @@ export default function Results() {
             key={(c.name || '') + i}
             c={c}
             badge={(c as any).fallback ? '' : i === 0 ? CANDS.bestBadge() : CANDS.matchBadge()}
-            invited={sent.has(String(c.name || ''))}
+            invited={!!sent[String(c.name || '')]}
             onOpen={() => openProfile(c)}
             onInvite={() => { setSendErr(''); setAsking(c); }}
+            onCancel={() => cancelInvite(String(c.name || ''))}
           />
         ))}
 
@@ -224,13 +248,14 @@ export default function Results() {
 
 /** Карточка кандидата — кадр O.12. Нажатие на тело карточки открывает полный профиль (O.13). */
 function CandCard({
-  c, badge, invited, onOpen, onInvite,
+  c, badge, invited, onOpen, onInvite, onCancel,
 }: {
   c: Cand;
   badge: string;
   invited: boolean;
   onOpen: () => void;
   onInvite: () => void;
+  onCancel: () => void;
 }) {
   const readiness = (ru() ? c.readiness_ru : c.readiness_en) || '';
   const where = candWhere(c);
@@ -287,17 +312,21 @@ function CandCard({
         ) : null}
       </Pressable>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ disabled: invited }}
-        disabled={invited}
-        style={[s.invite, invited && s.invited]}
-        onPress={onInvite}
-      >
-        <Text style={[s.inviteText, invited && { color: color.muted }]}>
-          {invited ? CANDS.invited() : CANDS.invite()}
-        </Text>
-      </Pressable>
+      {invited ? (
+        // O.15: приглашение ушло — слева спокойное состояние, справа настоящая «Отменить».
+        <View style={s.invitedRow}>
+          <View style={[s.invite, s.invitedPill]}>
+            <Text style={[s.inviteText, { color: color.fg }]}>{CANDS.invitedShort()}</Text>
+          </View>
+          <Pressable accessibilityRole="button" style={[s.invite, s.cancelPill]} onPress={onCancel}>
+            <Text style={s.inviteText}>{CANDS.cancel()}</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <Pressable accessibilityRole="button" style={s.invite} onPress={onInvite}>
+          <Text style={s.inviteText}>{CANDS.invite()}</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -382,7 +411,9 @@ const s = StyleSheet.create({
   readiness: { ...type.caption, color: color.muted } as any,
 
   invite: { height: 46, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
-  invited: { backgroundColor: color.neutral100 },
+  invitedRow: { flexDirection: 'row', gap: space.sm },
+  invitedPill: { flex: 1, backgroundColor: color.neutral100 },
+  cancelPill: { flex: 1, backgroundColor: color.ink },
   inviteText: { ...type.button, color: color.onPrimary } as any,
 
   cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },

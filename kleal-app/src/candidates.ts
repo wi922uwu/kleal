@@ -17,6 +17,10 @@ export const CANDS = {
   summaryLabel: () => T('Сводка Kleal:', 'Kleal summary:'),
   invite: () => T('Пригласить', 'Invite'),
   invited: () => T('Приглашение отправлено', 'Invite sent'),
+  /** O.15: состояние карточки после отправки — две кнопки. */
+  invitedShort: () => T('Отправлено', 'Invited'),
+  cancel: () => T('Отменить', 'Cancel'),
+  cancelFailed: () => T('Не получилось отменить. Попробуй ещё раз.', 'Couldn’t cancel. Try again.'),
   inviteFailed: () => T('Не отправилось. Попробуй ещё раз.', 'It didn’t send. Try again.'),
 
   /** Приписка приватности с кадра O.13, дословно. */
