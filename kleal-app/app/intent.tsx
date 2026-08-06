@@ -70,8 +70,25 @@ export default function Intent() {
   const insets = useSafeAreaInsets();
   const scroller = useRef<ScrollView>(null);
 
-  /** Тема из разговора создания. Сюда она приходит уже сформулированной. */
-  const topic = String(useLocalSearchParams<{ topic?: string }>().topic || '').trim();
+  /**
+   * Из разговора создания приходят ДВЕ вещи, и это не дублирование.
+   *
+   *   topics — английские ключи для поиска: coffee, work. По ним матчинг сравнивает БУКВАЛЬНО.
+   *   title  — подпись для человека на его языке: «Кофе — разговор». В поиск не идёт никогда.
+   *
+   * Раньше сюда ехала одна строка — заголовок, — и она уходила в topics. Русская фраза не
+   * совпадает ни с кем: запрос возвращал не людей, а восемь «замен». Проверено на стенде.
+   *
+   * `topic` (единственное число) поддержан для старых ссылок: он трактуется и как ключ, и как
+   * подпись, — так вело себя приложение до разделения.
+   */
+  const params = useLocalSearchParams<{ topics?: string; title?: string; topic?: string }>();
+  const legacy = String(params.topic || '').trim();
+  const topics = String(params.topics || legacy || '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const title = String(params.title || legacy || '').trim();
 
   const [step, setStep] = useState<IntentStepId>('how');
   const [draft, setDraft] = useState<Draft>(() => ({
@@ -162,7 +179,7 @@ export default function Intent() {
     setErr('');
     setBusy(true);
     const intent: any = {
-      topics: topic ? [topic] : [],
+      topics,
       mode: draft.mode || 'online',
       // Английская строка намеренно: срочность на той стороне ищется по словам, и только английским.
       time: timeQueryFromDate(draft.date, draft.minutes),
@@ -201,7 +218,8 @@ export default function Intent() {
    */
   const toSummary = () => {
     setStep('summary');
-    const text = topic || '';
+    // Категорию спрашиваем по КЛЮЧАМ: агент фильтрации, как и матчинг, понимает английский.
+    const text = topics.join(' ') || title;
     if (!text || category) return;
     agent.categorize(text)
       .then((r: any) => {
@@ -440,7 +458,7 @@ export default function Intent() {
 
               {step === 'summary' ? (
                 <SummaryCard
-                  topic={topic}
+                  topic={title}
                   draft={draft}
                   category={category}
                   busy={busy}

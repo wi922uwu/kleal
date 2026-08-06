@@ -74,11 +74,33 @@ export function looksLikeIntent(res: any): boolean {
   return topics.length > 0 || !!i.activity || !!i.title;
 }
 
-/** Короткая тема из ответа построителя — то, что уйдёт в поиск. */
-export function activityOf(res: any, fallback = ''): string {
+/**
+ * Из ответа построителя нужны ДВЕ РАЗНЫЕ вещи, и путать их нельзя.
+ *
+ *   intent.topics — ключи для поиска, всегда английские: ["coffee", "work"].
+ *   intent.title  — подпись для человека, на его языке: «Кофе — разговор».
+ *
+ * Это не придирка к именам. Матчинг сравнивает темы БУКВАЛЬНО, и «Кофе — разговор» не совпадает
+ * ни с одним человеком в базе: запрос возвращает не людей, а восемь «замен» с пометкой fallback.
+ * Проверено на стенде — ключ coffee даёт 8 настоящих карточек, та же тема заголовком даёт 8 замен.
+ * Промпт построителя пишет об этом прямо: «activity, time, format стоят в ENGLISH, потому что
+ * фильтрация и матчинг понимают только английский».
+ */
+
+/** Ключи для поиска. Пусто — построитель ничего не извлёк, и звать матчинг темами незачем. */
+export function topicsOf(res: any): string[] {
   const i = (res && res.intent) || {};
-  const topics = Array.isArray(i.topics) ? i.topics.filter(Boolean) : [];
-  return String(i.activity || i.title || topics.join(', ') || res?.activity || fallback).trim();
+  const topics = Array.isArray(i.topics) ? i.topics.map(String).filter(Boolean) : [];
+  if (topics.length) return topics;
+  // Запасной путь: у построителя есть и плоское поле activity — оно тоже английское.
+  const act = String(i.activity || res?.activity || '').trim();
+  return act ? [act] : [];
+}
+
+/** Подпись для человека: заголовок, а без него — сказанное им самим. Никогда не идёт в поиск. */
+export function titleOf(res: any, fallback = ''): string {
+  const i = (res && res.intent) || {};
+  return String(i.title || i.activity || res?.activity || fallback).trim();
 }
 
 export type Turn = { role: string; content: string };

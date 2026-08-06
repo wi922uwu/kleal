@@ -24,7 +24,7 @@ import { IconChevronLeft, IconMic, IconSpark } from '../src/components/icons';
 import { useLang, getLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { buddy as buddyApi } from '../src/api';
-import { CREATE, activityOf, unpackHistory, Turn } from '../src/buddy';
+import { CREATE, topicsOf, titleOf, unpackHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string };
@@ -59,8 +59,11 @@ export default function Create() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [loadingSug, setLoadingSug] = useState(!seed);
   const [hints, setHints] = useState<string[]>([]);
-  /** Тема собрана — дальше время, место и компания выставляются руками. */
-  const [ready, setReady] = useState('');
+  /**
+   * Тема собрана. Хранится ДВУМЯ полями: ключи для поиска и подпись для человека — см. topicsOf
+   * и titleOf. Одной строкой это уже было, и поиск уходил с заголовком вместо ключей.
+   */
+  const [ready, setReady] = useState<{ topics: string[]; title: string } | null>(null);
   const started = useRef(false);
   const rolls = useRef(0);
 
@@ -107,7 +110,12 @@ export default function Create() {
         setTurns([...next, { role: 'assistant', content: reply }]);
       }
       setHints(Array.isArray(r?.hints) ? r.hints.map(String).slice(0, 3) : []);
-      if (r?.ready) setReady(activityOf(r, text));
+      if (r?.ready) {
+        const topics = topicsOf(r);
+        // Ключей нет — построитель ничего не извлёк. Отправлять в поиск сказанное человеком
+        // как «тему» нельзя: русская фраза не совпадёт ни с кем. Пусть уточнит.
+        setReady({ topics, title: titleOf(r, text) });
+      }
     } catch {
       setTyping(false);
       say('bot', T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?'));
@@ -142,7 +150,14 @@ export default function Create() {
    * Тема готова — дальше вручную. Мастер открывается сразу на формате, а не на «что хочешь
    * сделать?»: на этот вопрос человек только что ответил, и спрашивать снова было бы издевательством.
    */
-  const next = () => router.push({ pathname: '/intent', params: { topic: ready } });
+  const next = () => router.push({
+    pathname: '/intent',
+    params: {
+      // Ключи едут списком через запятую — их читает поиск; заголовок отдельно, он только для глаз.
+      topics: (ready?.topics || []).join(','),
+      title: ready?.title || '',
+    },
+  });
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
