@@ -32,7 +32,7 @@ import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
   STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
-  DETAILS, dateChips, timeQueryFromDate, deviceTz, tzDisplay, tzOptions, looksLikeUrl,
+  DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzDisplay, tzOptions, tzCity, looksLikeUrl,
   DISTRICTS, districtLabel, districtQuery, SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm,
 } from '../src/intent';
@@ -42,6 +42,7 @@ import {
   IconChevronLeft, IconMic, IconPin, IconVideo, IconPlusRound, IconPerson, IconGroups,
   IconCalendar, IconClock, IconGlobe, IconLink, IconPlay, IconImagePlaceholder, IconPencil,
 } from '../src/components/icons';
+import { EditSheet } from '../src/components/ProfileShell';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { setResults } from '../src/results-store';
@@ -105,7 +106,12 @@ export default function Intent() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [dragging, setDragging] = useState(false);
+  /** O.07a: лист пояса держит выбор у себя и отдаёт его в черновик только по «Применить». */
   const [tzOpen, setTzOpen] = useState(false);
+  const [tzPick, setTzPick] = useState('');
+  /** O.10a: лист «что поменять» над сводкой; editPick — подсвеченная строка. */
+  const [editOpen, setEditOpen] = useState(false);
+  const [editPick, setEditPick] = useState('');
   const [free, setFree] = useState('');
   /** Категория для строки сводки O.10. Приходит от агента фильтрации; пусто — строка не рисуется. */
   const [category, setCategory] = useState('');
@@ -334,31 +340,19 @@ export default function Intent() {
                     />
                   </View>
 
+                  {/* O.07a: строка открывает лист выбора, а не аккордеон — выбор применяется только по «Применить». */}
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityState={{ expanded: tzOpen }}
                     style={s.tzRow}
-                    onPress={() => setTzOpen((o) => !o)}
+                    onPress={() => { setTzPick(draft.tz); setTzOpen(true); }}
                   >
                     <IconGlobe />
                     <View style={{ flex: 1 }}>
                       <Text style={s.tzLabel}>{DETAILS.timeZone()}</Text>
                       <Text style={s.tzValue}>{tzDisplay(draft.tz)}</Text>
                     </View>
-                    <Text style={s.chev}>{tzOpen ? '⌃' : '⌄'}</Text>
+                    <Text style={s.chev}>⌄</Text>
                   </Pressable>
-                  {tzOpen
-                    ? tzOptions().map((z) => (
-                        <Pressable
-                          key={z}
-                          accessibilityRole="button"
-                          style={s.tzOption}
-                          onPress={() => { setDraft((x) => ({ ...x, tz: z })); setTzOpen(false); }}
-                        >
-                          <Text style={[s.tzValue, z === draft.tz && { color: color.primary }]}>{tzDisplay(z)}</Text>
-                        </Pressable>
-                      ))
-                    : null}
 
                   <Cta label={INTENT.next()} onPress={() => setStep('who')} />
                 </View>
@@ -463,7 +457,8 @@ export default function Intent() {
                   category={category}
                   busy={busy}
                   onStart={finish}
-                  onEdit={() => setStep('how')}
+                  // O.10a: «Поправить» спрашивает, ЧТО менять, а не гонит через весь мастер заново.
+                  onEdit={() => { setEditPick(''); setEditOpen(true); }}
                 />
               ) : null}
             </>
@@ -489,6 +484,74 @@ export default function Intent() {
             </Pressable>
           </View>
         </View>
+
+        {/* O.07a — часовой пояс. Выбор живёт в tzPick и попадает в черновик только по «Применить». */}
+        <EditSheet
+          open={tzOpen}
+          title={DETAILS.tzSheetTitle()}
+          onClose={() => setTzOpen(false)}
+          onAccept={() => { if (tzPick) setDraft((x) => ({ ...x, tz: tzPick })); setTzOpen(false); }}
+          acceptLabel={DETAILS.apply()}
+          cancelLabel={DETAILS.cancel()}
+        >
+          {tzOptions().map((z) => (
+            <Pressable
+              key={z}
+              accessibilityRole="button"
+              accessibilityState={{ selected: z === tzPick }}
+              style={[s.pickRow, z === tzPick && s.pickRowOn]}
+              onPress={() => setTzPick(z)}
+            >
+              <Text style={s.pickText}>{tzCity(z)}</Text>
+              {z === tzPick ? <Text style={s.pickCheck}>✓</Text> : null}
+            </Pressable>
+          ))}
+        </EditSheet>
+
+        {/* O.10a — что менять в собранном интенте. «Изменить» ведёт на шаг подсвеченной строки. */}
+        <EditSheet
+          open={editOpen}
+          title={EDIT_SHEET.title()}
+          onClose={() => setEditOpen(false)}
+          onAccept={() => {
+            if (!editPick) return;
+            setEditOpen(false);
+            // Тема выбирается в разговоре создания, у мастера такого шага нет — «Изменить» по ней
+            // честно возвращает в тот разговор.
+            if (editPick === 'theme') { router.back(); return; }
+            setStep(editPick as IntentStepId);
+          }}
+          acceptLabel={EDIT_SHEET.edit()}
+          cancelLabel={DETAILS.cancel()}
+        >
+          {([
+            ['theme', IconPencil, EDIT_SHEET.theme(), title || '—'],
+            ['how', IconVideo, EDIT_SHEET.mode(), draft.mode ? formatLabel(draft.mode) : '—'],
+            ['size', IconGroups, EDIT_SHEET.format(), draft.size ? sizeLabel(draft.size) : '—'],
+            ['when', IconClock, EDIT_SHEET.datetime(), `${summaryDate(draft.date)}, ${hhmm(draft.minutes)}`],
+            ['who', IconPerson, EDIT_SHEET.audience(),
+              `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`],
+            draft.mode === 'offline'
+              ? ['place', IconPin, DETAILS.district(),
+                  draft.district ? districtLabel(draft.district) : EDIT_SHEET.noData()]
+              : ['link', IconLink, EDIT_SHEET.link(), draft.link.trim() || EDIT_SHEET.noData()],
+          ] as [string, any, string, string][]).map(([k, Icon, label, value]) => (
+            <Pressable
+              key={k}
+              accessibilityRole="button"
+              accessibilityState={{ selected: editPick === k }}
+              style={[s.pickRow, editPick === k && s.pickRowOn]}
+              onPress={() => setEditPick(k)}
+            >
+              <Icon size={20} c={color.fg} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.pickText}>{label}</Text>
+                <Text style={s.pickSub} numberOfLines={1}>{value}</Text>
+              </View>
+              {editPick === k ? <Text style={s.pickCheck}>✓</Text> : null}
+            </Pressable>
+          ))}
+        </EditSheet>
 
         {busy ? <Searching /> : null}
       </View>
@@ -790,7 +853,17 @@ const s = StyleSheet.create({
   tzRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
   tzLabel: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
   tzValue: { ...type.bodySmall, color: color.muted } as any,
-  tzOption: { paddingVertical: 8, paddingLeft: 30 },
+
+  // Строки листов O.07a/O.10a: выбранная — в рамке с галочкой, как на кадрах.
+  pickRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, paddingHorizontal: 14,
+    borderWidth: 1, borderColor: 'transparent', borderRadius: rad.lg,
+  },
+  pickRowOn: { borderColor: color.primary },
+  pickText: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
+  pickSub: { ...type.bodySmall, color: color.muted } as any,
+  pickCheck: { fontSize: 16, color: color.primary, fontWeight: '700' },
   chev: { fontSize: 16, color: color.muted },
 
   linkInput: {

@@ -14,11 +14,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
-  ActivityIndicator, Modal, KeyboardAvoidingView, Platform, Alert,
+  ActivityIndicator, Modal, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CHAT, Msg, msgTime } from '../src/chat';
+import { CHAT, UNDO_BAR, Msg, msgTime } from '../src/chat';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { agent } from '../src/api';
@@ -43,6 +43,13 @@ export default function Conversation() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [actions, setActions] = useState(false);
+  /**
+   * O.19a/O.19b: «Создать план» и «Завершить чат» не срабатывают мгновенно — внизу чата тикает
+   * полоса Undo · 4…0, и только по нулю действие случается. Отменить — просто снять pending,
+   * никуда ничего не уходит. Рецепт тот же, что у «Не интересно» на O.13b.
+   */
+  const [pending, setPending] = useState<{ kind: 'plan' | 'end'; n: number } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   /** Время последнего известного сообщения — по нему сервер отдаёт только новые. */
   const since = useRef(0);
 
@@ -119,18 +126,35 @@ export default function Conversation() {
     }
   };
 
-  const endConversation = () => {
-    const go = () => { setActions(false); router.back(); };
-    const ask = CHAT.endAsk(other);
-    if (Platform.OS === 'web') {
-      // eslint-disable-next-line no-alert
-      if (typeof confirm === 'function' && confirm(ask)) go();
-      return;
-    }
-    Alert.alert(ask, undefined, [
-      { text: T('Отмена', 'Cancel'), style: 'cancel' },
-      { text: CHAT.endConversation(), style: 'destructive', onPress: go },
-    ]);
+  const startPending = (kind: 'plan' | 'end') => {
+    if (pending) return;
+    setActions(false);
+    setPending({ kind, n: 4 });
+  };
+
+  useEffect(() => {
+    if (!pending) return;
+    timer.current = setTimeout(() => {
+      if (pending.n > 1) {
+        setPending({ ...pending, n: pending.n - 1 });
+        return;
+      }
+      setPending(null);
+      if (pending.kind === 'plan') {
+        router.push({ pathname: '/plan', params: { who: other, title: intentTitle, photo } });
+      } else {
+        // Конец разговора: у сервера нет понятия «закрытый тред», поэтому завершение — это уход
+        // с экрана. Полоса и была последним шансом остаться. Открытому по прямой ссылке экрану
+        // некуда «назад» — тогда домой, иначе кнопка тихо не делала бы ничего.
+        if (router.canGoBack()) router.back(); else router.replace('/home');
+      }
+    }, 1000);
+    return () => clearTimeout(timer.current);
+  }, [pending]);
+
+  const undoPending = () => {
+    clearTimeout(timer.current);
+    setPending(null);
   };
 
   return (
@@ -174,6 +198,18 @@ export default function Conversation() {
           {err ? <Text style={s.err}>{err}</Text> : null}
         </ScrollView>
 
+        {/* O.19a/O.19b — полоса отсчёта над композером: создание плана красное, конец чата тёмный. */}
+        {pending ? (
+          <View style={[s.undoBar, pending.kind === 'end' && s.undoBarDark]}>
+            <Text style={s.undoText} numberOfLines={1}>
+              {pending.kind === 'plan' ? UNDO_BAR.creating(other) : UNDO_BAR.ending()}
+            </Text>
+            <Pressable accessibilityRole="button" onPress={undoPending} hitSlop={8}>
+              <Text style={s.undoAction}>{UNDO_BAR.undo(pending.n)}</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           {/* Искра слева — вход в действия разговора (O.19), как на кадре. */}
           <Pressable accessibilityRole="button" accessibilityLabel={CHAT.actionsTitle()} style={s.sparkBtn} onPress={() => setActions(true)}>
@@ -206,18 +242,11 @@ export default function Conversation() {
               </Pressable>
             </View>
 
-            <Pressable
-              accessibilityRole="button"
-              style={s.actPri}
-              onPress={() => {
-                setActions(false);
-                router.push({ pathname: '/plan', params: { who: other, title: intentTitle, photo } });
-              }}
-            >
+            <Pressable accessibilityRole="button" style={s.actPri} onPress={() => startPending('plan')}>
               <Text style={s.actPriText}>{CHAT.createPlan()}</Text>
             </Pressable>
 
-            <Pressable accessibilityRole="button" style={s.actDark} onPress={endConversation}>
+            <Pressable accessibilityRole="button" style={s.actDark} onPress={() => startPending('end')}>
               <Text style={s.actDarkText}>{CHAT.endConversation()}</Text>
             </Pressable>
 
@@ -265,6 +294,15 @@ const s = StyleSheet.create({
   bubText: { ...type.body, color: color.fg } as any,
   time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
   err: { ...type.bodySmall, color: color.primary, marginTop: space.sm } as any,
+
+  undoBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    marginHorizontal: 16, paddingVertical: 12, paddingHorizontal: 16,
+    borderRadius: rad.full, backgroundColor: color.primary,
+  },
+  undoBarDark: { backgroundColor: color.ink },
+  undoText: { flex: 1, ...type.labelMedium, color: color.onPrimary, fontWeight: '600' } as any,
+  undoAction: { ...type.labelMedium, color: color.onPrimary, fontWeight: '700' } as any,
 
   dock: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
   sparkBtn: {

@@ -4149,6 +4149,9 @@ def _mp_public(p, me=""):
         "waiting_on": [x["name"] for x in people if not x["confirmed"]],
         "my_live": (p.get("live") or {}).get(who),
         "their_live": (p.get("live") or {}).get(_norm_name(_mp_other(p, me))),
+        # OF.23a разводит «You told X you can't make it» и «X can't make it» — без имени отменившего
+        # экран не знает, какую из двух правд показывать.
+        "cancelled_by": p.get("cancelled_by"),
         "outcome": p.get("outcome"), "my_feedback": (p.get("feedback") or {}).get(who),
         # OF.24 говорит «пока не ответите оба, никому ничего не засчитывается» — значит экрану нужно
         # знать сам ФАКТ ответа второго, но не его содержание. Пара their_*/my_* здесь та же, что у

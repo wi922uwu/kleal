@@ -111,7 +111,33 @@ export const DETAILS = {
 
   district: () => T('Район', 'District'),
   radius: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),
+
+  // O.07a — лист выбора пояса. Заголовок с кадра дословно.
+  tzSheetTitle: () => T('Часовой пояс GMT', 'Time Zone GMT'),
+  apply: () => T('Применить', 'Apply'),
+  cancel: () => T('Отмена', 'Cancel'),
 };
+
+/**
+ * O.10a — лист «что поменять» над сводкой. Подписи строк — с кадра; значения экран собирает из
+ * черновика сам. Ключ каждой строки — шаг мастера, на который ведёт «Edit».
+ */
+export const EDIT_SHEET = {
+  title: () => T('Что хочешь поменять?', 'What are you going change?'),
+  theme: () => T('Тема интента', 'Theme of Intent'),
+  mode: () => T('Режим встречи', 'Mode of meeting'),
+  format: () => T('Формат', 'Format'),
+  datetime: () => T('Дата и время', 'Date & Time'),
+  audience: () => T('Аудитория и возраст', 'Audience & Age'),
+  link: () => T('Ссылка', 'Link'),
+  noData: () => T('Нет данных', 'No Data'),
+  edit: () => T('Изменить', 'Edit'),
+};
+
+/** Город без пути и подчёркиваний: Europe/Buenos_Aires → «Buenos Aires». Строки листа O.07a. */
+export function tzCity(tz: string): string {
+  return String(tz || '').replace(/_/g, ' ').split('/').pop() || tz;
+}
 
 /**
  * Даты для чипов — от сегодня, как на кадре: «Wed Jul 22», по-русски «ср, 22 июл.». Интент живёт

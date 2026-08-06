@@ -159,6 +159,72 @@ export const PLAN = {
   send: () => T('Отправить', 'Send'),
   reportProblem: () => T('Сообщить о проблеме', 'Report a problem'),
   thanks: () => T('Спасибо — это поможет подбирать точнее.', 'Thank you — this helps us match you better.'),
+
+  /** O.20a — согласованный онлайн-план без ссылки. Времена на кадре — примеры борда; пояс
+   *  собеседника мы не храним (см. linkOpensAt), поэтому время здесь одно, своё. */
+  addLinkTitle: () => T('Добавь ссылку на звонок', 'Add the call link'),
+  addLinkNote: (when: string, name: string) =>
+    T(
+      `Встреча (${when}) согласована. ${name} видит «ссылка будет», пока ты её не вставишь — добавь заранее, чтобы к началу никто не ждал.`,
+      `${when} is agreed. ${name} sees “link coming” until you paste one — add it ahead of time so nobody is waiting on it.`
+    ),
+  noLinkYet: () => T('Онлайн · ссылки пока нет', 'Online · no link yet'),
+  pasteLink: () => T('Вставь ссылку Zoom, Meet — любую', 'Paste a Zoom, Meet or any link'),
+  saveLink: () => T('Сохранить ссылку', 'Save the link'),
+  askHost: (name: string) => T(`Попросить ${name} создать звонок`, `Ask ${name} to host instead`),
+  /** Уходит настоящим сообщением в чат — просьба должна дойти, а не остаться нажатой кнопкой. */
+  askHostMsg: () =>
+    T(
+      'Создашь ссылку на звонок со своей стороны? У меня не выходит — пришли её сюда.',
+      'Could you host the call and share the link here?'
+    ),
+  linkComing: () => T('Онлайн · ссылка будет', 'Online · link coming'),
+
+  /** O.21b — новое время отправлено; старое действует, пока встречное не принято. */
+  newTimeSent: (name: string) => T(`Новое время отправлено ${name}`, `New time sent to ${name}`),
+  newTimeNote: (name: string) =>
+    T(
+      `${name} увидит новое время и подтвердит его заново. До этого действует старое — ничего не отменено, и никому ничего делать не нужно.`,
+      `${name} sees the new time and confirms again. Until then the old time still stands — nothing is cancelled and nobody has to do anything.`
+    ),
+  newPrefix: (when: string) => T(`Новое: ${when}`, `New: ${when}`),
+  notAnsweredNewTime: () => T('Ещё не ответил(а) на новое время', 'Hasn’t answered the new time'),
+  waitingOldTime: () => T('Ждёшь · старое время в силе', 'Waiting · old time still stands'),
+  takeItBack: () => T('Забрать предложение', 'Take it back'),
+  /** Принимающая сторона встречного времени (OF.C5): кадра в пачке нет, кнопки — по контракту сервера. */
+  newTimeToYou: (name: string) => T(`${name} предлагает другое время`, `${name} suggests a new time`),
+  acceptNewTime: () => T('Принять новое время', 'Accept the new time'),
+  keepOldTime: () => T('Оставить как было', 'Keep the old time'),
+  /** OF.C5 дословно: спешки нет, отказ ничего не отменяет. */
+  oldTimeHolds: () =>
+    T(
+      'Старое время в силе, пока ты не ответишь, — спешки нет, и отказ ничего не отменяет.',
+      'The old time holds until you answer, so there is no rush and nothing is lost if you say no.'
+    ),
+  hostAskedNote: () => T('Просьба отправлена в чат', 'Asked in chat'),
+  sendNewTime: () => T('Отправить новое время', 'Send the new time'),
+
+  /** O.23a — создатель отменил встречу. */
+  youToldCantMake: (name: string) =>
+    T(`Ты сказал(а) ${name}, что не сможешь`, `You told ${name} you can’t make it`),
+  theyCantMake: (name: string) => T(`${name} не сможет прийти`, `${name} can’t make it`),
+  calledOffByYou: () => T('Отменено тобой', 'Called off by you'),
+  calledOffBy: (name: string) => T(`Отменил(а) ${name}`, `Called off by ${name}`),
+  anotherTime: () => T('Другое время', 'Another time'),
+  cantMakeStatus: () => T('Не сможет прийти', 'Can’t make it'),
+  toldJustNow: () => T('Узнал(а) только что', 'Told just now'),
+  nobodyWaiting: (name: string) =>
+    T(
+      `Никто не ждёт зря. ${name} уже видит отмену и не сидит в звонке в одиночку. Чат открыт — договориться о новом времени можно там.`,
+      `Nobody is left waiting. ${name} sees it now, so they aren’t sitting on a call alone. Your chat stays open — you can agree a new time there.`
+    ),
+};
+
+/** O.19a/O.19b — полоса отсчёта внизу чата: действие случится через 4 секунды, если не отменить. */
+export const UNDO_BAR = {
+  creating: (name: string) => T(`Создаю план с ${name}`, `Creating the plan with ${name}`),
+  ending: () => T('Завершаю чат. Можно вернуться снова', 'Ending chat. You can pick again'),
+  undo: (n: number) => T(`Отменить · ${n}`, `Undo · ${n}`),
 };
 
 /** Оценки — те же три, что на кадре. Ключи английские: их читает сервер. */

@@ -179,13 +179,16 @@ const s = StyleSheet.create({
  * изменениями, и это видно по экрану.
  */
 export function EditSheet({
-  open, title, onClose, onAccept, acceptLabel, children,
+  open, title, onClose, onAccept, acceptLabel, cancelLabel, children,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
   onAccept: () => void;
   acceptLabel: string;
+  /** Кадры O.07a/O.10a: под главной кнопкой стоит тёмная «Cancel». Профильные листы её не просят —
+   *  поэтому кнопка появляется только там, где подпись передана. Делает то же, что крестик. */
+  cancelLabel?: string;
   children: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
@@ -206,6 +209,11 @@ export function EditSheet({
         <Pressable accessibilityRole="button" style={e.accept} onPress={onAccept}>
           <Text style={e.acceptText}>{acceptLabel}</Text>
         </Pressable>
+        {cancelLabel ? (
+          <Pressable accessibilityRole="button" style={e.cancel} onPress={onClose}>
+            <Text style={e.cancelText}>{cancelLabel}</Text>
+          </Pressable>
+        ) : null}
       </View>
     </Modal>
   );
@@ -225,4 +233,6 @@ const e = StyleSheet.create({
   body: { paddingVertical: space.sm, gap: space.md },
   accept: { height: 56, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   acceptText: { ...type.button, color: color.onPrimary } as any,
+  cancel: { height: 56, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
+  cancelText: { ...type.button, color: '#fff' } as any,
 });
