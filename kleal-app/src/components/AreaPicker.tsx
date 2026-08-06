@@ -52,7 +52,15 @@ export function AreaPicker({ value, onChange }: { value: Area; onChange: (a: Are
 
   return (
     <View style={{ gap: space.md }}>
-      <Pressable style={s.select} onPress={() => setOpen((o) => !o)}>
+      {/* Роль обязательна: без неё Pressable на вебе остаётся <div> — не кнопка ни для скринридера,
+          ни для клавиатуры. Здесь это ещё и единственный способ сменить страну. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={value.label}
+        accessibilityState={{ expanded: open }}
+        style={s.select}
+        onPress={() => setOpen((o) => !o)}
+      >
         <Text style={s.selectText}>{value.label}</Text>
         <Text style={s.chev}>{open ? '⌃' : '⌄'}</Text>
       </Pressable>
@@ -62,6 +70,7 @@ export function AreaPicker({ value, onChange }: { value: Area; onChange: (a: Are
           {PLACES.map(([name, lat, lon]) => (
             <Pressable
               key={name}
+              accessibilityRole="button"
               style={s.option}
               onPress={() => {
                 onChange({ ...value, label: name, lat, lon });
@@ -89,7 +98,12 @@ export function AreaPicker({ value, onChange }: { value: Area; onChange: (a: Are
         thumbTintColor={color.primary}
       />
 
-      <Pressable style={s.detect} onPress={detect}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ busy: locating }}
+        style={s.detect}
+        onPress={detect}
+      >
         {locating ? (
           <ActivityIndicator color={color.onPrimary} />
         ) : (

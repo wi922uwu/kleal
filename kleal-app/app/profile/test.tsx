@@ -16,7 +16,7 @@ import { ProfileShell, Card } from '../../src/components/ProfileShell';
 import { useLang, getLang } from '../../src/i18n';
 import { useOnb, set, profileForAttach } from '../../src/state';
 import { buddy, profile as profileApi } from '../../src/api';
-import { TEST_Q, TEST as C } from '../../src/profile';
+import { TEST_Q, TEST as C, adaptSummary } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 type Answer = { k: string; q: string; a: string; token: string | null };
@@ -59,6 +59,9 @@ export default function PersonalityTest() {
       if (p.name) {
         await profileApi.update(p.name, { personality: text, persona: axes }).catch(() => {});
       }
+      // Сводка следует за личностью, а не наоборот: adaptSummary отвергнет ответ, который окажется
+      // просто текстом личности, — иначе тест съел бы сводку. Не ждём: экран закрывается сразу.
+      adaptSummary();
       router.back();
     } catch {
       setFailed(true);

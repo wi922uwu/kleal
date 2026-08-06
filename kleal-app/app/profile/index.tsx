@@ -16,10 +16,10 @@ import {
   IconPerson, IconVerified, IconStar, IconFaceScan, IconUserLock, IconTranslate, IconPin, IconPencil, IconGear,
 } from '../../src/components/icons';
 import { useLang, T, getLang, setLang } from '../../src/i18n';
-import { useOnb, set, reset, profileForAttach } from '../../src/state';
-import { profile as profileApi, buddy } from '../../src/api';
+import { useOnb, set, reset } from '../../src/state';
+import { profile as profileApi } from '../../src/api';
 import {
-  PROFILE_TITLE, HUB, AVAIL, SIGNOUT, HUB_ROWS, SHEETS, profileData, fmtUpdated,
+  PROFILE_TITLE, HUB, AVAIL, SIGNOUT, HUB_ROWS, SHEETS, profileData, fmtUpdated, adaptSummary,
 } from '../../src/profile';
 import { langName, langCode, searchLangs } from '../../src/languages';
 import { SETTINGS } from '../../src/settings';
@@ -72,20 +72,13 @@ export default function ProfileHub() {
     if (p.name) await profileApi.update(p.name, { summary: text }).catch(() => {});
   };
 
-  /** Пересобрать сводку моделью. Пустой ответ НЕ затирает текст — старый остаётся на экране. */
+  /**
+   * Пересобрать сводку. Одна и та же дверь и для кнопки «Пересобрать», и для правок профиля —
+   * защиты от затирания живут внутри adaptSummary, и обходить их отдельным путём нельзя.
+   */
   const rewrite = async () => {
     setBusy(true);
-    try {
-      const r: any = await buddy.resummary(
-        profileForAttach(), String((p as any).summary || ''), String((p as any).personality || ''), getLang()
-      );
-      const next = String(r?.summary || '').trim();
-      if (next) await saveSummary(next);
-    } catch {
-      /* молча: сводка на экране остаётся прежней, и это лучше пустой карточки */
-    } finally {
-      setBusy(false);
-    }
+    try { await adaptSummary(); } finally { setBusy(false); }
   };
 
   /**
@@ -105,6 +98,7 @@ export default function ProfileHub() {
       const codes = list.map(langCode).filter(Boolean) as string[];
       await profileApi.update(p.name, { langs: codes }).catch(() => {});
     }
+    rewrite();                    // сводка называет языки вслух — она обязана догнать
   };
 
   const saveLocation = async (a: Area) => {
@@ -117,6 +111,7 @@ export default function ProfileHub() {
       await profileApi.update(p.name, { area: a.label, lat: a.lat, lon: a.lon, radiusKm: a.km })
         .catch(() => {});
     }
+    rewrite();                    // «живёт в Барселоне» после переезда в Италию — неправда
   };
 
   const signOut = () => {

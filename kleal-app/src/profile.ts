@@ -15,6 +15,8 @@ import { T, getLang } from './i18n';
 import { sexLabel, hobbyPlain } from './onboarding';
 import { langPlainName } from './languages';
 import type { Profile } from './state';
+import { getState, set, profileForAttach } from './state';
+import { buddy, profile as profileApi } from './api';
 
 // ---------------------------------------------------------------- разделы
 
@@ -54,6 +56,51 @@ export const HUB = {
   empty: () =>
     T('Kleal опишет тебя здесь по мере знакомства.', 'Kleal will summarise you here as it learns more.'),
 };
+
+/**
+ * Пересобрать сводку под изменившийся профиль.
+ *
+ * Сводка проговаривает факты вслух — «живёт в Барселоне», «говорит по-русски и по-английски», — и
+ * после правки локации или языков она начинает врать. В вебе это давно так и устроено: правка
+ * location / languages / basics / interests тянет за собой adaptSummary(). В переносе этого не
+ * было, и человек, сменивший страну на Италию, продолжал читать про Барселону.
+ *
+ * Две защиты, обе из веба и обе не теоретические:
+ *
+ *  — Один запрос за раз. Иначе быстрые правки подряд (сменил язык, сразу страну) запускают две
+ *    пересборки, и выигрывает та, что вернулась позже, — то есть, возможно, более старая.
+ *  — Ответ отвергается, если он подозрительно короче прежнего или совпал с текстом личности.
+ *    «Сводка ещё не догнала» — поправимо, «сводку затёрло» — нет.
+ *
+ * Возвращает true, если текст действительно сменился.
+ */
+let _resumBusy = false;
+
+export async function adaptSummary(): Promise<boolean> {
+  if (_resumBusy) return false;
+  _resumBusy = true;
+  try {
+    const st = getState();
+    const cur = String((st.profile as any).summary || '');
+    const personality = String((st.profile as any).personality || '');
+    const r: any = await buddy.resummary(profileForAttach(), cur, personality, getLang());
+    const woven = String(r?.summary || '').trim();
+    const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!woven) return false;
+    if (personality && norm(woven) === norm(personality)) return false;
+    if (cur && woven.length < cur.length * 0.5) return false;
+
+    set('summary', woven);
+    set('summaryUpdated', Date.now());
+    const name = st.profile.name;
+    if (name) await profileApi.update(name, { summary: woven }).catch(() => {});
+    return true;
+  } catch {
+    return false;                 // сеть отвалилась — на экране остаётся прежний текст
+  } finally {
+    _resumBusy = false;
+  }
+}
 
 /** Статусы приёма — те же три, что понимает /api/onboarding/receiving. */
 /**

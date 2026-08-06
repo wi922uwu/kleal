@@ -16,7 +16,7 @@ import { ProfileShell, Card } from '../../src/components/ProfileShell';
 import { useLang, T } from '../../src/i18n';
 import { useOnb, set, get, profileForAttach } from '../../src/state';
 import { profile as profileApi } from '../../src/api';
-import { profileData, INTERESTS_SCREEN as C, SECTIONS } from '../../src/profile';
+import { profileData, INTERESTS_SCREEN as C, SECTIONS, adaptSummary } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function Interests() {
@@ -26,9 +26,14 @@ export default function Interests() {
   const d = useMemo(() => profileData(st.profile), [st.profile, lang]);
   const [open, setOpen] = useState<string | null>(d.interests[0]?.name || null);
 
+  /**
+   * Записать интересы на сервер и подтянуть за ними сводку: она перечисляет интересы вслух, и после
+   * удаления одного из них продолжала бы про него рассказывать. Так же устроен веб.
+   */
   const push = () => {
     const name = st.profile.name;
     if (name) profileApi.update(name, { interests: profileForAttach().interests }).catch(() => {});
+    adaptSummary();
   };
 
   const toggleUsed = (nm: string, on: boolean) => {
