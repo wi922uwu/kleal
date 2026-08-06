@@ -185,6 +185,22 @@ export const agent = {
   forYou: (self: string, prof: Json, limit = 30) =>
     api.post<{ plans?: Json[] }>('/api/agent/explore', { limit, self, profile: prof }),
 
+  /**
+   * Приглашение (O.14): человек увидит интент и профиль отправителя. Одно открытое приглашение на
+   * пару в одну сторону — повторная отправка обновляет его, а не плодит копии; это правило сервера.
+   */
+  propose: (from: string, to: string, intent: Json, note = '') =>
+    api.post<{ ok?: boolean; id?: string; error?: string }>(
+      '/api/agent/propose', { from, to, intent, note }
+    ),
+
+  /**
+   * Категория темы для сводки O.10 («Category: Languages»). Это отдельный агент фильтрации;
+   * пустой ответ — не ошибка, строка категории тогда просто не показывается.
+   */
+  categorize: (text: string) =>
+    api.post<{ category?: string; topics?: string[] }>('/api/filter/categorize', { text }),
+
   /** Кого этот человек заблокировал, плюс его же жалобы. */
   safety: (self: string) =>
     api.get<{ blocked?: string[]; reports?: Json[] }>(

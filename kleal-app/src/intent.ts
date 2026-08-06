@@ -24,7 +24,7 @@
  */
 import { T, getLang } from './i18n';
 
-export type IntentStepId = 'how' | 'size' | 'when' | 'who' | 'place' | 'link';
+export type IntentStepId = 'how' | 'size' | 'when' | 'who' | 'place' | 'link' | 'summary';
 
 // ---------------------------------------------------------------- общее
 
@@ -191,6 +191,67 @@ export function tzOptions(): string[] {
  */
 export function looksLikeUrl(s: string): boolean {
   return /^https?:\/\/\S+\.\S+/.test(String(s || '').trim());
+}
+
+// ---------------------------------------------------------------- O.10 · сводка перед поиском
+
+export const SUMMARY_O10 = {
+  title: () => T('Вот что получилось', "Here's what I got"),
+  /** Пузырь-примечание с кадра, дословно. */
+  note: () =>
+    T(
+      'Проверь — поправить можно что угодно. Поиск мы подгоним под настройки твоего профиля и этот интент.',
+      "Check it — edit anything if needed. We'll tailor the search to your profile settings and this intent."
+    ),
+  mode: () => T('Тип', 'Mode'),
+  format: () => T('Формат', 'Format'),
+  category: () => T('Категория', 'Category'),
+  audience: () => T('Аудитория', 'Audience'),
+  summaryLabel: () => T('Сводка Kleal:', 'Kleal summary:'),
+  start: () => T('Начать поиск', 'Start search'),
+  edit: () => T('Поправить', 'Edit'),
+};
+
+/** «Thu, 23 July» с кадра — дата сводки, на языке интерфейса. */
+export function summaryDate(dateKey: string): string {
+  const loc = getLang() === 'ru' ? 'ru-RU' : 'en-US';
+  const d = new Date(dateKey + 'T12:00:00');
+  return d.toLocaleDateString(loc, { weekday: 'short', day: 'numeric', month: 'long' });
+}
+
+/** Смещение пояса для строки времени: «(GMT+2)». Вырезается из tzDisplay, чтобы не считать дважды. */
+export function tzOffsetLabel(tz: string): string {
+  const m = tzDisplay(tz).match(/\(([^)]+)\)/);
+  return m ? `(${m[1]})` : '';
+}
+
+/**
+ * «Сводка Kleal» на O.10. На борде этот текст пишет модель («You want to speak Spanish, not study
+ * it…») — серверной ручки под это пока нет, и в каркасе стоит детерминированный шаблон из
+ * собранных фактов. Он не выдумывает ничего, чего человек не выбирал; умный пересказ — отдельная
+ * работа на стороне buddy, помечено в ROADMAP.
+ */
+export function intentSummaryText(o: {
+  topic: string; size?: string; sex?: string; minAge: number; maxAge: number;
+  dateKey: string; minutes: number;
+}): string {
+  const who =
+    o.size === 'group'
+      ? T('компанию из 3–5 человек', 'a small group of 3–5')
+      : T('одного человека', 'one person');
+  const aud = o.sex && o.sex !== 'Any'
+    ? (o.sex === 'Female' ? T('женщину', 'a woman') : T('мужчину', 'a man')) + ', '
+    : '';
+  const when = `${summaryDate(o.dateKey)} ${T('около', 'around')} ${hhmm(o.minutes)}`;
+  return o.topic
+    ? T(
+        `Ты хочешь: ${o.topic}. Kleal ищет ${who} — ${aud}${o.minAge}–${o.maxAge}, со свободным временем ${when}.`,
+        `You're after: ${o.topic}. Kleal is looking for ${who} — ${aud}${o.minAge}–${o.maxAge}, free ${when}.`
+      )
+    : T(
+        `Kleal ищет ${who} — ${aud}${o.minAge}–${o.maxAge}, со свободным временем ${when}.`,
+        `Kleal is looking for ${who} — ${aud}${o.minAge}–${o.maxAge}, free ${when}.`
+      );
 }
 
 // ---------------------------------------------------------------- районы (офлайн, прежний кадр OF.09)

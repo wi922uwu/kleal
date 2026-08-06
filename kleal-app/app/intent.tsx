@@ -34,12 +34,13 @@ import {
   STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
   DETAILS, dateChips, timeQueryFromDate, deviceTz, tzDisplay, tzOptions, looksLikeUrl,
   DISTRICTS, districtLabel, districtQuery, SEARCHING,
+  SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm,
 } from '../src/intent';
 import { SEXES, sexLabel, COMPOSER_PLACEHOLDER } from '../src/onboarding';
 import { TimeDial, RangeDial } from '../src/components/Dials';
 import {
   IconChevronLeft, IconMic, IconPin, IconVideo, IconPlusRound, IconPerson, IconGroups,
-  IconCalendar, IconClock, IconGlobe, IconLink, IconPlay,
+  IconCalendar, IconClock, IconGlobe, IconLink, IconPlay, IconImagePlaceholder, IconPencil,
 } from '../src/components/icons';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
@@ -89,6 +90,8 @@ export default function Intent() {
   const [dragging, setDragging] = useState(false);
   const [tzOpen, setTzOpen] = useState(false);
   const [free, setFree] = useState('');
+  /** Категория для строки сводки O.10. Приходит от агента фильтрации; пусто — строка не рисуется. */
+  const [category, setCategory] = useState('');
 
   const profile = () => ({
     name: st.profile.name,
@@ -191,6 +194,23 @@ export default function Intent() {
     }
   };
 
+  /**
+   * O.10: перед поиском — сводка. Категория для её строки спрашивается у агента фильтрации в
+   * фоне; сводка её не ждёт — строка появляется, когда ответ пришёл, и не появляется вовсе, если
+   * агент промолчал. Держать человека на «Дальше» ради одной строки таблицы нельзя.
+   */
+  const toSummary = () => {
+    setStep('summary');
+    const text = topic || '';
+    if (!text || category) return;
+    agent.categorize(text)
+      .then((r: any) => {
+        const c = String(r?.category || '').trim();
+        if (c) setCategory(c.charAt(0).toUpperCase() + c.slice(1));
+      })
+      .catch(() => {});
+  };
+
   /** Третий шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
   const thirdStep: IntentStepId = draft.mode === 'offline' ? 'place' : 'link';
   const detailIndex = step === 'when' ? 0 : step === 'who' ? 1 : 2;
@@ -242,16 +262,26 @@ export default function Intent() {
             </>
           ) : (
             <>
-              <QuestionHead
-                title={DETAILS.title()}
-                sub={
-                  step === 'when' ? DETAILS.subWhen()
-                  : step === 'who' ? DETAILS.subWho()
-                  : step === 'link' ? DETAILS.subLink()
-                  : DETAILS.subPlace()
-                }
-              />
-              <Stepper current={detailIndex} />
+              {step === 'summary' ? (
+                <>
+                  <QuestionHead title={SUMMARY_O10.title()} />
+                  {/* Пузырь-примечание с кадра: сверить и поправить можно что угодно. */}
+                  <View style={s.ackBub}><Text style={s.ackText}>{SUMMARY_O10.note()}</Text></View>
+                </>
+              ) : (
+                <>
+                  <QuestionHead
+                    title={DETAILS.title()}
+                    sub={
+                      step === 'when' ? DETAILS.subWhen()
+                      : step === 'who' ? DETAILS.subWho()
+                      : step === 'link' ? DETAILS.subLink()
+                      : DETAILS.subPlace()
+                    }
+                  />
+                  <Stepper current={detailIndex} />
+                </>
+              )}
 
               {step === 'when' ? (
                 <View style={s.card}>
@@ -377,8 +407,7 @@ export default function Intent() {
                   <Cta
                     label={INTENT.next()}
                     disabled={!!draft.link.trim() && !looksLikeUrl(draft.link)}
-                    busy={busy}
-                    onPress={finish}
+                    onPress={toSummary}
                   />
                 </View>
               ) : null}
@@ -405,8 +434,19 @@ export default function Intent() {
                     maximumTrackTintColor={color.neutral100}
                     thumbTintColor={color.primary}
                   />
-                  <Cta label={INTENT.next()} busy={busy} onPress={finish} />
+                  <Cta label={INTENT.next()} onPress={toSummary} />
                 </View>
+              ) : null}
+
+              {step === 'summary' ? (
+                <SummaryCard
+                  topic={topic}
+                  draft={draft}
+                  category={category}
+                  busy={busy}
+                  onStart={finish}
+                  onEdit={() => setStep('how')}
+                />
               ) : null}
             </>
           )}
@@ -561,6 +601,83 @@ function Cta({ label, onPress, disabled, busy }: {
 }
 
 /**
+ * O.10 — сводка перед поиском: обложка, тема, факты строками, сводка Kleal, «Начать поиск» и
+ * «Поправить». Обложки-фотографии в данных нет — цветное поле со значком, как везде в каркасе:
+ * рисовать фотографию, которой нет, не из чего.
+ */
+function SummaryCard({
+  topic, draft, category, busy, onStart, onEdit,
+}: {
+  topic: string;
+  draft: Draft;
+  category: string;
+  busy: boolean;
+  onStart: () => void;
+  onEdit: () => void;
+}) {
+  const facts: [string, string][] = [
+    [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—'],
+    [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—'],
+    ...(category ? ([[SUMMARY_O10.category(), category]] as [string, string][]) : []),
+    [SUMMARY_O10.audience(),
+      `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`],
+  ];
+  return (
+    <View style={s.card}>
+      <View style={s.cover}><IconImagePlaceholder size={44} /></View>
+      {topic ? <Text style={s.sumTopic}>{topic}</Text> : null}
+
+      <View style={s.sumMeta}>
+        <IconCalendar />
+        <Text style={s.sumMetaText}>{summaryDate(draft.date)}</Text>
+        <IconClock />
+        <Text style={s.sumMetaText}>{hhmm(draft.minutes)} {tzOffsetLabel(draft.tz)}</Text>
+      </View>
+      {draft.mode !== 'offline' && draft.link.trim() ? (
+        <View style={s.sumMeta}>
+          <IconLink size={16} c={color.muted} />
+          <Text style={s.sumMetaText} numberOfLines={1}>{draft.link.trim()}</Text>
+        </View>
+      ) : null}
+      {draft.mode === 'offline' && draft.district ? (
+        <View style={s.sumMeta}>
+          <IconPin size={16} c={color.muted} />
+          <Text style={s.sumMetaText}>{districtLabel(draft.district)} · {draft.radiusKm} km</Text>
+        </View>
+      ) : null}
+
+      {facts.map(([k, v]) => (
+        <View key={k} style={s.sumRow}>
+          <Text style={s.sumKey}>{k}</Text>
+          <Text style={s.sumVal}>{v}</Text>
+        </View>
+      ))}
+
+      <View style={s.sumSummaryBox}>
+        <View style={s.sumSummaryHead}>
+          <Text style={s.sumSummaryLabel}>{SUMMARY_O10.summaryLabel()}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel={SUMMARY_O10.edit()} onPress={onEdit} hitSlop={8}>
+            <IconPencil size={18} />
+          </Pressable>
+        </View>
+        <Text style={s.sumSummaryText}>
+          {intentSummaryText({
+            topic, size: draft.size, sex: draft.sex,
+            minAge: draft.minAge, maxAge: draft.maxAge,
+            dateKey: draft.date, minutes: draft.minutes,
+          })}
+        </Text>
+      </View>
+
+      <Cta label={SUMMARY_O10.start()} busy={busy} onPress={onStart} />
+      <Pressable accessibilityRole="button" style={s.sumEditBtn} onPress={onEdit}>
+        <Text style={s.sumEditText}>{SUMMARY_O10.edit()}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+/**
  * OF.11 — пока идёт поиск. Накладкой поверх мастера, а не отдельным маршрутом: экран живёт секунды
  * и не должен оставаться в истории — иначе «назад» из выдачи возвращало бы человека в бесконечное
  * ожидание того, что уже нашлось.
@@ -568,9 +685,16 @@ function Cta({ label, onPress, disabled, busy }: {
 function Searching() {
   return (
     <View style={s.veil}>
-      <ActivityIndicator size="large" color={color.primary} />
+      {/* Кадр O.11: два круга-заглушки под иллюстрации и подпись Kleal. Иллюстраций в проекте
+          нет — честная заглушка, как везде в каркасе. */}
+      <View style={s.veilAva}><IconImagePlaceholder size={28} /></View>
+      <Text style={s.veilBrand}>Kleal</Text>
+      <View style={s.veilBig}><IconImagePlaceholder size={44} /></View>
       <Text style={s.veilTitle}>{SEARCHING.title()}</Text>
-      <Text style={s.veilStep}>{SEARCHING.step()}</Text>
+      <View style={s.veilRow}>
+        <ActivityIndicator size="small" color={color.primary} />
+        <Text style={s.veilStep}>{SEARCHING.step()}</Text>
+      </View>
       <Text style={s.veilNote}>{SEARCHING.note()}</Text>
     </View>
   );
@@ -675,10 +799,40 @@ const s = StyleSheet.create({
   },
   input: { flex: 1, color: color.fg, fontSize: 15 },
 
+  cover: {
+    height: 128, borderRadius: rad.lg, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sumTopic: { fontSize: 19, fontWeight: '700', color: color.fg },
+  sumMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sumMetaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
+  sumRow: { flexDirection: 'row', justifyContent: 'space-between', gap: space.md },
+  sumKey: { ...type.bodySmall, color: color.muted } as any,
+  sumVal: { ...type.bodySmall, color: color.fg, flex: 1, textAlign: 'right' } as any,
+  sumSummaryBox: { backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.md, gap: 6 },
+  sumSummaryHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sumSummaryLabel: { ...type.labelMedium, color: color.primary, fontWeight: '700' } as any,
+  sumSummaryText: { ...type.bodySmall, color: color.fg } as any,
+  sumEditBtn: {
+    height: 48, borderRadius: rad.full, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sumEditText: { ...type.button, color: color.fg } as any,
+
   veil: {
     ...StyleSheet.absoluteFillObject, backgroundColor: color.bg, alignItems: 'center',
     justifyContent: 'center', gap: space.md, paddingHorizontal: 32,
   },
+  veilAva: {
+    width: 96, height: 96, borderRadius: 48, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  veilBrand: { ...type.title, color: color.fg, fontWeight: '700' } as any,
+  veilBig: {
+    width: 148, height: 148, borderRadius: 74, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center', marginTop: space.md,
+  },
+  veilRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   veilTitle: { fontSize: 24, lineHeight: 31, fontWeight: '700', color: color.fg, textAlign: 'center' },
   veilStep: { ...type.body, color: color.primary, textAlign: 'center' } as any,
   veilNote: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,

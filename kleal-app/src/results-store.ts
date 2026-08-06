@@ -34,3 +34,18 @@ export function takeResults(): ResultsHandoff | null {
 export function clearResults() {
   handoff = null;
 }
+
+/**
+ * Кандидат, открытый из списка (O.12 → O.13). Тот же принцип, что и с выдачей: карточка большая
+ * (trace, snapshot, profile_view), в параметры маршрута её класть нельзя, и живёт она один переход.
+ */
+let candidate: any | null = null;
+
+export function setCandidate(c: any) {
+  candidate = c;
+}
+
+/** null — экран открыт напрямую (обновление страницы): показать нечего, честный путь назад. */
+export function takeCandidate(): any | null {
+  return candidate;
+}
