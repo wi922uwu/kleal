@@ -10,13 +10,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ProfileShell, Card, NavRow, Segments } from '../../src/components/ProfileShell';
+import { ProfileShell, Card, Segments, EditSheet } from '../../src/components/ProfileShell';
 import { BottomNav } from '../../src/components/BottomNav';
-import { IconPerson } from '../../src/components/icons';
+import {
+  IconPerson, IconVerified, IconStar, IconFaceScan, IconUserLock, IconTranslate, IconPin, IconPencil,
+} from '../../src/components/icons';
 import { useLang, T, getLang, setLang } from '../../src/i18n';
 import { useOnb, set, reset, profileForAttach } from '../../src/state';
 import { profile as profileApi, buddy } from '../../src/api';
-import { PROFILE_TITLE, SECTIONS, HUB, AVAIL, SIGNOUT, profileData, fmtUpdated } from '../../src/profile';
+import {
+  PROFILE_TITLE, HUB, AVAIL, SIGNOUT, HUB_ROWS, SHEETS, profileData, fmtUpdated,
+} from '../../src/profile';
+import { LANGS, langLabel } from '../../src/onboarding';
+import { AreaPicker, Area } from '../../src/components/AreaPicker';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function ProfileHub() {
@@ -31,6 +37,8 @@ export default function ProfileHub() {
   const [busy, setBusy] = useState(false);
   const [avail, setAvail] = useState<string | null>(null);
   const [availErr, setAvailErr] = useState(false);
+  /** Какой лист правки открыт. Пусто — ни один. */
+  const [sheet, setSheet] = useState<'languages' | 'location' | null>(null);
 
   // Текущий статус приёма читается с сервера, а не хранится локально: его меняет не только этот
   // экран (пауза приходит и из безопасности, и со стороны агента), и локальная копия разошлась бы.
@@ -79,6 +87,36 @@ export default function ProfileHub() {
     }
   };
 
+  /**
+   * Сохранение из листов правки.
+   *
+   * Пишется и в состояние устройства, и в строку на сервере: профиль на сервере — это то, по чему
+   * человека находят другие, и правка, оставшаяся только в телефоне, означала бы, что поиск видит
+   * старое. Имена полей на сервере свои (`langs`, `area`, `radiusKm`) — они из его белого списка,
+   * всё остальное он молча выбрасывает.
+   */
+  const saveLanguages = async (list: string[]) => {
+    set('languages.comfortable', list);
+    setSheet(null);
+    if (p.name) {
+      await profileApi.update(p.name, {
+        langs: list.map((l) => String(l).slice(0, 2).toLowerCase()),
+      }).catch(() => {});
+    }
+  };
+
+  const saveLocation = async (a: Area) => {
+    set('city', a.label);
+    set('geo.coarseLat', a.lat);
+    set('geo.coarseLon', a.lon);
+    set('geo.maxDistanceKm', a.km);
+    setSheet(null);
+    if (p.name) {
+      await profileApi.update(p.name, { area: a.label, lat: a.lat, lon: a.lon, radiusKm: a.km })
+        .catch(() => {});
+    }
+  };
+
   const signOut = () => {
     const has = !!st.login;
     const go = () => { reset(); router.replace('/'); };
@@ -124,7 +162,10 @@ export default function ProfileHub() {
               <View style={[s.ava, s.avaEmpty]}><IconPerson /></View>
             )}
           </Pressable>
-          <Text style={s.name}>{d.name}</Text>
+          <Text style={s.name} numberOfLines={1}>{d.name}</Text>
+          {/* Печать показывается только по-настоящему подтверждённым: нарисовать её всем значило
+              бы сообщить о человеке то, чего никто не проверял. */}
+          {d.verified ? <IconVerified /> : null}
         </View>
         <View style={s.confRow}>
           <Text style={s.confLabel}>{HUB.confidence()}</Text>
@@ -132,15 +173,6 @@ export default function ProfileHub() {
         </View>
         <View style={s.track}><View style={[s.trackFill, { width: `${d.confidence}%` }]} /></View>
       </Card>
-
-      {d.basics.map((r) => (
-        <Card key={r.title} style={s.basicRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.basicTitle}>{r.title}</Text>
-            <Text style={s.basicValue}>{r.value}</Text>
-          </View>
-        </Card>
-      ))}
 
       <Card>
         <View style={s.sumHead}>
@@ -193,12 +225,20 @@ export default function ProfileHub() {
         </Pressable>
       </Card>
 
-      {SECTIONS.map((sec) => (
-        <NavRow
-          key={sec.id}
-          title={sec.title()}
-          sub={sec.sub()}
-          onPress={() => router.push(`/profile/${sec.id}` as any)}
+      {/*
+        Пять строк одним списком — так на кадре. Первые три ведут вглубь, две последние открывают
+        лист правки поверх профиля. Выглядят одинаково, потому что для человека это одно и то же
+        действие: «поправить вот это».
+      */}
+      {HUB_ROWS.map((row) => (
+        <HubRowView
+          key={row.id}
+          title={row.title()}
+          sub={row.sub(p)}
+          Icon={ROW_ICON[row.id]}
+          onPress={() => (row.kind === 'screen'
+            ? router.push(`/profile/${row.id}` as any)
+            : setSheet(row.id as 'languages' | 'location'))}
         />
       ))}
 
@@ -231,6 +271,19 @@ export default function ProfileHub() {
         бы показать его следующему, кто возьмёт этот телефон. Карточка показывается всегда: см.
         SIGNOUT — привязка к логину прятала кнопку от тех, у кого логина нет.
       */}
+      <LanguagesSheet
+        open={sheet === 'languages'}
+        value={p.languages?.comfortable || []}
+        onClose={() => setSheet(null)}
+        onAccept={saveLanguages}
+      />
+      <LocationSheet
+        open={sheet === 'location'}
+        p={p}
+        onClose={() => setSheet(null)}
+        onAccept={saveLocation}
+      />
+
       <Card>
         <Text style={s.basicTitle}>{SIGNOUT.who(st.login)}</Text>
         <Pressable accessibilityRole="button" style={s.signout} onPress={signOut}>
@@ -268,6 +321,25 @@ const s = StyleSheet.create({
   link: { ...type.labelMedium, color: color.primary } as any,
   linkMuted: { ...type.labelMedium, color: color.muted } as any,
 
+  row: {
+    flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16,
+    borderRadius: rad.xl, backgroundColor: color.card,
+  },
+  rowIcon: {
+    width: 46, height: 46, borderRadius: 23, borderWidth: 1, borderColor: color.border,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  rowTitle: { fontSize: 18, fontWeight: '700', color: color.fg },
+  rowSub: { ...type.bodySmall, color: color.muted, marginTop: 2 } as any,
+
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  chip: {
+    height: 44, paddingHorizontal: 16, borderRadius: rad.full, borderWidth: 1,
+    borderColor: color.border, backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
+  },
+  chipOn: { backgroundColor: color.primary, borderColor: color.primary },
+  chipText: { ...type.labelMedium, color: color.fg } as any,
+
   cta: { height: 48, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', marginTop: space.sm },
   ctaText: { ...type.button, color: color.onPrimary } as any,
 
@@ -277,3 +349,103 @@ const s = StyleSheet.create({
   },
   signoutText: { ...type.button, color: color.danger } as any,
 });
+
+/** Строка хаба — круглая иконка, заголовок, подпись, карандаш. Один вид на все пять. */
+function HubRowView({
+  title, sub, Icon, onPress,
+}: {
+  title: string;
+  sub: string;
+  Icon: (p: any) => React.ReactElement;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [s.row, pressed && { opacity: 0.9 }]}
+    >
+      <View style={s.rowIcon}><Icon size={22} /></View>
+      <View style={{ flex: 1 }}>
+        <Text style={s.rowTitle} numberOfLines={1}>{title}</Text>
+        <Text style={s.rowSub} numberOfLines={1}>{sub}</Text>
+      </View>
+      <IconPencil />
+    </Pressable>
+  );
+}
+
+const ROW_ICON: Record<string, (p: any) => React.ReactElement> = {
+  interests: IconStar,
+  social: IconFaceScan,
+  safety: IconUserLock,
+  languages: IconTranslate,
+  location: IconPin,
+};
+
+/** Языки — чипы с флагами, как на кадре. Правка идёт по черновику: закрыть крестиком = не сохранить. */
+function LanguagesSheet({
+  open, value, onClose, onAccept,
+}: {
+  open: boolean;
+  value: string[];
+  onClose: () => void;
+  onAccept: (list: string[]) => void;
+}) {
+  const [sel, setSel] = useState<string[]>(value);
+  useEffect(() => { if (open) setSel(value); }, [open]);
+  const toggle = (k: string) => setSel((x) => (x.includes(k) ? x.filter((y) => y !== k) : [...x, k]));
+  return (
+    <EditSheet
+      open={open}
+      title={SHEETS.languages()}
+      onClose={onClose}
+      onAccept={() => onAccept(sel)}
+      acceptLabel={SHEETS.accept()}
+    >
+      <View style={s.chips}>
+        {LANGS.map(([k]) => (
+          <Pressable
+            key={k}
+            accessibilityRole="button"
+            accessibilityState={{ selected: sel.includes(k) }}
+            onPress={() => toggle(k)}
+            style={[s.chip, sel.includes(k) && s.chipOn]}
+          >
+            <Text style={[s.chipText, sel.includes(k) && { color: color.onPrimary }]}>{langLabel(k)}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </EditSheet>
+  );
+}
+
+/** Локация — страна, радиус и карта. Тот же AreaPicker, что в онбординге: это одна и та же вещь. */
+function LocationSheet({
+  open, p, onClose, onAccept,
+}: {
+  open: boolean;
+  p: any;
+  onClose: () => void;
+  onAccept: (a: Area) => void;
+}) {
+  const current = (): Area => ({
+    label: String(p.city || 'Spain'),
+    lat: p.geo?.coarseLat ?? 41.3874,
+    lon: p.geo?.coarseLon ?? 2.1686,
+    km: p.geo?.maxDistanceKm ?? 15,
+  });
+  const [area, setArea] = useState<Area>(current);
+  useEffect(() => { if (open) setArea(current()); }, [open]);
+  return (
+    <EditSheet
+      open={open}
+      title={SHEETS.location()}
+      onClose={onClose}
+      onAccept={() => onAccept(area)}
+      acceptLabel={SHEETS.accept()}
+    >
+      <AreaPicker value={area} onChange={setArea} />
+    </EditSheet>
+  );
+}

@@ -12,7 +12,7 @@
  * хабе и строка «Общается на …» в памяти не могут разойтись между собой.
  */
 import { T, getLang } from './i18n';
-import { sexLabel, hobbyPlain } from './onboarding';
+import { sexLabel, hobbyPlain, langPlain } from './onboarding';
 import type { Profile } from './state';
 
 // ---------------------------------------------------------------- разделы
@@ -67,6 +67,74 @@ export const HUB = {
  * действительно означает потерю. Об этом надо сказать прямо, а не одной формулировкой на оба
  * случая.
  */
+/**
+ * Строки профиля — кадр B.01, нижняя часть.
+ *
+ * Один общий список из пяти, а не два разных: на кадре все пять выглядят одинаково — круглая
+ * иконка, заголовок, подпись, карандаш справа. Отличаются они только тем, что открывают: первые
+ * три — экран вглубь, последние две — лист правки поверх профиля.
+ *
+ * «Основного» (пол и возраст) в этом списке нет — его нет и на кадре. Заводить строку, которой
+ * дизайн не предусмотрел, значит решать за дизайн.
+ */
+export type RowKind = 'screen' | 'sheet';
+export type HubRow = {
+  id: 'interests' | 'social' | 'safety' | 'languages' | 'location';
+  kind: RowKind;
+  title: () => string;
+  sub: (p: any) => string;
+};
+
+export const HUB_ROWS: HubRow[] = [
+  {
+    id: 'interests', kind: 'screen',
+    title: () => T('Интересы', 'Interests'),
+    sub: (p) => {
+      const list = (p?.interests?.explicit || []).map((k: string) => hobbyPlain(k));
+      return list.length ? list.join(' · ') : T('Пока не заполнено', 'Not set yet');
+    },
+  },
+  {
+    id: 'social', kind: 'screen',
+    title: () => T('Твоя личность', 'Your personality'),
+    sub: (p) =>
+      String(p?.personality || '').trim()
+        ? String(p.personality).trim()
+        : T('Пройди тест — Kleal опишет, как ты воспринимаешься', 'Take the test and Kleal will describe how you come across'),
+  },
+  {
+    id: 'safety', kind: 'screen',
+    title: () => T('Безопасность и приватность', 'Safety & Privacy'),
+    sub: () => T('Что Kleal может использовать и твои границы', 'What Kleal can use, and your limits'),
+  },
+  {
+    id: 'languages', kind: 'sheet',
+    title: () => T('Языки', 'Languages'),
+    sub: (p) => {
+      const list = (p?.languages?.comfortable || []).map((k: string) => langPlain(k));
+      return list.length ? list.join(' · ') : T('Пока не заполнено', 'Not set yet');
+    },
+  },
+  {
+    id: 'location', kind: 'sheet',
+    title: () => T('Локация', 'Location'),
+    sub: (p) => {
+      const city = String(p?.city || '').trim();
+      const km = p?.geo?.maxDistanceKm;
+      const bits = [city, km ? T(`до ${km} км`, `up to ${km} km`) : ''].filter(Boolean);
+      return bits.length ? bits.join(' · ') : T('Пока не заполнено', 'Not set yet');
+    },
+  },
+];
+
+/** Листы правки поверх профиля — кадры со «Accept changes». */
+export const SHEETS = {
+  languages: () => T('Языки', 'Languages'),
+  location: () => T('Локация', 'Location'),
+  accept: () => T('Принять изменения', 'Accept changes'),
+  close: () => T('Закрыть', 'Close'),
+};
+
 export const SIGNOUT = {
   label: (hasLogin: boolean) =>
     hasLogin ? T('Выйти из аккаунта', 'Sign out') : T('Выйти и начать заново', 'Sign out and start over'),
@@ -144,6 +212,8 @@ export type SafetyFlags = {
 
 export type ProfileData = {
   name: string;
+  /** Подтверждён ли профиль. Печать рядом с именем рисуется только по нему. */
+  verified: boolean;
   confidence: number;
   basics: Row[];
   interests: Interest[];
@@ -286,7 +356,7 @@ export function profileData(op: Profile | any): ProfileData {
     excludeKnown: sf.excludeKnown !== false,
   };
 
-  return { name: op.name || T('Ты', 'You'), confidence, basics, interests, safety };
+  return { name: op.name || T('Ты', 'You'), verified: !!(op as any).verified, confidence, basics, interests, safety };
 }
 
 // ---------------------------------------------------------------- интересы

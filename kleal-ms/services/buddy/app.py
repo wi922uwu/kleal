@@ -1633,7 +1633,7 @@ def ghostwrite(profile, candidate, messages, lang="ru"):
 # when, format) one at a time, and only when it has the gist returns ready:true with a CANONICAL intent
 # (same filtration + build_intent as /chat, so matching can rank it). The card is shown for confirmation;
 # the frontend launches the search separately.
-INTENT_BUILD_PROMPT = '''You help the user create an "intent" — a plan to meet people or do an activity with someone. What matters is that the ACTIVITY is specific enough to search on. Timing and place are NOT your job: the app asks for the day, the time of day and the district on the very next screen.
+INTENT_BUILD_PROMPT = '''You help the user create an "intent" — a plan to meet people or do an activity with someone. What matters is that the ACTIVITY is specific enough to search on. Timing, place and group size are NOT your job: the app asks for the day, the time of day, the district, the format and how many people on the very next screens.
 
 Conversation so far is given. Return ONE JSON object, nothing else, WITH THE KEYS IN EXACTLY THIS ORDER:
 {"valid":true|false, "ready":true|false,
@@ -1645,11 +1645,10 @@ The order matters: "valid" must come before "reply".
 Rules:
 - valid:false when the latest message is NOT a plan to do something with people. That includes gibberish ("asdfgh"), greetings and small talk ("привет", "как дела", "спасибо"), and general questions ("что такое дивиденды", "какая погода") — anything a person could ask a chatbot rather than ask of a meetup. ready MUST then be false. Never build an intent from those.
 - valid:true ONLY when the message really is about doing something with another person, even if the details are still missing ("хочу кофе" is valid, "привет" is not).
-- NEVER ask about logistics: not when, not what day, not what time, not where, not which district or city, not how far. The next screen asks all of that with taps, so asking here makes the person answer the same thing twice. If they volunteer a time anyway, record it in "time" and move on without acknowledging it as a question.
+- NEVER ask about logistics: not when, not what day, not what time, not where, not which district or city, not how far, and NOT how many people (not «вдвоём или компанией», not one-on-one vs group, not the group size). The next screen asks all of that with taps — including the format and the group size — so asking here makes the person answer the same thing twice. If they volunteer a time or a format anyway, record it in "time" / "format" and move on without acknowledging it as a question.
 - Ask at most TWO short questions, one per turn, and ONLY to make the request specific enough that a stranger could tell whether it is for them. Useful directions, pick what actually fits:
   * what they want out of it — «хочу выпить кофе» → «о чём хочется поговорить за кофе — про работу, про город, или просто познакомиться?»
   * which side of a broad interest — «футбол» → «поиграть или посмотреть матч?»
-  * what kind of company — «вдвоём или небольшой компанией?»
   * the mood — «спокойно посидеть или куда-то выбраться?»
 - Ask ONE thing at a time. Never stack two questions into one sentence.
 - Never ask something the conversation already answered, and never ask a question whose answer would not change who you look for.

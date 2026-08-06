@@ -137,3 +137,66 @@ export const IconGroups = ({ size = 18, c = color.fg }: P) => (
     <Path d="M16 6.4a3.2 3.2 0 0 1 0 6.2M17.2 14.4a5.6 5.6 0 0 1 3.3 4.1" />
   </Svg>
 );
+
+// ---------------------------------------------------------------- строки профиля
+// Круглая обводка вокруг иконки рисуется самой строкой, не иконкой: так один и тот же значок
+// годится и для строки, и для любого другого места.
+
+export const IconStar = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinejoin="round">
+    <Path d="M12 3.6l2.6 5.5 6 .8-4.4 4.2 1.1 6-5.3-2.9-5.3 2.9 1.1-6L3.4 9.9l6-.8L12 3.6z" />
+  </Svg>
+);
+
+export const IconFaceScan = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M4 8.5V6a2 2 0 0 1 2-2h2.5M15.5 4H18a2 2 0 0 1 2 2v2.5M20 15.5V18a2 2 0 0 1-2 2h-2.5M8.5 20H6a2 2 0 0 1-2-2v-2.5" />
+    <Circle cx={9.4} cy={10.6} r={0.9} fill={c} stroke="none" />
+    <Circle cx={14.6} cy={10.6} r={0.9} fill={c} stroke="none" />
+    <Path d="M9.4 14.6c1.6 1.3 3.6 1.3 5.2 0" />
+  </Svg>
+);
+
+export const IconUserLock = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx={10} cy={7.6} r={3.2} />
+    <Path d="M3.8 19.2a6.4 6.4 0 0 1 8.4-6" />
+    <Rect x={14.5} y={14} width={6.5} height={5.6} rx={1.4} />
+    <Path d="M16.2 14v-1.5a1.6 1.6 0 0 1 3.2 0V14" />
+  </Svg>
+);
+
+/** Языки. Знак перевода: иероглиф и латинская буква — тот же смысл, что на кадре. */
+export const IconTranslate = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M3.5 6h7M7 4.4V6M9 6c0 3.4-2.4 6.2-5.5 7M5 9.6c.9 2 2.7 3.4 4.8 3.9" />
+    <Path d="M12.6 20l3.6-8.6 3.6 8.6M14.1 17h4.2" />
+  </Svg>
+);
+
+/** Карандаш в рамке — правый край строки профиля. */
+export const IconPencil = ({ size = 22, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M4 20h4.2L19 9.2a2 2 0 0 0 0-2.8l-1.4-1.4a2 2 0 0 0-2.8 0L4 15.8V20z" />
+    <Path d="M14.2 6.6l3.2 3.2" />
+  </Svg>
+);
+
+/** Шестерёнка в правом углу шапки профиля — кадр B.01. */
+export const IconGear = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx={12} cy={12} r={3.2} />
+    <Path d="M19.4 14.6a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+  </Svg>
+);
+
+/** Красная галочка-печать рядом с именем — кадр B.01. */
+export const IconVerified = ({ size = 20 }: { size?: number }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24">
+    <Path
+      d="M12 2.2l2.3 1.7 2.8-.2.9 2.7 2.4 1.5-1 2.7 1 2.7-2.4 1.5-.9 2.7-2.8-.2L12 21.8l-2.3-1.7-2.8.2-.9-2.7-2.4-1.5 1-2.7-1-2.7 2.4-1.5.9-2.7 2.8.2L12 2.2z"
+      fill={color.primary}
+    />
+    <Path d="M8.2 12.2l2.6 2.6 5-5.2" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+  </Svg>
+);
