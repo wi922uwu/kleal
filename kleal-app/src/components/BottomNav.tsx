@@ -20,7 +20,7 @@ import { color } from '../theme';
 export type Tab = 'intents' | 'search' | 'messages' | 'profile';
 
 /** Что уже есть в приложении. Остальное — приглушено. */
-const ROUTE: Partial<Record<Tab, string>> = { profile: '/profile' };
+const ROUTE: Partial<Record<Tab, string>> = { profile: '/profile', messages: '/messages' };
 
 export function BottomNav({ active }: { active?: Tab }) {
   const insets = useSafeAreaInsets();

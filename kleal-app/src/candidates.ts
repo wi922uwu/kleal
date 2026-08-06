@@ -124,6 +124,22 @@ export const OPTIONS = {
 };
 
 /** Причины жалобы — словарь сервера (REPORT_REASONS). Подписи локальные, ключи его. */
+/**
+ * MSG.22 — потолок открытых приглашений. Правило КЛИЕНТСКОЕ: сервер шлёт сколько угодно, и когда
+ * потолок станет тарифом, проверку надо перенести туда — иначе любой другой клиент её обходит.
+ */
+export const CAP = {
+  limit: 3,
+  title: (n: number) => T(`Уже ${n} открытых приглашения`, `${n} open invites already`),
+  note: () =>
+    T(
+      'Kleal держит не больше трёх разом, чтобы никто не получал веер заявок. Отмени одно или дождись ответа — Plus поднимает потолок до пяти.',
+      'Kleal holds them at three so nobody gets a fan-out of requests. Cancel one, or wait for an answer — Plus raises it to five.'
+    ),
+  cancelOne: () => T('Отменить одно', 'Cancel one instead'),
+  withdraw: () => T('Отозвать', 'Withdraw'),
+};
+
 export const REPORT_REASONS: [string, string, string][] = [
   ['fake', 'Фейковый профиль', 'Fake profile'],
   ['harassment', 'Оскорбления или преследование', 'Harassment'],

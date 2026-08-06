@@ -3000,6 +3000,24 @@ def threads_for(self_name):
                                        "mine": _norm_name(m.get("from")) == me}
     return _with_photos(sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50], "who")
 
+def _thread_reads():
+    return SESSION.setdefault("_thread_reads", {})
+
+
+def thread_mark_read(self_name, other):
+    """MSG.11: «прочитано» — отметка ЧИТАТЕЛЯ, а не свойство сообщения. Храним момент, когда человек
+    в последний раз открывал пару; второй стороне отдаётся ТОЛЬКО этот момент (peer_read_at в
+    /api/agent/thread) — по нему клиент сам решает, на каких его пузырях рисовать двойную галочку.
+    Никакого по-сообщенного статуса нет намеренно: его пришлось бы писать в каждую строку стора."""
+    me = _norm_name(self_name)
+    if not me or not str(other or "").strip():
+        return {"ok": False, "error": "self and with are required"}
+    with _STORE_LOCK:
+        _thread_reads().setdefault(_pair_key(self_name, other), {})[me] = time.time()
+        _save_store()
+    return {"ok": True}
+
+
 # ---- intents as LIVE server-side standing searches ------------------------------------------------
 # Intents used to live only in the sender's localStorage, holding a FROZEN copy of the candidates from
 # the moment they were created — so a saved intent was a private note that never re-searched, while the
@@ -5322,7 +5340,13 @@ class H(BaseHTTPRequestHandler):
                 since = float(q.get("since", 0) or 0)
             except (TypeError, ValueError):
                 since = 0.0
-            send_json(self, 200, {"messages": thread(me, unquote(q.get("with", "").replace("+", " ")), since)})
+            other = unquote(q.get("with", "").replace("+", " "))
+            send_json(self, 200, {
+                "messages": thread(me, other, since),
+                # MSG.11: когда ВТОРАЯ сторона в последний раз открывала эту пару. Моих отметок тут
+                # нет — свою прочитанность человеку показывать незачем.
+                "peer_read_at": (_thread_reads().get(_pair_key(me, other)) or {}).get(_norm_name(other), 0),
+            })
         elif base in ("/api/agent/inbox", "/api/agent/outbox"):
             fn = inbox if base.endswith("inbox") else outbox
             send_json(self, 200, {"requests": fn(me)})
@@ -5347,6 +5371,8 @@ class H(BaseHTTPRequestHandler):
                                                           body.get("live") is not False)})
         elif p == "/api/agent/message":
             send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text")))
+        elif p == "/api/agent/thread-read":
+            send_json(self, 200, thread_mark_read(body.get("self"), body.get("with")))
         elif p == "/api/agent/propose":
             send_json(self, 200, propose(body.get("from"), body.get("to"), body.get("intent") or {},
                                          body.get("note"), body.get("idem")))

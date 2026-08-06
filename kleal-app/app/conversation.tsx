@@ -1,28 +1,30 @@
 /**
- * Переписка с мэтчем — кадры O.18 и O.19.
+ * Переписка с мэтчем — кадры O.18/O.19 и MSG.06–MSG.11, MSG.18–MSG.21.
  *
  * UX-КАРКАС: вид натянется поверх; копия и разбор — в src/chat.ts.
  *
- * Устройство по кадрам: шапка с названием интента и стрелкой вправо (открыть интент), под ней имя
- * собеседника с фото, лента сообщений, композер. Слева от поля — искра: она открывает лист
- * действий (O.19), где создаётся план, заканчивается разговор или открывается интент.
+ * Устройство по кадрам: шапка с названием интента, под ней имя собеседника, подзаголовок из
+ * настоящих состояний (план назначен / предложение отправлено / общаетесь с …), закреплённая
+ * карточка живого плана, лента, карточка входящего приглашения, подсказка Kleal, композер.
  *
- * Сообщения настоящие: /api/agent/message доставляет их собеседнику, /api/agent/thread отдаёт
- * переписку. Лента дотягивается по `since` — забирать все двести сообщений каждые три секунды
- * значило бы гонять килобайты ради одной новой строки.
+ * Сообщения настоящие: /api/agent/message доставляет, /api/agent/thread отдаёт по `since`.
+ * «Прочитано» — одна отметка на пару (/api/agent/thread-read): двойная галочка появляется на
+ * моих пузырях не новее момента, когда собеседник в последний раз открывал переписку.
+ * Чего у сервера нет — здесь не рисуется: ни «online now», ни «печатает…».
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
   ActivityIndicator, Modal, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CHAT, UNDO_BAR, Msg, msgTime } from '../src/chat';
+import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, msgTime, planWhen } from '../src/chat';
+import { inviteHoursLeft } from '../src/messages';
 import { useLang, T, getLang } from '../src/i18n';
-import { useOnb } from '../src/state';
+import { useOnb, markSeen, setMsgPrefs } from '../src/state';
 import { agent } from '../src/api';
-import { IconChevronLeft, IconMic, IconSpark, IconPerson } from '../src/components/icons';
+import { IconChevronLeft, IconMic, IconSpark, IconPerson, IconCalendar } from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
 
 export default function Conversation() {
@@ -52,6 +54,13 @@ export default function Conversation() {
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   /** Время последнего известного сообщения — по нему сервер отдаёт только новые. */
   const since = useRef(0);
+  /** MSG.06–MSG.11: живой план с этим человеком, заявка между нами, отметка чтения второй стороны. */
+  const [livePlan, setLivePlan] = useState<any>(null);
+  const [request, setRequest] = useState<any>(null);
+  const [peerRead, setPeerRead] = useState(0);
+  const [intentOpen, setIntentOpen] = useState(false);
+  /** Сколько сообщений уже отмечено прочитанными мной — чтобы не стучать thread-read на каждый опрос. */
+  const readStamped = useRef(0);
 
   /**
    * Слить пришедшее с сервера с тем, что уже на экране.
@@ -86,6 +95,7 @@ export default function Conversation() {
     try {
       const r: any = await agent.thread(me, other, since.current);
       merge((r?.messages || []) as Msg[]);
+      if (typeof r?.peer_read_at === 'number') setPeerRead(r.peer_read_at);
       setErr('');
     } catch {
       /* тихо: это фоновая дотяжка, и ругаться на каждый неудавшийся опрос незачем */
@@ -94,7 +104,42 @@ export default function Conversation() {
     }
   }, [me, other, merge]);
 
-  useEffect(() => { load(); }, [me, other]);
+  /** План и заявка между нами — для шапки, закреплённой карточки и карточек приглашения. */
+  const loadSide = useCallback(async () => {
+    if (!me || !other) return;
+    try {
+      const [pl, inb, out] = await Promise.all([agent.plans(me), agent.inbox(me), agent.outbox(me)]);
+      const norm = (v: any) => String(v || '').trim().toLowerCase();
+      const all = [...((pl as any)?.plans || [])];
+      setLivePlan(all.find((p: any) =>
+        (p.participants || []).some((x: any) => norm(x.name) === norm(other))
+        && (p.state === 'proposed' || p.state === 'confirmed')) || null);
+      const rows = [
+        ...(Array.isArray(inb) ? inb : (inb as any)?.requests || []),
+        ...(Array.isArray(out) ? out : (out as any)?.requests || []),
+      ].filter((x: any) => norm(x.from) === norm(other) || norm(x.to) === norm(other));
+      rows.sort((a: any, b: any) => (b.updated || 0) - (a.updated || 0));
+      setRequest(rows[0] || null);
+    } catch {
+      /* тихо */
+    }
+  }, [me, other]);
+
+  useEffect(() => { load(); loadSide(); markSeen(other); }, [me, other]);
+  useEffect(() => {
+    const id = setInterval(loadSide, 15000);
+    return () => clearInterval(id);
+  }, [loadSide]);
+
+  // «Прочитано» отправляется, когда на экране появились новые ЧУЖИЕ сообщения, а не на каждый опрос.
+  useEffect(() => {
+    const theirs = msgs.filter((m) => String(m.from || '').toLowerCase() !== me.toLowerCase()).length;
+    if (theirs > readStamped.current) {
+      readStamped.current = theirs;
+      markSeen(other);
+      agent.threadRead(me, other).catch(() => {});
+    }
+  }, [msgs.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Лёгкий опрос: собеседник отвечает не мгновенно, а держать сокет ради двух реплик избыточно.
   useEffect(() => {
@@ -157,6 +202,41 @@ export default function Conversation() {
     setPending(null);
   };
 
+  const ru = getLang() === 'ru';
+  const norm = (v: any) => String(v || '').trim().toLowerCase();
+
+  /** Подзаголовок шапки — только из того, что есть на самом деле. Присутствия и «печатает…» нет. */
+  const subtitle = useMemo(() => {
+    if (livePlan?.state === 'confirmed') return THREAD.planSet(planWhen(livePlan, ru));
+    if (livePlan?.state === 'proposed') {
+      return norm(livePlan.host) === norm(me) ? THREAD.proposalSent() : THREAD.planFromThem();
+    }
+    if (msgs.length) {
+      const first = new Date((msgs[0].t || 0) * 1000);
+      // Русскому нужен родительный: «с четверга». Английскому — просто имя дня.
+      const day = ru ? THREAD.weekdayGen(first.getDay()) : first.toLocaleDateString('en-US', { weekday: 'long' });
+      return THREAD.talkingSince(day);
+    }
+    if (request?.status === 'accepted') {
+      const title = String(request?.intent?.title || (request?.intent?.topics || []).join(', ') || '');
+      if (title) return THREAD.matchedOn(title);
+    }
+    return '';
+  }, [livePlan, msgs, request, ru, me]);
+
+  /** MSG.18–MSG.21: входящая заявка от этого человека, если её не скрывали. */
+  const inviteIn = request && norm(request.from) === norm(other) ? request : null;
+  const inviteHidden = (st.msg?.hiddenInvites || []).includes(String(inviteIn?.id || ''));
+  const noNudge = (st.msg?.noNudge || []).includes(norm(other));
+  const requestTitle = String(request?.intent?.title || (request?.intent?.topics || []).join(', ') || '');
+
+  const hideInvite = () =>
+    setMsgPrefs((m) => ({ ...m, hiddenInvites: [...(m.hiddenInvites || []), String(inviteIn?.id || '')] }));
+  const muteNudge = () =>
+    setMsgPrefs((m) => ({ ...m, noNudge: [...(m.noNudge || []), norm(other)] }));
+  const toPlan = () =>
+    router.push({ pathname: '/plan', params: { who: other, title: requestTitle || intentTitle, photo } });
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
@@ -171,7 +251,10 @@ export default function Conversation() {
           <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
             <IconChevronLeft />
           </Pressable>
-          <Text style={s.name} numberOfLines={1}>{other}</Text>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={s.name} numberOfLines={1}>{other}</Text>
+            {subtitle ? <Text style={s.sub} numberOfLines={1}>{subtitle}</Text> : null}
+          </View>
           {photo ? (
             <Image source={{ uri: photo }} style={s.ava} />
           ) : (
@@ -179,8 +262,69 @@ export default function Conversation() {
           )}
         </View>
 
+        {/* MSG.07 — живой план закреплён над лентой; тап открывает его экран. */}
+        {livePlan ? (
+          <Pressable
+            accessibilityRole="button"
+            style={s.planCard}
+            onPress={() => router.push({ pathname: '/plan', params: { id: livePlan.id, who: other, title: livePlan.title || intentTitle, photo } })}
+          >
+            <View style={s.planIcon}><IconCalendar c={color.onPrimary} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.planTitle} numberOfLines={1}>{livePlan.title || intentTitle}</Text>
+              <Text style={s.planSub} numberOfLines={1}>
+                {planWhen(livePlan, ru)}{livePlan.district ? ` · ${livePlan.district}` : ''}
+              </Text>
+            </View>
+          </Pressable>
+        ) : null}
+
         <ScrollView ref={scroller} contentContainerStyle={s.thread} keyboardShouldPersistTaps="handled">
           {loading ? <ActivityIndicator color={color.muted} style={{ marginTop: space.lg }} /> : null}
+
+          {/* MSG.18/20/21 — заявка от собеседника живёт в ленте карточкой, а не отдельным миром. */}
+          {inviteIn && !inviteHidden && inviteIn.status !== 'accepted' ? (
+            <View style={s.invCard}>
+              <Text style={s.invTitle}>{INVITE.title(other)}</Text>
+              <Text style={s.invState}>
+                {inviteIn.status === 'pending' ? THREAD.hoursToAnswer(inviteHoursLeft(inviteIn))
+                  : inviteIn.status === 'declined' ? THREAD.youDeclined()
+                  : THREAD.inviteExpired()}
+              </Text>
+              {requestTitle || inviteIn.intent?.time ? (
+                <Text style={s.invMeta} numberOfLines={1}>
+                  {[requestTitle, inviteIn.intent?.time].filter(Boolean).join(' · ')}
+                </Text>
+              ) : null}
+              {inviteIn.status === 'pending' ? (
+                <Pressable
+                  accessibilityRole="button"
+                  style={s.invBtn}
+                  onPress={() => router.push({ pathname: '/invite', params: { id: inviteIn.id } })}
+                >
+                  <Text style={s.invBtnText}>{THREAD.reviewInvite()}</Text>
+                </Pressable>
+              ) : (
+                <Pressable accessibilityRole="button" style={s.invBtnDark} onPress={hideInvite}>
+                  <Text style={s.invBtnDarkText}>{THREAD.dismiss()}</Text>
+                </Pressable>
+              )}
+            </View>
+          ) : null}
+          {inviteIn && inviteIn.status === 'declined' && !inviteHidden ? (
+            <View style={s.noteBox}><Text style={s.noteText}>{THREAD.declinedClear(other)}</Text></View>
+          ) : null}
+          {inviteIn && inviteIn.status === 'expired' && !inviteHidden ? (
+            <View style={s.noteBox}>
+              <Text style={s.noteText}>
+                {THREAD.expiredNote(Math.max(1, Math.round(((inviteIn.expires_at || 0) - (inviteIn.created || 0)) / 3600)))}
+              </Text>
+            </View>
+          ) : null}
+          {request && request.status === 'accepted' && requestTitle ? (
+            <Text style={s.sysLine}>{THREAD.joined(requestTitle)}</Text>
+          ) : null}
+
           {!loading && msgs.length === 0 ? <Text style={s.empty}>{CHAT.empty(other)}</Text> : null}
 
           {msgs.map((m, i) => {
@@ -190,10 +334,41 @@ export default function Conversation() {
                 <View style={[s.bub, mine ? s.bubMe : s.bubThem]}>
                   <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
                 </View>
-                <Text style={s.time}>{msgTime(m.t, getLang() === 'ru')}</Text>
+                <Text style={s.time}>
+                  {msgTime(m.t, ru)}
+                  {/* MSG.11: две галочки — собеседник открывал переписку после этого сообщения. */}
+                  {mine ? ` ${peerRead >= (m.t || 0) ? '✓✓' : '✓'}` : ''}
+                </Text>
               </View>
             );
           })}
+
+          {/* MSG.09 — предложение ушло; ничего не забронировано до «да». */}
+          {livePlan?.state === 'proposed' && norm(livePlan.host) === norm(me) ? (
+            <View style={s.sysNote}>
+              <Text style={s.sysTitle}>{THREAD.sentAsProposal(other)}</Text>
+              <Text style={s.sysSub}>{THREAD.nothingBooked(other)}</Text>
+            </View>
+          ) : null}
+
+          {/* MSG.08 — подсказка Kleal: счёт сообщений настоящий, план по кнопке, «пока нет» помнит. */}
+          {!livePlan && msgs.length >= 8 && !noNudge ? (
+            <View style={s.nudge}>
+              <Text style={s.nudgeLabel}>Kleal</Text>
+              <Text style={s.nudgeText}>{THREAD.nudge(msgs.length, other)}</Text>
+              <View style={s.nudgeRow}>
+                <Pressable accessibilityRole="button" style={s.chip} onPress={toPlan}>
+                  <Text style={s.chipText}>{THREAD.nudgeYes()}</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" style={s.chip} onPress={toPlan}>
+                  <Text style={s.chipText}>{THREAD.nudgeOther()}</Text>
+                </Pressable>
+                <Pressable accessibilityRole="button" style={s.chip} onPress={muteNudge}>
+                  <Text style={s.chipText}>{THREAD.nudgeNot()}</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
 
           {err ? <Text style={s.err}>{err}</Text> : null}
         </ScrollView>
@@ -250,13 +425,46 @@ export default function Conversation() {
               <Text style={s.actDarkText}>{CHAT.endConversation()}</Text>
             </Pressable>
 
-            <Pressable accessibilityRole="button" style={s.actSoft} onPress={() => { setActions(false); router.push('/create'); }}>
+            {/* MSG.10: интент показывается листом фактов, а не уводит в мастер создания. */}
+            <Pressable accessibilityRole="button" style={s.actSoft} onPress={() => { setActions(false); setIntentOpen(true); }}>
               <Text style={s.actSoftText}>{CHAT.viewIntent()}</Text>
             </Pressable>
 
             <Pressable accessibilityRole="button" style={s.actPlain} onPress={() => setActions(false)}>
               <Text style={s.actPlainText}>{CHAT.keepChatting()}</Text>
             </Pressable>
+          </View>
+        </Modal>
+
+        {/* MSG.10 — интент как лист фактов. Только то, что заявка знает на самом деле: где именно
+            пройдёт встреча, не обещаем — «после подтверждения обоих», это и есть правило OF.C3. */}
+        <Modal visible={intentOpen} transparent animationType="slide" onRequestClose={() => setIntentOpen(false)}>
+          <Pressable style={s.scrim} onPress={() => setIntentOpen(false)} accessibilityLabel={T('Закрыть', 'Close')} />
+          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+            <View style={s.sheetHead}>
+              <Text style={s.sheetTitle} numberOfLines={1}>{requestTitle || intentTitle || T('Интент', 'Intent')}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setIntentOpen(false)} hitSlop={10}>
+                <Text style={s.sheetX}>✕</Text>
+              </Pressable>
+            </View>
+            {([
+              [THREAD.intentMode(), request?.intent?.mode === 'offline' ? THREAD.offlineInPerson() : THREAD.onlineMode()],
+              [THREAD.intentWhen(), String(request?.intent?.time || '—')],
+              [THREAD.intentWhere(), request?.intent?.mode === 'offline' ? THREAD.whereAfterConfirm() : THREAD.whereLink()],
+              [THREAD.intentWho(), String(request?.intent?.format || '1:1')],
+              [THREAD.intentStatus(),
+                request?.status === 'accepted'
+                  ? THREAD.matchedAgo(other, Math.floor((Date.now() / 1000 - (request?.updated || 0)) / 86400))
+                  : request?.status === 'pending' ? THREAD.statusWaiting()
+                  : request?.status === 'declined' ? THREAD.youDeclined()
+                  : request?.status === 'expired' ? THREAD.inviteExpired()
+                  : '—'],
+            ] as [string, string][]).map(([k, v]) => (
+              <View key={k} style={s.factRow}>
+                <Text style={s.factKey}>{k}</Text>
+                <Text style={s.factVal}>{v}</Text>
+              </View>
+            ))}
           </View>
         </Modal>
       </View>
@@ -282,9 +490,72 @@ const s = StyleSheet.create({
     width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border,
     backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
   },
-  name: { flex: 1, ...type.title, color: color.fg, textAlign: 'center' } as any,
+  name: { ...type.title, color: color.fg, textAlign: 'center' } as any,
+  sub: { ...type.caption, color: color.muted } as any,
   ava: { width: 40, height: 40, borderRadius: 20 },
   avaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+
+  // MSG.07 — закреплённый план.
+  planCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    marginHorizontal: 16, marginBottom: space.sm, padding: 12,
+    borderRadius: rad.lg, backgroundColor: color.card, borderWidth: 1, borderColor: color.border,
+  },
+  planIcon: {
+    width: 40, height: 40, borderRadius: 12, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  planTitle: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
+  planSub: { ...type.caption, color: color.muted } as any,
+
+  // MSG.18–MSG.21 — карточка приглашения в ленте.
+  invCard: {
+    backgroundColor: color.card, borderRadius: rad.lg, padding: space.md,
+    gap: 6, marginTop: space.sm, borderWidth: 1, borderColor: color.border,
+  },
+  invTitle: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
+  invState: { ...type.caption, color: color.primary, fontWeight: '600' } as any,
+  invMeta: { ...type.caption, color: color.muted } as any,
+  invBtn: {
+    height: 44, borderRadius: rad.full, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center', marginTop: 6,
+  },
+  invBtnText: { ...type.labelMedium, color: color.onPrimary, fontWeight: '700' } as any,
+  invBtnDark: {
+    height: 44, borderRadius: rad.full, backgroundColor: color.ink,
+    alignItems: 'center', justifyContent: 'center', marginTop: 6,
+  },
+  invBtnDarkText: { ...type.labelMedium, color: '#fff', fontWeight: '700' } as any,
+  noteBox: { backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.md, marginTop: space.sm },
+  noteText: { ...type.caption, color: color.infoText } as any,
+  sysLine: { ...type.caption, color: color.muted, textAlign: 'center', marginTop: space.sm } as any,
+
+  // MSG.09 — записка «отправлено как предложение».
+  sysNote: {
+    alignSelf: 'flex-start', backgroundColor: color.neutral100, borderRadius: rad.lg,
+    padding: space.md, marginTop: space.sm, maxWidth: '86%',
+  },
+  sysTitle: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
+  sysSub: { ...type.caption, color: color.muted, marginTop: 2 } as any,
+
+  // MSG.08 — подсказка Kleal.
+  nudge: {
+    backgroundColor: color.neutral100, borderRadius: rad.lg, padding: space.md,
+    gap: 8, marginTop: space.md,
+  },
+  nudgeLabel: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
+  nudgeText: { ...type.bodySmall, color: color.fg } as any,
+  nudgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
+  chip: {
+    height: 34, paddingHorizontal: 12, borderRadius: rad.full, borderWidth: 1,
+    borderColor: color.border, backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
+  },
+  chipText: { ...type.caption, color: color.fg, fontWeight: '600' } as any,
+
+  // MSG.10 — лист интента.
+  factRow: { flexDirection: 'row', gap: 16, paddingVertical: 8 },
+  factKey: { width: 82, ...type.bodySmall, color: color.muted } as any,
+  factVal: { flex: 1, ...type.bodySmall, color: color.fg, textAlign: 'right' } as any,
 
   thread: { paddingHorizontal: 20, paddingBottom: space.lg, gap: 4 },
   empty: { ...type.bodySmall, color: color.muted, textAlign: 'center', marginTop: space.lg } as any,

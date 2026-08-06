@@ -28,7 +28,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { RESULTS, EXPAND_LADDER, ExpandAxis, axisExplain } from '../src/intent';
-import { CANDS, PREFS, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
+import { CANDS, PREFS, CAP, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
 import { CHAT, Req, ReqStatus, byPerson, activeChatWith } from '../src/chat';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, setCandidate } from '../src/results-store';
@@ -138,10 +138,20 @@ export default function Results() {
     }
   };
 
+  /** MSG.22: открытые приглашения прямо сейчас — по серверному outbox, не по локальному sent. */
+  const pendingOut = Object.entries(reqs).filter(([, r]) => (r as any).status === 'pending');
+  const [capOpen, setCapOpen] = useState(false);
+
   /** Отправка приглашения — только из окна O.14, никогда прямо с кнопки карточки. */
   const sendInvite = async () => {
     const to = String(asking?.name || '');
     if (!to || sending) return;
+    // MSG.22: потолок открытых приглашений. Правило клиентское — см. CAP в candidates.ts.
+    if (pendingOut.length >= CAP.limit && !pendingOut.some(([who]) => who === to)) {
+      setAsking(null);
+      setCapOpen(true);
+      return;
+    }
     setSending(true);
     setSendErr('');
     try {
@@ -390,6 +400,43 @@ export default function Results() {
           >
             <Text style={s.sheetNotText}>{CHAT.endChatWith(busyWith)}</Text>
           </Pressable>
+        </View>
+      </Modal>
+
+      {/* Потолок открытых приглашений — кадр MSG.22. Отзыв работает по серверным id из outbox. */}
+      <Modal visible={capOpen} transparent animationType="slide" onRequestClose={() => setCapOpen(false)}>
+        <Pressable style={s.scrim} onPress={() => setCapOpen(false)} accessibilityLabel={T('Закрыть', 'Close')} />
+        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+          <View style={s.sheetHead}>
+            <Text style={s.sheetTitle}>{CAP.title(pendingOut.length)}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setCapOpen(false)} hitSlop={10}>
+              <Text style={s.sheetX}>✕</Text>
+            </Pressable>
+          </View>
+          <Text style={s.sheetBody}>{CAP.note()}</Text>
+          {/* Тарифа в продукте нет — кнопка честно выключена, как в O.17. */}
+          <View style={[s.sheetSend, { opacity: 0.45 }]}>
+            <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
+          </View>
+          <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
+          {/* «Отменить одно» — вот они, все открытые: отзыв тут же, без похода по экранам. */}
+          {pendingOut.map(([who, r]) => (
+            <View key={who} style={s.capRow}>
+              <Text style={s.capName} numberOfLines={1}>{who}</Text>
+              <Pressable
+                accessibilityRole="button"
+                style={s.capBtn}
+                onPress={async () => {
+                  try {
+                    await agent.withdraw(String((r as any).id || ''), self);
+                    await loadReqs();
+                  } catch { /* строка останется — сервер не подтвердил */ }
+                }}
+              >
+                <Text style={s.capBtnText}>{CAP.withdraw()}</Text>
+              </Pressable>
+            </View>
+          ))}
         </View>
       </Modal>
 
@@ -718,6 +765,13 @@ const s = StyleSheet.create({
   prefFlexVal: { ...type.bodySmall, color: color.primary, fontWeight: '600' } as any,
 
   plusPrice: { ...type.caption, color: color.muted, textAlign: 'center' } as any,
+  capRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 6 },
+  capName: { flex: 1, ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
+  capBtn: {
+    height: 36, paddingHorizontal: 14, borderRadius: rad.full, backgroundColor: color.ink,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  capBtnText: { ...type.labelMedium, color: '#fff', fontWeight: '600' } as any,
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,

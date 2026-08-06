@@ -302,4 +302,9 @@ export const agent = {
     api.post<{ ok?: boolean; error?: string; status?: string }>(
       '/api/agent/respond', { id, self, decision, version }
     ),
+
+  /** «Я открыл эту переписку» — из этой отметки у второй стороны получаются двойные галочки
+   *  (MSG.11). Отметка одна на пару, по-сообщенного статуса нет намеренно. */
+  threadRead: (self: string, other: string) =>
+    api.post<{ ok?: boolean }>('/api/agent/thread-read', { self, with: other }),
 };

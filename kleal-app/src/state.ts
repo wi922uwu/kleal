@@ -32,11 +32,26 @@ export type Profile = {
   };
 };
 
+/**
+ * Пометки экрана «Сообщения», СВОИ для этого устройства: без уведомлений, архив, «покинул чат»,
+ * когда тред открывали в последний раз (для бейджей), спрятанные подсказки и карточки.
+ * На сервере их нет намеренно: это отношение человека к списку, а не состояние разговора.
+ */
+export type MsgPrefs = {
+  muted?: string[];
+  archived?: string[];
+  left?: string[];
+  seen?: Record<string, number>;
+  noNudge?: string[];
+  hiddenInvites?: string[];
+};
+
 export type OnbState = {
   slide: number;
   step: number;            // индекс в SCRIPT; -1 = ещё не начали
   login: string | null;
   authMethod: string | null;
+  msg?: MsgPrefs;
   /**
    * Онбординг пройден и профиль записан на сервере.
    *
@@ -112,6 +127,23 @@ export function set(path: string, value: unknown) {
 
 export function get(path: string): any {
   return path.split('.').reduce<any>((o, k) => (o == null ? undefined : o[k]), state.profile);
+}
+
+export function msgPrefs(): MsgPrefs {
+  return state.msg || {};
+}
+
+/** Правка пометок сообщений одной функцией: setMsgPrefs((m) => ({ ...m, muted: [...] })). */
+export function setMsgPrefs(fn: (m: MsgPrefs) => MsgPrefs) {
+  state = { ...state, msg: fn(state.msg || {}) };
+  emit();
+}
+
+/** Тред открыт — бейдж на нём гаснет. Зовётся из переписки, а не из списка: списку виднее нельзя. */
+export function markSeen(who: string) {
+  const key = String(who || '').trim().toLowerCase();
+  if (!key) return;
+  setMsgPrefs((m) => ({ ...m, seen: { ...(m.seen || {}), [key]: Date.now() / 1000 } }));
 }
 
 /**

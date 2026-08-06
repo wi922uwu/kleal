@@ -258,6 +258,72 @@ export const UNDO_BAR = {
   undo: (n: number) => T(`Отменить · ${n}`, `Undo · ${n}`),
 };
 
+/**
+ * Тред — кадры MSG.06–MSG.11 и карточки приглашений MSG.18–MSG.21.
+ * Подзаголовок шапки, закреплённый план, записка «отправлено как предложение», подсказка Kleal
+ * и лист интента. Всё считается из настоящих данных; чего у сервера нет (присутствие «online
+ * now», календарь занятости) — здесь и не обещается.
+ */
+export const THREAD = {
+  planSet: (when: string) => T(`План: ${when}`, `Plan set · ${when}`),
+  proposalSent: () => T('Предложение отправлено · ждём', 'Proposal sent · waiting'),
+  planFromThem: () => T('Тебе прислали план', 'They sent you a plan'),
+  talkingSince: (day: string) => T(`Общаетесь с ${day}`, `Talking since ${day}`),
+  /** «с четверга», а не «с четверг»: подзаголовку нужен родительный падеж. */
+  weekdayGen: (dayIndex: number) =>
+    ['воскресенья', 'понедельника', 'вторника', 'среды', 'четверга', 'пятницы', 'субботы'][dayIndex] || '',
+  matchedOn: (title: string) => T(`Мэтч по «${title}»`, `Matched on “${title}”`),
+
+  /** MSG.09 — под предложением, дословно: ничего не забронировано до «да». */
+  sentAsProposal: (name: string) => T(`Отправлено ${name} как предложение`, `Sent to ${name} as a proposal`),
+  nothingBooked: (name: string) =>
+    T(`Ничего не забронировано, пока ${name} не скажет «да».`, `Nothing is booked until ${name} says yes.`),
+
+  /** MSG.08 — подсказка Kleal. Счёт сообщений настоящий; свободные часы не обещаем: календарей
+   *  у Kleal нет, и «в четверг свободно у обоих» было бы выдумкой. */
+  nudge: (n: number, name: string) =>
+    T(
+      `Вы обменялись ${n} сообщениями, а время так и не назначено. Хочешь, предложу ${name} встретиться?`,
+      `You two have swapped ${n} messages and no time. Want me to put a plan to ${name}?`
+    ),
+  nudgeYes: () => T('Да, предложи', 'Yes, propose it'),
+  nudgeOther: () => T('Другой день', 'Another day'),
+  nudgeNot: () => T('Пока нет', 'Not yet'),
+
+  /** MSG.10 — лист интента. */
+  intentMode: () => T('Режим', 'Mode'),
+  intentWhen: () => T('Когда', 'When'),
+  intentWhere: () => T('Где', 'Where'),
+  intentWho: () => T('Кто', 'Who'),
+  intentStatus: () => T('Статус', 'Status'),
+  offlineInPerson: () => T('Оффлайн · вживую', 'Offline · in person'),
+  onlineMode: () => T('Онлайн', 'Online'),
+  whereAfterConfirm: () => T('Точное место — после подтверждения обоих', 'Exact place after you both confirm'),
+  whereLink: () => T('Ссылка — после подтверждения', 'Link after you confirm'),
+  matchedAgo: (name: string, days: number) =>
+    days <= 0
+      ? T(`Мэтч с ${name} · сегодня`, `Matched with ${name} · today`)
+      : T(`Мэтч с ${name} · ${days} дн. назад`, `Matched with ${name} · ${days} days ago`),
+  statusWaiting: () => T('Ждёт ответа', 'Waiting for an answer'),
+
+  /** MSG.18–MSG.21 — приглашение как карточка в треде. */
+  hoursToAnswer: (h: number) => T(`осталось ${h} ч на ответ`, `${h} h left to answer`),
+  reviewInvite: () => T('Открыть приглашение', 'Review invite'),
+  youDeclined: () => T('Ты отказал(ся/ась)', 'You declined'),
+  declinedClear: (name: string) =>
+    T(`${name} видит ясное «нет», а не «может быть».`, `${name} sees a clear no, not a maybe.`),
+  inviteExpired: () => T('Истекло · без ответа', 'Expired · no reply'),
+  /** Часы — настоящие, из самой заявки (created→expires_at): сервер держит место 72 часа,
+   *  а не 24 с борда. */
+  expiredNote: (h: number) =>
+    T(
+      `Приглашение держит место ${h} ч, чтобы никто не ждал в неведении.`,
+      `Invites hold a seat for ${h} hours so nobody is blocked waiting.`
+    ),
+  dismiss: () => T('Скрыть', 'Dismiss'),
+  joined: (title: string) => T(`Приглашение принято · ${title}`, `You joined · ${title}`),
+};
+
 /** O.C1 — входящее приглашение, сторона гостя. */
 export const INVITE = {
   title: (name: string) => T(`${name} пригласил(а) тебя`, `${name} invited you`),
