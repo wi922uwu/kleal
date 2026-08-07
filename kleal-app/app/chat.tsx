@@ -552,12 +552,21 @@ function LangW({ say, goto }: any) {
   const [ownOpen, setOwnOpen] = useState(false);
   const [sel, setSel] = useState<string[]>([]);
   const toggle = (k: string) => setSel((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
+
+  // Свой язык — тот, которого нет в готовом списке. Показывается отдельным чипом и зажжённым,
+  // ровно как свой интерес шагом ниже: без этого человек писал «каталанский», чип не появлялся,
+  // и добавление выглядело как несработавшее — при том что язык уже был в выборе.
+  const own = sel.filter((k) => !LANGS.some(([l]) => l === k));
+
   return (
     <View style={cs.widget}>
       <Hint>{STEP_LANGUAGES.hint()}</Hint>
       <View style={cs.row}>
         {LANGS.map(([k]) => (
           <Chip key={k} label={langLabel(k)} on={sel.includes(k)} onPress={() => toggle(k)} />
+        ))}
+        {own.map((k) => (
+          <Chip key={k} label={k} on onPress={() => toggle(k)} />
         ))}
         <Chip label={'+ ' + STEP_LANGUAGES.own()} onPress={() => setOwnOpen((o) => !o)} />
       </View>

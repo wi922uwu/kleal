@@ -60,6 +60,12 @@ export default function Create() {
   const [loadingSug, setLoadingSug] = useState(!seed);
   const [hints, setHints] = useState<string[]>([]);
   /**
+   * Что повторить, если запрос сорвался. Раньше разговор на этом просто заканчивался: агент
+   * говорил «связь пропала», а дальше человеку оставалось только писать всё заново — и он читал
+   * это как «флоу завис». Теперь сорвавшаяся реплика ждёт одной кнопки.
+   */
+  const [retry, setRetry] = useState<{ text: string; hist: Turn[] } | null>(null);
+  /**
    * Тема собрана. Хранится ДВУМЯ полями: ключи для поиска и подпись для человека — см. topicsOf
    * и titleOf. Одной строкой это уже было, и поиск уходил с заголовком вместо ключей.
    */
@@ -101,6 +107,7 @@ export default function Create() {
     setTurns(next);
     setTyping(true);
     setHints([]);
+    setRetry(null);
     try {
       const r: any = await buddyApi.intentBuild(next, profile());
       setTyping(false);
@@ -118,7 +125,12 @@ export default function Create() {
       }
     } catch {
       setTyping(false);
-      say('bot', T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?'));
+      // Реплику человека НЕ теряем: её вернёт кнопка «Попробовать снова», и разговор продолжится
+      // с того же места, а не с чистого листа.
+      setTurns(hist);
+      setRetry({ text, hist });
+      say('bot', T('Связь пропала — я не дослушал. Попробуем ещё раз?',
+                   'I lost the connection mid-thought. Shall we try again?'));
     }
   }, [say, st.profile]);
 
@@ -227,6 +239,19 @@ export default function Create() {
               >
                 <IconSpark size={18} />
                 <Text style={s.regenText}>{CREATE.regenerate()}</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {/* Сорвавшийся запрос — не конец разговора: одна кнопка возвращает последнюю реплику. */}
+          {retry ? (
+            <View style={s.hints}>
+              <Pressable
+                accessibilityRole="button"
+                style={s.hint}
+                onPress={() => { const r = retry; setRetry(null); ask(r.text, r.hist); }}
+              >
+                <Text style={s.hintText}>{T('Попробовать снова', 'Try again')}</Text>
               </Pressable>
             </View>
           ) : null}

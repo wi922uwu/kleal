@@ -50,10 +50,20 @@ async function request<T = Json>(path: string, init?: RequestInit, timeoutMs = 3
   }
 }
 
+/**
+ * Тридцати секунд хватает всему, кроме разговора с моделью: 70B под нагрузкой отвечает и минуту,
+ * а обрыв по таймауту человек читает как «связь пропала» и упирается в тупик. Поэтому у вызовов,
+ * за которыми стоит генерация, свой срок — он не делает приложение медленнее, он лишь не сдаётся
+ * раньше самой модели.
+ */
+const LLM_TIMEOUT_MS = 120000;
+const SLOW = /\/api\/(buddy|onboarding\/chat|agent\/(plan|match|expand))/;
+
 export const api = {
-  get: <T = Json>(path: string) => request<T>(path),
+  get: <T = Json>(path: string) => request<T>(path, undefined, SLOW.test(path) ? LLM_TIMEOUT_MS : undefined),
   post: <T = Json>(path: string, body: Json) =>
-    request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
+    request<T>(path, { method: 'POST', body: JSON.stringify(body) },
+      SLOW.test(path) ? LLM_TIMEOUT_MS : undefined),
 };
 
 // ---------------------------------------------------------------- онбординг
