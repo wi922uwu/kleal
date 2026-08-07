@@ -26,7 +26,7 @@ import {
 } from '../src/onboarding';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
-import { onboarding } from '../src/api';
+import { onboarding, agent } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
@@ -181,6 +181,7 @@ export default function Chat() {
     const base = hist || funnel;
     const next = text ? [...base, { role: 'user', content: text }] : base;
     if (text) setFunnel(next);
+    if (text) enrichInterests(text);
     setTyping(true);
     try {
       // Профиль уходит БЕЗ фото: это data-URL на сотни килобайт, и на каждом ходу разговора он
@@ -214,6 +215,39 @@ export default function Chat() {
   };
 
   /** Разговор начинается сразу после выбора чипов и с той же затравки, что в веб-версии. */
+  /**
+   * Разговор об увлечениях ОБОГАЩАЕТ ключи подбора, а не только сводку.
+   *
+   * Чипы — это затравка: «Музыка» и «Футбол» есть у сотни людей, и по ним человек тонет в выдаче.
+   * Ценное живёт в ответах — «инди и электроника», «играю в защите по субботам». Раньше эти слова
+   * оседали ТОЛЬКО в тексте сводки, а ранжирование читает interests: проверено на стенде — у
+   * Nina, рассказавшей про инди-концерты, в профиле осталось одно слово «music».
+   *
+   * Поэтому каждую содержательную реплику воронки пропускаем через фильтрацию — тот же сервис,
+   * что канонизирует «настолки» в board games на регистрации, — и добавляем найденные темы.
+   * Ограничения намеренные: только две темы за реплику, потолок восемь (как на сервере), общие
+   * слова вроде «hobby» и «social» отбрасываются, ошибки глотаются. Профиль от разговора может
+   * стать точнее, но не может испортиться.
+   */
+  const enrichInterests = (text: string) => {
+    const t = String(text || '').trim();
+    if (t.length < 8) return;
+    agent.categorize(t)
+      .then((r: any) => {
+        const GENERIC = new Set(['sport', 'sports', 'hobby', 'hobbies', 'social', 'people', 'fun',
+          'activity', 'activities', 'meeting', 'meetup', 'friends', 'culture', 'lifestyle',
+          'entertainment', 'event', 'events', 'game', 'games', 'art', 'music lover']);
+        const cur: string[] = get('interests.explicit') || [];
+        const have = new Set(cur.map((w) => String(w).toLowerCase()));
+        const add = (Array.isArray(r?.topics) ? r.topics : [])
+          .map((x: any) => String(x).trim().toLowerCase())
+          .filter((x: string) => x && !GENERIC.has(x) && !have.has(x))
+          .slice(0, 2);
+        if (add.length && cur.length < 8) set('interests.explicit', [...cur, ...add].slice(0, 8));
+      })
+      .catch(() => {});
+  };
+
   const startFunnel = (picks: string[]) => {
     const seed: Msg2[] = [
       { role: 'assistant', content: FUNNEL.seedBot },
