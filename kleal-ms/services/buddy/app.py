@@ -2257,7 +2257,14 @@ def intent_build(messages, profile, on_text=None):
     # hertz), and paraphrase-first made filtration read the whole thing as LEARNING GERMAN, so a
     # chat about frequency compiled into «Немецкий — встреча». Raw-first on the same input gives
     # tech/physics. Measured both ways.
-    cat = _categorize(" ".join(x for x in (_subject, str(last_user or ""), str(activity or "")) if x).strip()
+    # ВСЕ реплики этого разговора, а не только последняя. Уточняющий вопрос забирал у поиска
+    # предмет просьбы: «хочу пойти в бар» → «просто выпить и пообщаться» категоризировалось в
+    # [drinks, socializing], и слово «бар» пропадало — человек с интересом «bar» получал T2
+    # «близкая тема» вместо точного совпадения. Проверено на стенде: по «drinks» точных нет ни
+    # одного, по «bar» их трое. Реплики берём из bmsgs — там уже отобрано то, что относится к
+    # плану, так что болтовня сюда не попадает.
+    _asked = " ".join(str(m.get("content", "")) for m in bmsgs if m.get("role") == "user")[-600:]
+    cat = _categorize(" ".join(x for x in (_subject, _asked, str(activity or "")) if x).strip()
                       or activity)
     _teach(cat)
     sig = _baseline_signals(profile)
