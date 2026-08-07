@@ -119,7 +119,9 @@ export default function Chat() {
           : entry === 'basics' ? STEP_BASICS.bot()
           : STEP_START.ask());
       } else {
-        say('bot', STEP_START.ask());
+        // Знакомство идёт первым: человек должен понять, куда попал, прежде чем его о чём-то просят.
+        say('bot', STEP_START.intro());
+        setTimeout(() => say('bot', STEP_START.ask()), 1400);
       }
     }, 500);
   }, [say]);
@@ -134,7 +136,12 @@ export default function Chat() {
       setRunId((n) => n + 1);
       started.current = false;
       setTyping(true);
-      setTimeout(() => { setTyping(false); say('bot', STEP_START.ask()); started.current = true; }, 400);
+      setTimeout(() => {
+        setTyping(false);
+        say('bot', STEP_START.intro());
+        setTimeout(() => say('bot', STEP_START.ask()), 1400);
+        started.current = true;
+      }, 400);
     };
     if (Platform.OS === 'web') {
       // Alert.alert на вебе не показывает кнопок — там это window.confirm.
@@ -574,6 +581,25 @@ function LangW({ say, goto }: any) {
  * Пока модель спрашивает, отвечать можно и словами в композере — чипы это ускорение, а не рельсы.
  */
 function FunnelW({ opts, done, ask, leave, more, say }: FunnelBits & { say: any }) {
+  /**
+   * Выход из разговора спрашивается, а не случается. Это единственный шаг, который наполняет
+   * профиль, и уйти с него мимоходом — значит остаться с профилем из одного слова. Kleal говорит,
+   * что будет дальше, и ждёт ответа.
+   */
+  const [ending, setEnding] = useState(false);
+  const askEnd = () => {
+    if (ending) return;
+    setEnding(true);
+    say('bot', FUNNEL.endAsk());
+  };
+  if (ending) {
+    return (
+      <View style={cs.widget}>
+        <Cta label={FUNNEL.endNo()} kind="muted" onPress={() => setEnding(false)} />
+        <Cta label={FUNNEL.endYes()} onPress={leave} />
+      </View>
+    );
+  }
   // Разговор про этот интерес окончен. Дальше два честных пути, и оба названы: рассказать про
   // следующий интерес или закончить с интересами вовсе. Одна кнопка «Продолжить» не говорила, куда
   // именно продолжает, и добавить второй интерес после разговора было нечем.
@@ -581,21 +607,19 @@ function FunnelW({ opts, done, ask, leave, more, say }: FunnelBits & { say: any 
     return (
       <View style={cs.widget}>
         <Cta label={FUNNEL.more()} kind="muted" onPress={more} />
-        <Cta label={FUNNEL.finish()} onPress={leave} />
+        <Cta label={FUNNEL.finish()} onPress={askEnd} />
       </View>
     );
   }
-  // Выход рисуется ВСЕГДА, а не только когда пришли варианты. По-русски модель варианты почти не
-  // присылает, и без этого единственным способом закончить разговор оставался счётчик ходов:
-  // человек отвечает на восьмой вопрос подряд и не видит ни одной кнопки «хватит».
-  const hasOut = opts.some((o) => FUNNEL_OUT_RE.test(o));
+  // Выход рисуется ВСЕГДА, а не только когда пришли варианты: по-русски модель их почти не
+  // присылает, и без этого закончить разговор можно было только исчерпав счётчик ходов.
 
   // Вариант делает то, что на нём написано. «Добавить ещё интерес» возвращает к чипам, «это всё»
   // заканчивает разговор — а не отправляет свой же текст обратно агенту, после чего тот
   // переспрашивает словами и никакого выбора интересов не появляется.
   const press = (o: string) => {
     if (FUNNEL_MORE_RE.test(o)) { say('me', o); more(); return; }
-    if (FUNNEL_OUT_RE.test(o)) { say('me', o); leave(); return; }
+    if (FUNNEL_OUT_RE.test(o)) { say('me', o); askEnd(); return; }
     say('me', o);
     ask(o);
   };
@@ -606,8 +630,10 @@ function FunnelW({ opts, done, ask, leave, more, say }: FunnelBits & { say: any 
         {opts.map((o) => (
           <Chip key={o} label={o} onPress={() => press(o)} />
         ))}
-        {hasOut ? null : <Chip label={FUNNEL.done()} onPress={leave} />}
       </View>
+      {/* Выход — отдельной кнопкой под вариантами, а не чипом в их ряду: он делает не то же, что
+          они, и не должен читаться как ещё один ответ на вопрос агента. */}
+      <Cta label={FUNNEL.done()} kind="muted" onPress={askEnd} />
     </View>
   );
 }

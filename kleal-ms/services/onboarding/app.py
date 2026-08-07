@@ -110,13 +110,36 @@ def critical_status_v2(p):
             "complete": len(missing) == 0, "pct": int(100 * len(done) / total) if total else 0}
 
 # ---------------------------------------------------------------- interests-funnel chat prompt (interests step)
-FUNNEL_PROMPT = '''You are Kleal, on the INTERESTS step of a short profile setup.
-The user already gave their name, area and languages - do NOT ask about those.
-Your job: understand each picked interest quickly. You get AT MOST TWO questions per interest, so make them count:
-- First: HOW THEY ENGAGE with it (fit the interest - play vs watch for a game or sport; watch or discuss for shows; build / discuss / learn / attend events for a topic like AI or startups; practise + level for a language; the vibe for a social thing like coffee) AND how long they have been into it - both in one natural message. NEVER offer play/watch choices for something you cannot play or watch.
-- Then, only where a domain applies, ONE most-useful detail: games -> platform + rank/level (one combined question); sport they play -> skill level; sport they watch -> favorite team; language -> current level; networking -> industry + goal.
-Style: react warmly to what they just said in ONE short line, then ask. EXACTLY ONE question per reply — one question mark, never two topics joined by "and". Asking "what, with whom and how long" in a single message is three questions and is forbidden; pick the single most useful one and keep the rest for later turns. The question is the LAST thing in the reply. Do not re-ask a question you already asked, even reworded, whether or not it was answered — if they sidestepped it, move on. English only. For closed choices end with [OPTIONS: a | b | c] (pipe-separated only, no letters/numbers). NEVER re-ask anything already known. No emoji, no markdown, no JSON, no <profile> tags.
-A status line tells you exactly what to ask next - follow it strictly.'''
+FUNNEL_PROMPT = '''You are Kleal, on the INTERESTS step of a short profile setup. The user already gave
+their name, area and languages — never ask about those.
+
+WHY YOU ARE ASKING AT ALL. Everything the user says here becomes the handle another human is found
+by. «Music» matches a thousand people and therefore nobody; «инди и электроника, живьём в клубах»
+matches the person they would actually enjoy an evening with. So every question must earn its place
+by making the search sharper. Ask yourself before writing: would the answer change WHO we show them?
+If not, do not ask it.
+
+NEVER ASK — these were asked for a year and never once changed a single match:
+- how long they have been into it («сколько лет увлекаешься», tenure, «since when»);
+- their rank, level, skill tier, ELO or platform;
+- anything that sounds like filling in a form rather than planning an evening.
+
+DO ASK, one of these, whichever is missing and most useful for THIS interest:
+- WHICH KIND exactly — the sub-flavour that separates people («какая музыка», «во что именно
+  играешь», «какой спорт»);
+- WHAT THEY WANT OUT OF IT with another person — play together, go and watch, talk about it, learn
+  it, just company;
+- WITH WHOM it usually happens — one-on-one, a small group, a crowd — but only if it is not obvious.
+
+STYLE. You are a person helping a friend, not a form. React to what they just said in ONE short,
+specific line — specific means naming the thing they mentioned, not «это замечательно» or «ты
+интересный человек». Never compliment the user. Never open with «X — это отличный способ…». Then
+ask EXACTLY ONE question, and let it be the last thing in the message. One question mark. Two topics
+joined by «and» is two questions and is forbidden. Keep the whole message under 25 words.
+
+Do not re-ask a question you already asked, even reworded — if they sidestepped it, move on. For
+closed choices end with [OPTIONS: a | b | c] (pipe-separated only, no letters or numbers). No emoji,
+no markdown, no JSON, no <profile> tags. A status line tells you exactly what to ask next — follow it.'''
 
 # finish / add-another intent detection at the confirm stage (order matters: FIN first - "no more" contains "more")
 # The option buttons are localised (see _CONFIRM_OPTIONS), so these must match the Russian labels too —
@@ -180,36 +203,33 @@ def _v2_kind(it):
     if re.search(r"\bai\b|\bml\b|startup|\btech|business|career|founder|network|invest|product|\bdesign|architect|coding|program|marketing|crypto", n): return "topic"
     return "social"
 
+# Что спрашивать первым про интерес. Всюду — КОНКРЕТИКА, потому что именно она становится ключом
+# поиска: «музыка» не совпадает ни с кем, «инди и электроника» совпадает с живым человеком.
 _ROLE_FRAME = {
-    "game":     "whether they mainly play it or watch it",
-    "sport":    "whether they play it or mostly watch it",
-    "watch":    "how they like to enjoy it - on their own, watch-parties, or discussing it",
-    "language": "how they practise it and roughly their level",
-    "topic":    "how they engage with it - building, discussing, learning, or going to events",
-    "social":   "what they enjoy most about it and who they usually do it with",
+    "game":     "which games exactly, and whether they would rather play together or watch",
+    "sport":    "which sport exactly, and whether they play it or go and watch",
+    "watch":    "what kind of it they like, and whether they would rather watch together or talk about it",
+    "language": "what they want the practice for — conversation, work, travel",
+    "topic":    "which side of it interests them, and whether they want to talk it over or do it together",
+    "social":   "what makes a good one for them, and who they usually go with",
 }
 def _v2_frame(it): return _ROLE_FRAME.get(_v2_kind(it), "what they enjoy doing with it")
 
 def _v2_detail_gap(p, it):
-    """The ONE domain-detail question for this interest, or None (no domain / already known)."""
-    role = json.dumps(_v2_role_of(p, it) or "").lower()
-    if _v2_listhas(p, "domains.games.gamesList", it):
-        if _chas(p, "domains.games.platformsByGame") or _chas(p, "domains.games.rankByGame"): return None
-        return 'for "%s": which platform they play on and roughly their rank or level (one combined question)' % it
-    if _v2_listhas(p, "domains.sport.sportsList", it):
-        if "play" in role:
-            if _chas(p, "domains.sport.skillLevelBySport"): return None
-            return 'for "%s": their skill level (beginner / intermediate / advanced)' % it
-        if _chas(p, "domains.sport.favoriteTeams"): return None
-        return 'for "%s": whether they have a favorite team' % it
+    """Второй — и последний — вопрос про интерес, или None.
+
+    Раньше здесь спрашивали ранг в игре, платформу, спортивный уровень и уровень языка. Ни одно из
+    этого не участвует в подборе: ранжирование сравнивает ТЕМЫ, а не разряды. Вопрос «какой у тебя
+    ранг» человек читает как анкету и отвечает односложно, а место в бюджете из двух вопросов
+    тратится. Здесь остаётся только то, что меняет выдачу: с кем и ради чего человек хочет этим
+    заняться."""
+    if _chas(p, "domains.games.platformsByGame") or _chas(p, "domains.sport.skillLevelBySport"):
+        return None                                   # уже спрошено в прошлых версиях — не повторяем
     low = it.lower()
-    if any(w in low for w in ("language", "practice", "spanish", "english", "french", "german")):
-        if _chas(p, "domains.language.targetLevel"): return None
-        return 'for "%s": their current level (beginner / intermediate / fluent)' % it
     if any(w in low for w in ("network", "startup", "business", "career")):
         if _chas(p, "domains.networking.industry") or _chas(p, "domains.networking.goal"): return None
-        return 'for "%s": their industry and what they want out of it' % it
-    return None
+        return 'for "%s": which field they are in and who they hope to meet through it' % it
+    return 'for "%s": whether they would rather do it one-on-one or with a small group' % it
 
 def _v2_gaps(p, hist):
     """Ask-ordered funnel gaps honoring the max-2-questions-per-interest budget. Stateless: an
@@ -219,15 +239,14 @@ def _v2_gaps(p, hist):
         low = it.lower()
         asked = sum(1 for m in hist if m.get("role") == "assistant" and low in str(m.get("content", "")).lower())
         if asked >= 2: continue  # budget spent - move on even if something stayed unknown
-        role, exp = _v2_role_of(p, it), _v2_exp_of(p, it)
+        # Стаж («сколько лет увлекаешься») здесь больше не спрашивается и в список пробелов не
+        # входит: он не меняет НИ ОДНОГО кандидата в выдаче — ранжирование его не читает, — а
+        # место в бюджете из двух вопросов занимал. То же с рангом и уровнем (см. _v2_detail_gap).
+        role = _v2_role_of(p, it)
         need = []
-        if not role and not exp:
-            need.append('for "%s": %s, AND how long they have been into it - both in ONE natural combined question that fits this interest (do NOT offer play/watch options for a non-game/sport interest)' % (it, _v2_frame(it)))
-        elif not role:
-            need.append('for "%s": %s (phrase it to fit this interest, not a generic play/watch list)' % (it, _v2_frame(it)))
-        elif not exp:
-            need.append('for "%s": how long they have been into it' % it)
-        if role and exp:
+        if not role:
+            need.append('for "%s": %s' % (it, _v2_frame(it)))
+        else:
             d = _v2_detail_gap(p, it)
             if d: need.append(d)
         gaps.extend(need[:max(0, 2 - asked)])

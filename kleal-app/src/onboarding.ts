@@ -80,7 +80,20 @@ export const SUMMARY_TITLE = () => T('Что Kleal знает о тебе', 'Wha
 // A.04. «We've go!» и «HMay I know your name?» — опечатки НА БОРДЕ. Здесь исправлены: копировать
 // опечатку в продукт нельзя, а править молча борд тоже нельзя — поэтому написано тут.
 export const STEP_START = {
-  ask: () => T('Расскажешь пару деталей о себе?', 'Would you be willing to fill in a few details about yourself?'),
+  /**
+   * Первое, что человек читает в приложении. Раньше здесь сразу просили «пару деталей» — просьба
+   * без объяснения, кто просит и зачем. Теперь Kleal сначала говорит, что он такое и чем отличается
+   * от ленты знакомств: он не показывает людей, он ищет их под конкретную затею и знакомит, когда
+   * совпало у обоих. Три предложения — дальше сразу вопрос, читать простыню никто не будет.
+   */
+  intro: () =>
+    T(
+      'Привет! Я Kleal — твой агент. Ты говоришь, чем хочешь заняться: сходить за кофе, погонять мяч, потренировать испанский, — а я ищу человека, которому хочется того же, и знакомлю вас, когда совпало у обоих.',
+      'Hi! I’m Kleal — your agent. You tell me what you feel like doing: grabbing a coffee, kicking a ball around, practising Spanish — and I find someone who wants the same, then introduce you once you both agree.'
+    ),
+  /** Вторая реплика: почему сейчас будут вопросы. */
+  ask: () => T('Расскажешь пару деталей о себе? Так я пойму, кого искать.',
+                'Tell me a couple of things about yourself? That’s how I know who to look for.'),
   hint: () => T('Выбери вариант или напиши своё', 'Pick some or write your own'),
   why: () => T('Зачем это нужно?', 'Why do you need this?'),
   go: () => T('Поехали!', "Let's go!"),
@@ -203,6 +216,18 @@ export const FUNNEL = {
   cap: (n: number) => n * 2 + 4,
   compose: () => T('Расскажи Kleal больше…', 'Tell Kleal more…'),
   done: () => T('Это всё', "That's enough"),
+  /**
+   * «Это всё» заканчивает разговор про увлечения — а это единственный шаг, который наполняет
+   * профиль по-настоящему. Раньше чип срабатывал мгновенно, наравне с обычными вариантами ответа,
+   * и человек выходил из разговора, не поняв, что вышел. Теперь Kleal сначала говорит, что будет.
+   */
+  endAsk: () =>
+    T(
+      'Если закончим — про увлечения я больше не расспрашиваю, дальше только фото и всё. Чем больше расскажешь сейчас, тем точнее я ищу; добавить что-то потом можно будет в профиле.',
+      'If we stop here I won’t ask about your interests again — after this it’s just the photo. The more you tell me now, the sharper I search; you can always add more later in your profile.'
+    ),
+  endYes: () => T('Да, закончить', 'Yes, finish'),
+  endNo: () => T('Расскажу ещё', 'I’ll add more'),
   cont: () => T('Продолжить', 'Continue'),
   /** Разговор про интерес окончен: либо назад к чипам за следующим, либо дальше по анкете. */
   more: () => T('Добавить ещё', 'Add another'),
