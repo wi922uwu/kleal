@@ -25,7 +25,6 @@ export default function Interests() {
   const router = useRouter();
   const st = useOnb();
   const d = useMemo(() => profileData(st.profile), [st.profile, lang]);
-  const [open, setOpen] = useState<string | null>(d.interests[0]?.name || null);
 
   /**
    * Записать интересы на сервер и подтянуть за ними сводку: она перечисляет интересы вслух, и после
@@ -50,7 +49,6 @@ export default function Interests() {
     const wipe = () => {
       set('interests.explicit', (get('interests.explicit') || []).filter((x: string) => x !== nm));
       set('interests.unused', (get('interests.unused') || []).filter((x: string) => x !== nm));
-      if (open === nm) setOpen(null);
       push();
     };
     const ask = T(`Убрать «${label}» из профиля?`, `Remove “${label}” from your profile?`);
@@ -80,54 +78,39 @@ export default function Interests() {
         <>
           <Text style={s.hint}>{C.hint()}</Text>
 
-          {d.interests.map((it) => {
-            const expanded = open === it.name;
-            return (
-              <Card key={it.name} style={{ gap: 0 }}>
-                <View style={s.row}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ expanded }}
-                    style={{ flex: 1 }}
-                    onPress={() => setOpen(expanded ? null : it.name)}
-                  >
-                    {/*
-                      «Уверенность» убрана намеренно. Она была не фактом о человеке, а внутренней
-                      оценкой derive-функции: первые два интереса «высокая», остальные — по наличию
-                      подробностей. Показывать это как свойство своего же увлечения бессмысленно.
-                    */}
-                    <Text style={s.name}>{it.label}</Text>
-                  </Pressable>
-                  <Switch
-                    value={it.used}
-                    onValueChange={(v) => toggleUsed(it.name, v)}
-                    accessibilityLabel={T(`Учитывать «${it.label}» при подборе`, `Use “${it.label}” for matching`)}
-                    trackColor={{ false: color.neutral300, true: color.primary }}
-                    thumbColor={color.card}
-                    ios_backgroundColor={color.neutral300}
-                  />
-                </View>
+          {/*
+            Карточка НЕ раскрывается. Раньше тап показывал внутренности — «Роль», «Опыт», а когда их
+            не было, заглушку «Kleal ещё разбирается…». Человек приходит сюда за одним: решить, что
+            учитывать при подборе. Строка с тумблером отвечает на это целиком, а раскрытие лишь
+            прятало удаление за лишним касанием и показывало то, чего он не спрашивал.
 
-                {expanded ? (
-                  <View style={s.exp}>
-                    {it.kv.length ? (
-                      it.kv.map(([k, v]) => (
-                        <View key={k} style={s.kv}>
-                          <Text style={s.k}>{k}</Text>
-                          <Text style={s.v}>{v}</Text>
-                        </View>
-                      ))
-                    ) : (
-                      <Text style={s.emptySub}>{C.summary(it.label)}</Text>
-                    )}
-                    <Pressable accessibilityRole="button" onPress={() => remove(it.name, it.label)}>
-                      <Text style={s.remove}>{C.remove()}</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-              </Card>
-            );
-          })}
+            «Уверенность» убрана раньше и по той же причине: это была внутренняя оценка
+            derive-функции, а не факт о человеке.
+          */}
+          {d.interests.map((it) => (
+            <Card key={it.name} style={{ gap: 0 }}>
+              <View style={s.row}>
+                <Text style={[s.name, { flex: 1 }]}>{it.label}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={T(`Удалить «${it.label}»`, `Remove “${it.label}”`)}
+                  hitSlop={10}
+                  style={s.del}
+                  onPress={() => remove(it.name, it.label)}
+                >
+                  <Text style={s.delText}>✕</Text>
+                </Pressable>
+                <Switch
+                  value={it.used}
+                  onValueChange={(v) => toggleUsed(it.name, v)}
+                  accessibilityLabel={T(`Учитывать «${it.label}» при подборе`, `Use “${it.label}” for matching`)}
+                  trackColor={{ false: color.neutral300, true: color.primary }}
+                  thumbColor={color.card}
+                  ios_backgroundColor={color.neutral300}
+                />
+              </View>
+            </Card>
+          ))}
 
           <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/chat?step=hobbies&back=/profile/interests')}>
             <Text style={s.ctaText}>{C.add()}</Text>
@@ -141,6 +124,9 @@ export default function Interests() {
 const s = StyleSheet.create({
   hint: { ...type.bodySmall, color: color.muted, paddingHorizontal: 4 } as any,
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  /** Крестик удаления: тихий, слева от тумблера — не спорит с ним за внимание. */
+  del: { paddingHorizontal: 10, paddingVertical: 4 },
+  delText: { fontSize: 17, color: color.neutral400 },
   name: { ...type.title, color: color.fg } as any,
   conf: { ...type.caption, color: color.muted, marginTop: 2 } as any,
   exp: { marginTop: space.md, paddingTop: space.md, borderTopWidth: 1, borderTopColor: color.line, gap: space.sm },
