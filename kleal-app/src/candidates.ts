@@ -90,8 +90,11 @@ export function candSummary(c: Cand, ru: boolean): string {
   const reasons = (ru ? c.reasons_ru : c.reasons_en) || c.reasons || [];
   const glue = (s: string) => s.toLowerCase().replace(/\s+/g, '');
   const say = new Map((c.interests || []).map((i) => [glue(String(i)), String(i)]));
+  // Подменяем только те слова, для которых у кандидата ЕСТЬ пара с пробелами: say собран из его
+  // интересов, и промах оставляет слово нетронутым. Слов короче шести букв не трогаем — склеек
+  // такой длины не бывает, а риск случайного совпадения выше.
   const human = (r: string) =>
-    r.replace(/[\p{L}\p{N}]{6,}/gu, (w) => (glue(w) !== w.toLowerCase() ? w : say.get(w.toLowerCase()) || w));
+    r.replace(/[\p{L}\p{N}]{6,}/gu, (w) => say.get(w.toLowerCase()) || w);
   const bits = reasons.filter(Boolean).map((r) => human(String(r)));
   if (bits.length) {
     const line = bits.join(', ');

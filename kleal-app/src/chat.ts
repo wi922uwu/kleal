@@ -327,6 +327,19 @@ export const PLAN = {
   reasonOther: () => T('Другое', 'Something else'),
   skip: () => T('Пропустить', 'Skip'),
 
+  /** OF.C4 — отменили офлайн-встречу: ждать за столиком, а не в звонке. */
+  toldYouNoteOffline: (name: string) =>
+    T(
+      `${name} предупредил(а), а не оставил(а) тебя ждать за столиком. Никому ничего не засчитано — чат открыт, и новое время может предложить любой из вас.`,
+      `${name} told you rather than leaving you at the table. Nothing is held against you — your chat stays open and either of you can suggest a new time.`
+    ),
+  /** OF.23a — своя отмена офлайна. */
+  nobodyWaitingOffline: (name: string) =>
+    T(
+      `Никто не ждёт зря. ${name} уже видит отмену и не сидит за столиком в одиночку. Чат открыт — договориться о новом времени можно там.`,
+      `Nobody is left waiting. ${name} sees it now, so they aren’t sitting at a table alone. Your chat stays open — you can agree a new time there.`
+    ),
+
   /** O.C4 — отменили мне; никто ничего не должен. */
   toldYouNote: (name: string) =>
     T(

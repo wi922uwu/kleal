@@ -155,7 +155,11 @@ export default function Results() {
     setSending(true);
     setSendErr('');
     try {
-      const r: any = await agent.propose(self, to, intent);
+      // Точное место в приглашение НЕ уезжает: под полем на OF.09 обещано, что его увидят только
+      // после взаимного «да», а заявка уходит человеку, который ещё ничего не решил. Оно живёт в
+      // интенте и подхватывается формой плана уже после согласия.
+      const { address: _exact, ...forInvite } = intent as any;
+      const r: any = await agent.propose(self, to, forInvite);
       if (!r?.ok) throw new Error(r?.error || 'propose failed');
       setSent((prev) => ({ ...prev, [to]: String(r.id || '') }));
       setAsking(null);

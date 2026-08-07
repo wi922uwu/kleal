@@ -149,15 +149,24 @@ export function intentRows(me: string, plans: any[], history: any[], inbox: any[
   // Приглашение принято, а встречи ещё нет — это и есть «собирается»: люди договариваются в чате.
   // Без этой ветки согласившаяся пара пропадала со вкладки «Интенты» до самого плана и жила только
   // в «Личных» — человек, зашедший посмотреть свои затеи, их там не находил.
-  const withPlan = new Set(
-    [...(plans || []), ...(history || [])].map((p: any) => norm(otherOf(p, me)))
-  );
+  //
+  // Прячем такую строку ТОЛЬКО когда с этим человеком есть ЖИВОЙ план: прошлая встреча в истории
+  // не должна скрывать новую договорённость — иначе одна отменённая встреча навсегда закрывает
+  // паре путь обратно в список.
+  const livePlanWith = new Set((plans || []).map((p: any) => norm(otherOf(p, me))));
+  // Заявка приезжает и во входящих, и в исходящих (сервер отдаёт обе стороны) — без ключа по
+  // ЧЕЛОВЕКУ одна и та же пара вставала в список двумя одинаковыми строками.
+  const already = new Set<string>();
   for (const r of [...(inbox || []), ...(outbox || [])]) {
     if (r.status !== 'accepted') continue;
     const who = norm(r.from) === norm(me) ? r.to : r.from;
-    if (withPlan.has(norm(who))) continue;
+    const key = norm(who);
+    if (!key || livePlanWith.has(key) || already.has(key)) continue;
+    already.add(key);
     forming.push({
-      key: 'ok:' + r.id, kind: 'thread', who, photo: r.photo,
+      // Ключ по человеку, а не по id заявки: пометки «без уведомлений» и «архив» ставятся на
+      // собеседника и должны пережить новую заявку с тем же человеком.
+      key: 'th:' + key, kind: 'thread', who, photo: r.photo,
       title: String(r.intent?.title || (r.intent?.topics || []).join(', ') || who),
       sub: `${who} · ${MSG.agreeing()}`,
       t: Number(r.updated || 0),
@@ -166,7 +175,10 @@ export function intentRows(me: string, plans: any[], history: any[], inbox: any[
 
   for (const p of history || []) {
     const other = otherOf(p, me);
-    const done = p.state === 'done';
+    // «Закончилось» — это про состоявшуюся встречу, а не про то, что запись закрыта: сервер
+    // ставит done и когда пара ответила «не состоялась». Смотрим на исход, а не на состояние.
+    const happened = p.outcome ? p.outcome.happened !== false : p.state === 'done';
+    const done = p.state === 'done' && happened;
     past.push({
       key: 'mp:' + p.id, kind: 'plan', id: p.id, who: other,
       title: String(p.title || other),

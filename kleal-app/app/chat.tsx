@@ -181,7 +181,9 @@ export default function Chat() {
     const base = hist || funnel;
     const next = text ? [...base, { role: 'user', content: text }] : base;
     if (text) setFunnel(next);
-    if (text) enrichInterests(text);
+    // Только разговор об увлечениях: свободный текст на шагах имени, возраста или города тоже
+    // приходит сюда, и «живу рядом с парком» не должно становиться интересом «parks».
+    if (text && step === 'funnel') enrichInterests(text);
     setTyping(true);
     try {
       // Профиль уходит БЕЗ фото: это data-URL на сотни килобайт, и на каждом ходу разговора он
@@ -239,11 +241,18 @@ export default function Chat() {
           'entertainment', 'event', 'events', 'game', 'games', 'art', 'music lover']);
         const cur: string[] = get('interests.explicit') || [];
         const have = new Set(cur.map((w) => String(w).toLowerCase()));
+        // Фильтрация, не узнав темы, возвращает куски самой реплики — их брать нельзя: в профиль
+        // попало бы «собираемся» или «четвергам». Берём только то, чего в реплике не было
+        // дословно, то есть настоящую тему, а не эхо.
+        const said = t.toLowerCase();
         const add = (Array.isArray(r?.topics) ? r.topics : [])
           .map((x: any) => String(x).trim().toLowerCase())
-          .filter((x: string) => x && !GENERIC.has(x) && !have.has(x))
+          .filter((x: string) => x && x.length > 2 && !GENERIC.has(x) && !have.has(x) && !said.includes(x))
           .slice(0, 2);
-        if (add.length && cur.length < 8) set('interests.explicit', [...cur, ...add].slice(0, 8));
+        // Потолок считаем по СВОБОДНЫМ местам, а не по общему числу: у разговорчивого профиля
+        // список и так близок к восьми, и обогащение не срабатывало бы ни разу.
+        const room = Math.max(0, 8 - cur.length);
+        if (add.length && room) set('interests.explicit', [...cur, ...add.slice(0, room)]);
       })
       .catch(() => {});
   };

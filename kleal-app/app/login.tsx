@@ -53,11 +53,14 @@ export default function Login() {
         // выхода из аккаунта, проходил всю анкету заново поверх профиля, который уже лежит на
         // сервере. Теперь профиль забирается, и онбординг пропускается.
         if (res.hasProfile && res.profile && typeof res.profile === 'object') {
-          patch({ login: login.trim(), done: true, profile: res.profile });
+          // Пометки «Сообщений» (без уведомлений, архив, покинул, что уже прочитано) — про
+          // ПРЕЖНЕГО человека на этом устройстве. Оставить их значит показать новому вошедшему
+          // чужой архив и чужие бейджи, а «покинул чат» скрыл бы его собственную переписку.
+          patch({ login: login.trim(), done: true, profile: res.profile, msg: {} });
           router.replace('/home');
           return;
         }
-        patch({ login: login.trim() });
+        patch({ login: login.trim(), msg: {} });
         applyDefaults();
         router.push('/chat');
         return;

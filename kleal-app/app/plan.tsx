@@ -211,10 +211,15 @@ export default function Plan() {
     if (sugDelta != null) {
       ts = Math.floor(plan.starts_at + sugDelta * 60);
     } else {
+      // Пустые поля — это «человек начал набирать и передумал», а не «полночь»: раньше
+      // незаполненные часы давали 00:00, и сервер честно отвечал «время уже прошло».
+      if (!sugH.trim() && !sugM.trim()) { setErr(CHAT.inThePast()); return; }
       const h = Math.max(0, Math.min(23, parseInt(sugH || '0', 10) || 0));
       const m = Math.max(0, Math.min(59, parseInt(sugM || '0', 10) || 0));
       const d = new Date(plan.starts_at * 1000);
       d.setHours(h, m, 0, 0);
+      // Названный час уже прошёл — человек имеет в виду завтра, а не вчера. Сервер отказал бы.
+      if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
       ts = Math.floor(d.getTime() / 1000);
     }
     const label = new Date(ts * 1000).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: !ru });
@@ -613,7 +618,8 @@ export default function Plan() {
                   propose на живом плане честно бьётся об PLAN_EXISTS. Пока экран просит ссылку
                   (O.20a), на кадре стоят только её две кнопки — эти прячутся. Получателю
                   неподтверждённого плана здесь делать нечего — у него свой блок O.C3 ниже. */}
-              {(phase === 'waiting' || phase === 'confirmed') && !pendingChange && !countering && !needsLink
+              {(phase === 'waiting' || phase === 'confirmed') && !pendingChange && !countering
+                && !needsLink && !needsPlace
                 && !(phase === 'waiting' && !myConfirmed(plan, me)) ? (
                 <>
                   <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
@@ -663,45 +669,58 @@ export default function Plan() {
                 </>
               ) : null}
 
-              {/* OF.C4: собеседник опаздывает — займи столик; выйти можно, но это отказ. */}
-              {(phase === 'soon' || phase === 'now') && offline && theirLive === 'late' ? (
+              {/*
+                OF.22/OF.23/OF.C4 — действия у встречи на носу. Состав кнопок НЕ меняется при
+                переходе «скоро» → «сейчас», и это сознательное отступление от борда: там в «скоро»
+                на втором месте «Я опаздываю», а в «сейчас» — «Не смогу». Фаза переключается сама,
+                по часам, раз в пятнадцать секунд. Человек, целившийся в «опаздываю», нажал бы
+                отмену встречи — и отменил бы её по-настоящему, необратимо. Поэтому:
+
+                  красная  — написать собеседнику (одна и та же во всех состояниях);
+                  тёмная   — «Я опаздываю», пока я не отметился (самое частое действие);
+                  мягкая   — выход: «Не могу ждать», когда опаздывает второй, иначе «Не смогу».
+
+                «Я на месте» на кадрах кнопкой не нарисована, но статус «At the place» на них есть —
+                без кнопки он недостижим, поэтому стоит мягкой строкой.
+              */}
+              {phase === 'soon' || phase === 'now' ? (
                 <>
                   <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
                     <Text style={s.ctaText}>{PLAN.messageThem(other)}</Text>
                   </Pressable>
-                  <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => respond('decline')}>
-                    <Text style={s.ctaDarkText}>{PLAN.cantWait()}</Text>
-                  </Pressable>
-                </>
-              ) : phase === 'soon' || phase === 'now' ? (
-                <>
-                  <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
-                    <Text style={s.ctaText}>{PLAN.messageThem(other)}</Text>
-                  </Pressable>
-                  {/* OF.22: у офлайна перед встречей — честное «опаздываю» вместо мгновенного отказа. */}
-                  {offline && myLive !== 'late' && myLive !== 'here' && phase === 'soon' ? (
+
+                  {offline && myLive !== 'late' && myLive !== 'here' ? (
                     <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => sendLive('late')}>
                       <Text style={s.ctaDarkText}>{PLAN.imLate()}</Text>
                     </Pressable>
-                  ) : (
-                    <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => respond('decline')}>
-                      <Text style={s.ctaDarkText}>{PLAN.cantMakeIt()}</Text>
-                    </Pressable>
-                  )}
-                  {/* «Я на месте» на кадрах нет как кнопки, но статус «At the place» на них есть —
-                      без кнопки он недостижим. Мягкой строкой, не мешает главному. */}
+                  ) : null}
+
                   {offline && myLive !== 'here' ? (
                     <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => sendLive('here')}>
                       <Text style={s.ctaSoftText}>{PLAN.imHere()}</Text>
                     </Pressable>
                   ) : null}
+
+                  <Pressable
+                    accessibilityRole="button"
+                    style={offline ? s.ctaSoft : s.ctaDark}
+                    onPress={() => respond('decline')}
+                  >
+                    <Text style={offline ? s.ctaSoftText : s.ctaDarkText}>
+                      {offline && theirLive === 'late' ? PLAN.cantWait() : PLAN.cantMakeIt()}
+                    </Text>
+                  </Pressable>
                 </>
               ) : null}
 
               {/* O.23a: моя отмена — записка «никто не ждёт» и чат. */}
               {phase === 'cancelled' && cancelledByMe ? (
                 <>
-                  <View style={s.infoBox}><Text style={s.infoText}>{PLAN.nobodyWaiting(other)}</Text></View>
+                  <View style={s.infoBox}>
+                    <Text style={s.infoText}>
+                      {offline ? PLAN.nobodyWaitingOffline(other) : PLAN.nobodyWaiting(other)}
+                    </Text>
+                  </View>
                   <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
                     <Text style={s.ctaText}>{CHAT.openChat()}</Text>
                   </Pressable>
@@ -948,7 +967,7 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
       // Отменил я — записка «никто не ждёт» стоит ниже, в рамке; дублировать её здесь незачем.
       if (by && by === String(me).trim().toLowerCase()) return '';
       // O.C4: отменили мне — объяснение стоит прямо под заголовком, как на кадре.
-      if (by) return PLAN.toldYouNote(other);
+      if (by) return plan?.mode === 'offline' ? PLAN.toldYouNoteOffline(other) : PLAN.toldYouNote(other);
       return T('Время освободилось. Можно предложить другое.', 'The slot is free. You can suggest another time.');
     }
     default: return '';
