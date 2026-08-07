@@ -143,6 +143,9 @@ export default function Plan() {
     ? [plan?.venue, plan?.address].filter(Boolean).join(' · ')
     : '';
 
+  /** Место уже стоит зелёной плашкой: встреча на носу и адрес открыт. */
+  const placeReady = offline && (phase === 'soon' || phase === 'now') && !!plan?.address_visible_to_me;
+
   /** OF.22 «Открыть маршрут» — обычная карта по адресу; своей навигации у Kleal нет. */
   const openRoute = () => {
     const q = placeLabel || String(plan?.district || '');
@@ -386,8 +389,9 @@ export default function Plan() {
                   </View>
                 ) : null}
                 {/* OF.20/OF.21: строка места. До подтверждения — честное «после подтверждения»,
-                    после — само место; пока не выбрано — «пока нет». */}
-                {offline ? (
+                    после — само место; пока не выбрано — «пока нет». Когда место уже стоит зелёной
+                    плашкой ниже (OF.22/OF.23), здесь его не повторяем — один адрес, одно место. */}
+                {offline && !(placeReady && placeLabel) ? (
                   <View style={s.metaRow}>
                     <IconPin size={16} c={color.muted} />
                     <Text style={s.metaText}>
@@ -417,7 +421,7 @@ export default function Plan() {
               </View>
 
               {/* OF.22/OF.23: место и маршрут — зелёной плашкой, когда встреча на носу. */}
-              {offline && (phase === 'soon' || phase === 'now') && plan.address_visible_to_me && placeLabel ? (
+              {placeReady && placeLabel ? (
                 <View style={s.linkCard}>
                   <View style={{ flex: 1 }}>
                     <Text style={s.linkTitle} numberOfLines={2}>{placeLabel}</Text>
@@ -872,8 +876,9 @@ function headline(phase: string, other: string, plan: any, me: string, ru: boole
   if (phase === 'confirmed' && plan?.mode === 'offline' && !plan?.address_set) {
     return PLAN.pickPlaceTitle();
   }
-  // OF.22a/OF.C4: опоздание перекрывает счётчик — оно и есть новость этого экрана.
-  if (phase === 'confirmed' || phase === 'soon' || phase === 'now') {
+  // OF.22a/OF.C4: опоздание перекрывает счётчик — оно и есть новость этого экрана. Но только
+  // когда встреча на носу: за восемь часов до неё «опаздывает» ничего не значит.
+  if (phase === 'soon' || phase === 'now') {
     if (String(plan?.my_live?.status || '') === 'late') return PLAN.lateKnows(other);
     if (String(plan?.their_live?.status || '') === 'late') return PLAN.theyLate(other);
   }
@@ -918,8 +923,10 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
   }
   // Офлайн говорит про адрес и дорогу, онлайн — про ссылку.
   if (plan?.mode === 'offline') {
-    if (String(plan?.my_live?.status || '') === 'late') return PLAN.lateSentNote(other);
-    if (String(plan?.their_live?.status || '') === 'late') return PLAN.theyLateNote(other);
+    if (phase === 'soon' || phase === 'now') {
+      if (String(plan?.my_live?.status || '') === 'late') return PLAN.lateSentNote(other);
+      if (String(plan?.their_live?.status || '') === 'late') return PLAN.theyLateNote(other);
+    }
     // OF.20, вид отправителя: обещать «видит место и ссылку» у встречи вживую нельзя — второй
     // видит только район, пока не подтвердит (OF.C3).
     if (phase === 'waiting') return PLAN.sentNoteOffline(other);
@@ -959,7 +966,7 @@ function statusFor(p: any, plan: any, phase: string, pendingChange: any, ru: boo
   // OF.22/OF.22a/OF.23: живой статус — свежайшая правда об этом человеке, он перекрывает
   // «подтвердил(а)». Сервер кладёт его прямо в строку участника.
   const live = String(p?.live?.status || '');
-  if (live && (phase === 'confirmed' || phase === 'soon' || phase === 'now')) {
+  if (live && (phase === 'soon' || phase === 'now')) {
     if (live === 'late') return p?.is_me ? PLAN.liveLateMine() : PLAN.liveLate();
     if (live === 'otw') return PLAN.liveOtw();
     if (live === 'here') return PLAN.liveHere();
