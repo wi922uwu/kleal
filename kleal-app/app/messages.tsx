@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { MSG, Row, intentRows, threadRows, searchRows, bucketOf, isUnread, rowTime } from '../src/messages';
+import { MSG, Row, intentRows, planRows, threadRows, searchRows, bucketOf, isUnread, rowTime } from '../src/messages';
 import { planWhen } from '../src/chat';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, msgPrefs, setMsgPrefs } from '../src/state';
@@ -34,7 +34,7 @@ export default function Messages() {
   const ru = getLang() === 'ru';
   const me = String(st.profile.name || '');
 
-  const [tab, setTab] = useState<'intents' | 'private'>('intents');
+  const [tab, setTab] = useState<'intents' | 'plans' | 'private'>('intents');
   const [searching, setSearching] = useState(false);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
@@ -95,6 +95,11 @@ export default function Messages() {
     () => intentRows(me, data.plans, data.history, data.inbox, data.outbox, ru, planWhen),
     [me, data, ru]
   );
+  /** Договорились о времени и месте — пара живёт здесь, а не среди намерений. */
+  const plansSec = useMemo(
+    () => planRows(me, data.plans, data.history, ru, planWhen),
+    [me, data, ru]
+  );
   const privateRows = useMemo(
     () => threadRows(data.threads).map((r) => ({ ...r, count: counts[String(r.who || '').toLowerCase()] })),
     [data.threads, counts]
@@ -113,17 +118,19 @@ export default function Messages() {
     return { normal, muted, archived };
   };
 
-  const intentsAll = [...sections.upcoming, ...sections.forming, ...sections.past];
-  const iUp = split(sections.upcoming), iForm = split(sections.forming), iPast = split(sections.past);
-  const iMuted = [...iUp.muted, ...iForm.muted, ...iPast.muted];
-  const iArch = [...iUp.archived, ...iForm.archived, ...iPast.archived];
+  const intentsAll = sections.forming;
+  const iForm = split(sections.forming);
+  const plansAll = [...plansSec.upcoming, ...plansSec.forming, ...plansSec.past];
+  const pUp = split(plansSec.upcoming), pForm = split(plansSec.forming), pPast = split(plansSec.past);
+  const pMuted = [...pUp.muted, ...pForm.muted, ...pPast.muted];
+  const pArch = [...pUp.archived, ...pForm.archived, ...pPast.archived];
   const pv = split(privateRows);
 
   const empty = !loading
-    && intentsAll.length === 0 && privateRows.length === 0;
+    && intentsAll.length === 0 && plansAll.length === 0 && privateRows.length === 0;
 
   const found = useMemo(
-    () => searchRows(tab === 'intents' ? intentsAll : privateRows, q),
+    () => searchRows(tab === 'intents' ? intentsAll : tab === 'plans' ? plansAll : privateRows, q),
     [q, tab, data] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
@@ -246,7 +253,7 @@ export default function Messages() {
         // MSG.02: два сегмента в одной белой обойме, активный — красная пилюля.
         <View style={s.tabsWrap}>
           <View style={s.tabs}>
-            {([['intents', MSG.tabIntents()], ['private', MSG.tabPrivate()]] as const).map(([k, label]) => (
+            {([['intents', MSG.tabIntents()], ['plans', MSG.tabPlans()], ['private', MSG.tabPrivate()]] as const).map(([k, label]) => (
               <Pressable
                 key={k}
                 accessibilityRole="button"
@@ -303,11 +310,17 @@ export default function Messages() {
           </View>
         ) : tab === 'intents' ? (
           <>
-            {section(MSG.upcoming(), iUp.normal)}
             {section(MSG.forming(), iForm.normal)}
-            {section(MSG.past(), iPast.normal)}
-            {section(MSG.muted(), iMuted)}
-            {section(MSG.archived(), iArch.map((r) => ({ ...r, teaser: MSG.readOnly() })))}
+            {section(MSG.muted(), iForm.muted)}
+            {section(MSG.archived(), iForm.archived.map((r) => ({ ...r, teaser: MSG.readOnly() })))}
+          </>
+        ) : tab === 'plans' ? (
+          <>
+            {section(MSG.upcoming(), pUp.normal)}
+            {section(MSG.forming(), pForm.normal)}
+            {section(MSG.past(), pPast.normal)}
+            {section(MSG.muted(), pMuted)}
+            {section(MSG.archived(), pArch.map((r) => ({ ...r, teaser: MSG.readOnly() })))}
           </>
         ) : (
           <>

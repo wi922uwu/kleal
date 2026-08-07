@@ -267,8 +267,25 @@ export default function Create() {
             </View>
           ) : null}
 
+          {/*
+            Круг замыкается там же, где начался: сводка по затее и кнопка «Создать интент» — та
+            самая, что была в окне Бадди. Кнопки «Дальше» здесь нет намеренно: она обещала
+            следующий шаг, а человек уже ответил на всё, что у него спрашивали. Уточнил ещё раз —
+            сводка пересобирается, и кнопка снова та же.
+          */}
           {ready ? (
             <View style={s.readyBlock}>
+              <View style={s.sumCard}>
+                <Text style={s.sumLabel}>{CREATE.summaryLabel()}</Text>
+                <Text style={s.sumTitle}>{ready.title}</Text>
+                {ready.topics.length ? (
+                  <View style={s.sumChips}>
+                    {ready.topics.map((t) => (
+                      <View key={t} style={s.sumChip}><Text style={s.sumChipText}>{t}</Text></View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
               <Text style={s.readyNote}>{CREATE.readyNote()}</Text>
               <Pressable accessibilityRole="button" style={s.readyBtn} onPress={next}>
                 <Text style={s.readyBtnText}>{CREATE.ready()}</Text>
@@ -345,6 +362,13 @@ const s = StyleSheet.create({
   hintText: { ...type.labelMedium, color: color.fg } as any,
 
   readyBlock: { marginTop: space.lg, gap: space.sm },
+  /** Сводка по затее перед созданием — та же карточка, что человек увидит на экране интента. */
+  sumCard: { backgroundColor: color.card, borderRadius: rad.lg, padding: space.md, gap: 8 },
+  sumLabel: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
+  sumTitle: { fontSize: 17, fontWeight: '700', color: color.fg } as any,
+  sumChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  sumChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: rad.full, backgroundColor: color.neutral100 },
+  sumChipText: { ...type.caption, color: color.fg } as any,
   readyNote: { ...type.bodySmall, color: color.muted } as any,
   readyBtn: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   readyBtnText: { ...type.button, color: color.onPrimary } as any,

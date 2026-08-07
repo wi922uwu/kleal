@@ -12,6 +12,8 @@ import type { MsgPrefs } from './state';
 export const MSG = {
   title: () => T('Сообщения', 'Messages'),
   tabIntents: () => T('Интенты', 'Intents'),
+  /** Договорились о времени и месте — пара уходит сюда, из «Интентов» она исчезает. */
+  tabPlans: () => T('Планы', 'Plans'),
   tabPrivate: () => T('Личные', 'Private'),
 
   // MSG.01 — пустое состояние, дословно с кадра.
@@ -104,26 +106,13 @@ export function otherOf(plan: any, me: string): string {
 }
 
 /**
- * Вкладка «Интенты»: планы и приглашения по секциям.
- * Предстоящее — подтверждённые планы; Собирается — ждущие планы и приглашения в обе стороны;
- * Прошло — done/cancelled. Бейджи и mute/архив накладывает экран — здесь только факты.
+ * Вкладка «Интенты»: то, что ещё НЕ стало встречей — приглашения в обе стороны и пары, которые
+ * уже согласились и договариваются. Как только появился план (у пары есть время и место),
+ * строка уходит на вкладку «Планы» — см. planRows. Один и тот же человек не должен стоять в двух
+ * местах: пока встреча живая, ей место среди планов, а не среди намерений.
  */
 export function intentRows(me: string, plans: any[], history: any[], inbox: any[], outbox: any[], ru: boolean, planWhen: (p: any, ru: boolean) => string) {
-  const upcoming: Row[] = [];
   const forming: Row[] = [];
-  const past: Row[] = [];
-
-  for (const p of plans || []) {
-    const other = otherOf(p, me);
-    const row: Row = {
-      key: 'mp:' + p.id, kind: 'plan', id: p.id, who: other,
-      title: String(p.title || other), sub: `${other} · ${planWhen(p, ru)}`,
-      photo: (p.participants || []).find((x: any) => norm(x?.name) === norm(other))?.photo,
-      t: Number(p.updated || p.created || 0),
-    };
-    if (p.state === 'confirmed') upcoming.push(row);
-    else if (p.state === 'proposed') forming.push({ ...row, teaser: MSG.waitingAnswer() });
-  }
 
   for (const r of inbox || []) {
     if (r.status !== 'pending') continue;
@@ -173,23 +162,45 @@ export function intentRows(me: string, plans: any[], history: any[], inbox: any[
     });
   }
 
-  for (const p of history || []) {
+  // Прошедшие встречи живут на вкладке «Планы» вместе с живыми — см. planRows. Здесь остаётся
+  // только «Собирается»: приглашения и пары, у которых встречи ещё нет.
+  const byT = (a: Row, b: Row) => (b.t || 0) - (a.t || 0);
+  forming.sort(byT);
+  return { forming };
+}
+
+/**
+ * Вкладка «Планы»: встречи, о которых уже договорились. Предстоящее — подтверждённые обеими
+ * сторонами; Собирается — отправленные и ждущие ответа; Прошло — состоявшиеся и отменённые.
+ */
+export function planRows(me: string, plans: any[], history: any[], ru: boolean, planWhen: (p: any, ru: boolean) => string) {
+  const upcoming: Row[] = [];
+  const forming: Row[] = [];
+  const past: Row[] = [];
+  const row = (p: any): Row => {
     const other = otherOf(p, me);
-    // «Закончилось» — это про состоявшуюся встречу, а не про то, что запись закрыта: сервер
-    // ставит done и когда пара ответила «не состоялась». Смотрим на исход, а не на состояние.
+    return {
+      key: 'mp:' + p.id, kind: 'plan', id: p.id, who: other,
+      title: String(p.title || other), sub: `${other} · ${planWhen(p, ru)}`,
+      photo: (p.participants || []).find((x: any) => norm(x?.name) === norm(other))?.photo,
+      t: Number(p.updated || p.created || 0),
+    };
+  };
+  for (const p of plans || []) {
+    if (p.state === 'confirmed') upcoming.push(row(p));
+    else if (p.state === 'proposed') forming.push({ ...row(p), teaser: MSG.waitingAnswer() });
+  }
+  for (const p of history || []) {
+    // «Закончилось» — про состоявшуюся встречу: сервер ставит done и когда пара ответила «не
+    // состоялась», поэтому смотрим на исход, а не на состояние.
     const happened = p.outcome ? p.outcome.happened !== false : p.state === 'done';
     const done = p.state === 'done' && happened;
     past.push({
-      key: 'mp:' + p.id, kind: 'plan', id: p.id, who: other,
-      title: String(p.title || other),
+      ...row(p),
       sub: `${done ? MSG.ended() : MSG.calledOffShort()} · ${planWhen(p, ru)}`,
-      // Оценка ещё не оставлена — список сам зовёт её оставить, как на кадре.
       teaser: done && !p.my_feedback ? MSG.rateTeaser() : undefined,
-      photo: (p.participants || []).find((x: any) => norm(x?.name) === norm(other))?.photo,
-      t: Number(p.updated || 0),
     });
   }
-
   const byT = (a: Row, b: Row) => (b.t || 0) - (a.t || 0);
   upcoming.sort(byT); forming.sort(byT); past.sort(byT);
   return { upcoming, forming, past };
