@@ -150,7 +150,10 @@ export function dateChips(n = 8, from = new Date()): { key: string; label: strin
     const d = new Date(from);
     d.setDate(d.getDate() + i);
     out.push({
-      key: d.toISOString().slice(0, 10),
+      // Ключ — из ЛОКАЛЬНЫХ частей даты, не из toISOString(): та отдаёт UTC, и после местной
+      // полуночи (пока UTC ещё вчера) чип «Пт, 7» носил ключ «-06» — план строился на вчера,
+      // и сервер честно отвечал IN_THE_PAST. Поймано вживую в симуляторе в 02:58.
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
       label: d.toLocaleDateString(loc, { weekday: 'short', month: 'short', day: 'numeric' }),
     });
   }

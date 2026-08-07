@@ -298,11 +298,14 @@ function PersonCard({ p, myArea }: { p: Person; myArea: string }) {
 }
 
 function InviteCard({ inv }: { inv: Invite }) {
+  const router = useRouter();
   const io = inv.intent || {};
   const w = splitWhen(String(io.when || io.time || ''));
   const where = String(io.area || io.place || '');
+  // Вся карточка — дверь в приглашение (O.C1), не только кнопка: попадать проще.
+  const open = () => router.push({ pathname: '/invite', params: { id: inv.id } });
   return (
-    <View style={s.meet}>
+    <Pressable accessibilityRole="button" onPress={open} style={s.meet}>
       {inv.photo ? (
         <Image source={{ uri: inv.photo }} style={s.meetAva} />
       ) : (
@@ -326,11 +329,11 @@ function InviteCard({ inv }: { inv: Invite }) {
             <Text style={s.meta} numberOfLines={1}>{inv.note || HOME.wantsToMeet()}</Text>
           )}
         </View>
-        <Pressable accessibilityRole="button" style={s.meetBtn}>
+        <Pressable accessibilityRole="button" style={s.meetBtn} onPress={open}>
           <Text style={s.meetBtnText}>{HOME.review()}</Text>
         </Pressable>
       </View>
-    </View>
+    </Pressable>
   );
 }
 

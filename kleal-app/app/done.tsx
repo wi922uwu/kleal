@@ -31,7 +31,13 @@ export default function Done() {
       </View>
 
       <View style={s.ctaWrap}>
-        <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.replace('/home')}>
+        {/* Кнопка обещает создание интента — и открывает именно его. Главная подкладывается ВНИЗ,
+            чтобы «назад» из создания вело на неё, а не обратно в поздравление. */}
+        <Pressable
+          accessibilityRole="button"
+          style={s.cta}
+          onPress={() => { router.replace('/home'); router.push('/create'); }}
+        >
           <Text style={s.ctaText}>{DONE_SCREEN.cta()}</Text>
         </Pressable>
       </View>
