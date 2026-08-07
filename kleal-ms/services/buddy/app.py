@@ -1531,26 +1531,37 @@ def resummary(profile, current, lang="ru", personality=""):
 # question — gives eight chances to hang on a chain that allows ~195s, for questions that are fixed by
 # design anyway. The paragraph is the PERSONALITY text and has its own owner: «Сводка Kleal» keeps its
 # own field and afterwards re-weaves to carry this strand, rather than being replaced by it.
-PERSONA_PROMPT = """You are Kleal. Below is a user's profile data, the life story they wrote in their own
-words, and their answers to a short personality test. Write ONE warm, natural, flowing paragraph
-describing how this person comes across and who they are easy with. Address the user directly ("you").
-3-5 sentences. Be concrete and grounded ONLY in what is given — never invent facts, never flatter.
+PERSONA_PROMPT = """You are Kleal. Below are a user's answers to a short personality test and, if they
+wrote one, a few lines about themselves in their own words. Write ONE warm, natural, flowing paragraph
+describing HOW THIS PERSON COMES ACROSS and who they are easy with. Address the user directly ("you").
+2-4 sentences. Be concrete and grounded ONLY in what is given — never invent facts, never flatter.
+In Russian address the user as «ты», in Spanish as «tú».
+DO NOT SPECULATE: no «probably», «you likely feel», no guessing at moods or settings the answers do
+not describe. Say what their answers show and stop.
 No bullet points, no headings, no preamble: output ONLY the paragraph.
 
-LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ Interests may be
-stored as English keywords for the matching engine — translate them naturally, and do not switch
-language because of them."""
+THIS PARAGRAPH IS ABOUT CHARACTER, NOT ABOUT HOBBIES. You are deliberately not given their interests,
+languages or city — those live elsewhere in the profile and are written about there. Do not guess at
+them, do not mention hiking, cooking, coffee or any other activity even if a test answer brushes past
+one: use such an answer only as evidence of how they behave with people. A paragraph that lists what
+someone likes doing has answered the wrong question.
+
+LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__"""
 
 
 def persona(profile, story, answers, current, lang="ru"):
     """The personality test -> one paragraph, in the user's language, or "" if the model won't comply."""
-    lang = "en" if str(lang).lower() == "en" else "ru"
+    lang = str(lang or "ru").lower()
+    if lang not in ("ru", "en", "es"):
+        lang = "ru"
     qa = "\n".join("Q: %s\nA: %s" % (str(a.get("q", ""))[:200], str(a.get("a", ""))[:400])
                     for a in (answers or []) if isinstance(a, dict) and str(a.get("a", "")).strip())
-    payload = ("PROFILE DATA:\n" + json.dumps(profile or {}, ensure_ascii=False)[:1800] +
-               "\n\nTHEIR LIFE STORY, IN THEIR OWN WORDS:\n" + (str(story or "").strip()[:2500] or "(not written)") +
-               "\n\nPERSONALITY TEST ANSWERS:\n" + (qa or "(not taken)") +
-               "\n\nCURRENT SUMMARY:\n" + (str(current or "").strip()[:900] or "(none yet)"))
+    # Ни профиля, ни общей сводки на входе: этот абзац — про характер, и пока интересы лежали
+    # рядом, модель исправно пересказывала их («твоя любовь к походам и готовке»), то есть отвечала
+    # на вопрос соседнего экрана. Остаются ответы теста и то, что человек написал о себе сам.
+    payload = ("PERSONALITY TEST ANSWERS:\n" + (qa or "(not taken)") +
+               "\n\nWHAT THEY WROTE ABOUT THEMSELVES, IN THEIR OWN WORDS:\n"
+               + (str(story or "").strip()[:2500] or "(not written)"))
     sys_prompt = (PERSONA_PROMPT
                   .replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
                   .replace("__LANGDIR__", _LANGDIR.get(lang, _LANGDIR["ru"])))

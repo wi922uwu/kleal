@@ -70,17 +70,8 @@ export default function Personality() {
         <Text style={s.ctaText}>{C.takeTest()}</Text>
       </Pressable>
 
-      <Card>
-        <View style={s.head}>
-          <Text style={s.label}>{C.title()}</Text>
-          {updated ? <Text style={s.updated}>{updated}</Text> : null}
-        </View>
-        <Text style={s.body}>{text || C.empty()}</Text>
-        <Pressable accessibilityRole="button" style={s.dark} onPress={() => router.push('/profile/test')}>
-          <Text style={s.darkText}>{C.editWith()}</Text>
-        </Pressable>
-      </Card>
-
+      {/* Свои слова — ВЫШЕ сводки: человек сначала пишет о себе, а абзац Kleal — уже следствие.
+          Обратный порядок читался как «вот наш вердикт, а теперь можешь дополнить». */}
       <Text style={s.cap}>{C.storyCap()}</Text>
       <TextInput
         style={s.story}
@@ -98,6 +89,18 @@ export default function Personality() {
         <Text style={s.count}>{story.length} / {STORY_MAX}</Text>
         {saved ? <Text style={s.savedNote}>{C.saved()}</Text> : null}
       </View>
+
+      <Card>
+        <View style={s.head}>
+          <Text style={s.label}>{C.title()}</Text>
+          {updated ? <Text style={s.updated}>{updated}</Text> : null}
+        </View>
+        <Text style={s.body}>{text || C.empty()}</Text>
+        <Pressable accessibilityRole="button" style={s.dark} onPress={() => router.push('/profile/test')}>
+          <Text style={s.darkText}>{C.editWith()}</Text>
+        </Pressable>
+      </Card>
+
     </ProfileShell>
   );
 }

@@ -33,10 +33,30 @@ export const BUDDY = {
 /** Всплывающее окно O.03. Появляется и по кнопке, и по распознанному триггеру — оно одно. */
 export const SHEET = {
   title: () => T('С чего начнём?', 'Get started'),
+  /** Окно называет затею словами: человек соглашается на конкретное, а не на «создать интент». */
+  what: (what: string) => T(`Похоже, ты хочешь «${what}».`, `Looks like you want to “${what}”.`),
   create: () => T('Создать интент', 'Create Intent'),
   keep: () => T('Продолжить разговор', 'Keep chatting'),
   close: () => T('Закрыть', 'Close'),
+  /**
+   * Ответ на «продолжим общаться». Kleal называет, что он понял, и отдаёт ход человеку: молча
+   * закрыть окно значило бы, что распознавание случилось где-то за кадром и обсудить его нельзя.
+   */
+  keptChatting: (what: string) =>
+    T(
+      `Слушай, я думал, ты хочешь «${what}». Может, имелось в виду другое — или просто болтаем дальше?`,
+      `I thought you wanted to “${what}”. Did you mean something else — or shall we just keep talking?`
+    ),
 };
+
+/** Как назвать распознанную затею человеку: заголовок от модели, иначе темы, иначе его же слова. */
+export function intentLabel(res: any, fallback = ''): string {
+  const i = (res && res.intent) || {};
+  const title = String(i.title || i.activity || '').trim();
+  if (title) return title;
+  const topics = Array.isArray(i.topics) ? i.topics.filter(Boolean).map(String) : [];
+  return topics.length ? topics.join(', ') : String(fallback || '').trim();
+}
 
 export const CREATE = {
   title: () => T('Все интенты', 'All intents'),

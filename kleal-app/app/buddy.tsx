@@ -19,7 +19,7 @@ import { IconChevronLeft, IconMic } from '../src/components/icons';
 import { useLang, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { buddy as buddyApi } from '../src/api';
-import { BUDDY, SHEET, looksLikeIntent, packHistory, Turn } from '../src/buddy';
+import { BUDDY, SHEET, looksLikeIntent, intentLabel, packHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string };
@@ -44,6 +44,8 @@ export default function Buddy() {
   const [draft, setDraft] = useState('');
   const [typing, setTyping] = useState(false);
   const [sheet, setSheet] = useState(false);
+  /** Что распознал Kleal — заголовок для окна и для реплики «а я думал…». */
+  const [what, setWhat] = useState('');
   /** Тема, с которой откроется создание интента, если человек его выберет. */
   const [topic, setTopic] = useState('');
   const started = useRef(false);
@@ -71,14 +73,25 @@ export default function Buddy() {
       const r: any = await buddyApi.chat(next, profile());
       setTyping(false);
       const reply = String(r?.reply || '');
+      /**
+       * Распознан план — на экран НЕ приходит ни одной реплики: вместо неё открывается окно
+       * выбора. Раньше человек получал и ответ агента, и окно поверх него — то есть разговор
+       * продолжался и одновременно прерывался, и было непонятно, на что отвечать.
+       *
+       * В историю ответ всё же кладём: он был, модель на него опирается, и после «продолжим
+       * общаться» разговор не должен начинаться с пустоты.
+       */
+      if (looksLikeIntent(r)) {
+        const label = intentLabel(r, text);
+        setTurns(reply ? [...next, { role: 'assistant', content: reply }] : next);
+        setTopic(text);
+        setWhat(label);
+        setSheet(true);
+        return;
+      }
       if (reply) {
         say('bot', reply);
         setTurns([...next, { role: 'assistant', content: reply }]);
-      }
-      // Распознанный план НЕ создаёт интент сам — он открывает окно выбора. Решает человек.
-      if (looksLikeIntent(r)) {
-        setTopic(text);
-        setSheet(true);
       }
     } catch {
       setTyping(false);
@@ -111,6 +124,18 @@ export default function Buddy() {
    * ОБ ЭТОМ» без истории не значит ничего — построитель переспрашивал «о чём?», хотя человек
    * рассказывал ему это минуту назад.
    */
+  /**
+   * «Продолжим общаться»: окно закрывается, и Kleal вслух называет, что он понял. Молчаливое
+   * закрытие оставляло человека с догадкой — распознал агент что-то или нет.
+   */
+  const keepChatting = () => {
+    setSheet(false);
+    if (!what) return;
+    const line = SHEET.keptChatting(what);
+    say('bot', line);
+    setTurns((t) => [...t, { role: 'assistant', content: line }]);
+  };
+
   const toCreate = () => {
     setSheet(false);
     const params: Record<string, string> = {};
@@ -176,8 +201,9 @@ export default function Buddy() {
 
         <GetStarted
           open={sheet}
+          what={what}
           onCreate={toCreate}
-          onKeep={() => setSheet(false)}
+          onKeep={keepChatting}
           bottomInset={insets.bottom}
         />
       </View>
@@ -190,9 +216,11 @@ export default function Buddy() {
  * обоих случаях один и тот же: создавать интент или продолжать разговор.
  */
 export function GetStarted({
-  open, onCreate, onKeep, bottomInset = 0,
+  open, what, onCreate, onKeep, bottomInset = 0,
 }: {
   open: boolean;
+  /** Что именно распознал Kleal. Человек соглашается на конкретную затею, а не на «интент». */
+  what?: string;
   onCreate: () => void;
   onKeep: () => void;
   bottomInset?: number;
@@ -208,6 +236,7 @@ export function GetStarted({
             <Text style={sh.x}>✕</Text>
           </Pressable>
         </View>
+        {what ? <Text style={sh.what}>{SHEET.what(what)}</Text> : null}
         <Pressable accessibilityRole="button" style={[sh.btn, sh.btnPri]} onPress={onCreate}>
           <Text style={sh.btnPriText}>{SHEET.create()}</Text>
         </Pressable>
@@ -262,6 +291,8 @@ const sh = StyleSheet.create({
   grip: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: color.neutral300 },
   headRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.sm },
   title: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
+  /** Строка «Похоже, ты хочешь …» — под заголовком окна, перед кнопками. */
+  what: { ...type.bodySmall, color: color.muted, marginBottom: 4 } as any,
   x: { fontSize: 20, color: color.muted },
   btn: { height: 54, borderRadius: rad.full, alignItems: 'center', justifyContent: 'center' },
   btnPri: { backgroundColor: color.primary },
