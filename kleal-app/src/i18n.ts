@@ -9,7 +9,29 @@ import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Localization from 'expo-localization';
 
+/**
+ * Языки интерфейса — ru и en. Испанский пока живёт ОТДЕЛЬНО (см. replyLang): интерфейс на нём
+ * не переведён, а вот агент и сводка на нём говорить обязаны — человеку с испанской системой
+ * незачем читать рассказ о себе по-английски.
+ */
 export type Lang = 'ru' | 'en';
+
+/** Язык, на котором отвечает агент и пишется сводка. Их три, и они настоящие. */
+export type ReplyLang = 'ru' | 'en' | 'es';
+
+let reply: ReplyLang = 'en';
+
+/**
+ * Язык ответов агента. Отличается от языка интерфейса ровно в одном случае — испанская система:
+ * кнопки останутся английскими (перевода ещё нет), но Kleal заговорит по-испански.
+ */
+export function replyLang(): ReplyLang {
+  return reply;
+}
+
+export function setReplyLang(l: ReplyLang) {
+  reply = l;
+}
 
 const KEY = 'kleal.lang';
 let current: Lang = 'en';
@@ -26,6 +48,7 @@ export function getLang(): Lang {
 export function setLang(l: Lang) {
   if (l === current) return;
   current = l;
+  reply = l;                       // выбрал язык интерфейса — на нём же отвечает и агент
   AsyncStorage.setItem(KEY, l).catch(() => {});
   listeners.forEach((fn) => fn(l));
 }
@@ -40,10 +63,13 @@ export async function initLang(): Promise<Lang> {
   }
   if (saved === 'ru' || saved === 'en') {
     current = saved;
+    reply = saved;
   } else {
     // Русский только при явно русской локали; всё остальное — английский.
     const tag = String(Localization.getLocales?.()[0]?.languageCode || 'en').toLowerCase();
     current = tag === 'ru' ? 'ru' : 'en';
+    // Испанскую систему интерфейс показать не может, а агент — может, и должен.
+    reply = tag === 'ru' ? 'ru' : tag === 'es' ? 'es' : 'en';
   }
   listeners.forEach((fn) => fn(current));
   return current;

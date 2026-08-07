@@ -1483,6 +1483,8 @@ RESUMMARY_PROMPT = '''You are Kleal. Below is a user's current profile summary a
 
 If a PERSONALITY section is present, it is a separate text the user owns and keeps: do NOT copy its sentences and do NOT replace the summary with it. Carry its substance — how they come across and who they are easy with — into the paragraph, while keeping everything the CURRENT SUMMARY already states about their life, interests and plans. The result must read as ONE paragraph about the whole person.
 
+WRITE ABOUT THE PERSON, NOT ABOUT THEIR SETTINGS. Never mention safety options, privacy or visibility choices, matching permissions, verification, radius in kilometres or coordinates — they are switches in an app, not traits of a human being, and a paragraph that recites them reads like a form.
+
 LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ The interests may be stored as English keywords for the matching engine — translate them naturally, do not switch language because of them.'''
 
 
@@ -1491,12 +1493,18 @@ def resummary(profile, current, lang="ru", personality=""):
 
     `personality` is the SEPARATE text the Kleal test owns. It is carried in as substance to weave,
     never as sentences to copy: the two texts have two owners and must not collapse into one."""
-    lang = "en" if str(lang).lower() == "en" else "ru"
+    lang = str(lang or "ru").lower()
+    if lang not in ("ru", "en", "es"):
+        lang = "ru"
     pers = str(personality or "").strip()[:900]
+    # Настройки в модель не отдаём вовсе: запрет словами — второй рубеж, а не единственный.
+    DROP = ("photo", "summary", "safety", "permissions", "receiving", "verified", "paused",
+            "radiusKm", "km", "lat", "lon", "geo", "datingOk", "blocksMe", "source", "id")
+    clean = {k: v for k, v in (profile or {}).items() if k not in DROP}
     payload = ("CURRENT SUMMARY:\n" + str(current or "(none yet)") +
                (("\n\nPERSONALITY (the user's own separate text, from the Kleal test — weave, do not copy):\n"
                  + pers) if pers else "") +
-               "\n\nUP-TO-DATE PROFILE DATA:\n" + json.dumps(profile or {}, ensure_ascii=False)[:2200])
+               "\n\nUP-TO-DATE PROFILE DATA:\n" + json.dumps(clean, ensure_ascii=False)[:2200])
     sys_prompt = (RESUMMARY_PROMPT
                   .replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
                   .replace("__LANGDIR__", _LANGDIR.get(lang, _LANGDIR["ru"])))

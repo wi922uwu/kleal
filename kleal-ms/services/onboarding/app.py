@@ -252,16 +252,44 @@ interests.experienceByInterest = {"<interest exactly as named in explicit>": "<h
 
 # the stored artifact: ONE continuous plain-text summary describing everything about the user
 SUMMARY_PROMPT = '''You are Kleal, a personal social agent. You store your memory of a user as ONE continuous plain-text summary.
-Given the profile JSON, write that summary in __LANGNAME__, second person, 4-8 sentences, warm but strictly factual. In Russian address the user as «ты».
-Cover, when present in the JSON: who they are (name, age, gender), where and how far they go (area, radius), languages, EVERY interest with its role, how long they have been into it and key details (platform, rank, team, level, industry), how they like to connect, and their safety choices and permissions.
+Given the profile JSON, write that summary in __LANGNAME__, second person, warm but strictly factual, and AS SHORT AS THE FACTS ARE — two sentences when the profile holds two things, six at the very most. Never pad to reach a length: a sentence that adds no new fact («this is part of your life», «you spend time on it») must not be written at all. __LANGDIR__ In Russian address the user as «ты»; in Spanish use «tú».
+
+WRITE ABOUT THE PERSON, NOT ABOUT THEIR SETTINGS. Cover, when present: who they are (name, age), what they are into — every interest with the detail that makes it theirs (how long, what level, with whom, what exactly they like about it) — the languages they are comfortable in, and the city or area they move around.
+
+NEVER MENTION, even in passing: safety options, privacy or visibility choices, matching permissions, verification, radius in kilometres, coordinates, whether the profile may be used for matching, or any other switch from the app. These are settings, not the person; a summary that recites them reads like a form, and the user asked to be described, not configured. If the JSON has nothing but settings, write only what little is about the person and stop.
+
+INTERESTS ARE STORED FOR A SEARCH ENGINE, NOT FOR READING. They arrive as a mixed bag: English keywords, the user's own words, sometimes another language entirely, sometimes near-duplicates of one another («gaming», «настольные игры», «board games»). Render them as the person would say them in __LANGNAME__, merge the duplicates into one mention, and NEVER quote the raw key, NEVER show a second language in brackets, NEVER remark on which language a key was written in. The storage format is not a fact about the human.
+
+NO COMPLIMENTS AND NO CLOSING FLOURISH. Never tell the person they are interesting, unique, versatile or well-rounded, never sum them up with a verdict, never end on a flattering sentence. State what is there and stop — the last sentence should be as plain as the first. Gender is not a fact to announce either: it only shapes the grammar of the sentences.
+
+DO NOT SPECULATE. No «probably», «likely», «you may also enjoy», no guessing at their free time, their character or their motives from an interest. If the JSON does not state it, it does not go in the summary — a person reading this must not find a single sentence they did not tell you.
+
 STRICT: only facts present in the JSON - NEVER invent or embellish. No lists, no markdown, no headings, no emoji, no JSON. Plain flowing text only.'''
+
+# Три языка, а не два: человек с испанской системой получал английский текст, потому что здесь
+# была развилка «Russian или English». Названия и указания те же, что у buddy (_LANGNAME/_LANGDIR),
+# чтобы агент и сводка не заговорили на разных языках об одном и том же человеке.
+_SUM_LANGNAME = {"ru": "Russian", "en": "English", "es": "Spanish"}
+_SUM_LANGDIR = {
+    "ru": "Every word must be in Russian, in Cyrillic script.",
+    "en": "Every word must be in English.",
+    "es": "Every word must be in Spanish (castellano).",
+}
 
 def v2_summary(profile, lang="ru"):
     """One LLM call -> the running text summary we store for the user (profile.summary)."""
     cfg = MODEL_ID
-    lang = "en" if str(lang).lower() == "en" else "ru"
-    prof = {k: v for k, v in (profile or {}).items() if k not in ("photo", "summary")}
-    sys_prompt = SUMMARY_PROMPT.replace("__LANGNAME__", "Russian" if lang == "ru" else "English")
+    lang = str(lang or "ru").lower()
+    if lang not in ("ru", "en", "es"):
+        lang = "ru"
+    # Настройки в модель просто НЕ отдаём: запрет в промпте — второй рубеж, а не единственный.
+    # Пока они лежали во входе, модель исправно пересказывала их в сводке.
+    DROP = ("photo", "summary", "safety", "permissions", "receiving", "verified", "paused",
+            "radiusKm", "km", "lat", "lon", "geo", "datingOk", "blocksMe", "source", "id")
+    prof = {k: v for k, v in (profile or {}).items() if k not in DROP}
+    sys_prompt = (SUMMARY_PROMPT
+                  .replace("__LANGNAME__", _SUM_LANGNAME.get(lang, "Russian"))
+                  .replace("__LANGDIR__", _SUM_LANGDIR.get(lang, _SUM_LANGDIR["ru"])))
     raw = llm_complete(cfg, [{"role": "system", "content": sys_prompt},
                               {"role": "user", "content": json.dumps(prof, ensure_ascii=False)}], 0.4)
     txt = base.parse_reply(raw)[0]

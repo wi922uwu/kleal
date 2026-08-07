@@ -24,7 +24,7 @@ import {
   hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME, FUNNEL, FUNNEL_OUT_RE, FUNNEL_MORE_RE,
   OWN_INPUT,
 } from '../src/onboarding';
-import { useLang, T, getLang } from '../src/i18n';
+import { useLang, T, getLang , replyLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding, agent } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
@@ -189,7 +189,7 @@ export default function Chat() {
       // Профиль уходит БЕЗ фото: это data-URL на сотни килобайт, и на каждом ходу разговора он
       // гонялся бы туда и обратно без всякой пользы — модель его всё равно не видит.
       const r: any = await onboarding.chat({
-        messages: next, profile: profileForAttach(), lang: getLang(),
+        messages: next, profile: profileForAttach(), lang: replyLang(),
       });
       setTyping(false);
       const reply = String(r?.reply || '');

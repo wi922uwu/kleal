@@ -21,7 +21,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { IconChevronLeft, IconMic, IconSpark } from '../src/components/icons';
-import { useLang, getLang, T } from '../src/i18n';
+import { useLang, getLang, T , replyLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { buddy as buddyApi } from '../src/api';
 import { CREATE, topicsOf, titleOf, unpackHistory, Turn } from '../src/buddy';
@@ -93,7 +93,7 @@ export default function Create() {
     setLoadingSug(true);
     try {
       rolls.current += 1;
-      const r: any = await buddyApi.intentSuggest(profile(), getLang(), String(rolls.current));
+      const r: any = await buddyApi.intentSuggest(profile(), replyLang(), String(rolls.current));
       setSuggestions(Array.isArray(r?.suggestions) ? r.suggestions.map(String) : []);
     } catch {
       setSuggestions([]);

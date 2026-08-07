@@ -8,7 +8,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useLang, T } from '../src/i18n';
+import { useLang, T, replyLang } from '../src/i18n';
 import { useOnb, patch, set, profileForRegister, profileForAttach } from '../src/state';
 import { onboarding } from '../src/api';
 import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';
@@ -44,7 +44,7 @@ export default function Summary() {
   useEffect(() => {
     let alive = true;
     onboarding
-      .summary(profileForAttach())
+      .summary(profileForAttach(), replyLang())
       .then((r: any) => {
         if (!alive) return;
         const next = String(r?.summary || '').trim();

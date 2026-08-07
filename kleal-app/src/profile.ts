@@ -11,7 +11,7 @@
  * веба, потому что из неё живут ВСЕ четыре экрана сразу. Пока derive один, карточка «Языки» на
  * хабе и строка «Общается на …» в памяти не могут разойтись между собой.
  */
-import { T, getLang } from './i18n';
+import { T, getLang, replyLang } from './i18n';
 import { sexLabel, hobbyPlain } from './onboarding';
 import { langPlainName } from './languages';
 import type { Profile } from './state';
@@ -83,7 +83,7 @@ export async function adaptSummary(): Promise<boolean> {
     const st = getState();
     const cur = String((st.profile as any).summary || '');
     const personality = String((st.profile as any).personality || '');
-    const r: any = await buddy.resummary(profileForAttach(), cur, personality, getLang());
+    const r: any = await buddy.resummary(profileForAttach(), cur, personality, replyLang());
     const woven = String(r?.summary || '').trim();
     const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').trim();
     if (!woven) return false;

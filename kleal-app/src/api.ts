@@ -88,8 +88,9 @@ export const onboarding = {
    */
   register: (profile: Json) => api.post('/api/onboarding/register', { profile }),
 
-  /** Текст сводки от агента по собранному профилю. */
-  summary: (profile: Json) => api.post('/api/onboarding/summary', { profile }),
+  /** Текст сводки от агента по собранному профилю. Язык обязателен: без него сервер молча
+   *  писал по-русски, и человек с английской системой читал рассказ о себе не на своём языке. */
+  summary: (profile: Json, lang: string) => api.post('/api/onboarding/summary', { profile, lang }),
 
   /** Реплика агента на шаге интересов — единственный шаг, где отвечает модель. */
   chat: (payload: Json) => api.post('/api/onboarding/chat', payload),
