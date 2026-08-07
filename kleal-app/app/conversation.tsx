@@ -188,7 +188,7 @@ export default function Conversation() {
       }
       setPending(null);
       if (pending.kind === 'plan') {
-        router.push({ pathname: '/plan', params: { who: other, title: intentTitle, photo } });
+        router.push({ pathname: '/plan', params: { who: other, title: intentTitle, photo, address: planAddressHint() } });
       } else {
         // Конец разговора: у сервера нет понятия «закрытый тред», поэтому завершение — это уход
         // с экрана. Полоса и была последним шансом остаться. Открытому по прямой ссылке экрану
@@ -236,8 +236,11 @@ export default function Conversation() {
     setMsgPrefs((m) => ({ ...m, hiddenInvites: [...(m.hiddenInvites || []), String(inviteIn?.id || '')] }));
   const muteNudge = () =>
     setMsgPrefs((m) => ({ ...m, noNudge: [...(m.noNudge || []), norm(other)] }));
+  /** OF.09 → OF.20: точное место, названное при создании интента, — форме плана, не спрашивать дважды. */
+  const planAddressHint = () => String(request?.intent?.address || '');
+
   const toPlan = () =>
-    router.push({ pathname: '/plan', params: { who: other, title: requestTitle || intentTitle, photo } });
+    router.push({ pathname: '/plan', params: { who: other, title: requestTitle || intentTitle, photo, address: planAddressHint() } });
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>

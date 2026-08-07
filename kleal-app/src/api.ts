@@ -277,9 +277,17 @@ export const agent = {
       '/api/agent/mplan-respond', { id, self, action, ...extra }
     ),
 
-  /** Место встречи или ссылка на звонок. Сервер открывает её только подтвердившим (OF.C3). */
-  planAddress: (id: string, self: string, address: string) =>
-    api.post<{ ok?: boolean; error?: string }>('/api/agent/mplan-address', { id, self, address }),
+  /** Место встречи или ссылка на звонок. Сервер открывает её только подтвердившим (OF.C3).
+   *  venue — человеческое имя места («Nømad»), address — куда идти. */
+  planAddress: (id: string, self: string, address: string, venue?: string) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/mplan-address', { id, self, address, venue }),
+
+  /** OF.22/OF.22a/OF.23 — «уже иду» / «опаздываю» / «я на месте». Видит только собеседник,
+   *  и только у подтверждённого плана: сервер отклонит статус к встрече, которой ещё нет. */
+  planStatus: (id: string, self: string, status: 'otw' | 'late' | 'here', eta_min?: number) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/mplan-status', { id, self, status, eta_min }
+    ),
 
   /**
    * «Состоялось ли» и отзыв — ОДНА запись: второй вызов дописывается в первый, а не заменяет его.

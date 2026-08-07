@@ -26,7 +26,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator,
-  KeyboardAvoidingView, Platform, Linking,
+  KeyboardAvoidingView, Platform, Linking, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -50,7 +50,7 @@ export default function Plan() {
   const st = useOnb();
   const insets = useSafeAreaInsets();
 
-  const params = useLocalSearchParams<{ who?: string; title?: string; photo?: string; link?: string; id?: string }>();
+  const params = useLocalSearchParams<{ who?: string; title?: string; photo?: string; link?: string; id?: string; address?: string }>();
   const other = String(params.who || '').trim();
   const intentTitle = String(params.title || '').trim();
   const photo = String(params.photo || '');
@@ -64,6 +64,8 @@ export default function Plan() {
   const [minutes, setMinutes] = useState(20 * 60);
   const [district, setDistrict] = useState(String(st.profile.city || ''));
   const [link, setLink] = useState(linkFromIntent);
+  /** OF.09 → OF.20: точное место из интента подхватывается, чтобы не спрашивать дважды. */
+  const [address, setAddress] = useState(String(params.address || '').trim());
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -76,8 +78,17 @@ export default function Plan() {
   /** O.20a: ссылка, которую доносят в уже согласованный план, и флаг «уже попросил(а) хостить». */
   const [linkDraft, setLinkDraft] = useState('');
   const [hostAsked, setHostAsked] = useState(false);
-  /** O.21b: форма встречного времени. НЕ новая встреча — план живёт, изменение ложится рядом. */
+  /** O.21b/OF.21a: лист встречного времени. НЕ новая встреча — план живёт, изменение ложится рядом. */
   const [countering, setCountering] = useState(false);
+  /** OF.21a: выбранный сдвиг (минуты от текущего начала) или своё время часами-минутами. */
+  const [sugDelta, setSugDelta] = useState<number | null>(60);
+  const [sugH, setSugH] = useState('');
+  const [sugM, setSugM] = useState('');
+  /** OF.20a: место, которое доносят в согласованный план. */
+  const [placeDraft, setPlaceDraft] = useState('');
+  /** OF.24a: лист причины «не состоялась». */
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reasonPick, setReasonPick] = useState('');
   /** «Другое время» после отмены: составляем новую встречу, опрос не должен возвращать старую. */
   const composing = useRef(false);
   const startNewPlan = () => { composing.current = true; setPlan(null); };
@@ -119,6 +130,25 @@ export default function Plan() {
   /** O.20a: согласованный онлайн-план без ссылки — добавить может любой из двоих. */
   const needsLink = !!plan && plan.mode === 'online' && !plan.address_set
     && (phase === 'confirmed' || phase === 'soon' || phase === 'now');
+  /** Офлайн-ветка борда. */
+  const offline = plan?.mode === 'offline';
+  /** OF.20a: согласовано, а точного места нет — выбрать может любой из двоих. */
+  const needsPlace = !!plan && offline && !plan.address_set
+    && (phase === 'confirmed' || phase === 'soon' || phase === 'now');
+  /** OF.22/OF.22a/OF.23: живые статусы — «в пути», «опаздываю», «на месте». */
+  const myLive = String(plan?.my_live?.status || '');
+  const theirLive = String(plan?.their_live?.status || '');
+  /** Человеческое имя места: «Nømad · Carrer de Verdi 12». Видно только подтвердившим (OF.C3). */
+  const placeLabel = offline
+    ? [plan?.venue, plan?.address].filter(Boolean).join(' · ')
+    : '';
+
+  /** OF.22 «Открыть маршрут» — обычная карта по адресу; своей навигации у Kleal нет. */
+  const openRoute = () => {
+    const q = placeLabel || String(plan?.district || '');
+    if (!q) return;
+    Linking.openURL('https://maps.google.com/?q=' + encodeURIComponent(q)).catch(() => setErr(CHAT.planFailed()));
+  };
 
   const propose = async () => {
     if (busy || !me || !other) return;
@@ -133,9 +163,9 @@ export default function Plan() {
         starts_at: Math.floor(d.getTime() / 1000),
         when: planWhenLabel(date, minutes, ru),
         district: link ? '' : district,
-        // Ссылка живёт в поле адреса: сервер открывает адрес только подтвердившим, и для звонка
-        // это ровно то поведение, которое нужно.
-        address: link,
+        // В поле адреса живёт либо ссылка звонка, либо точное место (OF.20) — сервер в обоих
+        // случаях открывает его только подтвердившим, и это ровно нужное поведение.
+        address: link || address.trim(),
       });
       if (!r?.ok) {
         if (r?.error === 'NOT_MATCHED') throw new Error(CHAT.notMatched());
@@ -168,15 +198,66 @@ export default function Plan() {
     }
   };
 
-  /** O.21b: встречное время. Сервер паркует его рядом с планом; старое время держится до ответа. */
+  /**
+   * OF.21a/O.21b: встречное время из листа — быстрый сдвиг или своё «чч:мм» в тот же день.
+   * Сервер паркует его рядом с планом; старое время держится до ответа.
+   */
   const sendCounter = async () => {
-    const d = new Date(date + 'T00:00:00');
-    d.setMinutes(minutes);
-    await respond('counter', {
-      starts_at: Math.floor(d.getTime() / 1000),
-      when: planWhenLabel(date, minutes, ru),
-    });
+    if (!plan?.starts_at) return;
+    let ts: number;
+    if (sugDelta != null) {
+      ts = Math.floor(plan.starts_at + sugDelta * 60);
+    } else {
+      const h = Math.max(0, Math.min(23, parseInt(sugH || '0', 10) || 0));
+      const m = Math.max(0, Math.min(59, parseInt(sugM || '0', 10) || 0));
+      const d = new Date(plan.starts_at * 1000);
+      d.setHours(h, m, 0, 0);
+      ts = Math.floor(d.getTime() / 1000);
+    }
+    const label = new Date(ts * 1000).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: !ru });
+    await respond('counter', { starts_at: ts, when: `${planWhen(plan, ru).split(' · ')[0]} · ${label}` });
     setCountering(false);
+  };
+
+  /** OF.20a: донести точное место в согласованный план — сервер отдаст его обоим по OF.C3. */
+  const savePlace = async () => {
+    const v = placeDraft.trim();
+    if (!plan?.id || !v) return;
+    setErr('');
+    try {
+      const r: any = await agent.planAddress(plan.id, me, v);
+      if (!r?.ok) throw new Error(r?.error || 'failed');
+      setPlaceDraft('');
+      await load();
+    } catch {
+      setErr(CHAT.planFailed());
+    }
+  };
+
+  /** OF.20a: «пусть выберет он(а)» — настоящее сообщение в чат. */
+  const askPlace = async () => {
+    if (!plan?.id || hostAsked) return;
+    setErr('');
+    try {
+      const r: any = await agent.message(me, other, PLAN.askChooseMsg());
+      if (!r?.ok) throw new Error('failed');
+      setHostAsked(true);
+    } catch {
+      setErr(CHAT.planFailed());
+    }
+  };
+
+  /** OF.22/OF.22a/OF.23: «уже иду» / «опаздываю» / «на месте». Видит только собеседник. */
+  const sendLive = async (status: 'otw' | 'late' | 'here') => {
+    if (!plan?.id) return;
+    setErr('');
+    try {
+      const r: any = await agent.planStatus(plan.id, me, status);
+      if (!r?.ok) throw new Error(r?.error || 'failed');
+      if (r.plan) setPlan(r.plan); else await load();
+    } catch {
+      setErr(CHAT.planFailed());
+    }
   };
 
   /** O.20a: донести ссылку в согласованный план. Сервер отдаст её обоим по правилу OF.C3. */
@@ -209,8 +290,29 @@ export default function Plan() {
 
   const answerHappened = async (happened: boolean) => {
     if (!plan?.id) return;
+    // OF.24a: «нет» сперва спрашивает, что случилось, — и только лист отправляет ответ.
+    if (!happened) {
+      setReasonPick('');
+      setReasonOpen(true);
+      return;
+    }
     try {
       await agent.planFeedback(plan.id, me, { happened });
+      await load();
+    } catch {
+      setErr(CHAT.planFailed());
+    }
+  };
+
+  /** OF.24a: «не состоялась» с причиной (или без — «Пропустить»). Причину другим не показывают. */
+  const sendDidnt = async (withReason: boolean) => {
+    if (!plan?.id) return;
+    try {
+      await agent.planFeedback(plan.id, me, {
+        happened: false,
+        ...(withReason && reasonPick ? { reason: reasonPick } : {}),
+      });
+      setReasonOpen(false);
       await load();
     } catch {
       setErr(CHAT.planFailed());
@@ -253,6 +355,7 @@ export default function Plan() {
               dates={dates} date={date} setDate={setDate}
               minutes={minutes} setMinutes={setMinutes} setDragging={setDragging}
               district={district} setDistrict={setDistrict}
+              address={address} setAddress={setAddress}
               link={link} setLink={setLink}
               busy={busy} err={err} onPropose={propose}
             />
@@ -282,7 +385,19 @@ export default function Plan() {
                     <Text style={s.metaText}>{plan.district}</Text>
                   </View>
                 ) : null}
-                {plan.mode === 'online' || serverLink ? (
+                {/* OF.20/OF.21: строка места. До подтверждения — честное «после подтверждения»,
+                    после — само место; пока не выбрано — «пока нет». */}
+                {offline ? (
+                  <View style={s.metaRow}>
+                    <IconPin size={16} c={color.muted} />
+                    <Text style={s.metaText}>
+                      {!plan.address_set ? PLAN.noPlaceYet()
+                        : plan.address_visible_to_me ? placeLabel
+                        : PLAN.addressAfterConfirm()}
+                    </Text>
+                  </View>
+                ) : null}
+                {plan.mode === 'online' ? (
                   <View style={s.metaRow}>
                     <IconLink size={16} c={color.muted} />
                     {/* Когда ссылка открыта, об этом говорит зелёная карточка ниже — здесь только факт
@@ -301,8 +416,23 @@ export default function Plan() {
                 ) : null}
               </View>
 
+              {/* OF.22/OF.23: место и маршрут — зелёной плашкой, когда встреча на носу. */}
+              {offline && (phase === 'soon' || phase === 'now') && plan.address_visible_to_me && placeLabel ? (
+                <View style={s.linkCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.linkTitle} numberOfLines={2}>{placeLabel}</Text>
+                    <Text style={s.linkSub}>
+                      {phase === 'now' ? PLAN.meetupNow() : PLAN.startsInLong(minutesToStart(plan))}
+                    </Text>
+                  </View>
+                  <Pressable accessibilityRole="button" style={s.linkBtn} onPress={openRoute}>
+                    <Text style={s.linkBtnText}>{PLAN.openRoute()}</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
               {/* O.22/O.23: ссылка становится кнопкой только теперь — см. шапку файла. */}
-              {linkReady && serverLink ? (
+              {!offline && linkReady && serverLink ? (
                 <View style={s.linkCard}>
                   <View style={{ flex: 1 }}>
                     <Text style={s.linkTitle}>{PLAN.linkOpenNow()}</Text>
@@ -351,7 +481,10 @@ export default function Plan() {
               ))}
 
               {phase === 'soon' || phase === 'now' ? (
-                <View style={s.infoBox}><Text style={s.infoText}>{PLAN.outsideNote()}</Text></View>
+                <View style={s.infoBox}>
+                  {/* Kleal не видит ни звонок, ни встречу — но говорит об этом их словами. */}
+                  <Text style={s.infoText}>{offline ? PLAN.meetupBlindNote() : PLAN.outsideNote()}</Text>
+                </View>
               ) : null}
 
               {err ? <Text style={s.err}>{err}</Text> : null}
@@ -440,39 +573,36 @@ export default function Plan() {
                 </>
               ) : null}
 
-              {/* Форма встречного времени: та же дата и циферблат, но уходит counter-ом — план живёт. */}
-              {countering ? (
-                <View style={s.card}>
-                  <View style={s.labelRow}>
-                    <IconCalendar />
-                    <Text style={s.label}>{DETAILS.date()}</Text>
-                  </View>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
-                    {dates.map((d: any) => (
-                      <Pressable
-                        key={d.key}
-                        accessibilityRole="button"
-                        accessibilityState={{ selected: date === d.key }}
-                        onPress={() => setDate(d.key)}
-                        style={[s.chip, date === d.key && s.chipOn]}
-                      >
-                        <Text style={[s.chipText, date === d.key && { color: color.onPrimary }]}>{d.label}</Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                  <View style={s.labelRow}>
-                    <IconClock />
-                    <Text style={s.label}>{DETAILS.time()}</Text>
-                  </View>
-                  <TimeDial minutes={minutes} onChange={setMinutes} onDragChange={setDragging} />
-                  <Text style={s.tz}>{hhmm(minutes)} {tzOffsetLabel(deviceTz())}</Text>
-                  <Pressable accessibilityRole="button" style={s.cta} onPress={sendCounter}>
-                    <Text style={s.ctaText}>{PLAN.sendNewTime()}</Text>
+              {/* OF.20a: согласовано, а точного места нет — поле и две кнопки, как у ссылки. */}
+              {needsPlace && !pendingChange && !countering ? (
+                <>
+                  <TextInput
+                    style={s.input}
+                    value={placeDraft}
+                    onChangeText={setPlaceDraft}
+                    placeholder={PLAN.placePlaceholder()}
+                    placeholderTextColor={color.neutral400}
+                    accessibilityLabel={PLAN.placePlaceholder()}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={!placeDraft.trim()}
+                    accessibilityState={{ disabled: !placeDraft.trim() }}
+                    style={[s.cta, !placeDraft.trim() && { opacity: 0.45 }]}
+                    onPress={savePlace}
+                  >
+                    <Text style={s.ctaText}>{PLAN.savePlace()}</Text>
                   </Pressable>
-                  <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setCountering(false)}>
-                    <Text style={s.ctaDarkText}>{DETAILS.cancel()}</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={hostAsked}
+                    accessibilityState={{ disabled: hostAsked }}
+                    style={[s.ctaDark, hostAsked && { opacity: 0.45 }]}
+                    onPress={askPlace}
+                  >
+                    <Text style={s.ctaDarkText}>{hostAsked ? PLAN.hostAskedNote() : PLAN.askChoose(other)}</Text>
                   </Pressable>
-                </View>
+                </>
               ) : null}
 
               {/* Действия до встречи. «Другое время» — это counter (O.21b), а не новая встреча:
@@ -529,14 +659,38 @@ export default function Plan() {
                 </>
               ) : null}
 
-              {phase === 'soon' || phase === 'now' ? (
+              {/* OF.C4: собеседник опаздывает — займи столик; выйти можно, но это отказ. */}
+              {(phase === 'soon' || phase === 'now') && offline && theirLive === 'late' ? (
                 <>
                   <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
                     <Text style={s.ctaText}>{PLAN.messageThem(other)}</Text>
                   </Pressable>
                   <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => respond('decline')}>
-                    <Text style={s.ctaDarkText}>{PLAN.cantMakeIt()}</Text>
+                    <Text style={s.ctaDarkText}>{PLAN.cantWait()}</Text>
                   </Pressable>
+                </>
+              ) : phase === 'soon' || phase === 'now' ? (
+                <>
+                  <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
+                    <Text style={s.ctaText}>{PLAN.messageThem(other)}</Text>
+                  </Pressable>
+                  {/* OF.22: у офлайна перед встречей — честное «опаздываю» вместо мгновенного отказа. */}
+                  {offline && myLive !== 'late' && myLive !== 'here' && phase === 'soon' ? (
+                    <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => sendLive('late')}>
+                      <Text style={s.ctaDarkText}>{PLAN.imLate()}</Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => respond('decline')}>
+                      <Text style={s.ctaDarkText}>{PLAN.cantMakeIt()}</Text>
+                    </Pressable>
+                  )}
+                  {/* «Я на месте» на кадрах нет как кнопки, но статус «At the place» на них есть —
+                      без кнопки он недостижим. Мягкой строкой, не мешает главному. */}
+                  {offline && myLive !== 'here' ? (
+                    <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => sendLive('here')}>
+                      <Text style={s.ctaSoftText}>{PLAN.imHere()}</Text>
+                    </Pressable>
+                  ) : null}
                 </>
               ) : null}
 
@@ -570,6 +724,107 @@ export default function Plan() {
             </>
           )}
         </ScrollView>
+
+        {/* OF.21a — «предложить другое время» листом: быстрые сдвиги и своё «чч:мм» в тот же день. */}
+        <Modal visible={countering} transparent animationType="slide" onRequestClose={() => setCountering(false)}>
+          <Pressable style={s.scrim} onPress={() => setCountering(false)} accessibilityLabel={T('Закрыть', 'Close')} />
+          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+            <View style={s.sheetHead}>
+              <Text style={s.sheetTitle}>{PLAN.suggestSheetTitle()}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setCountering(false)} hitSlop={10}>
+                <Text style={s.sheetX}>✕</Text>
+              </Pressable>
+            </View>
+            <Text style={s.note}>{PLAN.insteadOf(tOf(plan?.starts_at, ru))}</Text>
+            <View style={s.chipRowWrap}>
+              {[60, 90, 120, 150].map((d) => {
+                const on = sugDelta === d;
+                const label = plan?.starts_at
+                  ? tOf(plan.starts_at + d * 60, ru)
+                  : `+${d}`;
+                return (
+                  <Pressable
+                    key={d}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: on }}
+                    style={[s.chip, on && s.chipOn]}
+                    onPress={() => setSugDelta(d)}
+                  >
+                    <Text style={[s.chipText, on && { color: color.onPrimary }]}>{label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={s.note}>{PLAN.orSetYour()}</Text>
+            <View style={s.hmRow}>
+              <TextInput
+                style={s.hmBox}
+                value={sugH}
+                onChangeText={(t) => { setSugH(t.replace(/\D/g, '').slice(0, 2)); setSugDelta(null); }}
+                placeholder="19"
+                placeholderTextColor={color.neutral400}
+                keyboardType="number-pad"
+                accessibilityLabel={T('Часы', 'Hours')}
+              />
+              <Text style={s.hmColon}>:</Text>
+              <TextInput
+                style={s.hmBox}
+                value={sugM}
+                onChangeText={(t) => { setSugM(t.replace(/\D/g, '').slice(0, 2)); setSugDelta(null); }}
+                placeholder="45"
+                placeholderTextColor={color.neutral400}
+                keyboardType="number-pad"
+                accessibilityLabel={T('Минуты', 'Minutes')}
+              />
+            </View>
+            <Text style={s.note}>{PLAN.suggestSheetNote(other)}</Text>
+            <Pressable accessibilityRole="button" style={s.cta} onPress={sendCounter}>
+              <Text style={s.ctaText}>{PLAN.sendNewTime()}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setCountering(false)}>
+              <Text style={s.ctaDarkText}>{DETAILS.cancel()}</Text>
+            </Pressable>
+          </View>
+        </Modal>
+
+        {/* OF.24a — «не состоялась»: что случилось. Ответ другим не показывается; «Пропустить»
+            отправляет «нет» без причины, крестик не отправляет ничего. */}
+        <Modal visible={reasonOpen} transparent animationType="slide" onRequestClose={() => setReasonOpen(false)}>
+          <Pressable style={s.scrim} onPress={() => setReasonOpen(false)} accessibilityLabel={T('Закрыть', 'Close')} />
+          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+            <View style={s.sheetHead}>
+              <Text style={s.sheetTitle}>{PLAN.whatHappened()}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setReasonOpen(false)} hitSlop={10}>
+                <Text style={s.sheetX}>✕</Text>
+              </Pressable>
+            </View>
+            <Text style={s.note}>{PLAN.whatHappenedNote()}</Text>
+            {([
+              ['no_show', PLAN.reasonNoShow(other)],
+              ['couldnt_make', PLAN.reasonCouldnt()],
+              ['place_closed', PLAN.reasonClosed()],
+              ['moved', PLAN.reasonMoved()],
+              ['other', PLAN.reasonOther()],
+            ] as [string, string][]).map(([k, label]) => (
+              <Pressable
+                key={k}
+                accessibilityRole="button"
+                accessibilityState={{ selected: reasonPick === k }}
+                style={s.reasonRow}
+                onPress={() => setReasonPick(k)}
+              >
+                <View style={[s.radio, reasonPick === k && s.radioOn]} />
+                <Text style={s.reasonText}>{label}</Text>
+              </Pressable>
+            ))}
+            <Pressable accessibilityRole="button" style={s.cta} onPress={() => sendDidnt(true)}>
+              <Text style={s.ctaText}>{PLAN.send()}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => sendDidnt(false)}>
+              <Text style={s.ctaDarkText}>{PLAN.skip()}</Text>
+            </Pressable>
+          </View>
+        </Modal>
 
         <View style={s.navFloat} pointerEvents="box-none">
           <BottomNav />
@@ -613,6 +868,17 @@ function headline(phase: string, other: string, plan: any, me: string, ru: boole
   if (phase === 'confirmed' && plan?.mode === 'online' && !plan?.address_set) {
     return PLAN.addLinkTitle();
   }
+  // OF.20a: то же для офлайна — согласовано, а места нет.
+  if (phase === 'confirmed' && plan?.mode === 'offline' && !plan?.address_set) {
+    return PLAN.pickPlaceTitle();
+  }
+  // OF.22a/OF.C4: опоздание перекрывает счётчик — оно и есть новость этого экрана.
+  if (phase === 'confirmed' || phase === 'soon' || phase === 'now') {
+    if (String(plan?.my_live?.status || '') === 'late') return PLAN.lateKnows(other);
+    if (String(plan?.their_live?.status || '') === 'late') return PLAN.theyLate(other);
+  }
+  // OF.23: у офлайна «сейчас» — это встреча, а не звонок.
+  if (phase === 'now' && plan?.mode === 'offline') return PLAN.meetupNow();
   switch (phase) {
     case 'waiting': return CHAT.sentTo(other);
     case 'confirmed': return PLAN.confirmed();
@@ -644,9 +910,25 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
     // O.21b и O.C5 объясняют одно правило, каждой стороне со своей стороны.
     return plan.pending.mine ? PLAN.newTimeNote(other) : PLAN.moveNote(other);
   }
-  if (phase === 'waiting' && !myConfirmed(plan, me)) return PLAN.sentPlanNote();
+  if (phase === 'waiting' && !myConfirmed(plan, me)) {
+    return plan?.mode === 'offline' ? PLAN.sentPlanNoteOffline() : PLAN.sentPlanNote();
+  }
   if (phase === 'confirmed' && plan?.mode === 'online' && !plan?.address_set) {
     return PLAN.addLinkNote(planWhen(plan, ru), other);
+  }
+  // Офлайн говорит про адрес и дорогу, онлайн — про ссылку.
+  if (plan?.mode === 'offline') {
+    if (String(plan?.my_live?.status || '') === 'late') return PLAN.lateSentNote(other);
+    if (String(plan?.their_live?.status || '') === 'late') return PLAN.theyLateNote(other);
+    // OF.20, вид отправителя: обещать «видит место и ссылку» у встречи вживую нельзя — второй
+    // видит только район, пока не подтвердит (OF.C3).
+    if (phase === 'waiting') return PLAN.sentNoteOffline(other);
+    if (phase === 'confirmed' && !plan?.address_set) return PLAN.pickPlaceNote(planWhen(plan, ru), other);
+    if (phase === 'confirmed') {
+      return plan?.address_visible_to_me ? PLAN.addressOpenNote(other) : PLAN.addressAfterConfirm();
+    }
+    if (phase === 'soon') return PLAN.lateHint(other);
+    if (phase === 'now') return '';
   }
   switch (phase) {
     case 'waiting': return CHAT.sentNote(other);
@@ -674,6 +956,14 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
  */
 function statusFor(p: any, plan: any, phase: string, pendingChange: any, ru: boolean): string {
   const name = String(p?.name || '').trim().toLowerCase();
+  // OF.22/OF.22a/OF.23: живой статус — свежайшая правда об этом человеке, он перекрывает
+  // «подтвердил(а)». Сервер кладёт его прямо в строку участника.
+  const live = String(p?.live?.status || '');
+  if (live && (phase === 'confirmed' || phase === 'soon' || phase === 'now')) {
+    if (live === 'late') return p?.is_me ? PLAN.liveLateMine() : PLAN.liveLate();
+    if (live === 'otw') return PLAN.liveOtw();
+    if (live === 'here') return PLAN.liveHere();
+  }
   if (phase === 'cancelled') {
     const by = String(plan?.cancelled_by || '').trim().toLowerCase();
     if (by) {
@@ -710,7 +1000,7 @@ function tOf(sa: any, ru: boolean): string {
 /** Форма плана — первая половина кадра O.20. */
 function PlanForm({
   dates, date, setDate, minutes, setMinutes, setDragging,
-  district, setDistrict, link, setLink, busy, err, onPropose,
+  district, setDistrict, address, setAddress, link, setLink, busy, err, onPropose,
 }: any) {
   return (
     <View style={s.card}>
@@ -770,6 +1060,20 @@ function PlanForm({
             placeholderTextColor={color.neutral400}
             accessibilityLabel={DETAILS.district()}
           />
+          {/* OF.20: точное место — опционально; собеседник увидит его только после «да» (OF.C3). */}
+          <View style={s.labelRow}>
+            <IconPin size={18} c={color.fg} />
+            <Text style={s.label}>{DETAILS.exactAddress()}</Text>
+          </View>
+          <TextInput
+            style={s.input}
+            value={address}
+            onChangeText={setAddress}
+            placeholder={PLAN.placePlaceholder()}
+            placeholderTextColor={color.neutral400}
+            accessibilityLabel={DETAILS.exactAddress()}
+          />
+          <Text style={s.note}>{DETAILS.exactAddressNote()}</Text>
         </>
       ) : null}
 
@@ -829,6 +1133,27 @@ const s = StyleSheet.create({
 
   infoBox: { backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.md },
   infoText: { ...type.bodySmall, color: color.infoText } as any,
+
+  // Листы OF.21a/OF.24a.
+  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
+  sheet: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    paddingHorizontal: 20, paddingTop: 18, gap: space.sm,
+  },
+  sheetHead: { flexDirection: 'row', alignItems: 'center' },
+  sheetTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
+  sheetX: { fontSize: 20, color: color.fg },
+  hmRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  hmBox: {
+    width: 74, height: 48, borderRadius: rad.md, backgroundColor: color.neutral100,
+    textAlign: 'center', color: color.fg, fontSize: 18,
+  },
+  hmColon: { fontSize: 18, color: color.muted },
+  reasonRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 9 },
+  radio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: color.neutral300 },
+  radioOn: { borderColor: color.primary, backgroundColor: color.primary },
+  reasonText: { ...type.bodySmall, color: color.fg } as any,
 
   // O.23a: зелёная строка факта отмены и кнопка «Другое время» рядом.
   pillRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },

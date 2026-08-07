@@ -111,6 +111,14 @@ export const DETAILS = {
 
   district: () => T('Район', 'District'),
   radius: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),
+  /** OF.09: точное место — опционально уже на создании; чужим его не видно до взаимного «да». */
+  exactAddress: () => T('Точный адрес', 'Exact address'),
+  exactAddressPlaceholder: () => T('Кафе, бар или парк…', 'Search for a café, bar or park'),
+  exactAddressNote: () =>
+    T(
+      'Пока идёт подбор, виден только район. Точным местом вы делитесь после того, как оба согласитесь встретиться.',
+      'Only the district is shown while you’re matching. You share the exact spot after you both agree to meet.'
+    ),
 
   // O.07a — лист выбора пояса. Заголовок с кадра дословно.
   tzSheetTitle: () => T('Часовой пояс GMT', 'Time Zone GMT'),

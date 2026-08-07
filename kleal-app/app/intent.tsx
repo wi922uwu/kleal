@@ -33,11 +33,12 @@ import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
   STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzDisplay, tzOptions, tzCity, looksLikeUrl,
-  DISTRICTS, districtLabel, districtQuery, SEARCHING,
+  SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm,
 } from '../src/intent';
 import { SEXES, sexLabel, COMPOSER_PLACEHOLDER } from '../src/onboarding';
 import { TimeDial, RangeDial } from '../src/components/Dials';
+import { RadiusMap } from '../src/components/RadiusMap';
 import {
   IconChevronLeft, IconMic, IconPin, IconVideo, IconPlusRound, IconPerson, IconGroups,
   IconCalendar, IconClock, IconGlobe, IconLink, IconPlay, IconImagePlaceholder, IconPencil,
@@ -62,6 +63,8 @@ type Draft = {
   district?: string;
   radiusKm: number;
   link: string;
+  /** OF.09: точное место, названное на создании. В выдачу не уходит — только район. */
+  address?: string;
 };
 
 export default function Intent() {
@@ -131,6 +134,15 @@ export default function Intent() {
    * Без него ответ приходит с minimally_sufficient.ok = false, и поиск идёт по интенту, который
    * сам сервер считает недосказанным. tz — из мастера: человек мог выбрать не пояс устройства.
    */
+  /**
+   * Центр карты OF.09 — координаты профиля. Булавка стоит там, где человек живёт, а круг радиуса
+   * рисует, куда он готов доехать. Барселона запасным значением: без координат карта показала бы
+   * океан у нулевого меридиана, а это выглядит как поломка, а не как «мы не знаем, где ты».
+   */
+  const where = String(st.profile.city || '').trim();
+  const mapLat = Number(st.profile.geo?.coarseLat ?? 41.3874);
+  const mapLon = Number(st.profile.geo?.coarseLon ?? 2.1686);
+
   const ctx = () => ({
     self: st.profile.name,
     uid: st.profile.name,
@@ -198,8 +210,14 @@ export default function Intent() {
     if (draft.minAge) intent.minAge = draft.minAge;
     if (draft.maxAge) intent.maxAge = draft.maxAge;
     if (draft.mode === 'offline') {
-      if (draft.district) intent.place = districtQuery(draft.district);
+      // Район на OF.09 задаёт карта вокруг координат профиля, а не список чипов, — в запрос
+      // едет город профиля: именно его §5.3 читает как location_block.city.
+      const place = String(st.profile.city || '').trim();
+      if (place) intent.place = place;
       if (draft.radiusKm != null) intent.radiusKm = draft.radiusKm;
+      // OF.09: точное место ранжирование не читает — оно нужно ПОЗЖЕ, когда из мэтча собирается
+      // план: форма плана подхватит его, чтобы не спрашивать дважды. В выдачу уходит только район.
+      if (draft.address?.trim()) intent.address = draft.address.trim();
     } else {
       // Иначе §5.3 требует город, которого у онлайн-встречи нет по определению.
       intent.allowOnlineFallback = true;
@@ -424,14 +442,26 @@ export default function Intent() {
                 </View>
               ) : null}
 
+              {/* OF.09 — район картой, а не списком: круг показывает, что человек считает «рядом».
+                  Порядок с кадра: карта → точный адрес → радиус → записка о приватности. */}
               {step === 'place' ? (
                 <View style={s.card}>
                   <LabelRow Icon={IconPin} text={DETAILS.district()} />
-                  <View style={s.chipRowWrap}>
-                    {DISTRICTS.map(([k]) => (
-                      <Chip key={k} label={districtLabel(k)} on={draft.district === k} onPress={() => setDraft((x) => ({ ...x, district: k }))} />
-                    ))}
+                  <View style={s.map}>
+                    <RadiusMap lat={mapLat} lon={mapLon} km={draft.radiusKm} />
                   </View>
+
+                  {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт
+                      только план после взаимного подтверждения (OF.C3). */}
+                  <TextInput
+                    style={s.linkInput}
+                    value={draft.address || ''}
+                    onChangeText={(t) => setDraft((x) => ({ ...x, address: t }))}
+                    placeholder={DETAILS.exactAddress()}
+                    placeholderTextColor={color.neutral400}
+                    accessibilityLabel={DETAILS.exactAddress()}
+                  />
+
                   <View style={s.radiusRow}>
                     <Text style={s.tzLabel}>{DETAILS.radius()}</Text>
                     <Text style={s.radiusValue}>{draft.radiusKm} km</Text>
@@ -446,6 +476,7 @@ export default function Intent() {
                     maximumTrackTintColor={color.neutral100}
                     thumbTintColor={color.primary}
                   />
+                  <Text style={s.privacyNote}>{DETAILS.exactAddressNote()}</Text>
                   <Cta label={INTENT.next()} onPress={toSummary} />
                 </View>
               ) : null}
@@ -453,6 +484,7 @@ export default function Intent() {
               {step === 'summary' ? (
                 <SummaryCard
                   topic={title}
+                  where={where}
                   draft={draft}
                   category={category}
                   busy={busy}
@@ -533,7 +565,7 @@ export default function Intent() {
               `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`],
             draft.mode === 'offline'
               ? ['place', IconPin, DETAILS.district(),
-                  draft.district ? districtLabel(draft.district) : EDIT_SHEET.noData()]
+                  draft.address?.trim() || where || EDIT_SHEET.noData()]
               : ['link', IconLink, EDIT_SHEET.link(), draft.link.trim() || EDIT_SHEET.noData()],
           ] as [string, any, string, string][]).map(([k, Icon, label, value]) => (
             <Pressable
@@ -687,11 +719,13 @@ function Cta({ label, onPress, disabled, busy }: {
  * рисовать фотографию, которой нет, не из чего.
  */
 function SummaryCard({
-  topic, draft, category, busy, onStart, onEdit,
+  topic, draft, category, where, busy, onStart, onEdit,
 }: {
   topic: string;
   draft: Draft;
   category: string;
+  /** Подпись места в сводке: город профиля — район на OF.09 задаёт карта, а не список. */
+  where: string;
   busy: boolean;
   onStart: () => void;
   onEdit: () => void;
@@ -720,10 +754,10 @@ function SummaryCard({
           <Text style={s.sumMetaText} numberOfLines={1}>{draft.link.trim()}</Text>
         </View>
       ) : null}
-      {draft.mode === 'offline' && draft.district ? (
+      {draft.mode === 'offline' && where ? (
         <View style={s.sumMeta}>
           <IconPin size={16} c={color.muted} />
-          <Text style={s.sumMetaText}>{districtLabel(draft.district)} · {draft.radiusKm} km</Text>
+          <Text style={s.sumMetaText}>{where} · {draft.radiusKm} km</Text>
         </View>
       ) : null}
 
@@ -875,6 +909,10 @@ const s = StyleSheet.create({
 
   radiusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   radiusValue: { ...type.body, color: color.primary, fontWeight: '600' } as any,
+  /** OF.09: карта района — та же, что в онбординге и профиле. */
+  map: { height: 200, borderRadius: rad.lg, overflow: 'hidden', backgroundColor: color.neutral100 },
+  /** OF.09: приватность места — серой строкой под полем, как на кадре. */
+  privacyNote: { ...type.caption, color: color.muted } as any,
 
   cta: {
     height: 52, borderRadius: rad.full, backgroundColor: color.primary,

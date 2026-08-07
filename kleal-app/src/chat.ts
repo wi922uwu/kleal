@@ -228,6 +228,105 @@ export const PLAN = {
   confirmTime: (t: string) => T(`Подтвердить ${t}`, `Confirm ${t}`),
   keepTime: (t: string) => T(`Оставить ${t}`, `Keep ${t}`),
 
+  /** OF.20 — офлайн-план отправлен: район виден сразу, адрес — только после её «да». */
+  sentNoteOffline: (name: string) =>
+    T(
+      `${name} видит район и время. Точный адрес откроется ей(ему) только после подтверждения.`,
+      `${name} sees the district and the time. The exact address opens for them only when they confirm.`
+    ),
+  /** OF.21 — подтверждено, адрес открыт обоим. */
+  addressOpenNote: (name: string) =>
+    T(`У ${name} теперь есть точный адрес.`, `${name} has the exact address now.`),
+  /** OF.C3, сторона без подтверждения: адрес придёт после «да». */
+  addressAfterConfirm: () =>
+    T('Адрес откроется после твоего подтверждения.', 'The address opens once you confirm.'),
+  districtOnly: (d: string) => T(`${d} · адрес после подтверждения`, `${d} · address after you both confirm`),
+
+  /** OF.20a — согласовано, а точного места нет: выбрать до начала. */
+  pickPlaceTitle: () => T('Выбери точное место', 'Pick the exact place'),
+  pickPlaceNote: (when: string, name: string) =>
+    T(
+      `Встреча (${when}) согласована. ${name} видит только район, пока ты не назовёшь место — выбери заранее, чтобы можно было спланировать дорогу.`,
+      `${when} is agreed. ${name} only sees the district until you name a place — pick one ahead so they can plan the trip.`
+    ),
+  placePlaceholder: () => T('Кафе, бар или парк…', 'Search for a café, bar or park'),
+  savePlace: () => T('Сохранить место', 'Save the place'),
+  askChoose: (name: string) => T(`Пусть выберет ${name}`, `Ask ${name} to choose`),
+  askChooseMsg: () =>
+    T('Выберешь место со своей стороны? Кафе, бар или парк — что удобнее.', 'Could you pick the place? A café, bar or park — whatever works.'),
+  noPlaceYet: () => T('Место пока не выбрано', 'No place yet'),
+
+  /** OF.22 — скоро начало: маршрут и честное «я опаздываю». */
+  startsInLong: (min: number) => T(`Начало через ${min} мин`, `Starts in ${min} minutes`),
+  openRoute: () => T('Открыть маршрут', 'Open the route'),
+  imLate: () => T('Я опаздываю', 'I’m running late'),
+  onMyWay: () => T('Уже иду', 'On my way'),
+  imHere: () => T('Я на месте', 'I’m here'),
+  /** OF.22, подзаголовок: опоздание не страшно, если о нём сказать. */
+  lateHint: (name: string) =>
+    T(
+      `Если опаздываешь — скажи ${name}: он(а) будет ждать у того же места.`,
+      `If you’re running late, tell ${name} — they wait at the same place.`
+    ),
+  /** OF.22a, заголовок. */
+  lateKnows: (name: string) => T(`${name} знает, что ты опаздываешь`, `${name} knows you’re late`),
+  /** OF.C3, приёмная сторона офлайна: подтверждение открывает адрес — в обе стороны. */
+  sentPlanNoteOffline: () =>
+    T(
+      'Подтверди — и точный адрес откроется тебе. До этого виден только район, и это работает в обе стороны.',
+      'Confirm and the exact address opens for you. Until then you only see the district — that works both ways.'
+    ),
+  /** OF.22a — опоздание сказано; никто не сидит в неведении. */
+  lateSentNote: (name: string) =>
+    T(
+      `${name} знает, что ты опаздываешь. Ты ничего не отменял(а) — встреча в силе, просто ${name} не ждёт в неведении.`,
+      `${name} knows you’re late. You didn’t cancel anything — the meetup is still on, they just aren’t waiting in the dark.`
+    ),
+  /** OF.C4 — опаздывает СОБЕСЕДНИК. */
+  theyLate: (name: string) => T(`${name} опаздывает`, `${name} is running late`),
+  theyLateNote: (name: string) =>
+    T(
+      `${name} уже в пути. Ничего не отменено — займи столик, он(а) будет.`,
+      `${name} is on the way. Nothing is cancelled — grab a table, they’ll be there.`
+    ),
+  cantWait: () => T('Не могу ждать', 'I can’t wait'),
+  /** Живые статусы участников (OF.22/OF.22a/OF.23). */
+  liveOtw: () => T('В пути', 'On the way'),
+  liveLate: () => T('Опаздывает', 'Running late'),
+  liveHere: () => T('На месте', 'At the place'),
+  liveLateMine: () => T('Опаздываешь', 'Running late'),
+  /** OF.23 — встреча сейчас, офлайн. */
+  meetupNow: () => T('Встреча сейчас', 'Your meetup is now'),
+  meetupBlindNote: () =>
+    T(
+      'Kleal не видит встречу. Здесь ничего о ней не записывается. Потом мы спросим у обоих, состоялась ли она.',
+      'Kleal can’t see the meetup. Nothing about it is recorded here. Afterwards we’ll ask you both whether it happened.'
+    ),
+
+  /** OF.21a — «предложить другое время» листом: быстрые часы и своё время. */
+  suggestSheetTitle: () => T('Предложить другое время', 'Suggest another time'),
+  insteadOf: (t: string) => T(`Вместо ${t}`, `Instead of ${t}`),
+  orSetYour: () => T('или поставь своё', 'or set your time'),
+  suggestSheetNote: (name: string) =>
+    T(
+      `${name} подтвердит заново. Текущее время держится, пока он(а) не ответит, — ничего не отменено.`,
+      `${name} confirms again after this. The current time stays until they do — nothing is cancelled.`
+    ),
+
+  /** OF.24a — «не состоялась»: причина. Ответ другим не показывается. */
+  whatHappened: () => T('Что случилось?', 'What happened?'),
+  whatHappenedNote: () =>
+    T(
+      'Нужно, чтобы планы оставались честными. Твой ответ другим не показывается.',
+      'Used to keep plans honest. Your answer is not shown to the others.'
+    ),
+  reasonNoShow: (name: string) => T(`${name} не пришёл(шла)`, `${name} didn’t show up`),
+  reasonCouldnt: () => T('Не смог(ла) я', 'I couldn’t make it'),
+  reasonClosed: () => T('Место было закрыто', 'The place was closed'),
+  reasonMoved: () => T('Договорились перенести', 'We agreed to move it'),
+  reasonOther: () => T('Другое', 'Something else'),
+  skip: () => T('Пропустить', 'Skip'),
+
   /** O.C4 — отменили мне; никто ничего не должен. */
   toldYouNote: (name: string) =>
     T(
