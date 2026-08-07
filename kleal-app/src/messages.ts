@@ -37,6 +37,8 @@ export const MSG = {
 
   // Подписи строк.
   waitingAnswer: () => T('ждёт ответа', 'waiting for an answer'),
+  /** Приглашение принято, встречи ещё нет: пара договаривается в чате. */
+  agreeing: () => T('договариваетесь', 'agreeing on details'),
   youWereInvited: (from: string) => T(`${from} зовёт`, `${from} invited you`),
   hoursLeft: (h: number) => T(`осталось ${h} ч`, `${h} h left`),
   ended: () => T('Закончилось', 'Ended'),
@@ -140,6 +142,24 @@ export function intentRows(me: string, plans: any[], history: any[], inbox: any[
       key: 'out:' + r.id, kind: 'invite-out', id: r.id, who: r.to, photo: r.photo,
       title: String(r.intent?.title || (r.intent?.topics || []).join(', ') || r.to),
       sub: `${r.to} · ${MSG.waitingAnswer()}`,
+      t: Number(r.updated || 0),
+    });
+  }
+
+  // Приглашение принято, а встречи ещё нет — это и есть «собирается»: люди договариваются в чате.
+  // Без этой ветки согласившаяся пара пропадала со вкладки «Интенты» до самого плана и жила только
+  // в «Личных» — человек, зашедший посмотреть свои затеи, их там не находил.
+  const withPlan = new Set(
+    [...(plans || []), ...(history || [])].map((p: any) => norm(otherOf(p, me)))
+  );
+  for (const r of [...(inbox || []), ...(outbox || [])]) {
+    if (r.status !== 'accepted') continue;
+    const who = norm(r.from) === norm(me) ? r.to : r.from;
+    if (withPlan.has(norm(who))) continue;
+    forming.push({
+      key: 'ok:' + r.id, kind: 'thread', who, photo: r.photo,
+      title: String(r.intent?.title || (r.intent?.topics || []).join(', ') || who),
+      sub: `${who} · ${MSG.agreeing()}`,
       t: Number(r.updated || 0),
     });
   }

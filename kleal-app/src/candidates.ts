@@ -77,10 +77,22 @@ export function candWhere(c: Cand): string {
   return typeof c.km === 'number' && isFinite(c.km) ? `${c.km} km` : '';
 }
 
-/** «Сводка Kleal» на карточке — причины совпадения словами. Их пишет ранжирование, не мы. */
+/**
+ * «Сводка Kleal» на карточке — причины совпадения словами. Их пишет ранжирование, не мы.
+ *
+ * Одно исправление на выходе: тему в причине ранжирование называет служебной формой — без
+ * пробелов, как оно её сравнивает («настольныеигры», «boardgames»). Читателю это выглядит
+ * опечаткой, поэтому склеенное слово подменяется тем, которое написал сам человек: интересы
+ * кандидата приехали в этой же карточке, сверять есть с чем. Не нашли пары — оставляем как есть,
+ * выдумывать написание нельзя.
+ */
 export function candSummary(c: Cand, ru: boolean): string {
   const reasons = (ru ? c.reasons_ru : c.reasons_en) || c.reasons || [];
-  const bits = reasons.filter(Boolean).map(String);
+  const glue = (s: string) => s.toLowerCase().replace(/\s+/g, '');
+  const say = new Map((c.interests || []).map((i) => [glue(String(i)), String(i)]));
+  const human = (r: string) =>
+    r.replace(/[\p{L}\p{N}]{6,}/gu, (w) => (glue(w) !== w.toLowerCase() ? w : say.get(w.toLowerCase()) || w));
+  const bits = reasons.filter(Boolean).map((r) => human(String(r)));
   if (bits.length) {
     const line = bits.join(', ');
     return line.charAt(0).toUpperCase() + line.slice(1) + '.';
