@@ -110,6 +110,10 @@ export const DETAILS = {
     ),
 
   district: () => T('Район', 'District'),
+  /** OF.09: булавка двигается — без подписи об этом никто не догадается, карта выглядит картинкой. */
+  dragPin: () => T('Потяни точку, если искать надо не от дома.', 'Drag the pin if you’re searching from somewhere else.'),
+  centerMoved: () => T('Ищем вокруг этой точки.', 'We’ll search around this spot.'),
+  backHome: () => T('Вернуть к дому', 'Back to home'),
   radius: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),
   /** OF.09: точное место — опционально уже на создании; чужим его не видно до взаимного «да». */
   exactAddress: () => T('Точный адрес', 'Exact address'),

@@ -206,11 +206,17 @@ export function planRows(me: string, plans: any[], history: any[], ru: boolean, 
   return { upcoming, forming, past };
 }
 
-/** Вкладка «Личные»: переписки как они есть. */
-export function threadRows(threads: any[]): Row[] {
+/**
+ * Вкладка «Личные»: переписки как они есть.
+ *
+ * Последней строкой вполне может оказаться СОБЫТИЕ плана («План подтверждён»), а у события пустой
+ * текст — под именем зияла бы пустота. Поэтому превью собирается той же функцией, что и лента.
+ */
+export function threadRows(threads: any[], me = '', ru = true, line?: (sys: any, me: string, ru: boolean) => string): Row[] {
   return (threads || []).map((t: any) => ({
     key: 'th:' + norm(t.who), kind: 'thread' as const, who: t.who,
-    title: String(t.who || ''), sub: '', teaser: String(t.last || ''),
+    title: String(t.who || ''), sub: '',
+    teaser: String(t.last || '') || (t.sys && line ? line(t.sys, me, ru) : ''),
     photo: t.photo, t: Number(t.t || 0),
   })).sort((a, b) => (b.t || 0) - (a.t || 0));
 }

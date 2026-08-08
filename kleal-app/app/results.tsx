@@ -29,9 +29,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { RESULTS, EXPAND_LADDER, ExpandAxis, axisExplain } from '../src/intent';
 import { CANDS, PREFS, CAP, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
-import { CHAT, Req, ReqStatus, byPerson, activeChatWith } from '../src/chat';
+import { CHAT, ReqStatus, activeChatWith } from '../src/chat';
+import { useInvites, inviteTo, openInvites, sendInvite, withdrawInvite } from '../src/invites';
 import { useLang, T, getLang } from '../src/i18n';
-import { takeResults, setCandidate } from '../src/results-store';
+import { takeResults, patchResults, setCandidate } from '../src/results-store';
 import { agent } from '../src/api';
 import { IconPerson, IconPin, IconClock } from '../src/components/icons';
 import { AgeRange } from '../src/components/AgeRange';
@@ -55,21 +56,10 @@ export default function Results() {
   const [note, setNote] = useState('');
   /** Следующая непройденная ступень лестницы. */
   const [rung, setRung] = useState(0);
-  /**
-   * Кому уже отправлено: имя → id заявки. Id нужен не для красоты — «Отменить» на кадре O.15
-   * отзывает приглашение, а отзыв на сервере ходит по id, и потерять его значит оставить кнопку,
-   * которая ничего не может отменить.
-   */
-  const [sent, setSent] = useState<Record<string, string>>({});
   /** Кандидат, для которого открыто окно O.14. null — окна нет. */
   const [asking, setAsking] = useState<Cand | null>(null);
   const [sending, setSending] = useState(false);
   const [sendErr, setSendErr] = useState('');
-  /**
-   * Что стало с уже отправленными приглашениями. Тянется с сервера: ответ приходит не на этом
-   * экране, и без опроса карточка навсегда осталась бы в состоянии «Отправлено».
-   */
-  const [reqs, setReqs] = useState<Record<string, Req>>({});
   /** Окно бесплатного тарифа (O.17): с кем уже идёт переписка, когда пробуешь открыть вторую. */
   const [busyWith, setBusyWith] = useState('');
   /** С кем реально идёт переписка — по сообщениям, а не по принятым приглашениям (см. activeChatWith). */
@@ -95,6 +85,11 @@ export default function Results() {
 
   const profile = initial?.profile || {};
   const self = String(profile?.name || '');
+  /**
+   * Состояние приглашений — общее с карточкой кандидата (src/invites.ts). Здесь только подписка:
+   * отправка, отзыв и потолок живут там, потому что кнопка «Пригласить» есть на обоих экранах.
+   */
+  useInvites(self);
 
   // Радиус нечего удваивать, когда встреча онлайн, — эта ступень для такого интента бессмысленна.
   const ladder: ExpandAxis[] = useMemo(
@@ -120,13 +115,19 @@ export default function Results() {
         setCands(next);
         // Интент двигаем сами: сервер возвращает только карточки, а следующая ступень должна
         // считаться от уже расширенного запроса, иначе радиус удваивался бы от исходного вечно.
-        setIntent((prev: any) => ({
-          ...prev,
-          ...(axis === 'adjacent' ? { adjacentAllowed: true } : {}),
-          ...(axis === 'parent' ? { broadAllowed: true } : {}),
-          ...(axis === 'exactness' ? { exactMatchRequired: false } : {}),
-          ...(axis === 'radius' ? { radiusKm: km } : {}),
-        }));
+        setIntent((prev: any) => {
+          const next = {
+            ...prev,
+            ...(axis === 'adjacent' ? { adjacentAllowed: true } : {}),
+            ...(axis === 'parent' ? { broadAllowed: true } : {}),
+            ...(axis === 'exactness' ? { exactMatchRequired: false } : {}),
+            ...(axis === 'radius' ? { radiusKm: km } : {}),
+          };
+          // Карточка кандидата берёт интент из того же хранилища — приглашение с неё должно уехать
+          // с расширенным запросом, а не с исходным (см. patchResults).
+          patchResults({ intent: next });
+          return next;
+        });
         setNote(`${axisExplain(axis, km)} ${RESULTS.found(next.length)}`);
       } else {
         setNote(`${axisExplain(axis, km)} ${RESULTS.empty()}`);
@@ -138,30 +139,21 @@ export default function Results() {
     }
   };
 
-  /** MSG.22: открытые приглашения прямо сейчас — по серверному outbox, не по локальному sent. */
-  const pendingOut = Object.entries(reqs).filter(([, r]) => (r as any).status === 'pending');
+  /** MSG.22: открытые приглашения прямо сейчас — по серверному outbox, а не по памяти экрана. */
+  const pendingOut = openInvites();
   const [capOpen, setCapOpen] = useState(false);
 
   /** Отправка приглашения — только из окна O.14, никогда прямо с кнопки карточки. */
-  const sendInvite = async () => {
+  const send = async () => {
     const to = String(asking?.name || '');
     if (!to || sending) return;
-    // MSG.22: потолок открытых приглашений. Правило клиентское — см. CAP в candidates.ts.
-    if (pendingOut.length >= CAP.limit && !pendingOut.some(([who]) => who === to)) {
-      setAsking(null);
-      setCapOpen(true);
-      return;
-    }
     setSending(true);
     setSendErr('');
     try {
-      // Точное место в приглашение НЕ уезжает: под полем на OF.09 обещано, что его увидят только
-      // после взаимного «да», а заявка уходит человеку, который ещё ничего не решил. Оно живёт в
-      // интенте и подхватывается формой плана уже после согласия.
-      const { address: _exact, ...forInvite } = intent as any;
-      const r: any = await agent.propose(self, to, forInvite);
-      if (!r?.ok) throw new Error(r?.error || 'propose failed');
-      setSent((prev) => ({ ...prev, [to]: String(r.id || '') }));
+      const r = await sendInvite(self, to, intent);
+      // MSG.22: потолок открытых приглашений. Правило клиентское — см. CAP в candidates.ts.
+      if (r.capped) { setAsking(null); setCapOpen(true); return; }
+      if (!r.ok) throw new Error(r.error || 'propose failed');
       setAsking(null);
     } catch {
       setSendErr(CANDS.inviteFailed());
@@ -172,21 +164,8 @@ export default function Results() {
 
   /** O.15 «Cancel»: отозвать НЕотвеченное приглашение. Ответившее отозвать нельзя — скажет сервер. */
   const cancelInvite = async (to: string) => {
-    const id = sent[to];
-    if (!id) return;
-    try {
-      const r: any = await agent.withdraw(id, self);
-      // ALREADY_RESOLVED — человек уже ответил, пока мы смотрели на экран. Кнопку всё равно
-      // убираем: отменять больше нечего, а правда живёт в списке интентов.
-      if (!r?.ok && r?.error !== 'ALREADY_RESOLVED') throw new Error(r?.error || 'withdraw failed');
-      setSent((prev) => {
-        const next = { ...prev };
-        delete next[to];
-        return next;
-      });
-    } catch {
-      setNote(CANDS.cancelFailed());
-    }
+    const ok = await withdrawInvite(self, to);
+    if (!ok) setNote(CANDS.cancelFailed());
   };
 
   /** «Начать поиск» из листа O.11a: тот же /api/agent/match, но с условиями, которые человек ослабил сам. */
@@ -206,6 +185,7 @@ export default function Results() {
         self, uid: self, city: profile?.city,
       });
       setIntent(r?.intent || next);
+      patchResults({ intent: r?.intent || next });
       setCands((r?.candidates || []) as Cand[]);
       setRung(0);                      // условия сменились — лестница §12 начинается заново
       setPrefsOpen(false);
@@ -216,26 +196,22 @@ export default function Results() {
     }
   };
 
-  /** Состояния приглашений живут на сервере — забираем их и обновляем, пока экран открыт. */
-  const loadReqs = useCallback(async () => {
+  /** С кем реально идёт переписка — правило одного чата (O.17) считается по сообщениям. */
+  const loadChats = useCallback(async () => {
     if (!self) return;
     try {
-      const [o, th]: any[] = await Promise.all([
-        agent.outbox(self),
-        agent.threads(self).catch(() => ({ threads: [] })),
-      ]);
-      setReqs(byPerson((o?.requests || []) as Req[]));
+      const th: any = await agent.threads(self).catch(() => ({ threads: [] }));
       setChatting(activeChatWith((th?.threads || []) as any[]));
     } catch {
       /* тихо: фоновая дотяжка состояний */
     }
   }, [self]);
 
-  useEffect(() => { loadReqs(); }, [loadReqs]);
+  useEffect(() => { loadChats(); }, [loadChats]);
   useEffect(() => {
-    const id = setInterval(loadReqs, 6000);
+    const id = setInterval(loadChats, 6000);
     return () => clearInterval(id);
-  }, [loadReqs]);
+  }, [loadChats]);
 
   /**
    * Открыть переписку. Правило бесплатного тарифа с кадра O.17 — один живой чат за раз — живёт
@@ -336,8 +312,7 @@ export default function Results() {
             key={(c.name || '') + i}
             c={c}
             badge={(c as any).fallback ? '' : i === 0 ? CANDS.bestBadge() : CANDS.matchBadge()}
-            invited={!!sent[String(c.name || '')]}
-            status={reqs[String(c.name || '')]?.status}
+            status={inviteTo(String(c.name || ''))?.status}
             onOpen={() => openProfile(c)}
             onInvite={() => { setSendErr(''); setAsking(c); }}
             onCancel={() => cancelInvite(String(c.name || ''))}
@@ -424,18 +399,13 @@ export default function Results() {
           </View>
           <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
           {/* «Отменить одно» — вот они, все открытые: отзыв тут же, без похода по экранам. */}
-          {pendingOut.map(([who, r]) => (
-            <View key={who} style={s.capRow}>
-              <Text style={s.capName} numberOfLines={1}>{who}</Text>
+          {pendingOut.map((r) => (
+            <View key={r.id || r.to} style={s.capRow}>
+              <Text style={s.capName} numberOfLines={1}>{r.to}</Text>
               <Pressable
                 accessibilityRole="button"
                 style={s.capBtn}
-                onPress={async () => {
-                  try {
-                    await agent.withdraw(String((r as any).id || ''), self);
-                    await loadReqs();
-                  } catch { /* строка останется — сервер не подтвердил */ }
-                }}
+                onPress={() => withdrawInvite(self, r.to)}
               >
                 <Text style={s.capBtnText}>{CAP.withdraw()}</Text>
               </Pressable>
@@ -448,7 +418,7 @@ export default function Results() {
         cand={asking}
         sending={sending}
         err={sendErr}
-        onSend={sendInvite}
+        onSend={send}
         onClose={() => setAsking(null)}
         bottomInset={insets.bottom}
       />
@@ -458,12 +428,11 @@ export default function Results() {
 
 /** Карточка кандидата — кадр O.12. Нажатие на тело карточки открывает полный профиль (O.13). */
 function CandCard({
-  c, badge, invited, status, onOpen, onInvite, onCancel, onOpenChat, onRemove,
+  c, badge, status, onOpen, onInvite, onCancel, onOpenChat, onRemove,
 }: {
   c: Cand;
   badge: string;
-  invited: boolean;
-  /** Ответ на приглашение, как его называет сервер. Пусто — ответа ещё нет. */
+  /** Состояние приглашения из общего стора. Пусто — не приглашали. */
   status?: ReqStatus;
   onOpen: () => void;
   onInvite: () => void;
@@ -551,7 +520,7 @@ function CandCard({
             <Text style={s.inviteText}>{CANDS.cancel()}</Text>
           </Pressable>
         </View>
-      ) : invited || status === 'pending' ? (
+      ) : status === 'pending' ? (
         <View style={s.invitedRow}>
           <View style={[s.invite, s.invitedPill]}>
             <Text style={[s.inviteText, { color: color.fg }]}>{CANDS.invitedShort()}</Text>

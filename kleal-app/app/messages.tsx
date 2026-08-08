@@ -18,7 +18,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { MSG, Row, intentRows, planRows, threadRows, searchRows, bucketOf, isUnread, rowTime } from '../src/messages';
-import { planWhen } from '../src/chat';
+import { planWhen, sysLine } from '../src/chat';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, msgPrefs, setMsgPrefs } from '../src/state';
 import { agent } from '../src/api';
@@ -101,8 +101,9 @@ export default function Messages() {
     [me, data, ru]
   );
   const privateRows = useMemo(
-    () => threadRows(data.threads).map((r) => ({ ...r, count: counts[String(r.who || '').toLowerCase()] })),
-    [data.threads, counts]
+    () => threadRows(data.threads, me, ru, sysLine)
+      .map((r) => ({ ...r, count: counts[String(r.who || '').toLowerCase()] })),
+    [data.threads, counts, me, ru]
   );
 
   // Раскладка по локальным пометкам: покинутые исчезают, архив и «без уведомлений» — вниз.

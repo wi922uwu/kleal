@@ -65,6 +65,9 @@ type Draft = {
   link: string;
   /** OF.09: точное место, названное на создании. В выдачу не уходит — только район. */
   address?: string;
+  /** OF.09: центр поиска. Пусто — берётся из профиля; заполняется, когда булавку передвинули. */
+  lat?: number;
+  lon?: number;
 };
 
 export default function Intent() {
@@ -119,13 +122,18 @@ export default function Intent() {
   /** Категория для строки сводки O.10. Приходит от агента фильтрации; пусто — строка не рисуется. */
   const [category, setCategory] = useState('');
 
+  /**
+   * Профиль, как он уезжает в поиск. Координаты — из черновика, когда булавку на OF.09 передвинули:
+   * расстояние до кандидатов считается от них, и «ищи вокруг вон той точки» иначе было бы просто
+   * картинкой. Не трогали булавку — едут координаты профиля, как раньше.
+   */
   const profile = () => ({
     name: st.profile.name,
     age: st.profile.age,
     gender: st.profile.gender,
     city: st.profile.city,
-    lat: st.profile.geo?.coarseLat,
-    lon: st.profile.geo?.coarseLon,
+    lat: draft.lat ?? st.profile.geo?.coarseLat,
+    lon: draft.lon ?? st.profile.geo?.coarseLon,
     languages: st.profile.languages?.comfortable || [],
   });
 
@@ -140,8 +148,12 @@ export default function Intent() {
    * океан у нулевого меридиана, а это выглядит как поломка, а не как «мы не знаем, где ты».
    */
   const where = String(st.profile.city || '').trim();
-  const mapLat = Number(st.profile.geo?.coarseLat ?? 41.3874);
-  const mapLon = Number(st.profile.geo?.coarseLon ?? 2.1686);
+  const homeLat = Number(st.profile.geo?.coarseLat ?? 41.3874);
+  const homeLon = Number(st.profile.geo?.coarseLon ?? 2.1686);
+  const mapLat = draft.lat ?? homeLat;
+  const mapLon = draft.lon ?? homeLon;
+  /** Булавку увели от дома — говорим об этом словами и даём вернуть одним нажатием. */
+  const moved = draft.lat != null || draft.lon != null;
 
   const ctx = () => ({
     self: st.profile.name,
@@ -448,7 +460,25 @@ export default function Intent() {
                 <View style={s.card}>
                   <LabelRow Icon={IconPin} text={DETAILS.district()} />
                   <View style={s.map}>
-                    <RadiusMap lat={mapLat} lon={mapLon} km={draft.radiusKm} />
+                    <RadiusMap
+                      lat={mapLat}
+                      lon={mapLon}
+                      km={draft.radiusKm}
+                      onMove={(la, lo) => setDraft((x) => ({ ...x, lat: la, lon: lo }))}
+                      onDragChange={setDragging}
+                    />
+                  </View>
+                  <View style={s.mapHintRow}>
+                    <Text style={s.mapHint}>{moved ? DETAILS.centerMoved() : DETAILS.dragPin()}</Text>
+                    {moved ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        hitSlop={8}
+                        onPress={() => setDraft((x) => ({ ...x, lat: undefined, lon: undefined }))}
+                      >
+                        <Text style={s.mapReset}>{DETAILS.backHome()}</Text>
+                      </Pressable>
+                    ) : null}
                   </View>
 
                   {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт
@@ -911,6 +941,9 @@ const s = StyleSheet.create({
   radiusValue: { ...type.body, color: color.primary, fontWeight: '600' } as any,
   /** OF.09: карта района — та же, что в онбординге и профиле. */
   map: { height: 200, borderRadius: rad.lg, overflow: 'hidden', backgroundColor: color.neutral100 },
+  mapHintRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: -space.sm },
+  mapHint: { flex: 1, ...type.caption, color: color.muted } as any,
+  mapReset: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
   /** OF.09: приватность места — серой строкой под полем, как на кадре. */
   privacyNote: { ...type.caption, color: color.muted } as any,
 

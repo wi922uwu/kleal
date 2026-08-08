@@ -13,7 +13,10 @@ set -u
 # Override for another box: KLEAL_SSH="ssh ... root@host" ops/deploy.sh
 SSH="${KLEAL_SSH:-ssh -o ConnectTimeout=25 -o BatchMode=yes -i $HOME/.ssh/id_ed25519 -p 24309 root@195.26.233.30}"
 LOCAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REMOTE_ROOT="/root/kleal-ms"
+# Куда кладём. По умолчанию прод-дерево; стенд — KLEAL_REMOTE_ROOT=/root/kleal-dev, и это
+# единственный способ доставить правку на стенд: dev-stack.sh sync копирует ПРОД-дерево пода,
+# то есть затирает стендом всё, что не доехало до прода.
+REMOTE_ROOT="${KLEAL_REMOTE_ROOT:-/root/kleal-ms}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 
 # One path per line, no comments and no blanks — the loop below word-splits this string, so anything

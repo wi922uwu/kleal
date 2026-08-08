@@ -2956,6 +2956,30 @@ def _messages():
 def _pair_key(a, b):
     return "|".join(sorted([_norm_name(a), _norm_name(b)]))
 
+def _sys_msg(frm, to, code, **fields):
+    """A PLAN EVENT written into the pair's thread. Call only with _STORE_LOCK already held.
+
+    Why the thread and not just the plan screen. The plan lives on its own screen, and everything
+    that happened to it used to live there too: the other side got a pinned card that silently
+    changed under them — no line saying the plan was sent, none saying it was confirmed, none when
+    the place or the call link was finally named. Two people agreeing to meet were reading two
+    different states of the same evening and had to ask each other «ну что, договорились?».
+
+    The row carries a CODE and its facts, never a rendered sentence: the two sides can be reading
+    the app in different languages, and a Russian line baked here would arrive at an English screen.
+    `text` is a plain fallback for anything that shows a raw last-message preview.
+    """
+    frm, to = str(frm or "").strip(), str(to or "").strip()
+    if not frm or not to:
+        return
+    m = {"id": "s_%d_%s" % (int(time.time() * 1000), code), "pair": _pair_key(frm, to),
+         "from": frm, "to": to, "text": "", "t": time.time(),
+         "sys": dict({"code": code, "by": frm}, **{k: v for k, v in fields.items() if v not in (None, "")})}
+    ms = _messages()
+    ms.append(m)
+    del ms[:-4000]
+
+
 def send_message(frm, to, text):
     frm, to, text = str(frm or "").strip(), str(to or "").strip(), str(text or "").strip()[:2000]
     if not frm or not to or not text or _norm_name(frm) == _norm_name(to):
@@ -2996,7 +3020,10 @@ def threads_for(self_name):
         other = m.get("to") if _norm_name(m.get("from")) == me else m.get("from")
         cur = last.get(_norm_name(other))
         if not cur or (m.get("t") or 0) > (cur.get("t") or 0):
+            # `sys` едет наружу: в списке «Сообщений» последней строкой вполне может быть событие
+            # плана, и рисовать под именем пустоту вместо «План подтверждён» нельзя.
             last[_norm_name(other)] = {"who": other, "last": m.get("text"), "t": m.get("t"),
+                                       "sys": m.get("sys"),
                                        "mine": _norm_name(m.get("from")) == me}
     return _with_photos(sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50], "who")
 
@@ -4225,6 +4252,7 @@ def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", distr
              "responses": {_norm_name(frm): {"state": "confirmed", "t": now, "version": 1}},
              "live": {}, "feedback": {}, "created": now, "updated": now}
         _mplans().append(p)
+        _sys_msg(frm, to, "plan_proposed", at=sa, mode=p["mode"], district=p["district"])
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, frm)})
 
@@ -4263,15 +4291,20 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
         k = _norm_name(who)
         v = int(p.get("version") or 1)
         pend = p.get("pending") or None
+        peer = _mp_other(p, who)
         if act == "decline":
             p["state"] = "cancelled"
             p["cancelled_by"] = who
             p["cancel_reason"] = str(note or "")[:400]
             p.setdefault("responses", {})[k] = {"state": "declined", "t": now, "version": v}
+            _sys_msg(who, peer, "plan_cancelled", at=p.get("starts_at"))
         elif act == "confirm":
             p.setdefault("responses", {})[k] = {"state": "confirmed", "t": now, "version": v}
             if len(_mp_confirmed(p)) >= 2:
                 p["state"] = "confirmed"
+                # ЭТА строка и есть «финальное сообщение, что план подтверждён». Пишется один раз,
+                # в момент, когда согласились оба, — не на каждое нажатие «Подтвердить».
+                _sys_msg(who, peer, "plan_confirmed", at=p.get("starts_at"), mode=p.get("mode"))
         elif act == "counter":
             try:
                 sa = float(starts_at) if starts_at else None
@@ -4287,6 +4320,7 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
             p["pending"] = {"by": who, "starts_at": sa, "when": str(when or "")[:120],
                             "district": str(district or "")[:120], "title": str(title or "")[:120],
                             "note": str(note or "")[:400], "at": now}
+            _sys_msg(who, peer, "plan_counter", at=sa, was=p.get("starts_at"))
         elif act in ("accept_change", "reject_change"):
             if not pend:
                 return _idem_put(idem, {"ok": False, "error": "NO_PENDING_CHANGE"})
@@ -4298,6 +4332,11 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
             if act == "reject_change":
                 p["pending"] = None
                 p["last_change"] = {"state": "rejected", "by": who, "at": now}
+                # Забрать своё предложение и отказать чужому — разные новости, и в ленте они разные:
+                # иначе автор переноса читал бы, что ему отказали, отказав самому себе.
+                _sys_msg(who, peer,
+                         "plan_change_pulled" if _norm_name(pend.get("by")) == k else "plan_change_no",
+                         at=p.get("starts_at"))
             else:
                 p["starts_at"] = pend.get("starts_at")
                 for f in ("when", "district", "title", "note"):
@@ -4312,6 +4351,7 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
                 p["state"] = "confirmed"
                 p["live"] = {}                    # nobody is on their way to the old hour any more
                 p["last_change"] = {"state": "accepted", "by": who, "at": now}
+                _sys_msg(who, peer, "plan_change_ok", at=p.get("starts_at"), mode=p.get("mode"))
         p["updated"] = now
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
@@ -4340,6 +4380,11 @@ def mp_address(pid, who, address="", venue="", idem=None):
         if venue:
             p["venue"] = str(venue)[:120]
         p["updated"] = time.time()
+        if address or venue:
+            # Само место в ленту НЕ уходит: адрес открывается только подтвердившим (OF.C3), а лента
+            # общая. В строке — сам факт, что место наконец названо; кто подтвердил, увидит его в плане.
+            _sys_msg(who, _mp_other(p, who), "plan_place",
+                     kind="link" if p.get("mode") == "online" else "place")
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
 
@@ -4361,6 +4406,7 @@ def mp_cancel(pid, who, reason="", idem=None):
         p["cancelled_by"] = who
         p["cancel_reason"] = str(reason or "")[:400]
         p["updated"] = time.time()
+        _sys_msg(who, _mp_other(p, who), "plan_cancelled", at=p.get("starts_at"))
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
 

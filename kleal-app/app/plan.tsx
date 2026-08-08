@@ -50,12 +50,25 @@ export default function Plan() {
   const st = useOnb();
   const insets = useSafeAreaInsets();
 
-  const params = useLocalSearchParams<{ who?: string; title?: string; photo?: string; link?: string; id?: string; address?: string }>();
+  const params = useLocalSearchParams<{
+    who?: string; title?: string; photo?: string; link?: string; id?: string;
+    address?: string; mode?: string;
+  }>();
   const other = String(params.who || '').trim();
   const intentTitle = String(params.title || '').trim();
   const photo = String(params.photo || '');
   const linkFromIntent = String(params.link || '').trim();
   const planId = String(params.id || '').trim();
+  /**
+   * Режим встречи. Приходит ИЗ ИНТЕНТА, по которому вы совпали, — а не угадывается по тому, есть
+   * ли в форме ссылка.
+   *
+   * Так было раньше и это ломалось в обе стороны: у офлайн-интента форма спрашивала ссылку на
+   * звонок (её там быть не должно вовсе), а у онлайн-интента план молча уезжал на сервер как
+   * offline, если человек не успел вставить ссылку прямо сейчас, — и второй получал встречу
+   * вживую вместо звонка. Пустой параметр (старые ссылки) читается по старому правилу.
+   */
+  const modeFromIntent = String(params.mode || '').trim().toLowerCase();
 
   const me = String(st.profile.name || '');
   const ru = getLang() === 'ru';
@@ -98,10 +111,19 @@ export default function Plan() {
     if (!me) return;
     try {
       const r: any = await agent.plans(me);
-      const all = [...(r?.plans || []), ...(r?.history || [])];
+      const live = (r?.plans || []) as any[];
+      const past = (r?.history || []) as any[];
+      const withOther = (list: any[]) => list.filter((p: any) =>
+        (p.participants || []).some((x: any) =>
+          String(x.name || '').trim().toLowerCase() === other.trim().toLowerCase()));
+      // Живая встреча важнее прошлой, а из нескольких прошлых показываем свежайшую. Раньше брался
+      // ПЕРВЫЙ совпавший план из склеенного списка: одна отменённая встреча месячной давности
+      // закрывала собой сегодняшнюю договорённость.
+      const newest = (list: any[]) =>
+        list.slice().sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0))[0];
       const mine = planId
-        ? all.find((p: any) => p.id === planId)
-        : all.find((p: any) => (p.participants || []).some((x: any) => String(x.name || '') === other));
+        ? [...live, ...past].find((p: any) => p.id === planId)
+        : (newest(withOther(live)) || newest(withOther(past)));
       // Пока человек сознательно составляет НОВУЮ встречу («Другое время» после отмены), фоновый
       // опрос не имеет права вернуть на экран старый план — иначе форма исчезает из-под рук.
       if (mine && !composing.current) setPlan(mine);
@@ -119,6 +141,18 @@ export default function Plan() {
     return () => clearInterval(id);
   }, [load]);
 
+  /**
+   * Режим этой встречи. У живого плана его знает сервер; у ещё не созданного — интент, по которому
+   * совпали. Совсем без подсказок (старая ссылка на экран) — по наличию ссылки, как было раньше.
+   */
+  const mode: 'offline' | 'online' | 'hybrid' =
+    (plan?.mode as any)
+    || (modeFromIntent === 'online' || modeFromIntent === 'hybrid' || modeFromIntent === 'offline'
+        ? (modeFromIntent as any)
+        : (linkFromIntent ? 'online' : 'offline'));
+  const wantsLink = mode === 'online' || mode === 'hybrid';
+  const wantsPlace = mode === 'offline' || mode === 'hybrid';
+
   const phase = plan ? planPhase(plan, tick) : null;
   const mine = plan ? myAnswer(plan) : undefined;
   const bothAnswered = !!plan?.their_feedback && mine !== undefined;
@@ -127,14 +161,15 @@ export default function Plan() {
   const cancelledByMe =
     !!plan?.cancelled_by
     && String(plan.cancelled_by).trim().toLowerCase() === me.trim().toLowerCase();
-  /** O.20a: согласованный онлайн-план без ссылки — добавить может любой из двоих. */
-  const needsLink = !!plan && plan.mode === 'online' && !plan.address_set
+  /** Согласовано, а куда идти — неизвестно. Дозаполнить может любой из двоих (O.20a / OF.20a). */
+  const needsWhere = !!plan && !plan.address_set
     && (phase === 'confirmed' || phase === 'soon' || phase === 'now');
+  /** O.20a: согласованный онлайн-план без ссылки. */
+  const needsLink = needsWhere && wantsLink;
   /** Офлайн-ветка борда. */
-  const offline = plan?.mode === 'offline';
-  /** OF.20a: согласовано, а точного места нет — выбрать может любой из двоих. */
-  const needsPlace = !!plan && offline && !plan.address_set
-    && (phase === 'confirmed' || phase === 'soon' || phase === 'now');
+  const offline = mode === 'offline';
+  /** OF.20a: согласовано, а точного места нет. */
+  const needsPlace = needsWhere && !wantsLink;
   /** OF.22/OF.22a/OF.23: живые статусы — «в пути», «опаздываю», «на месте». */
   const myLive = String(plan?.my_live?.status || '');
   const theirLive = String(plan?.their_live?.status || '');
@@ -145,6 +180,12 @@ export default function Plan() {
 
   /** Место уже стоит зелёной плашкой: встреча на носу и адрес открыт. */
   const placeReady = offline && (phase === 'soon' || phase === 'now') && !!plan?.address_visible_to_me;
+  /**
+   * Договорились обо всём — зелёная плашка «Всё готово» ниже. Она называет и время, и место, и
+   * час открытия ссылки, поэтому строки выше про то же самое не рисуются: одна новость, одно место
+   * на экране. Раньше адрес стоял дважды, а про ссылку было сказано трижды.
+   */
+  const allSet = phase === 'confirmed' && !plan?.pending && !!plan?.address_set;
 
   /** OF.22 «Открыть маршрут» — обычная карта по адресу; своей навигации у Kleal нет. */
   const openRoute = () => {
@@ -162,13 +203,15 @@ export default function Plan() {
       d.setMinutes(minutes);
       const r: any = await agent.planPropose(me, other, {
         title: intentTitle || T('Встреча', 'Meetup'),
-        mode: link ? 'online' : 'offline',
+        // Режим — из интента, а не «есть ли ссылка в поле». См. modeFromIntent выше.
+        mode,
         starts_at: Math.floor(d.getTime() / 1000),
         when: planWhenLabel(date, minutes, ru),
-        district: link ? '' : district,
+        district: wantsPlace ? district : '',
         // В поле адреса живёт либо ссылка звонка, либо точное место (OF.20) — сервер в обоих
-        // случаях открывает его только подтвердившим, и это ровно нужное поведение.
-        address: link || address.trim(),
+        // случаях открывает его только подтвердившим, и это ровно нужное поведение. У гибрида
+        // ведущей остаётся ссылка: онлайн-часть без неё не существует, место можно донести позже.
+        address: (wantsLink ? link.trim() : '') || (wantsPlace ? address.trim() : ''),
       });
       if (!r?.ok) {
         if (r?.error === 'NOT_MATCHED') throw new Error(CHAT.notMatched());
@@ -365,6 +408,7 @@ export default function Plan() {
               district={district} setDistrict={setDistrict}
               address={address} setAddress={setAddress}
               link={link} setLink={setLink}
+              wantsLink={wantsLink} wantsPlace={wantsPlace} other={other}
               busy={busy} err={err} onPropose={propose}
             />
           ) : (
@@ -396,7 +440,7 @@ export default function Plan() {
                 {/* OF.20/OF.21: строка места. До подтверждения — честное «после подтверждения»,
                     после — само место; пока не выбрано — «пока нет». Когда место уже стоит зелёной
                     плашкой ниже (OF.22/OF.23), здесь его не повторяем — один адрес, одно место. */}
-                {offline && !(placeReady && placeLabel) ? (
+                {offline && !(placeReady && placeLabel) && !(allSet && plan.address_visible_to_me) ? (
                   <View style={s.metaRow}>
                     <IconPin size={16} c={color.muted} />
                     <Text style={s.metaText}>
@@ -419,11 +463,30 @@ export default function Plan() {
                         : phase === 'after' ? PLAN.modeOnline()
                         // O.20a: ссылки ещё нет — врать «откроется в …» нечем.
                         : !plan.address_set ? PLAN.noLinkYet()
+                        // Когда ниже стоит «Всё готово», час открытия ссылки назван там — здесь
+                        // остаётся только формат встречи.
+                        : allSet ? PLAN.modeOnline()
                         : linkReady ? PLAN.linkSaved() : PLAN.linkOpensLabel(linkOpensAt(plan, ru))}
                     </Text>
                   </View>
                 ) : null}
               </View>
+
+              {/*
+                Договорились обо всём — и это сказано вслух, зелёным, один раз.
+                Не хватало именно этого: план подтверждался, место называлось, а экран продолжал
+                выглядеть как незаконченное дело — человек не понимал, надо ли ещё что-то нажать.
+                Плашка живёт только в «подтверждено»: у «скоро» и «сейчас» ниже своя, с маршрутом.
+              */}
+              {allSet ? (
+                <View style={s.doneCard}>
+                  <Text style={s.doneTitle}>{PLAN.allSetTitle()}</Text>
+                  <Text style={s.doneSub}>
+                    {PLAN.allSetNote(planWhen(plan, ru), offline, other,
+                      offline ? (plan.address_visible_to_me ? placeLabel : '') : '')}
+                  </Text>
+                </View>
+              ) : null}
 
               {/* OF.22/OF.23: место и маршрут — зелёной плашкой, когда встреча на носу. */}
               {placeReady && placeLabel ? (
@@ -739,9 +802,11 @@ export default function Plan() {
                 </>
               ) : null}
 
+              {/* Кнопка ДЕЙСТВИЯ и должна называться действием: здесь стояло «Подтверждено» —
+                  состояние, а не то, что случится по нажатию. */}
               {phase === 'confirmed' && !myConfirmed(plan, me) ? (
                 <Pressable accessibilityRole="button" style={s.cta} onPress={() => respond('confirm')}>
-                  <Text style={s.ctaText}>{PLAN.confirmed()}</Text>
+                  <Text style={s.ctaText}>{PLAN.confirmAction()}</Text>
                 </Pressable>
               ) : null}
             </>
@@ -930,6 +995,9 @@ function headline(phase: string, other: string, plan: any, me: string, ru: boole
 }
 
 function subline(phase: string, other: string, plan: any, ru: boolean, me: string): string {
+  // Договорились обо всём — об этом ниже говорит зелёная плашка «Всё готово», и повторять её
+  // подзаголовком незачем: одна и та же новость трижды на одном экране читается как шум.
+  if (phase === 'confirmed' && plan?.address_set && !plan?.pending) return '';
   if ((phase === 'waiting' || phase === 'confirmed') && plan?.pending) {
     // O.21b и O.C5 объясняют одно правило, каждой стороне со своей стороны.
     return plan.pending.mine ? PLAN.newTimeNote(other) : PLAN.moveNote(other);
@@ -1023,13 +1091,27 @@ function tOf(sa: any, ru: boolean): string {
   });
 }
 
-/** Форма плана — первая половина кадра O.20. */
+/**
+ * Форма плана — первая половина кадра O.20.
+ *
+ * Поля СПРАШИВАЮТСЯ ПО РЕЖИМУ интента, а не все сразу. Встрече вживую поле «Ссылка» не нужно —
+ * его там и не было на борде, а стояло оно здесь только потому, что режим угадывался по наличию
+ * ссылки. Звонку, наоборот, не нужны район и адрес.
+ */
 function PlanForm({
   dates, date, setDate, minutes, setMinutes, setDragging,
-  district, setDistrict, address, setAddress, link, setLink, busy, err, onPropose,
+  district, setDistrict, address, setAddress, link, setLink,
+  wantsLink, wantsPlace, other, busy, err, onPropose,
 }: any) {
   return (
     <View style={s.card}>
+      {/* Что за встреча — сказано словами до первого поля: человек должен видеть, во что
+          превратится «Создать план», а не догадываться по набору полей. */}
+      <View style={s.modeRow}>
+        {wantsLink ? <IconLink size={16} c={color.primary} /> : <IconPin size={16} c={color.primary} />}
+        <Text style={s.modeText}>{PLAN.formMode(wantsLink && wantsPlace ? 'hybrid' : wantsLink ? 'online' : 'offline', other)}</Text>
+      </View>
+
       <View style={s.labelRow}>
         <IconCalendar />
         <Text style={s.label}>{DETAILS.date()}</Text>
@@ -1055,24 +1137,32 @@ function PlanForm({
       <TimeDial minutes={minutes} onChange={setMinutes} onDragChange={setDragging} />
       <Text style={s.tz}>{hhmm(minutes)} {tzOffsetLabel(deviceTz())}</Text>
 
-      <View style={s.labelRow}>
-        <IconLink size={18} c={color.fg} />
-        <Text style={s.label}>{DETAILS.link()}</Text>
-      </View>
-      <TextInput
-        style={s.input}
-        value={link}
-        onChangeText={setLink}
-        placeholder={DETAILS.linkPlaceholder()}
-        placeholderTextColor={color.neutral400}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="url"
-        accessibilityLabel={DETAILS.link()}
-      />
+      {/* Ссылка — только у звонка и гибрида. У встречи вживую этого поля нет вовсе. */}
+      {wantsLink ? (
+        <>
+          <View style={s.labelRow}>
+            <IconLink size={18} c={color.fg} />
+            <Text style={s.label}>{DETAILS.link()}</Text>
+          </View>
+          <TextInput
+            style={s.input}
+            value={link}
+            onChangeText={setLink}
+            placeholder={DETAILS.linkPlaceholder()}
+            placeholderTextColor={color.neutral400}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            accessibilityLabel={DETAILS.link()}
+          />
+          {/* Пустая ссылка допустима: её доносят в согласованный план (O.20a). Врать о том, что
+              без неё нельзя, не нужно — но и молчать о последствии тоже. */}
+          <Text style={s.note}>{PLAN.linkLaterNote(other)}</Text>
+        </>
+      ) : null}
 
-      {/* Место спрашиваем только у встречи вживую: у звонка его нет. */}
-      {!link ? (
+      {/* Место — только у встречи вживую и гибрида: у звонка его нет. */}
+      {wantsPlace ? (
         <>
           <View style={s.labelRow}>
             <IconPin size={18} c={color.fg} />
@@ -1105,15 +1195,23 @@ function PlanForm({
 
       {err ? <Text style={s.err}>{err}</Text> : null}
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ busy, disabled: !!link && !looksLikeUrl(link) }}
-        disabled={!!link && !looksLikeUrl(link)}
-        style={[s.cta, !!link && !looksLikeUrl(link) && { opacity: 0.45 }]}
-        onPress={busy ? undefined : onPropose}
-      >
-        {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.ctaText}>{CHAT.createPlan()}</Text>}
-      </Pressable>
+      {/* Непустая ссылка обязана быть ссылкой: молча отправить «встретимся в зуме» как url нельзя. */}
+      {(() => {
+        const bad = wantsLink && !!link.trim() && !looksLikeUrl(link.trim());
+        return (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ busy, disabled: bad }}
+            disabled={bad}
+            style={[s.cta, bad && { opacity: 0.45 }]}
+            onPress={busy ? undefined : onPropose}
+          >
+            {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.ctaText}>{CHAT.createPlan()}</Text>}
+          </Pressable>
+        );
+      })()}
+      {/* Что произойдёт по нажатию — до нажатия, а не после: план уходит человеку предложением. */}
+      <Text style={s.note}>{PLAN.formSendNote(other)}</Text>
     </View>
   );
 }
@@ -1144,6 +1242,12 @@ const s = StyleSheet.create({
   cover: { height: 110, borderRadius: rad.lg, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   label: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
+  // Шапка формы: чем эта встреча будет — сказано до первого поля.
+  modeRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.md,
+  },
+  modeText: { flex: 1, ...type.bodySmall, color: color.infoText, fontWeight: '600' } as any,
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   metaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
   tz: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
@@ -1152,6 +1256,10 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: space.md,
     backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.md,
   },
+  // «Всё готово»: та же зелёная семья, но без кнопки — это не действие, а точка в переговорах.
+  doneCard: { backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.md, gap: 4 },
+  doneTitle: { ...type.labelMedium, color: color.successText, fontWeight: '700' } as any,
+  doneSub: { ...type.bodySmall, color: color.successText } as any,
   linkTitle: { ...type.labelMedium, color: color.successText, fontWeight: '700' } as any,
   linkSub: { ...type.caption, color: color.successText } as any,
   linkBtn: { height: 40, paddingHorizontal: 18, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },

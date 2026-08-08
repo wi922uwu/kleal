@@ -81,7 +81,7 @@ _CYR_ONB = re.compile(r"[\u0430-\u044f\u0410-\u042f\u0451\u0401]")
 
 def _onb_lang(hist, want=None):
     """The language the UI is in, when the client tells us; otherwise a guess from what was typed."""
-    if want in ("ru", "en"):
+    if want in ("ru", "en", "es"):
         return want
     for m in reversed(hist or []):
         if m.get("role") == "user" and str(m.get("content", "")).strip():
@@ -89,10 +89,26 @@ def _onb_lang(hist, want=None):
     return "ru"
 
 
+# GRAMMAR is a separate demand from LANGUAGE, and it has to be: the model wrote Russian words in
+# Russian order and still produced «Какую сторону кодирования ты больше интересуешься» and «Ты бы
+# играл в игры с кем-то или смотреть матчи». Both are correct-language and broken-sentence, and a
+# person reads a broken sentence as a broken product. The rule below names the two failures the
+# model actually makes — case agreement in the question word, and a verb form that stops agreeing
+# halfway through a choice — instead of asking politely for "good Russian".
 _ONB_LANG_RULE = {
     "ru": (" [LANGUAGE: the user is writing in Russian, so write EVERY word of your message in Russian,"
-           " including any [OPTIONS: ...] labels. Do not switch to English.]"),
-    "en": "",
+           " including any [OPTIONS: ...] labels. Do not switch to English."
+           " GRAMMAR, and this matters as much as the meaning: the question must be ONE complete,"
+           " grammatical Russian sentence that ends with a single «?». The question word must agree"
+           " in case with what it asks about («какая музыка тебе нравится», NOT «какую музыку тебе"
+           " нравится»). When you offer a choice, both halves must be the same part of speech and the"
+           " same form («играть или смотреть», NOT «играл или смотреть»). Re-read the sentence before"
+           " you send it: if a native speaker would not say it out loud, rewrite it.]"),
+    "en": (" [Write the question as one complete sentence ending in a single «?». Both halves of a"
+           " choice take the same form (\"play or watch\", not \"played or watching\").]"),
+    "es": (" [LANGUAGE: write EVERY word in Spanish (castellano), including any [OPTIONS: ...] labels."
+           " Address the user as «tú». The question must be one complete, grammatical sentence with"
+           " «¿» at the start and «?» at the end, and both halves of a choice take the same form.]"),
 }
 
 def critical_status_v2(p):
@@ -132,9 +148,11 @@ DO ASK, one of these, whichever is missing and most useful for THIS interest:
 - WITH WHOM it usually happens — one-on-one, a small group, a crowd — but only if it is not obvious.
 
 STYLE. You are a person helping a friend, not a form. React to what they just said in ONE short,
-specific line — specific means naming the thing they mentioned, not «это замечательно» or «ты
+specific line — specific means naming the thing they mentioned, IN THEIR OWN WORD for it: they wrote
+«Код», so write «Код», not «Кодирование» and not «программирование». Never «это замечательно» or «ты
 интересный человек». Never compliment the user. Never open with «X — это отличный способ…». Then
-ask EXACTLY ONE question, and let it be the last thing in the message. One question mark. Two topics
+ask EXACTLY ONE question, and let it be the last thing in the message. It must be a complete
+sentence and it must END WITH A QUESTION MARK — exactly one, and none anywhere else. Two topics
 joined by «and» is two questions and is forbidden. Keep the whole message under 25 words.
 
 Do not re-ask a question you already asked, even reworded — if they sidestepped it, move on. For
@@ -145,10 +163,15 @@ no markdown, no JSON, no <profile> tags. A status line tells you exactly what to
 # The option buttons are localised (see _CONFIRM_OPTIONS), so these must match the Russian labels too —
 # otherwise tapping «Это всё» would fall through and the step would never finish.
 _FIN_RE = re.compile(r"that'?s all|that is all|\bfinish|\bdone\b|no more|nothing else|i'?m good|all set|\bnope\b|^\s*no[.! ]*$"
-                     r"|это вс[её]|всё|все[.! ]*$|больше нет|хватит|готов|достаточно|^\s*нет[.! ]*$", re.I)
+                     r"|это вс[её]|всё|все[.! ]*$|больше нет|хватит|готов|достаточно|^\s*нет[.! ]*$"
+                     # Испанский: без этих форм «Eso es todo» проваливалось мимо ветки финиша, и шаг
+                     # зацикливался ровно так же, как когда-то зацикливался русский.
+                     r"|eso es todo|ya est[áa]|nada m[áa]s|es todo|^\s*no[.! ]*$|listo|suficiente", re.I)
 _ADD_RE = re.compile(r"\badd\b|another|one more|\bmore\b|\byes\b|yeah|sure|\balso\b|actually"
-                     r"|добав|ещ[её]|да[.! ]*$|конечно|также|хочу", re.I)
-_CONFIRM_OPTIONS = {"ru": "Добавить ещё интерес | Это всё", "en": "Add another interest | That's all"}
+                     r"|добав|ещ[её]|да[.! ]*$|конечно|также|хочу"
+                     r"|a[ñn]adir|otro inter[ée]s|uno m[áa]s|^\s*s[íi][.! ]*$|claro|tambi[ée]n", re.I)
+_CONFIRM_OPTIONS = {"ru": "Добавить ещё интерес | Это всё", "en": "Add another interest | That's all",
+                    "es": "Añadir otro interés | Eso es todo"}
 
 # gibberish / non-answer detection: catch keyboard-mash like "afcafcafc" / "ппфцпц" so the funnel
 # re-asks instead of silently accepting junk and moving on.
@@ -377,11 +400,19 @@ def v2_chat(messages, prior, want_lang=None):
         sys += (" [ALL PICKED INTERESTS ARE COVERED. Ask EXACTLY ONE closing question: would they like to add "
                 "another interest, or is that everything for now. End with [OPTIONS: %s]. "
                 "Nothing else.]" % _CONFIRM_OPTIONS[_onb_lang(hist, want_lang)])
-    raw = llm_complete(cfg, [{"role": "system", "content": sys}] + hist, 0.6)
+    # 0.45, не 0.6. Здесь модель не сочиняет, а формулирует один вопрос на чужом для неё языке, и
+    # каждая лишняя десятая температуры — это «Ты бы играл в игры с кем-то или смотреть матчи».
+    # Разнообразие вопросов задаёт список пробелов выше, а не разброс сэмплинга.
+    raw = llm_complete(cfg, [{"role": "system", "content": sys}] + hist, 0.45)
     reply, _p, _i, _b, _s, options = base.parse_reply(raw)
     options = _norm_options(options)
     reply = base.dose_reply(base.sanitize_output(base.guard_reply(reply)))
     reply = reply.replace("—", "-").replace("–", "-")  # taste-skill: no em/en-dash in user-visible copy
+    # Вопрос без знака вопроса — самая частая осечка модели, и на экране он выглядит оборванным.
+    # Ставим его сами ТОЛЬКО там, где реплика заведомо вопрос: есть варианты ответа, а завершающей
+    # точки нет. Ветку финиша (она обязана кончаться точкой) это не трогает.
+    if options and reply and not reply.rstrip().endswith(("?", ".", "!", "…")):
+        reply = reply.rstrip() + "?"
     if not (reply or "").strip():
         reply = "Tell me a bit more. What do you like to do with it?"
     # funnelComplete = no gaps left AND the user explicitly confirmed they are done adding interests

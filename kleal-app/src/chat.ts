@@ -64,10 +64,11 @@ export const CHAT = {
 
   /** O.20 — план отправлен. */
   sentTo: (name: string) => T(`Отправлено: ${name}`, `Sent to ${name}`),
+  /** У звонка нет «места» — обещать его в записке к онлайн-плану было просто неправдой. */
   sentNote: (name: string) =>
     T(
-      `${name} видит время, место и ссылку. Пока не подтвердит — ничего не забронировано ни у кого из вас.`,
-      'They see the time, the place and the link. Until they confirm, nothing is booked for either of you.'
+      `${name} видит время и то, что это звонок. Пока не подтвердит — ничего не забронировано ни у кого из вас.`,
+      `${name} sees the time and that it is a call. Until they confirm, nothing is booked for either of you.`
     ),
   notAnswered: () => T('Ещё не ответил(а)', 'Hasn’t answered yet'),
   youProposed: () => T('Это предложил(а) ты', 'You proposed this'),
@@ -103,6 +104,25 @@ export const CHAT = {
  */
 export const PLAN = {
   confirmed: () => T('Подтверждено', 'Confirmed'),
+
+  /** O.20 — шапка формы. Режим приходит из интента, и форма его НАЗЫВАЕТ, а не намекает полями. */
+  formMode: (mode: 'offline' | 'online' | 'hybrid', name: string) =>
+    mode === 'online'
+      ? T(`Звонок с ${name} — по интенту вы договорились встретиться онлайн`,
+          `A call with ${name} — your intent was to meet online`)
+      : mode === 'hybrid'
+        ? T(`Встреча с ${name} — по интенту можно и онлайн, и вживую`,
+            `Meeting ${name} — your intent allows both online and in person`)
+        : T(`Встреча с ${name} вживую — по интенту вы договорились увидеться`,
+            `Meeting ${name} in person — your intent was to meet up`),
+  /** Ссылку можно донести потом, но второй до этого видит «ссылка будет» — об этом честно сразу. */
+  linkLaterNote: (name: string) =>
+    T(`Можно оставить пустым и прислать позже — до этого ${name} видит «ссылка будет».`,
+      `You can leave this empty and add it later — until then ${name} sees “link coming”.`),
+  /** Что случится по «Создать план». Кнопка отправляет предложение, а не бронирует вечер. */
+  formSendNote: (name: string) =>
+    T(`${name} получит это предложением и подтвердит со своей стороны. Пока не подтвердит — ничего не назначено.`,
+      `${name} gets this as a proposal and confirms on their side. Nothing is booked until they do.`),
   /**
    * На кадре здесь названы обе стороны и оба часовых пояса. Пояс собеседника мы не храним — ни в
    * профиле, ни в плане, — поэтому время показывается ОДНО, своё, и подписано своим поясом.
@@ -115,6 +135,19 @@ export const PLAN = {
     T(`Видеозвонок · ссылка откроется в ${hhmmStr}`, `Video call · link opens ${hhmmStr}`),
   /** Формат без обещаний про ссылку — для встречи, которая уже позади или отменена. */
   modeOnline: () => T('Видеозвонок', 'Video call'),
+
+  /** Всё согласовано и место известно — конец переговоров, сказанный вслух. */
+  allSetTitle: () => T('Всё готово', 'You’re all set'),
+  allSetNote: (when: string, offline: boolean, name: string, place: string) =>
+    offline
+      ? T(
+          `${when}${place ? `, ${place}` : ''}. Адрес есть у вас обоих — договариваться больше не о чем.`,
+          `${when}${place ? `, ${place}` : ''}. You both have the address — nothing left to agree.`
+        )
+      : T(
+          `${when}. Ссылка сохранена и откроется за 10 минут до начала — ${name} тоже её увидит.`,
+          `${when}. The link is saved and opens 10 minutes before — ${name} sees it too.`
+        ),
 
   startsIn: (min: number) => T(`Начало через ${min} мин`, `Starts in ${min} minutes`),
   startsNow: () => T('Время звонка', 'Your call is now'),
@@ -365,6 +398,36 @@ export const PLAN = {
     ),
 };
 
+/**
+ * Состояние встречи одной строкой — для закреплённой карточки в переписке (MSG.07).
+ *
+ * `warn` означает «ход за тобой»: такая строка красится в акцент. Строка считается ЗДЕСЬ, а не в
+ * экране, чтобы карточка в чате и заголовок на экране плана не разъехались в оценке одного и того
+ * же состояния.
+ */
+export function planPinned(plan: any, me: string): { label: string; warn: boolean } {
+  const norm = (v: any) => String(v || '').trim().toLowerCase();
+  const meRow = (plan?.participants || []).find((p: any) => norm(p?.name) === norm(me));
+  const iConfirmed = !!meRow?.confirmed;
+  const pending = plan?.pending;
+  if (pending) {
+    return pending.mine
+      ? { label: T('Новое время отправлено — ждём ответа', 'New time sent — waiting for an answer'), warn: false }
+      : { label: T('Предложено другое время — твой ход', 'Another time suggested — your turn'), warn: true };
+  }
+  if (plan?.state === 'confirmed') {
+    // Согласовано, но идти некуда: у звонка нет ссылки, у встречи — места.
+    if (!plan?.address_set) {
+      return plan?.mode === 'online'
+        ? { label: T('Подтверждено · ссылки пока нет', 'Confirmed · no link yet'), warn: true }
+        : { label: T('Подтверждено · место пока не выбрано', 'Confirmed · no place yet'), warn: true };
+    }
+    return { label: T('Подтверждено обоими', 'Confirmed by both'), warn: false };
+  }
+  if (!iConfirmed) return { label: T('Ждёт твоего подтверждения', 'Waiting for you to confirm'), warn: true };
+  return { label: T('Отправлено · ждём ответа', 'Sent · waiting for an answer'), warn: false };
+}
+
 /** O.19a/O.19b — полоса отсчёта внизу чата: действие случится через 4 секунды, если не отменить. */
 export const UNDO_BAR = {
   creating: (name: string) => T(`Создаю план с ${name}`, `Creating the plan with ${name}`),
@@ -508,7 +571,96 @@ export function linkOpensAt(plan: any, ru = true): string {
   return d.toLocaleTimeString(ru ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: !ru });
 }
 
-export type Msg = { from?: string; to?: string; text?: string; t?: number };
+/**
+ * СОБЫТИЕ ПЛАНА в ленте переписки. Сервер кладёт код и факты, строку собираем здесь.
+ *
+ * Почему не готовым текстом с сервера: у двоих может быть разный язык интерфейса, и русская
+ * фраза, склеенная на сервере, приезжала бы на английский экран. Поэтому едет `code` плюс то, из
+ * чего строка складывается, а «Ты» против имени решается уже на месте — по тому, кто смотрит.
+ *
+ * Зачем это вообще. Раньше план жил только на своём экране: второй стороне карточка молча меняла
+ * состояние — ни строки о том, что план отправлен, ни о том, что он подтверждён, ни о том, что
+ * место наконец названо. Двое договаривались о встрече, читая два разных экрана.
+ */
+export type SysMsg = {
+  code: string;
+  by?: string;
+  /** Время встречи в секундах — форматируется на языке читателя, не отправителя. */
+  at?: number;
+  was?: number;
+  mode?: string;
+  district?: string;
+  kind?: string;
+};
+
+export type Msg = { id?: string; from?: string; to?: string; text?: string; t?: number; sys?: SysMsg };
+
+/** «Пт, 8 авг · 20:00» из секунд. Пусто — времени нет, и выдумывать его нечем. */
+function atLabel(at: any, ru: boolean): string {
+  if (typeof at !== 'number' || !isFinite(at) || !at) return '';
+  const d = new Date(at * 1000);
+  const day = d.toLocaleDateString(ru ? 'ru-RU' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short' });
+  const hm = d.toLocaleTimeString(ru ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: !ru });
+  return `${day} · ${hm}`;
+}
+
+/** Час без даты — для переноса, где важен только сдвинутый час. */
+function hourLabel(at: any, ru: boolean): string {
+  if (typeof at !== 'number' || !isFinite(at) || !at) return '';
+  return new Date(at * 1000).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', {
+    hour: '2-digit', minute: '2-digit', hour12: !ru,
+  });
+}
+
+/**
+ * Строка события для ленты. `me` — кто смотрит: свои действия называются «ты», чужие — именем.
+ * Неизвестный код возвращает пустую строку: показать сырой код человеку хуже, чем не показать
+ * ничего, а новый код доедет со следующей версией клиента.
+ */
+export function sysLine(sys: SysMsg | undefined, me: string, ru: boolean): string {
+  if (!sys?.code) return '';
+  const by = String(sys.by || '').trim();
+  const mine = !!by && by.toLowerCase() === String(me || '').trim().toLowerCase();
+  const when = atLabel(sys.at, ru);
+  const hour = hourLabel(sys.at, ru);
+  const wasHour = hourLabel(sys.was, ru);
+  switch (sys.code) {
+    case 'plan_proposed':
+      return mine
+        ? T(`Ты предложил(а) встречу${when ? ' — ' + when : ''}`, `You proposed a meetup${when ? ' — ' + when : ''}`)
+        : T(`${by} предложил(а) встречу${when ? ' — ' + when : ''}`, `${by} proposed a meetup${when ? ' — ' + when : ''}`);
+    // Та самая строка, которой не хватало: она приходит обоим и означает, что торг закончен.
+    case 'plan_confirmed':
+      return T(`План подтверждён${when ? ' — ' + when : ''}. Время закреплено за вами обоими.`,
+               `The plan is confirmed${when ? ' — ' + when : ''}. The time is set for both of you.`);
+    case 'plan_place':
+      if (sys.kind === 'link') {
+        return mine ? T('Ты добавил(а) ссылку на звонок', 'You added the call link')
+                    : T(`${by} добавил(а) ссылку на звонок`, `${by} added the call link`);
+      }
+      return mine ? T('Ты назвал(а) место встречи', 'You named the place')
+                  : T(`${by} назвал(а) место встречи`, `${by} named the place`);
+    case 'plan_counter':
+      return mine
+        ? T(`Ты предложил(а) перенести${hour ? ' на ' + hour : ''} — до ответа в силе прежнее время`,
+            `You suggested moving it${hour ? ' to ' + hour : ''} — the old time holds until they answer`)
+        : T(`${by} предлагает${hour ? ' ' + hour : ' другое время'}${wasHour ? ' вместо ' + wasHour : ''}`,
+            `${by} suggests${hour ? ' ' + hour : ' another time'}${wasHour ? ' instead of ' + wasHour : ''}`);
+    case 'plan_change_ok':
+      return T(`Новое время принято${when ? ' — ' + when : ''}`, `The new time is agreed${when ? ' — ' + when : ''}`);
+    case 'plan_change_no':
+      return mine ? T('Ты оставил(а) прежнее время', 'You kept the original time')
+                  : T(`${by} оставил(а) прежнее время`, `${by} kept the original time`);
+    case 'plan_change_pulled':
+      return mine ? T('Ты забрал(а) предложение о переносе', 'You took back the time change')
+                  : T(`${by} забрал(а) предложение о переносе`, `${by} took back the time change`);
+    case 'plan_cancelled':
+      return mine ? T('Ты отменил(а) встречу', 'You called the meetup off')
+                  : T(`${by} отменил(а) встречу`, `${by} called the meetup off`);
+    default:
+      return '';
+  }
+}
 export type Req = {
   id?: string;
   from?: string;
@@ -519,18 +671,9 @@ export type Req = {
   updated?: number;
 };
 
-/** Заявки по имени собеседника — чтобы карточка выдачи знала своё состояние. */
-export function byPerson(reqs: Req[]): Record<string, Req> {
-  const out: Record<string, Req> = {};
-  for (const r of reqs || []) {
-    const who = String(r.to || '').trim();
-    if (!who) continue;
-    const prev = out[who];
-    // Свежайшая заявка на человека выигрывает: сервер обновляет одну и ту же, но история бывает.
-    if (!prev || (r.updated || 0) > (prev.updated || 0)) out[who] = r;
-  }
-  return out;
-}
+// byPerson жил здесь и раскладывал outbox по именам для карточек выдачи. Теперь это делает общий
+// стор приглашений (src/invites.ts) — он же владеет отправкой, отзывом и потолком, потому что
+// «Пригласить» есть на двух экранах и состояние у них обязано быть одно.
 
 /**
  * С кем переписка ИДЁТ на самом деле — по последним сообщениям, а не по принятым приглашениям.

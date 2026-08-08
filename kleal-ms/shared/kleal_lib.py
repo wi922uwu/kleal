@@ -71,8 +71,44 @@ def dose_reply(text):
     q = text.find("?")
     if q != -1:
         text = text[:q + 1]                         # keep only the first question
-    text = re.sub(r" {2,}", " ", text)
-    return re.sub(r"\n{2,}", "\n", text).strip()
+    return polish_reply(text)
+
+
+# -------- speech repair: the seam every strip above leaves behind --------
+#
+# Everything that reaches a person passes through here. The strips are surgical and the model is
+# careless, and where the two meet the text tears in ways a reader reads as a broken app rather
+# than as a clumsy sentence. Two tears seen live, both in one screen of onboarding:
+#
+#   «Какой код интересен ?»              — sanitize_output pulled an emoji out from before the
+#                                          question mark and left its space standing.
+#   «разработку илиReverse-engineering»  — the space between a Russian word and a Latin term is
+#                                          gone; the two words read as one nonsense token.
+#
+# The second one is repairable without knowing WHICH strip ate the space, and that matters: the
+# rule is about the text, not about its history. A Russian word never continues in Latin letters
+# and a Latin word never continues in Cyrillic — a script boundary inside a token is always a lost
+# space, whoever lost it. Hyphenated pairs («AI-помощник») keep their hyphen and are not touched.
+_GLUE_CYR_LAT = re.compile(r"([А-Яа-яЁё])([A-Za-z])")
+_GLUE_LAT_CYR = re.compile(r"([A-Za-z])([А-Яа-яЁё])")
+# A conjunction left hanging at the end: the sentence it belonged to was cut by the [OPTIONS] strip
+# or by the one-question dosing above. «…разработку или» is worse than «…разработку».
+_DANGLING = re.compile(r"[\s,;:—-]*\b(?:или|and|or|и|а также)\s*$", re.I)
+
+
+def polish_reply(text):
+    """Repair the seams: spacing around punctuation, glued scripts, a conjunction left dangling."""
+    text = str(text or "")
+    text = _GLUE_CYR_LAT.sub(r"\1 \2", text)
+    text = _GLUE_LAT_CYR.sub(r"\1 \2", text)
+    text = re.sub(r"[ \t]+([,;:!?…»])", r"\1", text)       # «слово ?» -> «слово?»
+    text = re.sub(r"[ \t]+\.(?=\s|$)", ".", text)          # the same for a sentence-final period
+    text = re.sub(r"([«(])[ \t]+", r"\1", text)            # «( слово» -> «(слово»
+    text = re.sub(r"[ \t]{2,}", " ", text)                 # doubled spaces left by a strip
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{2,}", "\n", text).strip()
+    text = _DANGLING.sub("", text).strip()
+    return text
 
 
 KNOWN_TOP = {"name", "ageVerified18", "ageRange", "city", "country", "timezone", "photoStatus",

@@ -1467,7 +1467,7 @@ def profile_edit(message, profile, lang):
         return {"reply": ("Не совсем понял — что поменять в профиле?" if lang == "ru"
                           else "I didn't catch that — what should I change?"), "patch": [], "lang": lang}
     patch = _validate_patch(obj.get("patch"))
-    reply = str(obj.get("reply") or "").strip()[:400] or (
+    reply = base.polish_reply(str(obj.get("reply") or ""))[:400] or (
         ("Готово?" if lang == "ru" else "Want me to apply that?") if patch
         else ("Что поменять в профиле?" if lang == "ru" else "What should I change?"))
     return {"reply": reply, "patch": patch, "lang": lang}
@@ -1781,10 +1781,13 @@ def _salvage(reply, lang):
     still worth a re-roll. Losing a good answer to a two-character artifact is not.
     """
     s = str(reply or "")
+    # polish_reply on BOTH branches: the seams it repairs (a space eaten before «?», a Russian word
+    # glued to a Latin term) have nothing to do with the language check and appear in answers that
+    # pass it. Читателю склейка выглядит поломкой приложения, а не косноязычием модели.
     if _lang_ok(s, lang):
-        return s
+        return base.polish_reply(s)
     s2 = _strip_foreign(s)
-    return s2 if (s2 and _lang_ok(s2, lang)) else ""
+    return base.polish_reply(s2) if (s2 and _lang_ok(s2, lang)) else ""
 
 
 # Filtration answers a bare greeting with topics: "привет" -> ['hello','greeting'],
@@ -2199,7 +2202,7 @@ def intent_build(messages, profile, on_text=None):
                                   else "What would you like to set up? Tell me what and with whom."),
                 "valid": False, "ready": False, "intent": None, "lang": lang,
                 "conversational": bool(chat), "hints": []}
-    reply = str(obj.get("reply"))[:400]
+    reply = base.polish_reply(str(obj.get("reply")))[:400]
     valid = bool(obj.get("valid", True))
     ready = bool(obj.get("ready")) and valid
     activity = str(obj.get("activity") or last_user)

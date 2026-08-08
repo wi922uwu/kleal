@@ -23,7 +23,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { CANDS, OPTIONS, REPORT_REASONS, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
+import { CANDS, CAP, OPTIONS, REPORT_REASONS, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
+import { CHAT } from '../src/chat';
+import { useInvites, inviteTo, sendInvite, withdrawInvite } from '../src/invites';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, takeCandidate } from '../src/results-store';
 import { agent } from '../src/api';
@@ -39,8 +41,19 @@ export default function Candidate() {
   const insets = useSafeAreaInsets();
   const c: Cand | null = useMemo(() => takeCandidate(), []);
   const handoff = useMemo(() => takeResults(), []);
+  const self = String(handoff?.profile?.name || '');
+  const name = String(c?.name || '');
+  /**
+   * Приглашение — общее состояние со списком выдачи (src/invites.ts). Своего у карточки больше
+   * нет: пока оно было, приглашённый из списка человек открывался здесь с кнопкой «Пригласить»,
+   * и заявка уходила во второй раз.
+   */
+  useInvites(self);
+  const invite = inviteTo(name);
 
   const [asking, setAsking] = useState(false);
+  /** MSG.22: потолок открытых приглашений сработал — окно живёт и здесь, не только в выдаче. */
+  const [capOpen, setCapOpen] = useState(false);
   /** Лист O.13b и его отсчёт. pending — действие, которое случится через n секунд, если не отменить. */
   const [options, setOptions] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -48,8 +61,6 @@ export default function Candidate() {
   const [optNote, setOptNote] = useState('');
   const timer = useRef<any>(null);
   const [sending, setSending] = useState(false);
-  /** Id отправленной заявки. По нему работает «Отменить» (O.15); пусто — не отправляли. */
-  const [sentId, setSentId] = useState('');
   const [err, setErr] = useState('');
 
   if (!c) {
@@ -66,7 +77,6 @@ export default function Candidate() {
     );
   }
 
-  const name = String(c.name || '');
   const where = candWhere(c);
   const summary = candSummary(c, ru());
   const readiness = (ru() ? c.readiness_ru : c.readiness_en) || '';
@@ -76,10 +86,9 @@ export default function Candidate() {
     setSending(true);
     setErr('');
     try {
-      const self = String(handoff?.profile?.name || '');
-      const r: any = await agent.propose(self, name, handoff?.intent || {});
-      if (!r?.ok) throw new Error(r?.error || 'propose failed');
-      setSentId(String(r.id || ''));
+      const r = await sendInvite(self, name, handoff?.intent || {});
+      if (r.capped) { setAsking(false); setCapOpen(true); return; }
+      if (!r.ok) throw new Error(r.error || 'propose failed');
       setAsking(false);
     } catch {
       setErr(CANDS.inviteFailed());
@@ -90,16 +99,8 @@ export default function Candidate() {
 
   /** O.15 «Отменить»: отзыв НЕотвеченного приглашения. Уже отвеченное отзывать нечем. */
   const cancel = async () => {
-    if (!sentId) return;
     setErr('');
-    try {
-      const self = String(handoff?.profile?.name || '');
-      const r: any = await agent.withdraw(sentId, self);
-      if (!r?.ok && r?.error !== 'ALREADY_RESOLVED') throw new Error(r?.error || 'withdraw failed');
-      setSentId('');
-    } catch {
-      setErr(CANDS.cancelFailed());
-    }
+    if (!(await withdrawInvite(self, name))) setErr(CANDS.cancelFailed());
   };
 
   /**
@@ -120,7 +121,6 @@ export default function Candidate() {
         setPending({ ...pending, n: pending.n - 1 });
         return;
       }
-      const self = String(handoff?.profile?.name || '');
       try {
         if (pending.kind === 'block') {
           const r: any = await agent.block(self, name, true);
@@ -148,7 +148,6 @@ export default function Candidate() {
   const sendReport = async (reason: string) => {
     setOptNote('');
     try {
-      const self = String(handoff?.profile?.name || '');
       const r: any = await agent.report(self, name, reason);
       if (!r?.ok) throw new Error(r?.error || 'report failed');
       setReporting(false);
@@ -222,7 +221,25 @@ export default function Candidate() {
 
         {err ? <Text style={s.err}>{err}</Text> : null}
 
-        {sentId ? (
+        {/* Те же четыре состояния, что и на карточке в списке (O.15/O.16/O.17) — они читаются из
+            общего стора, поэтому «Пригласить» здесь не может появиться у уже приглашённого. */}
+        {invite?.status === 'declined' ? (
+          <View style={s.invitedRow}>
+            <View style={[s.invite, s.invitedPill]}>
+              <Text style={[s.inviteText, { color: color.muted }]}>⊘  {CHAT.declined()}</Text>
+            </View>
+          </View>
+        ) : invite?.status === 'accepted' ? (
+          <View style={s.invitedRow}>
+            <Pressable
+              accessibilityRole="button"
+              style={[s.invite, { flex: 1 }]}
+              onPress={() => router.push({ pathname: '/conversation', params: { who: name, photo: c.photo || '' } })}
+            >
+              <Text style={s.inviteText}>{CHAT.openChat()}</Text>
+            </Pressable>
+          </View>
+        ) : invite?.status === 'pending' ? (
           // O.15: приглашение ушло — слева спокойное состояние, справа настоящая «Отменить».
           <View style={s.invitedRow}>
             <View style={[s.invite, s.invitedPill]}>
@@ -266,6 +283,24 @@ export default function Candidate() {
           </Pressable>
           <Pressable accessibilityRole="button" style={s.sheetNot} onPress={() => setAsking(false)}>
             <Text style={s.sheetNotText}>{CANDS.notYet()}</Text>
+          </Pressable>
+        </View>
+      </Modal>
+
+      {/* MSG.22 — потолок открытых приглашений. Раньше жил только в выдаче, и отправка отсюда
+          его обходила: карточка молча слала четвёртое приглашение. */}
+      <Modal visible={capOpen} transparent animationType="slide" onRequestClose={() => setCapOpen(false)}>
+        <Pressable style={s.scrim} onPress={() => setCapOpen(false)} accessibilityLabel={T('Закрыть', 'Close')} />
+        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+          <View style={s.sheetHead}>
+            <Text style={s.sheetTitle}>{CAP.title(CAP.limit)}</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setCapOpen(false)} hitSlop={10}>
+              <Text style={s.sheetX}>✕</Text>
+            </Pressable>
+          </View>
+          <Text style={s.sheetBody}>{CAP.note()}</Text>
+          <Pressable accessibilityRole="button" style={s.sheetNot} onPress={() => { setCapOpen(false); router.back(); }}>
+            <Text style={s.sheetNotText}>{CAP.cancelOne()}</Text>
           </Pressable>
         </View>
       </Modal>

@@ -19,7 +19,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, msgTime, msgDayLabel, planWhen } from '../src/chat';
+import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, msgTime, msgDayLabel, planWhen, planPinned, sysLine } from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
@@ -73,6 +73,10 @@ export default function Conversation() {
    *
    * Склеиваем по отправителю и тексту в окне полминуты: собственных часов у клиента и сервера
    * достаточно разных, чтобы сравнивать одни только метки времени было нельзя.
+   *
+   * Сначала — по id, и это не оптимизация. У событий плана текст ПУСТОЙ (строка собирается из кода
+   * на экране), поэтому склейка по тексту схлопывала «план предложен» и «место назначено», пришедшие
+   * в одну минуту, в одну строку: экран терял половину истории встречи.
    */
   const merge = useCallback((incoming: Msg[]) => {
     if (!incoming.length) return;
@@ -80,10 +84,13 @@ export default function Conversation() {
     setMsgs((prev) => {
       const out = [...prev];
       for (const m of incoming) {
-        const dupe = out.findIndex(
-          (x) => x.text === m.text
-            && String(x.from || '').toLowerCase() === String(m.from || '').toLowerCase()
-            && Math.abs((x.t || 0) - (m.t || 0)) < 30
+        const byId = m.id ? out.findIndex((x) => x.id && x.id === m.id) : -1;
+        const dupe = byId >= 0 ? byId : (
+          !m.text ? -1 : out.findIndex(
+            (x) => !x.id && x.text === m.text
+              && String(x.from || '').toLowerCase() === String(m.from || '').toLowerCase()
+              && Math.abs((x.t || 0) - (m.t || 0)) < 30
+          )
         );
         if (dupe >= 0) out[dupe] = m;      // серверная версия точнее: у неё настоящее время
         else out.push(m);
@@ -133,9 +140,13 @@ export default function Conversation() {
     return () => clearInterval(id);
   }, [loadSide]);
 
+  /** Только настоящие реплики. События плана — не разговор: они не считаются ни в «прочитано»,
+   *  ни в счётчике подсказки MSG.08 («вы обменялись N сообщениями»). */
+  const talk = useMemo(() => msgs.filter((m) => !m.sys), [msgs]);
+
   // «Прочитано» отправляется, когда на экране появились новые ЧУЖИЕ сообщения, а не на каждый опрос.
   useEffect(() => {
-    const theirs = msgs.filter((m) => String(m.from || '').toLowerCase() !== me.toLowerCase()).length;
+    const theirs = talk.filter((m) => String(m.from || '').toLowerCase() !== me.toLowerCase()).length;
     if (theirs > readStamped.current) {
       readStamped.current = theirs;
       markSeen(other);
@@ -188,7 +199,7 @@ export default function Conversation() {
       }
       setPending(null);
       if (pending.kind === 'plan') {
-        router.push({ pathname: '/plan', params: { who: other, title: intentTitle, photo, address: planAddressHint() } });
+        router.push({ pathname: '/plan', params: planParams() });
       } else {
         // Конец разговора: у сервера нет понятия «закрытый тред», поэтому завершение — это уход
         // с экрана. Полоса и была последним шансом остаться. Открытому по прямой ссылке экрану
@@ -236,11 +247,25 @@ export default function Conversation() {
     setMsgPrefs((m) => ({ ...m, hiddenInvites: [...(m.hiddenInvites || []), String(inviteIn?.id || '')] }));
   const muteNudge = () =>
     setMsgPrefs((m) => ({ ...m, noNudge: [...(m.noNudge || []), norm(other)] }));
-  /** OF.09 → OF.20: точное место, названное при создании интента, — форме плана, не спрашивать дважды. */
-  const planAddressHint = () => String(request?.intent?.address || '');
+  /**
+   * Что форма плана обязана знать про интент, по которому вы совпали, — иначе она это выдумывает.
+   *
+   *   mode    — офлайн/онлайн/гибрид. Без него форма угадывала режим по наличию ссылки: у встречи
+   *             вживую спрашивала ссылку на звонок, а звонок без вставленной ссылки уезжал на
+   *             сервер как встреча вживую.
+   *   address — точное место с OF.09: не спрашивать дважды то, что человек уже назвал.
+   *   link    — то же самое для звонка.
+   */
+  const planParams = () => ({
+    who: other,
+    title: requestTitle || intentTitle,
+    photo,
+    mode: String(request?.intent?.mode || ''),
+    address: String(request?.intent?.address || ''),
+    link: String(request?.intent?.link || ''),
+  });
 
-  const toPlan = () =>
-    router.push({ pathname: '/plan', params: { who: other, title: requestTitle || intentTitle, photo, address: planAddressHint() } });
+  const toPlan = () => router.push({ pathname: '/plan', params: planParams() });
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -277,6 +302,11 @@ export default function Conversation() {
               <Text style={s.planTitle} numberOfLines={1}>{livePlan.title || intentTitle}</Text>
               <Text style={s.planSub} numberOfLines={1}>
                 {planWhen(livePlan, ru)}{livePlan.district ? ` · ${livePlan.district}` : ''}
+              </Text>
+              {/* Состояние встречи — прямо на карточке. Раньше она молчала, и «подтверждено» или
+                  «ждёт тебя» узнавалось только после перехода на экран плана. */}
+              <Text style={[s.planState, planPinned(livePlan, me).warn && { color: color.primary }]} numberOfLines={1}>
+                {planPinned(livePlan, me).label}
               </Text>
             </View>
             {/* Пара участников, как на MSG.07: собеседник и я, внахлёст. */}
@@ -341,7 +371,7 @@ export default function Conversation() {
             <Text style={s.sysLine}>{THREAD.joined(requestTitle)}</Text>
           ) : null}
 
-          {!loading && msgs.length === 0 ? <Text style={s.empty}>{CHAT.empty(other)}</Text> : null}
+          {!loading && talk.length === 0 ? <Text style={s.empty}>{CHAT.empty(other)}</Text> : null}
 
           {msgs.map((m, i) => {
             const mine = String(m.from || '').trim().toLowerCase() === me.trim().toLowerCase();
@@ -349,6 +379,22 @@ export default function Conversation() {
             const newDay = !!m.t && (!prev
               || new Date((prev.t || 0) * 1000).toDateString() !== new Date(m.t * 1000).toDateString());
             const read = peerRead >= (m.t || 0);
+            /* События плана — не реплика: они не чьи-то слова, а факт, случившийся с встречей.
+               Поэтому строкой по центру, без пузыря, аватара и галочек прочтения. */
+            if (m.sys) {
+              const line = sysLine(m.sys, me, ru);
+              if (!line) return null;
+              return (
+                <React.Fragment key={i}>
+                  {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
+                  <View style={s.eventRow}>
+                    <IconCalendar size={13} c={color.muted} />
+                    <Text style={s.eventText}>{line}</Text>
+                    <Text style={s.eventTime}>{msgTime(m.t, ru)}</Text>
+                  </View>
+                </React.Fragment>
+              );
+            }
             return (
               <React.Fragment key={i}>
                 {/* MSG.06: «Сегодня» над первой репликой дня. */}
@@ -379,10 +425,10 @@ export default function Conversation() {
           ) : null}
 
           {/* MSG.08 — подсказка Kleal: счёт сообщений настоящий, план по кнопке, «пока нет» помнит. */}
-          {!livePlan && msgs.length >= 8 && !noNudge ? (
+          {!livePlan && talk.length >= 8 && !noNudge ? (
             <View style={s.nudge}>
               <Text style={s.nudgeLabel}>Kleal</Text>
-              <Text style={s.nudgeText}>{THREAD.nudge(msgs.length, other)}</Text>
+              <Text style={s.nudgeText}>{THREAD.nudge(talk.length, other)}</Text>
               <View style={s.nudgeRow}>
                 <Pressable accessibilityRole="button" style={s.chip} onPress={toPlan}>
                   <Text style={s.chipText}>{THREAD.nudgeYes()}</Text>
@@ -546,6 +592,7 @@ const s = StyleSheet.create({
   },
   planTitle: { fontSize: 16, fontWeight: '700', color: color.fg } as any,
   planSub: { fontSize: 13, color: color.muted, marginTop: 1 } as any,
+  planState: { fontSize: 12, color: color.muted, marginTop: 2, fontWeight: '600' } as any,
   pairWrap: { flexDirection: 'row', alignItems: 'center' },
   pairAva: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: color.card },
   pairAvaOverlap: { marginLeft: -10 },
@@ -599,6 +646,16 @@ const s = StyleSheet.create({
   factRow: { flexDirection: 'row', gap: 16, paddingVertical: 8 },
   factKey: { width: 82, ...type.bodySmall, color: color.muted } as any,
   factVal: { flex: 1, ...type.bodySmall, color: color.fg, textAlign: 'right' } as any,
+
+  // События плана: плашка по центру ленты — заметная, но тише реплики.
+  eventRow: {
+    alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 7,
+    maxWidth: '92%', marginTop: space.sm,
+    paddingVertical: 7, paddingHorizontal: 12,
+    borderRadius: rad.full, backgroundColor: color.neutral100,
+  },
+  eventText: { flexShrink: 1, fontSize: 12.5, lineHeight: 17, color: color.muted, textAlign: 'center' } as any,
+  eventTime: { fontSize: 11, color: color.neutral400 } as any,
 
   thread: { paddingHorizontal: 20, paddingBottom: space.lg, gap: 4 },
   empty: { ...type.bodySmall, color: color.muted, textAlign: 'center', marginTop: space.lg } as any,
