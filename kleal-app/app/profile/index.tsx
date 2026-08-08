@@ -26,7 +26,7 @@ import {
 import { langName, searchLangs } from '../../src/languages';
 import { writeFact, patchFor } from '../../src/fields';
 import { SETTINGS } from '../../src/settings';
-import { AreaPicker, Area } from '../../src/components/AreaPicker';
+import { AreaPicker, Area, DEFAULT_AREA, PLACES } from '../../src/components/AreaPicker';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function ProfileHub() {
@@ -89,7 +89,9 @@ export default function ProfileHub() {
   };
 
   const saveLocation = async (a: Area) => {
-    writeFact('location.area', a.label);
+    // location.area ложится в profile.city — значит это ГОРОД. Раньше сюда приезжало название
+    // страны, и человек из Барселоны хранился как живущий в «Spain».
+    writeFact('location.area', a.city);
     writeFact('location.lat', a.lat);
     writeFact('location.lon', a.lon);
     writeFact('location.radiusKm', a.km);
@@ -582,12 +584,23 @@ function LocationSheet({
   onClose: () => void;
   onAccept: (a: Area) => void;
 }) {
-  const current = (): Area => ({
-    label: String(p.city || 'Spain'),
-    lat: p.geo?.coarseLat ?? 41.3874,
-    lon: p.geo?.coarseLon ?? 2.1686,
-    km: p.geo?.maxDistanceKm ?? 15,
-  });
+  /**
+   * Профиль хранит город и координаты, но не помнит, из какого списка их взяли. Страну
+   * восстанавливаем по городу; не нашли — значит точку ставили булавкой, и это честно помечено
+   * `moved`: подпись «Вернуть к <город>» тогда не врёт, а строка города остаётся своей.
+   */
+  const current = (): Area => {
+    const city = String(p.city || DEFAULT_AREA.city);
+    const home = PLACES.find((x) => x.cities.some((c) => c[0] === city));
+    return {
+      country: home?.country || DEFAULT_AREA.country,
+      city,
+      lat: p.geo?.coarseLat ?? DEFAULT_AREA.lat,
+      lon: p.geo?.coarseLon ?? DEFAULT_AREA.lon,
+      km: p.geo?.maxDistanceKm ?? 15,
+      moved: !home,
+    };
+  };
   const [area, setArea] = useState<Area>(current);
   useEffect(() => { if (open) setArea(current()); }, [open]);
   return (

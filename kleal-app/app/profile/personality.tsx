@@ -8,14 +8,14 @@
  * сводка на хабе. Сливать их нельзя: в вебе это уже пробовали, и тест молча съедал сводку.
  */
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image, TextInput } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card } from '../../src/components/ProfileShell';
 import { IconPerson } from '../../src/components/icons';
 import { useLang } from '../../src/i18n';
-import { useOnb, set } from '../../src/state';
+import { useOnb, set, getState } from '../../src/state';
 import { profile as profileApi } from '../../src/api';
-import { PERSONALITY as C, STORY_MAX, fmtUpdated } from '../../src/profile';
+import { PERSONALITY as C, STORY_MAX, fmtUpdated, adaptSummary } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function Personality() {
@@ -26,6 +26,13 @@ export default function Personality() {
 
   const [story, setStory] = useState<string>(String(p.story || ''));
   const [saved, setSaved] = useState(false);
+  /** Пересборка сводки: идёт / что получилось. Пусто — ещё не нажимали. */
+  const [rebuilding, setRebuilding] = useState(false);
+  const [rebuilt, setRebuilt] = useState('');
+  const [rebuildErr, setRebuildErr] = useState('');
+
+  /** Текст в поле отличается от сохранённого — значит есть что применять. */
+  const dirty = story.slice(0, STORY_MAX) !== String(p.story || '');
 
   /**
    * История сохраняется по уходу с поля и по кнопке. Проверка на «не изменилось» здесь не ради
@@ -39,6 +46,33 @@ export default function Personality() {
     setSaved(true);
     setTimeout(() => setSaved(false), 1800);
     return true;
+  };
+
+  /**
+   * «Пересобрать сводку». История уходит в профиль и оттуда — в сводку Kleal, но сама собой она
+   * туда не попадала: пересборка запускается правкой полей на хабе, а на этом экране кнопки не
+   * было вовсе. Человек писал абзац о себе, и ничего не происходило — по делу так и было.
+   *
+   * Сперва сохраняем историю (иначе пересобирали бы по вчерашнему тексту), потом просим модель.
+   * Результат показываем ЗДЕСЬ же: кнопка, которая тихо меняет текст на другом экране, — это то
+   * же самое «ничего не произошло».
+   */
+  const rebuild = async () => {
+    if (rebuilding) return;
+    setRebuilding(true);
+    setRebuildErr('');
+    setRebuilt('');
+    try {
+      await saveStory();
+      const ok = await adaptSummary();
+      const now = String((getState().profile as any).summary || '');
+      if (ok && now) setRebuilt(now);
+      else setRebuildErr(C.rebuildFailed());
+    } catch {
+      setRebuildErr(C.rebuildFailed());
+    } finally {
+      setRebuilding(false);
+    }
   };
 
   const text = String(p.personality || '');
@@ -90,6 +124,44 @@ export default function Personality() {
         {saved ? <Text style={s.savedNote}>{C.saved()}</Text> : null}
       </View>
 
+      {/*
+        Две кнопки прямо под полем. Раньше история сохранялась молча — по уходу с поля и по
+        кнопке в самом низу экрана, за 180 пикселями текстового поля: человек писал абзац о себе
+        и не видел ни подтверждения, ни последствия. Теперь «Сохранить» говорит, что применилось,
+        а «Пересобрать» показывает, что из этого вышло.
+      */}
+      <Pressable
+        accessibilityRole="button"
+        disabled={!dirty}
+        accessibilityState={{ disabled: !dirty }}
+        style={[s.applyBtn, !dirty && { opacity: 0.45 }]}
+        onPress={saveStory}
+      >
+        {/* «История сохранена» — только когда она правда есть. У пустого поля это была бы
+            неправда про несуществующий текст. */}
+        <Text style={s.applyText}>{!dirty && p.story ? C.applied() : C.apply()}</Text>
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ busy: rebuilding }}
+        style={[s.dark, rebuilding && { opacity: 0.7 }]}
+        onPress={rebuilding ? undefined : rebuild}
+      >
+        {rebuilding
+          ? <ActivityIndicator color="#fff" />
+          : <Text style={s.darkText}>{C.rebuild()}</Text>}
+      </Pressable>
+      <Text style={s.cap}>{C.rebuildNote()}</Text>
+
+      {rebuildErr ? <Text style={s.errNote}>{rebuildErr}</Text> : null}
+      {rebuilt ? (
+        <View style={s.rebuiltBox}>
+          <Text style={s.rebuiltLabel}>{C.rebuiltLabel()}</Text>
+          <Text style={s.rebuiltText}>{rebuilt}</Text>
+        </View>
+      ) : null}
+
       <Card>
         <View style={s.head}>
           <Text style={s.label}>{C.title()}</Text>
@@ -129,4 +201,16 @@ const s = StyleSheet.create({
   ctaText: { ...type.button, color: color.onPrimary } as any,
   dark: { height: 44, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center', marginTop: space.sm },
   darkText: { ...type.button, color: color.onPrimary } as any,
+
+  // «Сохранить историю» — не главное действие экрана (главное внизу, «Сохранить и закрыть»),
+  // поэтому мягкая кнопка, а не красная: две красные подряд спорят друг с другом.
+  applyBtn: {
+    height: 44, borderRadius: rad.full, backgroundColor: color.infoBg,
+    alignItems: 'center', justifyContent: 'center', marginTop: space.sm,
+  },
+  applyText: { ...type.button, color: color.primary } as any,
+  errNote: { ...type.bodySmall, color: color.primary, paddingHorizontal: 4 } as any,
+  rebuiltBox: { backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.md, gap: 4 },
+  rebuiltLabel: { ...type.labelSmall, color: color.successText, fontWeight: '700' } as any,
+  rebuiltText: { ...type.bodySmall, color: color.successText } as any,
 });

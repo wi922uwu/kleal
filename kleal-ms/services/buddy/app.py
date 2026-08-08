@@ -1485,7 +1485,9 @@ If a PERSONALITY section is present, it is a separate text the user owns and kee
 
 WRITE ABOUT THE PERSON, NOT ABOUT THEIR SETTINGS. Never mention safety options, privacy or visibility choices, matching permissions, verification, radius in kilometres or coordinates — they are switches in an app, not traits of a human being, and a paragraph that recites them reads like a form.
 
-LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ The interests may be stored as English keywords for the matching engine — translate them naturally, do not switch language because of them.'''
+DO NOT SPECULATE AND DO NOT COMPLIMENT. Only what the data states. No «which of course takes patience and attention to detail», no guessing at their character or motives from a job or a hobby, no telling them they are interesting, unique or well-rounded, no flattering closing sentence. State what is there and stop. These are the same rules the first summary was written under — a rewrite that adds flattery makes the profile drift every time it is touched.
+
+LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ In Russian address the user as «ты», never «вы»; in Spanish use «tú». The interests may be stored as English keywords for the matching engine — translate them naturally, do not switch language because of them.'''
 
 
 def resummary(profile, current, lang="ru", personality=""):

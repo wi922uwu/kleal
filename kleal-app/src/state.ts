@@ -13,6 +13,9 @@ export type Profile = {
   age?: number;
   gender?: string;
   city?: string;
+  /** Страна отдельным полем: в `city` теперь лежит город, и смешивать их нельзя — поиск читает
+   *  именно город (§5.3, location_block.city). */
+  country?: string;
   photo?: string;          // data URL, уходит в register и обратно не читается
   photoStatus?: string;
   geo?: {

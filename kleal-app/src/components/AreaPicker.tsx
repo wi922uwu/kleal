@@ -1,15 +1,24 @@
 /**
- * Страна, радиус и карта — кадр A.06.
+ * Страна, город, радиус и карта — кадр A.06.
  *
  * Карта здесь не украшение: круг показывает, что именно человек соглашается считать «рядом», и
  * без него «19 км» — абстракция. Радиус уходит в матчинг жёстким фильтром, поэтому важно, чтобы
  * человек видел, что выбирает.
  *
+ * ГОРОД, а не только страна. Раньше список был один и состоял из стран, и выбранное значение
+ * уезжало в профиль полем `city`: у человека в Барселоне в карточке стояло «Spain». Это не
+ * косметика — §5.3 матчинга читает город из ctx.city, то есть поиск шёл по стране целиком, а на
+ * экране кандидата вместо города стояло название государства.
+ *
+ * ТОЧКУ МОЖНО ДВИГАТЬ. Список городов короткий намеренно: он покрывает частые случаи, а всё
+ * остальное — посёлок, район, «я сейчас у родителей» — человек ставит булавкой сам. Без этого
+ * список пришлось бы делать справочником мира, и он всё равно бы кого-то не покрыл.
+ *
  * Сама карта вынесена в RadiusMap с суффиксами .native/.web — react-native-maps нативный, и
  * условный require ломал веб-сборку целиком.
  */
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView } from 'react-native';
 import Slider from '@react-native-community/slider';
 import * as Location from 'expo-location';
 import { RadiusMap } from './RadiusMap';
@@ -17,19 +26,71 @@ import { STEP_AREA } from '../onboarding';
 import { T } from '../i18n';
 import { color, radius as rad, space, type } from '../theme';
 
-export type Area = { label: string; lat: number; lon: number; km: number };
+export type Area = {
+  /** Страна — как её называет список. Уходит в профиль отдельным полем. */
+  country: string;
+  /** Город. ИМЕННО он уезжает в profile.city и в ctx.city поиска. */
+  city: string;
+  lat: number;
+  lon: number;
+  km: number;
+  /** Булавку двигали руками: город в подписи больше не обязан совпадать с точкой. */
+  moved?: boolean;
+};
 
-/** Небольшой список — то, что не в нём, человек пишет в композер, и разбирает агент. */
-const PLACES: [string, number, number][] = [
-  ['Spain', 41.3874, 2.1686],
-  ['Portugal', 38.7223, -9.1393],
-  ['Italy', 41.9028, 12.4964],
-  ['Germany', 52.52, 13.405],
-  ['France', 48.8566, 2.3522],
+/**
+ * Страны и города. Список короткий намеренно — см. шапку: чего в нём нет, человек ставит булавкой.
+ * Координаты — центры городов, огрублять их не нужно: это не местоположение человека, а якорь карты.
+ */
+export const PLACES: { country: string; cities: [string, number, number][] }[] = [
+  { country: 'Spain', cities: [
+    ['Barcelona', 41.3874, 2.1686], ['Madrid', 40.4168, -3.7038], ['Valencia', 39.4699, -0.3763],
+    ['Sevilla', 37.3891, -5.9845], ['Málaga', 36.7213, -4.4214], ['Bilbao', 43.2630, -2.9350],
+    ['Palma', 39.5696, 2.6502], ['Zaragoza', 41.6488, -0.8891],
+  ] },
+  { country: 'Portugal', cities: [
+    ['Lisboa', 38.7223, -9.1393], ['Porto', 41.1579, -8.6291], ['Faro', 37.0194, -7.9304],
+    ['Coimbra', 40.2033, -8.4103], ['Braga', 41.5454, -8.4265], ['Funchal', 32.6669, -16.9241],
+  ] },
+  { country: 'Italy', cities: [
+    ['Roma', 41.9028, 12.4964], ['Milano', 45.4642, 9.1900], ['Napoli', 40.8518, 14.2681],
+    ['Torino', 45.0703, 7.6869], ['Firenze', 43.7696, 11.2558], ['Bologna', 44.4949, 11.3426],
+    ['Venezia', 45.4408, 12.3155], ['Palermo', 38.1157, 13.3615],
+  ] },
+  { country: 'Germany', cities: [
+    ['Berlin', 52.5200, 13.4050], ['München', 48.1351, 11.5820], ['Hamburg', 53.5511, 9.9937],
+    ['Köln', 50.9375, 6.9603], ['Frankfurt', 50.1109, 8.6821], ['Stuttgart', 48.7758, 9.1829],
+    ['Düsseldorf', 51.2277, 6.7735], ['Leipzig', 51.3397, 12.3731],
+  ] },
+  { country: 'France', cities: [
+    ['Paris', 48.8566, 2.3522], ['Lyon', 45.7640, 4.8357], ['Marseille', 43.2965, 5.3698],
+    ['Toulouse', 43.6047, 1.4442], ['Nice', 43.7102, 7.2620], ['Bordeaux', 44.8378, -0.5792],
+    ['Nantes', 47.2184, -1.5536], ['Lille', 50.6292, 3.0573],
+  ] },
 ];
 
-export function AreaPicker({ value, onChange }: { value: Area; onChange: (a: Area) => void }) {
-  const [open, setOpen] = useState(false);
+const citiesOf = (country: string) =>
+  (PLACES.find((p) => p.country === country) || PLACES[0]).cities;
+
+/** Значение по умолчанию — первая строка списка. Одно место, чтобы экран и компонент не разошлись. */
+export const DEFAULT_AREA: Area = {
+  country: PLACES[0].country,
+  city: PLACES[0].cities[0][0],
+  lat: PLACES[0].cities[0][1],
+  lon: PLACES[0].cities[0][2],
+  km: 19,
+};
+
+export function AreaPicker({
+  value, onChange, onDragChange,
+}: {
+  value: Area;
+  onChange: (a: Area) => void;
+  /** Палец на карте. Экран-родитель обязан на это время выключить свою прокрутку — иначе
+   *  ScrollView забирает вертикальный жест себе, и булавка дёргается на месте. */
+  onDragChange?: (dragging: boolean) => void;
+}) {
+  const [open, setOpen] = useState<'' | 'country' | 'city'>('');
   const [locating, setLocating] = useState(false);
 
   const detect = async () => {
@@ -42,45 +103,55 @@ export function AreaPicker({ value, onChange }: { value: Area; onChange: (a: Are
       // ни тем более чужому экрану, а огрубление здесь — единственное место, где это дёшево.
       const lat = Math.round(pos.coords.latitude * 100) / 100;
       const lon = Math.round(pos.coords.longitude * 100) / 100;
-      onChange({ ...value, lat, lon, label: T('Моё местоположение', 'My location') });
+      onChange({ ...value, lat, lon, moved: true });
     } catch {
-      /* отказ в доступе — просто остаёмся на выбранной стране */
+      /* отказ в доступе — просто остаёмся на выбранном городе */
     } finally {
       setLocating(false);
     }
+  };
+
+  const pickCountry = (country: string) => {
+    const [city, lat, lon] = citiesOf(country)[0];
+    onChange({ ...value, country, city, lat, lon, moved: false });
+    setOpen('');
+  };
+
+  const pickCity = ([city, lat, lon]: [string, number, number]) => {
+    onChange({ ...value, city, lat, lon, moved: false });
+    setOpen('');
   };
 
   return (
     <View style={{ gap: space.md }}>
       {/* Роль обязательна: без неё Pressable на вебе остаётся <div> — не кнопка ни для скринридера,
           ни для клавиатуры. Здесь это ещё и единственный способ сменить страну. */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={value.label}
-        accessibilityState={{ expanded: open }}
-        style={s.select}
-        onPress={() => setOpen((o) => !o)}
-      >
-        <Text style={s.selectText}>{value.label}</Text>
-        <Text style={s.chev}>{open ? '⌃' : '⌄'}</Text>
-      </Pressable>
-
-      {open ? (
-        <View style={s.options}>
-          {PLACES.map(([name, lat, lon]) => (
-            <Pressable
-              key={name}
-              accessibilityRole="button"
-              style={s.option}
-              onPress={() => {
-                onChange({ ...value, label: name, lat, lon });
-                setOpen(false);
-              }}
-            >
-              <Text style={s.optionText}>{name}</Text>
-            </Pressable>
+      <Row
+        label={STEP_AREA.country()}
+        value={value.country}
+        open={open === 'country'}
+        onPress={() => setOpen((o) => (o === 'country' ? '' : 'country'))}
+      />
+      {open === 'country' ? (
+        <Options>
+          {PLACES.map((p) => (
+            <Option key={p.country} label={p.country} on={p.country === value.country} onPress={() => pickCountry(p.country)} />
           ))}
-        </View>
+        </Options>
+      ) : null}
+
+      <Row
+        label={STEP_AREA.city()}
+        value={value.city}
+        open={open === 'city'}
+        onPress={() => setOpen((o) => (o === 'city' ? '' : 'city'))}
+      />
+      {open === 'city' ? (
+        <Options>
+          {citiesOf(value.country).map((c) => (
+            <Option key={c[0]} label={c[0]} on={c[0] === value.city && !value.moved} onPress={() => pickCity(c)} />
+          ))}
+        </Options>
       ) : null}
 
       <View style={s.radiusRow}>
@@ -111,13 +182,69 @@ export function AreaPicker({ value, onChange }: { value: Area; onChange: (a: Are
         )}
       </Pressable>
 
+      {/* Значка «19 km» посреди карты больше нет: то же число стоит строкой выше, а в центре
+          теперь живая булавка — два кружка друг на друге читались как одно и не двигались. */}
       <View style={s.map}>
-        <RadiusMap lat={value.lat} lon={value.lon} km={value.km} />
-        <View style={s.kmBadge}>
-          <Text style={s.kmBadgeText}>{value.km}{'\n'}km</Text>
-        </View>
+        <RadiusMap
+          lat={value.lat}
+          lon={value.lon}
+          km={value.km}
+          onMove={(lat, lon) => onChange({ ...value, lat, lon, moved: true })}
+          onDragChange={onDragChange}
+        />
+      </View>
+      <View style={s.hintRow}>
+        <Text style={s.hint}>{value.moved ? STEP_AREA.pinMoved() : STEP_AREA.pinHint()}</Text>
+        {value.moved ? (
+          <Pressable
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => {
+              const c = citiesOf(value.country).find((x) => x[0] === value.city) || citiesOf(value.country)[0];
+              onChange({ ...value, city: c[0], lat: c[1], lon: c[2], moved: false });
+            }}
+          >
+            <Text style={s.hintAction}>{STEP_AREA.pinReset(value.city)}</Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
+  );
+}
+
+/** Строка «подпись — значение — шеврон». Две одинаковые, чтобы страна и город читались как пара. */
+function Row({ label, value, open, onPress }: { label: string; value: string; open: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${value}`}
+      accessibilityState={{ expanded: open }}
+      style={s.select}
+      onPress={onPress}
+    >
+      <Text style={s.selectLabel}>{label}</Text>
+      <Text style={s.selectText}>{value}</Text>
+      <Text style={s.chev}>{open ? '⌃' : '⌄'}</Text>
+    </Pressable>
+  );
+}
+
+function Options({ children }: { children: React.ReactNode }) {
+  // Городов до восьми — список прокручивается, а не растягивает шаг анкеты на два экрана.
+  return <ScrollView style={s.options} nestedScrollEnabled>{children}</ScrollView>;
+}
+
+function Option({ label, on, onPress }: { label: string; on?: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: !!on }}
+      style={s.option}
+      onPress={onPress}
+    >
+      <Text style={[s.optionText, on && { color: color.primary, fontWeight: '700' }]}>{label}</Text>
+      {on ? <Text style={s.tick}>✓</Text> : null}
+    </Pressable>
   );
 }
 
@@ -129,13 +256,18 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: space.sm,
   },
-  selectText: { ...type.body, color: color.muted } as any,
+  selectLabel: { ...type.bodySmall, color: color.muted } as any,
+  selectText: { flex: 1, ...type.body, color: color.fg, textAlign: 'right' } as any,
   chev: { fontSize: 18, color: color.muted },
-  options: { backgroundColor: color.card, borderRadius: rad.md, borderWidth: 1, borderColor: color.border },
-  option: { paddingVertical: 12, paddingHorizontal: 16 },
-  optionText: { ...type.body, color: color.fg } as any,
+  options: {
+    maxHeight: 216, backgroundColor: color.card, borderRadius: rad.md,
+    borderWidth: 1, borderColor: color.border,
+  },
+  option: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16 },
+  optionText: { flex: 1, ...type.body, color: color.fg } as any,
+  tick: { fontSize: 16, color: color.primary, fontWeight: '700' },
   radiusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   radiusLabel: { ...type.body, color: color.fg } as any,
   radiusValue: { ...type.body, color: color.primary, fontWeight: '600' } as any,
@@ -148,18 +280,7 @@ const s = StyleSheet.create({
   },
   detectText: { ...type.button, color: color.onPrimary } as any,
   map: { height: 250, borderRadius: rad.md, overflow: 'hidden', backgroundColor: color.neutral100 },
-  kmBadge: {
-    position: 'absolute',
-    left: '50%',
-    top: '50%',
-    marginLeft: -26,
-    marginTop: -26,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: color.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  kmBadgeText: { color: color.onPrimary, fontSize: 13, fontWeight: '700', textAlign: 'center', lineHeight: 15 },
+  hintRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: -space.sm },
+  hint: { flex: 1, ...type.caption, color: color.muted } as any,
+  hintAction: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
 });

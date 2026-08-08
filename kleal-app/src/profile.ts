@@ -476,6 +476,19 @@ export const PERSONALITY = {
     T('Пиши как получится — Kleal сам разберётся.', "Write it however it comes out — Kleal will make sense of it."),
   confirm: () => T('Сохранить и закрыть', 'Confirm & Close'),
   saved: () => T('Сохранено', 'Saved'),
+
+  /** Явные кнопки под полем истории: применить написанное и увидеть, что из этого вышло. */
+  apply: () => T('Сохранить историю', 'Save your story'),
+  applied: () => T('История сохранена', 'Story saved'),
+  rebuild: () => T('Пересобрать сводку Kleal', 'Rebuild Kleal’s summary'),
+  rebuildNote: () =>
+    T(
+      'Kleal перечитает профиль вместе с твоей историей и перепишет сводку — ту, что стоит на главной профиля.',
+      'Kleal re-reads your profile together with your story and rewrites the summary — the one on your profile home.'
+    ),
+  rebuiltLabel: () => T('Новая сводка Kleal', 'Your new Kleal summary'),
+  rebuildFailed: () =>
+    T('Не получилось пересобрать. Попробуй ещё раз.', 'Couldn’t rebuild it. Try again.'),
 };
 
 /** Предел из update_user: STORY_MAX. Обрезаем здесь же, чтобы не отправлять заведомо лишнее. */

@@ -66,12 +66,17 @@ def _v2_exp_of(p, name):
     return None
 
 def _v2_role_exp_spec(p):
-    """Gate additions driving the progress %: per explicit interest, Role + Experience."""
-    out = []
-    for it in _v2_ints(p):
-        out.append(("Role: " + it, lambda p, i=it: bool(_v2_role_of(p, i))))
-        out.append(("Experience: " + it, lambda p, i=it: bool(_v2_exp_of(p, i))))
-    return out
+    """Раньше здесь на КАЖДЫЙ интерес добавлялось по два гейта прогресса — Role и Experience.
+
+    Оба стали недостижимы, и это видно на экране: стаж («сколько лет увлекаешься») воронка больше
+    не спрашивает намеренно — он не меняет ни одного кандидата, — а роль извлекается далеко не из
+    каждого ответа. Полоса застревала на 70% навсегда: человек отвечал на всё, что у него
+    спрашивали, и всё равно не мог дойти до конца. Проценты должны мерить то, что реально
+    спрашивается, иначе это просто неправда на экране.
+
+    Интересы в списке гейтов представлены строкой «Interests» из CRIT_V2 — она и закрывается.
+    """
+    return []
 
 # Onboarding had no language rule at all — every prompt and the whole scripted greeting are English, so
 # a user writing Russian got answered in English throughout setup, which is their first impression of
@@ -226,53 +231,70 @@ def _v2_kind(it):
     if re.search(r"\bai\b|\bml\b|startup|\btech|business|career|founder|network|invest|product|\bdesign|architect|coding|program|marketing|crypto", n): return "topic"
     return "social"
 
-# Что спрашивать первым про интерес. Всюду — КОНКРЕТИКА, потому что именно она становится ключом
-# поиска: «музыка» не совпадает ни с кем, «инди и электроника» совпадает с живым человеком.
+# Что спросить про интерес. РОВНО ОДНО и всюду — КОНКРЕТИКА, потому что именно она становится
+# ключом поиска: «музыка» не совпадает ни с кем, «инди и электроника» совпадает с живым человеком.
+#
+# Раньше каждая строка спрашивала ДВЕ вещи разом («во что именно играешь И играешь или смотришь»),
+# и модель честно склеивала их в одно предложение, которое разваливалось: «Ты бы играл в игры с
+# кем-то или смотреть матчи». Одна строка — один вопрос.
 _ROLE_FRAME = {
-    "game":     "which games exactly, and whether they would rather play together or watch",
-    "sport":    "which sport exactly, and whether they play it or go and watch",
-    "watch":    "what kind of it they like, and whether they would rather watch together or talk about it",
-    "language": "what they want the practice for — conversation, work, travel",
-    "topic":    "which side of it interests them, and whether they want to talk it over or do it together",
-    "social":   "what makes a good one for them, and who they usually go with",
+    "game":     "which games exactly they play",
+    "sport":    "whether they play it themselves or go and watch",
+    "watch":    "what exactly they watch — which shows, films or sport",
+    "language": "what they want the practice for — conversation, work or travel",
+    "topic":    "which side of it interests them",
+    "social":   "what makes a good one for them",
 }
-def _v2_frame(it): return _ROLE_FRAME.get(_v2_kind(it), "what they enjoy doing with it")
+def _v2_frame(it): return _ROLE_FRAME.get(_v2_kind(it), "what exactly they like about it")
 
 def _v2_detail_gap(p, it):
-    """Второй — и последний — вопрос про интерес, или None.
+    """Второй вопрос про интерес — или None, и None это норма.
 
-    Раньше здесь спрашивали ранг в игре, платформу, спортивный уровень и уровень языка. Ни одно из
-    этого не участвует в подборе: ранжирование сравнивает ТЕМЫ, а не разряды. Вопрос «какой у тебя
-    ранг» человек читает как анкету и отвечает односложно, а место в бюджете из двух вопросов
-    тратится. Здесь остаётся только то, что меняет выдачу: с кем и ради чего человек хочет этим
-    заняться."""
-    if _chas(p, "domains.games.platformsByGame") or _chas(p, "domains.sport.skillLevelBySport"):
-        return None                                   # уже спрошено в прошлых версиях — не повторяем
+    Здесь по очереди жили ранг в игре, платформа, спортивный уровень, уровень языка, стаж — ни одно
+    из этого не участвует в подборе: ранжирование сравнивает ТЕМЫ. Последним стоял вопрос «один на
+    один или в небольшой группе», и он оказался хуже всех: это свойство ЧЕЛОВЕКА, а не интереса, —
+    воронка задавала его отдельно про игры, отдельно про футбол, отдельно про музыку, слово в слово.
+    Три интереса превращались в три одинаковых вопроса подряд. Теперь он спрашивается один раз на
+    весь шаг, в самом конце (см. _v2_gaps).
+
+    Остаётся ровно один случай, где второй вопрос правда меняет выдачу: нетворкинг. «Кого ты
+    хочешь встретить» — это и есть его тема, без неё интерес нечем сравнивать.
+    """
     low = it.lower()
     if any(w in low for w in ("network", "startup", "business", "career")):
         if _chas(p, "domains.networking.industry") or _chas(p, "domains.networking.goal"): return None
         return 'for "%s": which field they are in and who they hope to meet through it' % it
-    return 'for "%s": whether they would rather do it one-on-one or with a small group' % it
+    return None
 
 def _v2_gaps(p, hist):
-    """Ask-ordered funnel gaps honoring the max-2-questions-per-interest budget. Stateless: an
-    interest's spent budget is estimated by how many agent turns already mentioned it by name."""
+    """Что ещё стоит спросить, по порядку. Stateless: сколько бюджета потрачено на интерес,
+    оценивается по тому, сколько раз агент уже называл его по имени.
+
+    Бюджет — ОДИН вопрос на интерес. Было два, и второй уходил в никуда: спрашивать про один
+    интерес дважды подряд человек читает как «меня не слышат», а выдачу это не меняло.
+    """
     gaps = []
     for it in _v2_ints(p):
         low = it.lower()
         asked = sum(1 for m in hist if m.get("role") == "assistant" and low in str(m.get("content", "")).lower())
-        if asked >= 2: continue  # budget spent - move on even if something stayed unknown
-        # Стаж («сколько лет увлекаешься») здесь больше не спрашивается и в список пробелов не
-        # входит: он не меняет НИ ОДНОГО кандидата в выдаче — ранжирование его не читает, — а
-        # место в бюджете из двух вопросов занимал. То же с рангом и уровнем (см. _v2_detail_gap).
-        role = _v2_role_of(p, it)
-        need = []
-        if not role:
-            need.append('for "%s": %s' % (it, _v2_frame(it)))
-        else:
-            d = _v2_detail_gap(p, it)
-            if d: need.append(d)
-        gaps.extend(need[:max(0, 2 - asked)])
+        if asked:
+            continue                     # уже спрашивали про это — второй заход даёт кольцо
+        if _v2_role_of(p, it):
+            d = _v2_detail_gap(p, it)    # только нетворкинг; всё остальное — None
+            if d: gaps.append(d)
+            continue
+        gaps.append('for "%s": %s' % (it, _v2_frame(it)))
+    # «Один на один или в небольшой группе» здесь НЕ спрашивается вовсе, и это осознанно.
+    #
+    # Сначала он задавался про каждый интерес отдельно — три интереса давали три одинаковых
+    # вопроса подряд. Потом один раз на весь шаг, с проверкой «не спрашивал ли я это уже» по своим
+    # прошлым репликам — и модель тут же переформулировала его словами, которых проверка не знала
+    # («смотришь с друзьями или один?»), и спросила дважды. Ловить формулировку регуляркой значит
+    # проигрывать ей каждый раз.
+    #
+    # А главное — этот ответ ничего не меняет в выдаче: размер компании человек выбирает заново
+    # для КАЖДОГО интента (кадр O.06, «Сколько вас будет?»), и матчинг читает именно intent.format.
+    # Вопрос в анкете спрашивал то, на что всё равно ответят потом.
     return gaps
 
 def _norm_options(options):

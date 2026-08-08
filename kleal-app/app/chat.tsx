@@ -28,7 +28,7 @@ import { useLang, T, getLang , replyLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding, agent } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
-import { AreaPicker, Area } from '../src/components/AreaPicker';
+import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
 import { IconCheckCircle } from '../src/components/icons';
 import { color, radius as rad, type } from '../src/theme';
@@ -387,7 +387,9 @@ function StepWidget({
 
   if (step === 'start') return <StartW say={say} goto={goto} />;
   if (step === 'basics') return <BasicsW say={say} goto={goto} onDrag={onDrag} />;
-  if (step === 'area') return <AreaW say={say} goto={goto} />;
+  // onDrag — не косметика: пока палец тащит булавку по карте, лента анкеты обязана молчать,
+  // иначе ScrollView забирает вертикальный жест себе и точка дёргается на месте.
+  if (step === 'area') return <AreaW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'languages') return <LangW say={say} goto={goto} />;
   if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} />;
   if (step === 'funnel') return <FunnelW {...funnel} say={say} />;
@@ -500,22 +502,26 @@ function BasicsW({ say, goto, onDrag }: any) {
   );
 }
 
-/** A.06 — страна, радиус, карта. */
-function AreaW({ say, goto }: any) {
-  const [area, setArea] = useState<Area>({ label: 'Spain', lat: 41.3874, lon: 2.1686, km: 19 });
+/** A.06 — страна, город, радиус, карта. */
+function AreaW({ say, goto, onDrag }: any) {
+  const [area, setArea] = useState<Area>(DEFAULT_AREA);
   return (
     <View style={cs.widget}>
-      <AreaPicker value={area} onChange={setArea} />
+      <AreaPicker value={area} onChange={setArea} onDragChange={onDrag} />
       <Cta
         label={STEP_AREA.cta()}
         onPress={() => {
-          set('city', area.label);
-          set('geo.comfortableAreas', [area.label]);
+          // В профиль уезжает ГОРОД, а не страна: §5.3 матчинга читает ctx.city, и «Spain» там
+          // означало поиск по стране целиком, а в карточке кандидата вместо города стояло
+          // название государства. Страна лежит отдельным полем — сервер знает `country`.
+          set('city', area.city);
+          set('country', area.country);
+          set('geo.comfortableAreas', [area.city]);
           set('geo.located', true);
           set('geo.coarseLat', area.lat);
           set('geo.coarseLon', area.lon);
           set('geo.maxDistanceKm', area.km);
-          say('me', `${area.label}, ${area.km} km`);
+          say('me', `${area.city}, ${area.country} · ${area.km} km`);
           goto('languages', STEP_LANGUAGES.bot());
         }}
       />

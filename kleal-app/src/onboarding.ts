@@ -125,8 +125,16 @@ export const sexLabel = (k: string) => {
 
 export const STEP_AREA = {
   bot: () => T('Класс! Где ты обычно бываешь?', 'Cool!\nWhere do you usually hang out?'),
+  /** Страна и город — две строки, а не одна: в профиль и в поиск уезжает ГОРОД. */
+  country: () => T('Страна', 'Country'),
+  city: () => T('Город', 'City'),
   radiusLabel: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),
   detect: () => T('Определить моё местоположение', 'Detect my location'),
+  /** Булавка — единственный способ назвать место, которого нет в коротком списке городов. */
+  pinHint: () => T('Нет своего города в списке? Подвинь точку на карте.',
+                   'Your town isn’t on the list? Drag the pin on the map.'),
+  pinMoved: () => T('Ищем вокруг этой точки.', 'We’ll search around this spot.'),
+  pinReset: (city: string) => T(`Вернуть к ${city}`, `Back to ${city}`),
   cta: () => T('Почти закончили', 'We’re almost done'),
 };
 
