@@ -19,7 +19,7 @@ import { IconChevronLeft, IconMic } from '../src/components/icons';
 import { useLang, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { buddy as buddyApi } from '../src/api';
-import { BUDDY, SHEET, looksLikeIntent, intentLabel, packHistory, Turn } from '../src/buddy';
+import { BUDDY, SHEET, looksLikeIntent, intentPhrase, sheetWhat, sheetKept, packHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string };
@@ -82,7 +82,8 @@ export default function Buddy() {
        * общаться» разговор не должен начинаться с пустоты.
        */
       if (looksLikeIntent(r)) {
-        const label = intentLabel(r, text);
+        // Фраза, а не подпись карточки: «поговорить про Jesus», см. intentPhrase.
+        const label = intentPhrase(r, text);
         setTurns(reply ? [...next, { role: 'assistant', content: reply }] : next);
         setTopic(text);
         setWhat(label);
@@ -131,7 +132,7 @@ export default function Buddy() {
   const keepChatting = () => {
     setSheet(false);
     if (!what) return;
-    const line = SHEET.keptChatting(what);
+    const line = sheetKept(what);
     say('bot', line);
     setTurns((t) => [...t, { role: 'assistant', content: line }]);
   };
@@ -236,7 +237,7 @@ export function GetStarted({
             <Text style={sh.x}>✕</Text>
           </Pressable>
         </View>
-        {what ? <Text style={sh.what}>{SHEET.what(what)}</Text> : null}
+        {what ? <Text style={sh.what}>{sheetWhat(what)}</Text> : null}
         <Pressable accessibilityRole="button" style={[sh.btn, sh.btnPri]} onPress={onCreate}>
           <Text style={sh.btnPriText}>{SHEET.create()}</Text>
         </Pressable>

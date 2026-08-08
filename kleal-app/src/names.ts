@@ -81,6 +81,25 @@ export function nameCase(raw: string, form: NameCase): string {
   return name + 'ом';
 }
 
+/**
+ * Винительный падеж ТЕМЫ — для «поговорить про …».
+ *
+ * Отдельно от имён и куда проще: у русских неодушевлённых существительных винительный совпадает с
+ * именительным везде, кроме женского рода на -а/-я. «музыка» → «музыку», «йога» → «йогу», а
+ * «футбол», «кино», «настолки» не меняются вовсе.
+ *
+ * Латиница остаётся как есть и НЕ понижается в регистре: «Christianity» в русской фразе не
+ * склоняется, а «christianity» с маленькой буквы выглядело бы опечаткой.
+ */
+export function topicAcc(raw: string): string {
+  const t = String(raw || '').trim();
+  if (!t || !CYR.test(t)) return t;
+  const low = t.toLowerCase();
+  if (low.endsWith('а')) return low.slice(0, -1) + 'у';
+  if (low.endsWith('я')) return low.slice(0, -1) + 'ю';
+  return low;
+}
+
 /** Короткие обёртки — чтобы в строках копии читалось падежом, а не аргументом. */
 export const acc = (n: string) => nameCase(n, 'acc');   // вижу кого — «Пригласить Костю»
 export const gen = (n: string) => nameCase(n, 'gen');   // нет кого — «у Кости»

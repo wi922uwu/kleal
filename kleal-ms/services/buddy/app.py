@@ -262,6 +262,16 @@ instead of asking who they are.
 Reply as ONE JSON object only, nothing outside it:
 {"reply":"<your natural, helpful message>","signals":{<only fields you newly learned THIS turn; may include "interest">},"match":true|false}
 
+ADDRESS THEM AS «ТЫ». In Russian always «ты», never «вы» and never «Здравствуйте» — the whole product
+speaks to one person, informally, and this agent was the last place still using the formal form.
+In Spanish use «tú». English has no choice to make.
+
+DO NOT PROMISE WHAT YOU ARE NOT DOING. Setting "match": true does NOT start a search and does not
+introduce anyone: the app shows the person a window, they confirm, and only then does anything
+happen. So never write «я соединяю вас с людьми», «уже ищу», «сейчас подберу» — at that moment it is
+simply untrue, and the next thing they see is a question, not a match. Say what is actually next:
+that you can look for someone, and ask if they want that.
+
 LANGUAGE: write "reply" in the SAME language the user writes in (Russian -> answer in Russian; Spanish -> answer in Spanish; English -> answer in English). Write EVERY word of "reply" in that language's own script — translate or transliterate technical terms, species/type names and examples (in Russian say «кучевые», «слоистые», «перистые облака», never "cumulus"/"stratus" or any Chinese/Japanese characters). Never leave a foreign-script or stray Latin word inside a Russian or Spanish sentence. Every OTHER value — signals, interest, topics, time, area — stays in ENGLISH, because the filtration and matching agents only understand English.
 
 MEMORY: the conversation you are given is the WHOLE history — there is nothing before it. Never refer to things "we already talked about", never say "as I said" or "снова"/"again", and never claim to remember a person or a topic that is not in the text above. If the history starts with [FIRST MESSAGE], this person is talking to you for the very first time: greet them as a new acquaintance. Otherwise you are MID-conversation: do NOT greet again (no "Привет"/"Здравствуйте"), and when the user sends a short follow-up like "подробнее"/"примеры"/"ещё"/"а как", it refers to the CURRENT topic — continue and expand it, never ask what they mean or reset to small talk.'''
@@ -832,7 +842,17 @@ _TIMEISH = re.compile(r"^\s*\d{1,2}\s*[:.\-]?\s*\d{0,2}\s*(ч|h|am|pm)?\s*$", re
 
 
 def _title_for(topics, tags, typ, lang, role="meet"):
-    """Card title. Prefers whichever word we can actually SAY in the user's language.
+    """Заголовок карточки И отдельно предмет: возвращает (title, subject).
+
+    Предмет нужен экрану, а не карточке. Попап спрашивал «Похоже, ты хочешь "Jesus — разговор"» —
+    в кавычки подставлялся ГОТОВЫЙ заголовок карточки, а он существительное с суффиксом, и после
+    «ты хочешь» получалась не фраза, а подпись под картинкой. Имея предмет и роль отдельно, экран
+    говорит по-человечески: «Похоже, ты хочешь поговорить про Jesus».
+
+    Пусто в subject — предмета нет вовсе («Встреча», «Разговор», «Свидание»), и фраза строится
+    без него.
+
+    Card title. Prefers whichever word we can actually SAY in the user's language.
 
     It used to title off `tags or topics`, and filtration's tags are synonym bags in arbitrary order —
     'хочу поиграть в футбол' came back tagged ['soccer','football',...], so the Russian card read
@@ -840,7 +860,7 @@ def _title_for(topics, tags, typ, lang, role="meet"):
     translates before falling back, so an untranslated synonym can never win over a translatable topic.
     """
     if typ == "dating":
-        return _L(lang, "Свидание", "Date", "Cita")
+        return _L(lang, "Свидание", "Date", "Cita"), ""
     cands = [str(t) for t in list(topics or []) + list(tags or []) if str(t).strip()]
     # A generic word must never win the title. Tags carried «разговоры» alongside `hertz`, and the
     # Russian-preference scan below happily picked it: "разговоры — разговор".
@@ -850,10 +870,10 @@ def _title_for(topics, tags, typ, lang, role="meet"):
         # Nothing but generic words — «разговоры» and nothing else. Naming it twice
         # ("разговоры — разговор") is worse than naming it once.
         return {"discuss": _L(lang, "Разговор", "A chat", "Charla")}.get(
-            str(role or "").lower(), _L(lang, "Встреча", "Meet someone", "Quedada"))
+            str(role or "").lower(), _L(lang, "Встреча", "Meet someone", "Quedada")), ""
     cands = named
     if not cands:
-        return _L(lang, "Встреча", "Meet someone", "Quedada")
+        return _L(lang, "Встреча", "Meet someone", "Quedada"), ""
     # The suffix should name what will actually happen. Someone who asked to TALK about hertz was
     # given "Hertz — встреча"; "встреча" is right for padel, wrong for a conversation.
     suffix = {"discuss": _L(lang, " — разговор", " chat", " — charla"),
@@ -871,25 +891,25 @@ def _title_for(topics, tags, typ, lang, role="meet"):
             first = prim[0]
             word = _TOPIC_RU.get(first.strip().lower())
             if word:
-                return word + suffix
+                return word + suffix, word
             if any('а' <= ch <= 'я' for ch in first.lower()):
-                return first[:1].upper() + first[1:] + suffix
+                return first[:1].upper() + first[1:] + suffix, first[:1].upper() + first[1:]
             # Untranslatable and Latin — but filtration usually also returned the person's OWN word
             # among the tags («chlamydia» next to «хламидиоз»). Show them their word, not ours.
             for c in cands:
                 if any('а' <= ch <= 'я' for ch in c.lower()):
-                    return c[:1].upper() + c[1:] + suffix
-            return first.capitalize() + suffix
+                    return c[:1].upper() + c[1:] + suffix, c[:1].upper() + c[1:]
+            return first.capitalize() + suffix, first.capitalize()
         # No engine topics — we are in the tag bag, whose order IS arbitrary («хочу поиграть в
         # футбол» came back tagged ['soccer','football',...]), so there a scan is the right move.
         for c in cands:
             word = _TOPIC_RU.get(c.strip().lower())
             if word:
-                return word + suffix
+                return word + suffix, word
         for c in cands:
             if any('а' <= ch <= 'я' for ch in c.lower()):
-                return c[:1].upper() + c[1:] + suffix
-    return cands[0].capitalize() + suffix
+                return c[:1].upper() + c[1:] + suffix, c[:1].upper() + c[1:]
+    return cands[0].capitalize() + suffix, cands[0].capitalize()
 
 
 # Online-native activities and explicit "let's do it online" cues. Hard-coding mode="offline" sent
@@ -1030,10 +1050,10 @@ def build_intent(sig, cat, last_user, lang):
     mode = _infer_mode(topics, sig, last_user, cat.get("category"), cat.get("subcategory"))
     place = str(sig.get("area") or (_L(lang, "Онлайн", "Online", "En línea") if mode == "online" else
                                     _L(lang, "Публичные места рядом", "Public places nearby", "Lugares públicos cercanos")))[:60]
-    title = _title_for(topics, tags, typ, lang, role)
+    title, subject = _title_for(topics, tags, typ, lang, role)
     return {
         # ---- machine-facing: matching-service reads exactly these ----
-        "title": title, "type": typ, "topics": topics or ["social"], "role": role, "mode": mode,
+        "title": title, "subject": subject, "type": typ, "topics": topics or ["social"], "role": role, "mode": mode,
         "category": cat.get("category"), "subcategory": cat.get("subcategory") or "",
         "time": sig.get("time") or _L(lang, "Гибко", "Flexible", "Flexible"),
         "place": place, "format": _L(lang, "1:1 или небольшая группа", "1:1 or small group", "1:1 o grupo pequeño"),
