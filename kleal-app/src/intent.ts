@@ -196,6 +196,17 @@ export function timeQueryFromDate(dateKey: string, minutes: number, from = new D
   return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${t}`;
 }
 
+/**
+ * Человеческая подпись времени интента: «сб, 8 авг. · 20:00». Едет рядом с английским `time`,
+ * который читает сервер, — приглашённому показывается она, а не «today 20:00».
+ */
+export function planWhenLabel(dateKey: string, minutes: number): string {
+  const loc = getLang() === 'ru' ? 'ru-RU' : 'en-US';
+  const d = new Date(dateKey + 'T12:00:00');
+  const day = d.toLocaleDateString(loc, { weekday: 'short', day: 'numeric', month: 'short' });
+  return `${day} · ${hhmm(minutes)}`;
+}
+
 /** Часовой пояс устройства — IANA-имя, оно же уходит в ctx.tz. */
 export function deviceTz(): string {
   try {

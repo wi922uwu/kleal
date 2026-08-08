@@ -443,13 +443,15 @@ function CandCard({
   const readiness = (ru() ? c.readiness_ru : c.readiness_en) || '';
   const where = candWhere(c);
   const summary = candSummary(c, ru());
+  /** Ссылка на фото есть, а файла нет: <Image> рисует пустоту — не кружок, а дыру в карточке. */
+  const [broken, setBroken] = useState(false);
 
   return (
     <View style={s.card}>
       <Pressable accessibilityRole="button" onPress={onOpen} style={({ pressed }) => [pressed && { opacity: 0.92 }]}>
         <View style={s.cardTop}>
-          {c.photo ? (
-            <Image source={{ uri: c.photo }} style={s.av} />
+          {c.photo && !broken ? (
+            <Image source={{ uri: c.photo }} style={s.av} onError={() => setBroken(true)} />
           ) : (
             <View style={[s.av, s.avEmpty]}><IconPerson /></View>
           )}

@@ -10,6 +10,7 @@
  * это карточка живого человека, а не макет.
  */
 import { T } from './i18n';
+import { acc, dat, gen, ins } from './names';
 
 export const CANDS = {
   bestBadge: () => T('Лучший мэтч', 'Best match'),
@@ -31,7 +32,7 @@ export const CANDS = {
     ),
 
   /** Окно O.14. Текст с кадра; по-английски нейтральное they вместо she — имя бывает любым. */
-  sheetTitle: (name: string) => T(`Пригласить ${name}?`, `Invite ${name}?`),
+  sheetTitle: (name: string) => T(`Пригласить ${acc(name)}?`, `Invite ${name}?`),
   sheetBody: (name: string) =>
     T(
       `${name} увидит твой интент и твой профиль. Если согласится — откроется чат; на бесплатном тарифе это единственный чат для этого интента.`,
@@ -72,9 +73,14 @@ export function candSubtitle(c: Cand, ru: boolean): string {
   return String((ru ? c.band_ru : c.band_en) || '');
 }
 
-/** Строка с меткой места: километры, когда они посчитаны. Города у кандидата нет. */
+/**
+ * Строка с меткой места: километры, когда они посчитаны. Города у кандидата нет.
+ *
+ * Один знак после запятой ВСЕГДА — иначе на одной карточке рядом стоят «0 km» под именем и
+ * «рядом (0.0 km)» в сводке причин: ранжирование округляет само, а шаблон печатал число как есть.
+ */
 export function candWhere(c: Cand): string {
-  return typeof c.km === 'number' && isFinite(c.km) ? `${c.km} km` : '';
+  return typeof c.km === 'number' && isFinite(c.km) ? `${c.km.toFixed(1)} km` : '';
 }
 
 /**
@@ -129,7 +135,7 @@ export const OPTIONS = {
   title: () => T('Действия с профилем', 'Profile options'),
   notInterested: () => T('Не интересно', 'Not interested'),
   report: () => T('Пожаловаться на профиль', 'Report profile'),
-  block: (name: string) => T(`Заблокировать ${name}`, `Block ${name}`),
+  block: (name: string) => T(`Заблокировать ${acc(name)}`, `Block ${name}`),
   cancel: () => T('Отмена', 'Cancel'),
   /** Строка отсчёта: действие названо, секунды идут, отмена в одно касание. */
   pending: (what: string, n: number) => T(`${what} через ${n}…`, `${what} in ${n}…`),

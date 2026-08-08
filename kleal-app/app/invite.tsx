@@ -87,7 +87,7 @@ export default function Invite() {
   const from = String(row?.from || '');
   const intent = row?.intent || {};
   const online = String(intent.mode || '') !== 'offline';
-  const what = [titleOf(row), String(intent.time || '')].filter(Boolean).join(', ');
+  const what = [titleOf(row), whenOf(intent)].filter(Boolean).join(', ');
 
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
@@ -112,10 +112,10 @@ export default function Invite() {
             <View style={s.card}>
               <View style={s.cover}><IconImagePlaceholder size={40} /></View>
               {titleOf(row) ? <Text style={s.cardTitle}>{titleOf(row)}</Text> : null}
-              {intent.time ? (
+              {whenOf(intent) ? (
                 <View style={s.metaRow}>
                   <IconCalendar />
-                  <Text style={s.metaText}>{String(intent.time)}</Text>
+                  <Text style={s.metaText}>{whenOf(intent)}</Text>
                 </View>
               ) : null}
               <View style={s.metaRow}>
@@ -178,6 +178,15 @@ export default function Invite() {
       </View>
     </View>
   );
+}
+
+/**
+ * Время интента ГЛАЗАМИ, а не ключом поиска. `intent.time` — английская строка («today 20:00»),
+ * она нужна серверу для определения срочности и на экране читается как недоперевод. Мастер кладёт
+ * рядом `when` на языке интерфейса; у старых заявок его нет — тогда честнее показать что есть.
+ */
+function whenOf(intent: any): string {
+  return String(intent?.when || intent?.time || '').trim();
 }
 
 /** Подпись интента: заголовок, а без него — темы. Приглашение без слов не показать. */

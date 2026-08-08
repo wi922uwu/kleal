@@ -34,7 +34,7 @@ import {
   STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzDisplay, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
-  SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm,
+  SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
 } from '../src/intent';
 import { SEXES, sexLabel, COMPOSER_PLACEHOLDER } from '../src/onboarding';
 import { TimeDial, RangeDial } from '../src/components/Dials';
@@ -210,9 +210,19 @@ export default function Intent() {
     setBusy(true);
     const intent: any = {
       topics,
+      /**
+       * Подпись для ЛЮДЕЙ. Её тут не было, и это видел не автор интента, а приглашённый: у него
+       * на экране приглашения, в списке «Сообщений», в шапке чата и в заголовке плана стояло
+       * «coffee, casual» — служебные английские ключи поиска. Заголовок собран в разговоре
+       * создания («Кофе — встреча») и обязан ехать вместе с ключами.
+       */
+      ...(title ? { title } : {}),
       mode: draft.mode || 'online',
       // Английская строка намеренно: срочность на той стороне ищется по словам, и только английским.
       time: timeQueryFromDate(draft.date, draft.minutes),
+      // ...и человеческая подпись того же времени рядом: «today 20:00» на экране приглашения
+      // читалось как недоперевод. Ключ отдельно для поиска, строка отдельно для глаз.
+      when: planWhenLabel(draft.date, draft.minutes),
       // format, а не groupSize. §5.3 признаёт интент описанным только когда есть и mode, и format;
       // groupSize же увёл бы запрос в групповую ветку, где 1:1 просто нечего делать.
       format: draft.size === 'group' ? 'group' : '1:1',

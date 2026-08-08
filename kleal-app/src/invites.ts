@@ -116,9 +116,10 @@ export async function sendInvite(who: string, to: string, intent: any): Promise<
   if (open.length >= CAP.limit && !open.some((r) => norm(r.to) === norm(name))) {
     return { ok: false, capped: true };
   }
-  // Правило 1 из шапки: точное место остаётся в интенте и подхватывается формой плана — потом.
-  const { address: _exact, ...forInvite } = (intent || {}) as any;
-  const r: any = await agent.propose(from, name, forInvite);
+  // Правило 1 из шапки исполняет СЕРВЕР: он вырезает address на выходе получателю (inbox), а в
+  // заявке место остаётся — оттуда его берёт форма плана автора, чтобы не спрашивать дважды.
+  // Пока вырезал клиент, вместе с приватностью пропадал и собственный адрес отправителя.
+  const r: any = await agent.propose(from, name, intent || {});
   if (!r?.ok) return { ok: false, error: String(r?.error || 'propose failed') };
   self = from;
   rows[norm(name)] = { id: String(r.id || ''), to: name, status: 'pending', updated: 0 };

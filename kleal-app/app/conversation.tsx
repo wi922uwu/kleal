@@ -226,6 +226,8 @@ export default function Conversation() {
     }
     if (msgs.length) {
       const first = new Date((msgs[0].t || 0) * 1000);
+      // Разговор начался сегодня — «с субботы» про сегодняшний день читается как «давно уже».
+      if (first.toDateString() === new Date().toDateString()) return THREAD.talkingToday();
       // Русскому нужен родительный: «с четверга». Английскому — просто имя дня.
       const day = ru ? THREAD.weekdayGen(first.getDay()) : first.toLocaleDateString('en-US', { weekday: 'long' });
       return THREAD.talkingSince(day);
@@ -337,9 +339,9 @@ export default function Conversation() {
                   : inviteIn.status === 'declined' ? THREAD.youDeclined()
                   : THREAD.inviteExpired()}
               </Text>
-              {requestTitle || inviteIn.intent?.time ? (
+              {requestTitle || inviteIn.intent?.when || inviteIn.intent?.time ? (
                 <Text style={s.invMeta} numberOfLines={1}>
-                  {[requestTitle, inviteIn.intent?.time].filter(Boolean).join(' · ')}
+                  {[requestTitle, inviteIn.intent?.when || inviteIn.intent?.time].filter(Boolean).join(' · ')}
                 </Text>
               ) : null}
               {inviteIn.status === 'pending' ? (
@@ -371,7 +373,10 @@ export default function Conversation() {
             <Text style={s.sysLine}>{THREAD.joined(requestTitle)}</Text>
           ) : null}
 
-          {!loading && talk.length === 0 ? <Text style={s.empty}>{CHAT.empty(other)}</Text> : null}
+          {/* Кто кого позвал: заявка от собеседника значит, что приглашение принял Я. */}
+          {!loading && talk.length === 0 ? (
+            <Text style={s.empty}>{CHAT.empty(other, norm(request?.to) === norm(other))}</Text>
+          ) : null}
 
           {msgs.map((m, i) => {
             const mine = String(m.from || '').trim().toLowerCase() === me.trim().toLowerCase();
@@ -531,7 +536,7 @@ export default function Conversation() {
             </View>
             {([
               [THREAD.intentMode(), request?.intent?.mode === 'offline' ? THREAD.offlineInPerson() : THREAD.onlineMode()],
-              [THREAD.intentWhen(), String(request?.intent?.time || '—')],
+              [THREAD.intentWhen(), String(request?.intent?.when || request?.intent?.time || '—')],
               [THREAD.intentWhere(), request?.intent?.mode === 'offline' ? THREAD.whereAfterConfirm() : THREAD.whereLink()],
               [THREAD.intentWho(), String(request?.intent?.format || '1:1')],
               [THREAD.intentStatus(),

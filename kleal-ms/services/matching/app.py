@@ -2810,6 +2810,15 @@ def inbox(self_name):
     # not drawn. Declined and expired ones stay: those are the recipient's own history.
     out = [dict(r) for r in _requests()
            if _norm_name(r.get("to")) == me and r.get("status") != "withdrawn"]
+    # OF.09: точное место в приглашение НЕ отдаётся. Раньше это делал клиент — вырезал `address`
+    # ПЕРЕД отправкой, — и вместе с приватностью терялась вещь, которую обещали не спрашивать
+    # дважды: автор интента, дойдя до формы плана, не находил собственного адреса и вводил его
+    # заново. Место остаётся в заявке (её видит только отправитель, через outbox) и вырезается
+    # здесь, на выходе получателю. Это же и надёжнее: правило живёт на сервере, а не в клиенте.
+    for r in out:
+        it = r.get("intent")
+        if isinstance(it, dict) and it.get("address"):
+            r["intent"] = {k: v for k, v in it.items() if k != "address"}
     out.sort(key=lambda r: -(r.get("updated") or 0))
     return _with_photos(out[:50], "from")
 

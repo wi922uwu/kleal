@@ -18,6 +18,7 @@
  * ограничение обходится любым другим клиентом.
  */
 import { T } from './i18n';
+import { acc, dat, gen, ins } from './names';
 
 /** Статус заявки: как его называет сервер (см. §14.1). */
 export type ReqStatus = 'pending' | 'accepted' | 'declined' | 'withdrawn' | 'expired';
@@ -32,7 +33,7 @@ export const CHAT = {
   continueChat: () => T('Продолжить чат', 'Continue chat'),
 
   /** Окно бесплатного тарифа, текст с кадра O.17. */
-  busyTitle: (name: string) => T(`Ты уже переписываешься с ${name}`, `You're already chatting with ${name}`),
+  busyTitle: (name: string) => T(`Ты уже переписываешься с ${ins(name)}`, `You're already chatting with ${name}`),
   busyBody: () =>
     T(
       'На бесплатном тарифе можно вести переписку только с одним мэтчем за раз. Закончи текущую, чтобы начать с другим, или подключи Kleal Plus — тогда доступны все три.',
@@ -41,15 +42,23 @@ export const CHAT = {
   getPlus: () => T('Подключить Kleal Plus', 'Get Kleal Plus'),
   plusPrice: () => T('€6,99 в месяц · переписка со всеми · отмена в любой момент',
                      '€6.99 / month · Chat with all matches · Cancel any time'),
-  endChatWith: (name: string) => T(`Закончить переписку с ${name}`, `End chat with ${name}`),
+  endChatWith: (name: string) => T(`Закончить переписку с ${ins(name)}`, `End chat with ${name}`),
 
   /** O.18 — сам чат. */
   placeholder: () => T('Сообщение…', 'Message…'),
   /** Композер MSG.06 обращается по имени: «Message Jane». */
-  placeholderTo: (name: string) => T(`Написать ${name}…`, `Message ${name}`),
-  empty: (name: string) =>
-    T(`${name} принял(а) приглашение. Напиши первым — это ваш общий разговор про интент.`,
-      `${name} accepted your invite. Say hello — this chat belongs to your intent.`),
+  placeholderTo: (name: string) => T(`Написать ${dat(name)}…`, `Message ${name}`),
+  /**
+   * Пустая переписка. Ролей ДВЕ, и текст обязан их различать: раньше обеим сторонам показывалось
+   * «X принял(а) приглашение», и человек, который сам только что нажал «Присоединиться», читал,
+   * что приглашение принял собеседник. Кто кого позвал — знает экран, а не эта строка.
+   */
+  empty: (name: string, theyAccepted: boolean) =>
+    theyAccepted
+      ? T(`${name} принял(а) приглашение. Напиши первым — это ваш общий разговор про интент.`,
+          `${name} accepted your invite. Say hello — this chat belongs to your intent.`)
+      : T(`Ты принял(а) приглашение от ${gen(name)}. Напиши первым — это ваш общий разговор про интент.`,
+          `You accepted ${name}’s invite. Say hello — this chat belongs to your intent.`),
   offline: () => T('Сообщение не ушло. Проверь связь.', 'The message didn’t send. Check your connection.'),
 
   /** O.19 — лист действий. */
@@ -59,7 +68,7 @@ export const CHAT = {
   viewIntent: () => T('Открыть интент', 'View intent'),
   keepChatting: () => T('Продолжить разговор', 'Keep Chatting'),
   endAsk: (name: string) =>
-    T(`Закончить разговор с ${name}? Переписка закроется, а место освободится для другого мэтча.`,
+    T(`Закончить разговор с ${ins(name)}? Переписка закроется, а место освободится для другого мэтча.`,
       `End the chat with ${name}? The conversation closes and frees the slot for another match.`),
 
   /** O.20 — план отправлен. */
@@ -108,12 +117,12 @@ export const PLAN = {
   /** O.20 — шапка формы. Режим приходит из интента, и форма его НАЗЫВАЕТ, а не намекает полями. */
   formMode: (mode: 'offline' | 'online' | 'hybrid', name: string) =>
     mode === 'online'
-      ? T(`Звонок с ${name} — по интенту вы договорились встретиться онлайн`,
+      ? T(`Звонок с ${ins(name)} — по интенту вы договорились встретиться онлайн`,
           `A call with ${name} — your intent was to meet online`)
       : mode === 'hybrid'
-        ? T(`Встреча с ${name} — по интенту можно и онлайн, и вживую`,
+        ? T(`Встреча с ${ins(name)} — по интенту можно и онлайн, и вживую`,
             `Meeting ${name} — your intent allows both online and in person`)
-        : T(`Встреча с ${name} вживую — по интенту вы договорились увидеться`,
+        : T(`Встреча с ${ins(name)} вживую — по интенту вы договорились увидеться`,
             `Meeting ${name} in person — your intent was to meet up`),
   /** Ссылку можно донести потом, но второй до этого видит «ссылка будет» — об этом честно сразу. */
   linkLaterNote: (name: string) =>
@@ -164,7 +173,7 @@ export const PLAN = {
       'Звонок идёт вне Kleal. Мы его не видим и ничего о нём не записываем. Потом спросим у обоих, состоялся ли он.',
       'The call happens outside Kleal. We can’t see it and nothing about it is recorded here. Afterwards we’ll ask you both whether it happened.'
     ),
-  messageThem: (name: string) => T(`Написать ${name}`, `Message ${name}`),
+  messageThem: (name: string) => T(`Написать ${dat(name)}`, `Message ${name}`),
   cantMakeIt: () => T('Не смогу', 'I can’t make it'),
   suggestAnother: () => T('Предложить другое время', 'Suggest another time'),
 
@@ -173,7 +182,7 @@ export const PLAN = {
    * начала, а до того ни автор плана, ни приглашённый не имели способа сказать «не смогу».
    */
   callOff: () => T('Отменить встречу', 'Call the meetup off'),
-  callOffAsk: (name: string) => T(`Отменить встречу с ${name}?`, `Call off the meetup with ${name}?`),
+  callOffAsk: (name: string) => T(`Отменить встречу с ${ins(name)}?`, `Call off the meetup with ${name}?`),
   callOffNote: (name: string) =>
     T(
       `${name} сразу увидит отмену. Вернуть эту встречу нельзя — можно назначить новую, чат остаётся открытым.`,
@@ -220,7 +229,7 @@ export const PLAN = {
   noLinkYet: () => T('Онлайн · ссылки пока нет', 'Online · no link yet'),
   pasteLink: () => T('Вставь ссылку Zoom, Meet — любую', 'Paste a Zoom, Meet or any link'),
   saveLink: () => T('Сохранить ссылку', 'Save the link'),
-  askHost: (name: string) => T(`Попросить ${name} создать звонок`, `Ask ${name} to host instead`),
+  askHost: (name: string) => T(`Попросить ${acc(name)} создать звонок`, `Ask ${name} to host instead`),
   /** Уходит настоящим сообщением в чат — просьба должна дойти, а не остаться нажатой кнопкой. */
   askHostMsg: () =>
     T(
@@ -230,7 +239,7 @@ export const PLAN = {
   linkComing: () => T('Онлайн · ссылка будет', 'Online · link coming'),
 
   /** O.21b — новое время отправлено; старое действует, пока встречное не принято. */
-  newTimeSent: (name: string) => T(`Новое время отправлено ${name}`, `New time sent to ${name}`),
+  newTimeSent: (name: string) => T(`Новое время отправлено ${dat(name)}`, `New time sent to ${name}`),
   newTimeNote: (name: string) =>
     T(
       `${name} увидит новое время и подтвердит его заново. До этого действует старое — ничего не отменено, и никому ничего делать не нужно.`,
@@ -278,7 +287,7 @@ export const PLAN = {
   /** OF.20 — офлайн-план отправлен: район виден сразу, адрес — только после её «да». */
   sentNoteOffline: (name: string) =>
     T(
-      `${name} видит район и время. Точный адрес откроется ей(ему) только после подтверждения.`,
+      `${name} видит район и время. Точный адрес откроется только после подтверждения.`,
       `${name} sees the district and the time. The exact address opens for them only when they confirm.`
     ),
   /** OF.21 — подтверждено, адрес открыт обоим. */
@@ -398,7 +407,7 @@ export const PLAN = {
 
   /** O.23a — создатель отменил встречу. */
   youToldCantMake: (name: string) =>
-    T(`Ты сказал(а) ${name}, что не сможешь`, `You told ${name} you can’t make it`),
+    T(`Ты сказал(а) ${dat(name)}, что не сможешь`, `You told ${name} you can’t make it`),
   theyCantMake: (name: string) => T(`${name} не сможет прийти`, `${name} can’t make it`),
   calledOffByYou: () => T('Отменено тобой', 'Called off by you'),
   calledOffBy: (name: string) => T(`Отменил(а) ${name}`, `Called off by ${name}`),
@@ -444,7 +453,7 @@ export function planPinned(plan: any, me: string): { label: string; warn: boolea
 
 /** O.19a/O.19b — полоса отсчёта внизу чата: действие случится через 4 секунды, если не отменить. */
 export const UNDO_BAR = {
-  creating: (name: string) => T(`Создаю план с ${name}`, `Creating the plan with ${name}`),
+  creating: (name: string) => T(`Создаю план с ${ins(name)}`, `Creating the plan with ${name}`),
   ending: () => T('Завершаю чат. Можно вернуться снова', 'Ending chat. You can pick again'),
   undo: (n: number) => T(`Отменить · ${n}`, `Undo · ${n}`),
 };
@@ -460,6 +469,8 @@ export const THREAD = {
   proposalSent: () => T('Предложение отправлено · ждём', 'Proposal sent · waiting'),
   planFromThem: () => T('Тебе прислали план', 'They sent you a plan'),
   talkingSince: (day: string) => T(`Общаетесь с ${day}`, `Talking since ${day}`),
+  /** Разговор начался сегодня — «с субботы» про сегодняшний день читается как «давно». */
+  talkingToday: () => T('Общаетесь сегодня', 'Talking since today'),
   /** «с четверга», а не «с четверг»: подзаголовку нужен родительный падеж. */
   weekdayGen: (dayIndex: number) =>
     ['воскресенья', 'понедельника', 'вторника', 'среды', 'четверга', 'пятницы', 'субботы'][dayIndex] || '',
@@ -493,8 +504,8 @@ export const THREAD = {
   whereLink: () => T('Ссылка — после подтверждения', 'Link after you confirm'),
   matchedAgo: (name: string, days: number) =>
     days <= 0
-      ? T(`Мэтч с ${name} · сегодня`, `Matched with ${name} · today`)
-      : T(`Мэтч с ${name} · ${days} дн. назад`, `Matched with ${name} · ${days} days ago`),
+      ? T(`Мэтч с ${ins(name)} · сегодня`, `Matched with ${name} · today`)
+      : T(`Мэтч с ${ins(name)} · ${days} дн. назад`, `Matched with ${name} · ${days} days ago`),
   statusWaiting: () => T('Ждёт ответа', 'Waiting for an answer'),
 
   /** MSG.18–MSG.21 — приглашение как карточка в треде. */
@@ -520,11 +531,11 @@ export const INVITE = {
   title: (name: string) => T(`${name} пригласил(а) тебя`, `${name} invited you`),
   note: (what: string, name: string) =>
     T(
-      `${what ? what + '. ' : ''}Если присоединишься, откроется чат с ${name} — детали договорите там.`,
+      `${what ? what + '. ' : ''}Если присоединишься, откроется чат с ${ins(name)} — детали договорите там.`,
       `${what ? what + '. ' : ''}If you join, a chat with ${name} opens and you two agree the details there.`
     ),
   /** Ссылки в приглашении нет и не должно быть: она приходит позже, через план (OF.C3). */
-  linkFrom: (name: string) => T(`Видеозвонок · ссылка у ${name}`, `Video call · link from ${name}`),
+  linkFrom: (name: string) => T(`Видеозвонок · ссылка у ${gen(name)}`, `Video call · link from ${name}`),
   inPerson: () => T('Встреча вживую', 'In person'),
   invitedYou: () => T('Пригласил(а) тебя', 'Invited you'),
   join: () => T('Присоединиться', 'Join'),
