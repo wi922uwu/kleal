@@ -22,6 +22,7 @@ import { useOnb, set, reset } from '../../src/state';
 import { profile as profileApi } from '../../src/api';
 import {
   PROFILE_TITLE, HUB, SIGNOUT, HUB_ROWS, SHEETS, WHOAMI, profileData, fmtUpdated, adaptSummary,
+  onSummaryBusy,
 } from '../../src/profile';
 import { langName, searchLangs } from '../../src/languages';
 import { writeFact, patchFor } from '../../src/fields';
@@ -38,7 +39,11 @@ export default function ProfileHub() {
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  /** Пересборка идёт — своя или чужая. Сводку теперь обновляет сторож (startSummaryWatch), и
+   *  «Kleal составляет описание…» должно загораться и тогда, когда правку сделали на другом
+   *  экране, а сюда человек вернулся посреди запроса. */
   const [busy, setBusy] = useState(false);
+  useEffect(() => onSummaryBusy(setBusy), []);
   /** Какой лист правки открыт. Пусто — ни один. */
   const [sheet, setSheet] = useState<'languages' | 'location' | 'whoami' | null>(null);
 

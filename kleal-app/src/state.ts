@@ -91,6 +91,17 @@ export function getState(): OnbState {
   return state;
 }
 
+/**
+ * Подписка на состояние ВНЕ React — для того, что живёт дольше экрана.
+ *
+ * Тем же набором слушателей, что и useOnb: сторож сводки должен видеть правку независимо от того,
+ * с какого экрана она пришла и открыт ли вообще профиль.
+ */
+export function subscribe(fn: (s: OnbState) => void): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
 export function useOnb(): OnbState {
   const [s, setS] = useState(state);
   useEffect(() => {

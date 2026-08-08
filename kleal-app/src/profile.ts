@@ -15,7 +15,7 @@ import { T, getLang, replyLang } from './i18n';
 import { sexLabel, hobbyPlain } from './onboarding';
 import { langPlainName } from './languages';
 import type { Profile } from './state';
-import { getState, set, profileForAttach } from './state';
+import { getState, set, subscribe, profileForAttach } from './state';
 import { buddy, profile as profileApi } from './api';
 
 // ---------------------------------------------------------------- разделы
@@ -75,15 +75,31 @@ export const HUB = {
  * Возвращает true, если текст действительно сменился.
  */
 let _resumBusy = false;
+/** Кто хочет знать, идёт ли пересборка прямо сейчас: экран профиля рисует этим «обновляю…». */
+const _busySubs = new Set<(b: boolean) => void>();
+function setBusy(b: boolean) {
+  _resumBusy = b;
+  _busySubs.forEach((f) => f(b));
+}
+export function onSummaryBusy(cb: (b: boolean) => void): () => void {
+  _busySubs.add(cb);
+  cb(_resumBusy);
+  return () => { _busySubs.delete(cb); };
+}
 
 export async function adaptSummary(): Promise<boolean> {
   if (_resumBusy) return false;
-  _resumBusy = true;
+  setBusy(true);
   try {
     const st = getState();
+    // Отпечаток профиля, ПО КОТОРОМУ собираем. Нужен сторожу: без него его отложенный запуск
+    // повторял бы то, что экран уже попросил сам (кнопка «Пересобрать» + правка = два ответа
+    // модели на одну правку). См. startSummaryWatch.
+    const sigNow = summarySignature(st.profile);
     const cur = String((st.profile as any).summary || '');
     const personality = String((st.profile as any).personality || '');
     const r: any = await buddy.resummary(profileForAttach(), cur, personality, replyLang());
+    _builtSig = sigNow;           // модель ответила — этот профиль считается разобранным
     const woven = String(r?.summary || '').trim();
     const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').trim();
     if (!woven) return false;
@@ -98,8 +114,78 @@ export async function adaptSummary(): Promise<boolean> {
   } catch {
     return false;                 // сеть отвалилась — на экране остаётся прежний текст
   } finally {
-    _resumBusy = false;
+    setBusy(false);
   }
+}
+
+/**
+ * СТОРОЖ СВОДКИ: пересобирает её сам, как только профиль изменился.
+ *
+ * Раньше каждый экран звал adaptSummary() у себя — три листа на хабе, интересы, тест. Это работает
+ * ровно до первого забытого места, и такое место было: история «своими словами» меняла профиль и
+ * не трогала сводку вовсе, пока туда не поставили отдельную кнопку. Любой новый экран наследовал
+ * бы ту же ловушку.
+ *
+ * Здесь один вход и одно правило: смотрим не на экраны, а на САМ ПРОФИЛЬ. Считаем отпечаток полей,
+ * которые сводка описывает; изменился — пересобираем.
+ *
+ * Что в отпечаток НЕ входит и почему:
+ *  — сама summary: иначе пересборка запускала бы пересборку, и это кольцо;
+ *  — фото, безопасность, разрешения, радиус: сводке про них говорить запрещено (SUMMARY_PROMPT),
+ *    так что их правка ничего в тексте не меняет и гонять модель незачем;
+ *  — пометки «Сообщений» и прочее состояние устройства — они не про человека.
+ */
+function summarySignature(p: any): string {
+  const list = (v: any) => (Array.isArray(v) ? v.map(String).slice().sort().join('|') : '');
+  return [
+    p?.name, p?.age, p?.gender, p?.city, p?.country,
+    list(p?.languages?.comfortable),
+    list(p?.interests?.explicit),
+    list(p?.interests?.unused),
+    p?.personality, p?.story,
+  ].map((x) => String(x ?? '')).join('\u0001');
+}
+
+let _watching = false;
+/** Отпечаток профиля, по которому сводка уже собиралась, кем бы ни был вызван adaptSummary. */
+let _builtSig = '';
+
+/**
+ * Включается один раз на всё приложение (app/_layout.tsx).
+ *
+ * Задержка — не косметика: один шаг человека часто пишет несколько полей подряд (тест кладёт и
+ * `personality`, и `persona`; лист локации — город, координаты и радиус), и без неё модель
+ * дёргалась бы на каждое поле. Полторы секунды тишины — и один запрос на всю правку.
+ *
+ * Пока онбординг не закончен, сторож молчит: там профиль меняется каждым шагом, а свою сводку
+ * анкета пишет сама в самом конце.
+ */
+export function startSummaryWatch(): void {
+  if (_watching) return;
+  _watching = true;
+  let last = summarySignature(getState().profile);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const run = async () => {
+    timer = null;
+    // Занято — ждём и приходим снова. Именно ждём, а не «поставим флажок»: пересборку мог
+    // запустить экран (кнопка «Пересобрать» на личности), и тогда флажок некому было бы снять.
+    if (_resumBusy) { schedule(); return; }
+    if (summarySignature(getState().profile) === _builtSig) return;   // экран уже успел сам
+    await adaptSummary();
+  };
+  const schedule = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(run, 1500);
+  };
+
+  subscribe((st) => {
+    if (!st.done) { last = summarySignature(st.profile); return; }
+    const sig = summarySignature(st.profile);
+    if (sig === last) return;
+    last = sig;
+    schedule();
+  });
 }
 
 /** Статусы приёма — те же три, что понимает /api/onboarding/receiving. */
