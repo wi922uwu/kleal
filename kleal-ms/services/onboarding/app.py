@@ -152,13 +152,29 @@ DO ASK, one of these, whichever is missing and most useful for THIS interest:
   it, just company;
 - WITH WHOM it usually happens — one-on-one, a small group, a crowd — but only if it is not obvious.
 
-STYLE. You are a person helping a friend, not a form. React to what they just said in ONE short,
-specific line — specific means naming the thing they mentioned, IN THEIR OWN WORD for it: they wrote
-«Код», so write «Код», not «Кодирование» and not «программирование». Never «это замечательно» or «ты
-интересный человек». Never compliment the user. Never open with «X — это отличный способ…». Then
-ask EXACTLY ONE question, and let it be the last thing in the message. It must be a complete
+STYLE.
+
+NEVER REPEAT BACK WHAT THEY JUST SAID. This is the failure that keeps happening, and it is what
+makes the agent sound like a machine confirming input instead of a person listening:
+
+    User: на концертах   ->  Agent: «Концерты. Ходишь на них с друзьями или один?»   WRONG
+    User: климат         ->  Agent: «Климат. Что делает фотографию отличной?»        WRONG
+
+A bare noun echoed back with a full stop adds nothing. If you have nothing to add, ADD NOTHING —
+ask the question and stop. MOST OF YOUR MESSAGES SHOULD BE ONE QUESTION AND NOT A WORD MORE. A
+lead-in is allowed only when it carries something NEW that follows from their answer, never a copy
+of it.
+
+DO NOT REUSE A SENTENCE PATTERN. «Что делает поездку идеальной для тебя?» followed by «Что делает
+фотографию отличной для тебя?» is one template with the noun swapped — that is a questionnaire, not
+a conversation. Ask about the thing itself: «Куда ездил в последний раз?», «Что снимаешь?»
+
+Never compliment. No «это замечательно», «отличный выбор», «ты интересный человек», and never open
+with «X — это отличный способ…».
+
+Ask EXACTLY ONE question, and let it be the last thing in the message. It must be a complete
 sentence and it must END WITH A QUESTION MARK — exactly one, and none anywhere else. Two topics
-joined by «and» is two questions and is forbidden. Keep the whole message under 25 words.
+joined by «and» is two questions and is forbidden. Keep the whole message under 20 words.
 
 Do not re-ask a question you already asked, even reworded — if they sidestepped it, move on. For
 closed choices end with [OPTIONS: a | b | c] (pipe-separated only, no letters or numbers). No emoji,
@@ -224,11 +240,15 @@ def _v2_listhas(p, path, name):
 # "do you play or watch" makes sense for a game/sport, but is nonsense for AI or coffee.
 def _v2_kind(it):
     n = (it or "").lower()
-    if re.search(r"dota|valorant|league|\bcs\b|apex|fortnite|fifa|minecraft|\bgame|gaming|esport", n): return "game"
-    if re.search(r"football|soccer|basket|tennis|\bgym\b|\brun|\bbox|climb|swim|cycl|\bhik|volleyball|skate|yoga|padel|surf|ski", n): return "sport"
-    if re.search(r"movie|cinema|film|series|\bshow|anime|\btv\b|netflix|k-?drama", n): return "watch"
-    if re.search(r"language|spanish|english|french|german|italian|portuguese|japanese|chinese|practice|duolingo", n): return "language"
-    if re.search(r"\bai\b|\bml\b|startup|\btech|business|career|founder|network|invest|product|\bdesign|architect|coding|program|marketing|crypto", n): return "topic"
+    if re.search(r"dota|valorant|league|\bcs\b|apex|fortnite|fifa|minecraft|\bgame|gaming|esport|игр", n): return "game"
+    if re.search(r"football|soccer|basket|tennis|\bgym\b|\brun|\bbox|climb|swim|cycl|\bhik|volleyball|skate|yoga|padel|surf|ski|футбол|бег|поход|спорт|йог", n): return "sport"
+    if re.search(r"movie|cinema|film|series|\bshow|anime|\btv\b|netflix|k-?drama|кино|фильм|сериал", n): return "watch"
+    if re.search(r"language|spanish|english|french|german|italian|portuguese|japanese|chinese|practice|duolingo|язык", n): return "language"
+    if re.search(r"music|concert|gig|band|dj|vinyl|музык|концерт", n): return "music"
+    if re.search(r"travel|trip|roadtrip|backpack|путешеств|поездк", n): return "travel"
+    if re.search(r"coffee|food|cook|bar|wine|beer|restaurant|кофе|еда|готов|бар|вино", n): return "food"
+    if re.search(r"photo|фото|снима|draw|paint|craft|рисов", n): return "photo"
+    if re.search(r"\bai\b|\bml\b|startup|\btech|business|career|founder|network|invest|product|\bdesign|architect|coding|program|marketing|crypto|код|стартап|бизнес", n): return "topic"
     return "social"
 
 # Что спросить про интерес. РОВНО ОДНО и всюду — КОНКРЕТИКА, потому что именно она становится
@@ -242,8 +262,14 @@ _ROLE_FRAME = {
     "sport":    "whether they play it themselves or go and watch",
     "watch":    "what exactly they watch — which shows, films or sport",
     "language": "what they want the practice for — conversation, work or travel",
+    "music":    "which music exactly — which artists or genres",
+    "travel":   "where they went last, or where they are going next",
+    "food":     "what kind of places they go to",
+    "photo":    "what they shoot",
     "topic":    "which side of it interests them",
-    "social":   "what makes a good one for them",
+    # Общий случай — про КОНКРЕТНЫЙ последний раз, а не про идеал: «что делает X идеальным для
+    # тебя» модель повторяла слово в слово от интереса к интересу, и это читалось анкетой.
+    "social":   "the last time they did it — where it was or what it was",
 }
 def _v2_frame(it): return _ROLE_FRAME.get(_v2_kind(it), "what exactly they like about it")
 
@@ -272,7 +298,19 @@ def _v2_gaps(p, hist):
 
     Бюджет — ОДИН вопрос на интерес. Было два, и второй уходил в никуда: спрашивать про один
     интерес дважды подряд человек читает как «меня не слышат», а выдачу это не меняло.
+
+    И ПОТОЛОК НА ВЕСЬ ШАГ. Он появился вместе с обогащением: ответ «экшн» на «во что играешь»
+    теперь сам ложится в интересы — и следующим ходом воронка честно видит новый интерес, про
+    который ещё не спрашивала. Три интереса превращались в шесть, шесть в десять, и разговор не
+    кончался никогда. Спрашиваем столько раз, сколько увлечений человек назвал САМ в начале, — то
+    есть про то, что он выбрал, а не про то, что мы из него вытащили.
     """
+    asked_total = sum(1 for m in hist if m.get("role") == "assistant" and "?" in str(m.get("content", "")))
+    first_user = next((str(m.get("content", "")) for m in hist if m.get("role") == "user"), "")
+    budget = len([x for x in re.split(r"[,;]", first_user) if x.strip()]) or len(_v2_ints(p))
+    if asked_total >= max(1, min(budget, 6)):
+        return []
+
     gaps = []
     for it in _v2_ints(p):
         low = it.lower()
@@ -297,6 +335,33 @@ def _v2_gaps(p, hist):
     # Вопрос в анкете спрашивал то, на что всё равно ответят потом.
     return gaps
 
+def _v2_union_interests(prior, fresh, merged):
+    """Список интересов ДОПОЛНЯЕТСЯ, а не заменяется.
+
+    base._deep_merge для всего, что не словарь, делает `acc[k] = v` — то есть список интересов
+    затирается тем, что извлеклось на ЭТОМ ходу. Извлекатель видит весь разговор и обычно
+    перечисляет всё, но стоит ему один раз вернуть только последний ответ — и накопленное
+    пропадает. Ровно из-за этого «экшн» мог не доехать до профиля: не потому, что его не извлекли,
+    а потому что следующий ход его вытер.
+
+    Порядок сохраняется, сравнение регистронезависимое, потолок на случай длинного разговора.
+    """
+    def lst(p):
+        v = ((p or {}).get("interests") or {}).get("explicit")
+        if isinstance(v, str):
+            return [v]
+        return [x for x in (v or []) if isinstance(x, str) and x.strip()]
+    out, seen = [], set()
+    for x in lst(prior) + lst(fresh) + lst(merged):
+        k = x.strip().lower()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(x.strip())
+    if out:
+        merged.setdefault("interests", {})["explicit"] = out[:24]
+    return merged
+
+
 def _norm_options(options):
     """Models sometimes jam choices into one comma blob or prefix them (a) / 1.). Split + clean -> chips."""
     raw = list(options or [])
@@ -312,7 +377,27 @@ def _norm_options(options):
 # extractor with V2 extras: per-interest experience/tenure ("how long have you been into it")
 EXTRACT_V2 = base.EXTRACT_PROMPT + '''
 ALSO extract, under the same iron rules (ONLY if the user explicitly said it):
-interests.experienceByInterest = {"<interest exactly as named in explicit>": "<how long they have been into it, short: '5 years', 'since school', 'just started'>"} - one entry per interest whose experience/tenure the user stated.'''
+interests.experienceByInterest = {"<interest exactly as named in explicit>": "<how long they have been into it, short: '5 years', 'since school', 'just started'>"} - one entry per interest whose experience/tenure the user stated.
+
+AND THIS IS THE POINT OF THE WHOLE STEP — THE ANSWER TO A "WHICH KIND" QUESTION IS ITSELF AN
+INTEREST. When the Agent asked which kind / which genre / what exactly / what they play or watch,
+and the User named it, that named thing goes into interests.explicit as ITS OWN ENTRY, in the
+user's own words, alongside the broad one:
+
+  Agent: Какой жанр игр тебе интересен?   User: экшн
+  -> interests.explicit must contain BOTH the original interest and "экшн"
+
+  Agent: Какую музыку любишь?             User: инди и электроника
+  -> "инди", "электроника"
+
+This is not decoration. Search compares these entries LITERALLY: a person who wrote «экшн» is
+found by «экшн», and a detail that stays only in prose is a detail nobody can be found by.
+
+Two limits, both hard. Only words the User actually typed — never a genre you inferred, never a
+synonym you improved. And a message that names nothing («не знаю», «разное», «разную», «любую»,
+«всякое», «мне нравится», «давно этим занимаюсь») adds NOTHING: it is a non-answer, not an interest.
+
+Keep every interest already present — you are adding to the list, never replacing it.'''
 
 # the stored artifact: ONE continuous plain-text summary describing everything about the user
 SUMMARY_PROMPT = '''You are Kleal, a personal social agent. You store your memory of a user as ONE continuous plain-text summary.
@@ -384,6 +469,7 @@ def v2_chat(messages, prior, want_lang=None):
     if any(m.get("role") == "user" for m in hist):
         _t = threading.Thread(target=_job, daemon=True); _t.start(); _t.join(timeout=220)
     merged = base._deep_merge(dict(prior), result["profile"] or {})
+    merged = _v2_union_interests(prior, result["profile"], merged)
     crit = critical_status_v2(merged)
     gaps = _v2_gaps(merged, hist)
     lastu = next((str(m.get("content", "")) for m in reversed(hist) if m.get("role") == "user"), "")

@@ -110,8 +110,9 @@ export const DETAILS = {
     ),
 
   district: () => T('Район', 'District'),
-  /** OF.09: булавка двигается — без подписи об этом никто не догадается, карта выглядит картинкой. */
-  dragPin: () => T('Потяни точку, если искать надо не от дома.', 'Drag the pin if you’re searching from somewhere else.'),
+  /** OF.09: двигают КАРТУ, булавка стоит в центре — см. RadiusMap.native, там про долгое нажатие. */
+  dragPin: () => T('Ищешь не от дома? Подвинь карту под булавку.',
+                   'Searching from somewhere else? Move the map under the pin.'),
   centerMoved: () => T('Ищем вокруг этой точки.', 'We’ll search around this spot.'),
   backHome: () => T('Вернуть к дому', 'Back to home'),
   radius: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),

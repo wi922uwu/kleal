@@ -102,11 +102,23 @@ export const STEP_START = {
       'Чтобы искать не всех подряд, а тех, с кем тебе правда будет о чём поговорить. Чем больше я знаю, тем точнее подбираю.',
       'So I look for people you would actually have something to talk about with, not just anyone. The more I know, the better I match.'
     ),
-  askName: () => T('Отлично! Как тебя зовут?', 'We’re on! May I know your name?'),
+  askName: () => T('Как тебя зовут?', 'What should I call you?'),
 };
 
+/**
+  * Реплики шагов — БЕЗ пустых похвал в начале.
+  *
+  * Было: «Отлично! Как тебя зовут?», «Супер! Сначала немного о тебе», «Класс! Где ты обычно
+  * бываешь?», «Класс! Чем увлекаешься?» — четыре восклицания подряд, каждое хвалит ни за что и ни
+  * одно не говорит, ЗАЧЕМ спрашивают. Тот же дефект, что вычищен из промпта воронки, только этот
+  * жил в захардкоженных строках и мимо промпта прошёл.
+  *
+  * Стало: вопрос и одна строка про последствие — что именно этот ответ меняет в поиске. Возраст,
+  * радиус и язык — жёсткие фильтры, и человеку честнее об этом знать, пока он отвечает.
+  */
 export const STEP_BASICS = {
-  bot: () => T('Супер! Сначала немного о тебе.', 'Awesome!\nFirst, a little bit about you.'),
+  bot: () => T('Сколько тебе лет и какого ты пола? По ним я отсекаю тех, кто тебе не подойдёт.',
+                'How old are you, and what’s your gender? I use both to rule out who won’t fit.'),
   ageLabel: () => T('Твой возраст', 'Your age'),
   sexLabel: () => T('Пол', 'Sex'),
   cta: () => T('Продолжаем', 'Keep going'),
@@ -124,15 +136,20 @@ export const sexLabel = (k: string) => {
 };
 
 export const STEP_AREA = {
-  bot: () => T('Класс! Где ты обычно бываешь?', 'Cool!\nWhere do you usually hang out?'),
+  bot: () => T('Где ты бываешь? Дальше выбранного радиуса я никого предлагать не буду.',
+                'Where do you spend your time? I won’t suggest anyone beyond the radius you set.'),
   /** Страна и город — две строки, а не одна: в профиль и в поиск уезжает ГОРОД. */
   country: () => T('Страна', 'Country'),
   city: () => T('Город', 'City'),
   radiusLabel: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),
   detect: () => T('Определить моё местоположение', 'Detect my location'),
-  /** Булавка — единственный способ назвать место, которого нет в коротком списке городов. */
-  pinHint: () => T('Нет своего города в списке? Подвинь точку на карте.',
-                   'Your town isn’t on the list? Drag the pin on the map.'),
+  /**
+   * Карта — единственный способ назвать место, которого нет в коротком списке городов.
+   * Формулировка про КАРТУ, а не про булавку: булавка приколота к центру экрана и не двигается,
+   * двигают карту под ней (см. RadiusMap.native — перетаскиваемая метка требует долгого нажатия).
+   */
+  pinHint: () => T('Нет своего города в списке? Подвинь карту — точка встанет под булавку.',
+                   'Your town isn’t on the list? Move the map — the pin marks the spot.'),
   pinMoved: () => T('Ищем вокруг этой точки.', 'We’ll search around this spot.'),
   pinReset: (city: string) => T(`Вернуть к ${city}`, `Back to ${city}`),
   cta: () => T('Почти закончили', 'We’re almost done'),
@@ -140,7 +157,8 @@ export const STEP_AREA = {
 
 export const STEP_LANGUAGES = {
   bot: () =>
-    T('Отлично. На каких языках тебе комфортно общаться?', 'Great. What languages are you comfortable communicating in?'),
+    T('На каких языках тебе комфортно? Без общего языка встречи не выйдет — это жёсткий фильтр.',
+      'Which languages are you comfortable in? Without a shared one a meetup can’t happen — it’s a hard filter.'),
   hint: () => T('Выбери варианты или напиши свой', 'Pick some or write your own'),
   own: () => T('Свой вариант', 'Your option'),
   cta: () => T('Дальше', 'Next'),
@@ -173,7 +191,8 @@ export const OWN_INPUT = {
 };
 
 export const STEP_HOBBIES = {
-  bot: () => T('Класс! Чем увлекаешься?', 'Cool!\nWhat are your hobbies?'),
+  bot: () => T('Чем любишь заниматься? С этого я и начну искать людей.',
+                'What do you like doing? That’s where I start looking for people.'),
   hint: () =>
     T('Выбери из готовых или напиши своё', 'Choose from the pre-written options or write your own'),
   own: () => T('Добавить своё', 'Add your own'),
@@ -273,7 +292,9 @@ export const STEP_PHOTO = {
   skip: () => T('Пропустить', 'Skip'),
   selfieTitle: () => T('Сделай селфи', 'Take a selfie'),
   cancel: () => T('Отмена', 'Cancel'),
-  praise: () => T('Отлично вышло! Идеальное фото для профиля.', 'Wow — you look great!\nThat’s a perfect profile photo.'),
+  /** Хвалить лицо человека агент не должен — говорим о том, что с фото делать дальше. */
+  praise: () => T('Годится. Его увидят те, кому ты отправишь приглашение.',
+                  'That works. The people you invite will see it.'),
   pickHint: () => T('Выбери, нажав на вариант', 'Select an option by tap'),
   use: () => T('Оставить', 'Use it'),
   retake: () => T('Переснять', 'Retake'),
