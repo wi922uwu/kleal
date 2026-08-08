@@ -27,6 +27,12 @@ export const ChatShell = forwardRef<ScrollView, {
   /** Правый угол шапки до процента: например «Начать заново». */
   headerExtra?: React.ReactNode;
   /**
+   * Бровка — тонкая полоса СРАЗУ под шапкой, над лентой. Для действия, которое доступно всё время
+   * шага и не является ответом на текущий вопрос: «Это всё» в разговоре про интересы. Кнопкой в
+   * ленте оно росло вместе с прокруткой и уезжало из виду, а по размеру спорило с самими ответами.
+   */
+  brow?: React.ReactNode;
+  /**
    * Выключает прокрутку ленты. Нужно виджетам, которые сами ловят движение пальца: кольцо возраста
    * крутится ровно в том же жесте, каким лента прокручивается, и без этого едет и то, и другое.
    */
@@ -38,7 +44,7 @@ export const ChatShell = forwardRef<ScrollView, {
   onBack?: () => void;
   onSend?: (text: string) => void;
 }>(function ChatShell(
-  { title, pct, thread, typing, widget, headerExtra, scrollEnabled = true, composerPlaceholder, focusSignal, onBack, onSend },
+  { title, pct, thread, typing, widget, headerExtra, brow, scrollEnabled = true, composerPlaceholder, focusSignal, onBack, onSend },
   scroller
 ) {
   const insets = useSafeAreaInsets();
@@ -56,6 +62,7 @@ export const ChatShell = forwardRef<ScrollView, {
             <View style={[s.trackFill, { width: `${pct}%` }]} />
           </View>
         )}
+        {brow}
 
         <ScrollView
           ref={scroller as any}

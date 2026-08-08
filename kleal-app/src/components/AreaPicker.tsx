@@ -17,13 +17,14 @@
  * Сама карта вынесена в RadiusMap с суффиксами .native/.web — react-native-maps нативный, и
  * условный require ломал веб-сборку целиком.
  */
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView } from 'react-native';
 import Slider from '@react-native-community/slider';
 import * as Location from 'expo-location';
 import { RadiusMap } from './RadiusMap';
 import { STEP_AREA } from '../onboarding';
-import { T } from '../i18n';
+import { reverseGeocode } from '../geocode';
+import { T, getLang } from '../i18n';
 import { color, radius as rad, space, type } from '../theme';
 
 export type Area = {
@@ -36,6 +37,19 @@ export type Area = {
   km: number;
   /** Булавку двигали руками: город в подписи больше не обязан совпадать с точкой. */
   moved?: boolean;
+  /**
+   * Адрес точки словами — «Carrer de Verdi 12, Gràcia». Появляется, когда карту подвинули, и
+   * заменяет собой строку города: пока там стояла «Barcelona», а булавка была в Жироне, экран врал.
+   */
+  address?: string;
+  /**
+   * Город, ВЫБРАННЫЙ В СПИСКЕ, — якорь для «Вернуть к …».
+   *
+   * Отдельно от `city`, потому что после переезда точки `city` — это уже настоящий город из
+   * геокодера («Алелья»), и кнопка возврата, называя его, обещала вернуть туда, где человек и так
+   * стоит. Возвращает она к тому, что он выбирал руками.
+   */
+  pinCity?: string;
 };
 
 /**
@@ -76,6 +90,7 @@ const citiesOf = (country: string) =>
 export const DEFAULT_AREA: Area = {
   country: PLACES[0].country,
   city: PLACES[0].cities[0][0],
+  pinCity: PLACES[0].cities[0][0],
   lat: PLACES[0].cities[0][1],
   lon: PLACES[0].cities[0][2],
   km: 19,
@@ -92,6 +107,34 @@ export function AreaPicker({
 }) {
   const [open, setOpen] = useState<'' | 'country' | 'city'>('');
   const [locating, setLocating] = useState(false);
+  /** Идёт запрос адреса по координатам. Строка не должна молча показывать старое место. */
+  const [naming, setNaming] = useState(false);
+
+  /**
+   * Подвинули точку — спрашиваем, что там на самом деле, и подменяем строку города адресом.
+   *
+   * Запрос уходит ПОСЛЕ того, как карту отпустили (onMove зовётся из onRegionChangeComplete), и
+   * только если точка правда уехала. Гонка снята счётчиком: пока летит ответ, человек успевает
+   * подвинуть карту ещё раз, и старый ответ не имеет права перезаписать новый.
+   *
+   * Город из ответа кладётся в area.city — это он уезжает в поиск (§5.3, ctx.city). Раньше туда
+   * попадал город из списка, и человек, поставивший точку в Жироне, искался по Барселоне.
+   */
+  const req = useRef(0);
+  useEffect(() => {
+    if (!value.moved || !onChange) return;
+    const mine = ++req.current;
+    setNaming(true);
+    reverseGeocode(value.lat, value.lon, getLang())
+      .then((p) => {
+        if (mine !== req.current) return;          // пришёл ответ на позапрошлую точку — выбрасываем
+        setNaming(false);
+        if (!p) return;                            // не узнали — строка останется прежней, врать нечем
+        onChange({ ...value, address: p.label, city: p.city || value.city });
+      })
+      .catch(() => { if (mine === req.current) setNaming(false); });
+    // Только координаты: перерисовка от смены радиуса не должна дёргать геокодер.
+  }, [value.moved, value.lat, value.lon]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const detect = async () => {
     setLocating(true);
@@ -113,12 +156,12 @@ export function AreaPicker({
 
   const pickCountry = (country: string) => {
     const [city, lat, lon] = citiesOf(country)[0];
-    onChange({ ...value, country, city, lat, lon, moved: false });
+    onChange({ ...value, country, city, pinCity: city, lat, lon, moved: false, address: undefined });
     setOpen('');
   };
 
   const pickCity = ([city, lat, lon]: [string, number, number]) => {
-    onChange({ ...value, city, lat, lon, moved: false });
+    onChange({ ...value, city, pinCity: city, lat, lon, moved: false, address: undefined });
     setOpen('');
   };
 
@@ -140,9 +183,11 @@ export function AreaPicker({
         </Options>
       ) : null}
 
+      {/* Одна строка на две роли: город из списка — или адрес точки, если карту двигали.
+          Нажатие в обоих случаях открывает список городов, то есть даёт вернуться к списку. */}
       <Row
-        label={STEP_AREA.city()}
-        value={value.city}
+        label={value.moved ? STEP_AREA.address() : STEP_AREA.city()}
+        value={value.moved ? (naming ? STEP_AREA.naming() : value.address || value.city) : value.city}
         open={open === 'city'}
         onPress={() => setOpen((o) => (o === 'city' ? '' : 'city'))}
       />
@@ -200,11 +245,12 @@ export function AreaPicker({
             accessibilityRole="button"
             hitSlop={8}
             onPress={() => {
-              const c = citiesOf(value.country).find((x) => x[0] === value.city) || citiesOf(value.country)[0];
-              onChange({ ...value, city: c[0], lat: c[1], lon: c[2], moved: false });
+              const anchor = value.pinCity || DEFAULT_AREA.city;
+              const c = citiesOf(value.country).find((x) => x[0] === anchor) || citiesOf(value.country)[0];
+              onChange({ ...value, city: c[0], pinCity: c[0], lat: c[1], lon: c[2], moved: false, address: undefined });
             }}
           >
-            <Text style={s.hintAction}>{STEP_AREA.pinReset(value.city)}</Text>
+            <Text style={s.hintAction}>{STEP_AREA.pinReset(value.pinCity || DEFAULT_AREA.city)}</Text>
           </Pressable>
         ) : null}
       </View>

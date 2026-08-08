@@ -70,6 +70,9 @@ export default function Chat() {
   const [funnelTurns, setFunnelTurns] = useState(0);
   const [funnelCap, setFunnelCap] = useState(10);
   const [funnelDone, setFunnelDone] = useState(false);
+  /** «Это всё» нажали — Kleal предупредил и ждёт ответа. Живёт здесь, а не в виджете: спрашивает
+   *  бровка под шапкой, а отвечают кнопки в ленте. */
+  const [funnelEnding, setFunnelEnding] = useState(false);
   // Лента стоит, пока крутят кольцо возраста: иначе один и тот же жест двигает и то, и другое.
   const [dragging, setDragging] = useState(false);
   // Номер прохода. Меняется при «Начать заново» и служит ключом виджетам, чтобы те начинали с
@@ -124,6 +127,14 @@ export default function Chat() {
         setTimeout(() => say('bot', STEP_START.ask()), 1400);
       }
     }, 500);
+  }, [say]);
+
+  /** «Это всё»: Kleal сначала говорит, что будет дальше, и только потом уходит с шага. */
+  const askEnd = useCallback(() => {
+    setFunnelEnding((was) => {
+      if (!was) say('bot', FUNNEL.endAsk());
+      return true;
+    });
   }, [say]);
 
   /** Начать онбординг заново. Спрашиваем: это стирает всё, что человек уже ввёл. */
@@ -306,6 +317,7 @@ export default function Chat() {
       onSend={send}
       scrollEnabled={!dragging}
       composerPlaceholder={step === 'funnel' ? FUNNEL.compose() : undefined}
+      brow={step === 'funnel' && !funnelEnding && !funnelDone ? <FunnelBrow onPress={askEnd} /> : null}
       headerExtra={
         hasProgress(st.profile) ? (
           <Pressable accessibilityRole="button" onPress={restart} hitSlop={10}>
@@ -322,7 +334,10 @@ export default function Chat() {
           onDrag={setDragging}
           onDone={() => router.push('/summary')}
           startFunnel={startFunnel}
-          funnel={{ opts: funnelOpts, done: funnelDone, ask: funnelTurn, leave: leaveFunnel, more: moreInterests }}
+          funnel={{
+            opts: funnelOpts, done: funnelDone, ask: funnelTurn, leave: leaveFunnel, more: moreInterests,
+            ending: funnelEnding, askEnd, keepGoing: () => setFunnelEnding(false),
+          }}
         />
       }
     />
@@ -337,6 +352,9 @@ type FunnelBits = {
   ask: (text: string) => void;
   leave: () => void;
   more: () => void;
+  ending: boolean;
+  askEnd: () => void;
+  keepGoing: () => void;
 };
 
 /**
@@ -516,12 +534,13 @@ function AreaW({ say, goto, onDrag }: any) {
           // название государства. Страна лежит отдельным полем — сервер знает `country`.
           set('city', area.city);
           set('country', area.country);
-          set('geo.comfortableAreas', [area.city]);
+          // Точку двигали — «свой район» это адрес с карты, а не название города из списка.
+          set('geo.comfortableAreas', [area.address || area.city]);
           set('geo.located', true);
           set('geo.coarseLat', area.lat);
           set('geo.coarseLon', area.lon);
           set('geo.maxDistanceKm', area.km);
-          say('me', `${area.city}, ${area.country} · ${area.km} km`);
+          say('me', `${area.address || area.city}, ${area.country} · ${area.km} km`);
           goto('languages', STEP_LANGUAGES.bot());
         }}
       />
@@ -586,22 +605,12 @@ function LangW({ say, goto }: any) {
  *
  * Пока модель спрашивает, отвечать можно и словами в композере — чипы это ускорение, а не рельсы.
  */
-function FunnelW({ opts, done, ask, leave, more, say }: FunnelBits & { say: any }) {
-  /**
-   * Выход из разговора спрашивается, а не случается. Это единственный шаг, который наполняет
-   * профиль, и уйти с него мимоходом — значит остаться с профилем из одного слова. Kleal говорит,
-   * что будет дальше, и ждёт ответа.
-   */
-  const [ending, setEnding] = useState(false);
-  const askEnd = () => {
-    if (ending) return;
-    setEnding(true);
-    say('bot', FUNNEL.endAsk());
-  };
+function FunnelW({ opts, done, ask, leave, more, ending, askEnd, keepGoing, say }: FunnelBits & { say: any }) {
+  // Подтверждение выхода живёт в Chat: спрашивает бровка под шапкой, отвечают эти две кнопки.
   if (ending) {
     return (
       <View style={cs.widget}>
-        <Cta label={FUNNEL.endNo()} kind="muted" onPress={() => setEnding(false)} />
+        <Cta label={FUNNEL.endNo()} kind="muted" onPress={keepGoing} />
         <Cta label={FUNNEL.endYes()} onPress={leave} />
       </View>
     );
@@ -630,6 +639,9 @@ function FunnelW({ opts, done, ask, leave, more, say }: FunnelBits & { say: any 
     ask(o);
   };
 
+  // Выхода здесь больше нет: он живёт бровкой под шапкой (см. FunnelBrow). Кнопка в ленте
+  // спорила размером с самими ответами и уезжала вверх вместе с прокруткой — а закончить разговор
+  // человек может захотеть в любой момент, не долистывая до низа.
   return (
     <View style={cs.widget}>
       <View style={cs.row}>
@@ -637,10 +649,22 @@ function FunnelW({ opts, done, ask, leave, more, say }: FunnelBits & { say: any 
           <Chip key={o} label={o} onPress={() => press(o)} />
         ))}
       </View>
-      {/* Выход — отдельной кнопкой под вариантами, а не чипом в их ряду: он делает не то же, что
-          они, и не должен читаться как ещё один ответ на вопрос агента. */}
-      <Cta label={FUNNEL.done()} kind="muted" onPress={askEnd} />
     </View>
+  );
+}
+
+/**
+ * Бровка «Это всё» — тонкая строка сразу под шапкой, на всё время разговора про интересы.
+ *
+ * Спрашивает подтверждение той же репликой, что и раньше: уйти отсюда мимоходом значит остаться
+ * с профилем из одного слова, и Kleal сначала говорит, что будет дальше.
+ */
+function FunnelBrow({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable accessibilityRole="button" style={s.brow} onPress={onPress}>
+      <Text style={s.browText}>{FUNNEL.done()}</Text>
+      <Text style={s.browChev}>›</Text>
+    </Pressable>
   );
 }
 
@@ -728,9 +752,27 @@ function PhotoW({ say, onDone, name }: any) {
   const [stage, setStage] = useState<'ask' | 'result' | 'confirmed'>('ask');
   const [busy, setBusy] = useState(false);
 
-  const shrink = async (src: string) => {
+  /**
+   * Фото готовится БЕЗ экрана обрезки.
+   *
+   * Раньше и камера, и галерея открывались с `allowsEditing: true` — и человек, выбрав снимок,
+   * попадал в системный редактор с рамкой и кнопкой «ОБРЕЗАТЬ», без которой фото не принималось.
+   * Лишний экран ради квадрата, который мы и сами умеем вырезать: берём центральный квадрат по
+   * размерам, которые пикер и так отдал вместе с файлом.
+   */
+  const shrink = async (a: { uri: string; width?: number; height?: number }) => {
+    const src = a.uri;
     // Ужимаем ДО отправки: сервер режет всё тяжелее 600 КБ, и снимок с камеры не пролезает.
     const ctx = ImageManipulator.ImageManipulator.manipulate(src);
+    const w = Number(a.width || 0), h = Number(a.height || 0);
+    if (w > 0 && h > 0 && w !== h) {
+      const side = Math.min(w, h);
+      ctx.crop({
+        originX: Math.round((w - side) / 2),
+        originY: Math.round((h - side) / 2),
+        width: side, height: side,
+      });
+    }
     const img = await ctx.resize({ width: 512, height: null }).renderAsync();
     const out = await img.saveAsync({ compress: 0.75, format: ImageManipulator.SaveFormat.JPEG, base64: true });
     set('photo', `data:image/jpeg;base64,${out.base64}`);
@@ -741,19 +783,20 @@ function PhotoW({ say, onDone, name }: any) {
   const take = async () => {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) return;
-    const r = await ImagePicker.launchCameraAsync({ cameraType: ImagePicker.CameraType.front, allowsEditing: true, aspect: [1, 1], quality: 0.9 });
+    // Без allowsEditing: системный редактор с «ОБРЕЗАТЬ» больше не встаёт между снимком и профилем.
+    const r = await ImagePicker.launchCameraAsync({ cameraType: ImagePicker.CameraType.front, quality: 0.9 });
     if (r.canceled || !r.assets?.length) return;
     setBusy(true);
-    try { const u = await shrink(r.assets[0].uri); setUri(u); say('me', '', u); setStage('result'); } finally { setBusy(false); }
+    try { const u = await shrink(r.assets[0]); setUri(u); say('me', '', u); setStage('result'); } finally { setBusy(false); }
   };
 
   const upload = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
-    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.9 });
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
     if (r.canceled || !r.assets?.length) return;
     setBusy(true);
-    try { const u = await shrink(r.assets[0].uri); setUri(u); say('me', '', u); setStage('result'); } finally { setBusy(false); }
+    try { const u = await shrink(r.assets[0]); setUri(u); say('me', '', u); setStage('result'); } finally { setBusy(false); }
   };
 
   if (stage === 'ask') {
@@ -814,6 +857,15 @@ function PhotoW({ say, onDone, name }: any) {
  * ровно один раз на оба чат-экрана, онбординг и создание интента.
  */
 const s = StyleSheet.create({
+  /** Бровка «Это всё»: тонкая строка под шапкой. Тише ответов в ленте — это выход, а не ответ. */
+  brow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginHorizontal: 20, marginTop: 10,
+    height: 32, borderRadius: rad.full, backgroundColor: color.neutral100,
+  },
+  browText: { ...type.caption, color: color.muted, fontWeight: '600' } as any,
+  browChev: { fontSize: 13, color: color.muted, marginTop: -1 },
+
   ownRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   ownInput: {
     flex: 1, height: 44, borderRadius: rad.full, backgroundColor: color.neutral100,

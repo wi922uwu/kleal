@@ -435,13 +435,22 @@ function WhoAmISheet({
   const pick = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.9,
-    });
+    // Без allowsEditing — экран «ОБРЕЗАТЬ» между выбором и профилем не нужен: квадрат вырезаем
+    // сами, по размерам, которые пикер отдаёт вместе с файлом (то же, что в онбординге).
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
     if (res.canceled || !res.assets?.length) return;
-    const out = await ImageManipulator.manipulate(res.assets[0].uri)
-      .resize({ width: 512 })
-      .renderAsync();
+    const a = res.assets[0];
+    const ctx = ImageManipulator.manipulate(a.uri);
+    const w = Number(a.width || 0), h = Number(a.height || 0);
+    if (w > 0 && h > 0 && w !== h) {
+      const side = Math.min(w, h);
+      ctx.crop({
+        originX: Math.round((w - side) / 2),
+        originY: Math.round((h - side) / 2),
+        width: side, height: side,
+      });
+    }
+    const out = await ctx.resize({ width: 512 }).renderAsync();
     const saved = await out.saveAsync({ compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true });
     setPhoto(saved.base64 ? `data:image/jpeg;base64,${saved.base64}` : saved.uri);
   };
@@ -595,6 +604,8 @@ function LocationSheet({
     return {
       country: home?.country || DEFAULT_AREA.country,
       city,
+      // Якорь «Вернуть к …»: если город из списка — он сам, иначе первый город страны.
+      pinCity: home ? city : DEFAULT_AREA.city,
       lat: p.geo?.coarseLat ?? DEFAULT_AREA.lat,
       lon: p.geo?.coarseLon ?? DEFAULT_AREA.lon,
       km: p.geo?.maxDistanceKm ?? 15,
