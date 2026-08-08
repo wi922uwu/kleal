@@ -44,6 +44,7 @@ import {
   IconCalendar, IconClock, IconGlobe, IconLink, IconPlay, IconImagePlaceholder, IconPencil,
 } from '../src/components/icons';
 import { EditSheet } from '../src/components/ProfileShell';
+import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { setResults } from '../src/results-store';
@@ -75,6 +76,8 @@ export default function Intent() {
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
+  /** Android: клавиатура ложится поверх композера — окно под неё не ужимается. См. src/keyboard.ts. */
+  const kb = useKeyboardInset();
   const scroller = useRef<ScrollView>(null);
 
   /**
@@ -539,7 +542,7 @@ export default function Intent() {
           {err ? <Text style={s.err}>{err}</Text> : null}
         </ScrollView>
 
-        <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
           <View style={s.field}>
             <TextInput
               style={s.input}

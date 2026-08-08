@@ -8,6 +8,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, TextInput, Pressable, StyleSheet } from 'react-native';
 import { COMPOSER_PLACEHOLDER } from '../onboarding';
+import { useKeyboardInset, dockBottom } from '../keyboard';
 import { T } from '../i18n';
 import { IconChevronLeft, IconMic } from './icons';
 import { color, radius as rad, space } from '../theme';
@@ -43,8 +44,15 @@ export function Composer({
     onSend(t);
   };
 
+  /**
+   * На Android клавиатура ложится ПОВЕРХ композера: окно под неё больше не ужимается (edge-to-edge
+   * в SDK 54), а KeyboardAvoidingView там ничего не делает. Поднимаем сами — см. src/keyboard.ts,
+   * там же про то, почему это не ломает случаи, где система справляется сама.
+   */
+  const kb = useKeyboardInset();
+
   return (
-    <View style={[s.dock, { paddingBottom: Math.max(bottomInset, 10) }]}>
+    <View style={[s.dock, { paddingBottom: dockBottom(bottomInset, kb) }]}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={T('Назад', 'Back')}

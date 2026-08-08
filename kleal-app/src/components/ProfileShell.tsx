@@ -8,6 +8,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useKeyboardInset, dockBottom } from '../keyboard';
 import { T } from '../i18n';
 import { color, radius as rad, space, type } from '../theme';
 
@@ -28,6 +29,8 @@ export function ProfileShell({
   nav?: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
+  /** Android: подвал с кнопкой уезжает под клавиатуру, когда на экране есть поле. См. src/keyboard.ts. */
+  const kb = useKeyboardInset();
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.bar}>
@@ -45,7 +48,7 @@ export function ProfileShell({
       >
         {children}
       </ScrollView>
-      {footer ? <View style={[s.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>{footer}</View> : null}
+      {footer ? <View style={[s.footer, { paddingBottom: dockBottom(insets.bottom, kb, 12) }]}>{footer}</View> : null}
       {nav}
     </View>
   );
@@ -192,10 +195,11 @@ export function EditSheet({
   children: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
+  const kb = useKeyboardInset();
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={e.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
-      <View style={[e.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+      <View style={[e.sheet, { paddingBottom: dockBottom(insets.bottom, kb, 18) }]}>
         <View style={e.grip} />
         <View style={e.head}>
           <Text style={e.title}>{title}</Text>

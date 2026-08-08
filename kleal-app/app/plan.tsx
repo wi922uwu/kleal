@@ -35,6 +35,7 @@ import {
 } from '../src/chat';
 import { DETAILS, dateChips, hhmm, deviceTz, tzOffsetLabel, looksLikeUrl } from '../src/intent';
 import { TimeDial } from '../src/components/Dials';
+import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { agent } from '../src/api';
@@ -49,6 +50,8 @@ export default function Plan() {
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
+  /** Листы с полями ввода: на Android клавиатура ложится поверх них. См. src/keyboard.ts. */
+  const kb = useKeyboardInset();
 
   const params = useLocalSearchParams<{
     who?: string; title?: string; photo?: string; link?: string; id?: string;
@@ -840,7 +843,8 @@ export default function Plan() {
         {/* OF.21a — «предложить другое время» листом: быстрые сдвиги и своё «чч:мм» в тот же день. */}
         <Modal visible={countering} transparent animationType="slide" onRequestClose={() => setCountering(false)}>
           <Pressable style={s.scrim} onPress={() => setCountering(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+          {/* Единственный лист с полями ввода — цифровая клавиатура закрывала «Отправить новое время». */}
+          <View style={[s.sheet, { paddingBottom: dockBottom(insets.bottom, kb, 18) }]}>
             <View style={s.sheetHead}>
               <Text style={s.sheetTitle}>{PLAN.suggestSheetTitle()}</Text>
               <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setCountering(false)} hitSlop={10}>

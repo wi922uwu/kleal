@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, msgTime, msgDayLabel, planWhen, planPinned, sysLine } from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
+import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
 import { agent } from '../src/api';
@@ -34,6 +35,8 @@ export default function Conversation() {
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
+  /** Android: клавиатура ложится поверх композера — окно под неё не ужимается. См. src/keyboard.ts. */
+  const kb = useKeyboardInset();
   const scroller = useRef<ScrollView>(null);
 
   const params = useLocalSearchParams<{ who?: string; title?: string; photo?: string }>();
@@ -463,7 +466,7 @@ export default function Conversation() {
           </View>
         ) : null}
 
-        <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
           {/* Искра слева — вход в действия разговора (O.19). На кадре в этом слоте скрепка,
               но вложений в продукте нет — мёртвую кнопку не рисуем. */}
           <Pressable accessibilityRole="button" accessibilityLabel={CHAT.actionsTitle()} style={s.sparkBtn} onPress={() => setActions(true)}>
