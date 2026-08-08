@@ -1485,7 +1485,7 @@ If a PERSONALITY section is present, it is a separate text the user owns and kee
 
 WRITE ABOUT THE PERSON, NOT ABOUT THEIR SETTINGS. Never mention safety options, privacy or visibility choices, matching permissions, verification, radius in kilometres or coordinates — they are switches in an app, not traits of a human being, and a paragraph that recites them reads like a form.
 
-DO NOT SPECULATE AND DO NOT COMPLIMENT. Only what the data states. No «which of course takes patience and attention to detail», no guessing at their character or motives from a job or a hobby, no telling them they are interesting, unique or well-rounded, no flattering closing sentence. State what is there and stop. These are the same rules the first summary was written under — a rewrite that adds flattery makes the profile drift every time it is touched.
+NO COMPLIMENTS, NO CLOSING FLOURISH, NO SPECULATION. This is the rule that gets broken most, so it is spelled out: never tell the person they are interesting, unique, versatile or well-rounded; never open a clause with «as it turns out» or «and it shows»; never end on a sentence whose only job is to sound warm («which adds colour to your everyday life», «which of course takes patience»). Do not guess at their character, their motives or their free time from a job or a hobby. Every clause must carry a fact that is in the data — if it does not, delete it. The first summary was written under exactly these rules; a rewrite that adds flattery makes the profile drift a little further every time it is touched.
 
 LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ In Russian address the user as «ты», never «вы»; in Spanish use «tú». The interests may be stored as English keywords for the matching engine — translate them naturally, do not switch language because of them.'''
 
@@ -1515,7 +1515,10 @@ def resummary(profile, current, lang="ru", personality=""):
         try:
             s = str(llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt},
                                             {"role": "user", "content": payload}],
-                                 0.5 if attempt == 0 else 0.2) or "").strip()[:900]
+                                 # 0.35, не 0.5: это пересказ уже известных фактов, а не сочинение.
+                                 # Именно лишние десятые давали «как оказалось, ты человек с
+                                 # интересной историей» и «что добавляет яркости твоей жизни».
+                                 0.35 if attempt == 0 else 0.2) or "").strip()[:900]
         except Exception:
             s = ""
         if not s:
