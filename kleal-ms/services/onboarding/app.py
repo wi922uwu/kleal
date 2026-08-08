@@ -2457,6 +2457,15 @@ def update_user(name, patch):
             clean.pop("persona")          # not a dict: leave whatever the row already holds
         else:
             clean["persona"] = cp
+    # Интересы, дописанные ПОСЛЕ онбординга, канонизируются ровно так же, как при регистрации.
+    #
+    # Здесь этого не было, и получалась асимметрия, которую никто бы не заподозрил: тот же самый
+    # интерес, добавленный в анкете, получал английскую ручку («настолки» → boardgames), а
+    # добавленный потом из профиля — не получал ничего и оставался виден только тому, кто наберёт
+    # то же слово. Проверено на стенде двумя одинаковыми людьми: у зарегистрированного в строке
+    # ['настолки', 'boardgames'], у дописавшего — ['настолки'].
+    if isinstance(clean.get("interests"), list):
+        clean["interests"] = _canon_interests(clean["interests"]) or clean["interests"]
     if not clean:
         return {"ok": False, "error": "no editable fields in patch"}
     with _REG_LOCK:
