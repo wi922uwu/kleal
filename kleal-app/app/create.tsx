@@ -70,6 +70,14 @@ export default function Create() {
    * и titleOf. Одной строкой это уже было, и поиск уходил с заголовком вместо ключей.
    */
   const [ready, setReady] = useState<{ topics: string[]; title: string } | null>(null);
+  /**
+   * ВСЕ версии собранного интента, по порядку. Нужны не для истории ради истории: разговор
+   * уточняющий, и после каждого ответа сводка пересобирается — человек должен видеть, ЧТО именно
+   * от его слов изменилось, а не гадать, стало лучше или хуже. Последняя версия и есть `ready`.
+   */
+  const [versions, setVersions] = useState<{ topics: string[]; title: string }[]>([]);
+  /** Закреплённая сводка развёрнута. Свёрнута по умолчанию — она не должна съедать половину чата. */
+  const [sumOpen, setSumOpen] = useState(false);
   const started = useRef(false);
   const rolls = useRef(0);
 
@@ -121,7 +129,15 @@ export default function Create() {
         const topics = topicsOf(r);
         // Ключей нет — построитель ничего не извлёк. Отправлять в поиск сказанное человеком
         // как «тему» нельзя: русская фраза не совпадёт ни с кем. Пусть уточнит.
-        setReady({ topics, title: titleOf(r, text) });
+        const v = { topics, title: titleOf(r, text) };
+        setReady(v);
+        // Пишем в историю только НАСТОЯЩЕЕ изменение: тот же самый интент второй раз подряд —
+        // это не правка, и строка «что изменилось» о нём молчит.
+        setVersions((all) => {
+          const last = all[all.length - 1];
+          const same = last && last.title === v.title && last.topics.join('|') === v.topics.join('|');
+          return same ? all : [...all, v];
+        });
       }
     } catch {
       setTyping(false);
@@ -183,6 +199,16 @@ export default function Create() {
             <Text style={s.allText}>{CREATE.title()}</Text>
           </Pressable>
         </View>
+
+        {ready ? (
+          <PinnedSummary
+            cur={ready}
+            versions={versions}
+            open={sumOpen}
+            onToggle={() => setSumOpen((o) => !o)}
+            onCreate={next}
+          />
+        ) : null}
 
         <ScrollView ref={scroller} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
           {/* Заголовок показывается, пока разговор не начался: потом его место занимает лента. */}
@@ -273,25 +299,8 @@ export default function Create() {
             следующий шаг, а человек уже ответил на всё, что у него спрашивали. Уточнил ещё раз —
             сводка пересобирается, и кнопка снова та же.
           */}
-          {ready ? (
-            <View style={s.readyBlock}>
-              <View style={s.sumCard}>
-                <Text style={s.sumLabel}>{CREATE.summaryLabel()}</Text>
-                <Text style={s.sumTitle}>{ready.title}</Text>
-                {ready.topics.length ? (
-                  <View style={s.sumChips}>
-                    {ready.topics.map((t) => (
-                      <View key={t} style={s.sumChip}><Text style={s.sumChipText}>{t}</Text></View>
-                    ))}
-                  </View>
-                ) : null}
-              </View>
-              <Text style={s.readyNote}>{CREATE.readyNote()}</Text>
-              <Pressable accessibilityRole="button" style={s.readyBtn} onPress={next}>
-                <Text style={s.readyBtnText}>{CREATE.ready()}</Text>
-              </Pressable>
-            </View>
-          ) : null}
+          {/* Сводка больше не живёт в ленте — она закреплена под шапкой (см. PinnedSummary):
+              разговор уточняющий, и карточка уезжала вверх ровно тогда, когда её и надо смотреть. */}
         </ScrollView>
 
         <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
@@ -312,6 +321,77 @@ export default function Create() {
         </View>
       </View>
     </KeyboardAvoidingView>
+  );
+}
+
+
+/**
+ * Закреплённая сводка интента — полоса под шапкой, а не карточка в ленте.
+ *
+ * Разговор здесь уточняющий: человек отвечает, сводка пересобирается, отвечает снова. Пока она
+ * стояла в ленте, её уносило вверх ровно тогда, когда на неё и надо смотреть, а «Создать интент»
+ * приходилось искать прокруткой.
+ *
+ * Свёрнута по умолчанию: одна строка с темой. Развёрнутая показывает ключи поиска и — главное —
+ * ЧТО ИЗМЕНИЛОСЬ от последнего ответа. Без этого уточнение вслепую: человек говорит «не бег, а
+ * плавание» и не видит, услышали его или нет.
+ */
+function PinnedSummary({
+  cur, versions, open, onToggle, onCreate,
+}: {
+  cur: { topics: string[]; title: string };
+  versions: { topics: string[]; title: string }[];
+  open: boolean;
+  onToggle: () => void;
+  onCreate: () => void;
+}) {
+  const prev = versions.length > 1 ? versions[versions.length - 2] : null;
+  const added = prev ? cur.topics.filter((t) => !prev.topics.includes(t)) : [];
+  const gone = prev ? prev.topics.filter((t) => !cur.topics.includes(t)) : [];
+  const renamed = prev && prev.title !== cur.title ? prev.title : '';
+  const changed = added.length || gone.length || renamed;
+
+  return (
+    <View style={s.pin}>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} style={s.pinHead} onPress={onToggle}>
+        <View style={{ flex: 1 }}>
+          <Text style={s.pinLabel}>{CREATE.summaryLabel()}</Text>
+          <Text style={s.pinTitle} numberOfLines={1}>{cur.title}</Text>
+        </View>
+        {/* Точка у свёрнутой строки — единственный намёк, что после ответа что-то поменялось. */}
+        {!open && changed ? <View style={s.pinDot} /> : null}
+        <Text style={s.pinChev}>{open ? '⌃' : '⌄'}</Text>
+      </Pressable>
+
+      {open ? (
+        <>
+          {cur.topics.length ? (
+            <View style={s.sumChips}>
+              {cur.topics.map((t) => (
+                <View key={t} style={[s.sumChip, added.includes(t) && s.sumChipNew]}>
+                  <Text style={[s.sumChipText, added.includes(t) && { color: color.onPrimary }]}>{t}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {changed ? (
+            <View style={s.diff}>
+              <Text style={s.diffLabel}>{CREATE.changed()}</Text>
+              {renamed ? <Text style={s.diffLine}>{CREATE.wasCalled(renamed)}</Text> : null}
+              {added.length ? <Text style={s.diffLine}>{CREATE.added(added.join(', '))}</Text> : null}
+              {gone.length ? <Text style={s.diffLine}>{CREATE.dropped(gone.join(', '))}</Text> : null}
+            </View>
+          ) : (
+            <Text style={s.readyNote}>{CREATE.readyNote()}</Text>
+          )}
+
+          <Pressable accessibilityRole="button" style={s.readyBtn} onPress={onCreate}>
+            <Text style={s.readyBtnText}>{CREATE.ready()}</Text>
+          </Pressable>
+        </>
+      ) : null}
+    </View>
   );
 }
 
@@ -360,6 +440,23 @@ const s = StyleSheet.create({
     borderColor: color.border, backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
   },
   hintText: { ...type.labelMedium, color: color.fg } as any,
+
+  // Закреплённая сводка: живёт под шапкой, поэтому со своими полями и тенью, а не в ленте.
+  pin: {
+    marginHorizontal: 20, marginBottom: space.sm, padding: space.md, gap: space.sm,
+    borderRadius: rad.lg, backgroundColor: color.card,
+    shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 }, elevation: 2,
+  },
+  pinHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  pinLabel: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
+  pinTitle: { ...type.title, color: color.fg } as any,
+  pinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.primary },
+  pinChev: { fontSize: 18, color: color.muted },
+  diff: { backgroundColor: color.infoBg, borderRadius: rad.md, padding: space.md, gap: 3 },
+  diffLabel: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
+  diffLine: { ...type.bodySmall, color: color.infoText } as any,
+  sumChipNew: { backgroundColor: color.primary },
 
   readyBlock: { marginTop: space.lg, gap: space.sm },
   /** Сводка по затее перед созданием — та же карточка, что человек увидит на экране интента. */

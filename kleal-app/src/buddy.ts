@@ -116,6 +116,11 @@ export const CREATE = {
       'Время, место и с кем — на следующем шаге, там это выставляется вручную.',
       'When, where and who comes next — you set those by hand.'
     ),
+  /** Разбор правок в развёрнутой сводке: уточнение вслепую — это уточнение без обратной связи. */
+  changed: () => T('Что изменилось', 'What changed'),
+  wasCalled: (was: string) => T(`Было: ${was}`, `Was: ${was}`),
+  added: (list: string) => T(`Добавилось: ${list}`, `Added: ${list}`),
+  dropped: (list: string) => T(`Ушло: ${list}`, `Dropped: ${list}`),
 };
 
 /**

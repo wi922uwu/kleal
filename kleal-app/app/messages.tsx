@@ -135,17 +135,24 @@ export default function Messages() {
     [q, tab, data] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
+  /**
+   * ЛЮБАЯ строка «Сообщений» открывает ПЕРЕПИСКУ — и «Интенты», и «Планы», и «Личные».
+   *
+   * Раньше каждая вкладка вела в своё: интент — на экран приглашения, план — сразу на экран
+   * встречи, и только «Личные» в чат. Экран называется «Сообщения», строки выглядят как чаты, а
+   * тап уводил куда угодно, кроме чата, — человек терял разговор, который у него с этим человеком
+   * уже есть.
+   *
+   * Вглубь ведёт сама переписка: закреплённая карточка сверху открывает план или интент, а
+   * приглашение, на которое ещё не ответили, стоит карточкой прямо в ленте (MSG.18–MSG.21).
+   * Один вход, дальше по одному шагу — вместо трёх разных дверей с одинаковыми ручками.
+   */
   const open = (r: Row) => {
-    if (r.kind === 'invite-in') { router.push({ pathname: '/invite', params: { id: r.id } }); return; }
-    if (r.kind === 'plan') {
-      router.push({ pathname: '/plan', params: { id: r.id, who: r.who, title: r.title, photo: r.photo || '' } });
-      return;
-    }
-    if (r.kind === 'thread') {
-      router.push({ pathname: '/conversation', params: { who: r.who, photo: r.photo || '' } });
-      return;
-    }
-    // invite-out: открывать нечего — ответ ещё не случился; действия живут в долгом нажатии.
+    if (!r.who) return;              // строка без собеседника — открывать нечего
+    router.push({
+      pathname: '/conversation',
+      params: { who: r.who, title: r.title || '', photo: r.photo || '' },
+    });
   };
 
   const toggle = (list: 'muted' | 'archived' | 'left', r: Row) => {

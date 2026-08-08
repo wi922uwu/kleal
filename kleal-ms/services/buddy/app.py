@@ -1571,7 +1571,7 @@ them, do not mention hiking, cooking, coffee or any other activity even if a tes
 one: use such an answer only as evidence of how they behave with people. A paragraph that lists what
 someone likes doing has answered the wrong question.
 
-LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__"""
+LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ In Russian address the user as «ты», never «вы»; in Spanish use «tú»."""
 
 
 def persona(profile, story, answers, current, lang="ru"):
@@ -1630,7 +1630,7 @@ Rules:
 Return ONE JSON object, nothing else: {"draft":"<the message>"}
 The KEY is the literal ASCII word draft. Do NOT translate the key — only its value is translated.
 
-LANGUAGE: write the VALUE of "draft" in __LANGNAME__. This is not optional: __LANGDIR__'''
+LANGUAGE: write the VALUE of "draft" in __LANGNAME__. This is not optional: __LANGDIR__ In Russian «ты», never «вы»; in Spanish «tú».'''
 
 
 def ghostwrite(profile, candidate, messages, lang="ru"):
@@ -1706,7 +1706,7 @@ Rules:
   to make them specific ("Найти компанию на утренний бег в Белграде", not "Заняться спортом").
   "hints" is the ONLY key you may omit; never omit or reorder the others.
 
-LANGUAGE: write "reply" in __LANGNAME__ — the language this user writes in. This is not optional: __LANGDIR__ Every other value — activity, time, format — stays in ENGLISH, because the filtration and matching agents only understand English. (The transcript below is labelled "User:"/"Kleal:" in English for machine reasons; that says nothing about the reply language.)'''
+LANGUAGE: write "reply" in __LANGNAME__ — the language this user writes in. This is not optional: __LANGDIR__ In Russian address the user as «ты», never «вы» and never «Здравствуйте»; in Spanish use «tú». The whole product speaks to one person, informally. Every other value — activity, time, format — stays in ENGLISH, because the filtration and matching agents only understand English. (The transcript below is labelled "User:"/"Kleal:" in English for machine reasons; that says nothing about the reply language.)'''
 
 _LANGNAME = {"ru": "Russian", "en": "English", "es": "Spanish"}
 _LANGDIR = {"ru": "every word must be in Russian, in Cyrillic script — translate/transliterate technical "

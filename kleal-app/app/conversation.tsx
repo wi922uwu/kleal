@@ -242,6 +242,13 @@ export default function Conversation() {
     return '';
   }, [livePlan, msgs, request, ru, me]);
 
+  /** В каком состоянии знакомство, когда сказать ещё нечего. См. CHAT.empty. */
+  const emptyState: 'they-accepted' | 'i-accepted' | 'sent' | 'invited-me' | 'none' =
+    !request ? 'none'
+    : request.status === 'accepted' ? (norm(request.to) === norm(other) ? 'they-accepted' : 'i-accepted')
+    : request.status === 'pending' ? (norm(request.to) === norm(other) ? 'sent' : 'invited-me')
+    : 'none';
+
   /** MSG.18–MSG.21: входящая заявка от этого человека, если её не скрывали. */
   const inviteIn = request && norm(request.from) === norm(other) ? request : null;
   const inviteHidden = (st.msg?.hiddenInvites || []).includes(String(inviteIn?.id || ''));
@@ -328,6 +335,25 @@ export default function Conversation() {
               )}
             </View>
           </Pressable>
+        ) : requestTitle ? (
+          /*
+            Встречи ещё нет — закреплён ИНТЕНТ, по которому вы совпали. Он и есть то, ради чего
+            этот разговор начался, и провалиться в него надо из чата, а не из меню за «•••»:
+            «Сообщения» теперь ведут только сюда, и другого пути к карточке интента не остаётся.
+          */
+          <Pressable accessibilityRole="button" style={s.planCard} onPress={() => setIntentOpen(true)}>
+            <View style={[s.planIcon, s.intentIcon]}><IconSpark size={20} c={color.primary} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.planTitle} numberOfLines={1}>{requestTitle}</Text>
+              <Text style={s.planSub} numberOfLines={1}>
+                {[request?.intent?.when || request?.intent?.time,
+                  request?.intent?.mode === 'offline' ? THREAD.offlineInPerson() : THREAD.onlineMode()]
+                  .filter(Boolean).join(' · ')}
+              </Text>
+              <Text style={s.planState} numberOfLines={1}>{THREAD.openIntent()}</Text>
+            </View>
+            <Text style={s.planChev}>›</Text>
+          </Pressable>
         ) : null}
 
         <ScrollView ref={scroller} contentContainerStyle={s.thread} keyboardShouldPersistTaps="handled">
@@ -376,9 +402,9 @@ export default function Conversation() {
             <Text style={s.sysLine}>{THREAD.joined(requestTitle)}</Text>
           ) : null}
 
-          {/* Кто кого позвал: заявка от собеседника значит, что приглашение принял Я. */}
+          {/* Кто кого позвал и ответили ли уже — четыре разных факта, четыре разных строки. */}
           {!loading && talk.length === 0 ? (
-            <Text style={s.empty}>{CHAT.empty(other, norm(request?.to) === norm(other))}</Text>
+            <Text style={s.empty}>{CHAT.empty(other, emptyState)}</Text>
           ) : null}
 
           {msgs.map((m, i) => {
@@ -601,6 +627,9 @@ const s = StyleSheet.create({
   planTitle: { fontSize: 16, fontWeight: '700', color: color.fg } as any,
   planSub: { fontSize: 13, color: color.muted, marginTop: 1 } as any,
   planState: { fontSize: 12, color: color.muted, marginTop: 2, fontWeight: '600' } as any,
+  /** Интент — не встреча: плитка светлая, чтобы красный остался за назначенным временем. */
+  intentIcon: { backgroundColor: color.infoBg },
+  planChev: { fontSize: 22, color: color.neutral400, marginLeft: 2 },
   pairWrap: { flexDirection: 'row', alignItems: 'center' },
   pairAva: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: color.card },
   pairAvaOverlap: { marginLeft: -10 },

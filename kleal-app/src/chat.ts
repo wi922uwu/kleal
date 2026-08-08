@@ -49,16 +49,31 @@ export const CHAT = {
   /** Композер MSG.06 обращается по имени: «Message Jane». */
   placeholderTo: (name: string) => T(`Написать ${dat(name)}…`, `Message ${name}`),
   /**
-   * Пустая переписка. Ролей ДВЕ, и текст обязан их различать: раньше обеим сторонам показывалось
-   * «X принял(а) приглашение», и человек, который сам только что нажал «Присоединиться», читал,
-   * что приглашение принял собеседник. Кто кого позвал — знает экран, а не эта строка.
+   * Пустая переписка. Состояний ЧЕТЫРЕ, и текст обязан их различать.
+   *
+   * Сначала строка была одна — «X принял(а) приглашение» — и человек, сам нажавший
+   * «Присоединиться», читал, что принял собеседник. Теперь в чат ведут ВСЕ строки «Сообщений»,
+   * включая неотвеченные приглашения, и та же строка врала бы ещё грубее: приглашение висит,
+   * а чат сообщает, что его приняли.
    */
-  empty: (name: string, theyAccepted: boolean) =>
-    theyAccepted
-      ? T(`${name} принял(а) приглашение. Напиши первым — это ваш общий разговор про интент.`,
-          `${name} accepted your invite. Say hello — this chat belongs to your intent.`)
-      : T(`Ты принял(а) приглашение от ${gen(name)}. Напиши первым — это ваш общий разговор про интент.`,
-          `You accepted ${name}’s invite. Say hello — this chat belongs to your intent.`),
+  empty: (name: string, st: 'they-accepted' | 'i-accepted' | 'sent' | 'invited-me' | 'none') => {
+    switch (st) {
+      case 'they-accepted':
+        return T(`${name} принял(а) приглашение. Напиши первым — это ваш общий разговор про интент.`,
+                 `${name} accepted your invite. Say hello — this chat belongs to your intent.`);
+      case 'i-accepted':
+        return T(`Ты принял(а) приглашение от ${gen(name)}. Напиши первым — это ваш общий разговор про интент.`,
+                 `You accepted ${name}’s invite. Say hello — this chat belongs to your intent.`);
+      case 'sent':
+        return T(`Приглашение отправлено — ${name} ещё не ответил(а). Написать можно и сейчас.`,
+                 `Your invite is sent — ${name} hasn’t answered yet. You can still write.`);
+      case 'invited-me':
+        return T(`${name} зовёт тебя. Ответь на приглашение выше — или напиши и спроси.`,
+                 `${name} invited you. Answer the invite above — or just write and ask.`);
+      default:
+        return T('Здесь пока пусто. Напиши первым.', 'Nothing here yet. Say hello.');
+    }
+  },
   offline: () => T('Сообщение не ушло. Проверь связь.', 'The message didn’t send. Check your connection.'),
 
   /** O.19 — лист действий. */
@@ -475,6 +490,8 @@ export const THREAD = {
   weekdayGen: (dayIndex: number) =>
     ['воскресенья', 'понедельника', 'вторника', 'среды', 'четверга', 'пятницы', 'субботы'][dayIndex] || '',
   matchedOn: (title: string) => T(`Мэтч по «${title}»`, `Matched on “${title}”`),
+  /** Подпись закреплённой карточки интента: куда ведёт нажатие. */
+  openIntent: () => T('Открыть интент', 'View the intent'),
 
   /** MSG.09 — под предложением, дословно: ничего не забронировано до «да». */
   sentAsProposal: (name: string) => T(`Отправлено ${name} как предложение`, `Sent to ${name} as a proposal`),
