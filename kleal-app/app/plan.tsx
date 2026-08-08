@@ -39,7 +39,7 @@ import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { agent } from '../src/api';
 import {
-  IconChevronLeft, IconCalendar, IconClock, IconPin, IconLink, IconPerson, IconImagePlaceholder,
+  IconChevronLeft, IconCalendar, IconClock, IconPin, IconLink, IconPerson,
 } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { color, radius as rad, space, type } from '../src/theme';
@@ -102,6 +102,8 @@ export default function Plan() {
   /** OF.24a: лист причины «не состоялась». */
   const [reasonOpen, setReasonOpen] = useState(false);
   const [reasonPick, setReasonPick] = useState('');
+  /** Подтверждение отмены: на сервере отменённая встреча терминальна, вернуть её нельзя. */
+  const [dropping, setDropping] = useState(false);
   /** «Другое время» после отмены: составляем новую встречу, опрос не должен возвращать старую. */
   const composing = useRef(false);
   const startNewPlan = () => { composing.current = true; setPlan(null); };
@@ -414,10 +416,13 @@ export default function Plan() {
           ) : (
             <>
               <Text style={s.title}>{headline(phase!, other, plan, me, ru)}</Text>
-              <Text style={s.note}>{subline(phase!, other, plan, ru, me)}</Text>
+              {subline(phase!, other, plan, ru, me) ? (
+                <Text style={s.note}>{subline(phase!, other, plan, ru, me)}</Text>
+              ) : null}
 
               <View style={s.card}>
-                <View style={s.cover}><IconImagePlaceholder size={40} /></View>
+                {/* Обложки у встречи нет и взяться ей неоткуда. Красный прямоугольник со значком
+                    «нет картинки» читался не как заглушка, а как не загрузившееся фото. */}
                 <View style={s.metaRow}>
                   <IconCalendar />
                   <Text style={s.metaText}>{planWhen(plan, ru)} {tzOffsetLabel(deviceTz())}</Text>
@@ -440,7 +445,11 @@ export default function Plan() {
                 {/* OF.20/OF.21: строка места. До подтверждения — честное «после подтверждения»,
                     после — само место; пока не выбрано — «пока нет». Когда место уже стоит зелёной
                     плашкой ниже (OF.22/OF.23), здесь его не повторяем — один адрес, одно место. */}
-                {offline && !(placeReady && placeLabel) && !(allSet && plan.address_visible_to_me) ? (
+                {/* У отменённой встречи адрес не обещают: «откроется после твоего подтверждения»
+                    было прямой неправдой — подтверждать больше нечего, а сервер закрывает адрес
+                    отказавшемуся автоматически (его ответ перестал быть «подтвердил»). */}
+                {offline && phase !== 'cancelled'
+                  && !(placeReady && placeLabel) && !(allSet && plan.address_visible_to_me) ? (
                   <View style={s.metaRow}>
                     <IconPin size={16} c={color.muted} />
                     <Text style={s.metaText}>
@@ -688,10 +697,9 @@ export default function Plan() {
                   <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
                     <Text style={s.ctaText}>{CHAT.openChat()}</Text>
                   </Pressable>
+                  {/* «Поправить план» обещало больше, чем делает: меняется только время. */}
                   <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setCountering(true)}>
-                    <Text style={s.ctaDarkText}>
-                      {phase === 'confirmed' ? PLAN.suggestAnother() : CHAT.changePlan()}
-                    </Text>
+                    <Text style={s.ctaDarkText}>{PLAN.suggestAnother()}</Text>
                   </Pressable>
                 </>
               ) : null}
@@ -706,6 +714,22 @@ export default function Plan() {
                     <Text style={s.ctaSoftText}>{PLAN.suggestAnother()}</Text>
                   </Pressable>
                 </>
+              ) : null}
+
+              {/*
+                Отменить встречу можно было ТОЛЬКО за десять минут до неё: до этого кнопки не было
+                ни у автора плана, ни у того, кому его прислали. Человек, понявший в понедельник,
+                что в субботу не сможет, не имел способа это сказать — и второй узнавал бы об этом,
+                уже стоя у кафе.
+
+                Стоит последней и мягкой, а не тёмной: рядом «Подтвердить» и «Другое время», и
+                промах пальцем не должен необратимо гасить вечер. Поэтому же — подтверждение
+                листом: отменённая встреча на сервере терминальна, вернуть её нельзя.
+              */}
+              {(phase === 'waiting' || phase === 'confirmed') && !pendingChange && !countering ? (
+                <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => setDropping(true)}>
+                  <Text style={s.ctaSoftText}>{PLAN.callOff()}</Text>
+                </Pressable>
               ) : null}
 
               {/* O.21b: моё встречное время ждёт ответа — можно забрать, пока второй не ответил. */}
@@ -871,6 +895,31 @@ export default function Plan() {
             </Pressable>
             <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setCountering(false)}>
               <Text style={s.ctaDarkText}>{DETAILS.cancel()}</Text>
+            </Pressable>
+          </View>
+        </Modal>
+
+        {/* Подтверждение отмены. Называет последствие словами: встреча гаснет для обоих и
+            восстановить её нельзя — только назначить новую. */}
+        <Modal visible={dropping} transparent animationType="slide" onRequestClose={() => setDropping(false)}>
+          <Pressable style={s.scrim} onPress={() => setDropping(false)} accessibilityLabel={T('Закрыть', 'Close')} />
+          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
+            <View style={s.sheetHead}>
+              <Text style={s.sheetTitle}>{PLAN.callOffAsk(other)}</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setDropping(false)} hitSlop={10}>
+                <Text style={s.sheetX}>✕</Text>
+              </Pressable>
+            </View>
+            <Text style={s.note}>{PLAN.callOffNote(other)}</Text>
+            <Pressable
+              accessibilityRole="button"
+              style={s.ctaDark}
+              onPress={() => { setDropping(false); respond('decline'); }}
+            >
+              <Text style={s.ctaDarkText}>{PLAN.callOffYes()}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => setDropping(false)}>
+              <Text style={s.ctaSoftText}>{PLAN.callOffNo()}</Text>
             </Pressable>
           </View>
         </Modal>
@@ -1239,7 +1288,6 @@ const s = StyleSheet.create({
   note: { ...type.bodySmall, color: color.muted } as any,
 
   card: { backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg, gap: space.md },
-  cover: { height: 110, borderRadius: rad.lg, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   label: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
   // Шапка формы: чем эта встреча будет — сказано до первого поля.

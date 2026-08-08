@@ -168,6 +168,20 @@ export const PLAN = {
   cantMakeIt: () => T('Не смогу', 'I can’t make it'),
   suggestAnother: () => T('Предложить другое время', 'Suggest another time'),
 
+  /**
+   * Отмена встречи заранее. Её не было вовсе: отказаться можно было только за десять минут до
+   * начала, а до того ни автор плана, ни приглашённый не имели способа сказать «не смогу».
+   */
+  callOff: () => T('Отменить встречу', 'Call the meetup off'),
+  callOffAsk: (name: string) => T(`Отменить встречу с ${name}?`, `Call off the meetup with ${name}?`),
+  callOffNote: (name: string) =>
+    T(
+      `${name} сразу увидит отмену. Вернуть эту встречу нельзя — можно назначить новую, чат остаётся открытым.`,
+      `${name} sees it straight away. This meetup can’t be restored — you can set a new one, and your chat stays open.`
+    ),
+  callOffYes: () => T('Да, отменить', 'Yes, call it off'),
+  callOffNo: () => T('Оставить как есть', 'Leave it as it is'),
+
   /** O.24. Формулировка с кадра: спрашивают обоих, и до ответа обоих никому ничего не засчитывают. */
   didItHappen: () => T('Встреча состоялась?', 'Did it happen?'),
   didItNote: (name: string) =>
