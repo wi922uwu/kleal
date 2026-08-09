@@ -24,7 +24,13 @@ import kleal_contracts as kc
 # type is never coerced away (which would silently change the domain). Off-list -> deny-safe 'social'.
 TYPE_ALLOWLIST = {"dinner", "sport", "gaming", "networking", "dating", "language", "social", "other", "event"}
 ROLE_ALLOWLIST = {"play", "watch", "discuss", "practise", "attend", "meet"}
-MODE_ALLOWLIST = {"offline", "online"}
+# «hybrid» — третий режим встречи, а не опечатка: он есть в мастере создания с самого начала, есть
+# в планах (MP_MODES) и имеет собственный раздел борда (кадры HY.*, «both ways open»). Здесь его не
+# было, и это тихо переписывало КАЖДЫЙ гибридный интент в offline — со всеми последствиями офлайна,
+# включая жёсткий гейт радиуса. То есть человек указывал ссылку на звонок, а поиск отсекал всех, кто
+# не мог доехать, и ссылка не спасала никого. Проверено на стенде: гибрид с радиусом 3 км возвращал
+# ровно ту же восьмёрку, что и офлайн, а mode внутри ранжирования читался как 'offline'.
+MODE_ALLOWLIST = {"offline", "online", "hybrid"}
 RADIUS_MAX_KM, AGE_FLOOR, AGE_CEIL, TOPIC_CAP = 500.0, 18, 120, 4
 # §15 MVP band on TOTAL headcount (the asker included), so one above kleal_groups._MAX_MVP_SIZE,
 # which counts SEATS. The value is duplicated rather than imported because this module deliberately

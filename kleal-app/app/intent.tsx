@@ -241,7 +241,12 @@ export default function Intent() {
     // Характер — ПОЖЕЛАНИЕ, не гейт: ранжирование поднимает совпавших выше, но никого не
     // отсекает. Отсекать по нему нельзя — тест прошли единицы, и фильтр оставил бы пустую выдачу.
     if (Object.keys(draft.nature).length) intent.wantPersona = draft.nature;
-    if (draft.mode === 'offline') {
+    // Гибрид кладёт И место, И ссылку — HY.09. Это не «оба на всякий случай»: без места некуда
+    // прийти живьём, без ссылки нечем подключиться, и борд формулирует это в обе стороны
+    // (HY.20a / HY.20b). Раньше гибрид шёл целиком по ветке онлайна и приезжал в поиск без места.
+    const wantsPlace = draft.mode === 'offline' || draft.mode === 'hybrid';
+    const wantsLink = draft.mode !== 'offline';
+    if (wantsPlace) {
       // Район на OF.09 задаёт карта вокруг координат профиля, а не список чипов, — в запрос
       // едет город профиля: именно его §5.3 читает как location_block.city.
       const place = String(st.profile.city || '').trim();
@@ -250,8 +255,12 @@ export default function Intent() {
       // OF.09: точное место ранжирование не читает — оно нужно ПОЗЖЕ, когда из мэтча собирается
       // план: форма плана подхватит его, чтобы не спрашивать дважды. В выдачу уходит только район.
       if (draft.address?.trim()) intent.address = draft.address.trim();
-    } else {
-      // Иначе §5.3 требует город, которого у онлайн-встречи нет по определению.
+    }
+    if (wantsLink) {
+      // Иначе §5.3 требует город, которого у онлайн-встречи нет по определению. Гибриду это тоже
+      // нужно, и по той же причине: половина его встречи — звонок, и радиус не должен НИКОГО
+      // отсекать (кто далеко — подключится). Жёсткий гейт радиуса на сервере включён только для
+      // mode == 'offline', так что гибрид получает радиус как предпочтение, а не как забор.
       intent.allowOnlineFallback = true;
       // Ссылку ранжирование не читает — она нужна ПОЗЖЕ, когда из мэтча собирается план встречи.
       // Кладётся в интент, чтобы уехать вместе с ним в выдачу, а не потеряться на этом экране.
@@ -285,12 +294,97 @@ export default function Intent() {
       .catch(() => {});
   };
 
+  /**
+   * Место и ссылка вынесены в блоки: у гибрида они стоят на ОДНОМ шаге (HY.09), у офлайна и
+   * онлайна — каждый на своём. Копия и поведение обязаны быть теми же; две копии одного блока
+   * разошлись бы на первой правке, и разошлись бы именно у гибрида, которого меньше видно.
+   */
+  const linkBroken = !!draft.link.trim() && !looksLikeUrl(draft.link);
+
+  const linkBlock = (
+    <>
+      <LabelRow Icon={IconLink} text={DETAILS.link()} />
+      <TextInput
+        style={s.linkInput}
+        value={draft.link}
+        onChangeText={(t) => setDraft((x) => ({ ...x, link: t }))}
+        placeholder={DETAILS.linkPlaceholder()}
+        placeholderTextColor={color.neutral400}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        accessibilityLabel={DETAILS.link()}
+      />
+      <View style={s.noteRow}>
+        <IconLink size={16} c={color.muted} />
+        <Text style={s.note}>{DETAILS.linkNote()}</Text>
+      </View>
+    </>
+  );
+
+  /* OF.09 — район картой, а не списком: круг показывает, что человек считает «рядом».
+     Порядок с кадра: карта → точный адрес → радиус → записка о приватности. */
+  const placeBlock = (
+    <>
+      <LabelRow Icon={IconPin} text={DETAILS.district()} />
+      <View style={s.map}>
+        <RadiusMap
+          lat={mapLat}
+          lon={mapLon}
+          km={draft.radiusKm}
+          onMove={(la, lo) => setDraft((x) => ({ ...x, lat: la, lon: lo }))}
+          onDragChange={setDragging}
+        />
+      </View>
+      <View style={s.mapHintRow}>
+        <Text style={s.mapHint}>{moved ? DETAILS.centerMoved() : DETAILS.dragPin()}</Text>
+        {moved ? (
+          <Pressable
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={() => setDraft((x) => ({ ...x, lat: undefined, lon: undefined }))}
+          >
+            <Text style={s.mapReset}>{DETAILS.backHome()}</Text>
+          </Pressable>
+        ) : null}
+      </View>
+
+      {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт
+          только план после взаимного подтверждения (OF.C3). */}
+      <TextInput
+        style={s.linkInput}
+        value={draft.address || ''}
+        onChangeText={(t) => setDraft((x) => ({ ...x, address: t }))}
+        placeholder={DETAILS.exactAddress()}
+        placeholderTextColor={color.neutral400}
+        accessibilityLabel={DETAILS.exactAddress()}
+      />
+
+      <View style={s.radiusRow}>
+        <Text style={s.tzLabel}>{DETAILS.radius()}</Text>
+        <Text style={s.radiusValue}>{draft.radiusKm} km</Text>
+      </View>
+      <Slider
+        minimumValue={1}
+        maximumValue={50}
+        step={1}
+        value={draft.radiusKm}
+        onValueChange={(km) => setDraft((x) => ({ ...x, radiusKm: Math.round(km) }))}
+        minimumTrackTintColor={color.primary}
+        maximumTrackTintColor={color.neutral100}
+        thumbTintColor={color.primary}
+      />
+      <Text style={s.privacyNote}>{DETAILS.exactAddressNote()}</Text>
+    </>
+  );
+
   /** Отмеченные черты одной строкой — для сводки O.10 и листа правки. */
   const natureSummary = NATURE_TRAITS.filter((t) => draft.nature[t.axis] === t.token)
     .map((t) => t.label()).join(', ');
 
   /** Последний шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
-  const lastStep: IntentStepId = draft.mode === 'offline' ? 'place' : 'link';
+  const lastStep: IntentStepId =
+    draft.mode === 'offline' ? 'place' : draft.mode === 'hybrid' ? 'both' : 'link';
   const detailIndex = step === 'when' ? 0 : step === 'who' ? 1 : step === 'nature' ? 2 : 3;
 
   return (
@@ -355,6 +449,7 @@ export default function Intent() {
                       : step === 'who' ? DETAILS.subWho()
                       : step === 'nature' ? DETAILS.subNature()
                       : step === 'link' ? DETAILS.subLink()
+                      : step === 'both' ? DETAILS.subBoth()
                       : DETAILS.subPlace()
                     }
                   />
@@ -504,85 +599,29 @@ export default function Intent() {
 
               {step === 'link' ? (
                 <View style={s.card}>
-                  <LabelRow Icon={IconLink} text={DETAILS.link()} />
-                  <TextInput
-                    style={s.linkInput}
-                    value={draft.link}
-                    onChangeText={(t) => setDraft((x) => ({ ...x, link: t }))}
-                    placeholder={DETAILS.linkPlaceholder()}
-                    placeholderTextColor={color.neutral400}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="url"
-                    accessibilityLabel={DETAILS.link()}
-                  />
-                  <View style={s.noteRow}>
-                    <IconLink size={16} c={color.muted} />
-                    <Text style={s.note}>{DETAILS.linkNote()}</Text>
-                  </View>
-                  {/* Пустая ссылка допустима — её можно прислать позже, когда план сложится. Непустая
-                      обязана быть ссылкой: молча отправить «встретимся в зуме» как url нельзя. */}
-                  <Cta
-                    label={INTENT.next()}
-                    disabled={!!draft.link.trim() && !looksLikeUrl(draft.link)}
-                    onPress={toSummary}
-                  />
+                  {linkBlock}
+                  <Cta label={INTENT.next()} disabled={linkBroken} onPress={toSummary} />
                 </View>
               ) : null}
 
-              {/* OF.09 — район картой, а не списком: круг показывает, что человек считает «рядом».
-                  Порядок с кадра: карта → точный адрес → радиус → записка о приватности. */}
+              {/*
+                HY.09 — «3 of 3 · place and link». У гибрида шаг ОДИН, но в нём оба блока: борд
+                говорит это прямо на HY.20a/20b — «hybrid needs both». Раньше гибрид шёл по ветке
+                ссылки, то есть места у него не было вовсе: тому, кто хотел прийти живьём, приходить
+                было некуда, а радиус поиска не задавался ничем.
+              */}
+              {step === 'both' ? (
+                <View style={s.card}>
+                  {placeBlock}
+                  <View style={s.bothSplit} />
+                  {linkBlock}
+                  <Cta label={INTENT.next()} disabled={linkBroken} onPress={toSummary} />
+                </View>
+              ) : null}
+
               {step === 'place' ? (
                 <View style={s.card}>
-                  <LabelRow Icon={IconPin} text={DETAILS.district()} />
-                  <View style={s.map}>
-                    <RadiusMap
-                      lat={mapLat}
-                      lon={mapLon}
-                      km={draft.radiusKm}
-                      onMove={(la, lo) => setDraft((x) => ({ ...x, lat: la, lon: lo }))}
-                      onDragChange={setDragging}
-                    />
-                  </View>
-                  <View style={s.mapHintRow}>
-                    <Text style={s.mapHint}>{moved ? DETAILS.centerMoved() : DETAILS.dragPin()}</Text>
-                    {moved ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        hitSlop={8}
-                        onPress={() => setDraft((x) => ({ ...x, lat: undefined, lon: undefined }))}
-                      >
-                        <Text style={s.mapReset}>{DETAILS.backHome()}</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-
-                  {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт
-                      только план после взаимного подтверждения (OF.C3). */}
-                  <TextInput
-                    style={s.linkInput}
-                    value={draft.address || ''}
-                    onChangeText={(t) => setDraft((x) => ({ ...x, address: t }))}
-                    placeholder={DETAILS.exactAddress()}
-                    placeholderTextColor={color.neutral400}
-                    accessibilityLabel={DETAILS.exactAddress()}
-                  />
-
-                  <View style={s.radiusRow}>
-                    <Text style={s.tzLabel}>{DETAILS.radius()}</Text>
-                    <Text style={s.radiusValue}>{draft.radiusKm} km</Text>
-                  </View>
-                  <Slider
-                    minimumValue={1}
-                    maximumValue={50}
-                    step={1}
-                    value={draft.radiusKm}
-                    onValueChange={(km) => setDraft((x) => ({ ...x, radiusKm: Math.round(km) }))}
-                    minimumTrackTintColor={color.primary}
-                    maximumTrackTintColor={color.neutral100}
-                    thumbTintColor={color.primary}
-                  />
-                  <Text style={s.privacyNote}>{DETAILS.exactAddressNote()}</Text>
+                  {placeBlock}
                   <Cta label={INTENT.next()} onPress={toSummary} />
                 </View>
               ) : null}
@@ -671,10 +710,14 @@ export default function Intent() {
             ['who', IconPerson, EDIT_SHEET.audience(),
               `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`],
             ['nature', IconStar, DETAILS.nature(), natureSummary || EDIT_SHEET.noData()],
-            draft.mode === 'offline'
-              ? ['place', IconPin, DETAILS.district(),
-                  draft.address?.trim() || where || EDIT_SHEET.noData()]
-              : ['link', IconLink, EDIT_SHEET.link(), draft.link.trim() || EDIT_SHEET.noData()],
+            draft.mode === 'hybrid'
+              ? ['both', IconPlusRound, DETAILS.bothRow(),
+                  [draft.address?.trim() || where, draft.link.trim()].filter(Boolean).join(' · ')
+                    || EDIT_SHEET.noData()]
+              : draft.mode === 'offline'
+                ? ['place', IconPin, DETAILS.district(),
+                    draft.address?.trim() || where || EDIT_SHEET.noData()]
+                : ['link', IconLink, EDIT_SHEET.link(), draft.link.trim() || EDIT_SHEET.noData()],
           ] as [string, any, string, string][]).map(([k, Icon, label, value]) => (
             <Pressable
               key={k}
@@ -861,13 +904,15 @@ function SummaryCard({
         <IconClock />
         <Text style={s.sumMetaText}>{hhmm(draft.minutes)} {tzOffsetLabel(draft.tz)}</Text>
       </View>
+      {/* Гибрид показывает ОБЕ строки: у него и место, и ссылка (HY.09). Раньше условие места
+          было привязано к офлайну, и гибрид уезжал в поиск, показав человеку только ссылку. */}
       {draft.mode !== 'offline' && draft.link.trim() ? (
         <View style={s.sumMeta}>
           <IconLink size={16} c={color.muted} />
           <Text style={s.sumMetaText} numberOfLines={1}>{draft.link.trim()}</Text>
         </View>
       ) : null}
-      {draft.mode === 'offline' && where ? (
+      {draft.mode !== 'online' && where ? (
         <View style={s.sumMeta}>
           <IconPin size={16} c={color.muted} />
           <Text style={s.sumMetaText}>{where} · {draft.radiusKm} km</Text>
@@ -984,6 +1029,8 @@ const s = StyleSheet.create({
   label: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
   chipRow: { gap: space.sm, paddingVertical: 2 },
   natureHint: { ...type.bodySmall, color: color.muted } as any,
+  /** Разделитель между «где» и «куда звонить» на шаге гибрида: два блока, а не один длинный. */
+  bothSplit: { height: 1, backgroundColor: color.border, marginVertical: space.sm },
   natureSkip: { ...type.labelMedium, color: color.muted, textAlign: 'center', paddingVertical: space.sm } as any,
   chipRowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chip: {

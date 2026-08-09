@@ -1535,13 +1535,22 @@ def match_candidates(intent, prof, ctx=None, diag=None):
     # (band) сохраняются, меняется только порядок внутри полосы.
     n_final = _slate_budget(intent)
     over = None if n_final is not None else _PERSONA_OVERFETCH   # группам лишние места не нужны
-    slate, _meta = _core.search(intent, prof or {}, ctx, retrieved, _H, _CORE_CFG,
-                                top_n=(over if over is not None else n_final))
-    if not slate and eligible:                             # never dead-end while anyone is eligible (§12) —
-        slate = _expand_fallback(intent, prof or {}, ctx, eligible)   # over the FULL pool, never budget-starved
-    slate = _persona_order(slate, intent)
-    if over is not None:
-        slate = slate[:_core.TOP_N]                        # ровно та же восьмёрка, что и раньше
+    hybrid = str(intent.get('mode') or '') == 'hybrid' and over is not None
+    if hybrid:
+        near, far, _meta = _hybrid_pair(intent, prof, ctx, eligible, budget, over)
+        if not near and not far and eligible:
+            near = _expand_fallback(intent, prof or {}, ctx, eligible)
+        # Порядок по характеру считаем в КАЖДОЙ половине отдельно: иначе полосы двух выдач
+        # перемешались бы, и «сначала ближние» перестало бы соблюдаться.
+        slate = _hybrid_merge(_persona_order(near, intent), _persona_order(far, intent), _core.TOP_N)
+    else:
+        slate, _meta = _core.search(intent, prof or {}, ctx, retrieved, _H, _CORE_CFG,
+                                    top_n=(over if over is not None else n_final))
+        if not slate and eligible:                         # never dead-end while anyone is eligible (§12) —
+            slate = _expand_fallback(intent, prof or {}, ctx, eligible)  # over the FULL pool, never budget-starved
+        slate = _persona_order(slate, intent)
+        if over is not None:
+            slate = slate[:_core.TOP_N]                    # ровно та же восьмёрка, что и раньше
     slate = _apply_policy(slate, policy_by)
     slate = _allocate(slate, ctx, retrieved)              # §11 allocation (DORMANT at pilot defaults; before contracts)
     slate = _stamp_contracts(slate, intent, ctx)          # §4.6/§8.3/§4.12 additive contract overlays
@@ -1553,6 +1562,57 @@ def match_candidates(intent, prof, ctx=None, diag=None):
         diag['slate'] = len(slate)
         diag['meta'] = dict(_meta or {})                   # engine, config_version, domain, config_sha
     return slate
+
+# ---------------- гибрид: две половины встречи, обе настоящие ----------------
+# Кадр HY.09 даёт гибриду И место, И ссылку, а HY.21/HY.22 объясняют зачем: «both ways open» —
+# один идёт в кафе, второй подключается по видео, и переключиться можно до последнего.
+#
+# Из этого следует то, чего поиск не делал: далёкий человек для гибрида — НОРМАЛЬНЫЙ кандидат.
+# Жёсткого гейта радиуса у гибрида и не было (он включён только для mode == 'offline'), но замер на
+# стенде показал, что этого мало: гибрид с радиусом 3 км вернул РОВНО ту же восьмёрку, что и
+# офлайн, — расстояние доминирует в ранжировании, и «онлайн-половина» встречи не была
+# представлена ни одним человеком. Гибрид на выходе не отличался от офлайна ничем.
+#
+# Поэтому два прохода одним и тем же движком: обычный (с радиусом) и «как онлайн» (без радиуса).
+# Скоринг не трогаем — меняется только то, ЧТО у движка спрашивают. Ближние идут первыми, но
+# несколько мест в выдаче зарезервированы за теми, кто придёт по ссылке.
+_HYBRID_CALL_SLOTS = 2
+
+
+def _hybrid_pair(intent, prof, ctx, eligible, budget, top_n):
+    """(ближние, дальние, meta) — две выдачи одного движка по одному пулу."""
+    far_i = dict(intent)
+    far_i.pop("radiusKm", None)
+    far_i["mode"] = "online"                     # «как если бы встречались только по ссылке»
+    r_near, _src, _st = _retrieve(intent, eligible, budget)
+    near, meta = _core.search(intent, prof or {}, ctx, r_near, _H, _CORE_CFG, top_n=top_n)
+    r_far, _src2, _st2 = _retrieve(far_i, eligible, budget)
+    far, _m2 = _core.search(far_i, prof or {}, ctx, r_far, _H, _CORE_CFG, top_n=top_n)
+    return near, far, meta
+
+
+def _hybrid_merge(near, far, n_final, lang_note=True):
+    """Ближние вперёд, но не все места им: иначе гибрид — это офлайн под другим названием.
+
+    Каждая карточка помечена тем, КАК этот человек попадёт на встречу, и это написано словами:
+    место в списке, которое человек не может себе объяснить, он объяснит себе неверно."""
+    key = lambda c: str((c or {}).get("name", "")).strip().lower()
+    seen = {key(c) for c in near}
+    extra = [c for c in far if key(c) not in seen]
+    for c in near:
+        c["join"] = "in_person"
+    for c in extra:
+        c["join"] = "call"
+        c.setdefault("reasons_ru", []).append("далеко для встречи — подключится по ссылке")
+        c.setdefault("reasons_en", []).append("too far to meet in person — can join the call")
+    if not extra:
+        return near[:n_final]
+    slots = min(_HYBRID_CALL_SLOTS, len(extra), n_final)
+    out = near[:max(0, n_final - slots)] + extra[:slots]
+    if len(out) < n_final:                       # ближних не хватило — добираем дальними
+        out += [c for c in extra[slots:] if key(c) not in {key(x) for x in out}][:n_final - len(out)]
+    return out[:n_final]
+
 
 # ---------------- personality: what the Kleal test collected, used where it can be used ----------------
 # The test writes a closed set of axis tokens onto the person's row (onboarding _PERSONA_AXES). Nothing
