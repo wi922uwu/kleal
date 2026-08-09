@@ -841,6 +841,58 @@ _TOPIC_RU = {
 _TIMEISH = re.compile(r"^\s*\d{1,2}\s*[:.\-]?\s*\d{0,2}\s*(ч|h|am|pm)?\s*$", re.I)
 
 
+def _ru_acc(word, ours):
+    """Винительный падеж темы для заголовка-фразы: «поговорить про музыку», не «про музыка».
+
+    `ours` — слово взято из нашего словаря (_TOPIC_RU), значит это нарицательное и в середине
+    фразы оно со строчной. Слово человека оставляем как он написал: «Поговорить про Барселону»
+    правильнее, чем «про барселону», а отличить имя собственное иначе нечем."""
+    w = str(word or "")
+    if not w:
+        return w
+    if ours:
+        w = w.lower()          # и латиницу тоже: заглавную ей поставили мы, а не человек
+    if not any('а' <= ch <= 'я' or ch in 'ёЁ' for ch in w.lower()):
+        return w                                   # латиница, цифры, аббревиатуры — падежа нет
+    if w.endswith(('а', 'А')):
+        return w[:-1] + 'у'
+    if w.endswith(('я', 'Я')):
+        return w[:-1] + 'ю'
+    return w
+
+
+def _phrase_title(word, role, lang, ours=False):
+    """Заголовок карточки ФРАЗОЙ, а не «Существительное — существительное».
+
+    Заголовок склеивался из темы и суффикса роли: «Кодинг — разговор», «Кофе — встреча». Это
+    читается как строка в таблице, а не как то, что человек собрался делать, — и на карточке,
+    в списке чатов и в приглашении другому человеку одинаково.
+
+    Роль называем глаголом там, где без него смысл теряется: тема «кодинг» сама по себе значит
+    «поделать», а человек хотел поговорить. Для обычной встречи глагол не нужен вовсе — «Футбол»
+    и «Кофе» и так понятны, и тире с «встреча» только мешало."""
+    w = str(word or "").strip()
+    if not w:
+        return _L(lang, "Встреча", "Meet someone", "Quedada")
+    r = str(role or "").lower()
+    if lang == "ru":
+        acc = _ru_acc(w, ours)
+        if r == "discuss":  return "Поговорить про " + acc
+        if r == "watch":    return "Посмотреть " + acc
+        if r == "practise": return "Попрактиковать " + acc
+        return w[:1].upper() + w[1:]
+    low = w.lower() if ours else w
+    if lang == "es":
+        if r == "discuss":  return "Hablar de " + low
+        if r == "watch":    return "Ver " + low
+        if r == "practise": return "Practicar " + low
+        return w[:1].upper() + w[1:]
+    if r == "discuss":  return "Talk about " + low
+    if r == "watch":    return "Watch " + low
+    if r == "practise": return "Practise " + low
+    return w[:1].upper() + w[1:]
+
+
 def _title_for(topics, tags, typ, lang, role="meet"):
     """Заголовок карточки И отдельно предмет: возвращает (title, subject).
 
@@ -873,13 +925,8 @@ def _title_for(topics, tags, typ, lang, role="meet"):
             str(role or "").lower(), _L(lang, "Встреча", "Meet someone", "Quedada")), ""
     cands = named
     if not cands:
-        return _L(lang, "Встреча", "Meet someone", "Quedada"), ""
-    # The suffix should name what will actually happen. Someone who asked to TALK about hertz was
-    # given "Hertz — встреча"; "встреча" is right for padel, wrong for a conversation.
-    suffix = {"discuss": _L(lang, " — разговор", " chat", " — charla"),
-              "watch": _L(lang, " — просмотр", " watch", " — sesión"),
-              "practise": _L(lang, " — практика", " practice", " — práctica")}.get(
-        str(role or "").lower(), _L(lang, " — встреча", " meetup", " — quedada"))
+        return {"discuss": _L(lang, "Разговор", "A chat", "Charla")}.get(
+            str(role or "").lower(), _L(lang, "Встреча", "Meet someone", "Quedada")), ""
     if lang == "ru":
         # `topics` is ordered and canonical, so position 0 IS the subject — translate it, or show it
         # as it is. Scanning past it for a word that merely happens to be translatable turned
@@ -891,25 +938,31 @@ def _title_for(topics, tags, typ, lang, role="meet"):
             first = prim[0]
             word = _TOPIC_RU.get(first.strip().lower())
             if word:
-                return word + suffix, word
+                return _phrase_title(word, role, lang, ours=True), word
             if any('а' <= ch <= 'я' for ch in first.lower()):
-                return first[:1].upper() + first[1:] + suffix, first[:1].upper() + first[1:]
+                own = first[:1].upper() + first[1:]
+                # Человек написал со строчной — значит нарицательное, и в середине фразы оно тоже
+                # со строчной: «поговорить про архитектуру», а не «про Архитектуру». Написал с
+                # заглавной — имя собственное, оставляем его написание.
+                return _phrase_title(own, role, lang, ours=(first == first.lower())), own
             # Untranslatable and Latin — but filtration usually also returned the person's OWN word
             # among the tags («chlamydia» next to «хламидиоз»). Show them their word, not ours.
             for c in cands:
                 if any('а' <= ch <= 'я' for ch in c.lower()):
-                    return c[:1].upper() + c[1:] + suffix, c[:1].upper() + c[1:]
-            return first.capitalize() + suffix, first.capitalize()
+                    own = c[:1].upper() + c[1:]
+                    return _phrase_title(own, role, lang, ours=(c == c.lower())), own
+            return _phrase_title(first.capitalize(), role, lang, ours=True), first.capitalize()
         # No engine topics — we are in the tag bag, whose order IS arbitrary («хочу поиграть в
         # футбол» came back tagged ['soccer','football',...]), so there a scan is the right move.
         for c in cands:
             word = _TOPIC_RU.get(c.strip().lower())
             if word:
-                return word + suffix, word
+                return _phrase_title(word, role, lang, ours=True), word
         for c in cands:
             if any('а' <= ch <= 'я' for ch in c.lower()):
-                return c[:1].upper() + c[1:] + suffix, c[:1].upper() + c[1:]
-    return cands[0].capitalize() + suffix, cands[0].capitalize()
+                own = c[:1].upper() + c[1:]
+                return _phrase_title(own, role, lang, ours=(c == c.lower())), own
+    return _phrase_title(cands[0].capitalize(), role, lang, ours=True), cands[0].capitalize()
 
 
 # Online-native activities and explicit "let's do it online" cues. Hard-coding mode="offline" sent

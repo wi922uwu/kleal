@@ -220,28 +220,43 @@ check("no history -> no subject, and no crash", B._subject_from_history([]) == "
 # ---- 12. the card title has to name what will actually happen ----
 # From the app: a chat about hertz produced a card headed «я хочу с кем-то об этом поговорить» —
 # the sentence the person typed, which names nothing.
-check("discuss gets a talk suffix, not «встреча»",
+#
+# The suffix form («Hertz — разговор», «Футбол — встреча») is gone: it read like a row in a table,
+# not like something a person is about to do. A conversation gets a verb, a meetup gets the topic
+# alone — «Футбол» needs no «— встреча» to be understood.
+check("discuss becomes a phrase, not «Тема — разговор»",
       B._title_for(["hertz", "frequency", "music"], ["hertz", "разговоры"], "social", "ru", "discuss")[0]
-      == "Hertz — разговор",
+      == "Поговорить про hertz",
       B._title_for(["hertz", "frequency", "music"], ["hertz", "разговоры"], "social", "ru", "discuss")[0])
 check("the subject wins over a merely-translatable later topic",
-      "Музыка" not in B._title_for(["hertz", "frequency", "music"], [], "social", "ru", "discuss")[0])
+      "узык" not in B._title_for(["hertz", "frequency", "music"], [], "social", "ru", "discuss")[0])
 check("the person's own Russian word is preferred when ours is Latin",
-      B._title_for(["chlamydia"], ["хламидиоз"], "social", "ru", "discuss")[0] == "Хламидиоз — разговор",
+      B._title_for(["chlamydia"], ["хламидиоз"], "social", "ru", "discuss")[0] == "Поговорить про хламидиоз",
       B._title_for(["chlamydia"], ["хламидиоз"], "social", "ru", "discuss")[0])
-check("play still reads as a meetup", B._title_for(["football"], ["football"], "sport", "ru", "play")[0]
-      == "Футбол — встреча", B._title_for(["football"], ["football"], "sport", "ru", "play")[0])
+check("a meetup is just the topic", B._title_for(["football"], ["football"], "sport", "ru", "play")[0]
+      == "Футбол", B._title_for(["football"], ["football"], "sport", "ru", "play")[0])
 # the tag bag IS arbitrary order — there a scan for a translatable word is still right
 check("untranslated synonym cannot win from the tag bag",
-      B._title_for([], ["soccer", "football"], "sport", "ru", "play")[0] == "Футбол — встреча",
+      B._title_for([], ["soccer", "football"], "sport", "ru", "play")[0] == "Футбол",
       B._title_for([], ["soccer", "football"], "sport", "ru", "play")[0])
+check("accusative, and our own word goes lower-case mid-phrase",
+      B._title_for(["music"], [], "social", "ru", "discuss")[0] == "Поговорить про музыку",
+      B._title_for(["music"], [], "social", "ru", "discuss")[0])
+check("the person's own capitalised word keeps its capital",
+      B._title_for(["Барселона"], [], "social", "ru", "discuss")[0] == "Поговорить про Барселону",
+      B._title_for(["Барселона"], [], "social", "ru", "discuss")[0])
+check("no topic at all still knows its role",
+      B._title_for([], [], "social", "ru", "discuss")[0] == "Разговор",
+      B._title_for([], [], "social", "ru", "discuss")[0])
 check("all-generic topics are named once, not twice",
       B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss")[0] == "Разговор",
       B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss")[0])
 check("dating is untouched", B._title_for([], [], "dating", "ru", "meet")[0] == "Свидание")
-check("es discuss", B._title_for(["padel"], [], "sport", "es", "discuss")[0] == "Padel — charla",
+check("es discuss", B._title_for(["padel"], [], "sport", "es", "discuss")[0] == "Hablar de padel",
       B._title_for(["padel"], [], "sport", "es", "discuss")[0])
-check("en play", B._title_for(["padel"], [], "sport", "en", "play")[0] == "Padel meetup",
+check("en discuss", B._title_for(["padel"], [], "sport", "en", "discuss")[0] == "Talk about padel",
+      B._title_for(["padel"], [], "sport", "en", "discuss")[0])
+check("en play", B._title_for(["padel"], [], "sport", "en", "play")[0] == "Padel",
       B._title_for(["padel"], [], "sport", "en", "play")[0])
 
 print()
