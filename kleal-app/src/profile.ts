@@ -553,6 +553,10 @@ export const PERSONALITY = {
       'Take the test and Kleal will describe how you come across and who you click with.'
     ),
   editWith: () => T('Изменить с Kleal', 'Edit with Kleal'),
+  /** Оси теста на самом экране личности: они лежат в профиле, и прятать их от того, про кого они,
+   *  незачем. Заодно видно, что тест засчитан, даже когда абзац не собрался. */
+  axesTitle: () => T('Ответы теста', 'Your test answers'),
+  retake: () => T('Пройти тест заново', 'Take the test again'),
   storyCap: () =>
     T(
       'Расскажи историю своей жизни в свободном формате (детство, обучение, интересы, профессия)',
@@ -580,52 +584,244 @@ export const PERSONALITY = {
 /** Предел из update_user: STORY_MAX. Обрезаем здесь же, чтобы не отправлять заведомо лишнее. */
 export const STORY_MAX = 4000;
 
-export type TestQ = { k: string; q: () => string; o: (() => string)[]; m: (string | null)[]; free?: boolean };
+export type TestQ = {
+  k: string;
+  /** Сцена, если она есть: одна строка обстановки перед самим вопросом. */
+  scene?: () => string;
+  q: () => string;
+  o: (() => string)[];
+  m: string[];
+  free?: boolean;
+  /** Незаконченная фраза: человек дописывает её, а не отвечает на открытый вопрос. */
+  stem?: () => string;
+};
 
 /**
- * Тест Kleal — восемь вопросов на клиенте и РОВНО один вызов /api/buddy/persona в конце.
- * По одному обращению к модели на вопрос — это восемь шансов повиснуть там, где вопросы всё равно
- * заданы заранее.
+ * Тест Kleal — вопросы на клиенте и РОВНО один вызов /api/buddy/persona в конце.
+ * По одному обращению к модели на вопрос — это столько же шансов повиснуть там, где вопросы всё
+ * равно заданы заранее.
  *
- * `m` — токен, который уходит в профиль. null означает «ответ есть, но в поля подбора он не ложится»
- * («зависит от людей» — это не значение оси, а отказ от неё), и на экране результата так и написано.
+ * ЧТО ЗДЕСЬ ИЗМЕНИЛОСЬ И ПОЧЕМУ. Прежние восемь вопросов спрашивали про ПРЕДПОЧТЕНИЯ («какой
+ * разговор тебе ближе?»), и на такие вопросы человек отвечает тем, каким он себя видит, а не тем,
+ * какой он есть: «глубокий, про смыслы» выбирают почти все. Характер видно в трёх других местах —
+ * в поведении («что ты обычно делаешь»), в выборе с ценой (обе стороны чем-то жертвуют) и в
+ * трении (отменили, повисла пауза, человек надоел). Отсюда сцена перед вопросом: она превращает
+ * ответ из самооценки в припоминание.
+ *
+ * Три оси добавлены и раньше не спрашивались вовсе, а рассказывают больше остальных:
+ *   friction — что человек делает, когда план рассыпался;
+ *   lull     — что он делает с молчанием;
+ *   give     — что он приносит другим, а не что хочет получить.
+ *
+ * Варианта «зависит / гибко» больше нет ни в одном вопросе. Он собирал тех, кто просто не хотел
+ * выбирать, и — хуже — уходил в профиль как `null`, то есть не сохранялся ВООБЩЕ: человек отвечал,
+ * а ось оставалась пустой. Не хочешь отвечать — «Пропустить», и это видно честно.
+ *
+ * `m[n]` — токен оси для профиля. Словарь закрыт на сервере (_PERSONA_AXES в onboarding):
+ * незнакомый токен там отбрасывается, поэтому менять их парой с сервером, а не по одному.
  */
 export const TEST_Q: TestQ[] = [
-  { k: 'energy', q: () => T('После насыщенного дня с людьми ты скорее…', 'After a full day around people you usually feel…'),
-    o: [() => T('Заряжен', 'Energised'), () => T('Вымотан', 'Drained'), () => T('Зависит от людей', 'Depends who they were')],
-    m: ['energised', 'drained', null] },
-  { k: 'group', q: () => T('Как тебе комфортнее знакомиться?', 'How do you prefer to meet people?'),
-    o: [() => T('Один на один', 'One to one'), () => T('Небольшая группа, 3–5', 'A small group of 3–5'), () => T('Большая компания', 'A big crowd')],
-    m: ['one', 'small', 'crowd'] },
-  { k: 'depth', q: () => T('Какой разговор тебе ближе?', 'What kind of conversation suits you?'),
-    o: [() => T('Глубокий, про смыслы', 'Deep, about what matters'), () => T('Лёгкий и весёлый', 'Light and funny'), () => T('Практичный, по делу', 'Practical, to the point')],
-    m: ['deep', 'light', 'practical'] },
-  { k: 'firstMeet', q: () => T('Идеальная первая встреча — это…', 'An ideal first meet is…'),
-    o: [() => T('Кофе и разговор', 'Coffee and a talk'), () => T('Что-то делать вместе', 'Doing something together'), () => T('Событие или мероприятие', 'An event or a meetup')],
-    m: ['talk', 'doing', 'event'] },
-  { k: 'pace', q: () => T('Как ты сходишься с людьми?', 'How do you warm up to people?'),
-    o: [() => T('Быстро и открыто', 'Fast and openly'), () => T('Постепенно, присматриваюсь', 'Slowly, I watch first'), () => T('Зависит от человека', 'Depends on the person')],
-    m: ['fast', 'slow', null] },
-  { k: 'planning', q: () => T('Планы или спонтанность?', 'Plans or spontaneity?'),
-    o: [() => T('Договариваться заранее', 'Agree in advance'), () => T('Лучше спонтанно', 'Rather spontaneous'), () => T('Гибко', 'Flexible')],
-    m: ['advance', 'spontaneous', null] },
-  { k: 'seek', q: () => T('Что тебе сейчас важнее всего в новых знакомствах?', 'What matters most in new connections right now?'),
-    o: [() => T('Друзья надолго', 'Friends for the long run'), () => T('Компания под интерес', 'Company for a specific interest'), () => T('Расширить круг', 'A wider circle')],
-    m: ['long', 'interest', 'wider'] },
-  { k: 'own', q: () => T('Что о тебе стоит знать, чтобы понять, с кем тебе легко?', 'What should Kleal know to understand who you click with?'),
-    o: [], m: [], free: true },
+  {
+    k: 'energy',
+    scene: () => T('Суббота, ты весь день был среди людей.', 'Saturday, you have been around people all day.'),
+    q: () => T('Наступает вечер. Что с тобой происходит?', 'Evening comes. What happens to you?'),
+    o: [
+      () => T('Ещё не наигрался — ищешь, куда поехать дальше', 'Still going — you look for where to head next'),
+      () => T('Отключаешь телефон и никого не хочешь', 'You switch the phone off and want nobody'),
+      () => T('Хватает сил ровно на одного человека', 'You have exactly one person left in you'),
+    ],
+    m: ['energised', 'drained', 'depends'],
+  },
+  {
+    k: 'group',
+    q: () => T('Вспомни последний разговор, из которого ты вышел довольным. Сколько вас было?',
+               'Think of the last conversation you walked away happy from. How many of you were there?'),
+    o: [
+      () => T('Двое', 'Two'),
+      () => T('Стол на четверых-пятерых', 'A table of four or five'),
+      () => T('Много, и ты был в гуще', 'A lot of people, and you were in the middle of it'),
+    ],
+    m: ['one', 'small', 'crowd'],
+  },
+  {
+    k: 'depth',
+    scene: () => T('Полчаса как познакомились, разговор пошёл.', 'Half an hour in, the conversation has caught.'),
+    q: () => T('О чём вы говорите, когда становится интересно?', 'What are you talking about when it gets good?'),
+    o: [
+      () => T('О том, о чём обычно не говорят с незнакомыми', 'About things you normally do not say to strangers'),
+      () => T('О ерунде, но так, что оба смеётесь', 'About nothing much, but you are both laughing'),
+      () => T('О деле: кто что делает и как это устроено', 'About the work: who does what and how it is put together'),
+    ],
+    m: ['deep', 'light', 'practical'],
+  },
+  {
+    k: 'firstMeet',
+    q: () => T('Первая встреча удалась. По чему ты это понял?',
+               'A first meet went well. How do you know?'),
+    o: [
+      () => T('Просидели дольше, чем собирались', 'You stayed longer than you meant to'),
+      () => T('Что-то сделали вместе, а не просто поговорили', 'You did something together, not just talked'),
+      () => T('Вокруг что-то происходило, и вы это обсуждали', 'Something was going on around you and you had it to talk about'),
+    ],
+    m: ['talk', 'doing', 'event'],
+  },
+  {
+    k: 'pace',
+    q: () => T('Когда новый человек узнаёт про тебя что-то настоящее?',
+               'When does a new person learn something real about you?'),
+    o: [
+      () => T('Почти сразу — ты не умеешь иначе', 'Almost straight away — you do not know another way'),
+      () => T('Когда решишь, что ему можно', 'Once you have decided they can be trusted with it'),
+      () => T('Когда он расскажет первым', 'Once they have gone first'),
+    ],
+    m: ['fast', 'slow', 'mirror'],
+  },
+  {
+    k: 'planning',
+    scene: () => T('Пятница, шесть вечера, планов нет.', 'Friday, six in the evening, nothing planned.'),
+    q: () => T('Как так вышло?', 'How did that happen?'),
+    o: [
+      () => T('Не вышло — ты договорился ещё в среду', 'It did not — you sorted this out on Wednesday'),
+      () => T('Сейчас напишешь троим и куда-нибудь поедешь', 'You are about to message three people and go somewhere'),
+      () => T('И хорошо: вечер дома тебя устраивает', 'And that is fine — an evening at home suits you'),
+    ],
+    m: ['advance', 'spontaneous', 'flexible'],
+  },
+  {
+    k: 'friction',
+    scene: () => T('За час до встречи человек пишет: не смогу.', 'An hour before you meet, they message: I cannot make it.'),
+    q: () => T('Что ты делаешь?', 'What do you do?'),
+    o: [
+      () => T('Сразу предлагаешь другой день', 'You offer another day right away'),
+      () => T('Отвечаешь «ок» и ждёшь, что предложит он', 'You reply “sure” and wait for them to offer one'),
+      () => T('Ничего. Значит, не сложилось', 'Nothing. It was not meant to happen'),
+    ],
+    m: ['reschedule', 'wait', 'letgo'],
+  },
+  {
+    k: 'lull',
+    scene: () => T('Разговор идёт хорошо, и вдруг оба замолчали.', 'The conversation is going well, and suddenly you both go quiet.'),
+    q: () => T('Что происходит внутри?', 'What is going on inside?'),
+    o: [
+      () => T('Ты уже придумываешь, чем её заполнить', 'You are already thinking of something to fill it with'),
+      () => T('Ничего. Пауза — тоже часть разговора', 'Nothing. A pause is part of the conversation too'),
+      () => T('Становится неловко и хочется закруглиться', 'It gets awkward and you want to wrap up'),
+    ],
+    m: ['fill', 'allow', 'uneasy'],
+  },
+  {
+    k: 'give',
+    q: () => T('За что тебя держат те, кто с тобой давно?',
+               'What do the people who have stayed keep you around for?'),
+    o: [
+      () => T('Ты слушаешь и помнишь', 'You listen, and you remember'),
+      () => T('С тобой смешно', 'You make it funny'),
+      () => T('На тебя можно рассчитывать', 'You can be counted on'),
+      () => T('Ты вытаскиваешь их из дома', 'You get them out of the house'),
+    ],
+    m: ['listen', 'fun', 'reliable', 'instigate'],
+  },
+  {
+    k: 'seek',
+    q: () => T('Чего тебе сейчас не хватает?', 'What are you short of right now?'),
+    o: [
+      () => T('Двух-трёх своих людей', 'Two or three people of your own'),
+      () => T('Компании под конкретное занятие', 'Company for one specific thing'),
+      () => T('Просто больше жизни вокруг', 'Simply more life around you'),
+    ],
+    m: ['long', 'interest', 'wider'],
+  },
+  {
+    // Незаконченная фраза, а не открытый вопрос. «Что о тебе стоит знать?» человек читает как
+    // просьбу презентовать себя и пишет резюме; допиши-фразу отвечают почти всегда конкретным
+    // случаем, а модели именно конкретное и нужно.
+    k: 'own',
+    q: () => T('Последнее. Допиши фразу — как есть, без причёсывания.',
+               'Last one. Finish the sentence — as it comes, unpolished.'),
+    stem: () => T('Со мной легко, если…', 'I am easy to be around if…'),
+    o: [], m: [], free: true,
+  },
+];
+
+/**
+ * Как ось читается человеку. Тест сохраняет токены в профиль, а показать их было негде: экран
+ * результата отсутствовал вовсе, и человек видел только абзац от модели. Тест, который что-то
+ * узнал и не сказал что, — гадание, а не тест.
+ */
+export const AXIS_LABEL: Record<string, () => string> = {
+  energy: () => T('Люди', 'People'),
+  group: () => T('Формат', 'Format'),
+  depth: () => T('Разговор', 'Conversation'),
+  firstMeet: () => T('Первая встреча', 'A first meet'),
+  pace: () => T('Открытость', 'Opening up'),
+  planning: () => T('Планы', 'Plans'),
+  friction: () => T('Когда отменяют', 'When plans fall through'),
+  lull: () => T('Пауза', 'Silence'),
+  give: () => T('Что приносишь', 'What you bring'),
+  seek: () => T('Ищешь', 'Looking for'),
+};
+
+export const AXIS_VALUE: Record<string, () => string> = {
+  energised: () => T('заряжают', 'charge you up'),
+  drained: () => T('забирают силы', 'take it out of you'),
+  depends: () => T('по одному — да, толпой — нет', 'one at a time, not in a crowd'),
+  one: () => T('один на один', 'one to one'),
+  small: () => T('небольшой стол', 'a small table'),
+  crowd: () => T('большая компания', 'a big crowd'),
+  deep: () => T('вглубь', 'goes deep'),
+  light: () => T('легко и смешно', 'light and funny'),
+  practical: () => T('по делу', 'to the point'),
+  talk: () => T('просидеть дольше, чем собирались', 'staying longer than planned'),
+  doing: () => T('делать что-то вместе', 'doing something together'),
+  event: () => T('там, где что-то происходит', 'somewhere things are happening'),
+  fast: () => T('сразу настоящий', 'real from the start'),
+  slow: () => T('когда решишь, что можно', 'once you decide they can be trusted'),
+  mirror: () => T('в ответ на откровенность', 'in answer to theirs'),
+  advance: () => T('заранее', 'agreed in advance'),
+  spontaneous: () => T('спонтанно', 'on the spur'),
+  flexible: () => T('вечер дома тоже вариант', 'an evening in is fine too'),
+  reschedule: () => T('предлагаешь другой день', 'you offer another day'),
+  wait: () => T('ждёшь встречного шага', 'you wait for their move'),
+  letgo: () => T('отпускаешь', 'you let it go'),
+  fill: () => T('заполняешь', 'you fill it'),
+  allow: () => T('даёшь ей побыть', 'you let it sit'),
+  uneasy: () => T('становится неловко', 'it makes you uneasy'),
+  listen: () => T('слушаешь и помнишь', 'you listen and remember'),
+  fun: () => T('с тобой смешно', 'you make it funny'),
+  reliable: () => T('на тебя можно рассчитывать', 'you can be counted on'),
+  instigate: () => T('вытаскиваешь из дома', 'you get people out'),
+  long: () => T('своих людей надолго', 'people of your own, long term'),
+  interest: () => T('компанию под занятие', 'company for one thing'),
+  wider: () => T('больше жизни вокруг', 'more life around you'),
+};
+
+/** Порядок строк на экране результата — от «как с людьми» к «что делаешь, когда трудно». */
+export const AXIS_ORDER = [
+  'energy', 'group', 'depth', 'pace', 'firstMeet', 'planning', 'friction', 'lull', 'give', 'seek',
 ];
 
 export const TEST = {
   title: () => T('Тест от Kleal', 'Your Kleal test'),
   of: (i: number, n: number) => T(`Вопрос ${i} из ${n}`, `Question ${i} of ${n}`),
   skip: () => T('Пропустить', 'Skip'),
-  placeholder: () => T('Своими словами…', 'In your own words…'),
+  placeholder: () => T('Дальше своими словами…', 'Carry on in your own words…'),
   finish: () => T('Готово', 'Done'),
   working: () => T('Kleal обдумывает ответы…', 'Kleal is thinking it over…'),
   failed: () =>
     T('Не получилось собрать результат. Ответы сохранены — попробуй ещё раз.',
       'Could not put the result together. Your answers are saved — try again.'),
+
+  /** Экран результата. Раньше тест просто закрывался, и человек не видел, что из него вышло. */
+  resultTitle: () => T('Вот что получилось', 'Here is what came out'),
+  axesTitle: () => T('Что Kleal записал', 'What Kleal wrote down'),
+  axesNote: () => T('Это остаётся в профиле и видно только тебе.',
+                    'This stays in your profile and only you see it.'),
+  skipped: () => T('Пропущено', 'Skipped'),
+  keep: () => T('Сохранить', 'Keep it'),
+  again: () => T('Пройти заново', 'Take it again'),
+  /** Честная строка, когда абзац не собрался, а ответы записались. */
+  axesOnly: () =>
+    T('Ответы сохранены — абзац Kleal напишет позже.', 'Your answers are saved — Kleal will write the paragraph later.'),
 };
 
 // ---------------------------------------------------------------- безопасность

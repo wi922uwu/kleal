@@ -15,7 +15,10 @@ import { IconPerson } from '../../src/components/icons';
 import { useLang } from '../../src/i18n';
 import { useOnb, set, getState } from '../../src/state';
 import { profile as profileApi } from '../../src/api';
-import { PERSONALITY as C, STORY_MAX, fmtUpdated, adaptSummary } from '../../src/profile';
+import {
+  PERSONALITY as C, STORY_MAX, fmtUpdated, adaptSummary,
+  AXIS_LABEL, AXIS_VALUE, AXIS_ORDER,
+} from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function Personality() {
@@ -77,6 +80,10 @@ export default function Personality() {
 
   const text = String(p.personality || '');
   const updated = fmtUpdated(p.personalityUpdated);
+  // Оси лежат плоско ({energy:'drained'}) — так их шлёт тест. Из старых записей приходит обёртка
+  // {v:1,axes:{…}}; читаем обе, чтобы человек, проходивший тест раньше, тоже видел свои ответы.
+  const persona: Record<string, string> = (p.persona && p.persona.axes) || p.persona || {};
+  const answered = AXIS_ORDER.filter((k) => persona[k] && AXIS_VALUE[persona[k]]);
 
   return (
     <ProfileShell
@@ -173,6 +180,21 @@ export default function Personality() {
         </Pressable>
       </Card>
 
+      {answered.length ? (
+        <Card>
+          <Text style={s.label}>{C.axesTitle()}</Text>
+          {answered.map((k) => (
+            <View key={k} style={s.axisRow}>
+              <Text style={s.axisKey}>{AXIS_LABEL[k]()}</Text>
+              <Text style={s.axisVal}>{AXIS_VALUE[persona[k]]()}</Text>
+            </View>
+          ))}
+          <Pressable accessibilityRole="button" onPress={() => router.push('/profile/test')}>
+            <Text style={s.retake}>{C.retake()}</Text>
+          </Pressable>
+        </Card>
+      ) : null}
+
     </ProfileShell>
   );
 }
@@ -186,6 +208,13 @@ const s = StyleSheet.create({
   label: { fontSize: 17, fontWeight: '700', color: color.fg },
   updated: { ...type.caption, color: color.muted } as any,
   body: { ...type.body, color: color.fg } as any,
+  axisRow: {
+    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
+    gap: space.md, paddingVertical: 7,
+  },
+  axisKey: { ...type.bodySmall, color: color.muted, flexShrink: 0 } as any,
+  axisVal: { ...type.bodySmall, color: color.fg, fontWeight: '600', flex: 1, textAlign: 'right' } as any,
+  retake: { ...type.labelMedium, color: color.primary, fontWeight: '600', paddingTop: space.sm } as any,
 
   cap: { ...type.bodySmall, color: color.muted, paddingHorizontal: 4 } as any,
   story: {

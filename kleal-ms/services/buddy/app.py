@@ -1556,25 +1556,159 @@ def resummary(profile, current, lang="ru", personality=""):
 # question — gives eight chances to hang on a chain that allows ~195s, for questions that are fixed by
 # design anyway. The paragraph is the PERSONALITY text and has its own owner: «Сводка Kleal» keeps its
 # own field and afterwards re-weaves to carry this strand, rather than being replaced by it.
-PERSONA_PROMPT = """You are Kleal. Below are a user's answers to a short personality test and, if they
-wrote one, a few lines about themselves in their own words. Write ONE warm, natural, flowing paragraph
-describing HOW THIS PERSON COMES ACROSS and who they are easy with. Address the user directly ("you").
-2-4 sentences. Be concrete and grounded ONLY in what is given — never invent facts, never flatter.
-In Russian address the user as «ты», in Spanish as «tú».
-DO NOT SPECULATE: no «probably», «you likely feel», no guessing at moods or settings the answers do
-not describe. Say what their answers show and stop.
-No bullet points, no headings, no preamble: output ONLY the paragraph.
+PERSONA_PROMPT = """You are Kleal. Below are a user's answers to your personality test — BEHAVIOURAL
+questions: what they do when a plan collapses an hour before, what happens inside them when a
+conversation goes quiet, what the people who stayed keep them around for. Under them is a sentence they
+finished themselves.
 
-THIS PARAGRAPH IS ABOUT CHARACTER, NOT ABOUT HOBBIES. You are deliberately not given their interests,
-languages or city — those live elsewhere in the profile and are written about there. Do not guess at
-them, do not mention hiking, cooking, coffee or any other activity even if a test answer brushes past
-one: use such an answer only as evidence of how they behave with people. A paragraph that lists what
-someone likes doing has answered the wrong question.
+Write FOUR sentences addressed to the user ("you"), in this exact order. Output them as ONE paragraph,
+no numbering, no headings, no preamble.
 
-LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ In Russian address the user as «ты», never «вы»; in Spanish use «tú»."""
+1. THE SHAPE. This sentence must JOIN AT LEAST TWO different axes — the reading is what they came for,
+   and a single answer said back to them is not a reading. If two answers pull against each other, that
+   pull IS the sentence.
+2. WHO IT WORKS WITH. The kind of person this fits, said as a fact about fit.
+3. WHERE IT DOES NOT. What wears them out or what they will not put up with, drawn from their own
+   answers. Without this sentence the paragraph fits everybody and describes nobody.
+4. HOW TO MEET. The user message ends with FACTS FOR SENTENCE 4. Say them in your own words. They come
+   straight from the answers, so contradicting them contradicts the person you are describing.
+
+HERE IS THE REGISTER. The example below is a DIFFERENT PERSON who answered: crowd energises them, they
+open up slowly, they arrange things the same evening, they are the one who gets everyone out. Your user
+answered something else. Copy the TONE — the sentence rhythm, the plainness, the missing flattery — and
+never a single fact from it:
+
+«Тебя разгоняет компания, но настоящего в тебе никто не увидит, пока ты сам не решишь, что можно, — со
+стороны это читается как лёгкость, а не как закрытость. Тебе просто с теми, кто не требует близости
+сразу и не принимает шутку за уклонение. Тяжелее будет с тем, кто ждёт разговора по душам на второй
+встрече: ты в этот момент как раз зовёшь всех куда-то ехать. Начинать лучше там, где что-то происходит
+и можно собраться в тот же вечер, — договариваться за неделю не твой способ.»
+
+"A crowd winds you up, but nobody sees the real version until you decide they can — from outside that
+reads as easiness, not as a closed door. You are simple to be around for people who do not need
+closeness immediately and do not mistake a joke for dodging. It gets harder with someone who expects a
+heart-to-heart by the second meet: that is exactly when you are getting everyone out of the house. Start
+somewhere things are already happening and can be arranged the same evening — a week's notice is not
+your way."
+
+NEVER WRITE THESE. Each one has appeared in a bad version of this paragraph:
+  «ты человек, который…» / «ты из тех, кто…» / «в тебе есть…» / "you are someone who…"
+  «ценишь искренность» / «ценишь честность» / «тебе важно доверие» / "you value authenticity"
+  «это может стать основой…» / «что добавляет…» / «как оказалось…»
+  any word praising them: интересный, уникальный, глубокий, привлекательный, разносторонний.
+Start the paragraph with the observation itself. No "probably", no "вероятно", no guessing at moods,
+jobs or reasons — if it is not in the answers, it does not go in.
+
+THIS IS ABOUT CHARACTER, NOT HOBBIES. You are deliberately not given their interests, languages or city —
+those live elsewhere in the profile. Do not mention hiking, cooking, coffee or any other activity even if
+an answer brushes past one: use such an answer only as evidence of how they behave with people.
+
+SKIPPED QUESTIONS ARE SILENCE, NOT DATA. If an axis is missing, it is missing. Never fill the gap.
+
+LANGUAGE: write in __LANGNAME__. This is not optional: __LANGDIR__ In Russian address the user as «ты», never «вы»; in Spanish use «tú»."""
 
 
-def persona(profile, story, answers, current, lang="ru"):
+# The bans above are prose, and a 70B obeys structure far better than prohibition: the first version
+# of this paragraph opened with the exact phrase the prompt forbids in its own first ban. So the ban
+# is enforced here too — the text is rejected and the model is told which phrase it used.
+_PERSONA_BANNED = (
+    "ты человек, который", "ты человек который", "ты из тех, кто", "ты из тех кто", "в тебе есть",
+    "you are someone who", "you're someone who", "you are a person who",
+    "ценишь искренность", "ценишь честность", "ценишь открытость", "тебе важно доверие",
+    "you value authenticity", "you value honesty", "genuine connection",
+    "может стать основой", "что добавляет", "как оказалось",
+    "привлекательн", "уникальн", "разносторонн",
+)
+
+
+def _persona_flaw(text):
+    """The banned phrase this paragraph used, or "" if it is clean."""
+    low = str(text or "").lower()
+    for bad in _PERSONA_BANNED:
+        if bad in low:
+            return bad
+    return ""
+
+
+# The axis tokens, spelled out for the model. The Q/A text alone made it paraphrase the option the
+# person tapped; the token names let it treat an answer as a coordinate and notice when two of them
+# pull in opposite directions — which is the whole point of a behavioural test.
+_AXIS_GLOSS = {
+    "energy":    {"energised": "a day among people leaves them wanting more",
+                  "drained": "a day among people empties them",
+                  "depends": "one person at a time is fine, a crowd is not"},
+    "group":     {"one": "best one to one", "small": "best at a table of four or five",
+                  "crowd": "comes alive in a big group"},
+    "depth":     {"deep": "goes past small talk fast", "light": "keeps it light and funny",
+                  "practical": "talks about the doing of things"},
+    "firstMeet": {"talk": "a first meet works when they overstay it talking",
+                  "doing": "a first meet works when there is something to do",
+                  "event": "a first meet works when something is going on around them"},
+    "pace":      {"fast": "shows the real version immediately",
+                  "slow": "shows it only once they have decided you can be trusted",
+                  "mirror": "goes as open as the other person went first",
+                  "depends": "varies by person"},
+    "planning":  {"advance": "plans are made days ahead", "spontaneous": "plans are made the same hour",
+                  "flexible": "happy to end up with no plan at all"},
+    "friction":  {"reschedule": "when a plan falls through they immediately offer another day",
+                  "wait": "when a plan falls through they wait for the other person to move",
+                  "letgo": "when a plan falls through they let it go"},
+    "lull":      {"fill": "fills a silence", "allow": "lets a silence sit",
+                  "uneasy": "a silence makes them want to leave"},
+    "give":      {"listen": "the one who listens and remembers", "fun": "the one who makes it funny",
+                  "reliable": "the one who can be counted on",
+                  "instigate": "the one who gets everyone out of the house"},
+    "seek":      {"long": "wants two or three people of their own",
+                  "interest": "wants company for one specific thing",
+                  "wider": "wants more life around them"},
+}
+
+
+_MEET_FACTS = {
+    "group":     {"one": "meets work one to one, not in a group",
+                  "small": "meets work at a table of four or five",
+                  "crowd": "meets work in a big group"},
+    "firstMeet": {"talk": "a first meet needs room to sit and talk longer than planned",
+                  "doing": "a first meet needs something to do, not just a table",
+                  "event": "a first meet works best where something is already going on"},
+    "planning":  {"advance": "plans are agreed several days ahead, not on the day",
+                  "spontaneous": "plans are agreed the same day, not a week out",
+                  "flexible": "no pressure either way — an evening that does not happen is fine"},
+    "friction":  {"reschedule": "if it falls through they will offer another day themselves",
+                  "wait": "if it falls through, the other person has to be the one to re-offer",
+                  "letgo": "if it falls through it will not be picked back up unless the other person insists"},
+}
+
+
+def _meet_facts(persona):
+    """The fourth sentence, as FACTS rather than as an invitation to invent one.
+
+    The model kept ending the paragraph with a plausible-sounding meeting tip that contradicted the
+    person's own answer — it copied the closing clause out of the worked example. Facts it must not
+    contradict are cheaper than a rule telling it not to."""
+    axes = {}
+    if isinstance(persona, dict):
+        axes = persona.get("axes") if isinstance(persona.get("axes"), dict) else persona
+    out = [_MEET_FACTS[k][axes[k]] for k in ("group", "firstMeet", "planning", "friction")
+           if k in _MEET_FACTS and axes.get(k) in _MEET_FACTS.get(k, {})]
+    return "; ".join(out)
+
+
+def _axis_lines(persona):
+    """Readable one-liners for the axes the user actually answered. Unknown/absent axes are skipped —
+    a missing axis must reach the model as silence, not as a default."""
+    axes = {}
+    if isinstance(persona, dict):
+        axes = persona.get("axes") if isinstance(persona.get("axes"), dict) else persona
+    out = []
+    for k, tok in (axes or {}).items():
+        gloss = _AXIS_GLOSS.get(k, {}).get(tok)
+        if gloss:
+            out.append("- %s" % gloss)
+    return "\n".join(out)
+
+
+def persona(profile, story, answers, current, lang="ru", axes=None):
     """The personality test -> one paragraph, in the user's language, or "" if the model won't comply."""
     lang = str(lang or "ru").lower()
     if lang not in ("ru", "en", "es"):
@@ -1584,25 +1718,40 @@ def persona(profile, story, answers, current, lang="ru"):
     # Ни профиля, ни общей сводки на входе: этот абзац — про характер, и пока интересы лежали
     # рядом, модель исправно пересказывала их («твоя любовь к походам и готовке»), то есть отвечала
     # на вопрос соседнего экрана. Остаются ответы теста и то, что человек написал о себе сам.
+    gloss = _axis_lines(axes)
+    facts = _meet_facts(axes)
     payload = ("PERSONALITY TEST ANSWERS:\n" + (qa or "(not taken)") +
+               (("\n\nWHAT THOSE ANSWERS MEAN, AXIS BY AXIS:\n" + gloss) if gloss else "") +
                "\n\nWHAT THEY WROTE ABOUT THEMSELVES, IN THEIR OWN WORDS:\n"
-               + (str(story or "").strip()[:2500] or "(not written)"))
+               + (str(story or "").strip()[:2500] or "(not written)") +
+               (("\n\nFACTS FOR SENTENCE 4 — say these, do not contradict them:\n" + facts)
+                if facts else ""))
     sys_prompt = (PERSONA_PROMPT
                   .replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
                   .replace("__LANGDIR__", _LANGDIR.get(lang, _LANGDIR["ru"])))
     best = ""
-    for attempt in range(2):
+    extra = ""
+    for attempt in range(3):
         try:
-            out = str(llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt},
+            out = str(llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt + extra},
                                               {"role": "user", "content": payload}],
-                                   0.5 if attempt == 0 else 0.2) or "").strip()[:900]
+                                   0.35 if attempt == 0 else 0.2) or "").strip()[:900]
         except Exception:
             out = ""
         if not out:
             continue
         best = best or out
-        if _lang_ok(out, lang):
+        if not _lang_ok(out, lang):
+            continue
+        flaw = _persona_flaw(out)
+        if not flaw:
+            out = base.polish_reply(out)   # те же склейки букв и висящие союзы, что и в репликах
             return {"personality": out, "summary": out}
+        # Назвать провинившуюся фразу — единственное, что эта модель слышит: общий запрет она
+        # прочитывает и всё равно начинает абзац именно с него.
+        extra = ("\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: it contained the forbidden phrase «%s». "
+                 "Rewrite from scratch. Open with the observation itself." % flaw)
+        best = out if not _persona_flaw(best) else out
     # Same honesty rule as resummary: an empty result keeps the old text on screen and lets the client
     # offer a retry, which beats handing the user an English paragraph about themselves.
     _b = best if _lang_ok(best, lang) else ""
@@ -2454,8 +2603,12 @@ class H(BaseHTTPRequestHandler):
             if r == "/persona":                      # the Kleal personality test -> one prose summary
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
                 ans = body.get("answers") if isinstance(body.get("answers"), list) else []
+                # `axes` — токены теста. Пришли отдельно от вопросов намеренно: по тексту варианта
+                # модель пересказывала нажатую кнопку, по токенам она видит координаты и замечает,
+                # когда две оси тянут в разные стороны, — ради этого тест и переписан на поведение.
                 return send_json(self, 200, persona(prof, body.get("story") or "", ans,
-                                                    body.get("current") or "", body.get("lang") or "ru"))
+                                                    body.get("current") or "", body.get("lang") or "ru",
+                                                    body.get("axes") if isinstance(body.get("axes"), dict) else None))
 
             if r == "/resummary":                    # after a profile edit: rewrite the summary to fit (adapt, not append)
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}

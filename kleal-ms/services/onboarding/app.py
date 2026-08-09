@@ -2416,21 +2416,36 @@ PROSE_MAX = 900         # what buddy actually returns for a summary / personalit
 
 # The personality test's own record: a closed vocabulary per axis. An unrecognised token is DROPPED,
 # never defaulted — a default here would be the profile asserting something nobody answered.
+# friction / lull / give were added when the test was rewritten from preference questions to
+# behavioural ones: what someone DOES when a plan collapses, what they do with a silence, and what
+# they bring rather than what they want. `pace` gained "mirror" (opens up in answer to the other
+# person) and lost "depends" — the client no longer offers a non-answer on any axis, because a
+# non-answer used to arrive as null and was never stored at all.
 _PERSONA_AXES = {
     "energy":    ("energised", "drained", "depends"),
     "group":     ("one", "small", "crowd"),
     "depth":     ("deep", "light", "practical"),
     "firstMeet": ("talk", "doing", "event"),
-    "pace":      ("fast", "slow", "depends"),
+    "pace":      ("fast", "slow", "mirror", "depends"),
     "planning":  ("advance", "spontaneous", "flexible"),
+    "friction":  ("reschedule", "wait", "letgo"),
+    "lull":      ("fill", "allow", "uneasy"),
+    "give":      ("listen", "fun", "reliable", "instigate"),
     "seek":      ("long", "interest", "wider"),
 }
 
 
 def _clean_persona(p):
+    """Accept BOTH shapes: the wrapped {"v":1,"axes":{...}} and a bare {axis: token} dict.
+
+    The test screen sends the bare form, and this function only ever looked for `.axes` — so every
+    axis a user answered was dropped on the way in and the row got {"v":1,"axes":{}}. It was
+    invisible from the app (which keeps its own copy in device state) and visible only in the store,
+    where exactly that empty record sits next to an older wrapped one that came through fine."""
     if not isinstance(p, dict):
         return None
-    axes = p.get("axes") if isinstance(p.get("axes"), dict) else {}
+    axes = p.get("axes") if isinstance(p.get("axes"), dict) else \
+        {k: v for k, v in p.items() if k in _PERSONA_AXES}
     keep = {k: v for k, v in axes.items() if k in _PERSONA_AXES and v in _PERSONA_AXES[k]}
     out = {"v": 1, "axes": keep}
     if isinstance(p.get("takenAt"), (int, float)):
