@@ -24,7 +24,7 @@
  */
 import { T, getLang } from './i18n';
 
-export type IntentStepId = 'how' | 'size' | 'when' | 'who' | 'place' | 'link' | 'summary';
+export type IntentStepId = 'how' | 'size' | 'when' | 'who' | 'nature' | 'place' | 'link' | 'summary';
 
 // ---------------------------------------------------------------- общее
 
@@ -86,10 +86,41 @@ export const sizeSub = (k: string) => {
 
 // ---------------------------------------------------------------- O.07–O.09 · детали
 
+/**
+ * Черты, которые можно попросить в другом человеке. Это ТЕ ЖЕ оси, что заполняет тест личности
+ * (src/profile.ts, AXIS_VALUE), — иначе просить было бы нечего: у кандидата в профиле лежат
+ * именно они.
+ *
+ * Взяты не все десять: спрашивать «что он приносит» и «что делает, когда отменили» на этапе
+ * поиска рано — человек этого про незнакомца не выбирает. Осталось то, что решает, сойдётесь ли
+ * вы за первый вечер: темп, глубина, энергия, планирование и одна черта про то, что он даёт.
+ *
+ * Внутри оси выбор ОДИН: «спокойный» и «заводной» — это две стороны одной оси, и отметить обе
+ * значит не отметить ничего. Экран так и ведёт себя — второй выбор заменяет первый.
+ */
+export type NatureTrait = { axis: string; token: string; label: () => string };
+
+export const NATURE_TRAITS: NatureTrait[] = [
+  { axis: 'energy', token: 'energised', label: () => T('Заводной', 'High-energy') },
+  { axis: 'energy', token: 'drained', label: () => T('Спокойный', 'Low-key') },
+  { axis: 'depth', token: 'deep', label: () => T('Говорит по душам', 'Goes deep') },
+  { axis: 'depth', token: 'light', label: () => T('Лёгкий, с юмором', 'Light and funny') },
+  { axis: 'pace', token: 'fast', label: () => T('Открывается сразу', 'Opens up fast') },
+  { axis: 'pace', token: 'slow', label: () => T('Сначала присматривается', 'Takes their time') },
+  { axis: 'planning', token: 'advance', label: () => T('Договаривается заранее', 'Plans ahead') },
+  { axis: 'planning', token: 'spontaneous', label: () => T('Спонтанный', 'Spontaneous') },
+  { axis: 'give', token: 'listen', label: () => T('Умеет слушать', 'A good listener') },
+  { axis: 'give', token: 'instigate', label: () => T('Вытащит из дома', 'Gets you out') },
+];
+
+/** Сколько черт имеет смысл просить. Больше — сужение без выигрыша, и об этом сказано вслух. */
+export const NATURE_MAX = 3;
+
 export const DETAILS = {
   title: () => T('Пара деталей — и я ищу', "A few details, and I'll search"),
   subWhen: () => T('Когда и где удобно?', 'When and where works best?'),
   subWho: () => T('Кого ты ищешь?', 'Who are you looking for?'),
+  subNature: () => T('Какой человек тебе подойдёт?', 'What kind of person suits you?'),
   subLink: () => T('Где пройдёт звонок?', 'Where does the call happen?'),
   subPlace: () => T('Где удобно встретиться?', 'Where works best to meet?'),
 
@@ -99,6 +130,14 @@ export const DETAILS = {
 
   audience: () => T('Аудитория', 'Audience'),
   age: () => T('Возраст', 'Age'),
+
+  nature: () => T('Характер', 'Character'),
+  natureHint: () =>
+    T('Необязательно. Отметь то, что важно, — Kleal поднимет таких людей выше, но не спрячет остальных.',
+      'Optional. Mark what matters — Kleal lifts those people higher, it does not hide the rest.'),
+  natureLimit: () => T('Больше трёх не нужно — сузит выдачу без пользы.',
+                       'Three is enough — more narrows the results without helping.'),
+  natureSkip: () => T('Мне не принципиально', 'No preference'),
 
   link: () => T('Ссылка', 'Link'),
   linkPlaceholder: () => 'https://yourlink.com',
@@ -287,6 +326,8 @@ export function tzOffsetLabel(tz: string): string {
 export function intentSummaryText(o: {
   topic: string; size?: string; sex?: string; minAge: number; maxAge: number;
   dateKey: string; minutes: number;
+  /** Отмеченные черты одной строкой. Пусто — про характер в сводке не говорим вовсе. */
+  nature?: string;
 }): string {
   const who =
     o.size === 'group'
@@ -296,7 +337,14 @@ export function intentSummaryText(o: {
     ? (o.sex === 'Female' ? T('женщину', 'a woman') : T('мужчину', 'a man')) + ', '
     : '';
   const when = `${summaryDate(o.dateKey)} ${T('около', 'around')} ${hhmm(o.minutes)}`;
-  return o.topic
+  // Характер — предпочтение, и сводка называет его именно так. Сказать «Kleal ищет спокойного»
+  // значило бы пообещать фильтр, которого нет: ранжирование поднимает таких выше, но не прячет
+  // остальных (см. wantPersona в app/intent.tsx).
+  const nat = String(o.nature || '').trim()
+    ? ' ' + T(`Из похожих подниму тех, кто ближе к «${o.nature!.toLowerCase()}».`,
+              `Among the matches I'll lift those closer to "${o.nature!.toLowerCase()}".`)
+    : '';
+  return (o.topic
     ? T(
         `Ты хочешь: ${o.topic}. Kleal ищет ${who} — ${aud}${o.minAge}–${o.maxAge}, со свободным временем ${when}.`,
         `You're after: ${o.topic}. Kleal is looking for ${who} — ${aud}${o.minAge}–${o.maxAge}, free ${when}.`
@@ -304,7 +352,7 @@ export function intentSummaryText(o: {
     : T(
         `Kleal ищет ${who} — ${aud}${o.minAge}–${o.maxAge}, со свободным временем ${when}.`,
         `Kleal is looking for ${who} — ${aud}${o.minAge}–${o.maxAge}, free ${when}.`
-      );
+      )) + nat;
 }
 
 // ---------------------------------------------------------------- районы (офлайн, прежний кадр OF.09)

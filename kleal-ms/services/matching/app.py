@@ -1483,7 +1483,7 @@ def match_candidates(intent, prof, ctx=None, diag=None):
     legitimately differ and people can be lost between the gates and the ranker. A funnel that
     hides its narrowest stage is decoration."""
     if not CORE_V2:
-        return match_candidates_legacy(intent, prof, ctx)
+        return _persona_order(match_candidates_legacy(intent, prof, ctx), intent)
     ctx = ctx or {}
     intent = ki.normalize_for_scoring(intent)              # §5: untrusted-output hardening (idempotent; PARITY)
     now = ctx.get('now') or time.time()
@@ -1528,10 +1528,20 @@ def match_candidates(intent, prof, ctx=None, diag=None):
         # What the ranker was actually handed. The old funnel asserted scored._in == eligible; that
         # identity only held before staged retrieval existed.
         diag['scored'] = {'_in': len(retrieved), 'budget_dropped': max(0, len(eligible) - len(retrieved))}
+    # Порядок по характеру должен применяться ДО отсечки, иначе он не значит ничего: восьмёрку
+    # движок уже отобрал, а человек, прошедший тест, может стоять девятым — переставлять внутри
+    # выдачи, в которую он не попал, бессмысленно. Поэтому у движка просим втрое больше карточек и
+    # режем до восьми уже ПОСЛЕ переупорядочивания. Ранжирование при этом остаётся его: полосы
+    # (band) сохраняются, меняется только порядок внутри полосы.
+    n_final = _slate_budget(intent)
+    over = None if n_final is not None else _PERSONA_OVERFETCH   # группам лишние места не нужны
     slate, _meta = _core.search(intent, prof or {}, ctx, retrieved, _H, _CORE_CFG,
-                                top_n=_slate_budget(intent))
+                                top_n=(over if over is not None else n_final))
     if not slate and eligible:                             # never dead-end while anyone is eligible (§12) —
         slate = _expand_fallback(intent, prof or {}, ctx, eligible)   # over the FULL pool, never budget-starved
+    slate = _persona_order(slate, intent)
+    if over is not None:
+        slate = slate[:_core.TOP_N]                        # ровно та же восьмёрка, что и раньше
     slate = _apply_policy(slate, policy_by)
     slate = _allocate(slate, ctx, retrieved)              # §11 allocation (DORMANT at pilot defaults; before contracts)
     slate = _stamp_contracts(slate, intent, ctx)          # §4.6/§8.3/§4.12 additive contract overlays
@@ -1543,6 +1553,91 @@ def match_candidates(intent, prof, ctx=None, diag=None):
         diag['slate'] = len(slate)
         diag['meta'] = dict(_meta or {})                   # engine, config_version, domain, config_sha
     return slate
+
+# ---------------- personality: what the Kleal test collected, used where it can be used ----------------
+# The test writes a closed set of axis tokens onto the person's row (onboarding _PERSONA_AXES). Nothing
+# read them. This orders the slate by them — and ONLY orders it: character never gates anybody out.
+# It cannot: the test is new, almost nobody has taken it, and a gate would answer most searches with an
+# empty screen. A wish that quietly empties the results is worse than no wish at all.
+#
+# The engine's own relevance ordering is preserved exactly. Cards are regrouped only INSIDE the band the
+# engine already put them in, so a weak match can never climb over a strong one because it filled in
+# more of its profile.
+# Сколько карточек просить у движка сверх восьми, чтобы переупорядочивание вообще имело материал.
+# Втрое: дальше третьей страницы результата уже другая полоса релевантности, и поднимать оттуда
+# человека за то, что он прошёл тест, — обман про совпадение.
+_PERSONA_OVERFETCH = 24
+
+_NATURE_SAY = {
+    ("energy", "energised"):   ("заводной", "high-energy"),
+    ("energy", "drained"):     ("спокойный", "low-key"),
+    ("depth", "deep"):         ("говорит по душам", "goes deep"),
+    ("depth", "light"):        ("лёгкий, с юмором", "light and funny"),
+    ("pace", "fast"):          ("открывается сразу", "opens up fast"),
+    ("pace", "slow"):          ("сначала присматривается", "takes their time"),
+    ("planning", "advance"):   ("договаривается заранее", "plans ahead"),
+    ("planning", "spontaneous"): ("спонтанный", "spontaneous"),
+    ("give", "listen"):        ("умеет слушать", "a good listener"),
+    ("give", "instigate"):     ("вытащит из дома", "gets you out"),
+}
+
+
+def _axes_of(p):
+    """Axes out of whatever shape the store holds: bare {axis: token} or {"v":1,"axes":{…}}."""
+    if not isinstance(p, dict):
+        return {}
+    a = p.get("axes") if isinstance(p.get("axes"), dict) else p
+    return {str(k): str(v) for k, v in a.items() if isinstance(v, str)} if isinstance(a, dict) else {}
+
+
+def _persona_by_name():
+    """name (normalised) -> test axes. Same reason _photo_by_name exists: the four card-assembly
+    paths do not carry the field, and the card came back with persona=null even for people whose
+    row has it. Read at the end from the store, like the photo."""
+    out = {}
+    for u in load_candidates():
+        ax = _axes_of(u.get("persona"))
+        if ax:
+            out[str(u.get("name", "")).strip().lower()] = ax
+    return out
+
+
+def _persona_order(slate, intent):
+    """§ product: «сначала те, кто подходят и заполнили интерес и характер».
+
+    Three keys, in this order:
+      1. the band the ENGINE gave the card — relevance stays the engine's business;
+      2. how many of the asked-for traits the person actually has;
+      3. whether their profile can be read at all — interests AND a taken test.
+    Ties fall back to the engine's own position, so the sort is stable end to end."""
+    slate = list(slate or [])
+    want = {str(k): str(v) for k, v in ((intent or {}).get("wantPersona") or {}).items()
+            if isinstance(v, str) and v}
+    by_name = _persona_by_name()
+    bands, keyed = {}, []
+    for i, c in enumerate(slate):
+        band = str(c.get("band") or c.get("tier") or "")
+        if band not in bands:
+            bands[band] = len(bands)          # порядок появления = порядок движка, не наш алфавит
+        axes = _axes_of(c.get("persona")) or by_name.get(str(c.get("name", "")).strip().lower(), {})
+        if axes and not c.get("persona"):
+            c["persona"] = {"v": 1, "axes": axes}      # карточка теперь знает то, что знает строка
+        hits = [k for k, v in want.items() if axes.get(k) == v]
+        filled = bool(axes) and bool(c.get("interests"))
+        c["persona_hits"] = len(hits)
+        c["persona_filled"] = filled
+        # Названо вслух на карточке: «спокойный — как ты просил». Совпадение, о котором человек не
+        # прочитал, для него не существует, а место в списке он объяснит себе как угодно.
+        for k in hits:
+            say = _NATURE_SAY.get((k, want[k]))
+            if not say:
+                continue
+            c.setdefault("reasons_ru", []).append("%s — как ты просил(а)" % say[0])
+            c.setdefault("reasons_en", []).append("%s — as you asked" % say[1])
+        keyed.append((bands[band], -len(hits), 0 if filled else 1, i, c))
+    keyed.sort(key=lambda t: t[:4])
+    return [t[4] for t in keyed]
+
 
 def _apply_policy(slate, policy_by):
     """Stamp each card with its policy_decision + a typed allocation_action (§0 output table). A REVIEW

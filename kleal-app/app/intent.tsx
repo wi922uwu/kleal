@@ -31,6 +31,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
+  NATURE_TRAITS, NATURE_MAX,
   STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzDisplay, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
@@ -41,7 +42,7 @@ import { TimeDial, RangeDial } from '../src/components/Dials';
 import { RadiusMap } from '../src/components/RadiusMap';
 import {
   IconChevronLeft, IconMic, IconPin, IconVideo, IconPlusRound, IconPerson, IconGroups,
-  IconCalendar, IconClock, IconGlobe, IconLink, IconPlay, IconImagePlaceholder, IconPencil,
+  IconCalendar, IconClock, IconGlobe, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar,
 } from '../src/components/icons';
 import { EditSheet } from '../src/components/ProfileShell';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
@@ -61,6 +62,8 @@ type Draft = {
   sex?: string;
   minAge: number;
   maxAge: number;
+  /** Черты, которые попросили в другом человеке: ось → токен. Пусто — «не принципиально». */
+  nature: Record<string, string>;
   district?: string;
   radiusKm: number;
   link: string;
@@ -107,6 +110,7 @@ export default function Intent() {
     tz: deviceTz(),
     minAge: 18,
     maxAge: 28,               // диапазон с кадра O.08
+    nature: {},
     radiusKm: 15,
     link: '',
   }));
@@ -234,6 +238,9 @@ export default function Intent() {
     if (draft.sex && draft.sex !== 'Any') intent.sex = draft.sex;
     if (draft.minAge) intent.minAge = draft.minAge;
     if (draft.maxAge) intent.maxAge = draft.maxAge;
+    // Характер — ПОЖЕЛАНИЕ, не гейт: ранжирование поднимает совпавших выше, но никого не
+    // отсекает. Отсекать по нему нельзя — тест прошли единицы, и фильтр оставил бы пустую выдачу.
+    if (Object.keys(draft.nature).length) intent.wantPersona = draft.nature;
     if (draft.mode === 'offline') {
       // Район на OF.09 задаёт карта вокруг координат профиля, а не список чипов, — в запрос
       // едет город профиля: именно его §5.3 читает как location_block.city.
@@ -278,9 +285,13 @@ export default function Intent() {
       .catch(() => {});
   };
 
-  /** Третий шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
-  const thirdStep: IntentStepId = draft.mode === 'offline' ? 'place' : 'link';
-  const detailIndex = step === 'when' ? 0 : step === 'who' ? 1 : 2;
+  /** Отмеченные черты одной строкой — для сводки O.10 и листа правки. */
+  const natureSummary = NATURE_TRAITS.filter((t) => draft.nature[t.axis] === t.token)
+    .map((t) => t.label()).join(', ');
+
+  /** Последний шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
+  const lastStep: IntentStepId = draft.mode === 'offline' ? 'place' : 'link';
+  const detailIndex = step === 'when' ? 0 : step === 'who' ? 1 : step === 'nature' ? 2 : 3;
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -342,6 +353,7 @@ export default function Intent() {
                     sub={
                       step === 'when' ? DETAILS.subWhen()
                       : step === 'who' ? DETAILS.subWho()
+                      : step === 'nature' ? DETAILS.subNature()
                       : step === 'link' ? DETAILS.subLink()
                       : DETAILS.subPlace()
                     }
@@ -435,7 +447,58 @@ export default function Intent() {
                     />
                   </View>
 
-                  <Cta label={INTENT.next()} onPress={() => setStep(thirdStep)} />
+                  <Cta label={INTENT.next()} onPress={() => setStep('nature')} />
+                </View>
+              ) : null}
+
+              {/*
+                Четвёртый шаг: характер. Оси те же, что заполняет тест личности, — просить можно
+                только то, что у кандидата в профиле есть. Ничего не отметив, человек не сужает
+                поиск: подсказка говорит это прямо, потому что молчащий фильтр люди трактуют как
+                «значит, ищет всех подряд».
+              */}
+              {step === 'nature' ? (
+                <View style={s.card}>
+                  <LabelRow Icon={IconPerson} text={DETAILS.nature()} />
+                  <Text style={s.natureHint}>{DETAILS.natureHint()}</Text>
+                  <View style={s.chipRowWrap}>
+                    {NATURE_TRAITS.map((t) => {
+                      const on = draft.nature[t.axis] === t.token;
+                      const full = Object.keys(draft.nature).length >= NATURE_MAX;
+                      // Забита ли ось — видно по тому, что в ней уже стоит другой токен: тогда
+                      // нажатие ЗАМЕНЯЕТ, а не добавляет, и потолок не мешает.
+                      const busyAxis = !!draft.nature[t.axis];
+                      const blocked = !on && !busyAxis && full;
+                      return (
+                        <Chip
+                          key={t.axis + t.token}
+                          label={t.label()}
+                          on={on}
+                          dim={blocked}
+                          onPress={() =>
+                            setDraft((x) => {
+                              const next = { ...x.nature };
+                              if (on) delete next[t.axis];
+                              else if (blocked) return x;
+                              else next[t.axis] = t.token;
+                              return { ...x, nature: next };
+                            })
+                          }
+                        />
+                      );
+                    })}
+                  </View>
+                  {Object.keys(draft.nature).length >= NATURE_MAX ? (
+                    <Text style={s.natureHint}>{DETAILS.natureLimit()}</Text>
+                  ) : null}
+
+                  <Cta label={INTENT.next()} onPress={() => setStep(lastStep)} />
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => { setDraft((x) => ({ ...x, nature: {} })); setStep(lastStep); }}
+                  >
+                    <Text style={s.natureSkip}>{DETAILS.natureSkip()}</Text>
+                  </Pressable>
                 </View>
               ) : null}
 
@@ -528,6 +591,7 @@ export default function Intent() {
                 <SummaryCard
                   topic={title}
                   where={where}
+                  nature={natureSummary}
                   draft={draft}
                   category={category}
                   busy={busy}
@@ -606,6 +670,7 @@ export default function Intent() {
             ['when', IconClock, EDIT_SHEET.datetime(), `${summaryDate(draft.date)}, ${hhmm(draft.minutes)}`],
             ['who', IconPerson, EDIT_SHEET.audience(),
               `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`],
+            ['nature', IconStar, DETAILS.nature(), natureSummary || EDIT_SHEET.noData()],
             draft.mode === 'offline'
               ? ['place', IconPin, DETAILS.district(),
                   draft.address?.trim() || where || EDIT_SHEET.noData()]
@@ -688,7 +753,7 @@ function Ack() {
 function Stepper({ current }: { current: number }) {
   return (
     <View style={s.stepper}>
-      {[0, 1, 2].map((i) => (
+      {[0, 1, 2, 3].map((i) => (
         <React.Fragment key={i}>
           {i > 0 ? <View style={[s.stepLine, i <= current && s.stepLineOn]} /> : null}
           <View style={[s.stepDot, i <= current && s.stepDotOn, i === current && s.stepDotNow]}>
@@ -709,13 +774,15 @@ function LabelRow({ Icon, text }: { Icon: (p: any) => React.ReactElement; text: 
   );
 }
 
-function Chip({ label, on, onPress }: { label: string; on?: boolean; onPress?: () => void }) {
+function Chip({
+  label, on, dim, onPress,
+}: { label: string; on?: boolean; dim?: boolean; onPress?: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ selected: !!on }}
+      accessibilityState={{ selected: !!on, disabled: !!dim }}
       onPress={onPress}
-      style={({ pressed }) => [s.chip, on && s.chipOn, pressed && { opacity: 0.85 }]}
+      style={({ pressed }) => [s.chip, on && s.chipOn, dim && { opacity: 0.4 }, pressed && { opacity: 0.85 }]}
     >
       <Text style={[s.chipText, on && { color: color.onPrimary }]}>{label}</Text>
     </Pressable>
@@ -762,10 +829,12 @@ function Cta({ label, onPress, disabled, busy }: {
  * рисовать фотографию, которой нет, не из чего.
  */
 function SummaryCard({
-  topic, draft, category, where, busy, onStart, onEdit,
+  topic, draft, category, where, nature, busy, onStart, onEdit,
 }: {
   topic: string;
   draft: Draft;
+  /** Отмеченные черты одной строкой. Собраны на экране — здесь только показываются. */
+  nature: string;
   category: string;
   /** Подпись места в сводке: город профиля — район на OF.09 задаёт карта, а не список. */
   where: string;
@@ -777,6 +846,7 @@ function SummaryCard({
     [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—'],
     [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—'],
     ...(category ? ([[SUMMARY_O10.category(), category]] as [string, string][]) : []),
+    ...(nature ? ([[DETAILS.nature(), nature]] as [string, string][]) : []),
     [SUMMARY_O10.audience(),
       `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`],
   ];
@@ -823,6 +893,7 @@ function SummaryCard({
             topic, size: draft.size, sex: draft.sex,
             minAge: draft.minAge, maxAge: draft.maxAge,
             dateKey: draft.date, minutes: draft.minutes,
+            nature: nature,
           })}
         </Text>
       </View>
@@ -912,6 +983,8 @@ const s = StyleSheet.create({
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   label: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
   chipRow: { gap: space.sm, paddingVertical: 2 },
+  natureHint: { ...type.bodySmall, color: color.muted } as any,
+  natureSkip: { ...type.labelMedium, color: color.muted, textAlign: 'center', paddingVertical: space.sm } as any,
   chipRowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chip: {
     height: 38, paddingHorizontal: 14, borderRadius: rad.full, borderWidth: 1,
