@@ -24,6 +24,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Modal,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -34,7 +35,7 @@ import { useInvites, inviteTo, openInvites, sendInvite, withdrawInvite } from '.
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, patchResults, setCandidate } from '../src/results-store';
 import { agent } from '../src/api';
-import { IconPerson, IconPin, IconClock } from '../src/components/icons';
+import { IconPerson, IconPin, IconCalendar } from '../src/components/icons';
 import { AgeRange } from '../src/components/AgeRange';
 import Slider from '@react-native-community/slider';
 import { SEXES, sexLabel } from '../src/onboarding';
@@ -43,10 +44,35 @@ import { color, radius as rad, space, type } from '../src/theme';
 
 const ru = () => getLang() === 'ru';
 
+/** Черновик условий листа O.11a. Живёт отдельно от интента: «Отмена» не должна ничего менять. */
+type Prefs = { sex: string; anyAge: boolean; minAge: number; maxAge: number; radiusKm: number };
+
+/**
+ * Условия из интента — как они есть СЕЙЧАС.
+ *
+ * `anyAge` считается по факту наличия рамки, а не по её значению. Мастер интента кладёт 18–28
+ * всегда (кадр O.08 нарисован с этими числами), а сервер трактует любое minAge как жёсткий гейт:
+ * «до 28» — и никого старше, включая тех, у кого возраст просто не указан. Проверено на стенде —
+ * тот же запрос с рамкой отдаёт 7 человек, без рамки 8, и первым идёт тот, кого рамка отсекала.
+ * Поэтому у возраста есть «Любой», и он снимает поля из интента, а не расставляет их пошире.
+ */
+function prefsFromIntent(it: any): Prefs {
+  const mn = Number(it?.minAge) || 0;
+  const mx = Number(it?.maxAge) || 0;
+  return {
+    sex: String(it?.gender || it?.sex || 'Any'),
+    anyAge: !(mn || mx),
+    minAge: mn || 18,
+    maxAge: mx || 45,
+    radiusKm: Number(it?.radiusKm) || 15,
+  };
+}
+
 export default function Results() {
   useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const win = useWindowDimensions();
   // Читаем один раз: последующие render'ы не должны затирать уже расширенную выдачу исходной.
   const initial = useMemo(() => takeResults(), []);
 
@@ -75,13 +101,17 @@ export default function Results() {
     // с пометкой fallback: он почти никогда не возвращает пусто. Лист предлагается в обоих случаях.
     return cs.length === 0 || cs.every((c: any) => !!c.fallback);
   });
-  const [prefs, setPrefs] = useState(() => ({
-    sex: String(initial?.intent?.sex || 'Any'),
-    minAge: Number(initial?.intent?.minAge || 18),
-    maxAge: Number(initial?.intent?.maxAge || 28),
-    flexH: 2,
-  }));
+  const [prefs, setPrefs] = useState<Prefs>(() => prefsFromIntent(initial?.intent));
   const [reSearching, setReSearching] = useState(false);
+
+  /**
+   * Открыть лист — всегда с ЖИВОГО интента.
+   *
+   * Черновик читался один раз при монтировании экрана. Значит «Отмена» и повторное открытие
+   * возвращали брошенные значения, а ступени лестницы §12 (удвоенный радиус) лист вовсе не видел
+   * и молча откатывал бы их обратно первым же «Начать поиск».
+   */
+  const openPrefs = () => { setPrefs(prefsFromIntent(intent)); setPrefsOpen(true); };
 
   const profile = initial?.profile || {};
   const self = String(profile?.name || '');
@@ -174,21 +204,32 @@ export default function Results() {
     setReSearching(true);
     setNote('');
     try {
-      const next: any = { ...intent, minAge: prefs.minAge, maxAge: prefs.maxAge };
-      if (prefs.sex && prefs.sex !== 'Any') next.sex = prefs.sex;
-      else delete next.sex;
-      // Гибкость по времени сервер сегодня НЕ читает — поле едет в интент честно помеченным
-      // ожиданием: когда матчинг научится, клиент уже отправляет. Врать «± 2 часа применены»
-      // мы не можем, поэтому в подписи ступени это и не утверждается.
-      next.timeFlexHours = prefs.flexH;
+      const next: any = { ...intent };
+      // «Любой» — это отсутствие ключей, а не 18–80: сервер и на 18 отсекает всех, у кого возраст
+      // не заполнен («age unknown»), так что раздвинуть рамку до упора и снять её — разные вещи.
+      if (prefs.anyAge) { delete next.minAge; delete next.maxAge; }
+      else { next.minAge = prefs.minAge; next.maxAge = prefs.maxAge; }
+      // Оба ключа: гейт читает `gender || sex`, и убрать один — значит не убрать ничего.
+      if (prefs.sex && prefs.sex !== 'Any') { next.sex = prefs.sex; next.gender = prefs.sex; }
+      else { delete next.sex; delete next.gender; }
+      if (intent?.mode !== 'online') next.radiusKm = prefs.radiusKm;
       const r: any = await agent.match(next, profile, {
         self, uid: self, city: profile?.city,
       });
       setIntent(r?.intent || next);
       patchResults({ intent: r?.intent || next });
-      setCands((r?.candidates || []) as Cand[]);
+      const found: Cand[] = (r?.candidates || []) as Cand[];
+      setCands(found);
       setRung(0);                      // условия сменились — лестница §12 начинается заново
       setPrefsOpen(false);
+      // Лист закрывается, список меняется — и раньше нигде не говорилось, ОТ ЧЕГО он изменился.
+      // Ступени лестницы называют себя вслух; этот путь должен вести себя так же.
+      const conds = [
+        prefs.sex && prefs.sex !== 'Any' ? sexLabel(prefs.sex).toLowerCase() : PREFS.anySex(),
+        prefs.anyAge ? PREFS.ageAny() : PREFS.ageBand(prefs.minAge, prefs.maxAge),
+        ...(intent?.mode !== 'online' ? [PREFS.distVal(prefs.radiusKm)] : []),
+      ].join(', ');
+      setNote(`${PREFS.applied(conds)} ${found.length ? RESULTS.found(found.length) : RESULTS.empty()}`);
     } catch {
       setNote(T('Не получилось поискать. Попробуй ещё раз.', 'The search failed. Try again.'));
     } finally {
@@ -288,7 +329,7 @@ export default function Results() {
               {T('Никто не занимается ровно этим. Вот кто рядом и с кем это может получиться.',
                  'Nobody is doing exactly that. Here are people nearby it could work with.')}
             </Text>
-            <Pressable accessibilityRole="button" style={s.prefsBtn} onPress={() => setPrefsOpen(true)}>
+            <Pressable accessibilityRole="button" style={s.prefsBtn} onPress={openPrefs}>
               <Text style={s.prefsBtnText}>{PREFS.title()}</Text>
             </Pressable>
           </View>
@@ -301,7 +342,7 @@ export default function Results() {
             <View style={s.noMatchArt}><IconPerson size={34} /></View>
             <Text style={s.noMatchTitle}>{PREFS.noMatches()}</Text>
             <Text style={s.lead}>{RESULTS.emptyNote()}</Text>
-            <Pressable accessibilityRole="button" style={s.cta} onPress={() => setPrefsOpen(true)}>
+            <Pressable accessibilityRole="button" style={s.cta} onPress={openPrefs}>
               <Text style={s.ctaText}>{PREFS.title()}</Text>
             </Pressable>
           </View>
@@ -346,10 +387,13 @@ export default function Results() {
         open={prefsOpen}
         prefs={prefs}
         setPrefs={setPrefs}
+        offline={intent?.mode !== 'online'}
         busy={reSearching}
         onStart={reSearch}
         onClose={() => setPrefsOpen(false)}
         bottomInset={insets.bottom}
+        // Тело листа не выше половины экрана: остальное — шапка, две кнопки и вырез снизу.
+        maxBody={Math.round(win.height * 0.46)}
       />
 
       {/* Окно бесплатного тарифа — кадр O.17. Текст с кадра; ограничение клиентское, см. openChat. */}
@@ -541,84 +585,129 @@ function CandCard({
 }
 
 /**
- * Лист O.11a «Изменить условия поиска»: пол, возраст линейным диапазоном (на этом кадре — слайдер,
- * не кольцо) и гибкость по времени. «Начать поиск» перезапускает матчинг с ослабленными условиями.
+ * Лист O.11a «Изменить условия поиска»: пол, возраст диапазоном и — у офлайн-интента — расстояние.
+ * «Начать поиск» перезапускает матчинг с условиями, которые человек ослабил сам.
+ *
+ * Три вещи, которых тут раньше не хватало и без которых лист не делал того, ради чего открывается:
+ *
+ *  — «Любой» у возраста. Единственный способ СНЯТЬ рамку, а не подвинуть (см. prefsFromIntent).
+ *  — Расстояние. Экран за листом обещает расширение «по расстоянию», а в самом листе этой ручки
+ *    не было — только в лестнице, которая удваивает радиус вслепую.
+ *  — Прокрутка. Лист прибит к низу и растёт вверх; на невысоком экране заголовок и «✕» уезжали
+ *    за верхнюю кромку, и закрыть его можно было только по затемнению.
+ *
+ * Ползунка «гибко по времени» больше нет: матчинг `timeFlexHours` не читает — ни в гейтах, ни в
+ * ранжировании, ни в лестнице §12. Ручка, которая ничего не меняет, хуже отсутствующей.
  */
 function PrefsSheet({
-  open, prefs, setPrefs, busy, onStart, onClose, bottomInset,
+  open, prefs, setPrefs, offline, busy, onStart, onClose, bottomInset, maxBody,
 }: {
   open: boolean;
-  prefs: { sex: string; minAge: number; maxAge: number; flexH: number };
-  setPrefs: React.Dispatch<React.SetStateAction<{ sex: string; minAge: number; maxAge: number; flexH: number }>>;
+  prefs: Prefs;
+  setPrefs: React.Dispatch<React.SetStateAction<Prefs>>;
+  /** Офлайн-интент — только у него расстояние что-то значит. */
+  offline: boolean;
   busy: boolean;
   onStart: () => void;
   onClose: () => void;
   bottomInset: number;
+  maxBody: number;
 }) {
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={s.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
       <View style={[s.sheet, { paddingBottom: Math.max(bottomInset, 18) }]}>
+        <View style={s.grabber} />
         <View style={s.sheetHead}>
           <Text style={s.sheetTitle}>{PREFS.title()}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={onClose} hitSlop={10}>
             <Text style={s.sheetX}>✕</Text>
           </Pressable>
         </View>
+        <Text style={s.sheetBody}>{PREFS.lead()}</Text>
 
-        <View style={s.prefLabelRow}>
-          <IconPerson size={16} c={color.fg} />
-          <Text style={s.prefLabel}>{PREFS.sex()}</Text>
-        </View>
-        <View style={s.prefChips}>
-          {SEXES.map(([k]) => (
+        <ScrollView
+          style={{ maxHeight: maxBody }}
+          contentContainerStyle={s.prefsBody}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={s.prefLabelRow}>
+            <IconPerson size={16} c={color.fg} />
+            <Text style={s.prefLabel}>{PREFS.sex()}</Text>
+          </View>
+          <View style={s.prefChips}>
+            {SEXES.map(([k]) => (
+              <Pressable
+                key={k}
+                accessibilityRole="button"
+                accessibilityState={{ selected: prefs.sex === k }}
+                onPress={() => setPrefs((p) => ({ ...p, sex: k }))}
+                style={[s.prefChip, prefs.sex === k && s.prefChipOn]}
+              >
+                <Text style={[s.prefChipText, prefs.sex === k && { color: color.onPrimary }]}>{sexLabel(k)}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={s.prefHeadRow}>
+            <View style={s.prefLabelRow}>
+              <IconCalendar size={16} c={color.fg} />
+              <Text style={s.prefLabel}>{PREFS.age()}</Text>
+            </View>
             <Pressable
-              key={k}
               accessibilityRole="button"
-              accessibilityState={{ selected: prefs.sex === k }}
-              onPress={() => setPrefs((p) => ({ ...p, sex: k }))}
-              style={[s.prefChip, prefs.sex === k && s.prefChipOn]}
+              accessibilityState={{ selected: prefs.anyAge }}
+              onPress={() => setPrefs((p) => ({ ...p, anyAge: !p.anyAge }))}
+              style={[s.miniChip, prefs.anyAge && s.prefChipOn]}
+              hitSlop={6}
             >
-              <Text style={[s.prefChipText, prefs.sex === k && { color: color.onPrimary }]}>{sexLabel(k)}</Text>
+              <Text style={[s.miniChipText, prefs.anyAge && { color: color.onPrimary }]}>{PREFS.anyAge()}</Text>
             </Pressable>
-          ))}
-        </View>
+          </View>
+          {prefs.anyAge ? null : (
+            <AgeRange
+              min={prefs.minAge}
+              max={prefs.maxAge}
+              onChange={(lo, hi) => setPrefs((p) => ({ ...p, minAge: lo, maxAge: hi }))}
+            />
+          )}
 
-        <View style={s.prefLabelRow}>
-          <IconClock size={16} c={color.fg} />
-          <Text style={s.prefLabel}>{PREFS.age()}</Text>
-        </View>
-        <AgeRange
-          min={prefs.minAge}
-          max={prefs.maxAge}
-          onChange={(lo, hi) => setPrefs((p) => ({ ...p, minAge: lo, maxAge: hi }))}
-        />
-
-        <View style={s.prefFlexRow}>
-          <Text style={s.prefLabel}>{PREFS.flex()}</Text>
-          <Text style={s.prefFlexVal}>{PREFS.flexVal(prefs.flexH)}</Text>
-        </View>
-        <Slider
-          minimumValue={0}
-          maximumValue={6}
-          step={1}
-          value={prefs.flexH}
-          onValueChange={(h) => setPrefs((p) => ({ ...p, flexH: Math.round(h) }))}
-          minimumTrackTintColor={color.primary}
-          maximumTrackTintColor={color.neutral100}
-          thumbTintColor={color.primary}
-        />
+          {offline ? (
+            <>
+              <View style={s.prefHeadRow}>
+                <View style={s.prefLabelRow}>
+                  <IconPin size={16} c={color.fg} />
+                  <Text style={s.prefLabel}>{PREFS.dist()}</Text>
+                </View>
+                <Text style={s.prefVal}>{PREFS.distVal(prefs.radiusKm)}</Text>
+              </View>
+              <Slider
+                minimumValue={1}
+                maximumValue={100}
+                step={1}
+                value={prefs.radiusKm}
+                onValueChange={(v) => setPrefs((p) => ({ ...p, radiusKm: Math.round(v) }))}
+                minimumTrackTintColor={color.primary}
+                maximumTrackTintColor={color.neutral100}
+                thumbTintColor={color.primary}
+                accessibilityLabel={PREFS.dist()}
+              />
+            </>
+          ) : null}
+        </ScrollView>
 
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ busy }}
-          style={s.sheetSend}
+          style={[s.sheetSend, busy && { opacity: 0.7 }]}
           onPress={busy ? undefined : onStart}
         >
           {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.sheetSendText}>{PREFS.start()}</Text>}
         </Pressable>
-        <Pressable accessibilityRole="button" style={s.sheetNot} onPress={onClose}>
-          <Text style={s.sheetNotText}>{PREFS.cancel()}</Text>
+        {/* «Отмена» тише «Начать поиск»: чёрной заливкой она перевешивала главное действие. */}
+        <Pressable accessibilityRole="button" style={s.sheetGhost} onPress={onClose}>
+          <Text style={s.sheetGhostText}>{PREFS.cancel()}</Text>
         </Pressable>
       </View>
     </Modal>
@@ -736,8 +825,14 @@ const s = StyleSheet.create({
   },
   prefChipOn: { backgroundColor: color.primary, borderColor: color.primary },
   prefChipText: { ...type.labelMedium, color: color.fg } as any,
-  prefFlexRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  prefFlexVal: { ...type.bodySmall, color: color.primary, fontWeight: '600' } as any,
+  prefHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  prefVal: { ...type.bodySmall, color: color.primary, fontWeight: '600' } as any,
+  prefsBody: { gap: space.md, paddingBottom: space.sm },
+  miniChip: {
+    height: 30, paddingHorizontal: 14, borderRadius: rad.full, borderWidth: 1,
+    borderColor: color.border, alignItems: 'center', justifyContent: 'center',
+  },
+  miniChipText: { ...type.caption, color: color.muted, fontWeight: '600' } as any,
 
   plusPrice: { ...type.caption, color: color.muted, textAlign: 'center' } as any,
   capRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 6 },
@@ -760,5 +855,11 @@ const s = StyleSheet.create({
   sheetSend: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   sheetSendText: { ...type.button, color: color.onPrimary } as any,
   sheetNot: { height: 52, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
+  sheetGhost: { height: 48, alignItems: 'center', justifyContent: 'center' },
+  sheetGhostText: { ...type.button, color: color.muted } as any,
+  grabber: {
+    width: 40, height: 4, borderRadius: 2, backgroundColor: color.neutral100,
+    alignSelf: 'center', marginTop: -6,
+  },
   sheetNotText: { ...type.button, color: '#fff' } as any,
 });
