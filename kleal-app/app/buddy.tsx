@@ -18,6 +18,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { IconChevronLeft, IconMic } from '../src/components/icons';
 import { useLang, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
+import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { buddy as buddyApi } from '../src/api';
 import { BUDDY, SHEET, looksLikeIntent, intentPhrase, sheetWhat, sheetKept, packHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
@@ -34,6 +35,8 @@ export default function Buddy() {
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
+  /** Android: клавиатура ложится поверх дока — окно под неё не ужимается. См. src/keyboard.ts. */
+  const kb = useKeyboardInset();
   const scroller = useRef<ScrollView>(null);
 
   /** Текст с главного экрана: человек уже сказал, что хочет, — повторять вопрос незачем. */
@@ -109,7 +112,23 @@ export default function Buddy() {
       return;
     }
     setTyping(true);
-    setTimeout(() => { setTyping(false); say('bot', BUDDY.hello(st.profile.name || '')); }, 450);
+    setTimeout(() => {
+      setTyping(false);
+      const hello = BUDDY.hello(st.profile.name || '');
+      say('bot', hello);
+      /**
+       * Приветствие идёт и В ИСТОРИЮ, а не только на экран.
+       *
+       * `say()` рисует пузырь, `turns` — то, что видит модель. Пока приветствие жило только в
+       * первом, модель получала первую реплику человека как самую первую в разговоре, сервер
+       * помечал её «[FIRST MESSAGE] … greet them as a new acquaintance», и модель здоровалась
+       * ВТОРОЙ раз: «Привет, Иван. О чём поговорим?» — «привет» — «Привет, Иван! …».
+       *
+       * Она и не могла поступить иначе: поздороваться было нечем — в её истории приветствия не
+       * было. Кладём его туда, и правило промпта «do NOT greet again» наконец применимо.
+       */
+      setTurns((t) => (t.length ? t : [{ role: 'assistant', content: hello }]));
+    }, 450);
   }, []);
 
   const submit = () => {
@@ -183,7 +202,7 @@ export default function Buddy() {
           ) : null}
         </ScrollView>
 
-        <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
           <View style={s.field}>
             <TextInput
               style={s.input}

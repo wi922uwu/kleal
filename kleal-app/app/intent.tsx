@@ -21,7 +21,7 @@
  * задаётся. Открытый без темы (старые пути) мастер всё равно работает — интент уходит без topics,
  * и матчинг ищет широко.
  */
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, TextInput,
   KeyboardAvoidingView, Platform,
@@ -46,10 +46,11 @@ import {
 } from '../src/components/icons';
 import { EditSheet } from '../src/components/ProfileShell';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
+import { resetGroupSession } from '../src/ginvites';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { setResults } from '../src/results-store';
-import { agent } from '../src/api';
+import { agent, isAbort } from '../src/api';
 import { color, radius as rad, space, type } from '../src/theme';
 
 type Draft = {
@@ -117,6 +118,8 @@ export default function Intent() {
   /** Между шагом и шагом агент отвечает «Awesome!» и печатает — как на кадрах. */
   const [ack, setAck] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Живой запрос поиска — чтобы кнопка «Отменить» рвала именно его. */
+  const abortRef = useRef<AbortController | null>(null);
   const [err, setErr] = useState('');
   const [dragging, setDragging] = useState(false);
   /** O.07a: лист пояса держит выбор у себя и отдаёт его в черновик только по «Применить». */
@@ -170,6 +173,9 @@ export default function Intent() {
   });
 
   const toResults = (r: any, fallbackIntent: any, query?: string) => {
+    // Новый поиск — новая сессия группового набора: прошлая группа живёт на сервере, но выдача
+    // другого запроса ей не принадлежит (см. resetGroupSession в src/ginvites.ts).
+    resetGroupSession();
     setResults({
       intent: r?.intent || fallbackIntent,
       candidates: r?.candidates || [],
@@ -201,12 +207,16 @@ export default function Intent() {
     setFree('');
     setErr('');
     setBusy(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
-      const r: any = await agent.plan(text, profile(), ctx());
+      const r: any = await agent.plan(text, profile(), ctx(), undefined, ctrl.signal);
       toResults(r, {}, text);
-    } catch {
-      setErr(T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?'));
+    } catch (e) {
+      setErr(isAbort(e) ? SEARCHING.cancelled()
+                        : T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?'));
     } finally {
+      abortRef.current = null;
       setBusy(false);
     }
   };
@@ -266,15 +276,23 @@ export default function Intent() {
       // Кладётся в интент, чтобы уехать вместе с ним в выдачу, а не потеряться на этом экране.
       if (draft.link.trim()) intent.link = draft.link.trim();
     }
+    // Отмена принадлежит человеку: экран поиска даёт кнопку, и она рвёт именно этот запрос.
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
-      const r: any = await agent.match(intent, profile(), ctx());
+      const r: any = await agent.match(intent, profile(), ctx(), ctrl.signal);
       toResults(r, intent);
-    } catch {
-      setErr(T('Не получилось поискать. Попробуй ещё раз.', 'The search failed. Try again.'));
+    } catch (e) {
+      // Отменил сам — это не сбой связи. Называть это ошибкой значит врать о том, что произошло.
+      setErr(isAbort(e) ? SEARCHING.cancelled() : SEARCHING.failed());
     } finally {
+      abortRef.current = null;
       setBusy(false);
     }
   };
+
+  /** Отмена поиска по кнопке на вуали. */
+  const cancelSearch = () => abortRef.current?.abort();
 
   /**
    * O.10: перед поиском — сводка. Категория для её строки спрашивается у агента фильтрации в
@@ -736,7 +754,7 @@ export default function Intent() {
           ))}
         </EditSheet>
 
-        {busy ? <Searching /> : null}
+        {busy ? <Searching onCancel={cancelSearch} /> : null}
       </View>
     </KeyboardAvoidingView>
   );
@@ -956,7 +974,19 @@ function SummaryCard({
  * и не должен оставаться в истории — иначе «назад» из выдачи возвращало бы человека в бесконечное
  * ожидание того, что уже нашлось.
  */
-function Searching() {
+/**
+ * Вуаль поиска.
+ *
+ * Две вещи, которых тут не было и из-за которых экран называли «висит»: через шесть секунд он
+ * говорит, что дольше обычного, а выход есть с первой секунды. Подбор занимает полторы секунды —
+ * всё, что дольше, уже нештатно, и молчащий кружок в этот момент неотличим от зависания.
+ */
+function Searching({ onCancel }: { onCancel?: () => void }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setSlow(true), 6000);
+    return () => clearTimeout(id);
+  }, []);
   return (
     <View style={s.veil}>
       {/* Кадр O.11: два круга-заглушки под иллюстрации и подпись Kleal. Иллюстраций в проекте
@@ -969,7 +999,12 @@ function Searching() {
         <ActivityIndicator size="small" color={color.primary} />
         <Text style={s.veilStep}>{SEARCHING.step()}</Text>
       </View>
-      <Text style={s.veilNote}>{SEARCHING.note()}</Text>
+      <Text style={s.veilNote}>{slow ? SEARCHING.slow() : SEARCHING.note()}</Text>
+      {onCancel ? (
+        <Pressable accessibilityRole="button" style={s.veilCancel} onPress={onCancel} hitSlop={10}>
+          <Text style={s.veilCancelText}>{SEARCHING.cancel()}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -1131,4 +1166,10 @@ const s = StyleSheet.create({
   veilTitle: { fontSize: 24, lineHeight: 31, fontWeight: '700', color: color.fg, textAlign: 'center' },
   veilStep: { ...type.body, color: color.primary, textAlign: 'center' } as any,
   veilNote: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
+  veilCancel: {
+    marginTop: space.xl, height: 44, paddingHorizontal: 24, borderRadius: rad.full,
+    borderWidth: 1, borderColor: color.border, backgroundColor: color.card,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  veilCancelText: { ...type.button, color: color.fg } as any,
 });

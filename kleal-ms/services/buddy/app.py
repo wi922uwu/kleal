@@ -237,6 +237,156 @@ def _filtration_says_activity(text):
     name = str(cat.get("category") or "").lower().strip()
     return bool(name) and name != "other"
 
+
+# ===================== «Хочешь обсудить это с кем-нибудь?» — «Да» =====================
+#
+# Отдельный ярус триггера, и без него флоу, ради которого продукт и сделан, был НЕВОЗМОЖЕН.
+#
+# wants_people() читает ОДНУ последнюю реплику и требует, чтобы в ней самой были и ключевое слово,
+# и предмет. Согласие не содержит ни того, ни другого: и предложение, и тема лежат ходом раньше.
+# Замерено на живом стенде — из 16 согласий («Да», «давай», «ага», «конечно», «хочу»…) окно не
+# открыло ни одно, даже когда предложение агента стояло в истории. Агент в ответ предлагал то же
+# самое ещё раз, то есть переспрашивал человека, который уже согласился.
+#
+# Разрешение отсылки («об этом») при этом в сервисе есть и работает, но стоит ЗА гейтом: до него
+# не доходит управление. Здесь мы открываем гейт по паре «агент предложил + человек согласился» и
+# берём тему из истории — тем же _subject_from_history.
+
+# Отказ проверяется ПЕРВЫМ и по началу строки: «нет», «не сейчас», «потом». Иначе пришлось бы
+# запрещать «не» вообще, а «не против» — это согласие.
+_REFUSE = re.compile(r"^(нет|не\s+надо|не\s+хочу|не\s+сейчас|пока\s+нет|потом|позже|"
+                     r"no|nope|not\s+(now|really|yet)|maybe\s+later|later|"
+                     r"ahora\s+no|todav[íi]a\s+no|luego|m[áa]s\s+tarde)\b", re.I)
+
+# Согласие целиком, а не слово внутри фразы: «да» в «да я вообще про другое» — не согласие.
+_AFFIRM_HEAD = re.compile(r"^(да|ага|угу|давай(те)?|конечно|хочу|хотел[аи]?\s+бы|можно|"
+                          r"ок(ей)?|окей|идёт|идет|согласен|согласна|не\s+против|с\s+удовольствием|"
+                          r"было\s+бы\s+(интересно|здорово|круто|неплохо)|почему\s+бы\s+и\s+нет|"
+                          r"yes|yeah|yep|yup|sure|ok(ay)?|absolutely|definitely|i'?d\s+love|"
+                          r"sounds\s+good|why\s+not|"
+                          r"s[íi]|claro|vale|venga|dale|por\s+supuesto|me\s+encantar[íi]a)\b", re.I)
+
+
+def _is_affirmation(text):
+    """Короткое «да» и его родня. Длина ограничена намеренно: согласие — это согласие, а не реплика,
+    которая начинается с «да» и дальше уводит в сторону («да, но давай про другое»)."""
+    t = str(text or "").strip().strip(" \t!.?…,")
+    if not t or len(t.split()) > 5:
+        return False
+    if _REFUSE.match(t):
+        return False
+    return bool(_AFFIRM_HEAD.match(t))
+
+
+# Предложение агента найти живого собеседника. Ищем связку «глагол предложения» + «кто-то»:
+# «Можно поискать человека, который…», «Хочешь обсудить это с кем-нибудь?», «I can find someone…».
+_OFFER_VERB = (r"(хочешь|хотел\w*\s+бы|могу|можем|можно|давай|найти|найду|подобрать|поиск\w*|"
+               r"поищ\w*|познаком\w*|свести|"
+               r"want|would\s+you|i\s+can|we\s+can|shall\s+we|let\s+me|find|look\s+for|"
+               r"quieres|te\s+gustar[íi]a|puedo|podemos|buscar|encontrar)")
+_SOMEONE = (r"(с\s+кем-то|с\s+кем-нибудь|кого-нибудь|кем-нибудь|кого-то|собеседник\w*|"
+            r"человек\w*,?\s+котор|люд\w*,?\s+котор|компани[юя]|партн[её]р\w*|"
+            r"someone|somebody|people\s+who|a\s+person\s+who|"
+            r"alguien|gente\s+que|una\s+persona\s+que)")
+_OFFERED_MEET = re.compile(_OFFER_VERB + r"[\s\S]{0,140}?" + _SOMEONE, re.I)
+
+
+def _agent_offer_text(messages):
+    """Реплика агента, на которую человек только что ответил, — если в ней было предложение."""
+    for m in reversed((messages or [])[:-1]):
+        if m.get("role") == "user":
+            return ""                      # отвечали не агенту, а своей же реплике
+        t = str(m.get("content") or "")
+        return t if _OFFERED_MEET.search(t) else ""
+    return ""
+
+
+def _agreed_to_offer(messages):
+    """Агент предложил найти собеседника, и человек согласился. Это и есть заявка."""
+    msgs = messages or []
+    if not msgs or msgs[-1].get("role") != "user":
+        return False
+    if not _is_affirmation(msgs[-1].get("content")):
+        return False
+    return bool(_agent_offer_text(msgs))
+
+
+# ===================== предмет из вопроса — слово ЧЕЛОВЕКА на карточку =====================
+#
+# Канонические темы фильтрации английские, и когда перевода в _TOPIC_RU нет (там ~100 слов),
+# карточка для русского называлась «Поговорить про Futures» — половина по-русски, половина нет.
+# В живом сторе так и лежит: «Curling — разговор», subject 'Futures'. Слово человека при этом
+# стоит в его же вопросе — «Что такое фьючерсы?» — откуда его и берём.
+
+_SUBJ_NOUN = [
+    re.compile(r"^(?:что\s+такое|что\s+за|кто\s+так(?:ой|ая|ое|ие))\s+(?P<x>.+)$", re.I),
+    re.compile(r"^расскажи(?:\s+мне)?\s+(?:про|о|об|обо)\s+(?P<x>.+)$", re.I),
+    re.compile(r"^(?:what\s+(?:is|are)|who\s+(?:is|are))\s+(?P<x>.+)$", re.I),
+    re.compile(r"^tell\s+me\s+about\s+(?P<x>.+)$", re.I),
+    re.compile(r"^(?:qu[eé]\s+(?:es|son)|qui[eé]n(?:es)?\s+(?:es|son))\s+(?P<x>.+)$", re.I),
+    re.compile(r"^cu[eé]ntame\s+(?:de|sobre)\s+(?P<x>.+)$", re.I),
+]
+_SUBJ_CLAUSE = re.compile(r"^(?:почему|зачем|как|откуда|отчего|когда|сколько|"
+                          r"why|how|where|when|"
+                          r"por\s+qu[eé]|c[oó]mo|d[oó]nde|cu[aá]ndo)\b", re.I)
+
+
+def _own_subject(text):
+    """(kind, phrase) из вопроса человека — предмет его же словами.
+
+    'noun'   — «Что такое фьючерсы?» -> «фьючерсы»: готово для «Поговорить про …».
+    'clause' — «Почему небо голубое?» -> вопрос целиком: тема-предложение для «Обсудить, …».
+    ''       — не вопрос об одной вещи; заголовок собирается как раньше.
+    """
+    t = str(text or "").strip()
+    t = re.sub(r"^\[FIRST MESSAGE[^\]]*\]\s*", "", t).strip().strip(" \t?!.…¿¡")
+    if not t or len(t) > 90:
+        return "", ""
+    for rx in _SUBJ_NOUN:
+        m = rx.match(t)
+        if m:
+            x = m.group("x").strip(" \t?!.…,")
+            # «расскажи, как работает матчинг» — внутри снова вопрос-предложение, не предмет
+            if _SUBJ_CLAUSE.match(x):
+                return "clause", x[:64]
+            return ("noun", x[:48]) if 0 < len(x.split()) <= 4 else ("", "")
+    if _SUBJ_CLAUSE.match(t):
+        return "clause", t[:64]
+    return "", ""
+
+
+def _clause_title(clause, lang):
+    """«Почему небо голубое» -> заголовок-фраза. Вопрос называется, а не пересказывается."""
+    c = str(clause or "").strip().strip("?!.…")
+    c = c[:1].lower() + c[1:]
+    if lang == "ru":
+        return "Обсудить, " + c
+    if lang == "es":
+        return "Hablar de " + c
+    return "Talk about " + c
+
+
+def _apply_own_subject(intent, asked, lang):
+    """Переназвать карточку словами человека, когда тема пришла из его ВОПРОСА (отсылка назад,
+    согласие на предложение). Прямые просьбы («хочу обсудить лабубу») сюда не попадают — там
+    слово человека и так выигрывает в _title_for."""
+    if not isinstance(intent, dict):
+        return intent
+    kind, own = _own_subject(asked)
+    if not kind:
+        return intent
+    if kind == "noun":
+        # ours=True лишь для строчного написания: заглавную человек ставил сам («Кафку»), и она
+        # остаётся; «фьючерсы» со строчной так и идут в середину фразы.
+        intent["title"] = _phrase_title(own, intent.get("role") or "discuss", lang, ours=(own == own.lower()))
+    else:
+        intent["title"] = _clause_title(own, lang)
+    # Как написал человек, так и в subject: клиент вставляет его в свою фразу
+    # («Похоже, ты хочешь поговорить про …»), и заглавная посреди неё была бы нашей, не его.
+    intent["subject"] = own
+    intent["activity"] = intent["title"]
+    return intent
+
 BUDDY_PROMPT = '''You are "Kleal" — the user's buddy: a warm, smart, genuinely helpful companion they can chat with like they would with ChatGPT. Talk naturally (1-4 sentences). Be actually useful: answer questions, riff on ideas, recommend things, help them think — about anything, not only meeting people. You are their day-to-day AI on the Kleal platform. (Deeper tools like web research come later.)
 
 Kleal's superpower is connecting people. So while you chat, quietly notice the user's SIGNALS when they naturally come up (ONLY what they actually reveal — never invent):
@@ -253,6 +403,14 @@ Set "match": true ONLY when the user clearly wants to MEET a person / find peopl
 The "interest" and any clarifying question MUST come from what THIS conversation is actually about — the topic the user just raised, in their own words. NEVER substitute their profile interests: if you were discussing clouds and they ask to talk to someone about it, the interest is "discuss clouds / weather", NOT their profile's coding or games. Do not offer profile interests as the options in a clarifying question when the conversation is about something else.
 
 If the user clearly wants to talk to or meet SOMEONE about a topic — even a niche knowledge topic (clouds, philosophy, a specific book) that isn't an obvious meetup activity — set "match": true and put "discuss <that exact topic>" into "interest". Don't keep chatting or ask the same thing again. It is perfectly fine if such a niche interest turns out to have few or no matches — that is the honest outcome, and the next agents will handle it.
+
+OFFER — DO NOT WAIT TO BE ASKED. This is the whole point of Kleal: you answer, and then you open a door. When you have just told the person about something a human being could enjoy talking over — a subject, a field, a book, a film, a game, a place, a hobby — END your message with ONE short question offering to find them someone: «Хочешь обсудить это с кем-нибудь?», «Want to talk this over with someone?», «¿Quieres hablarlo con alguien?».
+
+Rules for that offer, all of them hard:
+- ONE question, at the very end, after you have actually answered. Never instead of the answer.
+- Only when a real person would plausibly want company for it. Not after «привет», not after a purely practical answer (how to reset a password, what time it is), not after something bleak or private where the offer would land badly.
+- NEVER twice in a row. If your previous message already offered and they did not take it, drop it and just keep talking — repeating it is nagging.
+- Keep "match": false when you offer. The offer is a QUESTION, not a search: their answer decides, and the app is what asks them. If they then say yes, the app opens the window — you do not have to do anything else, and you must NOT ask the same question a second time.
 
 Known so far (baseline from their profile): __SIG__
 You ALREADY KNOW this person — that block is their profile. Never ask for anything already in it: not
@@ -1327,10 +1485,21 @@ def buddy_chat(messages, profile, signals, uid=None):
                        else ("Buddy: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
     # Without this marker the 70B invents a shared past on turn one ("Привет снова! Я уже отвечал…",
     # "I've already told you…") — it reads a bare one-line history as the tail of a longer chat.
-    if sum(1 for m in (messages or []) if m.get("role") == "user") <= 1:
+    #
+    # Но метка ещё и ВЕЛИТ поздороваться («greet them as a new acquaintance»), а экран Бадди
+    # здоровается сам, своей строкой, до всякой модели. Пока считались только реплики человека,
+    # выходило два приветствия подряд: «Привет, Иван. О чём поговорим?» — «привет» — «Привет,
+    # Иван! …». Поэтому смотрим и на реплики АГЕНТА: если он в этом разговоре уже говорил,
+    # разговор не первый, кто бы ту реплику ни написал — модель или экран.
+    _users = sum(1 for m in (messages or []) if m.get("role") == "user")
+    _agent = sum(1 for m in (messages or []) if m.get("role") == "assistant")
+    if _users <= 1 and not _agent:
         convo = "[FIRST MESSAGE — you have never spoken with this person before]\n" + convo
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     lang = thread_lang(messages, last_user)
+    # «Хочешь обсудить это с кем-нибудь?» — «Да». Считается ДО модели: решение здесь целиком
+    # в истории, и мнение 70B на него не влияет (см. _agreed_to_offer).
+    _agreed = _agreed_to_offer(messages)
     # The age gate lived ONLY in intent_build(), i.e. on the composer path — /chat, which is the
     # path the app's buddy actually uses, had none. A sweep of «мне 15 лет, хочу найти друзей»
     # got "Хорошо, давай начнём поиск" back. The model is never asked; this is deterministic and
@@ -1367,10 +1536,12 @@ def buddy_chat(messages, profile, signals, uid=None):
         sig = _merge_signals(sig, obj.get("signals") or {})
         # The model's flag alone is not enough (it fires on plain chat and misses real asks). Require an
         # explicit ask in the user's words; the flag only tips a soft "with someone" cue over the line.
-        want_match = wants_people(last_user, bool(obj.get("match")), _filtration_says_activity)
+        want_match = _agreed or wants_people(last_user, bool(obj.get("match")), _filtration_says_activity)
     else:
         # LLM down: only the strong, explicit ask triggers a search — never a bare activity mention.
-        want_match = wants_people(last_user, False)
+        # Согласие на уже прозвучавшее предложение проходит и здесь: оно не требует модели, всё
+        # нужное лежит в истории.
+        want_match = _agreed or wants_people(last_user, False)
         reply = _FALLBACK_REPLY.get(lang, _FALLBACK_REPLY["en"])[0 if want_match else 1]
 
     out = {"reply": reply, "signals": sig, "lang": lang, "match": None,
@@ -1385,12 +1556,26 @@ def buddy_chat(messages, profile, signals, uid=None):
     # filtration canonicalises; the paraphrase still carries multi-turn context.
     # Same back-reference rule as intent_build: «поговорить об этом» names no subject, the turn it
     # points at does. Without it /chat searched on ["conversation","discussion","talk"].
-    _subj = _subject_from_history(messages) if _ANAPHORA.search(str(last_user or "")) else ""
-    req_text = " ".join(x for x in (_subj, str(last_user or ""), str(sig.get("interest") or "")) if x).strip() \
-        or " ".join(sig.get("topics") or [])
+    # Согласие — тот же случай отсылки назад, только ещё беднее: «Да» не называет вообще ничего.
+    # Тему берём из истории всегда, а САМО «да» из запроса выбрасываем — фильтрация на нём
+    # отвечает мусором, и он же испортил бы заголовок карточки.
+    _subj = _subject_from_history(messages) if (_agreed or _ANAPHORA.search(str(last_user or ""))) else ""
+    # Реплика, по которой дальше определяются роль, тип и режим. При согласии это не «да», а тема
+    # плюс само предложение агента: в нём стоит глагол («обсудить», «поиграть»), и без него роль
+    # схлопывалась бы в дежурное «встретиться».
+    _eff_user = " ".join(x for x in (_subj, _agent_offer_text(messages)) if x).strip()[:300] \
+        if _agreed else str(last_user or "")
+    # В фильтрацию идут только слова ЧЕЛОВЕКА: при согласии это тема из истории, без прозы агента —
+    # его формулировка нужна для роли, но как текст запроса она увела бы категорию в свою сторону.
+    _req_parts = (_subj, "" if _agreed else str(last_user or ""), str(sig.get("interest") or ""))
+    req_text = " ".join(x for x in _req_parts if x).strip() or " ".join(sig.get("topics") or [])
     cat = _categorize(req_text)
     _teach(cat)
-    intent = build_intent(sig, cat, last_user, lang)
+    intent = build_intent(sig, cat, _eff_user, lang)
+    # Тема пришла из ВОПРОСА («Что такое фьючерсы?» → «Да») — карточка называется его словами:
+    # «Поговорить про фьючерсы», а не 'Futures' из канонических тем фильтрации.
+    if _subj:
+        intent = _apply_own_subject(intent, _subj, lang)
     # "find me someone" with NO concrete activity -> ask, don't dump a generic social slate (spec §5:
     # a missing high-value slot is a clarification, not a silent default). Bare-social = the only topic
     # is the "social" placeholder AND the user named no recognizable activity word.
@@ -2075,14 +2260,18 @@ def _subject_from_history(messages):
     """The last thing the person actually asked ABOUT — the referent of «об этом».
 
     Walks their OWN turns backwards and skips the ones that carry no subject either: another
-    back-reference, or a bare follow-up like «а подробнее». Assistant turns are not used — the
-    answer paraphrases, the question names.
+    back-reference, a bare follow-up like «а подробнее», or a bare agreement. Assistant turns are
+    not used — the answer paraphrases, the question names.
+
+    Согласие пропускается по той же причине, что и «об этом», и это не теория: без него ответ «Да»
+    на предложение агента сам становился темой интента — карточка называлась «Да», а в поиск
+    уходило слово, по которому не совпадёт никто.
     """
     for m in reversed(messages or []):
         if m.get("role") != "user":
             continue
         t = str(m.get("content") or "").strip()
-        if not t or _ANAPHORA.search(t) or _FOLLOWUP.match(t):
+        if not t or _ANAPHORA.search(t) or _FOLLOWUP.match(t) or _is_affirmation(t):
             continue
         return t[:200]
     return ""
@@ -2512,6 +2701,9 @@ def intent_build(messages, profile, on_text=None):
     if obj.get("time"):
         sig["time"] = str(obj.get("time"))
     intent = build_intent(sig, cat, activity, lang)
+    # Как и в /chat: тема, взятая из вопроса по отсылке назад, называется словами человека.
+    if _subject:
+        intent = _apply_own_subject(intent, _subject, lang)
     if obj.get("format"):
         intent["format"] = str(obj.get("format"))[:40]
     # guard: if nothing rankable survived canonicalisation, don't pretend it's ready

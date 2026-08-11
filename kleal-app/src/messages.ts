@@ -77,7 +77,9 @@ export const MSG = {
 /** Строка списка. kind решает, куда ведёт тап; key — стабильный ключ для пометок. */
 export type Row = {
   key: string;
-  kind: 'plan' | 'invite-in' | 'invite-out' | 'thread';
+  kind: 'plan' | 'invite-in' | 'invite-out' | 'thread' | 'group' | 'ginvite-in';
+  /** Группам собеседника нет — их открывает gid, а не имя. */
+  gid?: string;
   title: string;
   sub: string;          // серым под заголовком: «сегодня 20:30 · …»
   teaser?: string;      // вторая строка: последняя реплика или подсказка
@@ -219,6 +221,50 @@ export function threadRows(threads: any[], me = '', ru = true, line?: (sys: any,
     teaser: String(t.last || '') || (t.sys && line ? line(t.sys, me, ru) : ''),
     photo: t.photo, t: Number(t.t || 0),
   })).sort((a, b) => (b.t || 0) - (a.t || 0));
+}
+
+/**
+ * Групповые строки — комнаты, где я уже состою, и входящие групповые приглашения.
+ *
+ * Живут во вкладке «Интенты» рядом с одиночными: для человека это одна и та же затея, просто
+ * людей больше. Собеседника у строки нет — открывается она по gid, поэтому `who` пустой, а
+ * `open()` в экране разводит переход по kind.
+ */
+export function groupRows(groups: any[], invites: any[], ru: boolean): Row[] {
+  const rows: Row[] = [];
+  for (const g of groups || []) {
+    const n = Number(g.joined_count || 0);
+    const min = Number(g.min_total || 3);
+    const need = Math.max(0, min - n);
+    rows.push({
+      key: 'g:' + String(g.gid || ''),
+      kind: 'group',
+      gid: String(g.gid || ''),
+      title: String(g.title || ''),
+      sub: ru ? `Группа · ${n} из ${min}` : `Group · ${n} of ${min}`,
+      // Подсказка говорит то, что человеку нужно решить прямо сейчас: добрать людей или уже
+      // планировать. Пересказывать последнюю реплику здесь нечем — сервер её в списке не отдаёт.
+      teaser: need
+        ? (ru ? `Нужен(ы) ещё ${need}` : `Need ${need} more`)
+        : (ru ? 'Людей достаточно — можно делать план' : 'Enough people — you can make a plan'),
+      t: Number(g.updated || g.created || 0),
+    });
+  }
+  for (const i of invites || []) {
+    rows.push({
+      key: 'gi:' + String(i.id || ''),
+      kind: 'ginvite-in',
+      id: String(i.id || ''),
+      gid: String(i.gid || ''),
+      title: String(i.title || i.group_title || ''),
+      sub: ru ? 'Приглашение в группу' : 'Group invite',
+      teaser: String(i.from || i.owner || ''),
+      t: Number(i.created || 0),
+      unread: true,
+      count: 1,
+    });
+  }
+  return rows.sort((a, b) => (b.t || 0) - (a.t || 0));
 }
 
 /** MSG.03: фильтр по уже загруженному — названия отдельно, реплики отдельно. */

@@ -169,6 +169,12 @@ DO NOT REUSE A SENTENCE PATTERN. «Что делает поездку идеал
 фотографию отличной для тебя?» is one template with the noun swapped — that is a questionnaire, not
 a conversation. Ask about the thing itself: «Куда ездил в последний раз?», «Что снимаешь?»
 
+NAMES IN LATIN SCRIPT STAY EXACTLY AS WRITTEN. Never decline them and never spell them in Cyrillic:
+«Xbox», not «ксбоксом»; «во что играешь на Xbox?», not «занимаешься иксбоксом». The same holds for
+game, brand, club and place names — Dota, PlayStation, Valorant, Netflix. Build the sentence around
+the name instead of bending it («играешь на PlayStation с друзьями?»). A mangled Cyrillic spelling
+of a Latin name reads as a broken translation, and it is the one thing people notice first.
+
 Never compliment. No «это замечательно», «отличный выбор», «ты интересный человек», and never open
 with «X — это отличный способ…».
 
@@ -292,6 +298,24 @@ def _v2_detail_gap(p, it):
         return 'for "%s": which field they are in and who they hope to meet through it' % it
     return None
 
+def _v2_plan(hist, p):
+    """План опроса — интересы, С КОТОРЫМИ ШАГ НАЧАЛСЯ, а не те, что сейчас в профиле.
+
+    Берётся из первой реплики человека («I'm into xbox, foraging» — её кладёт колесо). Профиль для
+    этого не годится: модель переписывает его целиком на каждом ходу, и интерес, который она не
+    пронесла, исчезал из плана вместе с вопросом про него.
+
+    Это же держит разговор конечным. Обогащение дописывает в профиль темы из ответов («экшн» после
+    «во что играешь»), и пока план строился по профилю, три интереса превращались в шесть, шесть в
+    десять, а шаг не кончался. Спрашиваем ровно про то, что человек выбрал сам.
+    """
+    first_user = next((str(m.get("content", "")) for m in hist if m.get("role") == "user"), "")
+    body = re.sub(r"^\s*i'?m into\s+", "", first_user.strip(), flags=re.I)
+    seed = [x.strip() for x in re.split(r"[,;]", body) if x.strip()]
+    # Запасной путь для входов не из колеса (веб-прототип, «добавить интересы» из профиля).
+    return seed[:8] if seed else _v2_ints(p)[:8]
+
+
 def _v2_gaps(p, hist):
     """Что ещё стоит спросить, по порядку. Stateless: сколько бюджета потрачено на интерес,
     оценивается по тому, сколько раз агент уже называл его по имени.
@@ -306,17 +330,23 @@ def _v2_gaps(p, hist):
     есть про то, что он выбрал, а не про то, что мы из него вытащили.
     """
     asked_total = sum(1 for m in hist if m.get("role") == "assistant" and "?" in str(m.get("content", "")))
-    first_user = next((str(m.get("content", "")) for m in hist if m.get("role") == "user"), "")
-    budget = len([x for x in re.split(r"[,;]", first_user) if x.strip()]) or len(_v2_ints(p))
-    if asked_total >= max(1, min(budget, 6)):
+    plan = _v2_plan(hist, p)
+    # Закрытыми считаются ПЕРВЫЕ asked_total пунктов плана — по одному вопросу на интерес, в
+    # порядке плана, потому что промпт и ведёт агента по gaps[0].
+    #
+    # Раньше «спрашивали ли уже про это» искалось подстрокой: ключ интереса внутри реплики агента.
+    # Не находилось НИКОГДА. Агент пишет по-русски и склоняет латиницу — на «xbox» он отвечает
+    # «Где ты обычно занимаешься ксбоксом?», и подстроки «xbox» там нет. План навсегда упирался в
+    # первый пункт, агент второй раз спрашивал про него же, а шаг закрывал глобальный потолок по
+    # ЧИСЛУ вопросов — то есть два интереса получали два вопроса, оба про первый.
+    # Проверено вживую: «Игры → Консоли → Xbox» и «Природа → Сад и звёзды → Травы и грибы» —
+    # про травы не спросили ни разу.
+    remaining = plan[asked_total:]
+    if not remaining:
         return []
 
     gaps = []
-    for it in _v2_ints(p):
-        low = it.lower()
-        asked = sum(1 for m in hist if m.get("role") == "assistant" and low in str(m.get("content", "")).lower())
-        if asked:
-            continue                     # уже спрашивали про это — второй заход даёт кольцо
+    for it in remaining:
         if _v2_role_of(p, it):
             d = _v2_detail_gap(p, it)    # только нетворкинг; всё остальное — None
             if d: gaps.append(d)

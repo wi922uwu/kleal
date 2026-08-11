@@ -16,8 +16,12 @@ Consequences to keep in mind:
   any module outside the bundled set. At that point the answer is a development build (`eas.json`
   already has the profiles), and the reason for staying on 54 disappears with it.
 - When bumping the SDK, check these two call sites first — both APIs moved recently and both are in
-  use: `ImageManipulator.manipulate()` in `app/chat.tsx`, and `mediaTypes: ['images']` in the same
-  file. Verified present in both 54 and 57; do not assume for other versions.
+  use: `ImageManipulator.ImageManipulator.manipulate()` in `src/photo.ts`, and `mediaTypes:
+  ['images']` in `app/chat.tsx` and `app/profile/index.tsx`. Verified present in both 54 and 57; do
+  not assume for other versions. Note the doubled name: the module exports a CLASS `ImageManipulator`
+  with a static `manipulate`, and there is no flat `ImageManipulator.manipulate`. The profile screen
+  once had its own copy written the flat way — changing a photo silently did nothing until the two
+  copies were merged into `src/photo.ts`. `tools/regressions_test.js` now fails if a copy comes back.
 
 # Эти экраны — UX-каркас, а не готовый вид
 

@@ -17,6 +17,7 @@ import { langPlainName } from './languages';
 import type { Profile } from './state';
 import { getState, set, subscribe, profileForAttach } from './state';
 import { buddy, profile as profileApi } from './api';
+import { patchFor } from './fields';
 
 // ---------------------------------------------------------------- разделы
 
@@ -85,6 +86,44 @@ export function onSummaryBusy(cb: (b: boolean) => void): () => void {
   _busySubs.add(cb);
   cb(_resumBusy);
   return () => { _busySubs.delete(cb); };
+}
+
+/**
+ * Отправить интересы на сервер, если они разошлись с тем, что уже отправлено.
+ *
+ * ЗАЧЕМ. Интересы, дописанные ПОСЛЕ онбординга, не доезжали до сервера вовсе. Путь «Профиль →
+ * Интересы → Добавить» ведёт в разговор (`/chat?step=hobbies&back=…`), там `/api/onboarding/chat`
+ * возвращает профиль клиенту и САМ в стор ничего не пишет, а выход из разговора просто
+ * переключает экран. Записывал интересы только тумблер «учитывать при подборе» и удаление.
+ *
+ * Получалось хуже, чем просто «не сохранилось»: сторож сводки правку замечал и отправлял на сервер
+ * СВОДКУ, в которой новое увлечение упомянуто. В строке оставался рассказ про настолки и список
+ * интересов без настолок — а ранжирование читает список. Человек видел интерес у себя на экране и
+ * был по нему невидим.
+ *
+ * Отпечаток, а не флаг: канонизация на сервере дёргает фильтрацию по каждому интересу, и слать
+ * одно и то же на каждый заход на экран незачем. Первый заход после запуска отправляет всегда —
+ * что лежит в строке, приложение не знает, и лишняя сверка дешевле молчаливого расхождения.
+ */
+let _sentInterests: string | null = null;
+
+export async function pushInterests(): Promise<boolean> {
+  const st = getState();
+  const name = st.profile.name;
+  if (!name || !st.done) return false;          // до регистрации всё уедет одним register()
+  try {
+    // patchFor внутри try намеренно: он БРОСАЕТ, если поля нет в реестре. Снаружи это стало бы
+    // необработанным отказом промиса внутри эффекта фокуса — то есть опять тишиной.
+    const patch = patchFor(['interests']);
+    const sig = JSON.stringify(patch);
+    if (sig === _sentInterests) return false;
+    const r: any = await profileApi.update(name, patch);
+    if (r && r.ok === false) return false;      // сервер отказал — пробуем на следующем заходе
+    _sentInterests = sig;
+    return true;
+  } catch {
+    return false;                                // сеть отвалилась — отпечаток не трогаем
+  }
 }
 
 export async function adaptSummary(): Promise<boolean> {
@@ -278,6 +317,10 @@ export const WHOAMI = {
   photo: () => T('Фото', 'Photo'),
   changePhoto: () => T('Сменить фото', 'Change photo'),
   removePhoto: () => T('Убрать фото', 'Remove photo'),
+  /** Снимок выбран, а подготовить его не вышло. Молчать тут нельзя — человек ждёт фото на экране. */
+  photoFailed: () =>
+    T('Не получилось подготовить снимок. Попробуй другой.',
+      'Could not prepare that photo. Try another one.'),
   nameNote: () =>
     T(
       'Имя видно людям в поиске и в приглашениях.',

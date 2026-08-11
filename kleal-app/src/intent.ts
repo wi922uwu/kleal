@@ -390,6 +390,18 @@ export const SEARCHING = {
   title: () => T('Ищу людей, группы\nи места для тебя', 'Finding people, groups\nand places for you'),
   step: () => T('Смотрю подходящие форматы', 'Scanning matching formats'),
   note: () => T('Это займёт пару секунд.', 'This will take just a moment.'),
+  /**
+   * После шести секунд экран обязан заговорить. Подбор занимает полторы секунды; всё, что дольше,
+   * — уже не «пара секунд», и молчащий кружок в этот момент читается как зависание.
+   */
+  slow: () => T('Дольше обычного — связь медленная. Ещё жду.',
+                'Taking longer than usual — the connection is slow. Still waiting.'),
+  /** Выход есть всегда. Экран без выхода и есть то, что называют «висит». */
+  cancel: () => T('Отменить', 'Cancel'),
+  /** Отменил сам — это не сбой, и говорить о сбое нельзя. */
+  cancelled: () => T('Поиск отменён.', 'Search cancelled.'),
+  failed: () => T('Поиск не дошёл до сервера. Проверь связь и попробуй ещё раз.',
+                  'The search never reached the server. Check your connection and try again.'),
 };
 
 /** OF.12 / OF.11a. */

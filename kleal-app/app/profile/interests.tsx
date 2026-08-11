@@ -9,15 +9,13 @@
  * Выключенные хранятся отдельным списком `interests.unused`, а не удалением из `explicit`: человек
  * сказал, что увлекается этим, и «не искать по этому» — не то же самое, что «я этим не увлекаюсь».
  */
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, Pressable, Switch, Alert, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { ProfileShell, Card } from '../../src/components/ProfileShell';
 import { useLang, T } from '../../src/i18n';
 import { useOnb, set, get } from '../../src/state';
-import { patchFor } from '../../src/fields';
-import { profile as profileApi } from '../../src/api';
-import { profileData, INTERESTS_SCREEN as C, SECTIONS, adaptSummary } from '../../src/profile';
+import { profileData, INTERESTS_SCREEN as C, SECTIONS, adaptSummary, pushInterests } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function Interests() {
@@ -31,13 +29,29 @@ export default function Interests() {
    * удаления одного из них продолжала бы про него рассказывать. Так же устроен веб.
    */
   const push = () => {
-    const name = st.profile.name;
-    // patchFor шлёт ПЛОСКИЙ список без выключенных — форму, которую ждёт строка. Раньше отсюда
+    // pushInterests шлёт ПЛОСКИЙ список без выключенных — форму, которую ждёт строка. Раньше отсюда
     // уходил вложенный объект целиком, а сервер делает слепой row.update(): строка получала вместо
     // списка словарь, и матчинг для этого человека ломался молча.
-    if (name) profileApi.update(name, patchFor(['interests'])).catch(() => {});
+    pushInterests();
     adaptSummary();
   };
+
+  /**
+   * Интересы, добавленные в разговоре, отправляются при ВОЗВРАЩЕНИИ на этот экран.
+   *
+   * «Добавить» уводит в `/chat?step=hobbies&back=/profile/interests`, и оттуда интересы приходят
+   * только в состояние на устройстве: разговорная ручка в стор не пишет, а выход из разговора
+   * просто переключает экран. Записывали их лишь тумблер и удаление — то есть человек, который
+   * ничего больше не трогал, оставался невидим по тому, что сам про себя рассказал.
+   *
+   * Именно фокус, а не выход из разговора: вернуться сюда можно и системным «назад», и жестом, и
+   * кнопкой, а фокус ловит все три. Повторов бояться не нужно — pushInterests сверяет отпечаток.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      pushInterests();
+    }, [])
+  );
 
   const toggleUsed = (nm: string, on: boolean) => {
     const unused: string[] = get('interests.unused') || [];

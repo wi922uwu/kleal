@@ -14,16 +14,19 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image, TextInput,
+  useWindowDimensions,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator';
+import { squarePhoto } from '../src/photo';
 import {
   STEP_PROGRESS, HEADER_TITLE, STEP_START, STEP_BASICS, SEXES, sexLabel,
-  STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES, HOBBIES, hobbyLabel,
+  STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES, hobbyLabel,
   hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME, FUNNEL, FUNNEL_OUT_RE, FUNNEL_MORE_RE,
   OWN_INPUT,
 } from '../src/onboarding';
+import { CipherWheel } from '../src/components/CipherWheel';
+import { labelOf, funnelWorthy, WHEEL_COPY } from '../src/interests-wheel';
 import { useLang, T, getLang , replyLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding, agent } from '../src/api';
@@ -409,7 +412,8 @@ function StepWidget({
   // иначе ScrollView забирает вертикальный жест себе и точка дёргается на месте.
   if (step === 'area') return <AreaW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'languages') return <LangW say={say} goto={goto} />;
-  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} />;
+  // onDrag и здесь: колесо интересов крутится тем же жестом, каким лента прокручивается.
+  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} onDrag={onDrag} />;
   if (step === 'funnel') return <FunnelW {...funnel} say={say} />;
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -676,8 +680,9 @@ function FunnelBrow({ onPress }: { onPress: () => void }) {
  * СТИРАЛ все интересы и заменял их новым выбором. Пока сюда нельзя было вернуться, это не
  * проявлялось; кнопка «Добавить интересы» в профиле делает вход обычным делом.
  */
-function HobbyW({ say, startFunnel, leaveFunnel }: any) {
+function HobbyW({ say, startFunnel, leaveFunnel, onDrag }: any) {
   const st = useOnb();
+  const { width } = useWindowDimensions();
   const [ownOpen, setOwnOpen] = useState(false);
   const [had] = useState<string[]>(() => get('interests.explicit') || []);
   const [sel, setSel] = useState<string[]>(had);
@@ -691,19 +696,31 @@ function HobbyW({ say, startFunnel, leaveFunnel }: any) {
     setSel((p) => Array.from(new Set([...p, ...explicit])));
   }, [key]);
 
-  // Свои интересы — те, которых нет в готовой десятке. Показываются отдельным рядом и всегда
-  // зажжёнными: сняв такой чип, человек потерял бы то, что сам только что написал.
-  const own = sel.filter((k) => !HOBBIES.some(([h]) => h === k));
+  /**
+   * «Добавить» с колеса: в набор уходит ВСЯ цепочка — родители и лист (Спорт → Ракетки → Падел
+   * кладёт все три ключа). Матчинг сравнивает буквально, и по родителям человека находят те, кто
+   * искал шире. Реплика в ленту НЕ пишется здесь: одно эхо на «Дальше», как у чипов, — иначе
+   * каждая добавка дублировалась бы итоговым списком.
+   */
+  const addFromWheel = (keys: string[]) => {
+    setSel((p) => Array.from(new Set([...p, ...keys])));
+  };
 
   return (
     <View style={cs.widget}>
-      <Hint>{STEP_HOBBIES.hint()}</Hint>
+      <Hint>{WHEEL_COPY.hint()}</Hint>
+      {/*
+        Колесо вместо сетки чипов (решение Ивана, 2026-08-10). Ширина от экрана: виджет живёт в
+        ленте с полями по 20, и на узком телефоне фиксированные 330 вылезали бы за край.
+        Нижняя планка обязательна: на первом кадре useWindowDimensions отдаёт 0, и «width - 56»
+        уезжал в минус — SVG с отрицательной шириной сыпал ошибками в консоль.
+      */}
+      <CipherWheel size={Math.max(240, Math.min(320, width - 56))} onAdd={addFromWheel} onDragChange={onDrag} />
+
+      {/* Собранное — чипами под колесом: снять лишнее можно до «Дальше». */}
       <View style={cs.row}>
-        {HOBBIES.map(([k]) => (
-          <Chip key={k} label={hobbyLabel(k)} on={sel.includes(k)} onPress={() => toggle(k)} />
-        ))}
-        {own.map((k) => (
-          <Chip key={k} label={k} on onPress={() => toggle(k)} />
+        {sel.map((k) => (
+          <Chip key={k} label={labelOf(k) === k ? hobbyLabel(k) : labelOf(k)} on onPress={() => toggle(k)} />
         ))}
         <Chip label={'+ ' + STEP_HOBBIES.own()} onPress={() => setOwnOpen((o) => !o)} />
       </View>
@@ -728,18 +745,24 @@ function HobbyW({ say, startFunnel, leaveFunnel }: any) {
         disabled={!sel.length}
         onPress={() => {
           set('interests.explicit', sel);
-          say('me', sel.map(hobbyPlain).join(', '));
+          say('me', sel.map((k) => (labelOf(k) === k ? hobbyPlain(k) : labelOf(k))).join(', '));
           // Расспрашиваем только про НОВОЕ: про то, что уже обсуждали, спрашивать заново — значит
           // показывать, что услышанное не сохранилось.
           const added = sel.filter((k) => !had.includes(k));
           if (!added.length) { leaveFunnel(); return; }
-          // Дальше не фото, а разговор: чипы говорят ЧТО выбрано, но не как человек этим занят.
+          // Дальше не фото, а разговор: колесо говорит ЧТО выбрано, но не как человек этим занят.
           //
-          // В затравку уходят КЛЮЧИ (coffee, photography), а не подписи («Кофе», «Фото»). Разговор
+          // В затравку уходят КЛЮЧИ (coffee, padel), а не подписи («Кофе», «Падел»). Разговор
           // ведёт модель, и она же переписывает профиль целиком — с русскими подписями в истории
           // она и в interests.explicit кладёт «Кофе». Матчинг ищет по ключам: «Кофе» не совпадёт
           // с coffee ни у кого. Проверено — так и было, пока сюда уходили подписи.
-          startFunnel(added);
+          //
+          // И только САМОЕ ТОЧНОЕ из добавленного: цепочка колеса кладёт в профиль и родителей
+          // (sport, racquet sports, padel), но разговор про падел — это разговор про падел.
+          // «Чем тебе нравится спорт?» после такого выбора значило бы не услышать ответа.
+          const worth = funnelWorthy(added);
+          if (!worth.length) { leaveFunnel(); return; }
+          startFunnel(worth);
         }}
       />
     </View>
@@ -761,23 +784,12 @@ function PhotoW({ say, onDone, name }: any) {
    * размерам, которые пикер и так отдал вместе с файлом.
    */
   const shrink = async (a: { uri: string; width?: number; height?: number }) => {
-    const src = a.uri;
-    // Ужимаем ДО отправки: сервер режет всё тяжелее 600 КБ, и снимок с камеры не пролезает.
-    const ctx = ImageManipulator.ImageManipulator.manipulate(src);
-    const w = Number(a.width || 0), h = Number(a.height || 0);
-    if (w > 0 && h > 0 && w !== h) {
-      const side = Math.min(w, h);
-      ctx.crop({
-        originX: Math.round((w - side) / 2),
-        originY: Math.round((h - side) / 2),
-        width: side, height: side,
-      });
-    }
-    const img = await ctx.resize({ width: 512, height: null }).renderAsync();
-    const out = await img.saveAsync({ compress: 0.75, format: ImageManipulator.SaveFormat.JPEG, base64: true });
-    set('photo', `data:image/jpeg;base64,${out.base64}`);
+    // Обрезка и сжатие — в src/photo.ts, общие с экраном профиля. Здесь была вторая копия того же
+    // кода, и профильная от неё отстала на одну строку: смена фото там молча перестала работать.
+    const shot = await squarePhoto(a);
+    set('photo', shot.dataUrl);
     set('photoStatus', 'set');
-    return out.uri;
+    return shot.uri;
   };
 
   const take = async () => {

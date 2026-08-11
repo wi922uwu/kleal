@@ -23,6 +23,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { IconChevronLeft, IconMic, IconSpark } from '../src/components/icons';
 import { useLang, getLang, T , replyLang } from '../src/i18n';
 import { useOnb } from '../src/state';
+import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { buddy as buddyApi } from '../src/api';
 import { CREATE, topicsOf, titleOf, unpackHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
@@ -39,6 +40,8 @@ export default function Create() {
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
+  /** Android: клавиатура ложится поверх дока — окно под неё не ужимается. См. src/keyboard.ts. */
+  const kb = useKeyboardInset();
   const scroller = useRef<ScrollView>(null);
 
   /**
@@ -303,7 +306,7 @@ export default function Create() {
               разговор уточняющий, и карточка уезжала вверх ровно тогда, когда её и надо смотреть. */}
         </ScrollView>
 
-        <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+        <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
           <View style={s.field}>
             <TextInput
               style={s.input}

@@ -20,43 +20,118 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${EXPO_PORT:-8081}"
+
+# Порт выбираем САМИ, а не надеемся, что 8081 свободен.
+#
+# На поде 8081 занят nginx. Expo это видит, спрашивает «занять 8082?» — и, запущенный фоном без
+# терминала, ответить не может: «Input is required, but 'npx expo' is in non-interactive mode…
+# Skipping dev server». Сервер не поднимается ВОВСЕ, а в логе сторожа при этом бодрое «адрес есть».
+# Держать нужный порт в самом файле не выходит — ops/sync-to-pod.sh везёт его целиком с ноутбука
+# и любую машинную правку затирает. Поэтому развилка здесь, и она одна на обе машины.
+port_free() { ! lsof -ti tcp:"$1" -sTCP:LISTEN >/dev/null 2>&1 && ! ss -lntH "sport = :$1" 2>/dev/null | grep -q .; }
+if [ -n "${EXPO_PORT:-}" ]; then
+  PORT="$EXPO_PORT"
+else
+  PORT=""
+  for p in 8081 19000 19001 19002 8082 8100; do
+    port_free "$p" && PORT="$p" && break
+  done
+  [ -n "$PORT" ] || { echo "не нашёл свободного порта для Metro" >&2; exit 1; }
+fi
 CF_LOG="$ROOT/ops/.cloudflared.log"
+
+# Где лежит cloudflared. На ноутбуке он в PATH (homebrew), на поде — файлом в /root, и в PATH его
+# НЕТ. Пока это было зашито строкой, скрипт приходилось править под каждую машину — а
+# ops/sync-to-pod.sh везёт файл целиком и правку затирал: сторож на поде падал с «nohup: failed to
+# run command 'cloudflared'», молча и каждый круг. Один файл на обе машины, развилка здесь.
+CF="$(command -v cloudflared 2>/dev/null || true)"
+[ -n "$CF" ] || for c in /root/cloudflared-linux-amd64 /usr/local/bin/cloudflared; do
+  [ -x "$c" ] && CF="$c" && break
+done
+[ -n "$CF" ] || { echo "cloudflared не найден ни в PATH, ни в /root" >&2; exit 1; }
 EXPO_LOG="$ROOT/ops/.expo.log"
 URL_FILE="$ROOT/ops/.expo-url"
 EVERY="${WATCH_EVERY:-60}"          # как часто щупать адрес снаружи, секунд
 
 log() { printf '%s  %s\n' "$(date +%H:%M:%S)" "$*"; }
 
+# Адрес туннеля из лога cloudflared — и ТОЛЬКО он.
+#
+# `api.trycloudflare.com` — служебный адрес самого cloudflared, и он попадает в лог даже когда
+# туннеля нет вовсе: «failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel":
+# context deadline exceeded». Наивный grep по *.trycloudflare.com хватал именно его, писал в
+# .expo-url и объявлял «поднят». Проверено вживую: в логе не было ни одного другого адреса.
+url_from_log() {
+  grep -ho 'https://[a-z0-9-]*\.trycloudflare\.com' "$CF_LOG" | grep -v '^https://api\.' | head -1
+}
+
+# Живой манифест — это РОВНО 200.
+#
+# `curl -o /dev/null` без кода возврата считает удачей любой ответ, в том числе 405, которым
+# api.trycloudflare.com отвечает на запрос манифеста. Из-за этого сторож бесконечно «проверял»
+# заведомо мёртвый адрес и ни разу не поднял туннель заново.
+manifest_ok() {
+  [ "$(curl -s -m 8 -o /dev/null -w '%{http_code}' -H 'expo-platform: ios' "$1/")" = "200" ]
+}
+
+# Манифеста МАЛО, и это стоило часа поисков: он весит килобайт и проходит даже тогда, когда бандл
+# на 8,5 МБ отдаётся с 530. Сторож рапортовал «поднят», а телефон приложение не открывал.
+# Проверяем то, ради чего сервер и существует, — что бандл уезжает целиком.
+bundle_ok() {
+  [ "$(curl -s -m 90 -o /dev/null -w '%{http_code}' \
+       "$1/node_modules/expo-router/entry.bundle?platform=ios&dev=true&hot=false")" = "200" ]
+}
+
 stop_all() {
-  pkill -f "cloudflared tunnel --protocol http2 --url http://localhost:$PORT" 2>/dev/null
-  # Убиваем ИМЕННО node-процесс expo, а не обёртку npm: обёртка умирает, дочерний сервер остаётся
-  # держать порт, и следующий запуск падает на «port already in use».
-  pkill -f "expo start --port $PORT" 2>/dev/null
-  sleep 2
+  # По PID из списка процессов, а НЕ pkill по шаблону. Причина: старый cloudflared переживал
+  # перезапуск, рядом поднимался второй, и на одном порту оказывалось ДВА туннеля с разными
+  # именами. Адрес в .expo-url принадлежал одному, запрос попадал в другой — снаружи это выглядело
+  # как «манифест 200, бандл 530», причём непостоянно.
+  local pids
+  pids="$(ps -eo pid,command \
+          | grep -E "cloudflared .*--url http://localhost:$PORT|expo start --port $PORT" \
+          | grep -v grep | awk '{print $1}')"
+  for p in $pids; do kill -9 "$p" 2>/dev/null; done
+  # Ждём освобождения порта, а не спим наугад: Metro отпускает его не мгновенно, и следующий запуск
+  # падал на «port already in use», оставляя всё на старом процессе.
+  for _ in $(seq 1 15); do
+    lsof -ti tcp:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || ss -lntH "sport = :$PORT" 2>/dev/null | grep -q . || break
+    sleep 1
+  done
 }
 
 start_all() {
   stop_all
   : > "$CF_LOG"
-  nohup cloudflared tunnel --protocol http2 --url "http://localhost:$PORT" > "$CF_LOG" 2>&1 &
+  nohup "$CF" tunnel --protocol http2 --url "http://localhost:$PORT" > "$CF_LOG" 2>&1 &
   # Ждём адрес, а не «сколько-нибудь секунд»: на медленной сети 15 секунд не хватает, на быстрой
   # это лишнее ожидание.
   local url="" i
   for i in $(seq 1 40); do
-    url="$(grep -ho 'https://[a-z0-9-]*\.trycloudflare\.com' "$CF_LOG" | head -1)"
+    url="$(url_from_log)"
     [ -n "$url" ] && break
     sleep 1
   done
   if [ -z "$url" ]; then log "cloudflared не отдал адрес — смотри $CF_LOG"; return 1; fi
 
   printf '%s\n' "$url" > "$URL_FILE"
-  ( cd "$ROOT" && EXPO_PACKAGER_PROXY_URL="$url" nohup npx expo start --port "$PORT" > "$EXPO_LOG" 2>&1 & )
+  # stdin ИЗ /dev/null — обязательно.
+  #
+  # `expo start` держит интерактивную консоль и читает клавиши со stdin. Когда скрипт сам запущен
+  # фоном, stdin у потомка закрывается, expo получает EOF и выходит МОЛЧА: в логе остаётся бодрое
+  # «Waiting on http://localhost:8081», а порт при этом никто не слушает. Снаружи это неотличимо от
+  # мёртвого туннеля, и чинить начинаешь не то.
+  #
+  # CI=1 здесь НЕ ставим, хотя он тоже снимает интерактивность: вместе с ней он выключает watch
+  # mode, и правка перестаёт доезжать до телефона без ручного перезапуска — то есть лечение хуже
+  # болезни для экрана, который как раз и проверяют вживую.
+  ( cd "$ROOT" && EXPO_PACKAGER_PROXY_URL="$url" nohup npx expo start --port "$PORT" \
+      > "$EXPO_LOG" 2>&1 < /dev/null & )
 
   # Готовность проверяем СНАРУЖИ, через сам туннель: локальный порт отвечает и тогда, когда
   # телефон уже ничего не видит.
   for i in $(seq 1 40); do
-    if curl -s -m 5 -o /dev/null -H "expo-platform: ios" "$url/"; then
+    if manifest_ok "$url"; then
       log "поднят: ${url/https:\/\//exp://}"
       return 0
     fi
@@ -69,7 +144,15 @@ start_all() {
 alive() {
   local url; url="$(cat "$URL_FILE" 2>/dev/null)"
   [ -n "$url" ] || return 1
-  curl -s -m 8 -o /dev/null -H "expo-platform: ios" "$url/"
+  # Дешёвая проверка каждый круг; тяжёлую (бандл целиком) гоняем раз в десять кругов, иначе сторож
+  # сам себе создаёт нагрузку в 8,5 МБ каждую минуту. Первый круг после старта — обязательно
+  # тяжёлый: именно там ловится «манифест есть, бандл 530».
+  manifest_ok "$url" || return 1
+  ROUND=$(( ${ROUND:-0} + 1 ))
+  if [ "$ROUND" = 1 ] || [ $(( ROUND % 10 )) = 0 ]; then
+    bundle_ok "$url" || { log "манифест отвечает, а бандл — нет: туннель полудохлый"; return 1; }
+  fi
+  return 0
 }
 
 # Первая попытка может не удаться — и это НЕ повод выходить: trycloudflare иногда отдаёт имя,
