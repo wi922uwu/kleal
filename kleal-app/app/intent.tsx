@@ -144,7 +144,9 @@ export default function Intent() {
     city: st.profile.city,
     lat: draft.lat ?? st.profile.geo?.coarseLat,
     lon: draft.lon ?? st.profile.geo?.coarseLon,
-    languages: st.profile.languages?.comfortable || [],
+    // Объектом, а не списком: сервер читает `languages.comfortable`, и на плоском списке
+    // ранжирование падало целиком — см. тот же комментарий в app/group.tsx.
+    languages: st.profile.languages || {},
   });
 
   /**

@@ -142,7 +142,11 @@ export default function GroupRoom() {
       const prof = {
         name: me, age: st.profile.age, gender: st.profile.gender, city: st.profile.city,
         lat: st.profile.geo?.coarseLat, lon: st.profile.geo?.coarseLon,
-        languages: st.profile.languages?.comfortable || [],
+        // Языки уходят ОБЪЕКТОМ, как их хранит профиль и как их читает сервер
+        // (`prof['languages']['comfortable']`). Здесь стоял плоский список — и ранжирование
+        // падало на первой же строке с «'list' object has no attribute 'get'», а экран показывал
+        // это как «никого не нашлось». Поиск людей в группу не находил вообще ничего.
+        languages: st.profile.languages || {},
       };
       const r: any = await agent.match(intent, prof, { self: me, uid: me, city: st.profile.city });
       setResults({

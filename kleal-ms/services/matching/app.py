@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (matching half, lines 304-831). Serves /api/agent/*.
 # Talks to llm-service over HTTP for parse/intro/negotiate; holds NO model keys. Owner: Dev B.
 # Endpoint names are FROZEN — the profile-service frontend hard-codes them (see ../../shared/contracts.md).
-import os, sys, json, re, threading, concurrent.futures, math, hashlib, time, copy, contextlib
+import os, sys, json, re, threading, concurrent.futures, math, hashlib, time, copy, contextlib, traceback
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
@@ -504,6 +504,27 @@ MERGE_DEMO = os.environ.get("KLEAL_MERGE_DEMO", "0") != "0"
 # Off by default: no fabricated people, ever, unless a demo explicitly asks for them.
 DEMO_FALLBACK = os.environ.get("KLEAL_DEMO_FALLBACK", "0") != "0"
 _users_cache = {"mtime": None, "list": None}
+def _langs_of(prof):
+    """Языки человека — из ЛЮБОЙ из двух форм, которыми их присылают.
+
+    Профиль хранит `languages` объектом: {"comfortable": [...], "native": ...}. Часть экранов
+    приложения, собирая профиль под поиск, отдаёт сразу список — и на этом ранжирование падало
+    с «'list' object has no attribute 'get'», а человек читал ответ как «никого не нашлось».
+    Экраны поправлены, но терпимость остаётся здесь: цена ошибки в форме одного поля не должна
+    быть «поиск не работает вообще», а следующий, кто соберёт профиль иначе, узнает об этом
+    не от пользователя.
+
+    Пустая строка и None отбрасываются: пустой язык — это не язык, а дырка в анкете."""
+    langs = (prof or {}).get('languages')
+    if isinstance(langs, dict):
+        langs = langs.get('comfortable') or langs.get('speaks') or []
+    if isinstance(langs, str):
+        langs = [langs]
+    if not isinstance(langs, (list, tuple, set)):
+        return []
+    return [l for l in langs if l]
+
+
 def load_candidates():
     store = None
     try:
@@ -1093,7 +1114,7 @@ def match_candidates_legacy(intent, prof, ctx=None):
                 'blocked': set(sess.get('blocked') or []) | set(ctx.get('blocked') or [])}
     topics   = [str(t).lower() for t in (intent.get('topics') or [])]
     irole    = (intent.get('role') or 'meet').lower()
-    my_langs = {str(l)[:2].lower() for l in ((prof.get('languages') or {}).get('comfortable') or [])}
+    my_langs = {str(l)[:2].lower() for l in _langs_of(prof)}
     my_vibe  = str(prof.get('vibe') or '').lower()
     dating   = (intent.get('type') or '').lower() == 'dating'
     soon     = any(w in str(intent.get('time', '')).lower() for w in SOON_WORDS)
@@ -3839,6 +3860,20 @@ def gi_post(gid, who, text, idem=None):
         return _idem_put(idem, {"ok": True, "message": msg})
 
 
+def _blew_up(where, e):
+    """Записать в лог ТРАССИРОВКУ упавшего запроса, а не только текст исключения.
+
+    Поиск людей падал с «'list' object has no attribute 'get'» и отдавал клиенту пустую выдачу.
+    Экран показывал «никого не нашлось» — то есть обычный, ожидаемый исход, — а в логе не было
+    ни строки: обработчик клал str(e) в ответ и на этом успокаивался. Найти такое можно только
+    случайно, и именно так его и нашли, через несколько дней.
+
+    Строка исключения без трассировки бесполезна вдвойне: она называет ТИП ошибки, но не место,
+    а «где-то список вместо словаря» в файле на шесть тысяч строк — это не подсказка."""
+    sys.stderr.write("[matching] %s FAILED: %s\n%s\n" % (where, e, traceback.format_exc()))
+    sys.stderr.flush()
+
+
 def _iso(ts):
     """unix-секунды → ISO-8601 в UTC. Клиенту время приглашения нужно строкой, а не числом:
     число он всё равно форматирует сам, и два разных формата разъезжаются первыми."""
@@ -6439,6 +6474,7 @@ class H(BaseHTTPRequestHandler):
                         res["expired"] = True
                 send_json(self, 200, res)
             except Exception as e:
+                _blew_up("/api/agent/match", e)
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
         elif p == "/api/agent/confirm":
             # §5.1 confirmation flow: promote ONLY the confirmed sensitive constraints (required language,
@@ -6462,6 +6498,7 @@ class H(BaseHTTPRequestHandler):
                     res["fallback"] = _online_fallback(conf)      # §12 never dead-end even after a narrowing confirm
                 send_json(self, 200, res)
             except Exception as e:
+                _blew_up("/api/agent/confirm", e)
                 send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
         elif p == "/api/agent/explain":
             # TWO tools under one name, chosen by whether a `candidate` is named:
