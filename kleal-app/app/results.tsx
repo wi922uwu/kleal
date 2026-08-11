@@ -32,9 +32,14 @@ import { RESULTS, EXPAND_LADDER, ExpandAxis, axisExplain } from '../src/intent';
 import { CANDS, PREFS, CAP, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
 import { CHAT, ReqStatus, activeChatWith } from '../src/chat';
 import { useInvites, inviteTo, openInvites, sendInvite, withdrawInvite } from '../src/invites';
+import { isGroupIntent, groupTitleOf, GROUP } from '../src/groups';
+import {
+  useGroupSession, groupStatusFor, groupCounters, groupPending, groupId,
+  sendGroupInvite, cancelGroupInvite,
+} from '../src/ginvites';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, patchResults, setCandidate } from '../src/results-store';
-import { agent } from '../src/api';
+import { mediaUrl, agent } from '../src/api';
 import { IconPerson, IconPin, IconCalendar } from '../src/components/icons';
 import { AgeRange } from '../src/components/AgeRange';
 import Slider from '@react-native-community/slider';
@@ -116,10 +121,17 @@ export default function Results() {
   const profile = initial?.profile || {};
   const self = String(profile?.name || '');
   /**
+   * Групповой режим той же выдачи — кадры GR.14–GR.17. Экран один, потому что на борде это один
+   * и тот же список карточек; меняются шапка, строка регламента и что делает «Пригласить».
+   */
+  const gmode = isGroupIntent(initial?.intent);
+  /**
    * Состояние приглашений — общее с карточкой кандидата (src/invites.ts). Здесь только подписка:
    * отправка, отзыв и потолок живут там, потому что кнопка «Пригласить» есть на обоих экранах.
+   * В групповом режиме то же самое делает сессия набора (src/ginvites.ts).
    */
   useInvites(self);
+  useGroupSession(self, gmode);
 
   // Радиус нечего удваивать, когда встреча онлайн, — эта ступень для такого интента бессмысленна.
   const ladder: ExpandAxis[] = useMemo(
@@ -173,28 +185,37 @@ export default function Results() {
   const pendingOut = openInvites();
   const [capOpen, setCapOpen] = useState(false);
 
-  /** Отправка приглашения — только из окна O.14, никогда прямо с кнопки карточки. */
+  /** Отправка приглашения — только из окна O.14/GR.16, никогда прямо с кнопки карточки. */
   const send = async () => {
     const to = String(asking?.name || '');
     if (!to || sending) return;
     setSending(true);
     setSendErr('');
     try {
+      if (gmode) {
+        // GR.16: первое приглашение по пути создаёт группу (лениво — см. шапку ginvites.ts).
+        const r = await sendGroupInvite(self, to, intent, groupTitleOf(intent, initial?.query));
+        if (r.capped) { setAsking(null); setCapOpen(true); return; }   // GR.15
+        if (r.full) { setSendErr(GROUP.full()); return; }
+        if (!r.ok) throw new Error(r.error || 'invite failed');
+        setAsking(null);
+        return;
+      }
       const r = await sendInvite(self, to, intent);
       // MSG.22: потолок открытых приглашений. Правило клиентское — см. CAP в candidates.ts.
       if (r.capped) { setAsking(null); setCapOpen(true); return; }
       if (!r.ok) throw new Error(r.error || 'propose failed');
       setAsking(null);
     } catch {
-      setSendErr(CANDS.inviteFailed());
+      setSendErr(gmode ? GROUP.sendFailed() : CANDS.inviteFailed());
     } finally {
       setSending(false);
     }
   };
 
-  /** O.15 «Cancel»: отозвать НЕотвеченное приглашение. Ответившее отозвать нельзя — скажет сервер. */
+  /** O.15/GR.17 «Cancel»: отозвать НЕотвеченное приглашение. Ответившее — скажет сервер. */
   const cancelInvite = async (to: string) => {
-    const ok = await withdrawInvite(self, to);
+    const ok = gmode ? await cancelGroupInvite(self, to) : await withdrawInvite(self, to);
     if (!ok) setNote(CANDS.cancelFailed());
   };
 
@@ -261,6 +282,14 @@ export default function Results() {
    * другим клиентом.
    */
   const openChat = (name: string, photo?: string) => {
+    // В группе личной переписки с человеком НЕТ — это обещано ещё в шите приглашения (GR.16).
+    // Открывается общая комната: она и есть разговор. Потолок «один чат за раз» сюда тоже не
+    // относится — он про 1:1.
+    if (gmode) {
+      const gid = groupId();
+      if (gid) router.push({ pathname: '/group', params: { gid } });
+      return;
+    }
     const active = chatting;
     if (active && active.toLowerCase() !== name.toLowerCase()) {
       setBusyWith(active);
@@ -307,9 +336,15 @@ export default function Results() {
     );
   }
 
-  const title = cands.length === 0 ? RESULTS.empty()
+  const title = gmode ? GROUP.header()
+              : cands.length === 0 ? RESULTS.empty()
               : onlyFallback ? T('Прямых совпадений нет', 'No direct matches')
               : RESULTS.best();
+  /** Групповые строки под шапкой: регламент до первого приглашения (GR.14), счётчик после (GR.17). */
+  const gc = groupCounters();
+  const gline = !gmode ? ''
+    : groupId() ? GROUP.counter(gc.joined, gc.max, gc.open, gc.min)
+    : GROUP.regime(gc.min, gc.max, gc.cap);
 
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
@@ -323,6 +358,7 @@ export default function Results() {
       </View>
 
       <ScrollView contentContainerStyle={[s.scroll, { paddingBottom: 120 }]}>
+        {gline ? <Text style={s.gline}>{gline}</Text> : null}
         {onlyFallback ? (
           <View style={{ gap: space.sm }}>
             <Text style={s.lead}>
@@ -353,7 +389,7 @@ export default function Results() {
             key={(c.name || '') + i}
             c={c}
             badge={(c as any).fallback ? '' : i === 0 ? CANDS.bestBadge() : CANDS.matchBadge()}
-            status={inviteTo(String(c.name || ''))?.status}
+            status={gmode ? groupStatusFor(String(c.name || '')) : inviteTo(String(c.name || ''))?.status}
             onOpen={() => openProfile(c)}
             onInvite={() => { setSendErr(''); setAsking(c); }}
             onCancel={() => cancelInvite(String(c.name || ''))}
@@ -426,30 +462,31 @@ export default function Results() {
         </View>
       </Modal>
 
-      {/* Потолок открытых приглашений — кадр MSG.22. Отзыв работает по серверным id из outbox. */}
+      {/* Потолок открытых приглашений — кадр MSG.22, в групповом режиме GR.15. Отзыв по id сервера. */}
       <Modal visible={capOpen} transparent animationType="slide" onRequestClose={() => setCapOpen(false)}>
         <Pressable style={s.scrim} onPress={() => setCapOpen(false)} accessibilityLabel={T('Закрыть', 'Close')} />
         <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
           <View style={s.sheetHead}>
-            <Text style={s.sheetTitle}>{CAP.title(pendingOut.length)}</Text>
+            <Text style={s.sheetTitle}>{gmode ? GROUP.capTitle() : CAP.title(pendingOut.length)}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setCapOpen(false)} hitSlop={10}>
               <Text style={s.sheetX}>✕</Text>
             </Pressable>
           </View>
-          <Text style={s.sheetBody}>{CAP.note()}</Text>
-          {/* Тарифа в продукте нет — кнопка честно выключена, как в O.17. */}
+          <Text style={s.sheetBody}>{gmode ? GROUP.capBody() : CAP.note()}</Text>
+          {/* Тарифа в продукте нет — кнопка честно выключена, как в O.17. GR.15 предлагает Plus
+              тем же местом, и он выключен по той же причине. */}
           <View style={[s.sheetSend, { opacity: 0.45 }]}>
             <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
           </View>
           <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
           {/* «Отменить одно» — вот они, все открытые: отзыв тут же, без похода по экранам. */}
-          {pendingOut.map((r) => (
+          {(gmode ? groupPending().map((r) => ({ id: r.id, to: r.to })) : pendingOut).map((r) => (
             <View key={r.id || r.to} style={s.capRow}>
               <Text style={s.capName} numberOfLines={1}>{r.to}</Text>
               <Pressable
                 accessibilityRole="button"
                 style={s.capBtn}
-                onPress={() => withdrawInvite(self, r.to)}
+                onPress={() => (gmode ? cancelGroupInvite(self, r.to) : withdrawInvite(self, r.to))}
               >
                 <Text style={s.capBtnText}>{CAP.withdraw()}</Text>
               </Pressable>
@@ -462,6 +499,7 @@ export default function Results() {
         cand={asking}
         sending={sending}
         err={sendErr}
+        group={gmode}
         onSend={send}
         onClose={() => setAsking(null)}
         bottomInset={insets.bottom}
@@ -476,8 +514,8 @@ function CandCard({
 }: {
   c: Cand;
   badge: string;
-  /** Состояние приглашения из общего стора. Пусто — не приглашали. */
-  status?: ReqStatus;
+  /** Состояние приглашения из общего стора; в групповом режиме добавляется 'joined'. */
+  status?: ReqStatus | 'joined';
   onOpen: () => void;
   onInvite: () => void;
   onCancel: () => void;
@@ -495,7 +533,7 @@ function CandCard({
       <Pressable accessibilityRole="button" onPress={onOpen} style={({ pressed }) => [pressed && { opacity: 0.92 }]}>
         <View style={s.cardTop}>
           {c.photo && !broken ? (
-            <Image source={{ uri: c.photo }} style={s.av} onError={() => setBroken(true)} />
+            <Image source={{ uri: mediaUrl(String(c.photo)) }} style={s.av} onError={() => setBroken(true)} />
           ) : (
             <View style={[s.av, s.avEmpty]}><IconPerson /></View>
           )}
@@ -548,7 +586,19 @@ function CandCard({
           отправлено (O.15) — «Отправлено» и «Отменить»;
           ничего            — просто «Пригласить».
       */}
-      {status === 'declined' ? (
+      {status === 'joined' ? (
+        /* GR.17: человек уже в группе. Отменить нечего — выход из состава это его решение,
+           а удаление организатором — отдельный флоу с причиной (GR.51), не кнопка на карточке.
+           Зато отсюда открывается сама комната: она и есть разговор с этим человеком. */
+        <View style={s.invitedRow}>
+          <View style={[s.invite, s.joinedPill]}>
+            <Text style={[s.inviteText, { color: color.successText }]}>✓  {GROUP.joined()}</Text>
+          </View>
+          <Pressable accessibilityRole="button" style={[s.invite, s.cancelPill]} onPress={onOpenChat}>
+            <Text style={s.inviteText}>{CHAT.openChat()}</Text>
+          </Pressable>
+        </View>
+      ) : status === 'declined' ? (
         <View style={s.invitedRow}>
           <View style={[s.invite, s.invitedPill]}>
             <Text style={[s.inviteText, { color: color.muted }]}>⊘  {CHAT.declined()}</Text>
@@ -716,11 +766,13 @@ function PrefsSheet({
 
 /** Окно O.14: последствия названы словами, отправка — только отсюда. */
 function InviteSheet({
-  cand, sending, err, onSend, onClose, bottomInset,
+  cand, sending, err, group, onSend, onClose, bottomInset,
 }: {
   cand: Cand | null;
   sending: boolean;
   err: string;
+  /** Групповой режим: та же механика, копия кадра GR.16 вместо O.14. */
+  group?: boolean;
   onSend: () => void;
   onClose: () => void;
   bottomInset: number;
@@ -731,12 +783,12 @@ function InviteSheet({
       <Pressable style={s.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
       <View style={[s.sheet, { paddingBottom: Math.max(bottomInset, 18) }]}>
         <View style={s.sheetHead}>
-          <Text style={s.sheetTitle}>{CANDS.sheetTitle(name)}</Text>
+          <Text style={s.sheetTitle}>{group ? GROUP.askTitle(name) : CANDS.sheetTitle(name)}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={onClose} hitSlop={10}>
             <Text style={s.sheetX}>✕</Text>
           </Pressable>
         </View>
-        <Text style={s.sheetBody}>{CANDS.sheetBody(name)}</Text>
+        <Text style={s.sheetBody}>{group ? GROUP.askBody(name) : CANDS.sheetBody(name)}</Text>
         {err ? <Text style={s.note}>{err}</Text> : null}
         <Pressable
           accessibilityRole="button"
@@ -744,10 +796,11 @@ function InviteSheet({
           style={s.sheetSend}
           onPress={sending ? undefined : onSend}
         >
-          {sending ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.sheetSendText}>{CANDS.send()}</Text>}
+          {sending ? <ActivityIndicator color={color.onPrimary} />
+                   : <Text style={s.sheetSendText}>{group ? GROUP.askSend() : CANDS.send()}</Text>}
         </Pressable>
         <Pressable accessibilityRole="button" style={s.sheetNot} onPress={onClose}>
-          <Text style={s.sheetNotText}>{CANDS.notYet()}</Text>
+          <Text style={s.sheetNotText}>{group ? GROUP.askNot() : CANDS.notYet()}</Text>
         </Pressable>
       </View>
     </Modal>
@@ -797,6 +850,10 @@ const s = StyleSheet.create({
   invitedRow: { flexDirection: 'row', gap: space.sm },
   invitedPill: { flex: 1, backgroundColor: color.neutral100 },
   cancelPill: { flex: 1, backgroundColor: color.ink },
+  /** GR.17 «Joined»: спокойная зелёная пилюля, не кнопка — нажимать тут нечего. */
+  joinedPill: { backgroundColor: color.successBg },
+  /** Строка регламента/счётчика набора — GR.14/GR.17, под шапкой над карточками. */
+  gline: { ...type.bodySmall, color: color.muted } as any,
   inviteText: { ...type.button, color: color.onPrimary } as any,
 
   cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },

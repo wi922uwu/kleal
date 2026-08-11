@@ -38,7 +38,7 @@ import { TimeDial } from '../src/components/Dials';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { agent } from '../src/api';
+import { mediaUrl, agent } from '../src/api';
 import {
   IconChevronLeft, IconCalendar, IconClock, IconPin, IconLink, IconPerson,
 } from '../src/components/icons';
@@ -552,7 +552,7 @@ export default function Plan() {
               {(plan.participants || []).map((p: any, i: number) => (
                 <View key={(p.name || '') + i} style={s.person}>
                   {p.photo ? (
-                    <Image source={{ uri: p.photo }} style={s.personAva} />
+                    <Image source={{ uri: mediaUrl(String(p.photo)) }} style={s.personAva} />
                   ) : (
                     <View style={[s.personAva, s.personAvaEmpty]}><IconPerson size={18} /></View>
                   )}

@@ -2,28 +2,25 @@
  * Главный экран — то, что в вебе называется Agent Home.
  *
  * Здесь только копия и разбор данных; сам экран в app/home.tsx. Всё, что показывается, приходит с
- * сервера: группы из /api/agent/groups, подходящие люди из POST /api/agent/explore (он строже
- * обычного обзора — отбирает по профилю), приглашения из /api/agent/inbox. Придуманных карточек на
- * этом экране нет и быть не должно: человек по ним нажимает.
+ * сервера: группы из /api/agent/groups и адресованные пользователю приглашения из
+ * /api/agent/home-invites. Потенциальные совпадения без явного приглашения сюда не попадают.
  */
 import { T, getLang } from './i18n';
 
 export const HOME = {
   hello: (name: string) => T(`Привет, ${name} 👋`, `Hey ${name} 👋`),
   groups: () => T('Групповые мероприятия', 'Group events'),
-  people: () => T('Подходящие люди', 'People who fit'),
-  noGroups: () => T('Пока нет открытых групповых мероприятий.', 'No open group events yet.'),
-  noPeople: () =>
-    T(
-      'Пока никого подходящего. Расскажи, чем хочешь заняться, — и Kleal поищет.',
-      'Nobody fits yet. Tell Kleal what you feel like doing and it will look.'
-    ),
+  invites: () => T('Приглашения', 'Invitations'),
+  /** Стопка приглашений разобрана. Их немного — это норма, а не поломка. */
+  invitesAllSeen: () => T('Это все приглашения.', 'That’s every invite.'),
+  inviteStatus: () => T('Приглашение', 'Invitation'),
+  inviteLoadFailed: () => T('Не удалось загрузить приглашения.', 'Invitations could not be loaded.'),
+  retry: () => T('Повторить', 'Retry'),
   ask: () => T('Чем хочешь заняться?', 'What do you feel like doing?'),
   history: () => T('Открыть историю разговоров', 'Open conversation history'),
   match: () => T('Мэтч', 'Match'),
   fits: () => T('Подходит', 'Match'),
   review: () => T('Посмотреть приглашение', 'Review invite'),
-  respond: () => T('Откликнуться', 'Respond'),
   wantsToMeet: () => T('хочет встретиться', 'wants to meet'),
   hosting: (who: string) => T(`${who} организует`, `${who} is hosting`),
   /**
@@ -34,6 +31,10 @@ export const HOME = {
     const t = n % 10, h = n % 100;
     const ru = t === 1 && h !== 11 ? 'идёт' : 'идут';
     return T(`${n} ${ru}`, `${n} going`);
+  },
+  peopleCount: (n: number, max?: number) => {
+    const total = max && max > n ? `${n}/${max}` : String(n);
+    return T(`${total} участников`, `${total} participants`);
   },
   flexible: () => T('Гибко', 'Flexible'),
   noArea: () => T('место не указано', 'area not set'),
@@ -97,24 +98,20 @@ export type Group = {
   waiting?: boolean;
 };
 
-export type Person = {
-  intentId?: string;
-  who: string;
-  age?: number;
-  photo?: string;
-  title: string;
-  when: string;
-  area: string;
-  dist: string;
-};
-
-export type Invite = {
+export type HomeInvite = {
   id: string;
-  from: string;
-  age?: number;
-  photo?: string;
+  type: 'one_to_one' | 'group';
+  created_at?: string;
+  from: { name: string; age?: number; photo?: string };
   note?: string;
-  intent?: { title?: string; when?: string; time?: string; area?: string; place?: string };
+  intent: { id?: string; title?: string; when?: string; mode?: string; area?: string };
+  group?: {
+    gid: string;
+    cover?: string;
+    participants: { name: string; photo?: string }[];
+    participant_count: number;
+    max_size?: number;
+  };
 };
 
 /** Группы, к которым имеет смысл предлагать присоединиться: чужие, не набранные, не ожидающие. */
@@ -135,19 +132,34 @@ export function joinableGroups(rows: any[]): Group[] {
     }));
 }
 
-export function forYouPeople(rows: any[]): Person[] {
-  return (rows || []).slice(0, 3).map((p) => ({
-    intentId: p.intentId,
-    who: String(p.who || ''),
-    age: p.age,
-    photo: String(p.photo || ''),
-    title: String(p.title || p.who || ''),
-    when: String(p.when || ''),
-    area: String(p.area || ''),
-    dist: distStr(p.dist),
-  }));
-}
-
-export function pendingInvites(rows: any[]): Invite[] {
-  return (rows || []).filter((r) => r && r.status === 'pending');
+export function homeInvites(rows: any[]): HomeInvite[] {
+  return (rows || [])
+    .filter((row) => row && row.id && (row.type === 'one_to_one' || row.type === 'group'))
+    .map((row) => ({
+      id: String(row.id),
+      type: row.type,
+      created_at: String(row.created_at || ''),
+      from: {
+        name: String(row.from?.name || row.from || ''),
+        age: row.from?.age == null ? undefined : Number(row.from.age),
+        photo: String(row.from?.photo || ''),
+      },
+      note: String(row.note || ''),
+      intent: {
+        id: String(row.intent?.id || ''),
+        title: String(row.intent?.title || ''),
+        when: String(row.intent?.when || ''),
+        mode: String(row.intent?.mode || ''),
+        area: String(row.intent?.area || ''),
+      },
+      group: row.group ? {
+        gid: String(row.group.gid || ''),
+        cover: String(row.group.cover || ''),
+        participants: Array.isArray(row.group.participants)
+          ? row.group.participants.map((p: any) => ({ name: String(p?.name || ''), photo: String(p?.photo || '') }))
+          : [],
+        participant_count: Number(row.group.participant_count || 0),
+        max_size: row.group.max_size == null ? undefined : Number(row.group.max_size),
+      } : undefined,
+    }));
 }

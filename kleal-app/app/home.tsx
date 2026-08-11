@@ -1,12 +1,10 @@
 /**
  * Главный экран.
  *
- * Порт Agent Home из веба. Три ленты, и все три — с сервера:
+ * Порт Agent Home из веба. Обе ленты приходят с сервера:
  *
  *  — групповые мероприятия (/api/agent/groups) — то, к чему можно присоединиться;
- *  — подходящие люди (POST /api/agent/explore) — этот вход строже обычного обзора, он отбирает по
- *    профилю, а не отдаёт всех подряд;
- *  — приглашение (/api/agent/inbox) — первое непросмотренное, остальные за ним.
+ *  — адресованные пользователю 1:1 и групповые приглашения (/api/agent/home-invites).
  *
  * Придуманных карточек здесь нет: по каждой человек нажимает и попадает к живому человеку. Когда
  * сервер ничего не вернул, показывается пустое состояние, а не заглушка, похожая на данные.
@@ -21,19 +19,20 @@ import {
   ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform, Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { BottomNav } from '../src/components/BottomNav';
+import { CardStack } from '../src/components/CardStack';
 import {
-  IconBell, IconCalendar, IconClock, IconPin, IconBookmark, IconMic, IconPerson,
+  IconBell, IconCalendar, IconClock, IconPin, IconBookmark, IconMic,
   IconChat, IconGroups, IconImagePlaceholder,
 } from '../src/components/icons';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { agent } from '../src/api';
+import { mediaUrl, agent } from '../src/api';
 import {
-  HOME, splitWhen, planWhere, joinableGroups, forYouPeople, pendingInvites,
-  Group, Person, Invite,
+  HOME, splitWhen, planWhere, joinableGroups, homeInvites,
+  Group, HomeInvite,
 } from '../src/home';
 import { color, radius as rad, space, type } from '../src/theme';
 
@@ -45,8 +44,8 @@ export default function Home() {
   const me = st.profile.name || '';
 
   const [groups, setGroups] = useState<Group[]>([]);
-  const [people, setPeople] = useState<Person[]>([]);
-  const [invites, setInvites] = useState<Invite[]>([]);
+  const [invites, setInvites] = useState<HomeInvite[]>([]);
+  const [inviteError, setInviteError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   /**
@@ -54,6 +53,8 @@ export default function Home() {
    * безопасной зоны, которая на разных телефонах разная.
    */
   const [navH, setNavH] = useState(96);
+  /** Какое приглашение сверху стопки. Живёт в экране: он знает, какие уже разобрали. */
+  const [invIdx, setInvIdx] = useState(0);
   /**
    * Открыта ли клавиатура.
    *
@@ -69,31 +70,24 @@ export default function Home() {
     return () => { show.remove(); hide.remove(); };
   }, []);
 
-  /**
-   * Три запроса разом, и каждый со своим catch: одна упавшая лента не должна уносить остальные.
-   * Пустой ответ и упавший запрос выглядят на экране одинаково — и это правда, потому что в обоих
-   * случаях показывать нечего.
-   */
+  /** Открытые группы и личные приглашения грузятся независимо друг от друга. */
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
-    const prof = {
-      name: me, age: st.profile.age, city: st.profile.city,
-      lat: st.profile.geo?.coarseLat, lon: st.profile.geo?.coarseLon,
-      interests: st.profile.interests?.explicit || [],
-      languages: st.profile.languages || {},
-    };
-    const [g, f, i] = await Promise.all([
+    const [g, i] = await Promise.all([
       agent.groups(me).catch(() => null),
-      agent.forYou(me, prof).catch(() => null),
-      agent.inbox(me).catch(() => null),
+      agent.homeInvites(me).catch(() => null),
     ]);
     setGroups(joinableGroups((g as any)?.groups || []));
-    setPeople(forYouPeople((f as any)?.plans || []));
-    setInvites(pendingInvites((i as any)?.requests || []));
+    if (i) {
+      setInvites(homeInvites((i as any)?.invites || []));
+      setInviteError(false);
+    } else {
+      setInviteError(true);
+    }
     setLoading(false);
-  }, [me, st.profile]);
+  }, [me]);
 
-  useEffect(() => { load(); }, [me]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const refresh = async () => {
     setRefreshing(true);
@@ -111,7 +105,6 @@ export default function Home() {
   const toBuddy = () => router.push('/buddy');
 
   const myArea = st.profile.city || '';
-  const inv = invites[0];
 
   return (
     <View style={s.wrap}>
@@ -138,29 +131,52 @@ export default function Home() {
             <ActivityIndicator style={{ marginTop: 40 }} color={color.primary} />
           ) : (
             <>
-              <Section icon={<IconGroups />} title={HOME.groups()} />
               {groups.length ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={s.carousel}
-                  snapToInterval={CARD_W + space.md}
-                  decelerationRate="fast"
-                >
-                  {groups.map((g) => <GroupCard key={g.gid} g={g} myArea={myArea} />)}
-                </ScrollView>
-              ) : (
-                <Text style={s.empty}>{HOME.noGroups()}</Text>
-              )}
+                <>
+                  <Section icon={<IconGroups />} title={HOME.groups()} />
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={s.carousel}
+                    snapToInterval={CARD_W + space.md}
+                    decelerationRate="fast"
+                  >
+                    {groups.map((g) => <GroupCard key={g.gid} g={g} myArea={myArea} />)}
+                  </ScrollView>
+                </>
+              ) : null}
 
-              <Section icon={<IconPerson size={18} />} title={HOME.people()} />
-              {people.length ? (
-                people.map((p, i) => <PersonCard key={(p.intentId || p.who) + i} p={p} myArea={myArea} />)
-              ) : (
-                <Text style={s.empty}>{HOME.noPeople()}</Text>
-              )}
-
-              {inv ? <InviteCard inv={inv} /> : null}
+              {invites.length || inviteError ? (
+                <>
+                  <Section icon={<IconBell size={18} />} title={HOME.invites()} />
+                  {inviteError ? (
+                    <View style={s.inviteError}>
+                      <Text style={s.empty}>{HOME.inviteLoadFailed()}</Text>
+                      <Pressable accessibilityRole="button" onPress={load} style={s.retryBtn}>
+                        <Text style={s.retryText}>{HOME.retry()}</Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    /*
+                      Стопка, а не список — компонент борда «Invite Stack» (GR.01, 350×131 при
+                      карточке 350×110). Сверху одно приглашение, за ним видны края остальных.
+                      Так и задумано продуктом: 2–4 объяснённых варианта, а не лента, по которой
+                      скроллят. Разбирать приглашения по одному — ещё и честнее: решение по
+                      каждому человеку принимается отдельно, а не сравнением витрины.
+                    */
+                    <CardStack
+                      items={invites.map((inv) => ({ ...inv, key: String(inv.id) }))}
+                      index={invIdx}
+                      onNext={() => setInvIdx((n) => n + 1)}
+                      emptyHint={invites.length ? HOME.invitesAllSeen() : ''}
+                      render={(inv) => (inv.type === 'group'
+                        ? <GroupInviteCard inv={inv} />
+                        : <DirectInviteCard inv={inv} />
+                      )}
+                    />
+                  )}
+                </>
+              ) : null}
             </>
           )}
         </ScrollView>
@@ -265,59 +281,28 @@ function GroupCard({ g, myArea }: { g: Group; myArea: string }) {
   );
 }
 
-function PersonCard({ p, myArea }: { p: Person; myArea: string }) {
-  const w = splitWhen(p.when);
-  const where = planWhere(p.area, p.dist, myArea);
-  return (
-    <View style={s.meet}>
-      {p.photo ? (
-        <Image source={{ uri: p.photo }} style={s.meetAva} />
-      ) : (
-        <View style={[s.meetAva, s.meetAvaEmpty]}>
-          <Text style={s.meetInit}>{(p.who || '?').slice(0, 1).toUpperCase()}</Text>
-        </View>
-      )}
-      <View style={{ flex: 1 }}>
-        <View style={s.meetTop}>
-          <Text style={s.meetName} numberOfLines={1}>{p.who}{p.age ? `, ${p.age}` : ''}</Text>
-          <View style={s.badge}><Text style={s.badgeText}>{HOME.fits()}</Text></View>
-        </View>
-        {p.title ? <Text style={s.meetIntent} numberOfLines={1}>{p.title}</Text> : null}
-        <View style={s.meetMeta}>
-          <IconClock />
-          <Text style={s.meta}>{w.date}{w.time ? ` · ${w.time}` : ''}</Text>
-          <IconPin size={16} c={color.muted} />
-          <Text style={s.meta} numberOfLines={1}>{where}</Text>
-        </View>
-        <Pressable accessibilityRole="button" style={s.meetBtn}>
-          <Text style={s.meetBtnText}>{HOME.respond()}</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function InviteCard({ inv }: { inv: Invite }) {
+function DirectInviteCard({ inv }: { inv: HomeInvite }) {
   const router = useRouter();
-  const io = inv.intent || {};
-  const w = splitWhen(String(io.when || io.time || ''));
-  const where = String(io.area || io.place || '');
-  // Вся карточка — дверь в приглашение (O.C1), не только кнопка: попадать проще.
+  const w = splitWhen(inv.intent.when || '');
+  const where = inv.intent.area || '';
   const open = () => router.push({ pathname: '/invite', params: { id: inv.id } });
   return (
     <Pressable accessibilityRole="button" onPress={open} style={s.meet}>
-      {inv.photo ? (
-        <Image source={{ uri: inv.photo }} style={s.meetAva} />
+      {inv.from.photo ? (
+        <Image source={{ uri: mediaUrl(String(inv.from.photo)) }} style={s.meetAva} />
       ) : (
         <View style={[s.meetAva, s.meetAvaEmpty]}>
-          <Text style={s.meetInit}>{(inv.from || '?').slice(0, 1).toUpperCase()}</Text>
+          <Text style={s.meetInit}>{(inv.from.name || '?').slice(0, 1).toUpperCase()}</Text>
         </View>
       )}
       <View style={{ flex: 1 }}>
         <View style={s.meetTop}>
-          <Text style={s.meetName} numberOfLines={1}>{inv.from}{inv.age ? `, ${inv.age}` : ''}</Text>
+          <Text style={s.meetName} numberOfLines={1}>
+            {inv.from.name}{inv.from.age ? `, ${inv.from.age}` : ''}
+          </Text>
           <View style={s.badge}><Text style={s.badgeText}>{HOME.match()}</Text></View>
         </View>
+        {inv.intent.title ? <Text style={s.meetIntent} numberOfLines={1}>{inv.intent.title}</Text> : null}
         <View style={s.meetMeta}>
           {w.date || where ? (
             <>
@@ -329,9 +314,83 @@ function InviteCard({ inv }: { inv: Invite }) {
             <Text style={s.meta} numberOfLines={1}>{inv.note || HOME.wantsToMeet()}</Text>
           )}
         </View>
-        <Pressable accessibilityRole="button" style={s.meetBtn} onPress={open}>
+        <View style={s.meetBtn}>
           <Text style={s.meetBtnText}>{HOME.review()}</Text>
-        </Pressable>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+function GroupInviteCard({ inv }: { inv: HomeInvite }) {
+  const router = useRouter();
+  const group = inv.group;
+  const w = splitWhen(inv.intent.when || '');
+  // Маршрут называется /ginvite — файл app/ginvite.tsx. Стояло `/group-invite`, которого нет:
+  // expo-router на несуществующий путь молча ничего не делает, и карточка приглашения не
+  // открывалась вовсе. Заметить это было нельзя, пока лента приглашений сама отдавала 404.
+  const open = () => router.push({ pathname: '/ginvite', params: { id: inv.id } });
+  const participants = (group?.participants || []).slice(0, 5);
+  const hidden = Math.max(0, (group?.participant_count || 0) - participants.length);
+
+  return (
+    <Pressable accessibilityRole="button" onPress={open} style={s.groupInvite}>
+      <View style={s.groupHero}>
+        {group?.cover ? (
+          <Image source={{ uri: mediaUrl(String(group.cover)) }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+        ) : (
+          <IconImagePlaceholder size={48} c="#ffffff99" />
+        )}
+        <View style={s.avatarStack}>
+          {participants.map((person, index) => (
+            person.photo ? (
+              <Image
+                key={`${person.name}-${index}`}
+                source={{ uri: mediaUrl(String(person.photo)) }}
+                style={[s.stackAvatar, { marginLeft: index ? -12 : 0, zIndex: participants.length - index }]}
+              />
+            ) : (
+              <View
+                key={`${person.name}-${index}`}
+                style={[s.stackAvatar, s.stackAvatarEmpty, { marginLeft: index ? -12 : 0, zIndex: participants.length - index }]}
+              >
+                <Text style={s.stackInitial}>{(person.name || '?').slice(0, 1).toUpperCase()}</Text>
+              </View>
+            )
+          ))}
+          {hidden > 0 ? (
+            <View style={[s.stackAvatar, s.stackMore, { marginLeft: participants.length ? -12 : 0 }]}>
+              <Text style={s.stackMoreText}>+{hidden}</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+
+      <View style={s.groupInviteBody}>
+        <Text style={s.groupInviteTitle} numberOfLines={2}>
+          {inv.intent.title || inv.from.name}
+        </Text>
+        <View style={s.inviteBadge}>
+          <IconGroups size={16} c={color.successText} />
+          <Text style={s.inviteBadgeText}>{HOME.inviteStatus()}</Text>
+        </View>
+        <View style={s.groupMetaRow}>
+          <IconCalendar />
+          <Text style={s.groupMeta}>{w.date}</Text>
+          {w.time ? <><IconClock /><Text style={s.groupMeta}>{w.time}</Text></> : null}
+        </View>
+        {inv.intent.area ? (
+          <View style={s.groupMetaRow}>
+            <IconPin size={18} c={color.muted} />
+            <Text style={s.groupMeta} numberOfLines={1}>{inv.intent.area}</Text>
+          </View>
+        ) : null}
+        <Text style={s.groupCount}>
+          {HOME.peopleCount(group?.participant_count || 0, group?.max_size)}
+        </Text>
+        <View style={s.groupInviteBtn}>
+          <Text style={s.meetBtnText}>{HOME.review()}</Text>
+        </View>
       </View>
     </Pressable>
   );
@@ -354,6 +413,9 @@ const s = StyleSheet.create({
   sec: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, marginTop: space.md },
   secText: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
   empty: { ...type.bodySmall, color: color.ink, opacity: 0.65, paddingHorizontal: 20 } as any,
+  inviteError: { gap: space.sm, alignItems: 'flex-start' },
+  retryBtn: { marginLeft: 20, paddingVertical: 8, paddingHorizontal: 14, borderRadius: rad.full, backgroundColor: color.card },
+  retryText: { ...type.labelSmall, color: color.primary, fontWeight: '700' } as any,
 
   carousel: { paddingHorizontal: 20, gap: space.md, paddingVertical: 4 },
   card: {
@@ -391,6 +453,38 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginTop: 12,
   },
   meetBtnText: { ...type.button, color: color.onPrimary } as any,
+
+  groupInvite: {
+    marginHorizontal: 20, borderRadius: rad.xl, backgroundColor: color.card, overflow: 'hidden',
+    shadowColor: '#000', shadowOpacity: 0.09, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 3,
+  },
+  groupHero: {
+    height: 142, backgroundColor: '#e2604f', alignItems: 'center', justifyContent: 'center',
+  },
+  avatarStack: {
+    position: 'absolute', left: 24, bottom: 14, flexDirection: 'row', alignItems: 'center', minHeight: 58,
+  },
+  stackAvatar: {
+    width: 58, height: 58, borderRadius: 29, borderWidth: 2, borderColor: color.card,
+  },
+  stackAvatarEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+  stackInitial: { fontSize: 19, fontWeight: '700', color: color.muted },
+  stackMore: { backgroundColor: color.card, alignItems: 'center', justifyContent: 'center' },
+  stackMoreText: { fontSize: 18, fontWeight: '700', color: color.muted },
+  groupInviteBody: { padding: 18, gap: 10 },
+  groupInviteTitle: { fontSize: 22, lineHeight: 27, fontWeight: '700', color: color.fg },
+  inviteBadge: {
+    alignSelf: 'flex-start', minHeight: 30, borderRadius: rad.full, paddingHorizontal: 12,
+    backgroundColor: color.successBg, flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  inviteBadgeText: { ...type.labelSmall, color: color.successText, fontWeight: '700' } as any,
+  groupMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 22 },
+  groupMeta: { ...type.body, color: color.muted, flexShrink: 1 } as any,
+  groupCount: { ...type.bodySmall, color: color.muted } as any,
+  groupInviteBtn: {
+    height: 50, borderRadius: rad.full, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center', marginTop: 2,
+  },
 
   dock: { paddingHorizontal: 16, gap: 8, paddingBottom: 6 },
   askRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },

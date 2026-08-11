@@ -28,7 +28,7 @@ import { CHAT } from '../src/chat';
 import { useInvites, inviteTo, sendInvite, withdrawInvite } from '../src/invites';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, takeCandidate } from '../src/results-store';
-import { agent } from '../src/api';
+import { mediaUrl, agent } from '../src/api';
 import { IconPerson, IconPin, IconUserLock } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { color, radius as rad, space, type } from '../src/theme';
@@ -177,7 +177,7 @@ export default function Candidate() {
           пейджер на одну страницу значит обещать пролистывание, которого нет.
         */}
         {c.photo ? (
-          <Image source={{ uri: c.photo }} style={s.photoBig} resizeMode="cover" />
+          <Image source={{ uri: mediaUrl(String(c.photo)) }} style={s.photoBig} resizeMode="cover" />
         ) : (
           <View style={[s.photo, s.photoEmpty]}><IconPerson size={54} /></View>
         )}

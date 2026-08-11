@@ -14,7 +14,7 @@ import { ProfileShell, Card } from '../../src/components/ProfileShell';
 import { IconPerson } from '../../src/components/icons';
 import { useLang } from '../../src/i18n';
 import { useOnb, set, getState } from '../../src/state';
-import { profile as profileApi } from '../../src/api';
+import { mediaUrl, profile as profileApi } from '../../src/api';
 import {
   PERSONALITY as C, STORY_MAX, fmtUpdated, adaptSummary,
   AXIS_LABEL, AXIS_VALUE, AXIS_ORDER,
@@ -101,7 +101,7 @@ export default function Personality() {
     >
       <View style={s.photoWrap}>
         {p.photo ? (
-          <Image source={{ uri: p.photo }} style={s.photo} />
+          <Image source={{ uri: mediaUrl(String(p.photo)) }} style={s.photo} />
         ) : (
           <View style={[s.photo, s.photoEmpty]}><IconPerson /></View>
         )}

@@ -6,6 +6,7 @@
  * расходилась между экранами; здесь одно место.
  */
 import React, { forwardRef } from 'react';
+import { mediaUrl } from '../api';
 import {
   View, Text, StyleSheet, ScrollView, ActivityIndicator, Image,
   KeyboardAvoidingView, Platform,
@@ -73,7 +74,7 @@ export const ChatShell = forwardRef<ScrollView, {
           {thread.map((m, i) => (
             <View key={i} style={{ alignItems: m.who === 'me' ? 'flex-end' : 'flex-start' }}>
               {m.photo ? (
-                <Image source={{ uri: m.photo }} style={s.threadPhoto} />
+                <Image source={{ uri: mediaUrl(String(m.photo)) }} style={s.threadPhoto} />
               ) : (
                 <View style={[s.bub, m.who === 'me' ? s.bubMe : s.bubBot]}>
                   <Text style={[s.bubText, m.who === 'me' && { color: color.onPrimary }]}>{m.text}</Text>

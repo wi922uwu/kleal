@@ -19,7 +19,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { CHAT, INVITE } from '../src/chat';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { agent } from '../src/api';
+import { mediaUrl, agent } from '../src/api';
 import {
   IconChevronLeft, IconCalendar, IconPerson, IconGroups, IconImagePlaceholder, IconPin,
 } from '../src/components/icons';
@@ -126,7 +126,7 @@ export default function Invite() {
 
             <View style={s.person}>
               {row.photo ? (
-                <Image source={{ uri: row.photo }} style={s.personAva} />
+                <Image source={{ uri: mediaUrl(String(row.photo)) }} style={s.personAva} />
               ) : (
                 <View style={[s.personAva, s.personAvaEmpty]}><IconPerson size={18} /></View>
               )}

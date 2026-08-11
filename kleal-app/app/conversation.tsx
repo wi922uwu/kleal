@@ -24,7 +24,7 @@ import { inviteHoursLeft } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
-import { agent } from '../src/api';
+import { mediaUrl, agent } from '../src/api';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
 } from '../src/components/icons';
@@ -289,7 +289,7 @@ export default function Conversation() {
             <IconChevronLeft />
           </Pressable>
           {photo ? (
-            <Image source={{ uri: photo }} style={s.ava} />
+            <Image source={{ uri: mediaUrl(String(photo)) }} style={s.ava} />
           ) : (
             <View style={[s.ava, s.avaEmpty]}><IconPerson size={20} /></View>
           )}
@@ -324,12 +324,12 @@ export default function Conversation() {
             {/* Пара участников, как на MSG.07: собеседник и я, внахлёст. */}
             <View style={s.pairWrap}>
               {photo ? (
-                <Image source={{ uri: photo }} style={s.pairAva} />
+                <Image source={{ uri: mediaUrl(String(photo)) }} style={s.pairAva} />
               ) : (
                 <View style={[s.pairAva, s.avaEmpty]}><IconPerson size={13} /></View>
               )}
               {st.profile.photo ? (
-                <Image source={{ uri: st.profile.photo }} style={[s.pairAva, s.pairAvaOverlap]} />
+                <Image source={{ uri: mediaUrl(String(st.profile.photo)) }} style={[s.pairAva, s.pairAvaOverlap]} />
               ) : (
                 <View style={[s.pairAva, s.pairAvaOverlap, s.avaEmpty]}><IconPerson size={13} /></View>
               )}

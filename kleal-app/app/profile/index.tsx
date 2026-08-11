@@ -12,14 +12,14 @@ import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator,
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, Segments, EditSheet } from '../../src/components/ProfileShell';
 import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator';
+import { squarePhoto } from '../../src/photo';
 import { BottomNav } from '../../src/components/BottomNav';
 import {
   IconPerson, IconVerified, IconStar, IconFaceScan, IconUserLock, IconTranslate, IconPin, IconPencil, IconGear,
 } from '../../src/components/icons';
 import { useLang, getLang, setLang } from '../../src/i18n';
 import { useOnb, set, reset } from '../../src/state';
-import { profile as profileApi } from '../../src/api';
+import { mediaUrl, profile as profileApi } from '../../src/api';
 import {
   PROFILE_TITLE, HUB, SIGNOUT, HUB_ROWS, SHEETS, WHOAMI, profileData, fmtUpdated, adaptSummary,
   onSummaryBusy,
@@ -172,7 +172,7 @@ export default function ProfileHub() {
         <View style={s.idRow}>
           <View>
             {p.photo ? (
-              <Image source={{ uri: p.photo }} style={s.ava} />
+              <Image source={{ uri: mediaUrl(String(p.photo)) }} style={s.ava} />
             ) : (
               <View style={[s.ava, s.avaEmpty]}><IconPerson /></View>
             )}
@@ -352,6 +352,7 @@ const s = StyleSheet.create({
   },
   whoPhotoBtnText: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
   whoRemove: { ...type.caption, color: color.primary, textAlign: 'center' } as any,
+  whoPhotoErr: { ...type.caption, color: color.danger, textAlign: 'center' } as any,
   whoInput: {
     height: 48, borderRadius: rad.md, backgroundColor: color.neutral100,
     paddingHorizontal: 14, color: color.fg, fontSize: 16,
@@ -429,15 +430,19 @@ function WhoAmISheet({
   const [name, setName] = useState(String(p.name || ''));
   const [age, setAge] = useState(String(p.age || ''));
   const [photo, setPhoto] = useState<string>(String(p.photo || ''));
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoErr, setPhotoErr] = useState('');
 
   useEffect(() => {
     if (!open) return;
     setName(String(p.name || ''));
     setAge(String(p.age || ''));
     setPhoto(String(p.photo || ''));
+    setPhotoErr('');
   }, [open]);
 
   const pick = async () => {
+    setPhotoErr('');
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return;
     // Без allowsEditing — экран «ОБРЕЗАТЬ» между выбором и профилем не нужен: квадрат вырезаем
@@ -445,19 +450,18 @@ function WhoAmISheet({
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.9 });
     if (res.canceled || !res.assets?.length) return;
     const a = res.assets[0];
-    const ctx = ImageManipulator.manipulate(a.uri);
-    const w = Number(a.width || 0), h = Number(a.height || 0);
-    if (w > 0 && h > 0 && w !== h) {
-      const side = Math.min(w, h);
-      ctx.crop({
-        originX: Math.round((w - side) / 2),
-        originY: Math.round((h - side) / 2),
-        width: side, height: side,
-      });
+    // Подготовка — общая с онбордингом (src/photo.ts). Своя копия здесь однажды разъехалась с той
+    // на одну строку, и смена фото молча перестала работать.
+    setPhotoBusy(true);
+    try {
+      const shot = await squarePhoto(a);
+      setPhoto(shot.dataUrl);
+    } catch {
+      // Молчать нельзя: человек уже выбрал снимок и ждёт его на экране.
+      setPhotoErr(WHOAMI.photoFailed());
+    } finally {
+      setPhotoBusy(false);
     }
-    const out = await ctx.resize({ width: 512 }).renderAsync();
-    const saved = await out.saveAsync({ compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true });
-    setPhoto(saved.base64 ? `data:image/jpeg;base64,${saved.base64}` : saved.uri);
   };
 
   return (
@@ -470,19 +474,29 @@ function WhoAmISheet({
     >
       <View style={s.whoPhotoRow}>
         {photo ? (
-          <Image source={{ uri: photo }} style={s.whoPhoto} />
+          <Image source={{ uri: mediaUrl(String(photo)) }} style={s.whoPhoto} />
         ) : (
           <View style={[s.whoPhoto, s.avaEmpty]}><IconPerson size={30} /></View>
         )}
         <View style={{ flex: 1, gap: space.sm }}>
-          <Pressable accessibilityRole="button" style={s.whoPhotoBtn} onPress={pick}>
-            <Text style={s.whoPhotoBtnText}>{WHOAMI.changePhoto()}</Text>
+          <Pressable
+            accessibilityRole="button"
+            style={[s.whoPhotoBtn, photoBusy && { opacity: 0.6 }]}
+            onPress={photoBusy ? undefined : pick}
+            accessibilityState={{ busy: photoBusy }}
+          >
+            {photoBusy ? (
+              <ActivityIndicator size="small" color={color.fg} />
+            ) : (
+              <Text style={s.whoPhotoBtnText}>{WHOAMI.changePhoto()}</Text>
+            )}
           </Pressable>
-          {photo ? (
+          {photo && !photoBusy ? (
             <Pressable accessibilityRole="button" onPress={() => setPhoto('')}>
               <Text style={s.whoRemove}>{WHOAMI.removePhoto()}</Text>
             </Pressable>
           ) : null}
+          {photoErr ? <Text style={s.whoPhotoErr}>{photoErr}</Text> : null}
         </View>
       </View>
 

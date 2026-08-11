@@ -17,7 +17,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { MSG, Row, intentRows, planRows, threadRows, searchRows, bucketOf, isUnread, rowTime } from '../src/messages';
+import { MSG, Row, intentRows, planRows, threadRows, groupRows, searchRows, bucketOf, isUnread, rowTime } from '../src/messages';
+import { mediaUrl, group as gapi } from '../src/api';
 import { planWhen, sysLine } from '../src/chat';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, msgPrefs, setMsgPrefs } from '../src/state';
@@ -38,9 +39,10 @@ export default function Messages() {
   const [searching, setSearching] = useState(false);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<{ plans: any[]; history: any[]; inbox: any[]; outbox: any[]; threads: any[] }>(
-    { plans: [], history: [], inbox: [], outbox: [], threads: [] }
-  );
+  const [data, setData] = useState<{
+    plans: any[]; history: any[]; inbox: any[]; outbox: any[]; threads: any[];
+    groups: any[]; ginvites: any[];
+  }>({ plans: [], history: [], inbox: [], outbox: [], threads: [], groups: [], ginvites: [] });
   /** Лист MSG.04 — по какой строке вызван. */
   const [menuRow, setMenuRow] = useState<Row | null>(null);
   const [menuNote, setMenuNote] = useState('');
@@ -52,8 +54,11 @@ export default function Messages() {
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
     try {
-      const [pl, inb, out, th] = await Promise.all([
+      // Группы — своим запросом и со своим catch: групповой слой новее остальных, и его
+      // неудача не должна уносить список переписок, который работал годами.
+      const [pl, inb, out, th, gr] = await Promise.all([
         agent.plans(me), agent.inbox(me), agent.outbox(me), agent.threads(me),
+        gapi.mine(me).catch(() => null),
       ]);
       const arr = (r: any, k: string) => (Array.isArray(r) ? r : r?.[k] || []);
       const threads = arr(th, 'threads');
@@ -63,6 +68,8 @@ export default function Messages() {
         inbox: arr(inb, 'requests'),
         outbox: arr(out, 'requests'),
         threads,
+        groups: (gr as any)?.groups || [],
+        ginvites: (gr as any)?.invites || [],
       });
       const seen = (msgPrefs().seen || {}) as Record<string, number>;
       const fresh = threads.filter((t: any) => (t.t || 0) > (seen[String(t.who || '').toLowerCase()] || 0)).slice(0, 10);
@@ -119,8 +126,15 @@ export default function Messages() {
     return { normal, muted, archived };
   };
 
-  const intentsAll = sections.forming;
-  const iForm = split(sections.forming);
+  /** Группы стоят рядом с одиночными интентами: для человека это одна затея, просто людей больше. */
+  const gRows = useMemo(() => groupRows(data.groups, data.ginvites, ru), [data.groups, data.ginvites, ru]);
+  const formingWithGroups = useMemo(
+    () => [...gRows, ...sections.forming].sort((a, b) => (b.t || 0) - (a.t || 0)),
+    [gRows, sections.forming]
+  );
+
+  const intentsAll = formingWithGroups;
+  const iForm = split(formingWithGroups);
   const plansAll = [...plansSec.upcoming, ...plansSec.forming, ...plansSec.past];
   const pUp = split(plansSec.upcoming), pForm = split(plansSec.forming), pPast = split(plansSec.past);
   const pMuted = [...pUp.muted, ...pForm.muted, ...pPast.muted];
@@ -148,6 +162,17 @@ export default function Messages() {
    * Один вход, дальше по одному шагу — вместо трёх разных дверей с одинаковыми ручками.
    */
   const open = (r: Row) => {
+    // У групп собеседника нет — вместо переписки открывается комната по gid. Правило «любая
+    // строка ведёт в разговор» при этом соблюдено: комната и ЕСТЬ разговор группы.
+    if (r.kind === 'group' || r.kind === 'ginvite-in') {
+      if (!r.gid) return;
+      if (r.kind === 'ginvite-in') {
+        router.push({ pathname: '/ginvite', params: { id: r.id || '', gid: r.gid } });
+        return;
+      }
+      router.push({ pathname: '/group', params: { gid: r.gid } });
+      return;
+    }
     if (!r.who) return;              // строка без собеседника — открывать нечего
     router.push({
       pathname: '/conversation',
@@ -196,7 +221,7 @@ export default function Messages() {
         delayLongPress={350}
       >
         {r.photo ? (
-          <Image source={{ uri: r.photo }} style={s.ava} />
+          <Image source={{ uri: mediaUrl(String(r.photo)) }} style={s.ava} />
         ) : (
           <View style={[s.ava, s.avaEmpty]}><IconPerson size={22} /></View>
         )}

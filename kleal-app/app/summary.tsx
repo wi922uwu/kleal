@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useLang, T, replyLang } from '../src/i18n';
 import { useOnb, patch, set, profileForRegister, profileForAttach } from '../src/state';
-import { onboarding } from '../src/api';
+import { mediaUrl, onboarding } from '../src/api';
 import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';
 import { Composer } from '../src/components/Composer';
 import { IconPerson } from '../src/components/icons';
@@ -74,7 +74,17 @@ export default function Summary() {
     return bits.join('. ') + (bits.length ? '.' : '');
   }, [p]);
 
-  const finish = async () => {
+  /**
+   * Записать профиль на сервер — ЕДИНСТВЕННОЕ место, где это происходит.
+   *
+   * Через него обязаны проходить ОБА выхода с экрана. «Все настройки профиля» уводила отсюда
+   * простым переходом, и человек получал поздравление, не существуя на сервере: в users.json его
+   * не было, поиск не мог его найти, а `done` не ставился — следующий запуск снова открывал интро.
+   *
+   * Возвращает true, только когда профиль действительно записан: не записался — никуда не уходим,
+   * а показываем ошибку. Уйти с непрописанным профилем нельзя ни одной кнопкой.
+   */
+  const register = async (): Promise<boolean> => {
     setSending(true);
     setErr('');
     try {
@@ -84,13 +94,23 @@ export default function Summary() {
       // Отметка ставится ТОЛЬКО после успешной записи: иначе следующий запуск пустил бы человека
       // в приложение с профилем, которого на сервере нет.
       patch({ done: true });
-      router.replace('/done');
+      return true;
     } catch {
       setErr(T('Профиль не сохранился. Проверь связь и попробуй ещё раз.',
                'Your profile didn’t save. Check your connection and try again.'));
+      return false;
     } finally {
       setSending(false);
     }
+  };
+
+  const finish = async () => {
+    if (await register()) router.replace('/done');
+  };
+
+  /** Кнопка обещает настройки профиля — туда и ведёт. Но сначала запись, как и «Готово». */
+  const toProfile = async () => {
+    if (await register()) router.replace('/profile');
   };
 
   return (
@@ -106,7 +126,7 @@ export default function Summary() {
         <View style={s.card}>
           <View style={s.idRow}>
             {p.photo ? (
-              <Image source={{ uri: p.photo }} style={s.idAvatar} />
+              <Image source={{ uri: mediaUrl(String(p.photo)) }} style={s.idAvatar} />
             ) : (
               <View style={[s.idAvatar, s.idAvatarEmpty]}>
                 <IconPerson />
@@ -134,7 +154,12 @@ export default function Summary() {
             <Text style={s.cardMeta}>{SUMMARY.updatedToday()}</Text>
           </View>
           <Text style={s.para}>{text || fallback}</Text>
-          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/done')}>
+          <Pressable
+            accessibilityRole="button"
+            style={[s.cta, sending && { opacity: 0.6 }]}
+            onPress={sending ? undefined : toProfile}
+            accessibilityState={{ busy: sending }}
+          >
             <Text style={s.ctaText}>{SUMMARY.viewAll()}</Text>
           </Pressable>
         </View>
