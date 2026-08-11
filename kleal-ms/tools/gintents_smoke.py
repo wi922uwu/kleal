@@ -86,8 +86,45 @@ for i in (1, 2):
                                            "idem": "gi-i%d-%d" % (i, STAMP)})
     inv[i] = ((r or {}).get("invite") or {}).get("id")
 check("три приглашения в воздухе", all(inv.get(i) for i in (0, 1, 2)), inv)
+# Борд GR.14/GR.15: «3 open invites at a time on Free». Раньше здесь проверялось обратное
+# («batch разрешён», кап 20 был предохранителем) — правило дейлика; борд новее и действует.
 cap = call("/api/agent/gintent-invite", {"gid": GID, "self": OWNER, "to": GUESTS[3]})
-check("четвёртое приглашение проходит — batch разрешён", cap.get("ok") is True, cap)
+check("четвёртое открытое приглашение упирается в кап борда",
+      cap.get("error") == "INVITE_CAP" and cap.get("cap") == 3, cap)
+
+print()
+print("=" * 76)
+print("2b. ОТМЕНА ПРИГЛАШЕНИЯ — GR.17 Cancel, выход из капа по GR.15")
+print("=" * 76)
+notmine = call("/api/agent/gintent-invite-cancel", {"id": inv[2], "self": GUESTS[1]})
+check("отменяет только создатель", notmine.get("error") == "NOT_ORGANIZER", notmine)
+cx = call("/api/agent/gintent-invite-cancel", {"id": inv[2], "self": OWNER,
+                                               "idem": "gi-cx-%d" % STAMP})
+check("открытое приглашение отозвано", cx.get("ok") is True, cx)
+check("отзыв освободил кап — приглашение по нему снова уходит",
+      (call("/api/agent/gintent-invite", {"gid": GID, "self": OWNER, "to": GUESTS[3],
+                                          "idem": "gi-i3-%d" % STAMP}) or {}).get("ok") is True)
+dead = call("/api/agent/ginvite-respond", {"id": inv[2], "self": GUESTS[2], "accept": True})
+check("по отозванному приглашению войти нельзя, и причина названа",
+      dead.get("error") == "WITHDRAWN", dead)
+replayc = call("/api/agent/gintent-invite-cancel", {"id": inv[2], "self": OWNER,
+                                                    "idem": "gi-cx-%d" % STAMP})
+check("повтор отмены по тому же ключу — тот же ответ", replayc.get("ok") is True, replayc)
+# Кап снова полон (inv0, inv1, GUESTS[3]) — освобождаем место и возвращаем GUESTS[2] живое
+# приглашение: дальше секции 3–4 работают с ним.
+call("/api/agent/gintent-invite-cancel", {"id": ((call("/api/agent/gintent?gid=%s&self=%s"
+     % (GID, OWNER.replace(" ", "+"))).get("group") or {}).get("invites") or [{}])[-1].get("id"),
+     "self": OWNER, "idem": "gi-cx2-%d" % STAMP})
+r = call("/api/agent/gintent-invite", {"gid": GID, "self": OWNER, "to": GUESTS[2],
+                                       "idem": "gi-i2b-%d" % STAMP})
+inv[2] = ((r or {}).get("invite") or {}).get("id")
+check("GUESTS[2] снова приглашён — для секций ниже", bool(inv[2]), r)
+own_view = (call("/api/agent/gintent?gid=%s&self=%s" % (GID, OWNER.replace(" ", "+")))
+            .get("group") or {})
+check("организатор видит список открытых приглашений (GR.17)",
+      sorted(x.get("to") for x in (own_view.get("invites") or []))
+      == sorted([GUESTS[0], GUESTS[1], GUESTS[2]]), own_view.get("invites"))
+check("и кап назван в самой группе", own_view.get("invite_cap") == 3, own_view.get("invite_cap"))
 
 print()
 print("=" * 76)
@@ -100,6 +137,8 @@ check("вошёл", a0.get("ok") is True, a0)
 check("в комнате двое", g.get("joined_count") == 2, g.get("joined_count"))
 check("при двоих план ещё недоступен", g.get("planning_allowed") is False, g.get("planning_allowed"))
 check("и сказано, что нужен ещё один", g.get("need_more") == 1, g.get("need_more"))
+check("участник списка приглашений НЕ видит — он только у организатора (GR.16/GR.17)",
+      "invites" not in ((a0 or {}).get("group") or {}), list(((a0 or {}).get("group") or {}).keys())[:8])
 th = call("/api/agent/gintent-thread?gid=%s&self=%s" % (GID, GUESTS[0].replace(" ", "+")))
 check("чат открыт сразу, без ожидания", th.get("ok") is True, th.get("error"))
 check("вход записан в историю",
@@ -225,14 +264,18 @@ batch = call("/api/agent/gintent-invite", {"gid": GB, "self": OWNER,
                                            "to": GUESTS[:4] + [OWNER, GUESTS[0]],
                                            "idem": "gi-b-%d" % STAMP})
 check("батч ушёл одним вызовом", batch.get("ok") is True, len(batch.get("sent") or []))
-check("приглашены все годные", len(batch.get("sent") or []) == 4, batch.get("sent"))
+# Кап борда режет и батч: тремя открытыми всё и заканчивается, четвёртому — INVITE_CAP поимённо.
+check("ушли первые трое — дальше кап", len(batch.get("sent") or []) == 3, batch.get("sent"))
 check("негодные названы поимённо, а не срезали батч",
-      len(batch.get("refused") or []) == 2, batch.get("refused"))
+      len(batch.get("refused") or []) == 3, batch.get("refused"))
+check("четвёртому названа причина — кап",
+      any(x.get("error") == "INVITE_CAP" for x in (batch.get("refused") or [])),
+      batch.get("refused"))
 check("себя в батче не приглашает",
       any(x.get("to") == OWNER for x in (batch.get("refused") or [])), batch.get("refused"))
 check("повтор батча по ключу — тот же ответ",
       len((call("/api/agent/gintent-invite", {"gid": GB, "self": OWNER, "to": GUESTS[:4],
-                                              "idem": "gi-b-%d" % STAMP}).get("sent") or [])) == 4)
+                                              "idem": "gi-b-%d" % STAMP}).get("sent") or [])) == 3)
 
 print()
 print("=" * 76)

@@ -3313,27 +3313,26 @@ def list_intents(owner, profile=None, live=True):
 # chat between the organiser and a member. A group intent has exactly ONE thread. The first person to
 # accept opens it; everyone who accepts after that is added to the same one automatically.
 #
-# Candidates are invited ONE AT A TIME — there is deliberately no batch invite. Batch invite turns a
-# group intent into a casting call: send twenty, keep three. Every check below (capacity, pending cap,
-# policy) is therefore per-candidate and re-run at ACCEPT as well as at SEND, because the group can
-# fill up in between.
-#
-# What is NOT here, on purpose: no remove-participant. A member leaves on their own, or safety removes
-# them. An organiser who can evict people is running a casting flow, and the spec forbids it (§16).
+# Every check below (capacity, open-invite cap, policy) is per-candidate and re-run at ACCEPT as
+# well as at SEND, because the group can fill up in between.
 GI_MIN_TOTAL = 3          # three people INCLUDING the organiser; two is not a group result
-GI_MAX_TOTAL = 6
-# The daily is the governing document here and it overrides the written spec on two points.
-#
-#  1. INVITES GO OUT IN A BATCH. «Ему в формате мэтчинга показывается определённый набор людей. Он
-#     может им всем отправить инвайт. Например, отправить 10 инвайтов.» The written spec forbade
-#     batch invite; the product decision is that the organiser invites the slate at once. This cap
-#     is therefore not a product limit any more — it is only an abuse ceiling, so one account cannot
-#     hold hundreds of seats open across the pool.
-#  2. While the intent is still in its INVITE phase every acceptance auto-joins: «Все остальные люди
-#     также без ограничений сразу проваливаются в группу, но только в тот момент, когда у нас статус
-#     нашей встречи именно "инвайт".» Once planning starts, acceptance needs the organiser's approval
-#     instead — see GI_PHASES below.
-GI_PENDING_CAP = 20
+# Free ceiling is FIVE — board GR.08: «Free groups go up to 5 people. Plus raises the ceiling
+# to 20». The Plus tier does not exist in the backend yet, so 5 is the ceiling, full stop; when
+# the Plus layer lands, this becomes per-owner. (Was 6 — a written-spec-era default that matched
+# neither the board nor the app copy «3–5 человек».)
+GI_MAX_TOTAL = 5
+# Который документ здесь главный — уже менялось ДВАЖДЫ, поэтому история выписана явно:
+#   written spec  : приглашения строго по одному, батч запрещён;
+#   daily (июль)  : батч разрешён («отправить 10 инвайтов»), кап — только предохранитель (20);
+#   БОРД (август) : снова по одному, с шитом подтверждения на каждого (GR.16), и открытых
+#                   приглашений У ОДНОЙ ГРУППЫ не больше ТРЁХ на Free — GR.14/GR.15: «3 open
+#                   invites at a time on Free · first 5 who accept are in», «Kleal holds them at
+#                   three so nobody gets a fan-out of requests. Cancel one, or wait — Plus raises
+#                   it». Борд новее, борд и действует.
+# API по-прежнему принимает список (gi_invite_many) — но кап в 3 открытых делает «казтинг-колл»
+# невозможным независимо от формы вызова. Отменить открытое приглашение можно (gi_invite_cancel):
+# GR.17 даёт Cancel на каждой строке, и GR.15 прямо предлагает «Cancel one» как выход из капа.
+GI_OPEN_INVITE_CAP = 3
 GI_INVITE_TTL = 72 * 3600  # an invite nobody answers stops being a held seat
 # The phases where an accepted invite still drops straight into the chat. After that the roster is
 # what a plan is being confirmed against, so a newcomer is approved by the organiser, not admitted
@@ -3389,6 +3388,15 @@ def _gi_public(g, me=""):
     act = _gi_active(g)
     n = len(act)
     mine = _norm_name(me)
+    is_owner = bool(mine) and mine == _norm_name(g.get("owner"))
+    # Открытые приглашения — ТОЛЬКО организатору: это его экран «Invites sent» (GR.17), со
+    # строкой и Cancel на каждого. Участникам список не показывается — GR.16 обещает приглашённому
+    # «who is already in», а не «кого ещё позвали».
+    invites = [{"id": i.get("id"), "to": i.get("to"), "state": i.get("state")}
+               for i in _ginvites()
+               if i.get("gid") == g.get("id") and i.get("state") in ("sent", "viewed",
+                                                                     "awaiting_approval")] \
+        if is_owner else None
     return {
         "gid": g.get("id"), "title": g.get("title"), "topics": g.get("topics") or [],
         "when": g.get("when") or "", "area": g.get("area") or "", "mode": g.get("mode") or "offline",
@@ -3403,7 +3411,9 @@ def _gi_public(g, me=""):
         "awaiting_approval": [i.get("to") for i in _ginvites()
                               if i.get("gid") == g.get("id") and i.get("state") == "awaiting_approval"],
         "seats_left": max(0, int(g.get("max_total") or GI_MAX_TOTAL) - n),
-        "i_am_owner": bool(mine) and mine == _norm_name(g.get("owner")),
+        "invite_cap": GI_OPEN_INVITE_CAP,
+        **({"invites": invites} if invites is not None else {}),
+        "i_am_owner": is_owner,
         "i_am_member": any(_norm_name(m.get("name")) == mine for m in act),
         # §6.6/§6.7: the ONE thing the screen keys off. Below the floor the chat is a coordination
         # room and nothing more; the plan CTA is disabled with a reason, never hidden.
@@ -3520,9 +3530,11 @@ def gi_invite(gid, frm, to, note="", idem=None):
         pend = _gi_pending(gid)
         if any(_norm_name(i.get("to")) == _norm_name(to) for i in pend):
             return _idem_put(idem, {"ok": False, "error": "ALREADY_INVITED", "gid": gid})
-        if len(pend) >= GI_PENDING_CAP:
-            return _idem_put(idem, {"ok": False, "error": "PENDING_CAP", "gid": gid,
-                                    "cap": GI_PENDING_CAP})
+        # Продуктовый кап борда, не предохранитель: больше трёх ждущих ответа приглашений у группы
+        # не бывает (GR.15). Выход из капа — отменить одно (gi_invite_cancel) или дождаться ответа.
+        if len(pend) >= GI_OPEN_INVITE_CAP:
+            return _idem_put(idem, {"ok": False, "error": "INVITE_CAP", "gid": gid,
+                                    "cap": GI_OPEN_INVITE_CAP})
         # Deliberately NO "forecast" check here — outstanding invites do NOT reserve seats. Blocking
         # an invite because everyone MIGHT say yes sounds prudent and is wrong: §20 requires the case
         # where two candidates accept the last seat at the same moment to be handled, and a forecast
@@ -3621,6 +3633,41 @@ def gi_respond(inv_id, who, accept, idem=None):
             _gi_say(g, "This group is full. Pending invites are no longer available.")
         _save_store()
         return _idem_put(idem, {"ok": True, "gid": g.get("id"), "group": _gi_public(g, who)})
+
+
+def gi_invite_cancel(inv_id, frm, idem=None):
+    """Withdraw an OPEN invite — the Cancel on every GR.17 row, and the way out of the three-open
+    cap that GR.15 offers by name («Cancel one»). Only the organiser, and only while the invite is
+    still unanswered: a person who already accepted is a member (leaving is theirs to do), and one
+    who is awaiting approval is decided by gi_approve(accept=False), not by yanking the invite."""
+    frm = str(frm or "").strip()
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        _gi_expire(now)
+        inv = next((i for i in _ginvites() if i.get("id") == inv_id), None)
+        if not inv:
+            return {"ok": False, "error": "NO_SUCH_INVITE"}
+        g = _gi_find(inv.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(frm) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if inv.get("state") not in ("sent", "viewed"):
+            # Уже отвечено/сгорело — состояние называется по имени, как в gi_respond: ошибка
+            # «ACCEPTED» говорит организатору правду, а не абстрактное «нельзя».
+            return _idem_put(idem, {"ok": False, "error": inv.get("state", "").upper() or "CLOSED",
+                                    "invite": {"id": inv_id, "state": inv.get("state")}})
+        inv["state"] = "withdrawn"
+        inv["updated"] = now
+        # Приглашённому — тишина, а не сообщение в чат: он в комнате не был, писать ему некуда.
+        # Его сторона просто перестаёт видеть приглашение (gi_for отдаёт только живые), а попытка
+        # принять по старой ссылке честно ответит WITHDRAWN — это уже умеет gi_respond.
+        _save_store()
+        return _idem_put(idem, {"ok": True, "invite": {"id": inv_id, "state": "withdrawn"},
+                                "group": _gi_public(g, frm)})
 
 
 def gi_approve(gid, frm, who, accept=True, idem=None):
@@ -3792,6 +3839,113 @@ def gi_post(gid, who, text, idem=None):
         return _idem_put(idem, {"ok": True, "message": msg})
 
 
+def _iso(ts):
+    """unix-секунды → ISO-8601 в UTC. Клиенту время приглашения нужно строкой, а не числом:
+    число он всё равно форматирует сам, и два разных формата разъезжаются первыми."""
+    try:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(ts)))
+    except (TypeError, ValueError):
+        return ""
+
+
+def _person_card(name):
+    """Имя → как этого человека рисуют в чужом списке: фото и возраст, и ничего сверх того.
+
+    Отдельно от `_photo_by_name`, потому что приглашение подписывается «Марк, 31»: без возраста
+    строка обрывается на имени, а лезть за ним в общий профиль ради одной цифры — лишний повод
+    вынести наружу то, чего в приглашении быть не должно."""
+    key = _norm_name(name)
+    for u in load_candidates():
+        if _norm_name(u.get("name")) == key:
+            age = u.get("age")
+            try:
+                age = int(age) if age is not None else None
+            except (TypeError, ValueError):
+                age = None
+            return {"name": str(u.get("name") or name), "age": age, "photo": u.get("photo") or ""}
+    return {"name": str(name or ""), "age": None, "photo": ""}
+
+
+def home_invites(who):
+    """Единая лента входящих приглашений для главной — 1:1 и групповые в ОДНОМ списке.
+
+    Почему отдельная ручка, а не два запроса и склейка на клиенте: на борде (GR.01, «Invite Stack»)
+    это одна стопка, и порядок в ней общий. Считать «что новее» на клиенте значило бы держать это
+    правило там же, где вид, и повторять его в каждом месте, где стопка понадобится снова.
+
+    В ленту попадает ТОЛЬКО то, на что человек ещё может ответить: `pending` у заявок 1:1 и
+    `sent`/`viewed` у групповых. Отклонённое и просроченное — история; экрану, который спрашивает
+    «идёшь?», ей отвечать нечем, а показанная там она читается как новое приглашение.
+
+    Форма строки списана с клиента (`homeInvites` в kleal-app/src/home.ts), а не придумана:
+    он отбрасывает всё, у чего нет `id` и знакомого `type`, так что расхождение здесь означает
+    не ошибку на экране, а пустую ленту без единого слова о причине."""
+    _expire_due()
+    _gi_expire()
+    me = _norm_name(who)
+    if not me:
+        return {"ok": True, "invites": []}
+    rows = []
+
+    for r in _requests():
+        if _norm_name(r.get("to")) != me or r.get("status") != "pending":
+            continue
+        it = r.get("intent") if isinstance(r.get("intent"), dict) else {}
+        rows.append({
+            "id": r.get("id"), "type": "one_to_one",
+            "created_at": _iso(r.get("created") or r.get("updated")),
+            "_t": float(r.get("created") or r.get("updated") or 0),
+            "from": _person_card(r.get("from")),
+            "note": str(r.get("note") or "")[:400],
+            "intent": {
+                "id": str(it.get("id") or ""),
+                "title": str(it.get("title") or ""),
+                "when": str(it.get("time") or it.get("when") or ""),
+                "mode": str(it.get("mode") or ""),
+                # Точный адрес наружу не идёт — тот же запрет, что в `inbox` (OF.09): в списке
+                # приглашений человек видит район, а куда именно идти — уже после согласия.
+                "area": str(it.get("area") or it.get("district") or it.get("place") or ""),
+            },
+        })
+
+    for i in _ginvites():
+        if _norm_name(i.get("to")) != me or i.get("state") not in ("sent", "viewed"):
+            continue
+        g = _gi_find(i.get("gid"))
+        if not g:
+            continue
+        pub = _gi_public(g, who)
+        rows.append({
+            "id": i.get("id"), "type": "group",
+            "created_at": _iso(i.get("created")),
+            "_t": float(i.get("created") or 0),
+            "from": _person_card(i.get("frm")),
+            "note": str(i.get("note") or "")[:400],
+            "intent": {
+                "id": str(g.get("id") or ""),
+                "title": str(g.get("title") or ""),
+                "when": str(g.get("when") or ""),
+                "mode": str(g.get("mode") or "offline"),
+                "area": str(g.get("area") or ""),
+            },
+            "group": {
+                "gid": g.get("id"),
+                "cover": "",
+                # Кто уже внутри — ровно то, что GR.16 обещает приглашённому. Приглашённых
+                # (кого ещё позвали) здесь нет и быть не должно: это видит только организатор.
+                "participants": [{"name": m.get("name"), "photo": m.get("photo") or ""}
+                                 for m in (pub.get("members") or [])],
+                "participant_count": pub.get("joined_count"),
+                "max_size": pub.get("max_total"),
+            },
+        })
+
+    rows.sort(key=lambda r: -r["_t"])
+    for r in rows:
+        r.pop("_t", None)
+    return {"ok": True, "invites": rows[:50]}
+
+
 def gi_for(who):
     """Every group intent this person is in or has been invited to — the Intents tab reads this."""
     _gi_expire()
@@ -3833,7 +3987,27 @@ def gi_for(who):
 # Two hours before it starts everything freezes. «Убираются все кнопки, и этот план считается, что
 # он точно состоялся» — no edits, no cancels, no new people.
 GP_LOCK_BEFORE = 2 * 3600      # the freeze window, in seconds before the meeting starts
-GP_MIN_CONFIRMS = GI_MIN_TOTAL  # three, the same three that make a group a group
+# Три — это ПОЛ, а не достаточность. План утверждается, когда подтвердили ВСЕ (борд GR.26
+# «Waiting for everyone»); эта константа осталась нижней границей СОСТАВА: план, в котором меньше
+# трёх человек, группой быть перестал (§1) — это проверяет `_gp_recount`.
+GP_MIN_CONFIRMS = GI_MIN_TOTAL
+# А вот сколько нужно СОГЛАСИЙ, чтобы организатор мог закрепить план (GR.30) — другое число, и
+# путать их дорого. Борд показывает кадр закрепления при двух согласных из трёх: «Two confirmed,
+# one didn’t… You can fix Thursday 20:30 as the plan». Требование трёх согласий делало бы кнопку
+# недостижимой в группе ровно из трёх человек — то есть в самой частой, — и молчащий получал бы
+# право вечного вето, ради устранения которого раунды и придумывались.
+#
+# Почему не единица: закрепление с одним согласием — это указ организатора, а не план группы. Два
+# означает «решаю не я один», и §1 при этом не нарушается: не подтвердившего НИКТО не выбрасывает,
+# он остаётся в составе и решает сам (GR.31), так что людей в плане по-прежнему трое.
+GP_FIX_MIN_CONFIRMS = 2
+# Сколько встречных предложений допускается, считая исходное. Борд: «Round 1 of 3» → «Round 2 of
+# 3» → «Last round · after this the organiser fixes the plan». Дальше — gp_fix.
+GP_MAX_ROUNDS = 3
+# Голосование живёт шесть часов. Борд GR.35: «Everyone gets 6 hours to answer». Окно нужно именно
+# потому, что голосование СОВЕЩАТЕЛЬНОЕ: без срока молчащий держал бы его вечно, а организатору
+# нечего было бы решать. Истёк срок — считаем по тем, кто ответил.
+GP_VOTE_WINDOW = 6 * 3600
 
 
 def _gplans():
@@ -3877,6 +4051,12 @@ def _gp_confirms(p):
     return [n for n in said_yes if _norm_name(n) in live]
 
 
+def _gp_round(p):
+    """Каким по счёту раундом согласования идёт план. Отдельно от версии — см. `_gp_public`.
+    Планы, заведённые до появления поля, читаются по версии: у них другого числа и не было."""
+    return int(p.get("round") or p.get("version") or 1)
+
+
 def _gp_recount(gid, now=None):
     """Re-derive a plan's standing after the roster changed. Called from every exit path, because
     losing a confirmed participant is exactly when a plan stops being a group plan."""
@@ -3884,8 +4064,12 @@ def _gp_recount(gid, now=None):
     p = _gp_of(gid)
     if not p or p.get("state") not in ("proposed", "confirmed"):
         return
-    n = len(_gp_confirms(p))
     g = _gi_find(gid)
+    # Пока идёт «принять или выйти» (GR.33), считать по подтверждениям нельзя: их по построению
+    # одно — организатора. Меряем составом, который и есть встреча: «the group carries on either
+    # way». Иначе первый же вышедший обрушивал план в below_quorum со строкой «Only 1 confirmed
+    # remain» — при пятерых, которые никуда не делись.
+    n = len(_gi_active(g)) if (g and p.get("update")) else len(_gp_confirms(p))
     if p.get("state") == "confirmed" and n < GP_MIN_CONFIRMS:
         p["state"] = "below_quorum"
         p["updated"] = now
@@ -3907,8 +4091,12 @@ def _gp_lock_due(now=None):
                 changed = True
                 for v in _gvotes():
                     if v.get("plan_id") == p.get("id") and v.get("state") == "open":
-                        v["state"] = "failed"
+                        # Голосование о встрече, до которой меньше двух часов, решать уже нечего:
+                        # закрываем и сразу помечаем решённым, иначе организатору навсегда
+                        # останется висеть кнопка «It’s your call» по плану, который не меняется.
+                        v["state"] = "closed"
                         v["closed"] = now
+                        v["decided"] = "kept"
                         v["why"] = "locked"
                 g = _gi_find(p.get("gid"))
                 if g:
@@ -3927,13 +4115,50 @@ def _gp_public(p, me=""):
         "id": p.get("id"), "gid": p.get("gid"), "version": p.get("version"),
         "when": p.get("when"), "place": p.get("place"), "note": p.get("note"),
         "starts_at": p.get("starts_at"), "state": p.get("state"),
+        # Строка места — единственное, чем офлайн-борд отличается от онлайн-борда (GR.25 «Gràcia ·
+        # Nømad» против GRO.25 «Video call · link saved»). Поэтому её различие живёт ЗДЕСЬ, в
+        # данных, а не в двух экранах: два экрана разошлись бы на первой правке.
+        "mode": p.get("mode") or (g.get("mode") if g else "offline") or "offline",
+        "link": p.get("link") or "",
+        # GRO.25a: интент завели без ссылки — план согласован, а подключиться некуда. Группе про
+        # это говорят прямо, организатору дают вставить ссылку.
+        "needs_link": (p.get("mode") or (g.get("mode") if g else "")) == "online"
+                      and not (p.get("link") or ""),
         "confirmed": conf, "confirmed_count": len(conf),
         # Who has not answered THIS version — the counter is meaningless without it.
         "waiting": [n for n in act if n not in conf
                     and (p.get("responses") or {}).get(n, {}).get("version") != p.get("version")],
         "declined": [n for n, r in (p.get("responses") or {}).items() if r.get("state") == "declined"],
         "my_response": (p.get("responses") or {}).get(str(me or ""), {}).get("state"),
-        "needs": max(0, GP_MIN_CONFIRMS - len(conf)),
+        # Сколько ещё «да» нужно, чтобы план встал сам. Считается от ВСЕГО состава (борд GR.26
+        # «Waiting for everyone»), а не от тройки: тройка — это пол для фиксации организатором.
+        "needs": max(0, len(act) - len(conf)),
+        # Раунд и потолок — на экране это «Round 2 of 3» и «Last round» (GR.28/29). Числа отдаёт
+        # сервер, чтобы подпись не разошлась с тем, что он на самом деле разрешает.
+        #
+        # Раунд НЕ равен версии, хотя их легко перепутать. Версия растёт от любой смены условий —
+        # включая перенос по итогам голосования и правку организатора; раунд считает только
+        # встречные предложения (GR.27→28→29). Пока это было одно число, перенос утверждённого
+        # плана поднимал «раунд» до третьего, и следующее согласование начиналось сразу
+        # исчерпанным: «Last round» на первом же экране.
+        "round": _gp_round(p),
+        "max_rounds": GP_MAX_ROUNDS,
+        "rounds_used_up": _gp_round(p) >= GP_MAX_ROUNDS,
+        # Организатор может закрепить план (GR.30), когда раунды кончились и согласных хотя бы трое.
+        "can_fix": bool(g) and _norm_name(me) == _norm_name(g.get("owner"))
+                   and p.get("state") == "proposed"
+                   and _gp_round(p) >= GP_MAX_ROUNDS
+                   and len(conf) >= GP_FIX_MIN_CONFIRMS,
+        "fixed_by": p.get("fixed_by"),
+        # «Ты не подтверждал этот план, но прийти можешь» — экран GR.31 у тех, кого зафиксировали
+        # молчащими. Флаг личный: остальным этого выбора не показывают.
+        "stay_or_leave": bool(p.get("fixed_by")) and str(me or "") in act and str(me or "") not in conf,
+        # Правка сверху (GR/GRO.32→33): что изменилось, кто изменил и чей сейчас ход. `was` даёт
+        # строку «21:00 · was 19:00» — без прежнего значения человек не поймёт, что именно поменяли.
+        "update": ({"by": (p.get("update") or {}).get("by"),
+                    "at": (p.get("update") or {}).get("at"),
+                    "was": (p.get("update") or {}).get("from")} if p.get("update") else None),
+        "accept_or_leave": bool(p.get("update")) and str(me or "") in act and str(me or "") not in conf,
         "editable": p.get("state") in ("proposed", "confirmed"),
         "locked": p.get("state") == "locked",
     }
@@ -3969,9 +4194,14 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None):
                                     "note": "a plan must start more than two hours from now, "
                                             "or nobody can confirm it"})
         p = {"id": "gp_%d_%s" % (int(now * 1000), hashlib.sha1(gid.encode("utf-8")).hexdigest()[:6]),
-             "gid": gid, "owner": g.get("owner"), "version": 1,
+             "gid": gid, "owner": g.get("owner"), "version": 1, "round": 1,
              "when": str(when or "")[:120], "place": str(place or "")[:160],
              "note": str(note or "")[:400], "starts_at": sa,
+             # Онлайн или офлайн решает ИНТЕНТ, а не автор плана: группа собиралась под звонок или
+             # под место, и подменять это на шаге плана значило бы позвать людей на одно, а свести
+             # на другое. Ссылка приезжает оттуда же, если она была; если нет — GRO.25a.
+             "mode": str(g.get("mode") or "offline"),
+             "link": str((g.get("intent") or {}).get("link") or g.get("link") or "")[:400],
              "state": "proposed", "responses": {}, "created": now, "updated": now}
         # The organiser proposing it IS their confirmation — asking them to agree with themselves
         # would be theatre, and it would make three people impossible with a group of exactly three.
@@ -4011,6 +4241,7 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
         if p.get("state") in ("cancelled", "done"):
             return _idem_put(idem, {"ok": False, "error": "CLOSED"})
         v = int(p.get("version") or 1)
+        rnd = _gp_round(p)
         if action == "counter" and p.get("state") != "proposed":
             # Once the plan is agreed, changing it is not one person's move any more — it goes to a
             # vote. Without this guard a single «внести своё предложение» tore up a confirmed plan
@@ -4018,7 +4249,18 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
             return _idem_put(idem, {"ok": False, "error": "ALREADY_CONFIRMED",
                                     "note": "open a vote to change an agreed plan"})
         if action == "counter":
+            # РАУНДЫ. Борд GR.28/GR.29: «Round 2 of 3», «This is the last round. After it Marc
+            # fixes the plan and it stops changing». Бесконечные встречные предложения — это не
+            # согласование, а способ никогда не договориться; трое могут гонять время по кругу
+            # сутками, и план так и не наступит. После третьего раунда слово за организатором
+            # (gp_fix), а не за следующим предложившим.
+            if rnd >= GP_MAX_ROUNDS:
+                return _idem_put(idem, {"ok": False, "error": "ROUNDS_USED_UP",
+                                        "rounds": rnd, "max_rounds": GP_MAX_ROUNDS,
+                                        "note": "the organiser fixes the plan now",
+                                        "plan": _gp_public(p, who)})
             p["version"] = v + 1
+            p["round"] = rnd + 1
             if when:
                 p["when"] = str(when)[:120]
             if place:
@@ -4049,13 +4291,88 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
         p["responses"][who] = {"state": "confirmed", "t": now, "version": v}
         p["updated"] = now
         conf = _gp_confirms(p)
-        # Three is enough. Not «everyone», not «everyone who is still reading» — three.
-        if len(conf) >= GP_MIN_CONFIRMS and p.get("state") == "proposed":
+        # ПОДТВЕРЖДАЮТ ВСЕ. Борд GR.26 говорит это заголовком — «Waiting for everyone» — и текстом:
+        # «The plan starts when all three confirm». Раньше здесь хватало трёх, и четвёртый человек
+        # узнавал, что план без него, из ленты: он ещё думал, а состав уже закрыли. Молчащего
+        # теперь не выбрасывают — его ждут, а когда ждать больше нельзя (раунды кончились),
+        # организатор фиксирует план явно, и молчавшему предлагают остаться или выйти (GR.30/31).
+        need = [m.get("name") for m in _gi_active(g)]
+        if p.get("state") == "proposed" and len(conf) >= len(need):
             p["state"] = "confirmed"
             g["state"] = "planned"
-            _gi_say(g, "The plan is set with the people who confirmed: %s." % ", ".join(conf))
+            _gi_say(g, "Everyone confirmed. The plan is set: %s." % ", ".join(conf))
+        elif p.get("update") and len(conf) >= len(need):
+            # Правку приняли все — «принять или выйти» закончилось, и план снова просто план.
+            # Пока метка висит, экран показывал бы «Marc changed the time» людям, которые уже
+            # ответили, и считал бы состав по-другому (см. `_gp_recount`).
+            p.pop("update", None)
+            _gi_say(g, "Everyone accepted the change.")
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
+def gp_fix(pid, who, idem=None):
+    """GR.30 «Fix the plan» — организатор закрывает согласование, когда раунды кончились.
+
+    Зачем отдельное действие, а не автоматика по счётчику раундов: борд даёт организатору ВЫБОР —
+    «Fix the plan» или «Give it more time». Автоматическая фиксация отняла бы у него второй
+    вариант, а он осмысленный: человек может знать, что молчащий просто спит.
+
+    Не подтвердившие НЕ выбрасываются. Борд GR.31 показывает им экран «Stay or leave»: план
+    состоялся без их «да», но прийти они всё ещё могут. Поэтому состав плана здесь не режется —
+    режет его только собственный уход (gp_leave) или отказ."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    now = time.time()
+    with _STORE_LOCK:
+        _gp_lock_due(now)
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if p.get("state") == "locked":
+            return _idem_put(idem, {"ok": False, "error": "LOCKED"})
+        if p.get("state") != "proposed":
+            return _idem_put(idem, {"ok": False, "error": "NOT_PROPOSED", "plan": _gp_public(p, who)})
+        # Фиксировать можно только когда раунды исчерпаны: иначе это способ обойти согласование —
+        # предложил и тут же закрепил, не дав никому ответить.
+        if int(p.get("version") or 1) < GP_MAX_ROUNDS:
+            return _idem_put(idem, {"ok": False, "error": "ROUNDS_LEFT",
+                                    "rounds": int(p.get("version") or 1),
+                                    "max_rounds": GP_MAX_ROUNDS})
+        conf = _gp_confirms(p)
+        if len(conf) < GP_FIX_MIN_CONFIRMS:
+            # Согласен только сам организатор — это указ, а не план (см. GP_FIX_MIN_CONFIRMS).
+            return _idem_put(idem, {"ok": False, "error": "ALONE",
+                                    "need": GP_FIX_MIN_CONFIRMS,
+                                    "confirmed": conf, "plan": _gp_public(p, who)})
+        if len(_gi_active(g)) < GP_MIN_CONFIRMS:
+            # А вот людей в плане должно остаться трое — это §1, и оно про состав, не про согласия.
+            return _idem_put(idem, {"ok": False, "error": "NEED_THREE",
+                                    "confirmed": conf, "plan": _gp_public(p, who)})
+        p["state"] = "confirmed"
+        p["fixed_by"] = who
+        p["fixed_at"] = now
+        p["updated"] = now
+        g["state"] = "planned"
+        silent = [m.get("name") for m in _gi_active(g)
+                  if _norm_name(m.get("name")) not in {_norm_name(c) for c in conf}]
+        _gi_say(g, "%s fixed the plan: %s%s." % (who, p.get("when") or "",
+                                                 (", " + p.get("place")) if p.get("place") else ""))
+        if silent:
+            # Названы поимённо и нейтрально: им предстоит решить, идут они или выходят (GR.31),
+            # и группа должна понимать, почему у этих людей в составе стоит вопрос.
+            _gi_say(g, "%s did not confirm this time and can stay or leave."
+                    % ", ".join(str(s) for s in silent))
+        _save_store()
+        return _idem_put(idem, {"ok": True, "fixed": True, "unconfirmed": silent,
+                                "plan": _gp_public(p, who)})
 
 
 def gp_vote_open(pid, who, kind, when="", place="", note="", starts_at=None, idem=None):
@@ -4100,10 +4417,24 @@ def _gp_vote_view(v, me=""):
     votes = v.get("votes") or {}
     yes = [n for n, b in votes.items() if b]
     no = [n for n, b in votes.items() if not b]
-    return {"ok": True, "vote": {"id": v.get("id"), "kind": v.get("kind"), "state": v.get("state"),
+    owner = g.get("owner") if g else ""
+    closes = float(v.get("created") or 0) + GP_VOTE_WINDOW
+    return {"ok": True, "vote": {"id": v.get("id"), "plan_id": v.get("plan_id"),
+                                 "kind": v.get("kind"), "state": v.get("state"),
+                                 "by": v.get("by"), "organiser": owner,
                                  "yes": len(yes), "no": len(no),
                                  "waiting": [n for n in act if n not in votes],
                                  "my_vote": votes.get(str(me or "")),
+                                 # Срок — на экране это «closes in 4h» (GR.36). Отдаём момент, а
+                                 # не «осталось столько-то»: клиент считает сам и не врёт, пока
+                                 # экран открыт.
+                                 "closes_at": closes,
+                                 # Совет и решение — разные вещи, и на борде они разными словами
+                                 # (GR.37 «the group asked, you decide»). Клиенту нужны обе.
+                                 "advice": v.get("advice"), "decided": v.get("decided"),
+                                 # Ждём ли решения организатора — то, чем GR.37 отличается от GR.38.
+                                 "awaiting_decision": v.get("state") == "closed" and not v.get("decided"),
+                                 "i_decide": bool(owner) and _norm_name(me) == _norm_name(owner),
                                  "why": v.get("why"), "proposal": v.get("proposal")}}
 
 
@@ -4116,6 +4447,7 @@ def gp_vote(vote_id, who, yes, idem=None):
     now = time.time()
     with _STORE_LOCK:
         _gp_lock_due(now)
+        _gp_votes_due(now)
         v = next((x for x in _gvotes() if x.get("id") == vote_id), None)
         if not v:
             return {"ok": False, "error": "NO_SUCH_VOTE"}
@@ -4133,56 +4465,225 @@ def gp_vote(vote_id, who, yes, idem=None):
 
 
 def _gp_close_vote(v, now=None):
-    """Apply the outcome. Called when everyone has voted, or by the organiser closing it early."""
+    """COUNT the vote. Deliberately does not act on it.
+
+    Борд GR.35 говорит это открытым текстом ещё до первого голоса: «The result is advice — Marc
+    makes the final call», и повторяет голосующему (GR.36 «Your answer is advice»), и объявляет
+    итог (GR.38 «3 of 5 voted to change it. On Kleal the vote is advice — the organiser decides»).
+    Раньше здесь большинство само переносило и само отменяло встречу; человека, который её собрал,
+    об этом просто ставили в известность. Теперь голосование даёт ЧИСЛА, а решение — отдельным
+    действием организатора (`gp_vote_decide`).
+
+    Что «большинство» значит для совета: большинство ОТ ОТВЕТИВШИХ, ничья — не большинство. Это та
+    же арифметика, что была, но теперь она называет исход советом, а не приговором."""
     now = now or time.time()
     votes = v.get("votes") or {}
     yes = sum(1 for b in votes.values() if b)
     no = len(votes) - yes
-    p = _gp_find(v.get("plan_id"))
     g = _gi_find(v.get("gid"))
+    act = [m.get("name") for m in _gi_active(g)] if g else []
+    silent = max(0, len(act) - len(votes))
+    v["state"] = "closed"
     v["closed"] = now
-    if yes <= no:                      # a tie is NOT a majority — the plan people agreed to stands
-        v["state"] = "failed"
-        v["why"] = "tie" if yes == no else "majority against"
-        if g:
-            _gi_say(g, "The group voted to keep the plan as it is.")
-        return v
-    v["state"] = "passed"
-    if not p:
-        return v
-    if v.get("kind") == "cancel":
-        p["state"] = "cancelled"
-        p["updated"] = now
-        if g:
-            g["state"] = "chat_open"
-            _gi_say(g, "The group voted to cancel the plan.")
-        return v
-    pr = v.get("proposal") or {}
+    v["tally"] = {"yes": yes, "no": no, "silent": silent}
+    v["advice"] = "change" if yes > no else "keep"
+    if g:
+        what = "change" if v.get("kind") == "edit" else "cancel"
+        _gi_say(g, "The vote is closed: %d for, %d against, %d didn’t answer. "
+                   "It’s %s’s call whether to %s the plan."
+                % (yes, no, silent, g.get("owner"), what))
+    return v
+
+
+def _gp_votes_due(now=None):
+    """Шесть часов вышли — считаем по тем, кто ответил (GR.35 «Everyone gets 6 hours to answer»).
+
+    Без срока совещательное голосование зависало бы навсегда: один молчащий — и организатору
+    нечего решать, потому что «голоса ещё идут»."""
+    now = now or time.time()
+    changed = False
+    for v in _gvotes():
+        if v.get("state") == "open" and now - float(v.get("created") or now) >= GP_VOTE_WINDOW:
+            _gp_close_vote(v, now)
+            changed = True
+    return changed
+
+
+def _gp_sweep():
+    """Провести всё, что наступает САМО: двухчасовой замок и истёкший срок голосования.
+
+    Оба события — про время, а не про чьё-то нажатие, поэтому их обязан проводить и тот, кто
+    просто пришёл ЧИТАТЬ. Пока это делали только пишущие ручки, группа, открытая на чтение,
+    показывала живой план с кнопкой «Подтвердить» — а сервер на неё отвечал LOCKED: экран узнавал
+    правду только после того, как соврал человеку."""
+    with _STORE_LOCK:
+        if _gp_lock_due() | _gp_votes_due():
+            _save_store()
+
+
+def _gp_apply_change(p, g, pr, by, now):
+    """Изменить условия УТВЕРЖДЁННОГО плана — и заново спросить каждого.
+
+    Один код на два входа: организатор правит сам (GR.32) или применяет совет голосования
+    (GR.37 «Change the plan»). Итог по борду одинаковый: «Everyone who already joined has to accept
+    or leave, and the open invite is updated to the new time» — то есть подтверждения обнуляются,
+    но состав НЕ режется и встреча не отменяется: «the group carries on either way» (GR.33).
+
+    Раунд не трогаем: это не встречное предложение, а правка сверху (см. `_gp_public`)."""
+    p["prev"] = {"when": p.get("when"), "place": p.get("place"), "starts_at": p.get("starts_at")}
     if pr.get("when"):
-        p["when"] = pr["when"]
+        p["when"] = str(pr["when"])[:120]
     if pr.get("place"):
-        p["place"] = pr["place"]
+        p["place"] = str(pr["place"])[:160]
     if pr.get("note"):
-        p["note"] = pr["note"]
+        p["note"] = str(pr["note"])[:400]
     if pr.get("starts_at"):
         try:
             p["starts_at"] = float(pr["starts_at"])
         except (TypeError, ValueError):
             pass
     p["version"] = int(p.get("version") or 1) + 1
+    p["update"] = {"by": by, "at": now, "from": p["prev"]}
+    p["responses"] = {by: {"state": "confirmed", "t": now, "version": p["version"]}}
     p["updated"] = now
-    # The change was agreed by a majority, so it does NOT go back round for re-confirmation — that
-    # is the difference between a vote and a counter-proposal.
-    p["responses"] = {n: {"state": "confirmed", "t": now, "version": p["version"]}
-                      for n, b in votes.items() if b}
     if g:
-        _gi_say(g, "The group voted to change the plan: %s%s."
-                % (p.get("when") or "", (", " + p.get("place")) if p.get("place") else ""))
-    return v
+        # Открытое приглашение показывает новое время само: карточка группы читает план, а не
+        # свою копию условий, — поэтому «the open invite is updated» ничего дополнительно не требует.
+        g["updated"] = now
+        _gi_say(g, "%s changed the plan: %s%s. Accept to stay in the group, or leave."
+                % (by, p.get("when") or "", (", " + p.get("place")) if p.get("place") else ""))
+    return p
+
+
+def gp_update(pid, who, when="", place="", note="", starts_at=None, idem=None):
+    """GR/GRO.32 «Change the time or place» — организатор правит утверждённый план напрямую.
+
+    Почему не через голосование: голосование — инструмент УЧАСТНИКА, который хочет попросить
+    (GR.35 «Ask the group to change this plan?»). У организатора власть менять есть по роли, и
+    борд даёт ему прямую кнопку; цена — каждый участник заново говорит «принимаю» или уходит."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    now = time.time()
+    with _STORE_LOCK:
+        _gp_lock_due(now)
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if p.get("state") == "locked":
+            return _idem_put(idem, {"ok": False, "error": "LOCKED"})
+        if p.get("state") != "confirmed":
+            # До утверждения менять условия нечего: там для этого есть встречное предложение,
+            # и оно считается раундом.
+            return _idem_put(idem, {"ok": False, "error": "NOT_CONFIRMED",
+                                    "note": "counter-propose while the plan is still being agreed",
+                                    "plan": _gp_public(p, who)})
+        if any(v.get("plan_id") == pid and v.get("state") == "open" for v in _gvotes()):
+            # Иначе группа отвечает на вопрос про время, которого уже нет.
+            return _idem_put(idem, {"ok": False, "error": "VOTE_IN_PROGRESS"})
+        if not (when or place or starts_at):
+            return _idem_put(idem, {"ok": False, "error": "NOTHING_TO_CHANGE"})
+        try:
+            sa = float(starts_at) if starts_at else None
+        except (TypeError, ValueError):
+            sa = None
+        if sa is not None and sa - GP_LOCK_BEFORE <= now:
+            return _idem_put(idem, {"ok": False, "error": "TOO_LATE",
+                                    "note": "the new time must start more than two hours from now"})
+        _gp_apply_change(p, g, {"when": when, "place": place, "note": note, "starts_at": sa},
+                         who, now)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "updated": True, "plan": _gp_public(p, who)})
+
+
+def gp_link(pid, who, link="", idem=None):
+    """GRO.25a «Add the call link» — онлайн-план без ссылки: подключиться некуда.
+
+    Ссылку ставит организатор. Второй кнопкой борд предлагает «Ask the group to host instead» —
+    это просто сообщение в общий чат, а не отдельная сущность: хост меняется тем, что ссылку
+    пришлёт кто-то другой, и тогда её сохранит организатор."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    link = str(link or "").strip()[:400]
+    now = time.time()
+    with _STORE_LOCK:
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if (p.get("mode") or g.get("mode")) != "online":
+            return _idem_put(idem, {"ok": False, "error": "NOT_ONLINE"})
+        if not link:
+            return _idem_put(idem, {"ok": False, "error": "LINK_REQUIRED"})
+        if not re.match(r"^(https?://|[a-z0-9.-]+\.[a-z]{2,})", link, re.I):
+            # Не валидатор ссылок, а защита от пустого текста в поле: человек, который придёт по
+            # такой «ссылке», не попадёт никуда, а узнает об этом за минуту до звонка.
+            return _idem_put(idem, {"ok": False, "error": "BAD_LINK"})
+        p["link"] = link
+        p["updated"] = now
+        g["link"] = link
+        _gi_say(g, "The call link is saved.")
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
+def gp_vote_decide(vote_id, who, apply=True, idem=None):
+    """GR.37 «It’s your call» — организатор решает, что делать с советом группы.
+
+    Только после закрытия голосования: решать, пока считают, значит не считать вовсе."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    now = time.time()
+    with _STORE_LOCK:
+        _gp_lock_due(now)
+        _gp_votes_due(now)
+        v = next((x for x in _gvotes() if x.get("id") == vote_id), None)
+        if not v:
+            return {"ok": False, "error": "NO_SUCH_VOTE"}
+        g = _gi_find(v.get("gid"))
+        if not g or _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if v.get("state") == "open":
+            return _idem_put(idem, {"ok": False, "error": "VOTE_OPEN",
+                                    "note": "close the vote first, or wait for the six hours"})
+        if v.get("decided"):
+            return _idem_put(idem, _gp_vote_view(v, who))
+        p = _gp_find(v.get("plan_id"))
+        v["decided"] = "applied" if apply else "kept"
+        v["decided_at"] = now
+        if not apply or not p:
+            _gi_say(g, "%s kept the plan as it is." % who)
+            _save_store()
+            return _idem_put(idem, _gp_vote_view(v, who))
+        if p.get("state") == "locked":
+            return _idem_put(idem, {"ok": False, "error": "LOCKED"})
+        if v.get("kind") == "cancel":
+            p["state"] = "cancelled"
+            p["updated"] = now
+            g["state"] = "chat_open"
+            _gi_say(g, "%s cancelled the plan." % who)
+        else:
+            _gp_apply_change(p, g, v.get("proposal") or {}, who, now)
+        _save_store()
+        return _idem_put(idem, _gp_vote_view(v, who))
 
 
 def gp_vote_close(vote_id, who, idem=None):
-    """Close a vote before everyone has answered. Only the organiser, and the same majority rule."""
+    """Закрыть голосование, не дожидаясь шести часов. Только организатор; счёт — по ответившим."""
     cached = _idem_get(idem)
     if cached is not None:
         return cached
@@ -4246,8 +4747,12 @@ def gp_for(who):
         view = _gp_public(p, who)
         view["title"] = g.get("title")
         (history if p.get("state") in ("done", "cancelled") else active).append(view)
+    _gp_votes_due()
     for v in _gvotes():
-        if v.get("state") != "open":
+        # Закрытое, но НЕ решённое голосование — это и есть экран GR.37/38: организатору «It’s your
+        # call», остальным «жду решения». Пока сюда попадали только открытые, обе стороны узнавали
+        # исход ниоткуда: голосование просто исчезало.
+        if v.get("state") not in ("open", "closed") or v.get("decided"):
             continue
         g = _gi_find(v.get("gid"))
         if g and any(_norm_name(m.get("name")) == me for m in _gi_active(g)):
@@ -5518,12 +6023,16 @@ class H(BaseHTTPRequestHandler):
         # Group intents (spec: individual invites, one shared chat). Handled first so their own
         # membership ACL applies rather than the 1:1 thread rules below.
         if base in ("/api/agent/gintent", "/api/agent/gintent-thread", "/api/agent/gintents",
-                    "/api/agent/gplans"):
+                    "/api/agent/gplans", "/api/agent/home-invites"):
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
                 if "?" in self.path else {}
             me = unquote(q.get("self", "").replace("+", " "))
             gid = unquote(q.get("gid", "").replace("+", " "))
-            if base == "/api/agent/gplans":
+            # Все четыре ручки отдают план — значит все четыре обязаны сперва провести время.
+            _gp_sweep()
+            if base == "/api/agent/home-invites":
+                send_json(self, 200, home_invites(me))
+            elif base == "/api/agent/gplans":
                 send_json(self, 200, gp_for(me))
             elif base == "/api/agent/gintents":
                 send_json(self, 200, gi_for(me))
@@ -5608,6 +6117,9 @@ class H(BaseHTTPRequestHandler):
             else:
                 send_json(self, 200, gi_invite(body.get("gid"), body.get("self") or body.get("from"),
                                                _to, body.get("note"), body.get("idem")))
+        elif p == "/api/agent/gintent-invite-cancel":
+            send_json(self, 200, gi_invite_cancel(body.get("id"), body.get("self"),
+                                                  body.get("idem")))
         elif p == "/api/agent/gintent-approve":
             send_json(self, 200, gi_approve(body.get("gid"), body.get("self"), body.get("who"),
                                             body.get("accept", True), body.get("idem")))
@@ -5624,6 +6136,15 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, gp_begin(body.get("gid"), body.get("self"), body.get("when"),
                                           body.get("place"), body.get("note"),
                                           body.get("starts_at"), body.get("idem")))
+        elif p == "/api/agent/gplan-fix":
+            send_json(self, 200, gp_fix(body.get("id"), body.get("self"), body.get("idem")))
+        elif p == "/api/agent/gplan-update":
+            send_json(self, 200, gp_update(body.get("id"), body.get("self"), body.get("when"),
+                                           body.get("place"), body.get("note"),
+                                           body.get("starts_at"), body.get("idem")))
+        elif p == "/api/agent/gplan-link":
+            send_json(self, 200, gp_link(body.get("id"), body.get("self"),
+                                         body.get("link"), body.get("idem")))
         elif p == "/api/agent/gplan-respond":
             send_json(self, 200, gp_respond(body.get("id"), body.get("self"), body.get("action"),
                                             body.get("when"), body.get("place"), body.get("note"),
@@ -5637,6 +6158,11 @@ class H(BaseHTTPRequestHandler):
                                          bool(body.get("yes")), body.get("idem")))
         elif p == "/api/agent/gplan-vote-close":
             send_json(self, 200, gp_vote_close(body.get("id"), body.get("self"), body.get("idem")))
+        elif p == "/api/agent/gplan-vote-decide":
+            # `apply` по умолчанию НЕ True: решение «менять план» слишком тяжёлое, чтобы приезжать
+            # из пропущенного поля. Не сказали — значит оставили как есть.
+            send_json(self, 200, gp_vote_decide(body.get("id"), body.get("self"),
+                                                bool(body.get("apply")), body.get("idem")))
         elif p == "/api/agent/gplan-feedback":
             send_json(self, 200, gp_feedback(body.get("id"), body.get("self"), body.get("happened"),
                                              body.get("reason"), body.get("text"), body.get("idem")))

@@ -3,9 +3,20 @@
 
     python3 tools/gplans_smoke.py [http://127.0.0.1:7074]
 
-Written against the daily, whose two decided points are the ones most easily got wrong: THREE
-confirmations are enough (not everyone), and a vote is a majority OF THOSE WHO VOTED (so a tie
-leaves the plan alone). Both are asserted here with the awkward cases, not the flattering ones.
+Написан по БОРДУ (секции 2247:44703 офлайн и 2328:66035 онлайн), который в фазе плана отменяет
+два прежних правила дейлика. Разбор расхождений — docs/GROUP_PLAN_BOARD_VS_BACKEND.md.
+
+  1. ПОДТВЕРЖДАЮТ ВСЕ, а не трое: GR.26 «Waiting for everyone… The plan starts when all three
+     confirm». Молчащего ждут, из состава не выбрасывают.
+  2. РАУНДОВ ТРИ: GR.28/29 «Round 2 of 3», «Last round · after this the organiser fixes the plan».
+     Четвёртое встречное предложение отклоняется (ROUNDS_USED_UP), дальше gp_fix.
+
+  3. ГОЛОСОВАНИЕ СОВЕЩАТЕЛЬНОЕ: GR.35 «The result is advice — Marc makes the final call», GR.38
+     «On Kleal the vote is advice — the organiser decides». Голоса СЧИТАЮТСЯ, план не трогают;
+     решает организатор отдельным действием, и он вправе не послушать большинство.
+  4. ПРАВКА СВЕРХУ: GR/GRO.32 — организатор меняет утверждённый план сам, а каждый участник
+     заново «принимает или выходит» (GR.33). Раундом это не считается.
+  5. ОНЛАЙН БЕЗ ССЫЛКИ: GRO.25a — план согласован, подключиться некуда; ссылку ставит организатор.
 """
 import json
 import os
@@ -79,7 +90,7 @@ PID = ((p or {}).get("plan") or {}).get("id")
 pl = (p or {}).get("plan") or {}
 check("план предложен всему составу", bool(PID), p)
 check("предложивший считается подтвердившим", pl.get("confirmed_count") == 1, pl.get("confirmed"))
-check("нужно ещё двое", pl.get("needs") == 2, pl.get("needs"))
+check("ждём остальных троих", pl.get("needs") == 3, pl.get("needs"))
 dup = call("/api/agent/gplan-begin", {"gid": gid, "self": OWN, "when": "вс"})
 check("второй план на тот же интент не создать", dup.get("error") == "PLAN_EXISTS", dup)
 
@@ -100,63 +111,258 @@ check("план снова на утверждении", pl.get("state") == "pro
 
 print()
 print("=" * 76)
-print("3. ТРЁХ ПОДТВЕРЖДЕНИЙ ДОСТАТОЧНО — МОЛЧАЩИЕ НЕ ДЕРЖАТ")
+print("3. ПОДТВЕРЖДАЮТ ВСЕ — МОЛЧАЩЕГО ЖДУТ, А НЕ ВЫБРАСЫВАЮТ")
 print("=" * 76)
+# Борд GR.26: «Waiting for everyone», «The plan starts when all three confirm». Раньше здесь
+# проверялось обратное — что трёх достаточно и четвёртый в состав не попадает (правило дейлика).
+# Борд новее и действует: молчащего ждут, а закрывает согласование организатор (раздел 3b).
 r1 = call("/api/agent/gplan-respond", {"id": PID, "self": OWN, "action": "confirm"})
 check("после двух подтверждений план ещё не создан",
       ((r1.get("plan") or {}).get("state")) == "proposed", (r1.get("plan") or {}).get("state"))
 r2 = call("/api/agent/gplan-respond", {"id": PID, "self": who[0], "action": "confirm",
                                        "idem": "pc%d" % S})
 pl = (r2 or {}).get("plan") or {}
-check("на третьем подтверждении план создан", pl.get("state") == "confirmed", pl.get("state"))
-check("состав плана — те, кто подтвердил", sorted(pl.get("confirmed") or []) == sorted([OWN, who[0], who[1]]),
-      pl.get("confirmed"))
-check("четвёртый молчал и в план не попал", who[2] not in (pl.get("confirmed") or []), pl.get("confirmed"))
+check("трёх из четверых МАЛО — ждём последнего", pl.get("state") == "proposed", pl.get("state"))
+check("и сказано, скольких ждём", pl.get("needs") == 1, pl.get("needs"))
+check("молчащий числится в ожидаемых", who[2] in (pl.get("waiting") or []), pl.get("waiting"))
 outsider = call("/api/agent/gplan-respond", {"id": PID, "self": "Посторонний%d" % S,
                                              "action": "confirm"})
 check("посторонний план не подтверждает", outsider.get("error") == "NOT_A_MEMBER", outsider)
+last = call("/api/agent/gplan-respond", {"id": PID, "self": who[2], "action": "confirm"})
+pl = (last or {}).get("plan") or {}
+check("подтвердил последний — план встал сам", pl.get("state") == "confirmed", pl.get("state"))
+check("в составе все четверо", len(pl.get("confirmed") or []) == 4, pl.get("confirmed"))
 
 print()
 print("=" * 76)
-print("4. ГОЛОСОВАНИЕ: БОЛЬШИНСТВО ОТ ПРОГОЛОСОВАВШИХ, НИЧЬЯ — ПЛАН СТОИТ")
+print("3b. РАУНДЫ: ИХ ТРИ, ДАЛЬШЕ ФИКСИРУЕТ ОРГАНИЗАТОР (GR.28–GR.31)")
 print("=" * 76)
+gidR, whoR = group(3, tag="r")
+pr = call("/api/agent/gplan-begin", {"gid": gidR, "self": OWN, "when": "чт 19:00",
+                                     "starts_at": time.time() + 30 * 3600, "idem": "pr%d" % S})
+PR = ((pr or {}).get("plan") or {}).get("id")
+check("раунд первый", ((pr or {}).get("plan") or {}).get("round") == 1,
+      ((pr or {}).get("plan") or {}).get("round"))
+check("потолок раундов назван", ((pr or {}).get("plan") or {}).get("max_rounds") == 3)
+c2 = call("/api/agent/gplan-respond", {"id": PR, "self": whoR[0], "action": "counter", "when": "чт 20:00"})
+check("второй раунд", ((c2 or {}).get("plan") or {}).get("round") == 2, (c2.get("plan") or {}).get("round"))
+c3 = call("/api/agent/gplan-respond", {"id": PR, "self": whoR[1], "action": "counter", "when": "чт 20:30"})
+pl3 = (c3 or {}).get("plan") or {}
+check("третий раунд — последний", pl3.get("round") == 3 and pl3.get("rounds_used_up") is True,
+      [pl3.get("round"), pl3.get("rounds_used_up")])
+c4 = call("/api/agent/gplan-respond", {"id": PR, "self": whoR[2], "action": "counter", "when": "чт 21:00"})
+check("четвёртое встречное предложение отклонено", c4.get("error") == "ROUNDS_USED_UP", c4)
+check("и время осталось прежним",
+      ((call("/api/agent/gplans?self=%s" % OWN).get("plans") or [{}]) and
+       next((x for x in call("/api/agent/gplans?self=%s" % OWN).get("plans") or []
+             if x.get("id") == PR), {}).get("when")) == "чт 20:30")
+# Фиксация: раунды исчерпаны, согласен не только сам организатор, и делает это он один.
+notown = call("/api/agent/gplan-fix", {"id": PR, "self": whoR[0]})
+check("фиксирует только организатор", notown.get("error") == "NOT_ORGANIZER", notown)
+alone = call("/api/agent/gplan-fix", {"id": PR, "self": OWN})
+check("в одиночку закрепить нельзя — это был бы указ, а не план",
+      alone.get("error") == "ALONE", alone)
+call("/api/agent/gplan-respond", {"id": PR, "self": OWN, "action": "confirm"})
+call("/api/agent/gplan-respond", {"id": PR, "self": whoR[0], "action": "confirm"})
+fx = call("/api/agent/gplan-fix", {"id": PR, "self": OWN, "idem": "fx%d" % S})
+plf = (fx or {}).get("plan") or {}
+check("организатор закрепил план", fx.get("ok") is True and plf.get("state") == "confirmed", fx)
+check("не подтвердившие названы, но НЕ выброшены",
+      whoR[2] in (fx.get("unconfirmed") or []) and whoR[2] in
+      [m for m in (call("/api/agent/gintent?gid=%s&self=%s" % (gidR, OWN)).get("group") or {}).get("members", [])
+       and [x.get("name") for x in (call("/api/agent/gintent?gid=%s&self=%s" % (gidR, OWN)).get("group") or {}).get("members", [])]],
+      fx.get("unconfirmed"))
+check("повтор фиксации по ключу — тот же ответ",
+      call("/api/agent/gplan-fix", {"id": PR, "self": OWN, "idem": "fx%d" % S}).get("ok") is True)
+
+# «Остаться или выйти» (GR.31): фиксация не выбрасывает молчавшего, а СПРАШИВАЕТ его.
+mine = call("/api/agent/gplans?self=%s" % whoR[2])
+plq = next((x for x in (mine.get("plans") or []) if x.get("id") == PR), {})
+check("молчавшему предложен выбор «остаться или выйти»", plq.get("stay_or_leave") is True, plq)
+others = call("/api/agent/gplans?self=%s" % whoR[0])
+plo = next((x for x in (others.get("plans") or []) if x.get("id") == PR), {})
+check("остальным этого выбора не показывают", not plo.get("stay_or_leave"), plo.get("stay_or_leave"))
+stay = call("/api/agent/gplan-respond", {"id": PR, "self": whoR[2], "action": "confirm"})
+check("«остаться» — это обычное подтверждение",
+      whoR[2] in ((stay.get("plan") or {}).get("confirmed") or []), stay.get("plan"))
+check("и выбор снят", not (stay.get("plan") or {}).get("stay_or_leave"))
+
+print()
+print("=" * 76)
+print("4. ГОЛОСОВАНИЕ СОВЕЩАТЕЛЬНОЕ: СЧИТАЕТ ГРУППА, РЕШАЕТ ОРГАНИЗАТОР (GR.35–38)")
+print("=" * 76)
+# Борд говорит это трижды и разными словами: «The result is advice — Marc makes the final call»
+# (GR.35), «Your answer is advice» (GR.36), «On Kleal the vote is advice — the organiser decides»
+# (GR.38). До этой правки большинство само отменяло и само переносило встречу.
 v = call("/api/agent/gplan-vote-open", {"id": PID, "self": who[0], "kind": "cancel",
                                         "idem": "vo%d" % S})
 VID = ((v or {}).get("vote") or {}).get("id")
+vv = (v or {}).get("vote") or {}
 check("голосование открыто", bool(VID), v)
-check("созвавший уже проголосовал за", ((v.get("vote") or {}).get("yes")) == 1, v.get("vote"))
+check("созвавший уже проголосовал за", vv.get("yes") == 1, vv)
+check("срок назван — шесть часов", vv.get("closes_at") and
+      5.9 * 3600 < vv["closes_at"] - time.time() <= 6 * 3600, vv.get("closes_at"))
 second = call("/api/agent/gplan-vote-open", {"id": PID, "self": OWN, "kind": "edit"})
 check("второе голосование одновременно нельзя", second.get("error") == "VOTE_IN_PROGRESS", second)
 call("/api/agent/gplan-vote", {"id": VID, "self": OWN, "yes": False})
 res = call("/api/agent/gplan-vote", {"id": VID, "self": who[1], "yes": False})
 vv = (res or {}).get("vote") or {}
 check("голоса посчитаны", (vv.get("yes"), vv.get("no")) == (1, 2), [vv.get("yes"), vv.get("no")])
-call("/api/agent/gplan-vote", {"id": VID, "self": who[2], "yes": True})
-st = call("/api/agent/gplans?self=%s" % OWN)
-plan_now = next((x for x in (st.get("plans") or []) if x.get("id") == PID), None)
-check("при 2:2 план НЕ отменён — ничья не большинство",
-      bool(plan_now) and plan_now.get("state") == "confirmed",
+last = call("/api/agent/gplan-vote", {"id": VID, "self": who[2], "yes": True})
+vv = (last or {}).get("vote") or {}
+check("высказались все — голосование закрылось", vv.get("state") == "closed", vv.get("state"))
+check("при 2:2 совет — оставить как есть", vv.get("advice") == "keep",
+      [vv.get("yes"), vv.get("no"), vv.get("advice")])
+check("но само оно ничего не сделало — решения ещё нет", not vv.get("decided"), vv.get("decided"))
+plan_now = next((x for x in (call("/api/agent/gplans?self=%s" % OWN).get("plans") or [])
+                 if x.get("id") == PID), None)
+check("план не тронут", bool(plan_now) and plan_now.get("state") == "confirmed",
       plan_now and plan_now.get("state"))
+notown = call("/api/agent/gplan-vote-decide", {"id": VID, "self": who[0], "apply": True})
+check("решает только организатор", notown.get("error") == "NOT_ORGANIZER", notown)
+seen = call("/api/agent/gplans?self=%s" % OWN)
+check("закрытое, но нерешённое голосование видно организатору",
+      any(x.get("id") == VID and x.get("awaiting_decision") for x in (seen.get("votes") or [])),
+      seen.get("votes"))
+kept = call("/api/agent/gplan-vote-decide", {"id": VID, "self": OWN, "apply": False,
+                                             "idem": "vd%d" % S})
+check("организатор оставил план как есть", ((kept.get("vote") or {}).get("decided")) == "kept", kept)
+gone = call("/api/agent/gplans?self=%s" % OWN)
+check("решённое голосование больше не висит", not any(x.get("id") == VID for x in (gone.get("votes") or [])),
+      gone.get("votes"))
 
 print()
 print("=" * 76)
-print("5. ГОЛОСОВАНИЕ ЗА ПЕРЕНОС ПРОХОДИТ")
+print("5. СОВЕТ «ПЕРЕНЕСТИ» — И ОРГАНИЗАТОР, КОТОРЫЙ ЕГО НЕ ПОСЛУШАЛ (GR.38)")
 print("=" * 76)
 v2 = call("/api/agent/gplan-vote-open", {"id": PID, "self": OWN, "kind": "edit",
                                          "when": "вс 12:00", "place": "Парк"})
 V2 = ((v2 or {}).get("vote") or {}).get("id")
 for n in (who[0], who[1]):
     call("/api/agent/gplan-vote", {"id": V2, "self": n, "yes": True})
-last = call("/api/agent/gplan-vote", {"id": V2, "self": who[2], "yes": False})
-check("голосование закрылось, когда высказались все",
-      ((last.get("vote") or {}).get("state")) == "passed", (last.get("vote") or {}).get("state"))
-st = call("/api/agent/gplans?self=%s" % OWN)
-plan_now = next((x for x in (st.get("plans") or []) if x.get("id") == PID), None)
-check("время перенесено", plan_now and plan_now.get("when") == "вс 12:00", plan_now and plan_now.get("when"))
-check("план остался подтверждённым — перенос не отправляет на новый круг",
-      plan_now and plan_now.get("state") == "confirmed", plan_now and plan_now.get("state"))
-check("проголосовавшие против в составе не остались",
-      who[2] not in (plan_now.get("confirmed") or []), plan_now.get("confirmed"))
+r = call("/api/agent/gplan-vote", {"id": V2, "self": who[2], "yes": False})
+vv = (r or {}).get("vote") or {}
+check("трое за перенос, один против", (vv.get("yes"), vv.get("no")) == (3, 1), vv)
+check("совет группы — менять", vv.get("advice") == "change", vv.get("advice"))
+call("/api/agent/gplan-vote-decide", {"id": V2, "self": OWN, "apply": False})
+plan_now = next((x for x in (call("/api/agent/gplans?self=%s" % OWN).get("plans") or [])
+                 if x.get("id") == PID), None)
+check("время НЕ перенесено — большинство просило, организатор оставил",
+      plan_now and plan_now.get("when") == "сб 20:00", plan_now and plan_now.get("when"))
+check("и состав не порезан — против переноса больше никого не выбрасывает",
+      plan_now and len(plan_now.get("confirmed") or []) == 4, plan_now and plan_now.get("confirmed"))
+
+print()
+print("=" * 76)
+print("5b. ТОТ ЖЕ СОВЕТ, ПРИНЯТЫЙ: ПЕРЕНОС И «ПРИНЯТЬ ИЛИ ВЫЙТИ» (GR.37→33)")
+print("=" * 76)
+v3 = call("/api/agent/gplan-vote-open", {"id": PID, "self": who[1], "kind": "edit",
+                                         "when": "вс 12:00", "place": "Парк"})
+V3 = ((v3 or {}).get("vote") or {}).get("id")
+for n in (OWN, who[0], who[2]):
+    call("/api/agent/gplan-vote", {"id": V3, "self": n, "yes": True})
+ap = call("/api/agent/gplan-vote-decide", {"id": V3, "self": OWN, "apply": True})
+check("организатор принял совет", ((ap.get("vote") or {}).get("decided")) == "applied", ap)
+plan_now = next((x for x in (call("/api/agent/gplans?self=%s" % OWN).get("plans") or [])
+                 if x.get("id") == PID), None)
+check("время перенесено", plan_now and plan_now.get("when") == "вс 12:00",
+      plan_now and plan_now.get("when"))
+check("план остался живым — встреча не отменяется", plan_now.get("state") == "confirmed",
+      plan_now.get("state"))
+check("прежнее время сохранено для строки «было»",
+      ((plan_now.get("update") or {}).get("was") or {}).get("when") == "сб 20:00",
+      plan_now.get("update"))
+check("подтверждения обнулены — каждый принимает заново",
+      plan_now.get("confirmed") == [OWN], plan_now.get("confirmed"))
+check("версия выросла", plan_now.get("version") == 3, plan_now.get("version"))
+check("а РАУНД не вырос: правка сверху — не встречное предложение",
+      plan_now.get("round") == 2 and plan_now.get("rounds_used_up") is False,
+      [plan_now.get("round"), plan_now.get("rounds_used_up")])
+mine = next((x for x in (call("/api/agent/gplans?self=%s" % who[0]).get("plans") or [])
+             if x.get("id") == PID), {})
+check("участнику предложено принять или выйти", mine.get("accept_or_leave") is True, mine)
+own = next((x for x in (call("/api/agent/gplans?self=%s" % OWN).get("plans") or [])
+            if x.get("id") == PID), {})
+check("автору правки — не предложено", not own.get("accept_or_leave"), own.get("accept_or_leave"))
+for n in who[:3]:
+    acc = call("/api/agent/gplan-respond", {"id": PID, "self": n, "action": "confirm"})
+plan_now = (acc or {}).get("plan") or {}
+check("приняли все — правка закрыта", not plan_now.get("update"), plan_now.get("update"))
+check("и снова четверо в составе", len(plan_now.get("confirmed") or []) == 4, plan_now.get("confirmed"))
+
+print()
+print("=" * 76)
+print("5c. ОРГАНИЗАТОР ПРАВИТ ПЛАН САМ, БЕЗ ГОЛОСОВАНИЯ (GR/GRO.32)")
+print("=" * 76)
+gidU, whoU = group(3, tag="u")                   # четверо: чтобы уход одного не опускал ниже трёх
+pu = call("/api/agent/gplan-begin", {"gid": gidU, "self": OWN, "when": "чт 19:00",
+                                     "place": "Nømad", "starts_at": time.time() + 40 * 3600,
+                                     "idem": "pu%d" % S})
+PU = ((pu or {}).get("plan") or {}).get("id")
+early = call("/api/agent/gplan-update", {"id": PU, "self": OWN, "when": "чт 21:00"})
+check("пока план не утверждён — правки нет, есть встречное предложение",
+      early.get("error") == "NOT_CONFIRMED", early)
+for n in whoU:
+    call("/api/agent/gplan-respond", {"id": PU, "self": n, "action": "confirm"})
+notown = call("/api/agent/gplan-update", {"id": PU, "self": whoU[0], "when": "чт 21:00"})
+check("правит только организатор", notown.get("error") == "NOT_ORGANIZER", notown)
+empty = call("/api/agent/gplan-update", {"id": PU, "self": OWN})
+check("правка без изменений отклонена", empty.get("error") == "NOTHING_TO_CHANGE", empty)
+upd = call("/api/agent/gplan-update", {"id": PU, "self": OWN, "when": "чт 21:00",
+                                       "idem": "up%d" % S})
+plu = (upd or {}).get("plan") or {}
+check("организатор перенёс время", plu.get("when") == "чт 21:00", plu.get("when"))
+check("место не тронуто — меняли только время", plu.get("place") == "Nømad", plu.get("place"))
+check("строка «было» собрана", ((plu.get("update") or {}).get("was") or {}).get("when") == "чт 19:00",
+      plu.get("update"))
+check("состав НЕ порезан — «the group carries on either way»",
+      len((call("/api/agent/gintent?gid=%s&self=%s" % (gidU, OWN)).get("group") or {}).get("members") or []) == 4)
+memb = next((x for x in (call("/api/agent/gplans?self=%s" % whoU[0]).get("plans") or [])
+             if x.get("id") == PU), {})
+check("участнику — принять или выйти", memb.get("accept_or_leave") is True, memb)
+call("/api/agent/gplan-respond", {"id": PU, "self": whoU[0], "action": "confirm"})
+left = call("/api/agent/gintent-leave", {"gid": gidU, "self": whoU[1], "idem": "lv%d" % S})
+check("а кто не принял — выходит, и это не рушит план", left.get("ok") is True, left)
+after = next((x for x in (call("/api/agent/gplans?self=%s" % OWN).get("plans") or [])
+              if x.get("id") == PU), {})
+# Пока идёт «принять или выйти», подтверждение ровно одно — организатора. Меряй план по ним, и
+# он обрушился бы в below_quorum при троих живых людях, которые никуда не делись.
+check("план жив: считаем по составу, а не по подтверждениям",
+      after.get("state") == "confirmed", after.get("state"))
+# А вот когда состав ДЕЙСТВИТЕЛЬНО падает ниже трёх — план и должен перестать быть групповым.
+call("/api/agent/gintent-leave", {"gid": gidU, "self": whoU[2], "idem": "lv2%d" % S})
+after2 = next((x for x in (call("/api/agent/gplans?self=%s" % OWN).get("plans") or [])
+               if x.get("id") == PU), {})
+check("а вот при двоих — уже не групповой план", after2.get("state") == "below_quorum",
+      after2.get("state"))
+
+print()
+print("=" * 76)
+print("5d. ОНЛАЙН БЕЗ ССЫЛКИ (GRO.25a)")
+print("=" * 76)
+co = call("/api/agent/gintent-create", {"self": OWN, "title": "Book club",
+                                        "intent": {"topics": ["books"], "mode": "online"},
+                                        "idem": "co%d" % S})
+GO = ((co.get("group") or {}).get("gid"))
+bo = call("/api/agent/gintent-invite", {"gid": GO, "self": OWN, "to": M[3:5], "idem": "io%d" % S})
+for x in (bo.get("sent") or []):
+    call("/api/agent/ginvite-respond", {"id": x["id"], "self": x["to"], "accept": True})
+po = call("/api/agent/gplan-begin", {"gid": GO, "self": OWN, "when": "чт 20:30",
+                                     "starts_at": time.time() + 50 * 3600, "idem": "po%d" % S})
+PO = ((po or {}).get("plan") or {}).get("id")
+plo = (po or {}).get("plan") or {}
+check("план знает, что он онлайновый", plo.get("mode") == "online", plo.get("mode"))
+check("и что ссылки нет", plo.get("needs_link") is True, plo.get("needs_link"))
+bad = call("/api/agent/gplan-link", {"id": PO, "self": OWN, "link": "спрошу позже"})
+check("текст вместо ссылки не сохраняется", bad.get("error") == "BAD_LINK", bad)
+notown = call("/api/agent/gplan-link", {"id": PO, "self": M[3], "link": "https://meet.example/x"})
+check("ссылку ставит организатор", notown.get("error") == "NOT_ORGANIZER", notown)
+ok = call("/api/agent/gplan-link", {"id": PO, "self": OWN, "link": "https://meet.example/kleal",
+                                    "idem": "lk%d" % S})
+check("ссылка сохранена", ((ok.get("plan") or {}).get("link")) == "https://meet.example/kleal", ok)
+check("и «нет ссылки» снято", ((ok.get("plan") or {}).get("needs_link")) is False, ok.get("plan"))
+offl = call("/api/agent/gplan-link", {"id": PID, "self": OWN, "link": "https://x.example"})
+check("офлайновому плану ссылка не нужна", offl.get("error") == "NOT_ONLINE", offl)
 
 print()
 print("=" * 76)
@@ -169,24 +375,30 @@ too_late = call("/api/agent/gplan-begin", {"gid": gid2, "self": OWN, "when": "ч
 check("план внутри окна не заводится — его некому подтвердить",
       too_late.get("error") == "TOO_LATE", too_late)
 
-# Ровно на границе: план начинается через два часа с минутой, трое подтверждают, затем время
-# сдвигается голосованием так, что встреча оказывается внутри окна.
+# Ровно на границе: план начинается через два часа с минутой, все подтверждают, затем время
+# сдвигается внутрь окна — и всё замирает.
 p2 = call("/api/agent/gplan-begin", {"gid": gid2, "self": OWN, "when": "сегодня",
                                      "starts_at": time.time() + 2 * 3600 + 600,
                                      "idem": "pb2%d" % S})
 P2 = ((p2 or {}).get("plan") or {}).get("id")
 check("а за границей окна — заводится", bool(P2), p2)
-for n in who2[:2]:
-    call("/api/agent/gplan-respond", {"id": P2, "self": n, "action": "confirm"})
-st2 = call("/api/agent/gplans?self=%s" % OWN)
-pl2 = next((x for x in (st2.get("plans") or []) if x.get("id") == P2), None)
-check("план подтверждён тремя", pl2 and pl2.get("state") == "confirmed", pl2 and pl2.get("state"))
-# Переносим встречу внутрь окна голосованием — это законный путь, и после него всё замирает.
-v3 = call("/api/agent/gplan-vote-open", {"id": P2, "self": OWN, "kind": "edit",
-                                         "when": "через час", "starts_at": soon})
-V3 = ((v3 or {}).get("vote") or {}).get("id")
 for n in who2:
-    call("/api/agent/gplan-vote", {"id": V3, "self": n, "yes": True})
+    call("/api/agent/gplan-respond", {"id": P2, "self": n, "action": "confirm"})
+pl2 = next((x for x in (call("/api/agent/gplans?self=%s" % OWN).get("plans") or [])
+            if x.get("id") == P2), None)
+check("план подтверждён всем составом", pl2 and pl2.get("state") == "confirmed",
+      pl2 and pl2.get("state"))
+late_upd = call("/api/agent/gplan-update", {"id": P2, "self": OWN, "when": "через час",
+                                            "starts_at": soon})
+check("перенести встречу внутрь окна нельзя даже организатору",
+      late_upd.get("error") == "TOO_LATE", late_upd)
+# Законный путь внутрь окна — голосование, принятое организатором: там срок проверяли на открытии.
+v4 = call("/api/agent/gplan-vote-open", {"id": P2, "self": OWN, "kind": "edit",
+                                         "when": "через час", "starts_at": soon})
+V4 = ((v4 or {}).get("vote") or {}).get("id")
+for n in who2:
+    call("/api/agent/gplan-vote", {"id": V4, "self": n, "yes": True})
+call("/api/agent/gplan-vote-decide", {"id": V4, "self": OWN, "apply": True})
 late = call("/api/agent/gplan-respond", {"id": P2, "self": who2[2], "action": "confirm"})
 check("после переноса внутрь окна подтвердить нельзя", late.get("error") == "LOCKED", late)
 vlate = call("/api/agent/gplan-vote-open", {"id": P2, "self": OWN, "kind": "cancel"})
@@ -200,11 +412,11 @@ print("7. ПОСЛЕ ВСТРЕЧИ — ОБРАТНАЯ СВЯЗЬ И ИСТО�
 print("=" * 76)
 conf = [x for x in (call("/api/agent/gplans?self=%s" % OWN).get("plans") or []) if x.get("id") == PID]
 parts = (conf[0].get("confirmed") if conf else []) or []
-check("в плане трое", len(parts) == 3, parts)
+check("в плане четверо", len(parts) == 4, parts)
 f1 = call("/api/agent/gplan-feedback", {"id": PID, "self": parts[0], "happened": True,
                                         "text": "хорошо посидели", "idem": "f1%d" % S})
 check("первый ответил", f1.get("ok") is True, f1)
-check("план ещё не в истории", (f1.get("answered"), f1.get("of")) == (1, 3),
+check("план ещё не в истории", (f1.get("answered"), f1.get("of")) == (1, 4),
       [f1.get("answered"), f1.get("of")])
 nope = call("/api/agent/gplan-feedback", {"id": PID, "self": M[4], "happened": True})
 check("не участник фидбэк не оставляет", nope.get("error") == "NOT_A_PARTICIPANT", nope)

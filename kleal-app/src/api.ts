@@ -1,18 +1,39 @@
 /**
  * Клиент к бекенду Kleal.
  *
- * По умолчанию смотрит на ИЗОЛИРОВАННЫЙ СТЕНД, а не на прод: приложение в разработке пишет живых
- * людей в users.json, и указать сюда прод — значит однажды случайно зарегистрировать тестовые
- * профили в боевом пуле. Переключение — через EXPO_PUBLIC_API (app.json → extra или .env).
+ * Смотрит на ПРОД (`/root/kleal-ms`, порты 70xx через шлюз 7080) — по решению Ивана 2026-08-10.
  *
- * Адрес стенда эфемерный (бесплатный trycloudflare) и меняется при перезапуске туннеля.
- * Актуальный: ops/dev-stack.sh tunnel
+ * До этого здесь стоял изолированный стенд, и стояло намеренно: приложение в разработке пишет
+ * живых людей в users.json, а прод считался боевым пулом. Проверено перед переключением — боевого
+ * пула нет: на проде 604 профиля, из них 600 синтетических сидов и 4 тестовых. Пулы обоих контуров
+ * одинаковы по природе, так что защищать было нечего.
+ *
+ * ЧТО ЭТО ЗНАЧИТ ТЕПЕРЬ: каждая регистрация с телефона идёт в прод-стор. Стенд (71xx) остался жив
+ * и работает, но приложение с ним больше не разговаривает. Вернуться на него — переменной
+ * EXPO_PUBLIC_API, не правкой этого файла:
+ *
+ *   EXPO_PUBLIC_API=https://<адрес-стенда> npx expo start
+ *
+ * Адрес эфемерный (бесплатный trycloudflare) и меняется при перезапуске туннеля. Актуальный
+ * прод-адрес — из лога туннеля на поде: /root/cf7080.log
  */
 
-const DEFAULT_BASE = 'https://thousands-developmental-bonus-calculation.trycloudflare.com';
+const DEFAULT_BASE = 'https://andrews-pencil-ricky-pcs.trycloudflare.com';
 
 export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API && String(process.env.EXPO_PUBLIC_API)) || DEFAULT_BASE;
+
+export type VoicePayload = {
+  id: string;
+  url: string;
+  duration_ms: number;
+  transcript: string;
+  mime_type: string;
+  language?: string;
+};
+
+export const mediaUrl = (url: string) =>
+  /^https?:\/\//i.test(url) || url.startsWith('file:') || url.startsWith('blob:') ? url : API_BASE + url;
 
 export class ApiError extends Error {
   status: number;
@@ -27,9 +48,20 @@ export class ApiError extends Error {
 
 type Json = Record<string, any>;
 
-async function request<T = Json>(path: string, init?: RequestInit, timeoutMs = 30000): Promise<T> {
+async function request<T = Json>(
+  path: string,
+  init?: RequestInit,
+  timeoutMs = 30000,
+  /** Отмена снаружи: экран поиска даёт человеку выйти, не дожидаясь срока. */
+  external?: AbortSignal,
+): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const relay = () => ctrl.abort();
+  if (external) {
+    if (external.aborted) ctrl.abort();
+    else external.addEventListener('abort', relay);
+  }
   try {
     const res = await fetch(API_BASE + path, {
       ...init,
@@ -50,6 +82,21 @@ async function request<T = Json>(path: string, init?: RequestInit, timeoutMs = 3
   }
 }
 
+async function multipart<T = Json>(path: string, body: FormData, headers: Record<string, string> = {}): Promise<T> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
+  try {
+    const res = await fetch(API_BASE + path, { method: 'POST', body, headers, signal: ctrl.signal });
+    const text = await res.text();
+    let payload: any = null;
+    try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
+    if (!res.ok) throw new ApiError('HTTP ' + res.status, res.status, payload);
+    return payload as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Тридцати секунд хватает всему, кроме разговора с моделью: 70B под нагрузкой отвечает и минуту,
  * а обрыв по таймауту человек читает как «связь пропала» и упирается в тупик. Поэтому у вызовов,
@@ -57,14 +104,47 @@ async function request<T = Json>(path: string, init?: RequestInit, timeoutMs = 3
  * раньше самой модели.
  */
 const LLM_TIMEOUT_MS = 120000;
-const SLOW = /\/api\/(buddy|onboarding\/chat|agent\/(plan|match|expand))/;
+
+/**
+ * За моделью стоят только эти три. `agent/match` и `agent/expand` — НЕ они.
+ *
+ * Раньше ранжирование лежало в этом же списке и ждало две минуты. А это детерминированный подбор:
+ * замерено на живом стенде — match 1.0–1.8 с, expand 1.5 с, и так же из самого приложения. То есть
+ * запрос, который в норме занимает полторы секунды, при любой заминке держал экран поиска
+ * ДВЕ МИНУТЫ — без отмены и без единого слова о том, что что-то идёт не так. Снаружи это
+ * неотличимо от «ищет бесконечно», и именно так это и было названо.
+ *
+ * Двадцать пять секунд — с запасом в пятнадцать раз к измеренному, и всё равно в пределах
+ * человеческого терпения.
+ */
+const RANK_TIMEOUT_MS = 25000;
+const LLM_PATHS = /\/api\/(buddy|onboarding\/chat|agent\/plan)/;
+const RANK_PATHS = /\/api\/agent\/(match|expand)/;
+
+const timeoutFor = (path: string) =>
+  LLM_PATHS.test(path) ? LLM_TIMEOUT_MS : RANK_PATHS.test(path) ? RANK_TIMEOUT_MS : undefined;
 
 export const api = {
-  get: <T = Json>(path: string) => request<T>(path, undefined, SLOW.test(path) ? LLM_TIMEOUT_MS : undefined),
-  post: <T = Json>(path: string, body: Json) =>
-    request<T>(path, { method: 'POST', body: JSON.stringify(body) },
-      SLOW.test(path) ? LLM_TIMEOUT_MS : undefined),
+  get: <T = Json>(path: string, signal?: AbortSignal) =>
+    request<T>(path, undefined, timeoutFor(path), signal),
+  post: <T = Json>(path: string, body: Json, signal?: AbortSignal) =>
+    request<T>(path, { method: 'POST', body: JSON.stringify(body) }, timeoutFor(path), signal),
 };
+
+export const speech = {
+  transcribe: (body: FormData) => multipart<{ ok?: boolean; text?: string; language?: string }>(
+    '/api/speech/transcribe', body
+  ),
+  uploadVoice: (body: FormData, durationMs: number) => multipart<VoicePayload & { ok?: boolean; text?: string }>(
+    '/api/speech/voice', body, { 'X-Voice-Duration-Ms': String(Math.round(durationMs)) }
+  ),
+};
+
+/** Отменённый людьми запрос — не ошибка связи, и говорить о нём как об ошибке нельзя. */
+export function isAbort(e: unknown): boolean {
+  const name = (e as any)?.name;
+  return name === 'AbortError' || String((e as any)?.message || '').includes('Aborted');
+}
 
 // ---------------------------------------------------------------- онбординг
 
@@ -160,12 +240,13 @@ export const agent = {
    * Свободный текст → интент + кандидаты. Разбирает модель, поэтому это единственный вход,
    * которому можно отдать «хочу посмотреть футбол вечером» как есть.
    */
-  plan: (query: string, profile: Json, ctx: Json = {}, override?: Json) =>
-    api.post('/api/agent/plan', { query, profile, ctx, override }),
+  plan: (query: string, profile: Json, ctx: Json = {}, override?: Json, signal?: AbortSignal) =>
+    api.post('/api/agent/plan', { query, profile, ctx, override }, signal),
 
   /** Уже собранный интент → кандидаты, без разбора текста. */
-  match: (intent: Json, profile: Json, ctx: Json = {}) =>
-    api.post('/api/agent/match', { intent, profile, ctx }),
+  /** `signal` — чтобы экран поиска мог отменить запрос по кнопке, а не ждать срока. */
+  match: (intent: Json, profile: Json, ctx: Json = {}, signal?: AbortSignal) =>
+    api.post('/api/agent/match', { intent, profile, ctx }, signal),
 
   /**
    * §12 лестница расширения: на шаг шире по ОДНОЙ оси, а не «показать всех».
@@ -263,8 +344,8 @@ export const agent = {
     ),
 
   /** Отправить сообщение. Доставка настоящая — сообщение появится и у собеседника. */
-  message: (from: string, to: string, text: string) =>
-    api.post<{ ok?: boolean; error?: string }>('/api/agent/message', { from, to, text }),
+  message: (from: string, to: string, text: string, voice?: VoicePayload) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/message', { from, to, text, voice }),
 
   /**
    * Предложить встречу (O.20). Сервер откажет, если человек ещё не принял приглашение
@@ -315,6 +396,10 @@ export const agent = {
   inbox: (self: string) =>
     api.get<{ requests?: Json[] }>(`/api/agent/inbox?self=${encodeURIComponent(self)}`),
 
+  /** Единая лента входящих 1:1 и групповых приглашений для главного экрана. */
+  homeInvites: (self: string) =>
+    api.get<{ invites?: Json[] }>(`/api/agent/home-invites?self=${encodeURIComponent(self)}`),
+
   /** Ответ получателя на приглашение (O.C1). Сервер пере-проверяет политику на момент ответа:
    *  между отправкой и согласием человек мог заблокировать или закрыть направление. */
   respondInvite: (id: string, self: string, decision: 'accept' | 'decline', version?: number) =>
@@ -326,4 +411,208 @@ export const agent = {
    *  (MSG.11). Отметка одна на пару, по-сообщенного статуса нет намеренно. */
   threadRead: (self: string, other: string) =>
     api.post<{ ok?: boolean }>('/api/agent/thread-read', { self, with: other }),
+};
+
+// ---------------------------------------------------------------- группы
+
+/**
+ * Групповые интенты и групповые планы. Бекенд готов целиком и покрыт смоуками
+ * (kleal-ms/tools/gintents_smoke.py, gplans_smoke.py) — формы ниже списаны с них и с раздатчика
+ * маршрутов, не придуманы.
+ *
+ * Правила, которые НЕЛЬЗЯ перепутать с 1:1 — они противоположные, и это решения борда:
+ *  — встречное предложение по групповому плану РВЁТ утверждение (версия++, подтверждения в ноль);
+ *    в 1:1 оно паркуется рядом и старое время держится (OF.21a);
+ *  — подтверждают ВСЕ (GR.26 «Waiting for everyone»); молчащего ждут, а не выбрасывают;
+ *  — раундов согласования три (GR.28/29), дальше план закрепляет организатор (GR.30);
+ *  — голосование СОВЕЩАТЕЛЬНОЕ (GR.35/38): группа считает голоса, решает организатор;
+ *  — за два часа до встречи всё замирает (LOCKED): ни подтвердить, ни отменить, ни позвать.
+ *
+ * `idem` на каждом изменяющем вызове: сервер идемпотентен по ключу, и повтор того же нажатия
+ * (двойной тап, ретрай после обрыва) не создаёт второй группы и не шлёт второе приглашение.
+ * Ключ делает ЭКРАН на само действие (см. newIdem) — один на нажатие, не на запрос.
+ */
+
+/** Ключ идемпотентности: один на человеческое действие. Дата+случайность, без библиотек. */
+export function newIdem(tag: string): string {
+  return `${tag}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export type GroupInfo = {
+  gid?: string;
+  title?: string;
+  joined_count?: number;
+  min_total?: number;
+  max_total?: number;
+  /** Скольких не хватает до минимума. 0 — можно планировать. */
+  need_more?: number;
+  planning_allowed?: boolean;
+  [k: string]: any;
+};
+
+export const group = {
+  // ---- слой 1: комната -------------------------------------------------
+
+  /** Создать групповой интент. Создатель сразу участник; min 3 — правило продукта, не поле формы. */
+  create: (self: string, title: string, intent: Json, idem: string, opts: Json = {}) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>(
+      '/api/agent/gintent-create', { self, title, intent, idem, ...opts }
+    ),
+
+  /**
+   * Пригласить. `to` — имя ИЛИ список: организатор зовёт всю выдачу одним вызовом и получает
+   * ответ ПО КАЖДОМУ (sent/refused с причинами), а не один вердикт на батч. Места приглашение
+   * не резервирует — на последнее место может быть два живых приглашения, это по спеке (§20).
+   */
+  invite: (gid: string, self: string, to: string | string[], idem: string, note = '') =>
+    api.post<{
+      ok?: boolean; error?: string;
+      invite?: Json;                       // одиночное приглашение
+      sent?: Json[]; refused?: Json[];     // батч
+    }>('/api/agent/gintent-invite', { gid, self, to, note, idem }),
+
+  /** Отозвать ОТКРЫТОЕ приглашение — Cancel со строки GR.17 и выход из капа по GR.15. Только
+   *  организатор, только неотвеченное: по принятому человек уже участник, по ожидающему апрува
+   *  решает approve(accept=false). Приглашённому — тишина; попытка войти ответит WITHDRAWN. */
+  inviteCancel: (id: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; invite?: Json; group?: GroupInfo }>(
+      '/api/agent/gintent-invite-cancel', { id, self, idem }
+    ),
+
+  /** Ответ на групповое приглашение. Принял — сразу в общем чате; на этапе плана вместо этого
+   *  приходит `awaiting_approval: true`, и человека впускает организатор. */
+  respondInvite: (id: string, self: string, accept: boolean, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo; awaiting_approval?: boolean }>(
+      '/api/agent/ginvite-respond', { id, self, accept, idem }
+    ),
+
+  /** Апрув ожидающего (этап плана). Только организатор; accept: false — отказать во входе. */
+  approve: (gid: string, self: string, who: string, idem: string, accept = true) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>(
+      '/api/agent/gintent-approve', { gid, self, who, accept, idem }
+    ),
+
+  /** Удалить участника. Только организатор и ТОЛЬКО с причиной — сервер иначе откажет
+   *  (REASON_REQUIRED). Группе объявляется нейтрально, без причины и без имени удалившего. */
+  remove: (gid: string, self: string, who: string, reason: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string }>(
+      '/api/agent/gintent-remove', { gid, self, who, reason, idem }
+    ),
+
+  /** Выйти самому. Ниже минимума «Создать план» у оставшихся гаснет. */
+  leave: (gid: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>(
+      '/api/agent/gintent-leave', { gid, self, idem }
+    ),
+
+  /** Сообщение в общий чат группы. */
+  post: (gid: string, self: string, text: string, voice?: VoicePayload) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/gintent-post', { gid, self, text, voice }),
+
+  /** Чат группы, старые сверху; `since` — дотягивать только новое. Не участнику — NOT_A_MEMBER:
+   *  комнату читают только свои, и это проверка сервера, а не вежливость интерфейса. */
+  thread: (gid: string, self: string, since = 0) =>
+    api.get<{ ok?: boolean; error?: string; messages?: Json[] }>(
+      `/api/agent/gintent-thread?gid=${encodeURIComponent(gid)}&self=${encodeURIComponent(self)}&since=${since}`
+    ),
+
+  /** Одна группа целиком — состав, need_more, planning_allowed, ожидающие апрува. */
+  get: (gid: string, self: string) =>
+    api.get<{ ok?: boolean; group?: GroupInfo }>(
+      `/api/agent/gintent?gid=${encodeURIComponent(gid)}&self=${encodeURIComponent(self)}`
+    ),
+
+  /** Мои группы и входящие групповые приглашения — для «Сообщений» и главной. */
+  mine: (self: string) =>
+    api.get<{ groups?: Json[]; invites?: Json[] }>(
+      `/api/agent/gintents?self=${encodeURIComponent(self)}`
+    ),
+
+  // ---- слой 2: план ----------------------------------------------------
+
+  /**
+   * Предложить план. Только организатор и только при трёх в комнате (NEED_THREE). Предложивший
+   * считается подтвердившим. Внутри двух часов до встречи план не заводится (TOO_LATE).
+   * `starts_at` — unix-секунды точного начала: по нему сервер считает двухчасовой замок.
+   */
+  planBegin: (gid: string, self: string, p: { when: string; place?: string; note?: string; starts_at?: number }, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/gplan-begin', { gid, self, ...p, idem }
+    ),
+
+  /**
+   * Ответ на план: confirm | counter. ГРУППОВОЕ правило: counter обнуляет прежние подтверждения
+   * (согласие было на другой вечер), поднимает раунд и версию, план снова «на утверждении».
+   * Раундов три (GR.28/29) — четвёртый вернёт ROUNDS_USED_UP. Подтвердили все — план встал сам.
+   *
+   * Тот же confirm служит ещё двум кнопкам борда, и это не совпадение, а одно и то же действие:
+   * «Stay in the plan» (GR.31, после закрепления) и «Accept the change» (GR.33, после правки
+   * организатора) — это «да, я в этом плане», сказанное в другой момент.
+   */
+  planRespond: (id: string, self: string, action: 'confirm' | 'counter', idem: string, extra: Json = {}) =>
+    api.post<{ ok?: boolean; error?: string; countered?: boolean; plan?: Json }>(
+      '/api/agent/gplan-respond', { id, self, action, idem, ...extra }
+    ),
+
+  /** GR.30 «Fix the plan» — организатор закрывает согласование, когда раунды кончились. Не
+   *  выбрасывает молчавших: им предлагается остаться или выйти (GR.31, флаг stay_or_leave). */
+  planFix: (id: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; fixed?: boolean; unconfirmed?: string[]; plan?: Json }>(
+      '/api/agent/gplan-fix', { id, self, idem }
+    ),
+
+  /** GR/GRO.32 — организатор правит УТВЕРЖДЁННЫЙ план. Каждый участник после этого принимает
+   *  заново или выходит (GR.33); встреча при этом не отменяется. */
+  planUpdate: (id: string, self: string, p: { when?: string; place?: string; starts_at?: number },
+               idem: string) =>
+    api.post<{ ok?: boolean; error?: string; updated?: boolean; plan?: Json }>(
+      '/api/agent/gplan-update', { id, self, ...p, idem }
+    ),
+
+  /** GRO.25a — ссылка на звонок для онлайн-плана. Только организатор, только онлайн. */
+  planLink: (id: string, self: string, link: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/gplan-link', { id, self, link, idem }
+    ),
+
+  /** Открыть голосование: cancel — отменить встречу, edit — перенести (when/place/starts_at).
+   *  Одновременно живёт одно (VOTE_IN_PROGRESS); созвавший уже «за». Живёт шесть часов. */
+  voteOpen: (id: string, self: string, kind: 'cancel' | 'edit', idem: string, extra: Json = {}) =>
+    api.post<{ ok?: boolean; error?: string; vote?: Json }>(
+      '/api/agent/gplan-vote-open', { id, self, kind, idem, ...extra }
+    ),
+
+  /** Голос. Закрывается само, когда высказались все или вышли шесть часов. Закрытие СЧИТАЕТ
+   *  голоса и на этом останавливается: план не меняется, пока организатор не решит (voteDecide). */
+  vote: (id: string, self: string, yes: boolean, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; vote?: Json }>(
+      '/api/agent/gplan-vote', { id, self, yes, idem }
+    ),
+
+  /** Закрыть голосование досрочно, не дожидаясь всех. Только организатор. */
+  voteClose: (id: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; vote?: Json }>(
+      '/api/agent/gplan-vote-close', { id, self, idem }
+    ),
+
+  /** GR.37 «It’s your call» — организатор решает, что делать с советом группы. apply: false —
+   *  оставить план как есть, и это законный исход даже при большинстве за перенос (GR.38). */
+  voteDecide: (id: string, self: string, apply: boolean, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; vote?: Json }>(
+      '/api/agent/gplan-vote-decide', { id, self, apply, idem }
+    ),
+
+  /** «Состоялось?» после встречи. План закрывается, когда ответили ВСЕ участники (answered/of) —
+   *  в отличие от 1:1, где запись одна и дозаписывается. */
+  planFeedback: (id: string, self: string, v: { happened: boolean; text?: string; reason?: string }, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; answered?: number; of?: number; plan?: Json }>(
+      '/api/agent/gplan-feedback', { id, self, ...v, idem }
+    ),
+
+  /** Групповые планы этого человека: живые, история и голосования, которые ждут его или
+   *  организатора. Закрытое, но нерешённое голосование тоже здесь — это и есть экран GR.37/38. */
+  plans: (self: string) =>
+    api.get<{ plans?: Json[]; history?: Json[]; votes?: Json[] }>(
+      `/api/agent/gplans?self=${encodeURIComponent(self)}`
+    ),
 };
