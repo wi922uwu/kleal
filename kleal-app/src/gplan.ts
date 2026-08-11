@@ -98,7 +98,6 @@ export const GPLAN = {
       'Каждый сможет подтвердить или предложить своё, прежде чем это станет планом.',
       'Everyone gets to confirm or suggest a change before this becomes a plan.'
     ),
-  whenPh: () => T('Например: чт 24 июля, 20:30', 'For example: Thu 24 July, 20:30'),
   placePh: () => T('Место — район и заведение', 'Place — area and venue'),
   send: () => T('Отправить группе', 'Send to the group'),
   back: () => T('Назад', 'Back'),
@@ -112,7 +111,6 @@ export const GPLAN = {
     T(`Для плана нужно трое. Не хватает ${n}.`, `A plan needs three. ${n} more to go.`),
   planExists: () => T('План у этой группы уже есть.', 'This group already has a plan.'),
   createFailed: () => T('План не ушёл. Попробуй ещё раз.', 'The plan didn’t go out. Try again.'),
-  whenRequired: () => T('Без времени это не план.', 'Without a time it isn’t a plan.'),
 
   // ---- GR.26 / GR.28 / GR.29: согласование ------------------------------
   waitingTitle: () => T('Ждём всех', 'Waiting for everyone'),

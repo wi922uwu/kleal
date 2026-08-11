@@ -31,6 +31,8 @@ import { useOnb } from '../src/state';
 import { group as gapi, mediaUrl, newIdem, type GroupInfo } from '../src/api';
 import { GPLAN, venue, hoursLeft, memberState, type GPlan, type GVote } from '../src/gplan';
 import { ROOM } from '../src/groups';
+import { WhenPicker, whenLabel, whenStartsAt, whenFromStartsAt, type WhenValue } from '../src/components/WhenPicker';
+import { dateChips, deviceTz } from '../src/intent';
 import {
   IconChevronLeft, IconPerson, IconCalendar, IconPin, IconVideo, IconLink, IconCheckCircle, IconClock,
 } from '../src/components/icons';
@@ -62,8 +64,20 @@ export default function GroupPlan() {
   const [voteSheet, setVoteSheet] = useState(false);
   const [decideSheet, setDecideSheet] = useState(false);
 
-  /** Поля форм. Одни и те же на создание, предложение и правку — предлагают всегда одно и то же. */
-  const [when, setWhen] = useState('');
+  /**
+   * Поля форм. Одни и те же на создание, предложение и правку — предлагают всегда одно и то же.
+   *
+   * Время — НЕ строка. Здесь стояло текстовое поле «например: чт 24 июля, 20:30», и у плана из-за
+   * этого не было настоящего момента: сервер считает двухчасовой замок и отказ TOO_LATE по
+   * `starts_at`, а он не отправлялся вовсе. Теперь дата и время выбираются как на кадре GR.09 и
+   * уходят вдвоём — подписью и unix-секундами.
+   */
+  const [when, setWhen] = useState<WhenValue>(() => ({
+    date: dateChips(1)[0].key,
+    minutes: 20 * 60,
+    tz: deviceTz(),
+  }));
+  const [dragging, setDragging] = useState(false);
   const [place, setPlace] = useState('');
   const [link, setLink] = useState('');
 
@@ -144,27 +158,31 @@ export default function GroupPlan() {
 
   // ---- действия ---------------------------------------------------------
 
+  /**
+   * Время уходит ПАРОЙ: `when` — подпись, которую читают люди, `starts_at` — момент, по которому
+   * сервер считает двухчасовой замок и отказывает в плане на прошлое. Отправить одну подпись —
+   * значит завести план, который никогда не замрёт перед встречей.
+   */
+  const timeArgs = () => ({ when: whenLabel(when), starts_at: whenStartsAt(when) });
+
   const create = () =>
-    !when.trim() ? setErr(GPLAN.whenRequired())
-      : act(() => gapi.planBegin(gid, me, { when: when.trim(), place: place.trim() }, newIdem('gpb')),
-            () => { setMode('view'); setWhen(''); setPlace(''); });
+    act(() => gapi.planBegin(gid, me, { ...timeArgs(), place: place.trim() }, newIdem('gpb')),
+        () => { setMode('view'); setPlace(''); });
 
   const confirm = () =>
     act(() => gapi.planRespond(String(plan?.id), me, 'confirm', newIdem('gpc')));
 
   const counter = () =>
-    !when.trim() ? setErr(GPLAN.whenRequired())
-      : act(() => gapi.planRespond(String(plan?.id), me, 'counter', newIdem('gpn'),
-                                   { when: when.trim(), place: place.trim() || plan?.place || '' }),
-            () => { setMode('view'); setWhen(''); setPlace(''); });
+    act(() => gapi.planRespond(String(plan?.id), me, 'counter', newIdem('gpn'),
+                               { ...timeArgs(), place: place.trim() || plan?.place || '' }),
+        () => { setMode('view'); setPlace(''); });
 
   const fix = () => act(() => gapi.planFix(String(plan?.id), me, newIdem('gpf')));
 
   const update = () =>
-    !when.trim() ? setErr(GPLAN.whenRequired())
-      : act(() => gapi.planUpdate(String(plan?.id), me,
-                                  { when: when.trim(), place: place.trim() || undefined }, newIdem('gpu')),
-            () => { setMode('view'); setWhen(''); setPlace(''); });
+    act(() => gapi.planUpdate(String(plan?.id), me,
+                              { ...timeArgs(), place: place.trim() || undefined }, newIdem('gpu')),
+        () => { setMode('view'); setPlace(''); });
 
   const saveLink = () =>
     act(() => gapi.planLink(String(plan?.id), me, link.trim(), newIdem('gpl')),
@@ -179,8 +197,8 @@ export default function GroupPlan() {
 
   const startVote = (kind: 'edit' | 'cancel') =>
     act(() => gapi.voteOpen(String(plan?.id), me, kind, newIdem('gvo'),
-                            kind === 'edit' ? { when: when.trim() || plan?.when || '' } : {}),
-        () => { setAskVote(false); setWhen(''); });
+                            kind === 'edit' ? timeArgs() : {}),
+        () => setAskVote(false));
 
   const castVote = (yes: boolean) =>
     act(() => gapi.vote(String(vote?.id), me, yes, newIdem('gv')), () => setVoteSheet(false));
@@ -234,7 +252,10 @@ export default function GroupPlan() {
           }}
         />
 
-        <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
+        {/* scrollEnabled выключается на время вращения циферблата: иначе жест по кругу
+            перехватывает список, и стрелка прыгает. Та же пара, что в мастере интента. */}
+        <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled"
+                    scrollEnabled={!dragging}>
           {loading && !g ? <ActivityIndicator style={{ marginTop: 24 }} color={color.primary} /> : null}
 
           {/* Заголовок и пояснение — они и есть кадр: на борде меняются только эти две строки. */}
@@ -246,7 +267,7 @@ export default function GroupPlan() {
           {plan || formMode ? (
             <PlanCard
               title={g?.title || ''}
-              when={formMode && when ? when : String(plan?.when || when || '')}
+              when={formMode ? whenLabel(when) : String(plan?.when || '')}
               was={mode === 'update' ? String(plan?.when || '') : String(plan?.update?.was?.when || '')}
               venueLine={
                 formMode && !online
@@ -281,10 +302,10 @@ export default function GroupPlan() {
           {/* Формы. Поля одни и те же, потому что предлагают всегда одно и то же — время и место. */}
           {mode === 'create' || mode === 'suggest' || mode === 'update' ? (
             <View style={s.form}>
-              <TextInput
-                style={s.input} value={when} onChangeText={setWhen}
-                placeholder={GPLAN.whenPh()} placeholderTextColor={color.neutral400}
-              />
+              {/* Кадр GR.09: чипы дат, циферблат, часы и минуты — тот же компонент, что в мастере
+                  интента. Место остаётся полем: у него нет готового списка, а район приезжает
+                  из интента группы. */}
+              <WhenPicker value={when} onChange={setWhen} onDragChange={setDragging} />
               {!online ? (
                 <TextInput
                   style={s.input} value={place} onChangeText={setPlace}
@@ -363,10 +384,10 @@ export default function GroupPlan() {
             online={online}
             leftForConfirm={Number(plan?.needs || 0)}
             isOwner={isOwner}
-            onCreateOpen={() => { setWhen(''); setPlace(''); setMode('create'); }}
+            onCreateOpen={() => { setPlace(''); setMode('create'); }}
             onCreate={create}
             onConfirm={confirm}
-            onSuggestOpen={() => { setWhen(String(plan?.when || '')); setPlace(String(plan?.place || '')); setMode('suggest'); }}
+            onSuggestOpen={() => { setWhen(whenFromStartsAt(plan?.starts_at, when.tz) || when); setPlace(String(plan?.place || '')); setMode('suggest'); }}
             onSuggestSend={counter}
             onFix={fix}
             onStay={confirm}
@@ -375,7 +396,7 @@ export default function GroupPlan() {
             onAskVote={() => setAskVote(true)}
             onOpenVote={() => setVoteSheet(true)}
             onDecide={() => setDecideSheet(true)}
-            onUpdateOpen={() => { setWhen(String(plan?.when || '')); setPlace(''); setMode('update'); }}
+            onUpdateOpen={() => { setWhen(whenFromStartsAt(plan?.starts_at, when.tz) || when); setPlace(''); setMode('update'); }}
             onUpdateSend={update}
             onAccept={confirm}
             onLinkOpen={() => setMode('link')}
@@ -389,10 +410,9 @@ export default function GroupPlan() {
         <Sheet open={askVote} onClose={() => setAskVote(false)} bottomInset={insets.bottom}
                title={GPLAN.askTitle()}
                body={isOwner ? GPLAN.askNoteMine() : GPLAN.askNote(owner || GPLAN.roleOrganiser())}>
-          <TextInput
-            style={s.input} value={when} onChangeText={setWhen}
-            placeholder={GPLAN.whenPh()} placeholderTextColor={color.neutral400}
-          />
+          {/* Просят перенос НА КОНКРЕТНОЕ время: «давайте перенесём» без времени — не предложение,
+              а вопрос, и голосовать по нему не о чем. */}
+          <WhenPicker value={when} onChange={setWhen} />
           <Pressable accessibilityRole="button" style={s.primary} onPress={() => startVote('edit')}
                      accessibilityState={{ busy }}>
             {busy ? <ActivityIndicator color={color.onPrimary} />
