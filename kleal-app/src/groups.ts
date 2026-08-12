@@ -60,10 +60,7 @@ export const GROUP = {
     ),
 
   /** Кнопка и состояния строки кандидата — GR.14/GR.17. */
-  invite: () => T('Пригласить', 'Invite'),
-  invited: () => T('Приглашён(а)', 'Invited'),
   joined: () => T('В группе', 'Joined'),
-  cancel: () => T('Отменить', 'Cancel'),
 
   /** Шит подтверждения — GR.16, дословно с кадра. */
   askTitle: (name: string) => T(`Пригласить ${name} в группу?`, `Invite ${name} to the group?`),
@@ -82,12 +79,10 @@ export const GROUP = {
       'Три приглашения ждут ответа. Kleal держит планку в три, чтобы никому не прилетал веер заявок. Отмени одно или дождись ответа — Plus поднимет планку.',
       'You have 3 invites still waiting for an answer. Kleal holds them at three so nobody gets a fan-out of requests. Cancel one, or wait — Plus raises it.'
     ),
-  capCancelOne: () => T('Отменить одно', 'Cancel one instead'),
 
   /** Отказы сервера — по имени, как он их называет. */
   full: () => T('Группа уже собралась — мест нет.', 'The group is already full.'),
   sendFailed: () => T('Приглашение не ушло. Попробуй ещё раз.', 'The invite didn’t go out. Try again.'),
-  createFailed: () => T('Не получилось открыть группу. Попробуй ещё раз.', 'Couldn’t open the group. Try again.'),
 };
 
 /**
@@ -122,8 +117,6 @@ export const ROOM = {
       : T(`${n} из ${min} · нужен(ы) ещё ${min - n}`, `${n} of ${min} · need ${min - n} more`),
 
   /** Системные строки ленты — GR.18/GR.21. Их пишет сервер по-английски; здесь перевод для показа. */
-  sysCreated: (who: string, title: string) =>
-    T(`${who} создал(а) «${title}»`, `${who} created ${title}`),
   sysJoined: (who: string) => T(`${who} в группе`, `${who} joined the group`),
   sysLeft: (who: string) => T(`${who} вышел(ла) из группы`, `${who} left the group`),
   sysEnough: () => T('Людей достаточно — можно делать план.', 'You have enough people to make a plan.'),
@@ -227,8 +220,6 @@ export function groupSysLine(text: string): string {
   if (m) return ROOM.sysLeft(m[1]);
   m = t.match(/^(.+?) is no longer in the group\.?$/i);
   if (m) return ROOM.sysRemoved(m[1]);
-  m = t.match(/^(.+?) created (.+?)\.?$/i);
-  if (m) return ROOM.sysCreated(m[1], m[2]);
   if (/enough people/i.test(t)) return ROOM.sysEnough();
   if (/group is full/i.test(t)) return ROOM.sysFull();
   return t;

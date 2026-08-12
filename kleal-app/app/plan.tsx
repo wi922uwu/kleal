@@ -506,7 +506,7 @@ export default function Plan() {
                   <View style={{ flex: 1 }}>
                     <Text style={s.linkTitle} numberOfLines={2}>{placeLabel}</Text>
                     <Text style={s.linkSub}>
-                      {phase === 'now' ? PLAN.meetupNow() : PLAN.startsInLong(minutesToStart(plan))}
+                      {phase === 'now' ? PLAN.meetupNow() : PLAN.startsIn(minutesToStart(plan))}
                     </Text>
                   </View>
                   <Pressable accessibilityRole="button" style={s.linkBtn} onPress={openRoute}>

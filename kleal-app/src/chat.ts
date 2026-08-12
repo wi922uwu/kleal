@@ -30,7 +30,6 @@ export const CHAT = {
 
   /** O.17 — приглашение приняли. */
   openChat: () => T('Открыть чат', 'Open chat'),
-  continueChat: () => T('Продолжить чат', 'Continue chat'),
 
   /** Окно бесплатного тарифа, текст с кадра O.17. */
   busyTitle: (name: string) => T(`Ты уже переписываешься с ${ins(name)}`, `You're already chatting with ${name}`),
@@ -45,7 +44,6 @@ export const CHAT = {
   endChatWith: (name: string) => T(`Закончить переписку с ${ins(name)}`, `End chat with ${name}`),
 
   /** O.18 — сам чат. */
-  placeholder: () => T('Сообщение…', 'Message…'),
   /** Композер MSG.06 обращается по имени: «Message Jane». */
   placeholderTo: (name: string) => T(`Написать ${dat(name)}…`, `Message ${name}`),
   /**
@@ -99,8 +97,6 @@ export const CHAT = {
   youProposedShort: () => T('твой план', 'your plan'),
   confirmed: () => T('Подтвердил(а)', 'Confirmed'),
   declinedPlan: () => T('Отказался(ась)', 'Declined'),
-  changePlan: () => T('Поправить план', 'Change the plan'),
-  videoCall: () => T('Видеозвонок · ссылка сохранена', 'Video call · link saved'),
   planFailed: () => T('План не отправился. Попробуй ещё раз.', 'The plan didn’t send. Try again.'),
   /** Сервер отказывает, если человек ещё не принял приглашение, — говорим об этом словами. */
   notMatched: () => T('План можно отправить только тому, кто принял приглашение.',
@@ -216,8 +212,6 @@ export const PLAN = {
   yesWeTalked: () => T('Да, встретились', 'Yes, we talked'),
   noItDidnt: () => T('Нет, не состоялась', 'No, it didn’t happen'),
   waitingBoth: () => T('Ждём ответа обоих', 'Waiting on both answers'),
-  youAnswered: () => T('Ты ответил(а)', 'You answered'),
-  theyNotAnswered: (name: string) => T(`${name} ещё не ответил(а)`, `${name} hasn’t answered yet`),
 
   /** O.25. */
   howWasIt: () => T('Как прошло?', 'How was it?'),
@@ -265,9 +259,6 @@ export const PLAN = {
   waitingOldTime: () => T('Ждёшь · старое время в силе', 'Waiting · old time still stands'),
   takeItBack: () => T('Забрать предложение', 'Take it back'),
   /** Принимающая сторона встречного времени (OF.C5): кадра в пачке нет, кнопки — по контракту сервера. */
-  newTimeToYou: (name: string) => T(`${name} предлагает другое время`, `${name} suggests a new time`),
-  acceptNewTime: () => T('Принять новое время', 'Accept the new time'),
-  keepOldTime: () => T('Оставить как было', 'Keep the old time'),
   /** OF.C5 дословно: спешки нет, отказ ничего не отменяет. */
   oldTimeHolds: () =>
     T(
@@ -311,7 +302,6 @@ export const PLAN = {
   /** OF.C3, сторона без подтверждения: адрес придёт после «да». */
   addressAfterConfirm: () =>
     T('Адрес откроется после твоего подтверждения.', 'The address opens once you confirm.'),
-  districtOnly: (d: string) => T(`${d} · адрес после подтверждения`, `${d} · address after you both confirm`),
 
   /** OF.20a — согласовано, а точного места нет: выбрать до начала. */
   pickPlaceTitle: () => T('Выбери точное место', 'Pick the exact place'),
@@ -328,10 +318,8 @@ export const PLAN = {
   noPlaceYet: () => T('Место пока не выбрано', 'No place yet'),
 
   /** OF.22 — скоро начало: маршрут и честное «я опаздываю». */
-  startsInLong: (min: number) => T(`Начало через ${min} мин`, `Starts in ${min} minutes`),
   openRoute: () => T('Открыть маршрут', 'Open the route'),
   imLate: () => T('Я опаздываю', 'I’m running late'),
-  onMyWay: () => T('Уже иду', 'On my way'),
   imHere: () => T('Я на месте', 'I’m here'),
   /** OF.22, подзаголовок: опоздание не страшно, если о нём сказать. */
   lateHint: (name: string) =>
@@ -646,14 +634,6 @@ function atLabel(at: any, ru: boolean): string {
   return `${day} · ${hm}`;
 }
 
-/** Час без даты — для переноса, где важен только сдвинутый час. */
-function hourLabel(at: any, ru: boolean): string {
-  if (typeof at !== 'number' || !isFinite(at) || !at) return '';
-  return new Date(at * 1000).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: !ru,
-  });
-}
-
 /**
  * Строка события для ленты. `me` — кто смотрит: свои действия называются «ты», чужие — именем.
  * Неизвестный код возвращает пустую строку: показать сырой код человеку хуже, чем не показать
@@ -664,8 +644,8 @@ export function sysLine(sys: SysMsg | undefined, me: string, ru: boolean): strin
   const by = String(sys.by || '').trim();
   const mine = !!by && by.toLowerCase() === String(me || '').trim().toLowerCase();
   const when = atLabel(sys.at, ru);
-  const hour = hourLabel(sys.at, ru);
-  const wasHour = hourLabel(sys.was, ru);
+  const hour = msgTime(sys.at, ru);
+  const wasHour = msgTime(sys.was, ru);
   switch (sys.code) {
     case 'plan_proposed':
       return mine
@@ -735,7 +715,7 @@ export function activeChatWith(threads: { who?: string; t?: number }[]): string 
 
 /** Время сообщения — часы и минуты, как на кадре. */
 export function msgTime(t?: number, ru = true): string {
-  if (!t) return '';
+  if (typeof t !== 'number' || !isFinite(t) || !t) return '';
   return new Date(t * 1000).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', {
     hour: '2-digit', minute: '2-digit', hour12: !ru,
   });
@@ -753,14 +733,7 @@ export function msgDayLabel(t: number, ru = true, nowMs = Date.now()): string {
 
 /** Строка «Сегодня · 20:00 Barcelona» из плана. Часовых поясов у обоих сервер не хранит. */
 export function planWhen(p: any, ru = true): string {
-  const sa = p?.starts_at;
-  if (typeof sa === 'number' && isFinite(sa)) {
-    const d = new Date(sa * 1000);
-    const day = d.toLocaleDateString(ru ? 'ru-RU' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short' });
-    const hm = d.toLocaleTimeString(ru ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: !ru });
-    return `${day} · ${hm}`;
-  }
-  return String(p?.when || '');
+  return atLabel(p?.starts_at, ru) || String(p?.when || '');
 }
 
 /**

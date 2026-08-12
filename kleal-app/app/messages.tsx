@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { MSG, Row, intentRows, planRows, gplanRows, threadRows, groupRows, searchRows, bucketOf, isUnread, rowTime } from '../src/messages';
+import { MSG, Row, intentRows, planRows, gplanRows, threadRows, groupRows, searchRows, bucketOf, isUnread, rowTime, newestFirst } from '../src/messages';
 import { mediaUrl, group as gapi } from '../src/api';
 import { planWhen, sysLine } from '../src/chat';
 import { useLang, T, getLang } from '../src/i18n';
@@ -107,8 +107,8 @@ export default function Messages() {
 
   const prefs = st.msg || {};
   const sections = useMemo(
-    () => intentRows(me, data.plans, data.history, data.inbox, data.outbox, ru, planWhen),
-    [me, data, ru]
+    () => intentRows(me, data.plans, data.inbox, data.outbox),
+    [me, data.plans, data.inbox, data.outbox]
   );
   /**
    * Договорились о времени и месте — живут здесь, а не среди намерений. И парные, и групповые:
@@ -120,11 +120,10 @@ export default function Messages() {
     // Групповой план приходит с сервера уже с подписью времени (`when`), собранной пикером, —
     // пересобирать её из starts_at незачем и вредно: разойдётся с тем, что видно в самой группе.
     const many = gplanRows(data.gplans, data.ghistory, ru, (p: any) => String(p.when || ''));
-    const byT = (a: Row, b: Row) => (b.t || 0) - (a.t || 0);
     return {
-      upcoming: [...one.upcoming, ...many.upcoming].sort(byT),
-      forming: [...one.forming, ...many.forming].sort(byT),
-      past: [...one.past, ...many.past].sort(byT),
+      upcoming: [...one.upcoming, ...many.upcoming].sort(newestFirst),
+      forming: [...one.forming, ...many.forming].sort(newestFirst),
+      past: [...one.past, ...many.past].sort(newestFirst),
     };
   }, [me, data, ru]);
   const privateRows = useMemo(
@@ -149,7 +148,7 @@ export default function Messages() {
   /** Группы стоят рядом с одиночными интентами: для человека это одна затея, просто людей больше. */
   const gRows = useMemo(() => groupRows(data.groups, data.ginvites, ru), [data.groups, data.ginvites, ru]);
   const formingWithGroups = useMemo(
-    () => [...gRows, ...sections.forming].sort((a, b) => (b.t || 0) - (a.t || 0)),
+    () => [...gRows, ...sections.forming].sort(newestFirst),
     [gRows, sections.forming]
   );
 
@@ -324,7 +323,7 @@ export default function Messages() {
       <ScrollView contentContainerStyle={[s.body, { paddingBottom: 130 }]} keyboardShouldPersistTaps="handled">
         {/* Kleal закреплён сверху в любом состоянии — так обещает пустой экран MSG.01. */}
         {!searching ? (
-          <Pressable accessibilityRole="button" style={[s.row, s.klealRow]} onPress={() => router.push('/buddy')}>
+          <Pressable accessibilityRole="button" style={s.row} onPress={() => router.push('/buddy')}>
             <View style={s.klealAva}><IconSpark size={20} c={color.onPrimary} /></View>
             <View style={{ flex: 1 }}>
               <Text style={s.rowTitle}>{MSG.kleal()}</Text>
@@ -490,7 +489,6 @@ const s = StyleSheet.create({
     backgroundColor: color.card, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 14,
     marginTop: 10, ...cardShadow,
   },
-  klealRow: {},
   klealAva: {
     width: 52, height: 52, borderRadius: 26, backgroundColor: color.primary,
     alignItems: 'center', justifyContent: 'center',

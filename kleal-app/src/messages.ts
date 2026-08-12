@@ -48,7 +48,6 @@ export const MSG = {
   calledOffShort: () => T('Отменилось', 'Called off'),
   rateTeaser: () => T('Как прошло? Нажми, чтобы оценить', 'How did it go? Tap to rate'),
   readOnly: () => T('Только чтение', 'Read-only'),
-  mutedMark: () => T('Без уведомлений', 'Muted'),
 
   // MSG.03 — поиск.
   searchPlaceholder: () => T('Поиск', 'Search'),
@@ -96,6 +95,9 @@ export type Row = {
 
 const norm = (s: string) => String(s || '').trim().toLowerCase();
 
+/** Свежее сверху. Правило одно на весь список — и в секциях, и при слиянии парного с групповым. */
+export const newestFirst = (a: { t?: number }, b: { t?: number }) => (b.t || 0) - (a.t || 0);
+
 /** Сколько часов осталось приглашению. Часы честные — из expires_at, а не из цифры на борде:
  *  сервер держит место 72 часа (KLEAL_PROPOSAL_TTL_S), борд рисовал 24. */
 export function inviteHoursLeft(row: any, nowS = Date.now() / 1000): number {
@@ -103,7 +105,7 @@ export function inviteHoursLeft(row: any, nowS = Date.now() / 1000): number {
   return e > nowS ? Math.max(1, Math.round((e - nowS) / 3600)) : 0;
 }
 
-export function otherOf(plan: any, me: string): string {
+function otherOf(plan: any, me: string): string {
   return String(plan?.other || '') ||
     String(((plan?.participants || []).find((p: any) => norm(p?.name) !== norm(me)) || {}).name || '');
 }
@@ -114,7 +116,7 @@ export function otherOf(plan: any, me: string): string {
  * строка уходит на вкладку «Планы» — см. planRows. Один и тот же человек не должен стоять в двух
  * местах: пока встреча живая, ей место среди планов, а не среди намерений.
  */
-export function intentRows(me: string, plans: any[], history: any[], inbox: any[], outbox: any[], ru: boolean, planWhen: (p: any, ru: boolean) => string) {
+export function intentRows(me: string, plans: any[], inbox: any[], outbox: any[]) {
   const forming: Row[] = [];
 
   for (const r of inbox || []) {
@@ -167,8 +169,7 @@ export function intentRows(me: string, plans: any[], history: any[], inbox: any[
 
   // Прошедшие встречи живут на вкладке «Планы» вместе с живыми — см. planRows. Здесь остаётся
   // только «Собирается»: приглашения и пары, у которых встречи ещё нет.
-  const byT = (a: Row, b: Row) => (b.t || 0) - (a.t || 0);
-  forming.sort(byT);
+  forming.sort(newestFirst);
   return { forming };
 }
 
@@ -204,8 +205,7 @@ export function planRows(me: string, plans: any[], history: any[], ru: boolean, 
       teaser: done && !p.my_feedback ? MSG.rateTeaser() : undefined,
     });
   }
-  const byT = (a: Row, b: Row) => (b.t || 0) - (a.t || 0);
-  upcoming.sort(byT); forming.sort(byT); past.sort(byT);
+  upcoming.sort(newestFirst); forming.sort(newestFirst); past.sort(newestFirst);
   return { upcoming, forming, past };
 }
 
@@ -223,7 +223,7 @@ export function threadRows(threads: any[], me = '', ru = true, line?: (sys: any,
       ? MSG.voiceMessage()
       : String(t.last || '') || (t.sys && line ? line(t.sys, me, ru) : ''),
     photo: t.photo, t: Number(t.t || 0),
-  })).sort((a, b) => (b.t || 0) - (a.t || 0));
+  })).sort(newestFirst);
 }
 
 /**
@@ -273,7 +273,7 @@ export function groupRows(groups: any[], invites: any[], ru: boolean): Row[] {
       count: 1,
     });
   }
-  return rows.sort((a, b) => (b.t || 0) - (a.t || 0));
+  return rows.sort(newestFirst);
 }
 
 /**
