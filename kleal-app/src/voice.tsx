@@ -535,9 +535,22 @@ function AudioPlay({
     Animated.timing(rateIn, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
   }, [rateIn, started]);
 
-  const toggle = () => {
-    if (status.playing) player.pause();
-    else { setStarted(true); player.play(); }
+  /**
+   * Режим звука включается ПЕРЕД каждым запуском, и это не перестраховка.
+   *
+   * `playsInSilentMode` выставлялся только в конце записи. Своё, только что записанное, поэтому
+   * слушалось, а входящее в свежеоткрытой переписке — нет: при поднятом беззвучном переключателе
+   * iOS просто не выпускает звук. Снаружи это выглядит как «голосовое не проигрывается»: волна
+   * ползёт, отсчёт идёт, тишина.
+   *
+   * Ждём применения, а не пускаем вдогонку: иначе первые доли секунды успевают уйти в старом
+   * режиме — ровно то начало фразы, ради которого сообщение и открывают.
+   */
+  const toggle = async () => {
+    if (status.playing) { player.pause(); return; }
+    setStarted(true);
+    await setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
+    player.play();
   };
 
   /**
@@ -672,8 +685,6 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
   const busy = voice.phase !== 'idle';
   const [locked, setLocked] = useState(false);
   const [hint, setHint] = useState<'none' | 'lock' | 'cancel'>('none');
-  /** Полоса живёт чуть дольше записи — ровно на время своего исчезновения. */
-  const [shown, setShown] = useState(false);
 
   // В обработчиках жеста нельзя читать состояние: они замыкаются на первое значение и остаются
   // с ним навсегда. Поэтому решение принимается по ссылкам, а состояние — только для показа.
@@ -784,14 +795,13 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
     return () => loop.stop();
   }, [arrow, locked, recording]);
 
+  // Появление полосы. Исчезновение доигрывать некому: строка размонтируется вместе с записью,
+  // и держать её ради ста пятидесяти миллисекунд значит держать состояние, которое врёт.
   useEffect(() => {
-    if (busy) {
-      setShown(true);
-      Animated.timing(enter, { toValue: 1, duration: 170, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-      return;
-    }
-    Animated.timing(enter, { toValue: 0, duration: 150, easing: Easing.in(Easing.cubic), useNativeDriver: true })
-      .start(({ finished }) => { if (finished) setShown(false); });
+    Animated.timing(enter, {
+      toValue: busy ? 1 : 0, duration: busy ? 170 : 120,
+      easing: busy ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic), useNativeDriver: true,
+    }).start();
   }, [busy, enter]);
 
   const haloScale = lvl.interpolate({ inputRange: [0, 1], outputRange: [1.1, 2.7] });
@@ -806,15 +816,24 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
   const sendNow = () => { voice.stopAndSend(); resetGesture(); };
   const dropIt = () => { buzzLost(); voice.cancel(); resetGesture(); };
 
+  const ready = voice.phase === 'preview' || voice.phase === 'uploading';
+
+  /**
+   * Полоса записи — ОДНА строка, которая сама растёт, а не накладка поверх композера.
+   *
+   * Так было не всегда: сперва она лежала absolute поверх дока, чтобы перекрыть поле ввода
+   * целиком. На экране разговора это работало, а на экранах Бадди и группы — нет: там кнопка
+   * стоит ВНУТРИ поля ввода и при записи заменяет его собой. Absolute отмеряется от родителя,
+   * родителем оказывалось поле, и микрофон уезжал к левому краю (снято 12 августа).
+   *
+   * Самодостаточная строка не зависит от того, куда её поставили: кнопка всегда справа, всё
+   * остальное набегает слева. Экран решает лишь одно — отдать ей всю ширину на время записи.
+   */
   return (
-    <>
-      {shown ? (
-        <Animated.View
-          style={[s.bar, { opacity: enter, transform: [{ translateY: barSlide }] }]}
-          // Пока палец на кнопке, полоса не должна перехватывать касания: жест уже отдан кнопке.
-          pointerEvents={gestureOff.current ? 'auto' : 'none'}
-        >
-          {voice.phase === 'preview' || voice.phase === 'uploading' ? (
+    <View style={[s.hold, busy && s.holdBusy]} {...responder.panHandlers}>
+      {busy ? (
+        <Animated.View style={[s.barLeft, { opacity: enter, transform: [{ translateY: barSlide }] }]}>
+          {ready ? (
             <>
               <Pressable accessibilityRole="button" accessibilityLabel={T('Удалить запись', 'Delete recording')}
                          onPress={dropIt} disabled={voice.disabled} style={s.barAction} hitSlop={6}>
@@ -849,9 +868,8 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
         </Animated.View>
       ) : null}
 
-      <View style={[s.holdWrap, (locked || voice.phase === 'preview' || voice.phase === 'uploading') && s.holdWrapWide]}
-            {...responder.panHandlers}>
-        {locked || voice.phase === 'preview' || voice.phase === 'uploading' ? (
+      <View style={s.micSlot}>
+        {locked || ready ? (
           <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')}
                      onPress={locked ? sendNow : voice.send} disabled={voice.disabled}
                      style={[s.send, voice.disabled && { opacity: 0.55 }]}>
@@ -902,7 +920,7 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
           </>
         )}
       </View>
-    </>
+    </View>
   );
 }
 
@@ -985,10 +1003,18 @@ const s = StyleSheet.create({
   rateText: { fontSize: 10, fontWeight: '700', color: color.muted, fontVariant: ['tabular-nums'] },
 
   // --- кнопка удержания
-  /** Тот же размер, что у прежнего микрофона, — композер не должен прыгать при простое. */
-  holdWrap: { minWidth: 28, minHeight: 34, alignItems: 'center', justifyContent: 'center' },
-  /** Закрепили или слушаем — на месте микрофона встаёт отправка, ей нужно чуть больше места. */
-  holdWrapWide: { minWidth: 36, minHeight: 36 },
+  /**
+   * В простое — тот же размер, что у прежнего микрофона: композер не должен прыгать.
+   * В записи — вся доступная ширина, и кнопка прижата ВПРАВО. Прижата явно, а не по остаточному
+   * принципу: строку ставят в три разных композера, и в двух из них она оказывается единственным
+   * содержимым поля ввода — там без `flex-end` кнопка ушла бы к левому краю.
+   */
+  hold: { minWidth: 28, minHeight: 34, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 },
+  holdBusy: { flex: 1, minHeight: 36 },
+  /** Слева от кнопки: отсчёт, подсказка, волна — смотря что сейчас происходит. */
+  barLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  /** Гнездо кнопки: ореолы и замок кладутся относительно НЕГО, а не всей строки. */
+  micSlot: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   halo: { position: 'absolute', width: 34, height: 34, borderRadius: 17, backgroundColor: color.primary },
   micDisc: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   micFill: { ...StyleSheet.absoluteFillObject, borderRadius: 17, backgroundColor: color.primary },
@@ -1000,16 +1026,6 @@ const s = StyleSheet.create({
   lockFill: { ...StyleSheet.absoluteFillObject, borderRadius: 15, backgroundColor: color.neutral100 },
 
   // --- полоса записи поверх композера
-  /**
-   * Отступы свои, а не докины: absolute-дитя отмеряет `left`/`right` от РАМКИ родителя, его
-   * собственные `paddingHorizontal` для него не существуют. Без этого корзина упиралась в край
-   * экрана, а живая полоска подлезала под кнопку отправки. Справа шире на её ширину.
-   */
-  bar: {
-    position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingLeft: 16, paddingRight: 60, backgroundColor: color.bg,
-  },
   barAction: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.primary },
   hintRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },

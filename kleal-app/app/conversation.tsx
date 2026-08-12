@@ -542,23 +542,31 @@ export default function Conversation() {
           <Pressable accessibilityRole="button" accessibilityLabel={CHAT.actionsTitle()} style={s.sparkBtn} onPress={() => setActions(true)}>
             <IconSpark size={20} c={color.primary} />
           </Pressable>
-          <View style={s.field}>
-            <TextInput
-              style={s.input}
-              value={draft}
-              onChangeText={setDraft}
-              placeholder={CHAT.placeholderTo(other)}
-              placeholderTextColor={color.neutral400}
-              onSubmitEditing={send}
-              returnKeyType="send"
-            />
-          </View>
+          {/*
+            Во время записи поля нет: полоса записи занимает его место целиком, как в мессенджерах.
+            Именно `null`, а не другая разметка — соседняя кнопка обязана остаться на СВОЁМ месте
+            в дереве, иначе React пересоберёт её заново ровно в тот миг, когда запись начинается,
+            и жест удержания оборвётся на старте.
+          */}
+          {voice.phase === 'idle' ? (
+            <View style={s.field}>
+              <TextInput
+                style={s.input}
+                value={draft}
+                onChangeText={setDraft}
+                placeholder={CHAT.placeholderTo(other)}
+                placeholderTextColor={color.neutral400}
+                onSubmitEditing={send}
+                returnKeyType="send"
+              />
+            </View>
+          ) : null}
           {/*
             Одна кнопка на два действия, как в мессенджерах: пусто в поле — микрофон (удержание
             записывает голосовое), есть текст — самолётик. Держать обе рядом значит отдать место
             кнопке, которая в этот момент заведомо не нужна.
           */}
-          {draft.trim() ? (
+          {voice.phase === 'idle' && draft.trim() ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={T('Отправить', 'Send')}
