@@ -23,6 +23,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { setAudioModeAsync } from 'expo-audio';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { mediaUrl, video as videoApi, VideoPayload } from './api';
 import { T } from './i18n';
@@ -62,6 +63,14 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
   const cam = useRef<CameraView>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [ms, setMs] = useState(0);
+  /**
+   * Почему не вышло — СЛОВАМИ, а не молчанием.
+   *
+   * Съёмка может не начаться по причинам, о которых знает только устройство: занятая звуковая
+   * сессия, неготовая камера, отказ системы. Раньше всё это уходило в пустой `catch`, и человек
+   * видел одно: кружок появился и пропал. Отлаживать такое нечем — ни ему, ни мне.
+   */
+  const [err, setErr] = useState('');
   const [cameraOk, askCamera] = useCameraPermissions();
   const [micOk, askMic] = useMicrophonePermissions();
   const cancelled = useRef(false);
@@ -130,6 +139,17 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
   /** Записывать начинает КАМЕРА, когда проснулась, — см. `arming`. */
   const begin = useCallback(async () => {
     if (!cam.current) return;
+    setErr('');
+    /**
+     * Звуковая сессия у камеры и голосовых ОДНА на приложение, и голосовой модуль оставляет её в
+     * режиме «только воспроизведение» (`allowsRecording: false`) после каждой своей записи и
+     * каждого проигрывания. Камера в таком режиме звук не захватывает, и съёмка со звуком просто
+     * не начинается — снаружи это выглядит как «кружок появился и пропал».
+     *
+     * Поэтому перед съёмкой режим переключается явно. Ошибку глотаем: если модуль звука не
+     * отозвался, это не повод не снимать — пусть падает уже сама камера, и с внятной причиной.
+     */
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }).catch(() => {});
     started.current = Date.now();
     setMs(0);
     setPhase('recording');
@@ -138,13 +158,20 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
       // Разрешается ТОЛЬКО когда запись остановлена — отпусканием пальца или пределом.
       const r = await cam.current.recordAsync({ maxDuration: MAX_MS / 1000 });
       const took = Date.now() - started.current;
+      // Вернуть сессию как было — на ЛЮБОМ исходе, включая отмену и слишком короткое нажатие:
+      // иначе следующее голосовое воспроизведение останется в режиме записи.
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
       setPhase('idle');
       if (cancelled.current || !r?.uri) return;
       if (took < MIN_MS) { buzzLost(); return; }
       taken.current = { uri: r.uri, ms: took };
       await push();
-    } catch {
-      setPhase('idle');
+    } catch (e) {
+      // Текст от системы оставляем как есть: он не для показа красоты, а для ответа на вопрос
+      // «почему не снялось» — и другого источника этого ответа нет.
+      setErr(String((e as any)?.message || e || '').slice(0, 160) || 'RECORD_FAILED');
+      buzzLost();
+      setPhase('failed');
     } finally {
       busy.current = false;
     }
@@ -165,6 +192,7 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
     }
     cancelled.current = false;
     busy.current = false;
+    setErr('');
     setMs(0);
     setPhase('arming');            // камера появляется на экране; снимать начнёт, когда проснётся
   }, [askCamera, askMic, cameraOk, disabled, micOk, phase]);
@@ -183,7 +211,10 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
     cam.current?.stopRecording();
   }, []);
 
-  return { cam, phase, ms, start, stop, ready, retry: push,
+  /** Убрать сообщение о неудаче: снятого нет, повторять нечего — просто закрыть. */
+  const dismiss = useCallback(() => { setErr(''); setPhase('idle'); }, []);
+
+  return { cam, phase, ms, err, start, stop, ready, retry: taken.current ? push : dismiss, dismiss,
            disabled: disabled || phase === 'uploading' };
 }
 
@@ -270,10 +301,13 @@ export function VideoNoteControl({ note }: { note: VideoNote }) {
           style={s.sending}
         >
           {note.phase === 'uploading' ? <ActivityIndicator size="small" color={color.primary} /> : null}
-          <Text style={[s.sendingText, note.phase === 'failed' && s.sendingFail]}>
-            {note.phase === 'failed'
-              ? T('Кружок не ушёл — нажми, чтобы повторить', 'The circle didn’t send — tap to try again')
-              : T('Отправляю кружок…', 'Sending the circle…')}
+          <Text style={[s.sendingText, note.phase === 'failed' && s.sendingFail]} numberOfLines={2}>
+            {note.phase !== 'failed'
+              ? T('Отправляю кружок…', 'Sending the circle…')
+              : note.err
+                /* Причина от устройства — дословно: без неё «не получилось» не отладить. */
+                ? `${T('Не записалось', 'Recording failed')}: ${note.err}`
+                : T('Кружок не ушёл — нажми, чтобы повторить', 'The circle didn’t send — tap to try again')}
           </Text>
         </Pressable>
       ) : null}

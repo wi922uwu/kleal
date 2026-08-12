@@ -997,7 +997,21 @@ console.log('\nкружок записывается, отдаётся куск�
     /taken\.current = \{ uri: r\.uri, ms: took \}/.test(v) && /setPhase\('failed'\)/.test(v),
     'переснять момент человек не может — он прошёл');
   check('повтор отправки не переснимает',
-    /retry: push/.test(v));
+    /retry: taken\.current \? push : dismiss/.test(v));
+
+  // Камера и голосовые делят ОДНУ звуковую сессию, и голосовой модуль оставляет её в режиме
+  // «только воспроизведение». Камера в нём звук не захватывает — съёмка не начинается вовсе.
+  check('перед съёмкой звуковая сессия переключается на запись',
+    /setAudioModeAsync\(\{ allowsRecording: true, playsInSilentMode: true \}\)/.test(v),
+    'голосовой модуль оставляет allowsRecording: false — камера в нём молчит и не стартует');
+  check('и возвращается на любом исходе, а не только при успехе',
+    /const took = Date\.now\(\) - started\.current;\n\s*await setAudioModeAsync\(\{ allowsRecording: false/.test(v),
+    'иначе следующее голосовое останется в режиме записи');
+
+  // «Появился и пропал» — это была проглоченная ошибка: catch молча возвращал в исходное.
+  check('причина неудачи съёмки видна словами',
+    /setErr\(String\(\(e as any\)\?\.message/.test(v) && /Не записалось/.test(read('src/videonote.tsx')),
+    'пустой catch не отладить ни человеку, ни мне');
   check('во время записи видно себя',
     /<CameraView/.test(v) && /facing="front"/.test(v),
     'снимать вслепую то, где показывают лицо, нельзя');
