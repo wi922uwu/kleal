@@ -179,7 +179,10 @@ function summarySignature(p: any): string {
   return [
     p?.name, p?.age, p?.gender, p?.city, p?.country,
     list(p?.languages?.comfortable),
-    list(p?.interests?.explicit),
+    // Через общий помощник: с сервера интересы приходят ПЛОСКИМ списком, и прямое чтение
+    // `.explicit` давало здесь пустоту. Отпечаток от этого не менялся при правке интересов —
+    // то есть сводка не пересобиралась вовсе и продолжала рассказывать про старые увлечения.
+    list(explicitInterests(p)),
     list(p?.interests?.unused),
     p?.personality, p?.story,
   ].map((x) => String(x ?? '')).join('\u0001');
@@ -258,12 +261,30 @@ export type HubRow = {
   sub: (p: any) => string;
 };
 
+/**
+ * Интересы человека — из ЛЮБОЙ из двух форм, в которых они приходят.
+ *
+ * Пока идёт онбординг, профиль лежит в состоянии устройства объектом: `interests.explicit`.
+ * А сервер хранит и отдаёт ПЛОСКИЙ список — проверено на живом проде:
+ * `{"interests": ["sports","team","rugby",…]}`. После «Выйти → Войти» профиль приезжает с
+ * сервера, и чтение `interests.explicit` давало undefined: экран писал «Пока не заполнено»
+ * человеку с восемью интересами.
+ *
+ * Функция ОДНА на оба места, где это читается (строка хаба и `profileData`). Двумя копиями
+ * это и было: первую я починил, вторая осталась врать — и именно её видно на экране.
+ */
+export function explicitInterests(p: any): string[] {
+  const raw = p && p.interests;
+  const list = Array.isArray(raw) ? raw : (raw && raw.explicit);
+  return Array.isArray(list) ? list.filter(Boolean).map(String) : [];
+}
+
 export const HUB_ROWS: HubRow[] = [
   {
     id: 'interests', kind: 'screen',
     title: () => T('Интересы', 'Interests'),
     sub: (p) => {
-      const list = (p?.interests?.explicit || []).map((k: string) => hobbyPlain(k));
+      const list = explicitInterests(p).map((k: string) => hobbyPlain(k));
       return list.length ? list.join(' · ') : T('Пока не заполнено', 'Not set yet');
     },
   },
@@ -481,9 +502,7 @@ export function profileData(op: Profile | any): ProfileData {
   //
   // Тот же класс ошибки, что с `languages`: одно поле, две формы, и молчаливо пустой результат
   // вместо ошибки. Поэтому здесь не «какая форма правильная», а «понимаем обе».
-  const ints = arr(
-    Array.isArray(op.interests) ? op.interests : (op.interests && op.interests.explicit)
-  ).map(String);
+  const ints = explicitInterests(op);
   const rolesRaw = (op.interests && op.interests.roles) || {};
   const exp = (op.interests && op.interests.experienceByInterest) || {};
   const games = (op.domains && op.domains.games) || {};

@@ -258,9 +258,17 @@ console.log('\nпрофиль понимает обе формы своих по
 {
   const prof = code('src/profile.ts');
 
-  check('интересы читаются и плоским списком, и вложенно',
-    /Array\.isArray\(op\.interests\)\s*\?\s*op\.interests\s*:/.test(prof),
-    'вернулось только op.interests.explicit — с сервера интересы приходят массивом');
+  check('есть один помощник, понимающий обе формы интересов',
+    /export function explicitInterests\(/.test(prof) && /Array\.isArray\(raw\)/.test(prof),
+    'с сервера интересы приходят массивом, из онбординга — объектом .explicit');
+
+  // Главное — что читателей ОДИН. Копий было две (строка хаба и profileData), первую починили,
+  // вторая осталась врать — и именно её человек видел на экране: «Интересы · Пока не заполнено»
+  // при восьми интересах. Прямое чтение `.interests.explicit` мимо помощника и есть возврат копии.
+  const direct = ['src/profile.ts', 'app/profile/index.tsx', 'app/profile/interests.tsx', 'src/home.ts']
+    .filter((f) => /\.interests\?\.explicit|\.interests\.explicit/.test(code(f)));
+  check('никто не читает interests.explicit в обход помощника', direct.length === 0,
+    'прямое чтение в: ' + direct.join(', '));
 
   // Языки на клиенте уже читаются обеими формами (comfortable || fluent); держим это.
   check('языки читаются обеими формами',

@@ -344,80 +344,78 @@ function GroupInviteCard({ inv }: { inv: HomeInvite }) {
   const participants = (group?.participants || []).slice(0, 5);
   const hidden = Math.max(0, (group?.participant_count || 0) - participants.length);
 
+  /*
+    ТА ЖЕ «Home Card», что у приглашения один на один, — так на борде.
+    GR.01, «Invite Stack» [350×131]: три слоя, верхний — «Home Card» [350×110], а внутри неё
+    Photo [86×86] слева и колонка [224×86] справа: строка имени с бейджем [224×16], строка
+    «время · место» ОДНОЙ строкой [193×14] и кнопка [224×32].
+
+    Здесь стояла карточка другого рода: обложка во всю ширину плюс семь блоков столбиком —
+    около четырёхсот пунктов, во весь экран. Групповое приглашение — такое же приглашение, и
+    отдельного вида у него на борде нет: разница только в том, что слева не одно лицо, а
+    несколько, и под именем стоит, кто зовёт.
+  */
+  const cover = participants[0];
   return (
-    <Pressable accessibilityRole="button" onPress={open} style={s.groupInvite}>
-      <View style={s.groupHero}>
-        {group?.cover ? (
-          <Image source={{ uri: mediaUrl(String(group.cover)) }} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
-        ) : (
-          <IconImagePlaceholder size={48} c="#ffffff99" />
-        )}
-        <View style={s.avatarStack}>
-          {participants.map((person, index) => (
-            person.photo ? (
-              <Image
-                key={`${person.name}-${index}`}
-                source={{ uri: mediaUrl(String(person.photo)) }}
-                style={[s.stackAvatar, { marginLeft: index ? -12 : 0, zIndex: participants.length - index }]}
-              />
-            ) : (
-              <View
-                key={`${person.name}-${index}`}
-                style={[s.stackAvatar, s.stackAvatarEmpty, { marginLeft: index ? -12 : 0, zIndex: participants.length - index }]}
-              >
-                <Text style={s.stackInitial}>{(person.name || '?').slice(0, 1).toUpperCase()}</Text>
-              </View>
-            )
-          ))}
-          {hidden > 0 ? (
-            <View style={[s.stackAvatar, s.stackMore, { marginLeft: participants.length ? -12 : 0 }]}>
-              <Text style={s.stackMoreText}>+{hidden}</Text>
-            </View>
-          ) : null}
-        </View>
+    <Pressable accessibilityRole="button" onPress={open} style={s.meet}>
+      {/* Слева — кто уже внутри: стопка лиц вместо одного. Это единственное, чем групповая
+          карточка отличается от одиночной, и ровно так же выглядит на кадре. */}
+      <View style={s.groupFaces}>
+        {participants.slice(0, 3).map((person, index) => (
+          <View
+            key={`${person.name}-${index}`}
+            style={[s.faceAva, s.faceAvaEmpty,
+                    { marginLeft: index ? -14 : 0, zIndex: 3 - index }]}
+          >
+            <Text style={s.faceInit}>{(person.name || '?').slice(0, 1).toUpperCase()}</Text>
+            {person.photo ? (
+              <Image source={{ uri: mediaUrl(String(person.photo)) }}
+                     style={[s.faceAva, StyleSheet.absoluteFillObject]} />
+            ) : null}
+          </View>
+        ))}
+        {hidden > 0 ? (
+          <View style={[s.faceAva, s.faceMore, { marginLeft: participants.length ? -14 : 0 }]}>
+            <Text style={s.faceMoreText}>+{hidden}</Text>
+          </View>
+        ) : null}
+        {!participants.length ? (
+          <View style={[s.faceAva, s.faceAvaEmpty]}><IconGroups size={20} c={color.muted} /></View>
+        ) : null}
       </View>
 
-      <View style={s.groupInviteBody}>
-        <Text style={s.groupInviteTitle} numberOfLines={2}>
-          {inv.intent.title || inv.from.name}
-        </Text>
-        {/*
-          КТО ЗОВЁТ. Имя приглашающего стояло только запасным вариантом заголовка — то есть у
-          группы с названием («Книжный клуб») не показывалось нигде. Приглашение при этом
-          персональное: человека зовёт человек, и первое, что он хочет знать, — кто.
-          Фото и имя сервер присылает в `inv.from`, они просто не доходили до экрана.
-        */}
+      <View style={{ flex: 1 }}>
+        <View style={s.meetTop}>
+          <Text style={s.meetName} numberOfLines={1}>
+            {inv.intent.title || inv.from.name}
+          </Text>
+          <View style={s.badge}><Text style={s.badgeText}>{HOME.inviteKindGroup()}</Text></View>
+        </View>
+
+        {/* Кто зовёт. Имя стояло лишь запасным вариантом заголовка — у группы с названием
+            («Книжный клуб») не показывалось нигде, хотя зовёт человека человек. */}
         {inv.from?.name ? (
-          <View style={s.inviterRow}>
-            <View style={[s.inviterAva, s.inviterAvaEmpty]}>
-              <Text style={s.inviterInitial}>{String(inv.from.name).slice(0, 1).toUpperCase()}</Text>
-              {inv.from.photo ? (
-                <Image source={{ uri: mediaUrl(String(inv.from.photo)) }}
-                       style={[s.inviterAva, StyleSheet.absoluteFillObject]} />
-              ) : null}
-            </View>
-            <Text style={s.inviterText} numberOfLines={1}>{HOME.hosting(String(inv.from.name))}</Text>
-          </View>
+          <Text style={s.meetIntent} numberOfLines={1}>{HOME.hosting(String(inv.from.name))}</Text>
         ) : null}
-        <View style={s.inviteBadge}>
-          <IconGroups size={16} c={color.successText} />
-          <Text style={s.inviteBadgeText}>{HOME.inviteStatus()}</Text>
+
+        {/* Время и место — ОДНОЙ строкой, как на кадре [193×14], а не двумя блоками. */}
+        <View style={s.meetMeta}>
+          <IconClock />
+          <Text style={s.meta} numberOfLines={1}>
+            {w.date}{w.time ? ` · ${w.time}` : ''}
+          </Text>
+          {inv.intent.area ? (
+            <>
+              <IconPin size={16} c={color.muted} />
+              <Text style={s.meta} numberOfLines={1}>{inv.intent.area}</Text>
+            </>
+          ) : null}
+          <Text style={s.meta}>
+            · {HOME.peopleCount(group?.participant_count || 0, group?.max_size)}
+          </Text>
         </View>
-        <View style={s.groupMetaRow}>
-          <IconCalendar />
-          <Text style={s.groupMeta}>{w.date}</Text>
-          {w.time ? <><IconClock /><Text style={s.groupMeta}>{w.time}</Text></> : null}
-        </View>
-        {inv.intent.area ? (
-          <View style={s.groupMetaRow}>
-            <IconPin size={18} c={color.muted} />
-            <Text style={s.groupMeta} numberOfLines={1}>{inv.intent.area}</Text>
-          </View>
-        ) : null}
-        <Text style={s.groupCount}>
-          {HOME.peopleCount(group?.participant_count || 0, group?.max_size)}
-        </Text>
-        <View style={s.groupInviteBtn}>
+
+        <View style={s.meetBtn}>
           <Text style={s.meetBtnText}>{HOME.review()}</Text>
         </View>
       </View>
@@ -483,49 +481,16 @@ const s = StyleSheet.create({
   },
   meetBtnText: { ...type.button, color: color.onPrimary } as any,
 
-  groupInvite: {
-    marginHorizontal: 20, borderRadius: rad.xl, backgroundColor: color.card, overflow: 'hidden',
-    shadowColor: '#000', shadowOpacity: 0.09, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 3,
-  },
   /**
-   * Обложка. 142 пункта пустоты: своей картинки у группового интента нет вовсе (сервер отдаёт
-   * `cover` пустой строкой), так что здесь всегда заглушка и ряд аватарок. Из-за её высоты низ
-   * карточки — кнопка «Посмотреть приглашение» и строка «Ещё N» — уходил за сгиб экрана: снято
-   * на симуляторе. Аватаркам хватает 96; они и есть единственное содержимое этой полосы.
+   * Лица группы слева — вместо одного фото на одиночной карточке. Кадр GR.01 отводит под
+   * Photo 86×86; три лица внахлёст занимают ту же полосу.
    */
-  groupHero: {
-    height: 96, backgroundColor: color.coverFallback, alignItems: 'center', justifyContent: 'center',
-  },
-  /** Кто зовёт — строка под названием. Фото ложится поверх буквы, чтобы медленное фото не оставляло дыру. */
-  inviterRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  inviterAva: { width: 24, height: 24, borderRadius: 12, overflow: 'hidden' },
-  inviterAvaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
-  inviterInitial: { fontSize: 11, fontWeight: '700', color: color.muted },
-  inviterText: { flex: 1, ...type.bodySmall, color: color.muted } as any,
-  avatarStack: {
-    position: 'absolute', left: 24, bottom: 14, flexDirection: 'row', alignItems: 'center', minHeight: 58,
-  },
-  stackAvatar: {
-    width: 58, height: 58, borderRadius: 29, borderWidth: 2, borderColor: color.card,
-  },
-  stackAvatarEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
-  stackInitial: { fontSize: 19, fontWeight: '700', color: color.muted },
-  stackMore: { backgroundColor: color.card, alignItems: 'center', justifyContent: 'center' },
-  stackMoreText: { fontSize: 18, fontWeight: '700', color: color.muted },
-  groupInviteBody: { padding: 18, gap: 10 },
-  groupInviteTitle: { fontSize: 22, lineHeight: 27, fontWeight: '700', color: color.fg },
-  inviteBadge: {
-    alignSelf: 'flex-start', minHeight: 30, borderRadius: rad.full, paddingHorizontal: 12,
-    backgroundColor: color.successBg, flexDirection: 'row', alignItems: 'center', gap: 6,
-  },
-  inviteBadgeText: { ...type.labelSmall, color: color.successText, fontWeight: '700' } as any,
-  groupMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 22 },
-  groupMeta: { ...type.body, color: color.muted, flexShrink: 1 } as any,
-  groupCount: { ...type.bodySmall, color: color.muted } as any,
-  groupInviteBtn: {
-    height: 50, borderRadius: rad.full, backgroundColor: color.primary,
-    alignItems: 'center', justifyContent: 'center', marginTop: 2,
-  },
+  groupFaces: { flexDirection: 'row', alignItems: 'center' },
+  faceAva: { width: 44, height: 44, borderRadius: rad.full, borderWidth: 2, borderColor: color.card, overflow: 'hidden' },
+  faceAvaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+  faceInit: { fontSize: 16, fontWeight: '700', color: color.muted },
+  faceMore: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+  faceMoreText: { ...type.labelSmall, color: color.muted, fontWeight: '700' } as any,
 
   dock: { paddingHorizontal: 16, gap: 8, paddingBottom: 6 },
   askRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
