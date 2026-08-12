@@ -85,10 +85,12 @@ const clock = (ms: number) => {
  *   warming  окно открыто, камера просыпается — записывать ещё нечем
  *   ready    камера готова, ждём нажатия
  *   recording  пишем
- *   sending  запись кончилась, файл уезжает
- *   failed   не уехало (или не записалось) — снятое цело, повтор одним нажатием
+ *   saving   попросили закончить, ждём файл от камеры
+ *   review   снятое играет по кругу: видно, что уйдёт
+ *   sending  файл уезжает
+ *   failed   не уехало или не записалось — что снято, то цело
  */
-type Stage = 'off' | 'warming' | 'ready' | 'recording' | 'sending' | 'failed';
+type Stage = 'off' | 'warming' | 'ready' | 'recording' | 'saving' | 'review' | 'sending' | 'failed';
 
 export function VideoNoteButton({
   onSend, disabled = false, hidden = false,
@@ -127,24 +129,40 @@ export function VideoNoteButton({
    * им уже нельзя: человек ушёл, и вернуть его в окно, которое он закрыл, было бы захватом экрана.
    */
   const gone = useRef(false);
+  /**
+   * Отложенная просьба закончить.
+   *
+   * Кнопка «готово» ЖИВАЯ с первой миллисекунды: погашенная кнопка — это ровно та жалоба, с
+   * которой всё началось («кнопка есть, а не нажимается»), и делать её намеренно нельзя. Но
+   * камере, которая ещё не начала писать, останавливаться нечем: такая просьба уходит в пустоту.
+   * Поэтому нажатие ПРИНИМАЕТСЯ сразу, а исполняется в тот момент, когда останавливать есть что.
+   */
+  const stopAt = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const on = stage !== 'off';
+  /** Камера на экране только пока снимаем: после этого она не нужна ни батарее, ни индикатору. */
+  const capturing = stage === 'warming' || stage === 'ready' || stage === 'recording' || stage === 'saving';
 
   /**
    * Звуковая сессия у камеры и у голосовых ОДНА на приложение, и голосовой модуль оставляет её в
    * режиме «только воспроизведение» (`allowsRecording: false`). Камера в нём звук не захватывает,
    * и съёмка не начинается вовсе — снаружи это ровно «кружок появился и пропал».
    *
-   * Переключение привязано к самому окну, а не к записи: открылось — взяли, закрылось — вернули.
-   * Возврат в уборке эффекта, поэтому он случится на ЛЮБОМ исходе, включая отмену, слишком
-   * короткое нажатие и уход с экрана вместе с чатом. Иначе следующее голосовое осталось бы в
-   * режиме записи и звучало бы в тишину.
+   * Держим режим записи ровно пока СНИМАЕМ, а не пока открыто окно. Разница не косметическая: в
+   * режиме записи iOS гонит звук в разговорный динамик, и собственный кружок на показе звучал бы
+   * глухо, будто записался испорченным.
+   *
+   * Возврат — в уборке эффекта, поэтому он случится на ЛЮБОМ исходе: отмена, показ, уход с экрана
+   * вместе с чатом. Иначе следующее голосовое осталось бы в режиме записи и звучало бы в тишину.
    */
   useEffect(() => {
-    if (!on) return;
+    if (!capturing) return;
     setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }).catch(() => {});
     return () => { setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {}); };
-  }, [on]);
+  }, [capturing]);
+
+  /** Отложенная просьба не должна пережить окно: уйти с экрана и остановить чужую съёмку нельзя. */
+  useEffect(() => () => { if (stopAt.current) clearTimeout(stopAt.current); }, []);
 
   useEffect(() => {
     if (stage !== 'recording') return;
@@ -218,13 +236,18 @@ export function VideoNoteButton({
     setStage('recording');
     buzz(Haptics.ImpactFeedbackStyle.Medium);
     try {
+      // Режим записи подтверждается ещё раз, вплотную к съёмке. Голосовое, доигравшее уже ПОСЛЕ
+      // открытия окна, ставит сессию обратно в «только воспроизведение» — и кружок вышел бы немым.
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }).catch(() => {});
       // Предел держит сама камера. Считать его по таймеру и звать остановку значит опять городить
       // отметки «остановили один раз, а не пачкой» — камера умеет это сама и без нас.
       const r = await cam.current.recordAsync({ maxDuration: MAX_MS / 1000 });
       if (gone.current) return;
       if (!r?.uri) { setStage('ready'); return; }
       clip.current = { uri: r.uri, ms: Math.min(Date.now() - startedAt.current, MAX_MS) };
-      await send();
+      // Съёмка НЕ отправляет. Она показывает снятое — и дальше решает человек. Это единственное
+      // место, где немой или чёрный кружок ловится у автора, а не у собеседника.
+      setStage('review');
     } catch (e) {
       if (gone.current) return;
       // Текст от системы оставляем дословно: он не для красоты, а для ответа на вопрос «почему не
@@ -267,12 +290,26 @@ export function VideoNoteButton({
    */
   const close = useCallback(() => {
     gone.current = true;
+    if (stopAt.current) { clearTimeout(stopAt.current); stopAt.current = null; }
     clip.current = null;
     setStage('off');
   }, []);
 
   /**
-   * «Готово»: камеру просят остановиться, и её ответ — это `recordAsync`, который дальше отправит.
+   * Показ снятого. Играет ТОТ ЖЕ локальный файл, который уедет, — не пересобранный и не
+   * переименованный: если он чёрный, немой или без первой секунды, это видно здесь, у автора, а
+   * не у собеседника, когда исправлять уже поздно.
+   */
+  const preview = useVideoPlayer(null, (p) => { p.loop = true; });
+  useEffect(() => {
+    if (stage !== 'review' || !clip.current) return;
+    preview.replace(clip.current.uri);
+    preview.play();
+    return () => { preview.pause(); preview.replace(null); };
+  }, [stage, preview]);
+
+  /**
+   * «Готово»: камеру просят остановиться, а её ответ — это `recordAsync`, который вернёт файл.
    *
    * ПЕРЕХВАТИТЬ ОТКАЗ ЭТОГО ВЫЗОВА НЕЛЬЗЯ, и это не предположение. В expo-camera 17.0.10
    * (`build/CameraView.js`) метод написан так:
@@ -283,23 +320,33 @@ export function VideoNoteButton({
    * `catch` на `undefined` и не делала ровно ничего: красная плашка «Uncaught (in promise)»
    * приходила мимо неё.
    *
-   * Значит лекарство одно — НЕ ЗВАТЬ ТАМ, ГДЕ МОЖЕТ ОТКАЗАТЬ. Здесь это гарантировано устройством
-   * окна: кнопка существует только в состоянии `recording`, а в него попадают лишь из готовой
-   * камеры и не раньше, чем через MIN_MS после начала съёмки. Останавливать всегда есть что.
+   * Значит лекарство одно — НЕ ЗВАТЬ ТАМ, ГДЕ МОЖЕТ ОТКАЗАТЬ. Кнопка живёт только в состоянии
+   * `recording`, куда попадают лишь из готовой камеры, а сам вызов откладывается до MIN_MS от
+   * начала съёмки. Останавливать в этот момент всегда есть что.
    */
   const finish = useCallback(() => {
     buzz(Haptics.ImpactFeedbackStyle.Light);
-    setStage('sending');
-    cam.current?.stopRecording();
+    setStage('saving');
+    // Просьбу принимаем сразу, а исполняем не раньше, чем камере есть что останавливать — см.
+    // `stopAt`. На живой записи ждать нечего, и разница незаметна.
+    const wait = Math.max(0, MIN_MS - (Date.now() - startedAt.current));
+    if (stopAt.current) clearTimeout(stopAt.current);
+    stopAt.current = setTimeout(() => { cam.current?.stopRecording(); }, wait);
   }, []);
 
   /** Камера может отозваться готовой не один раз — переход из `warming` просто нечему повторить. */
   const ready = useCallback(() => setStage((v) => (v === 'warming' ? 'ready' : v)), []);
 
-  /** Поднять камеру заново после «не записалось»: окно уже открыто, закрывать его незачем. */
-  const again = useCallback(() => { setErr(''); setMs(0); setStage('warming'); }, []);
-
-  const live = stage === 'warming' || stage === 'ready' || stage === 'recording';
+  /**
+   * Снять заново — и после «переснять», и после «не записалось». Окно уже открыто, закрывать его
+   * незачем; снятое до этого выбрасывается, потому что человек только что сказал, что оно не годится.
+   */
+  const again = useCallback(() => {
+    clip.current = null;
+    setErr('');
+    setMs(0);
+    setStage('warming');
+  }, []);
 
   return (
     <>
@@ -320,7 +367,7 @@ export function VideoNoteButton({
       <Modal visible={on} animationType="fade" onRequestClose={close} statusBarTranslucent>
         <View style={s.screen}>
           <View style={[s.frame, stage === 'recording' && s.frameLive]}>
-            {live ? (
+            {capturing ? (
               <CameraView
                 ref={cam}
                 style={StyleSheet.absoluteFill}
@@ -337,6 +384,14 @@ export function VideoNoteButton({
                   setStage('failed');
                 }}
               />
+            ) : stage === 'review' ? (
+              /* Тот же файл, что уедет, — в том же круге и того же размера. */
+              <VideoView
+                style={StyleSheet.absoluteFill}
+                player={preview}
+                contentFit="cover"
+                nativeControls={false}
+              />
             ) : (
               /* Съёмка кончилась — камеру с экрана долой: батарея и индикатор камеры не должны
                  гореть, пока уезжает файл. */
@@ -346,17 +401,17 @@ export function VideoNoteButton({
             )}
           </View>
 
-          {/* Отсчёт остаётся стоять и пока файл уезжает: видно, какой длины кружок отправляется. */}
+          {/* Отсчёт стоит и на показе, и пока файл уезжает: видно, какой длины кружок уйдёт. */}
           <Text style={s.timer}>
-            {stage === 'recording' || stage === 'sending' ? clock(ms) : ''}
+            {stage === 'off' || stage === 'warming' || stage === 'ready' ? '' : clock(ms)}
           </Text>
 
           <Text style={s.say} numberOfLines={3}>
             {stage === 'warming' ? T('Камера просыпается…', 'Waking the camera…')
               : stage === 'ready' ? T('Нажми, чтобы записать. До минуты.', 'Tap to record. Up to a minute.')
-              : stage === 'recording' ? (ms < MIN_MS
-                  ? T('Пишем…', 'Recording…')
-                  : T('Нажми «готово», когда закончишь', 'Tap “done” when you’re finished'))
+              : stage === 'recording' ? T('Нажми «готово», когда закончишь', 'Tap “done” when you’re finished')
+              : stage === 'saving' ? T('Сохраняю…', 'Saving…')
+              : stage === 'review' ? T('Так и уйдёт. Отправляем?', 'This is what will be sent. Send it?')
               : stage === 'sending' ? T('Отправляю кружок…', 'Sending the circle…')
               : err
                 ? `${T('Не получилось', 'It didn’t work')}: ${err}`
@@ -396,27 +451,39 @@ export function VideoNoteButton({
               <>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={T('Закрыть', 'Close')}
-                  onPress={close}
+                  accessibilityLabel={stage === 'review' ? T('Переснять', 'Retake') : T('Закрыть', 'Close')}
+                  onPress={stage === 'review' ? again : close}
                   style={s.side}
                 >
-                  <Text style={s.sideText}>{T('Закрыть', 'Close')}</Text>
+                  <Text style={s.sideText}>
+                    {stage === 'review' ? T('Переснять', 'Retake') : T('Закрыть', 'Close')}
+                  </Text>
                 </Pressable>
 
                 {stage === 'recording' ? (
+                  /* Живая с первой миллисекунды: погашенная кнопка — это ровно та жалоба, с
+                     которой всё началось. Слишком раннее нажатие не отбрасывается, а ждёт
+                     своего момента (см. `stopAt`). */
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={T('Готово', 'Done')}
-                    accessibilityState={{ disabled: ms < MIN_MS }}
-                    disabled={ms < MIN_MS}
                     onPress={finish}
-                    style={[s.big, s.bigStop, ms < MIN_MS && s.off]}
+                    style={[s.big, s.bigStop]}
                   >
                     <View style={s.square} />
                   </Pressable>
-                ) : stage === 'sending' ? (
-                  /* Пустое место вместо кнопки: погашенная кнопка записи здесь читалась бы как
-                     «можно снять ещё раз», а снимать в этот момент нечего — файл уезжает. */
+                ) : stage === 'review' ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={T('Отправить', 'Send')}
+                    onPress={() => { send().catch(() => {}); }}
+                    style={[s.big, s.bigSend]}
+                  >
+                    <IconSend size={22} />
+                  </Pressable>
+                ) : stage === 'saving' || stage === 'sending' ? (
+                  /* Пустое место вместо кнопки: погашенная кнопка записи читалась бы как «можно
+                     снять ещё раз», а снимать в этот момент нечего. */
                   <View style={s.big} />
                 ) : (
                   <Pressable
