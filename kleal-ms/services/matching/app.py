@@ -3157,8 +3157,9 @@ def _sys_msg(frm, to, code, **fields):
     frm, to = str(frm or "").strip(), str(to or "").strip()
     if not frm or not to:
         return
-    m = {"id": "s_%d_%s" % (int(time.time() * 1000), code), "pair": _pair_key(frm, to),
-         "from": frm, "to": to, "text": "", "t": time.time(),
+    _now = time.time()
+    m = {"id": "s_%d_%s" % (int(_now * 1000), code), "pair": _pair_key(frm, to),
+         "from": frm, "to": to, "text": "", "t": _now, "u": _now,
          "sys": dict({"code": code, "by": frm}, **{k: v for k, v in fields.items() if v not in (None, "")})}
     ms = _messages()
     ms.append(m)
@@ -3194,7 +3195,25 @@ def _voice_message(voice):
     }, None
 
 
-def send_message(frm, to, text, voice=None):
+_MID_SEQ = [0]
+
+
+def _mid(prefix):
+    """Уникальный id сообщения.
+
+    Был просто миллисекундой (`m_%d`), и две реплики, отправленные в одну и ту же миллисекунду,
+    получали ОДИН id. Клиент склеивает ленту по id — одна строка молча затирала другую. Пока по
+    id никто не адресовался, это была редкая невидимая потеря; с реакциями, цитатой и удалением
+    цена промаха другая: действие уедет не в то сообщение.
+
+    Счётчик, а не случайные символы: внутри процесса он даёт гарантию, а не вероятность, и
+    сохраняет порядок отправки для двух реплик одной миллисекунды.
+    """
+    _MID_SEQ[0] = (_MID_SEQ[0] + 1) % 4096
+    return "%s%d_%03x" % (prefix, int(time.time() * 1000), _MID_SEQ[0])
+
+
+def send_message(frm, to, text, voice=None, client_id=None):
     frm, to, text = str(frm or "").strip(), str(to or "").strip(), str(text or "").strip()[:2000]
     voice, voice_error = _voice_message(voice)
     if voice_error:
@@ -3205,8 +3224,17 @@ def send_message(frm, to, text, voice=None):
         return {"ok": False, "error": "from, to and text are required and the two must differ"}
     if _blocked_pair(frm, to):
         return {"ok": False, "error": "BLOCKED"}
-    m = {"id": "m_%d" % int(time.time() * 1000), "pair": _pair_key(frm, to),
-         "from": frm, "to": to, "text": text, "t": time.time()}
+    # Повтор с тем же ключом отправителя — тот же ответ, а не вторая реплика. Без этого «отправить
+    # ещё раз» после неясного сбоя (сообщение записалось, а ответ не доехал) удваивает реплику у
+    # собеседника, и отправитель об этом не узнает.
+    cached = _idem_get(client_id)
+    if cached is not None:
+        return cached
+    now = time.time()
+    m = {"id": _mid("m_"), "pair": _pair_key(frm, to),
+         "from": frm, "to": to, "text": text, "t": now, "u": now}
+    if client_id:
+        m["cid"] = str(client_id)[:64]
     if voice:
         m.update({"kind": "voice", "voice": voice})
     with _STORE_LOCK:
@@ -3214,7 +3242,20 @@ def send_message(frm, to, text, voice=None):
         ms.append(m)
         del ms[:-4000]                       # keep the store bounded
     _save_store()
-    return {"ok": True, "id": m["id"], "t": m["t"]}
+    return _idem_put(client_id, {"ok": True, "id": m["id"], "t": m["t"], "cid": m.get("cid")})
+
+def _touched(m):
+    """Когда строку последний раз трогали: создали или изменили. По ней и идёт опрос.
+
+    `t` — момент отправки, и он задаёт ПОРЯДОК в ленте; менять его при правке нельзя, иначе
+    исправленная реплика прыгнет в конец разговора. Поэтому изменения отмечаются отдельным `u`, а
+    опрос смотрит на больший из двух. Пока ничего не меняется, `u == t` и поведение прежнее.
+
+    Без этого поля реакция, правка и удаление были бы видны ТОЛЬКО тому, кто их сделал: опрос
+    тянет строго новее `since`, а тронутая строка старше — второй участник не узнал бы о ней.
+    """
+    return max(m.get("t") or 0, m.get("u") or 0)
+
 
 def thread(self_name, other, since=0.0):
     """Every message between the two, oldest first. `since` lets a client poll for new ones only."""
@@ -3225,7 +3266,7 @@ def thread(self_name, other, since=0.0):
         since = float(since or 0)
     except (TypeError, ValueError):
         since = 0.0
-    out = [dict(m) for m in _messages() if m.get("pair") == key and (m.get("t") or 0) > since]
+    out = [dict(m) for m in _messages() if m.get("pair") == key and _touched(m) > since]
     out.sort(key=lambda m: m.get("t") or 0)
     return out[-200:]
 
@@ -3234,19 +3275,32 @@ def threads_for(self_name):
     me = _norm_name(self_name)
     if not me:
         return []
-    last = {}
+    reads = _thread_reads()
+    last, unread = {}, {}
     for m in _messages():
         if me not in (_norm_name(m.get("from")), _norm_name(m.get("to"))):
             continue
         other = m.get("to") if _norm_name(m.get("from")) == me else m.get("from")
-        cur = last.get(_norm_name(other))
+        okey = _norm_name(other)
+        cur = last.get(okey)
         if not cur or (m.get("t") or 0) > (cur.get("t") or 0):
             # `sys` едет наружу: в списке «Сообщений» последней строкой вполне может быть событие
             # плана, и рисовать под именем пустоту вместо «План подтверждён» нельзя.
-            last[_norm_name(other)] = {"who": other, "last": m.get("text"), "t": m.get("t"),
-                                       "kind": m.get("kind"), "voice": m.get("voice"),
-                                       "sys": m.get("sys"),
-                                       "mine": _norm_name(m.get("from")) == me}
+            last[okey] = {"who": other, "last": m.get("text"), "t": m.get("t"),
+                          "kind": m.get("kind"), "voice": m.get("voice"),
+                          "sys": m.get("sys"),
+                          "mine": _norm_name(m.get("from")) == me}
+        # Непрочитанное считается ЗДЕСЬ, потому что этот проход по сообщениям всё равно делается.
+        # Клиент ради того же числа слал отдельный запрос на каждую переписку — до десяти штук
+        # каждые пятнадцать секунд — и всё равно врал: у одиннадцатой переписки числа не бывало
+        # никогда, а у групп не бывает и сейчас. Системные строки не считаем: событие плана —
+        # не реплика, и жирная единица из-за него читается как «тебе написали».
+        if _norm_name(m.get("from")) != me and not m.get("sys"):
+            seen = (reads.get(_pair_key(self_name, other)) or {}).get(me) or 0
+            if (m.get("t") or 0) > seen:
+                unread[okey] = unread.get(okey, 0) + 1
+    for k, row in last.items():
+        row["unread"] = unread.get(k, 0)
     return _with_photos(sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50], "who")
 
 def _thread_reads():
@@ -3868,12 +3922,12 @@ def gi_thread(gid, who, since=0.0):
         since = float(since or 0)
     except (TypeError, ValueError):
         since = 0.0
-    msgs = [m for m in _gmsgs() if m.get("gid") == gid and (m.get("t") or 0) > since]
+    msgs = [m for m in _gmsgs() if m.get("gid") == gid and _touched(m) > since]
     msgs.sort(key=lambda m: m.get("t") or 0)
     return {"ok": True, "group": _gi_public(g, who), "messages": msgs[-200:]}
 
 
-def gi_post(gid, who, text, idem=None, voice=None):
+def gi_post(gid, who, text, idem=None, voice=None, client_id=None):
     who, text = str(who or "").strip(), str(text or "").strip()
     voice, voice_error = _voice_message(voice)
     if voice_error:
@@ -3894,8 +3948,10 @@ def gi_post(gid, who, text, idem=None, voice=None):
         if g.get("state") in ("cancelled", "expired"):
             return {"ok": False, "error": "CLOSED"}
         now = time.time()
-        msg = {"id": "gm_%d" % int(now * 1000), "gid": gid, "frm": who,
-               "text": text[:2000], "t": now, "kind": "msg"}
+        msg = {"id": _mid("gm_"), "gid": gid, "frm": who,
+               "text": text[:2000], "t": now, "u": now, "kind": "msg"}
+        if client_id:
+            msg["cid"] = str(client_id)[:64]
         if voice:
             msg.update({"kind": "voice", "voice": voice})
         _gmsgs().append(msg)
@@ -6194,7 +6250,7 @@ class H(BaseHTTPRequestHandler):
                                                           body.get("live") is not False)})
         elif p == "/api/agent/message":
             send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text"),
-                                              body.get("voice")))
+                                              body.get("voice"), body.get("client_id")))
         elif p == "/api/agent/thread-read":
             send_json(self, 200, thread_mark_read(body.get("self"), body.get("with")))
         elif p == "/api/agent/propose":
@@ -6236,7 +6292,8 @@ class H(BaseHTTPRequestHandler):
                                             bool(body.get("accept")), body.get("idem")))
         elif p == "/api/agent/gintent-post":
             send_json(self, 200, gi_post(body.get("gid"), body.get("self"),
-                                         body.get("text"), body.get("idem"), body.get("voice")))
+                                         body.get("text"), body.get("idem"), body.get("voice"),
+                                         body.get("client_id")))
         elif p == "/api/agent/gplan-begin":
             send_json(self, 200, gp_begin(body.get("gid"), body.get("self"), body.get("when"),
                                           body.get("place"), body.get("note"),
