@@ -663,7 +663,7 @@ export default function Conversation() {
             <>
               {/* Кружок отдельной кнопкой, а не переключателем на микрофоне: у микрофона свой
                   жест удержания, и делить его на два смысла значит ломать оба. */}
-              {voice.phase === 'idle' ? <VideoNoteButton onSend={sendCircle} disabled={!canSend} /> : null}
+              <VideoNoteButton onSend={sendCircle} disabled={!canSend} hidden={voice.phase !== 'idle'} />
               <VoiceMessageControl voice={voice} />
             </>
           )}

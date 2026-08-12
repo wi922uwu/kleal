@@ -1034,14 +1034,25 @@ console.log('\nкружок: камера готова заранее, коне�
     'кнопки поверх композера видны и мертвы: родитель не отдаёт им касания');
   for (const scr of ['app/conversation.tsx', 'app/group.tsx']) {
     check(`${scr}: экран не расставляет части кружка сам`,
-      /<VideoNoteButton onSend=\{sendCircle\} disabled=\{!canSend\} \/>/.test(code(scr))
+      /<VideoNoteButton onSend=\{sendCircle\} disabled=\{!canSend\} hidden=/.test(code(scr))
       && !/VideoNoteStage|useVideoNote/.test(code(scr)),
       'собранная из кусков кнопка уже разъезжалась по экранам — теперь она одна');
   }
   check('пока пишется голосовое, кружок не предлагают',
     ['app/conversation.tsx', 'app/group.tsx'].every(
-      (scr) => /voice\.phase === 'idle' \? <VideoNoteButton/.test(code(scr))),
+      (scr) => /hidden=\{voice\.phase !== 'idle'\}/.test(code(scr))),
     'у микрофона свой жест удержания, и две записи разом не нужны');
+  check('но прячут КНОПКУ, а не компонент с окном внутри',
+    /\{hidden && !on \? null : \(/.test(v)
+    && !['app/conversation.tsx', 'app/group.tsx'].some(
+      (scr) => /\? <VideoNoteButton/.test(code(scr))),
+    'снять компонент значит снять и окно записи — вместе со снятым файлом и без единого слова');
+  check('камера, не поднявшаяся молча, тоже называет причину',
+    /onMountError=\{\(e: \{ message: string \}\) =>/.test(v),
+    'startSession может выйти с ошибкой, и тогда onCameraReady не придёт уже никогда');
+  check('предел записи считается в секундах ровно в одном месте',
+    /const MAX_MS = 60_000/.test(v) && (v.match(/MAX_MS \/ 1000/g) || []).length === 1,
+    'maxDuration у камеры в СЕКУНДАХ (CMTime(seconds:)) — ошибка тут молча делает из минуты шестнадцать часов');
 
   // Звуковая сессия одна на приложение, и голосовой модуль оставляет её в режиме
   // «только воспроизведение» — камера в нём звук не захватывает и не стартует вовсе.

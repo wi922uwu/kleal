@@ -91,10 +91,19 @@ const clock = (ms: number) => {
 type Stage = 'off' | 'warming' | 'ready' | 'recording' | 'sending' | 'failed';
 
 export function VideoNoteButton({
-  onSend, disabled = false,
+  onSend, disabled = false, hidden = false,
 }: {
   onSend: (v: VideoPayload) => void;
   disabled?: boolean;
+  /**
+   * Убрать КНОПКУ из композера — но не сам компонент.
+   *
+   * Экраны прячут кружок, пока пишется голосовое. Раньше это делалось условием вокруг компонента,
+   * и внутри него теперь живёт окно записи: снять компонент с экрана значит снять и окно, вместе
+   * со снятым файлом и без единого слова. Здесь этого случиться не может — пока окно открыто,
+   * прятать нечего, а компонент на месте в любом случае.
+   */
+  hidden?: boolean;
 }) {
   const cam = useRef<CameraView>(null);
   const [stage, setStage] = useState<Stage>('off');
@@ -294,17 +303,19 @@ export function VideoNoteButton({
 
   return (
     <>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={T('Записать кружок', 'Record a circle')}
-        accessibilityState={{ disabled }}
-        disabled={disabled}
-        onPress={() => { open().catch(() => {}); }}
-        style={s.slot}
-        hitSlop={8}
-      >
-        <IconVideo size={22} c={disabled ? color.neutral300 : color.muted} />
-      </Pressable>
+      {hidden && !on ? null : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={T('Записать кружок', 'Record a circle')}
+          accessibilityState={{ disabled }}
+          disabled={disabled}
+          onPress={() => { open().catch(() => {}); }}
+          style={s.slot}
+          hitSlop={8}
+        >
+          <IconVideo size={22} c={disabled ? color.neutral300 : color.muted} />
+        </Pressable>
+      )}
 
       <Modal visible={on} animationType="fade" onRequestClose={close} statusBarTranslucent>
         <View style={s.screen}>
@@ -317,6 +328,14 @@ export function VideoNoteButton({
                 mode="video"
                 videoQuality="480p"
                 onCameraReady={ready}
+                /* Камера умеет не подняться МОЛЧА: `startSession` выходит с ошибкой, и тогда
+                   `onCameraReady` не придёт уже никогда. Без этого обработчика единственным
+                   следом была бы тишина, а через шесть секунд — сторож с общей фразой «не
+                   отозвалась» вместо настоящей причины от системы. */
+                onMountError={(e: { message: string }) => {
+                  setErr(String(e?.message || '').slice(0, 160));
+                  setStage('failed');
+                }}
               />
             ) : (
               /* Съёмка кончилась — камеру с экрана долой: батарея и индикатор камеры не должны
