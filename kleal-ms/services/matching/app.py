@@ -3213,7 +3213,29 @@ def _mid(prefix):
     return "%s%d_%03x" % (prefix, int(time.time() * 1000), _MID_SEQ[0])
 
 
-def send_message(frm, to, text, voice=None, client_id=None):
+# Набор реакций закрытый и маленький. Открытый вернул бы в переписку произвольную картинку от
+# постороннего — это уже не реакция, а сообщение в обход всех проверок. Шесть штук покрывают то,
+# ради чего реакция и нужна: согласиться, обрадоваться, удивиться, посочувствовать.
+REACTIONS = ("❤️", "👍", "😂", "🔥", "😮", "😢")
+
+
+def _quote_of(m):
+    """Что показать в цитате: кто сказал и первые слова.
+
+    Хранится РЯДОМ с ответом, а не берётся по ссылке при чтении. Лента отдаёт последние двести
+    строк, и цитируемое запросто окажется за этим краем — тогда ответ остался бы без того, на что
+    отвечает. Двести знаков хватает: цитата в пузыре и так обрезается.
+    """
+    return {"id": m.get("id"), "from": m.get("from") or m.get("frm"),
+            "text": str(m.get("text") or "")[:200], "kind": m.get("kind")}
+
+
+def _touch(m):
+    """Отметить строку изменённой — по этому полю опрос и приносит её второму участнику."""
+    m["u"] = time.time()
+
+
+def send_message(frm, to, text, voice=None, client_id=None, reply_to=None):
     frm, to, text = str(frm or "").strip(), str(to or "").strip(), str(text or "").strip()[:2000]
     voice, voice_error = _voice_message(voice)
     if voice_error:
@@ -3235,6 +3257,14 @@ def send_message(frm, to, text, voice=None, client_id=None):
          "from": frm, "to": to, "text": text, "t": now, "u": now}
     if client_id:
         m["cid"] = str(client_id)[:64]
+    if reply_to:
+        # Цитируемое обязано быть ИЗ ЭТОЙ ЖЕ переписки: иначе ответом можно вытащить на экран
+        # строку из чужого разговора — id угадывать не нужно, они последовательны.
+        src = next((x for x in _messages()
+                    if x.get("id") == str(reply_to) and x.get("pair") == m["pair"]), None)
+        if not src:
+            return {"ok": False, "error": "NO_SUCH_MESSAGE"}
+        m["rt"] = _quote_of(src)
     if voice:
         m.update({"kind": "voice", "voice": voice})
     with _STORE_LOCK:
@@ -3255,6 +3285,69 @@ def _touched(m):
     тянет строго новее `since`, а тронутая строка старше — второй участник не узнал бы о ней.
     """
     return max(m.get("t") or 0, m.get("u") or 0)
+
+
+def _react(m, who, emoji):
+    """Поставить или снять реакцию. Повторное нажатие снимает — другого способа передумать нет."""
+    who = _norm_name(who)
+    rs = m.setdefault("r", {})
+    names = [n for n in (rs.get(emoji) or []) if n]
+    if who in names:
+        names.remove(who)
+    else:
+        names.append(who)
+    if names:
+        rs[emoji] = names
+    else:
+        rs.pop(emoji, None)
+    if not rs:
+        m.pop("r", None)
+    _touch(m)
+
+
+def message_react(self_name, mid, emoji):
+    me = _norm_name(self_name)
+    emoji = str(emoji or "")
+    if not me or not mid:
+        return {"ok": False, "error": "self and id are required"}
+    if emoji not in REACTIONS:
+        return {"ok": False, "error": "UNKNOWN_REACTION"}
+    with _STORE_LOCK:
+        m = next((x for x in _messages() if x.get("id") == str(mid)), None)
+        if not m:
+            return {"ok": False, "error": "NO_SUCH_MESSAGE"}
+        # Реагировать может только участник этой пары — членство и есть право доступа.
+        if me not in (_norm_name(m.get("from")), _norm_name(m.get("to"))):
+            return {"ok": False, "error": "NOT_YOURS"}
+        _react(m, me, emoji)
+        _save_store()
+    return {"ok": True, "id": m["id"], "r": m.get("r") or {}}
+
+
+def message_delete(self_name, mid):
+    """Удаление МЯГКОЕ: строка остаётся, текст стирается.
+
+    Жёсткое вырезание строки из стора второму участнику не доедет никогда: опрос переносит
+    изменения, а не пропажи — сообщение так и висело бы у него на экране. Поэтому строка живёт
+    дальше и говорит о себе «удалено»."""
+    me = _norm_name(self_name)
+    if not me or not mid:
+        return {"ok": False, "error": "self and id are required"}
+    with _STORE_LOCK:
+        m = next((x for x in _messages() if x.get("id") == str(mid)), None)
+        if not m:
+            return {"ok": False, "error": "NO_SUCH_MESSAGE"}
+        if _norm_name(m.get("from")) != me:
+            return {"ok": False, "error": "NOT_YOURS"}
+        if m.get("sys"):
+            return {"ok": False, "error": "NOT_A_MESSAGE"}
+        m["text"] = ""
+        m["deleted"] = True
+        m.pop("voice", None)
+        m.pop("r", None)
+        _touch(m)
+        _save_store()
+    return {"ok": True, "id": m["id"]}
 
 
 def thread(self_name, other, since=0.0):
@@ -3910,6 +4003,46 @@ def gi_leave(gid, who, idem=None):
         return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, who)})
 
 
+def gmsg_react(gid, who, mid, emoji):
+    """Реакция в комнате. Право — членство: кто в группе, тот и реагирует."""
+    emoji = str(emoji or "")
+    if emoji not in REACTIONS:
+        return {"ok": False, "error": "UNKNOWN_REACTION"}
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
+            return {"ok": False, "error": "NOT_A_MEMBER"}
+        m = next((x for x in _gmsgs() if x.get("id") == str(mid) and x.get("gid") == gid), None)
+        if not m:
+            return {"ok": False, "error": "NO_SUCH_MESSAGE"}
+        _react(m, who, emoji)
+        _save_store()
+    return {"ok": True, "id": m["id"], "r": m.get("r") or {}}
+
+
+def gmsg_delete(gid, who, mid):
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        m = next((x for x in _gmsgs() if x.get("id") == str(mid) and x.get("gid") == gid), None)
+        if not m:
+            return {"ok": False, "error": "NO_SUCH_MESSAGE"}
+        if _norm_name(m.get("frm")) != _norm_name(who):
+            return {"ok": False, "error": "NOT_YOURS"}
+        if m.get("kind") == "system":
+            return {"ok": False, "error": "NOT_A_MESSAGE"}
+        m["text"] = ""
+        m["deleted"] = True
+        m.pop("voice", None)
+        m.pop("r", None)
+        _touch(m)
+        _save_store()
+    return {"ok": True, "id": m["id"]}
+
+
 def gi_thread(gid, who, since=0.0):
     """The shared chat. Membership IS the ACL: a person who is not in the room does not get the
     history, and there is no other thread to be in."""
@@ -3927,7 +4060,7 @@ def gi_thread(gid, who, since=0.0):
     return {"ok": True, "group": _gi_public(g, who), "messages": msgs[-200:]}
 
 
-def gi_post(gid, who, text, idem=None, voice=None, client_id=None):
+def gi_post(gid, who, text, idem=None, voice=None, client_id=None, reply_to=None):
     who, text = str(who or "").strip(), str(text or "").strip()
     voice, voice_error = _voice_message(voice)
     if voice_error:
@@ -3952,6 +4085,13 @@ def gi_post(gid, who, text, idem=None, voice=None, client_id=None):
                "text": text[:2000], "t": now, "u": now, "kind": "msg"}
         if client_id:
             msg["cid"] = str(client_id)[:64]
+        if reply_to:
+            # Цитируемое — из ЭТОЙ комнаты: иначе ответом можно вытащить строку из чужой.
+            src = next((x for x in _gmsgs()
+                        if x.get("id") == str(reply_to) and x.get("gid") == gid), None)
+            if not src:
+                return {"ok": False, "error": "NO_SUCH_MESSAGE"}
+            msg["rt"] = _quote_of(src)
         if voice:
             msg.update({"kind": "voice", "voice": voice})
         _gmsgs().append(msg)
@@ -6250,7 +6390,12 @@ class H(BaseHTTPRequestHandler):
                                                           body.get("live") is not False)})
         elif p == "/api/agent/message":
             send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text"),
-                                              body.get("voice"), body.get("client_id")))
+                                              body.get("voice"), body.get("client_id"),
+                                              body.get("reply_to")))
+        elif p == "/api/agent/message-react":
+            send_json(self, 200, message_react(body.get("self"), body.get("id"), body.get("emoji")))
+        elif p == "/api/agent/message-delete":
+            send_json(self, 200, message_delete(body.get("self"), body.get("id")))
         elif p == "/api/agent/thread-read":
             send_json(self, 200, thread_mark_read(body.get("self"), body.get("with")))
         elif p == "/api/agent/propose":
@@ -6293,7 +6438,12 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/gintent-post":
             send_json(self, 200, gi_post(body.get("gid"), body.get("self"),
                                          body.get("text"), body.get("idem"), body.get("voice"),
-                                         body.get("client_id")))
+                                         body.get("client_id"), body.get("reply_to")))
+        elif p == "/api/agent/gmsg-react":
+            send_json(self, 200, gmsg_react(body.get("gid"), body.get("self"),
+                                            body.get("id"), body.get("emoji")))
+        elif p == "/api/agent/gmsg-delete":
+            send_json(self, 200, gmsg_delete(body.get("gid"), body.get("self"), body.get("id")))
         elif p == "/api/agent/gplan-begin":
             send_json(self, 200, gp_begin(body.get("gid"), body.get("self"), body.get("when"),
                                           body.get("place"), body.get("note"),

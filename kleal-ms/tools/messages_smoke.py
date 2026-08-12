@@ -140,6 +140,53 @@ if row:
 
 print()
 print("=" * 76)
+print("5. РЕАКЦИЯ, ЦИТАТА И УДАЛЕНИЕ ДОЕЗЖАЮТ ДО ВТОРОГО")
+print("=" * 76)
+base = send(A, B, "на это ответят и отреагируют")
+mid = base.get("id")
+check("сообщение для опытов создано", bool(mid), base)
+
+mark = thread(A, B).get("messages") or []
+after = max((m.get("u") or m.get("t") or 0) for m in mark)
+
+r1 = call("/api/agent/message-react", {"self": B, "id": mid, "emoji": "👍"})
+check("реакция ставится", r1.get("ok") and r1.get("r", {}).get("👍"), r1)
+check("чужую реакцию не поставить от постороннего",
+      call("/api/agent/message-react", {"self": "Nobody%d" % S, "id": mid, "emoji": "👍"}).get("error") == "NOT_YOURS")
+check("произвольную картинку не подсунуть",
+      call("/api/agent/message-react", {"self": B, "id": mid, "emoji": "🦖"}).get("error") == "UNKNOWN_REACTION",
+      "открытый набор — это сообщение в обход всех проверок")
+
+# ГЛАВНОЕ: изменение СТАРОЙ строки должно приехать опросом, иначе его увидит только нажавший.
+fresh = thread(A, B, after).get("messages") or []
+got = [m for m in fresh if m.get("id") == mid]
+check("тронутая строка приезжает опросом второму", len(got) == 1,
+      "их %d — опрос слеп к изменениям, и реакции работают только у нажавшего" % len(got))
+check("и несёт саму реакцию", got and (got[0].get("r") or {}).get("👍"), got)
+
+r2 = call("/api/agent/message-react", {"self": B, "id": mid, "emoji": "👍"})
+check("повторное нажатие снимает реакцию", r2.get("ok") and not r2.get("r"), r2)
+
+q = send(B, A, "отвечаю на это")
+q = call("/api/agent/message", {"from": B, "to": A, "text": "вот мой ответ", "reply_to": mid})
+check("ответ с цитатой принят", q.get("ok"), q)
+body2 = thread(A, B).get("messages") or []
+quoted = [m for m in body2 if m.get("id") == q.get("id")]
+check("цитата приехала рядом с ответом, а не ссылкой",
+      quoted and quoted[0].get("rt", {}).get("text"), quoted)
+check("цитировать чужую переписку нельзя",
+      call("/api/agent/message", {"from": B, "to": A, "text": "чужое", "reply_to": "m_1_000"}).get("error") == "NO_SUCH_MESSAGE")
+
+d = call("/api/agent/message-delete", {"self": B, "id": mid})
+check("чужое сообщение удалить нельзя", d.get("error") == "NOT_YOURS", d)
+d = call("/api/agent/message-delete", {"self": A, "id": mid})
+check("своё — можно", d.get("ok"), d)
+gone = [m for m in (thread(A, B).get("messages") or []) if m.get("id") == mid]
+check("строка осталась и помечена удалённой", gone and gone[0].get("deleted") and not gone[0].get("text"),
+      "жёсткое вырезание второму не доедет: опрос переносит изменения, а не пропажи")
+
+print()
+print("=" * 76)
 print("итог: %d ok, %d fail" % (R["ok"], R["fail"]))
 for f in FAILED:
     print("   не прошло: " + f)
