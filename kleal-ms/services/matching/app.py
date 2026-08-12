@@ -3889,6 +3889,13 @@ def gi_respond(inv_id, who, accept, idem=None):
             return {"ok": False, "error": "NO_SUCH_GROUP"}
         if not accept:
             inv["state"] = "declined"; inv["updated"] = now
+            # ОТКАЗ ГОВОРИТСЯ ВСЛУХ. Он проходил молча: строка отказавшегося пропадала из
+            # _gi_public (наружу идут только sent|viewed|awaiting_approval), версия группы не
+            # росла, и экран организатора даже не перерисовывался. Человек видел «2 из 3» и не
+            # понимал, ждать ему или звать другого — а третий уже ответил «нет».
+            _gi_say(g, "%s can\'t make it." % inv.get("to"))
+            g["version"] = int(g.get("version") or 1) + 1
+            g["updated"] = now
             _save_store()
             return _idem_put(idem, {"ok": True, "invite": {"id": inv_id, "state": "declined"}})
         if g.get("state") in ("cancelled", "expired", "converted_1to1"):

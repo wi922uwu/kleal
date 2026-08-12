@@ -262,7 +262,10 @@ export default function GroupRoom() {
     if (leaving || !gid) return;
     setLeaving(true);
     try {
-      await gapi.leave(gid, me, newIdem('gl'));
+      // Ответ ПРОВЕРЯЕТСЯ. Раньше экран уходил назад в любом случае — и неудачный выход выглядел
+      // ровно как удачный: человек «вышел», возвращался в список и находил группу на месте.
+      const r: any = await gapi.leave(gid, me, newIdem('gl'));
+      if (!r?.ok) { setErr(ROOM.leaveFailed()); return; }
       // Вышел — комнаты больше нет: возвращаемся туда, откуда пришли, а не остаёмся смотреть
       // на чат, который сервер уже перестал отдавать.
       if (router.canGoBack()) router.back(); else router.replace('/home');
