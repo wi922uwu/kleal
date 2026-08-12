@@ -124,8 +124,21 @@ export default function MyIntent() {
        * сервер хранит в заявке копию объекта, но не ссылку на интент.
        */
       const stamped = { ...(row.intent || {}), [INTENT_ID_KEY]: row.id };
-      const r: any = await agent.match(stamped, searchProfile(st.profile), { self: me });
-      setResults({ ...(r || {}), intent: stamped });
+      const prof = searchProfile(st.profile);
+      const r: any = await agent.match(stamped, prof, { self: me });
+      /**
+       * Склад заполняется ПОЛЕМ ЗА ПОЛЕМ, а не россыпью ответа сервера. Россыпью я и ошибся:
+       * `{...r, intent}` выглядит полным, но профиля в ответе матчинга нет — а выдача берёт из
+       * склада именно его, и из него имя отправителя. Пустое имя обрывало отправку приглашения
+       * на первой же проверке, и человек видел «не отправилось», хотя связь была в порядке.
+       * Проверить это типами нельзя: расплывание `any` в литерал прячет недостающие поля.
+       */
+      setResults({
+        intent: stamped,
+        candidates: r?.candidates || [],
+        profile: prof,
+        query: intentTitle(row),
+      });
       router.push('/results');
     } catch {
       setErr(ACT.loadFailed());
