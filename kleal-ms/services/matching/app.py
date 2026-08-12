@@ -3213,6 +3213,90 @@ def _mid(prefix):
     return "%s%d_%03x" % (prefix, int(time.time() * 1000), _MID_SEQ[0])
 
 
+# ---- КРУЖКИ: приём, хранение и раздача КУСКАМИ ---------------------------------------------------
+#
+# Раздача по кускам здесь не украшение, а условие работы. Проигрыватель на iOS тянет удалённое
+# видео частями и требует от сервера поддержки `Range`; сервер, который её не умеет, для него
+# просто непригоден — файл не открывается вовсе. Ровно на это уже наступили с голосовыми: там
+# пришлось скачивать файл целиком перед проигрыванием. У видео такой обход неприемлем — минута
+# кружка это мегабайты, и ждать их до первого кадра никто не станет.
+VIDEO_DIR = os.environ.get(
+    "KLEAL_VIDEO_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "video"))
+MAX_VIDEO_BYTES = 12 * 1024 * 1024
+MAX_VIDEO_MS = 60_000
+MIN_VIDEO_MS = 700
+VIDEO_NAME_RE = re.compile(r"^[0-9a-f]{32}\.(mp4|mov|m4v)$")
+_VIDEO_URL_RE = re.compile(r"^/api/agent/video/[0-9a-f]{32}\.(mp4|mov|m4v)$")
+
+
+def _one_file(content_type, body):
+    """Достать единственный файл из multipart/form-data.
+
+    Полноценный разбор здесь не нужен и был бы лишним: клиент шлёт ровно одно поле с файлом.
+    Берём первую часть, у которой есть `filename`, — всё остальное в этом запросе не наше дело.
+    """
+    m = re.search(r'boundary="?([^";]+)"?', content_type or "", re.I)
+    if not m:
+        return None, None, None
+    sep = ("--" + m.group(1)).encode()
+    for part in body.split(sep):
+        head, _, data = part.partition(b"\r\n\r\n")
+        if b"filename=" not in head.lower():
+            continue
+        h = head.decode("utf-8", "replace")
+        name = (re.search(r'filename="([^"]*)"', h) or [None, ""])[1]
+        ctype = (re.search(r"Content-Type:\s*([^\r\n;]+)", h, re.I) or [None, ""])[1].strip().lower()
+        if data.endswith(b"\r\n"):
+            data = data[:-2]
+        return name, ctype, data
+    return None, None, None
+
+
+def video_store(filename, media_type, blob, duration_ms):
+    if not blob:
+        return {"ok": False, "error": "VIDEO_REQUIRED"}
+    if len(blob) > MAX_VIDEO_BYTES:
+        return {"ok": False, "error": "VIDEO_TOO_LARGE"}
+    if not (MIN_VIDEO_MS <= int(duration_ms or 0) <= MAX_VIDEO_MS):
+        return {"ok": False, "error": "INVALID_VIDEO_DURATION"}
+    ext = "mp4"
+    low = "%s %s" % (str(filename or "").lower(), str(media_type or "").lower())
+    if "quicktime" in low or low.endswith(".mov") or ".mov" in low:
+        ext = "mov"
+    os.makedirs(VIDEO_DIR, exist_ok=True)
+    vid = hashlib.sha1(("%s%s" % (time.time(), len(blob))).encode()).hexdigest()[:32]
+    name = "%s.%s" % (vid, ext)
+    with open(os.path.join(VIDEO_DIR, name), "wb") as f:
+        f.write(blob)
+    return {"ok": True, "id": vid, "url": "/api/agent/video/%s" % name,
+            "duration_ms": int(duration_ms), "mime_type": "video/%s" % ("quicktime" if ext == "mov" else "mp4")}
+
+
+def _video_message(video):
+    """Проверить метаданные кружка и НЕ пустить произвольный адрес.
+
+    Та же защита, что у голосовых: без неё через переписку можно заставить чужое приложение
+    сходить куда угодно — достаточно прислать сообщение со ссылкой в поле `video`.
+    """
+    if video is None:
+        return None, None
+    if not isinstance(video, dict):
+        return None, "INVALID_VIDEO"
+    url = str(video.get("url") or "").strip()
+    vid = str(video.get("id") or "").strip().lower()
+    try:
+        ms = int(video.get("duration_ms") or 0)
+    except (TypeError, ValueError):
+        return None, "INVALID_VIDEO"
+    if not _VIDEO_URL_RE.match(url) or not re.fullmatch(r"[0-9a-f]{32}", vid):
+        return None, "INVALID_VIDEO"
+    if not (MIN_VIDEO_MS <= ms <= MAX_VIDEO_MS):
+        return None, "INVALID_VIDEO"
+    return {"id": vid, "url": url, "duration_ms": ms,
+            "mime_type": str(video.get("mime_type") or "video/mp4")[:40]}, None
+
+
 # Набор реакций закрытый и маленький. Открытый вернул бы в переписку произвольную картинку от
 # постороннего — это уже не реакция, а сообщение в обход всех проверок. Шесть штук покрывают то,
 # ради чего реакция и нужна: согласиться, обрадоваться, удивиться, посочувствовать.
@@ -3235,13 +3319,20 @@ def _touch(m):
     m["u"] = time.time()
 
 
-def send_message(frm, to, text, voice=None, client_id=None, reply_to=None):
+def send_message(frm, to, text, voice=None, client_id=None, reply_to=None, video=None):
     frm, to, text = str(frm or "").strip(), str(to or "").strip(), str(text or "").strip()[:2000]
     voice, voice_error = _voice_message(voice)
     if voice_error:
         return {"ok": False, "error": voice_error}
+    video, video_error = _video_message(video)
+    if video_error:
+        return {"ok": False, "error": video_error}
     if voice:
         text = voice["transcript"]
+    if video and not text:
+        # У кружка расшифровки нет, а пустой текст `send_message` не пускает — и правильно
+        # делает. Подпись даёт списку «Сообщений» что показать вместо пустоты под именем.
+        text = "[video]"
     if not frm or not to or not text or _norm_name(frm) == _norm_name(to):
         return {"ok": False, "error": "from, to and text are required and the two must differ"}
     if _blocked_pair(frm, to):
@@ -3267,6 +3358,8 @@ def send_message(frm, to, text, voice=None, client_id=None, reply_to=None):
         m["rt"] = _quote_of(src)
     if voice:
         m.update({"kind": "voice", "voice": voice})
+    if video:
+        m.update({"kind": "video", "video": video})
     with _STORE_LOCK:
         ms = _messages()
         ms.append(m)
@@ -4072,13 +4165,18 @@ def gi_thread(gid, who, since=0.0):
     return {"ok": True, "group": _gi_public(g, who), "messages": msgs[-200:]}
 
 
-def gi_post(gid, who, text, idem=None, voice=None, client_id=None, reply_to=None):
+def gi_post(gid, who, text, idem=None, voice=None, client_id=None, reply_to=None, video=None):
     who, text = str(who or "").strip(), str(text or "").strip()
     voice, voice_error = _voice_message(voice)
     if voice_error:
         return {"ok": False, "error": voice_error}
+    video, video_error = _video_message(video)
+    if video_error:
+        return {"ok": False, "error": video_error}
     if voice:
         text = voice["transcript"]
+    if video and not text:
+        text = "[video]"
     if not text:
         return {"ok": False, "error": "empty message"}
     cached = _idem_get(idem)
@@ -4106,6 +4204,8 @@ def gi_post(gid, who, text, idem=None, voice=None, client_id=None, reply_to=None
             msg["rt"] = _quote_of(src)
         if voice:
             msg.update({"kind": "voice", "voice": voice})
+        if video:
+            msg.update({"kind": "video", "video": video})
         _gmsgs().append(msg)
         g["updated"] = now
         _save_store()
@@ -6477,7 +6577,7 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/message":
             send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text"),
                                               body.get("voice"), body.get("client_id"),
-                                              body.get("reply_to")))
+                                              body.get("reply_to"), body.get("video")))
         elif p == "/api/agent/message-react":
             send_json(self, 200, message_react(body.get("self"), body.get("id"), body.get("emoji")))
         elif p == "/api/agent/message-delete":
@@ -6524,7 +6624,8 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/gintent-post":
             send_json(self, 200, gi_post(body.get("gid"), body.get("self"),
                                          body.get("text"), body.get("idem"), body.get("voice"),
-                                         body.get("client_id"), body.get("reply_to")))
+                                         body.get("client_id"), body.get("reply_to"),
+                                         body.get("video")))
         elif p == "/api/agent/gmsg-react":
             send_json(self, 200, gmsg_react(body.get("gid"), body.get("self"),
                                             body.get("id"), body.get("emoji")))
@@ -6725,6 +6826,9 @@ class H(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        _p = self.path.split("?", 1)[0]
+        if _p.startswith("/api/agent/video/"):
+            return self._video_serve(_p.rsplit("/", 1)[-1])
         if self._restored_get() or self._restored_admin_get():
             return
         if self.path == "/api/agent/weights":
@@ -6783,7 +6887,68 @@ class H(BaseHTTPRequestHandler):
         else:
             send_json(self, 404, {})
 
+    def _video_upload(self):
+        """POST /api/agent/video — кружок приезжает файлом, а не в JSON."""
+        try:
+            ln = int(self.headers.get("Content-Length", "0") or 0)
+        except (TypeError, ValueError):
+            ln = 0
+        if ln <= 0 or ln > MAX_VIDEO_BYTES + 64 * 1024:
+            return send_json(self, 413, {"ok": False, "error": "VIDEO_TOO_LARGE"})
+        raw = self.rfile.read(ln)
+        try:
+            ms = int(self.headers.get("X-Video-Duration-Ms", "0") or 0)
+        except (TypeError, ValueError):
+            ms = 0
+        name, ctype, blob = _one_file(self.headers.get("Content-Type", ""), raw)
+        if blob is None:
+            return send_json(self, 400, {"ok": False, "error": "VIDEO_REQUIRED"})
+        return send_json(self, 200, video_store(name, ctype, blob, ms))
+
+    def _video_serve(self, name):
+        """GET /api/agent/video/<id>.mp4 — с поддержкой ЧАСТИЧНЫХ запросов.
+
+        Проигрыватель просит файл кусками и без 206 не откроет его вовсе. Полный ответ тоже
+        остаётся: без заголовка `Range` отдаём файл целиком, как обычно."""
+        if not VIDEO_NAME_RE.match(name):
+            return send_json(self, 404, {})
+        path = os.path.join(VIDEO_DIR, name)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return send_json(self, 404, {})
+        start, end, partial = 0, size - 1, False
+        rm = re.match(r"bytes=(\d*)-(\d*)\s*$", str(self.headers.get("Range") or "").strip())
+        if rm:
+            a, b = rm.group(1), rm.group(2)
+            if a:
+                start = min(int(a), size - 1)
+                end = min(int(b), size - 1) if b else size - 1
+            elif b:                                   # bytes=-500 — последние 500 байт
+                start = max(0, size - int(b))
+            partial = True
+        if start > end:
+            return send_json(self, 416, {"ok": False, "error": "BAD_RANGE"})
+        with open(path, "rb") as f:
+            f.seek(start)
+            chunk = f.read(end - start + 1)
+        self.send_response(206 if partial else 200)
+        self.send_header("Content-Type", "video/quicktime" if name.endswith(".mov") else "video/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(len(chunk)))
+        if partial:
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+        # Файл неизменен по своему имени: имя — это его хеш, и второй раз он не понадобится.
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(chunk)
+
     def do_POST(self):
+        # Кружок приезжает multipart'ом, и разбирать его как JSON нельзя: read_json прочитает
+        # тело до конца, и до файла дело уже не дойдёт.
+        if self.path.split("?", 1)[0] == "/api/agent/video":
+            return self._video_upload()
         body = read_json(self)
         p = self.path
         if self._restored_post(p, body) or self._restored_admin_post(p, body):

@@ -42,6 +42,7 @@ import { usePolling } from '../src/polling';
 import * as Clipboard from 'expo-clipboard';
 import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
+import { useVideoNote, VideoNoteControl } from '../src/videonote';
 
 type GMsg = { id?: string; frm?: string; text?: string; t?: number; kind?: string; voice?: VoicePayload };
 
@@ -88,6 +89,16 @@ export default function GroupRoom() {
     setErr('');
   }, [gid, me]);
   const voice = useVoiceMessage(deliverVoice, !me || !gid || !!fatal);
+
+  /** Кружок в комнате — тем же путём, что и текст: ключ, состояние, повтор. */
+  const note = useVideoNote((payload) => {
+    if (!me || !gid) return;
+    const local: Row = {
+      from: me, text: '', video: payload, t: Date.now() / 1000, cid: newIdem('c'), state: 'sending',
+    };
+    setMsgs((prev) => [...prev, local]);
+    deliver(local);
+  }, !me || !gid || !!fatal);
 
   const load = useCallback(async () => {
     if (!gid || !me) return;
@@ -145,7 +156,7 @@ export default function GroupRoom() {
     if (!gid || !me) return;
     setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'sending' } : x)));
     try {
-      const r: any = await gapi.post(gid, me, String(m.text || ''), m.voice, m.cid, m.rt?.id);
+      const r: any = await gapi.post(gid, me, String(m.text || ''), m.voice, m.cid, m.rt?.id, m.video);
       if (!r?.ok) throw new Error(String(r?.error || 'post failed'));
       setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: undefined } : x)));
       setErr('');
@@ -391,7 +402,12 @@ export default function GroupRoom() {
                 <IconSend />
               </Pressable>
             ) : (
-              <VoiceMessageControl voice={voice} />
+              <>
+                {/* Кружок отдельной кнопкой, а не переключателем на микрофоне: у микрофона свой
+                    жест удержания, и делить его на два смысла значит ломать оба. */}
+                {voice.phase === 'idle' ? <VideoNoteControl note={note} /> : null}
+                {note.phase === 'idle' ? <VoiceMessageControl voice={voice} /> : null}
+              </>
             )}
           </View>
 

@@ -187,6 +187,76 @@ check("строка осталась и помечена удалённой", go
 
 print()
 print("=" * 76)
+print("6. КРУЖОК: ПРИЁМ, РАЗДАЧА КУСКАМИ, ЗАЩИТА ОТ ЧУЖОГО АДРЕСА")
+print("=" * 76)
+
+
+def upload_video(blob, ms):
+    """Отправить файл ровно так, как это делает приложение: multipart с одним полем."""
+    b = "----kleal%d" % S
+    body = (
+        ("--%s\r\n" % b).encode()
+        + b'Content-Disposition: form-data; name="file"; filename="circle.mp4"\r\n'
+        + b"Content-Type: video/mp4\r\n\r\n" + blob + b"\r\n"
+        + ("--%s--\r\n" % b).encode()
+    )
+    req = urllib.request.Request(
+        BASE + "/api/agent/video", data=body, method="POST",
+        headers={"Content-Type": "multipart/form-data; boundary=%s" % b,
+                 "X-Video-Duration-Ms": str(ms)})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        return {"_http": e.code, "_body": e.read().decode("utf-8", "replace")[:160]}
+    except Exception as e:
+        return {"_err": str(e)[:140]}
+
+
+blob = bytes(range(256)) * 40                       # 10 240 байт «видео»
+up = upload_video(blob, 4200)
+check("кружок принят", up.get("ok") and up.get("id") and up.get("url"), up)
+check("слишком короткий не берут", upload_video(blob, 100).get("error") == "INVALID_VIDEO_DURATION")
+
+if up.get("ok"):
+    url = BASE + up["url"]
+
+    def get(headers=None):
+        req = urllib.request.Request(url, headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, dict(r.headers), r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), e.read()
+
+    st, h, bo = get()
+    check("файл отдаётся целиком", st == 200 and bo == blob, (st, len(bo)))
+    check("и объявляет, что умеет куски", (h.get("Accept-Ranges") or "").lower() == "bytes", h)
+
+    st, h, bo = get({"Range": "bytes=0-99"})
+    check("частичный запрос отвечает 206, а не 200", st == 206, st)
+    check("и присылает ровно запрошенный кусок", bo == blob[:100], len(bo))
+    check("с честным Content-Range",
+          h.get("Content-Range") == "bytes 0-99/%d" % len(blob), h.get("Content-Range"))
+    st, _, bo = get({"Range": "bytes=-50"})
+    check("хвост тоже умеет", st == 206 and bo == blob[-50:], (st, len(bo)))
+
+    v = {"id": up["id"], "url": up["url"], "duration_ms": 4200, "mime_type": "video/mp4"}
+    m = call("/api/agent/message", {"from": A, "to": B, "text": "", "video": v})
+    check("кружок доезжает сообщением", m.get("ok"), m)
+    got = [x for x in (thread(A, B).get("messages") or []) if x.get("id") == m.get("id")]
+    check("и приходит собеседнику как kind=video",
+          got and got[0].get("kind") == "video" and got[0].get("video", {}).get("url") == up["url"], got)
+    check("в списке под именем не пустота",
+          got and got[0].get("text"), "иначе в «Сообщениях» под именем зияет дыра")
+
+    bad = call("/api/agent/message",
+               {"from": A, "to": B, "text": "", "video": dict(v, url="https://evil.example/x.mp4")})
+    check("чужой адрес в кружке не пройдёт", bad.get("error") == "INVALID_VIDEO",
+          "иначе перепиской можно заставить чужое приложение сходить куда угодно")
+
+print()
+print("=" * 76)
 print("итог: %d ok, %d fail" % (R["ok"], R["fail"]))
 for f in FAILED:
     print("   не прошло: " + f)

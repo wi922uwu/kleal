@@ -649,7 +649,7 @@ export type SysMsg = {
  */
 export type Msg = {
   id?: string; from?: string; to?: string; text?: string; t?: number; sys?: SysMsg;
-  cid?: string; state?: 'sending' | 'failed'; voice?: any;
+  cid?: string; state?: 'sending' | 'failed'; voice?: any; video?: any;
   /** Реакции: смайлик → кто его поставил. Пусто — реакций нет, поля просто не будет. */
   r?: Record<string, string[]>;
   /** Цитата: кусок того, на что отвечают. Едет РЯДОМ, а не ссылкой — см. сервер. */

@@ -30,6 +30,7 @@ import { Sheet, SheetItem } from '../src/components/Sheet';
 import * as Clipboard from 'expo-clipboard';
 import { MessageFeed } from '../src/components/MessageFeed';
 import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
+import { useVideoNote, VideoNoteControl } from '../src/videonote';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
 } from '../src/components/icons';
@@ -203,7 +204,7 @@ export default function Conversation() {
     setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'sending' } : x)));
     try {
       const r: any = await agent.message(me, other, String(m.text || ''), m.voice, m.cid,
-                                         m.rt?.id);
+                                         m.rt?.id, m.video);
       if (!r?.ok) throw new Error(String(r?.error || 'SEND_FAILED'));
       setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: undefined, id: r.id, t: r.t || x.t } : x)));
       setErr('');
@@ -275,6 +276,17 @@ export default function Conversation() {
    * `text`. Поэтому и показывается оно сразу, как своя реплика, — опрос принесёт серверную
    * версию и склеит по id.
    */
+  /** Кружок уходит тем же путём, что текст и голосовое: тот же ключ, то же состояние, тот же повтор. */
+  const note = useVideoNote((payload) => {
+    if (!me || !other) return;
+    const local: Msg = {
+      from: me, to: other, text: '', video: payload,
+      t: Date.now() / 1000, cid: newIdem('c'), state: 'sending',
+    };
+    setMsgs((prev) => [...prev, local]);
+    deliver(local);
+  }, !me || !other);
+
   const voice = useVoiceMessage((payload) => {
     if (!me || !other) return;
     // Тем же путём, что и текст: тот же ключ, то же состояние, тот же повтор при сбое. Своего
@@ -647,7 +659,12 @@ export default function Conversation() {
               <IconSend size={18} />
             </Pressable>
           ) : (
-            <VoiceMessageControl voice={voice} />
+            <>
+              {/* Кружок отдельной кнопкой, а не переключателем на микрофоне: у микрофона свой
+                  жест удержания, и делить его на два смысла значит ломать оба. */}
+              {voice.phase === 'idle' ? <VideoNoteControl note={note} /> : null}
+              {note.phase === 'idle' ? <VoiceMessageControl voice={voice} /> : null}
+            </>
           )}
         </View>
 

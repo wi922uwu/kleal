@@ -246,6 +246,7 @@ export function roomMsg(raw: any): Msg {
     t: Number(raw?.t || 0),
     cid: raw?.cid,
     voice: raw?.kind === 'voice' ? raw?.voice : undefined,
+    video: raw?.kind === 'video' ? raw?.video : undefined,
     r: raw?.r,
     rt: raw?.rt,
     deleted: !!raw?.deleted,

@@ -22,6 +22,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View, Linking } from 'react-native';
 import { CHAT, Msg, msgTime, msgDayLabel, sameSeries, linkParts } from '../chat';
 import { VoiceBubble } from '../voice';
+import { VideoBubble } from '../videonote';
 import { SwipeToReply } from './SwipeToReply';
 import { color, radius as rad, space } from '../theme';
 
@@ -86,7 +87,10 @@ export function MessageFeed({
                     репликой одного человека значит кричать его четыре раза подряд. */}
                 {showAuthor && !mine && head ? <Text style={s.author}>{m.from}</Text> : null}
 
-                {m.voice ? (
+                {m.video && !m.deleted ? (
+                  /* Кружок — не пузырь: у него нет ни фона, ни хвостика, он сам себе форма. */
+                  <VideoBubble video={m.video} />
+                ) : m.voice ? (
                   <VoiceBubble voice={m.voice} mine={mine} />
                 ) : (
                   <Pressable

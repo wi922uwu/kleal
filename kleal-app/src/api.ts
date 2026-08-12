@@ -23,6 +23,14 @@ const DEFAULT_BASE = 'https://andrews-pencil-ricky-pcs.trycloudflare.com';
 export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API && String(process.env.EXPO_PUBLIC_API)) || DEFAULT_BASE;
 
+/** Кружок. Расшифровки нет — подпись в списке ставит сервер, чтобы под именем не было пустоты. */
+export type VideoPayload = {
+  id: string;
+  url: string;
+  duration_ms: number;
+  mime_type?: string;
+};
+
 export type VoicePayload = {
   id: string;
   url: string;
@@ -147,6 +155,17 @@ export const api = {
     request<T>(path, undefined, timeoutFor(path), signal),
   post: <T = Json>(path: string, body: Json, signal?: AbortSignal) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }, timeoutFor(path), signal),
+};
+
+/**
+ * Кружки. Ручка СВОЯ, а не голосовая: у видео нет расшифровки, нет распознавания и другой предел
+ * размера — вешать его на `/api/speech/*` значило бы называть видео речью.
+ */
+export const video = {
+  upload: (body: FormData, durationMs: number) =>
+    multipart<{ ok?: boolean; error?: string } & VideoPayload>(
+      '/api/agent/video', body, { 'X-Video-Duration-Ms': String(Math.round(durationMs)) }
+    ),
 };
 
 export const speech = {
@@ -403,9 +422,10 @@ export const agent = {
    * как сервер кладёт туда расшифровку, и голосовое двоилось в ленте. По ключу узнаётся любое.
    */
   message: (from: string, to: string, text: string, voice?: VoicePayload, clientId?: string,
-            replyTo?: string) =>
+            replyTo?: string, video?: VideoPayload) =>
     api.post<{ ok?: boolean; error?: string; id?: string; t?: number; cid?: string }>(
-      '/api/agent/message', { from, to, text, voice, client_id: clientId, reply_to: replyTo }),
+      '/api/agent/message',
+      { from, to, text, voice, client_id: clientId, reply_to: replyTo, video }),
 
   /** Реакция переключается: то же нажатие второй раз её снимает. Набор закрыт — см. REACTIONS. */
   react: (self: string, id: string, emoji: string) =>
@@ -582,9 +602,10 @@ export const group = {
 
   /** Сообщение в общий чат группы. */
   post: (gid: string, self: string, text: string, voice?: VoicePayload, clientId?: string,
-         replyTo?: string) =>
+         replyTo?: string, video?: VideoPayload) =>
     api.post<{ ok?: boolean; error?: string; message?: Json }>(
-      '/api/agent/gintent-post', { gid, self, text, voice, client_id: clientId, reply_to: replyTo }),
+      '/api/agent/gintent-post',
+      { gid, self, text, voice, client_id: clientId, reply_to: replyTo, video }),
 
   /** Реакция в комнате. Право — членство: кто в группе, тот и реагирует. */
   react: (gid: string, self: string, id: string, emoji: string) =>
