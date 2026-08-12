@@ -46,6 +46,18 @@ import { color, radius as rad, space, type } from '../src/theme';
 
 type Sheet = 'none' | 'when' | 'who' | 'summary';
 
+/**
+ * ДВА РЕЖИМА ОДНОЙ СТРАНИЦЫ, а не один экран на всё. На борде это разные кадры, и разница не
+ * косметическая:
+ *   просмотр (C.07) — карандашей НЕТ, зато есть состав и «идут N»; внизу «Групповой чат»
+ *                     и круглый карандаш, который и включает правку;
+ *   правка  (C.02a) — карандаши у четырёх строк, состава нет; внизу «Открыть поиск» и «Отмена».
+ *
+ * «Отмена» выходит ИЗ ПРАВКИ, а не со страницы: каждый лист применяет своё сразу, поэтому
+ * отменять ей нечего — она возвращает страницу в спокойный вид.
+ */
+type Mode = 'view' | 'edit';
+
 const SUMMARY_MAX = 300;
 
 export default function MyIntent() {
@@ -62,6 +74,7 @@ export default function MyIntent() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [sheet, setSheet] = useState<Sheet>('none');
+  const [mode, setMode] = useState<Mode>('view');
 
   /** Черновик листа. Заводится при открытии и до «Применить» никуда не уходит. */
   const [dateKey, setDateKey] = useState('');
@@ -207,13 +220,17 @@ export default function MyIntent() {
             <Text style={s.title}>{intentTitle(row)}</Text>
             <Text style={s.stateLine}>{stateLine(state)}</Text>
 
-            <Pressable accessibilityRole="button" style={s.metaRow} onPress={openWhen}>
+            <Pressable
+              accessibilityRole="button"
+              style={s.metaRow}
+              onPress={mode === 'edit' ? openWhen : undefined}
+            >
               <IconCalendar size={18} />
               <Text style={s.metaText} numberOfLines={1}>{when.date}</Text>
               {when.time ? <IconClock size={18} /> : null}
               {when.time ? <Text style={s.metaText} numberOfLines={1}>{when.time}</Text> : null}
               <View style={{ flex: 1 }} />
-              <IconPencil size={16} />
+              {mode === 'edit' ? <IconPencil size={16} /> : null}
             </Pressable>
 
             <View style={s.metaRow}>
@@ -225,21 +242,26 @@ export default function MyIntent() {
               {facts.map((f) => (
                 <Pressable
                   key={f.label}
-                  accessibilityRole={f.label === DETAILS.audience() ? 'button' : undefined}
+                  accessibilityRole={mode === 'edit' && f.label === DETAILS.audience() ? 'button' : undefined}
                   style={s.fact}
-                  onPress={f.label === DETAILS.audience() ? openWho : undefined}
+                  onPress={mode === 'edit' && f.label === DETAILS.audience() ? openWho : undefined}
                 >
                   <Text style={s.factLabel}>{f.label}</Text>
                   <Text style={s.factValue} numberOfLines={1}>{f.value}</Text>
-                  {f.label === DETAILS.audience() ? <IconPencil size={14} /> : null}
+                  {mode === 'edit' && f.label === DETAILS.audience() ? <IconPencil size={14} /> : null}
                 </Pressable>
               ))}
             </View>
 
-            <Pressable accessibilityRole="button" style={s.summary} onPress={openSummary}>
+            {/* На кадре это подпись и текст, а не карточка с подложкой. */}
+            <Pressable
+              accessibilityRole="button"
+              style={s.summary}
+              onPress={mode === 'edit' ? openSummary : undefined}
+            >
               <View style={s.summaryHead}>
                 <Text style={s.summaryLabel}>{SUMMARY_O10.summaryLabel()}</Text>
-                <IconPencil size={16} />
+                {mode === 'edit' ? <IconPencil size={16} /> : null}
               </View>
               <Text style={s.summaryText}>{intentSummary(row)}</Text>
             </Pressable>
@@ -248,6 +270,30 @@ export default function MyIntent() {
           </ScrollView>
 
           <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
+            {/* Просмотр: главное действие и круглый карандаш рядом — он включает правку. */}
+            {mode === 'view' ? (
+              <View style={s.dockRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  style={[s.cta, { flex: 1 }, busy && { opacity: 0.6 }]}
+                  disabled={busy}
+                  onPress={openSearch}
+                >
+                  {busy ? <ActivityIndicator size="small" color={color.onPrimary} />
+                    : <Text style={s.ctaText}>{ctaLabel(state)}</Text>}
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={ACT.edit()}
+                  style={s.fab}
+                  onPress={() => setMode('edit')}
+                >
+                  <IconPencil size={20} c={color.onPrimary} />
+                </Pressable>
+              </View>
+            ) : null}
+
+            {mode === 'edit' ? (
             <Pressable
               accessibilityRole="button"
               style={[s.cta, busy && { opacity: 0.6 }]}
@@ -257,18 +303,16 @@ export default function MyIntent() {
               {busy ? <ActivityIndicator size="small" color={color.onPrimary} />
                 : <Text style={s.ctaText}>{ctaLabel(state)}</Text>}
             </Pressable>
+            ) : null}
             {/*
-              Вторая кнопка с кадра. Она НЕ отменяет правки: каждый лист применяет своё сразу,
-              своей же кнопкой «Применить», и отменять к этому моменту нечего. Она закрывает
-              страницу — «я посмотрел и ничего больше не хочу». Назвать её «Отмена» — с борда.
+              «Отмена» выходит ИЗ ПРАВКИ, а не со страницы: листы применяют своё сразу, отменять
+              к этому моменту нечего. Она возвращает страницу в спокойный вид — без карандашей.
             */}
-            <Pressable
-              accessibilityRole="button"
-              style={s.ctaDark}
-              onPress={() => (router.canGoBack() ? router.back() : router.replace('/activity'))}
-            >
-              <Text style={s.ctaDarkText}>{DETAILS.cancel()}</Text>
-            </Pressable>
+            {mode === 'edit' ? (
+              <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setMode('view')}>
+                <Text style={s.ctaDarkText}>{DETAILS.cancel()}</Text>
+              </Pressable>
+            ) : null}
           </View>
         </>
       ) : null}
@@ -386,7 +430,7 @@ const s = StyleSheet.create({
   factLabel: { width: 96, ...type.bodySmall, color: color.muted } as any,
   factValue: { flex: 1, ...type.bodySmall, color: color.fg } as any,
 
-  summary: { marginTop: space.md, padding: space.md, borderRadius: rad.lg, backgroundColor: color.card, gap: 6 },
+  summary: { marginTop: space.md, gap: 6 },
   summaryHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   summaryLabel: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
   summaryText: { ...type.bodySmall, color: color.muted } as any,
@@ -394,6 +438,8 @@ const s = StyleSheet.create({
   err: { marginTop: space.md, ...type.bodySmall, color: color.warnText } as any,
 
   dock: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: space.lg, paddingTop: space.sm, backgroundColor: color.bg },
+  dockRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  fab: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
   cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   ctaText: { ...type.button, color: color.onPrimary } as any,
   ctaDark: { height: 52, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center', marginTop: space.sm },

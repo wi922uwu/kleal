@@ -25,12 +25,12 @@ import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { agent, group as gapi, mediaUrl } from '../src/api';
 import { searchProfile } from '../src/intent';
-import { planWhen } from '../src/chat';
-import { planRows, gplanRows, newestFirst, type Row } from '../src/messages';
+import { type Row } from '../src/messages';
 import { setResults } from '../src/results-store';
 import {
-  ACT, CHIP_TONE, INTENT_ID_KEY, chipLabel, ctaLabel, intentState, intentTitle, intentWhen, intentWhere,
-  type IntentRow,
+  ACT, CHIP_TONE, INTENT_ID_KEY, PLAN_STATE, chipLabel, ctaLabel, intentState, intentTitle,
+  intentWhen, intentWhere, planCard,
+  type IntentRow, type PlanCard,
 } from '../src/activity';
 import { BottomNav } from '../src/components/BottomNav';
 import {
@@ -52,7 +52,6 @@ export default function Activity() {
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
-  const ru = getLang() === 'ru';
   const me = String(st.profile.name || '');
 
   const [seg, setSeg] = useState<Seg>('intents');
@@ -100,16 +99,15 @@ export default function Activity() {
   // Возврат на вкладку — повод перечитать: пока человек отвечал на приглашение, список устарел.
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const plans = useMemo(() => {
-    const one = planRows(me, data.plans, data.history, ru, planWhen);
-    // Групповой план приходит с подписью времени, собранной пикером: пересобирать её из starts_at
-    // значит разойтись с тем, что видно в самой группе.
-    const many = gplanRows(data.gplans, data.ghistory, ru, (p: any) => String(p.when || ''));
-    return {
-      live: [...one.upcoming, ...one.forming, ...many.upcoming, ...many.forming].sort(newestFirst),
-      past: [...one.past, ...many.past].sort(newestFirst),
-    };
-  }, [me, data, ru]);
+  /**
+   * Планы — КАРТОЧКАМИ, теми же, что затеи. Строкой с аватаркой план выглядел как переписка, а
+   * ведёт он в саму встречу: одинаковый вид у разных вещей обманывает ожидание вернее, чем
+   * неточное слово. Разбор общий для парных и групповых — для человека это одна встреча.
+   */
+  const plans = useMemo(() => ({
+    live: [...data.plans, ...data.gplans].map((p: any) => planCard(p, me)),
+    past: [...data.history, ...data.ghistory].map((p: any) => planCard(p, me)),
+  }), [data, me]);
 
   /**
    * Кнопка карточки. Выдача НЕ передаётся параметрами маршрута — она большая, и на вебе это 431;
@@ -150,9 +148,9 @@ export default function Activity() {
     }
   }, [busy, me, router, st.profile]);
 
-  const openRow = (r: Row) => {
-    if (r.kind === 'group' && r.gid) return router.push({ pathname: '/gplan', params: { gid: r.gid } });
-    router.push({ pathname: '/plan', params: { id: r.id || '', who: r.who || '', title: r.title } });
+  const openPlan = (c: PlanCard) => {
+    if (c.gid) return router.push({ pathname: '/gplan', params: { gid: c.gid } });
+    router.push({ pathname: '/plan', params: { id: c.id || '', who: c.who || '', title: c.title } });
   };
 
   const openInvite = (v: any) =>
@@ -250,7 +248,7 @@ export default function Activity() {
 
         {!loading && seg === 'plans' ? (
           plans.live.length
-            ? plans.live.map((r) => <PlainRow key={r.key} row={r} onPress={() => openRow(r)} />)
+            ? plans.live.map((c) => <PlanBlock key={c.key} card={c} onPress={() => openPlan(c)} />)
             : empty(ACT.emptyPlans())
         ) : null}
 
@@ -273,7 +271,7 @@ export default function Activity() {
 
         {!loading && seg === 'history' ? (
           plans.past.length
-            ? plans.past.map((r) => <PlainRow key={r.key} row={r} onPress={() => openRow(r)} />)
+            ? plans.past.map((c) => <PlanBlock key={c.key} card={c} onPress={() => openPlan(c)} />)
             : empty(ACT.emptyHistory())
         ) : null}
       </ScrollView>
@@ -354,7 +352,39 @@ function IntentCard({
   );
 }
 
-/** Строка для планов, приглашений и истории: тот же ряд, что в «Сообщениях», но ведёт в объект. */
+/** Блок плана — та же карточка, что у затеи: обложка с чипом, название, когда и где, действие. */
+function PlanBlock({ card, onPress }: { card: PlanCard; onPress: () => void }) {
+  return (
+    <Pressable style={s.card} accessibilityRole="button" onPress={onPress}>
+      <View style={s.cover}>
+        <IconImagePlaceholder size={40} c={color.onCoverSoft} />
+        <View style={[s.chip, s[`chip_${card.tone}` as 'chip_warn']]}>
+          <Text style={[s.chipText, s[`chipText_${card.tone}` as 'chipText_warn']]}>{card.chip}</Text>
+        </View>
+      </View>
+      <View style={s.cardBody}>
+        <Text style={s.cardTitle} numberOfLines={1}>{card.title}</Text>
+        <View style={s.meta}>
+          <IconCalendar size={16} />
+          <Text style={s.metaText} numberOfLines={1}>{card.date}</Text>
+          {card.time ? <IconClock size={16} /> : null}
+          {card.time ? <Text style={s.metaText} numberOfLines={1}>{card.time}</Text> : null}
+        </View>
+        <View style={s.meta}>
+          <IconPin size={16} c={color.muted} />
+          <Text style={s.metaText} numberOfLines={1}>{card.where}</Text>
+        </View>
+        <View style={s.actions}>
+          <Pressable accessibilityRole="button" style={s.cta} onPress={onPress}>
+            <Text style={s.ctaText}>{PLAN_STATE.open()}</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+/** Строка для приглашений: там это человек, а не встреча, и карточка была бы не о том. */
 function PlainRow({ row, onPress }: { row: Row; onPress: () => void }) {
   return (
     <Pressable accessibilityRole="button" style={s.row} onPress={onPress}>

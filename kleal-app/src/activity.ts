@@ -218,6 +218,69 @@ export function intentSummary(row: IntentRow): string {
   });
 }
 
+/**
+ * Карточка ПЛАНА — тот же блок, что у затеи, а не строка переписки.
+ *
+ * Строкой с аватаркой план выглядел как чат, и это была неправда о том, куда ведёт нажатие: в
+ * «Сообщениях» такая строка открывает разговор, здесь — саму встречу. Одинаковый вид у разных
+ * вещей — худший сорт вранья интерфейса: он не ошибается в словах, он ошибается в ожидании.
+ */
+export type PlanCard = {
+  key: string;
+  title: string;
+  date: string;
+  time: string;
+  where: string;
+  chip: string;
+  tone: 'warn' | 'success' | 'info';
+  faces: string[];
+  gid?: string;
+  id?: string;
+  who?: string;
+};
+
+export const PLAN_STATE = {
+  proposed: () => T('Согласовывают', 'Being agreed'),
+  confirmed: () => T('Подтверждён', 'Confirmed'),
+  locked: () => T('Закреплён', 'Locked'),
+  below: () => T('На паузе', 'On hold'),
+  done: () => T('Прошло', 'Ended'),
+  cancelled: () => T('Отменён', 'Called off'),
+  open: () => T('Открыть план', 'Open the plan'),
+};
+
+/** Один разбор на парные и групповые планы: для человека это одна и та же встреча. */
+export function planCard(p: any, me = ''): PlanCard {
+  const st = String(p?.state || '');
+  const tone: PlanCard['tone'] =
+    st === 'confirmed' || st === 'locked' ? 'success'
+    : st === 'below_quorum' || st === 'cancelled' ? 'info' : 'warn';
+  const chip =
+    st === 'confirmed' ? PLAN_STATE.confirmed()
+    : st === 'locked' ? PLAN_STATE.locked()
+    : st === 'below_quorum' ? PLAN_STATE.below()
+    : st === 'done' ? PLAN_STATE.done()
+    : st === 'cancelled' ? PLAN_STATE.cancelled()
+    : PLAN_STATE.proposed();
+  const who = (p?.participants || [])
+    .map((x: any) => String(x?.name || ''))
+    .filter((n: string) => n && n.toLowerCase() !== String(me).toLowerCase());
+  const when = splitWhen(String(p?.when || ''));
+  return {
+    key: (p?.gid ? 'gp:' : 'mp:') + String(p?.id || p?.gid || ''),
+    title: String(p?.title || who[0] || T('Встреча', 'Meetup')).trim(),
+    date: when.date,
+    time: when.time,
+    where: planWhere(String(p?.venue || p?.district || p?.place || '').trim(), '', ''),
+    chip,
+    tone,
+    faces: (p?.participants || []).map((x: any) => String(x?.photo || '')).filter(Boolean).slice(0, 3),
+    gid: p?.gid ? String(p.gid) : undefined,
+    id: p?.id ? String(p.id) : undefined,
+    who: who[0],
+  };
+}
+
 /** Счётчик на сегменте «Приглашения» — столько же, сколько строк в стопке на главной. */
 export const inviteBadge = (invites: any[]) => (invites || []).length;
 
