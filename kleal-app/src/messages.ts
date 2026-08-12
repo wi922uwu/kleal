@@ -29,6 +29,7 @@ export const MSG = {
   kleal: () => 'Kleal',
   klealSub: () => T('Твой агент · всегда на связи', 'Your agent · always on'),
   klealTeaser: () => T('Скажи, чего хочется', 'Tell me what you feel like doing'),
+  voiceMessage: () => T('Голосовое сообщение', 'Voice message'),
 
   // Секции MSG.02/MSG.05.
   upcoming: () => T('Предстоящее', 'Upcoming'),
@@ -218,7 +219,9 @@ export function threadRows(threads: any[], me = '', ru = true, line?: (sys: any,
   return (threads || []).map((t: any) => ({
     key: 'th:' + norm(t.who), kind: 'thread' as const, who: t.who,
     title: String(t.who || ''), sub: '',
-    teaser: String(t.last || '') || (t.sys && line ? line(t.sys, me, ru) : ''),
+    teaser: t.kind === 'voice'
+      ? MSG.voiceMessage()
+      : String(t.last || '') || (t.sys && line ? line(t.sys, me, ru) : ''),
     photo: t.photo, t: Number(t.t || 0),
   })).sort((a, b) => (b.t || 0) - (a.t || 0));
 }
