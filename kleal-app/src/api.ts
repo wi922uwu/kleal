@@ -581,9 +581,18 @@ export const group = {
     ),
 
   /** Сообщение в общий чат группы. */
-  post: (gid: string, self: string, text: string, voice?: VoicePayload, clientId?: string) =>
+  post: (gid: string, self: string, text: string, voice?: VoicePayload, clientId?: string,
+         replyTo?: string) =>
     api.post<{ ok?: boolean; error?: string; message?: Json }>(
-      '/api/agent/gintent-post', { gid, self, text, voice, client_id: clientId }),
+      '/api/agent/gintent-post', { gid, self, text, voice, client_id: clientId, reply_to: replyTo }),
+
+  /** Реакция в комнате. Право — членство: кто в группе, тот и реагирует. */
+  react: (gid: string, self: string, id: string, emoji: string) =>
+    api.post<{ ok?: boolean; error?: string; r?: Record<string, string[]> }>(
+      '/api/agent/gmsg-react', { gid, self, id, emoji }),
+
+  deleteMessage: (gid: string, self: string, id: string) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/gmsg-delete', { gid, self, id }),
 
   /** Чат группы, старые сверху; `since` — дотягивать только новое. Не участнику — NOT_A_MEMBER:
    *  комнату читают только свои, и это проверка сервера, а не вежливость интерфейса. */

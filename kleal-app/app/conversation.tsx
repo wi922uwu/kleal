@@ -15,14 +15,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
-  ActivityIndicator, KeyboardAvoidingView, Platform, Linking,
+  ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import {
-  CHAT, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS,
-  msgTime, msgDayLabel, planWhen, planPinned, sysLine, sameSeries, linkParts,
-} from '../src/chat';
+import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS, planWhen, planPinned, sysLine } from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
@@ -31,8 +28,8 @@ import { mediaUrl, agent, newIdem } from '../src/api';
 import { usePolling } from '../src/polling';
 import { Sheet, SheetItem } from '../src/components/Sheet';
 import * as Clipboard from 'expo-clipboard';
-import { SwipeToReply } from '../src/components/SwipeToReply';
-import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
+import { MessageFeed } from '../src/components/MessageFeed';
+import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
 } from '../src/components/icons';
@@ -163,17 +160,6 @@ export default function Conversation() {
    *  ни в счётчике подсказки MSG.08 («вы обменялись N сообщениями»). */
   const talk = useMemo(() => msgs.filter((m) => !m.sys), [msgs]);
 
-  /**
-   * Что реально попадёт на экран. Считается ЗАРАНЕЕ, потому что от соседей зависят и разделитель
-   * дня, и серия — а системная строка с незнакомым кодом не рисуется вовсе.
-   *
-   * Раньше соседа брали из полного списка: скрытая строка оставалась «предыдущей», и разделитель
-   * «Сегодня» исчезал вместе с ней — первый настоящий пузырь дня оставался без даты.
-   */
-  const shown = useMemo(
-    () => msgs.filter((m) => !m.sys || !!sysLine(m.sys, me, getLang() === 'ru')),
-    [msgs, me]
-  );
 
   // «Прочитано» отправляется, когда на экране появились новые ЧУЖИЕ сообщения, а не на каждый опрос.
   useEffect(() => {
@@ -550,114 +536,17 @@ export default function Conversation() {
             <Text style={s.empty}>{CHAT.empty(other, emptyState)}</Text>
           ) : null}
 
-          {shown.map((m, i) => {
-            const mine = String(m.from || '').trim().toLowerCase() === me.trim().toLowerCase();
-            const prev = shown[i - 1];
-            const next = shown[i + 1];
-            const newDay = !!m.t && (!prev
-              || new Date((prev.t || 0) * 1000).toDateString() !== new Date(m.t * 1000).toDateString());
-            /* События плана — не реплика: они не чьи-то слова, а факт, случившийся с встречей.
-               Поэтому строкой по центру, без пузыря, аватара и галочек прочтения. */
-            if (m.sys) {
-              return (
-                <React.Fragment key={m.id || m.cid || i}>
-                  {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
-                  <View style={s.eventRow}>
-                    <IconCalendar size={13} c={color.muted} />
-                    <Text style={s.eventText}>{sysLine(m.sys, me, ru)}</Text>
-                    <Text style={s.eventTime}>{msgTime(m.t, ru)}</Text>
-                  </View>
-                </React.Fragment>
-              );
-            }
-            /* Подряд идущие реплики одного человека — одна серия: время и хвостик у неё общие.
-               Иначе живая переписка превращается в столбик одинаковых часов. */
-            const tail = !sameSeries(m, next);
-            const failed = m.state === 'failed';
-            const read = peerRead >= (m.t || 0);
-            return (
-              <React.Fragment key={m.id || m.cid || i}>
-                {/* MSG.06: «Сегодня» над первой репликой дня. */}
-                {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
-                <SwipeToReply enabled={!!m.id && !m.deleted} onReply={() => setReplyTo(m)}>
-                <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', marginTop: sameSeries(prev, m) ? 2 : 8 }}>
-                  {/* У голосового текста в пузыре нет — есть проигрыватель и расшифровка под ним. */}
-                  {m.voice ? (
-                    <VoiceBubble voice={m.voice} mine={mine} />
-                  ) : (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={failed ? CHAT.retry() : m.text}
-                      onPress={failed ? () => deliver(m) : undefined}
-                      onLongPress={m.deleted || !m.id ? undefined : () => setPicked(m)}
-                      delayLongPress={350}
-                      style={[s.bub, mine ? s.bubMe : s.bubThem,
-                              !tail && (mine ? s.bubMeMid : s.bubThemMid), failed && s.bubFailed]}
-                    >
-                      {/* Цитата внутри пузыря, а не рядом: ответ и то, на что отвечают, — одно целое. */}
-                      {m.rt ? (
-                        <View style={[s.quote, mine && s.quoteMine]}>
-                          <Text style={[s.quoteWho, mine && { color: color.onPrimary }]} numberOfLines={1}>
-                            {m.rt.from}
-                          </Text>
-                          <Text style={[s.quoteText, mine && { color: color.onPrimary }]} numberOfLines={2}>
-                            {m.rt.text || CHAT.deleted()}
-                          </Text>
-                        </View>
-                      ) : null}
-                      <Text style={[s.bubText, mine && { color: color.onPrimary },
-                                    m.deleted && s.bubGone]}>
-                        {m.deleted ? CHAT.deleted() : linkParts(String(m.text || '')).map((part, k) => (
-                          part.href ? (
-                            /* Ссылка показывается ровно так, как её прислали: подменять адрес
-                               красивой подписью в переписке нельзя — по ней и решают, идти ли. */
-                            <Text
-                              key={k}
-                              style={[s.link, mine && s.linkMine]}
-                              onPress={() => Linking.openURL(part.href!).catch(() => {})}
-                            >
-                              {part.text}
-                            </Text>
-                          ) : <Text key={k}>{part.text}</Text>
-                        ))}
-                      </Text>
-                    </Pressable>
-                  )}
-                  {/* Реакции под пузырём: нажатие по своей снимает её, по чужой — присоединяет. */}
-                  {m.r && Object.keys(m.r).length ? (
-                    <View style={[s.reactions, { alignSelf: mine ? 'flex-end' : 'flex-start' }]}>
-                      {Object.entries(m.r).map(([e, who]) => (
-                        <Pressable
-                          key={e}
-                          accessibilityRole="button"
-                          accessibilityLabel={`${e} ${who.length}`}
-                          onPress={() => react(m, e)}
-                          style={[s.reaction, who.includes(me.trim().toLowerCase()) && s.reactionMine]}
-                        >
-                          <Text style={s.reactionText}>{e}{who.length > 1 ? ` ${who.length}` : ''}</Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  ) : null}
-                  {tail ? (
-                    <Text style={s.time}>
-                      {msgTime(m.t, ru)}
-                      {/* Своё сообщение говорит о себе честно: часики — ушло не всё, восклицание —
-                          не ушло вовсе и можно нажать, галочка — сервер принял, две — прочитано.
-                          Раньше серая галочка стояла безусловно, и потерянное выглядело как
-                          доставленное. */}
-                      {mine ? (
-                        m.state === 'sending' ? <Text style={s.tick}>  ⋯</Text>
-                        : failed ? <Text style={s.tickFail}>  ! {CHAT.retry()}</Text>
-                        : <Text style={read ? s.tickRead : s.tick}>{read ? '  ✓✓' : '  ✓'}</Text>
-                      ) : null}
-                    </Text>
-                  ) : null}
-                </View>
-                </SwipeToReply>
-              </React.Fragment>
-            );
-          })}
+          <MessageFeed
+            msgs={msgs}
+            me={me}
+            ru={ru}
+            sysText={(m) => sysLine(m.sys, me, ru)}
+            peerRead={peerRead}
+            onReply={setReplyTo}
+            onReact={react}
+            onPick={setPicked}
+            onRetry={deliver}
+          />
 
           {/* MSG.09 — предложение ушло; ничего не забронировано до «да». */}
           {livePlan?.state === 'proposed' && norm(livePlan.host) === norm(me) ? (
@@ -950,12 +839,6 @@ const s = StyleSheet.create({
   factVal: { flex: 1, ...type.bodySmall, color: color.fg, textAlign: 'right' } as any,
 
   // События плана: плашка по центру ленты — заметная, но тише реплики.
-  eventRow: {
-    alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 7,
-    maxWidth: '92%', marginTop: space.sm,
-    paddingVertical: 7, paddingHorizontal: 12,
-    borderRadius: rad.full, backgroundColor: color.neutral100,
-  },
   eventText: { flexShrink: 1, fontSize: 12.5, lineHeight: 17, color: color.muted, textAlign: 'center' } as any,
   eventTime: { fontSize: 11, color: color.neutral400 } as any,
 
@@ -963,34 +846,10 @@ const s = StyleSheet.create({
   empty: { ...type.bodySmall, color: color.muted, textAlign: 'center', marginTop: space.lg } as any,
   /** MSG.06: «Сегодня» — маленькая серая метка по центру над первой репликой дня. */
   day: { fontSize: 12, color: color.neutral400, textAlign: 'center', marginTop: space.md } as any,
-  bub: { maxWidth: '80%', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 18 },
-  /** Хвостик — у ПОСЛЕДНЕГО пузыря серии: он и показывает, где реплики одного человека кончились. */
-  bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderBottomRightRadius: 6 },
-  bubThem: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderBottomLeftRadius: 6 },
-  bubMeMid: { borderBottomRightRadius: 18 },
-  bubThemMid: { borderBottomLeftRadius: 18 },
-  /** Не ушло — пузырь бледнее и нажимается. Цвет не меняем: это по-прежнему твои слова. */
-  bubFailed: { opacity: 0.6 },
-  /** Удалённое остаётся строкой: пропасть бесследно оно не может — второй его уже видел. */
-  bubGone: { fontStyle: 'italic', opacity: 0.7 },
 
-  /** Цитата — внутри пузыря, с полоской слева: ответ и то, на что отвечают, это одно целое. */
-  quote: {
-    borderLeftWidth: 2, borderLeftColor: color.primary,
-    paddingLeft: space.sm, marginBottom: 6, gap: 1,
-  },
-  quoteMine: { borderLeftColor: color.onPrimary },
   quoteWho: { fontSize: 12, fontWeight: '700', color: color.primary } as any,
   quoteText: { fontSize: 12, color: color.muted } as any,
 
-  reactions: { flexDirection: 'row', gap: 4, marginTop: 3 },
-  reaction: {
-    flexDirection: 'row', paddingHorizontal: 7, paddingVertical: 3,
-    borderRadius: rad.full, backgroundColor: color.neutral100,
-    borderWidth: 1, borderColor: 'transparent',
-  },
-  /** Своя реакция обведена: без этого нельзя понять, поставил ты её или просто видишь. */
-  reactionMine: { borderColor: color.primary, backgroundColor: color.card },
   reactionText: { fontSize: 13, color: color.fg } as any,
   link: { color: color.primary, textDecorationLine: 'underline' } as any,
   linkMine: { color: color.onPrimary } as any,

@@ -12,6 +12,7 @@
  *    already in», а не «кого ещё позвали» (GR.16).
  */
 import { T } from './i18n';
+import type { Msg } from './chat';
 
 /**
  * Групповой ли это интент. Мастер шлёт плоские format/groupSize; сервер в ответе может отдать их
@@ -223,4 +224,33 @@ export function groupSysLine(text: string): string {
   if (/enough people/i.test(t)) return ROOM.sysEnough();
   if (/group is full/i.test(t)) return ROOM.sysFull();
   return t;
+}
+
+
+/**
+ * Привести реплику комнаты к общей форме ленты.
+ *
+ * Сервер зовёт автора `frm`, а в личной переписке он `from`; системную строку в комнате узнают по
+ * пустому автору, а в паре — по полю `sys`. Из-за этих двух различий ленты и были написаны
+ * дважды: разметка совпадала, а данные под ней — нет.
+ *
+ * Приводим здесь, на входе, а не ветвим показ: тогда обе ленты — один компонент, и всё, что
+ * сделано для переписки, работает в комнате в тот же день.
+ */
+export function roomMsg(raw: any): Msg {
+  const who = String(raw?.frm || '').trim();
+  return {
+    id: raw?.id,
+    from: who,
+    text: String(raw?.text || ''),
+    t: Number(raw?.t || 0),
+    cid: raw?.cid,
+    voice: raw?.kind === 'voice' ? raw?.voice : undefined,
+    r: raw?.r,
+    rt: raw?.rt,
+    deleted: !!raw?.deleted,
+    // Системная строка комнаты приходит английским текстом, а не кодом: `sys` тут — только метка
+    // «это не чья-то реплика», перевод делает groupSysLine по самому тексту.
+    sys: who ? undefined : ({ code: 'room' } as any),
+  };
 }

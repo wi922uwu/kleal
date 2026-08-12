@@ -31,16 +31,22 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo, type VoicePayload } from '../src/api';
-import { ROOM, GROUP, groupSysLine } from '../src/groups';
+import { ROOM, GROUP, groupSysLine, roomMsg } from '../src/groups';
 import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
-import { msgTime } from '../src/chat';
 import { IconChevronLeft, IconPerson, IconSend, IconDots } from '../src/components/icons';
-import { Sheet } from '../src/components/Sheet';
+import { Sheet, SheetItem } from '../src/components/Sheet';
+import { MessageFeed } from '../src/components/MessageFeed';
+import { CHAT, Msg, REACTIONS } from '../src/chat';
+import { usePolling } from '../src/polling';
+import * as Clipboard from 'expo-clipboard';
 import { color, radius as rad, space, type } from '../src/theme';
-import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
+import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
 
 type GMsg = { id?: string; frm?: string; text?: string; t?: number; kind?: string; voice?: VoicePayload };
+
+/** Лента комнаты и лента переписки — один компонент; форма приводится на входе (см. roomMsg). */
+type Row = Msg;
 
 export default function GroupRoom() {
   useLang();
@@ -56,7 +62,9 @@ export default function GroupRoom() {
   const me = String(st.profile.name || '');
 
   const [g, setG] = useState<GroupInfo | null>(null);
-  const [msgs, setMsgs] = useState<GMsg[]>([]);
+  const [msgs, setMsgs] = useState<Row[]>([]);
+  const [picked, setPicked] = useState<Row | null>(null);
+  const [replyTo, setReplyTo] = useState<Row | null>(null);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
@@ -73,10 +81,10 @@ export default function GroupRoom() {
     if (!me || !gid) throw new Error('MISSING_GROUP');
     const r: any = await gapi.post(gid, me, payload.transcript, payload);
     if (!r?.ok) throw new Error(r?.error || 'post failed');
-    const local: GMsg = r?.message || {
-      frm: me, text: payload.transcript, kind: 'voice', voice: payload, t: Date.now() / 1000,
-    };
-    setMsgs((prev) => [...prev, local]);
+    const local: Row = roomMsg(r?.message) || null;
+    setMsgs((prev) => [...prev, local || {
+      from: me, text: payload.transcript, voice: payload, t: Date.now() / 1000,
+    }]);
     setErr('');
   }, [gid, me]);
   const voice = useVoiceMessage(deliverVoice, !me || !gid || !!fatal);
@@ -90,20 +98,20 @@ export default function GroupRoom() {
       if (r?.group) setG(r.group);
       const list: GMsg[] = r?.messages || [];
       if (list.length) {
+        const rows = list.map(roomMsg);
         setMsgs((prev) => {
-          // Склейка по id: опрос приносит и мою собственную реплику, показанную оптимистично.
-          // У голосового своя примета — id загруженного файла: расшифровки двух записей могут
-          // совпасть дословно, и сверка по тексту склеила бы разные сообщения в одно.
-          const seen = new Set(prev.map((m) => m.id).filter(Boolean));
-          const add = list.filter((m) => !m.id || !seen.has(m.id));
-          return [
-            ...prev.filter((m) => m.id || !add.some((a) => (
-              m.voice?.id ? a.voice?.id === m.voice.id : !a.voice && a.text === m.text
-            ))),
-            ...add,
-          ];
+          // Склейка по КЛЮЧУ ОТПРАВИТЕЛЯ, потом по id — ровно как в переписке. Реакция и правка
+          // приходят на СТАРУЮ строку, поэтому пришедшее не добавляется, а заменяет свою.
+          const out = [...prev];
+          for (const m of rows) {
+            const byCid = m.cid ? out.findIndex((x) => x.cid && x.cid === m.cid) : -1;
+            const at = byCid >= 0 ? byCid : (m.id ? out.findIndex((x) => x.id && x.id === m.id) : -1);
+            if (at >= 0) out[at] = m; else out.push(m);
+          }
+          return out.sort((a, b) => (a.t || 0) - (b.t || 0));
         });
-        since.current = Math.max(since.current, ...list.map((m) => Number(m.t || 0)));
+        // Отсечка по «когда трогали»: иначе изменённая строка приедет ещё раз на каждом опросе.
+        since.current = Math.max(since.current, ...list.map((m: any) => Math.max(Number(m.t || 0), Number(m.u || 0))));
       }
       setErr('');
     } catch {
@@ -116,31 +124,83 @@ export default function GroupRoom() {
   useEffect(() => { load(); }, [load]);
 
   // Лёгкий опрос: в группе пишут не мгновенно, а сокет ради нескольких реплик избыточен.
-  useEffect(() => {
-    if (fatal) return;
-    const id = setInterval(load, 4000);
-    return () => clearInterval(id);
-  }, [load, fatal]);
+  // Спит, пока экран не виден: раньше тикал и из свёрнутого приложения.
+  usePolling(load, 4000, !fatal);
 
+  /** Прижимать ленту к низу — только если человек и так внизу, иначе чужая реплика выдёргивает
+   *  читающего старое сообщение обратно вниз каждые четыре секунды. */
+  const atBottom = useRef(true);
   useEffect(() => {
+    if (!atBottom.current) return;
     const id = setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 80);
     return () => clearTimeout(id);
   }, [msgs.length]);
 
-  const send = async () => {
+  /**
+   * Отправка одной реплики — и первая, и повторная. Всё то же, что в переписке: пузырь виден
+   * сразу, но честно говорит о себе часиками; ключ переживает повтор, поэтому у остальных не
+   * появляется вторая копия.
+   */
+  const deliver = useCallback(async (m: Row) => {
+    if (!gid || !me) return;
+    setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'sending' } : x)));
+    try {
+      const r: any = await gapi.post(gid, me, String(m.text || ''), m.voice, m.cid, m.rt?.id);
+      if (!r?.ok) throw new Error(String(r?.error || 'post failed'));
+      setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: undefined } : x)));
+      setErr('');
+    } catch {
+      setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'failed' } : x)));
+      setErr(ROOM.offline());
+    }
+  }, [gid, me]);
+
+  const send = () => {
     const text = draft.trim();
     if (!text || !me || !gid) return;
     setDraft('');
-    // Показываем сразу: опрос принесёт серверную версию этой же реплики и склеит по id.
-    setMsgs((prev) => [...prev, { frm: me, text, t: Date.now() / 1000 }]);
+    atBottom.current = true;
+    const local: Row = {
+      from: me, text, t: Date.now() / 1000, cid: newIdem('g'), state: 'sending',
+      rt: replyTo ? { id: replyTo.id, from: replyTo.from, text: replyTo.text } : undefined,
+    };
+    setReplyTo(null);
+    setMsgs((prev) => [...prev, local]);
+    deliver(local);
+  };
+
+  /** Реакция ставится сразу и откатывается, если не прошла: ждать ответа ради своего же нажатия
+   *  незачем, а объяснять неудачу нечем — человек нажмёт ещё раз. */
+  const react = useCallback(async (m: Row, emoji: string) => {
+    if (!m.id || !gid) return;
+    const mine = String(me).trim().toLowerCase();
+    const flip = (r?: Record<string, string[]>) => {
+      const next = { ...(r || {}) };
+      const has = (next[emoji] || []).includes(mine);
+      const list = has ? (next[emoji] || []).filter((n) => n !== mine) : [...(next[emoji] || []), mine];
+      if (list.length) next[emoji] = list; else delete next[emoji];
+      return next;
+    };
+    setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, r: flip(x.r) } : x)));
     try {
-      const r: any = await gapi.post(gid, me, text);
-      if (!r?.ok) throw new Error(r?.error || 'post failed');
-      setErr('');
+      const r: any = await gapi.react(gid, me, m.id, emoji);
+      if (!r?.ok) throw new Error();
+      setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, r: r.r } : x)));
+    } catch {
+      setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, r: flip(x.r) } : x)));
+    }
+  }, [gid, me]);
+
+  const removeMsg = useCallback(async (m: Row) => {
+    if (!m.id || !gid) return;
+    setPicked(null);
+    setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, text: '', deleted: true, r: undefined } : x)));
+    try {
+      await gapi.deleteMessage(gid, me, m.id);
     } catch {
       setErr(ROOM.offline());
     }
-  };
+  }, [gid, me]);
 
   /**
    * «Позвать ещё людей» — новый поиск по интенту ЭТОЙ группы, и приглашения из него уходят в неё
@@ -249,35 +309,64 @@ export default function GroupRoom() {
 
         <ScrollView ref={scroller} contentContainerStyle={s.thread} keyboardShouldPersistTaps="handled">
           {loading && !msgs.length ? <ActivityIndicator style={{ marginTop: 24 }} color={color.primary} /> : null}
-          {msgs.map((m, i) => {
-            const sys = !String(m.frm || '').trim();
-            if (sys) {
-              return (
-                <Text key={m.id || i} style={s.sys}>
-                  {groupSysLine(String(m.text || ''))}
-                  {m.t ? ` · ${msgTime(Number(m.t))}` : ''}
-                </Text>
-              );
-            }
-            const mine = String(m.frm || '').trim().toLowerCase() === me.toLowerCase();
-            return (
-              <View key={m.id || i} style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}>
-                {/* Имя автора — только у чужих: в группе больше двух человек, и без подписи
-                    реплики сливаются в один голос. У своих оно избыточно. */}
-                {!mine ? <Text style={s.author}>{m.frm}</Text> : null}
-                {m.kind === 'voice' && m.voice ? (
-                  <VoiceBubble voice={m.voice} mine={mine} />
-                ) : (
-                  <View style={[s.bub, mine ? s.bubMe : s.bubThem]}>
-                    <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
-                  </View>
-                )}
-                {m.t ? <Text style={s.time}>{msgTime(Number(m.t))}</Text> : null}
-              </View>
-            );
-          })}
+          <MessageFeed
+            msgs={msgs}
+            me={me}
+            ru={getLang() === 'ru'}
+            showAuthor
+            sysText={(m) => groupSysLine(String(m.text || ''))}
+            onReply={setReplyTo}
+            onReact={react}
+            onPick={setPicked}
+            onRetry={deliver}
+          />
           {err ? <Text style={s.err}>{err}</Text> : null}
         </ScrollView>
+
+        {/* Действия над сообщением — тот же лист, что в переписке, и та же строка реакций. */}
+        <Sheet visible={!!picked} onClose={() => setPicked(null)}>
+          <View style={s.reactRow}>
+            {REACTIONS.map((e) => (
+              <Pressable
+                key={e}
+                accessibilityRole="button"
+                accessibilityLabel={e}
+                style={s.reactPick}
+                onPress={() => { if (picked) react(picked, e); setPicked(null); }}
+              >
+                <Text style={s.reactPickText}>{e}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {picked?.text ? (
+            <SheetItem
+              label={CHAT.copy()}
+              onPress={async () => {
+                await Clipboard.setStringAsync(String(picked?.text || ''));
+                setPicked(null);
+              }}
+            />
+          ) : null}
+          <SheetItem label={CHAT.reply()} onPress={() => { setReplyTo(picked); setPicked(null); }} />
+          {picked && String(picked.from || '').trim().toLowerCase() === me.toLowerCase() ? (
+            <SheetItem label={CHAT.deleteMsg()} note={CHAT.deleteNote()} danger
+                       onPress={() => picked && removeMsg(picked)} />
+          ) : null}
+        </Sheet>
+
+        {/* На что отвечаем — видно ДО отправки, иначе цитата становится сюрпризом. */}
+        {replyTo ? (
+          <View style={s.replyBar}>
+            <View style={s.replyStripe} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.replyWho} numberOfLines={1}>{CHAT.replyTo(String(replyTo.from || ''))}</Text>
+              <Text style={s.replyText} numberOfLines={1}>{replyTo.text || CHAT.deleted()}</Text>
+            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Убрать', 'Remove')} onPress={() => setReplyTo(null)} hitSlop={10}>
+              <Text style={s.replyX}>✕</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
           <View style={s.field}>
@@ -429,6 +518,21 @@ function LeaveSheet({
 // Оформление UX-каркаса: значения — из токенов темы; при натягивании UI меняется этот блок.
 
 const s = StyleSheet.create({
+  reactRow: { flexDirection: 'row', justifyContent: 'space-between', paddingBottom: space.sm },
+  reactPick: {
+    width: 46, height: 46, borderRadius: 23, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  reactPickText: { fontSize: 24 } as any,
+  replyBar: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    marginHorizontal: 16, marginBottom: 6, paddingVertical: 8, paddingHorizontal: 10,
+    borderRadius: rad.md, backgroundColor: color.neutral100,
+  },
+  replyStripe: { width: 2, alignSelf: 'stretch', borderRadius: 1, backgroundColor: color.primary },
+  replyWho: { fontSize: 12, fontWeight: '700', color: color.primary } as any,
+  replyText: { fontSize: 13, color: color.muted } as any,
+  replyX: { fontSize: 16, color: color.muted },
   wrap: { flex: 1, backgroundColor: color.bg },
   head: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingBottom: space.sm },
   back: {
@@ -445,9 +549,6 @@ const s = StyleSheet.create({
   thread: { paddingHorizontal: 20, paddingTop: space.sm, paddingBottom: space.lg, gap: 4 },
   sys: { ...type.caption, color: color.muted, textAlign: 'center', marginVertical: 6 } as any,
   author: { ...type.caption, color: color.muted, marginLeft: 6, marginTop: space.sm } as any,
-  bub: { maxWidth: '86%', paddingVertical: 10, paddingHorizontal: 14, marginTop: 2 },
-  bubThem: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderRadius: 16 },
-  bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderRadius: 16, marginTop: space.sm },
   bubText: { ...type.body, color: color.fg } as any,
   time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
   err: { ...type.bodySmall, color: color.primary, textAlign: 'center', marginTop: space.sm } as any,
