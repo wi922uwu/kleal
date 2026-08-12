@@ -65,6 +65,30 @@ export const IconMic = ({ size = 20, c = color.muted }: P) => (
   </Svg>
 );
 
+/** Замок — подсказка «потяни вверх, чтобы закрепить запись» над кнопкой микрофона. */
+export const IconLock = ({ size = 14, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <Rect x={4.5} y={10.5} width={15} height={10.5} rx={2.6} />
+    <Path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+  </Svg>
+);
+
+/** Шеврон вверх — стрелка над замком, показывает направление протяжки. */
+export const IconChevronUp = ({ size = 12, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M5 15l7-7 7 7" />
+  </Svg>
+);
+
+/** Корзина — отмена записи: и на пороге протяжки влево, и кнопкой у закреплённой. */
+export const IconTrash = ({ size = 18, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M4 7h16" />
+    <Path d="M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7" />
+    <Path d="M6.5 7l.9 12.1A1.9 1.9 0 0 0 9.3 21h5.4a1.9 1.9 0 0 0 1.9-1.9L17.5 7" />
+  </Svg>
+);
+
 export const IconChevronLeft = ({ size = 22, c = color.fg }: P) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
     <Path d="M15 5l-7 7 7 7" />
