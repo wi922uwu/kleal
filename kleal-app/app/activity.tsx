@@ -29,12 +29,13 @@ import { planWhen } from '../src/chat';
 import { planRows, gplanRows, newestFirst, type Row } from '../src/messages';
 import { setResults } from '../src/results-store';
 import {
-  ACT, INTENT_ID_KEY, chipLabel, ctaLabel, intentState, intentTitle, intentWhen, intentWhere,
+  ACT, CHIP_TONE, INTENT_ID_KEY, chipLabel, ctaLabel, intentState, intentTitle, intentWhen, intentWhere,
   type IntentRow,
 } from '../src/activity';
 import { BottomNav } from '../src/components/BottomNav';
 import {
   IconChevronLeft, IconCalendar, IconClock, IconPin, IconPencil, IconImagePlaceholder, IconPerson,
+  IconSearch, IconCheckCircle,
 } from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
 
@@ -287,12 +288,18 @@ function IntentCard({
   row, outbox, busy, onOpen, onEdit,
 }: { row: IntentRow; outbox: any[]; busy: boolean; onOpen: () => void; onEdit: () => void }) {
   const state = intentState(row, outbox);
+  const tone = CHIP_TONE[state];
   const when = intentWhen(row);
+  const faces = (row.candidates || []).map((c: any) => String(c?.photo || '')).filter(Boolean).slice(0, 3);
   return (
     <View style={s.card}>
       <View style={s.cover}>
-        <IconImagePlaceholder size={40} />
-        <View style={s.chip}><Text style={s.chipText}>{chipLabel(state, row, outbox)}</Text></View>
+        <IconImagePlaceholder size={40} c={color.onCoverSoft} />
+        {/* Чип цветом называет состояние раньше, чем словом: карточки лежат стопкой. */}
+        <View style={[s.chip, s[`chip_${tone}` as 'chip_warn']]}>
+          {state === 'options' ? <IconCheckCircle size={13} /> : <IconSearch size={13} c={s[`chipText_${tone}` as 'chipText_warn'].color} />}
+          <Text style={[s.chipText, s[`chipText_${tone}` as 'chipText_warn']]}>{chipLabel(state, row, outbox)}</Text>
+        </View>
       </View>
       <View style={s.cardBody}>
         <Text style={s.cardTitle} numberOfLines={1}>{intentTitle(row)}</Text>
@@ -306,9 +313,22 @@ function IntentCard({
           <IconPin size={16} c={color.muted} />
           <Text style={s.metaText} numberOfLines={1}>{intentWhere(row)}</Text>
         </View>
-        <Text style={s.footNote} numberOfLines={1}>
-          {row.error ? ACT.rankFailed() : ACT.lookingNearby()}
-        </Text>
+        {/*
+          Лица с кадра — НАСТОЯЩИЕ: это те, кого поиск уже нашёл по этой затее. Пока не нашёл
+          никого, ряд просто не рисуется: три серых кружка означали бы людей, которых нет.
+        */}
+        <View style={s.foot}>
+          {faces.length ? (
+            <View style={s.faces}>
+              {faces.map((ph, i) => (
+                <Image key={i} source={{ uri: mediaUrl(ph) }} style={[s.face, i > 0 && s.faceNext]} />
+              ))}
+            </View>
+          ) : null}
+          <Text style={s.footNote} numberOfLines={1}>
+            {row.error ? ACT.rankFailed() : ACT.lookingNearby()}
+          </Text>
+        </View>
         <View style={s.actions}>
           <Pressable
             accessibilityRole="button"
@@ -320,7 +340,7 @@ function IntentCard({
               : <Text style={s.ctaText}>{ctaLabel(state)}</Text>}
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={ACT.edit()} style={s.pencil} onPress={onEdit}>
-            <IconPencil size={18} />
+            <IconPencil size={18} c={color.onPrimary} />
           </Pressable>
         </View>
       </View>
@@ -366,22 +386,35 @@ const s = StyleSheet.create({
   list: { paddingHorizontal: space.lg, paddingTop: space.md, gap: space.md },
 
   card: { borderRadius: rad.lg, backgroundColor: color.card, overflow: 'hidden', ...({} as any) },
-  cover: { height: 100, backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+  /** Обложек у затей нет ни в API, ни в проекте — та же подложка, что у карточек на главной. */
+  cover: { height: 100, backgroundColor: color.coverFallback, alignItems: 'center', justifyContent: 'center' },
   chip: {
     position: 'absolute', left: space.md, top: space.md,
+    flexDirection: 'row', alignItems: 'center', gap: 5,
     paddingHorizontal: 10, height: 24, borderRadius: 12,
-    backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
   },
-  chipText: { ...type.labelSmall, color: color.fg, fontWeight: '600' } as any,
+  chip_warn: { backgroundColor: color.warnBg },
+  chip_success: { backgroundColor: color.successBg },
+  chip_info: { backgroundColor: color.infoBg },
+  chipText: { ...type.labelSmall, fontWeight: '700' } as any,
+  chipText_warn: { color: color.warnText },
+  chipText_success: { color: color.successText },
+  chipText_info: { color: color.infoText },
   cardBody: { padding: space.md, gap: 6 },
   cardTitle: { ...type.title, color: color.fg } as any,
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   metaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
-  footNote: { ...type.labelSmall, color: color.muted } as any,
+  foot: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  faces: { flexDirection: 'row' },
+  face: { width: 24, height: 24, borderRadius: 12, backgroundColor: color.neutral100, borderWidth: 2, borderColor: color.card },
+  /** Внахлёст, как на кадре: ряд лиц читается как «люди», а не как три отдельных значка. */
+  faceNext: { marginLeft: -8 },
+  footNote: { ...type.labelSmall, color: color.muted, flexShrink: 1 } as any,
   actions: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 4 },
   cta: { flex: 1, height: 40, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   ctaText: { ...type.button, color: color.onPrimary } as any,
-  pencil: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+  /** Тёмный круг, как на кадре: карандаш стоит рядом с красной кнопкой и не должен с ней спорить. */
+  pencil: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
 
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, borderRadius: rad.lg, backgroundColor: color.card },
   avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.neutral100 },

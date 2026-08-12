@@ -15,6 +15,7 @@
  */
 import { T, getLang, plural } from './i18n';
 import { HOME, splitWhen, planWhere } from './home';
+import { intentSummaryText } from './intent';
 
 /** Ключ, которым интент помечает сам себя в отправленном приглашении. См. `pendingFor`. */
 export const INTENT_ID_KEY = 'kleal_intent_id';
@@ -115,6 +116,21 @@ export function chipLabel(state: IntentState, row: IntentRow, outbox: any[]): st
   return ACT.chipSearching();
 }
 
+/**
+ * Тон чипа. На борде у трёх состояний три разных цвета, и это не украшение: карточки лежат
+ * стопкой, и человек читает их состояние ЦВЕТОМ раньше, чем словом.
+ *   ищем        — тёплый: работа идёт, от человека ничего не требуется;
+ *   варианты    — зелёный: можно действовать, и это лучшая новость из трёх;
+ *   ждём ответы — синий: мяч не на нашей стороне.
+ * Фиолетового с борда в токенах нет, а заводить его ради одного чипа — плодить палитру;
+ * «ждём» и «сведения» — одна и та же по смыслу спокойная синева.
+ */
+export const CHIP_TONE: Record<IntentState, 'warn' | 'success' | 'info'> = {
+  searching: 'warn',
+  options: 'success',
+  waiting: 'info',
+};
+
 export function ctaLabel(state: IntentState): string {
   return state === 'waiting' ? ACT.ctaWaiting() : state === 'options' ? ACT.ctaOptions() : ACT.ctaSearching();
 }
@@ -162,12 +178,44 @@ export function intentFacts(row: IntentRow): { label: string; value: string }[] 
   push(T('Состав', 'Format'), i.format === 'group' ? T('Группа', 'Group')
     : i.format === '1:1' ? T('Один на один', '1:1') : '');
   push(T('Тема', 'Category'), i.topics);
-  const sex = i.sex === 'female' ? T('Женщины', 'Female')
-    : i.sex === 'male' ? T('Мужчины', 'Male')
-    : i.sex ? T('Любой', 'Any') : '';
-  const age = i.min_age && i.max_age ? `${i.min_age}–${i.max_age}` : '';
+  /**
+   * Пол и возраст читаются ТЕМИ ЖЕ ключами, какими их пишет мастер: `sex` из SEXES («Male» /
+   * «Female» / «Any», с большой буквы) и `minAge` / `maxAge`. Сравнение в нижнем регистре и
+   * `min_age` через подчёркивание — ровно то, на чём паспорт затеи показывал «Аудитория: Любой»
+   * при сохранённых «Female, 22–34»: поля были на месте, а прочитать их было нечем.
+   */
+  const sex = i.sex === 'Female' ? T('Женщины', 'Female')
+    : i.sex === 'Male' ? T('Мужчины', 'Male')
+    : T('Любой', 'Any is fine');
+  const age = i.minAge && i.maxAge ? `${i.minAge}–${i.maxAge}` : '';
   push(T('Аудитория', 'Audience'), [sex, age].filter(Boolean).join(ru ? ', ' : ', '));
   return out;
+}
+
+/**
+ * СВОДКА KLEAL. Своя, если человек её правил; иначе — собранная из фактов затеи.
+ *
+ * Пустого места здесь быть не должно: на борде в этом блоке всегда есть текст, и он появляется
+ * сам — ровно как на сводке перед поиском (O.10) и в профиле. Человек не пишет её с нуля, он
+ * правит уже написанное, и лист правки поэтому открывается заполненным.
+ *
+ * Собирает её тот же `intentSummaryText`, что и мастер: две разные сводки об одной затее
+ * разошлись бы на первой правке шаблона.
+ */
+export function intentSummary(row: IntentRow): string {
+  const own = String(row.intent?.summary || '').trim();
+  if (own) return own;
+  const i = row.intent || {};
+  const topics = Array.isArray(i.topics) ? i.topics.join(', ') : '';
+  return intentSummaryText({
+    topic: String(row.title || topics || '').trim(),
+    size: i.format === 'group' ? 'group' : undefined,
+    sex: i.sex,
+    minAge: Number(i.minAge) || 18,
+    maxAge: Number(i.maxAge) || 35,
+    dateKey: String(i.dateKey || ''),
+    minutes: Number(i.minutes) || 20 * 60,
+  });
 }
 
 /** Счётчик на сегменте «Приглашения» — столько же, сколько строк в стопке на главной. */

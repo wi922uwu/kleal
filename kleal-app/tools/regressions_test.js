@@ -601,6 +601,27 @@ console.log('\nвкладка «Моя активность» связана и�
       'без него self пустой и приглашение не уходит');
   }
 
+  // Паспорт затеи читает те же ключи, какими её пишет мастер. Регистр и подчёркивание —
+  // ровно то, на чём «Female, 22–34» показывалось как «Аудитория: Любой»: поля на месте,
+  // а прочитать их нечем, и молча — ни ошибки, ни пустого места.
+  check('пол и возраст читаются ключами мастера',
+    /i\.sex === 'Female'/.test(act) && /i\.minAge && i\.maxAge/.test(act) &&
+    !/min_age/.test(act) && !/'female'/.test(act),
+    'мастер пишет sex из SEXES с большой буквы и minAge/maxAge');
+  check('лист правки пишет те же значения пола',
+    /\['Female', T\(/.test(page) && /\['Male', T\(/.test(page),
+    'иначе правка обнулит то, что читает матчинг');
+
+  // Сводка Kleal нигде не бывает пустой: её сначала пишет Kleal, человек только правит.
+  check('сводка собирается сама, когда своей нет',
+    /export function intentSummary/.test(act) && /intentSummaryText\(/.test(act),
+    'пустой блок означал бы «напиши сам», а Kleal везде пишет первым');
+  check('лист правки открывается заполненным',
+    /setSummary\(row \? intentSummary\(row\) : ''\)/.test(page));
+  check('сводка одна на мастера и на страницу',
+    (code('src/intent.ts').match(/export function intentSummaryText/g) || []).length === 1,
+    'вторая сборка того же текста разошлась бы на первой правке шаблона');
+
   // Ничего из того, чего нет на сервере, экран не выдумывает.
   check('вариантов плана экран не сочиняет',
     !/Option 1|Option 2|вариант 1/i.test(page),
@@ -616,15 +637,16 @@ console.log('\nвкладка «Моя активность» связана и�
 console.log('\nпереписка не врёт про отправку и не печатает столбик часов');
 {
   const c = code('app/conversation.tsx');
+  const f = code('src/components/MessageFeed.tsx');
   const mod = code('src/chat.ts');
 
   check('у сообщения есть состояние отправки',
     /state\?: 'sending' \| 'failed'/.test(mod) && /state: 'sending'/.test(c));
   check('галочка ставится по состоянию, а не безусловно',
-    /m\.state === 'sending'/.test(c) && /tickFail/.test(c),
+    /m\.state === 'sending'/.test(f) && /tickFail/.test(f),
     'вернулась безусловная галочка — потерянное снова выглядит доставленным');
   check('неотправленное можно отправить ещё раз',
-    /onPress=\{failed \? \(\) => deliver\(m\)/.test(c));
+    /onPress=\{failed \? \(\) => onRetry\(m\)/.test(f) && /onRetry=\{deliver\}/.test(c));
   check('повтор несёт ТОТ ЖЕ ключ, а не новый',
     /agent\.message\(me, other, String\(m\.text \|\| ''\), m\.voice, m\.cid,/.test(c),
     'с новым ключом повтор создаст у собеседника вторую копию');
@@ -641,14 +663,14 @@ console.log('\nпереписка не врёт про отправку и не 
 
   // Серии и разделители дней.
   check('подряд идущие реплики склеиваются в серию',
-    /export function sameSeries/.test(mod) && /const tail = !sameSeries\(m, next\)/.test(c));
+    /export function sameSeries/.test(mod) && /const tail = !sameSeries\(m, next\)/.test(f));
   check('время печатается один раз на серию, а не под каждым пузырём',
-    /\{tail \? \(/.test(c),
+    /\{tail \? \(/.test(f),
     'иначе живая переписка — столбик одинаковых часов');
   check('хвостик у пузыря только в конце серии',
-    /bubMeMid/.test(c) && /borderBottomRightRadius: 18/.test(code('app/conversation.tsx')));
+    /bubMeMid/.test(f) && /borderBottomRightRadius: 18/.test(f));
   check('разделитель дня считается по ВИДИМЫМ строкам',
-    /const shown = useMemo/.test(c) && /shown\.map\(\(m, i\)/.test(c),
+    /const shown = msgs\.filter/.test(f) && /shown\.map\(\(m, i\)/.test(f),
     'скрытая системная строка уносила «Сегодня» с собой');
 
   // Лента не выдёргивает читающего вниз и не тикает из кармана.
@@ -699,11 +721,12 @@ console.log('\nнижний лист один, и десятой копии не
 console.log('\nнад сообщением можно что-то сделать');
 {
   const c = code('app/conversation.tsx');
+  const f = code('src/components/MessageFeed.tsx');
   const mod = code('src/chat.ts');
   const api = code('src/api.ts');
 
   check('долгое нажатие открывает лист действий',
-    /onLongPress=\{m\.deleted \|\| !m\.id \? undefined : \(\) => setPicked\(m\)\}/.test(c),
+    /onLongPress=\{m\.deleted \|\| !m\.id \? undefined : \(\) => onPick\(m\)\}/.test(f),
     'по удалённому и по ещё не отправленному действовать нечем');
   check('лист действий — общий Sheet, а не двенадцатая копия',
     /<Sheet visible=\{!!picked\}/.test(c));
@@ -718,7 +741,7 @@ console.log('\nнад сообщением можно что-то сделать
     (c.match(/flip\(x\.r\)/g) || []).length >= 2,
     'иначе на экране останется реакция, которой на сервере нет');
   check('свою реакцию видно среди чужих',
-    /reactionMine/.test(c), 'иначе не понять, поставил ты её или просто видишь');
+    /reactionMine/.test(f), 'иначе не понять, поставил ты её или просто видишь');
 
   check('цитата показывается ДО отправки',
     /replyBar/.test(c) && /setReplyTo\(picked\)/.test(c),
@@ -731,7 +754,7 @@ console.log('\nнад сообщением можно что-то сделать
   check('удалять можно только своё',
     /String\(picked\.from \|\| ''\)\.trim\(\)\.toLowerCase\(\) === me\.trim\(\)\.toLowerCase\(\)/.test(c));
   check('удалённое остаётся строкой, а не исчезает',
-    /m\.deleted \? CHAT\.deleted\(\)/.test(c) && /bubGone/.test(c),
+    /m\.deleted \? CHAT\.deleted\(\)/.test(f) && /bubGone/.test(f),
     'пропасть бесследно оно не может — второй его уже видел');
 
   check('текст можно скопировать',
@@ -742,13 +765,13 @@ console.log('\nнад сообщением можно что-то сделать
 // ------------------------------------------------- 15. свайп-ответ и живые ссылки
 console.log('\nссылка в переписке нажимается, а ответ делается жестом');
 {
-  const c = code('app/conversation.tsx');
+  const f = code('src/components/MessageFeed.tsx');
   const sw = code('src/components/SwipeToReply.tsx');
 
   check('ссылка нажимается и открывается',
-    /Linking\.openURL\(part\.href!\)/.test(c));
+    /Linking\.openURL\(part\.href!\)/.test(f));
   check('адрес показан как есть, без подмены подписью',
-    /\{part\.text\}/.test(c),
+    /\{part\.text\}/.test(f),
     'по адресу и решают, идти ли — красивая подпись поверх чужой ссылки этого решения лишает');
 
   check('жест не отбирает прокрутку у листающего',
@@ -760,7 +783,7 @@ console.log('\nссылка в переписке нажимается, а от�
   check('отклик даётся один раз за жест',
     /buzzed\.current = true/.test(sw) && /buzzed\.current = false/.test(sw));
   check('по удалённому и неотправленному свайпать нечего',
-    /enabled=\{!!m\.id && !m\.deleted\}/.test(c));
+    /enabled=\{!!m\.id && !m\.deleted\}/.test(f));
 }
 
 // ------------------------------------------------- 16. разбор ссылок считается, а не угадывается

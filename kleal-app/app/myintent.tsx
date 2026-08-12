@@ -35,7 +35,8 @@ import {
 } from '../src/intent';
 import { setResults } from '../src/results-store';
 import {
-  ACT, INTENT_ID_KEY, ctaLabel, intentFacts, intentState, intentTitle, intentWhen, intentWhere, stateLine,
+  ACT, INTENT_ID_KEY, ctaLabel, intentFacts, intentState, intentSummary, intentTitle, intentWhen,
+  intentWhere, stateLine,
   type IntentRow,
 } from '../src/activity';
 import { EditSheet } from '../src/components/ProfileShell';
@@ -160,8 +161,13 @@ export default function MyIntent() {
     setMaxAge(Number(i.maxAge) || 35);
     setSheet('who');
   };
+  /**
+   * Лист правки открывается ЗАПОЛНЕННЫМ — своей сводкой, а если её ещё нет, той, что собралась
+   * сама. Пустое поле здесь означало бы «напиши сам», а Kleal везде сначала пишет за человека,
+   * и правка идёт поверх написанного.
+   */
   const openSummary = () => {
-    setSummary(String(row?.intent?.summary || ''));
+    setSummary(row ? intentSummary(row) : '');
     setSheet('summary');
   };
 
@@ -194,7 +200,8 @@ export default function MyIntent() {
 
       {row ? (
         <>
-          <ScrollView contentContainerStyle={[s.body, { paddingBottom: insets.bottom + 140 }]}>
+          {/* Двухкнопочный док выше однокнопочного — запас считаем от него, иначе сводка уезжает под него. */}
+          <ScrollView contentContainerStyle={[s.body, { paddingBottom: insets.bottom + 200 }]}>
             <View style={s.cover}><IconImagePlaceholder size={56} /></View>
 
             <Text style={s.title}>{intentTitle(row)}</Text>
@@ -234,9 +241,7 @@ export default function MyIntent() {
                 <Text style={s.summaryLabel}>{SUMMARY_O10.summaryLabel()}</Text>
                 <IconPencil size={16} />
               </View>
-              <Text style={s.summaryText}>
-                {String(row.intent?.summary || '').trim() || ACT.lineSearching()}
-              </Text>
+              <Text style={s.summaryText}>{intentSummary(row)}</Text>
             </Pressable>
 
             {err ? <Text style={s.err}>{err}</Text> : null}
@@ -251,6 +256,18 @@ export default function MyIntent() {
             >
               {busy ? <ActivityIndicator size="small" color={color.onPrimary} />
                 : <Text style={s.ctaText}>{ctaLabel(state)}</Text>}
+            </Pressable>
+            {/*
+              Вторая кнопка с кадра. Она НЕ отменяет правки: каждый лист применяет своё сразу,
+              своей же кнопкой «Применить», и отменять к этому моменту нечего. Она закрывает
+              страницу — «я посмотрел и ничего больше не хочу». Назвать её «Отмена» — с борда.
+            */}
+            <Pressable
+              accessibilityRole="button"
+              style={s.ctaDark}
+              onPress={() => (router.canGoBack() ? router.back() : router.replace('/activity'))}
+            >
+              <Text style={s.ctaDarkText}>{DETAILS.cancel()}</Text>
             </Pressable>
           </View>
         </>
@@ -281,8 +298,13 @@ export default function MyIntent() {
             </Pressable>
           ))}
         </View>
-        <Text style={s.dialValue}>{hhmm(minutes)}</Text>
         <TimeDial minutes={minutes} onChange={setMinutes} />
+        {/* Числа под кругом — не украшение: на циферблате минуты читаются приблизительно. */}
+        <View style={s.boxes}>
+          <View style={s.box}><Text style={s.boxText}>{hhmm(minutes).slice(0, 2)}</Text></View>
+          <Text style={s.boxSep}>:</Text>
+          <View style={s.box}><Text style={s.boxText}>{hhmm(minutes).slice(3)}</Text></View>
+        </View>
       </EditSheet>
 
       {/* C.02d — аудитория и возраст. */}
@@ -297,7 +319,8 @@ export default function MyIntent() {
         acceptLabel={DETAILS.apply()}
       >
         <View style={s.chips}>
-          {([['Any', DETAILS.audience()], ['female', T('Женщины', 'Female')], ['male', T('Мужчины', 'Male')]] as const)
+          {/* Значения — как в SEXES (src/onboarding.ts): их читает и матчинг, и паспорт затеи. */}
+          {([['Any', T('Любой', 'Any is fine')], ['Female', T('Женщины', 'Female')], ['Male', T('Мужчины', 'Male')]] as const)
             .map(([k, label]) => (
               <Pressable
                 key={k}
@@ -310,8 +333,12 @@ export default function MyIntent() {
               </Pressable>
             ))}
         </View>
-        <Text style={s.dialValue}>{minAge}–{maxAge}</Text>
         <RangeDial lo={minAge} hi={maxAge} onChange={(lo, hi) => { setMinAge(lo); setMaxAge(hi); }} />
+        <View style={s.boxes}>
+          <View style={s.box}><Text style={s.boxText}>{minAge}</Text></View>
+          <Text style={s.boxSep}>–</Text>
+          <View style={s.box}><Text style={s.boxText}>{maxAge}</Text></View>
+        </View>
       </EditSheet>
 
       {/* C.02e — сводка Kleal. Хранится внутри самого интента: отдельного поля под неё сервер
@@ -369,13 +396,21 @@ const s = StyleSheet.create({
   dock: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: space.lg, paddingTop: space.sm, backgroundColor: color.bg },
   cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   ctaText: { ...type.button, color: color.onPrimary } as any,
+  ctaDark: { height: 52, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center', marginTop: space.sm },
+  ctaDarkText: { ...type.button, color: color.onPrimary } as any,
 
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   chip: { paddingHorizontal: space.md, height: 36, borderRadius: rad.full, backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
   chipOn: { backgroundColor: color.primary },
   chipText: { ...type.labelMedium, color: color.fg } as any,
   chipTextOn: { color: color.onPrimary, fontWeight: '700' },
-  dialValue: { textAlign: 'center', ...type.h2, color: color.fg, marginTop: space.md } as any,
+  boxes: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm, marginTop: space.md },
+  box: {
+    minWidth: 56, height: 40, borderRadius: rad.md, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  boxText: { ...type.title, color: color.fg, fontVariant: ['tabular-nums'] } as any,
+  boxSep: { ...type.title, color: color.muted } as any,
 
   area: {
     minHeight: 120, borderRadius: rad.md, backgroundColor: color.neutral100,
