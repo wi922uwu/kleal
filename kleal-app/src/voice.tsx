@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, PanResponder, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   AudioModule,
   RecordingPresets,
@@ -18,6 +18,11 @@ type DictationPhase = 'idle' | 'recording' | 'transcribing';
 type MessagePhase = 'idle' | 'recording' | 'preview' | 'uploading';
 
 const MAX_DURATION_MS = 60000;
+/**
+ * Короче этого — не сообщение, а случайное касание микрофона. При удержании кнопка отправляет
+ * сразу по отпусканию, поэтому без нижней границы промах пальцем улетал бы собеседнику шорохом.
+ */
+const MIN_DURATION_MS = 700;
 
 const formatDuration = (durationMs: number) => {
   const seconds = Math.max(0, Math.floor(durationMs / 1000));
@@ -176,6 +181,71 @@ export function useVoiceMessage(onSend: (voice: VoicePayload) => void | Promise<
     }
   }, [disabled, fail, phase, recorder]);
 
+  /**
+   * Отправка. `from` — чтобы можно было отправить СРАЗУ после остановки, не дожидаясь, пока
+   * состояние доедет до экрана.
+   *
+   * Зачем: при удержании кнопки запись заканчивается отпусканием пальца, и следом надо слать. Если
+   * читать `uri` из состояния, его там ещё нет — `setUri` внутри `stop()` применяется на следующем
+   * кадре, и отправка уходила бы с пустым файлом. Поэтому «остановить и отправить» передаёт путь
+   * напрямую, а обычная отправка из превью по-прежнему берёт его из состояния.
+   */
+  const upload = useCallback(async (from?: { uri: string; ms: number }) => {
+    const src = from?.uri || uri;
+    const ms = from?.ms ?? durationMillis;
+    if (!src) return;
+    setPhase('uploading');
+    try {
+      const result = await speech.uploadVoice(await audioForm(src), ms);
+      const transcript = String(result?.transcript || result?.text || '').trim();
+      if (!result?.id || !result?.url || !transcript) throw new Error('INVALID_VOICE_RESPONSE');
+      await onSend({
+        id: String(result.id), url: String(result.url), duration_ms: Number(result.duration_ms),
+        transcript, mime_type: String(result.mime_type || 'audio/mp4'), language: result.language,
+      });
+      reset();
+    } catch (error) {
+      // Возврат в превью, а НЕ в пустоту: запись цела, и человек может отправить её ещё раз или
+      // послушать. Терять надиктованное из-за отвалившейся сети нельзя.
+      setUri(src);
+      setDurationMillis(ms);
+      setPhase('preview');
+      const code = String((error as any)?.body?.error || (error as any)?.message || '');
+      Alert.alert(
+        T('Не удалось отправить голосовое', 'Could not send voice message'),
+        code === 'NO_SPEECH'
+          ? T('Речь не обнаружена. Запишите сообщение ещё раз.', 'No speech was detected. Record the message again.')
+          : T('Проверьте соединение и повторите отправку.', 'Check your connection and try sending again.')
+      );
+    }
+  }, [durationMillis, onSend, reset, uri]);
+
+  /**
+   * Отпустил палец — записать и отправить одним движением. Так работает удержание в мессенджерах:
+   * между «сказал» и «ушло» не должно быть ещё одного касания.
+   *
+   * Слишком короткое нажатие записью не считается: случайный тап по микрофону иначе отправлял бы
+   * собеседнику двухсотмиллисекундный шорох.
+   */
+  const stopAndSend = useCallback(async () => {
+    if (stopping.current || phase !== 'recording') return;
+    stopping.current = true;
+    const ms = Math.min(MAX_DURATION_MS, recorderState.durationMillis);
+    try {
+      await recorder.stop();
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      const src = recorder.uri;
+      if (!src) throw new Error('NO_RECORDING');
+      if (ms < MIN_DURATION_MS) { reset(); return; }
+      await upload({ uri: src, ms });
+    } catch {
+      fail(T('Запись не сохранена', 'Recording was not saved'),
+           T('Попробуйте записать ещё раз.', 'Try recording again.'));
+    } finally {
+      stopping.current = false;
+    }
+  }, [fail, phase, recorder, recorderState.durationMillis, reset, upload]);
+
   const send = useCallback(async () => {
     if (phase !== 'preview' || !uri) return;
     setPhase('uploading');
@@ -206,7 +276,7 @@ export function useVoiceMessage(onSend: (voice: VoicePayload) => void | Promise<
 
   return {
     phase, uri, durationMillis: phase === 'recording' ? recorderState.durationMillis : durationMillis,
-    start, stop, cancel: reset, send, disabled: disabled || phase === 'uploading',
+    start, stop, stopAndSend, cancel: reset, send, disabled: disabled || phase === 'uploading',
   };
 }
 
@@ -261,18 +331,130 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
       </View>
     );
   }
+  return <HoldToRecord voice={voice} />;
+}
+
+/**
+ * ЗАПИСЬ УДЕРЖАНИЕМ — как в мессенджерах, к которым человек уже привык.
+ *
+ * Жест целиком:
+ *   — прижал микрофон  → пошла запись;
+ *   — отпустил         → запись ушла собеседнику, без промежуточного экрана;
+ *   — потянул ВВЕРХ    → запись закрепилась, палец можно убрать и говорить дальше;
+ *   — потянул ВЛЕВО    → отмена, ничего не отправляется.
+ *
+ * Что было раньше: тап «начать», тап «стоп», потом экран превью и ещё тап «отправить» — три
+ * касания там, где привычка требует одного движения. Превью не выброшено: оно остаётся у
+ * закреплённой записи, где человек сам решил не торопиться.
+ *
+ * Пороги в пунктах, а не в долях экрана: жест делается большим пальцем, и его ход одинаков на
+ * телефоне любого размера. Отмена дальше закрепления (80 против 56) намеренно — промахнуться
+ * в «отменить» должно быть труднее, чем в «закрепить».
+ */
+const LOCK_AT = -56;
+const CANCEL_AT = -80;
+
+function HoldToRecord({ voice }: { voice: VoiceMessage }) {
   const recording = voice.phase === 'recording';
+  const [locked, setLocked] = useState(false);
+  const [hint, setHint] = useState<'none' | 'lock' | 'cancel'>('none');
+  // В обработчиках жеста нельзя читать состояние: они замыкаются на первое значение и остаются
+  // с ним навсегда. Поэтому решение принимается по ссылкам, а состояние — только для показа.
+  const lockedRef = useRef(false);
+  const cancelRef = useRef(false);
+
+  const reset = () => {
+    lockedRef.current = false;
+    cancelRef.current = false;
+    setLocked(false);
+    setHint('none');
+  };
+
+  // Обработчики жеста создаются ОДИН раз, а хук пересобирается на каждый кадр записи. Поэтому
+  // они ходят к нему через ссылку: замыкание на первое значение оставило бы кнопку навсегда
+  // подключённой к состоянию первого рендера.
+  const voiceRef = useRef(voice);
+  voiceRef.current = voice;
+
+  const responder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        reset();
+        voiceRef.current.start();
+      },
+      onPanResponderMove: (_e, g) => {
+        if (lockedRef.current) return;              // закрепили — жест больше ничего не решает
+        if (g.dx < CANCEL_AT) {
+          cancelRef.current = true;
+          setHint('cancel');
+          return;
+        }
+        cancelRef.current = false;
+        if (g.dy < LOCK_AT) {
+          lockedRef.current = true;
+          setLocked(true);
+          setHint('none');
+          return;
+        }
+        setHint(g.dy < LOCK_AT / 2 ? 'lock' : 'none');
+      },
+      onPanResponderRelease: () => {
+        if (lockedRef.current) return;              // палец убран, запись продолжается
+        if (cancelRef.current) { voiceRef.current.cancel(); reset(); return; }
+        voiceRef.current.stopAndSend();
+        reset();
+      },
+      // Жест перехватила прокрутка или звонок — считаем это отменой, а не отправкой: отправлять
+      // то, чего человек не заканчивал, нельзя.
+      onPanResponderTerminate: () => {
+        if (lockedRef.current) return;
+        voiceRef.current.cancel();
+        reset();
+      },
+    })
+  ).current;
+
+  if (recording && locked) {
+    return (
+      <View style={s.lockedRow}>
+        <View style={s.dot} />
+        <Text style={s.timer}>{formatDuration(voice.durationMillis)}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Отменить запись', 'Cancel recording')}
+                   onPress={() => { voice.cancel(); reset(); }} style={s.previewAction}>
+          <Text style={s.delete}>✕</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')}
+                   onPress={() => { voice.stopAndSend(); reset(); }} style={s.send}>
+          <IconSend size={17} />
+        </Pressable>
+      </View>
+    );
+  }
+
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={recording ? T('Остановить запись', 'Stop recording') : T('Записать голосовое', 'Record voice message')}
-      onPress={recording ? voice.stop : voice.start}
-      disabled={voice.disabled}
-      style={[s.iconButton, recording && s.recording]}
-      hitSlop={8}
-    >
-      {recording ? <><View style={s.stop} /><Text style={s.timer}>{formatDuration(voice.durationMillis)}</Text></> : <IconMic />}
-    </Pressable>
+    <View style={s.holdWrap} {...responder.panHandlers}>
+      {recording ? (
+        <View style={s.recordingRow}>
+          <View style={s.dot} />
+          <Text style={s.timer}>{formatDuration(voice.durationMillis)}</Text>
+          <Text style={[s.hint, hint === 'cancel' && s.hintCancel]} numberOfLines={1}>
+            {hint === 'cancel'
+              ? T('Отпусти — отмена', 'Release to cancel')
+              : T('◀ влево — отмена · ▲ вверх — закрепить', '◀ slide to cancel · ▲ slide up to lock')}
+          </Text>
+        </View>
+      ) : (
+        <View
+          accessibilityRole="button"
+          accessibilityLabel={T('Удерживай, чтобы записать голосовое', 'Hold to record a voice message')}
+          style={s.iconButton}
+        >
+          <IconMic />
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -310,6 +492,13 @@ const s = StyleSheet.create({
   trackFill: { height: 3, borderRadius: 2, backgroundColor: color.primary },
   trackFillMine: { backgroundColor: color.onPrimary },
   duration: { width: 38, fontSize: 11, color: color.muted, fontVariant: ['tabular-nums'] },
+  /** Кнопка удержания: та же ширина, что у прежнего микрофона, — композер не должен прыгать. */
+  holdWrap: { minWidth: 28, minHeight: 34, alignItems: 'center', justifyContent: 'center' },
+  recordingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4 },
+  lockedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.primary },
+  hint: { fontSize: 11, color: color.muted, flexShrink: 1 },
+  hintCancel: { color: color.primary, fontWeight: '600' },
   bubble: { minWidth: 230, maxWidth: 286, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 16, backgroundColor: color.neutral100 },
   bubbleMine: { backgroundColor: color.primary },
   transcriptLink: { fontSize: 12, color: color.primary, marginTop: 4, fontWeight: '600' },

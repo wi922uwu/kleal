@@ -25,6 +25,7 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
 import { mediaUrl, agent } from '../src/api';
+import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
 } from '../src/components/icons';
@@ -187,6 +188,24 @@ export default function Conversation() {
     }
   };
 
+  /**
+   * Голосовое уходит ТЕМ ЖЕ путём, что и текст: /api/agent/message принимает `voice` рядом с
+   * `text`. Поэтому и показывается оно сразу, как своя реплика, — опрос принесёт серверную
+   * версию и склеит по id.
+   */
+  const voice = useVoiceMessage(async (payload) => {
+    if (!me || !other) return;
+    const local: any = { from: me, to: other, text: '', voice: payload, t: Date.now() / 1000 };
+    setMsgs((prev) => [...prev, local]);
+    try {
+      const r: any = await agent.message(me, other, '', payload);
+      if (!r?.ok) throw new Error(r?.error || 'send failed');
+      setErr('');
+    } catch {
+      setErr(CHAT.offline());
+    }
+  }, !me || !other);
+
   const startPending = (kind: 'plan' | 'end') => {
     if (pending) return;
     setActions(false);
@@ -204,9 +223,29 @@ export default function Conversation() {
       if (pending.kind === 'plan') {
         router.push({ pathname: '/plan', params: planParams() });
       } else {
-        // Конец разговора: у сервера нет понятия «закрытый тред», поэтому завершение — это уход
-        // с экрана. Полоса и была последним шансом остаться. Открытому по прямой ссылке экрану
-        // некуда «назад» — тогда домой, иначе кнопка тихо не делала бы ничего.
+        // КОНЕЦ РАЗГОВОРА ЗАПИСЫВАЕТСЯ, а не только уводит с экрана.
+        //
+        // У сервера понятия «закрытый тред» действительно нет, и раньше отсюда следовал вывод:
+        // завершение — это просто уход назад. Но тогда «Закончить разговор» ничего не меняло:
+        // человек возвращался в «Сообщения» и находил ту же переписку на прежнем месте, во вкладке
+        // «Собирается». Кнопка обещала «переписка закроется» и не закрывала ничего.
+        //
+        // Пометка ЛОКАЛЬНАЯ — и это ровно та механика, что уже есть у «В архив» (MSG.04): отношение
+        // человека к списку живёт на устройстве, а не на сервере. Архив, а не «покинул»: разговор
+        // остаётся читаемым и находится поиском, он лишь уходит из активных — это и обещано словами
+        // «переписка закроется, а место освободится для другого мэтча».
+        //
+        // Ключ — имя собеседника в том же виде, в каком его кладёт `threadRows` (нижний регистр):
+        // `bucketOf` сверяет и по `r.key`, и по `norm(r.who)`, так что этого достаточно и для строки
+        // переписки, и для строки интента с тем же человеком.
+        const key = other.trim().toLowerCase();
+        if (key) {
+          setMsgPrefs((m) => {
+            const cur = new Set(m.archived || []);
+            cur.add(key);
+            return { ...m, archived: [...cur] };
+          });
+        }
         if (router.canGoBack()) router.back(); else router.replace('/home');
       }
     }, 1000);
@@ -434,9 +473,14 @@ export default function Conversation() {
                 {/* MSG.06: «Сегодня» над первой репликой дня. */}
                 {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
                 <View style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}>
-                  <View style={[s.bub, mine ? s.bubMe : s.bubThem]}>
-                    <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
-                  </View>
+                  {/* У голосового текста в пузыре нет — есть проигрыватель и расшифровка под ним. */}
+                  {(m as any).voice ? (
+                    <VoiceBubble voice={(m as any).voice} mine={mine} />
+                  ) : (
+                    <View style={[s.bub, mine ? s.bubMe : s.bubThem]}>
+                      <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
+                    </View>
+                  )}
                   <Text style={s.time}>
                     {msgTime(m.t, ru)}
                     {/* MSG.11: две галочки — собеседник открывал переписку после этого сообщения. */}
@@ -509,17 +553,23 @@ export default function Conversation() {
               returnKeyType="send"
             />
           </View>
-          {/* MSG.06: отправка — красный круг с самолётиком, а не микрофон-обманка. */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={T('Отправить', 'Send')}
-            disabled={!draft.trim()}
-            accessibilityState={{ disabled: !draft.trim() }}
-            style={[s.sendBtn, !draft.trim() && { opacity: 0.45 }]}
-            onPress={send}
-          >
-            <IconSend size={18} />
-          </Pressable>
+          {/*
+            Одна кнопка на два действия, как в мессенджерах: пусто в поле — микрофон (удержание
+            записывает голосовое), есть текст — самолётик. Держать обе рядом значит отдать место
+            кнопке, которая в этот момент заведомо не нужна.
+          */}
+          {draft.trim() ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={T('Отправить', 'Send')}
+              style={s.sendBtn}
+              onPress={send}
+            >
+              <IconSend size={18} />
+            </Pressable>
+          ) : (
+            <VoiceMessageControl voice={voice} />
+          )}
         </View>
 
         {/* Лист O.19. */}
