@@ -1739,7 +1739,9 @@ def profile_edit(message, profile, lang):
 # user an English paragraph about themselves on their own profile screen.
 RESUMMARY_PROMPT = '''You are Kleal. Below is a user's current profile summary and their up-to-date profile data. Rewrite the SUMMARY as ONE warm, natural, flowing paragraph that reflects the CURRENT data. Integrate every change smoothly into the prose — NEVER just append or list words. Address the user directly. 2-4 sentences, concrete, no bullet points, output ONLY the paragraph.
 
-If a PERSONALITY section is present, it is a separate text the user owns and keeps: do NOT copy its sentences and do NOT replace the summary with it. Carry its substance — how they come across and who they are easy with — into the paragraph, while keeping everything the CURRENT SUMMARY already states about their life, interests and plans. The result must read as ONE paragraph about the whole person.
+THE DATA IS THE TRUTH, THE OLD SUMMARY IS ONLY A DRAFT. Anything the CURRENT SUMMARY says that is no longer in the profile data — an interest they removed, a language they dropped, a city they left — MUST DISAPPEAR from the rewrite. Do not carry it over out of politeness and do not soften it into a hint. A person who deletes an interest and still reads about it decides the app did not hear them.
+
+If a PERSONALITY section is present, it is a separate text the user owns and keeps: do NOT copy its sentences and do NOT replace the summary with it. Carry its substance — how they come across and who they are easy with — into the paragraph. Keep from the CURRENT SUMMARY only what the data still confirms. The result must read as ONE paragraph about the whole person.
 
 WRITE ABOUT THE PERSON, NOT ABOUT THEIR SETTINGS. Never mention safety options, privacy or visibility choices, matching permissions, verification, radius in kilometres or coordinates — they are switches in an app, not traits of a human being, and a paragraph that recites them reads like a form.
 

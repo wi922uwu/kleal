@@ -53,6 +53,20 @@ console.log('\nинтересы из профиля доезжают до сер
     /if \(!name \|\| !st\.done\) return false/.test(mod),
     'иначе patch уедет для человека, которого на сервере ещё нет');
 
+  // Удалённый интерес оставался в сводке НЕ по недосмотру: промпт пересборки прямо велел
+  // сохранять всё, что старая сводка говорила об интересах, — и спорил сам с собой, потому что
+  // первой строкой требовал отражать текущие данные.
+  {
+    const prompt = fs.readFileSync(path.join(ROOT, '..', 'kleal-ms/services/buddy/app.py'), 'utf8');
+    check('сводка выбрасывает то, чего в данных больше нет',
+      /MUST DISAPPEAR from the rewrite/.test(prompt) &&
+      !/keeping everything the CURRENT SUMMARY already states about their life, interests/.test(prompt),
+      'иначе человек удаляет интерес и продолжает читать про него');
+    check('короткая сводка больше не отвергается как испорченная',
+      /woven\.length < 40/.test(mod) && !/cur\.length \* 0\.5/.test(mod),
+      'убрать интересы и значит стать короче — прежний порог отбрасывал именно этот случай');
+  }
+
   check('отпечаток обновляется только после удачной записи',
     mod.indexOf('_sentInterests = sig') > mod.indexOf('const r: any = await profileApi.update'),
     'иначе неудачная отправка запомнится как удачная и повтора не будет');

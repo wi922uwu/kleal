@@ -143,7 +143,11 @@ export async function adaptSummary(): Promise<boolean> {
     const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').trim();
     if (!woven) return false;
     if (personality && norm(woven) === norm(personality)) return false;
-    if (cur && woven.length < cur.length * 0.5) return false;
+    // Сторож против ОБРЫВКА, а не против укорачивания. Прежний порог — «короче половины
+    // старой» — отвергал ровно тот случай, ради которого пересборку и зовут: человек убрал
+    // несколько интересов, сводка честно стала короче, и её отбрасывали, оставляя на экране
+    // рассказ про увлечения, которых уже нет.
+    if (woven.length < 40) return false;
 
     set('summary', woven);
     set('summaryUpdated', Date.now());
