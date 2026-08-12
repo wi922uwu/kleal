@@ -45,6 +45,21 @@ export function getLang(): Lang {
   return current;
 }
 
+/**
+ * Русское согласование с числом: «1 ответ», «2 ответа», «5 ответов».
+ *
+ * Живёт здесь, а не по месту, потому что арифметика у него всегда одна, а ошибиться в ней легко:
+ * одиннадцать ведёт себя не как один, а сто двадцать один — как один. В проекте эта же выкладка
+ * уже переписана от руки в HOME.invitesLeft и HOME.going; новые счётчики берут её отсюда, и туда
+ * её можно свести тем же вызовом.
+ */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const t = n % 10, h = n % 100;
+  if (t === 1 && h !== 11) return one;
+  if (t >= 2 && t <= 4 && (h < 10 || h >= 20)) return few;
+  return many;
+}
+
 export function setLang(l: Lang) {
   if (l === current) return;
   current = l;

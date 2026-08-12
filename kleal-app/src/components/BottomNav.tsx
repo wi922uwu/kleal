@@ -4,9 +4,9 @@
  * Раньше жила прямо в финале онбординга и была картинкой: четыре подписи, ни одна никуда не ведёт.
  * Здесь она общая и настоящая.
  *
- * Три вкладки из четырёх ещё не перенесены, и это видно: они приглушены и не нажимаются. Кнопка,
- * которая выглядит рабочей и молча ничего не делает, хуже честно выключенной — человек нажимает её
- * второй и третий раз, думая, что не попал.
+ * Непере­несённые вкладки приглушены и не нажимаются. Кнопка, которая выглядит рабочей и молча
+ * ничего не делает, хуже честно выключенной — человек нажимает её второй и третий раз, думая,
+ * что не попал. Осталась одна такая: «Поиск».
  */
 import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
@@ -20,7 +20,9 @@ import { color } from '../theme';
 export type Tab = 'intents' | 'search' | 'messages' | 'profile';
 
 /** Что уже есть в приложении. Остальное — приглушено. */
-const ROUTE: Partial<Record<Tab, string>> = { profile: '/profile', messages: '/messages' };
+const ROUTE: Partial<Record<Tab, string>> = {
+  profile: '/profile', messages: '/messages', intents: '/activity',
+};
 
 export function BottomNav({ active }: { active?: Tab }) {
   const insets = useSafeAreaInsets();

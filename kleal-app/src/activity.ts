@@ -1,0 +1,177 @@
+/**
+ * «Моя активность» — копия и вывод состояний. Борд «My activity · my intents», кадр C.02.
+ *
+ * ЧЕМ ЭТА ВКЛАДКА ОТЛИЧАЕТСЯ ОТ «СООБЩЕНИЙ», хотя списки похожи до неразличимости.
+ *
+ * В «Сообщениях» любая строка открывает РАЗГОВОР — там показаны собеседники, сгруппированные по
+ * тому, на какой стадии с ними дело. Здесь любая строка открывает САМУ ЗАТЕЮ: интент, план,
+ * приглашение. Данные под ними общие, поэтому сборка строк не переписана заново, а взята из
+ * src/messages.ts — разные у вкладок только назначение перехода и вид карточки.
+ *
+ * СОСТОЯНИЙ ИНТЕНТА НА СЕРВЕРЕ НЕТ. Хранится title, свободный объект intent, метки времени и
+ * `launched`; поля status в ответе нет вовсе. Три чипа с кадра — «Searching», «N options ready»,
+ * «Waiting for N replies» — выводятся здесь, из трёх настоящих признаков: была ли запущена
+ * выдача, сколько кандидатов вернул пересчёт и сколько разосланных приглашений ещё без ответа.
+ */
+import { T, getLang, plural } from './i18n';
+import { HOME, splitWhen, planWhere } from './home';
+
+/** Ключ, которым интент помечает сам себя в отправленном приглашении. См. `pendingFor`. */
+export const INTENT_ID_KEY = 'kleal_intent_id';
+
+export const ACT = {
+  title: () => T('Моя активность', 'My Activity'),
+
+  tabIntents: () => T('Интенты', 'Intents'),
+  tabPlans: () => T('Планы', 'Plans'),
+  tabInvites: () => T('Приглашения', 'Invites'),
+  tabHistory: () => T('История', 'History'),
+
+  /** Чипы состояния поверх обложки. */
+  chipSearching: () => T('Ищем', 'Searching'),
+  chipOptions: (n: number) =>
+    T(`${n} ${plural(n, 'вариант', 'варианта', 'вариантов')} готово`, `${n} option${n === 1 ? '' : 's'} ready`),
+  chipWaiting: (n: number) =>
+    T(`Ждём ${n} ${plural(n, 'ответ', 'ответа', 'ответов')}`, `Waiting for ${n} repl${n === 1 ? 'y' : 'ies'}`),
+
+  /** Кнопка карточки. Её надпись — это и есть состояние, сказанное действием. */
+  ctaSearching: () => T('Открыть поиск', 'View search'),
+  ctaOptions: () => T('Посмотреть варианты', 'Review options'),
+  ctaWaiting: () => T('Посмотреть ответы', 'Review responses'),
+
+  /** Строка под названием на странице интента — кадры «States of My Intent page». */
+  lineSearching: () => T('Kleal ищет людей рядом', 'Kleal is looking for people nearby'),
+  lineOptions: () => T('Выбери, кого позвать', 'Pick who to invite'),
+  lineWaiting: () => T('Ответы придут сюда', 'Replies will show up here'),
+
+  edit: () => T('Изменить', 'Edit'),
+  lookingNearby: () => T('Ищем людей рядом', 'Looking for nearby people'),
+
+  emptyIntents: () => T('Затей пока нет', 'No intents yet'),
+  emptyIntentsNote: () =>
+    T(
+      'Заведи затею — Kleal начнёт искать людей и покажет их здесь.',
+      'Start something and Kleal will look for people, then show them here.'
+    ),
+  emptyPlans: () => T('Встреч пока нет', 'No plans yet'),
+  emptyInvites: () => T('Приглашений нет', 'No invites'),
+  emptyHistory: () => T('Здесь будет прошедшее', 'Past meetups will land here'),
+  create: () => T('Создать интент', 'Create intent'),
+
+  loadFailed: () => T('Не удалось загрузить.', 'Could not load.'),
+  retry: () => T('Повторить', 'Retry'),
+  /** Пересчёт одного интента упал: карточку не прячем — интент существует, просто без кандидатов. */
+  rankFailed: () => T('Поиск по этой затее сейчас не отвечает', 'Search for this one is not responding'),
+};
+
+export type IntentState = 'searching' | 'options' | 'waiting';
+
+/** Строка интента, как её отдаёт /api/agent/intents. */
+export type IntentRow = {
+  id: string;
+  title?: string;
+  intent?: any;
+  created?: number;
+  updated?: number;
+  launched?: number | null;
+  candidates?: any[];
+  error?: string;
+};
+
+/**
+ * Сколько разосланных по этой затее приглашений ещё без ответа.
+ *
+ * Сервер связи «заявка → интент» не хранит: propose кладёт в строку КОПИЮ объекта интента, но не
+ * его id. Поэтому связь делает клиент — при отправке приглашения он помечает объект своим id
+ * (`INTENT_ID_KEY`), и здесь метка находится обратно. Это точное совпадение, а не догадка по
+ * теме и названию: две затеи с одинаковой темой не склеятся.
+ *
+ * Приглашения, отправленные до появления метки, сюда не попадут — и это честнее, чем считать их
+ * приблизительно.
+ */
+export function pendingFor(intentId: string, outbox: any[]): number {
+  const id = String(intentId || '');
+  if (!id) return 0;
+  return (outbox || []).filter(
+    (r) => r && r.status === 'pending' && String(r.intent?.[INTENT_ID_KEY] || '') === id
+  ).length;
+}
+
+/**
+ * Состояние карточки. Порядок веток — не оформление, а смысл.
+ *
+ * Приглашения важнее вариантов: как только человек кого-то позвал, живой вопрос у него один —
+ * ответят или нет. Показать в этот момент «3 варианта готовы» значит отвечать не на тот вопрос.
+ */
+export function intentState(row: IntentRow, outbox: any[]): IntentState {
+  if (pendingFor(row.id, outbox) > 0) return 'waiting';
+  if ((row.candidates || []).length > 0) return 'options';
+  return 'searching';
+}
+
+export function chipLabel(state: IntentState, row: IntentRow, outbox: any[]): string {
+  if (state === 'waiting') return ACT.chipWaiting(pendingFor(row.id, outbox));
+  if (state === 'options') return ACT.chipOptions((row.candidates || []).length);
+  return ACT.chipSearching();
+}
+
+export function ctaLabel(state: IntentState): string {
+  return state === 'waiting' ? ACT.ctaWaiting() : state === 'options' ? ACT.ctaOptions() : ACT.ctaSearching();
+}
+
+export function stateLine(state: IntentState): string {
+  return state === 'waiting' ? ACT.lineWaiting() : state === 'options' ? ACT.lineOptions() : ACT.lineSearching();
+}
+
+/**
+ * Название затеи для карточки. Сервер хранит `title` отдельно, но у старых интентов его нет —
+ * тогда берём темы, а если и их нет, показываем прочерк, а не пустое место: карточка без имени
+ * читается как поломка загрузки.
+ */
+export function intentTitle(row: IntentRow): string {
+  const t = String(row.title || '').trim();
+  if (t) return t;
+  const topics = row.intent?.topics;
+  if (Array.isArray(topics) && topics.length) return topics.join(', ');
+  return T('Без названия', 'Untitled');
+}
+
+/** Две строки под названием: когда и где. Разбор общий с главной — там же и правило про километры. */
+export function intentWhen(row: IntentRow): { date: string; time: string } {
+  return splitWhen(String(row.intent?.when || ''));
+}
+
+export function intentWhere(row: IntentRow, myArea = ''): string {
+  const i = row.intent || {};
+  const area = String(i.area || i.district || i.address || '').trim();
+  return planWhere(area, '', myArea);
+}
+
+/** Паспорт затеи на её странице — кадры C.02a–C.02d, левая колонка. */
+export function intentFacts(row: IntentRow): { label: string; value: string }[] {
+  const i = row.intent || {};
+  const ru = getLang() === 'ru';
+  const out: { label: string; value: string }[] = [];
+  const push = (label: string, value: any) => {
+    const v = Array.isArray(value) ? value.join(', ') : String(value || '').trim();
+    if (v) out.push({ label, value: v });
+  };
+  push(T('Формат', 'Mode'), i.mode === 'online' ? T('Онлайн', 'Online')
+    : i.mode === 'hybrid' ? T('Гибрид', 'Hybrid')
+    : i.mode === 'offline' ? T('Вживую', 'Offline') : '');
+  push(T('Состав', 'Format'), i.format === 'group' ? T('Группа', 'Group')
+    : i.format === '1:1' ? T('Один на один', '1:1') : '');
+  push(T('Тема', 'Category'), i.topics);
+  const sex = i.sex === 'female' ? T('Женщины', 'Female')
+    : i.sex === 'male' ? T('Мужчины', 'Male')
+    : i.sex ? T('Любой', 'Any') : '';
+  const age = i.min_age && i.max_age ? `${i.min_age}–${i.max_age}` : '';
+  push(T('Аудитория', 'Audience'), [sex, age].filter(Boolean).join(ru ? ', ' : ', '));
+  return out;
+}
+
+/** Счётчик на сегменте «Приглашения» — столько же, сколько строк в стопке на главной. */
+export const inviteBadge = (invites: any[]) => (invites || []).length;
+
+/** Подпись «N идут» на карточке берём из главной: согласование там уже написано. */
+export const goingLabel = HOME.going;

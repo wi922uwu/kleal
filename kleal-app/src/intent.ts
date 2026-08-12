@@ -327,6 +327,28 @@ export function tzOffsetLabel(tz: string): string {
 }
 
 /**
+ * Профиль для поисковых вызовов — match, plan, intents.
+ *
+ * Собирался вручную в трёх экранах сразу (мастер интента, создание, разговор с Бадди), и с
+ * «Моей активностью» появилась бы четвёртая копия. Место опасное: `languages` сервер читает как
+ * ОБЪЕКТ (`languages.comfortable`), и на плоском списке ранжирование падает целиком, не сказав ни
+ * слова — эта ошибка уже случалась и стоила поиска, который «просто никого не находит».
+ *
+ * `override` — координаты, выбранные в мастере: человек мог указать не то место, где живёт.
+ */
+export function searchProfile(p: any, override?: { lat?: number; lon?: number }) {
+  return {
+    name: p?.name,
+    age: p?.age,
+    gender: p?.gender,
+    city: p?.city,
+    lat: override?.lat ?? p?.geo?.coarseLat,
+    lon: override?.lon ?? p?.geo?.coarseLon,
+    languages: p?.languages || {},
+  };
+}
+
+/**
  * «Сводка Kleal» на O.10. На борде этот текст пишет модель («You want to speak Spanish, not study
  * it…») — серверной ручки под это пока нет, и в каркасе стоит детерминированный шаблон из
  * собранных фактов. Он не выдумывает ничего, чего человек не выбирал; умный пересказ — отдельная

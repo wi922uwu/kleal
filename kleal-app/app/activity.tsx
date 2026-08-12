@@ -1,0 +1,389 @@
+/**
+ * «Моя активность» — кадр C.02, вкладка «Интенты» нижней панели.
+ *
+ * UX-КАРКАС: вид натянется поверх. Копия и вывод состояний — в src/activity.ts; оформление одним
+ * блоком внизу файла, только на токенах темы.
+ *
+ * Четыре сегмента с кадра — это ЧЕТЫРЕ СТАДИИ одной затеи, а не четыре разных списка:
+ *
+ *   Интенты      — то, что ищет людей прямо сейчас;
+ *   Планы        — то, о чём уже договорились (парные и групповые вместе);
+ *   Приглашения  — то, что ждёт ответа от МЕНЯ;
+ *   История      — то, что закончилось.
+ *
+ * Списки собираются теми же функциями, что и «Сообщения» (src/messages.ts): данные под вкладками
+ * общие, и вторая их сборка разошлась бы с первой на первой же правке. Разное — куда ведёт строка.
+ * В «Сообщениях» она открывает РАЗГОВОР, здесь — САМУ ЗАТЕЮ: план, приглашение, интент.
+ */
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, RefreshControl,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useLang, T, getLang } from '../src/i18n';
+import { useOnb } from '../src/state';
+import { agent, group as gapi, mediaUrl } from '../src/api';
+import { searchProfile } from '../src/intent';
+import { planWhen } from '../src/chat';
+import { planRows, gplanRows, newestFirst, type Row } from '../src/messages';
+import { setResults } from '../src/results-store';
+import {
+  ACT, INTENT_ID_KEY, chipLabel, ctaLabel, intentState, intentTitle, intentWhen, intentWhere,
+  type IntentRow,
+} from '../src/activity';
+import { BottomNav } from '../src/components/BottomNav';
+import {
+  IconChevronLeft, IconCalendar, IconClock, IconPin, IconPencil, IconImagePlaceholder, IconPerson,
+} from '../src/components/icons';
+import { color, radius as rad, space, type } from '../src/theme';
+
+type Seg = 'intents' | 'plans' | 'invites' | 'history';
+
+const EMPTY = {
+  intents: [] as IntentRow[], outbox: [] as any[],
+  plans: [] as any[], history: [] as any[], gplans: [] as any[], ghistory: [] as any[],
+  invites: [] as any[],
+};
+
+export default function Activity() {
+  useLang();
+  const router = useRouter();
+  const st = useOnb();
+  const insets = useSafeAreaInsets();
+  const ru = getLang() === 'ru';
+  const me = String(st.profile.name || '');
+
+  const [seg, setSeg] = useState<Seg>('intents');
+  const [data, setData] = useState(EMPTY);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+
+  /**
+   * Одно чтение на все четыре сегмента. Переключение вкладки не ходит на сервер: человек
+   * щёлкает по ним подряд, и четыре запроса на четыре щелчка — это ожидание там, где его быть
+   * не должно.
+   *
+   * Групповые ручки со своим `catch`: групповой слой новее остальных, и его неудача не должна
+   * уносить список, который работает. Тот же приём, что в «Сообщениях».
+   */
+  const load = useCallback(async () => {
+    if (!me) { setLoading(false); return; }
+    try {
+      const [ints, out, pl, gpl, inv] = await Promise.all([
+        agent.intents(me, searchProfile(st.profile)),
+        agent.outbox(me),
+        agent.plans(me),
+        gapi.plans(me).catch(() => null),
+        agent.homeInvites(me).catch(() => null),
+      ]);
+      const arr = (r: any, k: string) => (Array.isArray(r) ? r : r?.[k] || []);
+      setData({
+        intents: ((ints as any)?.intents || []) as IntentRow[],
+        outbox: arr(out, 'requests'),
+        plans: (pl as any)?.plans || [],
+        history: (pl as any)?.history || [],
+        gplans: (gpl as any)?.plans || [],
+        ghistory: (gpl as any)?.history || [],
+        invites: (inv as any)?.invites || [],
+      });
+      setErr('');
+    } catch {
+      setErr(ACT.loadFailed());
+    } finally {
+      setLoading(false);
+    }
+  }, [me, st.profile]);
+
+  // Возврат на вкладку — повод перечитать: пока человек отвечал на приглашение, список устарел.
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const plans = useMemo(() => {
+    const one = planRows(me, data.plans, data.history, ru, planWhen);
+    // Групповой план приходит с подписью времени, собранной пикером: пересобирать её из starts_at
+    // значит разойтись с тем, что видно в самой группе.
+    const many = gplanRows(data.gplans, data.ghistory, ru, (p: any) => String(p.when || ''));
+    return {
+      live: [...one.upcoming, ...one.forming, ...many.upcoming, ...many.forming].sort(newestFirst),
+      past: [...one.past, ...many.past].sort(newestFirst),
+    };
+  }, [me, data, ru]);
+
+  /**
+   * Кнопка карточки. Выдача НЕ передаётся параметрами маршрута — она большая, и на вебе это 431;
+   * поэтому поиск повторяется по сохранённому интенту, кладётся в общий склад и экран выдачи
+   * забирает её оттуда. Открытый напрямую он честно скажет «выдача устарела».
+   */
+  const openSearch = useCallback(async (row: IntentRow) => {
+    if (busy) return;
+    setBusy(row.id);
+    try {
+      /**
+       * Затея едет в выдачу ПОМЕЧЕННОЙ своим id. Дальше метка идёт сама: выдача отдаёт этот же
+       * объект отправке приглашения, отправка кладёт его в заявку, и по нему карточка потом
+       * находит свои неотвеченные — «ждём 2 ответа». Иначе связать заявку с затеей нечем:
+       * сервер хранит в заявке копию объекта, но не ссылку на интент.
+       */
+      const stamped = { ...(row.intent || {}), [INTENT_ID_KEY]: row.id };
+      const r: any = await agent.match(stamped, searchProfile(st.profile), { self: me });
+      setResults({ ...(r || {}), intent: stamped });
+      router.push('/results');
+    } catch {
+      setErr(ACT.loadFailed());
+    } finally {
+      setBusy('');
+    }
+  }, [busy, me, router, st.profile]);
+
+  const openRow = (r: Row) => {
+    if (r.kind === 'group' && r.gid) return router.push({ pathname: '/gplan', params: { gid: r.gid } });
+    router.push({ pathname: '/plan', params: { id: r.id || '', who: r.who || '', title: r.title } });
+  };
+
+  const openInvite = (v: any) =>
+    v?.type === 'group'
+      ? router.push({ pathname: '/ginvite', params: { id: String(v.id || ''), gid: String(v.group?.gid || '') } })
+      : router.push({ pathname: '/invite', params: { id: String(v.id || '') } });
+
+  const segments: [Seg, string, number][] = [
+    ['intents', ACT.tabIntents(), 0],
+    ['plans', ACT.tabPlans(), 0],
+    ['invites', ACT.tabInvites(), data.invites.length],
+    ['history', ACT.tabHistory(), 0],
+  ];
+
+  const empty = (title: string, note?: string, cta?: () => void) => (
+    <View style={s.empty}>
+      <Text style={s.emptyTitle}>{title}</Text>
+      {note ? <Text style={s.emptyNote}>{note}</Text> : null}
+      {cta ? (
+        <Pressable accessibilityRole="button" style={s.emptyCta} onPress={cta}>
+          <Text style={s.emptyCtaText}>{ACT.create()}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+
+  return (
+    <View style={s.wrap}>
+      <View style={[s.top, { paddingTop: insets.top + space.sm }]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={T('Назад', 'Back')}
+          style={s.back}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}
+        >
+          <IconChevronLeft />
+        </Pressable>
+        <Text style={s.title} numberOfLines={1}>{ACT.title()}</Text>
+        <View style={s.back} />
+      </View>
+
+      {/*
+        Сегменты по СОДЕРЖИМОМУ, а не равными четвертями. Четвертями «Приглашения» не помещались
+        и обрезались в «Приглашен…» — обрезанное слово читается как поломка вёрстки. Полоса при
+        этом прокручивается: перевод длиннее уедет вбок, но целым.
+      */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={s.segsWrap}
+        contentContainerStyle={s.segs}
+      >
+        {segments.map(([k, label, badge]) => {
+          const on = seg === k;
+          return (
+            <Pressable
+              key={k}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+              style={[s.seg, on && s.segOn]}
+              onPress={() => setSeg(k)}
+            >
+              <Text style={[s.segText, on && s.segTextOn]} numberOfLines={1}>{label}</Text>
+              {badge > 0 ? <View style={s.badge}><Text style={s.badgeText}>{badge}</Text></View> : null}
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      <ScrollView
+        contentContainerStyle={[s.list, { paddingBottom: insets.bottom + 120 }]}
+        refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={color.muted} />}
+      >
+        {loading ? <ActivityIndicator color={color.muted} style={{ marginTop: space.xl }} /> : null}
+        {err ? (
+          <Pressable accessibilityRole="button" style={s.err} onPress={load}>
+            <Text style={s.errText}>{err} {ACT.retry()}</Text>
+          </Pressable>
+        ) : null}
+
+        {!loading && seg === 'intents' ? (
+          data.intents.length
+            ? data.intents.map((row) => (
+                <IntentCard
+                  key={row.id}
+                  row={row}
+                  outbox={data.outbox}
+                  busy={busy === row.id}
+                  onOpen={() => openSearch(row)}
+                  onEdit={() => router.push({ pathname: '/myintent', params: { id: row.id } })}
+                />
+              ))
+            : empty(ACT.emptyIntents(), ACT.emptyIntentsNote(), () => router.push('/create'))
+        ) : null}
+
+        {!loading && seg === 'plans' ? (
+          plans.live.length
+            ? plans.live.map((r) => <PlainRow key={r.key} row={r} onPress={() => openRow(r)} />)
+            : empty(ACT.emptyPlans())
+        ) : null}
+
+        {!loading && seg === 'invites' ? (
+          data.invites.length
+            ? data.invites.map((v: any) => (
+                <PlainRow
+                  key={String(v.id)}
+                  row={{
+                    key: String(v.id), kind: 'invite-in',
+                    title: String(v.intent?.title || v.from?.name || ''),
+                    sub: [v.from?.name, v.intent?.when].filter(Boolean).join(' · '),
+                    photo: v.from?.photo,
+                  }}
+                  onPress={() => openInvite(v)}
+                />
+              ))
+            : empty(ACT.emptyInvites())
+        ) : null}
+
+        {!loading && seg === 'history' ? (
+          plans.past.length
+            ? plans.past.map((r) => <PlainRow key={r.key} row={r} onPress={() => openRow(r)} />)
+            : empty(ACT.emptyHistory())
+        ) : null}
+      </ScrollView>
+
+      <View style={s.nav}><BottomNav active="intents" /></View>
+    </View>
+  );
+}
+
+/** Карточка затеи — «Event Hero Card v2» с кадра: обложка с чипом, название, когда и где, кнопка. */
+function IntentCard({
+  row, outbox, busy, onOpen, onEdit,
+}: { row: IntentRow; outbox: any[]; busy: boolean; onOpen: () => void; onEdit: () => void }) {
+  const state = intentState(row, outbox);
+  const when = intentWhen(row);
+  return (
+    <View style={s.card}>
+      <View style={s.cover}>
+        <IconImagePlaceholder size={40} />
+        <View style={s.chip}><Text style={s.chipText}>{chipLabel(state, row, outbox)}</Text></View>
+      </View>
+      <View style={s.cardBody}>
+        <Text style={s.cardTitle} numberOfLines={1}>{intentTitle(row)}</Text>
+        <View style={s.meta}>
+          <IconCalendar size={16} />
+          <Text style={s.metaText} numberOfLines={1}>{when.date}</Text>
+          {when.time ? <IconClock size={16} /> : null}
+          {when.time ? <Text style={s.metaText} numberOfLines={1}>{when.time}</Text> : null}
+        </View>
+        <View style={s.meta}>
+          <IconPin size={16} c={color.muted} />
+          <Text style={s.metaText} numberOfLines={1}>{intentWhere(row)}</Text>
+        </View>
+        <Text style={s.footNote} numberOfLines={1}>
+          {row.error ? ACT.rankFailed() : ACT.lookingNearby()}
+        </Text>
+        <View style={s.actions}>
+          <Pressable
+            accessibilityRole="button"
+            style={[s.cta, busy && { opacity: 0.6 }]}
+            disabled={busy}
+            onPress={onOpen}
+          >
+            {busy ? <ActivityIndicator size="small" color={color.onPrimary} />
+              : <Text style={s.ctaText}>{ctaLabel(state)}</Text>}
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel={ACT.edit()} style={s.pencil} onPress={onEdit}>
+            <IconPencil size={18} />
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+/** Строка для планов, приглашений и истории: тот же ряд, что в «Сообщениях», но ведёт в объект. */
+function PlainRow({ row, onPress }: { row: Row; onPress: () => void }) {
+  return (
+    <Pressable accessibilityRole="button" style={s.row} onPress={onPress}>
+      {row.photo
+        ? <Image source={{ uri: mediaUrl(row.photo) }} style={s.avatar} />
+        : <View style={[s.avatar, s.avatarEmpty]}><IconPerson size={22} /></View>}
+      <View style={{ flex: 1 }}>
+        <Text style={s.rowTitle} numberOfLines={1}>{row.title}</Text>
+        <Text style={s.rowSub} numberOfLines={1}>{row.teaser || row.sub}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+// ===== вид
+
+const s = StyleSheet.create({
+  wrap: { flex: 1, backgroundColor: color.bg },
+  top: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingBottom: space.sm },
+  back: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  title: { flex: 1, textAlign: 'center', ...type.title, color: color.fg } as any,
+
+  segsWrap: { flexGrow: 0, marginHorizontal: space.lg },
+  segs: { padding: 4, borderRadius: rad.full, backgroundColor: color.card, flexDirection: 'row', gap: 2 },
+  seg: {
+    height: 36, paddingHorizontal: space.md, borderRadius: rad.full,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+  },
+  segOn: { backgroundColor: color.primary },
+  segText: { ...type.labelSmall, color: color.muted } as any,
+  segTextOn: { color: color.onPrimary, fontWeight: '700' },
+  badge: { minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 4, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  badgeText: { fontSize: 9, fontWeight: '700', color: color.onPrimary },
+
+  list: { paddingHorizontal: space.lg, paddingTop: space.md, gap: space.md },
+
+  card: { borderRadius: rad.lg, backgroundColor: color.card, overflow: 'hidden', ...({} as any) },
+  cover: { height: 100, backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+  chip: {
+    position: 'absolute', left: space.md, top: space.md,
+    paddingHorizontal: 10, height: 24, borderRadius: 12,
+    backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
+  },
+  chipText: { ...type.labelSmall, color: color.fg, fontWeight: '600' } as any,
+  cardBody: { padding: space.md, gap: 6 },
+  cardTitle: { ...type.title, color: color.fg } as any,
+  meta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  metaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
+  footNote: { ...type.labelSmall, color: color.muted } as any,
+  actions: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 4 },
+  cta: { flex: 1, height: 40, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  ctaText: { ...type.button, color: color.onPrimary } as any,
+  pencil: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, borderRadius: rad.lg, backgroundColor: color.card },
+  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.neutral100 },
+  avatarEmpty: { alignItems: 'center', justifyContent: 'center' },
+  rowTitle: { ...type.body, color: color.fg, fontWeight: '600' } as any,
+  rowSub: { ...type.bodySmall, color: color.muted } as any,
+
+  empty: { alignItems: 'center', gap: space.sm, paddingTop: space.xl * 2, paddingHorizontal: space.lg },
+  emptyTitle: { ...type.title, color: color.fg } as any,
+  emptyNote: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
+  emptyCta: { marginTop: space.sm, height: 44, paddingHorizontal: space.xl, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  emptyCtaText: { ...type.button, color: color.onPrimary } as any,
+
+  err: { padding: space.md, borderRadius: rad.md, backgroundColor: color.warnBg },
+  errText: { ...type.bodySmall, color: color.warnText } as any,
+
+  nav: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+});
