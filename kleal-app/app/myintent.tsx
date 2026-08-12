@@ -66,7 +66,8 @@ export default function MyIntent() {
   const st = useOnb();
   const insets = useSafeAreaInsets();
   const me = String(st.profile.name || '');
-  const id = String(useLocalSearchParams<{ id?: string }>().id || '').trim();
+  const params = useLocalSearchParams<{ id?: string; edit?: string }>();
+  const id = String(params.id || '').trim();
 
   const [row, setRow] = useState<IntentRow | null>(null);
   const [outbox, setOutbox] = useState<any[]>([]);
@@ -74,7 +75,8 @@ export default function MyIntent() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [sheet, setSheet] = useState<Sheet>('none');
-  const [mode, setMode] = useState<Mode>('view');
+  /** Карандаш на карточке открывает страницу СРАЗУ в правке — так на борде идёт стрелка. */
+  const [mode, setMode] = useState<Mode>(params.edit === '1' ? 'edit' : 'view');
 
   /** Черновик листа. Заводится при открытии и до «Применить» никуда не уходит. */
   const [dateKey, setDateKey] = useState('');

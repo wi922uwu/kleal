@@ -240,7 +240,8 @@ export default function Activity() {
                   outbox={data.outbox}
                   busy={busy === row.id}
                   onOpen={() => openSearch(row)}
-                  onEdit={() => router.push({ pathname: '/myintent', params: { id: row.id } })}
+                  onOpenPage={() => router.push({ pathname: '/myintent', params: { id: row.id } })}
+                  onEdit={() => router.push({ pathname: '/myintent', params: { id: row.id, edit: '1' } })}
                 />
               ))
             : empty(ACT.emptyIntents(), ACT.emptyIntentsNote(), () => router.push('/create'))
@@ -283,8 +284,11 @@ export default function Activity() {
 
 /** Карточка затеи — «Event Hero Card v2» с кадра: обложка с чипом, название, когда и где, кнопка. */
 function IntentCard({
-  row, outbox, busy, onOpen, onEdit,
-}: { row: IntentRow; outbox: any[]; busy: boolean; onOpen: () => void; onEdit: () => void }) {
+  row, outbox, busy, onOpen, onOpenPage, onEdit,
+}: {
+  row: IntentRow; outbox: any[]; busy: boolean;
+  onOpen: () => void; onOpenPage: () => void; onEdit: () => void;
+}) {
   const state = intentState(row, outbox);
   const tone = CHIP_TONE[state];
   const when = intentWhen(row);
@@ -296,7 +300,14 @@ function IntentCard({
       а не выцеливает кнопку. Кнопка и карандаш внутри остаются своими — вложенное нажатие
       выигрывает у внешнего, и «посмотреть варианты» по-прежнему ведёт в выдачу, а не на страницу.
     */
-    <Pressable style={s.card} accessibilityRole="button" onPress={onEdit}>
+    /*
+      Три разных нажатия — три разных места, как на борде:
+        тело карточки → страница затеи в ПРОСМОТРЕ,
+        карандаш      → она же сразу в ПРАВКЕ,
+        кнопка        → выдача.
+      Тело и карандаш вели в одно и то же: карандаш переставал что-либо значить.
+    */
+    <Pressable style={s.card} accessibilityRole="button" onPress={onOpenPage}>
       <View style={s.cover}>
         <IconImagePlaceholder size={40} c={color.onCoverSoft} />
         {/* Чип цветом называет состояние раньше, чем словом: карточки лежат стопкой. */}
