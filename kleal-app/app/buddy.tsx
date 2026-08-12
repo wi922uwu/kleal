@@ -15,15 +15,16 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { IconChevronLeft, IconMic } from '../src/components/icons';
-import { useLang, getLang } from '../src/i18n';
+import { IconChevronLeft, IconSend } from '../src/components/icons';
+import { useLang, getLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
-import { buddy as buddyApi } from '../src/api';
+import { buddy as buddyApi, VoicePayload } from '../src/api';
 import { BUDDY, SHEET, looksLikeIntent, intentPhrase, sheetWhat, sheetKept, packHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
+import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 
-type Msg = { who: 'bot' | 'me'; text: string; at: string };
+type Msg = { who: 'bot' | 'me'; text: string; at: string; voice?: VoicePayload };
 
 const now = () =>
   new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
@@ -102,6 +103,13 @@ export default function Buddy() {
       say('bot', BUDDY.offline());
     }
   }, [say, st.profile]);
+
+  /** Голосовое ложится в ленту своим пузырём, а модели уходит расшифровка — ей слушать нечем. */
+  const deliverVoice = useCallback(async (payload: VoicePayload) => {
+    setThread((t) => [...t, { who: 'me', text: payload.transcript, voice: payload, at: now() }]);
+    await send(payload.transcript, turns);
+  }, [send, turns]);
+  const voice = useVoiceMessage(deliverVoice, typing);
 
   useEffect(() => {
     if (started.current) return;
@@ -189,9 +197,11 @@ export default function Buddy() {
         <ScrollView ref={scroller} contentContainerStyle={s.thread} keyboardShouldPersistTaps="handled">
           {thread.map((m, i) => (
             <View key={i} style={{ alignItems: m.who === 'me' ? 'flex-end' : 'flex-start' }}>
-              <View style={[s.bub, m.who === 'me' ? s.bubMe : s.bubBot]}>
-                <Text style={[s.bubText, m.who === 'me' && { color: color.onPrimary }]}>{m.text}</Text>
-              </View>
+              {m.voice ? <VoiceBubble voice={m.voice} mine={m.who === 'me'} /> : (
+                <View style={[s.bub, m.who === 'me' ? s.bubMe : s.bubBot]}>
+                  <Text style={[s.bubText, m.who === 'me' && { color: color.onPrimary }]}>{m.text}</Text>
+                </View>
+              )}
               <Text style={s.time}>{m.at}</Text>
             </View>
           ))}
@@ -204,18 +214,29 @@ export default function Buddy() {
 
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
           <View style={s.field}>
-            <TextInput
-              style={s.input}
-              value={draft}
-              onChangeText={setDraft}
-              placeholder={BUDDY.placeholder()}
-              placeholderTextColor={color.neutral400}
-              onSubmitEditing={submit}
-              returnKeyType="send"
-            />
-            <Pressable accessibilityRole="button" onPress={submit}>
-              <IconMic />
-            </Pressable>
+            {/*
+              Во время записи поля нет — полоса записи занимает его место. Именно `null`, а не
+              перестроенная разметка: соседняя кнопка обязана остаться на СВОЁМ месте в дереве,
+              иначе React пересоберёт её ровно в миг старта записи и жест удержания оборвётся.
+            */}
+            {voice.phase === 'idle' ? (
+              <TextInput
+                style={s.input}
+                value={draft}
+                onChangeText={setDraft}
+                placeholder={BUDDY.placeholder()}
+                placeholderTextColor={color.neutral400}
+                onSubmitEditing={submit}
+                returnKeyType="send"
+              />
+            ) : null}
+            {voice.phase === 'idle' && draft.trim() ? (
+              <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={submit} hitSlop={8}>
+                <IconSend size={18} c={color.primary} />
+              </Pressable>
+            ) : (
+              <VoiceMessageControl voice={voice} />
+            )}
           </View>
         </View>
 

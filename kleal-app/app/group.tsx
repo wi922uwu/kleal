@@ -30,15 +30,16 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo } from '../src/api';
+import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo, type VoicePayload } from '../src/api';
 import { ROOM, GROUP, groupSysLine } from '../src/groups';
 import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
 import { msgTime } from '../src/chat';
 import { IconChevronLeft, IconPerson, IconSend, IconDots } from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
+import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 
-type GMsg = { id?: string; frm?: string; text?: string; t?: number; kind?: string };
+type GMsg = { id?: string; frm?: string; text?: string; t?: number; kind?: string; voice?: VoicePayload };
 
 export default function GroupRoom() {
   useLang();
@@ -66,6 +67,19 @@ export default function GroupRoom() {
   /** Время последнего известного сообщения — по нему сервер отдаёт только новые. */
   const since = useRef(0);
 
+  /** Голосовое уходит той же ручкой, что и текст: расшифровка в `text`, файл рядом в `voice`. */
+  const deliverVoice = useCallback(async (payload: VoicePayload) => {
+    if (!me || !gid) throw new Error('MISSING_GROUP');
+    const r: any = await gapi.post(gid, me, payload.transcript, payload);
+    if (!r?.ok) throw new Error(r?.error || 'post failed');
+    const local: GMsg = r?.message || {
+      frm: me, text: payload.transcript, kind: 'voice', voice: payload, t: Date.now() / 1000,
+    };
+    setMsgs((prev) => [...prev, local]);
+    setErr('');
+  }, [gid, me]);
+  const voice = useVoiceMessage(deliverVoice, !me || !gid || !!fatal);
+
   const load = useCallback(async () => {
     if (!gid || !me) return;
     try {
@@ -77,9 +91,16 @@ export default function GroupRoom() {
       if (list.length) {
         setMsgs((prev) => {
           // Склейка по id: опрос приносит и мою собственную реплику, показанную оптимистично.
+          // У голосового своя примета — id загруженного файла: расшифровки двух записей могут
+          // совпасть дословно, и сверка по тексту склеила бы разные сообщения в одно.
           const seen = new Set(prev.map((m) => m.id).filter(Boolean));
           const add = list.filter((m) => !m.id || !seen.has(m.id));
-          return [...prev.filter((m) => m.id || !add.some((a) => a.text === m.text)), ...add];
+          return [
+            ...prev.filter((m) => m.id || !add.some((a) => (
+              m.voice?.id ? a.voice?.id === m.voice.id : !a.voice && a.text === m.text
+            ))),
+            ...add,
+          ];
         });
         since.current = Math.max(since.current, ...list.map((m) => Number(m.t || 0)));
       }
@@ -243,9 +264,13 @@ export default function GroupRoom() {
                 {/* Имя автора — только у чужих: в группе больше двух человек, и без подписи
                     реплики сливаются в один голос. У своих оно избыточно. */}
                 {!mine ? <Text style={s.author}>{m.frm}</Text> : null}
-                <View style={[s.bub, mine ? s.bubMe : s.bubThem]}>
-                  <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
-                </View>
+                {m.kind === 'voice' && m.voice ? (
+                  <VoiceBubble voice={m.voice} mine={mine} />
+                ) : (
+                  <View style={[s.bub, mine ? s.bubMe : s.bubThem]}>
+                    <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
+                  </View>
+                )}
                 {m.t ? <Text style={s.time}>{msgTime(Number(m.t))}</Text> : null}
               </View>
             );
@@ -255,18 +280,29 @@ export default function GroupRoom() {
 
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
           <View style={s.field}>
-            <TextInput
-              style={s.input}
-              value={draft}
-              onChangeText={setDraft}
-              placeholder={ROOM.composer()}
-              placeholderTextColor={color.neutral400}
-              onSubmitEditing={send}
-              returnKeyType="send"
-            />
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={send}>
-              <IconSend />
-            </Pressable>
+            {/*
+              Во время записи поля нет — полоса записи занимает его место. Именно `null`, а не
+              перестроенная разметка: соседняя кнопка обязана остаться на СВОЁМ месте в дереве,
+              иначе React пересоберёт её ровно в миг старта записи и жест удержания оборвётся.
+            */}
+            {voice.phase === 'idle' ? (
+              <TextInput
+                style={s.input}
+                value={draft}
+                onChangeText={setDraft}
+                placeholder={ROOM.composer()}
+                placeholderTextColor={color.neutral400}
+                onSubmitEditing={send}
+                returnKeyType="send"
+              />
+            ) : null}
+            {voice.phase === 'idle' && draft.trim() ? (
+              <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={send}>
+                <IconSend />
+              </Pressable>
+            ) : (
+              <VoiceMessageControl voice={voice} />
+            )}
           </View>
 
           {/*
