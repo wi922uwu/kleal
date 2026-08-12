@@ -353,6 +353,11 @@ console.log('\nголосовое ведёт себя как в мессендж
     v.indexOf('await setAudioModeAsync({ playsInSilentMode: true })') < v.indexOf('player.play();\n  };'),
     'иначе входящее голосовое молчит при поднятом переключателе');
 
+  // «Нажал — и ничего» одинаково выглядит и при незагрузившемся файле, и при исправном молчании.
+  check('незагрузившийся файл называет себя, а не молчит',
+    /status\.isLoaded/.test(v) && /setStuck\(true\)/.test(v) && /не загрузилось/.test(read('src/voice.tsx')),
+    'иначе человеку нечем отличить «не работает» от «не слышно»');
+
   check('перемотка и смена темпа не выключают звук',
     /const keepPlaying =/.test(v) &&
     /keepPlaying\(\(\) => player\.seekTo/.test(v) &&

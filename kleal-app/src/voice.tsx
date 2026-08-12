@@ -536,6 +536,18 @@ function AudioPlay({
   }, [rateIn, started]);
 
   /**
+   * Нажал — и ничего. Файл может не загрузиться (нет сети, адрес не тот), и до сих пор это
+   * выглядело ровно как исправное молчание: кнопка нажимается, ничего не происходит, и человеку
+   * нечем отличить «не работает» от «не слышно». Четыре секунды — с запасом на медленную сеть.
+   */
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    if (!started || status.isLoaded) { setStuck(false); return; }
+    const t = setTimeout(() => setStuck(true), 4000);
+    return () => clearTimeout(t);
+  }, [started, status.isLoaded]);
+
+  /**
    * Режим звука включается ПЕРЕД каждым запуском, и это не перестраховка.
    *
    * `playsInSilentMode` выставлялся только в конце записи. Своё, только что записанное, поэтому
@@ -606,8 +618,8 @@ function AudioPlay({
       />
 
       {/* До запуска — сколько сообщение длится, после — сколько уже прошло. */}
-      <Text style={[s.duration, mine && { color: color.onPrimary }]}>
-        {formatDuration(started ? current : total || durationMs)}
+      <Text style={[s.duration, stuck && s.durationStuck, mine && { color: color.onPrimary }]} numberOfLines={1}>
+        {stuck ? T('не загрузилось', 'failed') : formatDuration(started ? current : total || durationMs)}
       </Text>
 
       {started ? (
@@ -995,6 +1007,8 @@ const s = StyleSheet.create({
   waveMask: { position: 'absolute', left: 0, top: 0, height: 24, overflow: 'hidden' },
   waveBar: { width: 2, borderRadius: 1 },
   duration: { minWidth: 38, fontSize: 11, color: color.muted, fontVariant: ['tabular-nums'] },
+  /** Место отсчёта занимает причина молчания: строка длиннее, цифровой моноширины ей не нужно. */
+  durationStuck: { fontSize: 10, color: color.primary, fontVariant: undefined },
   rate: {
     paddingHorizontal: 6, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
     backgroundColor: color.neutral100,
