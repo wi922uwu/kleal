@@ -127,16 +127,33 @@ export async function sendInvite(who: string, to: string, intent: any): Promise<
   return { ok: true };
 }
 
-/** Отзыв (O.15). ALREADY_RESOLVED — человек ответил, пока мы смотрели: отменять уже нечего. */
-export async function withdrawInvite(who: string, to: string): Promise<boolean> {
+/**
+ * Отзыв (O.15).
+ *
+ * ALREADY_RESOLVED — человек ответил, пока мы смотрели. Раньше это выдавалось за успех: строка
+ * пропадала с экрана, вызывающий получал `true` и говорил «отозвано», хотя приглашение живо и
+ * принято. Отсюда и «нажимаю Отменить — ничего не происходит»: происходило, но не то, и следующий
+ * же опрос возвращал строку обратно.
+ *
+ * Теперь исход называется своим именем: `resolved` — не отказ связи, а «поздно, уже ответили»,
+ * и решает вызывающий, что об этом сказать.
+ */
+export type WithdrawResult = { ok: boolean; resolved?: boolean; error?: string };
+
+export async function withdrawInvite(who: string, to: string): Promise<WithdrawResult> {
   const row = inviteTo(to);
-  if (!row?.id) return false;
+  if (!row?.id) return { ok: false, error: 'NOT_FOUND' };
   const r: any = await agent.withdraw(row.id, String(who || '').trim());
-  if (!r?.ok && r?.error !== 'ALREADY_RESOLVED') return false;
+  if (!r?.ok) {
+    // Ответившее приглашение отзывать нечего — и стирать его со своей стороны тоже нельзя:
+    // оно продолжает жить у собеседника, и опрос вернёт его обратно.
+    if (r?.error === 'ALREADY_RESOLVED') { syncInvites(who); return { ok: false, resolved: true }; }
+    return { ok: false, error: String(r?.error || 'withdraw failed') };
+  }
   delete rows[norm(to)];
   emit();
   syncInvites(who);
-  return true;
+  return { ok: true };
 }
 
 /** Смена аккаунта: чужие приглашения на новом экране показывать нельзя. */

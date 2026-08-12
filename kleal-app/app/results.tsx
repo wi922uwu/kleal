@@ -216,8 +216,13 @@ export default function Results() {
 
   /** O.15/GR.17 «Cancel»: отозвать НЕотвеченное приглашение. Ответившее — скажет сервер. */
   const cancelInvite = async (to: string) => {
-    const ok = gmode ? await cancelGroupInvite(self, to) : await withdrawInvite(self, to);
-    if (!ok) setNote(CANDS.cancelFailed());
+    if (gmode) {
+      if (!(await cancelGroupInvite(self, to))) setNote(CANDS.cancelFailed());
+      return;
+    }
+    // Исход называется своим именем: «поздно» — не то же самое, что «не получилось».
+    const r = await withdrawInvite(self, to);
+    if (!r.ok) setNote(r.resolved ? CANDS.cancelTooLate() : CANDS.cancelFailed());
   };
 
   /** «Начать поиск» из листа O.11a: тот же /api/agent/match, но с условиями, которые человек ослабил сам. */

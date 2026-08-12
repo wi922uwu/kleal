@@ -22,6 +22,8 @@ export const CANDS = {
   invitedShort: () => T('Отправлено', 'Invited'),
   cancel: () => T('Отменить', 'Cancel'),
   cancelFailed: () => T('Не получилось отменить. Попробуй ещё раз.', 'Couldn’t cancel. Try again.'),
+  /** Отзывать нечего: ответили раньше, чем нажали. Это не сбой, и говорить о нём как о сбое нельзя. */
+  cancelTooLate: () => T('Уже ответили — отзывать нечего.', 'They already answered — nothing to withdraw.'),
   inviteFailed: () => T('Не отправилось. Попробуй ещё раз.', 'It didn’t send. Try again.'),
 
   /** Приписка приватности с кадра O.13, дословно. */

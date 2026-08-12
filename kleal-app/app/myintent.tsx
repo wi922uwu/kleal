@@ -77,6 +77,7 @@ export default function MyIntent() {
   const [sheet, setSheet] = useState<Sheet>('none');
   /** Карандаш на карточке открывает страницу СРАЗУ в правке — так на борде идёт стрелка. */
   const [mode, setMode] = useState<Mode>(params.edit === '1' ? 'edit' : 'view');
+  const [asking, setAsking] = useState(false);
 
   /** Черновик листа. Заводится при открытии и до «Применить» никуда не уходит. */
   const [dateKey, setDateKey] = useState('');
@@ -162,6 +163,22 @@ export default function MyIntent() {
       setBusy(false);
     }
   }, [busy, me, row, router, st.profile]);
+
+  /**
+   * Уйти из своей затеи можно только совсем: она твоя, «выходить» из неё не из чего. Спрашиваем
+   * подтверждение — удаление необратимо, мягкого архива у интентов на сервере нет.
+   */
+  const removeIntent = useCallback(async () => {
+    if (!row) return;
+    setAsking(false);
+    try {
+      const r: any = await agent.intentDelete(me, row.id);
+      if (!r?.ok) throw new Error('delete failed');
+      router.replace('/activity');
+    } catch {
+      setErr(ACT.removeFailed());
+    }
+  }, [me, row, router]);
 
   const openWhen = () => {
     const i = row?.intent || {};
@@ -311,13 +328,30 @@ export default function MyIntent() {
               к этому моменту нечего. Она возвращает страницу в спокойный вид — без карандашей.
             */}
             {mode === 'edit' ? (
-              <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setMode('view')}>
-                <Text style={s.ctaDarkText}>{DETAILS.cancel()}</Text>
-              </Pressable>
+              <>
+                <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setMode('view')}>
+                  <Text style={s.ctaDarkText}>{DETAILS.cancel()}</Text>
+                </Pressable>
+                {/* Единственный выход из своей затеи — убрать её совсем. Стоит в правке, не на виду. */}
+                <Pressable accessibilityRole="button" style={s.removeBtn} onPress={() => setAsking(true)}>
+                  <Text style={s.removeText}>{ACT.remove()}</Text>
+                </Pressable>
+              </>
             ) : null}
           </View>
         </>
       ) : null}
+
+      <EditSheet
+        open={asking}
+        title={ACT.removeTitle()}
+        onClose={() => setAsking(false)}
+        onAccept={removeIntent}
+        acceptLabel={ACT.remove()}
+        cancelLabel={ACT.keep()}
+      >
+        <Text style={s.summaryText}>{ACT.removeNote()}</Text>
+      </EditSheet>
 
       {/* C.02b — дата и время. Часового пояса на кадре нет: у уже заведённой затеи он не меняется. */}
       <EditSheet
@@ -444,6 +478,8 @@ const s = StyleSheet.create({
   fab: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
   cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   ctaText: { ...type.button, color: color.onPrimary } as any,
+  removeBtn: { height: 44, alignItems: 'center', justifyContent: 'center', marginTop: space.xs },
+  removeText: { ...type.button, color: color.danger } as any,
   ctaDark: { height: 52, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center', marginTop: space.sm },
   ctaDarkText: { ...type.button, color: color.onPrimary } as any,
 

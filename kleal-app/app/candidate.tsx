@@ -101,7 +101,8 @@ export default function Candidate() {
   /** O.15 «Отменить»: отзыв НЕотвеченного приглашения. Уже отвеченное отзывать нечем. */
   const cancel = async () => {
     setErr('');
-    if (!(await withdrawInvite(self, name))) setErr(CANDS.cancelFailed());
+    const r = await withdrawInvite(self, name);
+    if (!r.ok) setErr(r.resolved ? CANDS.cancelTooLate() : CANDS.cancelFailed());
   };
 
   /**

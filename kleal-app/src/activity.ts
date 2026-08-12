@@ -59,6 +59,19 @@ export const ACT = {
   emptyHistory: () => T('Здесь будет прошедшее', 'Past meetups will land here'),
   create: () => T('Создать интент', 'Create intent'),
 
+  /**
+   * Удаление затеи. «Выйти» из своей затеи нельзя — она твоя; из неё можно только уйти совсем,
+   * и тогда её не должно остаться нигде: ни в списке, ни в поиске. Поэтому слово прямое.
+   */
+  removeTitle: () => T('Удалить затею?', 'Delete this intent?'),
+  removeNote: () => T(
+    'Она исчезнет из списка, и Kleal перестанет искать по ней людей. Уже отправленные приглашения останутся у тех, кому ты их послал.',
+    'It disappears from the list and Kleal stops looking for people. Invites you already sent stay with the people you sent them to.'
+  ),
+  remove: () => T('Удалить', 'Delete'),
+  keep: () => T('Оставить', 'Keep it'),
+  removeFailed: () => T('Не удалось удалить. Попробуй ещё раз.', 'Could not delete. Try again.'),
+
   loadFailed: () => T('Не удалось загрузить.', 'Could not load.'),
   retry: () => T('Повторить', 'Retry'),
   /** Пересчёт одного интента упал: карточку не прячем — интент существует, просто без кандидатов. */
