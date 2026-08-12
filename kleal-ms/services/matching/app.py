@@ -3165,14 +3165,50 @@ def _sys_msg(frm, to, code, **fields):
     del ms[:-4000]
 
 
-def send_message(frm, to, text):
+_VOICE_URL_RE = re.compile(r"^/api/speech/audio/([0-9a-f]{32})\.(m4a|mp4|webm|wav|mp3|ogg)$")
+
+
+def _voice_message(voice):
+    """Normalize voice metadata produced by llm-service and reject arbitrary media URLs."""
+    if voice is None:
+        return None, None
+    if not isinstance(voice, dict):
+        return None, "INVALID_VOICE"
+    voice_id = str(voice.get("id") or "").strip().lower()
+    url = str(voice.get("url") or "").strip()
+    transcript = str(voice.get("transcript") or voice.get("text") or "").strip()[:2001]
+    mime_type = str(voice.get("mime_type") or "").strip().lower()
+    try:
+        duration_ms = int(voice.get("duration_ms") or 0)
+    except (TypeError, ValueError):
+        return None, "INVALID_VOICE"
+    match = _VOICE_URL_RE.fullmatch(url)
+    if (not re.fullmatch(r"[0-9a-f]{32}", voice_id) or not match
+            or match.group(1) != voice_id or not transcript or len(transcript) > 2000
+            or duration_ms < 250 or duration_ms > 60000
+            or not (mime_type.startswith("audio/") or mime_type.startswith("video/"))):
+        return None, "INVALID_VOICE"
+    return {
+        "id": voice_id, "url": url, "duration_ms": duration_ms,
+        "transcript": transcript, "mime_type": mime_type,
+    }, None
+
+
+def send_message(frm, to, text, voice=None):
     frm, to, text = str(frm or "").strip(), str(to or "").strip(), str(text or "").strip()[:2000]
+    voice, voice_error = _voice_message(voice)
+    if voice_error:
+        return {"ok": False, "error": voice_error}
+    if voice:
+        text = voice["transcript"]
     if not frm or not to or not text or _norm_name(frm) == _norm_name(to):
         return {"ok": False, "error": "from, to and text are required and the two must differ"}
     if _blocked_pair(frm, to):
         return {"ok": False, "error": "BLOCKED"}
     m = {"id": "m_%d" % int(time.time() * 1000), "pair": _pair_key(frm, to),
          "from": frm, "to": to, "text": text, "t": time.time()}
+    if voice:
+        m.update({"kind": "voice", "voice": voice})
     with _STORE_LOCK:
         ms = _messages()
         ms.append(m)
@@ -3208,6 +3244,7 @@ def threads_for(self_name):
             # `sys` едет наружу: в списке «Сообщений» последней строкой вполне может быть событие
             # плана, и рисовать под именем пустоту вместо «План подтверждён» нельзя.
             last[_norm_name(other)] = {"who": other, "last": m.get("text"), "t": m.get("t"),
+                                       "kind": m.get("kind"), "voice": m.get("voice"),
                                        "sys": m.get("sys"),
                                        "mine": _norm_name(m.get("from")) == me}
     return _with_photos(sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50], "who")
@@ -3836,8 +3873,13 @@ def gi_thread(gid, who, since=0.0):
     return {"ok": True, "group": _gi_public(g, who), "messages": msgs[-200:]}
 
 
-def gi_post(gid, who, text, idem=None):
+def gi_post(gid, who, text, idem=None, voice=None):
     who, text = str(who or "").strip(), str(text or "").strip()
+    voice, voice_error = _voice_message(voice)
+    if voice_error:
+        return {"ok": False, "error": voice_error}
+    if voice:
+        text = voice["transcript"]
     if not text:
         return {"ok": False, "error": "empty message"}
     cached = _idem_get(idem)
@@ -3854,6 +3896,8 @@ def gi_post(gid, who, text, idem=None):
         now = time.time()
         msg = {"id": "gm_%d" % int(now * 1000), "gid": gid, "frm": who,
                "text": text[:2000], "t": now, "kind": "msg"}
+        if voice:
+            msg.update({"kind": "voice", "voice": voice})
         _gmsgs().append(msg)
         g["updated"] = now
         _save_store()
@@ -3999,6 +4043,29 @@ def gi_for(who):
                                 "group": _gi_public(g, who)})
     mine.sort(key=lambda x: -(x.get("joined_count") or 0))
     return {"ok": True, "groups": mine, "invites": invited}
+
+
+def gi_invite_detail(inv_id, who):
+    """Return one live group invitation only to its recipient."""
+    _gi_expire()
+    me = _norm_name(who)
+    inv = next((i for i in _ginvites()
+                if i.get("id") == inv_id and _norm_name(i.get("to")) == me
+                and i.get("state") in ("sent", "viewed")), None)
+    if not inv:
+        return {"ok": False, "error": "NO_SUCH_INVITE"}
+    g = _gi_find(inv.get("gid"))
+    if not g:
+        return {"ok": False, "error": "NO_SUCH_GROUP"}
+    return {
+        "ok": True,
+        "invite": {
+            "id": inv.get("id"), "gid": inv.get("gid"), "from": inv.get("frm"),
+            "note": inv.get("note"), "state": inv.get("state"),
+            "expires_at": inv.get("expires_at"),
+        },
+        "group": _gi_public(g, who),
+    }
 
 
 # -*- coding: utf-8 -*-
@@ -6058,7 +6125,7 @@ class H(BaseHTTPRequestHandler):
         # Group intents (spec: individual invites, one shared chat). Handled first so their own
         # membership ACL applies rather than the 1:1 thread rules below.
         if base in ("/api/agent/gintent", "/api/agent/gintent-thread", "/api/agent/gintents",
-                    "/api/agent/gplans", "/api/agent/home-invites"):
+                    "/api/agent/gplans", "/api/agent/home-invites", "/api/agent/ginvite"):
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
                 if "?" in self.path else {}
             me = unquote(q.get("self", "").replace("+", " "))
@@ -6067,6 +6134,8 @@ class H(BaseHTTPRequestHandler):
             _gp_sweep()
             if base == "/api/agent/home-invites":
                 send_json(self, 200, home_invites(me))
+            elif base == "/api/agent/ginvite":
+                send_json(self, 200, gi_invite_detail(unquote(q.get("id", "").replace("+", " ")), me))
             elif base == "/api/agent/gplans":
                 send_json(self, 200, gp_for(me))
             elif base == "/api/agent/gintents":
@@ -6124,7 +6193,8 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, {"intents": list_intents(body.get("self"), body.get("profile") or {},
                                                           body.get("live") is not False)})
         elif p == "/api/agent/message":
-            send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text")))
+            send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text"),
+                                              body.get("voice")))
         elif p == "/api/agent/thread-read":
             send_json(self, 200, thread_mark_read(body.get("self"), body.get("with")))
         elif p == "/api/agent/propose":
@@ -6166,7 +6236,7 @@ class H(BaseHTTPRequestHandler):
                                             bool(body.get("accept")), body.get("idem")))
         elif p == "/api/agent/gintent-post":
             send_json(self, 200, gi_post(body.get("gid"), body.get("self"),
-                                         body.get("text"), body.get("idem")))
+                                         body.get("text"), body.get("idem"), body.get("voice")))
         elif p == "/api/agent/gplan-begin":
             send_json(self, 200, gp_begin(body.get("gid"), body.get("self"), body.get("when"),
                                           body.get("place"), body.get("note"),
