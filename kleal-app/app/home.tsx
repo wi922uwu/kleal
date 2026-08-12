@@ -340,7 +340,11 @@ function GroupInviteCard({ inv }: { inv: HomeInvite }) {
   // Маршрут называется /ginvite — файл app/ginvite.tsx. Стояло `/group-invite`, которого нет:
   // expo-router на несуществующий путь молча ничего не делает, и карточка приглашения не
   // открывалась вовсе. Заметить это было нельзя, пока лента приглашений сама отдавала 404.
-  const open = () => router.push({ pathname: '/ginvite', params: { id: inv.id } });
+  // gid рядом с id — правка соседней ветки: экран приглашения без него не находит группу.
+  const open = () => router.push({
+    pathname: '/ginvite',
+    params: { id: inv.id, gid: String(group?.gid || inv.intent.id || '') },
+  });
   const participants = (group?.participants || []).slice(0, 5);
   const hidden = Math.max(0, (group?.participant_count || 0) - participants.length);
 
