@@ -195,9 +195,15 @@ export const GPLAN = {
   locked: () =>
     T('До встречи меньше двух часов — план больше не меняется.',
       'Under two hours to go — the plan doesn’t change any more.'),
-  belowQuorum: () =>
-    T('В плане осталось меньше трёх — групповым он быть перестал.',
-      'Fewer than three are left — this is no longer a group plan.'),
+  /** GR.40. План НА ПАУЗЕ, а не отменён: решение за организатором, и оно ещё не принято. */
+  belowTitle: () => T('Вас осталось двое', 'You’re down to two'),
+  belowNote: () => T(
+    'Групповому плану нужны трое. Пока ты не решишь, ничего не происходит — план на паузе, а не отменён.',
+    'A group plan needs three. Nothing happens until you choose — the plan is on hold, not cancelled.'
+  ),
+  inviteMore: () => T('Позвать ещё людей', 'Invite more people'),
+  cancelPlan: () => T('Отменить план', 'Cancel the plan'),
+
   cancelled: () => T('План отменён.', 'The plan is cancelled.'),
 
   // ---- GR.35: попросить группу ------------------------------------------

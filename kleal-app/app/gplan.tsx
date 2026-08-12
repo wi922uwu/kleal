@@ -180,6 +180,9 @@ export default function GroupPlan() {
 
   const fix = () => act(() => gapi.planFix(String(plan?.id), me, newIdem('gpf')));
 
+  /** GR.40: организатор закрывает план, вставший на паузу. Группа остаётся — уходит только план. */
+  const cancelPlan = () => act(() => gapi.planCancel(String(plan?.id), me, newIdem('gpc')));
+
   const update = () =>
     act(() => gapi.planUpdate(String(plan?.id), me,
                               { ...timeArgs(), place: place.trim() || undefined }, newIdem('gpu')),
@@ -281,7 +284,9 @@ export default function GroupPlan() {
           ) : null}
 
           {/* Индикатор раундов — только пока согласовывают. На утверждённом плане его нет и на борде. */}
-          {plan?.state === 'proposed' && !formMode ? (
+          {/* Виден и в форме: раунд тратится ровно в ней, и «Round 2 of 3» нужно перед отправкой,
+              а не после. Скрытый на время формы, он пропадал в самый нужный момент. */}
+          {plan?.state === 'proposed' ? (
             <RoundBar round={Number(plan.round || 1)} max={Number(plan.max_rounds || 3)} />
           ) : null}
 
@@ -391,6 +396,9 @@ export default function GroupPlan() {
             onSuggestOpen={() => { setWhen(whenFromStartsAt(plan?.starts_at, when.tz) || when); setPlace(String(plan?.place || '')); setMode('suggest'); }}
             onSuggestSend={counter}
             onFix={fix}
+            onInviteMore={() => router.push({ pathname: '/group', params: { gid } })}
+            onCancelPlan={cancelPlan}
+            onMoreTime={() => {}}
             onStay={confirm}
             onLeave={leave}
             onOpenChat={() => router.push({ pathname: '/group', params: { gid } })}
@@ -531,8 +539,10 @@ function formTitle(
       // GRO.25a: для организатора отсутствие ссылки — это и есть заголовок. Для остальных нет:
       // они ничего с этим сделать не могут, им хватает плашки «ссылка будет» у карточки.
       return p.needs_link && a.isOwner ? GPLAN.linkTitle() : GPLAN.setTitle();
+    // «План назначен» на плане, который упал ниже трёх, — прямая неправда: рядом на том же
+    // экране написано, что осталось меньше трёх.
+    case 'below': return GPLAN.belowTitle();
     case 'locked':
-    case 'below':
     case 'closed':
     default: return GPLAN.setTitle();
   }
@@ -570,7 +580,9 @@ function formNote(
                                    (a.vote?.waiting || []).length);
     case 'voteWait': return GPLAN.waitingDecision(a.owner);
     case 'locked': return GPLAN.locked();
-    case 'below': return GPLAN.belowQuorum();
+    // Борд открывает вопрос («на паузе, решай»), а прежняя строка его закрывала («групповым
+    // быть перестал»). Обещать человеку выбор и тут же говорить, что всё кончено, нельзя.
+    case 'below': return GPLAN.belowNote();
     case 'closed': return GPLAN.cancelled();
     case 'confirmed':
       return p.needs_link && a.isOwner ? GPLAN.linkNote(String(p.when || '')) : GPLAN.setNote();
@@ -648,6 +660,7 @@ function Actions(a: {
   onCreate: () => void; onConfirm: () => void; onSuggestOpen: () => void; onSuggestSend: () => void;
   onFix: () => void; onStay: () => void; onLeave: () => void; onOpenChat: () => void;
   onAskVote: () => void; onOpenVote: () => void; onDecide: () => void;
+  onInviteMore: () => void; onCancelPlan: () => void; onMoreTime: () => void;
   onUpdateOpen: () => void; onUpdateSend: () => void; onAccept: () => void;
   onLinkOpen: () => void; onLinkSave: () => void; onAskHost: () => void; onCancelForm: () => void;
 }) {
@@ -680,14 +693,17 @@ function Actions(a: {
              <S label={GPLAN.openChat()} onPress={a.onOpenChat} /></>
         : <S label={GPLAN.openChat()} onPress={a.onOpenChat} />;
     case 'proposed':
+      // На последнем раунде предлагать уже нечего: сервер откажет ROUNDS_USED_UP. Кнопка,
+      // которая заведомо получит отказ, — обещание, которого приложение не выполнит.
       return mineDone
         ? <><Text style={s.dockNote}>{GPLAN.youConfirmed(a.leftForConfirm)}</Text>
-            <S label={GPLAN.suggest()} onPress={a.onSuggestOpen} /></>
+            {p?.rounds_used_up ? null : <S label={GPLAN.suggest()} onPress={a.onSuggestOpen} />}</>
         : <><P label={GPLAN.confirm()} onPress={a.onConfirm} />
-            <S label={GPLAN.suggest()} onPress={a.onSuggestOpen} /></>;
+            {p?.rounds_used_up ? null : <S label={GPLAN.suggest()} onPress={a.onSuggestOpen} />}</>;
     case 'fix':
+      // «Дать ещё время» — это «ничего не делать», а не «уйти в чат»: экран решения нужен здесь.
       return <><P label={GPLAN.fix()} onPress={a.onFix} />
-               <S label={GPLAN.moreTime()} onPress={a.onOpenChat} /></>;
+               <S label={GPLAN.moreTime()} onPress={a.onMoreTime} /></>;
     case 'stayOrLeave':
       return <><P label={GPLAN.stay()} onPress={a.onStay} />
                <S label={GPLAN.leavePlan()} onPress={a.onLeave} /></>;
@@ -710,8 +726,14 @@ function Actions(a: {
       }
       return <><P label={GPLAN.openChat()} onPress={a.onOpenChat} />
                <S label={GPLAN.changeOrCancel()} onPress={a.onAskVote} /></>;
-    case 'locked':
+    // GR.40: три выхода с кадра. Раньше здесь была одна «открыть чат» — то есть выхода не было
+    // ни одного, и план оставался на паузе навсегда.
     case 'below':
+      return a.isOwner
+        ? <><P label={GPLAN.inviteMore()} onPress={a.onInviteMore} />
+             <S label={GPLAN.cancelPlan()} onPress={a.onCancelPlan} /></>
+        : <S label={GPLAN.openChat()} onPress={a.onOpenChat} />;
+    case 'locked':
     case 'closed':
     default:
       return <S label={GPLAN.openChat()} onPress={a.onOpenChat} />;

@@ -3819,6 +3819,7 @@ def gi_respond(inv_id, who, accept, idem=None):
                                     "note": "the organiser approves joiners once planning has started"})
         inv["state"] = "accepted"; inv["updated"] = now
         g.setdefault("members", []).append({"name": who, "state": "joined", "joined": now})
+        _gp_recount(g.get("gid"), now)     # тот же пересчёт, что и при одобрении организатором
         n = len(_gi_active(g))
         # §7 state: the thread opens on the FIRST acceptance and is the same thread from then on.
         if g.get("state") == "searching":
@@ -3909,6 +3910,9 @@ def gi_approve(gid, frm, who, accept=True, idem=None):
         g["updated"] = now
         g["version"] = int(g.get("version") or 1) + 1
         _gi_say(g, "%s joined the group." % inv.get("to"))
+        # Состав вырос — пересчитать план. Без этого «позвать ещё людей» с кадра GR.40 выглядело
+        # рабочим и не работало: человек приходил в группу, а план оставался на паузе навсегда.
+        _gp_recount(gid, now)
         _save_store()
         return _idem_put(idem, {"ok": True, "approved": True, "who": inv.get("to"),
                                 "group": _gi_public(g, frm)})
@@ -4360,20 +4364,43 @@ def _gp_recount(gid, now=None):
     losing a confirmed participant is exactly when a plan stops being a group plan."""
     now = now or time.time()
     p = _gp_of(gid)
-    if not p or p.get("state") not in ("proposed", "confirmed"):
+    if not p or p.get("state") not in ("proposed", "confirmed", "below_quorum"):
         return
     g = _gi_find(gid)
+    roster = len(_gi_active(g)) if g else 0
+
+    # ПАУЗА СНИМАЕТСЯ. Раньше below_quorum было состоянием без выхода: сюда попадали и здесь
+    # оставались навсегда — ни одна ветка кода его не снимала, и позвать людей заново было
+    # бессмысленно. Меряем СОСТАВОМ, а не подтверждениями: только что принятый участник ничего
+    # подтвердить ещё не успел. Возвращаемся в «предложено», а не в «согласовано»: состав другой,
+    # и согласие каждого надо получить заново.
+    if p.get("state") == "below_quorum":
+        if roster >= GP_MIN_CONFIRMS:
+            p["state"] = "proposed"
+            p["updated"] = now
+            if g:
+                g["state"] = "planning"
+                _gi_say(g, "Three again — the plan is back on. Everyone confirms once more.")
+        return
+
     # Пока идёт «принять или выйти» (GR.33), считать по подтверждениям нельзя: их по построению
     # одно — организатора. Меряем составом, который и есть встреча: «the group carries on either
     # way». Иначе первый же вышедший обрушивал план в below_quorum со строкой «Only 1 confirmed
     # remain» — при пятерых, которые никуда не делись.
     n = len(_gi_active(g)) if (g and p.get("update")) else len(_gp_confirms(p))
-    if p.get("state") == "confirmed" and n < GP_MIN_CONFIRMS:
+    # Согласование тоже роняется — по составу. Пока проверялось только «согласовано», выход
+    # участника посреди раундов не ронял ничего: экран «вас осталось двое» не наступал, а двое
+    # продолжали согласовывать групповой план, которого уже не могло быть.
+    below = (p.get("state") == "confirmed" and n < GP_MIN_CONFIRMS) or \
+            (p.get("state") == "proposed" and roster < GP_MIN_CONFIRMS)
+    if below:
         p["state"] = "below_quorum"
         p["updated"] = now
         if g:
             g["state"] = "below_quorum"
-            _gi_say(g, "Only %d confirmed remain. This is no longer a group plan." % n)
+            # Борд GR.40: план НА ПАУЗЕ, а не отменён, и решение за организатором. Прежняя строка
+            # («This is no longer a group plan») закрывала вопрос, который борд как раз открывает.
+            _gi_say(g, "A group plan needs three. Nothing happens until you choose.")
 
 
 def _gp_lock_due(now=None):
@@ -4538,6 +4565,11 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
             return _idem_put(idem, {"ok": False, "error": "LOCKED"})
         if p.get("state") in ("cancelled", "done"):
             return _idem_put(idem, {"ok": False, "error": "CLOSED"})
+        # План на паузе не принимает ни подтверждений, ни встречных предложений: состава для
+        # групповой встречи нет. Раньше сервер отвечал «ok» и не менял ничего — человек жал
+        # «Подтвердить», получал успех и не понимал, почему на экране всё по-прежнему.
+        if p.get("state") == "below_quorum":
+            return _idem_put(idem, {"ok": False, "error": "BELOW_QUORUM"})
         v = int(p.get("version") or 1)
         rnd = _gp_round(p)
         if action == "counter" and p.get("state") != "proposed":
@@ -4607,6 +4639,45 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
             _gi_say(g, "Everyone accepted the change.")
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
+def gp_cancel(pid, who, idem=None):
+    """GR.40 «Cancel the plan» — организатор закрывает план, который встал на паузу.
+
+    Появилось потому, что выхода из below_quorum не было ВООБЩЕ. Единственным способом закрыть
+    план оставалось голосование, а оно требует состояния confirmed (gp_vote_open) — то есть
+    именно из того состояния, куда план упал, закрыть его было нечем. План висел вечно.
+
+    Отменяет только организатор и только то, что ещё живо. Группа при этом НЕ распускается: люди
+    остались, разговор остался, и завести новый план они могут — поэтому она возвращается в
+    «можно планировать», а не куда-нибудь в отмену."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    now = time.time()
+    with _STORE_LOCK:
+        _gp_lock_due(now)
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if p.get("state") == "locked":
+            return _idem_put(idem, {"ok": False, "error": "LOCKED"})
+        if p.get("state") in ("cancelled", "done"):
+            return _idem_put(idem, {"ok": False, "error": "CLOSED"})
+        p["state"] = "cancelled"
+        p["updated"] = now
+        p["version"] = int(p.get("version") or 1) + 1
+        g["state"] = "ready_to_plan"
+        g["updated"] = now
+        _gi_say(g, "%s cancelled the plan. The group is still here." % who)
+        _save_store()
+    return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
 
 def gp_fix(pid, who, idem=None):
@@ -6448,6 +6519,8 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, gp_begin(body.get("gid"), body.get("self"), body.get("when"),
                                           body.get("place"), body.get("note"),
                                           body.get("starts_at"), body.get("idem")))
+        elif p == "/api/agent/gplan-cancel":
+            send_json(self, 200, gp_cancel(body.get("id"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/gplan-fix":
             send_json(self, 200, gp_fix(body.get("id"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/gplan-update":

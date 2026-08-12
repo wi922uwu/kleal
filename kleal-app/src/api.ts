@@ -639,6 +639,18 @@ export const group = {
       '/api/agent/gplan-respond', { id, self, action, idem, ...extra }
     ),
 
+  /**
+   * GR.40 «Cancel the plan» — организатор закрывает план, вставший на паузу.
+   *
+   * Появилась потому, что выхода из «ниже трёх» не было ВООБЩЕ: закрыть план можно было только
+   * голосованием, а оно требует утверждённого плана — то есть ровно того состояния, из которого
+   * план и выпал. Он висел вечно. Группа при этом остаётся: люди никуда не делись.
+   */
+  planCancel: (id: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/gplan-cancel', { id, self, idem }
+    ),
+
   /** GR.30 «Fix the plan» — организатор закрывает согласование, когда раунды кончились. Не
    *  выбрасывает молчавших: им предлагается остаться или выйти (GR.31, флаг stay_or_leave). */
   planFix: (id: string, self: string, idem: string) =>
