@@ -30,7 +30,8 @@
       "expo-router",
       "expo-image-picker",
       "expo-localization",
-      "expo-audio"
+      "expo-audio",
+      "expo-asset"
     ],
     "scheme": "kleal"
   }

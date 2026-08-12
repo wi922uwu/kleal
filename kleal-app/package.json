@@ -6,6 +6,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/slider": "5.0.1",
     "expo": "~54.0.0",
+    "expo-asset": "~12.0.13",
     "expo-audio": "~1.1.1",
     "expo-constants": "~18.0.13",
     "expo-haptics": "~15.0.8",
