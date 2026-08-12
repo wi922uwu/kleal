@@ -731,12 +731,78 @@ console.log('\nнад сообщением можно что-то сделать
   check('удалять можно только своё',
     /String\(picked\.from \|\| ''\)\.trim\(\)\.toLowerCase\(\) === me\.trim\(\)\.toLowerCase\(\)/.test(c));
   check('удалённое остаётся строкой, а не исчезает',
-    /m\.deleted \? CHAT\.deleted\(\) : m\.text/.test(c),
+    /m\.deleted \? CHAT\.deleted\(\)/.test(c) && /bubGone/.test(c),
     'пропасть бесследно оно не может — второй его уже видел');
 
   check('текст можно скопировать',
     /Clipboard\.setStringAsync/.test(c) && /"expo-clipboard": "~8\.0\.8"/.test(read('package.json')),
     'версия обязана совпадать с той, что везёт SDK 54');
+}
+
+// ------------------------------------------------- 15. свайп-ответ и живые ссылки
+console.log('\nссылка в переписке нажимается, а ответ делается жестом');
+{
+  const c = code('app/conversation.tsx');
+  const sw = code('src/components/SwipeToReply.tsx');
+
+  check('ссылка нажимается и открывается',
+    /Linking\.openURL\(part\.href!\)/.test(c));
+  check('адрес показан как есть, без подмены подписью',
+    /\{part\.text\}/.test(c),
+    'по адресу и решают, идти ли — красивая подпись поверх чужой ссылки этого решения лишает');
+
+  check('жест не отбирает прокрутку у листающего',
+    /g\.dx > 10 && Math\.abs\(g\.dx\) > Math\.abs\(g\.dy\) \* 2/.test(sw),
+    'залипшая лента дороже несработавшего ответа');
+  check('тянется только вправо',
+    /Math\.max\(0, Math\.min\(MAX, g\.dx\)\)/.test(sw),
+    'свободный ход влево обещает то, чего там нет');
+  check('отклик даётся один раз за жест',
+    /buzzed\.current = true/.test(sw) && /buzzed\.current = false/.test(sw));
+  check('по удалённому и неотправленному свайпать нечего',
+    /enabled=\{!!m\.id && !m\.deleted\}/.test(c));
+}
+
+// ------------------------------------------------- 16. разбор ссылок считается, а не угадывается
+console.log('\nссылки в тексте находятся ровно там, где они есть');
+{
+  const src = read('src/chat.ts');
+  const from = src.indexOf('export function linkParts');
+  const to = src.indexOf('\n}', from);
+  check('linkParts нашёлся в исходнике', from >= 0 && to > from, 'переименовали?');
+
+  const head = src.slice(src.indexOf('const LINK_RE'), src.indexOf('export type TextPart'));
+  const body = src.slice(from, to + 2)
+    .replace('export function linkParts', 'function linkParts')
+    .replace(/: TextPart\[\]/g, '').replace(/: string/g, '');
+  const linkParts = new Function(`${head}\n${body}\nreturn linkParts;`)();
+
+  const one = (t) => linkParts(t);
+  check('обычный текст остаётся одним куском',
+    one('просто слова').length === 1 && !one('просто слова')[0].href);
+
+  const http = one('смотри https://example.com/x тут');
+  check('адрес выделяется из середины фразы',
+    http.length === 3 && http[1].href === 'https://example.com/x',
+    JSON.stringify(http));
+
+  check('www дополняется схемой',
+    one('www.example.com')[0].href === 'https://www.example.com');
+
+  const dot = one('зайди на https://example.com/x, там всё');
+  check('хвостовая запятая не входит в адрес',
+    dot[1].href === 'https://example.com/x' && dot[2].text.startsWith(','),
+    JSON.stringify(dot));
+
+  // Самое важное: голый домен не распознаём — иначе время превращается во внешний адрес.
+  const time = one('увидимся в 19.00');
+  check('время не превращается в ссылку',
+    time.length === 1 && !time[0].href,
+    'точка между цифрами уводила бы человека из приложения по промаху пальцем');
+  check('и «встретимся у метро» тоже',
+    one('встретимся у метро').every((p) => !p.href));
+
+  check('пустой текст не роняет разбор', linkParts('').length === 0);
 }
 
 console.log('');

@@ -15,13 +15,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
-  ActivityIndicator, KeyboardAvoidingView, Platform,
+  ActivityIndicator, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   CHAT, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS,
-  msgTime, msgDayLabel, planWhen, planPinned, sysLine, sameSeries,
+  msgTime, msgDayLabel, planWhen, planPinned, sysLine, sameSeries, linkParts,
 } from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
@@ -31,6 +31,7 @@ import { mediaUrl, agent, newIdem } from '../src/api';
 import { usePolling } from '../src/polling';
 import { Sheet, SheetItem } from '../src/components/Sheet';
 import * as Clipboard from 'expo-clipboard';
+import { SwipeToReply } from '../src/components/SwipeToReply';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
@@ -578,6 +579,7 @@ export default function Conversation() {
               <React.Fragment key={m.id || m.cid || i}>
                 {/* MSG.06: «Сегодня» над первой репликой дня. */}
                 {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
+                <SwipeToReply enabled={!!m.id && !m.deleted} onReply={() => setReplyTo(m)}>
                 <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', marginTop: sameSeries(prev, m) ? 2 : 8 }}>
                   {/* У голосового текста в пузыре нет — есть проигрыватель и расшифровка под ним. */}
                   {m.voice ? (
@@ -605,7 +607,19 @@ export default function Conversation() {
                       ) : null}
                       <Text style={[s.bubText, mine && { color: color.onPrimary },
                                     m.deleted && s.bubGone]}>
-                        {m.deleted ? CHAT.deleted() : m.text}
+                        {m.deleted ? CHAT.deleted() : linkParts(String(m.text || '')).map((part, k) => (
+                          part.href ? (
+                            /* Ссылка показывается ровно так, как её прислали: подменять адрес
+                               красивой подписью в переписке нельзя — по ней и решают, идти ли. */
+                            <Text
+                              key={k}
+                              style={[s.link, mine && s.linkMine]}
+                              onPress={() => Linking.openURL(part.href!).catch(() => {})}
+                            >
+                              {part.text}
+                            </Text>
+                          ) : <Text key={k}>{part.text}</Text>
+                        ))}
                       </Text>
                     </Pressable>
                   )}
@@ -640,6 +654,7 @@ export default function Conversation() {
                     </Text>
                   ) : null}
                 </View>
+                </SwipeToReply>
               </React.Fragment>
             );
           })}
@@ -977,6 +992,8 @@ const s = StyleSheet.create({
   /** Своя реакция обведена: без этого нельзя понять, поставил ты её или просто видишь. */
   reactionMine: { borderColor: color.primary, backgroundColor: color.card },
   reactionText: { fontSize: 13, color: color.fg } as any,
+  link: { color: color.primary, textDecorationLine: 'underline' } as any,
+  linkMine: { color: color.onPrimary } as any,
   reactRow: { flexDirection: 'row', justifyContent: 'space-between', paddingBottom: space.sm },
   reactPick: {
     width: 46, height: 46, borderRadius: 23, backgroundColor: color.neutral100,

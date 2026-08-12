@@ -667,6 +667,44 @@ export type Msg = {
 export const REACTIONS = ['❤️', '👍', '😂', '🔥', '😮', '😢'] as const;
 
 /**
+ * Разбить текст на куски: обычные и ссылки.
+ *
+ * Ссылка в пузыре была мёртвым серым текстом — не нажимается, не подсвечена, и скопировать её
+ * тоже было нечем. При этом продукт сам подталкивает слать ссылку репликой: у онлайн-встречи
+ * ссылка на созвон — это и есть место встречи.
+ *
+ * Ищем только то, в чём нельзя ошибиться: `http://`, `https://` и `www.`. Голые домены вроде
+ * «увидимся в 19.00» распознавать нельзя — точка между цифрами превратила бы время во внешний
+ * адрес, и человек ушёл бы из приложения, промахнувшись пальцем по собственному сообщению.
+ *
+ * Хвостовая пунктуация не входит в адрес: «зайди на example.com/x, там всё» — запятая тут от
+ * предложения, а не от ссылки, и с ней адрес не откроется.
+ */
+const LINK_RE = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+const TRAILING = /[.,;:!?)\]}»"']+$/;
+
+export type TextPart = { text: string; href?: string };
+
+export function linkParts(text: string): TextPart[] {
+  const src = String(text || '');
+  if (!src) return [];
+  const out: TextPart[] = [];
+  let last = 0;
+  for (const m of src.matchAll(LINK_RE)) {
+    const at = m.index ?? 0;
+    let raw = m[0];
+    const tail = raw.match(TRAILING);
+    if (tail) raw = raw.slice(0, raw.length - tail[0].length);
+    if (!raw) continue;
+    if (at > last) out.push({ text: src.slice(last, at) });
+    out.push({ text: raw, href: /^www\./i.test(raw) ? `https://${raw}` : raw });
+    last = at + raw.length;
+  }
+  if (last < src.length) out.push({ text: src.slice(last) });
+  return out.length ? out : [{ text: src }];
+}
+
+/**
  * Подряд идущие реплики одного человека — ОДНА серия: время под ней одно и хвостик один.
  *
  * Экран печатал время под каждым пузырём без исключения, и живая переписка превращалась в
