@@ -42,7 +42,7 @@ import { usePolling } from '../src/polling';
 import * as Clipboard from 'expo-clipboard';
 import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
-import { useVideoNote, VideoNoteControl } from '../src/videonote';
+import { useVideoNote, VideoNoteControl, VideoNoteStage } from '../src/videonote';
 
 type GMsg = { id?: string; frm?: string; text?: string; t?: number; kind?: string; voice?: VoicePayload };
 
@@ -504,6 +504,9 @@ export default function GroupRoom() {
           onClose={() => setLeaveAsk(false)}
           bottomInset={insets.bottom}
         />
+        {/* Окно записи кружка — у корня экрана: только здесь его границы во весь экран,
+            и только здесь нажимаются кнопки «отправить» и «отмена». */}
+        <VideoNoteStage note={note} />
       </View>
     </KeyboardAvoidingView>
   );

@@ -30,7 +30,7 @@ import { Sheet, SheetItem } from '../src/components/Sheet';
 import * as Clipboard from 'expo-clipboard';
 import { MessageFeed } from '../src/components/MessageFeed';
 import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
-import { useVideoNote, VideoNoteControl } from '../src/videonote';
+import { useVideoNote, VideoNoteControl, VideoNoteStage } from '../src/videonote';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
 } from '../src/components/icons';
@@ -754,6 +754,9 @@ export default function Conversation() {
               </View>
             ))}
         </Sheet>
+        {/* Окно записи кружка — у корня экрана: только здесь его границы во весь экран,
+            и только здесь нажимаются кнопки «отправить» и «отмена». */}
+        <VideoNoteStage note={note} />
       </View>
     </KeyboardAvoidingView>
   );
