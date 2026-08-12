@@ -28,7 +28,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { mediaUrl, video as videoApi, VideoPayload } from './api';
 import { T } from './i18n';
 import { color } from './theme';
-import { IconVideo } from './components/icons';
+import { IconSend, IconVideo } from './components/icons';
 
 const MAX_MS = 60_000;
 /** Короче — не сообщение, а промах пальцем: отпускание отправляет сразу. */
@@ -86,8 +86,22 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
   const held = useRef(false);
   /** Съёмка уже идёт. Камера может сообщить о готовности повторно — второй раз начинать нельзя. */
   const busy = useRef(false);
+  /**
+   * «Просили остановить» — и просьба ЖИВЁТ, пока запись не кончится.
+   *
+   * Между вызовом `recordAsync` и моментом, когда камера действительно начала писать, проходит
+   * ощутимое время. `stopRecording`, попавший в этот промежуток, уходит в пустоту: останавливать
+   * ещё нечего. Запись после этого начинается — и остановить её больше нечем, палец уже убран.
+   * Снаружи это ровно то, на что жалуются: «запись не завершается, ни отменить, ни отправить».
+   *
+   * Поэтому просьба не одноразовая: пока она стоит, камеру просят остановиться повторно, пока
+   * та не послушается.
+   */
+  const wantStop = useRef(false);
   /** Предел проверяется каждые сто миллисекунд; остановить надо ОДИН раз, а не пачкой. */
   const capped = useRef(false);
+  /** Сторож на случай, если камера не отзовётся на остановку вовсе. */
+  const escape = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
    * Снятое, но не уехавшее. Кружок весит мегабайты, и отправка по плохой связи срывается легко —
    * выбрасывать при этом уже записанное нельзя: переснять его человек не может, момент прошёл.
@@ -139,6 +153,7 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
   /** Записывать начинает КАМЕРА, когда проснулась, — см. `arming`. */
   const begin = useCallback(async () => {
     if (!cam.current) return;
+    wantStop.current = false;
     setErr('');
     /**
      * Звуковая сессия у камеры и голосовых ОДНА на приложение, и голосовой модуль оставляет её в
@@ -156,7 +171,17 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
     buzz(Haptics.ImpactFeedbackStyle.Light);
     try {
       // Разрешается ТОЛЬКО когда запись остановлена — отпусканием пальца или пределом.
-      const r = await cam.current.recordAsync({ maxDuration: MAX_MS / 1000 });
+      // Настойчивая остановка: см. `wantStop`. Раз в четверть секунды — этого хватает, чтобы
+      // человек не заметил задержки, и достаточно редко, чтобы не мешать самой камере.
+      const nudge = setInterval(() => {
+        if (wantStop.current) cam.current?.stopRecording();
+      }, 250);
+      let r: { uri: string } | undefined;
+      try {
+        r = await cam.current.recordAsync({ maxDuration: MAX_MS / 1000 });
+      } finally {
+        clearInterval(nudge);
+      }
       const took = Date.now() - started.current;
       // Вернуть сессию как было — на ЛЮБОМ исходе, включая отмену и слишком короткое нажатие:
       // иначе следующее голосовое воспроизведение останется в режиме записи.
@@ -174,6 +199,7 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
       setPhase('failed');
     } finally {
       busy.current = false;
+      if (escape.current) { clearTimeout(escape.current); escape.current = null; }
     }
   }, [push]);
 
@@ -207,8 +233,26 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
   const stop = useCallback((cancel = false) => {
     held.current = false;
     cancelled.current = cancel;
+    wantStop.current = true;
     if (cancel) buzzLost();
     cam.current?.stopRecording();
+
+    /**
+     * ПОСЛЕДНЯЯ МЕРА. Обычная остановка занимает доли секунды; если за пять камера так и не
+     * отдала запись — снимаем её с экрана. Размонтирование обрывает съёмку наверняка, потому что
+     * обрывает саму камеру.
+     *
+     * Записанное при этом теряется, и это осознанный размен: остаться в состоянии, из которого
+     * нет выхода, хуже, чем потерять один кружок.
+     */
+    if (escape.current) clearTimeout(escape.current);
+    escape.current = setTimeout(() => {
+      if (!busy.current) return;                 // камера уже послушалась — вмешиваться незачем
+      cancelled.current = true;
+      busy.current = false;
+      setErr(T('камера не остановилась сама', 'the camera would not stop'));
+      setPhase('failed');
+    }, 5000);
   }, []);
 
   /** Убрать сообщение о неудаче: снятого нет, повторять нечего — просто закрыть. */
@@ -269,9 +313,13 @@ export function VideoNoteControl({ note }: { note: VideoNote }) {
       {recording ? (
         <Animated.View
           style={[s.stage, { opacity: grow, transform: [{ scale: grow.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }] }]}
-          pointerEvents="none"
+          /**
+           * Кнопки под окошком обязаны нажиматься, поэтому окно больше не сквозное целиком:
+           * прозрачен только сам кадр, а не то, что под ним.
+           */
+          pointerEvents="box-none"
         >
-          <View style={[s.circle, cancelling && s.circleCancel]}>
+          <View style={[s.circle, cancelling && s.circleCancel]} pointerEvents="none">
             <CameraView
               ref={note.cam}
               style={StyleSheet.absoluteFill}
@@ -281,12 +329,39 @@ export function VideoNoteControl({ note }: { note: VideoNote }) {
               onCameraReady={note.ready}
             />
           </View>
-          <View style={s.hud}>
+          <View style={s.hud} pointerEvents="none">
             <View style={s.dot} />
             <Text style={s.timer}>{clock(note.ms)}</Text>
             <Text style={[s.hint, cancelling && s.hintCancel]}>
               {cancelling ? T('Отпусти — отмена', 'Release to cancel') : T('◀ влево — отмена', '◀ slide to cancel')}
             </Text>
+          </View>
+
+          {/*
+            ВИДИМЫЙ ВЫХОД. Отпускание пальца — не единственный способ закончить, и это не удобство,
+            а страховка: жест можно потерять (перехватила прокрутка, пришёл звонок, палец соскочил
+            за край), и тогда запись остаётся без единого способа её завершить. Состояний без
+            выхода в приложении быть не должно.
+          */}
+          <View style={s.exits}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={T('Отменить', 'Cancel')}
+              onPress={() => note.stop(true)}
+              style={s.exit}
+              hitSlop={8}
+            >
+              <Text style={s.exitX}>✕</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={T('Отправить', 'Send')}
+              onPress={() => note.stop(false)}
+              style={[s.exit, s.exitSend]}
+              hitSlop={8}
+            >
+              <IconSend size={18} />
+            </Pressable>
           </View>
         </Animated.View>
       ) : null}
@@ -394,6 +469,14 @@ const s = StyleSheet.create({
   timer: { fontSize: 12, color: color.primary, fontVariant: ['tabular-nums'] },
   hint: { fontSize: 11, color: color.muted },
   hintCancel: { color: color.primary, fontWeight: '600' },
+  exits: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  exit: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: color.card,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: color.border,
+  },
+  exitSend: { backgroundColor: color.primary, borderColor: color.primary },
+  exitX: { fontSize: 18, color: color.muted },
 
   bubble: {
     width: CIRCLE, height: CIRCLE, borderRadius: CIRCLE / 2,
