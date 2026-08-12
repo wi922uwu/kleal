@@ -402,9 +402,19 @@ export const agent = {
    * обратно. Раньше экран узнавал его по ТЕКСТУ — а у голосового локальный текст пустой, тогда
    * как сервер кладёт туда расшифровку, и голосовое двоилось в ленте. По ключу узнаётся любое.
    */
-  message: (from: string, to: string, text: string, voice?: VoicePayload, clientId?: string) =>
+  message: (from: string, to: string, text: string, voice?: VoicePayload, clientId?: string,
+            replyTo?: string) =>
     api.post<{ ok?: boolean; error?: string; id?: string; t?: number; cid?: string }>(
-      '/api/agent/message', { from, to, text, voice, client_id: clientId }),
+      '/api/agent/message', { from, to, text, voice, client_id: clientId, reply_to: replyTo }),
+
+  /** Реакция переключается: то же нажатие второй раз её снимает. Набор закрыт — см. REACTIONS. */
+  react: (self: string, id: string, emoji: string) =>
+    api.post<{ ok?: boolean; error?: string; r?: Record<string, string[]> }>(
+      '/api/agent/message-react', { self, id, emoji }),
+
+  /** Удаление мягкое: строка остаётся и говорит о себе «удалено». Жёсткое второму не доедет. */
+  deleteMessage: (self: string, id: string) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/message-delete', { self, id }),
 
   /**
    * Предложить встречу (O.20). Сервер откажет, если человек ещё не принял приглашение

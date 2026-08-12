@@ -79,6 +79,13 @@ export const CHAT = {
    */
   blocked: () => T('Этот человек больше не получает от тебя сообщений.', 'This person no longer receives your messages.'),
   retry: () => T('Нажми, чтобы отправить ещё раз', 'Tap to try again'),
+  copy: () => T('Копировать', 'Copy'),
+  copied: () => T('Скопировано', 'Copied'),
+  reply: () => T('Ответить', 'Reply'),
+  replyTo: (name: string) => T(`Ответ ${dat(name)}`, `Replying to ${name}`),
+  deleteMsg: () => T('Удалить у всех', 'Delete for everyone'),
+  deleteNote: () => T('Останется строка «Сообщение удалено».', 'A “message deleted” line stays.'),
+  deleted: () => T('Сообщение удалено', 'Message deleted'),
   sendFailed: () => T('Не отправилось', 'Not sent'),
 
   /** O.19 — лист действий. */
@@ -643,7 +650,21 @@ export type SysMsg = {
 export type Msg = {
   id?: string; from?: string; to?: string; text?: string; t?: number; sys?: SysMsg;
   cid?: string; state?: 'sending' | 'failed'; voice?: any;
+  /** Реакции: смайлик → кто его поставил. Пусто — реакций нет, поля просто не будет. */
+  r?: Record<string, string[]>;
+  /** Цитата: кусок того, на что отвечают. Едет РЯДОМ, а не ссылкой — см. сервер. */
+  rt?: { id?: string; from?: string; text?: string; kind?: string };
+  deleted?: boolean;
 };
+
+/**
+ * Набор реакций — закрытый и маленький, тот же, что проверяет сервер.
+ *
+ * Открытый набор вернул бы в переписку произвольную картинку от постороннего: это уже не реакция,
+ * а сообщение в обход всех проверок. Шесть штук покрывают то, ради чего реакция и нужна:
+ * согласиться, обрадоваться, удивиться, посочувствовать.
+ */
+export const REACTIONS = ['❤️', '👍', '😂', '🔥', '😮', '😢'] as const;
 
 /**
  * Подряд идущие реплики одного человека — ОДНА серия: время под ней одно и хвостик один.

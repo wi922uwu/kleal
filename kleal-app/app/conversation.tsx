@@ -19,14 +19,18 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, msgTime, msgDayLabel, planWhen, planPinned, sysLine, sameSeries } from '../src/chat';
+import {
+  CHAT, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS,
+  msgTime, msgDayLabel, planWhen, planPinned, sysLine, sameSeries,
+} from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
 import { mediaUrl, agent, newIdem } from '../src/api';
 import { usePolling } from '../src/polling';
-import { Sheet } from '../src/components/Sheet';
+import { Sheet, SheetItem } from '../src/components/Sheet';
+import * as Clipboard from 'expo-clipboard';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
@@ -67,6 +71,10 @@ export default function Conversation() {
   const [request, setRequest] = useState<any>(null);
   const [peerRead, setPeerRead] = useState(0);
   const [intentOpen, setIntentOpen] = useState(false);
+  /** Реплика, по которой держали палец: под неё открыт лист действий. */
+  const [picked, setPicked] = useState<Msg | null>(null);
+  /** Кому отвечаем — цитата стоит над композером, пока не отправишь или не снимешь. */
+  const [replyTo, setReplyTo] = useState<Msg | null>(null);
   /** Сколько сообщений уже отмечено прочитанными мной — чтобы не стучать thread-read на каждый опрос. */
   const readStamped = useRef(0);
 
@@ -207,7 +215,8 @@ export default function Conversation() {
   const deliver = useCallback(async (m: Msg) => {
     setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'sending' } : x)));
     try {
-      const r: any = await agent.message(me, other, String(m.text || ''), m.voice, m.cid);
+      const r: any = await agent.message(me, other, String(m.text || ''), m.voice, m.cid,
+                                         m.rt?.id);
       if (!r?.ok) throw new Error(String(r?.error || 'SEND_FAILED'));
       setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: undefined, id: r.id, t: r.t || x.t } : x)));
       setErr('');
@@ -220,6 +229,42 @@ export default function Conversation() {
     }
   }, [me, other]);
 
+  /**
+   * Реакция ставится СРАЗУ на экране и только потом уходит на сервер: ждать ответа, чтобы увидеть
+   * своё же нажатие, — то же самое, что ждать секунду на собственном сообщении. Не прошло —
+   * возвращаем как было, молча: тут нечего объяснять, человек нажмёт ещё раз.
+   */
+  const react = useCallback(async (m: Msg, emoji: string) => {
+    if (!m.id) return;
+    const mine = String(me).trim().toLowerCase();
+    const flip = (r?: Record<string, string[]>) => {
+      const next = { ...(r || {}) };
+      const has = (next[emoji] || []).includes(mine);
+      const list = has ? (next[emoji] || []).filter((n) => n !== mine) : [...(next[emoji] || []), mine];
+      if (list.length) next[emoji] = list; else delete next[emoji];
+      return next;
+    };
+    setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, r: flip(x.r) } : x)));
+    try {
+      const r: any = await agent.react(me, m.id, emoji);
+      if (!r?.ok) throw new Error();
+      setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, r: r.r } : x)));
+    } catch {
+      setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, r: flip(x.r) } : x)));
+    }
+  }, [me]);
+
+  const removeMsg = useCallback(async (m: Msg) => {
+    if (!m.id) return;
+    setPicked(null);
+    setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, text: '', deleted: true, r: undefined } : x)));
+    try {
+      await agent.deleteMessage(me, m.id);
+    } catch {
+      setErr(CHAT.offline());
+    }
+  }, [me]);
+
   const send = () => {
     const text = draft.trim();
     if (!text || !me || !other) return;
@@ -227,7 +272,13 @@ export default function Conversation() {
     atBottom.current = true;
     // `since` НЕ двигаем: пусть опрос принесёт серверную версию этой же реплики — merge её склеит
     // по ключу и заодно поправит время на настоящее.
-    const local: Msg = { from: me, to: other, text, t: Date.now() / 1000, cid: newIdem('m'), state: 'sending' };
+    const local: Msg = {
+      from: me, to: other, text, t: Date.now() / 1000, cid: newIdem('m'), state: 'sending',
+      // Цитата показывается сразу вместе со своим пузырём: ждать серверную версию, чтобы увидеть,
+      // на что ответил, — значит смотреть полсекунды на ответ без вопроса.
+      rt: replyTo ? { id: replyTo.id, from: replyTo.from, text: replyTo.text } : undefined,
+    };
+    setReplyTo(null);
     setMsgs((prev) => [...prev, local]);
     deliver(local);
   };
@@ -533,15 +584,47 @@ export default function Conversation() {
                     <VoiceBubble voice={m.voice} mine={mine} />
                   ) : (
                     <Pressable
-                      accessibilityRole={failed ? 'button' : 'text'}
-                      accessibilityLabel={failed ? CHAT.retry() : undefined}
+                      accessibilityRole="button"
+                      accessibilityLabel={failed ? CHAT.retry() : m.text}
                       onPress={failed ? () => deliver(m) : undefined}
+                      onLongPress={m.deleted || !m.id ? undefined : () => setPicked(m)}
+                      delayLongPress={350}
                       style={[s.bub, mine ? s.bubMe : s.bubThem,
                               !tail && (mine ? s.bubMeMid : s.bubThemMid), failed && s.bubFailed]}
                     >
-                      <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
+                      {/* Цитата внутри пузыря, а не рядом: ответ и то, на что отвечают, — одно целое. */}
+                      {m.rt ? (
+                        <View style={[s.quote, mine && s.quoteMine]}>
+                          <Text style={[s.quoteWho, mine && { color: color.onPrimary }]} numberOfLines={1}>
+                            {m.rt.from}
+                          </Text>
+                          <Text style={[s.quoteText, mine && { color: color.onPrimary }]} numberOfLines={2}>
+                            {m.rt.text || CHAT.deleted()}
+                          </Text>
+                        </View>
+                      ) : null}
+                      <Text style={[s.bubText, mine && { color: color.onPrimary },
+                                    m.deleted && s.bubGone]}>
+                        {m.deleted ? CHAT.deleted() : m.text}
+                      </Text>
                     </Pressable>
                   )}
+                  {/* Реакции под пузырём: нажатие по своей снимает её, по чужой — присоединяет. */}
+                  {m.r && Object.keys(m.r).length ? (
+                    <View style={[s.reactions, { alignSelf: mine ? 'flex-end' : 'flex-start' }]}>
+                      {Object.entries(m.r).map(([e, who]) => (
+                        <Pressable
+                          key={e}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${e} ${who.length}`}
+                          onPress={() => react(m, e)}
+                          style={[s.reaction, who.includes(me.trim().toLowerCase()) && s.reactionMine]}
+                        >
+                          <Text style={s.reactionText}>{e}{who.length > 1 ? ` ${who.length}` : ''}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
                   {tail ? (
                     <Text style={s.time}>
                       {msgTime(m.t, ru)}
@@ -606,6 +689,20 @@ export default function Conversation() {
           </View>
         ) : null}
 
+        {/* На что отвечаем — видно ДО отправки, иначе цитата становится сюрпризом. */}
+        {replyTo ? (
+          <View style={s.replyBar}>
+            <View style={s.replyStripe} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.replyWho} numberOfLines={1}>{CHAT.replyTo(String(replyTo.from || ''))}</Text>
+              <Text style={s.replyText} numberOfLines={1}>{replyTo.text || CHAT.deleted()}</Text>
+            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Убрать', 'Remove')} onPress={() => setReplyTo(null)} hitSlop={10}>
+              <Text style={s.replyX}>✕</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
           {/* Искра слева — вход в действия разговора (O.19). На кадре в этом слоте скрепка,
               но вложений в продукте нет — мёртвую кнопку не рисуем. */}
@@ -651,6 +748,45 @@ export default function Conversation() {
         </View>
 
         {/* Лист O.19. */}
+        {/*
+          Действия над сообщением. Жест уже воспитан этим же приложением: в списке «Сообщений»
+          долгое нажатие открывает такой же лист. Реакции стоят строкой сверху — до них два
+          касания вместо трёх, а это самое частое действие из четырёх.
+        */}
+        <Sheet visible={!!picked} onClose={() => setPicked(null)}>
+          <View style={s.reactRow}>
+            {REACTIONS.map((e) => (
+              <Pressable
+                key={e}
+                accessibilityRole="button"
+                accessibilityLabel={e}
+                style={s.reactPick}
+                onPress={() => { if (picked) react(picked, e); setPicked(null); }}
+              >
+                <Text style={s.reactPickText}>{e}</Text>
+              </Pressable>
+            ))}
+          </View>
+          {picked?.text ? (
+            <SheetItem
+              label={CHAT.copy()}
+              onPress={async () => {
+                await Clipboard.setStringAsync(String(picked?.text || ''));
+                setPicked(null);
+              }}
+            />
+          ) : null}
+          <SheetItem label={CHAT.reply()} onPress={() => { setReplyTo(picked); setPicked(null); }} />
+          {picked && String(picked.from || '').trim().toLowerCase() === me.trim().toLowerCase() ? (
+            <SheetItem
+              label={CHAT.deleteMsg()}
+              note={CHAT.deleteNote()}
+              danger
+              onPress={() => picked && removeMsg(picked)}
+            />
+          ) : null}
+        </Sheet>
+
         <Sheet visible={actions} onClose={() => setActions(false)} title={CHAT.actionsTitle()}>
 
             <Pressable accessibilityRole="button" style={s.actPri} onPress={() => startPending('plan')}>
@@ -820,6 +956,43 @@ const s = StyleSheet.create({
   bubThemMid: { borderBottomLeftRadius: 18 },
   /** Не ушло — пузырь бледнее и нажимается. Цвет не меняем: это по-прежнему твои слова. */
   bubFailed: { opacity: 0.6 },
+  /** Удалённое остаётся строкой: пропасть бесследно оно не может — второй его уже видел. */
+  bubGone: { fontStyle: 'italic', opacity: 0.7 },
+
+  /** Цитата — внутри пузыря, с полоской слева: ответ и то, на что отвечают, это одно целое. */
+  quote: {
+    borderLeftWidth: 2, borderLeftColor: color.primary,
+    paddingLeft: space.sm, marginBottom: 6, gap: 1,
+  },
+  quoteMine: { borderLeftColor: color.onPrimary },
+  quoteWho: { fontSize: 12, fontWeight: '700', color: color.primary } as any,
+  quoteText: { fontSize: 12, color: color.muted } as any,
+
+  reactions: { flexDirection: 'row', gap: 4, marginTop: 3 },
+  reaction: {
+    flexDirection: 'row', paddingHorizontal: 7, paddingVertical: 3,
+    borderRadius: rad.full, backgroundColor: color.neutral100,
+    borderWidth: 1, borderColor: 'transparent',
+  },
+  /** Своя реакция обведена: без этого нельзя понять, поставил ты её или просто видишь. */
+  reactionMine: { borderColor: color.primary, backgroundColor: color.card },
+  reactionText: { fontSize: 13, color: color.fg } as any,
+  reactRow: { flexDirection: 'row', justifyContent: 'space-between', paddingBottom: space.sm },
+  reactPick: {
+    width: 46, height: 46, borderRadius: 23, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  reactPickText: { fontSize: 24 } as any,
+
+  replyBar: {
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    marginHorizontal: 16, marginBottom: 6, paddingVertical: 8, paddingHorizontal: 10,
+    borderRadius: rad.md, backgroundColor: color.neutral100,
+  },
+  replyStripe: { width: 2, alignSelf: 'stretch', borderRadius: 1, backgroundColor: color.primary },
+  replyWho: { fontSize: 12, fontWeight: '700', color: color.primary } as any,
+  replyText: { fontSize: 13, color: color.muted } as any,
+  replyX: { fontSize: 16, color: color.muted },
   bubText: { fontSize: 15, lineHeight: 21, color: color.fg } as any,
   time: { fontSize: 11, color: color.neutral400, marginTop: 3 } as any,
   /** MSG.11: одна галочка серая, две — красные, прочитано. */
