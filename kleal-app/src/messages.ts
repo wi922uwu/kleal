@@ -331,6 +331,23 @@ export function gplanRows(plans: any[], history: any[], ru: boolean,
   return { upcoming, forming, past };
 }
 
+/**
+ * Сколько непрочитанных с каждым человеком. Считает СЕРВЕР — он один знает, сколько чужих реплик
+ * пришло после последнего открытия пары.
+ *
+ * Карта нужна, потому что одна и та же переписка стоит в двух вкладках: в «Интентах» как пара,
+ * которая договаривается, и в «Личных» как переписка. Раньше число приклеивалось только ко
+ * вторым, и один разговор показывал в двух местах разную правду — точку и цифру.
+ */
+export function unreadByPerson(threads: any[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const t of threads || []) {
+    const n = Number(t?.unread || 0);
+    if (n > 0) out[norm(t.who)] = n;
+  }
+  return out;
+}
+
 /** MSG.03: фильтр по уже загруженному — названия отдельно, реплики отдельно. */
 export function searchRows(rows: Row[], q: string): { chats: Row[]; messages: Row[] } {
   const needle = norm(q);
@@ -349,9 +366,18 @@ export function bucketOf(r: Row, prefs: MsgPrefs): 'left' | 'archived' | 'muted'
   return 'normal';
 }
 
-/** Бейдж: последнее событие новее, чем когда тред открывали на этом устройстве. */
+/**
+ * Бейдж. У переписок его ставит СЕРВЕР — он один знает, сколько чужих реплик пришло после
+ * последнего открытия. Локальная отметка `seen` остаётся запасным путём для строк, у которых
+ * серверного счётчика нет: приглашения, планы, группы.
+ *
+ * Своё непрочитанным не бывает. Раньше точка загоралась и на собственном исходящем приглашении,
+ * и на плане, который человек сам же поправил: сравнивалось «время события» с «когда заходил», а
+ * кто это событие устроил — не спрашивалось.
+ */
 export function isUnread(r: Row, prefs: MsgPrefs): boolean {
   if (r.unread) return true;
+  if (r.kind === 'thread') return false;      // у переписки правду говорит только счётчик сервера
   if (!r.t || !r.who) return false;
   const seen = (prefs.seen || {})[norm(r.who)] || 0;
   return r.t > seen;

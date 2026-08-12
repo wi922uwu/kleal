@@ -276,6 +276,35 @@ export const agent = {
   expand: (intent: Json, profile: Json, axis: string, ctx: Json = {}) =>
     api.post('/api/agent/expand', { intent, profile, axis, ctx }),
 
+  /**
+   * МОИ ИНТЕНТЫ — то, из чего состоит вкладка «Моя активность» (борд C.02).
+   *
+   * Ручки на сервере были всё это время, а звал их из приложения НИКТО: интент жил ровно столько,
+   * сколько открыт мастер, уходил в матчинг и нигде не оставался. Поэтому списку своих затей было
+   * неоткуда взяться — он пуст не потому, что человек ничего не завёл, а потому, что заводить
+   * было некуда.
+   *
+   * `live` не передаём: по умолчанию сервер пересчитывает кандидатов на каждый запрос, и «3
+   * варианта готовы» на карточке означает состояние СЕЙЧАС, а не слепок на момент создания.
+   */
+  intents: (self: string, prof: Json) =>
+    api.post<{ intents?: Json[] }>('/api/agent/intents', { self, profile: prof }),
+
+  /**
+   * Сохранить или обновить. Без `id` сервер сам склеит повтор по теме и роли — одна и та же
+   * затея, заведённая дважды, не должна лечь двумя карточками.
+   *
+   * `launched` — «поиск по этому интенту уже запускали». Обратно в «ещё не искали» он не
+   * отыгрывается, и это правило сервера, а не экрана.
+   */
+  intentSave: (self: string, intent: Json, title: string, id?: string, launched = false) =>
+    api.post<{ ok?: boolean; id?: string; merged?: boolean; error?: string }>(
+      '/api/agent/intent-save', { self, intent, title, id, launched }
+    ),
+
+  intentDelete: (self: string, id: string) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/intent-delete', { self, id }),
+
   /** Группы, к которым можно присоединиться. Это планы, а не «люди с похожими интересами». */
   groups: (self: string, limit = 60) =>
     api.get<{ groups?: Json[] }>(
@@ -362,8 +391,20 @@ export const agent = {
     ),
 
   /** Отправить сообщение. Доставка настоящая — сообщение появится и у собеседника. */
-  message: (from: string, to: string, text: string, voice?: VoicePayload) =>
-    api.post<{ ok?: boolean; error?: string }>('/api/agent/message', { from, to, text, voice }),
+  /**
+   * `clientId` — ключ отправителя, и он делает две вещи сразу.
+   *
+   * Повтор. Сервер идемпотентен по нему: нажать «отправить ещё раз» после неясного сбоя
+   * (сообщение записалось, а ответ не доехал) безопасно — вернётся тот же ответ, а не вторая
+   * реплика у собеседника.
+   *
+   * Узнавание. Свой пузырь показывается сразу, до ответа сервера, и опрос приносит его же
+   * обратно. Раньше экран узнавал его по ТЕКСТУ — а у голосового локальный текст пустой, тогда
+   * как сервер кладёт туда расшифровку, и голосовое двоилось в ленте. По ключу узнаётся любое.
+   */
+  message: (from: string, to: string, text: string, voice?: VoicePayload, clientId?: string) =>
+    api.post<{ ok?: boolean; error?: string; id?: string; t?: number; cid?: string }>(
+      '/api/agent/message', { from, to, text, voice, client_id: clientId }),
 
   /**
    * Предложить встречу (O.20). Сервер откажет, если человек ещё не принял приглашение
@@ -524,8 +565,9 @@ export const group = {
     ),
 
   /** Сообщение в общий чат группы. */
-  post: (gid: string, self: string, text: string, voice?: VoicePayload) =>
-    api.post<{ ok?: boolean; error?: string }>('/api/agent/gintent-post', { gid, self, text, voice }),
+  post: (gid: string, self: string, text: string, voice?: VoicePayload, clientId?: string) =>
+    api.post<{ ok?: boolean; error?: string; message?: Json }>(
+      '/api/agent/gintent-post', { gid, self, text, voice, client_id: clientId }),
 
   /** Чат группы, старые сверху; `since` — дотягивать только новое. Не участнику — NOT_A_MEMBER:
    *  комнату читают только свои, и это проверка сервера, а не вежливость интерфейса. */

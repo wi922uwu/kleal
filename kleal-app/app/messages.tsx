@@ -11,20 +11,21 @@
  * Долгое нажатие по строке — лист MSG.04. «Пожаловаться» — настоящий /api/agent/report;
  * отзыв своего приглашения — настоящий /api/agent/withdraw; остальное — локальные пометки.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { MSG, Row, intentRows, planRows, gplanRows, threadRows, groupRows, searchRows, bucketOf, isUnread, rowTime, newestFirst } from '../src/messages';
+import { MSG, Row, intentRows, planRows, gplanRows, threadRows, groupRows, searchRows, bucketOf, isUnread, rowTime, newestFirst, unreadByPerson } from '../src/messages';
 import { mediaUrl, group as gapi } from '../src/api';
 import { planWhen, sysLine } from '../src/chat';
 import { useLang, T, getLang } from '../src/i18n';
-import { useOnb, msgPrefs, setMsgPrefs } from '../src/state';
+import { useOnb, setMsgPrefs } from '../src/state';
 import { agent } from '../src/api';
 import { IconChevronLeft, IconSearch, IconPerson, IconSpark, IconCalendar } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
+import { usePolling } from '../src/polling';
 import { color, radius as rad, space, type } from '../src/theme';
 
 export default function Messages() {
@@ -47,10 +48,6 @@ export default function Messages() {
   /** Лист MSG.04 — по какой строке вызван. */
   const [menuRow, setMenuRow] = useState<Row | null>(null);
   const [menuNote, setMenuNote] = useState('');
-
-  /** Настоящие счётчики непрочитанного по перепискам: сколько ЧУЖИХ реплик пришло после
-   *  последнего открытия треда на этом устройстве. Рисовать выдуманные числа нельзя. */
-  const [counts, setCounts] = useState<Record<string, number>>({});
 
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
@@ -79,19 +76,6 @@ export default function Messages() {
         gplans: (gpl as any)?.plans || [],
         ghistory: (gpl as any)?.history || [],
       });
-      const seen = (msgPrefs().seen || {}) as Record<string, number>;
-      const fresh = threads.filter((t: any) => (t.t || 0) > (seen[String(t.who || '').toLowerCase()] || 0)).slice(0, 10);
-      const pairs = await Promise.all(fresh.map(async (t: any) => {
-        const key = String(t.who || '').toLowerCase();
-        try {
-          const r: any = await agent.thread(me, t.who, seen[key] || 0);
-          const n = (r?.messages || []).filter((m: any) => String(m.from || '').toLowerCase() !== me.toLowerCase()).length;
-          return [key, n] as [string, number];
-        } catch {
-          return [key, 0] as [string, number];
-        }
-      }));
-      setCounts(Object.fromEntries(pairs.filter(([, n]) => n > 0)));
     } catch {
       /* тихо: фоновая дотяжка */
     } finally {
@@ -99,11 +83,8 @@ export default function Messages() {
     }
   }, [me]);
 
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    const id = setInterval(load, 15000);
-    return () => clearInterval(id);
-  }, [load]);
+  // Спит, пока экран не виден: раньше таймер тикал и из стека, и из свёрнутого приложения.
+  usePolling(load, 15000);
 
   const prefs = st.msg || {};
   const sections = useMemo(
@@ -126,11 +107,18 @@ export default function Messages() {
       past: [...one.past, ...many.past].sort(newestFirst),
     };
   }, [me, data, ru]);
-  const privateRows = useMemo(
-    () => threadRows(data.threads, me, ru, sysLine)
-      .map((r) => ({ ...r, count: counts[String(r.who || '').toLowerCase()] })),
-    [data.threads, counts, me, ru]
-  );
+  const privateRows = useMemo(() => threadRows(data.threads, me, ru, sysLine), [data.threads, me, ru]);
+
+  /**
+   * Непрочитанное приклеивается в ОДНОМ месте — иначе одна и та же переписка показывает разную
+   * правду в двух вкладках: в «Интентах» она стоит как пара, которая договаривается, в «Личных»
+   * как переписка, и раньше число доставалось только вторым.
+   */
+  const unread = useMemo(() => unreadByPerson(data.threads), [data.threads]);
+  const withUnread = useCallback((rows: Row[]) => rows.map((r) => {
+    const n = r.who ? unread[String(r.who).trim().toLowerCase()] || 0 : 0;
+    return n ? { ...r, unread: true, count: n } : r;
+  }), [unread]);
 
   // Раскладка по локальным пометкам: покинутые исчезают, архив и «без уведомлений» — вниз.
   const split = (rows: Row[]) => {
@@ -148,17 +136,18 @@ export default function Messages() {
   /** Группы стоят рядом с одиночными интентами: для человека это одна затея, просто людей больше. */
   const gRows = useMemo(() => groupRows(data.groups, data.ginvites, ru), [data.groups, data.ginvites, ru]);
   const formingWithGroups = useMemo(
-    () => [...gRows, ...sections.forming].sort(newestFirst),
-    [gRows, sections.forming]
+    () => withUnread([...gRows, ...sections.forming].sort(newestFirst)),
+    [gRows, sections.forming, withUnread]
   );
 
   const intentsAll = formingWithGroups;
   const iForm = split(formingWithGroups);
   const plansAll = [...plansSec.upcoming, ...plansSec.forming, ...plansSec.past];
-  const pUp = split(plansSec.upcoming), pForm = split(plansSec.forming), pPast = split(plansSec.past);
+  const pUp = split(withUnread(plansSec.upcoming)), pForm = split(withUnread(plansSec.forming)),
+        pPast = split(withUnread(plansSec.past));
   const pMuted = [...pUp.muted, ...pForm.muted, ...pPast.muted];
   const pArch = [...pUp.archived, ...pForm.archived, ...pPast.archived];
-  const pv = split(privateRows);
+  const pv = split(withUnread(privateRows));
 
   const empty = !loading
     && intentsAll.length === 0 && plansAll.length === 0 && privateRows.length === 0;
