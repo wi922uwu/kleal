@@ -10,6 +10,7 @@ import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Modal } from 're
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeyboardInset, dockBottom } from '../keyboard';
 import { T } from '../i18n';
+import { Sheet } from './Sheet';
 import { color, radius as rad, space, type } from '../theme';
 
 export function ProfileShell({
@@ -197,16 +198,7 @@ export function EditSheet({
   const insets = useSafeAreaInsets();
   const kb = useKeyboardInset();
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={e.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
-      <View style={[e.sheet, { paddingBottom: dockBottom(insets.bottom, kb, 18) }]}>
-        <View style={e.grip} />
-        <View style={e.head}>
-          <Text style={e.title}>{title}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={onClose} hitSlop={10}>
-            <Text style={e.x}>✕</Text>
-          </Pressable>
-        </View>
+    <Sheet visible={open} onClose={onClose} title={title} bottomInset={dockBottom(insets.bottom, kb, 18)} grip>
         <ScrollView contentContainerStyle={e.body} keyboardShouldPersistTaps="handled">
           {children}
         </ScrollView>
@@ -218,22 +210,11 @@ export function EditSheet({
             <Text style={e.cancelText}>{cancelLabel}</Text>
           </Pressable>
         ) : null}
-      </View>
-    </Modal>
+    </Sheet>
   );
 }
 
 const e = StyleSheet.create({
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '86%',
-    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    paddingHorizontal: 20, paddingTop: 10, gap: space.md,
-  },
-  grip: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: color.neutral300 },
-  head: { flexDirection: 'row', alignItems: 'center', marginTop: space.sm },
-  title: { flex: 1, fontSize: 24, fontWeight: '700', color: color.fg },
-  x: { fontSize: 22, color: color.fg },
   body: { paddingVertical: space.sm, gap: space.md },
   accept: { height: 56, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   acceptText: { ...type.button, color: color.onPrimary } as any,

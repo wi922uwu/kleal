@@ -31,6 +31,7 @@ import { takeResults, takeCandidate } from '../src/results-store';
 import { mediaUrl, agent } from '../src/api';
 import { IconPerson, IconPin, IconUserLock } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
+import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 
 const ru = () => getLang() === 'ru';
@@ -262,100 +263,73 @@ export default function Candidate() {
       </View>
 
       {/* То же окно O.14, что и в списке: последствия приглашения называются всегда одинаково. */}
-      <Modal visible={asking} transparent animationType="slide" onRequestClose={() => setAsking(false)}>
-        <Pressable style={s.scrim} onPress={() => setAsking(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-          <View style={s.sheetHead}>
-            <Text style={s.sheetTitle}>{CANDS.sheetTitle(name)}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setAsking(false)} hitSlop={10}>
-              <Text style={s.sheetX}>✕</Text>
-            </Pressable>
-          </View>
-          <Text style={s.sheetBody}>{CANDS.sheetBody(name)}</Text>
-          {err ? <Text style={s.err}>{err}</Text> : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ busy: sending }}
-            style={s.sheetSend}
-            onPress={sending ? undefined : send}
-          >
-            {sending ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.sheetSendText}>{CANDS.send()}</Text>}
-          </Pressable>
-          <Pressable accessibilityRole="button" style={s.sheetNot} onPress={() => setAsking(false)}>
-            <Text style={s.sheetNotText}>{CANDS.notYet()}</Text>
-          </Pressable>
-        </View>
-      </Modal>
+      <Sheet visible={asking} onClose={() => setAsking(false)} title={CANDS.sheetTitle(name)}>
+        <Text style={s.sheetBody}>{CANDS.sheetBody(name)}</Text>
+        {err ? <Text style={s.err}>{err}</Text> : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ busy: sending }}
+          style={s.sheetSend}
+          onPress={sending ? undefined : send}
+        >
+          {sending ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.sheetSendText}>{CANDS.send()}</Text>}
+        </Pressable>
+        <Pressable accessibilityRole="button" style={s.sheetNot} onPress={() => setAsking(false)}>
+          <Text style={s.sheetNotText}>{CANDS.notYet()}</Text>
+        </Pressable>
+      </Sheet>
 
       {/* MSG.22 — потолок открытых приглашений. Раньше жил только в выдаче, и отправка отсюда
           его обходила: карточка молча слала четвёртое приглашение. */}
-      <Modal visible={capOpen} transparent animationType="slide" onRequestClose={() => setCapOpen(false)}>
-        <Pressable style={s.scrim} onPress={() => setCapOpen(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-          <View style={s.sheetHead}>
-            <Text style={s.sheetTitle}>{CAP.title(CAP.limit)}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setCapOpen(false)} hitSlop={10}>
-              <Text style={s.sheetX}>✕</Text>
-            </Pressable>
-          </View>
-          <Text style={s.sheetBody}>{CAP.note()}</Text>
-          <Pressable accessibilityRole="button" style={s.sheetNot} onPress={() => { setCapOpen(false); router.back(); }}>
-            <Text style={s.sheetNotText}>{CAP.cancelOne()}</Text>
-          </Pressable>
-        </View>
-      </Modal>
+      <Sheet visible={capOpen} onClose={() => setCapOpen(false)} title={CAP.title(CAP.limit)}>
+        <Text style={s.sheetBody}>{CAP.note()}</Text>
+        <Pressable accessibilityRole="button" style={s.sheetNot} onPress={() => { setCapOpen(false); router.back(); }}>
+          <Text style={s.sheetNotText}>{CAP.cancelOne()}</Text>
+        </Pressable>
+      </Sheet>
 
       {/* Лист O.13b. Пока идёт отсчёт, лист закрыть нельзя — иначе отмена потеряется вместе с ним. */}
-      <Modal visible={options} transparent animationType="slide" onRequestClose={() => !pending && setOptions(false)}>
-        <Pressable style={s.scrim} onPress={() => !pending && setOptions(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-          <View style={s.sheetHead}>
-            <Text style={s.sheetTitle}>{OPTIONS.title()}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => !pending && setOptions(false)} hitSlop={10}>
-              <Text style={s.sheetX}>✕</Text>
+      <Sheet visible={options} onClose={() => !pending && setOptions(false)} title={OPTIONS.title()}>
+
+        {optNote ? <Text style={s.optNote}>{optNote}</Text> : null}
+
+        {pending ? (
+          <View style={s.pendingRow}>
+            <Text style={s.pendingText}>
+              {OPTIONS.pending(pending.kind === 'block' ? OPTIONS.block(name) : OPTIONS.notInterested(), pending.n)}
+            </Text>
+            <Pressable accessibilityRole="button" style={s.undoBtn} onPress={undoPending}>
+              <Text style={s.undoText}>{OPTIONS.undo()}</Text>
             </Pressable>
           </View>
-
-          {optNote ? <Text style={s.optNote}>{optNote}</Text> : null}
-
-          {pending ? (
-            <View style={s.pendingRow}>
-              <Text style={s.pendingText}>
-                {OPTIONS.pending(pending.kind === 'block' ? OPTIONS.block(name) : OPTIONS.notInterested(), pending.n)}
-              </Text>
-              <Pressable accessibilityRole="button" style={s.undoBtn} onPress={undoPending}>
-                <Text style={s.undoText}>{OPTIONS.undo()}</Text>
+        ) : reporting ? (
+          <>
+            {REPORT_REASONS.map(([k, ruL, enL]) => (
+              <Pressable key={k} accessibilityRole="button" style={s.reasonBtn} onPress={() => sendReport(k)}>
+                <Text style={s.reasonText}>{T(ruL, enL)}</Text>
               </Pressable>
-            </View>
-          ) : reporting ? (
-            <>
-              {REPORT_REASONS.map(([k, ruL, enL]) => (
-                <Pressable key={k} accessibilityRole="button" style={s.reasonBtn} onPress={() => sendReport(k)}>
-                  <Text style={s.reasonText}>{T(ruL, enL)}</Text>
-                </Pressable>
-              ))}
-              <Pressable accessibilityRole="button" style={s.optCancel} onPress={() => setReporting(false)}>
-                <Text style={s.optCancelText}>{OPTIONS.cancel()}</Text>
-              </Pressable>
-            </>
-          ) : (
-            <>
-              <Pressable accessibilityRole="button" style={s.optDark} onPress={() => startPending('reject')}>
-                <Text style={s.optDarkText}>⊗  {OPTIONS.notInterested()}</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" style={s.optSoft} onPress={() => { setOptNote(''); setReporting(true); }}>
-                <Text style={s.optSoftText}>{OPTIONS.report()}</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" style={s.optSoft} onPress={() => startPending('block')}>
-                <Text style={s.optSoftText}>{OPTIONS.block(name)}</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" style={s.optCancel} onPress={() => setOptions(false)}>
-                <Text style={s.optCancelText}>{OPTIONS.cancel()}</Text>
-              </Pressable>
-            </>
-          )}
-        </View>
-      </Modal>
+            ))}
+            <Pressable accessibilityRole="button" style={s.optCancel} onPress={() => setReporting(false)}>
+              <Text style={s.optCancelText}>{OPTIONS.cancel()}</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Pressable accessibilityRole="button" style={s.optDark} onPress={() => startPending('reject')}>
+              <Text style={s.optDarkText}>⊗  {OPTIONS.notInterested()}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" style={s.optSoft} onPress={() => { setOptNote(''); setReporting(true); }}>
+              <Text style={s.optSoftText}>{OPTIONS.report()}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" style={s.optSoft} onPress={() => startPending('block')}>
+              <Text style={s.optSoftText}>{OPTIONS.block(name)}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" style={s.optCancel} onPress={() => setOptions(false)}>
+              <Text style={s.optCancelText}>{OPTIONS.cancel()}</Text>
+            </Pressable>
+          </>
+        )}
+      </Sheet>
     </View>
   );
 }
@@ -432,15 +406,6 @@ const s = StyleSheet.create({
   undoBtn: { height: 44, paddingHorizontal: 18, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   undoText: { ...type.button, color: color.onPrimary } as any,
 
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    paddingHorizontal: 20, paddingTop: 18, gap: space.md,
-  },
-  sheetHead: { flexDirection: 'row', alignItems: 'center' },
-  sheetTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
-  sheetX: { fontSize: 20, color: color.fg },
   sheetBody: { ...type.bodySmall, color: color.muted } as any,
   sheetSend: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   sheetSendText: { ...type.button, color: color.onPrimary } as any,

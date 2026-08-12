@@ -36,6 +36,7 @@ import { dateChips, deviceTz } from '../src/intent';
 import {
   IconChevronLeft, IconPerson, IconCalendar, IconPin, IconVideo, IconLink, IconCheckCircle, IconClock,
 } from '../src/components/icons';
+import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 
 /** Локальные режимы, которых у сервера нет: это формы, а не состояния плана. */
@@ -407,7 +408,7 @@ export default function GroupPlan() {
         </View>
 
         {/* GR.35 — попросить группу. Лист, потому что это вопрос, а не экран. */}
-        <Sheet open={askVote} onClose={() => setAskVote(false)} bottomInset={insets.bottom}
+        <PlanSheet open={askVote} onClose={() => setAskVote(false)}
                title={GPLAN.askTitle()}
                body={isOwner ? GPLAN.askNoteMine() : GPLAN.askNote(owner || GPLAN.roleOrganiser())}>
           {/* Просят перенос НА КОНКРЕТНОЕ время: «давайте перенесём» без времени — не предложение,
@@ -424,10 +425,10 @@ export default function GroupPlan() {
           <Pressable accessibilityRole="button" style={s.quiet} onPress={() => setAskVote(false)}>
             <Text style={s.quietText}>{GPLAN.notNow()}</Text>
           </Pressable>
-        </Sheet>
+        </PlanSheet>
 
         {/* GR.36 — голос. Совещательность повторена здесь же: человек читает это в момент выбора. */}
-        <Sheet open={voteSheet} onClose={() => setVoteSheet(false)} bottomInset={insets.bottom}
+        <PlanSheet open={voteSheet} onClose={() => setVoteSheet(false)}
                title={GPLAN.voteSheetTitle(hoursLeft(vote?.closes_at), String(vote?.kind || 'edit'))}
                body={isOwner
                  ? GPLAN.voteOpenNoteMine(hoursLeft(vote?.closes_at))
@@ -450,10 +451,10 @@ export default function GroupPlan() {
           ) : (
             <Text style={s.note}>{GPLAN.voted()}</Text>
           )}
-        </Sheet>
+        </PlanSheet>
 
         {/* GR.37 — числа и решение. Только организатору: у остальных этой кнопки на кадре нет. */}
-        <Sheet open={decideSheet} onClose={() => setDecideSheet(false)} bottomInset={insets.bottom}
+        <PlanSheet open={decideSheet} onClose={() => setDecideSheet(false)}
                title={GPLAN.tally(Number(vote?.yes || 0), Number(vote?.no || 0),
                                   (vote?.waiting || []).length)}
                body={GPLAN.decideNote()}>
@@ -467,7 +468,7 @@ export default function GroupPlan() {
           <Pressable accessibilityRole="button" style={s.secondary} onPress={() => decide(false)}>
             <Text style={s.secondaryText}>{GPLAN.keepIt()}</Text>
           </Pressable>
-        </Sheet>
+        </PlanSheet>
       </View>
     </KeyboardAvoidingView>
   );
@@ -717,27 +718,20 @@ function Actions(a: {
   }
 }
 
-function Sheet({
-  open, onClose, bottomInset, title, body, children,
+/**
+ * Лист группового плана: общий нижний лист плюс строка пояснения под заголовком — она есть у всех
+ * листов этого экрана и у одного только этого экрана.
+ */
+function PlanSheet({
+  open, onClose, title, body, children,
 }: {
-  open: boolean; onClose: () => void; bottomInset: number;
-  title: string; body: string; children: React.ReactNode;
+  open: boolean; onClose: () => void; title: string; body: string; children: React.ReactNode;
 }) {
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={s.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
-      <View style={[s.sheet, { paddingBottom: Math.max(bottomInset, 18) }]}>
-        <View style={s.sheetHead}>
-          <Text style={s.sheetTitle}>{title}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')}
-                     onPress={onClose} hitSlop={10}>
-            <Text style={s.sheetX}>✕</Text>
-          </Pressable>
-        </View>
-        <Text style={s.sheetBody}>{body}</Text>
-        {children}
-      </View>
-    </Modal>
+    <Sheet visible={open} onClose={onClose} title={title}>
+      <Text style={s.sheetBody}>{body}</Text>
+      {children}
+    </Sheet>
   );
 }
 
@@ -807,14 +801,5 @@ const s = StyleSheet.create({
   quiet: { height: 44, alignItems: 'center', justifyContent: 'center' },
   quietText: { ...type.bodySmall, color: color.muted } as any,
 
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    paddingHorizontal: 20, paddingTop: 14, gap: space.md,
-  },
-  sheetHead: { flexDirection: 'row', alignItems: 'center' },
-  sheetTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
-  sheetX: { fontSize: 20, color: color.muted },
   sheetBody: { ...type.bodySmall, color: color.muted } as any,
 });

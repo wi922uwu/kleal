@@ -36,6 +36,7 @@ import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
 import { msgTime } from '../src/chat';
 import { IconChevronLeft, IconPerson, IconSend, IconDots } from '../src/components/icons';
+import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 
@@ -333,73 +334,63 @@ export default function GroupRoom() {
         </View>
 
         {/* GR.24 — состав. Лист, а не отдельный маршрут: это справка о той же комнате. */}
-        <Modal visible={info} transparent animationType="slide" onRequestClose={() => setInfo(false)}>
-          <Pressable style={s.scrim} onPress={() => setInfo(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle}>{ROOM.infoTitle()}</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')}
-                         onPress={() => setInfo(false)} hitSlop={10}>
-                <Text style={s.sheetX}>✕</Text>
-              </Pressable>
-            </View>
-            <Text style={s.sheetBody}>
-              {ROOM.infoNote(n, Number(g?.max_total || 5), (g?.invites || []).length)}
-            </Text>
+        <Sheet visible={info} onClose={() => setInfo(false)} title={ROOM.infoTitle()}>
+          <Text style={s.sheetBody}>
+            {ROOM.infoNote(n, Number(g?.max_total || 5), (g?.invites || []).length)}
+          </Text>
 
-            {members.map((m, i) => {
-              const nm = String(m.name || '');
-              const owner = nm.trim().toLowerCase() === String(g?.owner || '').trim().toLowerCase();
-              return (
-                <View key={nm + i} style={s.memberRow}>
-                  {/* Заглушка снизу, фото сверху — см. тот же приём в app/gplan.tsx: пока фото
-                      едет (а через туннель это тридцать секунд), на месте человека должен быть
-                      кружок, а не дыра. */}
-                  <View style={[s.memberAv, s.memberAvEmpty]}>
-                    <IconPerson size={18} />
-                    {m.photo ? (
-                      <Image source={{ uri: mediaUrl(String(m.photo)) }}
-                             style={[s.memberAv, StyleSheet.absoluteFillObject]} />
-                    ) : null}
-                  </View>
-                  <Text style={s.memberName} numberOfLines={1}>
-                    {nm === me ? T('Ты', 'You') : nm}
-                  </Text>
-                  <Text style={s.memberRole}>
-                    {owner ? ROOM.roleOrganiser() : ROOM.roleMember()}
-                  </Text>
+          {members.map((m, i) => {
+            const nm = String(m.name || '');
+            const owner = nm.trim().toLowerCase() === String(g?.owner || '').trim().toLowerCase();
+            return (
+              <View key={nm + i} style={s.memberRow}>
+                {/* Заглушка снизу, фото сверху — см. тот же приём в app/gplan.tsx: пока фото
+                    едет (а через туннель это тридцать секунд), на месте человека должен быть
+                    кружок, а не дыра. */}
+                <View style={[s.memberAv, s.memberAvEmpty]}>
+                  <IconPerson size={18} />
+                  {m.photo ? (
+                    <Image source={{ uri: mediaUrl(String(m.photo)) }}
+                           style={[s.memberAv, StyleSheet.absoluteFillObject]} />
+                  ) : null}
                 </View>
-              );
-            })}
+                <Text style={s.memberName} numberOfLines={1}>
+                  {nm === me ? T('Ты', 'You') : nm}
+                </Text>
+                <Text style={s.memberRole}>
+                  {owner ? ROOM.roleOrganiser() : ROOM.roleMember()}
+                </Text>
+              </View>
+            );
+          })}
 
-            {/* «Позвать ещё» — только организатору и только пока есть места: у остальных этой
-                кнопки на кадре нет, и приглашать они не могут (сервер ответит NOT_ORGANIZER). */}
-            {g?.i_am_owner && !g?.full ? (
-              <Pressable accessibilityRole="button" style={[s.sheetSend, adopting && { opacity: 0.6 }]}
-                         accessibilityState={{ busy: adopting }}
-                         onPress={adopting ? undefined : inviteMore}>
-                {adopting ? <ActivityIndicator color={color.onPrimary} />
-                          : <Text style={s.sheetSendText}>{ROOM.inviteMore()}</Text>}
-              </Pressable>
-            ) : null}
-
-            {/*
-              Выход доступен ВСЕМ, включая организатора, — и это расхождение с бордом, сделанное
-              осознанно. GR.24 пишет: «participants can leave, and you can't: as organiser you
-              either cancel the plan or the group votes you out». Но выход, который борд оставляет
-              организатору, — это перевыборы GR.42–44, и их собственная спека помечена «не решено,
-              поэтому не реализовано». Убрать кнопку сейчас значило бы запереть человека в группе
-              без единого способа выйти. Сервер это уже решил разумнее: организатор выходит, роль
-              переходит к тому, кто в группе дольше всех. Когда перевыборы появятся — вернуть по борду.
-
-              Удаление участника организатором — отдельный флоу с причиной (GR.51), не эта кнопка.
-            */}
-            <Pressable accessibilityRole="button" style={s.sheetNot}
-                       onPress={() => { setInfo(false); setTimeout(() => setLeaveAsk(true), 250); }}>
-              <Text style={s.sheetNotText}>{ROOM.leave()}</Text>
+          {/* «Позвать ещё» — только организатору и только пока есть места: у остальных этой
+              кнопки на кадре нет, и приглашать они не могут (сервер ответит NOT_ORGANIZER). */}
+          {g?.i_am_owner && !g?.full ? (
+            <Pressable accessibilityRole="button" style={[s.sheetSend, adopting && { opacity: 0.6 }]}
+                       accessibilityState={{ busy: adopting }}
+                       onPress={adopting ? undefined : inviteMore}>
+              {adopting ? <ActivityIndicator color={color.onPrimary} />
+                        : <Text style={s.sheetSendText}>{ROOM.inviteMore()}</Text>}
             </Pressable>
-          </View>
-        </Modal>
+          ) : null}
+
+          {/*
+            Выход доступен ВСЕМ, включая организатора, — и это расхождение с бордом, сделанное
+            осознанно. GR.24 пишет: «participants can leave, and you can't: as organiser you
+            either cancel the plan or the group votes you out». Но выход, который борд оставляет
+            организатору, — это перевыборы GR.42–44, и их собственная спека помечена «не решено,
+            поэтому не реализовано». Убрать кнопку сейчас значило бы запереть человека в группе
+            без единого способа выйти. Сервер это уже решил разумнее: организатор выходит, роль
+            переходит к тому, кто в группе дольше всех. Когда перевыборы появятся — вернуть по борду.
+
+            Удаление участника организатором — отдельный флоу с причиной (GR.51), не эта кнопка.
+          */}
+          <Pressable accessibilityRole="button" style={s.sheetNot}
+                     onPress={() => { setInfo(false); setTimeout(() => setLeaveAsk(true), 250); }}>
+            <Text style={s.sheetNotText}>{ROOM.leave()}</Text>
+          </Pressable>
+        </Sheet>
 
         <LeaveSheet
           open={leaveAsk}
@@ -420,26 +411,17 @@ function LeaveSheet({
   open: boolean; busy: boolean; onYes: () => void; onClose: () => void; bottomInset: number;
 }) {
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={s.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
-      <View style={[s.sheet, { paddingBottom: Math.max(bottomInset, 18) }]}>
-        <View style={s.sheetHead}>
-          <Text style={s.sheetTitle}>{ROOM.leaveAsk()}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={onClose} hitSlop={10}>
-            <Text style={s.sheetX}>✕</Text>
-          </Pressable>
-        </View>
-        <Text style={s.sheetBody}>{ROOM.leaveBody()}</Text>
-        <Pressable accessibilityRole="button" style={s.sheetSend} onPress={busy ? undefined : onYes}
-                   accessibilityState={{ busy }}>
-          {busy ? <ActivityIndicator color={color.onPrimary} />
-                : <Text style={s.sheetSendText}>{ROOM.leaveYes()}</Text>}
-        </Pressable>
-        <Pressable accessibilityRole="button" style={s.sheetNot} onPress={onClose}>
-          <Text style={s.sheetNotText}>{ROOM.cancelBtn()}</Text>
-        </Pressable>
-      </View>
-    </Modal>
+    <Sheet visible={open} onClose={onClose} title={ROOM.leaveAsk()}>
+      <Text style={s.sheetBody}>{ROOM.leaveBody()}</Text>
+      <Pressable accessibilityRole="button" style={s.sheetSend} onPress={busy ? undefined : onYes}
+                 accessibilityState={{ busy }}>
+        {busy ? <ActivityIndicator color={color.onPrimary} />
+              : <Text style={s.sheetSendText}>{ROOM.leaveYes()}</Text>}
+      </Pressable>
+      <Pressable accessibilityRole="button" style={s.sheetNot} onPress={onClose}>
+        <Text style={s.sheetNotText}>{ROOM.cancelBtn()}</Text>
+      </Pressable>
+    </Sheet>
   );
 }
 
@@ -483,15 +465,6 @@ const s = StyleSheet.create({
   ctaOff: { opacity: 0.4 },
   ctaNote: { ...type.caption, color: color.muted, textAlign: 'center' } as any,
 
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    paddingHorizontal: 20, paddingTop: 14, gap: space.md,
-  },
-  sheetHead: { flexDirection: 'row', alignItems: 'center' },
-  sheetTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
-  sheetX: { fontSize: 20, color: color.muted },
   sheetBody: { ...type.bodySmall, color: color.muted } as any,
   sheetSend: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   sheetSendText: { ...type.button, color: color.onPrimary } as any,

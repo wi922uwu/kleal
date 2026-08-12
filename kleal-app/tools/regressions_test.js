@@ -663,6 +663,34 @@ console.log('\nпереписка не врёт про отправку и не 
     'у голосового локальный текст пустой — по тексту оно не узнавалось и двоилось');
 }
 
+// ------------------------------------------------- 13. нижний лист — один на всё приложение
+//
+// Их было одиннадцать: переписка (два), список сообщений, группа (два), план (три), групповой
+// план, Бадди, кандидат, выдача (три), оболочка профиля. Разметка совпадала до строчки, а числа
+// уже разъехались — paddingTop 18 против 14, gap то md, то sm. Никто этого не решал: копии
+// просто пожили порознь. Затемнение во всех стояло литералом при живом файле токенов.
+console.log('\nнижний лист один, и десятой копии не завести');
+{
+  const screens = ['app/conversation.tsx', 'app/messages.tsx', 'app/group.tsx', 'app/plan.tsx',
+                   'app/gplan.tsx', 'app/buddy.tsx', 'app/candidate.tsx', 'app/results.tsx',
+                   'src/components/ProfileShell.tsx'];
+  const own = screens.filter((f) => /scrim:/.test(code(f)));
+  check('ни один экран не держит свой лист', own.length === 0, 'нашлось в: ' + own.join(', '));
+
+  const raw = screens.filter((f) => /'#0006'/.test(code(f)));
+  check('затемнение берётся токеном, а не литералом', raw.length === 0, 'литерал в: ' + raw.join(', '));
+  check('токен затемнения существует', /scrim: '#00000066'/.test(read('src/theme.ts')));
+
+  const sh = code('src/components/Sheet.tsx');
+  check('лист сам закрывается по касанию вне себя и по «назад»',
+    /onRequestClose=\{onClose\}/.test(sh) && /onPress=\{onClose\}/.test(sh));
+  check('лист сам не залезает под домашнюю полосу',
+    /Math\.max\(insets\.bottom, 18\)/.test(sh));
+  check('свой отступ снизу остался только для листа с полями ввода',
+    (read('app/plan.tsx').match(/bottomInset=/g) || []).length === 1,
+    'клавиатура закрывает кнопку только там — остальным это не нужно');
+}
+
 console.log('');
 if (failed) {
   console.log(failed + ' проверок не прошло');

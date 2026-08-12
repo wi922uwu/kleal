@@ -21,6 +21,7 @@ import { useOnb } from '../src/state';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { buddy as buddyApi, VoicePayload } from '../src/api';
 import { BUDDY, SHEET, looksLikeIntent, intentPhrase, sheetWhat, sheetKept, packHistory, Turn } from '../src/buddy';
+import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 
@@ -267,16 +268,7 @@ export function GetStarted({
   bottomInset?: number;
 }) {
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onKeep}>
-      <Pressable style={sh.scrim} onPress={onKeep} accessibilityLabel={SHEET.close()} />
-      <View style={[sh.sheet, { paddingBottom: Math.max(bottomInset, 18) }]}>
-        <View style={sh.grip} />
-        <View style={sh.headRow}>
-          <Text style={sh.title}>{SHEET.title()}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel={SHEET.close()} onPress={onKeep} hitSlop={10}>
-            <Text style={sh.x}>✕</Text>
-          </Pressable>
-        </View>
+    <Sheet visible={open} onClose={onKeep} title={SHEET.title()} bottomInset={Math.max(bottomInset, 18)} grip>
         {what ? <Text style={sh.what}>{sheetWhat(what)}</Text> : null}
         <Pressable accessibilityRole="button" style={[sh.btn, sh.btnPri]} onPress={onCreate}>
           <Text style={sh.btnPriText}>{SHEET.create()}</Text>
@@ -284,8 +276,7 @@ export function GetStarted({
         <Pressable accessibilityRole="button" style={[sh.btn, sh.btnSec]} onPress={onKeep}>
           <Text style={sh.btnSecText}>{SHEET.keep()}</Text>
         </Pressable>
-      </View>
-    </Modal>
+    </Sheet>
   );
 }
 
@@ -294,8 +285,8 @@ export function GetStarted({
 // нет. При натягивании UI меняется этот блок, логика выше остаётся.
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: space.sm },
+  wrap: { flex: 1, backgroundColor: color.bg },
   back: {
     width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border,
     backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
@@ -323,18 +314,8 @@ const s = StyleSheet.create({
 });
 
 const sh = StyleSheet.create({
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    paddingHorizontal: 20, paddingTop: 10, gap: space.md,
-  },
-  grip: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: color.neutral300 },
-  headRow: { flexDirection: 'row', alignItems: 'center', marginTop: space.sm },
-  title: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
   /** Строка «Похоже, ты хочешь …» — под заголовком окна, перед кнопками. */
   what: { ...type.bodySmall, color: color.muted, marginBottom: 4 } as any,
-  x: { fontSize: 20, color: color.muted },
   btn: { height: 54, borderRadius: rad.full, alignItems: 'center', justifyContent: 'center' },
   btnPri: { backgroundColor: color.primary },
   btnPriText: { ...type.button, color: color.onPrimary } as any,

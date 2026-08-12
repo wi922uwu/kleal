@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator, Modal,
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -25,6 +25,7 @@ import { useOnb, setMsgPrefs } from '../src/state';
 import { agent } from '../src/api';
 import { IconChevronLeft, IconSearch, IconPerson, IconSpark, IconCalendar } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
+import { Sheet, SheetItem } from '../src/components/Sheet';
 import { usePolling } from '../src/polling';
 import { color, radius as rad, space, type } from '../src/theme';
 
@@ -373,60 +374,40 @@ export default function Messages() {
       </ScrollView>
 
       {/* MSG.04 — лист по долгому нажатию. */}
-      <Modal visible={!!menuRow} transparent animationType="slide" onRequestClose={() => setMenuRow(null)}>
-        <Pressable style={s.scrim} onPress={() => setMenuRow(null)} accessibilityLabel={T('Закрыть', 'Close')} />
-        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-          <View style={s.sheetHead}>
-            <Text style={s.sheetTitle} numberOfLines={1}>{menuRow?.title}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setMenuRow(null)} hitSlop={10}>
-              <Text style={s.sheetX}>✕</Text>
-            </Pressable>
-          </View>
-
-          {menuRow?.kind === 'invite-out' ? (
-            <MenuItem
-              label={MSG.withdrawAction()}
-              note={MSG.withdrawNote()}
-              onPress={() => menuRow && withdraw(menuRow)}
+      <Sheet visible={!!menuRow} onClose={() => setMenuRow(null)} title={menuRow?.title}>
+        {menuRow?.kind === 'invite-out' ? (
+          <SheetItem
+            label={MSG.withdrawAction()}
+            note={MSG.withdrawNote()}
+            onPress={() => menuRow && withdraw(menuRow)}
+          />
+        ) : (
+          <>
+            <SheetItem
+              label={bucketOf(menuRow || ({} as Row), prefs) === 'muted' ? MSG.unmuteAction() : MSG.muteAction()}
+              note={MSG.muteNote()}
+              onPress={() => { if (menuRow) { toggle('muted', menuRow); setMenuRow(null); } }}
             />
-          ) : (
-            <>
-              <MenuItem
-                label={bucketOf(menuRow || ({} as Row), prefs) === 'muted' ? MSG.unmuteAction() : MSG.muteAction()}
-                note={MSG.muteNote()}
-                onPress={() => { if (menuRow) { toggle('muted', menuRow); setMenuRow(null); } }}
-              />
-              <MenuItem
-                label={bucketOf(menuRow || ({} as Row), prefs) === 'archived' ? MSG.unarchiveAction() : MSG.archiveAction()}
-                note={MSG.archiveNote()}
-                onPress={() => { if (menuRow) { toggle('archived', menuRow); setMenuRow(null); } }}
-              />
-              <MenuItem
-                label={MSG.leaveAction()}
-                note={MSG.leaveNote()}
-                onPress={() => { if (menuRow) { toggle('left', menuRow); setMenuRow(null); } }}
-              />
-              <MenuItem label={MSG.reportAction()} note={MSG.reportNote()} onPress={() => menuRow && report(menuRow)} />
-            </>
-          )}
-
-          {menuNote ? <Text style={s.note}>{menuNote}</Text> : null}
-        </View>
-      </Modal>
+            <SheetItem
+              label={bucketOf(menuRow || ({} as Row), prefs) === 'archived' ? MSG.unarchiveAction() : MSG.archiveAction()}
+              note={MSG.archiveNote()}
+              onPress={() => { if (menuRow) { toggle('archived', menuRow); setMenuRow(null); } }}
+            />
+            <SheetItem
+              label={MSG.leaveAction()}
+              note={MSG.leaveNote()}
+              onPress={() => { if (menuRow) { toggle('left', menuRow); setMenuRow(null); } }}
+            />
+            <SheetItem label={MSG.reportAction()} note={MSG.reportNote()} onPress={() => menuRow && report(menuRow)} />
+          </>
+        )}
+        {menuNote ? <Text style={s.note}>{menuNote}</Text> : null}
+      </Sheet>
 
       <View style={s.navFloat} pointerEvents="box-none">
         <BottomNav active="messages" />
       </View>
     </View>
-  );
-}
-
-function MenuItem({ label, note, onPress }: { label: string; note: string; onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="button" style={s.menuItem} onPress={onPress}>
-      <Text style={s.menuLabel}>{label}</Text>
-      <Text style={s.menuNote}>{note}</Text>
-    </Pressable>
   );
 }
 
@@ -508,19 +489,6 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginTop: space.sm, ...cardShadow,
   },
   ctaText: { ...type.button, color: color.onPrimary } as any,
-
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    paddingHorizontal: 20, paddingTop: 18, gap: space.sm,
-  },
-  sheetHead: { flexDirection: 'row', alignItems: 'center', marginBottom: space.sm },
-  sheetTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
-  sheetX: { fontSize: 20, color: color.fg },
-  menuItem: { paddingVertical: 10 },
-  menuLabel: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
-  menuNote: { ...type.caption, color: color.muted, marginTop: 2 } as any,
 
   navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 });

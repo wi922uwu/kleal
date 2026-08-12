@@ -43,6 +43,7 @@ import {
   IconChevronLeft, IconCalendar, IconClock, IconPin, IconLink, IconPerson,
 } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
+import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 
 export default function Plan() {
@@ -841,16 +842,13 @@ export default function Plan() {
         </ScrollView>
 
         {/* OF.21a — «предложить другое время» листом: быстрые сдвиги и своё «чч:мм» в тот же день. */}
-        <Modal visible={countering} transparent animationType="slide" onRequestClose={() => setCountering(false)}>
-          <Pressable style={s.scrim} onPress={() => setCountering(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-          {/* Единственный лист с полями ввода — цифровая клавиатура закрывала «Отправить новое время». */}
-          <View style={[s.sheet, { paddingBottom: dockBottom(insets.bottom, kb, 18) }]}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle}>{PLAN.suggestSheetTitle()}</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setCountering(false)} hitSlop={10}>
-                <Text style={s.sheetX}>✕</Text>
-              </Pressable>
-            </View>
+        {/* Единственный лист с полями ввода — цифровая клавиатура закрывала «Отправить новое время». */}
+        <Sheet
+          visible={countering}
+          onClose={() => setCountering(false)}
+          title={PLAN.suggestSheetTitle()}
+          bottomInset={dockBottom(insets.bottom, kb, 18)}
+        >
             <Text style={s.note}>{PLAN.insteadOf(tOf(plan?.starts_at, ru))}</Text>
             <View style={s.chipRowWrap}>
               {[60, 90, 120, 150].map((d) => {
@@ -900,72 +898,53 @@ export default function Plan() {
             <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setCountering(false)}>
               <Text style={s.ctaDarkText}>{DETAILS.cancel()}</Text>
             </Pressable>
-          </View>
-        </Modal>
+        </Sheet>
 
         {/* Подтверждение отмены. Называет последствие словами: встреча гаснет для обоих и
             восстановить её нельзя — только назначить новую. */}
-        <Modal visible={dropping} transparent animationType="slide" onRequestClose={() => setDropping(false)}>
-          <Pressable style={s.scrim} onPress={() => setDropping(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle}>{PLAN.callOffAsk(other)}</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setDropping(false)} hitSlop={10}>
-                <Text style={s.sheetX}>✕</Text>
-              </Pressable>
-            </View>
-            <Text style={s.note}>{PLAN.callOffNote(other)}</Text>
-            <Pressable
-              accessibilityRole="button"
-              style={s.ctaDark}
-              onPress={() => { setDropping(false); respond('decline'); }}
-            >
-              <Text style={s.ctaDarkText}>{PLAN.callOffYes()}</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => setDropping(false)}>
-              <Text style={s.ctaSoftText}>{PLAN.callOffNo()}</Text>
-            </Pressable>
-          </View>
-        </Modal>
+        <Sheet visible={dropping} onClose={() => setDropping(false)} title={PLAN.callOffAsk(other)}>
+          <Text style={s.note}>{PLAN.callOffNote(other)}</Text>
+          <Pressable
+            accessibilityRole="button"
+            style={s.ctaDark}
+            onPress={() => { setDropping(false); respond('decline'); }}
+          >
+            <Text style={s.ctaDarkText}>{PLAN.callOffYes()}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => setDropping(false)}>
+            <Text style={s.ctaSoftText}>{PLAN.callOffNo()}</Text>
+          </Pressable>
+        </Sheet>
 
         {/* OF.24a — «не состоялась»: что случилось. Ответ другим не показывается; «Пропустить»
             отправляет «нет» без причины, крестик не отправляет ничего. */}
-        <Modal visible={reasonOpen} transparent animationType="slide" onRequestClose={() => setReasonOpen(false)}>
-          <Pressable style={s.scrim} onPress={() => setReasonOpen(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle}>{PLAN.whatHappened()}</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setReasonOpen(false)} hitSlop={10}>
-                <Text style={s.sheetX}>✕</Text>
-              </Pressable>
-            </View>
-            <Text style={s.note}>{PLAN.whatHappenedNote()}</Text>
-            {([
-              ['no_show', PLAN.reasonNoShow(other)],
-              ['couldnt_make', PLAN.reasonCouldnt()],
-              ['place_closed', PLAN.reasonClosed()],
-              ['moved', PLAN.reasonMoved()],
-              ['other', PLAN.reasonOther()],
-            ] as [string, string][]).map(([k, label]) => (
-              <Pressable
-                key={k}
-                accessibilityRole="button"
-                accessibilityState={{ selected: reasonPick === k }}
-                style={s.reasonRow}
-                onPress={() => setReasonPick(k)}
-              >
-                <View style={[s.radio, reasonPick === k && s.radioOn]} />
-                <Text style={s.reasonText}>{label}</Text>
-              </Pressable>
-            ))}
-            <Pressable accessibilityRole="button" style={s.cta} onPress={() => sendDidnt(true)}>
-              <Text style={s.ctaText}>{PLAN.send()}</Text>
+        <Sheet visible={reasonOpen} onClose={() => setReasonOpen(false)} title={PLAN.whatHappened()}>
+          <Text style={s.note}>{PLAN.whatHappenedNote()}</Text>
+          {([
+            ['no_show', PLAN.reasonNoShow(other)],
+            ['couldnt_make', PLAN.reasonCouldnt()],
+            ['place_closed', PLAN.reasonClosed()],
+            ['moved', PLAN.reasonMoved()],
+            ['other', PLAN.reasonOther()],
+          ] as [string, string][]).map(([k, label]) => (
+            <Pressable
+              key={k}
+              accessibilityRole="button"
+              accessibilityState={{ selected: reasonPick === k }}
+              style={s.reasonRow}
+              onPress={() => setReasonPick(k)}
+            >
+              <View style={[s.radio, reasonPick === k && s.radioOn]} />
+              <Text style={s.reasonText}>{label}</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => sendDidnt(false)}>
-              <Text style={s.ctaDarkText}>{PLAN.skip()}</Text>
-            </Pressable>
-          </View>
-        </Modal>
+          ))}
+          <Pressable accessibilityRole="button" style={s.cta} onPress={() => sendDidnt(true)}>
+            <Text style={s.ctaText}>{PLAN.send()}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => sendDidnt(false)}>
+            <Text style={s.ctaDarkText}>{PLAN.skip()}</Text>
+          </Pressable>
+        </Sheet>
 
         <View style={s.navFloat} pointerEvents="box-none">
           <BottomNav />
@@ -1321,15 +1300,6 @@ const s = StyleSheet.create({
   infoText: { ...type.bodySmall, color: color.infoText } as any,
 
   // Листы OF.21a/OF.24a.
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    paddingHorizontal: 20, paddingTop: 18, gap: space.sm,
-  },
-  sheetHead: { flexDirection: 'row', alignItems: 'center' },
-  sheetTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
-  sheetX: { fontSize: 20, color: color.fg },
   hmRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
   hmBox: {
     width: 74, height: 48, borderRadius: rad.md, backgroundColor: color.neutral100,

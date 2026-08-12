@@ -15,7 +15,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
-  ActivityIndicator, Modal, KeyboardAvoidingView, Platform,
+  ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -26,6 +26,7 @@ import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
 import { mediaUrl, agent, newIdem } from '../src/api';
 import { usePolling } from '../src/polling';
+import { Sheet } from '../src/components/Sheet';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
@@ -650,15 +651,7 @@ export default function Conversation() {
         </View>
 
         {/* Лист O.19. */}
-        <Modal visible={actions} transparent animationType="slide" onRequestClose={() => setActions(false)}>
-          <Pressable style={s.scrim} onPress={() => setActions(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle}>{CHAT.actionsTitle()}</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setActions(false)} hitSlop={10}>
-                <Text style={s.sheetX}>✕</Text>
-              </Pressable>
-            </View>
+        <Sheet visible={actions} onClose={() => setActions(false)} title={CHAT.actionsTitle()}>
 
             <Pressable accessibilityRole="button" style={s.actPri} onPress={() => startPending('plan')}>
               <Text style={s.actPriText}>{CHAT.createPlan()}</Text>
@@ -676,20 +669,15 @@ export default function Conversation() {
             <Pressable accessibilityRole="button" style={s.actPlain} onPress={() => setActions(false)}>
               <Text style={s.actPlainText}>{CHAT.keepChatting()}</Text>
             </Pressable>
-          </View>
-        </Modal>
+        </Sheet>
 
         {/* MSG.10 — интент как лист фактов. Только то, что заявка знает на самом деле: где именно
             пройдёт встреча, не обещаем — «после подтверждения обоих», это и есть правило OF.C3. */}
-        <Modal visible={intentOpen} transparent animationType="slide" onRequestClose={() => setIntentOpen(false)}>
-          <Pressable style={s.scrim} onPress={() => setIntentOpen(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-          <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-            <View style={s.sheetHead}>
-              <Text style={s.sheetTitle} numberOfLines={1}>{requestTitle || intentTitle || T('Интент', 'Intent')}</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setIntentOpen(false)} hitSlop={10}>
-                <Text style={s.sheetX}>✕</Text>
-              </Pressable>
-            </View>
+        <Sheet
+          visible={intentOpen}
+          onClose={() => setIntentOpen(false)}
+          title={requestTitle || intentTitle || T('Интент', 'Intent')}
+        >
             {([
               [THREAD.intentMode(), request?.intent?.mode === 'offline' ? THREAD.offlineInPerson() : THREAD.onlineMode()],
               [THREAD.intentWhen(), String(request?.intent?.when || request?.intent?.time || '—')],
@@ -708,8 +696,7 @@ export default function Conversation() {
                 <Text style={s.factVal}>{v}</Text>
               </View>
             ))}
-          </View>
-        </Modal>
+        </Sheet>
       </View>
     </KeyboardAvoidingView>
   );
@@ -863,15 +850,6 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', ...cardShadow,
   },
 
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    paddingHorizontal: 20, paddingTop: 18, gap: space.md,
-  },
-  sheetHead: { flexDirection: 'row', alignItems: 'center' },
-  sheetTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
-  sheetX: { fontSize: 20, color: color.fg },
   actPri: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   actPriText: { ...type.button, color: color.onPrimary } as any,
   actDark: { height: 52, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },

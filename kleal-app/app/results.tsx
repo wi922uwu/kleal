@@ -45,6 +45,7 @@ import { AgeRange } from '../src/components/AgeRange';
 import Slider from '@react-native-community/slider';
 import { SEXES, sexLabel } from '../src/onboarding';
 import { BottomNav } from '../src/components/BottomNav';
+import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 
 const ru = () => getLang() === 'ru';
@@ -433,67 +434,49 @@ export default function Results() {
       />
 
       {/* Окно бесплатного тарифа — кадр O.17. Текст с кадра; ограничение клиентское, см. openChat. */}
-      <Modal visible={!!busyWith} transparent animationType="slide" onRequestClose={() => setBusyWith('')}>
-        <Pressable style={s.scrim} onPress={() => setBusyWith('')} accessibilityLabel={T('Закрыть', 'Close')} />
-        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-          <View style={s.sheetHead}>
-            <Text style={s.sheetTitle}>{CHAT.busyTitle(busyWith)}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setBusyWith('')} hitSlop={10}>
-              <Text style={s.sheetX}>✕</Text>
-            </Pressable>
-          </View>
-          <Text style={s.sheetBody}>{CHAT.busyBody()}</Text>
-          {/* Тарифа в продукте нет — кнопка честно выключена, как везде в каркасе. */}
-          <View style={[s.sheetSend, { opacity: 0.45 }]}>
-            <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
-          </View>
-          <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
-          <Pressable
-            accessibilityRole="button"
-            style={s.sheetNot}
-            onPress={() => {
-              const who = busyWith;
-              setBusyWith('');
-              router.push({ pathname: '/conversation', params: { who } });
-            }}
-          >
-            <Text style={s.sheetNotText}>{CHAT.endChatWith(busyWith)}</Text>
-          </Pressable>
+      <Sheet visible={!!busyWith} onClose={() => setBusyWith('')} title={CHAT.busyTitle(busyWith)}>
+        <Text style={s.sheetBody}>{CHAT.busyBody()}</Text>
+        {/* Тарифа в продукте нет — кнопка честно выключена, как везде в каркасе. */}
+        <View style={[s.sheetSend, { opacity: 0.45 }]}>
+          <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
         </View>
-      </Modal>
+        <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
+        <Pressable
+          accessibilityRole="button"
+          style={s.sheetNot}
+          onPress={() => {
+            const who = busyWith;
+            setBusyWith('');
+            router.push({ pathname: '/conversation', params: { who } });
+          }}
+        >
+          <Text style={s.sheetNotText}>{CHAT.endChatWith(busyWith)}</Text>
+        </Pressable>
+      </Sheet>
 
       {/* Потолок открытых приглашений — кадр MSG.22, в групповом режиме GR.15. Отзыв по id сервера. */}
-      <Modal visible={capOpen} transparent animationType="slide" onRequestClose={() => setCapOpen(false)}>
-        <Pressable style={s.scrim} onPress={() => setCapOpen(false)} accessibilityLabel={T('Закрыть', 'Close')} />
-        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 18) }]}>
-          <View style={s.sheetHead}>
-            <Text style={s.sheetTitle}>{gmode ? GROUP.capTitle() : CAP.title(pendingOut.length)}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={() => setCapOpen(false)} hitSlop={10}>
-              <Text style={s.sheetX}>✕</Text>
+      <Sheet visible={capOpen} onClose={() => setCapOpen(false)} title={gmode ? GROUP.capTitle() : CAP.title(pendingOut.length)}>
+        <Text style={s.sheetBody}>{gmode ? GROUP.capBody() : CAP.note()}</Text>
+        {/* Тарифа в продукте нет — кнопка честно выключена, как в O.17. GR.15 предлагает Plus
+            тем же местом, и он выключен по той же причине. */}
+        <View style={[s.sheetSend, { opacity: 0.45 }]}>
+          <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
+        </View>
+        <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
+        {/* «Отменить одно» — вот они, все открытые: отзыв тут же, без похода по экранам. */}
+        {(gmode ? groupPending().map((r) => ({ id: r.id, to: r.to })) : pendingOut).map((r) => (
+          <View key={r.id || r.to} style={s.capRow}>
+            <Text style={s.capName} numberOfLines={1}>{r.to}</Text>
+            <Pressable
+              accessibilityRole="button"
+              style={s.capBtn}
+              onPress={() => (gmode ? cancelGroupInvite(self, r.to) : withdrawInvite(self, r.to))}
+            >
+              <Text style={s.capBtnText}>{CAP.withdraw()}</Text>
             </Pressable>
           </View>
-          <Text style={s.sheetBody}>{gmode ? GROUP.capBody() : CAP.note()}</Text>
-          {/* Тарифа в продукте нет — кнопка честно выключена, как в O.17. GR.15 предлагает Plus
-              тем же местом, и он выключен по той же причине. */}
-          <View style={[s.sheetSend, { opacity: 0.45 }]}>
-            <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
-          </View>
-          <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
-          {/* «Отменить одно» — вот они, все открытые: отзыв тут же, без похода по экранам. */}
-          {(gmode ? groupPending().map((r) => ({ id: r.id, to: r.to })) : pendingOut).map((r) => (
-            <View key={r.id || r.to} style={s.capRow}>
-              <Text style={s.capName} numberOfLines={1}>{r.to}</Text>
-              <Pressable
-                accessibilityRole="button"
-                style={s.capBtn}
-                onPress={() => (gmode ? cancelGroupInvite(self, r.to) : withdrawInvite(self, r.to))}
-              >
-                <Text style={s.capBtnText}>{CAP.withdraw()}</Text>
-              </Pressable>
-            </View>
-          ))}
-        </View>
-      </Modal>
+        ))}
+      </Sheet>
 
       <InviteSheet
         cand={asking}
@@ -664,103 +647,94 @@ function PrefsSheet({
   maxBody: number;
 }) {
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={s.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
-      <View style={[s.sheet, { paddingBottom: Math.max(bottomInset, 18) }]}>
-        <View style={s.grabber} />
-        <View style={s.sheetHead}>
-          <Text style={s.sheetTitle}>{PREFS.title()}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={onClose} hitSlop={10}>
-            <Text style={s.sheetX}>✕</Text>
+    <Sheet visible={open} onClose={onClose} title={PREFS.title()}>
+      <View style={s.grabber} />
+      <Text style={s.sheetBody}>{PREFS.lead()}</Text>
+
+      <ScrollView
+        style={{ maxHeight: maxBody }}
+        contentContainerStyle={s.prefsBody}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={s.prefLabelRow}>
+          <IconPerson size={16} c={color.fg} />
+          <Text style={s.prefLabel}>{PREFS.sex()}</Text>
+        </View>
+        <View style={s.prefChips}>
+          {SEXES.map(([k]) => (
+            <Pressable
+              key={k}
+              accessibilityRole="button"
+              accessibilityState={{ selected: prefs.sex === k }}
+              onPress={() => setPrefs((p) => ({ ...p, sex: k }))}
+              style={[s.prefChip, prefs.sex === k && s.prefChipOn]}
+            >
+              <Text style={[s.prefChipText, prefs.sex === k && { color: color.onPrimary }]}>{sexLabel(k)}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <View style={s.prefHeadRow}>
+          <View style={s.prefLabelRow}>
+            <IconCalendar size={16} c={color.fg} />
+            <Text style={s.prefLabel}>{PREFS.age()}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: prefs.anyAge }}
+            onPress={() => setPrefs((p) => ({ ...p, anyAge: !p.anyAge }))}
+            style={[s.miniChip, prefs.anyAge && s.prefChipOn]}
+            hitSlop={6}
+          >
+            <Text style={[s.miniChipText, prefs.anyAge && { color: color.onPrimary }]}>{PREFS.anyAge()}</Text>
           </Pressable>
         </View>
-        <Text style={s.sheetBody}>{PREFS.lead()}</Text>
+        {prefs.anyAge ? null : (
+          <AgeRange
+            min={prefs.minAge}
+            max={prefs.maxAge}
+            onChange={(lo, hi) => setPrefs((p) => ({ ...p, minAge: lo, maxAge: hi }))}
+          />
+        )}
 
-        <ScrollView
-          style={{ maxHeight: maxBody }}
-          contentContainerStyle={s.prefsBody}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          <View style={s.prefLabelRow}>
-            <IconPerson size={16} c={color.fg} />
-            <Text style={s.prefLabel}>{PREFS.sex()}</Text>
-          </View>
-          <View style={s.prefChips}>
-            {SEXES.map(([k]) => (
-              <Pressable
-                key={k}
-                accessibilityRole="button"
-                accessibilityState={{ selected: prefs.sex === k }}
-                onPress={() => setPrefs((p) => ({ ...p, sex: k }))}
-                style={[s.prefChip, prefs.sex === k && s.prefChipOn]}
-              >
-                <Text style={[s.prefChipText, prefs.sex === k && { color: color.onPrimary }]}>{sexLabel(k)}</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <View style={s.prefHeadRow}>
-            <View style={s.prefLabelRow}>
-              <IconCalendar size={16} c={color.fg} />
-              <Text style={s.prefLabel}>{PREFS.age()}</Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ selected: prefs.anyAge }}
-              onPress={() => setPrefs((p) => ({ ...p, anyAge: !p.anyAge }))}
-              style={[s.miniChip, prefs.anyAge && s.prefChipOn]}
-              hitSlop={6}
-            >
-              <Text style={[s.miniChipText, prefs.anyAge && { color: color.onPrimary }]}>{PREFS.anyAge()}</Text>
-            </Pressable>
-          </View>
-          {prefs.anyAge ? null : (
-            <AgeRange
-              min={prefs.minAge}
-              max={prefs.maxAge}
-              onChange={(lo, hi) => setPrefs((p) => ({ ...p, minAge: lo, maxAge: hi }))}
-            />
-          )}
-
-          {offline ? (
-            <>
-              <View style={s.prefHeadRow}>
-                <View style={s.prefLabelRow}>
-                  <IconPin size={16} c={color.fg} />
-                  <Text style={s.prefLabel}>{PREFS.dist()}</Text>
-                </View>
-                <Text style={s.prefVal}>{PREFS.distVal(prefs.radiusKm)}</Text>
+        {offline ? (
+          <>
+            <View style={s.prefHeadRow}>
+              <View style={s.prefLabelRow}>
+                <IconPin size={16} c={color.fg} />
+                <Text style={s.prefLabel}>{PREFS.dist()}</Text>
               </View>
-              <Slider
-                minimumValue={1}
-                maximumValue={100}
-                step={1}
-                value={prefs.radiusKm}
-                onValueChange={(v) => setPrefs((p) => ({ ...p, radiusKm: Math.round(v) }))}
-                minimumTrackTintColor={color.primary}
-                maximumTrackTintColor={color.neutral100}
-                thumbTintColor={color.primary}
-                accessibilityLabel={PREFS.dist()}
-              />
-            </>
-          ) : null}
-        </ScrollView>
+              <Text style={s.prefVal}>{PREFS.distVal(prefs.radiusKm)}</Text>
+            </View>
+            <Slider
+              minimumValue={1}
+              maximumValue={100}
+              step={1}
+              value={prefs.radiusKm}
+              onValueChange={(v) => setPrefs((p) => ({ ...p, radiusKm: Math.round(v) }))}
+              minimumTrackTintColor={color.primary}
+              maximumTrackTintColor={color.neutral100}
+              thumbTintColor={color.primary}
+              accessibilityLabel={PREFS.dist()}
+            />
+          </>
+        ) : null}
+      </ScrollView>
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ busy }}
-          style={[s.sheetSend, busy && { opacity: 0.7 }]}
-          onPress={busy ? undefined : onStart}
-        >
-          {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.sheetSendText}>{PREFS.start()}</Text>}
-        </Pressable>
-        {/* «Отмена» тише «Начать поиск»: чёрной заливкой она перевешивала главное действие. */}
-        <Pressable accessibilityRole="button" style={s.sheetGhost} onPress={onClose}>
-          <Text style={s.sheetGhostText}>{PREFS.cancel()}</Text>
-        </Pressable>
-      </View>
-    </Modal>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ busy }}
+        style={[s.sheetSend, busy && { opacity: 0.7 }]}
+        onPress={busy ? undefined : onStart}
+      >
+        {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.sheetSendText}>{PREFS.start()}</Text>}
+      </Pressable>
+      {/* «Отмена» тише «Начать поиск»: чёрной заливкой она перевешивала главное действие. */}
+      <Pressable accessibilityRole="button" style={s.sheetGhost} onPress={onClose}>
+        <Text style={s.sheetGhostText}>{PREFS.cancel()}</Text>
+      </Pressable>
+    </Sheet>
   );
 }
 
@@ -779,31 +753,22 @@ function InviteSheet({
 }) {
   const name = String(cand?.name || '');
   return (
-    <Modal visible={!!cand} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={s.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
-      <View style={[s.sheet, { paddingBottom: Math.max(bottomInset, 18) }]}>
-        <View style={s.sheetHead}>
-          <Text style={s.sheetTitle}>{group ? GROUP.askTitle(name) : CANDS.sheetTitle(name)}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Закрыть', 'Close')} onPress={onClose} hitSlop={10}>
-            <Text style={s.sheetX}>✕</Text>
-          </Pressable>
-        </View>
-        <Text style={s.sheetBody}>{group ? GROUP.askBody(name) : CANDS.sheetBody(name)}</Text>
-        {err ? <Text style={s.note}>{err}</Text> : null}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ busy: sending }}
-          style={s.sheetSend}
-          onPress={sending ? undefined : onSend}
-        >
-          {sending ? <ActivityIndicator color={color.onPrimary} />
-                   : <Text style={s.sheetSendText}>{group ? GROUP.askSend() : CANDS.send()}</Text>}
-        </Pressable>
-        <Pressable accessibilityRole="button" style={s.sheetNot} onPress={onClose}>
-          <Text style={s.sheetNotText}>{group ? GROUP.askNot() : CANDS.notYet()}</Text>
-        </Pressable>
-      </View>
-    </Modal>
+    <Sheet visible={!!cand} onClose={onClose} title={group ? GROUP.askTitle(name) : CANDS.sheetTitle(name)}>
+      <Text style={s.sheetBody}>{group ? GROUP.askBody(name) : CANDS.sheetBody(name)}</Text>
+      {err ? <Text style={s.note}>{err}</Text> : null}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ busy: sending }}
+        style={s.sheetSend}
+        onPress={sending ? undefined : onSend}
+      >
+        {sending ? <ActivityIndicator color={color.onPrimary} />
+                 : <Text style={s.sheetSendText}>{group ? GROUP.askSend() : CANDS.send()}</Text>}
+      </Pressable>
+      <Pressable accessibilityRole="button" style={s.sheetNot} onPress={onClose}>
+        <Text style={s.sheetNotText}>{group ? GROUP.askNot() : CANDS.notYet()}</Text>
+      </Pressable>
+    </Sheet>
   );
 }
 
@@ -899,15 +864,6 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   capBtnText: { ...type.labelMedium, color: '#fff', fontWeight: '600' } as any,
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0006' },
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: color.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    paddingHorizontal: 20, paddingTop: 18, gap: space.md,
-  },
-  sheetHead: { flexDirection: 'row', alignItems: 'center' },
-  sheetTitle: { flex: 1, fontSize: 20, fontWeight: '700', color: color.fg },
-  sheetX: { fontSize: 20, color: color.fg },
   sheetBody: { ...type.bodySmall, color: color.muted } as any,
   sheetSend: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   sheetSendText: { ...type.button, color: color.onPrimary } as any,
