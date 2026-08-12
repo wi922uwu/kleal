@@ -19,12 +19,13 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, msgTime, msgDayLabel, planWhen, planPinned, sysLine } from '../src/chat';
+import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, msgTime, msgDayLabel, planWhen, planPinned, sysLine, sameSeries } from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
-import { mediaUrl, agent } from '../src/api';
+import { mediaUrl, agent, newIdem } from '../src/api';
+import { usePolling } from '../src/polling';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
@@ -88,7 +89,11 @@ export default function Conversation() {
     setMsgs((prev) => {
       const out = [...prev];
       for (const m of incoming) {
-        const byId = m.id ? out.findIndex((x) => x.id && x.id === m.id) : -1;
+        // По КЛЮЧУ ОТПРАВИТЕЛЯ — он один и тот же у показанной сразу реплики и у серверной.
+        // Прежний путь искал совпадение по тексту, и у голосового не работал вовсе: локально
+        // текст пустой, а сервер кладёт туда расшифровку — голосовое двоилось в ленте.
+        const byCid = m.cid ? out.findIndex((x) => x.cid && x.cid === m.cid) : -1;
+        const byId = byCid >= 0 ? byCid : (m.id ? out.findIndex((x) => x.id && x.id === m.id) : -1);
         const dupe = byId >= 0 ? byId : (
           !m.text ? -1 : out.findIndex(
             (x) => !x.id && x.text === m.text
@@ -109,7 +114,9 @@ export default function Conversation() {
       const r: any = await agent.thread(me, other, since.current);
       merge((r?.messages || []) as Msg[]);
       if (typeof r?.peer_read_at === 'number') setPeerRead(r.peer_read_at);
-      setErr('');
+      // Ошибку отправки здесь НЕ гасим: опрос и отправка — разные события, и удачный опрос ничего
+      // не говорит об уехавшей реплике. Раньше «Сообщение не ушло» стиралось через четыре
+      // секунды, экран выглядел здоровым, а пузырь так и оставался недоставленным.
     } catch {
       /* тихо: это фоновая дотяжка, и ругаться на каждый неудавшийся опрос незачем */
     } finally {
@@ -139,14 +146,24 @@ export default function Conversation() {
   }, [me, other]);
 
   useEffect(() => { load(); loadSide(); markSeen(other); }, [me, other]);
-  useEffect(() => {
-    const id = setInterval(loadSide, 15000);
-    return () => clearInterval(id);
-  }, [loadSide]);
+  // План и заявка меняются редко — свой ритм, но спит так же, как и лента.
+  usePolling(loadSide, 15000);
 
   /** Только настоящие реплики. События плана — не разговор: они не считаются ни в «прочитано»,
    *  ни в счётчике подсказки MSG.08 («вы обменялись N сообщениями»). */
   const talk = useMemo(() => msgs.filter((m) => !m.sys), [msgs]);
+
+  /**
+   * Что реально попадёт на экран. Считается ЗАРАНЕЕ, потому что от соседей зависят и разделитель
+   * дня, и серия — а системная строка с незнакомым кодом не рисуется вовсе.
+   *
+   * Раньше соседа брали из полного списка: скрытая строка оставалась «предыдущей», и разделитель
+   * «Сегодня» исчезал вместе с ней — первый настоящий пузырь дня оставался без даты.
+   */
+  const shown = useMemo(
+    () => msgs.filter((m) => !m.sys || !!sysLine(m.sys, me, getLang() === 'ru')),
+    [msgs, me]
+  );
 
   // «Прочитано» отправляется, когда на экране появились новые ЧУЖИЕ сообщения, а не на каждый опрос.
   useEffect(() => {
@@ -159,33 +176,59 @@ export default function Conversation() {
   }, [msgs.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Лёгкий опрос: собеседник отвечает не мгновенно, а держать сокет ради двух реплик избыточно.
-  useEffect(() => {
-    const id = setInterval(load, 4000);
-    return () => clearInterval(id);
-  }, [load]);
+  // Спит, пока экран не виден: раньше он тикал каждые четыре секунды и из свёрнутого приложения.
+  usePolling(load, 4000);
 
+  /**
+   * Прижимать ленту к низу — только если человек и так внизу.
+   *
+   * Раньше прокрутка срабатывала на ЛЮБОЕ изменение длины, не спрашивая, где он находится: при
+   * опросе раз в четыре секунды чужая реплика выбрасывала читающего старое сообщение обратно
+   * вниз, и дочитать переписку было физически нельзя.
+   */
+  const atBottom = useRef(true);
   useEffect(() => {
+    if (!atBottom.current) return;
     const id = setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 80);
     return () => clearTimeout(id);
   }, [msgs.length]);
 
-  const send = async () => {
+  /**
+   * Отправка одной реплики — и текстовой, и повторной.
+   *
+   * Пузырь показывается сразу, ещё до ответа сервера, но теперь честно говорит о себе: часики,
+   * пока ответа нет, восклицательный знак, если отказали. Раньше серая галочка рисовалась
+   * безусловно, не глядя на результат, — неотправленное выглядело ровно как доставленное.
+   *
+   * `cid` один на реплику и переживает повтор: сервер по нему узнаёт, что это та же самая, и
+   * возвращает прежний ответ вместо второй копии у собеседника.
+   */
+  const deliver = useCallback(async (m: Msg) => {
+    setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'sending' } : x)));
+    try {
+      const r: any = await agent.message(me, other, String(m.text || ''), m.voice, m.cid);
+      if (!r?.ok) throw new Error(String(r?.error || 'SEND_FAILED'));
+      setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: undefined, id: r.id, t: r.t || x.t } : x)));
+      setErr('');
+    } catch (e) {
+      // Причина называется своя: заблокированному «проверь связь» — ложь, он будет
+      // переподключаться и писать снова.
+      const code = String((e as any)?.body?.error || (e as any)?.message || '');
+      setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'failed' } : x)));
+      setErr(code === 'BLOCKED' ? CHAT.blocked() : CHAT.offline());
+    }
+  }, [me, other]);
+
+  const send = () => {
     const text = draft.trim();
     if (!text || !me || !other) return;
     setDraft('');
-    // Показываем сразу, не дожидаясь сервера: опрос всё равно принесёт эту же строку, а ждать
-    // секунду на собственном сообщении — значит выглядеть сломанным.
-    const local: Msg = { from: me, to: other, text, t: Date.now() / 1000 };
-    setMsgs((prev) => [...prev, local]);
+    atBottom.current = true;
     // `since` НЕ двигаем: пусть опрос принесёт серверную версию этой же реплики — merge её склеит
-    // и заодно поправит время на настоящее. Сдвинуть здесь значило бы навсегда её пропустить.
-    try {
-      const r: any = await agent.message(me, other, text);
-      if (!r?.ok) throw new Error(r?.error || 'send failed');
-      setErr('');
-    } catch {
-      setErr(CHAT.offline());
-    }
+    // по ключу и заодно поправит время на настоящее.
+    const local: Msg = { from: me, to: other, text, t: Date.now() / 1000, cid: newIdem('m'), state: 'sending' };
+    setMsgs((prev) => [...prev, local]);
+    deliver(local);
   };
 
   /**
@@ -193,17 +236,16 @@ export default function Conversation() {
    * `text`. Поэтому и показывается оно сразу, как своя реплика, — опрос принесёт серверную
    * версию и склеит по id.
    */
-  const voice = useVoiceMessage(async (payload) => {
+  const voice = useVoiceMessage((payload) => {
     if (!me || !other) return;
-    const local: any = { from: me, to: other, text: '', voice: payload, t: Date.now() / 1000 };
+    // Тем же путём, что и текст: тот же ключ, то же состояние, тот же повтор при сбое. Своего
+    // пути у голосового быть не должно — иначе половина работы над отправкой обходит его стороной.
+    const local: Msg = {
+      from: me, to: other, text: payload.transcript, voice: payload,
+      t: Date.now() / 1000, cid: newIdem('v'), state: 'sending',
+    };
     setMsgs((prev) => [...prev, local]);
-    try {
-      const r: any = await agent.message(me, other, '', payload);
-      if (!r?.ok) throw new Error(r?.error || 'send failed');
-      setErr('');
-    } catch {
-      setErr(CHAT.offline());
-    }
+    deliver(local);
   }, !me || !other);
 
   const startPending = (kind: 'plan' | 'end') => {
@@ -395,7 +437,16 @@ export default function Conversation() {
           </Pressable>
         ) : null}
 
-        <ScrollView ref={scroller} contentContainerStyle={s.thread} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          ref={scroller}
+          contentContainerStyle={s.thread}
+          keyboardShouldPersistTaps="handled"
+          scrollEventThrottle={200}
+          onScroll={(e) => {
+            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+            atBottom.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 80;
+          }}
+        >
           {loading ? <ActivityIndicator color={color.muted} style={{ marginTop: space.lg }} /> : null}
 
           {/* MSG.18/20/21 — заявка от собеседника живёт в ленте карточкой, а не отдельным миром. */}
@@ -446,46 +497,64 @@ export default function Conversation() {
             <Text style={s.empty}>{CHAT.empty(other, emptyState)}</Text>
           ) : null}
 
-          {msgs.map((m, i) => {
+          {shown.map((m, i) => {
             const mine = String(m.from || '').trim().toLowerCase() === me.trim().toLowerCase();
-            const prev = msgs[i - 1];
+            const prev = shown[i - 1];
+            const next = shown[i + 1];
             const newDay = !!m.t && (!prev
               || new Date((prev.t || 0) * 1000).toDateString() !== new Date(m.t * 1000).toDateString());
-            const read = peerRead >= (m.t || 0);
             /* События плана — не реплика: они не чьи-то слова, а факт, случившийся с встречей.
                Поэтому строкой по центру, без пузыря, аватара и галочек прочтения. */
             if (m.sys) {
-              const line = sysLine(m.sys, me, ru);
-              if (!line) return null;
               return (
-                <React.Fragment key={i}>
+                <React.Fragment key={m.id || m.cid || i}>
                   {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
                   <View style={s.eventRow}>
                     <IconCalendar size={13} c={color.muted} />
-                    <Text style={s.eventText}>{line}</Text>
+                    <Text style={s.eventText}>{sysLine(m.sys, me, ru)}</Text>
                     <Text style={s.eventTime}>{msgTime(m.t, ru)}</Text>
                   </View>
                 </React.Fragment>
               );
             }
+            /* Подряд идущие реплики одного человека — одна серия: время и хвостик у неё общие.
+               Иначе живая переписка превращается в столбик одинаковых часов. */
+            const tail = !sameSeries(m, next);
+            const failed = m.state === 'failed';
+            const read = peerRead >= (m.t || 0);
             return (
-              <React.Fragment key={i}>
+              <React.Fragment key={m.id || m.cid || i}>
                 {/* MSG.06: «Сегодня» над первой репликой дня. */}
                 {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
-                <View style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}>
+                <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', marginTop: sameSeries(prev, m) ? 2 : 8 }}>
                   {/* У голосового текста в пузыре нет — есть проигрыватель и расшифровка под ним. */}
-                  {(m as any).voice ? (
-                    <VoiceBubble voice={(m as any).voice} mine={mine} />
+                  {m.voice ? (
+                    <VoiceBubble voice={m.voice} mine={mine} />
                   ) : (
-                    <View style={[s.bub, mine ? s.bubMe : s.bubThem]}>
+                    <Pressable
+                      accessibilityRole={failed ? 'button' : 'text'}
+                      accessibilityLabel={failed ? CHAT.retry() : undefined}
+                      onPress={failed ? () => deliver(m) : undefined}
+                      style={[s.bub, mine ? s.bubMe : s.bubThem,
+                              !tail && (mine ? s.bubMeMid : s.bubThemMid), failed && s.bubFailed]}
+                    >
                       <Text style={[s.bubText, mine && { color: color.onPrimary }]}>{m.text}</Text>
-                    </View>
+                    </Pressable>
                   )}
-                  <Text style={s.time}>
-                    {msgTime(m.t, ru)}
-                    {/* MSG.11: две галочки — собеседник открывал переписку после этого сообщения. */}
-                    {mine ? <Text style={read ? s.tickRead : s.tick}>{read ? '  ✓✓' : '  ✓'}</Text> : null}
-                  </Text>
+                  {tail ? (
+                    <Text style={s.time}>
+                      {msgTime(m.t, ru)}
+                      {/* Своё сообщение говорит о себе честно: часики — ушло не всё, восклицание —
+                          не ушло вовсе и можно нажать, галочка — сервер принял, две — прочитано.
+                          Раньше серая галочка стояла безусловно, и потерянное выглядело как
+                          доставленное. */}
+                      {mine ? (
+                        m.state === 'sending' ? <Text style={s.tick}>  ⋯</Text>
+                        : failed ? <Text style={s.tickFail}>  ! {CHAT.retry()}</Text>
+                        : <Text style={read ? s.tickRead : s.tick}>{read ? '  ✓✓' : '  ✓'}</Text>
+                      ) : null}
+                    </Text>
+                  ) : null}
                 </View>
               </React.Fragment>
             );
@@ -756,14 +825,20 @@ const s = StyleSheet.create({
   empty: { ...type.bodySmall, color: color.muted, textAlign: 'center', marginTop: space.lg } as any,
   /** MSG.06: «Сегодня» — маленькая серая метка по центру над первой репликой дня. */
   day: { fontSize: 12, color: color.neutral400, textAlign: 'center', marginTop: space.md } as any,
-  bub: { maxWidth: '80%', paddingVertical: 12, paddingHorizontal: 16, marginTop: space.sm, borderRadius: 18 },
+  bub: { maxWidth: '80%', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 18 },
+  /** Хвостик — у ПОСЛЕДНЕГО пузыря серии: он и показывает, где реплики одного человека кончились. */
   bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderBottomRightRadius: 6 },
   bubThem: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderBottomLeftRadius: 6 },
+  bubMeMid: { borderBottomRightRadius: 18 },
+  bubThemMid: { borderBottomLeftRadius: 18 },
+  /** Не ушло — пузырь бледнее и нажимается. Цвет не меняем: это по-прежнему твои слова. */
+  bubFailed: { opacity: 0.6 },
   bubText: { fontSize: 15, lineHeight: 21, color: color.fg } as any,
   time: { fontSize: 11, color: color.neutral400, marginTop: 3 } as any,
   /** MSG.11: одна галочка серая, две — красные, прочитано. */
   tick: { fontSize: 11, color: color.neutral400 } as any,
   tickRead: { fontSize: 11, color: color.primary, fontWeight: '700' } as any,
+  tickFail: { fontSize: 11, color: color.primary, fontWeight: '600' } as any,
   err: { ...type.bodySmall, color: color.primary, marginTop: space.sm } as any,
 
   undoBar: {

@@ -73,6 +73,13 @@ export const CHAT = {
     }
   },
   offline: () => T('Сообщение не ушло. Проверь связь.', 'The message didn’t send. Check your connection.'),
+  /**
+   * Отказ отказу рознь, и говорить о нём одной фразой нельзя: заблокированный человек слышал
+   * «проверь связь» и шёл переподключаться, хотя связь была ни при чём.
+   */
+  blocked: () => T('Этот человек больше не получает от тебя сообщений.', 'This person no longer receives your messages.'),
+  retry: () => T('Нажми, чтобы отправить ещё раз', 'Tap to try again'),
+  sendFailed: () => T('Не отправилось', 'Not sent'),
 
   /** O.19 — лист действий. */
   actionsTitle: () => T('Действия с разговором', 'Conversation Actions'),
@@ -623,7 +630,40 @@ export type SysMsg = {
   kind?: string;
 };
 
-export type Msg = { id?: string; from?: string; to?: string; text?: string; t?: number; sys?: SysMsg };
+/**
+ * Реплика ленты.
+ *
+ * `cid` — ключ, который придумал ОТПРАВИТЕЛЬ. По нему своя реплика, показанная сразу, узнаётся
+ * в том, что принёс опрос. Раньше узнавание шло по ТЕКСТУ, и у голосового оно не работало вовсе:
+ * локально текст пустой, а сервер кладёт туда расшифровку — голосовое показывалось дважды.
+ *
+ * `state` есть только у своей неподтверждённой реплики: `sending`, пока ответа нет, и `failed`,
+ * если сервер отказал. У доставленных его нет — отсутствие и означает «дошло».
+ */
+export type Msg = {
+  id?: string; from?: string; to?: string; text?: string; t?: number; sys?: SysMsg;
+  cid?: string; state?: 'sending' | 'failed'; voice?: any;
+};
+
+/**
+ * Подряд идущие реплики одного человека — ОДНА серия: время под ней одно и хвостик один.
+ *
+ * Экран печатал время под каждым пузырём без исключения, и живая переписка превращалась в
+ * столбик часов: три коротких реплики подряд давали три одинаковых «19:42». Борд (OF.18)
+ * рисует их под одной меткой, и так делает любой мессенджер.
+ *
+ * Пять минут — не украшение: реплики, разделённые паузой, это уже другой заход в разговор, и
+ * склеивать их в одну серию значит скрывать, что человек вернулся спустя время.
+ */
+export const SERIES_GAP_S = 300;
+
+export function sameSeries(a?: Msg, b?: Msg): boolean {
+  if (!a || !b || a.sys || b.sys) return false;
+  const who = (m: Msg) => String(m.from || '').trim().toLowerCase();
+  if (who(a) !== who(b)) return false;
+  if (Math.abs((b.t || 0) - (a.t || 0)) > SERIES_GAP_S) return false;
+  return new Date((a.t || 0) * 1000).toDateString() === new Date((b.t || 0) * 1000).toDateString();
+}
 
 /** «Пт, 8 авг · 20:00» из секунд. Пусто — времени нет, и выдумывать его нечем. */
 function atLabel(at: any, ru: boolean): string {
