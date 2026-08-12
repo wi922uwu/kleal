@@ -545,6 +545,12 @@ export const group = {
       '/api/agent/ginvite-respond', { id, self, accept, idem }
     ),
 
+  /** Recipient-scoped group invitation detail. Supports notification links that only carry id. */
+  inviteDetail: (id: string, self: string) =>
+    api.get<{ ok?: boolean; error?: string; invite?: Json; group?: GroupInfo }>(
+      `/api/agent/ginvite?id=${encodeURIComponent(id)}&self=${encodeURIComponent(self)}`
+    ),
+
   /** Апрув ожидающего (этап плана). Только организатор; accept: false — отказать во входе. */
   approve: (gid: string, self: string, who: string, idem: string, accept = true) =>
     api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>(
