@@ -24,13 +24,13 @@ import { inviteHoursLeft } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
-import { mediaUrl, agent, newIdem } from '../src/api';
+import { mediaUrl, agent, newIdem, type VideoPayload } from '../src/api';
 import { usePolling } from '../src/polling';
 import { Sheet, SheetItem } from '../src/components/Sheet';
 import * as Clipboard from 'expo-clipboard';
 import { MessageFeed } from '../src/components/MessageFeed';
 import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
-import { useVideoNote, VideoNoteControl, VideoNoteStage } from '../src/videonote';
+import { VideoNoteButton } from '../src/videonote';
 import {
   IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
 } from '../src/components/icons';
@@ -277,15 +277,16 @@ export default function Conversation() {
    * версию и склеит по id.
    */
   /** Кружок уходит тем же путём, что текст и голосовое: тот же ключ, то же состояние, тот же повтор. */
-  const note = useVideoNote((payload) => {
-    if (!me || !other) return;
+  const canSend = !!me && !!other;
+  const sendCircle = (payload: VideoPayload) => {
+    if (!canSend) return;
     const local: Msg = {
       from: me, to: other, text: '', video: payload,
       t: Date.now() / 1000, cid: newIdem('c'), state: 'sending',
     };
     setMsgs((prev) => [...prev, local]);
     deliver(local);
-  }, !me || !other);
+  };
 
   const voice = useVoiceMessage((payload) => {
     if (!me || !other) return;
@@ -662,8 +663,8 @@ export default function Conversation() {
             <>
               {/* Кружок отдельной кнопкой, а не переключателем на микрофоне: у микрофона свой
                   жест удержания, и делить его на два смысла значит ломать оба. */}
-              {voice.phase === 'idle' ? <VideoNoteControl note={note} /> : null}
-              {note.phase === 'idle' ? <VoiceMessageControl voice={voice} /> : null}
+              {voice.phase === 'idle' ? <VideoNoteButton onSend={sendCircle} disabled={!canSend} /> : null}
+              <VoiceMessageControl voice={voice} />
             </>
           )}
         </View>
@@ -754,9 +755,6 @@ export default function Conversation() {
               </View>
             ))}
         </Sheet>
-        {/* Окно записи кружка — у корня экрана: только здесь его границы во весь экран,
-            и только здесь нажимаются кнопки «отправить» и «отмена». */}
-        <VideoNoteStage note={note} />
       </View>
     </KeyboardAvoidingView>
   );

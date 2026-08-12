@@ -30,7 +30,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo, type VoicePayload } from '../src/api';
+import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo, type VoicePayload, type VideoPayload } from '../src/api';
 import { ROOM, GROUP, groupSysLine, roomMsg } from '../src/groups';
 import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
@@ -42,7 +42,7 @@ import { usePolling } from '../src/polling';
 import * as Clipboard from 'expo-clipboard';
 import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
-import { useVideoNote, VideoNoteControl, VideoNoteStage } from '../src/videonote';
+import { VideoNoteButton } from '../src/videonote';
 
 type GMsg = { id?: string; frm?: string; text?: string; t?: number; kind?: string; voice?: VoicePayload };
 
@@ -91,14 +91,15 @@ export default function GroupRoom() {
   const voice = useVoiceMessage(deliverVoice, !me || !gid || !!fatal);
 
   /** Кружок в комнате — тем же путём, что и текст: ключ, состояние, повтор. */
-  const note = useVideoNote((payload) => {
-    if (!me || !gid) return;
+  const canSend = !!me && !!gid && !fatal;
+  const sendCircle = (payload: VideoPayload) => {
+    if (!canSend) return;
     const local: Row = {
       from: me, text: '', video: payload, t: Date.now() / 1000, cid: newIdem('c'), state: 'sending',
     };
     setMsgs((prev) => [...prev, local]);
     deliver(local);
-  }, !me || !gid || !!fatal);
+  };
 
   const load = useCallback(async () => {
     if (!gid || !me) return;
@@ -405,8 +406,8 @@ export default function GroupRoom() {
               <>
                 {/* Кружок отдельной кнопкой, а не переключателем на микрофоне: у микрофона свой
                     жест удержания, и делить его на два смысла значит ломать оба. */}
-                {voice.phase === 'idle' ? <VideoNoteControl note={note} /> : null}
-                {note.phase === 'idle' ? <VoiceMessageControl voice={voice} /> : null}
+                {voice.phase === 'idle' ? <VideoNoteButton onSend={sendCircle} disabled={!canSend} /> : null}
+                <VoiceMessageControl voice={voice} />
               </>
             )}
           </View>
@@ -504,9 +505,6 @@ export default function GroupRoom() {
           onClose={() => setLeaveAsk(false)}
           bottomInset={insets.bottom}
         />
-        {/* Окно записи кружка — у корня экрана: только здесь его границы во весь экран,
-            и только здесь нажимаются кнопки «отправить» и «отмена». */}
-        <VideoNoteStage note={note} />
       </View>
     </KeyboardAvoidingView>
   );

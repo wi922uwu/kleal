@@ -1,25 +1,42 @@
 /**
  * КРУЖОК — короткое видео вместо реплики.
  *
- * Устроен ровно как голосовое, и это не совпадение, а условие: жест «прижал — говоришь, отпустил
- * — ушло, потянул влево — отмена» человек в этом приложении уже выучил на микрофоне. Дать
- * соседней кнопке другую грамматику значит заставить учить её заново.
+ * ПОЧЕМУ ЗДЕСЬ НЕТ УДЕРЖАНИЯ. Первая попытка повторяла микрофон: прижал кнопку в композере —
+ * пишется, отпустил — ушло. Она не заработала ни разу, и не из-за отдельных ошибок, а из-за самого
+ * устройства. Камера в нём поднималась ПОСЛЕ нажатия, и между «палец лёг» и «камера пишет»
+ * оставался промежуток в сотни миллисекунд, куда проваливалось всё: отпускание стиралось
+ * запоздавшим стартом, просьба остановиться уходила в пустоту, потерянный жест оставлял запись без
+ * единого способа её кончить. Каждую дыру латали отдельно — отметкой, сторожем, повторной
+ * просьбой раз в четверть секунды, — и на каждую заплату находилась следующая.
+ *
+ * Устройство теперь другое, и держится на трёх опорах:
+ *
+ *   1. КАМЕРА ГОТОВА ДО ТОГО, как запись можно начать. Окно открывается заранее, камера в нём
+ *      просыпается, и кнопка «записать» до её сигнала попросту не нажимается. Промежутка, в
+ *      который проваливались команды, больше нет — не потому что он обработан, а потому что его
+ *      неоткуда взять.
+ *   2. НАЧАЛО И КОНЕЦ — ЯВНЫЕ НАЖАТИЯ. Жеста нет вовсе, а значит его нельзя потерять: ни
+ *      прокруткой, ни звонком, ни соскочившим за край пальцем.
+ *   3. ОТМЕНА — ЭТО ЗАКРЫТЬ ОКНО. Она не просит камеру остановиться и не ждёт её согласия: камера
+ *      уходит с экрана вместе с окном, а съёмка обрывается вместе с камерой. Выход, который не
+ *      зависит ни от чего.
+ *
+ * И следствие, ради которого всё и затевалось: ВСЁ ОКНО ЦЕЛИКОМ живёт в модальном экране. Кнопки
+ * больше не висят поверх композера — а именно там они и не нажимались: на iOS касание за
+ * пределами родительского view до ребёнка не доходит, кнопка видна и мертва.
  *
  * Чем кружок отличается от голосового:
- *   — во время записи видно себя. Круглое окошко над композером — это и есть кадр, который
- *     уйдёт; снимать вслепую то, где показывают лицо, нельзя;
- *   — минута против минуты, но вес другой: видео тяжелее на порядок, поэтому берётся низкое
- *     разрешение (`480p`). Кружок смотрят в кружке — большего разрешения там просто не видно;
- *   — расшифровки нет. В списке «Сообщений» под именем сервер ставит подпись, иначе там зияла
- *     бы пустота.
+ *   — во время записи видно себя: снимать вслепую то, где показывают лицо, нельзя;
+ *   — вес другой, видео тяжелее на порядок, поэтому низкое разрешение (`480p`). Кружок смотрят в
+ *     кружке — большего там просто не видно;
+ *   — расшифровки нет: в списке «Сообщений» подпись под именем ставит сервер.
  *
- * ЗАПИСЬ ТОЛЬКО С ФРОНТАЛЬНОЙ КАМЕРЫ и без переключения: кружок — это лицо, и выбор камеры
- * здесь лишний вопрос. Кому нужна задняя камера, тому нужно не сообщение, а видеофайл.
+ * ЗАПИСЬ ТОЛЬКО С ФРОНТАЛЬНОЙ КАМЕРЫ и без переключения: кружок — это лицо. Кому нужна задняя
+ * камера, тому нужно не сообщение, а видеофайл.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator, Alert, Animated, Easing, PanResponder, Platform, Pressable,
-  StyleSheet, Text, View,
+  ActivityIndicator, Alert, Linking, Modal, Platform, Pressable, StyleSheet, Text, View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
@@ -31,17 +48,25 @@ import { color } from './theme';
 import { IconSend, IconVideo } from './components/icons';
 
 const MAX_MS = 60_000;
-/** Короче — не сообщение, а промах пальцем: отпускание отправляет сразу. */
+/**
+ * Раньше этого кнопка «готово» не нажимается.
+ *
+ * Смысл двойной. Первый — сообщением полусекундный обрывок всё равно не будет. Второй важнее:
+ * это единственное место, где съёмку могли остановить раньше, чем камера успела её начать, — а
+ * остановка, попавшая в этот промежуток, уходит в пустоту и запись становится неостановимой.
+ * Полсекунды с лишним — на порядок больше, чем нужно камере, чтобы начать.
+ */
 const MIN_MS = 700;
-/** Потянул влево — отмена. Порог тот же, что у голосового: рука уже знает это расстояние. */
-const CANCEL_AT = -80;
-/** Размер круга: и превью при записи, и пузыря в ленте. Один размер — одна вещь. */
+/** Сколько ждать пробуждения камеры, прежде чем признать, что она не отзовётся. */
+const WARM_MS = 6000;
+/** Размер кружка в ленте. */
 export const CIRCLE = 168;
+/** Размер кадра в окне съёмки: тут смотрят на себя, и мелкий кружок для этого не годится. */
+const PREVIEW = 280;
 
-const canBuzz = Platform.OS !== 'web';
-const buzz = (s: Haptics.ImpactFeedbackStyle) => { if (canBuzz) Haptics.impactAsync(s).catch(() => {}); };
+const buzz = (s: Haptics.ImpactFeedbackStyle) => { Haptics.impactAsync(s).catch(() => {}); };
 const buzzLost = () => {
-  if (canBuzz) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
 };
 
 const clock = (ms: number) => {
@@ -50,402 +75,352 @@ const clock = (ms: number) => {
 };
 
 /**
- * `arming` — камера уже на экране, но ещё не готова снимать.
+ * Одно состояние на всю съёмку — и никаких отметок рядом с ним.
  *
- * Без этого состояния кружок не записывался вовсе: камера монтируется только на время записи, а
- * `recordAsync` вызывался сразу после `setPhase` — ссылки на камеру в этот момент ещё нет, вызов
- * уходил в никуда и запись молча не начиналась. На устройстве к тому же камера просыпается не
- * мгновенно, так что ждать её надо в любом случае — сигнал даёт сама камера (`onCameraReady`).
+ * В прошлом устройстве состояний было три, а вокруг них жили шесть булевых ссылок: «палец на
+ * кнопке», «съёмка идёт», «просили остановить», «предел уже сработал», «отменено», сторожевой
+ * таймер. Разъехаться они могли восемью способами, и половина отказов была именно этим.
+ *
+ *   off      окна нет
+ *   warming  окно открыто, камера просыпается — записывать ещё нечем
+ *   ready    камера готова, ждём нажатия
+ *   recording  пишем
+ *   sending  запись кончилась, файл уезжает
+ *   failed   не уехало (или не записалось) — снятое цело, повтор одним нажатием
  */
-type Phase = 'idle' | 'arming' | 'recording' | 'uploading' | 'failed';
+type Stage = 'off' | 'warming' | 'ready' | 'recording' | 'sending' | 'failed';
 
-export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false) {
+export function VideoNoteButton({
+  onSend, disabled = false,
+}: {
+  onSend: (v: VideoPayload) => void;
+  disabled?: boolean;
+}) {
   const cam = useRef<CameraView>(null);
-  const [phase, setPhase] = useState<Phase>('idle');
+  const [stage, setStage] = useState<Stage>('off');
   const [ms, setMs] = useState(0);
   /**
-   * Почему не вышло — СЛОВАМИ, а не молчанием.
-   *
-   * Съёмка может не начаться по причинам, о которых знает только устройство: занятая звуковая
-   * сессия, неготовая камера, отказ системы. Раньше всё это уходило в пустой `catch`, и человек
-   * видел одно: кружок появился и пропал. Отлаживать такое нечем — ни ему, ни мне.
+   * Почему не вышло — СЛОВАМИ от устройства, а не молчанием. Съёмка срывается по причинам, о
+   * которых знает только оно: занятая звуковая сессия, отказ системы, нет места. Пустой `catch`
+   * оставлял человека с одним наблюдением — «появилось и пропало», — и отлаживать это нечем.
    */
   const [err, setErr] = useState('');
-  /** «Палец ушёл влево» живёт в хуке: об этом знают и кнопка, и окно записи, а это разные места. */
-  const [cancelling, setCancelling] = useState(false);
   const [cameraOk, askCamera] = useCameraPermissions();
   const [micOk, askMic] = useMicrophonePermissions();
-  const cancelled = useRef(false);
-  const started = useRef(0);
+  const startedAt = useRef(0);
   /**
-   * Палец НА кнопке — прямо сейчас. Ставится синхронно, до любых ожиданий, и снимается
-   * отпусканием.
-   *
-   * Без него запись начиналась почти всегда неправильно: `start` ждёт разрешений, отпускание за
-   * это время помечало «хватит», а `start`, дойдя до конца, эту пометку стирал. Камера
-   * просыпалась, и съёмка шла уже БЕЗ пальца — до самой минуты, пока не упрётся в предел.
+   * Снятое, но не уехавшее. Кружок весит мегабайты, отправка по плохой связи срывается легко —
+   * выбрасывать при этом запись нельзя: переснять момент человек не может, он прошёл.
    */
-  const held = useRef(false);
-  /** Съёмка уже идёт. Камера может сообщить о готовности повторно — второй раз начинать нельзя. */
-  const busy = useRef(false);
+  const clip = useRef<{ uri: string; ms: number } | null>(null);
   /**
-   * «Просили остановить» — и просьба ЖИВЁТ, пока запись не кончится.
-   *
-   * Между вызовом `recordAsync` и моментом, когда камера действительно начала писать, проходит
-   * ощутимое время. `stopRecording`, попавший в этот промежуток, уходит в пустоту: останавливать
-   * ещё нечего. Запись после этого начинается — и остановить её больше нечем, палец уже убран.
-   * Снаружи это ровно то, на что жалуются: «запись не завершается, ни отменить, ни отправить».
-   *
-   * Поэтому просьба не одноразовая: пока она стоит, камеру просят остановиться повторно, пока
-   * та не послушается.
+   * Окно закрыли, пока камера или сеть ещё чем-то заняты. Их ответ придёт — и трогать состояние
+   * им уже нельзя: человек ушёл, и вернуть его в окно, которое он закрыл, было бы захватом экрана.
    */
-  const wantStop = useRef(false);
-  /** Предел проверяется каждые сто миллисекунд; остановить надо ОДИН раз, а не пачкой. */
-  const capped = useRef(false);
-  /** Сторож на случай, если камера не отзовётся на остановку вовсе. */
-  const escape = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gone = useRef(false);
+
+  const on = stage !== 'off';
 
   /**
-   * Попросить камеру остановиться — и НЕ уронить приложение, если останавливать нечего.
+   * Звуковая сессия у камеры и у голосовых ОДНА на приложение, и голосовой модуль оставляет её в
+   * режиме «только воспроизведение» (`allowsRecording: false`). Камера в нём звук не захватывает,
+   * и съёмка не начинается вовсе — снаружи это ровно «кружок появился и пропал».
    *
-   * `stopRecording` отдаёт обещание, и когда записи нет, оно отклоняется. Просьба у нас
-   * настойчивая, раз в четверть секунды, — то есть таких отказов прилетает поток. Ни один из них
-   * не был перехвачен, и каждый всплывал красной плашкой «Uncaught (in promise)» поверх экрана.
+   * Переключение привязано к самому окну, а не к записи: открылось — взяли, закрылось — вернули.
+   * Возврат в уборке эффекта, поэтому он случится на ЛЮБОМ исходе, включая отмену, слишком
+   * короткое нажатие и уход с экрана вместе с чатом. Иначе следующее голосовое осталось бы в
+   * режиме записи и звучало бы в тишину.
    */
-  const halt = useCallback(() => {
-    try {
-      const p = cam.current?.stopRecording() as unknown as Promise<void> | undefined;
-      if (p && typeof (p as any).catch === 'function') (p as any).catch(() => {});
-    } catch {
-      /* камера уже снята с экрана — останавливать нечего и незачем */
-    }
-  }, []);
-  /**
-   * Снятое, но не уехавшее. Кружок весит мегабайты, и отправка по плохой связи срывается легко —
-   * выбрасывать при этом уже записанное нельзя: переснять его человек не может, момент прошёл.
-   */
-  const taken = useRef<{ uri: string; ms: number } | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }).catch(() => {});
+    return () => { setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {}); };
+  }, [on]);
 
   useEffect(() => {
-    if (phase !== 'recording') return;
-    const id = setInterval(() => setMs(Date.now() - started.current), 100);
+    if (stage !== 'recording') return;
+    const id = setInterval(() => setMs(Date.now() - startedAt.current), 100);
     return () => clearInterval(id);
-  }, [phase]);
-
-  // Минутный предел: дальше камера останавливается сама, и это отпускание руки не требует.
-  useEffect(() => {
-    if (phase !== 'recording') { capped.current = false; return; }
-    if (ms >= MAX_MS && !capped.current) {
-      capped.current = true;
-      halt();
-    }
-  }, [phase, ms, halt]);
+  }, [stage]);
 
   /**
-   * Отправка снятого. Отдельно от съёмки, потому что её повторяют: запись остаётся на месте, и
-   * «попробовать ещё раз» не требует переснимать момент, которого уже нет.
+   * Камера может не отозваться ВОВСЕ — и тогда ждать её нечего.
+   *
+   * На симуляторе камеры нет физически, и `onCameraReady` не придёт никогда: без этого срока окно
+   * оставалось бы навсегда с крутящимся кружком и словом «просыпается…», а человек — без единого
+   * объяснения. Проверено ровно так и было. На телефоне то же самое значит, что камеру держит
+   * кто-то другой.
+   *
+   * Шесть секунд: столько камера не просыпается никогда — обычно ей хватает долей секунды.
    */
-  const push = useCallback(async () => {
-    const t = taken.current;
-    if (!t) return;
-    setPhase('uploading');
+  useEffect(() => {
+    if (stage !== 'warming') return;
+    const id = setTimeout(() => {
+      setErr(T('камера не отозвалась', 'the camera did not respond'));
+      setStage('failed');
+    }, WARM_MS);
+    return () => clearTimeout(id);
+  }, [stage]);
+
+  /** Отправка отдельно от съёмки: её повторяют, и повтор не должен требовать переснять момент. */
+  const send = useCallback(async () => {
+    const c = clip.current;
+    if (!c) return;
+    setErr('');
+    setStage('sending');
     try {
-      // Расширение берётся из САМОГО файла: на iOS камера пишет `.mov`, и назвать его `.mp4`
-      // значит сохранить байты QuickTime под чужим именем — проигрыватель вправе не открыть.
-      const ext = (t.uri.split('?')[0].split('.').pop() || 'mp4').toLowerCase();
-      const kind = ext === 'mov' ? 'video/quicktime' : 'video/mp4';
+      // Расширение берётся из САМОГО файла, а запасное — по платформе: iOS пишет QuickTime всегда
+      // (`generatePathInCache(…, extension: ".mov")` в CameraVideoRecording.swift), Android —
+      // mp4. Назвать `.mov` мпэшкой значит отдать байты QuickTime под чужим именем, и
+      // проигрыватель вправе не открыть их вовсе.
+      const ext = (c.uri.split('?')[0].split('.').pop()
+        || (Platform.OS === 'ios' ? 'mov' : 'mp4')).toLowerCase();
       const form = new FormData();
-      form.append('file', { uri: t.uri, name: `circle-${Date.now()}.${ext}`, type: kind } as any);
-      const up: any = await videoApi.upload(form, t.ms);
+      form.append('file', {
+        uri: c.uri,
+        name: `circle-${Date.now()}.${ext}`,
+        type: ext === 'mov' ? 'video/quicktime' : 'video/mp4',
+      } as any);
+      const up: any = await videoApi.upload(form, c.ms);
       if (!up?.ok || !up?.id) throw new Error(String(up?.error || 'UPLOAD_FAILED'));
+      if (gone.current) return;
       onSend({ id: up.id, url: up.url, duration_ms: up.duration_ms, mime_type: up.mime_type });
       buzz(Haptics.ImpactFeedbackStyle.Light);
-      taken.current = null;
-      setPhase('idle');
-    } catch {
+      clip.current = null;
+      setStage('off');
+    } catch (e) {
+      if (gone.current) return;
       buzzLost();
-      setPhase('failed');                    // запись цела, повтор — одним нажатием
+      setErr(String((e as any)?.message || e || '').slice(0, 160));
+      setStage('failed');
     }
   }, [onSend]);
 
-  /** Записывать начинает КАМЕРА, когда проснулась, — см. `arming`. */
-  const begin = useCallback(async () => {
+  /**
+   * Съёмка. Зовётся ТОЛЬКО из нажатия и ТОЛЬКО когда камера уже отозвалась готовой — потому и нет
+   * ни ожидания камеры, ни отметок «уже пишем»: состояние `ready` бывает одно, и нажать в нём
+   * можно один раз.
+   */
+  const record = useCallback(async () => {
     if (!cam.current) return;
-    wantStop.current = false;
-    setErr('');
-    /**
-     * Звуковая сессия у камеры и голосовых ОДНА на приложение, и голосовой модуль оставляет её в
-     * режиме «только воспроизведение» (`allowsRecording: false`) после каждой своей записи и
-     * каждого проигрывания. Камера в таком режиме звук не захватывает, и съёмка со звуком просто
-     * не начинается — снаружи это выглядит как «кружок появился и пропал».
-     *
-     * Поэтому перед съёмкой режим переключается явно. Ошибку глотаем: если модуль звука не
-     * отозвался, это не повод не снимать — пусть падает уже сама камера, и с внятной причиной.
-     */
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true }).catch(() => {});
-    started.current = Date.now();
+    startedAt.current = Date.now();
     setMs(0);
-    setPhase('recording');
-    buzz(Haptics.ImpactFeedbackStyle.Light);
+    setErr('');
+    setStage('recording');
+    buzz(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      // Разрешается ТОЛЬКО когда запись остановлена — отпусканием пальца или пределом.
-      // Настойчивая остановка: см. `wantStop`. Раз в четверть секунды — этого хватает, чтобы
-      // человек не заметил задержки, и достаточно редко, чтобы не мешать самой камере.
-      const nudge = setInterval(() => {
-        if (wantStop.current) halt();
-      }, 250);
-      let r: { uri: string } | undefined;
-      try {
-        r = await cam.current.recordAsync({ maxDuration: MAX_MS / 1000 });
-      } finally {
-        clearInterval(nudge);
-      }
-      const took = Date.now() - started.current;
-      // Вернуть сессию как было — на ЛЮБОМ исходе, включая отмену и слишком короткое нажатие:
-      // иначе следующее голосовое воспроизведение останется в режиме записи.
-      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
-      setPhase('idle');
-      if (cancelled.current || !r?.uri) return;
-      if (took < MIN_MS) { buzzLost(); return; }
-      taken.current = { uri: r.uri, ms: took };
-      await push();
+      // Предел держит сама камера. Считать его по таймеру и звать остановку значит опять городить
+      // отметки «остановили один раз, а не пачкой» — камера умеет это сама и без нас.
+      const r = await cam.current.recordAsync({ maxDuration: MAX_MS / 1000 });
+      if (gone.current) return;
+      if (!r?.uri) { setStage('ready'); return; }
+      clip.current = { uri: r.uri, ms: Math.min(Date.now() - startedAt.current, MAX_MS) };
+      await send();
     } catch (e) {
-      // Текст от системы оставляем как есть: он не для показа красоты, а для ответа на вопрос
-      // «почему не снялось» — и другого источника этого ответа нет.
-      setErr(String((e as any)?.message || e || '').slice(0, 160) || 'RECORD_FAILED');
+      if (gone.current) return;
+      // Текст от системы оставляем дословно: он не для красоты, а для ответа на вопрос «почему не
+      // снялось», и другого источника этого ответа нет.
+      setErr(String((e as any)?.message || e || '').slice(0, 160));
       buzzLost();
-      setPhase('failed');
-    } finally {
-      busy.current = false;
-      if (escape.current) { clearTimeout(escape.current); escape.current = null; }
+      setStage('failed');
     }
-  }, [push, halt]);
+  }, [send]);
 
-  const start = useCallback(async () => {
-    held.current = true;                      // синхронно: отпускание обязано это переписать
-    if (disabled || phase !== 'idle') return;
-    // Спрашивать разрешения умеет отказать исключением, а зовут `start` из жеста и без ожидания:
-    // непойманный отказ всплыл бы красной плашкой поверх экрана.
-    const c = cameraOk?.granted ? cameraOk : await askCamera().catch(() => null);
-    const m = micOk?.granted ? micOk : await askMic().catch(() => null);
-    if (!held.current) return;                // отпустили, пока спрашивали разрешения
+  const open = useCallback(async () => {
+    if (disabled || stage !== 'off') return;
+    const c = cameraOk?.granted ? cameraOk : await askCamera();
+    const m = micOk?.granted ? micOk : await askMic();
     if (!c?.granted || !m?.granted) {
+      // Второй раз система не спросит — она спрашивает один раз за установку. Поэтому не «сходи
+      // куда-нибудь и разреши», а кнопка, которая открывает ровно ту страницу настроек.
       return Alert.alert(
         T('Нужен доступ к камере и микрофону', 'Camera and microphone access needed'),
-        T('Разрешите их в настройках устройства — без звука кружок был бы немым.',
-          'Allow both in device settings — without sound the circle would be mute.')
+        T('Без звука кружок был бы немым.', 'Without sound the circle would be mute.'),
+        [
+          { text: T('Не сейчас', 'Not now'), style: 'cancel' },
+          { text: T('Настройки', 'Settings'), onPress: () => { Linking.openSettings().catch(() => {}); } },
+        ]
       );
     }
-    cancelled.current = false;
-    busy.current = false;
+    gone.current = false;
+    clip.current = null;
     setErr('');
-    setCancelling(false);
     setMs(0);
-    setPhase('arming');            // камера появляется на экране; снимать начнёт, когда проснётся
-  }, [askCamera, askMic, cameraOk, disabled, micOk, phase]);
+    setStage('warming');
+  }, [askCamera, askMic, cameraOk, disabled, micOk, stage]);
 
-  const ready = useCallback(() => {
-    if (busy.current) return;                        // камера сообщила о готовности повторно
-    if (!held.current) { setPhase('idle'); return; } // отпустили, пока камера просыпалась
-    busy.current = true;
-    // `begin` асинхронный, а зовут его из события камеры: непойманный отказ всплыл бы плашкой.
-    begin().catch(() => {});
-  }, [begin]);
+  /**
+   * Закрыть — и этим же оборвать съёмку.
+   *
+   * Камера уходит с экрана вместе с окном, а съёмка обрывается вместе с камерой: просить её об
+   * остановке и ждать согласия не нужно. Это и есть выход, который работает всегда, — тот самый,
+   * которого не было, когда запись «не завершалась ни отменой, ни отправкой».
+   */
+  const close = useCallback(() => {
+    gone.current = true;
+    clip.current = null;
+    setStage('off');
+  }, []);
 
-  const stop = useCallback((cancel = false) => {
-    held.current = false;
-    cancelled.current = cancel;
-    wantStop.current = true;
-    if (cancel) buzzLost();
-    halt();
+  /**
+   * «Готово»: камеру просят остановиться, и её ответ — это `recordAsync`, который дальше отправит.
+   *
+   * ПЕРЕХВАТИТЬ ОТКАЗ ЭТОГО ВЫЗОВА НЕЛЬЗЯ, и это не предположение. В expo-camera 17.0.10
+   * (`build/CameraView.js`) метод написан так:
+   *
+   *     stopRecording() { this._cameraRef.current?.stopRecording(); }
+   *
+   * Нативное обещание он не возвращает — оно теряется у него внутри. Прежняя заплатка навешивала
+   * `catch` на `undefined` и не делала ровно ничего: красная плашка «Uncaught (in promise)»
+   * приходила мимо неё.
+   *
+   * Значит лекарство одно — НЕ ЗВАТЬ ТАМ, ГДЕ МОЖЕТ ОТКАЗАТЬ. Здесь это гарантировано устройством
+   * окна: кнопка существует только в состоянии `recording`, а в него попадают лишь из готовой
+   * камеры и не раньше, чем через MIN_MS после начала съёмки. Останавливать всегда есть что.
+   */
+  const finish = useCallback(() => {
+    buzz(Haptics.ImpactFeedbackStyle.Light);
+    setStage('sending');
+    cam.current?.stopRecording();
+  }, []);
 
-    /**
-     * ПОСЛЕДНЯЯ МЕРА. Обычная остановка занимает доли секунды; если за пять камера так и не
-     * отдала запись — снимаем её с экрана. Размонтирование обрывает съёмку наверняка, потому что
-     * обрывает саму камеру.
-     *
-     * Записанное при этом теряется, и это осознанный размен: остаться в состоянии, из которого
-     * нет выхода, хуже, чем потерять один кружок.
-     */
-    if (escape.current) clearTimeout(escape.current);
-    escape.current = setTimeout(() => {
-      if (!busy.current) return;                 // камера уже послушалась — вмешиваться незачем
-      cancelled.current = true;
-      busy.current = false;
-      setErr(T('камера не остановилась сама', 'the camera would not stop'));
-      setPhase('failed');
-    }, 5000);
-  }, [halt]);
+  /** Камера может отозваться готовой не один раз — переход из `warming` просто нечему повторить. */
+  const ready = useCallback(() => setStage((v) => (v === 'warming' ? 'ready' : v)), []);
 
-  /** Убрать сообщение о неудаче: снятого нет, повторять нечего — просто закрыть. */
-  const dismiss = useCallback(() => { setErr(''); setPhase('idle'); }, []);
+  /** Поднять камеру заново после «не записалось»: окно уже открыто, закрывать его незачем. */
+  const again = useCallback(() => { setErr(''); setMs(0); setStage('warming'); }, []);
 
-  return { cam, phase, ms, err, cancelling, setCancelling, start, stop, ready,
-           retry: taken.current ? push : dismiss, dismiss,
-           disabled: disabled || phase === 'uploading' };
-}
+  const live = stage === 'warming' || stage === 'ready' || stage === 'recording';
 
-export type VideoNote = ReturnType<typeof useVideoNote>;
-
-/**
- * Кнопка в композере и круглое окошко над ним.
- *
- * Окошко живёт absolute поверх ленты, а не в потоке: композер не должен прыгать, а кадр обязан
- * быть крупным. Камера смонтирована ТОЛЬКО во время записи — держать её включённой ради кнопки
- * значит жечь батарею и держать зажжённым индикатор камеры без причины.
- */
-/**
- * Кнопка в композере — и ТОЛЬКО она.
- *
- * Окно записи вынесено отдельно (`VideoNoteStage`) не ради стройности, а потому что иначе его
- * кнопки не нажимаются. Оно стоит absolute ВЫШЕ композера, то есть за границами своего родителя,
- * а на iOS касание за пределами родителя до ребёнка не доходит вовсе: кнопка видна и мертва.
- * Экран ставит окно у своего корня, где границы — весь экран.
- */
-export function VideoNoteControl({ note }: { note: VideoNote }) {
-  const recording = note.phase === 'recording' || note.phase === 'arming';
-  const dx = useRef(new Animated.Value(0)).current;
-  const grow = useRef(new Animated.Value(0)).current;
-  const noteRef = useRef(note);
-  noteRef.current = note;
-  const cancelRef = useRef(false);
-
-  useEffect(() => {
-    Animated.timing(grow, {
-      toValue: recording ? 1 : 0, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true,
-    }).start();
-    if (!recording) { cancelRef.current = false; dx.setValue(0); }
-  }, [dx, grow, recording]);
-
-  const responder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => { cancelRef.current = false; noteRef.current.start(); },
-      onPanResponderMove: (_e, g) => {
-        dx.setValue(Math.max(-140, Math.min(0, g.dx)));
-        const over = g.dx < CANCEL_AT;
-        if (over !== cancelRef.current) {
-          cancelRef.current = over;
-          noteRef.current.setCancelling(over);
-          if (over) buzz(Haptics.ImpactFeedbackStyle.Light);
-        }
-      },
-      onPanResponderRelease: () => noteRef.current.stop(cancelRef.current),
-      // Жест перехватила прокрутка или звонок — это отмена: отправлять то, чего человек не
-      // заканчивал, нельзя.
-      onPanResponderTerminate: () => noteRef.current.stop(true),
-    })
-  ).current;
-
-  if (note.phase === 'uploading' || note.phase === 'failed') {
-    return (
+  return (
+    <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={note.phase === 'failed' ? T('Ещё раз', 'Try again') : T('Отправляю', 'Sending')}
-        onPress={note.phase === 'failed' ? note.retry : undefined}
+        accessibilityLabel={T('Записать кружок', 'Record a circle')}
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        onPress={() => { open().catch(() => {}); }}
         style={s.slot}
         hitSlop={8}
       >
-        {note.phase === 'uploading'
-          ? <ActivityIndicator size="small" color={color.primary} />
-          : <Text style={s.retryMark}>↻</Text>}
+        <IconVideo size={22} c={disabled ? color.neutral300 : color.muted} />
       </Pressable>
-    );
-  }
 
-  return (
-    <View style={s.slot} {...responder.panHandlers}>
-      <Animated.View style={{ transform: [{ translateX: dx }, { scale: grow.interpolate({ inputRange: [0, 1], outputRange: [1, 1.25] }) }] }}>
-        <IconVideo size={22} c={recording ? color.primary : color.muted} />
-      </Animated.View>
-    </View>
-  );
-}
+      <Modal visible={on} animationType="fade" onRequestClose={close} statusBarTranslucent>
+        <View style={s.screen}>
+          <View style={[s.frame, stage === 'recording' && s.frameLive]}>
+            {live ? (
+              <CameraView
+                ref={cam}
+                style={StyleSheet.absoluteFill}
+                facing="front"
+                mode="video"
+                videoQuality="480p"
+                onCameraReady={ready}
+              />
+            ) : (
+              /* Съёмка кончилась — камеру с экрана долой: батарея и индикатор камеры не должны
+                 гореть, пока уезжает файл. */
+              <View style={s.blank}>
+                {stage === 'sending' ? <ActivityIndicator size="large" color={color.onPrimary} /> : null}
+              </View>
+            )}
+          </View>
 
-/**
- * Окно записи. Ставится у КОРНЯ экрана, а не в композере: только там его границы — весь экран, и
- * только там нажимаются кнопки под ним.
- *
- * `box-none` у обёртки: сама она касаний не берёт, лента под ней остаётся живой, а кнопки внутри
- * работают.
- */
-export function VideoNoteStage({ note }: { note: VideoNote }) {
-  const on = note.phase === 'recording' || note.phase === 'arming';
-  const uploading = note.phase === 'uploading' || note.phase === 'failed';
-  if (!on && !uploading) return null;
-
-  if (uploading) {
-    return (
-      <View style={s.overlay} pointerEvents="box-none">
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={note.phase === 'failed' ? T('Отправить ещё раз', 'Send again') : T('Отправляю', 'Sending')}
-          onPress={note.phase === 'failed' ? note.retry : undefined}
-          style={s.sending}
-        >
-          {note.phase === 'uploading' ? <ActivityIndicator size="small" color={color.primary} /> : null}
-          <Text style={[s.sendingText, note.phase === 'failed' && s.sendingFail]} numberOfLines={2}>
-            {note.phase !== 'failed'
-              ? T('Отправляю кружок…', 'Sending the circle…')
-              : note.err
-                /* Причина от устройства — дословно: без неё «не получилось» не отладить. */
-                ? `${T('Не записалось', 'Recording failed')}: ${note.err}`
-                : T('Кружок не ушёл — нажми, чтобы повторить', 'The circle didn’t send — tap to try again')}
+          {/* Отсчёт остаётся стоять и пока файл уезжает: видно, какой длины кружок отправляется. */}
+          <Text style={s.timer}>
+            {stage === 'recording' || stage === 'sending' ? clock(ms) : ''}
           </Text>
-        </Pressable>
-      </View>
-    );
-  }
 
-  return (
-    <View style={s.overlay} pointerEvents="box-none">
-      <View style={s.stage} pointerEvents="box-none">
-        <View style={[s.circle, note.cancelling && s.circleCancel]} pointerEvents="none">
-          <CameraView
-            ref={note.cam}
-            style={StyleSheet.absoluteFill}
-            facing="front"
-            mode="video"
-            videoQuality="480p"
-            onCameraReady={note.ready}
-          />
-        </View>
-        <View style={s.hud} pointerEvents="none">
-          <View style={s.dot} />
-          <Text style={s.timer}>{clock(note.ms)}</Text>
-          <Text style={[s.hint, note.cancelling && s.hintCancel]}>
-            {note.cancelling ? T('Отпусти — отмена', 'Release to cancel') : T('◀ влево — отмена', '◀ slide to cancel')}
+          <Text style={s.say} numberOfLines={3}>
+            {stage === 'warming' ? T('Камера просыпается…', 'Waking the camera…')
+              : stage === 'ready' ? T('Нажми, чтобы записать. До минуты.', 'Tap to record. Up to a minute.')
+              : stage === 'recording' ? (ms < MIN_MS
+                  ? T('Пишем…', 'Recording…')
+                  : T('Нажми «готово», когда закончишь', 'Tap “done” when you’re finished'))
+              : stage === 'sending' ? T('Отправляю кружок…', 'Sending the circle…')
+              : err
+                ? `${T('Не получилось', 'It didn’t work')}: ${err}`
+                : T('Кружок не ушёл', 'The circle didn’t send')}
           </Text>
-        </View>
 
-        {/*
-          ВИДИМЫЙ ВЫХОД. Отпускание пальца — не единственный способ закончить, и это не удобство,
-          а страховка: жест можно потерять (перехватила прокрутка, пришёл звонок, палец соскочил
-          за край), и тогда запись остаётся без единого способа её завершить.
-        */}
-        <View style={s.exits}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={T('Отменить', 'Cancel')}
-            onPress={() => note.stop(true)}
-            style={s.exit}
-            hitSlop={10}
-          >
-            <Text style={s.exitX}>✕</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={T('Отправить', 'Send')}
-            onPress={() => note.stop(false)}
-            style={[s.exit, s.exitSend]}
-            hitSlop={10}
-          >
-            <IconSend size={18} />
-          </Pressable>
+          {/* Ряд действий. Все они внутри окна, а значит внутри своих границ, — и нажимаются. */}
+          <View style={s.actions}>
+            {stage === 'failed' ? (
+              /*
+                Неудачи две, и путь из них разный. НЕ УЕХАЛО — файл цел, повторяем отправку и
+                переснимать нечего. НЕ ЗАПИСАЛОСЬ — файла нет, и единственное осмысленное действие
+                это попробовать поднять камеру заново. Одна кнопка, два смысла, оба честные;
+                тупика — «не получилось, и всё» — нет ни в одном из них.
+              */
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={clip.current ? T('Удалить', 'Discard') : T('Закрыть', 'Close')}
+                  onPress={close}
+                  style={s.side}
+                >
+                  <Text style={s.sideText}>
+                    {clip.current ? T('Удалить', 'Discard') : T('Закрыть', 'Close')}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={clip.current ? T('Отправить ещё раз', 'Send again') : T('Ещё раз', 'Try again')}
+                  onPress={clip.current ? () => { send().catch(() => {}); } : again}
+                  style={[s.big, s.bigSend]}
+                >
+                  {clip.current ? <IconSend size={22} /> : <Text style={s.retry}>↻</Text>}
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={T('Закрыть', 'Close')}
+                  onPress={close}
+                  style={s.side}
+                >
+                  <Text style={s.sideText}>{T('Закрыть', 'Close')}</Text>
+                </Pressable>
+
+                {stage === 'recording' ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={T('Готово', 'Done')}
+                    accessibilityState={{ disabled: ms < MIN_MS }}
+                    disabled={ms < MIN_MS}
+                    onPress={finish}
+                    style={[s.big, s.bigStop, ms < MIN_MS && s.off]}
+                  >
+                    <View style={s.square} />
+                  </Pressable>
+                ) : stage === 'sending' ? (
+                  /* Пустое место вместо кнопки: погашенная кнопка записи здесь читалась бы как
+                     «можно снять ещё раз», а снимать в этот момент нечего — файл уезжает. */
+                  <View style={s.big} />
+                ) : (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={T('Записать', 'Record')}
+                    accessibilityState={{ disabled: stage !== 'ready' }}
+                    disabled={stage !== 'ready'}
+                    onPress={() => { record().catch(() => {}); }}
+                    style={[s.big, s.bigRec, stage !== 'ready' && s.off]}
+                  >
+                    {stage === 'warming'
+                      ? <ActivityIndicator size="small" color={color.onPrimary} />
+                      : <View style={s.round} />}
+                  </Pressable>
+                )}
+              </>
+            )}
+            {/* Место справа — чтобы главная кнопка стояла по центру, а не съезжала от соседей. */}
+            <View style={s.side} pointerEvents="none" />
+          </View>
         </View>
-      </View>
-    </View>
+      </Modal>
+    </>
   );
 }
 
@@ -456,8 +431,8 @@ export function VideoNoteStage({ note }: { note: VideoNote }) {
  * `overflow: hidden`. Растягивать видео в круг нельзя — лицо поедет; поэтому `contentFit="cover"`,
  * то есть кадр обрезается по краям, а не сжимается.
  *
- * Играет по нажатию, а не сам: кружок со звуком, который заиграл, пока человек листает ленту в
- * тихом месте, — это не оживление, а неприятность.
+ * Играет по нажатию, а не сам: кружок со звуком, заигравший, пока человек листает ленту в тихом
+ * месте, — это не оживление, а неприятность.
  */
 export function VideoBubble({ video }: { video: VideoPayload }) {
   const player = useVideoPlayer(mediaUrl(video.url), (p) => { p.loop = false; });
@@ -496,39 +471,34 @@ export function VideoBubble({ video }: { video: VideoPayload }) {
 
 const s = StyleSheet.create({
   slot: { minWidth: 28, minHeight: 34, alignItems: 'center', justifyContent: 'center' },
-  sending: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 96, maxWidth: '86%',
-    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, backgroundColor: color.card,
-  },
-  retryMark: { fontSize: 20, color: color.primary },
-  sendingText: { fontSize: 12, color: color.muted },
-  sendingFail: { color: color.primary, fontWeight: '600' },
 
-  /** Обёртка на ВЕСЬ экран: только в её границах кнопки окна вообще получают касания. */
-  overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'flex-end', alignItems: 'center' },
-  /** Само окно — над композером; композер от него не сдвигается. */
-  stage: { alignItems: 'center', gap: 10, marginBottom: 96 },
-  circle: {
-    width: CIRCLE, height: CIRCLE, borderRadius: CIRCLE / 2, overflow: 'hidden',
-    borderWidth: 3, borderColor: color.primary, backgroundColor: color.ink,
+  screen: {
+    flex: 1, backgroundColor: color.ink,
+    alignItems: 'center', justifyContent: 'center', gap: 18, paddingHorizontal: 24,
   },
-  circleCancel: { borderColor: color.neutral400, opacity: 0.5 },
-  hud: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, backgroundColor: color.card,
+  frame: {
+    width: PREVIEW, height: PREVIEW, borderRadius: PREVIEW / 2, overflow: 'hidden',
+    borderWidth: 3, borderColor: color.neutral400, backgroundColor: '#000',
   },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.primary },
-  timer: { fontSize: 12, color: color.primary, fontVariant: ['tabular-nums'] },
-  hint: { fontSize: 11, color: color.muted },
-  hintCancel: { color: color.primary, fontWeight: '600' },
-  exits: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  exit: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: color.card,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: color.border,
-  },
-  exitSend: { backgroundColor: color.primary, borderColor: color.primary },
-  exitX: { fontSize: 18, color: color.muted },
+  /** Красный ободок — единственный признак, что идёт запись, и он должен читаться с одного взгляда. */
+  frameLive: { borderColor: color.primary },
+  blank: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+
+  timer: { fontSize: 20, color: color.onPrimary, fontVariant: ['tabular-nums'], minHeight: 24 },
+  say: { fontSize: 14, color: color.neutral300, textAlign: 'center', minHeight: 40 },
+
+  actions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', alignSelf: 'stretch' },
+  side: { width: 88 },
+  sideText: { fontSize: 15, color: color.neutral300 },
+  big: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center' },
+  bigRec: { backgroundColor: color.primary },
+  bigStop: { backgroundColor: color.onPrimary },
+  bigSend: { backgroundColor: color.primary },
+  /** Недоступная кнопка не исчезает, а гаснет: пропавшая кнопка читается как поломка. */
+  off: { opacity: 0.4 },
+  retry: { fontSize: 26, color: color.onPrimary },
+  round: { width: 28, height: 28, borderRadius: 14, backgroundColor: color.onPrimary },
+  square: { width: 24, height: 24, borderRadius: 4, backgroundColor: color.primary },
 
   bubble: {
     width: CIRCLE, height: CIRCLE, borderRadius: CIRCLE / 2,
