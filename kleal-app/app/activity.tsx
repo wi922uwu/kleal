@@ -292,7 +292,13 @@ function IntentCard({
   const when = intentWhen(row);
   const faces = (row.candidates || []).map((c: any) => String(c?.photo || '')).filter(Boolean).slice(0, 3);
   return (
-    <View style={s.card}>
+    /*
+      Нажимается ВСЯ карточка, а не только кнопка. На борде стрелка идёт от самой карточки к
+      странице затеи, и это единственный разумный жест: человек тычет в название и обложку,
+      а не выцеливает кнопку. Кнопка и карандаш внутри остаются своими — вложенное нажатие
+      выигрывает у внешнего, и «посмотреть варианты» по-прежнему ведёт в выдачу, а не на страницу.
+    */
+    <Pressable style={s.card} accessibilityRole="button" onPress={onEdit}>
       <View style={s.cover}>
         <IconImagePlaceholder size={40} c={color.onCoverSoft} />
         {/* Чип цветом называет состояние раньше, чем словом: карточки лежат стопкой. */}
@@ -344,7 +350,7 @@ function IntentCard({
           </Pressable>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 

@@ -56,7 +56,7 @@ const clock = (ms: number) => {
  * уходил в никуда и запись молча не начиналась. На устройстве к тому же камера просыпается не
  * мгновенно, так что ждать её надо в любом случае — сигнал даёт сама камера (`onCameraReady`).
  */
-type Phase = 'idle' | 'arming' | 'recording' | 'uploading';
+type Phase = 'idle' | 'arming' | 'recording' | 'uploading' | 'failed';
 
 export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false) {
   const cam = useRef<CameraView>(null);
@@ -66,8 +66,24 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
   const [micOk, askMic] = useMicrophonePermissions();
   const cancelled = useRef(false);
   const started = useRef(0);
-  /** Палец отпустили раньше, чем камера проснулась: записывать уже нечего. */
-  const letGo = useRef(false);
+  /**
+   * Палец НА кнопке — прямо сейчас. Ставится синхронно, до любых ожиданий, и снимается
+   * отпусканием.
+   *
+   * Без него запись начиналась почти всегда неправильно: `start` ждёт разрешений, отпускание за
+   * это время помечало «хватит», а `start`, дойдя до конца, эту пометку стирал. Камера
+   * просыпалась, и съёмка шла уже БЕЗ пальца — до самой минуты, пока не упрётся в предел.
+   */
+  const held = useRef(false);
+  /** Съёмка уже идёт. Камера может сообщить о готовности повторно — второй раз начинать нельзя. */
+  const busy = useRef(false);
+  /** Предел проверяется каждые сто миллисекунд; остановить надо ОДИН раз, а не пачкой. */
+  const capped = useRef(false);
+  /**
+   * Снятое, но не уехавшее. Кружок весит мегабайты, и отправка по плохой связи срывается легко —
+   * выбрасывать при этом уже записанное нельзя: переснять его человек не может, момент прошёл.
+   */
+  const taken = useRef<{ uri: string; ms: number } | null>(null);
 
   useEffect(() => {
     if (phase !== 'recording') return;
@@ -77,8 +93,39 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
 
   // Минутный предел: дальше камера останавливается сама, и это отпускание руки не требует.
   useEffect(() => {
-    if (phase === 'recording' && ms >= MAX_MS) cam.current?.stopRecording();
+    if (phase !== 'recording') { capped.current = false; return; }
+    if (ms >= MAX_MS && !capped.current) {
+      capped.current = true;
+      cam.current?.stopRecording();
+    }
   }, [phase, ms]);
+
+  /**
+   * Отправка снятого. Отдельно от съёмки, потому что её повторяют: запись остаётся на месте, и
+   * «попробовать ещё раз» не требует переснимать момент, которого уже нет.
+   */
+  const push = useCallback(async () => {
+    const t = taken.current;
+    if (!t) return;
+    setPhase('uploading');
+    try {
+      // Расширение берётся из САМОГО файла: на iOS камера пишет `.mov`, и назвать его `.mp4`
+      // значит сохранить байты QuickTime под чужим именем — проигрыватель вправе не открыть.
+      const ext = (t.uri.split('?')[0].split('.').pop() || 'mp4').toLowerCase();
+      const kind = ext === 'mov' ? 'video/quicktime' : 'video/mp4';
+      const form = new FormData();
+      form.append('file', { uri: t.uri, name: `circle-${Date.now()}.${ext}`, type: kind } as any);
+      const up: any = await videoApi.upload(form, t.ms);
+      if (!up?.ok || !up?.id) throw new Error(String(up?.error || 'UPLOAD_FAILED'));
+      onSend({ id: up.id, url: up.url, duration_ms: up.duration_ms, mime_type: up.mime_type });
+      buzz(Haptics.ImpactFeedbackStyle.Light);
+      taken.current = null;
+      setPhase('idle');
+    } catch {
+      buzzLost();
+      setPhase('failed');                    // запись цела, повтор — одним нажатием
+    }
+  }, [onSend]);
 
   /** Записывать начинает КАМЕРА, когда проснулась, — см. `arming`. */
   const begin = useCallback(async () => {
@@ -94,25 +141,21 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
       setPhase('idle');
       if (cancelled.current || !r?.uri) return;
       if (took < MIN_MS) { buzzLost(); return; }
-      setPhase('uploading');
-      const form = new FormData();
-      form.append('file', { uri: r.uri, name: `circle-${Date.now()}.mp4`, type: 'video/mp4' } as any);
-      const up: any = await videoApi.upload(form, took);
-      if (!up?.ok || !up?.id) throw new Error(String(up?.error || 'UPLOAD_FAILED'));
-      onSend({ id: up.id, url: up.url, duration_ms: up.duration_ms, mime_type: up.mime_type });
-      buzz(Haptics.ImpactFeedbackStyle.Light);
+      taken.current = { uri: r.uri, ms: took };
+      await push();
     } catch {
-      Alert.alert(T('Кружок не ушёл', 'The circle didn’t send'),
-                  T('Проверь связь и попробуй ещё раз.', 'Check your connection and try again.'));
-    } finally {
       setPhase('idle');
+    } finally {
+      busy.current = false;
     }
-  }, [onSend]);
+  }, [push]);
 
   const start = useCallback(async () => {
+    held.current = true;                      // синхронно: отпускание обязано это переписать
     if (disabled || phase !== 'idle') return;
     const c = cameraOk?.granted ? cameraOk : await askCamera();
     const m = micOk?.granted ? micOk : await askMic();
+    if (!held.current) return;                // отпустили, пока спрашивали разрешения
     if (!c?.granted || !m?.granted) {
       return Alert.alert(
         T('Нужен доступ к камере и микрофону', 'Camera and microphone access needed'),
@@ -121,24 +164,27 @@ export function useVideoNote(onSend: (v: VideoPayload) => void, disabled = false
       );
     }
     cancelled.current = false;
-    letGo.current = false;
+    busy.current = false;
     setMs(0);
     setPhase('arming');            // камера появляется на экране; снимать начнёт, когда проснётся
   }, [askCamera, askMic, cameraOk, disabled, micOk, phase]);
 
   const ready = useCallback(() => {
-    if (letGo.current) { setPhase('idle'); return; }
+    if (busy.current) return;                        // камера сообщила о готовности повторно
+    if (!held.current) { setPhase('idle'); return; } // отпустили, пока камера просыпалась
+    busy.current = true;
     begin();
   }, [begin]);
 
   const stop = useCallback((cancel = false) => {
+    held.current = false;
     cancelled.current = cancel;
-    letGo.current = true;
     if (cancel) buzzLost();
     cam.current?.stopRecording();
   }, []);
 
-  return { cam, phase, ms, start, stop, ready, disabled: disabled || phase === 'uploading' };
+  return { cam, phase, ms, start, stop, ready, retry: push,
+           disabled: disabled || phase === 'uploading' };
 }
 
 export type VideoNote = ReturnType<typeof useVideoNote>;
@@ -214,9 +260,27 @@ export function VideoNoteControl({ note }: { note: VideoNote }) {
         </Animated.View>
       ) : null}
 
+      {note.phase === 'uploading' || note.phase === 'failed' ? (
+        /* Кружок весит мегабайты, и по плохой связи отправка идёт секундами. Молчать в это
+           время нельзя: пустой экран после съёмки читается как «ничего не произошло». */
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={note.phase === 'failed' ? T('Отправить ещё раз', 'Send again') : T('Отправляю', 'Sending')}
+          onPress={note.phase === 'failed' ? note.retry : undefined}
+          style={s.sending}
+        >
+          {note.phase === 'uploading' ? <ActivityIndicator size="small" color={color.primary} /> : null}
+          <Text style={[s.sendingText, note.phase === 'failed' && s.sendingFail]}>
+            {note.phase === 'failed'
+              ? T('Кружок не ушёл — нажми, чтобы повторить', 'The circle didn’t send — tap to try again')
+              : T('Отправляю кружок…', 'Sending the circle…')}
+          </Text>
+        </Pressable>
+      ) : null}
+
       <View style={s.slot} {...responder.panHandlers}>
-        {note.phase === 'uploading'
-          ? <ActivityIndicator size="small" color={color.primary} />
+        {note.phase === 'uploading' || note.phase === 'failed'
+          ? null
           : (
             <Animated.View style={{ transform: [{ translateX: dx }, { scale: grow.interpolate({ inputRange: [0, 1], outputRange: [1, 1.25] }) }] }}>
               <IconVideo size={22} c={recording ? color.primary : color.muted} />
@@ -274,6 +338,12 @@ export function VideoBubble({ video }: { video: VideoPayload }) {
 
 const s = StyleSheet.create({
   slot: { minWidth: 28, minHeight: 34, alignItems: 'center', justifyContent: 'center' },
+  sending: {
+    position: 'absolute', right: 0, bottom: 44, flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: color.card,
+  },
+  sendingText: { fontSize: 12, color: color.muted },
+  sendingFail: { color: color.primary, fontWeight: '600' },
 
   /** Окошко записи — над композером, поверх ленты: композер от него не сдвигается. */
   stage: { position: 'absolute', right: 8, bottom: 56, alignItems: 'center', gap: 8 },
