@@ -3609,6 +3609,14 @@ def _gi_public(g, me=""):
         "min_total": g.get("min_total"), "max_total": g.get("max_total"),
         "members": [{"name": m.get("name"), "state": m.get("state"),
                      "photo": _photo_by_name().get(_norm_name(m.get("name")))} for m in act],
+        # ВЫБЫВШИЕ отдаются отдельно и со временем ухода. Кадр GR.39 — «Jane left the plan» —
+        # построить без этого нечем: состав наружу шёл только активный, вышедший исчезал бесследно,
+        # и объяснить, почему людей стало меньше, экрану было нечем. В самой строке участника
+        # время ухода лежало всё это время (`left`), просто наружу не выходило.
+        "departed": [{"name": m.get("name"), "state": m.get("state"), "left": m.get("left"),
+                      "photo": _photo_by_name().get(_norm_name(m.get("name")))}
+                     for m in (g.get("members") or [])
+                     if m.get("state") in ("left", "removed", "safety_removed") and m.get("left")],
         "joined_count": n,
         "pending_count": len(_gi_pending(g.get("id"))),
         # People who accepted after planning started and are waiting on the organiser. Surfaced on
@@ -4467,6 +4475,8 @@ def _gp_public(p, me=""):
         # плана поднимал «раунд» до третьего, и следующее согласование начиналось сразу
         # исчерпанным: «Last round» на первом же экране.
         "round": _gp_round(p),
+        # Автор последнего предложения — фактом, а не догадкой экрана.
+        "proposed_by": p.get("proposed_by"),
         "max_rounds": GP_MAX_ROUNDS,
         "rounds_used_up": _gp_round(p) >= GP_MAX_ROUNDS,
         # Организатор может закрепить план (GR.30), когда раунды кончились и согласных хотя бы трое.
@@ -4591,6 +4601,11 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
                                         "plan": _gp_public(p, who)})
             p["version"] = v + 1
             p["round"] = rnd + 1
+            # Кто предложил. Экран выводил это эвристикой «единственный подтвердивший» — она
+            # рассыпалась ровно там, где кадр GR.29 и нарисован: после второго подтверждения
+            # подтвердивших двое, и заголовок срывался в «ждём всех», хотя пояснение рядом
+            # продолжало называть имя.
+            p["proposed_by"] = who
             if when:
                 p["when"] = str(when)[:120]
             if place:

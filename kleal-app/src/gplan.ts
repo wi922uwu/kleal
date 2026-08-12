@@ -27,6 +27,8 @@ export type GPlan = {
   note?: string;
   starts_at?: number;
   state?: 'proposed' | 'confirmed' | 'locked' | 'below_quorum' | 'cancelled' | 'done' | string;
+  /** Кто внёс нынешнее предложение. Раньше выводилось догадкой — см. `proposer` в app/gplan.tsx. */
+  proposed_by?: string;
   mode?: 'offline' | 'online' | string;
   link?: string;
   needs_link?: boolean;
@@ -342,6 +344,14 @@ export const GPLAN = {
   stYourTurn: () => T('Твой ход', 'Your turn'),
   stDidnt: () => T('Не подтвердил(а)', 'Didn’t confirm'),
   stWillAccept: () => T('Ответит на изменение', 'Will be asked to accept'),
+  /** GR.27: предложение внесено, и подтверждать его будут заново — включая того, кто уже успел. */
+  stWillConfirmAgain: () => T('Подтвердит заново', 'Will confirm again'),
+  /** GR.27: этот человек прямо сейчас набирает встречное предложение. */
+  stSuggesting: () => T('Предлагает своё', 'Suggesting'),
+  /** GR.29: предложил организатор — на борде это отдельная подпись, а не «Организатор · подтвердил». */
+  stOrganiserSuggested: () => T('Организатор · предложил(а) это', 'Organiser · suggested this'),
+  /** GR.39: вышедший остаётся в составе строкой — иначе непонятно, почему людей стало меньше. */
+  stLeft: (ago: string) => T(`Вышел(а) · ${ago}`, `Left · ${ago}`),
   stChanging: () => T('Организатор · меняет', 'Organiser · changing it'),
   stChanged: () => T('Организатор · изменил(а)', 'Organiser · changed it'),
   stInGroup: () => T('В группе', 'In the group'),
@@ -372,7 +382,11 @@ export function memberState(
 
   if (confirmed) {
     if (p.update && eq(name, p.update.by)) return { text: GPLAN.stChanged(), done: true };
-    if (eq(name, opts.proposer) && !isOwner) return { text: GPLAN.stSuggested(), done: true };
+    // Предложил организатор — на борде GR.29 у него своя подпись, а не общая «Организатор ·
+    // подтвердил(а)»: иначе из состава не видно, чьё предложение сейчас на столе.
+    if (eq(name, opts.proposer)) {
+      return { text: isOwner ? GPLAN.stOrganiserSuggested() : GPLAN.stSuggested(), done: true };
+    }
     if (isOwner) return { text: GPLAN.stOrganiserConfirmed(), done: true };
     return { text: GPLAN.stConfirmed(), done: true };
   }
