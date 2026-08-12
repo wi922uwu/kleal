@@ -29,7 +29,7 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { group as gapi, mediaUrl, newIdem, type GroupInfo } from '../src/api';
-import { GPLAN, venue, hoursLeft, memberState, type GPlan, type GVote } from '../src/gplan';
+import { GPLAN, venue, hoursLeft, memberState, type GPlan, type GVote, leftAgo} from '../src/gplan';
 import { ROOM } from '../src/groups';
 import { WhenPicker, whenLabel, whenStartsAt, whenFromStartsAt, type WhenValue } from '../src/components/WhenPicker';
 import { dateChips, deviceTz } from '../src/intent';
@@ -85,6 +85,18 @@ export default function GroupPlan() {
   const owner = String(g?.owner || '');
   const isOwner = !!g?.i_am_owner;
   const members = (g?.members || []) as { name?: string; photo?: string }[];
+  /**
+   * GR.39. Вышедшие идут В ТОТ ЖЕ состав, строкой «Вышел(а) · 20 минут назад», а не исчезают.
+   * Состав, который забывает людей, не может объяснить, почему их стало меньше, — а это первый
+   * вопрос у того, кто открыл экран после чужого ухода.
+   */
+  const departed = (g?.departed || []) as { name?: string; photo?: string; left?: number }[];
+  const roster: { name?: string; photo?: string; left?: number; gone: boolean }[] = [
+    ...members.map((m) => ({ ...m, gone: false })),
+    ...departed.map((d) => ({ ...d, gone: true })),
+  ];
+  /** Ушли недавно — значит на экране ещё уместно сказать, что встреча в силе. */
+  const freshLeave = departed.some((d) => (Date.now() / 1000) - Number(d.left || 0) < 24 * 3600);
   const online = (plan?.mode || (g as any)?.mode || 'offline') === 'online';
 
   const load = useCallback(async () => {
@@ -338,11 +350,18 @@ export default function GroupPlan() {
           ) : null}
 
           {/* Состав со статусами — колонка, которая на борде есть на каждом кадре. */}
-          {members.length ? (
+          {/* GR.39: кто-то вышел, но людей хватает — экран говорит об этом раньше, чем спросят. */}
+          {freshLeave && plan && plan.state !== 'below_quorum' && plan.state !== 'cancelled' ? (
+            <Text style={s.stillOn}>{GPLAN.stillOn(members.length)}</Text>
+          ) : null}
+
+          {roster.length ? (
             <View style={s.roster}>
-              {members.map((m, i) => {
+              {roster.map((m, i) => {
                 const nm = String(m.name || '');
-                const stt = memberState(nm, plan || {}, { owner, me, proposer });
+                const stt = m.gone
+                  ? { text: GPLAN.stLeft(leftAgo(m.left)), done: false }
+                  : memberState(nm, plan || {}, { owner, me, proposer });
                 return (
                   <View key={nm + i} style={s.memberRow}>
                     {/*
@@ -811,6 +830,7 @@ const s = StyleSheet.create({
   },
 
   roster: { gap: space.md, paddingTop: space.xs },
+  stillOn: { ...type.bodySmall, color: color.successText, paddingTop: space.xs } as any,
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   av: { width: 40, height: 40, borderRadius: rad.full },
   avEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },

@@ -352,6 +352,14 @@ export const GPLAN = {
   stOrganiserSuggested: () => T('Организатор · предложил(а) это', 'Organiser · suggested this'),
   /** GR.39: вышедший остаётся в составе строкой — иначе непонятно, почему людей стало меньше. */
   stLeft: (ago: string) => T(`Вышел(а) · ${ago}`, `Left · ${ago}`),
+  /**
+   * GR.39. Главное на кадре — не сам уход, а что встреча в силе. Человек, увидевший «кто-то
+   * вышел», первым делом спрашивает «всё отменяется?», и ответ должен стоять в той же строке.
+   */
+  stillOn: (n: number) => T(
+    `${n} ${n === 1 ? 'человек идёт' : n < 5 ? 'человека идут' : 'человек идут'} — встреча в силе.`,
+    `${n} ${n === 1 ? 'person is' : 'people are'} still going, so the meetup is on.`
+  ),
   stChanging: () => T('Организатор · меняет', 'Organiser · changing it'),
   stChanged: () => T('Организатор · изменил(а)', 'Organiser · changed it'),
   stInGroup: () => T('В группе', 'In the group'),
@@ -369,6 +377,20 @@ export const GPLAN = {
  * разложенные по экрану они разъезжаются: на GR.27 «Will confirm again», на GR.32 «Will be asked
  * to accept» — это одна и та же мысль в разных фазах, и путать их нельзя.
  */
+/**
+ * «20 минут назад» под именем вышедшего. Часы и дни, а не точное время: на кадре важно НЕДАВНО
+ * это случилось или давно, а не в какую минуту.
+ */
+export function leftAgo(ts?: number, nowS = Date.now() / 1000): string {
+  const sec = Math.max(0, nowS - Number(ts || 0));
+  const m = Math.floor(sec / 60);
+  if (m < 1) return T('только что', 'just now');
+  if (m < 60) return T(`${m} мин назад`, `${m} minutes ago`);
+  const h = Math.floor(m / 60);
+  if (h < 24) return T(`${h} ч назад`, `${h} hours ago`);
+  return T(`${Math.floor(h / 24)} дн назад`, `${Math.floor(h / 24)} days ago`);
+}
+
 export function memberState(
   name: string,
   p: GPlan,
