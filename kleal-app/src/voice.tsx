@@ -13,6 +13,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
+import { Asset } from 'expo-asset';
 import { mediaUrl, speech, VoicePayload } from './api';
 import { T } from './i18n';
 import { color } from './theme';
@@ -507,7 +508,37 @@ function Waveform({
 function AudioPlay({
   source, durationMs, peaks, mine = false, grow = false,
 }: { source: string; durationMs: number; peaks: number[]; mine?: boolean; grow?: boolean }) {
-  const player = useAudioPlayer(source, { updateInterval: 200 });
+  /**
+   * ЧУЖОЕ ГОЛОСОВОЕ СКАЧИВАЕТСЯ ЦЕЛИКОМ, и только потом попадает к проигрывателю.
+   *
+   * Иначе оно не играет вовсе. Проигрыватель на iOS тянет удалённый файл по кускам и требует от
+   * сервера частичных запросов. Наш их не умеет: `Range: bytes=0-1023` возвращает 200 и файл
+   * целиком вместо 206, заголовка `Accept-Ranges` нет — при том что сам файл отдаётся верно
+   * (200, audio/mp4, столько байт, сколько на диске). Замерено на симуляторе 12 августа:
+   * с прямым адресом состояние проигрывателя навсегда `isLoaded=0, isBuffering=1, duration=0`,
+   * с локальным файлом — `isLoaded=1, duration=4.5`.
+   *
+   * Скачиваем САМИ, а не встроенным `downloadFirst`. Тот делает то же, но иначе: создаёт
+   * проигрыватель с пустым источником и подменяет его на лету. Работает и так; здесь выбран
+   * порядок без подмены — источник приходит уже готовым, и проигрыватель собирается сразу
+   * вокруг него, а не проходит через состояние «есть, но играть нечего».
+   *
+   * Настоящее лекарство — частичные запросы в `services/llm` (`/api/speech/audio/*`). Это чужая
+   * зона, см. AGENTS.md. Когда они появятся, всё это можно снять, и звук пойдёт, не дожидаясь
+   * конца файла. Своей записи это не касается: она и так на диске.
+   */
+  const remote = /^https?:/i.test(source);
+  const [cached, setCached] = useState<string | null>(null);
+  useEffect(() => {
+    if (!remote) { setCached(null); return; }
+    let alive = true;
+    Asset.fromURI(source).downloadAsync()
+      .then((a) => { if (alive) setCached(a.localUri || a.uri); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [remote, source]);
+
+  const player = useAudioPlayer(remote ? cached : source, { updateInterval: 200 });
   const status = useAudioPlayerStatus(player);
   const [rate, setRate] = useState(1);
   /** Скорость появляется только после первого запуска: до него это лишняя кнопка в пузыре. */
@@ -561,7 +592,7 @@ function AudioPlay({
   const toggle = async () => {
     if (status.playing) { player.pause(); return; }
     setStarted(true);
-    await setAudioModeAsync({ playsInSilentMode: true }).catch(() => {});
+    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
     player.play();
   };
 
