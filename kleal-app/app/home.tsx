@@ -79,7 +79,18 @@ export default function Home() {
     ]);
     setGroups(joinableGroups((g as any)?.groups || []));
     if (i) {
-      setInvites(homeInvites((i as any)?.invites || []));
+      const next = homeInvites((i as any)?.invites || []);
+      setInvites((prev) => {
+        // Индекс стопки только РОС и не сбрасывался никогда. `load()` дёргается при каждом
+        // возвращении на экран, и после ответа на приглашение список приходит короче — а индекс
+        // остаётся прежним: человек видел пустое место там, где лежало новое приглашение.
+        // Сбрасываем, когда СОСТАВ изменился; при том же составе позиция сохраняется — иначе
+        // возврат с экрана приглашения отбрасывал бы стопку в начало.
+        const same = prev.length === next.length
+          && prev.every((p, k) => String(p.id) === String(next[k]?.id));
+        if (!same) setInvIdx(0);
+        return next;
+      });
       setInviteError(false);
     } else {
       setInviteError(true);
@@ -370,6 +381,24 @@ function GroupInviteCard({ inv }: { inv: HomeInvite }) {
         <Text style={s.groupInviteTitle} numberOfLines={2}>
           {inv.intent.title || inv.from.name}
         </Text>
+        {/*
+          КТО ЗОВЁТ. Имя приглашающего стояло только запасным вариантом заголовка — то есть у
+          группы с названием («Книжный клуб») не показывалось нигде. Приглашение при этом
+          персональное: человека зовёт человек, и первое, что он хочет знать, — кто.
+          Фото и имя сервер присылает в `inv.from`, они просто не доходили до экрана.
+        */}
+        {inv.from?.name ? (
+          <View style={s.inviterRow}>
+            <View style={[s.inviterAva, s.inviterAvaEmpty]}>
+              <Text style={s.inviterInitial}>{String(inv.from.name).slice(0, 1).toUpperCase()}</Text>
+              {inv.from.photo ? (
+                <Image source={{ uri: mediaUrl(String(inv.from.photo)) }}
+                       style={[s.inviterAva, StyleSheet.absoluteFillObject]} />
+              ) : null}
+            </View>
+            <Text style={s.inviterText} numberOfLines={1}>{HOME.hosting(String(inv.from.name))}</Text>
+          </View>
+        ) : null}
         <View style={s.inviteBadge}>
           <IconGroups size={16} c={color.successText} />
           <Text style={s.inviteBadgeText}>{HOME.inviteStatus()}</Text>
@@ -401,7 +430,7 @@ const s = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: space.md },
   hello: { flex: 1, fontSize: 26, lineHeight: 32, fontWeight: '700', color: color.fg },
   bell: {
-    width: 42, height: 42, borderRadius: 21, backgroundColor: '#ffffffcc',
+    width: 42, height: 42, borderRadius: 21, backgroundColor: color.onCoverSoft,
     alignItems: 'center', justifyContent: 'center',
   },
   bellDot: {
@@ -422,7 +451,7 @@ const s = StyleSheet.create({
     width: CARD_W, borderRadius: rad.xl, backgroundColor: color.card, overflow: 'hidden',
     shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 3,
   },
-  cover: { height: 128, backgroundColor: '#e2604f', alignItems: 'center', justifyContent: 'center' },
+  cover: { height: 128, backgroundColor: color.coverFallback, alignItems: 'center', justifyContent: 'center' },
   bm: {
     position: 'absolute', top: 12, right: 12, width: 30, height: 30, borderRadius: 15,
     backgroundColor: '#ffffffe6', alignItems: 'center', justifyContent: 'center',
@@ -458,9 +487,21 @@ const s = StyleSheet.create({
     marginHorizontal: 20, borderRadius: rad.xl, backgroundColor: color.card, overflow: 'hidden',
     shadowColor: '#000', shadowOpacity: 0.09, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 3,
   },
+  /**
+   * Обложка. 142 пункта пустоты: своей картинки у группового интента нет вовсе (сервер отдаёт
+   * `cover` пустой строкой), так что здесь всегда заглушка и ряд аватарок. Из-за её высоты низ
+   * карточки — кнопка «Посмотреть приглашение» и строка «Ещё N» — уходил за сгиб экрана: снято
+   * на симуляторе. Аватаркам хватает 96; они и есть единственное содержимое этой полосы.
+   */
   groupHero: {
-    height: 142, backgroundColor: '#e2604f', alignItems: 'center', justifyContent: 'center',
+    height: 96, backgroundColor: color.coverFallback, alignItems: 'center', justifyContent: 'center',
   },
+  /** Кто зовёт — строка под названием. Фото ложится поверх буквы, чтобы медленное фото не оставляло дыру. */
+  inviterRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  inviterAva: { width: 24, height: 24, borderRadius: 12, overflow: 'hidden' },
+  inviterAvaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+  inviterInitial: { fontSize: 11, fontWeight: '700', color: color.muted },
+  inviterText: { flex: 1, ...type.bodySmall, color: color.muted } as any,
   avatarStack: {
     position: 'absolute', left: 24, bottom: 14, flexDirection: 'row', alignItems: 'center', minHeight: 58,
   },
@@ -489,7 +530,7 @@ const s = StyleSheet.create({
   dock: { paddingHorizontal: 16, gap: 8, paddingBottom: 6 },
   askRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   askAvatar: {
-    width: 46, height: 46, borderRadius: 23, backgroundColor: '#ffffffcc',
+    width: 46, height: 46, borderRadius: 23, backgroundColor: color.onCoverSoft,
     alignItems: 'center', justifyContent: 'center',
   },
   askField: {

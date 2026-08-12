@@ -236,6 +236,12 @@ export function groupRows(groups: any[], invites: any[], ru: boolean): Row[] {
     const n = Number(g.joined_count || 0);
     const min = Number(g.min_total || 3);
     const need = Math.max(0, min - n);
+    // Группа, у которой план УЖЕ ЖИВОЙ, — не намерение, а встреча: её строка живёт во вкладке
+    // «Планы» (gplanRows). Здесь она пропускается, иначе одна и та же группа стояла бы в двух
+    // вкладках, причём во второй с подписью «можно делать план» — про план, который уже сделан.
+    // Список групп несёт состояние плана в `plan` (см. `_gi_public`), его просто никто не читал.
+    const st = String((g.plan || {}).state || '');
+    if (st === 'proposed' || st === 'confirmed' || st === 'locked' || st === 'below_quorum') continue;
     rows.push({
       key: 'g:' + String(g.gid || ''),
       kind: 'group',
@@ -265,6 +271,61 @@ export function groupRows(groups: any[], invites: any[], ru: boolean): Row[] {
     });
   }
   return rows.sort((a, b) => (b.t || 0) - (a.t || 0));
+}
+
+/**
+ * Групповые планы во вкладке «Планы» — рядом с планами один на один.
+ *
+ * Разводить их по вкладкам нельзя: для человека «план» — это встреча, на которую он идёт, и
+ * сколько там людей, двое или пятеро, вопрос второй. Раньше сюда не попадали вовсе — экран
+ * запрашивал только `mplans`, и созданный групповой план исчезал из списка планов.
+ *
+ * Собеседника у групповой строки нет, поэтому `who` пустой, а открывается она по gid — как и
+ * строки комнат в `groupRows`.
+ */
+export function gplanRows(plans: any[], history: any[], ru: boolean,
+                          when: (p: any) => string) {
+  const upcoming: Row[] = [];
+  const forming: Row[] = [];
+  const past: Row[] = [];
+
+  const row = (p: any): Row => {
+    const n = (p.confirmed || []).length;
+    return {
+      key: 'gp:' + String(p.id || ''),
+      kind: 'group',                 // открывается как группа: у плана свой экран внутри неё
+      gid: String(p.gid || ''),
+      id: String(p.id || ''),
+      title: String(p.title || ''),
+      // Число согласных — то, чем групповой план отличается от парного: он ещё может не собраться.
+      sub: `${ru ? 'Группа' : 'Group'} · ${when(p)}${n ? ` · ${n} ${ru ? 'идут' : 'going'}` : ''}`,
+      t: Number(p.updated || p.created || 0),
+    };
+  };
+
+  for (const p of plans || []) {
+    if (p.state === 'confirmed' || p.state === 'locked') upcoming.push(row(p));
+    else if (p.state === 'proposed') {
+      // Сколько ещё ждём — это и есть повод открыть строку: возможно, ждут именно тебя.
+      const need = Number(p.needs || 0);
+      forming.push({
+        ...row(p),
+        teaser: need
+          ? (ru ? `Ждём ещё ${need}` : `Waiting for ${need} more`)
+          : (ru ? 'Ждём подтверждений' : 'Waiting for confirmations'),
+      });
+    } else if (p.state === 'below_quorum') {
+      forming.push({ ...row(p), teaser: ru ? 'Осталось меньше трёх' : 'Fewer than three left' });
+    }
+  }
+  for (const p of history || []) {
+    const cancelled = p.state === 'cancelled';
+    past.push({
+      ...row(p),
+      sub: `${cancelled ? MSG.calledOffShort() : MSG.ended()} · ${when(p)}`,
+    });
+  }
+  return { upcoming, forming, past };
 }
 
 /** MSG.03: фильтр по уже загруженному — названия отдельно, реплики отдельно. */

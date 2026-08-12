@@ -18,7 +18,7 @@
  */
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, Animated, Easing } from 'react-native';
-import { T } from '../i18n';
+import { HOME } from '../home';
 import { color, radius as rad, space, type } from '../theme';
 
 /** Насколько каждый следующий слой уже и ниже. С борда: 350→340→322 и 110→106→100. */
@@ -104,9 +104,11 @@ export function CardStack<T_ extends { key: string }>({
       */}
       {left > 1 ? (
         <View style={s.foot}>
-          <Text style={s.left}>{T(`Ещё ${left - 1}`, `${left - 1} more`)}</Text>
+          {/* Копия — в src/home.ts: голое «Ещё 1» по-русски обрывок, и склонять число в
+              компоненте вида нельзя по правилу проекта (текст живёт в src/*.ts). */}
+          <Text style={s.left}>{HOME.invitesLeft(left - 1)}</Text>
           <Pressable accessibilityRole="button" hitSlop={8} onPress={onNext} style={s.next}>
-            <Text style={s.nextText}>{T('Дальше', 'Next')} ›</Text>
+            <Text style={s.nextText}>{HOME.invitesNext()} ›</Text>
           </Pressable>
         </View>
       ) : null}

@@ -13,6 +13,18 @@ export const HOME = {
   invites: () => T('Приглашения', 'Invitations'),
   /** Стопка приглашений разобрана. Их немного — это норма, а не поломка. */
   invitesAllSeen: () => T('Это все приглашения.', 'That’s every invite.'),
+  /**
+   * Сколько ещё в стопке. С существительным: голое «Ещё 1» по-русски обрывок — ещё один чего?
+   * Согласование то же, что у HOME.peopleCount, и живёт здесь, а не в компоненте: копия в src/*.ts.
+   */
+  invitesLeft: (n: number) => {
+    const ten = n % 10, hundred = n % 100;
+    const word = ten === 1 && hundred !== 11 ? 'приглашение'
+      : ten >= 2 && ten <= 4 && (hundred < 10 || hundred >= 20) ? 'приглашения'
+      : 'приглашений';
+    return T(`Ещё ${n} ${word}`, `${n} more invite${n === 1 ? '' : 's'}`);
+  },
+  invitesNext: () => T('Дальше', 'Next'),
   inviteStatus: () => T('Приглашение', 'Invitation'),
   inviteLoadFailed: () => T('Не удалось загрузить приглашения.', 'Invitations could not be loaded.'),
   retry: () => T('Повторить', 'Retry'),

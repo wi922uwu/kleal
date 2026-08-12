@@ -32,8 +32,26 @@ export type VoicePayload = {
   language?: string;
 };
 
+/**
+ * Дописать базу к ОТНОСИТЕЛЬНОМУ пути картинки — и не тронуть всё остальное.
+ *
+ * Список пропуска был перечнем знакомых схем: http(s), file:, blob:. Всё прочее считалось
+ * относительным путём. А своё фото в приложении — это `data:image/jpeg;base64,…` (его делает
+ * `squarePhoto` в src/photo.ts), и оно получало базу спереди:
+ *
+ *     https://…trycloudflare.comdata:image/jpeg;base64,…
+ *
+ * Такой адрес не разбирается как URL. React Native падает на нём КРАСНЫМ ЭКРАНОМ «URI parsing
+ * error» в нативном слое (`ImageManager::requestImage`), а не просто не грузит картинку — снято
+ * на симуляторе 12 августа. Заодно этим же объясняется «аватарки в профиле нет»: там всегда
+ * своё фото, то есть всегда data-URL.
+ *
+ * Поэтому проверка теперь не «знаю ли я эту схему», а «есть ли схема вообще»: абсолютный адрес
+ * пропускается любой. Пустая строка остаётся пустой — иначе `<Image>` просил бы у сервера
+ * главную страницу вместо картинки.
+ */
 export const mediaUrl = (url: string) =>
-  /^https?:\/\//i.test(url) || url.startsWith('file:') || url.startsWith('blob:') ? url : API_BASE + url;
+  !url || /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : API_BASE + url;
 
 export class ApiError extends Error {
   status: number;

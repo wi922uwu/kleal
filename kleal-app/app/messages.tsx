@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { MSG, Row, intentRows, planRows, threadRows, groupRows, searchRows, bucketOf, isUnread, rowTime } from '../src/messages';
+import { MSG, Row, intentRows, planRows, gplanRows, threadRows, groupRows, searchRows, bucketOf, isUnread, rowTime } from '../src/messages';
 import { mediaUrl, group as gapi } from '../src/api';
 import { planWhen, sysLine } from '../src/chat';
 import { useLang, T, getLang } from '../src/i18n';
@@ -41,8 +41,9 @@ export default function Messages() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<{
     plans: any[]; history: any[]; inbox: any[]; outbox: any[]; threads: any[];
-    groups: any[]; ginvites: any[];
-  }>({ plans: [], history: [], inbox: [], outbox: [], threads: [], groups: [], ginvites: [] });
+    groups: any[]; ginvites: any[]; gplans: any[]; ghistory: any[];
+  }>({ plans: [], history: [], inbox: [], outbox: [], threads: [], groups: [], ginvites: [],
+       gplans: [], ghistory: [] });
   /** Лист MSG.04 — по какой строке вызван. */
   const [menuRow, setMenuRow] = useState<Row | null>(null);
   const [menuNote, setMenuNote] = useState('');
@@ -56,9 +57,14 @@ export default function Messages() {
     try {
       // Группы — своим запросом и со своим catch: групповой слой новее остальных, и его
       // неудача не должна уносить список переписок, который работал годами.
-      const [pl, inb, out, th, gr] = await Promise.all([
+      // Планов у человека ДВА рода, и живут они на разных ручках: `mplans` — один на один,
+      // `gplans` — групповые. Здесь запрашивали только первую, поэтому созданный групповой план
+      // во вкладку «Планы» не попадал вообще: человек его делал, видел в группе — и не находил
+      // там, где приложение обещает показывать все планы.
+      const [pl, inb, out, th, gr, gpl] = await Promise.all([
         agent.plans(me), agent.inbox(me), agent.outbox(me), agent.threads(me),
         gapi.mine(me).catch(() => null),
+        gapi.plans(me).catch(() => null),
       ]);
       const arr = (r: any, k: string) => (Array.isArray(r) ? r : r?.[k] || []);
       const threads = arr(th, 'threads');
@@ -70,6 +76,8 @@ export default function Messages() {
         threads,
         groups: (gr as any)?.groups || [],
         ginvites: (gr as any)?.invites || [],
+        gplans: (gpl as any)?.plans || [],
+        ghistory: (gpl as any)?.history || [],
       });
       const seen = (msgPrefs().seen || {}) as Record<string, number>;
       const fresh = threads.filter((t: any) => (t.t || 0) > (seen[String(t.who || '').toLowerCase()] || 0)).slice(0, 10);
@@ -102,11 +110,23 @@ export default function Messages() {
     () => intentRows(me, data.plans, data.history, data.inbox, data.outbox, ru, planWhen),
     [me, data, ru]
   );
-  /** Договорились о времени и месте — пара живёт здесь, а не среди намерений. */
-  const plansSec = useMemo(
-    () => planRows(me, data.plans, data.history, ru, planWhen),
-    [me, data, ru]
-  );
+  /**
+   * Договорились о времени и месте — живут здесь, а не среди намерений. И парные, и групповые:
+   * для человека «план» это встреча, на которую он идёт, а сколько там людей — вопрос второй.
+   * Групповые сюда не попадали вовсе, пока экран не спрашивал `gplans`.
+   */
+  const plansSec = useMemo(() => {
+    const one = planRows(me, data.plans, data.history, ru, planWhen);
+    // Групповой план приходит с сервера уже с подписью времени (`when`), собранной пикером, —
+    // пересобирать её из starts_at незачем и вредно: разойдётся с тем, что видно в самой группе.
+    const many = gplanRows(data.gplans, data.ghistory, ru, (p: any) => String(p.when || ''));
+    const byT = (a: Row, b: Row) => (b.t || 0) - (a.t || 0);
+    return {
+      upcoming: [...one.upcoming, ...many.upcoming].sort(byT),
+      forming: [...one.forming, ...many.forming].sort(byT),
+      past: [...one.past, ...many.past].sort(byT),
+    };
+  }, [me, data, ru]);
   const privateRows = useMemo(
     () => threadRows(data.threads, me, ru, sysLine)
       .map((r) => ({ ...r, count: counts[String(r.who || '').toLowerCase()] })),

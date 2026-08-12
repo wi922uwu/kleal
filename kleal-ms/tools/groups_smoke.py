@@ -138,6 +138,22 @@ check("someone can join", j.get("ok") is not False and not j.get("error"), j)
 l = call("/api/agent/group-leave", {"gid": gid, "self": "GroupJoiner", "idem": "l-" + idem})
 check("someone can leave", l.get("ok") is not False and not l.get("error"), l)
 
+# УБИРАЕМ ЗА СОБОЙ. Группа, созданная смоуком, — публичное мероприятие: `group_list` отдаёт её
+# на главный экран приложения наравне с настоящими. Уходил отсюда только присоединившийся, хозяин
+# оставался, и каждый прогон навсегда добавлял карточку «Padel smoke · Sunday · Gràcia · 1 идёт».
+# К 11 августа их накопилось пятнадцать, и вместе с «Sunday padel» из flows_smoke они занимали всю
+# карусель — 33 записи из 35.
+#
+# Выход ПОСЛЕДНЕГО участника помечает группу cancelled (`group_leave`), а `group_list` отменённые
+# пропускает. Значит достаточно, чтобы вышел и хозяин.
+h = call("/api/agent/group-leave", {"gid": gid, "self": "GroupProbe", "idem": "lh-" + idem})
+check("смоук убирает свою группу — она не оседает на главной",
+      h.get("ok") is not False and not h.get("error"), h)
+gone = call("/api/agent/groups?self=GroupProbe&limit=50") or {}
+check("и в списке её больше нет",
+      not any((x.get("gid") == gid) for x in (gone.get("groups") or [])),
+      [x.get("title") for x in (gone.get("groups") or [])][:5])
+
 print()
 print("=" * 74)
 print("5. THE SIZE ASKED FOR IS THE SIZE FORMED")

@@ -471,7 +471,19 @@ export function profileData(op: Profile | any): ProfileData {
   const areas = arr(op.geo && op.geo.comfortableAreas);
   const city = areas[0] || op.city || '';
   const km = op.geo && op.geo.maxDistanceKm;
-  const ints = arr(op.interests && op.interests.explicit).map(String);
+  // Интересы приходят В ДВУХ ФОРМАХ, и читать надо обе.
+  //
+  // Пока человек проходит онбординг, профиль лежит в состоянии устройства объектом:
+  // `interests.explicit`. А сервер хранит и отдаёт ПЛОСКИЙ список — проверено на живом проде:
+  // `{"interests": ["sports","team","rugby",…]}`. Значит после «Выйти → Войти» (когда профиль
+  // приезжает с сервера) экран читал `interests.explicit` у массива, получал undefined — и писал
+  // «Интересы · Пока не заполнено» человеку, у которого их восемь.
+  //
+  // Тот же класс ошибки, что с `languages`: одно поле, две формы, и молчаливо пустой результат
+  // вместо ошибки. Поэтому здесь не «какая форма правильная», а «понимаем обе».
+  const ints = arr(
+    Array.isArray(op.interests) ? op.interests : (op.interests && op.interests.explicit)
+  ).map(String);
   const rolesRaw = (op.interests && op.interests.roles) || {};
   const exp = (op.interests && op.interests.experienceByInterest) || {};
   const games = (op.domains && op.domains.games) || {};

@@ -209,6 +209,68 @@ console.log('\nу группового плана есть момент врем
     senders === 4, 'нашлось отправок: ' + senders);
 }
 
+// ------------------------------------------------- 7. mediaUrl не портит абсолютные адреса
+//
+// Помощник дописывает базу к относительному пути картинки. Список пропуска был перечнем ЗНАКОМЫХ
+// схем (http, file, blob), поэтому своё фото — а это всегда `data:image/jpeg;base64,…` из
+// src/photo.ts — получало базу спереди: «https://…comdata:image/…». Такой адрес не разбирается
+// как URL, и React Native падает КРАСНЫМ ЭКРАНОМ «URI parsing error» в нативном ImageManager.
+// Тем же объясняется «в профиле нет аватарки»: там всегда своё фото.
+console.log('\nmediaUrl не ломает абсолютные адреса');
+{
+  const src = code('src/api.ts');
+  const m = src.match(/export const mediaUrl = \(url: string\) =>\s*([\s\S]*?);/);
+  check('mediaUrl нашёлся', !!m, 'переименовали?');
+
+  if (m) {
+    // Собираем НАСТОЯЩУЮ функцию из исходника: проверять регуляркой по тексту — значит проверять
+    // формулировку, а не поведение.
+    const API_BASE = 'https://base.example';
+    const mediaUrl = new Function('url', 'API_BASE', 'return (' + m[1] + ');');
+    const cases = [
+      ['data:image/jpeg;base64,AAAA', 'data:image/jpeg;base64,AAAA', 'своё фото — data-URL'],
+      ['file:///tmp/a.jpg', 'file:///tmp/a.jpg', 'файл с устройства'],
+      ['blob:abc', 'blob:abc', 'blob'],
+      ['https://a.b/c.jpg', 'https://a.b/c.jpg', 'уже абсолютный'],
+      ['', '', 'пусто остаётся пустым'],
+      ['/api/onboarding/photo/x.jpg', API_BASE + '/api/onboarding/photo/x.jpg', 'чужое фото — путь с сервера'],
+    ];
+    for (const [input, want, what] of cases) {
+      let got;
+      try { got = mediaUrl(input, API_BASE); } catch (e) { got = 'ОШИБКА: ' + e.message; }
+      check(what, got === want, 'дано ' + JSON.stringify(input) + ' → ' + JSON.stringify(got));
+    }
+  }
+}
+
+// ------------------------------------------------- 8. профиль читает поле в ОБЕИХ его формах
+//
+// Третий случай одного и того же класса за два дня, поэтому проверка отдельная:
+//   — `languages`: экран слал плоский список, сервер ждал объект → ранжирование падало, и это
+//     выглядело как «никого не нашлось»;
+//   — `interests`: экран читал `interests.explicit`, сервер отдаёт ПЛОСКИЙ список (проверено на
+//     проде: {"interests": ["sports","team","rugby",…]}) → «Интересы · Пока не заполнено» у
+//     человека с восемью интересами;
+//   — `photo`: свой снимок — data-URL, чужой — путь с сервера (см. проверку mediaUrl выше).
+// Общее у всех трёх: одно поле живёт в двух формах, и несовпадение даёт МОЛЧАЛИВУЮ пустоту
+// вместо ошибки. Такое находят не по логу, а через неделю и случайно.
+console.log('\nпрофиль понимает обе формы своих полей');
+{
+  const prof = code('src/profile.ts');
+
+  check('интересы читаются и плоским списком, и вложенно',
+    /Array\.isArray\(op\.interests\)\s*\?\s*op\.interests\s*:/.test(prof),
+    'вернулось только op.interests.explicit — с сервера интересы приходят массивом');
+
+  // Языки на клиенте уже читаются обеими формами (comfortable || fluent); держим это.
+  check('языки читаются обеими формами',
+    /op\.languages\.comfortable \|\| op\.languages\.fluent/.test(prof));
+
+  const srv = fs.readFileSync(path.join(ROOT, '..', 'kleal-ms/services/matching/app.py'), 'utf8');
+  check('и сервер терпит обе формы языков', /def _langs_of\(/.test(srv),
+    'помощник _langs_of исчез — вернётся падение ранжирования');
+}
+
 console.log('');
 if (failed) {
   console.log(failed + ' проверок не прошло');

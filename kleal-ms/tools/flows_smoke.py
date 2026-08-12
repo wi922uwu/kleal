@@ -133,6 +133,18 @@ check("the joiner is counted as a member",
 r = call("/api/agent/group-leave", {"gid": gid, "self": B, "idem": "l-" + gidem})
 check("someone can leave", r.get("ok") is not False and not r.get("error"), r)
 
+# УБИРАЕМ ЗА СОБОЙ — см. тот же хвост в tools/groups_smoke.py. Созданная здесь группа попадает в
+# `group_list`, то есть на ГЛАВНЫЙ ЭКРАН приложения, наравне с настоящими. Выходил только
+# присоединившийся, хозяин оставался, и каждый прогон оставлял карточку «Sunday padel · Gràcia ·
+# 1 идёт» навсегда. Выход последнего участника помечает группу cancelled, а такие список не отдаёт.
+r = call("/api/agent/group-leave", {"gid": gid, "self": A, "idem": "lh-" + gidem})
+check("смоук убирает свою группу — она не оседает на главной",
+      r.get("ok") is not False and not r.get("error"), r)
+gl3 = (call("/api/agent/groups?self=%s&limit=50" % q(A)) or {}).get("groups") or []
+check("и в списке её больше нет",
+      not any((g.get("gid") or g.get("id")) == gid for g in gl3),
+      [g.get("title") for g in gl3][:5])
+
 print()
 print("=" * 74)
 print("RESULT: %d ok, %d failed" % (R["ok"], R["fail"]))
