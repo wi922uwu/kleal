@@ -14,11 +14,15 @@
  *
  *   EXPO_PUBLIC_API=https://<адрес-стенда> npx expo start
  *
- * Адрес эфемерный (бесплатный trycloudflare) и меняется при перезапуске туннеля. Актуальный
- * прод-адрес — из лога туннеля на поде: /root/cf7080.log
+ * Адрес ПОСТОЯННЫЙ. До 13 августа здесь стоял бесплатный trycloudflare, который Cloudflare
+ * удаляет у себя через несколько часов: за один день адрес менялся дважды, и каждый раз это
+ * выглядело как «приложение сломалось» — при живых процессах и целом коде.
+ *
+ * Теперь бэкенд живёт на своём сервере с доменом, и эта строка перестала быть расходником.
+ * Модель осталась на поде: сервер ходит к ней по закрытому каналу, наружу она не смотрит.
  */
 
-const DEFAULT_BASE = 'https://andrews-pencil-ricky-pcs.trycloudflare.com';
+const DEFAULT_BASE = 'https://aiopenware.com';
 
 export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API && String(process.env.EXPO_PUBLIC_API)) || DEFAULT_BASE;
