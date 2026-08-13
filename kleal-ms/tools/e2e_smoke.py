@@ -19,7 +19,13 @@ Two assertions here were wrong the first time and are worth keeping straight:
 """
 import json, urllib.request, urllib.error, time, sys
 
-GW = "http://127.0.0.1:7080"
+# Адрес шлюза. Первым аргументом — как у всех остальных смоуков в этой папке.
+#
+# Был прибит гвоздями к localhost, и это тихо обесценивало каждый запуск «по серверу»: адрес
+# принимался молча и не использовался, тест уходил на 127.0.0.1, получал Connection refused и
+# печатал FAIL — выглядело как поломка продукта, а не как промах теста (поймано 13 августа при
+# проверке переезда на новый сервер).
+GW = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:7080").rstrip("/")
 R = {"ok": 0, "fail": 0}
 FAILED = []
 
@@ -78,8 +84,13 @@ check("signin rejects the wrong password", st == 200 and isinstance(r, dict) and
 section("3. ONBOARDING FUNNEL — the gate, the agent, the summary")
 st, crit = call("/api/onboarding/state", {"profile": {}})
 check("empty profile reports the critical gate", st == 200 and isinstance(crit, dict), crit)
-missing0 = [c for c in (crit.get("items") or crit.get("crit") or []) if not (c.get("ok") if isinstance(c, dict) else True)]
-print("       gate items: %s" % (list(crit.keys())[:6],))
+# Ответ может оказаться строкой — при HTTP-ошибке `call` возвращает тело как есть. Раньше
+# следующая строка звала у строки .get и роняла ВЕСЬ прогон: из тридцати проверок выполнялось
+# семь, а про остальные двадцать три никто не узнавал. Провалившаяся проверка обязана оставаться
+# одной провалившейся проверкой.
+crit_d = crit if isinstance(crit, dict) else {}
+missing0 = [c for c in (crit_d.get("items") or crit_d.get("crit") or []) if not (c.get("ok") if isinstance(c, dict) else True)]
+print("       gate items: %s" % (list(crit_d.keys())[:6],))
 
 PROF = {"name": "E2E Tester", "ageVerified18": True, "gender": "Female", "photoStatus": "uploaded",
         "city": "Barcelona", "language": "en",
