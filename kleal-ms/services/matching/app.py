@@ -3723,6 +3723,14 @@ def _gi_public(g, me=""):
         "i_am_member": any(_norm_name(m.get("name")) == mine for m in act),
         # §6.6/§6.7: the ONE thing the screen keys off. Below the floor the chat is a coordination
         # room and nothing more; the plan CTA is disabled with a reason, never hidden.
+        # ПЕРЕХОД В ОДИН НА ОДИН (GR.19/GR.20). Оба поля нужны на РАЗНЫХ сторонах: организатору —
+        # можно ли предложить, второму — что предложение уже пришло и ждёт ответа. Без второго
+        # экран приглашённого не знал бы о просьбе вовсе.
+        "can_convert": is_owner and n == 2
+                       and g.get("state") in GI_OPEN_PHASES
+                       and not _gp_of(g.get("id"))
+                       and not g.get("pending_1to1"),
+        "pending_1to1": g.get("pending_1to1"),
         "planning_allowed": n >= int(g.get("min_total") or GI_MIN_TOTAL)
                             and g.get("state") not in ("cancelled", "expired", "converted_1to1"),
         "need_more": max(0, int(g.get("min_total") or GI_MIN_TOTAL) - n),
@@ -4074,6 +4082,93 @@ def gi_remove(gid, frm, who, reason="", idem=None):
         _gp_recount(gid, now)
         _save_store()
         return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, frm)})
+
+
+def gi_convert_ask(gid, frm, idem=None):
+    """GR.19 «Switch to one-on-one» — организатор просит второго перевести группу в один на один.
+
+    Почему это ПРОСЬБА, а не действие: группа принадлежит обоим. Организатор, закрывающий её
+    единолично, отнимает у второго то, на что тот согласился, — поэтому здесь только запрос, а
+    решает GR.20 (`gi_convert_respond`).
+
+    Условия ровно те, при которых предложение осмысленно: их двое (третий не пришёл или отказался),
+    план ещё не назначен, группа жива. При назначенном плане переводить нечего — есть встреча.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    frm = str(frm or "").strip()
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(frm) != _norm_name(g.get("owner")):
+            return _idem_put(idem, {"ok": False, "error": "NOT_ORGANIZER"})
+        if g.get("state") not in GI_OPEN_PHASES:
+            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": g.get("state")})
+        act = _gi_active(g)
+        if len(act) != 2:
+            return _idem_put(idem, {"ok": False, "error": "NEED_TWO", "joined": len(act)})
+        if _gp_of(gid):
+            return _idem_put(idem, {"ok": False, "error": "PLAN_EXISTS"})
+        other = next((m.get("name") for m in act if _norm_name(m.get("name")) != _norm_name(frm)), None)
+        if not other:
+            return _idem_put(idem, {"ok": False, "error": "NEED_TWO"})
+        g["pending_1to1"] = {"by": frm, "to": other, "at": now}
+        g["version"] = int(g.get("version") or 1) + 1
+        g["updated"] = now
+        _gi_say(g, "%s asked to switch to one-on-one." % frm)
+        _save_store()
+    return _idem_put(idem, {"ok": True, "asked": other, "group": _gi_public(g, frm)})
+
+
+def gi_convert_respond(gid, who, agree, idem=None):
+    """GR.20 — сторона, которую спросили, отвечает.
+
+    Согласие закрывает группу и гасит её открытые приглашения: приглашённым уходит текст GR.23
+    («…so the group invite is closed. Nothing you did») — это важно сказать вслух, иначе человек
+    решит, что его отвергли лично.
+
+    Отказ просто снимает просьбу: группа продолжает жить, и повторно спросить можно.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        req = g.get("pending_1to1") or {}
+        if not req:
+            return _idem_put(idem, {"ok": False, "error": "NOTHING_TO_ANSWER"})
+        if _norm_name(req.get("to")) != _norm_name(who):
+            return _idem_put(idem, {"ok": False, "error": "NOT_ASKED"})
+        if not agree:
+            g["pending_1to1"] = None
+            g["version"] = int(g.get("version") or 1) + 1
+            g["updated"] = now
+            _gi_say(g, "%s wants to keep the group." % who)
+            _save_store()
+            return _idem_put(idem, {"ok": True, "agreed": False, "group": _gi_public(g, who)})
+
+        g["pending_1to1"] = None
+        g["state"] = "converted_1to1"
+        g["version"] = int(g.get("version") or 1) + 1
+        g["updated"] = now
+        # Открытые приглашения гасятся ЗДЕСЬ, а не оставляются висеть: место, на которое звали,
+        # больше не существует. Текст с борда GR.23 — про то, что человек ни при чём.
+        title = str(g.get("title") or "the group")
+        for inv in _gi_pending(gid):
+            inv["state"] = "withdrawn"
+            inv["updated"] = now
+            inv["note_out"] = ("%s turned %s into a one-on-one, so the group invite is closed. "
+                               "Nothing you did." % (req.get("by"), title))
+        _gi_say(g, "The group is now a one-on-one.")
+        _save_store()
+    return _idem_put(idem, {"ok": True, "agreed": True, "group": _gi_public(g, who)})
 
 
 def gi_leave(gid, who, idem=None):
@@ -6708,6 +6803,11 @@ class H(BaseHTTPRequestHandler):
                                              body.get("text"), body.get("idem")))
         elif p == "/api/agent/gintent-leave":
             send_json(self, 200, gi_leave(body.get("gid"), body.get("self"), body.get("idem")))
+        elif p == "/api/agent/gintent-convert":
+            send_json(self, 200, gi_convert_ask(body.get("gid"), body.get("self"), body.get("idem")))
+        elif p == "/api/agent/gintent-convert-respond":
+            send_json(self, 200, gi_convert_respond(body.get("gid"), body.get("self"),
+                                                    bool(body.get("agree")), body.get("idem")))
         elif p == "/api/agent/group-create":
             send_json(self, 200, group_create(body.get("host"), body.get("title"), body.get("topics"),
                                               body.get("when"), body.get("area"), body.get("mode"),

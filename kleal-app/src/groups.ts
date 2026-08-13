@@ -133,12 +133,32 @@ export const ROOM = {
   openPlan: () => T('Открыть план', 'Open the plan'),
   switchTo1to1: () => T('Перейти в один на один', 'Switch to one-on-one'),
   /**
-   * Конверсии в 1:1 на сервере НЕТ: `converted_1to1` — только строка в гвардах, ручки под неё не
-   * существует (слой 3). Кнопка с кадра поэтому выключена и подписана — по тому же правилу, что
-   * нижняя панель и настройки: строка, которая выглядит рабочей и молча ничего не делает, хуже
-   * честно выключенной.
+   * Кнопка видна только когда переход ВОЗМОЖЕН: их двое, плана ещё нет, группа жива. Это решает
+   * сервер (`can_convert`), а не экран, — иначе клиент и сервер разошлись бы на первом же условии.
    */
-  switchSoon: () => T('Переход в один на один пока не сделан', 'Switching to one-on-one isn’t built yet'),
+  switchWhy: () => T(
+    'Группа не собралась. Можно продолжить вдвоём — если собеседник согласится.',
+    'The group didn’t fill up. You can keep going as two — if the other person agrees.'
+  ),
+
+  // ---- GR.19: организатор спрашивает --------------------------------------
+  askTitle: (who: string) => T(`Перейти в один на один с ${who}?`, `Switch to one-on-one with ${who}?`),
+  askNote: (who: string) => T(
+    `${who} тоже должен согласиться. Если согласится, открытые приглашения отменятся, и позванным об этом скажут.`,
+    `${who} has to agree too. If they do, your open invites are cancelled and those people are told.`
+  ),
+  askSend: (who: string) => T(`Спросить ${who}`, `Ask ${who} to switch`),
+  keepGroup: () => T('Оставить группу', 'Keep the group'),
+  askSent: (who: string) => T(`Спросили ${who} — ждём ответа.`, `Asked ${who} — waiting for an answer.`),
+
+  // ---- GR.20: спрашивают тебя ---------------------------------------------
+  answerTitle: (who: string) => T(`${who} предлагает перейти в один на один`, `${who} wants to switch to one-on-one`),
+  answerNote: () => T(
+    'Группа не собралась. Если согласишься, она закроется, и вы продолжите вдвоём.',
+    'The group didn’t fill up. If you agree, the group closes and the two of you keep going one-on-one.'
+  ),
+  agree: () => T('Согласиться', 'Agree'),
+  switchFailed: () => T('Не получилось. Попробуй ещё раз.', 'That didn’t work. Try again.'),
 
   composer: () => T('Сообщение…', 'Message…'),
   offline: () => T('Сообщение не ушло. Проверь связь.', 'The message didn’t send. Check your connection.'),

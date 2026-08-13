@@ -1183,6 +1183,48 @@ console.log('\nкружок: камера готова заранее, коне�
     'иначе Expo Go перестанет открывать приложение по QR');
 }
 
+// ------------------------------------------------- 13. переход группы в один на один
+//
+// Кадры GR.19 (организатор просит) / GR.20 (второй отвечает) / GR.23 (позванным говорят, что
+// приглашение закрыто). Не было построено НИ НА ОДНОМ из трёх слоёв: кнопка декоративна,
+// клиентской функции нет, маршрута нет, состояние converted_1to1 встречалось только в гвардах.
+console.log('\nпереход группы в один на один построен целиком');
+{
+  const py = fs.readFileSync(path.join(ROOT, '..', 'kleal-ms/services/matching/app.py'), 'utf8');
+  const scr = code('app/group.tsx');
+  const txt = code('src/groups.ts');
+  const api = code('src/api.ts');
+
+  check('обе ручки есть и обе в маршрутах',
+    /def gi_convert_ask\(/.test(py) && /def gi_convert_respond\(/.test(py) &&
+    /"\/api\/agent\/gintent-convert"/.test(py) && /"\/api\/agent\/gintent-convert-respond"/.test(py),
+    'функция без строчки в диспетчере недостижима');
+  check('состояние converted_1to1 наконец достижимо',
+    /g\["state"\] = "converted_1to1"/.test(py),
+    'до этого три вхождения и все на чтение');
+  check('это просьба, а не приказ',
+    /g\["pending_1to1"\] = \{"by": frm, "to": other/.test(py) && /"error": "NOT_ASKED"/.test(py),
+    'группа принадлежит обоим — закрыть её единолично значит отнять у второго его согласие');
+  check('переводить нечего, если план уже назначен',
+    /if _gp_of\(gid\):\s*\n\s*return _idem_put\(idem, \{"ok": False, "error": "PLAN_EXISTS"\}\)/.test(py));
+  check('согласие гасит открытые приглашения и говорит почему',
+    /inv\["state"\] = "withdrawn"/.test(py) && /Nothing you did/.test(py),
+    'человек иначе решит, что его отвергли лично');
+
+  check('кнопку показывает сервер, а не экран',
+    /"can_convert": is_owner and n == 2/.test(py) && /\(g as any\)\?\.can_convert/.test(scr),
+    'разойдись условия — кнопка обещала бы то, на что придёт отказ');
+  check('второму видно, что его спросили',
+    /"pending_1to1": g\.get\("pending_1to1"\)/.test(py) && /const askedMe =/.test(scr));
+  check('кнопка больше не декоративна',
+    !/switchSoon/.test(txt) && !/switchSoon/.test(scr) && /onPress=\{\(\) => setAsk1to1\(true\)\}/.test(scr),
+    'мёртвый View со стилем ctaOff заменён живым Pressable');
+  check('обёртки клиента на месте',
+    /convertAsk:/.test(api) && /convertRespond:/.test(api));
+  check('копия обоих кадров — в src, не в JSX',
+    /askTitle:/.test(txt) && /answerTitle:/.test(txt) && /keepGroup:/.test(txt));
+}
+
 console.log('');
 if (failed) {
   console.log(failed + ' проверок не прошло');

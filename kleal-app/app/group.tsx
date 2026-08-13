@@ -73,6 +73,9 @@ export default function GroupRoom() {
   const [info, setInfo] = useState(false);
   const [leaveAsk, setLeaveAsk] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  /** GR.19/GR.20: спрашиваю я или спрашивают меня — два листа поверх одного экрана. */
+  const [ask1to1, setAsk1to1] = useState(false);
+  const [busy1to1, setBusy1to1] = useState(false);
   const [adopting, setAdopting] = useState(false);
   /** Время последнего известного сообщения — по нему сервер отдаёт только новые. */
   const since = useRef(0);
@@ -258,6 +261,40 @@ export default function GroupRoom() {
     }
   };
 
+  /** GR.19 — организатор просит. Решает не он: группа принадлежит обоим. */
+  const askSwitch = async () => {
+    if (busy1to1 || !gid) return;
+    setBusy1to1(true);
+    try {
+      const r: any = await gapi.convertAsk(gid, me, newIdem('gcv'));
+      if (!r?.ok) { setErr(ROOM.switchFailed()); return; }
+      setAsk1to1(false);
+      load();
+    } finally {
+      setBusy1to1(false);
+    }
+  };
+
+  /** GR.20 — отвечает тот, кого спросили. Отказ не закрывает вопрос: спросить можно снова. */
+  const answerSwitch = async (agree: boolean) => {
+    if (busy1to1 || !gid) return;
+    setBusy1to1(true);
+    try {
+      const r: any = await gapi.convertRespond(gid, me, agree, newIdem('gcr'));
+      if (!r?.ok) { setErr(ROOM.switchFailed()); return; }
+      load();
+    } finally {
+      setBusy1to1(false);
+    }
+  };
+
+  /** Второй в группе — тот, кого спрашивают. Их двое, иначе кнопки перехода не бывает. */
+  const otherName = ((g as any)?.members || [])
+    .map((m: any) => String(m?.name || ''))
+    .find((n: string) => n && n.toLowerCase() !== me.toLowerCase()) || '';
+  /** Спросили МЕНЯ — лист GR.20 открывается сам: это вопрос, а не уведомление. */
+  const askedMe = String((g as any)?.pending_1to1?.to || '').toLowerCase() === me.toLowerCase();
+
   const leave = async () => {
     if (leaving || !gid) return;
     setLeaving(true);
@@ -339,6 +376,36 @@ export default function GroupRoom() {
         </ScrollView>
 
         {/* Действия над сообщением — тот же лист, что в переписке, и та же строка реакций. */}
+        {/*
+          GR.19 — организатор спрашивает. GR.20 — тот, кого спросили, отвечает. Два листа поверх
+          ОДНОГО экрана: это один разговор, и разводить его по маршрутам значило бы, что человек,
+          обсуждая свою же группу, каждый раз оказывается где-то ещё.
+        */}
+        <Sheet visible={ask1to1} onClose={() => setAsk1to1(false)}>
+          <Text style={s.sheetTitle}>{ROOM.askTitle(otherName)}</Text>
+          <Text style={s.sheetNote}>{ROOM.askNote(otherName)}</Text>
+          <Pressable accessibilityRole="button" style={[s.cta, busy1to1 && { opacity: 0.6 }]}
+                     disabled={busy1to1} onPress={askSwitch}>
+            <Text style={s.ctaText}>{ROOM.askSend(otherName)}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setAsk1to1(false)}>
+            <Text style={s.ctaText}>{ROOM.keepGroup()}</Text>
+          </Pressable>
+        </Sheet>
+
+        <Sheet visible={askedMe} onClose={() => answerSwitch(false)}>
+          <Text style={s.sheetTitle}>{ROOM.answerTitle(String((g as any)?.pending_1to1?.by || ''))}</Text>
+          <Text style={s.sheetNote}>{ROOM.answerNote()}</Text>
+          <Pressable accessibilityRole="button" style={[s.cta, busy1to1 && { opacity: 0.6 }]}
+                     disabled={busy1to1} onPress={() => answerSwitch(true)}>
+            <Text style={s.ctaText}>{ROOM.agree()}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={s.ctaDark}
+                     disabled={busy1to1} onPress={() => answerSwitch(false)}>
+            <Text style={s.ctaText}>{ROOM.keepGroup()}</Text>
+          </Pressable>
+        </Sheet>
+
         <Sheet visible={!!picked} onClose={() => setPicked(null)}>
           <View style={s.reactRow}>
             {REACTIONS.map((e) => (
@@ -418,9 +485,9 @@ export default function GroupRoom() {
           {/*
             Нижнее действие — ровно то, что на кадре для этого состава:
               трое и больше (GR.21) — «Создать план»;
-              меньше (GR.18)        — «Перейти в один на один», и он ВЫКЛЮЧЕН: конверсии на
-                                      сервере нет (слой 3), а кнопка, которая молча ничего не
-                                      делает, хуже честно выключенной.
+              их двое (GR.18)       — «Перейти в один на один», и теперь она РАБОТАЕТ.
+            Показывать её или нет, решает сервер флагом `can_convert` (их двое, плана нет, группа
+            жива), а не экран: разойдись условия — кнопка обещала бы то, на что придёт отказ.
           */}
           {canPlan ? (
             /* GR.21 → GR.25: полный состав ведёт на экран плана. Подпись под кнопкой меняется,
@@ -432,14 +499,14 @@ export default function GroupRoom() {
                 {(g as any)?.plan ? ROOM.openPlan() : ROOM.createPlan()}
               </Text>
             </Pressable>
-          ) : (
+          ) : (g as any)?.can_convert ? (
             <View style={s.ctaOffWrap}>
-              <View style={[s.cta, s.ctaOff]}>
+              <Pressable accessibilityRole="button" style={s.cta} onPress={() => setAsk1to1(true)}>
                 <Text style={s.ctaText}>{ROOM.switchTo1to1()}</Text>
-              </View>
-              <Text style={s.ctaNote}>{ROOM.switchSoon()}</Text>
+              </Pressable>
+              <Text style={s.ctaNote}>{ROOM.switchWhy()}</Text>
             </View>
-          )}
+          ) : null}
         </View>
 
         {/* GR.24 — состав. Лист, а не отдельный маршрут: это справка о той же комнате. */}
@@ -584,6 +651,10 @@ const s = StyleSheet.create({
   ctaText: { ...type.button, color: color.onPrimary } as any,
   ctaOffWrap: { gap: 4 },
   ctaOff: { opacity: 0.4 },
+  /** Листы GR.19/GR.20: заголовок, объяснение последствий и две кнопки — согласие и отказ. */
+  sheetTitle: { ...type.title, color: color.fg, paddingBottom: space.xs } as any,
+  sheetNote: { ...type.bodySmall, color: color.muted, paddingBottom: space.md } as any,
+  ctaDark: { height: 52, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center', marginTop: space.sm },
   ctaNote: { ...type.caption, color: color.muted, textAlign: 'center' } as any,
 
   sheetBody: { ...type.bodySmall, color: color.muted } as any,

@@ -600,6 +600,21 @@ export const group = {
       '/api/agent/gintent-leave', { gid, self, idem }
     ),
 
+  /**
+   * GR.19 — организатор ПРОСИТ второго перевести группу в один на один. Именно просит: группа
+   * принадлежит обоим, и закрыть её единолично значит отнять у второго то, на что он согласился.
+   */
+  convertAsk: (gid: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; asked?: string; group?: GroupInfo }>(
+      '/api/agent/gintent-convert', { gid, self, idem }
+    ),
+
+  /** GR.20 — ответ той стороны. Согласие закрывает группу и гасит её открытые приглашения. */
+  convertRespond: (gid: string, self: string, agree: boolean, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; agreed?: boolean; group?: GroupInfo }>(
+      '/api/agent/gintent-convert-respond', { gid, self, agree, idem }
+    ),
+
   /** Сообщение в общий чат группы. */
   post: (gid: string, self: string, text: string, voice?: VoicePayload, clientId?: string,
          replyTo?: string, video?: VideoPayload) =>
