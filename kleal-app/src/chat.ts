@@ -746,6 +746,13 @@ export function sysLine(sys: SysMsg | undefined, me: string, ru: boolean): strin
   const hour = msgTime(sys.at, ru);
   const wasHour = msgTime(sys.was, ru);
   switch (sys.code) {
+    // O.19c: разговор закрыли с той стороны. Раньше второй об этом не узнавал вовсе и продолжал
+    // ждать ответа в открытой переписке.
+    case 'chat_ended':
+      return mine
+        ? T('Ты завершил(а) разговор', 'You ended the chat')
+        : T(`${by} завершил(а) разговор. Можно выбрать другого.`,
+            `${by} ended the chat. You can pick again.`);
     case 'plan_proposed':
       return mine
         ? T(`Ты предложил(а) встречу${when ? ' — ' + when : ''}`, `You proposed a meetup${when ? ' — ' + when : ''}`)

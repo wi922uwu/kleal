@@ -792,10 +792,17 @@ export default function Plan() {
                     </Pressable>
                   ) : null}
 
+                  {/*
+                    Через лист подтверждения, а не сразу. Отмена на сервере ТЕРМИНАЛЬНА: план уходит
+                    в отменённые, и вернуть его нельзя — пара заводит новый. Здесь же кнопка стоит в
+                    фазе звонка, когда человек торопится и жмёт не глядя, и один промах пальцем гасил
+                    вечер необратимо. Сам лист был написан (кадр O.23b), но открывался только из
+                    других фаз — сюда его просто не подключили.
+                  */}
                   <Pressable
                     accessibilityRole="button"
                     style={offline ? s.ctaSoft : s.ctaDark}
-                    onPress={() => respond('decline')}
+                    onPress={() => setDropping(true)}
                   >
                     <Text style={offline ? s.ctaSoftText : s.ctaDarkText}>
                       {offline && theirLive === 'late' ? PLAN.cantWait() : PLAN.cantMakeIt()}

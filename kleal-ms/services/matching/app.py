@@ -3378,6 +3378,34 @@ def _touch(m):
     m["u"] = time.time()
 
 
+def end_thread(who, other, idem=None):
+    """Закрыть переписку — так, чтобы об этом узнал ВТОРОЙ.
+
+    Кадр O.19c «Jane ended the chat. You can pick again» существует, а показать его было нечем:
+    «Завершить чат» клало имя в локальный список на телефоне закрывшего, и на сервер не уходило
+    ничего. Второй человек оставался ждать ответа в открытой переписке — и ждал бы вечно.
+
+    Что делаем: пишем в ленту пары системную строку с кодом. Она приходит обоим по обычному пути
+    чтения, ей не нужен ни отдельный опрос, ни уведомление, и она остаётся в истории — «почему
+    этот разговор кончился» видно и через неделю.
+
+    Заявку при этом НЕ трогаем: закрыть разговор и отозвать согласие — разные вещи, и второй
+    может завести новый план с тем же человеком, если оба захотят.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who, other = str(who or "").strip(), str(other or "").strip()
+    if not who or not other or _norm_name(who) == _norm_name(other):
+        return {"ok": False, "error": "TWO_PEOPLE_REQUIRED"}
+    if not _mp_matched(who, other):
+        return {"ok": False, "error": "NOT_MATCHED"}
+    with _STORE_LOCK:
+        _sys_msg(who, other, "chat_ended")
+        _save_store()
+    return _idem_put(idem, {"ok": True})
+
+
 def send_message(frm, to, text, voice=None, client_id=None, reply_to=None, video=None):
     frm, to, text = str(frm or "").strip(), str(to or "").strip(), str(text or "").strip()[:2000]
     voice, voice_error = _voice_message(voice)
@@ -6812,6 +6840,9 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text"),
                                               body.get("voice"), body.get("client_id"),
                                               body.get("reply_to"), body.get("video")))
+        elif p == "/api/agent/thread-end":
+            send_json(self, 200, end_thread(body.get("self"), body.get("with") or body.get("other"),
+                                            body.get("idem")))
         elif p == "/api/agent/message-react":
             send_json(self, 200, message_react(body.get("self"), body.get("id"), body.get("emoji")))
         elif p == "/api/agent/message-delete":
