@@ -586,9 +586,17 @@ const s = StyleSheet.create({
   round: { width: 28, height: 28, borderRadius: 14, backgroundColor: color.onPrimary },
   square: { width: 24, height: 24, borderRadius: 4, backgroundColor: color.primary },
 
+  /**
+   * Фон ПРОЗРАЧНЫЙ. Стоял `color.ink`, и кружок читался тёмным диском на светлой ленте: до первого
+   * кадра видно было не видео, а подложку, и круг выглядел приклеенным к чужому фону.
+   *
+   * Форму держит не заливка, а `overflow: 'hidden'` с круглым радиусом — видео обрезается по
+   * кругу само. Пока кадра нет, круг очерчивает полупрозрачная вуаль с кнопкой «play» (s.veil):
+   * она темнее фона переписки на любом оформлении, поэтому кружок не пропадает.
+   */
   bubble: {
     width: CIRCLE, height: CIRCLE, borderRadius: CIRCLE / 2,
-    overflow: 'hidden', backgroundColor: color.ink,
+    overflow: 'hidden', backgroundColor: 'transparent',
   },
   veil: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000033' },
   play: { fontSize: 34, color: color.onPrimary },
