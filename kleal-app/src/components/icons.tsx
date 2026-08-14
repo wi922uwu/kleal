@@ -95,6 +95,13 @@ export const IconChevronLeft = ({ size = 22, c = color.fg }: P) => (
   </Svg>
 );
 
+/** Стрелка вправо — «здесь можно пройти дальше». Кадр GR.18 ставит её в карточку затеи. */
+export const IconChevronRight = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M9 5l7 7-7 7" />
+  </Svg>
+);
+
 export const IconPin = ({ size = 18, c = '#fff' }: P) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round">
     <Path d="M12 21s7-6.2 7-11a7 7 0 1 0-14 0c0 4.8 7 11 7 11z" />

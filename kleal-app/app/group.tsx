@@ -34,7 +34,7 @@ import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo, type VoicePayl
 import { ROOM, GROUP, groupSysLine, roomMsg, type GroupSys } from '../src/groups';
 import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
-import { IconChevronLeft, IconPerson, IconSend, IconDots } from '../src/components/icons';
+import { IconChevronLeft, IconChevronRight, IconPerson, IconSend, IconDots } from '../src/components/icons';
 import { Sheet, SheetItem } from '../src/components/Sheet';
 import { MessageFeed } from '../src/components/MessageFeed';
 import { CHAT, Msg, REACTIONS } from '../src/chat';
@@ -318,6 +318,8 @@ export default function GroupRoom() {
   const n = Number(g?.joined_count || members.length || 0);
   const min = Number(g?.min_total || 3);
   const canPlan = !!g?.planning_allowed;
+  // За стрелкой должно что-то БЫТЬ: либо план уже есть, либо состав дорос и его можно создать.
+  const planReachable = canPlan || !!(g as any)?.plan;
 
   if (fatal) {
     return (
@@ -337,6 +339,30 @@ export default function GroupRoom() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
+        {/*
+          Верхняя карточка затеи — на кадре GR.18 их ДВЕ шапки, и эта была пропущена целиком.
+          Её стрелка вправо ведёт к плану: из чата туда попадали только нижней кнопкой, а она
+          видна лишь при полном составе — то есть с GR.18, где людей двое, к плану не было хода
+          вовсе, хотя стрелка на кадре есть.
+
+          Живой она делается ТОЛЬКО когда за ней что-то есть: план уже создан или состав дорос до
+          планирования. Иначе стрелка обещала бы переход, за которым пусто, — а это хуже, чем её
+          отсутствие: человек жмёт и решает, что приложение сломано.
+        */}
+        {planReachable ? (
+          <Pressable accessibilityRole="button" style={s.intentBar}
+                     accessibilityLabel={(g as any)?.plan ? ROOM.openPlan() : ROOM.createPlan()}
+                     onPress={() => router.push({ pathname: '/gplan', params: { gid } })}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.intentTitle} numberOfLines={1}>{g?.title || ''}</Text>
+              <Text style={[s.intentSub, canPlan && { color: color.successText }]} numberOfLines={1}>
+                {ROOM.headCount(n, min)}
+              </Text>
+            </View>
+            <IconChevronRight size={20} c={color.muted} />
+          </Pressable>
+        ) : null}
+
         <View style={s.head}>
           <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back}
                      onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
@@ -630,6 +656,17 @@ const s = StyleSheet.create({
   },
   headTitle: { ...type.title, color: color.fg, fontWeight: '700' } as any,
   headSub: { ...type.bodySmall, color: color.muted } as any,
+
+  // Карточка затеи над шапкой комнаты (GR.18). Своих цветов и размеров нет — только токены.
+  intentBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    marginHorizontal: 16, marginBottom: space.sm,
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: rad.lg, borderWidth: 1, borderColor: color.border,
+    backgroundColor: color.card,
+  },
+  intentTitle: { ...type.body, color: color.fg, fontWeight: '700' } as any,
+  intentSub: { ...type.bodySmall, color: color.muted } as any,
 
   whoRow: { paddingHorizontal: 20, paddingBottom: space.sm, gap: 2 },
   who: { ...type.bodySmall, color: color.fg } as any,

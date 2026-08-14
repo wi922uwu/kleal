@@ -155,6 +155,13 @@ export const ROOM = {
   sysPlanCancelledGroupStays: (who: string) =>
     T(`${who} отменил(а) план. Группа остаётся.`, `${who} cancelled the plan. The group is still here.`),
   sysPlanCancelled: (who: string) => T(`${who} отменил(а) план`, `${who} cancelled the plan`),
+  /** GR.45b. Опоздание НИЧЕГО не отменяет — строка обязана это показывать, иначе её читают как отказ. */
+  sysRunningLate: (who: string, eta: number) =>
+    eta > 0
+      ? T(`${who} опаздывает примерно на ${eta} мин — встреча в силе`,
+          `${who} is running late by about ${eta} min — the meetup is still on`)
+      : T(`${who} опаздывает — встреча в силе`, `${who} is running late — the meetup is still on`),
+  sysArrived: (who: string) => T(`${who} на месте`, `${who} is there`),
   sysLinkSaved: () => T('Ссылка на звонок сохранена.', 'The call link is saved.'),
   sysVoteKept: (who: string) => T(`${who} оставил(а) план как есть`, `${who} kept the plan as it is`),
   sysPlanCountered: (who: string, when: string) =>
@@ -318,6 +325,8 @@ export function groupSysLine(text: string, sys?: GroupSys): string {
   if (c === 'change_accepted') return ROOM.sysChangeAccepted();
   if (c === 'plan_cancelled_group_stays') return ROOM.sysPlanCancelledGroupStays(S(f.who));
   if (c === 'plan_cancelled') return ROOM.sysPlanCancelled(S(f.who));
+  if (c === 'running_late') return ROOM.sysRunningLate(S(f.who), Number(f.eta || 0));
+  if (c === 'arrived') return ROOM.sysArrived(S(f.who));
   if (c === 'link_saved') return ROOM.sysLinkSaved();
   if (c === 'vote_kept') return ROOM.sysVoteKept(S(f.who));
   if (c === 'vote_opened') return ROOM.sysVoteOpened(S(f.who), S(f.kind));

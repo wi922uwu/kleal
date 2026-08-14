@@ -3754,6 +3754,11 @@ GI_INVITE_TTL = 72 * 3600  # an invite nobody answers stops being a held seat
 # what a plan is being confirmed against, so a newcomer is approved by the organiser, not admitted
 # automatically — «он уже не автоматически попадает в чат, а создатель должен сделать аппрув».
 GI_OPEN_PHASES = ("searching", "chat_open", "ready_to_plan")
+# Переход в один на один возможен и из ПАУЗЫ. Когда план падает ниже кворума, туда же уходит и
+# состояние самой группы — а она при этом жива: люди на месте, разговор на месте, стоит только
+# встреча. Кадр GR.40 предлагает оттуда три выхода, и средний («перейти в один на один») упирался
+# сразу в две проверки: «есть ли план» и «открыта ли группа». Обе отвечали «нельзя».
+GI_CONVERTIBLE_PHASES = GI_OPEN_PHASES + ("below_quorum",)
 
 
 def _gintents():
@@ -3845,8 +3850,8 @@ def _gi_public(g, me=""):
         # можно ли предложить, второму — что предложение уже пришло и ждёт ответа. Без второго
         # экран приглашённого не знал бы о просьбе вовсе.
         "can_convert": is_owner and n == 2
-                       and g.get("state") in GI_OPEN_PHASES
-                       and not _gp_of(g.get("id"))
+                       and g.get("state") in GI_CONVERTIBLE_PHASES
+                       and not _gp_blocks_convert(g.get("id"))
                        and not g.get("pending_1to1"),
         "pending_1to1": g.get("pending_1to1"),
         "planning_allowed": n >= int(g.get("min_total") or GI_MIN_TOTAL)
@@ -4219,6 +4224,18 @@ def gi_remove(gid, frm, who, reason="", idem=None):
         return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, frm)})
 
 
+def _gp_blocks_convert(gid):
+    """Мешает ли план перейти в один на один.
+
+    Живая встреча мешает: переводить нечего, есть договорённость, и увести из неё вдвоём значит
+    отменить её молча. А вот план НА ПАУЗЕ (below_quorum, GR.40) не мешает — он и стоит потому,
+    что третьего нет. Ровно там кадр и предлагает три выхода: позвать ещё, перейти в один на один,
+    отменить. Средний не работал: проверка стояла на «есть ли план вообще», а на паузе он есть.
+    """
+    p = _gp_of(gid)
+    return bool(p) and p.get("state") not in ("below_quorum", "cancelled", "done")
+
+
 def gi_convert_ask(gid, frm, idem=None):
     """GR.19 «Switch to one-on-one» — организатор просит второго перевести группу в один на один.
 
@@ -4240,12 +4257,12 @@ def gi_convert_ask(gid, frm, idem=None):
             return {"ok": False, "error": "NO_SUCH_GROUP"}
         if _norm_name(frm) != _norm_name(g.get("owner")):
             return _idem_put(idem, {"ok": False, "error": "NOT_ORGANIZER"})
-        if g.get("state") not in GI_OPEN_PHASES:
+        if g.get("state") not in GI_CONVERTIBLE_PHASES:
             return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": g.get("state")})
         act = _gi_active(g)
         if len(act) != 2:
             return _idem_put(idem, {"ok": False, "error": "NEED_TWO", "joined": len(act)})
-        if _gp_of(gid):
+        if _gp_blocks_convert(gid):
             return _idem_put(idem, {"ok": False, "error": "PLAN_EXISTS"})
         other = next((m.get("name") for m in act if _norm_name(m.get("name")) != _norm_name(frm)), None)
         if not other:
@@ -4293,6 +4310,17 @@ def gi_convert_respond(gid, who, agree, idem=None):
         g["state"] = "converted_1to1"
         g["version"] = int(g.get("version") or 1) + 1
         g["updated"] = now
+        # План, стоявший на паузе, закрывается ВМЕСТЕ с группой. Оставить его — значит оставить
+        # встречу, к которой больше некому прийти: группы уже нет, а план ссылается на неё и
+        # продолжает висеть в списке живых. Молчаливый мусор, который потом никто не свяжет с
+        # этим переходом.
+        held = _gp_of(gid)
+        if held and held.get("state") == "below_quorum":
+            held["state"] = "cancelled"
+            held["updated"] = now
+            held["version"] = int(held.get("version") or 1) + 1
+            held["cancelled_by"] = str(req.get("by") or "")
+            held["cancel_reason"] = "converted_1to1"
         # Открытые приглашения гасятся ЗДЕСЬ, а не оставляются висеть: место, на которое звали,
         # больше не существует. Текст с борда GR.23 — про то, что человек ни при чём.
         title = str(g.get("title") or "the group")
@@ -4811,6 +4839,14 @@ def _gp_public(p, me=""):
         # встречные предложения (GR.27→28→29). Пока это было одно число, перенос утверждённого
         # плана поднимал «раунд» до третьего, и следующее согласование начиналось сразу
         # исчерпанным: «Last round» на первом же экране.
+        # GR.45a: кто уже в пути, кто опаздывает, кто на месте. Отдаётся ВСЕЙ группе, в отличие
+        # от один-на-один, где это личное: здесь «опаздываю» адресовано всем сразу, и знать об
+        # этом должен каждый, а не только тот, кто откроет чат.
+        "live": dict(p.get("live") or {}),
+        "my_live": (p.get("live") or {}).get(_norm_name(me)),
+        # Встреча уже идёт — кадр меняется с «заперто, через два часа» на «происходит сейчас».
+        "started": bool(p.get("starts_at")) and time.time() >= float(p.get("starts_at") or 0)
+                   and p.get("state") in ("confirmed", "locked"),
         "round": _gp_round(p),
         # Автор последнего предложения — фактом, а не догадкой экрана.
         "proposed_by": p.get("proposed_by"),
@@ -5425,6 +5461,55 @@ def gp_vote_close(vote_id, who, idem=None):
             _gp_close_vote(v)
         _save_store()
         return _idem_put(idem, _gp_vote_view(v, who))
+
+
+GP_LIVE = ("otw", "late", "here")     # GR.45a «уже иду» / «опаздываю» / «я на месте»
+
+
+def gp_status(pid, who, status, eta_min=None, idem=None):
+    """GR.45a/GR.45b — «я опаздываю» и что об этом узнаёт группа.
+
+    Отличие от один-на-один принципиальное и потому не сведено к общей функции: там статус —
+    ЛИЧНОЕ сообщение одному человеку, здесь его должны увидеть все, и увидеть СРАЗУ. Поэтому
+    строка уходит в чат группы кодом (`running_late`), а не только полем в плане: человек,
+    который смотрит в переписку, а не в план, иначе не узнал бы ничего.
+
+    Ставится только на живой встрече — подтверждённой или уже запертой. Сказать «опаздываю» на
+    план, который ещё согласовывают, значит заявить о договорённости, которой нет.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    st = str(status or "").strip().lower()
+    if st not in GP_LIVE:
+        return {"ok": False, "error": "BAD_STATUS", "allowed": list(GP_LIVE)}
+    try:
+        eta = int(eta_min) if eta_min not in (None, "") else None
+    except (TypeError, ValueError):
+        eta = None
+    if eta is not None:
+        eta = max(0, min(180, eta))
+    now = time.time()
+    with _STORE_LOCK:
+        _gp_lock_due(now)
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) not in {_norm_name(m.get("name")) for m in _gi_active(g)}:
+            return _idem_put(idem, {"ok": False, "error": "NOT_A_PARTICIPANT"})
+        if p.get("state") not in ("confirmed", "locked"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_CONFIRMED", "state": p.get("state")})
+        p.setdefault("live", {})[_norm_name(who)] = {"status": st, "eta_min": eta, "t": now}
+        p["updated"] = now
+        if st == "late":
+            _gi_say(g, "%s is running late." % who, code="running_late", who=who, eta=eta)
+        elif st == "here":
+            _gi_say(g, "%s is there." % who, code="arrived", who=who)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
 
 def gp_feedback(pid, who, happened=None, reason="", text="", idem=None):
@@ -6963,6 +7048,9 @@ class H(BaseHTTPRequestHandler):
             # из пропущенного поля. Не сказали — значит оставили как есть.
             send_json(self, 200, gp_vote_decide(body.get("id"), body.get("self"),
                                                 bool(body.get("apply")), body.get("idem")))
+        elif p == "/api/agent/gplan-status":
+            send_json(self, 200, gp_status(body.get("id"), body.get("self"), body.get("status"),
+                                           body.get("eta_min"), body.get("idem")))
         elif p == "/api/agent/gplan-feedback":
             send_json(self, 200, gp_feedback(body.get("id"), body.get("self"), body.get("happened"),
                                              body.get("reason"), body.get("text"), body.get("idem")))

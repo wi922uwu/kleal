@@ -62,6 +62,7 @@ export default function GroupPlan() {
   const [err, setErr] = useState('');
   const [fatal, setFatal] = useState('');
   const [askVote, setAskVote] = useState(false);
+  const [ask1to1, setAsk1to1] = useState(false);
   const [voteSheet, setVoteSheet] = useState(false);
   const [decideSheet, setDecideSheet] = useState(false);
 
@@ -85,6 +86,11 @@ export default function GroupPlan() {
   const owner = String(g?.owner || '');
   const isOwner = !!g?.i_am_owner;
   const members = (g?.members || []) as { name?: string; photo?: string }[];
+  // Второй из двоих — тот, чьё согласие нужно на переход. Берётся из ЖИВОГО состава, а не из
+  // истории плана: ушедший в списке плана остаётся (кадр показывает «Left · 20 minutes ago»), и
+  // спросить его было бы не у кого.
+  const otherName = members.map((m) => String(m.name || ''))
+                           .filter((x) => x && x !== me)[0] || '';
   /**
    * GR.39. Вышедшие идут В ТОТ ЖЕ состав, строкой «Вышел(а) · 20 минут назад», а не исчезают.
    * Состав, который забывает людей, не может объяснить, почему их стало меньше, — а это первый
@@ -195,6 +201,26 @@ export default function GroupPlan() {
   /** GR.40: организатор закрывает план, вставший на паузу. Группа остаётся — уходит только план. */
   const cancelPlan = () => act(() => gapi.planCancel(String(plan?.id), me, newIdem('gpc')));
 
+  /**
+   * GR.40, третий выход: продолжить вдвоём.
+   *
+   * Это ПРОСЬБА, а не действие. Группа принадлежит обоим, и организатор, закрывающий её
+   * единолично, отнимает у второго то, на что тот согласился, — поэтому здесь только вопрос,
+   * а отвечает второй (GR.20, в чате группы).
+   */
+  /**
+   * GR.45a «Я опаздываю» — и об этом узнаёт ВСЯ группа.
+   *
+   * Ничего не отменяет и ничего не меняет в плане: встреча в силе, просто остальные не ждут в
+   * неведении. Поэтому строка уходит и в чат — человек, который смотрит переписку, а не план,
+   * иначе не узнал бы вовсе.
+   */
+  const sayLate = () =>
+    act(() => gapi.planStatus(String(plan?.id), me, 'late', newIdem('gps')));
+
+  const askSwitch = () =>
+    act(() => gapi.convertAsk(String(gid), me, newIdem('gcv')), () => setAsk1to1(false));
+
   const update = () =>
     act(() => gapi.planUpdate(String(plan?.id), me,
                               { ...timeArgs(), place: place.trim() || undefined }, newIdem('gpu')),
@@ -282,7 +308,7 @@ export default function GroupPlan() {
 
           {/* Заголовок и пояснение — они и есть кадр: на борде меняются только эти две строки. */}
           <Text style={s.title}>{formTitle(mode, view, { plan, vote, owner, online, proposer, isOwner })}</Text>
-          <Text style={s.note}>{formNote(mode, view, { plan, vote, owner, online, g, isOwner })}</Text>
+          <Text style={s.note}>{formNote(mode, view, { plan, vote, owner, online, g, isOwner, me })}</Text>
 
           {/* Карточка плана — общая для всех кадров. В форме показывает то, что человек вводит
               прямо сейчас: иначе он правит вслепую и сверяет с памятью. */}
@@ -423,6 +449,11 @@ export default function GroupPlan() {
             onFix={fix}
             onInviteMore={() => router.push({ pathname: '/group', params: { gid } })}
             onCancelPlan={cancelPlan}
+            canConvert={!!(g as any)?.can_convert}
+            onSwitch1to1={() => setAsk1to1(true)}
+            imLateSent={String((plan as any)?.my_live?.status || '') === 'late'}
+            onLate={sayLate}
+            onCantMakeIt={leave}
             onMoreTime={() => {}}
             onStay={confirm}
             onLeave={leave}
@@ -457,6 +488,21 @@ export default function GroupPlan() {
           </Pressable>
           <Pressable accessibilityRole="button" style={s.quiet} onPress={() => setAskVote(false)}>
             <Text style={s.quietText}>{GPLAN.notNow()}</Text>
+          </Pressable>
+        </PlanSheet>
+
+        {/* GR.40, средний выход. Лист повторяет тот, что в чате группы, дословно по смыслу: решение
+            принимают ДВОЕ, и человек читает это ровно в момент, когда нажимает. */}
+        <PlanSheet open={ask1to1} onClose={() => setAsk1to1(false)}
+               title={GPLAN.switchAskTitle(otherName)}
+               body={GPLAN.switchAskNote(otherName)}>
+          <Pressable accessibilityRole="button" style={s.primary} onPress={askSwitch}
+                     accessibilityState={{ busy }} disabled={busy}>
+            {busy ? <ActivityIndicator color={color.onPrimary} />
+                  : <Text style={s.primaryText}>{GPLAN.switchAskSend(otherName)}</Text>}
+          </Pressable>
+          <Pressable accessibilityRole="button" style={s.quiet} onPress={() => setAsk1to1(false)}>
+            <Text style={s.quietText}>{GPLAN.switchKeep()}</Text>
           </Pressable>
         </PlanSheet>
 
@@ -520,12 +566,13 @@ export default function GroupPlan() {
  */
 type Frame =
   | 'none' | 'proposed' | 'confirmed' | 'fix' | 'stayOrLeave' | 'acceptOrLeave'
-  | 'voteOpen' | 'voteDecide' | 'voteWait' | 'locked' | 'below' | 'closed';
+  | 'voteOpen' | 'voteDecide' | 'voteWait' | 'locked' | 'now' | 'below' | 'closed';
 
 function frameOf(a: { plan: GPlan | null; vote: GVote | null; isOwner: boolean; owner: string; me: string }): Frame {
   const { plan, vote, isOwner } = a;
   if (!plan) return 'none';
   if (plan.state === 'cancelled' || plan.state === 'done') return 'closed';
+  if ((plan as any).started) return 'now';
   if (plan.state === 'locked') return 'locked';
   if (plan.state === 'below_quorum') return 'below';
   if (plan.stay_or_leave) return 'stayOrLeave';
@@ -567,6 +614,7 @@ function formTitle(
     // «План назначен» на плане, который упал ниже трёх, — прямая неправда: рядом на том же
     // экране написано, что осталось меньше трёх.
     case 'below': return GPLAN.belowTitle();
+    case 'now': return GPLAN.nowTitle();
     case 'locked':
     case 'closed':
     default: return GPLAN.setTitle();
@@ -576,7 +624,7 @@ function formTitle(
 function formNote(
   mode: Mode, f: Frame,
   a: { plan: GPlan | null; vote: GVote | null; owner: string; online: boolean; g: GroupInfo | null;
-       isOwner: boolean }
+       isOwner: boolean; me: string }
 ): string {
   const p = a.plan || {};
   if (mode === 'create') return GPLAN.createNote();
@@ -604,10 +652,17 @@ function formNote(
       return GPLAN.closedNoteOwner(Number(a.vote?.yes || 0), Number(a.vote?.no || 0),
                                    (a.vote?.waiting || []).length);
     case 'voteWait': return GPLAN.waitingDecision(a.owner);
+    case 'now': return GPLAN.nowNote(a.owner);
     case 'locked': return GPLAN.locked();
     // Борд открывает вопрос («на паузе, решай»), а прежняя строка его закрывала («групповым
     // быть перестал»). Обещать человеку выбор и тут же говорить, что всё кончено, нельзя.
-    case 'below': return GPLAN.belowNote();
+    case 'below': {
+      // Про согласие второго говорим, только если переход и правда возможен: иначе строка
+      // обещала бы выход, которого на кадре нет.
+      const peer = ((a.g?.members || []) as { name?: string }[])
+        .map((m) => String(m.name || '')).filter((x) => x && x !== a.me)[0] || '';
+      return GPLAN.belowNote((a.g as any)?.can_convert ? peer : '');
+    }
     case 'closed': return GPLAN.cancelled();
     case 'confirmed':
       return p.needs_link && a.isOwner ? GPLAN.linkNote(String(p.when || '')) : GPLAN.setNote();
@@ -686,6 +741,8 @@ function Actions(a: {
   onFix: () => void; onStay: () => void; onLeave: () => void; onOpenChat: () => void;
   onAskVote: () => void; onOpenVote: () => void; onDecide: () => void;
   onInviteMore: () => void; onCancelPlan: () => void; onMoreTime: () => void;
+  canConvert: boolean; onSwitch1to1: () => void;
+  imLateSent: boolean; onLate: () => void; onCantMakeIt: () => void;
   onUpdateOpen: () => void; onUpdateSend: () => void; onAccept: () => void;
   onLinkOpen: () => void; onLinkSave: () => void; onAskHost: () => void; onCancelForm: () => void;
 }) {
@@ -754,11 +811,24 @@ function Actions(a: {
     // GR.40: три выхода с кадра. Раньше здесь была одна «открыть чат» — то есть выхода не было
     // ни одного, и план оставался на паузе навсегда.
     case 'below':
+      // Средний выход показывается только когда он ВОЗМОЖЕН: сервер отдаёт can_convert, и он же
+      // отказал бы, если бы кнопка обещала лишнего (уже спросили, второго нет, план ожил).
       return a.isOwner
         ? <><P label={GPLAN.inviteMore()} onPress={a.onInviteMore} />
+             {a.canConvert ? <S label={GPLAN.switchTo1to1()} onPress={a.onSwitch1to1} /> : null}
              <S label={GPLAN.cancelPlan()} onPress={a.onCancelPlan} /></>
         : <S label={GPLAN.openChat()} onPress={a.onOpenChat} />;
+    // GR.45: заперто — менять нельзя ничего, но сказать «не смогу» можно и нужно; иначе
+    // единственным честным действием остаётся молча не прийти.
     case 'locked':
+      return <><P label={GPLAN.openChat()} onPress={a.onOpenChat} />
+               <S label={GPLAN.cantMakeIt()} onPress={a.onCantMakeIt} /></>;
+    // GR.45a: встреча идёт. «Опаздываю» видит вся группа — тем и отличается от один-на-один,
+    // где это личное сообщение одному человеку.
+    case 'now':
+      return <><P label={GPLAN.openChat()} onPress={a.onOpenChat} />
+               <S label={a.imLateSent ? GPLAN.lateSent() : GPLAN.imLate()}
+                  onPress={a.imLateSent ? a.onOpenChat : a.onLate} /></>;
     case 'closed':
     default:
       return <S label={GPLAN.openChat()} onPress={a.onOpenChat} />;

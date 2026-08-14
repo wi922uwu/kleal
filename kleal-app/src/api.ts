@@ -694,6 +694,12 @@ export const group = {
    * голосованием, а оно требует утверждённого плана — то есть ровно того состояния, из которого
    * план и выпал. Он висел вечно. Группа при этом остаётся: люди никуда не делись.
    */
+  /** GR.45a: «уже иду» / «опаздываю» / «я на месте». Видит вся группа, а не один человек. */
+  planStatus: (id: string, self: string, status: 'otw' | 'late' | 'here', idem: string, etaMin?: number) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/gplan-status', { id, self, status, idem, eta_min: etaMin }
+    ),
+
   planCancel: (id: string, self: string, idem: string) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       '/api/agent/gplan-cancel', { id, self, idem }

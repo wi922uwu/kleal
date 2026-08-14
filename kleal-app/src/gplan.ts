@@ -199,12 +199,38 @@ export const GPLAN = {
       'Under two hours to go — the plan doesn’t change any more.'),
   /** GR.40. План НА ПАУЗЕ, а не отменён: решение за организатором, и оно ещё не принято. */
   belowTitle: () => T('Вас осталось двое', 'You’re down to two'),
-  belowNote: () => T(
-    'Групповому плану нужны трое. Пока ты не решишь, ничего не происходит — план на паузе, а не отменён.',
+  belowNote: (who?: string) => T(
+    'Групповому плану нужны трое. Пока ты не решишь, ничего не происходит — план на паузе, а не отменён.'
+    + (who ? ` Переход в один на один требует согласия ${who} и тратит один из твоих планов 1:1.` : ''),
     'A group plan needs three. Nothing happens until you choose — the plan is on hold, not cancelled.'
+    + (who ? ` Switching to one-on-one needs ${who}’s agreement and uses one of your 1:1 plans.` : '')
   ),
   inviteMore: () => T('Позвать ещё людей', 'Invite more people'),
+  /** Третий выход с GR.40. Он был описан в коде и не построен: кнопок рисовалось две. */
+  switchTo1to1: () => T('Перейти в один на один', 'Switch to one-on-one'),
   cancelPlan: () => T('Отменить план', 'Cancel the plan'),
+  /** Лист подтверждения — тот же смысл, что в чате группы: решает не организатор, а оба. */
+  switchAskTitle: (who: string) => T(`Перейти в один на один с ${who}?`, `Switch to one-on-one with ${who}?`),
+  switchAskNote: (who: string) => T(
+    `${who} тоже должен согласиться. Если согласится, план закроется, а вы продолжите вдвоём.`,
+    `${who} has to agree too. If they do, the plan closes and the two of you keep going.`
+  ),
+  switchAskSend: (who: string) => T(`Спросить ${who}`, `Ask ${who} to switch`),
+  switchKeep: () => T('Оставить группу', 'Keep the group'),
+  switchFailed: () => T('Не вышло предложить переход. Попробуй ещё раз.',
+                        'Couldn’t offer the switch. Try again.'),
+
+  /** GR.45: заперто — но сказать «не смогу» можно. Молча не прийти это не выход, а его отсутствие. */
+  cantMakeIt: () => T('Не смогу прийти', 'I can’t make it'),
+  /** GR.45a: встреча идёт. */
+  nowTitle: () => T('Встреча идёт', 'It’s happening now'),
+  nowNote: (who: string) => T(
+    `Kleal не видит, что происходит за столом. Завтра спросим всех, состоялось ли${who ? `. Организатор — ${who}` : ''}.`,
+    `Kleal can’t see what’s going on at the table. Tomorrow we’ll ask everyone whether it happened${who ? `. Organiser — ${who}` : ''}.`
+  ),
+  imLate: () => T('Я опаздываю', 'I’m running late'),
+  /** Второй раз говорить то же самое незачем: подпись сообщает, что группа уже знает. */
+  lateSent: () => T('Группа знает, что ты опаздываешь', 'The group knows you’re late'),
 
   cancelled: () => T('План отменён.', 'The plan is cancelled.'),
 
