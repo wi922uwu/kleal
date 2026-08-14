@@ -77,6 +77,7 @@ export default function GroupRoom() {
   const [leaving, setLeaving] = useState(false);
   /** GR.19/GR.20: спрашиваю я или спрашивают меня — два листа поверх одного экрана. */
   const [ask1to1, setAsk1to1] = useState(false);
+  const leftForOneOnOne = useRef(false);
   const [busy1to1, setBusy1to1] = useState(false);
   const [adopting, setAdopting] = useState(false);
   /** Время последнего известного сообщения — по нему сервер отдаёт только новые. */
@@ -113,6 +114,24 @@ export default function GroupRoom() {
       if (r?.error === 'NOT_A_MEMBER') { setFatal(ROOM.notMember()); return; }
       if (r?.error === 'NO_SUCH_GROUP') { setFatal(ROOM.gone()); return; }
       if (r?.group) setG(r.group);
+      // Спрашивавшая сторона ждёт здесь, и ответ приходит опросом. Как только группа стала
+      // один-на-один — уводим и её: иначе организатор остаётся в комнате, которой уже нет, и
+      // «согласился» выглядит как «ничего не ответил».
+      //
+      // Один раз и только на ПЕРЕХОД, а не на состояние: сторожок нужен потому, что опрос идёт
+      // дальше, и без него replace повторялся бы каждые несколько секунд, забивая переписку.
+      if (r?.group?.state === 'converted_1to1' && !leftForOneOnOne.current) {
+        const peer = (r.group.members || [])
+          .map((x: any) => String(x?.name || ''))
+          .find((x: string) => x && x.toLowerCase() !== me.toLowerCase());
+        if (peer) {
+          leftForOneOnOne.current = true;
+          const m = (r.group.members || []).find(
+            (x: any) => String(x?.name || '').toLowerCase() === peer.toLowerCase());
+          router.replace({ pathname: '/conversation', params: { who: peer, photo: String(m?.photo || '') } });
+          return;
+        }
+      }
       const list: GMsg[] = r?.messages || [];
       if (list.length) {
         const rows = list.map(roomMsg);
@@ -284,10 +303,25 @@ export default function GroupRoom() {
     try {
       const r: any = await gapi.convertRespond(gid, me, agree, newIdem('gcr'));
       if (!r?.ok) { setErr(ROOM.switchFailed()); return; }
+      // Согласился — значит один-на-один уже существует, и оставаться в комнате мёртвой группы
+      // незачем. Раньше здесь был только load(): состояние менялось, а экран оставался прежним,
+      // и человек видел ровно то же, что до нажатия («ничего не произошло»).
+      if (agree && r?.with) { toOneOnOne(String(r.with)); return; }
       load();
     } finally {
       setBusy1to1(false);
     }
+  };
+
+  /**
+   * Уйти в личную переписку — replace, а не push: группы больше нет, и возвращаться в её комнату
+   * кнопкой «назад» человеку некуда. Фото берётся из состава: без него переписка открылась бы
+   * с пустым кружком вместо лица того, с кем только что говорили.
+   */
+  const toOneOnOne = (who: string) => {
+    const m = ((g as any)?.members || []).find(
+      (x: any) => String(x?.name || '').toLowerCase() === who.toLowerCase());
+    router.replace({ pathname: '/conversation', params: { who, photo: String(m?.photo || '') } });
   };
 
   /** Второй в группе — тот, кого спрашивают. Их двое, иначе кнопки перехода не бывает. */

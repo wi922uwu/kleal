@@ -755,6 +755,11 @@ export function sysLine(sys: SysMsg | undefined, me: string, ru: boolean): strin
         ? T('Ты завершил(а) разговор', 'You ended the chat')
         : T(`${by} завершил(а) разговор. Можно выбрать другого.`,
             `${by} ended the chat. You can pick again.`);
+    // Переписка началась не с нуля: эти двое уже говорили в группе, которая не собралась.
+    // Без этой строки личный чат открывается пустым, и непонятно, откуда он взялся.
+    case 'converted_from_group':
+      return T('Группа не собралась — вы продолжаете вдвоём. Переписка здесь.',
+               'The group didn’t fill up — the two of you carry on. The chat is here.');
     case 'plan_proposed':
       return mine
         ? T(`Ты предложил(а) встречу${when ? ' — ' + when : ''}`, `You proposed a meetup${when ? ' — ' + when : ''}`)

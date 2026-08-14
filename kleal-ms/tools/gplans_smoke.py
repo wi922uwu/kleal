@@ -515,6 +515,30 @@ thC = call("/api/agent/gintent-thread?gid=%s&self=%s" % (gidC, OWN))
 codesC = [(m.get("sys") or {}).get("code") for m in (thC.get("messages") or [])]
 check("в чате есть и вопрос, и ответ", "convert_asked" in codesC and "converted" in codesC, codesC[-4:])
 
+# И САМОЕ ГЛАВНОЕ: один-на-один должен ПОЯВИТЬСЯ, а не только назваться.
+#
+# Сначала переход менял состояние группы, писал строку в чат — и всё. Никакого один-на-один не
+# возникало: двое оставались в комнате мёртвой группы и не могли ни написать друг другу
+# (переписка 1:1 требует принятого приглашения), ни назначить встречу. Отказа при этом не было,
+# экран просто оставался прежним — «нажал и ничего не произошло».
+check("ответ называет, с кем теперь один-на-один", agr.get("with") == OWN, agr.get("with"))
+post = call("/api/agent/message", {"from": OWN, "to": whoC[0], "text": "после перехода %d" % S})
+check("переписка один-на-один работает", post.get("ok"), post)
+thP = call("/api/agent/thread?self=%s&with=%s" % (OWN, whoC[0]))
+msgsP = thP.get("messages") or []
+check("и объясняет, откуда она взялась",
+      "converted_from_group" in [(m.get("sys") or {}).get("code") for m in msgsP],
+      [(m.get("sys") or {}).get("code") for m in msgsP][:4])
+check("сообщение видно обеим сторонам",
+      any(m.get("text") == "после перехода %d" % S for m in msgsP)
+      and any(m.get("text") == "после перехода %d" % S
+              for m in (call("/api/agent/thread?self=%s&with=%s" % (whoC[0], OWN)).get("messages") or [])))
+mpP = call("/api/agent/mplan-propose", {"self": OWN, "to": whoC[0], "title": "Кофе",
+                                        "mode": "offline", "when": "через 3 дня",
+                                        "starts_at": int(time.time()) + 3 * 86400,
+                                        "idem": "mpc%d" % S})
+check("и встречу вдвоём можно назначить", mpP.get("ok"), mpP)
+
 print()
 print("=" * 76)
 print("РЕЗУЛЬТАТ: %d ok, %d проблем" % (R["ok"], R["fail"]))

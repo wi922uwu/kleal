@@ -4329,9 +4329,37 @@ def gi_convert_respond(gid, who, agree, idem=None):
             inv["updated"] = now
             inv["note_out"] = ("%s turned %s into a one-on-one, so the group invite is closed. "
                                "Nothing you did." % (req.get("by"), title))
+        # А ВОТ И САМ ОДИН-НА-ОДИН. Без этой записи «перешли в один на один» было ярлыком без
+        # вещи: состояние группы менялось, строка в чат уходила, а никакого один-на-один не
+        # возникало. Двое оставались в комнате мёртвой группы и не могли ни написать друг другу
+        # (переписка 1:1 требует принятого приглашения — _mp_matched), ни назначить встречу.
+        # Отказа при этом не было: экран просто оставался прежним.
+        #
+        # Согласие уже дано — обоими, вслух, прямо здесь: один спросил, второй ответил «да».
+        # Поэтому заявка создаётся СРАЗУ принятой, а не «отправленной»: спрашивать второй раз то,
+        # на что человек только что согласился, значит не понимать собственный вопрос.
+        by, to_ = str(req.get("by") or ""), str(req.get("to") or "")
+        if by and to_ and not _mp_matched(by, to_):
+            rs = _requests()
+            rid = "rq_%d_%s" % (int(now * 1000),
+                                hashlib.sha1((by + to_ + "cv").encode("utf-8")).hexdigest()[:6])
+            rs.append({"id": rid, "from": by, "to": to_,
+                       "intent": {"topics": list(g.get("topics") or []),
+                                  "title": str(g.get("title") or "")[:200]},
+                       "iid": str(g.get("gid") or "")[:64],
+                       "note": "", "status": "accepted", "created": now, "updated": now,
+                       "version": 1, "expires_at": now,
+                       # След происхождения: эта пара пришла НЕ из поиска, а из распавшейся группы.
+                       # Без него потом не отличить её от обычного знакомства.
+                       "source": "group_convert",
+                       "config_version": (_CORE_CFG or {}).get("config_version")})
+            # Разговор не начинается с пустого экрана: люди уже общались, и первое, что они
+            # увидят в переписке, — почему она вдруг стала личной.
+            _sys_msg(by, to_, "converted_from_group")
         _gi_say(g, "The group is now a one-on-one.", code="converted")
         _save_store()
-    return _idem_put(idem, {"ok": True, "agreed": True, "group": _gi_public(g, who)})
+    return _idem_put(idem, {"ok": True, "agreed": True, "with": str(req.get("by") or ""),
+                            "group": _gi_public(g, who)})
 
 
 def gi_leave(gid, who, idem=None):
