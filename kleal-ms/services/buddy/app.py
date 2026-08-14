@@ -421,7 +421,11 @@ real structure, and only then:
   | Что | Падел | Теннис |\n| --- | --- | --- |\n| Ракетка | короткая, без струн | длинная, со струнами |
   Keep it to 2-3 columns and short cells: it is read on a phone.
 - A sequence of steps -> a numbered list. Independent points of equal weight -> a bulleted list.
-- An answer longer than roughly four sentences that covers several distinct things -> «## » headings.
+- HEADINGS. Count the distinct parts of your answer before you write it. TWO OR MORE parts -> put a
+  «## » heading above each one, on its own line. «Расскажи про X» almost always has parts: what it is,
+  how it works, what it is for, what the risks are. Do not merge them into one wall of paragraphs —
+  that is the most common way this comes out wrong. ONE part (a single fact, a direct answer) -> no
+  heading at all. A heading is 1-3 words, names the part, and never repeats the question.
 - One key definition or caveat the whole answer hangs on -> a «> » quote line.
 - **Bold** the term being defined, not whole sentences.
 HARD LIMITS, because over-formatting is worse than none:
@@ -1531,6 +1535,33 @@ def _escape_raw_newlines(s):
     return "".join(out)
 
 
+def _as_plain_reply(raw):
+    """Модель ответила ТЕКСТОМ, без обёртки JSON. Это всё равно ответ.
+
+    На втором-третьем ходу 70B регулярно бросает конверт: реплика человека («подробнее», «а ещё»)
+    разговорная, и модель отвечает разговорно — просто абзацем. Измерено на живом сервере: 7 отказов
+    из 8 на одном и том же ходу, и в каждом случае в логе лежал готовый, полный, уместный ответ,
+    который выбрасывался только за отсутствие фигурных скобок. Человек вместо него видел «я сбился».
+
+    Выбросить готовый ответ, потому что он не в конверте, — это и есть поломка. Здесь он
+    принимается, а `signals` остаются пустыми: их модель не прислала, и выдумывать их нельзя.
+
+    Отказываем только тому, что похоже на СЛОМАННЫЙ JSON: такому лучше дать шанс на починку
+    скобок, чем показывать человеку кусок разметки.
+    """
+    t = str(raw or "").strip()
+    if not t:
+        return None
+    if t.startswith("```"):                     # ```json ... ``` — снимаем забор
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```$", "", t).strip()
+    if not t or t.lstrip().startswith("{") or '"reply"' in t[:200]:
+        return None
+    if len(t) < 12:                             # «ок» без конверта — не ответ, а обрывок
+        return None
+    return {"reply": t[:600], "signals": {}, "match": False}
+
+
 def _lenient_json(raw):
     """The 70B sometimes truncates the closing braces. Try the shared extractor, then repair."""
     obj = base._extract_json(raw)
@@ -1590,12 +1621,22 @@ def buddy_chat(messages, profile, signals, uid=None):
     _cmsgs = [{"role": "system", "content": _buddy_sys(sig, lang)},
               {"role": "user", "content": convo}]
     obj = None
+    _why = []                      # почему не вышло — иначе сбой виден только человеку на экране
     for _attempt in range(2):
+        raw = ""
         try:
             raw = llm_complete(MODEL_ID, _cmsgs, 0.35 if _attempt == 0 else 0.2)
             cand = _lenient_json(raw)
-        except Exception:
+            if not isinstance(cand, dict):
+                # Голый текст — это ответ, а не отказ. Конверт нужен нам, а не человеку.
+                cand = _as_plain_reply(raw)
+                if not isinstance(cand, dict):
+                    _why.append("json:%r" % (str(raw)[:200],))
+            elif not cand.get("reply"):
+                _why.append("no-reply:%r" % (str(raw)[:160],))
+        except Exception as e:
             cand = None
+            _why.append("llm:%s: %s" % (type(e).__name__, str(e)[:120]))
         if not isinstance(cand, dict) or not cand.get("reply"):
             continue
         if obj is None:
@@ -1616,6 +1657,10 @@ def buddy_chat(messages, profile, signals, uid=None):
         # Согласие на уже прозвучавшее предложение проходит и здесь: оно не требует модели, всё
         # нужное лежит в истории.
         want_match = _agreed or wants_people(last_user, False)
+        # Заготовка вместо ответа — это отказ, и он обязан быть ВИДЕН в журнале. Без этой строки
+        # он существовал только на экране у человека: сервис молчал, и причину приходилось гадать.
+        print("BUDDY FALLBACK lang=%s want_match=%s why=%s" % (lang, want_match, " | ".join(_why) or "?"),
+              flush=True)
         # Разговор уже шёл — значит спрашивать «чем занимаешься» поздно и неправдиво: это не
         # продолжение беседы, а её обнуление. Честнее сказать, что сбились.
         _mid = sum(1 for m in (messages or []) if m.get("role") == "assistant") > 0
