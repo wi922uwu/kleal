@@ -76,8 +76,10 @@ export default function ProfileHub() {
    * ключуется именем, а фото едет отдельным путём при регистрации. См. WHOAMI в src/profile.ts —
    * там записано, почему переименование не создаёт вторую строку молча.
    */
-  const saveWhoAmI = async (v: { name: string; age: number; photo?: string }) => {
+  const saveWhoAmI = async (v: { name: string; surname: string; age: number; photo?: string }) => {
     if (v.name.trim()) set('name', v.name.trim());
+    // Пустую фамилию записываем тоже — иначе стереть её было бы нельзя.
+    set('surname', v.surname.trim());
     if (v.age) set('age', v.age);
     set('photo', v.photo || '');
     setSheet(null);
@@ -425,9 +427,10 @@ function WhoAmISheet({
   open: boolean;
   p: any;
   onClose: () => void;
-  onAccept: (v: { name: string; age: number; photo?: string }) => void;
+  onAccept: (v: { name: string; surname: string; age: number; photo?: string }) => void;
 }) {
   const [name, setName] = useState(String(p.name || ''));
+  const [surname, setSurname] = useState(String(p.surname || ''));
   const [age, setAge] = useState(String(p.age || ''));
   const [photo, setPhoto] = useState<string>(String(p.photo || ''));
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -436,6 +439,7 @@ function WhoAmISheet({
   useEffect(() => {
     if (!open) return;
     setName(String(p.name || ''));
+    setSurname(String(p.surname || ''));
     setAge(String(p.age || ''));
     setPhoto(String(p.photo || ''));
     setPhotoErr('');
@@ -469,7 +473,7 @@ function WhoAmISheet({
       open={open}
       title={WHOAMI.title()}
       onClose={onClose}
-      onAccept={() => onAccept({ name, age: parseInt(age, 10) || 0, photo })}
+      onAccept={() => onAccept({ name, surname, age: parseInt(age, 10) || 0, photo })}
       acceptLabel={SHEETS.accept()}
     >
       <View style={s.whoPhotoRow}>
@@ -510,6 +514,17 @@ function WhoAmISheet({
         accessibilityLabel={WHOAMI.name()}
       />
       <Text style={s.whoNote}>{WHOAMI.nameNote()}</Text>
+
+      <Text style={s.basicTitle}>{WHOAMI.surname()}</Text>
+      <TextInput
+        style={s.whoInput}
+        value={surname}
+        onChangeText={setSurname}
+        placeholder={WHOAMI.surname()}
+        placeholderTextColor={color.neutral400}
+        accessibilityLabel={WHOAMI.surname()}
+      />
+      <Text style={s.whoNote}>{WHOAMI.surnameNote()}</Text>
 
       <Text style={s.basicTitle}>{WHOAMI.age()}</Text>
       <TextInput

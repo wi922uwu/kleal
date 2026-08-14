@@ -207,7 +207,10 @@ export default function Home() {
               <IconMic />
             </Pressable>
           </View>
-          <Pressable accessibilityRole="button" style={s.hist} onPress={() => router.push('/buddy')}>
+          {/* Кнопка обещает историю — и открывает её сегмент во вкладке «Интенты». Раньше она
+              вела в чат с Бадди: это разговор, но не история, и вернуться к прошлым затеям
+              оттуда было нельзя. */}
+          <Pressable accessibilityRole="button" style={s.hist} onPress={() => router.push('/activity?seg=history')}>
             <IconChat />
             <Text style={s.histText}>{HOME.history()}</Text>
             <Text style={s.histArrow}>›</Text>

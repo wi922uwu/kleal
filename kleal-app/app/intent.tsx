@@ -437,7 +437,10 @@ export default function Intent() {
             <IconChevronLeft />
           </Pressable>
           <View style={{ flex: 1 }} />
-          <Pressable accessibilityRole="button" style={s.allBtn} onPress={() => router.replace('/home')}>
+          {/* Кнопка называется «Все интенты» — значит ведёт к ним, а не на главную. Раньше она
+              делала replace('/home'), и человек, искавший список своих затей, оказывался на
+              ленте (поймано 14 августа). Список живёт во вкладке «Интенты» — это /activity. */}
+          <Pressable accessibilityRole="button" style={s.allBtn} onPress={() => router.replace('/activity')}>
             <Text style={s.allText}>{INTENT.allIntents()}</Text>
           </Pressable>
         </View>

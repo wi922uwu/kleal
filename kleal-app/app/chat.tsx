@@ -23,7 +23,7 @@ import {
   STEP_PROGRESS, HEADER_TITLE, STEP_START, STEP_BASICS, SEXES, sexLabel,
   STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES, hobbyLabel,
   hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME, FUNNEL, FUNNEL_OUT_RE, FUNNEL_MORE_RE,
-  OWN_INPUT,
+  OWN_INPUT, parseName,
 } from '../src/onboarding';
 import { CipherWheel } from '../src/components/CipherWheel';
 import { labelOf, funnelWorthy, WHEEL_COPY } from '../src/interests-wheel';
@@ -294,9 +294,13 @@ export default function Chat() {
       return;
     }
 
-    // На шаге имени ответ разбирать не нужно: что написали, то и имя.
+    // На шаге имени ответ РАЗБИРАЕТСЯ. Раньше здесь стояло «что написали, то и имя» — и человек,
+    // ответивший «называй меня Иван», становился «называй меня иван»: под этим именем его видели
+    // в поиске и к нему обращался агент. Заодно из «Иван Петров» достаётся фамилия.
     if (step === 'start' && !st.profile.name) {
-      set('name', text);
+      const parsed = parseName(text);
+      if (parsed.name) set('name', parsed.name);
+      if (parsed.surname) set('surname', parsed.surname);
       goto('basics', STEP_BASICS.bot());
       return;
     }

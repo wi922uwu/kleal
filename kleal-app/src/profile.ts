@@ -338,6 +338,11 @@ export const HUB_ROWS: HubRow[] = [
 export const WHOAMI = {
   title: () => T('Кто ты', 'About you'),
   name: () => T('Имя', 'Name'),
+  surname: () => T('Фамилия', 'Surname'),
+  /** Фамилия не обязательна: людям, которые не хотят её называть, нельзя закрывать регистрацию. */
+  surnameNote: () =>
+    T('Не обязательно. Помогает не спутать двух тёзок в группе.',
+      'Optional. Helps tell two people with the same first name apart.'),
   age: () => T('Возраст', 'Age'),
   photo: () => T('Фото', 'Photo'),
   changePhoto: () => T('Сменить фото', 'Change photo'),

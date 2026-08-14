@@ -20,7 +20,7 @@ import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { agent, group as gapi, mediaUrl } from '../src/api';
@@ -54,7 +54,16 @@ export default function Activity() {
   const insets = useSafeAreaInsets();
   const me = String(st.profile.name || '');
 
-  const [seg, setSeg] = useState<Seg>('intents');
+  /**
+   * Сегмент можно открыть сразу — `/activity?seg=history`. Иначе кнопка «Открыть историю» с
+   * главной приводила бы на экран и просила человека самому найти нужную вкладку: обещание в
+   * названии кнопки и то, что он видит, обязаны совпадать.
+   */
+  const params = useLocalSearchParams<{ seg?: string }>();
+  const asked = String(params.seg || '') as Seg;
+  const [seg, setSeg] = useState<Seg>(
+    ['intents', 'plans', 'invites', 'history'].includes(asked) ? asked : 'intents'
+  );
   const [data, setData] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');

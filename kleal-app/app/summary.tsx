@@ -5,7 +5,7 @@
  * дальше речь уже не о заполнении, а о том, что из этого понято.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
+import { Alert, View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useLang, T, replyLang } from '../src/i18n';
@@ -108,9 +108,21 @@ export default function Summary() {
     if (await register()) router.replace('/done');
   };
 
-  /** Кнопка обещает настройки профиля — туда и ведёт. Но сначала запись, как и «Готово». */
+  /**
+   * Кнопка обещает настройки профиля — туда и ведёт. Запись идёт первой, как и у «Готово»:
+   * уйти в приложение с профилем, которого нет на сервере, нельзя.
+   *
+   * Но НЕУДАЧА ЗАПИСИ БОЛЬШЕ НЕ ДЕЛАЕТ КНОПКУ МЁРТВОЙ. Раньше при сбое здесь просто ничего не
+   * происходило: сообщение об ошибке рисуется в самом низу прокрутки, за краем экрана, и со
+   * стороны это выглядело как «нажимаю — и ничего» (сообщено 14 августа с телефона). Теперь
+   * причина всплывает поверх экрана, и человек видит, что произошло.
+   */
   const toProfile = async () => {
-    if (await register()) router.replace('/profile');
+    if (await register()) { router.replace('/profile'); return; }
+    Alert.alert(
+      T('Профиль не сохранился', 'Your profile didn’t save'),
+      T('Проверь связь и попробуй ещё раз.', 'Check your connection and try again.')
+    );
   };
 
   return (

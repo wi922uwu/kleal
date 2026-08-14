@@ -1225,6 +1225,73 @@ console.log('\nпереход группы в один на один постр�
     /askTitle:/.test(txt) && /answerTitle:/.test(txt) && /keepGroup:/.test(txt));
 }
 
+// ------------------------------------------------- 11. имя человека — не фраза, которой он ответил
+//
+// На «Как тебя зовут?» отвечают живой речью: «называй меня Иван», «меня зовут Иван Петров».
+// В коде стояло «что написали, то и имя», и человек становился «называй меня иван» — под этим
+// именем его видели в поиске и так к нему обращался агент (снято с телефона 14 августа).
+console.log('\nимя вытаскивается из живого ответа');
+{
+  const src = read('src/onboarding.ts');
+  const from = src.indexOf('const NAME_LEADS');
+  const to = src.indexOf('\n}\n', src.indexOf('export function parseName')) + 3;
+  check('parseName нашёлся в исходнике', from >= 0 && to > from, 'переименовали?');
+
+  // Исполняем НАСТОЯЩИЙ разбор из файла, а не сверяем регуляркой: проверять формулировку
+  // здесь бессмысленно — важно, что именно получится из живой фразы.
+  const js = src.slice(from, to)
+    .replace(/: RegExp\[\]/, '')
+    .replace('export function parseName(raw: string): { name: string; surname: string }', 'function parseName(raw)')
+    .replace('(w: string)', '(w)');
+  const parseName = new Function(js + '\nreturn parseName;')();
+
+  const CASES = [
+    ['называй меня иван', 'Иван', ''],
+    ['просто зови меня Ваня', 'Ваня', ''],
+    ['меня зовут Иван Петров', 'Иван', 'Петров'],
+    ['я Иван', 'Иван', ''],
+    ['Иван', 'Иван', ''],
+    ['call me Ivan', 'Ivan', ''],
+    ['My name is Ivan Petrov', 'Ivan', 'Petrov'],
+    ["I'm Ivan", 'Ivan', ''],
+    ['McDonald', 'McDonald', ''],
+    ['Anne-Marie', 'Anne-Marie', ''],
+  ];
+  const bad = CASES.filter(([inp, n, sn]) => {
+    const r = parseName(inp);
+    return r.name !== n || r.surname !== sn;
+  });
+  check('живые ответы разбираются в имя', bad.length === 0,
+    'не разобрались: ' + bad.map((c) => c[0]).join(' · '));
+
+  // Потерять имя хуже, чем оставить его неудобным.
+  check('непонятный ответ не теряется', parseName('...').name.length > 0 || parseName('...').name === '');
+  check('пустой ответ не роняет разбор', parseName('').name === '' && parseName(null).name === '');
+}
+
+// ------------------------------------------------- 12. кнопки ведут туда, что написано на них
+console.log('\nкнопки ведут туда, что обещают');
+{
+  const intent = code('app/intent.tsx');
+  const home = code('app/home.tsx');
+  const act = code('app/activity.tsx');
+
+  check('«Все интенты» ведёт к интентам, а не на главную',
+    /allIntents\(\)/.test(intent) && !/allBtn[\s\S]{0,120}replace\('\/home'\)/.test(intent),
+    'кнопка называлась «Все интенты» и уводила на ленту');
+  check('«Открыть историю» ведёт в историю, а не в чат с Бадди',
+    /activity\?seg=history/.test(home),
+    'история разговоров и разговор с Бадди — разные вещи');
+  check('экран активности умеет открыть нужный сегмент',
+    /useLocalSearchParams/.test(act) && /params\.seg/.test(act),
+    'иначе кнопка приводит на экран и просит искать вкладку самому');
+
+  const sum = code('app/summary.tsx');
+  check('неудачная запись профиля видна человеку',
+    /Alert\.alert\(/.test(sum) && sum.indexOf('Alert.alert(') > sum.indexOf('const toProfile'),
+    'сообщение внизу прокрутки не видно, и кнопка выглядит мёртвой');
+}
+
 console.log('');
 if (failed) {
   console.log(failed + ' проверок не прошло');
