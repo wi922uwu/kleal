@@ -1807,6 +1807,13 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
         # предложение — считается: там человек ответил именно на вопрос агента.
         if want_match and not _agreed and _is_game_move(last_user, messages):
             want_match = False
+        # ПРЕДЛОЖЕНИЕ И ОКНО — ВЗАИМОИСКЛЮЧАЮЩИ. Если агент спросил «хочешь обсудить это с
+        # кем-нибудь?», решение за человеком: окно поверх собственного вопроса означает, что
+        # вопрос был не вопросом. Снято с телефона: ответ про водные пистолеты кончался
+        # предложением, и одновременно открывалось окно затеи. В промпте это правило есть
+        # («Keep match: false when you offer»), и оно не соблюдается.
+        if want_match and not _agreed and _TRAILING_OFFER.search(str(obj.get("reply") or "").rstrip()):
+            want_match = False
     else:
         # LLM down: only the strong, explicit ask triggers a search — never a bare activity mention.
         # Согласие на уже прозвучавшее предложение проходит и здесь: оно не требует модели, всё

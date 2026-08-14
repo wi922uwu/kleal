@@ -187,11 +187,19 @@ export default function Create() {
         }
         settle(r, reply, text, next, opened);
       },
-      error: () => {
-        setTyping(false);
-        // Реплику человека НЕ теряем: её вернёт кнопка «Попробовать снова», и разговор продолжится
-        // с того же места, а не с чистого листа. Показанную половину убираем — она обрывок.
+      error: async () => {
+        // Как и в чате Бадди: поток — способ доставки, а не ответ. Сначала вторая попытка обычным
+        // запросом, и только если и она не прошла — «попробуем ещё раз».
         if (opened) setThread((prev) => prev.slice(0, -1));
+        try {
+          const r: any = await buddyApi.intentBuild(next, profile());
+          setTyping(false);
+          const reply = String(r?.reply || '');
+          if (reply) { settle(r, reply, text, next, false); return; }
+        } catch {
+          /* и обычный запрос не прошёл — значит связи правда нет */
+        }
+        setTyping(false);
         setTurns(hist);
         setRetry({ text, hist });
         say('bot', T('Связь пропала — я не дослушал. Попробуем ещё раз?',

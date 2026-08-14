@@ -204,6 +204,10 @@ export function sse(
 
   xhr.open('POST', API_BASE + path);
   xhr.setRequestHeader('Content-Type', 'application/json');
+  // Без этого заголовка посредники (и прокси мобильного оператора в том числе) охотно буферизуют
+  // ответ целиком, и поток перестаёт быть потоком — а на телефоне это выглядело как обрыв связи.
+  xhr.setRequestHeader('Accept', 'text/event-stream');
+  xhr.setRequestHeader('Cache-Control', 'no-cache');
   xhr.onprogress = () => {
     const t = xhr.responseText || '';
     buf += t.slice(seen);

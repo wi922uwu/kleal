@@ -141,11 +141,29 @@ export default function Buddy() {
 
     buddyApi.chatStream(next, profile(), {
       delta: grow,
-      error: () => {
-        setTyping(false);
-        // Оборвалось до первой буквы — сказать надо, иначе экран замрёт молча. Оборвалось после —
-        // на экране уже есть половина ответа, и извинение поверх неё только запутает.
-        if (!opened) say('bot', BUDDY.offline());
+      error: async () => {
+        /**
+         * ПОТОК ОБОРВАЛСЯ — ЭТО НЕ ПОВОД ТЕРЯТЬ ОТВЕТ.
+         *
+         * Поток — способ доставки, а не сам ответ. Сообщено с телефона: «Связь пропала.
+         * Повторишь?» приходило на каждое сообщение подряд, хотя сервер отвечал исправно —
+         * рвался именно поток, и вместе с ним выбрасывался готовый ответ. Человек видел
+         * приложение, которое перестало работать.
+         *
+         * Поэтому здесь не извинение, а ВТОРАЯ ПОПЫТКА обычным запросом. Извиняемся только если
+         * и она не прошла: тогда связи действительно нет.
+         */
+        if (opened) { setTyping(false); resolve(); return; }   // половина ответа уже на экране
+        try {
+          const r: any = await buddyApi.chat(next, profile());
+          setTyping(false);
+          const reply = String(r?.reply || '');
+          if (reply) finish(r, reply, text, next, false);
+          else say('bot', BUDDY.offline());
+        } catch {
+          setTyping(false);
+          say('bot', BUDDY.offline());
+        }
         resolve();
       },
       done: (r: any) => {
