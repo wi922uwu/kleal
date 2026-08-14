@@ -364,6 +364,17 @@ export const buddy = {
    * спрашивает намеренно — их человек ставит руками на следующих экранах, и переспрашивать
    * значило бы заставить отвечать дважды. Это правило живёт в системном промпте сервера.
    */
+  /**
+   * Сборка интента, но ответ приходит по мере написания. Измерено: обычный путь 5,2 с — это
+   * дольше, чем разговор с Бадди, потому что построитель ещё и разбирает сказанное.
+   *
+   * `done` несёт весь разбор — ready, topics, подсказки: он существует только когда конверт
+   * дочитан целиком. Экран показывает текст по дороге, а ветвится по `done`.
+   */
+  intentBuildStream: (messages: Json[], prof: Json,
+                      on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void }) =>
+    sse('/api/buddy/intent-build', { messages, profile: prof, stream: true }, on),
+
   intentBuild: (messages: Json[], prof: Json) =>
     api.post<{ reply?: string; valid?: boolean; ready?: boolean; intent?: Json | null; hints?: string[] }>(
       '/api/buddy/intent-build', { messages, profile: prof }

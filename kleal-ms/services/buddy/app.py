@@ -3111,7 +3111,19 @@ class H(BaseHTTPRequestHandler):
                     # A re-roll, or the hand-off to the conversational agent, produces a DIFFERENT reply
                     # from the one the user just watched appear. Tell the client so it can replace the
                     # bubble instead of leaving a stale half-sentence stranded above the real answer.
-                    emit("done", dict(out, replaced=("".join(shown) != (out.get("reply") or ""))))
+                    # То же правило, что в /chat, и по тем же причинам: сравнивать по существу
+                    # (иначе заменой объявляется каждый ответ и экран переписывает прочитанное),
+                    # брать текст из потока, когда конверт пришёл обрезанным, и не принимать за
+                    # ответ просочившийся конверт. Держать это в двух местах нельзя — но и общая
+                    # функция здесь была бы натяжкой: у построителя своя развилка в `done`.
+                    _shown = "".join(shown).strip()
+                    _final = (out.get("reply") or "").strip()
+                    if '"reply"' in _shown or '"match"' in _shown:
+                        _shown = ""
+                    if _shown and len(_shown) > len(_final):
+                        out = dict(out, reply=_clip(_shown))
+                        _final = (out.get("reply") or "").strip()
+                    emit("done", dict(out, replaced=(_shown != _final)))
                 except Exception as e:
                     emit("error", {"error": str(e)[:200]})
                 return

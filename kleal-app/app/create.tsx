@@ -114,20 +114,17 @@ export default function Create() {
     }
   }, [st.profile]);
 
-  const ask = useCallback(async (text: string, hist: Turn[]) => {
-    const next: Turn[] = [...hist, { role: 'user', content: text }];
-    setTurns(next);
-    setTyping(true);
-    setHints([]);
-    setRetry(null);
-    try {
-      const r: any = await buddyApi.intentBuild(next, profile());
-      setTyping(false);
-      const reply = String(r?.reply || '');
-      if (reply) {
-        say('bot', reply);
-        setTurns([...next, { role: 'assistant', content: reply }]);
-      }
+  /**
+   * Что сделать с готовым ответом построителя. Вынесено отдельно, потому что теперь срабатывает
+   * в `done`, а не сразу после запроса.
+   *
+   * `shown` — показался ли текст потоком: от него зависит, печатать ли реплику ещё раз.
+   */
+  const settle = useCallback((r: any, reply: string, text: string, next: Turn[], shown: boolean) => {
+    if (reply) {
+      if (!shown) say('bot', reply);
+      setTurns([...next, { role: 'assistant', content: reply }]);
+    }
       setHints(Array.isArray(r?.hints) ? r.hints.map(String).slice(0, 3) : []);
       if (r?.ready) {
         const topics = topicsOf(r);
@@ -143,16 +140,65 @@ export default function Create() {
           return same ? all : [...all, v];
         });
       }
-    } catch {
+  }, [say]);
+
+  /**
+   * ОТВЕТ ПОЯВЛЯЕТСЯ ПО МЕРЕ НАПИСАНИЯ — то же, что на экране Бадди.
+   *
+   * Измерено на живом сервере: обычный путь 5,2 с. Это дольше разговора с Бадди, потому что
+   * построитель не только отвечает, но и разбирает сказанное в тему и заголовок. Генерацию не
+   * ускорить, но ждать её конца незачем: первые слова приходят почти сразу.
+   *
+   * Серверная ручка это умела с самого начала — просто никто не просил.
+   */
+  const ask = useCallback((text: string, hist: Turn[]) => {
+    const next: Turn[] = [...hist, { role: 'user', content: text }];
+    setTurns(next);
+    setTyping(true);
+    setHints([]);
+    setRetry(null);
+
+    let acc = '';
+    let opened = false;
+    const grow = (t: string) => {
+      acc += t;
       setTyping(false);
-      // Реплику человека НЕ теряем: её вернёт кнопка «Попробовать снова», и разговор продолжится
-      // с того же места, а не с чистого листа.
-      setTurns(hist);
-      setRetry({ text, hist });
-      say('bot', T('Связь пропала — я не дослушал. Попробуем ещё раз?',
-                   'I lost the connection mid-thought. Shall we try again?'));
-    }
-  }, [say, st.profile]);
+      setThread((prev) => {
+        if (!opened) { opened = true; return [...prev, { who: 'bot', text: acc, at: now() }]; }
+        const out = prev.slice();
+        out[out.length - 1] = { ...out[out.length - 1], text: acc };
+        return out;
+      });
+    };
+
+    buddyApi.intentBuildStream(next, profile(), {
+      delta: grow,
+      done: (r: any) => {
+        setTyping(false);
+        const reply = String(r?.reply || acc);
+        // Итог разошёлся с показанным — переписываем: иначе над настоящим ответом висела бы
+        // оборванная половина.
+        if (opened && r?.replaced) {
+          setThread((prev) => {
+            const out = prev.slice();
+            out[out.length - 1] = { ...out[out.length - 1], text: reply };
+            return out;
+          });
+        }
+        settle(r, reply, text, next, opened);
+      },
+      error: () => {
+        setTyping(false);
+        // Реплику человека НЕ теряем: её вернёт кнопка «Попробовать снова», и разговор продолжится
+        // с того же места, а не с чистого листа. Показанную половину убираем — она обрывок.
+        if (opened) setThread((prev) => prev.slice(0, -1));
+        setTurns(hist);
+        setRetry({ text, hist });
+        say('bot', T('Связь пропала — я не дослушал. Попробуем ещё раз?',
+                     'I lost the connection mid-thought. Shall we try again?'));
+      },
+    });
+  }, [say, settle, st.profile]);
 
   useEffect(() => {
     if (started.current) return;
