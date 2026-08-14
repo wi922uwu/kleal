@@ -1740,6 +1740,91 @@ console.log('\nистория даёт интересы, заголовок гр
   check('пустое поле не рисуется вовсе', /if \(!String\(value \|\| ''\)\.trim\(\)\) return null/.test(gr));
 }
 
+// ------------------------------------------------- 26. ответ Бадди верстается документом
+console.log('\nответ модели — документ, а не реплика в пузыре');
+{
+  const md = read('src/components/Markdown.tsx');
+  const from = md.indexOf('type Inline =');
+  const to = md.indexOf('// ------------------------------------------------------------');
+  check('разбор нашёлся в исходнике', from >= 0);
+
+  // Исполняем НАСТОЯЩИЙ разбор, а не сверяем регуляркой: важно не как он написан, а во что
+  // превращается реальный вывод модели.
+  const js = md.slice(from, md.indexOf('function Rich('))
+    .replace(/^type [\s\S]*?;$/m, '')
+    .replace(/type Block =[\s\S]*?\| \{ kind: 'hr' \};/, '')
+    .replace('export function parseBlocks(src: string): Block[] {', 'function parseBlocks(src){')
+    .replace('export function parseInline(src: string): Inline[] {', 'function parseInline(src){')
+    .replace('function cells(line: string): string[] {', 'function cells(line){')
+    .replace('const out: Block[] = [];', 'const out = [];')
+    .replace('let para: string[] = [];', 'let para = [];')
+    .replace('const body: string[] = [];', 'const body = [];')
+    .replace('const rows: string[][] = [];', 'const rows = [];')
+    .replace('const out: Inline[] = [];', 'const out = [];')
+    .replace('const RULES: [RegExp, Partial<Inline>][] = [', 'const RULES = [')
+    .replace('let bestM: RegExpMatchArray | null = null;', 'let bestM = null;')
+    .replace('let bestStyle: Partial<Inline> = {};', 'let bestStyle = {};')
+    .replace(/ as 1 \| 2 \| 3/g, '').replace(/ as RegExpMatchArray/g, '');
+  const mk = new Function(js + '\nreturn { parseBlocks, parseInline };')();
+
+  // То, что модель печатает НА САМОМ ДЕЛЕ — снято с живого ответа 14 августа.
+  const REAL = '| Что | Падел | Теннис |\n| --- | --- | --- |\n| Ракетка | Короткая | Длинная |';
+  const t = mk.parseBlocks(REAL);
+  check('таблица из живого ответа опознаётся', t.length === 1 && t[0].kind === 'table', t.map((x) => x.kind));
+  check('и у неё разобраны шапка и строки',
+    t[0].head.length === 3 && t[0].rows.length === 1, JSON.stringify(t[0]).slice(0, 120));
+
+  // Одна палка в тексте — это палка, а не таблица. Без обязательного разделителя под шапкой
+  // любой абзац со словом «цена | качество» превращался бы в однорядную таблицу.
+  check('палка без разделителя таблицей не считается',
+    mk.parseBlocks('Цена | качество — вот вопрос.').map((x) => x.kind).join() === 'p');
+
+  const CASES = [
+    ['# Заголовок', 'h'], ['## Второй', 'h'], ['> цитата', 'quote'],
+    ['- пункт', 'ul'], ['1. пункт', 'ol'], ['---', 'hr'], ['обычный текст', 'p'],
+  ];
+  for (const [src, kind] of CASES) {
+    check(`«${src}» -> ${kind}`, mk.parseBlocks(src)[0]?.kind === kind, mk.parseBlocks(src)[0]?.kind);
+  }
+
+  // Незакрытый маркер обязан остаться символом: съесть его значит потерять то, что человек
+  // мог написать сам.
+  check('незакрытая звёздочка остаётся текстом',
+    mk.parseInline('незакрытая ** звёздочка').length === 1);
+  check('жирный не рвётся курсивом',
+    JSON.stringify(mk.parseInline('**a** и *b*'))
+      === '[{"text":"a","bold":true},{"text":" и "},{"text":"b","italic":true}]',
+    JSON.stringify(mk.parseInline('**a** и *b*')));
+
+  // Регулярка с ретроспективой уронила бы ВЕСЬ модуль при загрузке, а не испортила курсив.
+  // Проверяем САМИ регулярки, а не весь файл: в комментарии рядом эта конструкция названа
+  // словами, и проверка по всему тексту падала на объяснении, почему её здесь нет.
+  check('в разборе нет ретроспективных проверок',
+    !md.split('\n').filter((l) => /\[\/|const RE_/.test(l) && !/^\s*\/\//.test(l))
+        .some((l) => /\(\?<[!=]/.test(l)));
+
+  // Таблица обязана ездить ВНУТРИ себя: иначе она растягивает страницу и горизонтально
+  // начинает ездить весь разговор.
+  check('таблица прокручивается внутри себя',
+    /<ScrollView horizontal[\s\S]{0,200}s\.tableWrap/.test(md));
+  check('у ячейки есть и минимум, и максимум ширины',
+    /minWidth: 108, maxWidth: 260/.test(md));
+
+  const bd = code('app/buddy.tsx');
+  check('ответ модели рисуется документом', /<Markdown text=\{m\.text\} \/>/.test(bd));
+  check('а реплика человека осталась пузырём', /\[s\.bub, s\.bubMe\]/.test(bd));
+  check('у ответа нет подложки и он во всю ширину', /answer: \{ alignSelf: 'stretch'/.test(bd));
+
+  // Без разрешения на многострочность модель схлопывает разбор в один абзац, чтобы не
+  // экранировать переводы строк в JSON, — и вся вёрстка остаётся невидимой.
+  const bp = read('../kleal-ms/services/buddy/app.py');
+  check('модели разрешено отвечать многострочно', /"reply" IS ALLOWED TO BE MULTI-LINE/.test(bp));
+  check('и показан синтаксис таблицы', /The separator row under\n  the header is REQUIRED/.test(bp));
+  check('но короткий ответ остаётся простым текстом',
+    /A short answer stays PLAIN SENTENCES/.test(bp),
+    'переформатирование хуже отсутствия формата');
+}
+
 console.log('');
 if (failed) {
   console.log(failed + ' проверок не прошло');

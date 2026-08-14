@@ -24,6 +24,7 @@ import { BUDDY, SHEET, looksLikeIntent, intentPhrase, sheetWhat, sheetKept, pack
 import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
+import Markdown from '../src/components/Markdown';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string; voice?: VoicePayload };
 
@@ -196,16 +197,44 @@ export default function Buddy() {
         </View>
 
         <ScrollView ref={scroller} contentContainerStyle={s.thread} keyboardShouldPersistTaps="handled">
-          {thread.map((m, i) => (
-            <View key={i} style={{ alignItems: m.who === 'me' ? 'flex-end' : 'flex-start' }}>
-              {m.voice ? <VoiceBubble voice={m.voice} mine={m.who === 'me'} /> : (
-                <View style={[s.bub, m.who === 'me' ? s.bubMe : s.bubBot]}>
-                  <Text style={[s.bubText, m.who === 'me' && { color: color.onPrimary }]}>{m.text}</Text>
+          {/*
+            РЕПЛИКА И ОТВЕТ ВЫГЛЯДЯТ ПО-РАЗНОМУ, и это не украшение.
+
+            Человек говорит — его слова остаются пузырём справа. Модель пишет — её ответ идёт
+            страницей во всю ширину, без подложки и без рамки. Пока оба были пузырями, экран
+            сообщал, что разбор на восемь абзацев — такая же проходная реплика, как «ок», и
+            читался он так же бегло. Плюс разметка внутри пузыря схлопывалась в кашу из звёздочек
+            и решёток: она не просто не рисовалась, она МЕШАЛА.
+          */}
+          {thread.map((m, i) => {
+            const mine = m.who === 'me';
+            if (m.voice) {
+              return (
+                <View key={i} style={{ alignItems: mine ? 'flex-end' : 'flex-start' }}>
+                  <VoiceBubble voice={m.voice} mine={mine} />
+                  <Text style={s.time}>{m.at}</Text>
                 </View>
-              )}
-              <Text style={s.time}>{m.at}</Text>
-            </View>
-          ))}
+              );
+            }
+            if (mine) {
+              return (
+                <View key={i} style={{ alignItems: 'flex-end' }}>
+                  <View style={[s.bub, s.bubMe]}>
+                    <Text style={[s.bubText, { color: color.onPrimary }]}>{m.text}</Text>
+                  </View>
+                  <Text style={s.time}>{m.at}</Text>
+                </View>
+              );
+            }
+            return (
+              <View key={i} style={s.answer}>
+                <Markdown text={m.text} />
+                {/* Время под ответом приглушено сильнее, чем под репликой: у страницы оно
+                    служебная пометка, а не часть разговора. */}
+                <Text style={[s.time, s.timeAnswer]}>{m.at}</Text>
+              </View>
+            );
+          })}
           {typing ? (
             <View style={[s.bub, s.bubBot, { alignSelf: 'flex-start' }]}>
               <ActivityIndicator size="small" color={color.muted} />
@@ -303,6 +332,13 @@ const s = StyleSheet.create({
   bubBot: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderRadius: 16 },
   bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderRadius: 16 },
   bubText: { ...type.body, color: color.fg } as any,
+  /**
+   * Ответ модели. Ни подложки, ни рамки, ни ограничения ширины: это страница, а не реплика.
+   * Верхняя отбивка больше нижней — ответ отделяется от предыдущего вопроса сильнее, чем от
+   * собственной пометки времени.
+   */
+  answer: { alignSelf: 'stretch', marginTop: space.lg, marginBottom: space.xs },
+  timeAnswer: { color: color.neutral300, marginTop: space.xs } as any,
   time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
 
   dock: { paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
