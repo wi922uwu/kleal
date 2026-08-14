@@ -3018,6 +3018,13 @@ class H(BaseHTTPRequestHandler):
                         # match, кандидатов. Их в потоке нет и быть не может.
                         _shown = "".join(shown).strip()
                         _final = (out.get("reply") or "").strip()
+                        # Показанное берём, только если в нём нет конверта. Модель иногда пишет
+                        # ответ словами, а следом повторяет его же в JSON; поток такой хвост
+                        # отсекает, но если он всё же просочился, предпочесть его разобранному
+                        # значило бы показать человеку «{"reply":"…","match":false}» как часть
+                        # ответа. Правило «длиннее — значит полнее» здесь перестаёт работать.
+                        if '"reply"' in _shown or '"match"' in _shown:
+                            _shown = ""
                         if _shown and len(_shown) > len(_final):
                             out = dict(out, reply=_clip(_shown))
                             _final = (out.get("reply") or "").strip()

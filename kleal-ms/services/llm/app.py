@@ -8,6 +8,7 @@
 import os
 import sys
 import json
+import re
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -113,6 +114,13 @@ class FieldStreamer:
             return True
         return False if len(t) >= 8 else None
 
+    # Начало конверта ПОСЛЕ прозы. Модель нередко пишет ответ словами, а следом повторяет его же
+    # в JSON — «Reply as ONE JSON object» выполняется наполовину. В обычном режиме это неважно
+    # (текст берётся из поля), но в режиме «конверта нет» такой хвост уехал бы человеку на экран
+    # целиком: «…в портфельном управлении! {"reply":"Фьючерсы - это…», и так весь объект.
+    # Снято с телефона 14 августа.
+    _ENVELOPE_TAIL = re.compile(r'\{\s*"(?:reply|signals|match)"')
+
     def feed(self, chunk):
         """Return the newly available plain text for this chunk ('' if none yet)."""
         self.buf += chunk
@@ -121,7 +129,32 @@ class FieldStreamer:
         if self.key and not self.started and self._looks_like_envelope() is False:
             self.key = None
             self.gate = None
+            self.plain = True
         if not self.key:
+            # Замолчали — значит навсегда: дальше идёт конверт, и каждый следующий кусок его же
+            # продолжение. Без этой строки текст отсекался один раз, а хвост уезжал следующим
+            # вызовом — на экране оказывалось «:"x"}».
+            if getattr(self, "plain", False) and self.done:
+                self._scan = len(self.buf)
+                return ""
+            if getattr(self, "plain", False) and not self.done:
+                m = self._ENVELOPE_TAIL.search(self.buf)
+                if m and m.start() >= self._scan:
+                    # Дальше идёт конверт, а не ответ. Отдаём текст ДО него и замолкаем навсегда:
+                    # всё, что после, — служебное, и человеку его видеть нельзя.
+                    out = self.buf[self._scan:m.start()]
+                    self._scan = len(self.buf)
+                    self.done = True
+                    return out.rstrip()
+                # Начало конверта приходит РАЗОРВАННЫМ между кусками («{"re» + «ply":»), и без
+                # задержки «{"re» успевало уехать на экран прежде, чем станет ясно, что это
+                # конверт. Придерживаем хвост от последней «{», пока он короче маркера: как только
+                # символов хватит на решение, он либо совпадёт, либо уедет как обычный текст.
+                brace = self.buf.rfind("{")
+                if brace >= self._scan and len(self.buf) - brace < 24:
+                    out = self.buf[self._scan:brace]
+                    self._scan = brace
+                    return out
             out = self.buf[self._scan:]
             self._scan = len(self.buf)
             return out
