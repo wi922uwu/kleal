@@ -125,19 +125,64 @@ def warm_filtration(people, workers=8):
                 onb.FILTER_URL + "/api/filter/categorize",
                 data=_json.dumps({"text": w}).encode(),
                 headers={"Content-Type": "application/json"})
-            got = _json.loads(urllib.request.urlopen(req, timeout=60).read().decode())
-            return bool(got.get("topics"))
+            return _json.loads(urllib.request.urlopen(req, timeout=90).read().decode())
         except Exception:
-            return False
+            return None
 
     print("\nпрогрев фильтрации: %d разных интересов, потоков %d" % (len(words), workers))
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        got = list(ex.map(ask, words))
-    ok = sum(1 for g in got if g)
+        cards = list(ex.map(ask, words))
+    got = {}
+    for w, c in zip(words, cards):
+        if c:
+            got[" ".join(str(w).lower().split())] = c
+    ok = sum(1 for c in got.values() if c.get("topics"))
     print("  ручки получены для %d из %d" % (ok, len(words)))
     if ok < len(words) * 0.5:
         print("  ВНИМАНИЕ: больше половины слов остались без ручки — проверь, жива ли модель")
-    return ok, len(words)
+    return got
+
+
+def install_local_filtration(cards):
+    """Отвечать `_canon_interests` из прогретых ответов, не ходя по сети.
+
+    Кэш фильтрации держит 512 слов (FILTER_CACHE_MAX), а разных интересов у популяции 1089 —
+    больше половины прогретого вытеснялось ещё до того, как сборка до них доходила, и каждое
+    такое слово уходило в модель заново, ПО ОДНОМУ: сборка идёт последовательно, в отличие от
+    прогрева. Со стороны это не отказ, а «просто долго» — часы вместо минут.
+
+    Подменяется ТОЛЬКО транспорт. Сама `_canon_interests` — её обход по кругу, отсев общих слов,
+    потолок в восемь — остаётся ровно та же, что на живой регистрации: разложить её логику здесь
+    во второй раз значило бы завести копию, которая разойдётся с сервером при первой же правке.
+    """
+    import urllib.request
+    real = urllib.request.urlopen
+
+    class _Reply:
+        def __init__(self, payload):
+            self._p = payload
+
+        def read(self):
+            return self._p
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake(req, *a, **kw):
+        url = getattr(req, "full_url", "") or str(req)
+        if "/api/filter/categorize" in url and getattr(req, "data", None):
+            try:
+                text = json.loads(req.data.decode()).get("text") or ""
+            except Exception:
+                text = ""
+            card = cards.get(" ".join(str(text).lower().split())) or {"topics": []}
+            return _Reply(json.dumps(card).encode())
+        return real(req, *a, **kw)
+
+    urllib.request.urlopen = fake
 
 
 def build(people):
@@ -172,7 +217,7 @@ def main():
     print("срезы из %s:" % a.slices)
     people = load_slices(a.slices)
     if a.warm:
-        warm_filtration(people, a.warm)
+        install_local_filtration(warm_filtration(people, a.warm))
     rows, dropped = build(people)
 
     print("\nсобрано строк: %d (из %d)" % (len(rows), len(people)))

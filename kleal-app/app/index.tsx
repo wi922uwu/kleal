@@ -4,7 +4,7 @@
  * Волна снизу и тёмная кнопка на ней — узнаваемая часть экрана, поэтому нарисована фигурой, а не
  * заменена на обычную кнопку: та же кривая, что в SVG прототипа.
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet, Pressable, Text, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -25,10 +25,23 @@ export default function Splash() {
    * Кто уже в аккаунте и прошёл онбординг — сразу в приложение, минуя интро и анкету.
    *
    * replace, а не push: интро не должно оставаться в истории позади главного экрана.
+   *
+   * ОДИН РАЗ, НА ЗАПУСКЕ. Это правило старта, а не живое наблюдение за `done`. Раньше эффект
+   * следил за ним постоянно — а интро при этом остаётся ЖИВЫМ в стеке под всеми экранами
+   * онбординга, потому что дальше идут через push. И в момент, когда сводка дописывала профиль и
+   * ставила `done: true`, интро из-под низа делало replace('/home') поверх только что открытого
+   * профиля: человек жал «Все настройки профиля», а попадал на главный экран (сообщено с
+   * телефона). Кнопка при этом была совершенно исправна — уводило её чужое правило.
+   *
+   * Читать состояние на монтировании безопасно: корневой макет не рисует ни одного экрана, пока
+   * restore() не поднимет сохранённое.
    */
+  const gated = useRef(false);
   useEffect(() => {
+    if (gated.current) return;
+    gated.current = true;
     if (st.login && st.done) router.replace('/home');
-  }, [st.login, st.done]);
+  }, []);
 
   const slides = SLIDES();
   const i = Math.min(st.slide, slides.length - 1);
