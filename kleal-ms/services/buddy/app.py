@@ -1610,7 +1610,7 @@ def _lenient_json(raw):
     return None
 
 
-def buddy_chat(messages, profile, signals, uid=None):
+def buddy_chat(messages, profile, signals, uid=None, on_text=None):
     sig = _merge_signals(_baseline_signals(profile), signals)
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
                        else ("Buddy: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
@@ -1651,7 +1651,13 @@ def buddy_chat(messages, profile, signals, uid=None):
     for _attempt in range(2):
         raw = ""
         try:
-            raw = llm_complete(MODEL_ID, _cmsgs, 0.35 if _attempt == 0 else 0.2)
+            # Поток — только на ПЕРВОЙ попытке. Вторая существует потому, что первая оказалась
+            # негодной (чужой язык, сломанный конверт), и её текст человек уже увидел: досылать
+            # поверх второй набор букв значило бы переписывать ответ у него на глазах.
+            if on_text is not None and _attempt == 0:
+                raw = llm_stream(MODEL_ID, _cmsgs, 0.35, "reply", on_text)
+            else:
+                raw = llm_complete(MODEL_ID, _cmsgs, 0.35 if _attempt == 0 else 0.2)
             cand = _lenient_json(raw)
             if not isinstance(cand, dict):
                 # Голый текст — это ответ, а не отказ. Конверт нужен нам, а не человеку.
@@ -2964,6 +2970,47 @@ class H(BaseHTTPRequestHandler):
         try:
             if r == "/chat":
                 profile = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+                if body.get("stream") and isinstance(body.get("messages"), list) and body["messages"]:
+                    # ПОТОК. Модель и канал быстрые (тривиальный вызов 0,27 с) — время съедает
+                    # генерация: ответ в 1537 символов пишется 15,5 с, по токену за раз. Сократить
+                    # это нельзя, можно перестать ждать конца.
+                    #
+                    # `done` несёт ВЕСЬ разбор — signals, match, кандидатов, — потому что он
+                    # существует только когда конверт дочитан целиком. Экран показывает текст по
+                    # дороге, а ветвится по `done`, как и раньше.
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    alive = [True]
+                    shown = []
+
+                    def emit(event, obj):
+                        if not alive[0]:
+                            return
+                        try:
+                            self.wfile.write(("event: %s\ndata: %s\n\n" % (
+                                event, json.dumps(obj, ensure_ascii=False))).encode("utf-8"))
+                            self.wfile.flush()
+                        except (BrokenPipeError, ConnectionResetError):
+                            alive[0] = False    # человек ушёл с экрана; дело доделываем, писать перестаём
+
+                    def sink(t):
+                        shown.append(t)
+                        emit("delta", {"t": t})
+
+                    try:
+                        out = buddy_chat(body["messages"], profile, body.get("signals") or {},
+                                         uid, on_text=sink)
+                        # Показанное может РАЗОЙТИСЬ с итогом: вторая попытка, обрезка по границе,
+                        # заготовка при отказе. Тогда экран обязан заменить текст, а не оставить
+                        # оборванную половину висеть над настоящим ответом.
+                        emit("done", dict(out, replaced=("".join(shown) != (out.get("reply") or ""))))
+                    except Exception as e:
+                        emit("error", {"error": str(e)[:200]})
+                    return
                 if isinstance(body.get("messages"), list) and body["messages"]:
                     res = buddy_chat(body["messages"], profile, body.get("signals") or {}, uid)   # stateless
                 elif uid and body.get("message"):

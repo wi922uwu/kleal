@@ -89,9 +89,38 @@ class FieldStreamer:
 
     _ESCAPES = {'n': '\n', 't': '\t', 'r': '\r', '"': '"', '\\': '\\', '/': '/', 'b': '', 'f': ''}
 
+    def _looks_like_envelope(self):
+        """Есть ли вообще конверт. None — ещё рано судить.
+
+        Модель отвечает конвертом НЕ ВСЕГДА: на втором-третьем ходу 70B бросает его и пишет просто
+        прозой. Извлекатель при этом ждал ключ, которого никогда не будет, и молчал до самого конца
+        генерации. Измерено на живом сервере: с ожиданием поля первые буквы приходили через 6,26 с,
+        без него — через 0,24 с. Двадцать шесть раз разницы, и всё это время экран показывал
+        «думаю», хотя ответ уже писался.
+
+        Судим по первому непробельному символу, пропустив ограду ```json. Восьми символов хватает,
+        чтобы отличить «{» от начала фразы, и они приходят первым же куском.
+        """
+        t = self.buf.lstrip()
+        if t.startswith("```"):
+            nl = t.find("\n")
+            if nl < 0:
+                return None                     # ограда ещё не дописана
+            t = t[nl + 1:].lstrip()
+        if not t:
+            return None
+        if t[0] == "{":
+            return True
+        return False if len(t) >= 8 else None
+
     def feed(self, chunk):
         """Return the newly available plain text for this chunk ('' if none yet)."""
         self.buf += chunk
+        # Конверта нет — значит весь поток и есть ответ. Переключаемся навсегда и отдаём всё,
+        # что успело накопиться, иначе первые слова потерялись бы.
+        if self.key and not self.started and self._looks_like_envelope() is False:
+            self.key = None
+            self.gate = None
         if not self.key:
             out = self.buf[self._scan:]
             self._scan = len(self.buf)

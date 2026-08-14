@@ -154,6 +154,79 @@ const RANK_PATHS = /\/api\/agent\/(match|expand)/;
 const timeoutFor = (path: string) =>
   LLM_PATHS.test(path) ? LLM_TIMEOUT_MS : RANK_PATHS.test(path) ? RANK_TIMEOUT_MS : undefined;
 
+/**
+ * ЧТЕНИЕ ОТВЕТА ПО МЕРЕ ПОЯВЛЕНИЯ (SSE).
+ *
+ * Измерено на живом сервере: сама модель и канал быстрые — тривиальный вызов 0,27 с. Всё время
+ * съедает ГЕНЕРАЦИЯ: ответ в 1537 символов пишется 15,5 с, потому что токены выходят по одному.
+ * Сократить это нельзя — можно только перестать ждать конца. С потоком первые слова появляются
+ * через полторы секунды вместо пятнадцати, и это разница между «приложение думает» и «приложение
+ * отвечает».
+ *
+ * Почему XMLHttpRequest, а не fetch. В React Native у fetch нет потокового тела: `response.body`
+ * либо отсутствует, либо приходит целиком по завершении — то есть fetch отдал бы ровно то же
+ * ожидание, только сложнее. У XHR есть `onprogress`, где `responseText` растёт по мере прихода;
+ * это штатный способ читать SSE в RN.
+ *
+ * Разбор простой намеренно: сервер шлёт только «event: имя\ndata: {json}\n\n». Хвост, не
+ * оканчивающийся пустой строкой, остаётся в буфере до следующего куска — иначе половина события
+ * разобралась бы как целое и потерялась.
+ */
+export function sse(
+  path: string,
+  body: Json,
+  on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void },
+): () => void {
+  const xhr = new XMLHttpRequest();
+  let seen = 0;
+  let buf = '';
+  let finished = false;
+
+  const flush = () => {
+    let cut: number;
+    while ((cut = buf.indexOf('\n\n')) >= 0) {
+      const raw = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      let event = 'message';
+      let data = '';
+      for (const line of raw.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) data += line.slice(5).trim();
+      }
+      if (!data) continue;
+      let obj: any;
+      try { obj = JSON.parse(data); } catch { continue; }
+      if (event === 'delta' && obj?.t) on.delta?.(String(obj.t));
+      else if (event === 'done') { finished = true; on.done?.(obj); }
+      else if (event === 'error') { finished = true; on.error?.(String(obj?.error || 'stream failed')); }
+    }
+  };
+
+  xhr.open('POST', API_BASE + path);
+  xhr.setRequestHeader('Content-Type', 'application/json');
+  xhr.onprogress = () => {
+    const t = xhr.responseText || '';
+    buf += t.slice(seen);
+    seen = t.length;
+    flush();
+  };
+  xhr.onload = () => {
+    const t = xhr.responseText || '';
+    buf += t.slice(seen);
+    seen = t.length;
+    flush();
+    // Поток закончился, а «done» не пришло — это обрыв, а не ответ. Молчать нельзя: экран
+    // остался бы с половиной фразы и вечным индикатором.
+    if (!finished) on.error?.('stream ended without done');
+  };
+  xhr.onerror = () => { if (!finished) on.error?.('network'); };
+  xhr.ontimeout = () => { if (!finished) on.error?.('timeout'); };
+  xhr.timeout = 200000;
+  xhr.send(JSON.stringify(body));
+
+  return () => { try { xhr.abort(); } catch { /* уже закрыт */ } };
+}
+
 export const api = {
   get: <T = Json>(path: string, signal?: AbortSignal) =>
     request<T>(path, undefined, timeoutFor(path), signal),
@@ -298,8 +371,15 @@ export const agent = {
 
   /** Уже собранный интент → кандидаты, без разбора текста. */
   /** `signal` — чтобы экран поиска мог отменить запрос по кнопке, а не ждать срока. */
-  match: (intent: Json, profile: Json, ctx: Json = {}, signal?: AbortSignal) =>
-    api.post('/api/agent/match', { intent, profile, ctx }, signal),
+  /**
+   * `limit` — сколько человек показать. Без него сервер отвечает как всегда: первой восьмёркой.
+   *
+   * Восемь — это ПЕРВАЯ страница, а не весь ответ. С `limit` сервер отдаёт продолжение того же
+   * ранжирования (девятый после восьмого) и в `has_more` говорит, осталось ли что показывать —
+   * без этого кнопка «показать ещё» жила бы вечно и однажды снова нажималась бы впустую.
+   */
+  match: (intent: Json, profile: Json, ctx: Json = {}, signal?: AbortSignal, limit?: number) =>
+    api.post('/api/agent/match', limit ? { intent, profile, ctx, limit } : { intent, profile, ctx }, signal),
 
   /**
    * §12 лестница расширения: на шаг шире по ОДНОЙ оси, а не «показать всех».

@@ -167,6 +167,34 @@ ok_m = st == 200 and isinstance(m, dict)
 check("match responds", ok_m, (m or {}).get("error") if isinstance(m, dict) else m)
 cands = (m or {}).get("candidates") or [] if isinstance(m, dict) else []
 check("padel search returns people", len(cands) > 0, "%d candidates" % len(cands))
+# СПИСОК ОБЯЗАН ПРОДОЛЖАТЬСЯ.
+#
+# Восемь — первая страница, а не весь ответ. Срез стоял намертво (`slate[:TOP_N]`), и «Расширить
+# поиск» не мог показать никого нового: ослабление условий впускает больше людей в отбор, а вперёд
+# выходят те же лучшие восемь. Измерено на живом сервере: все ЧЕТЫРЕ оси расширения вернули ту же
+# восьмёрку, ноль новых имён — со стороны «нажимаю и ничего не происходит».
+_MI = {"topics": ["coffee"], "type": "social", "role": "meet", "mode": "offline", "radiusKm": 15}
+_st, _m8 = call("/api/agent/match", {"intent": _MI, "profile": PROF, "ctx": {"self": me}})
+_n8 = [c.get("name") for c in ((_m8 or {}).get("candidates") or [])]
+check("без limit выдача прежняя — восемь", len(_n8) == 8, len(_n8))
+check("и про продолжение сервер молчит", "has_more" not in (_m8 or {}))
+
+_st, _m16 = call("/api/agent/match", {"intent": _MI, "profile": PROF, "ctx": {"self": me}, "limit": 16})
+_n16 = [c.get("name") for c in ((_m16 or {}).get("candidates") or [])]
+check("с limit приходит продолжение", len(_n16) > len(_n8), "%d -> %d" % (len(_n8), len(_n16)))
+# Продолжение, а не другая выдача: девятый идёт ПОСЛЕ восьмого. Если бы порядок плыл, «показать
+# ещё» перетасовывало бы уже прочитанные карточки — человек читал бы одно и то же дважды.
+check("прежние остаются на своих местах", _n16[:len(_n8)] == _n8, _n16[:3])
+check("новые лица действительно новые",
+      len(set(_n16) - set(_n8)) == len(_n16) - len(_n8), sorted(set(_n16) - set(_n8))[:3])
+check("сервер сообщает, есть ли ещё", (_m16 or {}).get("has_more") in (True, False),
+      (_m16 or {}).get("has_more"))
+check("сам себя в выдачу не берёт", me not in _n16)
+# Потолок нужен, чтобы «показать ещё» не превратилось в выгрузку всей базы одним нажатием.
+_st, _mbig = call("/api/agent/match", {"intent": _MI, "profile": PROF, "ctx": {"self": me}, "limit": 999})
+check("предел ограничен сверху", len(((_mbig or {}).get("candidates") or [])) <= 48,
+      len(((_mbig or {}).get("candidates") or [])))
+
 if cands:
     c0 = cands[0]
     check("top card has a name", bool(c0.get("name")), c0.get("name"))

@@ -89,6 +89,16 @@ export default function Results() {
   const [note, setNote] = useState('');
   /** Следующая непройденная ступень лестницы. */
   const [rung, setRung] = useState(0);
+  /**
+   * Сколько человек показано и есть ли продолжение.
+   *
+   * Восемь — первая страница, а не весь ответ. `hasMore` приходит с сервера: без него кнопка
+   * жила бы вечно и однажды снова нажималась бы впустую — ровно то, из-за чего это и правится.
+   * Изначально `undefined`: выдача пришла со старого вызова, без `limit`, и про продолжение мы
+   * ещё ничего не знаем — но раз пришло ровно восемь, спросить стоит.
+   */
+  const [limit, setLimit] = useState((initial?.candidates || []).length || 8);
+  const [hasMore, setHasMore] = useState<boolean | undefined>(undefined);
   /** Кандидат, для которого открыто окно O.14. null — окна нет. */
   const [asking, setAsking] = useState<Cand | null>(null);
   const [sending, setSending] = useState(false);
@@ -144,6 +154,39 @@ export default function Results() {
   /** Карточки-заменители: тема не совпала ни у кого, показаны просто ближайшие подходящие люди. */
   const onlyFallback = cands.length > 0 && cands.every((c) => !!(c as any).fallback);
   const canWiden = rung < ladder.length && (cands.length === 0 || onlyFallback);
+
+  /**
+   * Показать ещё — ПРОДОЛЖЕНИЕ того же ранжирования, а не другой запрос.
+   *
+   * Список запрашивается целиком с бо́льшим пределом, а не дозагружается кусками: ранжирование
+   * детерминировано, первые люди остаются на своих местах (проверено на живом сервере), а
+   * склейка страниц дала бы дубликаты при малейшем изменении хранилища между запросами.
+   */
+  const showMore = async () => {
+    if (busy) return;
+    const next = limit + 8;
+    setBusy(true);
+    setNote('');
+    try {
+      // Имя смотрящего — из переданного профиля: сервер по нему исключает человека из его же
+      // выдачи, и без `self` он нашёл бы сам себя.
+      const self = String((profile as any)?.name || '');
+      const r: any = await agent.match(intent, profile, { self, uid: self }, undefined, next);
+      const found: Cand[] = (r && r.candidates) || [];
+      if (found.length > cands.length) {
+        setCands(found);
+        setLimit(next);
+        patchResults({ candidates: found });
+      }
+      // Ответ сервера, а не догадка экрана: он один знает, остался ли кто-то за срезом.
+      setHasMore(r?.has_more === true);
+      if (found.length <= cands.length) setNote(RESULTS.allShown(cands.length));
+    } catch {
+      setNote(T('Не получилось загрузить ещё. Попробуй ещё раз.', 'Could not load more. Try again.'));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const widen = async () => {
     const axis = ladder[rung];
@@ -404,6 +447,20 @@ export default function Results() {
             onRemove={() => removeCard(String(c.name || ''))}
           />
         ))}
+
+        {/* «Ещё» показывается, пока сервер не сказал, что это все. Оно НЕ заменяет расширение:
+            то ослабляет запрос и объясняется словами, это просто продолжает список. */}
+        {cands.length > 0 && hasMore !== false ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ busy }}
+            style={[s.moreBtn, busy && { opacity: 0.6 }]}
+            onPress={busy ? undefined : showMore}
+          >
+            {busy ? <ActivityIndicator color={color.fg} />
+                  : <Text style={s.moreText}>{RESULTS.more()}</Text>}
+          </Pressable>
+        ) : null}
 
         {canWiden ? (
           <Pressable
@@ -841,6 +898,13 @@ const s = StyleSheet.create({
   inviteText: { ...type.button, color: color.onPrimary } as any,
 
   cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  /* «Ещё» — вторичная кнопка: продолжение списка не должно спорить за внимание с приглашением,
+     ради которого экран и открыт. */
+  moreBtn: {
+    height: 48, borderRadius: rad.full, borderWidth: 1, borderColor: color.border,
+    backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
+  },
+  moreText: { ...type.button, color: color.fg } as any,
   ctaText: { ...type.button, color: color.onPrimary } as any,
 
   navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },

@@ -1507,7 +1507,7 @@ def _slate_budget(intent):
     return max(_core.TOP_N, min(2 * kg._MAX_MVP_SIZE, seats + 4))
 
 
-def match_candidates(intent, prof, ctx=None, diag=None):
+def match_candidates(intent, prof, ctx=None, diag=None, want=None):
     """Entry point. Policy hard gates run HERE (scoring only after ALLOW — spec §8), then §7 staged
     retrieval assembles the pool, then Core v2 scores it. KLEAL_CORE_V2=0 or an invalid config -> legacy
     scorer above, unchanged. The response is a superset of the legacy card contract.
@@ -1570,7 +1570,21 @@ def match_candidates(intent, prof, ctx=None, diag=None):
     # режем до восьми уже ПОСЛЕ переупорядочивания. Ранжирование при этом остаётся его: полосы
     # (band) сохраняются, меняется только порядок внутри полосы.
     n_final = _slate_budget(intent)
-    over = None if n_final is not None else _PERSONA_OVERFETCH   # группам лишние места не нужны
+    # СКОЛЬКО ПОКАЗАТЬ. Восемь — это ПЕРВАЯ страница, а не весь ответ.
+    #
+    # Раньше срез стоял намертво: `slate[:TOP_N]`. Из-за этого «Расширить поиск» не мог показать
+    # никого нового — ослабление условий лишь впускает больше людей в отбор, а вперёд всё равно
+    # выходят те же лучшие восемь. Измерено на живом сервере: все четыре оси расширения вернули
+    # ТУ ЖЕ восьмёрку, ноль новых имён. Со стороны это «нажимаю — ничего не происходит».
+    #
+    # `want` просит продолжение того же ранжирования: девятый идёт после восьмого, а не вместо.
+    want_n = None
+    if n_final is None and want:
+        try:
+            want_n = max(_core.TOP_N, min(48, int(want)))
+        except (TypeError, ValueError):
+            want_n = None
+    over = None if n_final is not None else max(_PERSONA_OVERFETCH, (want_n or 0) + 8)
     hybrid = str(intent.get('mode') or '') == 'hybrid' and over is not None
     if hybrid:
         near, far, _meta = _hybrid_pair(intent, prof, ctx, eligible, budget, over)
@@ -1578,7 +1592,8 @@ def match_candidates(intent, prof, ctx=None, diag=None):
             near = _expand_fallback(intent, prof or {}, ctx, eligible)
         # Порядок по характеру считаем в КАЖДОЙ половине отдельно: иначе полосы двух выдач
         # перемешались бы, и «сначала ближние» перестало бы соблюдаться.
-        slate = _hybrid_merge(_persona_order(near, intent), _persona_order(far, intent), _core.TOP_N)
+        slate = _hybrid_merge(_persona_order(near, intent), _persona_order(far, intent),
+                              want_n or _core.TOP_N)
     else:
         slate, _meta = _core.search(intent, prof or {}, ctx, retrieved, _H, _CORE_CFG,
                                     top_n=(over if over is not None else n_final))
@@ -1586,7 +1601,7 @@ def match_candidates(intent, prof, ctx=None, diag=None):
             slate = _expand_fallback(intent, prof or {}, ctx, eligible)  # over the FULL pool, never budget-starved
         slate = _persona_order(slate, intent)
         if over is not None:
-            slate = slate[:_core.TOP_N]                    # ровно та же восьмёрка, что и раньше
+            slate = slate[:(want_n or _core.TOP_N)]        # без `want` — ровно та же восьмёрка
     slate = _apply_policy(slate, policy_by)
     slate = _allocate(slate, ctx, retrieved)              # §11 allocation (DORMANT at pilot defaults; before contracts)
     slate = _stamp_contracts(slate, intent, ctx)          # §4.6/§8.3/§4.12 additive contract overlays
@@ -7409,8 +7424,21 @@ class H(BaseHTTPRequestHandler):
                                                     "note": "%s is not enabled in this pilot (%s)"
                                                             % (snap["decision_type"], RELEASE_STATUS),
                                                     "people_shown_anyway": len(ppl)}}); return
-                cands = match_candidates(intent, prof, ctx)
+                # `limit` — сколько человек показать. Просим на одного БОЛЬШЕ и по нему же решаем,
+                # есть ли продолжение: иначе кнопка «показать ещё» осталась бы вечной, и человек
+                # снова жал бы её впустую — ровно та поломка, из-за которой всё это и правится.
+                _lim = 0
+                try:
+                    _lim = int(body.get("limit") or 0)
+                except (TypeError, ValueError):
+                    _lim = 0
+                _lim = max(0, min(48, _lim))
+                cands = match_candidates(intent, prof, ctx, want=(_lim + 1) if _lim else None)
                 res = {"intent": intent, "candidates": cands, "snapshot": snap}
+                if _lim:
+                    res["has_more"] = len(cands) > _lim
+                    res["candidates"] = cands = cands[:_lim]
+                    res["shown"] = len(cands)
                 res.update(_section5_addendum(intent, str(body.get("query") or ""), cands))  # §5.1/§5.2
                 res["retrieval"] = _retrieval_report(cands)                                    # §7
                 res["expansion"] = expansion_ladder(intent, ctx)                               # §12
