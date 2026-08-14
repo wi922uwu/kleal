@@ -196,12 +196,29 @@ v = call("/api/agent/gplan-vote-open", {"id": pid, "self": own, "kind": "cancel"
 vid = ((v or {}).get("vote") or {}).get("id")
 for m in mem:
     call("/api/agent/gplan-vote", {"id": vid, "self": m, "yes": True})
+# ГОЛОС — СОВЕТ, А НЕ РЕШЕНИЕ. Здесь стояло ожидание «все проголосовали за отмену — план отменён»,
+# и оно давало четыре находки подряд, все ложные: план оставался живым, поэтому и фидбэк по нему
+# принимался, и новый план не начинался (PLAN_EXISTS). Продукт при этом вёл себя ровно по борду —
+# GR.35 «The result is advice — Marc makes the final call», GR.38 «On Kleal the vote is advice —
+# the organiser decides», и эти цитаты стоят прямо в _gp_close_vote.
+#
+# Поэтому проверяем ДВА шага. Сначала: после единогласного «за» план ещё жив — совет не отменяет.
+# Потом организатор применяет совет, и только тогда план уходит в отменённые.
+still = next((x for x in (call("/api/agent/gplans?self=%s" % own).get("plans") or [])
+              if x.get("id") == pid), None)
+if still:
+    ok("совет сам по себе план не отменяет", still.get("state"))
+else:
+    bug("голосование отменило план мимо организатора",
+        "у голосования совещательный характер: решает организатор (GR.35/GR.37)")
+
+call("/api/agent/gplan-vote-decide", {"id": vid, "self": own, "apply": True})
 after = next((x for x in (call("/api/agent/gplans?self=%s" % own).get("history") or [])
               if x.get("id") == pid), None)
 if after and after.get("state") == "cancelled":
-    ok("голосование действительно отменило план")
+    ok("организатор применил совет — план отменён")
 else:
-    bug("голосование за отмену план не отменило",
+    bug("организатор применил совет, а план не отменился",
         next((x for x in (call("/api/agent/gplans?self=%s" % own).get("plans") or [])
               if x.get("id") == pid), None))
 r = call("/api/agent/gplan-vote-open", {"id": pid, "self": own, "kind": "edit", "when": "вт"})
