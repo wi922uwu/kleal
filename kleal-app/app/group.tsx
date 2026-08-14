@@ -31,7 +31,7 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo, type VoicePayload, type VideoPayload } from '../src/api';
-import { ROOM, GROUP, groupSysLine, roomMsg } from '../src/groups';
+import { ROOM, GROUP, groupSysLine, roomMsg, type GroupSys } from '../src/groups';
 import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
 import { IconChevronLeft, IconPerson, IconSend, IconDots } from '../src/components/icons';
@@ -44,7 +44,9 @@ import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
 import { VideoNoteButton } from '../src/videonote';
 
-type GMsg = { id?: string; frm?: string; text?: string; t?: number; kind?: string; voice?: VoicePayload };
+type GMsg = { id?: string; frm?: string; text?: string; t?: number; kind?: string; voice?: VoicePayload;
+  /** Событие ленты кодом и фактами — по нему строка собирается на языке читающего. */
+  sys?: GroupSys };
 
 /** Лента комнаты и лента переписки — один компонент; форма приводится на входе (см. roomMsg). */
 type Row = Msg;
@@ -366,7 +368,7 @@ export default function GroupRoom() {
             me={me}
             ru={getLang() === 'ru'}
             showAuthor
-            sysText={(m) => groupSysLine(String(m.text || ''))}
+            sysText={(m) => groupSysLine(String(m.text || ''), (m as any).sys)}
             onReply={setReplyTo}
             onReact={react}
             onPick={setPicked}

@@ -3751,11 +3751,28 @@ def _gi_public(g, me=""):
     }
 
 
-def _gi_say(g, text, kind="system"):
+def _gi_say(g, text, kind="system", code=None, **fields):
     """System messages ARE the group's history — «X joined», «time changed» — so they live in the
-    same thread as everything else rather than in a side channel the next joiner cannot see."""
-    _gmsgs().append({"id": "gm_%d_%s" % (int(time.time() * 1000), hashlib.sha1(text.encode("utf-8")).hexdigest()[:4]),
-                     "gid": g.get("id"), "frm": "", "text": text, "t": time.time(), "kind": kind})
+    same thread as everything else rather than in a side channel the next joiner cannot see.
+
+    THE ROW CARRIES A CODE AND ITS FACTS, not only a rendered sentence. The English text stays as
+    the fallback (previews, older clients, anything that just prints the last line), but the screen
+    should read `sys`: a group is one history for everyone, and the interface language is personal.
+
+    Why this was added. The client used to recognise these lines by REGEX over English text
+    (`groupSysLine` in src/groups.ts). It covered five phrases out of twenty-seven, and one of the
+    misses is the one that matters most: «X left. Y is now the organiser» does not match
+    `^(.+?) left the group$`, so a Russian screen printed it in English. Worse, the failure is
+    silent — reword a sentence here and the client stops recognising it without a single error.
+
+    `text` stays the first positional argument on purpose: every existing call keeps working
+    untouched, and a call without a code degrades to exactly the old behaviour.
+    """
+    row = {"id": "gm_%d_%s" % (int(time.time() * 1000), hashlib.sha1(text.encode("utf-8")).hexdigest()[:4]),
+           "gid": g.get("id"), "frm": "", "text": text, "t": time.time(), "kind": kind}
+    if code:
+        row["sys"] = dict({"code": str(code)}, **{k: v for k, v in fields.items() if v is not None})
+    _gmsgs().append(row)
 
 
 def gi_create(owner, intent, title="", min_total=None, max_total=None, idem=None):
@@ -3913,7 +3930,7 @@ def gi_respond(inv_id, who, accept, idem=None):
             # _gi_public (наружу идут только sent|viewed|awaiting_approval), версия группы не
             # росла, и экран организатора даже не перерисовывался. Человек видел «2 из 3» и не
             # понимал, ждать ему или звать другого — а третий уже ответил «нет».
-            _gi_say(g, "%s can\'t make it." % inv.get("to"))
+            _gi_say(g, "%s can\'t make it." % inv.get("to"), code="cant_make_it", who=inv.get("to"))
             g["version"] = int(g.get("version") or 1) + 1
             g["updated"] = now
             _save_store()
@@ -3956,15 +3973,15 @@ def gi_respond(inv_id, who, accept, idem=None):
             g["state"] = "ready_to_plan"
         g["updated"] = now
         g["version"] = int(g.get("version") or 1) + 1
-        _gi_say(g, "%s joined the group." % who)
+        _gi_say(g, "%s joined the group." % who, code="joined", who=who)
         if n == int(g.get("min_total") or GI_MIN_TOTAL):
-            _gi_say(g, "You have enough people to make a plan.")
+            _gi_say(g, "You have enough people to make a plan.", code="quorum_reached")
         # Every remaining invite is re-checked against the new capacity: once the room is full the
         # people still holding an invitation are told so, instead of finding out by tapping Join.
         if n >= int(g.get("max_total") or GI_MAX_TOTAL):
             for i in _gi_pending(g.get("id")):
                 i["state"] = "group_full"; i["updated"] = now
-            _gi_say(g, "This group is full. Pending invites are no longer available.")
+            _gi_say(g, "This group is full. Pending invites are no longer available.", code="group_full")
         _save_store()
         return _idem_put(idem, {"ok": True, "gid": g.get("id"), "group": _gi_public(g, who)})
 
@@ -4037,7 +4054,7 @@ def gi_approve(gid, frm, who, accept=True, idem=None):
         g.setdefault("members", []).append({"name": inv.get("to"), "state": "joined", "joined": now})
         g["updated"] = now
         g["version"] = int(g.get("version") or 1) + 1
-        _gi_say(g, "%s joined the group." % inv.get("to"))
+        _gi_say(g, "%s joined the group." % inv.get("to"), code="joined", who=inv.get("to"))
         # Состав вырос — пересчитать план. Без этого «позвать ещё людей» с кадра GR.40 выглядело
         # рабочим и не работало: человек приходил в группу, а план оставался на паузе навсегда.
         _gp_recount(gid, now)
@@ -4090,7 +4107,7 @@ def gi_remove(gid, frm, who, reason="", idem=None):
         g["updated"] = now
         g["version"] = int(g.get("version") or 1) + 1
         # Neutral in the room: the group is told somebody left, never why or by whom.
-        _gi_say(g, "%s is no longer in the group." % who)
+        _gi_say(g, "%s is no longer in the group." % who, code="removed", who=who)
         _gp_recount(gid, now)
         _save_store()
         return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, frm)})
@@ -4130,7 +4147,7 @@ def gi_convert_ask(gid, frm, idem=None):
         g["pending_1to1"] = {"by": frm, "to": other, "at": now}
         g["version"] = int(g.get("version") or 1) + 1
         g["updated"] = now
-        _gi_say(g, "%s asked to switch to one-on-one." % frm)
+        _gi_say(g, "%s asked to switch to one-on-one." % frm, code="convert_asked", who=frm)
         _save_store()
     return _idem_put(idem, {"ok": True, "asked": other, "group": _gi_public(g, frm)})
 
@@ -4162,7 +4179,7 @@ def gi_convert_respond(gid, who, agree, idem=None):
             g["pending_1to1"] = None
             g["version"] = int(g.get("version") or 1) + 1
             g["updated"] = now
-            _gi_say(g, "%s wants to keep the group." % who)
+            _gi_say(g, "%s wants to keep the group." % who, code="convert_declined", who=who)
             _save_store()
             return _idem_put(idem, {"ok": True, "agreed": False, "group": _gi_public(g, who)})
 
@@ -4178,7 +4195,7 @@ def gi_convert_respond(gid, who, agree, idem=None):
             inv["updated"] = now
             inv["note_out"] = ("%s turned %s into a one-on-one, so the group invite is closed. "
                                "Nothing you did." % (req.get("by"), title))
-        _gi_say(g, "The group is now a one-on-one.")
+        _gi_say(g, "The group is now a one-on-one.", code="converted")
         _save_store()
     return _idem_put(idem, {"ok": True, "agreed": True, "group": _gi_public(g, who)})
 
@@ -4209,9 +4226,9 @@ def gi_leave(gid, who, idem=None):
         if _norm_name(who) == _norm_name(g.get("owner")) and rest:
             heir = sorted(rest, key=lambda x: x.get("joined") or 0)[0]
             g["owner"] = heir.get("name")
-            _gi_say(g, "%s left. %s is now the organiser." % (who, heir.get("name")))
+            _gi_say(g, "%s left. %s is now the organiser." % (who, heir.get("name")), code="left_heir", who=who, heir=heir.get("name"))
         else:
-            _gi_say(g, "%s left the group." % who)
+            _gi_say(g, "%s left the group." % who, code="left", who=who)
         n = len(rest)
         if n < int(g.get("min_total") or GI_MIN_TOTAL) and g.get("state") in ("ready_to_plan", "planning"):
             g["state"] = "below_quorum"
@@ -4602,7 +4619,7 @@ def _gp_recount(gid, now=None):
             p["updated"] = now
             if g:
                 g["state"] = "planning"
-                _gi_say(g, "Three again — the plan is back on. Everyone confirms once more.")
+                _gi_say(g, "Three again — the plan is back on. Everyone confirms once more.", code="quorum_back")
         return
 
     # Пока идёт «принять или выйти» (GR.33), считать по подтверждениям нельзя: их по построению
@@ -4622,7 +4639,7 @@ def _gp_recount(gid, now=None):
             g["state"] = "below_quorum"
             # Борд GR.40: план НА ПАУЗЕ, а не отменён, и решение за организатором. Прежняя строка
             # («This is no longer a group plan») закрывала вопрос, который борд как раз открывает.
-            _gi_say(g, "A group plan needs three. Nothing happens until you choose.")
+            _gi_say(g, "A group plan needs three. Nothing happens until you choose.", code="below_quorum")
 
 
 def _gp_lock_due(now=None):
@@ -4648,7 +4665,7 @@ def _gp_lock_due(now=None):
                 g = _gi_find(p.get("gid"))
                 if g:
                     g["state"] = "locked"
-                    _gi_say(g, "The plan is locked — it starts in less than two hours.")
+                    _gi_say(g, "The plan is locked — it starts in less than two hours.", code="plan_locked")
     return changed
 
 
@@ -4758,7 +4775,7 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None):
         _gplans().append(p)
         g["state"] = "planning"
         g["updated"] = now
-        _gi_say(g, "A group plan is ready. Confirm to join it.")
+        _gi_say(g, "A group plan is ready. Confirm to join it.", code="plan_ready")
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
@@ -4836,13 +4853,14 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
             p["state"] = "proposed"
             p["updated"] = now
             _gi_say(g, "%s suggested a change: %s%s. Everyone confirms again."
-                    % (who, p.get("when") or "", (", " + p.get("place")) if p.get("place") else ""))
+                    % (who, p.get("when") or "", (", " + p.get("place")) if p.get("place") else ""),
+                               code="plan_countered", who=who, when=p.get("when"), place=p.get("place"))
             _save_store()
             return _idem_put(idem, {"ok": True, "countered": True, "plan": _gp_public(p, who)})
         if action == "decline":
             p["responses"][who] = {"state": "declined", "t": now, "version": v}
             p["updated"] = now
-            _gi_say(g, "%s will not join this plan." % who)
+            _gi_say(g, "%s will not join this plan." % who, code="plan_declined", who=who)
             _save_store()
             return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
         if action != "confirm":
@@ -4859,13 +4877,13 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
         if p.get("state") == "proposed" and len(conf) >= len(need):
             p["state"] = "confirmed"
             g["state"] = "planned"
-            _gi_say(g, "Everyone confirmed. The plan is set: %s." % ", ".join(conf))
+            _gi_say(g, "Everyone confirmed. The plan is set: %s." % ", ".join(conf), code="plan_confirmed", names=", ".join(conf))
         elif p.get("update") and len(conf) >= len(need):
             # Правку приняли все — «принять или выйти» закончилось, и план снова просто план.
             # Пока метка висит, экран показывал бы «Marc changed the time» людям, которые уже
             # ответили, и считал бы состав по-другому (см. `_gp_recount`).
             p.pop("update", None)
-            _gi_say(g, "Everyone accepted the change.")
+            _gi_say(g, "Everyone accepted the change.", code="change_accepted")
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
@@ -4904,7 +4922,7 @@ def gp_cancel(pid, who, idem=None):
         p["version"] = int(p.get("version") or 1) + 1
         g["state"] = "ready_to_plan"
         g["updated"] = now
-        _gi_say(g, "%s cancelled the plan. The group is still here." % who)
+        _gi_say(g, "%s cancelled the plan. The group is still here." % who, code="plan_cancelled_group_stays", who=who)
         _save_store()
     return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
@@ -4962,12 +4980,14 @@ def gp_fix(pid, who, idem=None):
         silent = [m.get("name") for m in _gi_active(g)
                   if _norm_name(m.get("name")) not in {_norm_name(c) for c in conf}]
         _gi_say(g, "%s fixed the plan: %s%s." % (who, p.get("when") or "",
-                                                 (", " + p.get("place")) if p.get("place") else ""))
+                                                 (", " + p.get("place")) if p.get("place") else ""),
+                                                            code="plan_fixed", who=who, when=p.get("when"), place=p.get("place"))
         if silent:
             # Названы поимённо и нейтрально: им предстоит решить, идут они или выходят (GR.31),
             # и группа должна понимать, почему у этих людей в составе стоит вопрос.
             _gi_say(g, "%s did not confirm this time and can stay or leave."
-                    % ", ".join(str(s) for s in silent))
+                    % ", ".join(str(s) for s in silent),
+                               code="silent_stay_or_leave", names=", ".join(str(s) for s in silent))
         _save_store()
         return _idem_put(idem, {"ok": True, "fixed": True, "unconfirmed": silent,
                                 "plan": _gp_public(p, who)})
@@ -5004,7 +5024,8 @@ def gp_vote_open(pid, who, kind, when="", place="", note="", starts_at=None, ide
                 "votes": {who: True}}
         _gvotes().append(vote)
         _gi_say(g, "%s asked the group to %s the plan. Please vote."
-                % (who, "change" if kind == "edit" else "cancel"))
+                % (who, "change" if kind == "edit" else "cancel"),
+                           code="vote_opened", who=who, kind=kind)
         _save_store()
         return _idem_put(idem, _gp_vote_view(vote, who))
 
@@ -5089,7 +5110,8 @@ def _gp_close_vote(v, now=None):
         what = "change" if v.get("kind") == "edit" else "cancel"
         _gi_say(g, "The vote is closed: %d for, %d against, %d didn’t answer. "
                    "It’s %s’s call whether to %s the plan."
-                % (yes, no, silent, g.get("owner"), what))
+                % (yes, no, silent, g.get("owner"), what),
+                           code="vote_closed", yes=yes, no=no, silent=silent, owner=g.get("owner"), what=what)
     return v
 
 
@@ -5149,7 +5171,8 @@ def _gp_apply_change(p, g, pr, by, now):
         # свою копию условий, — поэтому «the open invite is updated» ничего дополнительно не требует.
         g["updated"] = now
         _gi_say(g, "%s changed the plan: %s%s. Accept to stay in the group, or leave."
-                % (by, p.get("when") or "", (", " + p.get("place")) if p.get("place") else ""))
+                % (by, p.get("when") or "", (", " + p.get("place")) if p.get("place") else ""),
+                           code="plan_updated", who=by, when=p.get("when"), place=p.get("place"))
     return p
 
 
@@ -5232,7 +5255,7 @@ def gp_link(pid, who, link="", idem=None):
         p["link"] = link
         p["updated"] = now
         g["link"] = link
-        _gi_say(g, "The call link is saved.")
+        _gi_say(g, "The call link is saved.", code="link_saved")
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
@@ -5264,7 +5287,7 @@ def gp_vote_decide(vote_id, who, apply=True, idem=None):
         v["decided"] = "applied" if apply else "kept"
         v["decided_at"] = now
         if not apply or not p:
-            _gi_say(g, "%s kept the plan as it is." % who)
+            _gi_say(g, "%s kept the plan as it is." % who, code="vote_kept", who=who)
             _save_store()
             return _idem_put(idem, _gp_vote_view(v, who))
         if p.get("state") == "locked":
@@ -5273,7 +5296,7 @@ def gp_vote_decide(vote_id, who, apply=True, idem=None):
             p["state"] = "cancelled"
             p["updated"] = now
             g["state"] = "chat_open"
-            _gi_say(g, "%s cancelled the plan." % who)
+            _gi_say(g, "%s cancelled the plan." % who, code="plan_cancelled", who=who)
         else:
             _gp_apply_change(p, g, v.get("proposal") or {}, who, now)
         _save_store()

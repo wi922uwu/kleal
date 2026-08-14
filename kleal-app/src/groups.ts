@@ -124,6 +124,56 @@ export const ROOM = {
   sysLeft: (who: string) => T(`${who} вышел(ла) из группы`, `${who} left the group`),
   sysEnough: () => T('Людей достаточно — можно делать план.', 'You have enough people to make a plan.'),
   sysRemoved: (who: string) => T(`${who} больше не в группе`, `${who} is no longer in the group`),
+  /**
+   * Системные строки ленты — ПО КОДУ СОБЫТИЯ, а не по разбору английской фразы.
+   *
+   * Пять строк ниже (sysJoined и соседи) остались от прежнего способа: сервер писал предложение
+   * по-английски, клиент узнавал его регуляркой. Из двадцати семи событий так узнавались пять, а
+   * промах был не виден — строка про смену организатора («X left. Y is now the organiser») не
+   * подходила под шаблон «X left the group» и приезжала на русский экран по-английски.
+   */
+  sysCantMakeIt: (who: string) => T(`${who} не сможет прийти`, `${who} can’t make it`),
+  sysConvertAsked: (who: string) =>
+    T(`${who} предлагает перейти в один на один`, `${who} asked to switch to one-on-one`),
+  sysConvertDeclined: (who: string) => T(`${who} хочет оставить группу`, `${who} wants to keep the group`),
+  sysConverted: () => T('Группа стала перепиской один на один.', 'The group is now a one-on-one.'),
+  /** Роль перешла не по своей воле — говорим обоих поимённо, иначе группа не понимает, к кому идти. */
+  sysLeftHeir: (who: string, heir: string) =>
+    T(`${who} вышел(ла). Теперь организатор — ${heir}`, `${who} left. ${heir} is now the organiser`),
+  sysQuorumBack: () => T('Снова трое — план в силе. Подтвердите ещё раз.',
+                         'Three again — the plan is back on. Everyone confirms once more.'),
+  sysBelowQuorum: () => T('Для группового плана нужны трое. Пока вы не решите, ничего не произойдёт.',
+                          'A group plan needs three. Nothing happens until you choose.'),
+  sysPlanLocked: () => T('План закреплён — до встречи меньше двух часов.',
+                         'The plan is locked — it starts in less than two hours.'),
+  sysPlanReady: () => T('Групповой план готов. Подтвердите, чтобы участвовать.',
+                        'A group plan is ready. Confirm to join it.'),
+  sysPlanDeclined: (who: string) => T(`${who} не пойдёт по этому плану`, `${who} will not join this plan`),
+  sysPlanConfirmed: (names: string) =>
+    T(`Все подтвердили. План назначен: ${names}.`, `Everyone confirmed. The plan is set: ${names}.`),
+  sysChangeAccepted: () => T('Изменение приняли все.', 'Everyone accepted the change.'),
+  sysPlanCancelledGroupStays: (who: string) =>
+    T(`${who} отменил(а) план. Группа остаётся.`, `${who} cancelled the plan. The group is still here.`),
+  sysPlanCancelled: (who: string) => T(`${who} отменил(а) план`, `${who} cancelled the plan`),
+  sysLinkSaved: () => T('Ссылка на звонок сохранена.', 'The call link is saved.'),
+  sysVoteKept: (who: string) => T(`${who} оставил(а) план как есть`, `${who} kept the plan as it is`),
+  sysPlanCountered: (who: string, when: string) =>
+    T(`${who} предлагает изменить: ${when}. Все подтверждают заново.`,
+      `${who} suggested a change: ${when}. Everyone confirms again.`),
+  sysPlanFixed: (who: string, when: string) =>
+    T(`${who} зафиксировал(а) план: ${when}.`, `${who} fixed the plan: ${when}.`),
+  sysPlanUpdated: (who: string, when: string) =>
+    T(`${who} изменил(а) план: ${when}. Примите, чтобы остаться, или выйдите.`,
+      `${who} changed the plan: ${when}. Accept to stay in the group, or leave.`),
+  sysSilentStayOrLeave: (names: string) =>
+    T(`${names} в этот раз не подтвердил(и) — можно остаться или выйти.`,
+      `${names} did not confirm this time and can stay or leave.`),
+  sysVoteOpened: (who: string, kind: string) =>
+    T(`${who} просит группу проголосовать: ${kind === 'edit' ? 'менять' : 'отменять'} ли план.`,
+      `${who} asked the group to ${kind === 'edit' ? 'change' : 'cancel'} the plan. Please vote.`),
+  sysVoteClosed: (yes: number, no: number, silent: number, owner: string, what: string) =>
+    T(`Голосование закрыто: ${yes} за, ${no} против, ${silent} не ответили. Решает ${owner}.`,
+      `The vote is closed: ${yes} for, ${no} against, ${silent} didn’t answer. It’s ${owner}’s call.`),
   sysFull: () => T('Группа заполнена. Открытые приглашения закрыты.',
                    'This group is full. Pending invites are no longer available.'),
 
@@ -235,7 +285,53 @@ export const GINVITE = {
  * распознавание события: строка разбирается на «что случилось + с кем» и рисуется на языке
  * читающего. Не разобралось — показываем как есть, а не прячем: непонятная строка честнее пустоты.
  */
-export function groupSysLine(text: string): string {
+/** Строка ленты, пришедшая с сервера: `sys` с кодом и фактами, `text` — английский запасной. */
+export type GroupSys = { code?: string; [k: string]: any };
+
+/**
+ * Показать событие на языке читающего.
+ *
+ * Первым делом смотрим КОД. Он приходит с фактами рядом (`who`, `heir`, `when`), и по нему строка
+ * собирается на нужном языке. Разбор английского текста регуляркой остался ниже ЗАПАСНЫМ путём:
+ * в ленте лежат старые сообщения, записанные до появления кодов, и терять их историю нельзя.
+ */
+export function groupSysLine(text: string, sys?: GroupSys): string {
+  const c = sys && sys.code;
+  const f = (sys || {}) as any;
+  const S = (v: any) => String(v == null ? '' : v);
+  if (c === 'joined') return ROOM.sysJoined(S(f.who));
+  if (c === 'left') return ROOM.sysLeft(S(f.who));
+  if (c === 'left_heir') return ROOM.sysLeftHeir(S(f.who), S(f.heir));
+  if (c === 'removed') return ROOM.sysRemoved(S(f.who));
+  if (c === 'cant_make_it') return ROOM.sysCantMakeIt(S(f.who));
+  if (c === 'quorum_reached') return ROOM.sysEnough();
+  if (c === 'group_full') return ROOM.sysFull();
+  if (c === 'convert_asked') return ROOM.sysConvertAsked(S(f.who));
+  if (c === 'convert_declined') return ROOM.sysConvertDeclined(S(f.who));
+  if (c === 'converted') return ROOM.sysConverted();
+  if (c === 'quorum_back') return ROOM.sysQuorumBack();
+  if (c === 'below_quorum') return ROOM.sysBelowQuorum();
+  if (c === 'plan_locked') return ROOM.sysPlanLocked();
+  if (c === 'plan_ready') return ROOM.sysPlanReady();
+  if (c === 'plan_declined') return ROOM.sysPlanDeclined(S(f.who));
+  if (c === 'plan_confirmed') return ROOM.sysPlanConfirmed(S(f.names));
+  if (c === 'change_accepted') return ROOM.sysChangeAccepted();
+  if (c === 'plan_cancelled_group_stays') return ROOM.sysPlanCancelledGroupStays(S(f.who));
+  if (c === 'plan_cancelled') return ROOM.sysPlanCancelled(S(f.who));
+  if (c === 'link_saved') return ROOM.sysLinkSaved();
+  if (c === 'vote_kept') return ROOM.sysVoteKept(S(f.who));
+  if (c === 'vote_opened') return ROOM.sysVoteOpened(S(f.who), S(f.kind));
+  if (c === 'vote_closed')
+    return ROOM.sysVoteClosed(Number(f.yes || 0), Number(f.no || 0), Number(f.silent || 0),
+                              S(f.owner), S(f.what));
+  if (c === 'plan_countered' || c === 'plan_fixed' || c === 'plan_updated') {
+    const when = [S(f.when), S(f.place)].filter(Boolean).join(', ');
+    if (c === 'plan_countered') return ROOM.sysPlanCountered(S(f.who), when);
+    if (c === 'plan_fixed') return ROOM.sysPlanFixed(S(f.who), when);
+    return ROOM.sysPlanUpdated(S(f.who), when);
+  }
+  if (c === 'silent_stay_or_leave') return ROOM.sysSilentStayOrLeave(S(f.names));
+
   const t = String(text || '').trim();
   let m = t.match(/^(.+?) joined the group\.?$/i);
   if (m) return ROOM.sysJoined(m[1]);
