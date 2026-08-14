@@ -1535,6 +1535,32 @@ def _escape_raw_newlines(s):
     return "".join(out)
 
 
+# Потолок ответа. Был 600 — столько хватало, пока Бадди отвечал одной фразой. С разметкой ответ
+# стал документом: два-три раздела с заголовками не влезают, и человек получал обрыв на середине
+# слова («…потенциально получить прибыль, ког»). Снято с телефона 14 августа.
+REPLY_MAX = 2400
+
+
+def _clip(text, limit=REPLY_MAX):
+    """Обрезать по ГРАНИЦЕ, а не по счёту символов.
+
+    Обрыв посреди слова читается как поломка приложения, а не как длинный ответ: человек не знает,
+    потерялся ли текст, и ждёт продолжения, которого не будет. Режем по концу абзаца, если он есть
+    в пределах последней четверти, иначе по концу предложения, иначе по пробелу — и только в самом
+    безнадёжном случае по символу.
+    """
+    t = str(text or "")
+    if len(t) <= limit:
+        return t
+    head = t[:limit]
+    for sep in ("\n\n", "\n", ". ", "! ", "? "):
+        cut = head.rfind(sep)
+        if cut > limit * 0.6:
+            return head[:cut + (len(sep) if sep.strip() else 0)].rstrip()
+    cut = head.rfind(" ")
+    return (head[:cut] if cut > limit * 0.6 else head).rstrip()
+
+
 def _as_plain_reply(raw):
     """Модель ответила ТЕКСТОМ, без обёртки JSON. Это всё равно ответ.
 
@@ -1559,7 +1585,7 @@ def _as_plain_reply(raw):
         return None
     if len(t) < 12:                             # «ок» без конверта — не ответ, а обрывок
         return None
-    return {"reply": t[:600], "signals": {}, "match": False}
+    return {"reply": _clip(t), "signals": {}, "match": False}
 
 
 def _lenient_json(raw):
@@ -1647,7 +1673,7 @@ def buddy_chat(messages, profile, signals, uid=None):
             break
 
     if isinstance(obj, dict) and obj.get("reply"):
-        reply = str(obj.get("reply"))[:600]
+        reply = _clip(str(obj.get("reply")))
         sig = _merge_signals(sig, obj.get("signals") or {})
         # The model's flag alone is not enough (it fires on plain chat and misses real asks). Require an
         # explicit ask in the user's words; the flag only tips a soft "with someone" cue over the line.

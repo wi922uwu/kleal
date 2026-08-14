@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Composer } from './Composer';
+import Markdown from './Markdown';
 import { color, space, type } from '../theme';
 
 export type Bubble = { who: 'bot' | 'me'; text: string; at: string; photo?: string };
@@ -71,16 +72,25 @@ export const ChatShell = forwardRef<ScrollView, {
           keyboardShouldPersistTaps="handled"
           scrollEnabled={scrollEnabled}
         >
+          {/*
+            Текст агента верстается ДОКУМЕНТОМ — тем же, что на экране Бадди. Правило одно на всё
+            приложение: реплика человека — пузырь, написанное моделью — страница. Пока здесь был
+            пузырь, разметка приезжала сырой («## Что такое фьючерс» строкой с решётками), а
+            длинный ответ схлопывался в кашу — и один и тот же ответ выглядел по-разному на разных
+            экранах, что читается как сбой, а не как замысел.
+          */}
           {thread.map((m, i) => (
-            <View key={i} style={{ alignItems: m.who === 'me' ? 'flex-end' : 'flex-start' }}>
+            <View key={i} style={m.who === 'me' ? { alignItems: 'flex-end' } : s.answer}>
               {m.photo ? (
                 <Image source={{ uri: mediaUrl(String(m.photo)) }} style={s.threadPhoto} />
-              ) : (
-                <View style={[s.bub, m.who === 'me' ? s.bubMe : s.bubBot]}>
-                  <Text style={[s.bubText, m.who === 'me' && { color: color.onPrimary }]}>{m.text}</Text>
+              ) : m.who === 'me' ? (
+                <View style={[s.bub, s.bubMe]}>
+                  <Text style={[s.bubText, { color: color.onPrimary }]}>{m.text}</Text>
                 </View>
+              ) : (
+                <Markdown text={m.text} />
               )}
-              <Text style={s.time}>{m.at}</Text>
+              <Text style={[s.time, m.who !== 'me' && s.timeAnswer]}>{m.at}</Text>
             </View>
           ))}
 
@@ -135,6 +145,8 @@ const s = StyleSheet.create({
   bubBot: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderRadius: 16 },
   bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderRadius: 16 },
   bubText: { ...type.body, color: color.fg } as any,
+  answer: { alignSelf: 'stretch', marginTop: space.lg, marginBottom: space.xs },
+  timeAnswer: { color: color.neutral300, marginTop: space.xs } as any,
   time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
   threadPhoto: { width: 178, height: 218, borderRadius: 16, marginTop: space.sm },
 });

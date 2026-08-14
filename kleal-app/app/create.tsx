@@ -27,6 +27,7 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { buddy as buddyApi } from '../src/api';
 import { CREATE, topicsOf, titleOf, unpackHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
+import Markdown from '../src/components/Markdown';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string };
 
@@ -225,12 +226,18 @@ export default function Create() {
             </>
           ) : null}
 
+          {/* То же правило, что на Бадди и в онбординге: человек говорит пузырём, модель пишет
+              страницей. См. src/components/Markdown.tsx. */}
           {thread.map((m, i) => (
-            <View key={i} style={{ alignItems: m.who === 'me' ? 'flex-end' : 'flex-start' }}>
-              <View style={[s.bub, m.who === 'me' ? s.bubMe : s.bubBot]}>
-                <Text style={[s.bubText, m.who === 'me' && { color: color.onPrimary }]}>{m.text}</Text>
-              </View>
-              <Text style={s.time}>{m.at}</Text>
+            <View key={i} style={m.who === 'me' ? { alignItems: 'flex-end' } : s.answer}>
+              {m.who === 'me' ? (
+                <View style={[s.bub, s.bubMe]}>
+                  <Text style={[s.bubText, { color: color.onPrimary }]}>{m.text}</Text>
+                </View>
+              ) : (
+                <Markdown text={m.text} />
+              )}
+              <Text style={[s.time, m.who !== 'me' && s.timeAnswer]}>{m.at}</Text>
             </View>
           ))}
 
@@ -421,6 +428,8 @@ const s = StyleSheet.create({
   bubBot: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderRadius: 16 },
   bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderRadius: 16 },
   bubText: { ...type.body, color: color.fg } as any,
+  answer: { alignSelf: 'stretch', marginTop: space.lg, marginBottom: space.xs },
+  timeAnswer: { color: color.neutral300, marginTop: space.xs } as any,
   time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
 
   sugBlock: { marginTop: space.lg, gap: space.sm },

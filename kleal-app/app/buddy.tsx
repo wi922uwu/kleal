@@ -26,7 +26,13 @@ import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import Markdown from '../src/components/Markdown';
 
-type Msg = { who: 'bot' | 'me'; text: string; at: string; voice?: VoicePayload };
+/**
+ * `hello` — первая реплика экрана. Это не ответ модели, а обращение к человеку, и выглядеть оно
+ * должно как заголовок страницы, а не как первая строчка переписки: с него разговор начинается.
+ * Признак хранится ОТДЕЛЬНО, а не «# » в тексте: тот же текст уходит модели в историю, и решётка
+ * попала бы к ней в контекст.
+ */
+type Msg = { who: 'bot' | 'me'; text: string; at: string; voice?: VoicePayload; hello?: boolean };
 
 const now = () =>
   new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
@@ -56,8 +62,8 @@ export default function Buddy() {
   const [topic, setTopic] = useState('');
   const started = useRef(false);
 
-  const say = useCallback((who: 'bot' | 'me', text: string) => {
-    setThread((t) => [...t, { who, text, at: now() }]);
+  const say = useCallback((who: 'bot' | 'me', text: string, hello = false) => {
+    setThread((t) => [...t, { who, text, at: now(), hello }]);
   }, []);
 
   useEffect(() => {
@@ -125,7 +131,7 @@ export default function Buddy() {
     setTimeout(() => {
       setTyping(false);
       const hello = BUDDY.hello(st.profile.name || '');
-      say('bot', hello);
+      say('bot', hello, true);
       /**
        * Приветствие идёт и В ИСТОРИЮ, а не только на экран.
        *
@@ -223,6 +229,14 @@ export default function Buddy() {
                     <Text style={[s.bubText, { color: color.onPrimary }]}>{m.text}</Text>
                   </View>
                   <Text style={s.time}>{m.at}</Text>
+                </View>
+              );
+            }
+            if (m.hello) {
+              return (
+                <View key={i} style={s.answer}>
+                  <Text style={s.hello}>{m.text}</Text>
+                  <Text style={[s.time, s.timeAnswer]}>{m.at}</Text>
                 </View>
               );
             }
@@ -339,6 +353,8 @@ const s = StyleSheet.create({
    */
   answer: { alignSelf: 'stretch', marginTop: space.lg, marginBottom: space.xs },
   timeAnswer: { color: color.neutral300, marginTop: space.xs } as any,
+  /** Приветствие — ступень заголовка документа: разговор им ОТКРЫВАЕТСЯ, а не продолжается. */
+  hello: { ...type.mdH1, color: color.fg } as any,
   time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
 
   dock: { paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
