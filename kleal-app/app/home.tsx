@@ -45,6 +45,7 @@ export default function Home() {
 
   const [groups, setGroups] = useState<Group[]>([]);
   const [invites, setInvites] = useState<HomeInvite[]>([]);
+  const [nextPlan, setNextPlan] = useState<any>(null);
   const [inviteError, setInviteError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -73,10 +74,17 @@ export default function Home() {
   /** Открытые группы и личные приглашения грузятся независимо друг от друга. */
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
-    const [g, i] = await Promise.all([
+    const [g, i, pl] = await Promise.all([
       agent.groups(me).catch(() => null),
       agent.homeInvites(me).catch(() => null),
+      agent.plans(me).catch(() => null),
     ]);
+    // Ближайшая ЖИВАЯ встреча: назначенная и ещё не прошедшая, самая ранняя из них. Отменённые и
+    // прошедшие сюда не попадают — главная показывает то, к чему человек собирается, а не архив.
+    const live = ((pl as any)?.plans || [])
+      .filter((p: any) => (p.state === 'confirmed' || p.state === 'proposed') && p.starts_at)
+      .sort((a: any, b: any) => (a.starts_at || 0) - (b.starts_at || 0));
+    setNextPlan(live[0] || null);
     setGroups(joinableGroups((g as any)?.groups || []));
     if (i) {
       const next = homeInvites((i as any)?.invites || []);
@@ -142,6 +150,27 @@ export default function Home() {
             <ActivityIndicator style={{ marginTop: 40 }} color={color.primary} />
           ) : (
             <>
+              {nextPlan ? (
+                <>
+                  <Section icon={<IconCalendar size={18} />} title={HOME.next()} />
+                  <Pressable
+                    accessibilityRole="button"
+                    style={s.nextCard}
+                    onPress={() => router.push({ pathname: '/plan', params: { id: String(nextPlan.id || '') } })}
+                  >
+                    <Text style={s.nextTitle} numberOfLines={1}>
+                      {String(nextPlan.title || '').trim() || HOME.next()}
+                    </Text>
+                    <Text style={s.nextWhen} numberOfLines={1}>
+                      {[String(nextPlan.when || '').trim(),
+                        nextPlan.mode === 'online' ? HOME.onCall() : String(nextPlan.venue || nextPlan.district || '').trim()]
+                        .filter(Boolean).join(' · ')}
+                    </Text>
+                    <Text style={s.nextGo}>{HOME.goToPlan()}  ›</Text>
+                  </Pressable>
+                </>
+              ) : null}
+
               {groups.length ? (
                 <>
                   <Section icon={<IconGroups />} title={HOME.groups()} />
@@ -511,6 +540,17 @@ const s = StyleSheet.create({
   },
   askText: { flex: 1, color: color.neutral400, fontSize: 15 },
   navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  /** Карточка ближайшей встречи — кадр O.01, блок Activity. Только токены, как и всё на экране. */
+  nextCard: {
+    marginHorizontal: space.lg, marginBottom: space.md, padding: space.lg,
+    borderRadius: rad.lg, backgroundColor: color.card, gap: 4,
+    shadowColor: '#000', shadowOpacity: 0.09, shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 }, elevation: 3,
+  },
+  nextTitle: { ...type.title, color: color.fg } as any,
+  nextWhen: { ...type.bodySmall, color: color.muted } as any,
+  nextGo: { ...type.labelMedium, color: color.primary, marginTop: 4 } as any,
+
   hist: {
     alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8,
     height: 36, paddingHorizontal: 16, borderRadius: rad.full, backgroundColor: color.card,

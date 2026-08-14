@@ -2976,7 +2976,11 @@ def propose(frm, to, intent, note, idem=None):
         rid, n = base, 1
         while rid in taken:
             rid, n = "%s_%d" % (base, n), n + 1
+        # `iid` — по какой затее это приглашение. Спека: «Открытых инвайтов НА ИНТЕНТ — 3 · Plus 5»,
+        # а считалось по всем затеям человека сразу: просто потому, что заявка не знала, откуда она.
+        # Проверено по живому хранилищу — из 32 заявок с затеей id не было ни у одной.
         rs.append({"id": rid, "from": frm, "to": to, "intent": intent or {},
+                   "iid": str((intent or {}).get("id") or "")[:64],
                    "note": str(note or "")[:400], "status": "pending", "created": now, "updated": now,
                    "version": 1, "expires_at": now + _invite_ttl(intent, now),
                    "config_version": (_CORE_CFG or {}).get("config_version")})   # immutable trace stamp

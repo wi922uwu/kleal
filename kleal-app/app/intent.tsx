@@ -49,7 +49,7 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { resetGroupSession } from '../src/ginvites';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { setResults } from '../src/results-store';
+import { setResults, patchResults } from '../src/results-store';
 import { agent, isAbort } from '../src/api';
 import { color, radius as rad, space, type } from '../src/theme';
 
@@ -297,8 +297,17 @@ export default function Intent() {
      * черновик. Сбой записи поиск не отменяет — человек шёл искать людей, а не сохранять карточку,
      * и ронять его дорогу из-за не доехавшей записи было бы наказанием не за то.
      */
-    agent.intentSave(String(st.profile.name || ''), intent, title || topics.join(', '), undefined, true)
-      .catch(() => {});
+    //
+    // Ответ ЗАПОМИНАЕМ: сервер возвращает id затеи, и без него потом нечем отличить одно
+    // приглашение от другого. Спека говорит «Открытых инвайтов НА ИНТЕНТ — 3», а считалось по
+    // всем затеям сразу — просто потому, что заявка не знала, по какой из них её отправили
+    // (проверено по живому хранилищу: из 32 заявок с затеей id не было ни у одной).
+    //
+    // Ждать ответа мы при этом не начинаем: человек шёл искать людей, а не сохранять карточку.
+    // Не доехал id — приглашение уйдёт как раньше, без привязки, и это хуже, но не поломка.
+    const savedId = agent.intentSave(String(st.profile.name || ''), intent, title || topics.join(', '), undefined, true)
+      .then((r: any) => String(r?.id || ''))
+      .catch(() => '');
 
     // Отмена принадлежит человеку: экран поиска даёт кнопку, и она рвёт именно этот запрос.
     const ctrl = new AbortController();
@@ -306,6 +315,10 @@ export default function Intent() {
     try {
       const r: any = await agent.match(intent, profile(), ctx(), ctrl.signal);
       toResults(r, intent);
+      // Опознаватель затеи приезжает своим темпом и дописывается к ней уже в выдаче. Ждать его
+      // до показа кандидатов незачем: без него всё работает как раньше, с ним — приглашения
+      // считаются по своей затее, как требует спека («Открытых инвайтов НА ИНТЕНТ — 3»).
+      savedId.then((id) => { if (id) patchResults({ intent: { ...(r?.intent || intent), id } }); });
     } catch (e) {
       // Отменил сам — это не сбой связи. Называть это ошибкой значит врать о том, что произошло.
       setErr(isAbort(e) ? SEARCHING.cancelled() : SEARCHING.failed());

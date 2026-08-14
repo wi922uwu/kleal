@@ -27,7 +27,9 @@ import { CAP } from './candidates';
 const norm = (s: string) => String(s || '').trim().toLowerCase();
 
 /** Строка приглашения так, как её знает экран: id для отзыва, статус для вида кнопки. */
-export type Invite = { id: string; to: string; status: ReqStatus; updated: number };
+export type Invite = { id: string; to: string; status: ReqStatus; updated: number;
+  /** По какой затее отправлено. Пусто у старых заявок — они были заведены до опознавателя. */
+  iid?: string };
 
 let rows: Record<string, Invite> = {};
 let self = '';
@@ -51,6 +53,7 @@ function merge(list: Req[]) {
       id: String(r.id || ''), to,
       status: (r.status || 'pending') as ReqStatus,
       updated: Number(r.updated || 0),
+      iid: String((r as any).iid || ''),
     };
     // Свежайшая заявка на человека выигрывает: сервер обновляет одну и ту же, но история бывает.
     if (!next[k] || row.updated >= next[k].updated) next[k] = row;
@@ -101,8 +104,20 @@ export function inviteTo(name: string): Invite | undefined {
 }
 
 /** Открытые (неотвеченные) приглашения — из них считается потолок MSG.22. */
-export function openInvites(): Invite[] {
-  return Object.values(rows).filter((r) => r.status === 'pending');
+/**
+   * Открытые приглашения. `iid` — считать ПО ЗАТЕЕ, как требует спека («Открытых инвайтов на
+   * интент — 3 · Plus 5»).
+   *
+   * Считалось по всем затеям сразу, и это било по человеку с двумя живыми затеями: третье
+   * приглашение по второй затее упиралось в потолок, набранный первой. Заявки, заведённые до
+   * появления опознавателя, `iid` не имеют — они считаются в общую кучу, как раньше: потерять
+   * их из счёта хуже, чем посчитать грубо.
+   */
+export function openInvites(iid?: string): Invite[] {
+  const open = Object.values(rows).filter((r) => r.status === 'pending');
+  const key = String(iid || '').trim();
+  if (!key) return open;
+  return open.filter((r) => !r.iid || r.iid === key);
 }
 
 export type SendResult = { ok: boolean; capped?: boolean; error?: string };
@@ -112,7 +127,7 @@ export async function sendInvite(who: string, to: string, intent: any): Promise<
   const from = String(who || '').trim();
   const name = String(to || '').trim();
   if (!from || !name) return { ok: false, error: 'no name' };
-  const open = openInvites();
+  const open = openInvites(String((intent || {}).id || ''));
   if (open.length >= CAP.limit && !open.some((r) => norm(r.to) === norm(name))) {
     return { ok: false, capped: true };
   }
