@@ -73,6 +73,30 @@ def threads(me):
     return (call("/api/agent/threads?self=%s" % me) or {}).get("threads") or []
 
 
+def match(a, b):
+    """Свести двоих так, как это делает продукт: заявка и согласие.
+
+    Раньше этого шага здесь не было — и не требовалось: /api/agent/message писала кому угодно,
+    зная только имя. 14 августа в неё добавлен гейт (тот же _mp_matched, что у плана), и тест,
+    писавший без всякой заявки, начал честно падать пятью проверками. Он закреплял правило,
+    которого у продукта больше нет.
+    """
+    r = call("/api/agent/propose", {"from": a, "to": b, "intent": {"topics": ["coffee"]},
+                                    "note": "hi", "idem": "msgpr%d" % S})
+    call("/api/agent/respond", {"id": r.get("id"), "decision": "accept", "self": b})
+
+
+print("=" * 76)
+print("0. КАНАЛ ОТКРЫВАЕТ СОГЛАСИЕ")
+print("=" * 76)
+stranger = "Чужой%d" % S
+check("постороннему написать нельзя",
+      send(A, stranger, "привет").get("error") == "NOT_MATCHED",
+      send(A, stranger, "привет"))
+match(A, B)
+check("после согласия — можно", bool(send(A, B, "теперь можно").get("id")))
+
+print()
 print("=" * 76)
 print("1. У КАЖДОГО СООБЩЕНИЯ СВОЙ id")
 print("=" * 76)
