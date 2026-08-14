@@ -257,6 +257,38 @@ export function planWhenLabel(dateKey: string, minutes: number): string {
 }
 
 /** Часовой пояс устройства — IANA-имя, оно же уходит в ctx.tz. */
+/**
+ * Чужое местное время — и ТОЛЬКО когда оно отличается от своего.
+ *
+ * Спека: «Таймзона в UI — только при расхождении. Иначе визуальный шум в 95 % случаев». До этого
+ * пояс печатался всегда и всегда СВОЙ: чужого не было нигде, поэтому строку «20:00 Barcelona ·
+ * 19:00 London» с кадров O.14/O.21/O.C3 показать было нечем.
+ *
+ * Пустая строка означает «показывать нечего»: либо пояс собеседника неизвестен, либо он тот же.
+ * Выдумывать «19:00 в Лондоне» без данных нельзя — лучше не сказать ничего.
+ */
+export function peerLocalTime(startsAt?: number | null, peerTz?: string, ru = true): string {
+  const at = Number(startsAt || 0);
+  const tz = String(peerTz || '').trim();
+  if (!at || !tz) return '';
+  const mine = deviceTz();
+  if (!mine || tz === mine) return '';
+  try {
+    const d = new Date(at * 1000);
+    const fmt = (zone: string) =>
+      new Intl.DateTimeFormat(ru ? 'ru-RU' : 'en-GB',
+        { hour: '2-digit', minute: '2-digit', timeZone: zone, hour12: false }).format(d);
+    const theirs = fmt(tz);
+    // Совпало по часам — расхождения для человека нет, даже если зоны названы по-разному.
+    if (theirs === fmt(mine)) return '';
+    // Город из имени зоны: «Europe/London» → «London». Он понятнее смещения в часах.
+    const city = tz.split('/').pop()?.replace(/_/g, ' ') || tz;
+    return `${theirs} ${city}`;
+  } catch {
+    return '';
+  }
+}
+
 export function deviceTz(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';

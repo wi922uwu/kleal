@@ -2298,6 +2298,11 @@ def _profile_to_user(p):
         # re-running onboarding silently wipes what the person wrote.
         "story": str(p.get("story") or "")[:STORY_MAX],
         "personality": str(p.get("personality") or "")[:PROSE_MAX],
+        # Часовой пояс ИМЕНЕМ зоны (Europe/Madrid), а не смещением: смещение меняется дважды в год,
+        # зона — нет. Нужен, чтобы показать чужое местное время там, где оно расходится со своим.
+        # Несётся здесь, а не только патчем, потому что register заменяет строку целиком — иначе
+        # повторный онбординг молча стирал бы пояс, как когда-то стирал story.
+        "tz": str(p.get("tz") or "")[:64],
         "persona": (_clean_persona(p.get("persona")) if p.get("persona") else None),
         # meeting-format preference (Figma «Формат встреч»); matching's mode_format reads this. Empty
         # until the user picks in the profile sheet — an empty list is honestly "no preference stated".
@@ -2439,8 +2444,13 @@ def get_user(name):
 # Deliberately ABSENT and never to be added: verified, datingOk, paused, pending, blocksMe,
 # declinedOwnerDaysAgo, source, role. Those are the hard gates in matching/app.py — a client patch
 # that could set them could make a person invisible to everyone with no trace on screen.
+# `tz` — часовой пояс человека, именем зоны (Europe/Madrid). Спека: «Таймзона в UI — только при
+# РАСХОЖДЕНИИ», а расхождение не с чем было считать: свой пояс устройство знает, чужой не хранился
+# нигде, и кадры O.14/O.21 со строкой «20:00 Barcelona · 19:00 London» показать было физически
+# нечем. Имя зоны, а не смещение: смещение меняется дважды в год, а зона — нет.
 _PATCH_FIELDS = {"age", "gender", "area", "radiusKm", "lat", "lon", "langs", "interests",
-                 "goals", "formats", "summary", "story", "personality", "persona", "vibe", "safety"}
+                 "goals", "formats", "summary", "story", "personality", "persona", "vibe", "safety",
+                 "tz"}
 STORY_MAX = 4000        # a life story, not a novel — and update_user writes straight into the row
 PROSE_MAX = 900         # what buddy actually returns for a summary / personality paragraph
 

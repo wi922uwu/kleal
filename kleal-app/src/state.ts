@@ -28,6 +28,8 @@ export type Profile = {
   languages?: { comfortable?: string[] };
   interests?: { explicit?: string[] };
   safety?: { publicPlacesOnly?: boolean; hideExactLocation?: boolean; verifiedOnly?: boolean };
+  /** Часовой пояс именем зоны (Europe/Madrid). Спрашивать нечего — устройство знает сам. */
+  tz?: string;
   permissions?: {
     useProfileForMatching?: boolean;
     allowAdjacentMatches?: boolean;
@@ -238,12 +240,26 @@ export function mergeProfile(cur: Profile, incoming: any): Profile {
 
 /** Профиль для /api/onboarding/register — с фото. */
 export function profileForRegister(): Profile {
-  return { ...state.profile };
+  return { ...state.profile, tz: deviceTz() };
 }
 
 /** Профиль для привязки к логину — без фото: оно уже уехало в register и лежит файлом на сервере. */
 export function profileForAttach(): Profile {
-  const p: Profile = { ...state.profile };
+  const p: Profile = { ...state.profile, tz: deviceTz() };
   delete p.photo;
   return p;
+}
+
+/**
+ * Часовой пояс устройства. Такая же функция есть в src/intent.ts, и импорт тут намеренно не
+ * сделан: state.ts не тянет НИ ОДНОГО модуля приложения (только react и хранилище) — состояние
+ * обязано подниматься раньше всего остального. Импорт ради трёх строк Intl тянул бы за собой
+ * i18n со всеми словарями.
+ */
+function deviceTz(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    return '';
+  }
 }

@@ -482,8 +482,12 @@ export const agent = {
     api.post<{ ok?: boolean; error?: string }>('/api/agent/mplan-feedback', { id, self, ...v }),
 
   /** Планы этого человека: живые и прошедшие. */
-  plans: (self: string) =>
-    api.get<{ plans?: Json[]; history?: Json[] }>(`/api/agent/mplans?self=${encodeURIComponent(self)}`),
+  /** `with` — собеседник, ради его часового пояса: на форме плана самого плана ещё нет. */
+  plans: (self: string, withWhom?: string) =>
+    api.get<{ plans?: Json[]; history?: Json[]; peer_tz?: string }>(
+      `/api/agent/mplans?self=${encodeURIComponent(self)}` +
+      (withWhom ? `&with=${encodeURIComponent(withWhom)}` : '')
+    ),
 
   /** Входящие приглашения. Просроченные и отозванные сервер отсекает сам. */
   inbox: (self: string) =>

@@ -33,7 +33,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   CHAT, PLAN, RATINGS, planWhen, personStatus, planPhase, minutesToStart, linkOpensAt,
 } from '../src/chat';
-import { DETAILS, dateChips, hhmm, deviceTz, tzOffsetLabel, looksLikeUrl } from '../src/intent';
+import { DETAILS, dateChips, hhmm, peerLocalTime, looksLikeUrl } from '../src/intent';
 import { TimeDial } from '../src/components/Dials';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
@@ -87,6 +87,7 @@ export default function Plan() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [plan, setPlan] = useState<any>(null);
+  const [peerTz, setPeerTz] = useState('');
   /** Часы идут — экран сам переходит из «подтверждено» в «через десять минут» и дальше. */
   const [tick, setTick] = useState(Date.now());
   /** Ответы O.24/O.25, пока не отправлены. */
@@ -116,7 +117,7 @@ export default function Plan() {
   const load = useCallback(async () => {
     if (!me) return;
     try {
-      const r: any = await agent.plans(me);
+      const r: any = await agent.plans(me, other);
       const live = (r?.plans || []) as any[];
       const past = (r?.history || []) as any[];
       const withOther = (list: any[]) => list.filter((p: any) =>
@@ -133,6 +134,8 @@ export default function Plan() {
       // Пока человек сознательно составляет НОВУЮ встречу («Другое время» после отмены), фоновый
       // опрос не имеет права вернуть на экран старый план — иначе форма исчезает из-под рук.
       if (mine && !composing.current) setPlan(mine);
+      // Пояс собеседника нужен и когда плана ещё нет — форма показывает выбранный час его глазами.
+      if (typeof r?.peer_tz === 'string') setPeerTz(r.peer_tz);
     } catch {
       /* тихо: фоновая дотяжка */
     }
@@ -160,6 +163,10 @@ export default function Plan() {
   const wantsPlace = mode === 'offline' || mode === 'hybrid';
 
   const phase = plan ? planPhase(plan, tick) : null;
+  // Местное время собеседника — и только если оно расходится с моим. Раньше здесь безусловно
+  // печаталось СВОЁ смещение «(GMT+2)»: сведений о чужом поясе не было нигде, поэтому строка
+  // ничего не сообщала — человек и так знает, в каком он поясе.
+  const peerTime = peerLocalTime(plan?.starts_at, plan?.their_tz || peerTz, ru);
   const mine = plan ? myAnswer(plan) : undefined;
   const bothAnswered = !!plan?.their_feedback && mine !== undefined;
   /** O.21b: встречное время лежит РЯДОМ с планом (pending), сама встреча не тронута. */
@@ -205,7 +212,7 @@ export default function Plan() {
     setBusy(true);
     setErr('');
     try {
-      const d = new Date(date + 'T00:00:00');
+      const d = dayStart(date);
       d.setMinutes(minutes);
       const r: any = await agent.planPropose(me, other, {
         title: intentTitle || T('Встреча', 'Meetup'),
@@ -414,7 +421,7 @@ export default function Plan() {
               district={district} setDistrict={setDistrict}
               address={address} setAddress={setAddress}
               link={link} setLink={setLink}
-              wantsLink={wantsLink} wantsPlace={wantsPlace} other={other}
+              wantsLink={wantsLink} wantsPlace={wantsPlace} other={other} otherTz={peerTz} ru={ru}
               busy={busy} err={err} onPropose={propose}
             />
           ) : (
@@ -429,7 +436,7 @@ export default function Plan() {
                     «нет картинки» читался не как заглушка, а как не загрузившееся фото. */}
                 <View style={s.metaRow}>
                   <IconCalendar />
-                  <Text style={s.metaText}>{planWhen(plan, ru)} {tzOffsetLabel(deviceTz())}</Text>
+                  <Text style={s.metaText}>{planWhen(plan, ru)}{peerTime ? ` · ${peerTime}` : ''}</Text>
                 </View>
                 {/* O.21b: предложенное время стоит РЯДОМ со старым — обе строки видны разом. */}
                 {pendingChange ? (
@@ -1122,6 +1129,11 @@ function statusFor(p: any, plan: any, phase: string, pendingChange: any, ru: boo
   return personStatus(p);
 }
 
+/** Полночь выбранного дня в поясе устройства. Момент встречи = она плюс minutes. */
+function dayStart(dateKey: string): Date {
+  return new Date(String(dateKey || '') + 'T00:00:00');
+}
+
 /** Час встречи в поясе устройства: «20:00». Для заголовка O.C5 и кнопок «Подтвердить/Оставить». */
 function tOf(sa: any, ru: boolean): string {
   if (typeof sa !== 'number' || !isFinite(sa)) return '';
@@ -1140,8 +1152,11 @@ function tOf(sa: any, ru: boolean): string {
 function PlanForm({
   dates, date, setDate, minutes, setMinutes, setDragging,
   district, setDistrict, address, setAddress, link, setLink,
-  wantsLink, wantsPlace, other, busy, err, onPropose,
+  wantsLink, wantsPlace, other, otherTz, ru, busy, err, onPropose,
 }: any) {
+  // Выбранный час глазами собеседника. Здесь это нужнее, чем где-либо: время НАЗНАЧАЮТ, и «20:00»
+  // может оказаться у него шестью часами позже. Пусто, если пояса совпали или чужой неизвестен.
+  const theirs = peerLocalTime(Math.floor(dayStart(date).getTime() / 1000) + minutes * 60, otherTz, ru);
   return (
     <View style={s.card}>
       {/* Что за встреча — сказано словами до первого поля: человек должен видеть, во что
@@ -1174,7 +1189,7 @@ function PlanForm({
         <Text style={s.label}>{DETAILS.time()}</Text>
       </View>
       <TimeDial minutes={minutes} onChange={setMinutes} onDragChange={setDragging} />
-      <Text style={s.tz}>{hhmm(minutes)} {tzOffsetLabel(deviceTz())}</Text>
+      <Text style={s.tz}>{hhmm(minutes)}{theirs ? ` · ${theirs}` : ''}</Text>
 
       {/* Ссылка — только у звонка и гибрида. У встречи вживую этого поля нет вовсе. */}
       {wantsLink ? (

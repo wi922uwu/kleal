@@ -1453,6 +1453,21 @@ def _photo_by_name():
     return out
 
 
+def _tz_by_name():
+    """имя (нормализованное) -> часовой пояс человека.
+
+    Нужен ровно для одного правила спеки: «Таймзона в UI — только при РАСХОЖДЕНИИ». Пока чужого
+    пояса не было нигде, расхождение не с чем было считать, и строку «20:00 Barcelona · 19:00
+    London» с кадров O.14/O.21/O.C3 показать было нечем.
+    """
+    out = {}
+    for u in load_candidates():
+        tz = str(u.get("tz") or "").strip()
+        if tz:
+            out[str(u.get("name", "")).strip().lower()] = tz
+    return out
+
+
 def _stamp_photo(cards):
     """Put each person's real photo onto their card, in ONE place.
 
@@ -5545,11 +5560,15 @@ def _mp_public(p, me=""):
     who = _norm_name(me)
     conf = set(_mp_confirmed(p))
     by = _photo_by_name()
+    tzs = _tz_by_name()
     people = []
     for nm, role in ((p.get("host"), "host"), (p.get("guest"), "guest")):
         k = _norm_name(nm)
         people.append({"name": nm, "role": role, "is_me": k == who, "photo": by.get(k),
                        "status": _mp_answer(p, nm) or "pending", "confirmed": k in conf,
+                       # Пояс участника — чтобы экран мог показать чужое местное время, и только
+                       # когда оно отличается от своего.
+                       "tz": tzs.get(k) or "",
                        "live": (p.get("live") or {}).get(k)})
     # OF.C3: released by the viewer's OWN confirmation — plus, always, to whoever typed it. Without
     # that second half a counter-proposal (which resets every confirmation) would hide the address
@@ -5575,6 +5594,9 @@ def _mp_public(p, me=""):
         "waiting_on": [x["name"] for x in people if not x["confirmed"]],
         "my_live": (p.get("live") or {}).get(who),
         "their_live": (p.get("live") or {}).get(_norm_name(_mp_other(p, me))),
+        # Пояс собеседника рядом с their_live по той же причине: экрану нужен ОДИН ключ, а не
+        # перебор participants ради поля, которое смотрят в каждой строке времени.
+        "their_tz": tzs.get(_norm_name(_mp_other(p, me))) or "",
         # OF.23a разводит «You told X you can't make it» и «X can't make it» — без имени отменившего
         # экран не знает, какую из двух правд показывать.
         "cancelled_by": p.get("cancelled_by"),
@@ -5990,8 +6012,13 @@ def safety_for(who):
             "reasons": list(REPORT_REASONS)}
 
 
-def mp_for(who):
-    """Every 1:1 plan this person is part of — live ones first, then history."""
+def mp_for(who, peer=""):
+    """Every 1:1 plan this person is part of — live ones first, then history.
+
+    `peer` is the person the screen is looking at. Its only job is `peer_tz`: on the plan FORM there
+    is no plan yet, so `their_tz` has nowhere to come from — and the form is exactly where the hour
+    is being chosen and «20:00 for you is 02:00 for them» matters most.
+    """
     me = _norm_name(who)
     now = time.time()
     active, history = [], []
@@ -6003,7 +6030,10 @@ def mp_for(who):
         (history if p.get("state") in ("done", "cancelled") or stale else active).append(view)
     active.sort(key=lambda x: x.get("starts_at") or x.get("updated") or 0)
     history.sort(key=lambda x: -(x.get("updated") or 0))
-    return {"ok": True, "plans": active, "history": history}
+    out = {"ok": True, "plans": active, "history": history}
+    if peer:
+        out["peer_tz"] = _tz_by_name().get(_norm_name(peer)) or ""
+    return out
 
 
 GROUP_MIN, GROUP_MAX = 2, 8
@@ -6762,7 +6792,7 @@ class H(BaseHTTPRequestHandler):
             if base == "/api/agent/safety":
                 send_json(self, 200, safety_for(me))
             elif base == "/api/agent/mplans":
-                send_json(self, 200, mp_for(me))
+                send_json(self, 200, mp_for(me, unquote(q.get("with", "").replace("+", " "))))
             else:
                 pl = _mp_find(unquote(q.get("id", "").replace("+", " ")))
                 if pl and not _mp_is_in(pl, me):

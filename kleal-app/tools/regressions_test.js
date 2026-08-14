@@ -1532,6 +1532,73 @@ console.log('\nближайшая встреча стоит на главной'
   check('карточка ведёт в план', /pathname: '\/plan'/.test(h) && /HOME\.goToPlan\(\)/.test(h));
 }
 
+// ------------------------------------------------- 22. пояс показывается только при расхождении
+console.log('\nчужой пояс — только когда он и правда чужой');
+{
+  const src = read('src/intent.ts');
+  const from = src.indexOf('export function peerLocalTime');
+  const to = src.indexOf('\n}\n', from) + 3;
+  check('peerLocalTime нашёлся в исходнике', from >= 0 && to > from, 'переименовали?');
+
+  // Исполняем НАСТОЯЩЕЕ правило из файла. Регуляркой тут делать нечего: вопрос не в том, как
+  // строка написана, а в том, промолчит ли она, когда показывать нечего. Именно молчание — суть
+  // требования «таймзона в UI только при расхождении»; до этого экраны безусловно печатали СВОЁ
+  // смещение, то есть сообщали человеку то, что он и так знает.
+  const js = src.slice(from, to)
+    .replace('export function peerLocalTime(startsAt?: number | null, peerTz?: string, ru = true): string',
+             'function peerLocalTime(startsAt, peerTz, ru = true)')
+    .replace('(zone: string)', '(zone)');
+  const peerLocalTime = new Function('deviceTz', js + '\nreturn peerLocalTime;');
+
+  const at = Math.floor(Date.parse('2026-08-20T18:00:00Z') / 1000);
+  const at22 = Math.floor(Date.parse('2026-08-20T22:00:00Z') / 1000);
+  const call = (a, peer, mine) => peerLocalTime(() => mine)(a, peer);
+  const CASES = [
+    ['разные пояса, разные часы', at, 'Europe/London', 'Europe/Madrid', '19:00 London'],
+    ['тот же пояс — молчит', at, 'Europe/Madrid', 'Europe/Madrid', ''],
+    // Лиссабон и Лондон названы по-разному, а час один. Показывать «19:00 Lisbon» рядом с «19:00»
+    // — это шум, ради которого правило и заводили.
+    ['разные имена, один час — молчит', at, 'Europe/Lisbon', 'Europe/London', ''],
+    ['чужой пояс неизвестен — молчит', at, '', 'Europe/Madrid', ''],
+    ['времени нет — молчит', 0, 'Europe/London', 'Europe/Madrid', ''],
+    ['подчёркивание в имени города', at, 'America/New_York', 'Europe/Madrid', '14:00 New York'],
+    ['переход через полночь', at22, 'Asia/Tokyo', 'Europe/London', '07:00 Tokyo'],
+  ];
+  for (const [name, a, peer, mine, want] of CASES) {
+    const got = call(a, peer, mine);
+    check(name, got === want, 'вышло ' + JSON.stringify(got) + ', ждали ' + JSON.stringify(want));
+  }
+
+  // Пояс должен доезжать до экрана обоими путями: из плана, когда он есть, и отдельным полем,
+  // когда его ещё нет (форму заполняют ДО создания плана — там час и выбирают).
+  const pl = code('app/plan.tsx');
+  check('на экране плана не осталось безусловного своего пояса',
+    !/tzOffsetLabel\(deviceTz\(\)\)/.test(pl),
+    'своё смещение печаталось всегда — ровно то, что правило запрещает');
+  check('план берёт пояс собеседника', /plan\?\.their_tz \|\| peerTz/.test(pl));
+  check('форма плана получает пояс', /otherTz=\{peerTz\}/.test(pl));
+  check('список планов спрашивает пояс собеседника', /agent\.plans\(me, other\)/.test(pl));
+
+  const api = code('src/api.ts');
+  check('api умеет передать собеседника', /with=\$\{encodeURIComponent\(withWhom\)\}/.test(api));
+
+  // Сервер обязан НЕСТИ пояс через register: он заменяет строку целиком, и без этого повторный
+  // онбординг молча стирал бы пояс — так уже случалось со story.
+  const onb = read('../kleal-ms/services/onboarding/app.py');
+  check('register сохраняет пояс', /"tz": str\(p\.get\("tz"\) or ""\)/.test(onb));
+  check('пояс разрешён к правке', /"safety", "tz"|"tz", "safety"/.test(onb) || /_PATCH_FIELDS[\s\S]{0,400}"tz"/.test(onb));
+
+  const mt = read('../kleal-ms/services/matching/app.py');
+  check('план отдаёт пояс собеседника', /"their_tz": tzs\.get\(_norm_name\(_mp_other\(p, me\)\)\)/.test(mt));
+  check('список планов отдаёт peer_tz', /out\["peer_tz"\] = _tz_by_name\(\)/.test(mt));
+
+  // Клиент обязан СООБЩАТЬ свой пояс, иначе на сервере он ни у кого не появится и правило
+  // «показывать при расхождении» будет вечно молчать — то есть выглядеть как работающее.
+  const st = code('src/state.ts');
+  check('регистрация несёт свой пояс', /profileForRegister[\s\S]{0,120}tz: deviceTz\(\)/.test(st));
+  check('привязка логина несёт свой пояс', /profileForAttach[\s\S]{0,200}tz: deviceTz\(\)/.test(st));
+}
+
 console.log('');
 if (failed) {
   console.log(failed + ' проверок не прошло');

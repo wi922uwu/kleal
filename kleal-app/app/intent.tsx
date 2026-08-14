@@ -960,7 +960,12 @@ function SummaryCard({
         <IconCalendar />
         <Text style={s.sumMetaText}>{summaryDate(draft.date)}</Text>
         <IconClock />
-        <Text style={s.sumMetaText}>{hhmm(draft.minutes)} {tzOffsetLabel(draft.tz)}</Text>
+        {/* Пояс — только при РАСХОЖДЕНИИ с поясом устройства. Совпадает (обычный случай) — и
+            «(GMT+2)» ничего не сообщает: человек и так в нём живёт. А вот пояс, выбранный вручную
+            в шаге выше, обязан быть виден: иначе встреча молча назначается не на тот час. */}
+        <Text style={s.sumMetaText}>
+          {hhmm(draft.minutes)}{draft.tz && draft.tz !== deviceTz() ? ` ${tzOffsetLabel(draft.tz)} ${tzCity(draft.tz)}` : ''}
+        </Text>
       </View>
       {/* Гибрид показывает ОБЕ строки: у него и место, и ссылка (HY.09). Раньше условие места
           было привязано к офлайну, и гибрид уезжал в поиск, показав человеку только ссылку. */}
