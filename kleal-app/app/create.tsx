@@ -28,8 +28,10 @@ import { buddy as buddyApi } from '../src/api';
 import { CREATE, topicsOf, titleOf, unpackHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
 import Markdown from '../src/components/Markdown';
+import { makeReveal } from '../src/reveal';
 
-type Msg = { who: 'bot' | 'me'; text: string; at: string };
+type Msg = { who: 'bot' | 'me'; text: string; at: string ;
+  /** Текст ещё пишется — под ним мигает курсор. */ live?: boolean };
 
 const now = () =>
   new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
@@ -160,28 +162,30 @@ export default function Create() {
 
     let acc = '';
     let opened = false;
-    const grow = (t: string) => {
-      acc += t;
+    // Ровный показ — тот же, что на экране Бадди. См. src/reveal.ts.
+    const rev = makeReveal((shown: string) => {
       setTyping(false);
       setThread((prev) => {
-        if (!opened) { opened = true; return [...prev, { who: 'bot', text: acc, at: now() }]; }
+        if (!opened) { opened = true; return [...prev, { who: 'bot', text: shown, at: now(), live: true }]; }
         const out = prev.slice();
-        out[out.length - 1] = { ...out[out.length - 1], text: acc };
+        out[out.length - 1] = { ...out[out.length - 1], text: shown, live: true };
         return out;
       });
-    };
+    });
+    const grow = (t: string) => { acc += t; rev.push(t); };
 
     buddyApi.intentBuildStream(next, profile(), {
       delta: grow,
       done: (r: any) => {
         setTyping(false);
+        rev.finish();
         const reply = String(r?.reply || acc);
-        // Итог разошёлся с показанным — переписываем: иначе над настоящим ответом висела бы
-        // оборванная половина.
-        if (opened && r?.replaced) {
+        if (opened) {
+          rev.stop();
           setThread((prev) => {
             const out = prev.slice();
-            out[out.length - 1] = { ...out[out.length - 1], text: reply };
+            const cur = out[out.length - 1];
+            out[out.length - 1] = { ...cur, text: r?.replaced ? reply : cur.text, live: false };
             return out;
           });
         }
@@ -190,7 +194,7 @@ export default function Create() {
       error: async () => {
         // Как и в чате Бадди: поток — способ доставки, а не ответ. Сначала вторая попытка обычным
         // запросом, и только если и она не прошла — «попробуем ещё раз».
-        if (opened) setThread((prev) => prev.slice(0, -1));
+        if (opened) { rev.stop(); setThread((prev) => prev.slice(0, -1)); }
         try {
           const r: any = await buddyApi.intentBuild(next, profile());
           setTyping(false);
@@ -289,7 +293,7 @@ export default function Create() {
                   <Text style={[s.bubText, { color: color.onPrimary }]}>{m.text}</Text>
                 </View>
               ) : (
-                <Markdown text={m.text} />
+                <Markdown text={m.text} caret={!!(m as any).live} />
               )}
               <Text style={[s.time, m.who !== 'me' && s.timeAnswer]}>{m.at}</Text>
             </View>

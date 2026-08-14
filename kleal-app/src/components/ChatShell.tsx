@@ -16,7 +16,8 @@ import { Composer } from './Composer';
 import Markdown from './Markdown';
 import { color, space, type } from '../theme';
 
-export type Bubble = { who: 'bot' | 'me'; text: string; at: string; photo?: string };
+export type Bubble = { who: 'bot' | 'me'; text: string; at: string; photo?: string;
+  /** Текст ещё пишется — под ним мигает курсор. */ live?: boolean };
 
 export const ChatShell = forwardRef<ScrollView, {
   title: string;
@@ -88,7 +89,7 @@ export const ChatShell = forwardRef<ScrollView, {
                   <Text style={[s.bubText, { color: color.onPrimary }]}>{m.text}</Text>
                 </View>
               ) : (
-                <Markdown text={m.text} />
+                <Markdown text={m.text} caret={!!m.live} />
               )}
               <Text style={[s.time, m.who !== 'me' && s.timeAnswer]}>{m.at}</Text>
             </View>

@@ -26,7 +26,7 @@
  * Неузнанная строка становится обычным абзацем: показать текст как есть всегда лучше, чем съесть.
  */
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, Animated } from 'react-native';
 import { color, radius as rad, space, type } from '../theme';
 
 // ---------------------------------------------------------------- разбор
@@ -251,8 +251,28 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
   );
 }
 
+/**
+ * Мигающий курсор — знак «ещё пишется».
+ *
+ * Стоит ОТДЕЛЬНОЙ строкой под текстом, а не приклеен к последнему слову: приклеенный он ездил бы
+ * вместе с переносами строк и прыгал бы на каждом кадре. Здесь он спокойно мигает на месте, и
+ * этого достаточно, чтобы отличить «пишет» от «закончил».
+ */
+function Caret() {
+  const a = React.useRef(new Animated.Value(1)).current;
+  React.useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(a, { toValue: 0.15, duration: 480, useNativeDriver: true }),
+      Animated.timing(a, { toValue: 1, duration: 480, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [a]);
+  return <Animated.View style={[s.caret, { opacity: a }]} />;
+}
+
 /** Ответ модели, свёрстанный документом. `text` — то, что она напечатала, как есть. */
-export default function Markdown({ text }: { text: string }) {
+export default function Markdown({ text, caret }: { text: string; caret?: boolean }) {
   const blocks = React.useMemo(() => parseBlocks(text), [text]);
   return (
     <View style={s.doc}>
@@ -313,6 +333,7 @@ export default function Markdown({ text }: { text: string }) {
             return null;
         }
       })}
+      {caret ? <Caret /> : null}
     </View>
   );
 }
@@ -365,4 +386,6 @@ const s = StyleSheet.create({
   code: { ...type.mono, color: color.fg } as any,
 
   hr: { height: 1, backgroundColor: color.border, marginVertical: space.md },
+  // Курсор — тонкая полоса высотой в строку. Ширина в два пункта: толще выглядит как опечатка.
+  caret: { width: 2, height: 18, borderRadius: 1, backgroundColor: color.primary, marginTop: 2 },
 });

@@ -25,6 +25,7 @@ import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import Markdown from '../src/components/Markdown';
+import { makeReveal } from '../src/reveal';
 
 /**
  * `hello` — первая реплика экрана. Это не ответ модели, а обращение к человеку, и выглядеть оно
@@ -32,7 +33,8 @@ import Markdown from '../src/components/Markdown';
  * Признак хранится ОТДЕЛЬНО, а не «# » в тексте: тот же текст уходит модели в историю, и решётка
  * попала бы к ней в контекст.
  */
-type Msg = { who: 'bot' | 'me'; text: string; at: string; voice?: VoicePayload; hello?: boolean };
+type Msg = { who: 'bot' | 'me'; text: string; at: string; voice?: VoicePayload; hello?: boolean;
+  /** Текст ещё пишется — под ним мигает курсор. */ live?: boolean };
 
 const now = () =>
   new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
@@ -128,16 +130,23 @@ export default function Buddy() {
 
     let acc = '';
     let opened = false;
-    const grow = (t: string) => {
-      acc += t;
+
+    /**
+     * Показ развязан с приходом: буквы приезжают рывками (201 кусок на 656 символов, между ними
+     * то 10 мс, то 400), а на экран выдаются ровным темпом. См. src/reveal.ts — там же объяснено,
+     * почему хвост с незакрытой разметкой придерживается.
+     */
+    const show = (shown: string) => {
       setTyping(false);
       setThread((prev) => {
-        if (!opened) { opened = true; return [...prev, { who: 'bot', text: acc, at: now() }]; }
+        if (!opened) { opened = true; return [...prev, { who: 'bot', text: shown, at: now(), live: true }]; }
         const out = prev.slice();
-        out[out.length - 1] = { ...out[out.length - 1], text: acc };
+        out[out.length - 1] = { ...out[out.length - 1], text: shown, live: true };
         return out;
       });
     };
+    const rev = makeReveal(show);
+    const grow = (t: string) => { acc += t; rev.push(t); };
 
     buddyApi.chatStream(next, profile(), {
       delta: grow,
@@ -153,7 +162,7 @@ export default function Buddy() {
          * Поэтому здесь не извинение, а ВТОРАЯ ПОПЫТКА обычным запросом. Извиняемся только если
          * и она не прошла: тогда связи действительно нет.
          */
-        if (opened) { setTyping(false); resolve(); return; }   // половина ответа уже на экране
+        if (opened) { rev.stop(); setTyping(false); resolve(); return; }   // половина уже на экране
         try {
           const r: any = await buddyApi.chat(next, profile());
           setTyping(false);
@@ -168,13 +177,19 @@ export default function Buddy() {
       },
       done: (r: any) => {
         setTyping(false);
+        rev.finish();
         const reply = String(r?.reply || acc);
         // Итог разошёлся с показанным (вторая попытка, обрезка по границе, заготовка при отказе)
         // — переписываем. Иначе над настоящим ответом висела бы оборванная половина.
-        if (opened && r?.replaced) {
+        if (opened) {
+          // Дописываем итог и гасим курсор. Ждать, пока машинка домотает сама, нельзя: она
+          // допечатывает уже принятый текст, а `done` может нести ДРУГОЙ (вторая попытка,
+          // обрезка по границе) — тогда курсор мигал бы под старым текстом.
+          rev.stop();
           setThread((prev) => {
             const out = prev.slice();
-            out[out.length - 1] = { ...out[out.length - 1], text: reply };
+            const cur = out[out.length - 1];
+            out[out.length - 1] = { ...cur, text: r?.replaced ? reply : cur.text, live: false };
             return out;
           });
         }
@@ -314,7 +329,7 @@ export default function Buddy() {
             }
             return (
               <View key={i} style={s.answer}>
-                <Markdown text={m.text} />
+                <Markdown text={m.text} caret={!!m.live} />
                 {/* Время под ответом приглушено сильнее, чем под репликой: у страницы оно
                     служебная пометка, а не часть разговора. */}
                 <Text style={[s.time, s.timeAnswer]}>{m.at}</Text>

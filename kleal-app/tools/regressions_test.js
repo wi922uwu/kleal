@@ -1812,7 +1812,9 @@ console.log('\nответ модели — документ, а не репли�
     /minWidth: 108, maxWidth: 260/.test(md));
 
   const bd = code('app/buddy.tsx');
-  check('ответ модели рисуется документом', /<Markdown text=\{m\.text\} \/>/.test(bd));
+  // Смысл, а не написание: важно, что текст модели уходит в Markdown, а не какие у него пропсы.
+  // Проверка держалась за точный тег и упала, когда добавился курсор, — ничего не изменив по сути.
+  check('ответ модели рисуется документом', /<Markdown text=\{m\.text\}/.test(bd));
   check('а реплика человека осталась пузырём', /\[s\.bub, s\.bubMe\]/.test(bd));
   check('у ответа нет подложки и он во всю ширину', /answer: \{ alignSelf: 'stretch'/.test(bd));
 
@@ -1892,7 +1894,7 @@ console.log('\nответ модели — документ, а не репли�
   // как сбой, а не как замысел.
   for (const f of ['src/components/ChatShell.tsx', 'app/create.tsx']) {
     const c = code(f);
-    check(`${f}: текст модели идёт документом`, /<Markdown text=\{m\.text\} \/>/.test(c));
+    check(`${f}: текст модели идёт документом`, /<Markdown text=\{m\.text\}/.test(c));
     check(`${f}: реплика человека осталась пузырём`, /\[s\.bub, s\.bubMe\]/.test(c));
   }
 
@@ -1954,7 +1956,8 @@ console.log('\nответ модели — документ, а не репли�
     check('показанное второй раз не печатается', /if \(!shown\) say\('bot', reply\)/.test(cr));
     // Обрыв оставил бы на экране половину фразы, а кнопка «Попробовать снова» вернула бы
     // реплику человека — и над ней висел бы обрывок ответа.
-    check('при обрыве обрывок убирается', /if \(opened\) setThread\(\(prev\) => prev\.slice\(0, -1\)\)/.test(cr));
+    check('при обрыве обрывок убирается',
+    /if \(opened\)[\s\S]{0,40}setThread\(\(prev\) => prev\.slice\(0, -1\)\)/.test(cr));
     check('и реплика человека не теряется', /setRetry\(\{ text, hist \}\)/.test(cr));
     check('у построителя те же правила замены',
       /То же правило, что в \/chat/.test(bp) && (bp.match(/_shown != _final/g) || []).length >= 2);
@@ -2053,6 +2056,38 @@ console.log('\nцензура ловит просьбу о способе, но 
   check('в создании интента то же', /await buddyApi\.intentBuild\(next, profile\(\)\)/.test(code('app/create.tsx')));
   // Без Accept посредники охотно буферизуют ответ целиком, и поток перестаёт быть потоком.
   check('поток просит себя явно', /setRequestHeader\('Accept', 'text\/event-stream'\)/.test(ap2));
+
+  // РОВНОЕ ПОЯВЛЕНИЕ. Буквы приезжают рывками — 201 кусок на 656 символов, между ними то 10 мс,
+  // то 400. Рисовать их как пришли значит показывать не «печатает», а «подтормаживает».
+  const rv = read('src/reveal.ts');
+  check('показ развязан с приходом', /export function makeReveal/.test(rv));
+  check('темп догоняющий, а не постоянный', /const cps = BASE_CPS \+ left \* CATCHUP/.test(rv),
+    'постоянный либо отстаёт от модели, либо стоит с пустым буфером');
+  // Показать «**Лон» значит показать звёздочки: разметка ещё не закрыта, и человек видит мусор,
+  // который через миг станет жирным текстом.
+  check('хвост с незакрытой разметкой придерживается', /export function safeCut/.test(rv));
+  check('и строка таблицы тоже', /m\.trimEnd\(\)\.endsWith\('\|'\)/.test(rv),
+    'иначе столбцы прыгали бы на каждом кадре');
+
+  // Исполняем НАСТОЯЩУЮ обрезку: важно не как она написана, а что именно скрывает.
+  {
+    const from = rv.indexOf('export function safeCut');
+    const js = rv.slice(from, rv.indexOf('export type Reveal'))
+      .replace('export function safeCut(text: string): string {', 'function safeCut(text){');
+    const safeCut = new Function(js + '\nreturn safeCut;')();
+    const CASES = [['**Лон', ''], ['**Лонг** — ставка', '**Лонг** — ставка'],
+                   ['Цена `mar', 'Цена '], ['Текст\n| Цена | Ре', 'Текст\n'],
+                   ['Первое\n##', 'Первое\n'], ['Обычный текст', 'Обычный текст']];
+    for (const [src, want] of CASES) {
+      check(`обрезка: ${JSON.stringify(src)}`, safeCut(src) === want, JSON.stringify(safeCut(src)));
+    }
+  }
+
+  const bd3 = code('app/buddy.tsx');
+  check('машинка подключена к ленте', /makeReveal\(show\)/.test(bd3));
+  check('курсор гаснет по завершении', /live: false/.test(bd3));
+  check('в создании интента то же', /makeReveal\(/.test(code('app/create.tsx')));
+  check('курсор мигает, а не приклеен к слову', /function Caret\(\)/.test(code('src/components/Markdown.tsx')));
 
   check('поток выключен на подозрительном запросе',
     /_sv == "ok"[\s\S]{0,80}body\.get\("stream"\)/.test(bp)
