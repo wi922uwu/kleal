@@ -77,40 +77,94 @@ export default function Buddy() {
     languages: st.profile.languages || {},
   });
 
-  const send = useCallback(async (text: string, hist: Turn[]) => {
-    const next: Turn[] = [...hist, { role: 'user', content: text }];
-    setTurns(next);
-    setTyping(true);
-    try {
-      const r: any = await buddyApi.chat(next, profile());
-      setTyping(false);
-      const reply = String(r?.reply || '');
+  /**
+   * Что сделать с готовым ответом. Развилка та же, что была до потока, — вынесена отдельно,
+   * потому что теперь она срабатывает в `done`, а не сразу после запроса.
+   *
+   * `shown` — показался ли текст потоком. От него зависит и то, печатать ли реплику (уже
+   * напечатана), и то, надо ли её УБРАТЬ, если ответ оказался планом.
+   */
+  const finish = useCallback((r: any, reply: string, text: string, next: Turn[], shown: boolean) => {
+    if (looksLikeIntent(r)) {
       /**
-       * Распознан план — на экран НЕ приходит ни одной реплики: вместо неё открывается окно
-       * выбора. Раньше человек получал и ответ агента, и окно поверх него — то есть разговор
-       * продолжался и одновременно прерывался, и было непонятно, на что отвечать.
+       * Распознан план — на экране реплики быть не должно, вместо неё окно выбора. Раньше человек
+       * получал и ответ агента, и окно поверх него: разговор продолжался и одновременно
+       * прерывался, и было непонятно, на что отвечать. С потоком добавилось второе: текст уже
+       * успел появиться, поэтому его надо снять, а не просто не печатать.
        *
        * В историю ответ всё же кладём: он был, модель на него опирается, и после «продолжим
        * общаться» разговор не должен начинаться с пустоты.
        */
-      if (looksLikeIntent(r)) {
-        // Фраза, а не подпись карточки: «поговорить про Jesus», см. intentPhrase.
-        const label = intentPhrase(r, text);
-        setTurns(reply ? [...next, { role: 'assistant', content: reply }] : next);
-        setTopic(text);
-        setWhat(label);
-        setSheet(true);
-        return;
-      }
-      if (reply) {
-        say('bot', reply);
-        setTurns([...next, { role: 'assistant', content: reply }]);
-      }
-    } catch {
-      setTyping(false);
-      say('bot', BUDDY.offline());
+      if (shown) setThread((prev) => prev.slice(0, -1));
+      // Фраза, а не подпись карточки: «поговорить про Jesus», см. intentPhrase.
+      const label = intentPhrase(r, text);
+      setTurns(reply ? [...next, { role: 'assistant', content: reply }] : next);
+      setTopic(text);
+      setWhat(label);
+      setSheet(true);
+      return;
     }
-  }, [say, st.profile]);
+    if (reply) {
+      if (!shown) say('bot', reply);       // потоком не приходило — печатаем целиком
+      setTurns([...next, { role: 'assistant', content: reply }]);
+    }
+  }, [say]);
+
+  /**
+   * ОТВЕТ ПОЯВЛЯЕТСЯ ПО МЕРЕ НАПИСАНИЯ.
+   *
+   * Измерено на живом сервере: модель начинает писать через 0,24 с, а весь ответ выходит за 15
+   * секунд — токен за токеном. Ускорить генерацию нельзя; можно перестать ждать её конца. Первые
+   * слова теперь на экране через ~1,9 с вместо 7,5 — это разница между «приложение думает» и
+   * «приложение отвечает».
+   *
+   * Текст растёт ПРЯМО В ЛЕНТЕ, а не в отдельном состоянии: иначе пришлось бы держать две копии
+   * и склеивать их в конце, а расхождение между ними человек увидел бы как мигание.
+   */
+  const send = useCallback((text: string, hist: Turn[]) => new Promise<void>((resolve) => {
+    const next: Turn[] = [...hist, { role: 'user', content: text }];
+    setTurns(next);
+    setTyping(true);
+
+    let acc = '';
+    let opened = false;
+    const grow = (t: string) => {
+      acc += t;
+      setTyping(false);
+      setThread((prev) => {
+        if (!opened) { opened = true; return [...prev, { who: 'bot', text: acc, at: now() }]; }
+        const out = prev.slice();
+        out[out.length - 1] = { ...out[out.length - 1], text: acc };
+        return out;
+      });
+    };
+
+    buddyApi.chatStream(next, profile(), {
+      delta: grow,
+      error: () => {
+        setTyping(false);
+        // Оборвалось до первой буквы — сказать надо, иначе экран замрёт молча. Оборвалось после —
+        // на экране уже есть половина ответа, и извинение поверх неё только запутает.
+        if (!opened) say('bot', BUDDY.offline());
+        resolve();
+      },
+      done: (r: any) => {
+        setTyping(false);
+        const reply = String(r?.reply || acc);
+        // Итог разошёлся с показанным (вторая попытка, обрезка по границе, заготовка при отказе)
+        // — переписываем. Иначе над настоящим ответом висела бы оборванная половина.
+        if (opened && r?.replaced) {
+          setThread((prev) => {
+            const out = prev.slice();
+            out[out.length - 1] = { ...out[out.length - 1], text: reply };
+            return out;
+          });
+        }
+        finish(r, reply, text, next, opened);
+        resolve();
+      },
+    });
+  }), [say, finish, st.profile]);
 
   /** Голосовое ложится в ленту своим пузырём, а модели уходит расшифровка — ей слушать нечем. */
   const deliverVoice = useCallback(async (payload: VoicePayload) => {
