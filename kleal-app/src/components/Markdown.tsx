@@ -206,7 +206,7 @@ export function parseInline(src: string): Inline[] {
 
 // ---------------------------------------------------------------- вид
 
-function Rich({ src, style }: { src: string; style?: any }) {
+function Rich({ src, style, tail }: { src: string; style?: any; tail?: React.ReactNode }) {
   return (
     <Text style={style}>
       {parseInline(src).map((t, i) => (
@@ -221,6 +221,9 @@ function Rich({ src, style }: { src: string; style?: any }) {
           {t.text}
         </Text>
       ))}
+      {/* Курсор — ВНУТРИ той же строки, а не под ней. Отдельной строкой он читался как
+          посторонний элемент, а не как место, где сейчас пишут (сообщено с телефона). */}
+      {tail}
     </Text>
   );
 }
@@ -268,7 +271,10 @@ function Caret() {
     loop.start();
     return () => loop.stop();
   }, [a]);
-  return <Animated.View style={[s.caret, { opacity: a }]} />;
+  // ЗНАК, а не прямоугольник. Прямоугольник — это View, а View внутри строки текста в React
+  // Native встать не может: он всегда уезжает на строку ниже. Символ же течёт вместе с текстом
+  // и переносится вместе с ним.
+  return <Animated.Text style={[s.caret, { opacity: a }]}>▍</Animated.Text>;
 }
 
 /** Ответ модели, свёрстанный документом. `text` — то, что она напечатала, как есть. */
@@ -277,24 +283,31 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
   return (
     <View style={s.doc}>
       {blocks.map((b, i) => {
+        // Курсор рисуется в последнем блоке — там, где сейчас пишут. Если последний блок не
+        // текстовый (таблица, код), внутрь его не поставить, и тогда он идёт отдельной строкой:
+        // это редкий случай и он честнее, чем курсор посреди таблицы.
+        const tail = caret && i === blocks.length - 1 ? <Caret /> : null;
         // Отбивка сверху у заголовка больше, чем снизу: заголовок принадлежит тому, что под ним.
         // Равные отступы — самая частая причина, по которой длинный текст читается кашей.
         const first = i === 0;
         switch (b.kind) {
           case 'h':
             return (
-              <Rich key={i} src={b.text}
+              <Rich key={i} src={b.text} tail={tail}
                     style={[
                       b.level === 1 ? s.h1 : b.level === 2 ? s.h2 : s.h3,
                       first && { marginTop: 0 },
                     ]} />
             );
           case 'p':
-            return <Rich key={i} src={b.text} style={s.p} />;
+            return <Rich key={i} src={b.text} style={s.p} tail={tail} />;
           case 'quote':
             return (
               <View key={i} style={s.quote}>
-                {b.lines.map((l, j) => <Rich key={j} src={l} style={s.quoteText} />)}
+                {b.lines.map((l, j) => (
+                  <Rich key={j} src={l} style={s.quoteText}
+                        tail={j === b.lines.length - 1 ? tail : null} />
+                ))}
               </View>
             );
           case 'ul':
@@ -303,7 +316,7 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
                 {b.items.map((it, j) => (
                   <View key={j} style={s.li}>
                     <Text style={s.marker}>•</Text>
-                    <Rich src={it} style={s.liText} />
+                    <Rich src={it} style={s.liText} tail={j === b.items.length - 1 ? tail : null} />
                   </View>
                 ))}
               </View>
@@ -314,7 +327,7 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
                 {b.items.map((it, j) => (
                   <View key={j} style={s.li}>
                     <Text style={s.marker}>{j + 1}.</Text>
-                    <Rich src={it} style={s.liText} />
+                    <Rich src={it} style={s.liText} tail={j === b.items.length - 1 ? tail : null} />
                   </View>
                 ))}
               </View>
@@ -333,7 +346,8 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
             return null;
         }
       })}
-      {caret ? <Caret /> : null}
+      {caret && blocks.length && ['table', 'code', 'hr'].includes(blocks[blocks.length - 1].kind)
+        ? <Caret /> : null}
     </View>
   );
 }
@@ -387,5 +401,6 @@ const s = StyleSheet.create({
 
   hr: { height: 1, backgroundColor: color.border, marginVertical: space.md },
   // Курсор — тонкая полоса высотой в строку. Ширина в два пункта: толще выглядит как опечатка.
-  caret: { width: 2, height: 18, borderRadius: 1, backgroundColor: color.primary, marginTop: 2 },
+  // Знак в строке: цвет и размер от текста, а не свои. Полупрозрачность даёт мигание.
+  caret: { color: color.primary, fontSize: 15, lineHeight: 22 } as any,
 });

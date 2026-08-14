@@ -2087,7 +2087,19 @@ console.log('\nцензура ловит просьбу о способе, но 
   check('машинка подключена к ленте', /makeReveal\(show\)/.test(bd3));
   check('курсор гаснет по завершении', /live: false/.test(bd3));
   check('в создании интента то же', /makeReveal\(/.test(code('app/create.tsx')));
-  check('курсор мигает, а не приклеен к слову', /function Caret\(\)/.test(code('src/components/Markdown.tsx')));
+  {
+    const md2 = code('src/components/Markdown.tsx');
+    check('курсор есть', /function Caret\(\)/.test(md2));
+    // View внутри строки текста в React Native встать не может — он всегда уезжает строкой ниже,
+    // и курсор читался как посторонний элемент, а не как место, где сейчас пишут.
+    check('курсор — ЗНАК, а не прямоугольник', /Animated\.Text style=\{\[s\.caret/.test(md2),
+      'View внутри Text всегда переносится на следующую строку');
+    check('и рисуется в последнем блоке', /const tail = caret && i === blocks\.length - 1/.test(md2));
+    check('в списке — в последнем пункте', /tail=\{j === b\.items\.length - 1 \? tail : null\}/.test(md2));
+    // Внутрь таблицы курсор не поставить — там он честнее отдельной строкой.
+    check('отдельной строкой только у таблицы и кода',
+      /\['table', 'code', 'hr'\]\.includes/.test(md2));
+  }
 
   check('поток выключен на подозрительном запросе',
     /_sv == "ok"[\s\S]{0,80}body\.get\("stream"\)/.test(bp)
