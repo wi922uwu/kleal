@@ -25,6 +25,8 @@ export type ReqStatus = 'pending' | 'accepted' | 'declined' | 'withdrawn' | 'exp
 
 export const CHAT = {
   /** O.16 — приглашение отклонили. */
+  /** O.14a: приглашение стояло до конца срока и не дождалось ответа. Не отказ — молчание. */
+  expired: () => T('Без ответа · истекло', 'No answer · expired'),
   declined: () => T('Отклонено', 'Declined'),
   remove: () => T('Убрать', 'Remove'),
 

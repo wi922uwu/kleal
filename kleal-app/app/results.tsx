@@ -587,6 +587,19 @@ function CandCard({
             <Text style={s.inviteText}>{CHAT.openChat()}</Text>
           </Pressable>
         </View>
+      ) : status === 'expired' || status === 'withdrawn' ? (
+        /* O.14a: приглашение простояло весь срок и не дождалось ответа — это НЕ отказ, и говорить
+           о нём надо иначе. Раньше CandCard разбирала только joined/declined/accepted/pending, и
+           на истёкшем молча рисовала обычное «Пригласить»: человек не понимал, ушло ли его
+           приглашение вообще. `withdrawn` сюда же — так закрываются соседи после чужого «да». */
+        <View style={s.invitedRow}>
+          <View style={[s.invite, s.invitedPill]}>
+            <Text style={[s.inviteText, { color: color.muted }]}>⏳  {CHAT.expired()}</Text>
+          </View>
+          <Pressable accessibilityRole="button" style={[s.invite, s.cancelPill]} onPress={onRemove}>
+            <Text style={s.inviteText}>{CHAT.remove()}</Text>
+          </Pressable>
+        </View>
       ) : status === 'declined' ? (
         <View style={s.invitedRow}>
           <View style={[s.invite, s.invitedPill]}>
