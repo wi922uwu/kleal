@@ -66,10 +66,26 @@ export function makeReveal(onShow: (shown: string) => void): Reveal {
 
   const paint = () => onShow(safeCut(target.slice(0, shownLen)));
 
+  /**
+   * РИТМ, А НЕ МЕТРОНОМ.
+   *
+   * Ровная выдача читается механически: буквы идут как из принтера. Живой текст дышит — на точке
+   * пауза длиннее, на запятой короче, внутри слова букв не считают вовсе. Здесь это две вещи:
+   * задержка после знака препинания и лёгкое дрожание темпа.
+   *
+   * Дрожание маленькое (±12%) намеренно: большее читается уже не как живость, а как рывки — то
+   * самое, от чего мы и ушли, развязав приход с показом.
+   */
+  const pauseAfter = (ch: string) =>
+    ch === '\n' ? 260 : '.!?…'.includes(ch) ? 190 : ',;:—'.includes(ch) ? 80 : 0;
+
+  let holdUntil = 0;
+
   const tick = () => {
     const now = Date.now();
     const dt = Math.max(0, now - last) / 1000;
     last = now;
+    if (now < holdUntil) return;            // дочитываем паузу после знака
     const left = target.length - shownLen;
     if (left <= 0) {
       if (done) stop();
@@ -77,8 +93,18 @@ export function makeReveal(onShow: (shown: string) => void): Reveal {
     }
     // Догон: базовый темп плюс доля остатка. На закрытом потоке добавляем ещё, чтобы конец
     // не тянулся, — человек уже дочитал до этого места.
-    const cps = BASE_CPS + left * CATCHUP + (done ? left * 3 : 0);
-    shownLen = Math.min(target.length, shownLen + Math.max(1, Math.round(cps * dt)));
+    const jitter = 0.88 + Math.random() * 0.24;
+    const cps = (BASE_CPS + left * CATCHUP + (done ? left * 3 : 0)) * jitter;
+    const step = Math.max(1, Math.round(cps * dt));
+
+    // Останавливаемся НА знаке, а не проскакиваем его: пауза после точки имеет смысл только
+    // если точка уже показана.
+    let take = step;
+    for (let k = 1; k <= step && shownLen + k <= target.length; k++) {
+      const p = pauseAfter(target[shownLen + k - 1]);
+      if (p) { take = k; holdUntil = now + p; break; }
+    }
+    shownLen = Math.min(target.length, shownLen + take);
     paint();
     if (done && shownLen >= target.length) stop();
   };

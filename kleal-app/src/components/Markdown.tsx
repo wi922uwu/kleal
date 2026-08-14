@@ -206,10 +206,13 @@ export function parseInline(src: string): Inline[] {
 
 // ---------------------------------------------------------------- вид
 
-function Rich({ src, style, tail }: { src: string; style?: any; tail?: React.ReactNode }) {
+function Rich({ src, style, tail, fade }: {
+  src: string; style?: any; tail?: React.ReactNode; fade?: boolean;
+}) {
+  const parts = parseInline(src);
   return (
     <Text style={style}>
-      {parseInline(src).map((t, i) => (
+      {parts.map((t, i) => (
         <Text
           key={i}
           style={[
@@ -218,7 +221,12 @@ function Rich({ src, style, tail }: { src: string; style?: any; tail?: React.Rea
             t.code ? s.codeInline : null,
           ]}
         >
-          {t.text}
+          {/* Гаснет только САМЫЙ конец последнего куска — там, где сейчас пишут. */}
+          {fade && i === parts.length - 1 && !t.code
+            ? fadeTail(t.text, true).map((p, j) => (
+                <Text key={j} style={p.o < 1 ? { opacity: p.o } : null}>{p.t}</Text>
+              ))
+            : t.text}
         </Text>
       ))}
       {/* Курсор — ВНУТРИ той же строки, а не под ней. Отдельной строкой он читался как
@@ -226,6 +234,32 @@ function Rich({ src, style, tail }: { src: string; style?: any; tail?: React.Rea
       {tail}
     </Text>
   );
+}
+
+/**
+ * ГАСНУЩИЙ ХВОСТ — «размытие» на конце строки, пока идёт печать.
+ *
+ * Настоящее размытие текста в React Native стоит нативного модуля и маски; здесь оно не нужно.
+ * Тот же эффект даёт градиент прозрачности по последним символам: буквы не выскакивают, а
+ * проявляются, и граница написанного перестаёт быть резкой.
+ *
+ * Ступеней три и они короткие: длинный градиент читается как «текст выцвел», а не как «текст
+ * ещё пишется».
+ */
+const FADE = [0.72, 0.42, 0.18];
+
+function fadeTail(text: string, on: boolean) {
+  if (!on || text.length < 4) return [{ t: text, o: 1 }];
+  const n = Math.min(6, Math.max(3, Math.round(text.length * 0.12)));
+  const head = text.slice(0, text.length - n);
+  const tailChars = text.slice(text.length - n);
+  const per = Math.ceil(n / FADE.length);
+  const parts: { t: string; o: number }[] = head ? [{ t: head, o: 1 }] : [];
+  for (let i = 0; i < FADE.length; i++) {
+    const piece = tailChars.slice(i * per, (i + 1) * per);
+    if (piece) parts.push({ t: piece, o: FADE[i] });
+  }
+  return parts;
 }
 
 function Table({ head, rows }: { head: string[]; rows: string[][] }) {
@@ -264,9 +298,12 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
 function Caret() {
   const a = React.useRef(new Animated.Value(1)).current;
   React.useEffect(() => {
+    // Плавно и НЕ до нуля: жёсткое мигание с постоянным шагом — то же механическое ощущение,
+    // что и ровная выдача букв. Гаснет до трети, разгорается дольше, чем гаснет: так пульс
+    // читается как дыхание, а не как индикатор загрузки.
     const loop = Animated.loop(Animated.sequence([
-      Animated.timing(a, { toValue: 0.15, duration: 480, useNativeDriver: true }),
-      Animated.timing(a, { toValue: 1, duration: 480, useNativeDriver: true }),
+      Animated.timing(a, { toValue: 0.3, duration: 620, useNativeDriver: true }),
+      Animated.timing(a, { toValue: 1, duration: 380, useNativeDriver: true }),
     ]));
     loop.start();
     return () => loop.stop();
@@ -287,26 +324,28 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
         // текстовый (таблица, код), внутрь его не поставить, и тогда он идёт отдельной строкой:
         // это редкий случай и он честнее, чем курсор посреди таблицы.
         const tail = caret && i === blocks.length - 1 ? <Caret /> : null;
+        const fade = !!tail;
         // Отбивка сверху у заголовка больше, чем снизу: заголовок принадлежит тому, что под ним.
         // Равные отступы — самая частая причина, по которой длинный текст читается кашей.
         const first = i === 0;
         switch (b.kind) {
           case 'h':
             return (
-              <Rich key={i} src={b.text} tail={tail}
+              <Rich key={i} src={b.text} tail={tail} fade={fade}
                     style={[
                       b.level === 1 ? s.h1 : b.level === 2 ? s.h2 : s.h3,
                       first && { marginTop: 0 },
                     ]} />
             );
           case 'p':
-            return <Rich key={i} src={b.text} style={s.p} tail={tail} />;
+            return <Rich key={i} src={b.text} style={s.p} tail={tail} fade={fade} />;
           case 'quote':
             return (
               <View key={i} style={s.quote}>
                 {b.lines.map((l, j) => (
                   <Rich key={j} src={l} style={s.quoteText}
-                        tail={j === b.lines.length - 1 ? tail : null} />
+                        tail={j === b.lines.length - 1 ? tail : null}
+                        fade={fade && j === b.lines.length - 1} />
                 ))}
               </View>
             );
@@ -316,7 +355,8 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
                 {b.items.map((it, j) => (
                   <View key={j} style={s.li}>
                     <Text style={s.marker}>•</Text>
-                    <Rich src={it} style={s.liText} tail={j === b.items.length - 1 ? tail : null} />
+                    <Rich src={it} style={s.liText} tail={j === b.items.length - 1 ? tail : null}
+                          fade={fade && j === b.items.length - 1} />
                   </View>
                 ))}
               </View>
@@ -327,7 +367,8 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
                 {b.items.map((it, j) => (
                   <View key={j} style={s.li}>
                     <Text style={s.marker}>{j + 1}.</Text>
-                    <Rich src={it} style={s.liText} tail={j === b.items.length - 1 ? tail : null} />
+                    <Rich src={it} style={s.liText} tail={j === b.items.length - 1 ? tail : null}
+                          fade={fade && j === b.items.length - 1} />
                   </View>
                 ))}
               </View>
