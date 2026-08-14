@@ -6,12 +6,19 @@ reached by an unusual order of events, and people acting after they stopped bein
 """
 import json
 import os
+import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 
-GW = "http://127.0.0.1:7074"
+# Адрес первым аргументом — как у всех соседних смоуков в этой папке.
+#
+# Был прибит к 127.0.0.1:7074, и заголовок «Run ON the pod» это оправдывал. Но запуск СНАРУЖИ
+# молча уходил в localhost запускающего: смоук печатал «сервис упал» и «Connection refused», и это
+# читалось как поломка продукта, а не как промах теста. Ровно та же ловушка, что нашлась в
+# e2e_smoke 13 августа. Умолчание оставлено прежним — на самой машине ничего не меняется.
+GW = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:7074").rstrip("/")
 S = int(time.time() * 1000) % 100000000 + os.getpid()
 FOUND, OK = [], [0]
 
