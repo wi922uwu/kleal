@@ -18,6 +18,7 @@ import type { Profile } from './state';
 import { getState, set, subscribe, profileForAttach } from './state';
 import { buddy, profile as profileApi } from './api';
 import { patchFor } from './fields';
+import { interestLabel, interestLabels } from './interest-label';
 
 // ---------------------------------------------------------------- разделы
 
@@ -288,7 +289,7 @@ export const HUB_ROWS: HubRow[] = [
     id: 'interests', kind: 'screen',
     title: () => T('Интересы', 'Interests'),
     sub: (p) => {
-      const list = explicitInterests(p).map((k: string) => hobbyPlain(k));
+      const list = interestLabels(explicitInterests(p));
       return list.length ? list.join(' · ') : T('Пока не заполнено', 'Not set yet');
     },
   },
@@ -553,7 +554,7 @@ export function profileData(op: Profile | any): ProfileData {
     // рассказал ли он о них хоть что-то сверх названия.
     const conf: Interest['conf'] = i < 2 ? 'High' : kv.length ? 'Medium' : 'Low';
     const used = !(op.interests && op.interests.unused && op.interests.unused.includes(name));
-    return { name, label: hobbyPlain(name), conf, used, kv };
+    return { name, label: interestLabel(name), conf, used, kv };
   });
 
   const basics: Row[] = [];

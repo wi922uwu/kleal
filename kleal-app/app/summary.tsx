@@ -15,6 +15,7 @@ import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding
 import { Composer } from '../src/components/Composer';
 import { IconPerson } from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
+import { interestLabels } from '../src/interest-label';
 
 export default function Summary() {
   useLang();
@@ -64,7 +65,7 @@ export default function Summary() {
   // строками, склонять их нечем, и «говорит на Английский» — сломанный русский. Английский
   // при этом строится нормальной фразой, ему падежи не нужны.
   const fallback = useMemo(() => {
-    const h = (p.interests?.explicit || []).map(hobbyPlain);
+    const h = interestLabels(p.interests?.explicit);
     const l = (p.languages?.comfortable || []).map(langPlain);
     const bits = [
       h.length ? T('Интересы: ' + h.join(', '), 'Into ' + h.join(', ')) : '',

@@ -47,6 +47,7 @@ import { SEXES, sexLabel } from '../src/onboarding';
 import { BottomNav } from '../src/components/BottomNav';
 import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
+import { interestLabels } from '../src/interest-label';
 
 const ru = () => getLang() === 'ru';
 
@@ -544,7 +545,7 @@ function CandCard({
 
         {(c.interests || []).length ? (
           <View style={s.tags}>
-            {(c.interests || []).slice(0, 3).map((t, i) => (
+            {interestLabels(c.interests).slice(0, 3).map((t, i) => (
               <View key={t + i} style={s.tag}><Text style={s.tagText}>{t}</Text></View>
             ))}
           </View>

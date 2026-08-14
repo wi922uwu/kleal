@@ -1292,6 +1292,67 @@ console.log('\nкнопки ведут туда, что обещают');
     'сообщение внизу прокрутки не видно, и кнопка выглядит мёртвой');
 }
 
+// ------------------------------------------------- 13. интерес показывается на языке экрана
+//
+// Словарей было ДВА и они не знали друг о друге: дерево колеса (312 ключей с ru и en) висело на
+// одном экране онбординга, а всё остальное ходило через hobbyPlain с десятью ключами и `return k`
+// при промахе. Человек, выбравший «Спорт → Ракетки → Падел», видел в профиле, в выдаче и на
+// карточках сырые «sports», «racket», «padel» — и они не менялись при переключении языка
+// (сообщено с телефона 14 августа).
+console.log('\nинтерес показывается на языке экрана');
+{
+  const lab = code('src/interest-label.ts');
+  check('резолвер существует и лесенкой, а не одним словарём',
+    /labelOf\(/.test(lab) && /hobbyPlain\(/.test(lab),
+    'колесо покрывает 312 ключей, HOBBIES — десять; ни один не покрывает другой');
+  check('неизвестный ключ возвращается как есть',
+    /return k;/.test(lab),
+    'своё написанное словами переводить нечем, и притворяться нельзя');
+
+  // Места показа: сырых ключей там остаться не должно.
+  const sites = {
+    'src/profile.ts': /interestLabels\(explicitInterests\(p\)\)/,
+    'app/summary.tsx': /interestLabels\(p\.interests\?\.explicit\)/,
+    'app/results.tsx': /interestLabels\(c\.interests\)/,
+    'app/candidate.tsx': /interestLabels\(c\.interests\)/,
+    'src/candidates.ts': /interestLabels\(c\.interests\)/,
+  };
+  for (const [f, re] of Object.entries(sites)) {
+    check(f + ': интересы идут через резолвер', re.test(code(f)),
+      'иначе на экран попадёт ключ матчинга, а не слово');
+  }
+
+  // Словарь исполняется по-настоящему: проверка формулировки тут бессмысленна.
+  const wheel = read('src/interests-wheel.ts');
+  let body = wheel.slice(wheel.indexOf('const N = '), wheel.indexOf('\n}\n', wheel.indexOf('export function labelOf')) + 3);
+  body = body.replace(/\bkids\?/g, 'kids')
+             .replace(/:\s*WheelNode\[\]|:\s*WheelNode|:\s*string\s*\|\s*null|:\s*string/g, '')
+             .replace(/export const/g, 'const').replace(/export function/g, 'function')
+             .replace(/const nodeLabel = [^;]+;/, 'const nodeLabel = (n) => (LANG === "ru" ? n.ru : n.en);');
+  const mk = (lang) => new Function('let LANG="' + lang + '";' + body + '\nreturn labelOf;')();
+  const ru = mk('ru'), en = mk('en');
+
+  check('один ключ — два разных слова',
+    ru('padel') === 'Падел' && en('padel') === 'Padel',
+    'ru=' + ru('padel') + ' en=' + en('padel'));
+  check('составное название тоже переводится',
+    ru('boardgames') !== en('boardgames') && ru('boardgames') !== 'boardgames');
+  check('своё слово не выдумывается', ru('своё словечко') === 'своё словечко');
+}
+
+// ------------------------------------------------- 14. писать можно только тому, кто согласился
+console.log('\nканал открывает согласие, а не знание имени');
+{
+  const py = fs.readFileSync(path.join(ROOT, '..', 'kleal-ms/services/matching/app.py'), 'utf8');
+  const send = py.slice(py.indexOf('def send_message('), py.indexOf('def send_message(') + 3000);
+  check('отправка сообщения проверяет согласие',
+    /_mp_matched\(frm, to\)/.test(send) && /NOT_MATCHED/.test(send),
+    'имена видны в поиске: без этой проверки написать можно было кому угодно');
+  check('правило одно на сообщение и на план',
+    (py.match(/if not _mp_matched\(frm, to\):/g) || []).length >= 2,
+    'две копии правила разойдутся при первой правке');
+}
+
 console.log('');
 if (failed) {
   console.log(failed + ' проверок не прошло');

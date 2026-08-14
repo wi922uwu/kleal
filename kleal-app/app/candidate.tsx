@@ -33,6 +33,7 @@ import { IconPerson, IconPin, IconUserLock } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
+import { interestLabels } from '../src/interest-label';
 
 const ru = () => getLang() === 'ru';
 
@@ -192,7 +193,7 @@ export default function Candidate() {
 
         {(c.interests || []).length ? (
           <View style={s.tags}>
-            {(c.interests || []).slice(0, 6).map((t, i) => (
+            {interestLabels(c.interests).slice(0, 6).map((t, i) => (
               <View key={t + i} style={s.tag}><Text style={s.tagText}>{t}</Text></View>
             ))}
           </View>

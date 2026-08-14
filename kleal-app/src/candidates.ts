@@ -11,6 +11,7 @@
  */
 import { T } from './i18n';
 import { acc, dat, gen, ins } from './names';
+import { interestLabels } from './interest-label';
 
 export const CANDS = {
   bestBadge: () => T('Лучший мэтч', 'Best match'),
@@ -70,7 +71,9 @@ export type Cand = {
 export function candSubtitle(c: Cand, ru: boolean): string {
   const vibe = String(c.vibe || '').trim();
   if (vibe) return vibe;
-  const ints = (c.interests || []).slice(0, 2).map(String);
+  // Подпись, а не ключ: «Падел · Настолки», а не «padel · boardgames». Заглавную ставим уже
+  // после перевода — иначе она поднималась бы у английского ключа, который человек не увидит.
+  const ints = interestLabels(c.interests).slice(0, 2);
   if (ints.length) return ints.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' · ');
   return String((ru ? c.band_ru : c.band_en) || '');
 }
