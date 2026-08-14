@@ -12,12 +12,12 @@ import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator 
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card } from '../../src/components/ProfileShell';
 import { IconPerson } from '../../src/components/icons';
-import { useLang } from '../../src/i18n';
+import { useLang, replyLang } from '../../src/i18n';
 import { useOnb, set, getState } from '../../src/state';
-import { mediaUrl, profile as profileApi } from '../../src/api';
+import { mediaUrl, profile as profileApi, buddy } from '../../src/api';
 import {
   PERSONALITY as C, STORY_MAX, fmtUpdated, adaptSummary,
-  AXIS_LABEL, AXIS_VALUE, AXIS_ORDER,
+  AXIS_LABEL, AXIS_VALUE, AXIS_ORDER, addInterests, explicitInterests,
 } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
@@ -33,6 +33,47 @@ export default function Personality() {
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuilt, setRebuilt] = useState('');
   const [rebuildErr, setRebuildErr] = useState('');
+  /**
+   * Что история говорит о занятиях человека — предложением, а не правкой.
+   *
+   * История уходила в сводку и никуда больше, а матчинг читает `interests`, не прозу: человек мог
+   * написать абзац про горы, хлеб и испанский и остаться в поиске «кофе, падел, книги». Со
+   * стороны это ровно «написал — и ничего не произошло».
+   *
+   * Само ничего не добавляется. Интересы, проставленные за человека, это ярлыки, которых он не
+   * выбирал, и найдут его по ним не те люди.
+   */
+  const [suggest, setSuggest] = useState<{ key: string; label: string; why: string }[]>([]);
+  const [picked, setPicked] = useState<Record<string, boolean>>({});
+  const [addedNote, setAddedNote] = useState(false);
+  const [asking, setAsking] = useState(false);
+
+  const askStory = async (text: string) => {
+    if (!text.trim()) return;
+    setAsking(true);
+    setAddedNote(false);
+    try {
+      const r: any = await buddy.storyInterests(text, explicitInterests(p), replyLang());
+      const list = (r?.interests || []) as { key: string; label: string; why: string }[];
+      setSuggest(list);
+      // Отмечено всё сразу: человек уже написал это про себя, и заставлять его отмечать заново
+      // — лишний шаг. Снять галочку с лишнего дешевле, чем проставить четыре.
+      setPicked(Object.fromEntries(list.map((x) => [x.key, true])));
+    } catch {
+      setSuggest([]);
+    } finally {
+      setAsking(false);
+    }
+  };
+
+  const applyPicked = async () => {
+    const keys = suggest.filter((x) => picked[x.key]).map((x) => x.key);
+    if (!keys.length) return;
+    await addInterests(keys);
+    setSuggest([]);
+    setPicked({});
+    setAddedNote(true);
+  };
 
   /** Текст в поле отличается от сохранённого — значит есть что применять. */
   const dirty = story.slice(0, STORY_MAX) !== String(p.story || '');
@@ -48,6 +89,7 @@ export default function Personality() {
     if (p.name) await profileApi.update(p.name, { story: text }).catch(() => {});
     setSaved(true);
     setTimeout(() => setSaved(false), 1800);
+    askStory(text);
     return true;
   };
 
@@ -137,6 +179,34 @@ export default function Personality() {
         и не видел ни подтверждения, ни последствия. Теперь «Сохранить» говорит, что применилось,
         а «Пересобрать» показывает, что из этого вышло.
       */}
+      {/* Что из истории годится для поиска. Показывается ПОСЛЕ сохранения — предлагать по
+          недописанному тексту значит предлагать по половине фразы. */}
+      {asking ? <ActivityIndicator style={{ marginVertical: space.sm }} color={color.primary} /> : null}
+      {suggest.length ? (
+        <View style={s.fromStory}>
+          <Text style={s.fromStoryTitle}>{C.fromStoryTitle()}</Text>
+          <Text style={s.fromStoryNote}>{C.fromStoryNote()}</Text>
+          {suggest.map((x) => (
+            <Pressable key={x.key} accessibilityRole="checkbox"
+                       accessibilityState={{ checked: !!picked[x.key] }}
+                       style={[s.pick, picked[x.key] && s.pickOn]}
+                       onPress={() => setPicked((v) => ({ ...v, [x.key]: !v[x.key] }))}>
+              <Text style={[s.pickLabel, picked[x.key] && { color: color.onPrimary }]}>{x.label}</Text>
+              {/* Цитата из истории — чтобы предложение можно было проверить, а не принять на веру. */}
+              <Text style={[s.pickWhy, picked[x.key] && { color: color.onPrimary }]} numberOfLines={2}>
+                «{x.why}»
+              </Text>
+            </Pressable>
+          ))}
+          <Pressable accessibilityRole="button" style={s.applyBtn} onPress={applyPicked}>
+            <Text style={s.applyText}>
+              {C.fromStoryAdd(suggest.filter((x) => picked[x.key]).length)}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {addedNote ? <Text style={s.savedNote}>{C.fromStoryAdded()}</Text> : null}
+
       <Pressable
         accessibilityRole="button"
         disabled={!dirty}
@@ -223,6 +293,18 @@ const s = StyleSheet.create({
     padding: 14, color: color.fg, fontSize: 15, lineHeight: 22,
   },
   storyFoot: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
+
+  // Предложение из истории. Токены, своих чисел и цветов нет.
+  fromStory: { gap: space.xs, marginTop: space.sm },
+  fromStoryTitle: { ...type.body, color: color.fg, fontWeight: '700' } as any,
+  fromStoryNote: { ...type.bodySmall, color: color.muted, marginBottom: space.xs } as any,
+  pick: {
+    borderRadius: rad.lg, borderWidth: 1, borderColor: color.border,
+    backgroundColor: color.card, paddingHorizontal: 14, paddingVertical: 10, gap: 2,
+  },
+  pickOn: { backgroundColor: color.primary, borderColor: color.primary },
+  pickLabel: { ...type.body, color: color.fg, fontWeight: '700' } as any,
+  pickWhy: { ...type.bodySmall, color: color.muted } as any,
   count: { ...type.caption, color: color.neutral400 } as any,
   savedNote: { ...type.caption, color: color.successText } as any,
 

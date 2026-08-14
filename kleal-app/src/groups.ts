@@ -224,6 +224,20 @@ export const ROOM = {
 
   /** Экран состава — GR.24. */
   infoTitle: () => T('Кто в группе', 'Who’s in'),
+  /** Сведения о самой затее — то, ради чего группа собралась. Нажатие на заголовок ведёт сюда. */
+  aboutTitle: () => T('О затее', 'About this'),
+  aboutTopics: () => T('Про что', 'What it’s about'),
+  aboutWhen: () => T('Когда', 'When'),
+  aboutWhere: () => T('Где', 'Where'),
+  aboutMode: (mode: string) =>
+    mode === 'online' ? T('Онлайн', 'Online')
+    : mode === 'hybrid' ? T('Онлайн или вживую', 'Online or in person')
+    : T('Вживую', 'In person'),
+  aboutSize: (min: number, max: number) =>
+    T(`От ${min} до ${max} человек`, `${min} to ${max} people`),
+  aboutOwner: (who: string) => T(`Затеял(а) ${who}`, `Started by ${who}`),
+  /** Пустое поле не выдумываем: «когда» и «где» на групповой затее часто не заданы вовсе. */
+  aboutUnset: () => T('не задано', 'not set'),
   infoNote: (joined: number, max: number, open: number) =>
     T(
       `В группе ${joined} из ${max}, открытых приглашений: ${open}. Удалить человека можно, пока план не назначен. После этого — нельзя; участник может выйти сам.`,

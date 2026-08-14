@@ -35,6 +35,7 @@ import { ROOM, GROUP, groupSysLine, roomMsg, type GroupSys } from '../src/groups
 import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
 import { IconChevronLeft, IconChevronRight, IconPerson, IconSend, IconDots } from '../src/components/icons';
+import { interestLabels } from '../src/interest-label';
 import { Sheet, SheetItem } from '../src/components/Sheet';
 import { MessageFeed } from '../src/components/MessageFeed';
 import { CHAT, Msg, REACTIONS } from '../src/chat';
@@ -402,13 +403,17 @@ export default function GroupRoom() {
                      onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <IconChevronLeft />
           </Pressable>
-          <View style={{ flex: 1 }}>
+          {/* Заголовок — не подпись, а вход: за названием стоит затея, ради которой всё
+              собралось, и посмотреть её больше негде. До этого нажатие не делало ничего, а
+              единственным входом в сведения были три точки справа — их ещё надо заметить. */}
+          <Pressable style={{ flex: 1 }} accessibilityRole="button"
+                     accessibilityLabel={ROOM.aboutTitle()} onPress={() => setInfo(true)}>
             <Text style={s.headTitle} numberOfLines={1}>{g?.title || ''}</Text>
             {/* GR.21: при полном составе подзаголовок сам зовёт делать план. */}
             <Text style={[s.headSub, canPlan && { color: color.successText }]} numberOfLines={1}>
               {ROOM.headCount(n, min)}
             </Text>
-          </View>
+          </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={ROOM.infoTitle()} style={s.back}
                      onPress={() => setInfo(true)}>
             <IconDots />
@@ -573,6 +578,23 @@ export default function GroupRoom() {
 
         {/* GR.24 — состав. Лист, а не отдельный маршрут: это справка о той же комнате. */}
         <Sheet visible={info} onClose={() => setInfo(false)} title={ROOM.infoTitle()}>
+          {/* СНАЧАЛА про затею, потом про людей. Лист открывался сразу составом, и человек,
+              зашедший в группу по приглашению, нигде не мог прочесть, ради чего она вообще:
+              название в шапке — это одна строка, а тема, формат и размер жили только на
+              экране создания, куда приглашённый не попадает никогда. */}
+          <Text style={s.aboutHead}>{ROOM.aboutTitle()}</Text>
+          <View style={s.aboutBox}>
+            <AboutRow label={ROOM.aboutTopics()}
+                      value={interestLabels(g?.topics || []).join(' · ') || ROOM.aboutUnset()} />
+            <AboutRow label={ROOM.aboutWhen()} value={String(g?.when || '') || ROOM.aboutUnset()} />
+            <AboutRow label={ROOM.aboutWhere()}
+                      value={[String(g?.area || ''), ROOM.aboutMode(String(g?.mode || 'offline'))]
+                        .filter(Boolean).join(' · ')} />
+            <AboutRow label={ROOM.aboutSize(Number(g?.min_total || 3), Number(g?.max_total || 5))}
+                      value={ROOM.aboutOwner(String(g?.owner || ''))} />
+          </View>
+
+          <Text style={s.aboutHead}>{ROOM.infoTitle()}</Text>
           <Text style={s.sheetBody}>
             {ROOM.infoNote(n, Number(g?.max_total || 5), (g?.invites || []).length)}
           </Text>
@@ -666,6 +688,18 @@ function LeaveSheet({
 // ============================================================ вид
 // Оформление UX-каркаса: значения — из токенов темы; при натягивании UI меняется этот блок.
 
+/** Строка «подпись — значение» в сведениях о затее. Пустое значение не рисуется вовсе: пустая
+ *  строка на экране читается как «здесь ничего нет», а не как «мы не спросили». */
+function AboutRow({ label, value }: { label: string; value: string }) {
+  if (!String(value || '').trim()) return null;
+  return (
+    <View style={s.aboutRow}>
+      <Text style={s.aboutLabel}>{label}</Text>
+      <Text style={s.aboutValue}>{value}</Text>
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   reactRow: { flexDirection: 'row', justifyContent: 'space-between', paddingBottom: space.sm },
   reactPick: {
@@ -690,6 +724,15 @@ const s = StyleSheet.create({
   },
   headTitle: { ...type.title, color: color.fg, fontWeight: '700' } as any,
   headSub: { ...type.bodySmall, color: color.muted } as any,
+
+  aboutHead: { ...type.bodySmall, color: color.muted, fontWeight: '700', marginTop: space.sm } as any,
+  aboutBox: {
+    borderRadius: rad.lg, borderWidth: 1, borderColor: color.border,
+    backgroundColor: color.card, paddingHorizontal: 14, paddingVertical: 4, gap: 2,
+  },
+  aboutRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 8 },
+  aboutLabel: { ...type.bodySmall, color: color.muted, width: 96 } as any,
+  aboutValue: { ...type.body, color: color.fg, flex: 1 } as any,
 
   // Карточка затеи над шапкой комнаты (GR.18). Своих цветов и размеров нет — только токены.
   intentBar: {

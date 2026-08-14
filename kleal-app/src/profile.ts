@@ -284,6 +284,26 @@ export function explicitInterests(p: any): string[] {
   return Array.isArray(list) ? list.filter(Boolean).map(String) : [];
 }
 
+/**
+ * Добавить интересы, которые человек ПОДТВЕРДИЛ.
+ *
+ * Пишется и в состояние, и на сервер: матчинг читает строку кандидата, а не то, что лежит на
+ * устройстве. Повторы отсекаются по нижнему регистру — «Хлеб» и «хлеб» это одно и то же, а два
+ * почти одинаковых чипа в профиле выглядят как сбой.
+ */
+export async function addInterests(keys: string[]): Promise<boolean> {
+  const p = getState().profile as any;
+  const have = explicitInterests(p);
+  const lower = new Set(have.map((x) => x.toLowerCase()));
+  const add = keys.map(String).filter((k) => k.trim() && !lower.has(k.trim().toLowerCase()));
+  if (!add.length) return false;
+  set('interests.explicit', [...have, ...add]);
+  // Отпечаток сбрасываем: без этого pushInterests сочтёт, что уже отправлял это, и правка
+  // осталась бы только на телефоне — то есть невидимой для поиска.
+  _sentInterests = null;
+  return pushInterests();
+}
+
 export const HUB_ROWS: HubRow[] = [
   {
     id: 'interests', kind: 'screen',
@@ -641,6 +661,18 @@ export const PERSONALITY = {
    *  незачем. Заодно видно, что тест засчитан, даже когда абзац не собрался. */
   axesTitle: () => T('Ответы теста', 'Your test answers'),
   retake: () => T('Пройти тест заново', 'Take the test again'),
+  /** Предложение интересов из истории — GR/профиль. Подтверждает человек, а не приложение. */
+  fromStoryTitle: () => T('Из твоей истории', 'From your story'),
+  fromStoryNote: () => T(
+    'Матчинг ищет по интересам, а не по тексту. Отметь, что добавить — остальное останется просто историей.',
+    'Search runs on interests, not prose. Tap what to add — the rest stays just a story.'
+  ),
+  fromStoryAdd: (n: number) =>
+    n === 1 ? T('Добавить 1 интерес', 'Add 1 interest') : T(`Добавить ${n}`, `Add ${n}`),
+  fromStoryAdded: () => T('Добавлено в интересы', 'Added to your interests'),
+  fromStoryNone: () => T('В истории пока не видно занятий — напиши, что ты делаешь и любишь.',
+                         'No activities visible in the story yet — write what you do and enjoy.'),
+
   storyCap: () =>
     T(
       'Расскажи историю своей жизни в свободном формате (детство, обучение, интересы, профессия)',

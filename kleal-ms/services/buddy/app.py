@@ -1750,6 +1750,66 @@ NO COMPLIMENTS, NO CLOSING FLOURISH, NO SPECULATION. This is the rule that gets 
 LANGUAGE: write the paragraph in __LANGNAME__. This is not optional: __LANGDIR__ In Russian address the user as «ты», never «вы»; in Spanish use «tú». The interests may be stored as English keywords for the matching engine — translate them naturally, do not switch language because of them.'''
 
 
+STORY_INTERESTS_PROMPT = '''You read a person's life story and pull out the things they actually DO — the interests a matching engine could use to find them people.
+
+Return ONE JSON object, nothing else:
+{"interests":[{"key":"<short English keyword>","label":"<the same thing in __LANGNAME__, 1-3 words>","why":"<the exact fragment of the story it comes from, quoted>"}]}
+
+RULES — the whole value of this depends on them:
+- ONLY what the story says the person DOES or CARES ABOUT. Cycling, baking, hiking, Spanish, biology. Not adjectives, not moods, not life events.
+- NEVER invent. If a thing is not in the text, it does not exist. `why` must quote the story literally; if you cannot quote it, drop the item.
+- A job is not automatically an interest. "Works remotely as a developer" is a job; "writes code in the evenings for fun" is an interest. When in doubt, leave it out.
+- PAST tense is not an interest: "spent eight years fixing bicycles, then closed the shop" is biography. Include it only if the story shows it continuing.
+- `key` is one short English keyword the engine can match on (cycling, baking, hiking, spanish, boardgames) — lowercase, no spaces where a single word will do.
+- At most 6 items, best first. Fewer is better than padded.
+- If the story is too short or says nothing about what they do -> {"interests":[]}.'''
+
+
+def story_interests(story, have=None, lang="ru"):
+    """Что человек ДЕЛАЕТ — из истории, которую он написал о себе.
+
+    Зачем это вообще. История жизни — самый большой текст, который человек пишет о себе, и она
+    уходила в сводку и никуда больше. Матчинг читает `interests`, а не прозу (см. канонизацию в
+    onboarding): человек мог написать абзац про горы, хлеб и испанский — и остаться в поиске
+    «кофе, падел, книги». Со стороны это выглядит как «написал и ничего не произошло».
+
+    Здесь ничего не добавляется само. Возвращается ПРЕДЛОЖЕНИЕ, которое человек подтверждает
+    руками — тем же правилом, что и редактор профиля: интересы, проставленные за человека, это
+    ярлыки, которых он не выбирал, и найдут его по ним не те люди.
+
+    `why` — цитата из истории. Без неё предложение невозможно проверить, а модель, которой нечего
+    цитировать, начинает додумывать.
+    """
+    text = str(story or "").strip()
+    if len(text) < 80:                    # короче — там ещё нечего вычитывать
+        return {"interests": []}
+    lang = str(lang or "ru").lower()
+    if lang not in ("ru", "en", "es"):
+        lang = "ru"
+    mine = {str(x).strip().lower() for x in (have or []) if str(x).strip()}
+    sys_prompt = STORY_INTERESTS_PROMPT.replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
+    try:
+        raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_prompt},
+                                      {"role": "user", "content": text[:2500]}], 0.2)
+        obj = base._extract_json(str(raw or "")) or {}
+    except Exception:
+        return {"interests": []}
+    out, seen = [], set()
+    for it in (obj.get("interests") or [])[:12]:
+        if not isinstance(it, dict):
+            continue
+        key = str(it.get("key") or "").strip().lower()[:40]
+        label = str(it.get("label") or "").strip()[:40] or key
+        why = str(it.get("why") or "").strip()[:200]
+        # Цитата обязана НАЙТИСЬ в истории. Иначе это не вычитанное, а придуманное — а придуманный
+        # интерес хуже отсутствующего: по нему человека найдут не те люди.
+        if not key or key in seen or key in mine or not why or why[:40].lower() not in text.lower():
+            continue
+        seen.add(key)
+        out.append({"key": key, "label": label, "why": why})
+    return {"interests": out[:6]}
+
+
 def resummary(profile, current, lang="ru", personality=""):
     """Rewrite the profile summary to integrate the latest changes (adapt, don't append).
 
@@ -2856,6 +2916,12 @@ class H(BaseHTTPRequestHandler):
                 return send_json(self, 200, persona(prof, body.get("story") or "", ans,
                                                     body.get("current") or "", body.get("lang") or "ru",
                                                     body.get("axes") if isinstance(body.get("axes"), dict) else None))
+
+            if r == "/story-interests":              # что человек ДЕЛАЕТ — вычитанное из его истории
+                return send_json(self, 200, story_interests(
+                    body.get("story") or "",
+                    body.get("have") if isinstance(body.get("have"), list) else [],
+                    body.get("lang") or "ru"))
 
             if r == "/resummary":                    # after a profile edit: rewrite the summary to fit (adapt, not append)
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}

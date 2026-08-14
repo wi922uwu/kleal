@@ -244,6 +244,18 @@ export const buddy = {
    * `personality` уезжает как материал, но НЕ как текст для копирования: это отдельное поле со
    * своим владельцем (тест Kleal), и слипание этих двух текстов уже однажды съедало сводку.
    */
+  /**
+   * Что человек ДЕЛАЕТ — вычитанное из его истории жизни.
+   *
+   * Возвращает ПРЕДЛОЖЕНИЕ, а не правку: интересы, проставленные за человека, это ярлыки,
+   * которых он не выбирал, и найдут его по ним не те люди. У каждого пункта есть цитата из
+   * истории — иначе предложение нечем проверить.
+   */
+  storyInterests: (story: string, have: string[], lang: string) =>
+    api.post<{ interests?: { key: string; label: string; why: string }[] }>(
+      '/api/buddy/story-interests', { story, have, lang }
+    ),
+
   resummary: (prof: Json, current: string, personality = '', lang = 'ru') =>
     api.post<{ summary?: string }>('/api/buddy/resummary', { profile: prof, current, personality, lang }),
 
