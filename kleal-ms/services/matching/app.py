@@ -2869,6 +2869,30 @@ def explain_match(intent, prof, ctx=None):
 # ACCEPT, the accept still went through. §14.2 requires the policy re-check to happen INSIDE the same
 # transaction as the acceptance.
 PROPOSAL_TTL_S = int(os.environ.get("KLEAL_PROPOSAL_TTL_S", 72 * 3600))   # spec §14.2 reservation TTL
+# Спека «01 · Сроки и пороги» → «Срок жизни инвайта»: min(6 ч, 50 % до встречи), но не меньше
+# 30 минут. Чип Decided.
+#
+# Здесь стояли плоские 72 часа, и они не смотрели на время встречи вовсе: приглашение на сегодняшний
+# вечер держало место трое суток — то есть ещё двое суток ПОСЛЕ того, как встреча прошла. Половина
+# оставшегося времени — честный размен, и спека объясняет почему: получателю хватает на решение, а
+# отправителю остаётся столько же на второй заход.
+INVITE_TTL_MAX_S = 6 * 3600
+INVITE_TTL_MIN_S = 30 * 60
+
+
+def _invite_ttl(intent, now=None):
+    """Сколько живёт приглашение по этому интенту."""
+    now = now or time.time()
+    starts = None
+    if isinstance(intent, dict):
+        try:
+            starts = float(intent.get("starts_at") or 0) or None
+        except (TypeError, ValueError):
+            starts = None
+    ttl = INVITE_TTL_MAX_S
+    if starts and starts > now:
+        ttl = min(ttl, (starts - now) / 2.0)
+    return max(INVITE_TTL_MIN_S, ttl)
 
 def _requests():
     return SESSION.setdefault("_requests", [])
@@ -2940,7 +2964,7 @@ def propose(frm, to, intent, note, idem=None):
             if (_norm_name(r.get("from")) == _norm_name(frm) and _norm_name(r.get("to")) == _norm_name(to)
                     and r.get("status") == "pending"):
                 r.update({"intent": intent or {}, "note": str(note or "")[:400], "updated": now,
-                          "expires_at": now + PROPOSAL_TTL_S,
+                          "expires_at": now + _invite_ttl(intent, now),
                           "version": int(r.get("version") or 1) + 1})
                 _save_store()
                 return _idem_put(idem, {"ok": True, "id": r["id"], "status": "pending",
@@ -2954,12 +2978,16 @@ def propose(frm, to, intent, note, idem=None):
             rid, n = "%s_%d" % (base, n), n + 1
         rs.append({"id": rid, "from": frm, "to": to, "intent": intent or {},
                    "note": str(note or "")[:400], "status": "pending", "created": now, "updated": now,
-                   "version": 1, "expires_at": now + PROPOSAL_TTL_S,
+                   "version": 1, "expires_at": now + _invite_ttl(intent, now),
                    "config_version": (_CORE_CFG or {}).get("config_version")})   # immutable trace stamp
     _save_store()
     _log_proposal(to)                       # feeds the receiving-policy budget, spec 4.4
+    # Срок берём ИЗ ЗАПИСИ, а не считаем второй раз. Здесь стоял свой литерал `now +
+    # PROPOSAL_TTL_S`, и когда правило срока поменялось, запись с ответом разошлись: приглашение
+    # жило по спеке, а отправителю сообщалось прежнее число. Разошедшиеся копии одного значения —
+    # это тот самый класс поломок, который в этом проекте виден только на живом сервере.
     return _idem_put(idem, {"ok": True, "id": rid, "status": "pending", "version": 1,
-                            "expires_at": now + PROPOSAL_TTL_S})
+                            "expires_at": rs[-1]["expires_at"]})
 
 def _with_photos(rows, name_key):
     """Attach the photo of the person named under `name_key` — an invitation and a message thread are
@@ -2993,8 +3021,15 @@ def inbox(self_name):
     # здесь, на выходе получателю. Это же и надёжнее: правило живёт на сервере, а не в клиенте.
     for r in out:
         it = r.get("intent")
-        if isinstance(it, dict) and it.get("address"):
-            r["intent"] = {k: v for k, v in it.items() if k != "address"}
+        # Адрес и ССЫЛКА — одного рода: и то и другое открывается только после согласия.
+        #
+        # Спека «Онлайн и гибрид → Ссылка генерируется при PlanState = Confirmed. До подтверждения
+        # ссылки физически не существует — правило безопасности, а не UI». Адрес вырезали, а link
+        # рядом забыли: он уезжал получателю целиком ещё до всякого ответа. Экран при этом честно
+        # рисовал «Видеозвонок · ссылка у X» — то есть правило соблюдалось на вид, но не в данных.
+        if isinstance(it, dict) and (it.get("address") or it.get("link")):
+            r["intent"] = {k: v for k, v in it.items() if k not in ("address", "link")}
+            r["intent"]["link_pending"] = bool(it.get("link"))
     out.sort(key=lambda r: -(r.get("updated") or 0))
     return _with_photos(out[:50], "from")
 
@@ -3106,8 +3141,32 @@ def respond(rid, decision, who, idem=None, version=None):
             r["version"] = int(r.get("version") or 1) + 1
             r["trace"] = {"decision": dec, "at": now, "by": who or r.get("to"),
                           "config_version": r.get("config_version")}   # immutable decision trace
+            # ПЕРВОЕ «ДА» ЗАКРЫВАЕТ ОСТАЛЬНЫЕ.
+            #
+            # Спека «01 · Сроки и пороги» → «Первый accept на 1:1 → остальные withdrawn.
+            # Автоматически, с уведомлением. Закрывает гонку „двое приняли последнее место“».
+            #
+            # Этого не было вовсе: статус менялся ровно у своей строки. Пригласивший троих получал
+            # три согласия на один вечер, а второй и третий узнавали об этом уже в чате — если
+            # вообще узнавали. Гасим соседей ТОГО ЖЕ отправителя, и только по 1:1: у группы места
+            # считаются иначе, там несколько «да» — норма.
+            withdrawn = []
+            if dec == "accepted":
+                for other in _requests():
+                    if other is r or other.get("status") != "pending":
+                        continue
+                    if _norm_name(other.get("from")) != _norm_name(r.get("from")):
+                        continue
+                    other["status"] = "withdrawn"
+                    other["updated"] = now
+                    other["version"] = int(other.get("version") or 1) + 1
+                    # Причина видна получателю: «место занято», а не «отправитель передумал».
+                    other["trace"] = {"decision": "withdrawn", "at": now, "reason": "seat_taken",
+                                      "taken_by": r.get("to")}
+                    withdrawn.append(other.get("id"))
             _save_store()
-            return _idem_put(idem, {"ok": True, "id": rid, "status": dec, "version": r["version"]})
+            return _idem_put(idem, {"ok": True, "id": rid, "status": dec, "version": r["version"],
+                                    "withdrawn": withdrawn})
     return {"ok": False, "error": "not found"}
 
 def withdraw_request(rid, who, idem=None):
@@ -5547,6 +5606,29 @@ def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", distr
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, frm)})
 
 
+# ЗАМОРОЗКА ЗА ДВА ЧАСА — та же, что у группы, и по той же спеке.
+#
+# «Заморозка перед встречей · T − 2 h. Отключены правки, отмена, голосования и приглашения.
+# Остаётся только „I can't make it" — оно встречу не отменяет. Заморозка сильнее любого другого
+# таймера» (board_spec_sroki.txt, чип Decided).
+#
+# У группы это жило с самого начала (GP_LOCK_BEFORE), у пары — не жило вовсе: перенести, отменить
+# и переписать место можно было за пять минут до встречи и даже ПОСЛЕ её начала. Второй человек
+# при этом уже вышел из дома.
+MP_LOCK_BEFORE = GP_LOCK_BEFORE
+
+
+def _mp_frozen(p, now=None):
+    """Меньше двух часов до начала — план больше не правится."""
+    try:
+        starts = float(p.get("starts_at") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not starts:
+        return False
+    return (now or time.time()) >= starts - MP_LOCK_BEFORE
+
+
 def mp_respond(pid, who, action, starts_at=None, when="", district="",
                title="", note="", version=None, idem=None):
     """confirm | decline | counter | accept_change | reject_change.
@@ -5582,6 +5664,12 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
         v = int(p.get("version") or 1)
         pend = p.get("pending") or None
         peer = _mp_other(p, who)
+        # В заморозке живут только ответы, а не правки: подтвердить можно, «не смогу» — можно,
+        # переносить время и принимать чужой перенос — нельзя. Спека: «Отключены правки, отмена,
+        # голосования и приглашения. Остаётся только „I can't make it" — оно встречу не отменяет».
+        if act in ("counter", "accept_change", "reject_change") and _mp_frozen(p, now):
+            return _idem_put(idem, {"ok": False, "error": "LOCKED",
+                                    "note": "less than two hours before the meeting"})
         if act == "decline":
             p["state"] = "cancelled"
             p["cancelled_by"] = who
@@ -5662,6 +5750,10 @@ def mp_address(pid, who, address="", venue="", idem=None):
             return {"ok": False, "error": "NO_SUCH_PLAN"}
         if not _mp_is_in(p, who):
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        # Место в заморозке не переписывают: человек уже едет по названному адресу.
+        if _mp_frozen(p):
+            return _idem_put(idem, {"ok": False, "error": "LOCKED",
+                                    "note": "less than two hours before the meeting"})
         if p.get("state") not in ("proposed", "confirmed"):
             return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
         if address:
@@ -5692,6 +5784,11 @@ def mp_cancel(pid, who, reason="", idem=None):
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
         if p.get("state") not in ("proposed", "confirmed"):
             return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+        # Отмена — «правка» в смысле спеки, и в заморозке она закрыта. Человеку, который уже
+        # вышел из дома, встречу отменять поздно: остаётся «не смогу», и оно встречу не отменяет.
+        if _mp_frozen(p):
+            return _idem_put(idem, {"ok": False, "error": "LOCKED",
+                                    "note": "less than two hours before the meeting"})
         p["state"] = "cancelled"
         p["cancelled_by"] = who
         p["cancel_reason"] = str(reason or "")[:400]
