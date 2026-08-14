@@ -69,11 +69,20 @@ export function parseBlocks(src: string): Block[] {
     }
   };
 
+  // Маркер блока ищется по строке БЕЗ ведущих пробелов.
+  //
+  // Модель печатает «\n > Фьючерс — это…» — с пробелом перед «>», и это не сбой, а обычное
+  // markdown-оформление (спецификация разрешает до трёх пробелов отступа). Разбор требовал маркер
+  // с нулевой позиции, поэтому такая строка становилась обычным абзацем и приклеивалась к
+  // предыдущему — человек видел «…определённой цене. > Фьючерс — это контракт…», то есть
+  // палку посреди предложения. Снято с телефона 14 августа.
+  const at = (k: number) => (lines[k] ?? '').trim();
+
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
-    const line = raw.trimEnd();
+    const line = raw.trim();
 
-    if (!line.trim()) { flush(); continue; }
+    if (!line) { flush(); continue; }
 
     // Код — первым: внутри него разметки нет вовсе, иначе решётка станет заголовком.
     if (/^\s*```/.test(line)) {
@@ -97,12 +106,12 @@ export function parseBlocks(src: string): Block[] {
 
     // Таблица опознаётся ТОЛЬКО по строке-разделителю под шапкой. Без неё «|» — это просто
     // палка в тексте, и одна такая строка превращала абзац в однорядную таблицу.
-    if (RE_ROW.test(line) && i + 1 < lines.length && RE_SEP.test(lines[i + 1])) {
+    if (RE_ROW.test(line) && i + 1 < lines.length && RE_SEP.test(at(i + 1))) {
       flush();
       const head = cells(line);
       const rows: string[][] = [];
       i += 2;
-      while (i < lines.length && RE_ROW.test(lines[i])) { rows.push(cells(lines[i])); i++; }
+      while (i < lines.length && RE_ROW.test(at(i))) { rows.push(cells(at(i))); i++; }
       i--;
       out.push({ kind: 'table', head, rows });
       continue;
@@ -112,8 +121,8 @@ export function parseBlocks(src: string): Block[] {
     if (q) {
       flush();
       const body = [q[1]];
-      while (i + 1 < lines.length && RE_QUOTE.test(lines[i + 1])) {
-        body.push((lines[i + 1].match(RE_QUOTE) as RegExpMatchArray)[1]);
+      while (i + 1 < lines.length && RE_QUOTE.test(at(i + 1))) {
+        body.push((at(i + 1).match(RE_QUOTE) as RegExpMatchArray)[1]);
         i++;
       }
       out.push({ kind: 'quote', lines: body });
@@ -124,8 +133,8 @@ export function parseBlocks(src: string): Block[] {
     if (ul) {
       flush();
       const items = [ul[1]];
-      while (i + 1 < lines.length && RE_UL.test(lines[i + 1].trimEnd())) {
-        items.push((lines[i + 1].trimEnd().match(RE_UL) as RegExpMatchArray)[1]);
+      while (i + 1 < lines.length && RE_UL.test(at(i + 1))) {
+        items.push((at(i + 1).match(RE_UL) as RegExpMatchArray)[1]);
         i++;
       }
       out.push({ kind: 'ul', items });
@@ -136,15 +145,15 @@ export function parseBlocks(src: string): Block[] {
     if (ol) {
       flush();
       const items = [ol[1]];
-      while (i + 1 < lines.length && RE_OL.test(lines[i + 1].trimEnd())) {
-        items.push((lines[i + 1].trimEnd().match(RE_OL) as RegExpMatchArray)[1]);
+      while (i + 1 < lines.length && RE_OL.test(at(i + 1))) {
+        items.push((at(i + 1).match(RE_OL) as RegExpMatchArray)[1]);
         i++;
       }
       out.push({ kind: 'ol', items });
       continue;
     }
 
-    para.push(line.trim());
+    para.push(line);
   }
   flush();
   return out;

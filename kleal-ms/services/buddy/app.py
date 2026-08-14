@@ -1449,10 +1449,23 @@ def run_match(intent, sig, uid, lang, negotiate=False, owner=None):
 # Spanish. Without the "es" rows a Spanish search raised KeyError('es') INSIDE the result-rendering
 # path — the request reached matching, found people, and then died on the way to the screen, so the
 # user got "I glitched for a second". Measured: the whole search path was unreachable in Spanish.
+# Третья строка — для СЕРЕДИНЫ разговора, и она появилась потому, что вторая там врала.
+#
+# Когда модель не отвечает, человек получал «Расскажи чуть больше — чем занимаешься и с кем хотел
+# бы встретиться?». В первом сообщении это уместный вопрос. Но на третьем ходу, посреди разбора
+# фьючерсов, он читается как «агент забыл, о чём мы говорили» — и, что хуже, выглядит обычной
+# репликой: человек не понимает, что произошёл сбой, и отвечает на подменённый вопрос.
+# Снято с телефона 14 августа.
 _FALLBACK_REPLY = {
-    "ru": ("Сейчас поищу кого-нибудь.", "Расскажи чуть больше — чем занимаешься и с кем хотел бы встретиться?"),
-    "en": ("Let me find someone for you.", "Tell me a bit more about what you're into and who you'd like to meet."),
-    "es": ("Voy a buscar a alguien para ti.", "Cuéntame un poco más — qué te gusta hacer y con quién te gustaría quedar."),
+    "ru": ("Сейчас поищу кого-нибудь.",
+           "Расскажи чуть больше — чем занимаешься и с кем хотел бы встретиться?",
+           "Я сбился на этом ответе — повтори, пожалуйста, последнюю мысль."),
+    "en": ("Let me find someone for you.",
+           "Tell me a bit more about what you're into and who you'd like to meet.",
+           "I glitched on that one — say your last message again?"),
+    "es": ("Voy a buscar a alguien para ti.",
+           "Cuéntame un poco más — qué te gusta hacer y con quién te gustaría quedar.",
+           "Me he trabado con esa — ¿repites lo último?"),
 }
 # Reply framing MUST match the match strength (spec §9.7: show the honest qualitative level, never
 # oversell). Only an especially_close/strong_option candidate is pitched as a confident match; a
@@ -1486,6 +1499,38 @@ _GLITCH = {"ru": "Что-то я подвис — повтори, пожалуй
            "es": "Me he colgado un momento — ¿me lo repites?"}
 
 
+def _escape_raw_newlines(s):
+    """Экранировать переводы строк ВНУТРИ строковых литералов JSON.
+
+    Модели разрешено отвечать многострочно — иначе разметка (заголовки, списки, таблицы) в ответ
+    не попадает вовсе. Но перевод строки внутри строки JSON обязан быть «\\n», а модель нередко
+    ставит настоящий: json.loads на таком падает, и человек получает не ответ, а заготовленную
+    реплику «расскажи чуть больше», которая вдобавок стирает тему разговора.
+
+    Идём по символам и считаем, внутри литерала мы или снаружи: снаружи перевод строки — это
+    форматирование самого JSON и трогать его нельзя, внутри — часть текста и его надо экранировать.
+    """
+    out, in_str, esc = [], False, False
+    for ch in str(s or ""):
+        if esc:
+            out.append(ch)
+            esc = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            esc = in_str
+            continue
+        if ch == '"':
+            in_str = not in_str
+            out.append(ch)
+            continue
+        if in_str and ch in "\n\r\t":
+            out.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[ch])
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
 def _lenient_json(raw):
     """The 70B sometimes truncates the closing braces. Try the shared extractor, then repair."""
     obj = base._extract_json(raw)
@@ -1495,13 +1540,16 @@ def _lenient_json(raw):
     i = s.find("{")
     if i < 0:
         return None
-    for extra in ("", "}", "}}", "\"}}", "\"}"):
-        try:
-            o = json.loads(s[i:] + extra)
-            if isinstance(o, dict):
-                return o
-        except Exception:
-            continue
+    # Сырые переводы строк чинятся ПЕРВЫМИ: без этого любой многострочный ответ — а с разметкой
+    # он теперь многострочный почти всегда — не разбирался вовсе.
+    for text in (s[i:], _escape_raw_newlines(s[i:])):
+        for extra in ("", "}", "}}", "\"}}", "\"}"):
+            try:
+                o = json.loads(text + extra)
+                if isinstance(o, dict):
+                    return o
+            except Exception:
+                continue
     return None
 
 
@@ -1568,7 +1616,11 @@ def buddy_chat(messages, profile, signals, uid=None):
         # Согласие на уже прозвучавшее предложение проходит и здесь: оно не требует модели, всё
         # нужное лежит в истории.
         want_match = _agreed or wants_people(last_user, False)
-        reply = _FALLBACK_REPLY.get(lang, _FALLBACK_REPLY["en"])[0 if want_match else 1]
+        # Разговор уже шёл — значит спрашивать «чем занимаешься» поздно и неправдиво: это не
+        # продолжение беседы, а её обнуление. Честнее сказать, что сбились.
+        _mid = sum(1 for m in (messages or []) if m.get("role") == "assistant") > 0
+        reply = _FALLBACK_REPLY.get(lang, _FALLBACK_REPLY["en"])[
+            0 if want_match else (2 if _mid else 1)]
 
     out = {"reply": reply, "signals": sig, "lang": lang, "match": None,
            "intent": None, "matches": [], "tool_call": None, "category": None}

@@ -1764,6 +1764,7 @@ console.log('\nответ модели — документ, а не репли�
     .replace('const RULES: [RegExp, Partial<Inline>][] = [', 'const RULES = [')
     .replace('let bestM: RegExpMatchArray | null = null;', 'let bestM = null;')
     .replace('let bestStyle: Partial<Inline> = {};', 'let bestStyle = {};')
+    .replace('const at = (k: number) =>', 'const at = (k) =>')
     .replace(/ as 1 \| 2 \| 3/g, '').replace(/ as RegExpMatchArray/g, '');
   const mk = new Function(js + '\nreturn { parseBlocks, parseInline };')();
 
@@ -1823,6 +1824,29 @@ console.log('\nответ модели — документ, а не репли�
   check('но короткий ответ остаётся простым текстом',
     /A short answer stays PLAIN SENTENCES/.test(bp),
     'переформатирование хуже отсутствия формата');
+
+  // Модель печатает « > Цитата» — с пробелом перед маркером; спецификация markdown это
+  // разрешает. Разбор требовал маркер с нулевой позиции, и такая строка становилась абзацем,
+  // приклеивалась к предыдущему и показывала палку посреди предложения.
+  const IND = ' > Цитата с отступом';
+  check('маркер с отступом опознаётся', mk.parseBlocks(IND)[0]?.kind === 'quote',
+    mk.parseBlocks(IND)[0]?.kind);
+  for (const [src, kind] of [['  ## Заголовок', 'h'], ['   - пункт', 'ul'], ['  1. пункт', 'ol']]) {
+    check(`«${src.trim()}» с отступом -> ${kind}`, mk.parseBlocks(src)[0]?.kind === kind);
+  }
+
+  // Разрешив модели многострочность, я сделал вероятным сырой перевод строки ВНУТРИ строки JSON.
+  // json.loads на таком падает, и человек получал не ответ, а заготовку, которая вдобавок
+  // стирала тему разговора. Это регрессия от собственной правки — проверка держит её закрытой.
+  check('сырой перевод строки в JSON чинится', /def _escape_raw_newlines/.test(bp));
+  check('и чинится ДО попытки разобрать',
+    /for text in \(s\[i:\], _escape_raw_newlines\(s\[i:\]\)\)/.test(bp));
+  // Заготовка в середине разговора не должна спрашивать «чем занимаешься»: это не продолжение
+  // беседы, а её обнуление, и выглядит оно обычной репликой — человек не понимает, что был сбой.
+  check('у заготовки есть отдельная строка для середины разговора',
+    /Я сбился на этом ответе/.test(bp));
+  check('и она выбирается по наличию истории',
+    /_mid = sum\(1 for m in \(messages or \[\]\) if m\.get\("role"\) == "assistant"\)/.test(bp));
 }
 
 console.log('');
