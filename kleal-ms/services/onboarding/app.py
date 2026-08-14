@@ -2317,17 +2317,41 @@ def _profile_to_user(p):
         # receiving policy (Matching Core spec §4.4): registering = explicit consent to be matched,
         # so a default ACTIVE policy is written here. Dating is opt-in only (spec §17). Matching's
         # readiness engine (core_v2.readiness_state) reads this to decide open_now/quiet-hours/busy.
-        "receiving": _default_receiving(dating),
+        "receiving": _default_receiving(dating, p.get("tz")),
     }
 
 
-def _default_receiving(dating_ok):
+def _tz_offset_min(tz, when=None):
+    """Смещение зоны в минутах на СЕЙЧАС. Неизвестная зона -> None, а не ноль и не Мадрид.
+
+    Считается от имени зоны каждый раз, а не хранится: летом и зимой оно разное, и записанное
+    однажды число к октябрю врёт на час.
+    """
+    tz = str(tz or "").strip()
+    if not tz:
+        return None
+    try:
+        import datetime
+        from zoneinfo import ZoneInfo
+        off = datetime.datetime.now(ZoneInfo(tz)).utcoffset()
+        return int(off.total_seconds() // 60) if off is not None else None
+    except Exception:
+        return None
+
+
+def _default_receiving(dating_ok, tz=""):
     doms = ["social_meet", "walk", "culture_event", "language_exchange", "coworking",
             "watch_together", "games", "sport_activity", "professional_networking"]
     if dating_ok:
         doms.append("dating")
+    # Тихие часы «22:00–09:00» — местные, и без смещения их не во что перевести. Здесь стояло
+    # жёсткое 120, то есть Мадрид: пока все были из Барселоны, это совпадало и потому не мешало.
+    # Человеку в Токио оно давало тишину среди дня и звонки среди ночи — и никакой ошибки при
+    # этом не возникало, движок готовности просто считал не тот интервал.
+    off = _tz_offset_min(tz)
     return {"status": "active", "allowed_domains": doms, "passive_outreach": True,
-            "quiet_hours": {"start": "22:00", "end": "09:00", "tz_offset_min": 120},
+            "quiet_hours": {"start": "22:00", "end": "09:00",
+                            "tz_offset_min": 120 if off is None else off},
             "paused_until": None}
 
 
