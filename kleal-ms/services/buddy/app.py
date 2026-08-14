@@ -203,6 +203,23 @@ def _has_novel_subject(text):
     return False
 
 
+# Ход в игре: одно-два слова без глагола, в ответ на вопрос агента. «Непотребства» посреди
+# ассоциаций — это ход, а не просьба познакомить с кем-то, но фильтрация честно относит такое
+# слово к категории, и поиск запускался. Снято с телефона: игра обрывалась на первом же ходу.
+_GAME_ON = re.compile(r"(поигра\w*|игра\w*\s+в\b|ассоциац\w*|назови\s+слово|"
+                      r"какое\s+слово|20\s+вопрос\w*|"
+                      r"let'?s\s+play|word\s+game|name\s+a\s+word)", re.I | re.U)
+
+
+def _is_game_move(text, messages):
+    """Похоже ли на ХОД в игре, а не на просьбу."""
+    t = str(text or "").strip()
+    if len(t.split()) > 3:
+        return False
+    bots = [str(m.get("content") or "") for m in (messages or []) if m.get("role") == "assistant"]
+    return bool(bots and _GAME_ON.search(bots[-1]))
+
+
 def wants_people(text, model_flagged, ask_filtration=None):
     """Deterministic search trigger.
 
@@ -300,6 +317,62 @@ def _agent_offer_text(messages):
         t = str(m.get("content") or "")
         return t if _OFFERED_MEET.search(t) else ""
     return ""
+
+
+# Последнее предложение агента, стоящее ОТДЕЛЬНЫМ предложением в конце ответа. Ровно его и
+# вырезают, когда оно лишнее, — поэтому важно, чтобы граница шла по концу фразы, а не по словам.
+_TRAILING_OFFER = re.compile(
+    r"(?:^|(?<=[.!?…»\)\n]))\s*[^.!?…\n]{0,160}?" + _OFFER_VERB +
+    r"[^.!?…\n]{0,140}?" + _SOMEONE + r"[^.!?…\n]{0,40}[?!.]\s*$",
+    re.I | re.U)
+
+# Где предложение поискать собеседника неуместно ВСЕГДА, чем бы модель ни руководствовалась.
+# Это не темы-табу, а разговоры, в которых «а хочешь обсудить это с кем-нибудь?» звучит как
+# отписка: чужая болезнь, вопрос про само приложение, игра, которую только что начали.
+_NO_OFFER_CTX = re.compile(
+    r"(давлени\w*|температур\w*|болит|болезн\w*|диагноз\w*|лекарств\w*|врач\w*|больниц\w*|"
+    r"умер\w*|похорон\w*|развод\w*|уволил\w*|"
+    r"лиценз\w*|ваш[аеи]\w*\s+компани\w*|кто\s+тебя\s+сделал|как\s+ты\s+устроен\w*|"
+    r"поигра\w*|игра\w*\s+в\b|ассоциац\w*|"
+    r"blood\s+pressure|diagnos\w*|medicine|doctor|hospital|died|funeral|"
+    r"licen[cs]e|your\s+company|who\s+made\s+you|"
+    r"let'?s\s+play|word\s+game)",
+    re.I | re.U)
+
+
+def strip_trailing_offer(reply):
+    """Убрать финальное «а хочешь обсудить это с кем-нибудь?».
+
+    Промпт запрещает повторять предложение и запрещает ставить его после практичного или тяжёлого
+    ответа — и модель это правило не соблюдает. Снято с телефона: оно пришло и на «что делать,
+    если у бабушки давление», и на вопрос про лицензию компании, и посреди игры в ассоциации.
+    Просить бесполезно; здесь оно просто вырезается.
+    """
+    t = str(reply or "").rstrip()
+    m = _TRAILING_OFFER.search(t)
+    if not m:
+        return t
+    cut = t[:m.start()].rstrip()
+    # Если после отсечения не осталось ответа, предложение и БЫЛО ответом — тогда лучше оставить
+    # как есть, чем отдать пустую строку.
+    return cut if len(cut) >= 20 else t
+
+
+def offer_is_welcome(messages, reply):
+    """Уместно ли предложение поискать собеседника ЗДЕСЬ.
+
+    Три причины сказать «нет», и все три взяты с живых снимков:
+      — агент уже предлагал в прошлой реплике: повторять значит клянчить;
+      — разговор о чужой болезни, о самом приложении или об игре: там это отписка;
+      — ответ короткий: предложение занимает больше места, чем сам ответ.
+    """
+    users = [str(m.get("content") or "") for m in (messages or []) if m.get("role") == "user"]
+    bots = [str(m.get("content") or "") for m in (messages or []) if m.get("role") == "assistant"]
+    if bots and _TRAILING_OFFER.search(bots[-1].rstrip()):
+        return False
+    if users and _NO_OFFER_CTX.search(users[-1]):
+        return False
+    return len(str(reply or "")) >= 160
 
 
 def _agreed_to_offer(messages):
@@ -1713,6 +1786,12 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
 
     if isinstance(obj, dict) and obj.get("reply"):
         reply = _clip(str(obj.get("reply")))
+        # Предложение поискать собеседника — не в каждый ответ. Правило в промпте модель не
+        # соблюдает: снято с телефона, как оно пришло и на «что делать, если у бабушки давление»,
+        # и на вопрос про лицензию компании, и посреди игры в ассоциации. Просить бесполезно —
+        # вырезаем.
+        if not offer_is_welcome(messages, reply):
+            reply = strip_trailing_offer(reply)
         # РУБЕЖ ТРЕТИЙ: модель согласилась вопреки промпту. Ровно это и произошло вживую, и без
         # проверки готового текста запрет остаётся пожеланием. Смотрим не на тему, а на ФОРМУ
         # инструкции: нумерованные шаги и повелительное наклонение рядом с опасной областью.
@@ -1724,6 +1803,10 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
         # The model's flag alone is not enough (it fires on plain chat and misses real asks). Require an
         # explicit ask in the user's words; the flag only tips a soft "with someone" cue over the line.
         want_match = _agreed or wants_people(last_user, bool(obj.get("match")), _filtration_says_activity)
+        # Ход в игре просьбой не считается, чем бы его ни сочла фильтрация. Согласие на прямое
+        # предложение — считается: там человек ответил именно на вопрос агента.
+        if want_match and not _agreed and _is_game_move(last_user, messages):
+            want_match = False
     else:
         # LLM down: only the strong, explicit ask triggers a search — never a bare activity mention.
         # Согласие на уже прозвучавшее предложение проходит и здесь: оно не требует модели, всё
