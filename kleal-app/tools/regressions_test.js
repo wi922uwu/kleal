@@ -2128,6 +2128,30 @@ console.log('\nцензура ловит просьбу о способе, но 
     || /body\.get\("stream"\) and _sv == "ok"/.test(bp));
 }
 
+// ------------------------------------------------- 28. карта не отбирает у человека масштаб
+console.log('\nкарта держит приближение, а не возвращает своё');
+{
+  const mp = code('src/components/RadiusMap.native.tsx');
+  // Масштаб всегда считался от километров, и эффект возвращал его при КАЖДОМ срабатывании.
+  // Пинч сдвигает центр на десятки метров -> onMove -> родитель меняет lat/lon -> эффект видит
+  // «точка та же» -> и анимирует назад. Со стороны это «приближаю, а оно отдаляется».
+  check('масштаб человека запоминается', /const userZoom = useRef</.test(mp));
+  check('и запоминается ВСЕГДА, даже после своей анимации',
+    /userZoom\.current = \{ latD: r\.latitudeDelta, lonD: r\.longitudeDelta \};[\s\S]{0,120}if \(programmatic\.current\)/.test(mp),
+    'иначе следующий переезд взял бы масштаб от радиуса и снова отдалил карту');
+  // Главная строчка: если ничего существенного не произошло — карту трогать нельзя.
+  check('без изменений карта не трогается', /if \(!moved && !kmChanged\) return;/.test(mp));
+  // Радиус — единственный случай, когда масштаб назначаем мы: человек ждёт, что круг впишется.
+  check('радиус вписывает круг и сбрасывает свой масштаб',
+    /if \(kmChanged\)[\s\S]{0,220}userZoom\.current = null/.test(mp));
+  check('переезд к новой точке сохраняет масштаб',
+    /reported\.current = \{ lat, lon \};[\s\S]{0,160}animateToRegion\(regionAt\(lat, lon\)/.test(mp));
+  check('тап по карте тоже', /animateToRegion\(regionAt\(c\.latitude, c\.longitude\)/.test(mp));
+  // Экраны, где это важно: онбординг (через AreaPicker) и создание интента.
+  check('в онбординге карта интерактивна', /onChange=\{setArea\}/.test(code('app/chat.tsx')));
+  check('в поиске тоже', /onMove=\{\(la, lo\) =>/.test(code('app/intent.tsx')));
+}
+
 console.log('');
 if (failed) {
   console.log(failed + ' проверок не прошло');

@@ -44,8 +44,25 @@ export function RadiusMap({
   /** Последнее, что мы отдали наружу, — с чем сравнивать пришедшие пропсы. */
   const reported = useRef({ lat, lon });
 
-  const delta = Math.max(0.05, (km / 111) * 2.6);   // ~110 км в градусе, плюс поля вокруг круга
-  const region: Region = { latitude: lat, longitude: lon, latitudeDelta: delta, longitudeDelta: delta };
+  /**
+   * МАСШТАБ ПРИНАДЛЕЖИТ ЧЕЛОВЕКУ, А НЕ РАДИУСУ.
+   *
+   * Здесь была поломка, из-за которой карта отъезжала сама: масштаб всегда считался от километров,
+   * и эффект возвращал его при КАЖДОМ срабатывании. Пинч сдвигает центр на несколько десятков
+   * метров → `onMove` → родитель меняет lat/lon → эффект видит «точка та же» → и анимирует назад
+   * к масштабу от радиуса. Со стороны это ровно «приближаю, а оно отдаляется».
+   *
+   * Теперь то, что человек выставил пальцами, запоминается и переживает и смену точки, и правку
+   * радиуса ползунком. Масштаб пересчитывается от километров только когда километры И ПРАВДА
+   * поменялись — то есть когда человек тянет ползунок радиуса и ждёт, что круг впишется в экран.
+   */
+  const userZoom = useRef<{ latD: number; lonD: number } | null>(null);
+  const lastKm = useRef(km);
+
+  const fitDelta = Math.max(0.05, (km / 111) * 2.6);   // ~110 км в градусе, плюс поля вокруг круга
+  const zoom = () => userZoom.current ?? { latD: fitDelta, lonD: fitDelta };
+  const regionAt = (la: number, lo: number, z = zoom()): Region =>
+    ({ latitude: la, longitude: lo, latitudeDelta: z.latD, longitudeDelta: z.lonD });
 
   /**
    * Карта следует за точкой, когда точку поменял НЕ жест по карте: другой город, «определить моё
@@ -55,20 +72,35 @@ export function RadiusMap({
    */
   useEffect(() => {
     const moved = Math.abs(lat - reported.current.lat) > EPS || Math.abs(lon - reported.current.lon) > EPS;
-    if (!moved) {
-      // Радиус поменялся при той же точке — подгоняем масштаб, но это тоже наша анимация.
+    const kmChanged = km !== lastKm.current;
+
+    // Ничего существенного не произошло — и трогать карту НЕЛЬЗЯ. Именно здесь стояла безусловная
+    // анимация, съедавшая приближение.
+    if (!moved && !kmChanged) return;
+
+    if (kmChanged) {
+      // Радиус тянут ползунком — человек ждёт, что круг впишется. Это единственный случай, когда
+      // мы вправе назначить масштаб сами, и заодно единственный, когда его выбор сбрасывается.
+      lastKm.current = km;
+      userZoom.current = null;
       programmatic.current = true;
-      ref.current?.animateToRegion(region, 250);
+      ref.current?.animateToRegion(regionAt(lat, lon, { latD: fitDelta, lonD: fitDelta }), 250);
       return;
     }
+
+    // Точку сменили снаружи — едем к ней, СОХРАНЯЯ масштаб: человек приблизился к своему двору,
+    // и возвращать его на общий план только потому, что сменился город, незачем.
     reported.current = { lat, lon };
     programmatic.current = true;
-    ref.current?.animateToRegion(region, 350);
+    ref.current?.animateToRegion(regionAt(lat, lon), 350);
   }, [lat, lon, km]);
 
   /** Карту отпустили — точкой становится её центр. */
   const settle = (r: Region) => {
     onDragChange?.(false);
+    // Масштаб запоминаем ВСЕГДА, даже после собственной анимации: иначе следующий переезд к
+    // новой точке взял бы масштаб от радиуса и снова отдалил бы карту.
+    userZoom.current = { latD: r.latitudeDelta, lonD: r.longitudeDelta };
     if (programmatic.current) { programmatic.current = false; return; }
     if (!onMove) return;
     if (Math.abs(r.latitude - reported.current.lat) < EPS
@@ -81,7 +113,7 @@ export function RadiusMap({
   const jump = (e: MapPressEvent) => {
     const c = e.nativeEvent?.coordinate;
     if (!c || !onMove) return;
-    ref.current?.animateToRegion({ ...region, latitude: c.latitude, longitude: c.longitude }, 250);
+    ref.current?.animateToRegion(regionAt(c.latitude, c.longitude), 250);
     reported.current = { lat: c.latitude, lon: c.longitude };
     programmatic.current = true;
     onMove(c.latitude, c.longitude);
@@ -92,7 +124,7 @@ export function RadiusMap({
       <MapView
         ref={ref}
         style={StyleSheet.absoluteFill}
-        initialRegion={region}
+        initialRegion={regionAt(lat, lon, { latD: fitDelta, lonD: fitDelta })}
         // Без onMove это просто картинка (профиль, онбординг «только посмотреть») — жесты мешают.
         scrollEnabled={!!onMove}
         zoomEnabled={!!onMove}
