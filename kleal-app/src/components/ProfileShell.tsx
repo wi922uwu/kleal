@@ -183,13 +183,22 @@ const s = StyleSheet.create({
  * изменениями, и это видно по экрану.
  */
 export function EditSheet({
-  open, title, onClose, onAccept, acceptLabel, cancelLabel, children,
+  open, title, onClose, onAccept, acceptLabel, cancelLabel, children, scrollEnabled = true,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
   onAccept: () => void;
   acceptLabel: string;
+  /**
+   * Отдать жест содержимому листа.
+   *
+   * Нужно ровно одному листу — с картой. Карта живёт внутри этой прокрутки, и жест у них общий:
+   * пока прокрутка включена, она забирает вертикальное движение себе, и карту нельзя ни
+   * подвинуть, ни свести пальцами. В онбординге то же место уже решено так же; здесь этого
+   * просто не было, и карта в профиле не двигалась вовсе.
+   */
+  scrollEnabled?: boolean;
   /** Кадры O.07a/O.10a: под главной кнопкой стоит тёмная «Cancel». Профильные листы её не просят —
    *  поэтому кнопка появляется только там, где подпись передана. Делает то же, что крестик. */
   cancelLabel?: string;
@@ -199,7 +208,8 @@ export function EditSheet({
   const kb = useKeyboardInset();
   return (
     <Sheet visible={open} onClose={onClose} title={title} bottomInset={dockBottom(insets.bottom, kb, 18)} grip>
-        <ScrollView contentContainerStyle={e.body} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={e.body} keyboardShouldPersistTaps="handled"
+                    scrollEnabled={scrollEnabled}>
           {children}
         </ScrollView>
         <Pressable accessibilityRole="button" style={e.accept} onPress={onAccept}>

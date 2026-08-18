@@ -647,6 +647,14 @@ function LocationSheet({
     };
   };
   const [area, setArea] = useState<Area>(current);
+  /**
+   * Пока карту двигают или сводят пальцами, прокрутка листа выключена.
+   *
+   * Жест у карты и у прокрутки общий, и без этого прокрутка забирала вертикальное движение себе:
+   * карту в профиле нельзя было ни подвинуть, ни приблизить — она только уезжала вместе с листом.
+   * В онбординге ровно то же место решено так же, здесь этого просто не было.
+   */
+  const [dragging, setDragging] = useState(false);
   useEffect(() => { if (open) setArea(current()); }, [open]);
   return (
     <EditSheet
@@ -655,8 +663,9 @@ function LocationSheet({
       onClose={onClose}
       onAccept={() => onAccept(area)}
       acceptLabel={SHEETS.accept()}
+      scrollEnabled={!dragging}
     >
-      <AreaPicker value={area} onChange={setArea} />
+      <AreaPicker value={area} onChange={setArea} onDragChange={setDragging} />
     </EditSheet>
   );
 }
