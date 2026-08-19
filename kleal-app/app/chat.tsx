@@ -14,7 +14,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image, TextInput,
-  useWindowDimensions,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,8 +24,8 @@ import {
   hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME, FUNNEL, FUNNEL_OUT_RE, FUNNEL_MORE_RE,
   OWN_INPUT, parseName,
 } from '../src/onboarding';
-import { CipherWheel } from '../src/components/CipherWheel';
-import { labelOf, funnelWorthy, WHEEL_COPY } from '../src/interests-wheel';
+import { InterestChips } from '../src/components/InterestChips';
+import { labelOf, funnelWorthy } from '../src/interests-wheel';
 import { useLang, T, getLang , replyLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding, agent } from '../src/api';
@@ -417,7 +416,7 @@ function StepWidget({
   if (step === 'area') return <AreaW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'languages') return <LangW say={say} goto={goto} />;
   // onDrag и здесь: колесо интересов крутится тем же жестом, каким лента прокручивается.
-  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} onDrag={onDrag} />;
+  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} />;
   if (step === 'funnel') return <FunnelW {...funnel} say={say} />;
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -684,9 +683,9 @@ function FunnelBrow({ onPress }: { onPress: () => void }) {
  * СТИРАЛ все интересы и заменял их новым выбором. Пока сюда нельзя было вернуться, это не
  * проявлялось; кнопка «Добавить интересы» в профиле делает вход обычным делом.
  */
-function HobbyW({ say, startFunnel, leaveFunnel, onDrag }: any) {
+/** `onDrag` больше не принимается: чипы не крутятся, отбирать прокрутку у ленты не за что. */
+function HobbyW({ say, startFunnel, leaveFunnel }: any) {
   const st = useOnb();
-  const { width } = useWindowDimensions();
   const [ownOpen, setOwnOpen] = useState(false);
   const [had] = useState<string[]>(() => get('interests.explicit') || []);
   const [sel, setSel] = useState<string[]>(had);
@@ -712,16 +711,18 @@ function HobbyW({ say, startFunnel, leaveFunnel, onDrag }: any) {
 
   return (
     <View style={cs.widget}>
-      <Hint>{WHEEL_COPY.hint()}</Hint>
       {/*
-        Колесо вместо сетки чипов (решение Ивана, 2026-08-10). Ширина от экрана: виджет живёт в
-        ленте с полями по 20, и на узком телефоне фиксированные 330 вылезали бы за край.
-        Нижняя планка обязательна: на первом кадре useWindowDimensions отдаёт 0, и «width - 56»
-        уезжал в минус — SVG с отрицательной шириной сыпал ошибками в консоль.
-      */}
-      <CipherWheel size={Math.max(240, Math.min(320, width - 56))} onAdd={addFromWheel} onDragChange={onDrag} />
+        Чипы вместо колеса (15 августа). Колесо было решением от 10 августа и остаётся в
+        репозитории неудалённым — src/components/CipherWheel.tsx: решение о виде этого шага
+        менялось уже дважды, и вернуть его должно стоить одной строки, а не восстановления из
+        истории.
 
-      {/* Собранное — чипами под колесом: снять лишнее можно до «Дальше». */}
+        Жест колесу был нужен, чипам — нет: они не крутятся, и прокрутку у ленты отбирать не за
+        что. Поэтому onDrag сюда больше не передаётся.
+      */}
+      <InterestChips selected={sel} onAdd={addFromWheel} onRemove={toggle} />
+
+      {/* Собранное — чипами ниже: снять лишнее можно до «Дальше». */}
       <View style={cs.row}>
         {sel.map((k) => (
           <Chip key={k} label={labelOf(k) === k ? hobbyLabel(k) : labelOf(k)} on onPress={() => toggle(k)} />

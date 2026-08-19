@@ -461,6 +461,16 @@ export function funnelWorthy(keys: string[]): string[] {
   return keys.filter((k) => !anc.has(k));
 }
 
+/** Подписи подборщика чипами. Колесо заменено им 15 августа — см. src/components/InterestChips.tsx. */
+export const CHIPS_COPY = {
+  hint: () =>
+    T('Выбери, чем занимаешься. Категорию можно раскрыть, а можно взять целиком.',
+      'Pick what you’re into. Open a category, or take it whole.'),
+  /** «Взять уровень целиком»: у колеса это называлось «остановиться на любом уровне». */
+  whole: (label: string) => T(`Всё: ${label}`, `All of ${label}`),
+  back: () => T('Назад', 'Back'),
+};
+
 export const WHEEL_COPY = {
   hint: () =>
     T('Крути кольцо — что под стрелкой, то и выбрано. Нажми в середину, чтобы раскрыть подробнее; остановиться можно на любом уровне.',
