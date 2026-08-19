@@ -221,7 +221,14 @@ nh = call("/api/agent/mplan-feedback", {"id": PID2, "self": G2, "happened": Fals
                                         "reason": "he never showed up"})
 np = nh.get("plan") or {}
 check("didn't happen is recorded", (np.get("outcome") or {}).get("happened") is False, np.get("outcome"))
-check("the reason is kept", (np.get("outcome") or {}).get("reason") == "he never showed up")
+# Причина ХРАНИТСЯ, но не показывается второму. Проверка раньше требовала её прямо в `outcome` —
+# то есть закрепляла утечку: `outcome` уходит ОБЕИМ сторонам, а экран обещает «твой ответ другим
+# не показывается». Теперь проверяем смысл: автор свою причину видит, второй не видит нигде.
+check("the reason is kept for its author", (np.get("my_feedback") or {}).get("reason") == "he never showed up",
+      np.get("my_feedback"))
+_peer_view = get(H2, PID2)
+check("and the other side never sees it",
+      "he never showed up" not in json.dumps(_peer_view, ensure_ascii=False), _peer_view.get("outcome"))
 check("one side saying no closes it without waiting for the other", np.get("state") == "done", np.get("state"))
 
 # ---------------------------------------------------------------- times that make no sense

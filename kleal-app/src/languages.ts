@@ -107,10 +107,23 @@ export const ALL_LANGS: Lang[] = [
 ];
 
 const BY_NAME = new Map(ALL_LANGS.map((l) => [l[0].toLowerCase(), l]));
+/**
+ * И по КОДУ тоже. Профиль хранит английское имя («Spanish»), а матчинг отдаёт кандидата с
+ * двухбуквенным `langs: ['es','ca']` — те же языки, записанные иначе. Поиск только по имени
+ * возвращал бы «es» как есть, и карточка говорила бы «Говорит: es, ca».
+ *
+ * Имя выигрывает у кода при совпадении ключа: столкновений между полными именами и кодами ISO
+ * нет (имя всегда длиннее двух букв), но порядок задан явно, чтобы это не зависело от списка.
+ */
+const BY_CODE = new Map(ALL_LANGS.map((l) => [l[1].toLowerCase(), l]));
+const lookup = (key: string) => {
+  const k = String(key).trim().toLowerCase();
+  return BY_NAME.get(k) || BY_CODE.get(k);
+};
 
 /** Подпись языка на языке интерфейса, с флагом, если он у него есть. */
 export function langName(key: string, ru: boolean): string {
-  const l = BY_NAME.get(String(key).toLowerCase());
+  const l = lookup(key);
   if (!l) return key;                       // язык, дописанный человеком, показывается как есть
   const name = ru ? l[2] : l[0];
   return l[3] ? `${name} ${l[3]}` : name;
@@ -118,7 +131,7 @@ export function langName(key: string, ru: boolean): string {
 
 /** То же имя без флага — для строки профиля, где на борде флагов нет. */
 export function langPlainName(key: string, ru: boolean): string {
-  const l = BY_NAME.get(String(key).toLowerCase());
+  const l = lookup(key);
   return l ? (ru ? l[2] : l[0]) : key;
 }
 
@@ -128,7 +141,9 @@ export function langPlainName(key: string, ru: boolean): string {
  * Незнакомое имя не превращается в код вовсе — лучше не отправить, чем отправить чужой язык.
  */
 export function langCode(key: string): string | null {
-  const l = BY_NAME.get(String(key).toLowerCase());
+  // Через тот же lookup: если на вход пришёл уже код («es»), вернуть его — это не «чужой язык»,
+  // а тот же самый в другой записи, и терять его молча незачем.
+  const l = lookup(key);
   return l ? l[1] : null;
 }
 
