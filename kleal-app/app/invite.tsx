@@ -68,7 +68,14 @@ export default function Invite() {
     try {
       const r: any = await agent.respondInvite(row.id, me, decision, row.version);
       if (!r?.ok) {
-        if (r?.error === 'EXPIRED' || r?.error === 'ALREADY_RESOLVED') throw new Error(INVITE.goneNote());
+        // O.C7: пока экран был открыт, приглашение закрылось — второй ответил раньше, отправитель
+        // забрал его, или оно сгорело. Одной красной строки мало: под ней оставались живые кнопки
+        // «Присоединиться» и «Не в этот раз», и следующее нажатие давало ту же ошибку. Перечитываем
+        // строку — экран сам уйдёт в нужное состояние и покажет выход.
+        if (r?.error === 'EXPIRED' || r?.error === 'ALREADY_RESOLVED') {
+          await load();
+          throw new Error(INVITE.goneNote());
+        }
         throw new Error(CHAT.planFailed());
       }
       if (decision === 'accept') {
@@ -139,8 +146,20 @@ export default function Invite() {
               <View style={[s.personAva, s.personAvaEmpty]}><IconPerson size={18} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={s.personName}>{T('Ты', 'You')}</Text>
+                {/*
+                  Истёкшее и отозванное разбираются ОТДЕЛЬНО. Раньше обе ветки проваливались в
+                  «Подтвердил(а)»: экран говорил ровно противоположное правде — приглашение
+                  сгорело, а человек читал, что он согласился.
+                */}
                 <Text style={s.personStatus}>
-                  {row.status === 'pending' ? CHAT.notAnswered() : row.status === 'declined' ? CHAT.declinedPlan() : CHAT.confirmed()}
+                  {row.status === 'pending' ? CHAT.notAnswered()
+                    : row.status === 'declined' ? CHAT.declinedPlan()
+                    : row.status === 'expired' ? INVITE.expiredStatus()
+                    : row.status === 'withdrawn' ? INVITE.withdrawnStatus()
+                    : row.status === 'accepted' ? CHAT.confirmed()
+                    // Остальное (например `policy_revoked`) — закрыто, но не согласие. Ветка
+                    // «иначе подтвердил(а)» врала ровно так же, как раньше врала на сгоревшем.
+                    : INVITE.closedStatus()}
                 </Text>
               </View>
             </View>
@@ -159,6 +178,20 @@ export default function Invite() {
             ) : null}
 
             {row.status === 'declined' ? <Text style={s.note}>{INVITE.declinedNote()}</Text> : null}
+
+            {/* Молчание — не вина: у истёкшего есть объяснение и выход, как у отказа. */}
+            {row.status !== 'pending' && row.status !== 'declined' && row.status !== 'accepted' ? (
+              <>
+                <Text style={s.note}>
+                  {row.status === 'expired' ? INVITE.expiredNote()
+                    : row.status === 'withdrawn' ? INVITE.withdrawnNote()
+                    : INVITE.closedNote()}
+                </Text>
+                <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.replace('/home')}>
+                  <Text style={s.ctaText}>{INVITE.lookElse()}</Text>
+                </Pressable>
+              </>
+            ) : null}
 
             {row.status === 'accepted' ? (
               <Pressable

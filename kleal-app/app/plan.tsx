@@ -174,8 +174,18 @@ export default function Plan() {
   // печаталось СВОЁ смещение «(GMT+2)»: сведений о чужом поясе не было нигде, поэтому строка
   // ничего не сообщала — человек и так знает, в каком он поясе.
   const peerTime = peerLocalTime(plan?.starts_at, plan?.their_tz || peerTz, ru);
+  /** То же самое для ПРЕДЛОЖЕННОГО часа — см. O.21b у кнопок выбора. */
+  const peerPendingTime = peerLocalTime(
+    (plan?.pending as any)?.starts_at, plan?.their_tz || peerTz, ru
+  );
   const mine = plan ? myAnswer(plan) : undefined;
   const bothAnswered = !!plan?.their_feedback && mine !== undefined;
+  /**
+   * Кого ждём. Если я уже ответил — ждём только второго, и говорить надо это: «ждём обоих» после
+   * собственного ответа читается как «твой ответ не записался».
+   */
+  const waitingLine = () =>
+    mine !== undefined && !plan?.their_feedback ? PLAN.waitingThem(other) : PLAN.waitingBoth();
   /** O.21b: встречное время лежит РЯДОМ с планом (pending), сама встреча не тронута. */
   const pendingChange = plan?.pending || null;
   const cancelledByMe =
@@ -188,6 +198,18 @@ export default function Plan() {
   const needsLink = needsWhere && wantsLink;
   /** Офлайн-ветка борда. */
   const offline = mode === 'offline';
+  /**
+   * O.23c — «к звонку никто не подключился».
+   *
+   * Знание тут ровно одно: открывал ли кто-нибудь ссылку из приложения (см. кнопку «Открыть
+   * ссылку»). Поэтому и признак только для звонка со ссылкой: у встречи вживую отметка «я на
+   * месте» ставится руками, и её отсутствие не значит ничего.
+   */
+  const nobodyJoined =
+    wantsLink
+    && !!plan?.address_set
+    && (plan?.my_live as any)?.status !== 'here'
+    && (plan?.their_live as any)?.status !== 'here';
   /** OF.20a: согласовано, а точного места нет. */
   const needsPlace = needsWhere && !wantsLink;
   /** OF.22/OF.22a/OF.23: живые статусы — «в пути», «опаздываю», «на месте». */
@@ -540,7 +562,18 @@ export default function Plan() {
                   <Pressable
                     accessibilityRole="button"
                     style={s.linkBtn}
-                    onPress={() => Linking.openURL(serverLink).catch(() => setErr(CHAT.planFailed()))}
+                    /* Открыть ссылку = выйти на связь. Другого признака у звонка нет: «я на
+                       месте» — кнопка офлайновая, и без этой отметки после звонка невозможно
+                       отличить «поговорили» от «никто не пришёл» (O.23c). Отметка идёт ФОНОМ:
+                       ссылка должна открыться даже если сервер не ответил. */
+                    onPress={() => {
+                      /* Не через sendLive: тот на неудаче пишет «не удалось» на экран, а здесь
+                         неудача незаметна и неважна — ссылка всё равно открылась. */
+                      agent.planStatus(plan.id, me, 'here').then((r: any) => {
+                        if (r?.plan) setPlan(r.plan);
+                      }).catch(() => {});
+                      Linking.openURL(serverLink).catch(() => setErr(CHAT.planFailed()));
+                    }}
                   >
                     <Text style={s.linkBtnText}>{PLAN.openLink()}</Text>
                   </Pressable>
@@ -591,6 +624,12 @@ export default function Plan() {
               {/* O.24: спрашиваем оба факта до оценки — оценка без ответа про сам факт бессмысленна. */}
               {phase === 'after' && mine === undefined ? (
                 <>
+                  {/* O.23c: звонок прошёл, а ссылку не открыл никто. Вопрос «состоялось ли»
+                      остаётся — мы знаем только про ссылку, а созвониться могли и мимо неё, — но
+                      молчать про это нельзя: чаще всего именно это и случилось. */}
+                  {nobodyJoined ? (
+                    <View style={s.infoBox}><Text style={s.infoText}>{PLAN.nobodyJoined()}</Text></View>
+                  ) : null}
                   <View style={s.infoBox}><Text style={s.infoText}>{PLAN.didItNote(other)}</Text></View>
                   <Pressable accessibilityRole="button" style={s.cta} onPress={() => answerHappened(true)}>
                     <Text style={s.ctaText}>{PLAN.yesWeTalked()}</Text>
@@ -605,7 +644,7 @@ export default function Plan() {
               {phase === 'after' && mine === true ? (
                 thanks || myRated(plan) ? (
                   // «Спасибо» уже стоит в заголовке — здесь остаётся только то, чего там нет.
-                  !bothAnswered ? <Text style={s.note}>{PLAN.waitingBoth()}</Text> : null
+                  !bothAnswered ? <Text style={s.note}>{waitingLine()}</Text> : null
                 ) : (
                   <>
                     <Text style={s.note}>{PLAN.optional()}</Text>
@@ -632,8 +671,28 @@ export default function Plan() {
                 )
               ) : null}
 
+              {/* O.24b: оба сказали «не состоялась» — это отдельный конец, а не общее «спасибо».
+                  Если ответы разошлись (я «нет», второй «да»), сервер считает встречу
+                  состоявшейся, и говорить «не состоялась» было бы неправдой — там остаётся
+                  благодарность за ответ. */}
               {phase === 'after' && mine === false ? (
-                <Text style={s.note}>{bothAnswered ? PLAN.thanks() : PLAN.waitingBoth()}</Text>
+                !bothAnswered ? (
+                  <Text style={s.note}>{waitingLine()}</Text>
+                ) : plan?.outcome?.happened === false ? (
+                  <>
+                    <Text style={s.closedTitle}>{PLAN.didntHappenTitle()}</Text>
+                    <Text style={s.note}>{PLAN.didntHappenNote(other)}</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      style={s.cta}
+                      onPress={() => router.replace('/home')}
+                    >
+                      <Text style={s.ctaText}>{PLAN.findElse()}</Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <Text style={s.note}>{PLAN.thanks()}</Text>
+                )
               ) : null}
 
               {/* O.20a: поле и две кнопки — ссылка или просьба хостить. Пока висит перенос, не показываем:
@@ -761,6 +820,13 @@ export default function Plan() {
                     <Text style={s.ctaText}>{CHAT.openChat()}</Text>
                   </Pressable>
                   {/* Забрать своё встречное время под замком уже нельзя — сервер его не примет. */}
+                  {/* O.21b: у самого плана чужое местное время показано, а у ПРЕДЛОЖЕННОГО не было —
+                      хотя решают именно про него. Через часовой пояс «давай в 20:00» может значить
+                      у второго и полночь; согласиться на такое вслепую — обычный способ сорвать
+                      встречу. Строка появляется только когда пояса разные (см. peerLocalTime). */}
+                  {peerPendingTime ? (
+                    <Text style={s.note}>{PLAN.theirTimeNote(other, peerPendingTime)}</Text>
+                  ) : null}
                   {locked ? (
                     <Text style={s.lockNote}>{PLAN.lockedNote()}</Text>
                   ) : (
@@ -959,10 +1025,14 @@ export default function Plan() {
             отправляет «нет» без причины, крестик не отправляет ничего. */}
         <Sheet visible={reasonOpen} onClose={() => setReasonOpen(false)} title={PLAN.whatHappened()}>
           <Text style={s.note}>{PLAN.whatHappenedNote()}</Text>
+          {/* Список зависит от РЕЖИМА встречи: у звонка не бывает закрытого места, а у встречи
+              вживую — несработавшей ссылки. Раньше он был жёстко офлайновым, и человеку после
+              сорвавшегося звонка предлагали сослаться на «закрытое место». */}
           {([
             ['no_show', PLAN.reasonNoShow(other)],
             ['couldnt_make', PLAN.reasonCouldnt()],
-            ['place_closed', PLAN.reasonClosed()],
+            ...(wantsLink ? [['link_failed', PLAN.reasonLink()]] : []),
+            ...(wantsPlace ? [['place_closed', PLAN.reasonClosed()]] : []),
             ['moved', PLAN.reasonMoved()],
             ['other', PLAN.reasonOther()],
           ] as [string, string][]).map(([k, label]) => (
@@ -1337,6 +1407,8 @@ const s = StyleSheet.create({
   // «Всё готово»: та же зелёная семья, но без кнопки — это не действие, а точка в переговорах.
   doneCard: { backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.md, gap: 4 },
   doneTitle: { ...type.labelMedium, color: color.successText, fontWeight: '700' } as any,
+  // «Не состоялась» — тоже итог, но не удача: зелёная семья здесь читалась бы как поздравление.
+  closedTitle: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
   doneSub: { ...type.bodySmall, color: color.successText } as any,
   linkTitle: { ...type.labelMedium, color: color.successText, fontWeight: '700' } as any,
   linkSub: { ...type.caption, color: color.successText } as any,

@@ -77,7 +77,10 @@ export const STEP_SIZE = {
 export const GROUP_MIN_TOTAL = 3;
 export const SIZES: [string, string, string, string, string][] = [
   ['1:1', '1:1', '1:1', 'Just the two of us', 'Только вы вдвоём'],
-  ['group', 'Group', 'Группа', '3–5 people · free · needs at least 3', '3–5 человек · бесплатно · нужно минимум 3'],
+  // Без «3–5»: верхняя граница — не обещание продукта, а текущая настройка сервера (max_total),
+  // и печатать её на кнопке значит обещать число, которое правится в конфиге. Нижняя остаётся:
+  // она правило — группа не собирается, пока не наберётся троих, и об этом человек знать должен.
+  ['group', 'Group', 'Группа', 'free · needs at least 3', 'бесплатно · нужно минимум 3'],
 ];
 export const sizeLabel = (k: string) => {
   const s = SIZES.find((x) => x[0] === k);
@@ -394,7 +397,7 @@ export function intentSummaryText(o: {
 }): string {
   const who =
     o.size === 'group'
-      ? T('компанию из 3–5 человек', 'a small group of 3–5')
+      ? T('небольшую компанию', 'a small group')
       : T('одного человека', 'one person');
   const aud = o.sex && o.sex !== 'Any'
     ? (o.sex === 'Female' ? T('женщину', 'a woman') : T('мужчину', 'a man')) + ', '

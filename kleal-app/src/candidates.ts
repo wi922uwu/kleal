@@ -17,6 +17,11 @@ export const CANDS = {
   bestBadge: () => T('Лучший мэтч', 'Best match'),
   matchBadge: () => T('Мэтч', 'Match'),
   summaryLabel: () => T('Сводка Kleal:', 'Kleal summary:'),
+  /**
+   * O.13 — языки на карточке. Их не было ни строкой, ни значком, хотя приложение спрашивает про
+   * языки в онбординге и хранит их. Человек решал, писать ли незнакомому, не зная, поймут ли его.
+   */
+  speaksLabel: () => T('Говорит: ', 'Speaks: '),
   invite: () => T('Пригласить', 'Invite'),
   invited: () => T('Приглашение отправлено', 'Invite sent'),
   /** O.15: состояние карточки после отправки — две кнопки. */
@@ -81,6 +86,8 @@ export type Cand = {
   note?: string;
   why?: string;
   interests?: string[];
+  /** Языки, на которых человеку комфортно (O.13). Полные английские имена: 'English', 'Spanish'. */
+  langs?: string[];
   reasons?: string[];
   reasons_ru?: string[];
   reasons_en?: string[];

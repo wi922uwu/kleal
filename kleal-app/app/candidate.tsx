@@ -30,6 +30,7 @@ import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, takeCandidate } from '../src/results-store';
 import { mediaUrl, agent } from '../src/api';
 import { IconPerson, IconPin, IconUserLock } from '../src/components/icons';
+import { langPlainName } from '../src/languages';
 import { BottomNav } from '../src/components/BottomNav';
 import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
@@ -208,6 +209,15 @@ export default function Candidate() {
             <IconPin size={14} c={color.muted} />
             <Text style={s.meta}>{where}</Text>
           </View>
+        ) : null}
+        {/* O.13: языки — рядом с расстоянием, потому что это тот же род сведений: могу ли я
+            вообще с этим человеком встретиться и понять друг друга. Имена берём из общего
+            справочника, незнакомый ключ он вернёт как есть — язык, дописанный руками, тоже язык. */}
+        {(c.langs || []).length ? (
+          <Text style={s.meta}>
+            {CANDS.speaksLabel()}
+            {(c.langs as string[]).map((l) => langPlainName(l, ru())).join(', ')}
+          </Text>
         ) : null}
         {readiness ? (
           <Text style={s.meta}>{T('Связаться: ', 'Reach out: ')}{readiness}</Text>

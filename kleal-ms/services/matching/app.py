@@ -1196,6 +1196,10 @@ def match_candidates_legacy(intent, prof, ctx=None):
         out.append({"name": c['name'], "score": score, "tier": tier, "kind": kind, "km": km,
                     "vibe": c['vibe'], "open": c['open'], "verified": c.get('verified'), "age": c.get('age'),
                     "interests": c['interests'], "role": c.get('role'), "dealBreakers": c.get('dealBreakers'),
+                    # Языки нужны карточке (O.13): без них человек решает, писать ли незнакомому,
+                    # не зная, поймут ли его вообще. Внутри они у кандидата были всегда — просто
+                    # никогда не выезжали наружу. `_langs_of` берёт обе формы хранения.
+                    "langs": _langs_of(c) or c.get('langs') or [],
                     "reasons": reasons, "agree": agree, "note": note, "bucket": bcat})
     out.sort(key=lambda x: (-x['score'], x['name']))
     return _diversify(out)
@@ -1951,6 +1955,7 @@ def _expand_fallback(intent, prof, ctx, eligible):
             "name": c.get("name"), "score": 0, "tier": "T4", "kind": "alternative",
             "km": c.get("km"), "vibe": c.get("vibe"), "open": c.get("open"),
             "verified": c.get("verified"), "age": c.get("age"), "interests": ints,
+            "langs": _langs_of(c) or c.get("langs") or [],
             "role": c.get("role"), "dealBreakers": c.get("dealBreakers"),
             "reasons": ["different interests — a broader suggestion"], "agree": False,
             "note": "Broader suggestion — a different category (no direct match right now)",
@@ -5735,7 +5740,13 @@ def _mp_public(p, me=""):
         # OF.23a разводит «You told X you can't make it» и «X can't make it» — без имени отменившего
         # экран не знает, какую из двух правд показывать.
         "cancelled_by": p.get("cancelled_by"),
-        "outcome": p.get("outcome"), "my_feedback": (p.get("feedback") or {}).get(who),
+        # ИСХОД БЕЗ ЧУЖОЙ ПРИЧИНЫ. В самом плане `outcome.reason` — это причина ТОГО, кто ответил
+        # «не состоялась»: «Иван не пришёл», «не смог(ла) я». Экран обещает прямым текстом
+        # «Твой ответ другим не показывается», а наружу эта строка уезжала обоим. Наружу идёт
+        # только сам факт; причину видит тот, кто её написал, — в своём `my_feedback`.
+        "outcome": ({k: v for k, v in (p.get("outcome") or {}).items() if k != "reason"}
+                    if p.get("outcome") else None),
+        "my_feedback": (p.get("feedback") or {}).get(who),
         # OF.24 говорит «пока не ответите оба, никому ничего не засчитывается» — значит экрану нужно
         # знать сам ФАКТ ответа второго, но не его содержание. Пара their_*/my_* здесь та же, что у
         # live: наружу уходит булево, чужая оценка и причина остаются внутри.
