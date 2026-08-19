@@ -5720,6 +5720,13 @@ def _mp_public(p, me=""):
         "confirmed_count": len(conf), "both_confirmed": len(conf) >= 2,
         "my_response": _mp_answer(p, me),
         "waiting_on": [x["name"] for x in people if not x["confirmed"]],
+        # ЗАМОК ВИДЕН ЭКРАНУ. За два часа до начала сервер перестаёт принимать встречное время,
+        # ответ на него и правку ссылки — а экран продолжал рисовать все эти кнопки и получал на
+        # нажатие безымянную ошибку. Ровно в тот момент, когда для человека важнее всего понять,
+        # что происходит. Признак отдаём фактом, чтобы экран не считал время сам и не разошёлся
+        # с сервером на минуту.
+        "locked": _mp_frozen(p),
+        "locks_at": (float(p["starts_at"]) - MP_LOCK_BEFORE) if p.get("starts_at") else None,
         "my_live": (p.get("live") or {}).get(who),
         "their_live": (p.get("live") or {}).get(_norm_name(_mp_other(p, me))),
         # Пояс собеседника рядом с their_live по той же причине: экрану нужен ОДИН ключ, а не

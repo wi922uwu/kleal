@@ -23,7 +23,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { CANDS, CAP, OPTIONS, REPORT_REASONS, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
+import { CANDS, CAP, OPTIONS, REPORT_REASONS, Cand, candSubtitle, candWhere, candSummary, hideCandidate } from '../src/candidates';
 import { CHAT } from '../src/chat';
 import { useInvites, inviteTo, sendInvite, withdrawInvite } from '../src/invites';
 import { useLang, T, getLang } from '../src/i18n';
@@ -133,7 +133,11 @@ export default function Candidate() {
         }
         setPending(null);
         setOptions(false);
-        // Человека из этой выдачи больше показывать нельзя — карточка закрывается.
+        // Человека из этой выдачи больше показывать нельзя — и это надо СКАЗАТЬ выдаче, а не
+        // только закрыть карточку. Раньше он оставался в списке с живой кнопкой «Пригласить»:
+        // нажатие получало BLOCKED и показывалось как «не отправилось» — то есть блокировка
+        // выглядела сбоем связи.
+        hideCandidate(name);
         router.back();
       } catch {
         setPending(null);

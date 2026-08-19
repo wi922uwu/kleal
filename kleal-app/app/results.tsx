@@ -23,13 +23,13 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Modal,
+  View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Modal, Alert,
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { RESULTS, EXPAND_LADDER, ExpandAxis, axisExplain } from '../src/intent';
-import { CANDS, PREFS, CAP, Cand, candSubtitle, candWhere, candSummary } from '../src/candidates';
+import { CANDS, PREFS, CAP, Cand, candSubtitle, candWhere, candSummary, isHidden } from '../src/candidates';
 import { CHAT, ReqStatus, activeChatWith } from '../src/chat';
 import { useInvites, inviteTo, openInvites, sendInvite, withdrawInvite } from '../src/invites';
 import { isGroupIntent, groupTitleOf, GROUP } from '../src/groups';
@@ -105,6 +105,8 @@ export default function Results() {
   const [sendErr, setSendErr] = useState('');
   /** Окно бесплатного тарифа (O.17): с кем уже идёт переписка, когда пробуешь открыть вторую. */
   const [busyWith, setBusyWith] = useState('');
+  /** Завершение идёт на сервер — на это время кнопка гаснет, чтобы не нажали дважды. */
+  const [ending, setEnding] = useState(false);
   /** С кем реально идёт переписка — по сообщениям, а не по принятым приглашениям (см. activeChatWith). */
   const [chatting, setChatting] = useState('');
   /**
@@ -314,6 +316,10 @@ export default function Results() {
     try {
       const th: any = await agent.threads(self).catch(() => ({ threads: [] }));
       setChatting(activeChatWith((th?.threads || []) as any[]));
+      // Заодно блокировки: возвращаясь в выдачу после перезапуска, человек не должен снова
+      // видеть того, кого заблокировал.
+      const sf: any = await agent.safety(self).catch(() => ({ blocked: [] }));
+      setBlocked(((sf?.blocked || []) as any[]).map((x) => String(x).trim().toLowerCase()));
     } catch {
       /* тихо: фоновая дотяжка состояний */
     }
@@ -350,6 +356,22 @@ export default function Results() {
       params: { who: name, title: String(intent?.title || (intent?.topics || []).join(', ') || ''), photo: photo || '' },
     });
   };
+
+  /**
+   * Кого в этой выдаче показывать нельзя.
+   *
+   * Два источника, и оба нужны. `isHidden` — «не интересно» и только что нажатая блокировка: она
+   * действует сразу, не дожидаясь ответа сервера. `blocked` — список с сервера: он переживает
+   * перезапуск приложения, а память экрана — нет.
+   */
+  const [blocked, setBlocked] = useState<string[]>([]);
+  const visible = useMemo(
+    () => cands.filter((c) => {
+      const n = String(c.name || '');
+      return n && !isHidden(n) && !blocked.includes(n.trim().toLowerCase());
+    }),
+    [cands, blocked],
+  );
 
   /** O.16 «Убрать»: карточка уходит с экрана. Отклонённое приглашение сервер уже закрыл сам. */
   const removeCard = (name: string) => {
@@ -434,7 +456,7 @@ export default function Results() {
           </View>
         ) : null}
 
-        {cands.map((c, i) => (
+        {visible.map((c, i) => (
           <CandCard
             key={(c.name || '') + i}
             c={c}
@@ -504,13 +526,38 @@ export default function Results() {
           <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
         </View>
         <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
+        {/*
+          Кнопка называется «Закончить разговор с N» — и заканчивает его.
+          Раньше она просто открывала переписку с этим человеком: слово «закончить» вело туда, где
+          завершение спрятано за ⋮, и передать намерение туда было нечем. Человек нажимал
+          «закончить» и оказывался в том же чате, из которого хотел выйти.
+
+          Спрашиваем перед этим: разговор закрывается для ДВОИХ, и второму об этом скажут.
+        */}
         <Pressable
           accessibilityRole="button"
-          style={s.sheetNot}
+          style={[s.sheetNot, ending && { opacity: 0.6 }]}
+          disabled={ending}
           onPress={() => {
             const who = busyWith;
-            setBusyWith('');
-            router.push({ pathname: '/conversation', params: { who } });
+            const go = async () => {
+              setEnding(true);
+              try {
+                await agent.threadEnd(self, who);
+                // Список тредов перечитываем сразу: слот освобождает не наше намерение, а
+                // системная строка на сервере, и до неё окно продолжало бы висеть.
+                await loadChats();
+                setBusyWith('');
+              } catch {
+                setSendErr(CHAT.endFailed());
+              } finally {
+                setEnding(false);
+              }
+            };
+            Alert.alert(CHAT.endAskTitle(who), CHAT.endAskBody(), [
+              { text: CHAT.endAskNo(), style: 'cancel' },
+              { text: CHAT.endAskYes(), style: 'destructive', onPress: go },
+            ]);
           }}
         >
           <Text style={s.sheetNotText}>{CHAT.endChatWith(busyWith)}</Text>
@@ -653,8 +700,14 @@ function CandCard({
           <View style={[s.invite, s.invitedPill]}>
             <Text style={[s.inviteText, { color: color.muted }]}>⏳  {CHAT.expired()}</Text>
           </View>
-          <Pressable accessibilityRole="button" style={[s.invite, s.cancelPill]} onPress={onRemove}>
-            <Text style={s.inviteText}>{CHAT.remove()}</Text>
+          {/*
+            Кадр O.14a даёт здесь «Invite again», а не «Убрать». И это разные вещи: молчание —
+            не отказ, человек мог просто не открыть приложение. «Убрать» уносило карточку с
+            экрана, и позвать снова становилось нечем — из выдачи человек исчезал совсем.
+            Сервер повторное приглашение принимает: истёкшая заявка не мешает завести новую.
+          */}
+          <Pressable accessibilityRole="button" style={[s.invite, s.cancelPill]} onPress={onInvite}>
+            <Text style={s.inviteText}>{CHAT.inviteAgain()}</Text>
           </Pressable>
         </View>
       ) : status === 'declined' ? (

@@ -163,6 +163,13 @@ export default function Plan() {
   const wantsPlace = mode === 'offline' || mode === 'hybrid';
 
   const phase = plan ? planPhase(plan, tick) : null;
+  /**
+   * ЗАМОК ЗА ДВА ЧАСА. Признак приходит с сервера фактом (`locked`), а не считается здесь: свой
+   * счёт времени разошёлся бы с серверным на минуту, и в эту минуту кнопка снова обещала бы то,
+   * на что придёт отказ. Сервер закрывает встречное время, ответ на него и правку ссылки —
+   * значит и кнопок этих быть не должно.
+   */
+  const locked = !!(plan as any)?.locked;
   // Местное время собеседника — и только если оно расходится с моим. Раньше здесь безусловно
   // печаталось СВОЁ смещение «(GMT+2)»: сведений о чужом поясе не было нигде, поэтому строка
   // ничего не сообщала — человек и так знает, в каком он поясе.
@@ -709,9 +716,11 @@ export default function Plan() {
                     <Text style={s.ctaText}>{CHAT.openChat()}</Text>
                   </Pressable>
                   {/* «Поправить план» обещало больше, чем делает: меняется только время. */}
-                  <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setCountering(true)}>
-                    <Text style={s.ctaDarkText}>{PLAN.suggestAnother()}</Text>
-                  </Pressable>
+                  {locked ? null : (
+                    <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => setCountering(true)}>
+                      <Text style={s.ctaDarkText}>{PLAN.suggestAnother()}</Text>
+                    </Pressable>
+                  )}
                 </>
               ) : null}
 
@@ -721,9 +730,11 @@ export default function Plan() {
                   <Pressable accessibilityRole="button" style={s.cta} onPress={() => respond('confirm')}>
                     <Text style={s.ctaText}>{PLAN.confirmAction()}</Text>
                   </Pressable>
-                  <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => setCountering(true)}>
-                    <Text style={s.ctaSoftText}>{PLAN.suggestAnother()}</Text>
-                  </Pressable>
+                  {locked ? null : (
+                    <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => setCountering(true)}>
+                      <Text style={s.ctaSoftText}>{PLAN.suggestAnother()}</Text>
+                    </Pressable>
+                  )}
                 </>
               ) : null}
 
@@ -749,21 +760,35 @@ export default function Plan() {
                   <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
                     <Text style={s.ctaText}>{CHAT.openChat()}</Text>
                   </Pressable>
-                  <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => respond('reject_change')}>
-                    <Text style={s.ctaDarkText}>{PLAN.takeItBack()}</Text>
-                  </Pressable>
+                  {/* Забрать своё встречное время под замком уже нельзя — сервер его не примет. */}
+                  {locked ? (
+                    <Text style={s.lockNote}>{PLAN.lockedNote()}</Text>
+                  ) : (
+                    <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => respond('reject_change')}>
+                      <Text style={s.ctaDarkText}>{PLAN.takeItBack()}</Text>
+                    </Pressable>
+                  )}
                 </>
               ) : null}
 
               {/* O.C5: встречное время пришло мне — кнопки называют оба часа, решение очевидно. */}
               {(phase === 'waiting' || phase === 'confirmed') && pendingChange && !pendingChange.mine ? (
                 <>
-                  <Pressable accessibilityRole="button" style={s.cta} onPress={() => respond('accept_change')}>
-                    <Text style={s.ctaText}>{PLAN.confirmTime(tOf(pendingChange.starts_at, ru))}</Text>
-                  </Pressable>
-                  <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => respond('reject_change')}>
-                    <Text style={s.ctaSoftText}>{PLAN.keepTime(tOf(plan.starts_at, ru))}</Text>
-                  </Pressable>
+                  {/* O.C5 обещает выбор «подтвердить 20:00 / оставить 19:00». Внутри заморозки
+                      сервер закрывает оба ответа, и рисовать их значит обещать несуществующее:
+                      нажатие давало безымянную ошибку, а встречное время так и висело. */}
+                  {locked ? (
+                    <Text style={s.lockNote}>{PLAN.lockedNote()}</Text>
+                  ) : (
+                    <>
+                      <Pressable accessibilityRole="button" style={s.cta} onPress={() => respond('accept_change')}>
+                        <Text style={s.ctaText}>{PLAN.confirmTime(tOf(pendingChange.starts_at, ru))}</Text>
+                      </Pressable>
+                      <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => respond('reject_change')}>
+                        <Text style={s.ctaSoftText}>{PLAN.keepTime(tOf(plan.starts_at, ru))}</Text>
+                      </Pressable>
+                    </>
+                  )}
                 </>
               ) : null}
 
@@ -1375,6 +1400,8 @@ const s = StyleSheet.create({
   // Вторая кнопка кадров O.C3/O.C4/O.C5 — серая, не тёмная: отказ там не «опасное» действие.
   ctaSoft: { height: 52, borderRadius: rad.full, backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
   ctaSoftText: { ...type.button, color: color.fg } as any,
+  /** Пояснение вместо кнопок, которые сервер уже не примет. */
+  lockNote: { ...type.bodySmall, color: color.muted, textAlign: 'center', paddingHorizontal: space.sm } as any,
   err: { ...type.bodySmall, color: color.primary } as any,
   navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 });

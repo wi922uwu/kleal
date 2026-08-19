@@ -27,6 +27,8 @@ export const CHAT = {
   /** O.16 — приглашение отклонили. */
   /** O.14a: приглашение стояло до конца срока и не дождалось ответа. Не отказ — молчание. */
   expired: () => T('Без ответа · истекло', 'No answer · expired'),
+  /** O.14a: молчание — не отказ, и позвать можно снова. Сервер истёкшую заявку не считает помехой. */
+  inviteAgain: () => T('Позвать снова', 'Invite again'),
   declined: () => T('Отклонено', 'Declined'),
   remove: () => T('Убрать', 'Remove'),
 
@@ -44,6 +46,16 @@ export const CHAT = {
   plusPrice: () => T('€6,99 в месяц · переписка со всеми · отмена в любой момент',
                      '€6.99 / month · Chat with all matches · Cancel any time'),
   endChatWith: (name: string) => T(`Закончить переписку с ${ins(name)}`, `End chat with ${name}`),
+  /** Лист лимита: кнопка и правда заканчивает разговор, поэтому спрашивает — он закроется у ДВОИХ. */
+  endAskTitle: (who: string) => T(`Закончить разговор с ${who}?`, `End your chat with ${who}?`),
+  endAskBody: () => T(
+    'Переписка закроется у вас обоих, и место освободится для другого мэтча. История останется — её можно перечитать.',
+    'The chat closes for both of you and the slot frees up for another match. The history stays — you can read it back.'
+  ),
+  endAskYes: () => T('Закончить', 'End it'),
+  endAskNo: () => T('Не надо', 'Keep it'),
+  endFailed: () => T('Не вышло закончить разговор. Попробуй ещё раз.', 'Couldn’t end the chat. Try again.'),
+
 
   /** O.18 — сам чат. */
   /** Композер MSG.06 обращается по имени: «Message Jane». */
@@ -203,6 +215,15 @@ export const PLAN = {
   messageThem: (name: string) => T(`Написать ${dat(name)}`, `Message ${name}`),
   cantMakeIt: () => T('Не смогу', 'I can’t make it'),
   suggestAnother: () => T('Предложить другое время', 'Suggest another time'),
+  /**
+   * Замок за два часа до встречи. Кнопки «предложить другое время», «подтвердить/оставить» и
+   * правка ссылки в этот момент перестают приниматься сервером — и раньше они всё равно
+   * рисовались, а нажатие давало безымянную ошибку. Теперь вместо них стоит объяснение.
+   */
+  lockedNote: () => T(
+    'До встречи меньше двух часов — время и ссылка больше не меняются. Если не сможешь прийти, скажи об этом: собеседник увидит.',
+    'Under two hours to go — the time and the link don’t change any more. If you can’t make it, say so and they’ll see it.'
+  ),
 
   /**
    * Отмена встречи заранее. Её не было вовсе: отказаться можно было только за десять минут до
@@ -631,6 +652,7 @@ export function linkOpensAt(plan: any, ru = true): string {
 export type SysMsg = {
   code: string;
   by?: string;
+  title?: string;
   /** Время встречи в секундах — форматируется на языке читателя, не отправителя. */
   at?: number;
   was?: number;
@@ -760,6 +782,11 @@ export function sysLine(sys: SysMsg | undefined, me: string, ru: boolean): strin
     case 'converted_from_group':
       return T('Группа не собралась — вы продолжаете вдвоём. Переписка здесь.',
                'The group didn’t fill up — the two of you carry on. The chat is here.');
+    case 'group_closed_invite':
+      return T(
+        `${by} закрыл(а) «${String(sys.title || 'группу')}» до назначения плана, поэтому приглашение больше не действует. Ты ни при чём. Я продолжу искать что-то похожее.`,
+        `${by} closed ${String(sys.title || 'the group')} before a plan was set, so your invite is gone. Nothing you did. I’m still looking for something close.`
+      );
     case 'plan_proposed':
       return mine
         ? T(`Ты предложил(а) встречу${when ? ' — ' + when : ''}`, `You proposed a meetup${when ? ' — ' + when : ''}`)
@@ -820,8 +847,27 @@ export type Req = {
  *
  * Пусто — не переписывается ни с кем, любой чат открывается свободно.
  */
-export function activeChatWith(threads: { who?: string; t?: number }[]): string {
-  const live = (threads || []).filter((t) => String(t.who || '').trim());
+export function activeChatWith(
+  threads: { who?: string; t?: number; sys?: { code?: string } }[],
+): string {
+  /**
+   * ЗАКРЫТЫЙ РАЗГОВОР СЛОТ НЕ ЗАНИМАЕТ.
+   *
+   * Кадр O.17 обещает прямо: «End your current chat to start one with another match». Завершение
+   * до сервера доходило — он пишет в ленту пары системную строку `chat_ended`, — но здесь она не
+   * читалась, и слот считался занятым по САМОМУ СВЕЖЕМУ треду. А свежайшим после завершения
+   * становилась ровно эта строка.
+   *
+   * Итог: человек закрывал переписку и не мог открыть НИ ОДНУ другую — окно «Ты уже переписываешься
+   * с Jane» висело на всех карточках, и выхода из него не было вовсе. Продукт кончался после
+   * первого же разговора.
+   *
+   * Признак — последнее сообщение пары. Если после «разговор закрыт» кто-то написал снова, тред
+   * снова живой: закрыть и передумать — обычное дело, и запрещать это нечем.
+   */
+  const live = (threads || []).filter(
+    (t) => String(t.who || '').trim() && t.sys?.code !== 'chat_ended',
+  );
   live.sort((a, b) => (b.t || 0) - (a.t || 0));
   return String(live[0]?.who || '');
 }
