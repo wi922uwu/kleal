@@ -58,7 +58,14 @@ export default function Plan() {
     who?: string; title?: string; photo?: string; link?: string; id?: string;
     address?: string; mode?: string;
   }>();
-  const other = String(params.who || '').trim();
+  /**
+  * Имя собеседника. С ГЛАВНОЙ план открывается только по `id` (app/home.tsx: «К плану»), и
+  * параметра `who` там нет. А на нём висит вся копия с именем — «Sofia тоже её увидит»,
+  * «Ждём ответа: Sofia», «Скажи Sofia, что не сможешь». Без него в тексте оставалась дырка:
+  * «откроется за 10 минут до начала —  тоже её увидит». Сервер отдаёт `other` в самом плане,
+  * поэтому берём оттуда, а параметр остаётся ведущим: он известен до первой загрузки.
+  */
+  const otherParam = String(params.who || '').trim();
   const intentTitle = String(params.title || '').trim();
   const photo = String(params.photo || '');
   const linkFromIntent = String(params.link || '').trim();
@@ -87,6 +94,7 @@ export default function Plan() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [plan, setPlan] = useState<any>(null);
+  const other = otherParam || String((plan as any)?.other || '').trim();
   const [peerTz, setPeerTz] = useState('');
   /** Часы идут — экран сам переходит из «подтверждено» в «через десять минут» и дальше. */
   const [tick, setTick] = useState(Date.now());
@@ -588,12 +596,12 @@ export default function Plan() {
                         // O.C4: формат + факт отмены одной строкой.
                         ? PLAN.calledOff()
                         // Встреча позади — обещать, что ссылка «откроется в 18:14», уже неправда.
-                        : phase === 'after' ? PLAN.modeOnline()
+                        : phase === 'after' ? (hybrid ? PLAN.modeHybrid() : PLAN.modeOnline())
                         // O.20a: ссылки ещё нет — врать «откроется в …» нечем.
                         : !linkSet ? PLAN.noLinkYet()
                         // Когда ниже стоит «Всё готово», час открытия ссылки назван там — здесь
                         // остаётся только формат встречи.
-                        : allSet ? PLAN.modeOnline()
+                        : allSet ? (hybrid ? PLAN.modeHybrid() : PLAN.modeOnline())
                         : linkReady ? PLAN.linkSaved() : PLAN.linkOpensLabel(linkOpensAt(plan, ru))}
                     </Text>
                   </View>
@@ -610,8 +618,8 @@ export default function Plan() {
                 <View style={s.doneCard}>
                   <Text style={s.doneTitle}>{PLAN.allSetTitle()}</Text>
                   <Text style={s.doneSub}>
-                    {PLAN.allSetNote(planWhen(plan, ru), offline, other,
-                      offline ? (plan.address_visible_to_me ? placeLabel : '') : '')}
+                    {PLAN.allSetNote(planWhen(plan, ru), mode, other,
+                      wantsPlace ? placeLabel : '')}
                   </Text>
                 </View>
               ) : null}
@@ -694,7 +702,13 @@ export default function Plan() {
               {phase === 'soon' || phase === 'now' ? (
                 <View style={s.infoBox}>
                   {/* Kleal не видит ни звонок, ни встречу — но говорит об этом их словами. */}
-                  <Text style={s.infoText}>{offline ? PLAN.meetupBlindNote() : PLAN.outsideNote()}</Text>
+                  {/* У гибрида, пока никуда не ушли, оба входа живы — и говорить надо про оба.
+                      После HY.23c остаётся ровно «звонок вне Kleal»: он и есть правда. */}
+                  <Text style={s.infoText}>
+                    {offline ? PLAN.meetupBlindNote()
+                      : hybrid && !movedToCall ? PLAN.outsideNoteHybrid()
+                      : PLAN.outsideNote()}
+                  </Text>
                 </View>
               ) : null}
 
@@ -1363,7 +1377,9 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
     case 'waiting': return CHAT.sentNote(other);
     case 'confirmed': return PLAN.linkOpensAt(linkOpensAt(plan, ru));
     case 'soon':
-    case 'now': return PLAN.linkNote();
+    // Подпись «сейчас». У гибрида она про оба входа, а не только про ссылку.
+    case 'now': return plan?.mode === 'hybrid' && !plan?.moved_to_call
+      ? PLAN.hybridNote() : PLAN.linkNote();
     case 'after': return '';
     case 'cancelled': {
       const by = String(plan?.cancelled_by || '').trim().toLowerCase();

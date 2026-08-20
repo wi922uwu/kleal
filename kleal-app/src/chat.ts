@@ -183,11 +183,29 @@ export const PLAN = {
     T(`Видеозвонок · ссылка откроется в ${hhmmStr}`, `Video call · link opens ${hhmmStr}`),
   /** Формат без обещаний про ссылку — для встречи, которая уже позади или отменена. */
   modeOnline: () => T('Видеозвонок', 'Video call'),
+  /**
+   * Формат ГИБРИДА одной строкой. Раньше в этой строке у него стояло «Видеозвонок» — половина
+   * правды, ровно та, из-за которой человек и решает не идти живьём.
+   */
+  modeHybrid: () => T('Вживую и на связи', 'In person and on the call'),
 
   /** Всё согласовано и место известно — конец переговоров, сказанный вслух. */
   allSetTitle: () => T('Всё готово', 'You’re all set'),
-  allSetNote: (when: string, offline: boolean, name: string, place: string) =>
-    offline
+  /**
+  * «Всё готово». У ГИБРИДА это отдельная фраза, а не одна из двух старых.
+  *
+  * Раньше признак был булев (offline или нет), гибрид попадал в онлайновую ветку, и она про место
+  * не говорит ни слова. А строка места к этому моменту уже скрыта — её прячут ровно потому, что
+  * «зелёная плашка назовёт место». В итоге у гибрида адрес пропадал с экрана совсем: и из строки,
+  * и из плашки. Проверено на симуляторе.
+  */
+  allSetNote: (when: string, mode: 'offline' | 'online' | 'hybrid', name: string, place: string) =>
+    mode === 'hybrid'
+      ? T(
+          `${when}${place ? `, ${place}` : ''}. Ссылка тоже открыта — можно и прийти, и подключиться.`,
+          `${when}${place ? `, ${place}` : ''}. The link is live too — you can come or join the call.`
+        )
+      : mode === 'offline'
       ? T(
           `${when}${place ? `, ${place}` : ''}. Адрес есть у вас обоих — договариваться больше не о чем.`,
           `${when}${place ? `, ${place}` : ''}. You both have the address — nothing left to agree.`
@@ -207,6 +225,23 @@ export const PLAN = {
     ),
   openLink: () => T('Открыть ссылку', 'Open link'),
   leavesKleal: () => T('Откроется вне Kleal', 'Opens outside Kleal'),
+  /**
+  * То же самое, но у ГИБРИДА, пока никуда не ушли.
+  *
+  * Строки про «звонок вне Kleal» писались для звонка, и до сих пор гибрид до них не доходил — у
+  * него этот блок просто не рисовался. Теперь доходит, и «звонок идёт вне Kleal» на экране, где
+  * человек сидит за столиком, — половина правды: встреча может идти обоими входами сразу.
+  */
+  outsideNoteHybrid: () =>
+    T(
+      'Встреча идёт вне Kleal — и за столиком, и по ссылке. Мы её не видим и ничего не записываем. Потом спросим у обоих, состоялась ли она.',
+      'The meetup happens outside Kleal — at the table and on the link. We can’t see it and record nothing. Afterwards we ask you both whether it happened.'
+    ),
+  hybridNote: () =>
+    T(
+      'Оба входа открыты: можно прийти на место, а можно подключиться по ссылке. Kleal хранит только их и время.',
+      'Both ways in are open: come to the place or join on the link. Kleal only keeps those and the time.'
+    ),
   outsideNote: () =>
     T(
       'Звонок идёт вне Kleal. Мы его не видим и ничего о нём не записываем. Потом спросим у обоих, состоялся ли он.',
