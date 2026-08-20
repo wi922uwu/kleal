@@ -5762,6 +5762,9 @@ MP_LIVE = ("otw", "late", "here")        # OF.22 on the way / OF.22a running lat
 # второй, и она переключается туда и обратно сколько угодно. Смешать их значило бы, что «я на
 # месте» стирает выбор стороны, а «ухожу в звонок» стирает «опаздываю на 10 минут».
 MP_SIDES = ("in_person", "call")
+# HY.25. «И так и так» — не отговорка: у гибрида это обычный исход, когда один пришёл, второй
+# подключился, а потом поменялись местами.
+MP_HOW = ("in_person", "call", "both")
 
 
 def mp_side(pid, who, side, idem=None):
@@ -5974,6 +5977,9 @@ def _mp_public(p, me=""):
         "outcome": ({k: v for k, v in (p.get("outcome") or {}).items() if k != "reason"}
                     if p.get("outcome") else None),
         "my_feedback": (p.get("feedback") or {}).get(who),
+        # HY.23c: экран должен отличать «оба ушли в звонок, потому что место закрыто» от обычной
+        # смены стороны — иначе кнопка «уходим в звонок» так и стоит после того, как ушли.
+        "moved_to_call": bool(p.get("moved_to_call")),
         # OF.24 говорит «пока не ответите оба, никому ничего не засчитывается» — значит экрану нужно
         # знать сам ФАКТ ответа второго, но не его содержание. Пара their_*/my_* здесь та же, что у
         # live: наружу уходит булево, чужая оценка и причина остаются внутри.
@@ -6234,6 +6240,43 @@ def mp_cancel(pid, who, reason="", idem=None):
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
 
 
+def mp_move_to_call(pid, who, idem=None):
+    """HY.23c — «место закрыто, уходим в звонок»: перевести ОБОИХ на другую сторону.
+
+    Это не то же, что сменить свою сторону. Кадр описывает ровно тот случай, когда оба уже стоят у
+    закрытой двери: менять сторону по одному значило бы, что каждый сам догадается сделать то же
+    самое, а пока он не догадался — второй сидит в звонке один. Поэтому одно действие переводит
+    двоих и говорит об этом в ленту.
+
+    И это НЕ отмена: у гибрида есть выход, которого нет у встречи вживую, — ссылка уже открыта.
+    Ровно это и написано на кадре.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        p = _mp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if not _mp_is_in(p, who):
+            return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        if p.get("mode") != "hybrid":
+            return _idem_put(idem, {"ok": False, "error": "NOT_HYBRID", "mode": p.get("mode")})
+        if p.get("state") not in ("proposed", "confirmed"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+        # Без ссылки уходить некуда, и «уходим в звонок» стало бы обещанием пустоты.
+        if not _mp_link(p):
+            return _idem_put(idem, {"ok": False, "error": "NO_LINK"})
+        now = time.time()
+        for nm in (p.get("host"), p.get("guest")):
+            p.setdefault("sides", {})[_norm_name(nm)] = {"side": "call", "t": now, "by": who}
+        p["moved_to_call"] = {"by": who, "t": now}
+        p["updated"] = now
+        _sys_msg(who, _mp_other(p, who), "moved_to_call")
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
+
+
 def mp_status(pid, who, status, eta_min=None, idem=None):
     """OF.22 / OF.22a / OF.23 — «уже иду», «опаздываю», «я на месте».
 
@@ -6266,7 +6309,7 @@ def mp_status(pid, who, status, eta_min=None, idem=None):
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
 
 
-def mp_feedback(pid, who, happened=None, reason="", rating=None, text="", idem=None):
+def mp_feedback(pid, who, happened=None, reason="", rating=None, text="", idem=None, how=""):
     """OF.24 «Did it happen» → OF.24a reason, or OF.25 feedback. Two screens, one record: the second
     call MERGES into the first instead of replacing it, or rating a meetup would erase the answer to
     whether it took place at all."""
@@ -6295,6 +6338,11 @@ def mp_feedback(pid, who, happened=None, reason="", rating=None, text="", idem=N
                 pass
         if text:
             row["text"] = str(text)[:1000]
+        # HY.25 — КАК встретились: за столиком, на звонке или и так и так. Вопрос только у гибрида
+        # и только к тому, кто сказал «состоялась»: у него два входа, и какой сработал — это не
+        # оценка встречи, а подсказка агенту, какой формат предлагать в следующий раз.
+        if str(how or "").strip().lower() in MP_HOW:
+            row["how"] = str(how).strip().lower()
         row["t"] = now
         p["feedback"][k] = row
         # It took place if either side says so; it did not only when someone says it did not and
@@ -7378,6 +7426,8 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/mplan-cancel":
             send_json(self, 200, mp_cancel(body.get("id"), body.get("self"),
                                            body.get("reason"), body.get("idem")))
+        elif p == "/api/agent/mplan-move-to-call":
+            send_json(self, 200, mp_move_to_call(body.get("id"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/mplan-side":
             send_json(self, 200, mp_side(body.get("id"), body.get("self"),
                                          body.get("side"), body.get("idem")))
@@ -7387,7 +7437,8 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/mplan-feedback":
             send_json(self, 200, mp_feedback(body.get("id"), body.get("self"), body.get("happened"),
                                              body.get("reason"), body.get("rating"),
-                                             body.get("text"), body.get("idem")))
+                                             body.get("text"), body.get("idem"),
+                                             body.get("how")))
         elif p == "/api/agent/gintent-leave":
             send_json(self, 200, gi_leave(body.get("gid"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/gintent-convert":

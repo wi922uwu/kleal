@@ -129,4 +129,65 @@ print("\n-- у звонка и у встречи вживую стороны н�
 off = call("/api/agent/mplan-side", {"id": PIDO if False else PIDN, "self": Hn, "side": "bogus"})
 check("выдуманная сторона отклонена", off.get("error") == "BAD_SIDE", off)
 
-print("\n%s\nИТОГ ПРОБНИКА: %d ok, %d проблем\n%s" % ("=" * 70, ok, bad, "=" * 70))
+print("\n-- HY.23c: место закрыто, уходим в звонок --")
+Hc, Gc = "HyClH%d" % S, "HyClG%d" % S
+for n in (Hc, Gc):
+    call("/api/onboarding/register", {"profile": {"name": n, "age": 30, "city": "Barcelona",
+        "interests": {"explicit": ["sketching"]}, "languages": {"comfortable": ["English"]}}})
+match(Hc, Gc, "d")
+rc = call("/api/agent/mplan-propose", {"self": Hc, "to": Gc, "title": "closed", "mode": "hybrid",
+          "starts_at": time.time() + 4 * 3600, "address": "Federal",
+          "link": "https://meet.example.com/closed"})
+PIDC = (rc.get("plan") or {}).get("id")
+call("/api/agent/mplan-respond", {"id": PIDC, "self": Gc, "action": "confirm"})
+mv = call("/api/agent/mplan-move-to-call", {"id": PIDC, "self": Hc})
+pm = mv.get("plan") or {}
+check("переход выполнен", mv.get("ok") is True, mv.get("error"))
+check("обе стороны в звонке", (pm.get("my_side"), pm.get("their_side")) == ("call", "call"),
+      (pm.get("my_side"), pm.get("their_side")))
+check("и это видно фактом", pm.get("moved_to_call") is True, pm.get("moved_to_call"))
+check("встреча НЕ отменена", pm.get("state") == "confirmed", pm.get("state"))
+second = get(Gc, PIDC)
+check("второй видит себя в звонке", second.get("my_side") == "call", second.get("my_side"))
+
+print("\n-- без ссылки уходить некуда --")
+Hn2, Gn2 = "HyCl2H%d" % S, "HyCl2G%d" % S
+for n in (Hn2, Gn2):
+    call("/api/onboarding/register", {"profile": {"name": n, "age": 30, "city": "Barcelona",
+        "interests": {"explicit": ["sketching"]}, "languages": {"comfortable": ["English"]}}})
+match(Hn2, Gn2, "e")
+rn2 = call("/api/agent/mplan-propose", {"self": Hn2, "to": Gn2, "title": "nolink", "mode": "hybrid",
+           "starts_at": time.time() + 4 * 3600, "address": "Federal"})
+nl2 = call("/api/agent/mplan-move-to-call", {"id": (rn2.get("plan") or {}).get("id"), "self": Hn2})
+check("переход без ссылки отклонён", nl2.get("error") == "NO_LINK", nl2)
+
+print("\n-- у звонка и встречи вживую перехода нет --")
+ro2 = call("/api/agent/mplan-propose", {"self": Ho, "to": Go, "title": "x", "mode": "online",
+           "starts_at": time.time() + 5 * 3600})
+no_h = call("/api/agent/mplan-move-to-call", {"id": PIDO_ONLINE, "self": Ho}) if False else \
+       call("/api/agent/mplan-move-to-call", {"id": (ro.get("plan") or {}).get("id"), "self": Ho})
+check("у звонка перехода нет", no_h.get("error") == "NOT_HYBRID", no_h)
+
+print("\n-- HY.25: как встретились --")
+# Встреча в прошлом: отзыв принимают только после неё.
+Hp, Gp = "HyPastH%d" % S, "HyPastG%d" % S
+for n in (Hp, Gp):
+    call("/api/onboarding/register", {"profile": {"name": n, "age": 30, "city": "Barcelona",
+        "interests": {"explicit": ["sketching"]}, "languages": {"comfortable": ["English"]}}})
+match(Hp, Gp, "f")
+rp = call("/api/agent/mplan-propose", {"self": Hp, "to": Gp, "title": "past", "mode": "hybrid",
+          "starts_at": time.time() + 3600, "address": "Federal", "link": "https://meet.example/p"})
+PIDP = (rp.get("plan") or {}).get("id")
+call("/api/agent/mplan-respond", {"id": PIDP, "self": Gp, "action": "confirm"})
+fb = call("/api/agent/mplan-feedback", {"id": PIDP, "self": Hp, "happened": True, "how": "both"})
+pf = fb.get("plan") or {}
+check("ответ принят", fb.get("ok") is True, fb.get("error"))
+check("«как встретились» записано", (pf.get("my_feedback") or {}).get("how") == "both",
+      pf.get("my_feedback"))
+bad_how = call("/api/agent/mplan-feedback", {"id": PIDP, "self": Hp, "happened": True, "how": "telepathy"})
+check("выдуманный способ не записывается",
+      ((bad_how.get("plan") or {}).get("my_feedback") or {}).get("how") == "both",
+      (bad_how.get("plan") or {}).get("my_feedback"))
+
+print("\n%s\nИТОГ: %d ok, %d проблем\n%s" % ("=" * 70, ok, bad, "=" * 70))
+sys.exit(1 if bad else 0)

@@ -109,6 +109,8 @@ export default function Plan() {
   const [reasonPick, setReasonPick] = useState('');
   /** Подтверждение отмены: на сервере отменённая встреча терминальна, вернуть её нельзя. */
   const [dropping, setDropping] = useState(false);
+  /** HY.25 — каким входом встреча в итоге состоялась. Только у гибрида. */
+  const [howMet, setHowMet] = useState<'' | 'in_person' | 'call' | 'both'>('');
   /** «Другое время» после отмены: составляем новую встречу, опрос не должен возвращать старую. */
   const composing = useRef(false);
   const startNewPlan = () => { composing.current = true; setPlan(null); };
@@ -230,8 +232,16 @@ export default function Plan() {
    * где оба «Confirmed · in person», пока никто ничего не менял.
    */
   const hybrid = mode === 'hybrid';
+  /** HY.23c: оба уже переведены в звонок — кнопку больше не предлагаем. */
+  const movedToCall = !!(plan as any)?.moved_to_call;
   const mySide = String((plan as any)?.my_side || (hybrid ? 'in_person' : ''));
   const theirSide = String((plan as any)?.their_side || (hybrid ? 'in_person' : ''));
+  /**
+   * Иду ли я живьём. У встречи вживую — всегда; у гибрида — пока не ушёл в звонок; у звонка —
+   * никогда. От этого зависят «опаздываю» и «я на месте»: они про дорогу к месту.
+   */
+  const comingInPerson = wantsPlace && mySide !== 'call';
+  const theirComingInPerson = wantsPlace && theirSide !== 'call';
   /** OF.22/OF.22a/OF.23: живые статусы — «в пути», «опаздываю», «на месте». */
   const myLive = String(plan?.my_live?.status || '');
   const theirLive = String(plan?.their_live?.status || '');
@@ -385,6 +395,22 @@ export default function Plan() {
     }
   };
 
+  /** HY.23c: место закрыто — переводим ОБОИХ в звонок. Не отмена: встреча остаётся. */
+  const moveToCall = async () => {
+    if (!plan?.id) return;
+    setErr('');
+    try {
+      const r: any = await agent.planMoveToCall(plan.id, me);
+      if (!r?.ok) {
+        if (r?.error === 'NO_LINK') throw new Error(PLAN.sideNoLink());
+        throw new Error(CHAT.planFailed());
+      }
+      if (r.plan) setPlan(r.plan); else await load();
+    } catch (e: any) {
+      setErr(String(e?.message || CHAT.planFailed()));
+    }
+  };
+
   /** OF.22/OF.22a/OF.23: «уже иду» / «опаздываю» / «на месте». Видит только собеседник. */
   const sendLive = async (status: 'otw' | 'late' | 'here') => {
     if (!plan?.id) return;
@@ -463,7 +489,10 @@ export default function Plan() {
     if (!plan?.id) return;
     try {
       const value = RATINGS.find(([k]) => k === rating)?.[2];
-      await agent.planFeedback(plan.id, me, { rating: value });
+      // HY.25: «как встретились» уезжает тем же вызовом, что и оценка, — сервер дописывает в ту же
+      // строку отзыва, а не заводит вторую. Пусто, если человек не выбрал: это необязательный
+      // вопрос, и молчание тут значит «не сказал», а не «никак».
+      await agent.planFeedback(plan.id, me, howMet ? { rating: value, how: howMet } : { rating: value });
       setThanks(PLAN.thanks());
       await load();
     } catch {
@@ -697,6 +726,37 @@ export default function Plan() {
                   !bothAnswered ? <Text style={s.note}>{waitingLine()}</Text> : null
                 ) : (
                   <>
+                    {/*
+                      HY.25 — «как встретились». Вопрос ТОЛЬКО у гибрида и только у того, кто
+                      сказал «состоялась»: у него было два входа, и какой сработал — это не оценка
+                      встречи, а подсказка агенту на следующий раз. «И так и так» стоит намеренно:
+                      обычный исход, когда один пришёл, второй подключился, а потом поменялись.
+                    */}
+                    {hybrid ? (
+                      <>
+                        <Text style={s.doneTitle}>{PLAN.howMetTitle()}</Text>
+                        <Text style={s.note}>{PLAN.howMetNote()}</Text>
+                        <View style={s.chipRowWrap}>
+                          {([
+                            ['in_person', PLAN.howInPerson()],
+                            ['call', PLAN.howCall()],
+                            ['both', PLAN.howBoth()],
+                          ] as ['in_person' | 'call' | 'both', string][]).map(([k, label]) => (
+                            <Pressable
+                              key={k}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected: howMet === k }}
+                              onPress={() => setHowMet(k)}
+                              style={[s.chip, howMet === k && s.chipOn]}
+                            >
+                              <Text style={[s.chipText, howMet === k && { color: color.onPrimary }]}>
+                                {label}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      </>
+                    ) : null}
                     <Text style={s.note}>{PLAN.optional()}</Text>
                     <View style={s.chipRowWrap}>
                       {RATINGS.map(([k, label]) => (
@@ -932,6 +992,32 @@ export default function Plan() {
                     <Text style={s.ctaText}>{PLAN.messageThem(other)}</Text>
                   </Pressable>
 
+                  {/*
+                    HY.23c — оба отметились «на месте», а место закрыто. Кадр описывает именно этот
+                    момент: два человека у запертой двери, и у гибрида в отличие от встречи вживую
+                    есть куда деться — ссылка уже открыта.
+
+                    Кнопка появляется только когда оба и правда на месте: предлагать «уходим в
+                    звонок» тому, кто ещё в дороге, значило бы звать его отменить свою же дорогу.
+                    После перехода она исчезает — сервер отдаёт признак фактом.
+                  */}
+                  {hybrid && !movedToCall && myLive === 'here' && theirLive === 'here' ? (
+                    <View style={s.infoBox}>
+                      <Text style={s.closedTitle}>{PLAN.placeClosedTitle()}</Text>
+                      <Text style={s.infoText}>{PLAN.placeClosedNote()}</Text>
+                      <Pressable accessibilityRole="button" style={s.cta} onPress={moveToCall}>
+                        <Text style={s.ctaText}>{PLAN.moveToCall()}</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+
+                  {hybrid && movedToCall ? (
+                    <View style={s.doneCard}>
+                      <Text style={s.doneTitle}>{PLAN.movedToCallTitle()}</Text>
+                      <Text style={s.doneSub}>{PLAN.movedToCallNote()}</Text>
+                    </View>
+                  ) : null}
+
                   {/* HY.22: за полчаса до начала гибрид даёт то, чего не даёт ни звонок, ни
                       встреча вживую, — уйти на другую сторону, не отменяя встречу. Кнопка
                       переключает в обе стороны: на кадре 22a рядом с «ушёл в звонок» стоит
@@ -948,13 +1034,18 @@ export default function Plan() {
                     </Pressable>
                   ) : null}
 
-                  {offline && myLive !== 'late' && myLive !== 'here' ? (
+                  {/* «Опаздываю» и «я на месте» — про ДОРОГУ, а не про режим встречи. Стояли на
+                      «режим == offline», поэтому у гибрида их не было ни у кого: человек шёл к
+                      столику и не мог ни предупредить об опоздании, ни отметиться на месте. А без
+                      «на месте» недостижим и весь кадр HY.23c, который на этом и держится.
+                      Показываем тому, кто идёт живьём: ушедшему в звонок отмечаться негде. */}
+                  {comingInPerson && myLive !== 'late' && myLive !== 'here' ? (
                     <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => sendLive('late')}>
                       <Text style={s.ctaDarkText}>{PLAN.imLate()}</Text>
                     </Pressable>
                   ) : null}
 
-                  {offline && myLive !== 'here' ? (
+                  {comingInPerson && myLive !== 'here' ? (
                     <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => sendLive('here')}>
                       <Text style={s.ctaSoftText}>{PLAN.imHere()}</Text>
                     </Pressable>
@@ -973,7 +1064,7 @@ export default function Plan() {
                     onPress={() => setDropping(true)}
                   >
                     <Text style={offline ? s.ctaSoftText : s.ctaDarkText}>
-                      {offline && theirLive === 'late' ? PLAN.cantWait() : PLAN.cantMakeIt()}
+                      {theirComingInPerson && theirLive === 'late' ? PLAN.cantWait() : PLAN.cantMakeIt()}
                     </Text>
                   </Pressable>
                 </>
@@ -1078,7 +1169,10 @@ export default function Plan() {
         {/* Подтверждение отмены. Называет последствие словами: встреча гаснет для обоих и
             восстановить её нельзя — только назначить новую. */}
         <Sheet visible={dropping} onClose={() => setDropping(false)} title={PLAN.callOffAsk(other)}>
-          <Text style={s.note}>{PLAN.callOffNote(other)}</Text>
+          {/* HY.23b: у гибрида рядом стоит «уйду в звонок», и «не смогу» легко прочесть как
+              смену стороны. Кадр требует сказать разницу вслух — иначе человек отменяет встречу,
+              думая, что просто меняет вход. */}
+          <Text style={s.note}>{hybrid ? PLAN.callOffNoteHybrid(other) : PLAN.callOffNote(other)}</Text>
           <Pressable
             accessibilityRole="button"
             style={s.ctaDark}

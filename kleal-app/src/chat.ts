@@ -236,6 +236,16 @@ export const PLAN = {
       `${name} сразу увидит отмену. Вернуть эту встречу нельзя — можно назначить новую, чат остаётся открытым.`,
       `${name} sees it straight away. This meetup can’t be restored — you can set a new one, and your chat stays open.`
     ),
+  /**
+   * HY.23b — та же отмена, но у ГИБРИДА. Тут рядом стоит кнопка «уйду в звонок», и человек может
+   * решить, что «не смогу» — это про неё, то есть про смену стороны. Кадр говорит прямым текстом,
+   * что это не так: смена стороны встречу не трогает, а отмена заканчивает её для обоих.
+   */
+  callOffNoteHybrid: (name: string) =>
+    T(
+      `Это не смена стороны: встреча закончится для вас обоих. ${name} сразу увидит отмену. Вернуть её нельзя — можно назначить новую, чат остаётся открытым.`,
+      `This is not switching sides — it ends the meetup for both of you. ${name} sees it straight away. This one cannot be brought back, but your chat stays open, so a new time is still possible.`
+    ),
   callOffYes: () => T('Да, отменить', 'Yes, call it off'),
   callOffNo: () => T('Оставить как есть', 'Leave it as it is'),
 
@@ -318,6 +328,39 @@ export const PLAN = {
    * не ждёшь того, кто не придёт».
    */
   joinCallInstead: () => T('Уйду в звонок', 'Join the call instead'),
+  /**
+   * HY.23c — «место закрыто».
+   *
+   * Выход, которого у встречи вживую нет: ссылка уже открыта. Кнопка переводит ОБОИХ, потому что
+   * по одному это не работает — пока второй не догадается сделать то же, он стоит у той же двери.
+   */
+  placeClosedTitle: () => T('Место закрыто', 'The place is closed'),
+  placeClosedNote: () =>
+    T(
+      'Дверь заперта, и вы оба снаружи. У гибрида есть выход, которого нет у встречи вживую: перевести всех в звонок — ссылка уже открыта.',
+      'The door is shut and you are both outside. Hybrid gives you a way out that offline does not — move everyone to the call, the link is already open.'
+    ),
+  moveToCall: () => T('Уходим в звонок', 'Move to the call'),
+  movedToCallTitle: () => T('Вы оба в звонке', 'You both moved to the call'),
+  movedToCallNote: () =>
+    T(
+      'Место не сработало, встреча осталась. Ссылка открыта у обоих.',
+      'The place didn’t work out, the meetup did. The link is open for both of you.'
+    ),
+  /**
+   * HY.25 — КАК встретились. Не оценка встречи: у гибрида два входа, и какой из них сработал —
+   * подсказка агенту, что предлагать в следующий раз. «И так и так» стоит намеренно: это обычный
+   * исход, когда один пришёл, второй подключился, а потом поменялись местами.
+   */
+  howMetTitle: () => T('Как встретились?', 'How did you meet?'),
+  howMetNote: () =>
+    T(
+      'Гибрид засчитывается в любом случае — это только чтобы агент понимал, какой формат тебе подходит.',
+      'Hybrid counts either way — this only helps your agent suggest the right format next time.'
+    ),
+  howInPerson: () => T('Вживую', 'In person'),
+  howCall: () => T('На звонке', 'On the call'),
+  howBoth: () => T('И так и так', 'A bit of both'),
   goInPersonAfterAll: () => T('Всё-таки приду живьём', 'Go in person after all'),
   sideSwitchedTitle: () => T('Ты уходишь в звонок', 'You switched to the call'),
   sideSwitchedNote: (name: string) =>
