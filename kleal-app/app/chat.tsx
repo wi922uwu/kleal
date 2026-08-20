@@ -270,9 +270,11 @@ export default function Chat() {
 
   const leaveFunnel = () => {
     setFunnelOpts([]);
-    // Пришли из профиля — туда и возвращаемся. replace, а не push: разговор закончен, и «назад»
-    // из профиля не должно приводить обратно в него.
-    if (back) { router.replace(back as any); return; }
+    // Пришли из профиля — туда и возвращаемся. Не `replace`: тот подменял только верхний экран,
+    // а приславший ОСТАВАЛСЯ в стопке под разговором — и человек получал ДВЕ копии «Интересов»
+    // подряд, из которых надо было выходить дважды. `dismissTo` снимает разговор и возвращает к
+    // тому экрану, который уже открыт.
+    if (back) { router.dismissTo(back as any); return; }
     setStep('photo');
     botAfter(STEP_PHOTO.greet(st.profile.name || ''));
     setTimeout(() => say('bot', STEP_PHOTO.ask()), 1900);

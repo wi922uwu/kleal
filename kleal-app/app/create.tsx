@@ -257,7 +257,7 @@ export default function Create() {
             <IconChevronLeft />
           </Pressable>
           <View style={{ flex: 1 }} />
-          <Pressable accessibilityRole="button" style={s.allBtn} onPress={() => router.replace('/home')}>
+          <Pressable accessibilityRole="button" style={s.allBtn} onPress={() => router.dismissTo('/home')}>
             <Text style={s.allText}>{CREATE.title()}</Text>
           </Pressable>
         </View>

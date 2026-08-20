@@ -400,7 +400,7 @@ export default function Results() {
                'Search results only live until the page reloads. Let’s search again.')}
           </Text>
           {/* Новый поиск начинается там же, где и любой другой: с темы, а не с формата. */}
-          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.replace('/create')}>
+          <Pressable accessibilityRole="button" style={s.cta} onPress={() => { router.dismissTo('/home'); router.navigate('/create'); }}>
             <Text style={s.ctaText}>{T('Новый поиск', 'New search')}</Text>
           </Pressable>
         </View>

@@ -73,7 +73,7 @@ export default function Candidate() {
           {T('Карточка живёт один переход из выдачи. Поищем заново?',
              'This card lives one hop from the results. Search again?')}
         </Text>
-        <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.replace('/create')}>
+        <Pressable accessibilityRole="button" style={s.cta} onPress={() => { router.dismissTo('/home'); router.navigate('/create'); }}>
           <Text style={s.ctaText}>{T('Новый поиск', 'New search')}</Text>
         </Pressable>
       </View>

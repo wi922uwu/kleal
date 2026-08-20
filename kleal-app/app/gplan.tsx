@@ -281,7 +281,9 @@ export default function GroupPlan() {
   if (fatal) {
     return (
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
-        <Head title={ROOM.gone()} onBack={() => router.replace('/home')} />
+        {/* Не `replace`: тот подменял бы только этот экран, оставляя под ним всю дорогу до
+            группы, которой уже нет. `dismissTo` возвращает к главной, снимая её целиком. */}
+        <Head title={ROOM.gone()} onBack={() => router.dismissTo('/home')} />
         <Text style={s.fatal}>{fatal}</Text>
       </View>
     );

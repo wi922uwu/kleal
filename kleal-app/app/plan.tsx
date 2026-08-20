@@ -812,7 +812,7 @@ export default function Plan() {
                     <Pressable
                       accessibilityRole="button"
                       style={s.cta}
-                      onPress={() => router.replace('/home')}
+                      onPress={() => router.dismissTo('/home')}
                     >
                       <Text style={s.ctaText}>{PLAN.findElse()}</Text>
                     </Pressable>

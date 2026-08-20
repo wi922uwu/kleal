@@ -187,7 +187,7 @@ export default function Invite() {
                     : row.status === 'withdrawn' ? INVITE.withdrawnNote()
                     : INVITE.closedNote()}
                 </Text>
-                <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.replace('/home')}>
+                <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.dismissTo('/home')}>
                   <Text style={s.ctaText}>{INVITE.lookElse()}</Text>
                 </Pressable>
               </>

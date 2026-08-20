@@ -174,7 +174,7 @@ export default function MyIntent() {
     try {
       const r: any = await agent.intentDelete(me, row.id);
       if (!r?.ok) throw new Error('delete failed');
-      router.replace('/activity');
+      router.dismissTo('/home'); router.navigate('/activity');
     } catch {
       setErr(ACT.removeFailed());
     }
@@ -224,7 +224,7 @@ export default function MyIntent() {
       {!loading && !row ? (
         <View style={s.empty}>
           <Text style={s.emptyTitle}>{err || ACT.loadFailed()}</Text>
-          <Pressable accessibilityRole="button" style={s.emptyCta} onPress={() => router.replace('/activity')}>
+          <Pressable accessibilityRole="button" style={s.emptyCta} onPress={() => { router.dismissTo('/home'); router.navigate('/activity'); }}>
             <Text style={s.emptyCtaText}>{ACT.title()}</Text>
           </Pressable>
         </View>

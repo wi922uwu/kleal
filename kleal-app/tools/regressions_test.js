@@ -80,9 +80,15 @@ console.log('\nсо сводки нельзя уйти, не записав пр
 {
   const scr = read('app/summary.tsx');
 
+  // ВАЖНО САМО УСЛОВИЕ, а не то, что оно стоит первой строкой: проверка требовала `if (await
+  // register())` вплотную за `{` и падала от вставленного между ними пояснения. Смысл — уйти
+  // можно только после успешной записи — от комментария не меняется.
+  const guarded = (fn) => {
+    const body = scr.slice(scr.indexOf('const ' + fn + ' = async'));
+    return /if \(await register\(\)\)/.test(body.slice(0, body.indexOf('};')));
+  };
   check('оба выхода идут через register()',
-    /const finish = async \(\) => \{\s*if \(await register\(\)\)/.test(scr) &&
-    /const toProfile = async \(\) => \{\s*if \(await register\(\)\)/.test(scr),
+    guarded('finish') && guarded('toProfile'),
     'выход без проверки результата = уход с непрописанным профилем');
 
   check('нет перехода на /done мимо регистрации',
@@ -1612,9 +1618,16 @@ console.log('\nинтро срабатывает на запуске, а не с
   check('в списке зависимостей нет done', !/\}, \[st\.login, st\.done\]\)/.test(ix));
 
   const sm = code('app/summary.tsx');
-  check('«Все настройки профиля» ведёт в профиль', /router\.replace\('\/profile'\)/.test(sm));
-  check('и только после успешной записи', /if \(await register\(\)\) \{ router\.replace\('\/profile'\)/.test(sm),
-    'уйти с профилем, которого нет на сервере, нельзя ни одной кнопкой');
+  // Важно КУДА ведёт и ПОСЛЕ ЧЕГО, а не каким вызовом: способ перехода менялся дважды
+  // (replace -> dismissAll+navigate), смысл ни разу.
+  check('«Все настройки профиля» ведёт в профиль', /'\/profile'/.test(sm));
+  {
+    const body = sm.slice(sm.indexOf('const toProfile = async'));
+    const upToReturn = body.slice(0, body.indexOf('return;') + 7);
+    check('и только после успешной записи',
+      /if \(await register\(\)\)/.test(upToReturn) && /'\/profile'/.test(upToReturn),
+      'уйти с профилем, которого нет на сервере, нельзя ни одной кнопкой');
+  }
 
   // Второй такой же наблюдатель уже был и уже защищён — проверяем, что защиту не сняли.
   const ch = code('app/chat.tsx');
@@ -2326,6 +2339,27 @@ console.log('\nчетыре находки сверки: слот, кнопка,
       check('вкладки открываются без анимации', missing.length === 0, missing.join(', '));
       // А проваливание вглубь её сохраняет — там движение говорит, куда идёшь.
       check('вглубь анимация осталась', /animation: 'slide_from_right'/.test(lay));
+    }
+    // Выход НА КОРЕНЬ через `replace` подменяет только верхний экран, оставляя всё под ним:
+    // из [главная, приглашение] получалось [главная, главная]. Единственная законная форма —
+    // запасной путь у кнопки «назад», когда возвращаться уже некуда.
+    {
+      const fs = require('fs'), path = require('path');
+      const bad = [];
+      const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).forEach((e) => {
+        const full = path.join(d, e.name);
+        if (e.isDirectory()) return walk(full);
+        if (!/\.tsx?$/.test(e.name)) return;
+        const src = fs.readFileSync(full, 'utf8');
+        src.split('\n').forEach((ln, i) => {
+          if (!/router\.replace\('\/(home|activity|messages|profile)'\)/.test(ln)) return;
+          if (/canGoBack\(\)/.test(ln)) return;                       // запасной путь «назад»
+          if (/index\.tsx$|login\.tsx$|chat\.tsx$/.test(full)) return; // перенаправления входа
+          bad.push(e.name + ':' + (i + 1));
+        });
+      });
+      walk(path.join(__dirname, '..', 'app'));
+      check('выход на корень не плодит копий', bad.length === 0, bad.join(', '));
     }
   }
 

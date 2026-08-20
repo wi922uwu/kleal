@@ -119,7 +119,10 @@ export default function Summary() {
    * причина всплывает поверх экрана, и человек видит, что произошло.
    */
   const toProfile = async () => {
-    if (await register()) { router.replace('/profile'); return; }
+    // Финал онбординга: `replace` подменил бы только этот экран, оставив под ним всю анкету —
+    // и «назад» из профиля вело бы обратно в неё. Онбординг закончен, возвращаться некуда:
+    // сворачиваем стопку до главной и открываем профиль поверх неё.
+    if (await register()) { router.dismissAll(); router.navigate('/home'); router.navigate('/profile'); return; }
     Alert.alert(
       T('Профиль не сохранился', 'Your profile didn’t save'),
       T('Проверь связь и попробуй ещё раз.', 'Check your connection and try again.')
