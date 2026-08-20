@@ -48,7 +48,7 @@ export default function Splash() {
   const sl = slides[i];
   const last = i === slides.length - 1;
 
-  const next = () => (last ? router.push('/auth') : patch({ slide: i + 1 }));
+  const next = () => (last ? router.navigate('/auth') : patch({ slide: i + 1 }));
 
   const waveH = 160;
   return (

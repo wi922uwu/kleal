@@ -50,7 +50,7 @@ export default function Safety() {
       {/* Кадр B.11: заблокированные — первая строка экрана, до всех переключателей. */}
       <Pressable
         accessibilityRole="button"
-        onPress={() => router.push('/settings/blocked')}
+        onPress={() => router.navigate('/settings/blocked')}
         style={({ pressed }: { pressed: boolean }) => [s.blocked, pressed && { opacity: 0.9 }]}
       >
         <View style={{ flex: 1 }}>

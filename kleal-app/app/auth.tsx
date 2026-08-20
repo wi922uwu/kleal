@@ -23,7 +23,7 @@ export default function Auth() {
   const skipTo = (method: string) => {
     patch({ authMethod: method });
     applyDefaults();
-    router.push('/chat');
+    router.navigate('/chat');
   };
 
   return (
@@ -42,7 +42,7 @@ export default function Auth() {
         <Btn kind="dark" label={T('Продолжить с Apple', 'Continue with Apple')} onPress={() => skipTo('apple')} />
         <Btn kind="ghost" label={T('Продолжить с Google', 'Continue with Google')} onPress={() => skipTo('google')} />
         <Btn kind="primary" label={T('Продолжить по почте', 'Continue with email')} onPress={() => skipTo('email')} />
-        <Btn kind="ghost" label={T('Логин и пароль', 'Login and password')} onPress={() => router.push('/login')} />
+        <Btn kind="ghost" label={T('Логин и пароль', 'Login and password')} onPress={() => router.navigate('/login')} />
       </View>
 
       <Text style={s.terms}>{AUTH_TERMS()}</Text>

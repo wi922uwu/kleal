@@ -2190,8 +2190,10 @@ console.log('\nинтересы выбираются чипами, и цепоч
   check('колесо больше не рисуется', !/<CipherWheel/.test(ch));
   // Профиль по «Добавить» уходит в ТОТ ЖЕ шаг онбординга — поэтому правка одна на два экрана.
   // Если это разойдётся, профиль останется со старым видом, и никто этого не заметит.
+  // Важен АДРЕС, а не способ перехода: проверка ловила `router.push(...)` дословно и сломалась,
+  // когда все переходы стали `navigate`. Смысл же остался прежним — профиль ведёт в тот же шаг.
   check('профиль ведёт в тот же шаг',
-    /router\.push\('\/chat\?step=hobbies&back=\/profile\/interests'\)/.test(code('app/profile/interests.tsx')));
+    /'\/chat\?step=hobbies&back=\/profile\/interests'/.test(code('app/profile/interests.tsx')));
 
   const ic = read('src/components/InterestChips.tsx');
   // ГЛАВНОЕ. Матчинг сравнивает интересы БУКВАЛЬНО: без родителей человека не найдёт тот, кто
@@ -2290,6 +2292,27 @@ console.log('\nчетыре находки сверки: слот, кнопка,
   // O.21b: чужой час был виден у согласованного времени и НЕ виден у предложенного — а решают
   // именно про предложенное.
   check('чужой час есть и у встречного времени', /PLAN\.theirTimeNote\(other, peerPendingTime\)/.test(pl));
+
+  // Кнопка «перейти к X» не должна заводить ВТОРОЙ X: с `push` профиль открывался сколько угодно
+  // раз подряд, и обратно надо было нажать «назад» столько же. Ищем по всем экранам сразу —
+  // одно случайно вернувшееся `push` возвращает и проблему.
+  {
+    const fs = require('fs'), path = require('path');
+    const files = [];
+    const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).forEach((e) => {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(e.name)) files.push(full);
+    });
+    walk(path.join(__dirname, '..', 'app'));
+    walk(path.join(__dirname, '..', 'src'));
+    const guilty = files.filter((f) => /router\.push\(/.test(fs.readFileSync(f, 'utf8')));
+    check('переходы не копят стопку экранов', guilty.length === 0,
+      guilty.map((f) => f.split('/').slice(-2).join('/')).join(', '));
+    const nav = code('src/components/BottomNav.tsx');
+    check('панель не реагирует на текущую вкладку', /to && !on \?/.test(nav));
+    check('и «домой» тоже не копит', /router\.navigate\('\/home'\)/.test(nav));
+  }
 
   // ГИБРИД: два входа. Поле было одно, и место у гибрида просто не уезжало на сервер.
   check('сервер держит ссылку отдельно от места', /def _mp_link\(p\)/.test(py));

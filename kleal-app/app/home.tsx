@@ -121,7 +121,7 @@ export default function Home() {
    * чтобы дочитать ответ на другом, незачем. Нажатие сразу открывает чат, клавиатура поднимается
    * уже там — под лентой, в которую человек и смотрит.
    */
-  const toBuddy = () => router.push('/buddy');
+  const toBuddy = () => router.navigate('/buddy');
 
   const myArea = st.profile.city || '';
 
@@ -156,7 +156,7 @@ export default function Home() {
                   <Pressable
                     accessibilityRole="button"
                     style={s.nextCard}
-                    onPress={() => router.push({ pathname: '/plan', params: { id: String(nextPlan.id || '') } })}
+                    onPress={() => router.navigate({ pathname: '/plan', params: { id: String(nextPlan.id || '') } })}
                   >
                     <Text style={s.nextTitle} numberOfLines={1}>
                       {String(nextPlan.title || '').trim() || HOME.next()}
@@ -239,7 +239,7 @@ export default function Home() {
           {/* Кнопка обещает историю — и открывает её сегмент во вкладке «Интенты». Раньше она
               вела в чат с Бадди: это разговор, но не история, и вернуться к прошлым затеям
               оттуда было нельзя. */}
-          <Pressable accessibilityRole="button" style={s.hist} onPress={() => router.push('/activity?seg=history')}>
+          <Pressable accessibilityRole="button" style={s.hist} onPress={() => router.navigate('/activity?seg=history')}>
             <IconChat />
             <Text style={s.histText}>{HOME.history()}</Text>
             <Text style={s.histArrow}>›</Text>
@@ -328,7 +328,7 @@ function DirectInviteCard({ inv }: { inv: HomeInvite }) {
   const router = useRouter();
   const w = splitWhen(inv.intent.when || '');
   const where = inv.intent.area || '';
-  const open = () => router.push({ pathname: '/invite', params: { id: inv.id } });
+  const open = () => router.navigate({ pathname: '/invite', params: { id: inv.id } });
   return (
     <Pressable accessibilityRole="button" onPress={open} style={s.meet}>
       {inv.from.photo ? (
@@ -373,7 +373,7 @@ function GroupInviteCard({ inv }: { inv: HomeInvite }) {
   // expo-router на несуществующий путь молча ничего не делает, и карточка приглашения не
   // открывалась вовсе. Заметить это было нельзя, пока лента приглашений сама отдавала 404.
   // gid рядом с id — правка соседней ветки: экран приглашения без него не находит группу.
-  const open = () => router.push({
+  const open = () => router.navigate({
     pathname: '/ginvite',
     params: { id: inv.id, gid: String(group?.gid || inv.intent.id || '') },
   });

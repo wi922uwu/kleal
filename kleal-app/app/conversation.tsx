@@ -315,7 +315,7 @@ export default function Conversation() {
       }
       setPending(null);
       if (pending.kind === 'plan') {
-        router.push({ pathname: '/plan', params: planParams() });
+        router.navigate({ pathname: '/plan', params: planParams() });
       } else {
         // КОНЕЦ РАЗГОВОРА ЗАПИСЫВАЕТСЯ, а не только уводит с экрана.
         //
@@ -413,7 +413,7 @@ export default function Conversation() {
     link: String(request?.intent?.link || ''),
   });
 
-  const toPlan = () => router.push({ pathname: '/plan', params: planParams() });
+  const toPlan = () => router.navigate({ pathname: '/plan', params: planParams() });
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -443,7 +443,7 @@ export default function Conversation() {
           <Pressable
             accessibilityRole="button"
             style={s.planCard}
-            onPress={() => router.push({ pathname: '/plan', params: { id: livePlan.id, who: other, title: livePlan.title || intentTitle, photo } })}
+            onPress={() => router.navigate({ pathname: '/plan', params: { id: livePlan.id, who: other, title: livePlan.title || intentTitle, photo } })}
           >
             <View style={s.planIcon}><IconCalendar size={20} c={color.onPrimary} /></View>
             <View style={{ flex: 1 }}>
@@ -522,7 +522,7 @@ export default function Conversation() {
                 <Pressable
                   accessibilityRole="button"
                   style={s.invBtn}
-                  onPress={() => router.push({ pathname: '/invite', params: { id: inviteIn.id } })}
+                  onPress={() => router.navigate({ pathname: '/invite', params: { id: inviteIn.id } })}
                 >
                   <Text style={s.invBtnText}>{THREAD.reviewInvite()}</Text>
                 </Pressable>

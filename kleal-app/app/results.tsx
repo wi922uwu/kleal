@@ -343,7 +343,7 @@ export default function Results() {
     // относится — он про 1:1.
     if (gmode) {
       const gid = groupId();
-      if (gid) router.push({ pathname: '/group', params: { gid } });
+      if (gid) router.navigate({ pathname: '/group', params: { gid } });
       return;
     }
     const active = chatting;
@@ -351,7 +351,7 @@ export default function Results() {
       setBusyWith(active);
       return;
     }
-    router.push({
+    router.navigate({
       pathname: '/conversation',
       params: { who: name, title: String(intent?.title || (intent?.topics || []).join(', ') || ''), photo: photo || '' },
     });
@@ -380,7 +380,7 @@ export default function Results() {
 
   const openProfile = (c: Cand) => {
     setCandidate(c);
-    router.push('/candidate');
+    router.navigate('/candidate');
   };
 
   // Экран открыт напрямую — обновлением страницы или по ссылке. Выдача живёт один переход, и

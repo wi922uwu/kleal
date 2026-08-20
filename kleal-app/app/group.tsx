@@ -275,7 +275,7 @@ export default function GroupRoom() {
         query: '',
       });
       setInfo(false);
-      router.push('/results');
+      router.navigate('/results');
     } catch {
       setErr(GROUP.sendFailed());
     } finally {
@@ -387,7 +387,7 @@ export default function GroupRoom() {
         {planReachable ? (
           <Pressable accessibilityRole="button" style={s.intentBar}
                      accessibilityLabel={(g as any)?.plan ? ROOM.openPlan() : ROOM.createPlan()}
-                     onPress={() => router.push({ pathname: '/gplan', params: { gid } })}>
+                     onPress={() => router.navigate({ pathname: '/gplan', params: { gid } })}>
             <View style={{ flex: 1 }}>
               <Text style={s.intentTitle} numberOfLines={1}>{g?.title || ''}</Text>
               <Text style={[s.intentSub, canPlan && { color: color.successText }]} numberOfLines={1}>
@@ -561,7 +561,7 @@ export default function GroupRoom() {
                когда план уже есть: «Создать» тогда врало бы — второго плана у группы не бывает
                (сервер ответит PLAN_EXISTS), и вести туда надо к существующему. */
             <Pressable accessibilityRole="button" style={s.cta}
-                       onPress={() => router.push({ pathname: '/gplan', params: { gid } })}>
+                       onPress={() => router.navigate({ pathname: '/gplan', params: { gid } })}>
               <Text style={s.ctaText}>
                 {(g as any)?.plan ? ROOM.openPlan() : ROOM.createPlan()}
               </Text>

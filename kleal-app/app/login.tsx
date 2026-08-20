@@ -62,7 +62,7 @@ export default function Login() {
         }
         patch({ login: login.trim(), msg: {} });
         applyDefaults();
-        router.push('/chat');
+        router.navigate('/chat');
         return;
       }
       setMsg(errorText(r?.error));

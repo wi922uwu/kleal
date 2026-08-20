@@ -36,7 +36,7 @@ export default function Done() {
         <Pressable
           accessibilityRole="button"
           style={s.cta}
-          onPress={() => { router.replace('/home'); router.push('/create'); }}
+          onPress={() => { router.replace('/home'); router.navigate('/create'); }}
         >
           <Text style={s.ctaText}>{DONE_SCREEN.cta()}</Text>
         </Pressable>

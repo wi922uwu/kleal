@@ -38,7 +38,18 @@ export function BottomNav({ active }: { active?: Tab }) {
         accessibilityRole="button"
         accessibilityState={{ selected: on, disabled: !to }}
         accessibilityLabel={label}
-        onPress={to ? () => router.push(to as any) : undefined}
+        /*
+          ВКЛАДКА НЕ КЛАДЁТСЯ СТОПКОЙ.
+          
+          Было `push`: каждое нажатие добавляло ЕЩЁ ОДИН экран поверх — хоть двадцать профилей
+          подряд, — и потом столько же раз надо было нажать «назад». Панель видна на девяти
+          экранах, так что набрать стопку можно было не заметив.
+          
+          `navigate` вместо `push`: если такой экран в стопке уже есть, он возвращает к нему, а не
+          заводит второй. А если я УЖЕ на этой вкладке, не делаем ничего: нажатие на текущую
+          вкладку — это промах или привычка, и открывать по нему нечего.
+        */
+        onPress={to && !on ? () => router.navigate(to as any) : undefined}
         style={[s.item, !to && s.off]}
       >
         <Icon size={24} c={on ? color.primary : color.muted} />
@@ -60,7 +71,12 @@ export function BottomNav({ active }: { active?: Tab }) {
         accessibilityRole="button"
         accessibilityLabel={NAV_FAB()}
         style={s.fab}
-        onPress={() => router.replace('/home')}
+        /*
+          Тоже не `replace`. Тот подменял ВЕРХНИЙ экран главной, оставляя всё, что под ним: из
+          [главная, профиль] получалось [главная, главная], и «назад» вело на главную же. `navigate`
+          возвращает к той главной, что уже открыта, и стопка не растёт.
+        */
+        onPress={() => router.navigate('/home')}
       >
         <IconSpark size={28} />
       </Pressable>

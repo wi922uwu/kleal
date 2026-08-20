@@ -184,7 +184,7 @@ export default function Intent() {
       profile: profile(),
       query: query || '',
     });
-    router.push('/results');
+    router.navigate('/results');
   };
 
   /** Выбор строки на O.05/O.06: галочка, «Awesome!», и через паузу следующий вопрос. */

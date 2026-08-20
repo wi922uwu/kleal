@@ -156,7 +156,7 @@ export default function MyIntent() {
         profile: prof,
         query: intentTitle(row),
       });
-      router.push('/results');
+      router.navigate('/results');
     } catch {
       setErr(ACT.loadFailed());
     } finally {

@@ -156,7 +156,7 @@ export default function ProfileHub() {
           accessibilityRole="button"
           accessibilityLabel={SETTINGS.title()}
           style={s.gear}
-          onPress={() => router.push('/settings')}
+          onPress={() => router.navigate('/settings')}
         >
           <IconGear />
         </Pressable>
@@ -238,7 +238,7 @@ export default function ProfileHub() {
           то есть с того, что ставится руками ПОСЛЕ того, как тема собрана. Открывать его первым —
           значит просить человека выбрать «онлайн или офлайн» раньше, чем он сказал, для чего.
         */}
-        <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/create')}>
+        <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/create')}>
           <Text style={s.ctaText}>{HUB.createIntent()}</Text>
         </Pressable>
       </Card>
@@ -255,7 +255,7 @@ export default function ProfileHub() {
           sub={row.sub(p)}
           Icon={ROW_ICON[row.id]}
           onPress={() => (row.kind === 'screen'
-            ? router.push(`/profile/${row.id}` as any)
+            ? router.navigate(`/profile/${row.id}` as any)
             : setSheet(row.id as 'languages' | 'location'))}
         />
       ))}

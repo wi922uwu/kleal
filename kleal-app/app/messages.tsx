@@ -176,14 +176,14 @@ export default function Messages() {
     if (r.kind === 'group' || r.kind === 'ginvite-in') {
       if (!r.gid) return;
       if (r.kind === 'ginvite-in') {
-        router.push({ pathname: '/ginvite', params: { id: r.id || '', gid: r.gid } });
+        router.navigate({ pathname: '/ginvite', params: { id: r.id || '', gid: r.gid } });
         return;
       }
-      router.push({ pathname: '/group', params: { gid: r.gid } });
+      router.navigate({ pathname: '/group', params: { gid: r.gid } });
       return;
     }
     if (!r.who) return;              // строка без собеседника — открывать нечего
-    router.push({
+    router.navigate({
       pathname: '/conversation',
       params: { who: r.who, title: r.title || '', photo: r.photo || '' },
     });
@@ -313,7 +313,7 @@ export default function Messages() {
       <ScrollView contentContainerStyle={[s.body, { paddingBottom: 130 }]} keyboardShouldPersistTaps="handled">
         {/* Kleal закреплён сверху в любом состоянии — так обещает пустой экран MSG.01. */}
         {!searching ? (
-          <Pressable accessibilityRole="button" style={s.row} onPress={() => router.push('/buddy')}>
+          <Pressable accessibilityRole="button" style={s.row} onPress={() => router.navigate('/buddy')}>
             <View style={s.klealAva}><IconSpark size={20} c={color.onPrimary} /></View>
             <View style={{ flex: 1 }}>
               <Text style={s.rowTitle}>{MSG.kleal()}</Text>
@@ -346,7 +346,7 @@ export default function Messages() {
             <View style={s.emptyIcon}><IconCalendar /></View>
             <Text style={s.emptyTitle}>{MSG.emptyTitle()}</Text>
             <Text style={s.emptyNote}>{MSG.emptyNote()}</Text>
-            <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/create')}>
+            <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/create')}>
               <Text style={s.ctaText}>{MSG.createIntent()}</Text>
             </Pressable>
           </View>

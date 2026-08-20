@@ -338,7 +338,7 @@ export default function Chat() {
           say={say}
           goto={goto}
           onDrag={setDragging}
-          onDone={() => router.push('/summary')}
+          onDone={() => router.navigate('/summary')}
           startFunnel={startFunnel}
           funnel={{
             opts: funnelOpts, done: funnelDone, ask: funnelTurn, leave: leaveFunnel, more: moreInterests,

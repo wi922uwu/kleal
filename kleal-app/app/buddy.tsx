@@ -268,7 +268,7 @@ export default function Buddy() {
     const hist = topic ? turns.filter((t) => t.content !== topic) : turns;
     const packed = packHistory(hist);
     if (packed) params.history = packed;
-    router.push({ pathname: '/create', params });
+    router.navigate({ pathname: '/create', params });
   };
 
   return (

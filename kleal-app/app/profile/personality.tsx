@@ -149,7 +149,7 @@ export default function Personality() {
         )}
       </View>
 
-      <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/profile/test')}>
+      <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/profile/test')}>
         <Text style={s.ctaText}>{C.takeTest()}</Text>
       </Pressable>
 
@@ -245,7 +245,7 @@ export default function Personality() {
           {updated ? <Text style={s.updated}>{updated}</Text> : null}
         </View>
         <Text style={s.body}>{text || C.empty()}</Text>
-        <Pressable accessibilityRole="button" style={s.dark} onPress={() => router.push('/profile/test')}>
+        <Pressable accessibilityRole="button" style={s.dark} onPress={() => router.navigate('/profile/test')}>
           <Text style={s.darkText}>{C.editWith()}</Text>
         </Pressable>
       </Card>
@@ -259,7 +259,7 @@ export default function Personality() {
               <Text style={s.axisVal}>{AXIS_VALUE[persona[k]]()}</Text>
             </View>
           ))}
-          <Pressable accessibilityRole="button" onPress={() => router.push('/profile/test')}>
+          <Pressable accessibilityRole="button" onPress={() => router.navigate('/profile/test')}>
             <Text style={s.retake}>{C.retake()}</Text>
           </Pressable>
         </Card>

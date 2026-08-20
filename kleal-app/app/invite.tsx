@@ -197,7 +197,7 @@ export default function Invite() {
               <Pressable
                 accessibilityRole="button"
                 style={s.cta}
-                onPress={() => router.push({ pathname: '/conversation', params: { who: from, title: titleOf(row), photo: row.photo || '' } })}
+                onPress={() => router.navigate({ pathname: '/conversation', params: { who: from, title: titleOf(row), photo: row.photo || '' } })}
               >
                 <Text style={s.ctaText}>{CHAT.openChat()}</Text>
               </Pressable>

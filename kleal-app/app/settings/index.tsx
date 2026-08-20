@@ -48,7 +48,7 @@ export default function Settings() {
       }
     >
       {SETTING_ROWS.map((row) => (
-        <Row key={row.id} row={row} onGo={(to) => router.push(to as any)} />
+        <Row key={row.id} row={row} onGo={(to) => router.navigate(to as any)} />
       ))}
     </ProfileShell>
   );

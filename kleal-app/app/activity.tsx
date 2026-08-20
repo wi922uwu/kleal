@@ -149,7 +149,7 @@ export default function Activity() {
         profile: prof,
         query: intentTitle(row),
       });
-      router.push('/results');
+      router.navigate('/results');
     } catch {
       setErr(ACT.loadFailed());
     } finally {
@@ -158,14 +158,14 @@ export default function Activity() {
   }, [busy, me, router, st.profile]);
 
   const openPlan = (c: PlanCard) => {
-    if (c.gid) return router.push({ pathname: '/gplan', params: { gid: c.gid } });
-    router.push({ pathname: '/plan', params: { id: c.id || '', who: c.who || '', title: c.title } });
+    if (c.gid) return router.navigate({ pathname: '/gplan', params: { gid: c.gid } });
+    router.navigate({ pathname: '/plan', params: { id: c.id || '', who: c.who || '', title: c.title } });
   };
 
   const openInvite = (v: any) =>
     v?.type === 'group'
-      ? router.push({ pathname: '/ginvite', params: { id: String(v.id || ''), gid: String(v.group?.gid || '') } })
-      : router.push({ pathname: '/invite', params: { id: String(v.id || '') } });
+      ? router.navigate({ pathname: '/ginvite', params: { id: String(v.id || ''), gid: String(v.group?.gid || '') } })
+      : router.navigate({ pathname: '/invite', params: { id: String(v.id || '') } });
 
   const segments: [Seg, string, number][] = [
     ['intents', ACT.tabIntents(), 0],
@@ -249,11 +249,11 @@ export default function Activity() {
                   outbox={data.outbox}
                   busy={busy === row.id}
                   onOpen={() => openSearch(row)}
-                  onOpenPage={() => router.push({ pathname: '/myintent', params: { id: row.id } })}
-                  onEdit={() => router.push({ pathname: '/myintent', params: { id: row.id, edit: '1' } })}
+                  onOpenPage={() => router.navigate({ pathname: '/myintent', params: { id: row.id } })}
+                  onEdit={() => router.navigate({ pathname: '/myintent', params: { id: row.id, edit: '1' } })}
                 />
               ))
-            : empty(ACT.emptyIntents(), ACT.emptyIntentsNote(), () => router.push('/create'))
+            : empty(ACT.emptyIntents(), ACT.emptyIntentsNote(), () => router.navigate('/create'))
         ) : null}
 
         {!loading && seg === 'plans' ? (

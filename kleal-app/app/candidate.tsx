@@ -251,7 +251,7 @@ export default function Candidate() {
             <Pressable
               accessibilityRole="button"
               style={[s.invite, { flex: 1 }]}
-              onPress={() => router.push({ pathname: '/conversation', params: { who: name, photo: c.photo || '' } })}
+              onPress={() => router.navigate({ pathname: '/conversation', params: { who: name, photo: c.photo || '' } })}
             >
               <Text style={s.inviteText}>{CHAT.openChat()}</Text>
             </Pressable>

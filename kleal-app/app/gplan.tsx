@@ -234,7 +234,7 @@ export default function GroupPlan() {
   const askHost = async () => {
     await gapi.post(gid, me, GPLAN.askHostMsg());
     setMode('view');
-    router.push({ pathname: '/group', params: { gid } });
+    router.navigate({ pathname: '/group', params: { gid } });
   };
 
   const startVote = (kind: 'edit' | 'cancel') =>
@@ -447,7 +447,7 @@ export default function GroupPlan() {
             onSuggestOpen={() => { setWhen(whenFromStartsAt(plan?.starts_at, when.tz) || when); setPlace(String(plan?.place || '')); setMode('suggest'); }}
             onSuggestSend={counter}
             onFix={fix}
-            onInviteMore={() => router.push({ pathname: '/group', params: { gid } })}
+            onInviteMore={() => router.navigate({ pathname: '/group', params: { gid } })}
             onCancelPlan={cancelPlan}
             canConvert={!!(g as any)?.can_convert}
             onSwitch1to1={() => setAsk1to1(true)}
@@ -457,7 +457,7 @@ export default function GroupPlan() {
             onMoreTime={() => {}}
             onStay={confirm}
             onLeave={leave}
-            onOpenChat={() => router.push({ pathname: '/group', params: { gid } })}
+            onOpenChat={() => router.navigate({ pathname: '/group', params: { gid } })}
             onAskVote={() => setAskVote(true)}
             onOpenVote={() => setVoteSheet(true)}
             onDecide={() => setDecideSheet(true)}

@@ -512,7 +512,7 @@ export default function Plan() {
   };
 
   const openChat = () =>
-    router.push({ pathname: '/conversation', params: { who: other, title: intentTitle, photo } });
+    router.navigate({ pathname: '/conversation', params: { who: other, title: intentTitle, photo } });
 
   /** Ссылка, как её отдал сервер: до подтверждения её просто нет в ответе. */
   const serverLink = String((plan as any)?.link ?? (mode === 'online' ? plan?.address : '') ?? '');
@@ -791,7 +791,7 @@ export default function Plan() {
                     <Pressable accessibilityRole="button" style={s.cta} onPress={sendRating}>
                       <Text style={s.ctaText}>{PLAN.send()}</Text>
                     </Pressable>
-                    <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => router.push('/profile/safety')}>
+                    <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => router.navigate('/profile/safety')}>
                       <Text style={s.ctaDarkText}>{PLAN.reportProblem()}</Text>
                     </Pressable>
                   </>

@@ -84,7 +84,7 @@ export default function Interests() {
         <Card>
           <Text style={s.emptyTitle}>{C.emptyTitle()}</Text>
           <Text style={s.emptySub}>{C.emptySub()}</Text>
-          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/chat?step=hobbies&back=/profile/interests')}>
+          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/chat?step=hobbies&back=/profile/interests')}>
             <Text style={s.ctaText}>{C.add()}</Text>
           </Pressable>
         </Card>
@@ -126,7 +126,7 @@ export default function Interests() {
             </Card>
           ))}
 
-          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.push('/chat?step=hobbies&back=/profile/interests')}>
+          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/chat?step=hobbies&back=/profile/interests')}>
             <Text style={s.ctaText}>{C.add()}</Text>
           </Pressable>
         </>
