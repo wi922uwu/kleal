@@ -398,6 +398,17 @@ export const PLAN = {
   howBoth: () => T('И так и так', 'A bit of both'),
   goInPersonAfterAll: () => T('Всё-таки приду живьём', 'Go in person after all'),
   sideSwitchedTitle: () => T('Ты уходишь в звонок', 'You switched to the call'),
+  /**
+   * Оба в звонке. Отдельная строка, потому что «ты уходишь в звонок» рядом с «Sofia по-прежнему
+   * идёт на место» после HY.23c — прямая неправда: на место больше не идёт никто. Поймано на
+   * симуляторе: заголовок остался от одиночной смены стороны.
+   */
+  sideBothCallTitle: () => T('Вы оба в звонке', 'You are both on the call'),
+  sideBothCallNote: (name: string) =>
+    T(
+      `Ни тебе, ни ${name} никуда идти не нужно — встреча пройдёт по ссылке.`,
+      `Neither you nor ${name} has anywhere to go — the meetup happens on the link.`
+    ),
   sideSwitchedNote: (name: string) =>
     T(
       `${name} это видит и по-прежнему идёт на место. Ссылка открыта для тебя — ничего не отменено, ты просто входишь другим входом.`,

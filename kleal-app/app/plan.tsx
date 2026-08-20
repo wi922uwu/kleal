@@ -259,7 +259,10 @@ export default function Plan() {
     : '';
 
   /** Место уже стоит зелёной плашкой: встреча на носу и адрес открыт. */
-  const placeReady = wantsPlace && (phase === 'soon' || phase === 'now') && !!placeLabel;
+  const placeReady = wantsPlace && (phase === 'soon' || phase === 'now') && !!placeLabel
+    // После HY.23c звать «Открыть маршрут» значит отправить человека к запертой двери, из-за
+    // которой все и ушли в звонок. Карточка места уходит вместе с этим решением.
+    && !movedToCall;
   /**
    * Договорились обо всём — зелёная плашка «Всё готово» ниже. Она называет и время, и место, и
    * час открытия ссылки, поэтому строки выше про то же самое не рисуются: одна новость, одно место
@@ -1294,6 +1297,8 @@ function headline(phase: string, other: string, plan: any, me: string, ru: boole
   // отвечает на вопрос «где меня ждать». Своя смена и чужая читаются по-разному, поэтому это две
   // разные строки, а не одна про «кто-то ушёл в звонок».
   if (plan?.mode === 'hybrid' && (phase === 'confirmed' || phase === 'soon' || phase === 'now')) {
+    // Сначала общий случай: если в звонке ОБА, ни «ты ушёл», ни «она ушла» уже не правда.
+    if (plan?.my_side === 'call' && plan?.their_side === 'call') return PLAN.sideBothCallTitle();
     if (plan?.my_side === 'call') return PLAN.sideSwitchedTitle();
     if (plan?.their_side === 'call') return PLAN.theySwitchedTitle(other);
   }
@@ -1346,6 +1351,7 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
     return PLAN.addLinkNote(planWhen(plan, ru), other);
   }
   if (plan?.mode === 'hybrid' && (phase === 'confirmed' || phase === 'soon' || phase === 'now')) {
+    if (plan?.my_side === 'call' && plan?.their_side === 'call') return PLAN.sideBothCallNote(other);
     if (plan?.my_side === 'call') return PLAN.sideSwitchedNote(other);
     if (plan?.their_side === 'call') return PLAN.theySwitchedNote(other);
   }
