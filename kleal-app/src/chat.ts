@@ -301,6 +301,49 @@ export const PLAN = {
   /** O.20a — согласованный онлайн-план без ссылки. Времена на кадре — примеры борда; пояс
    *  собеседника мы не храним (см. linkOpensAt), поэтому время здесь одно, своё. */
   addLinkTitle: () => T('Добавь ссылку на звонок', 'Add the call link'),
+  /**
+   * HY.20c — у гибрида не задано НИ ОДНОГО входа.
+   *
+   * Это отдельный кадр, а не «сперва одно, потом другое»: когда согласовано только время, человеку
+   * надо сказать, что нужны обе вещи сразу, — иначе он донесёт ссылку, решит, что закончил, и
+   * половина, собиравшаяся прийти живьём, останется без места.
+   */
+  addBothTitle: () => T('Добавь место и ссылку', 'Add a place and a link'),
+  /**
+   * HY.22 / HY.22a / HY.22b / HY.C4 — СТОРОНА ВСТРЕЧИ.
+   *
+   * У гибрида два входа, и каждый идёт своим. Главное, что здесь надо сказать словами: это не
+   * отмена. Человек, нажимающий «уйду в звонок», должен видеть, что встреча продолжается, а второй
+   * — что его не бросили за столиком. На кадре 22b это сказано прямо: «она сказала заранее, и ты
+   * не ждёшь того, кто не придёт».
+   */
+  joinCallInstead: () => T('Уйду в звонок', 'Join the call instead'),
+  goInPersonAfterAll: () => T('Всё-таки приду живьём', 'Go in person after all'),
+  sideSwitchedTitle: () => T('Ты уходишь в звонок', 'You switched to the call'),
+  sideSwitchedNote: (name: string) =>
+    T(
+      `${name} это видит и по-прежнему идёт на место. Ссылка открыта для тебя — ничего не отменено, ты просто входишь другим входом.`,
+      `${name} sees it and is still going to the place. The link is open for you — nothing is cancelled, you’re just joining the other way.`
+    ),
+  theySwitchedTitle: (name: string) => T(`${name} уходит в звонок`, `${name} joined the call instead`),
+  theySwitchedNote: (name: string) =>
+    T(
+      `${name} сказал(а) заранее — значит ты не ждёшь за столиком того, кто не придёт. Встреча в силе, просто вы с разных её сторон.`,
+      `${name} told you before the time, so you are not waiting at the table for someone who isn’t coming. The meetup is on — they are simply on the other side of it.`
+    ),
+  /** Строка участника: с какой стороны он придёт. */
+  sideInPerson: () => T('Придёт живьём', 'Coming in person'),
+  sideInPersonMine: () => T('Придёшь живьём', 'Coming in person'),
+  sideCall: () => T('Будет на звонке', 'Joining the call'),
+  sideCallMine: () => T('Будешь на звонке', 'Joining the call'),
+  /** Отказ сервера: стороны, которую выбирают, ещё не существует. */
+  sideNoLink: () => T('Ссылки ещё нет — сперва добавь её', 'No link yet — add one first'),
+  sideNoPlace: () => T('Места ещё нет — сперва выбери его', 'No place yet — pick one first'),
+  addBothNote: () =>
+    T(
+      'Согласовано только время. Гибриду нужны оба входа: без места некуда прийти, без ссылки не подключиться. Начни с места.',
+      'Only the time is agreed. Hybrid needs both a place and a link — without them nobody knows how to reach you. Start with the place.'
+    ),
   addLinkNote: (when: string, name: string) =>
     T(
       `Встреча (${when}) согласована. ${name} видит «ссылка будет», пока ты её не вставишь — добавь заранее, чтобы к началу никто не ждал.`,

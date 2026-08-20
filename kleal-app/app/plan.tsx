@@ -191,11 +191,22 @@ export default function Plan() {
   const cancelledByMe =
     !!plan?.cancelled_by
     && String(plan.cancelled_by).trim().toLowerCase() === me.trim().toLowerCase();
-  /** Согласовано, а куда идти — неизвестно. Дозаполнить может любой из двоих (O.20a / OF.20a). */
-  const needsWhere = !!plan && !plan.address_set
-    && (phase === 'confirmed' || phase === 'soon' || phase === 'now');
-  /** O.20a: согласованный онлайн-план без ссылки. */
-  const needsLink = needsWhere && wantsLink;
+  /**
+   * ДВА ВХОДА СЧИТАЮТСЯ ПОРОЗНЬ.
+   *
+   * Раньше был один признак «адрес задан», и у гибрида он значил «задано хоть что-то одно»: экран
+   * успокаивался, показав ссылку, и молчал о том, что места нет. Борд HY.20a/20b/20c — это три
+   * РАЗНЫХ кадра ровно потому, что не хватать может каждого по отдельности.
+   *
+   * `?? ` — на случай, если телефон держит старый бандл против нового сервера или наоборот: без
+   * новых полей считаем по-старому, а не показываем «места нет» там, где оно есть.
+   */
+  const placeSet = (plan as any)?.place_set ?? (wantsPlace && !!plan?.address_set);
+  const linkSet = (plan as any)?.link_set ?? (wantsLink && !!plan?.address_set);
+  const settling = phase === 'confirmed' || phase === 'soon' || phase === 'now';
+  const needsWhere = !!plan && settling && ((wantsPlace && !placeSet) || (wantsLink && !linkSet));
+  /** O.20a: согласованный план без ссылки — у звонка и у гибрида. */
+  const needsLink = !!plan && settling && wantsLink && !linkSet;
   /** Офлайн-ветка борда. */
   const offline = mode === 'offline';
   /**
@@ -208,27 +219,36 @@ export default function Plan() {
    */
   const nobodyJoined =
     mode === 'online'                       // именно звонок: у гибрида могли просто встретиться
-    && !!plan?.address_set
+    && !!linkSet
     && (plan?.my_live as any)?.status !== 'here'
     && (plan?.their_live as any)?.status !== 'here';
-  /** OF.20a: согласовано, а точного места нет. */
-  const needsPlace = needsWhere && !wantsLink;
+  /** OF.20a/HY.20b: согласовано, а точного места нет — у встречи вживую и у гибрида. */
+  const needsPlace = !!plan && settling && wantsPlace && !placeSet;
+  /**
+   * HY.22 — сторона встречи. Есть только у гибрида: у звонка приходить некуда, у встречи вживую
+   * уходить некуда. По умолчанию человек считается идущим живьём — так стоит на кадре HY.21,
+   * где оба «Confirmed · in person», пока никто ничего не менял.
+   */
+  const hybrid = mode === 'hybrid';
+  const mySide = String((plan as any)?.my_side || (hybrid ? 'in_person' : ''));
+  const theirSide = String((plan as any)?.their_side || (hybrid ? 'in_person' : ''));
   /** OF.22/OF.22a/OF.23: живые статусы — «в пути», «опаздываю», «на месте». */
   const myLive = String(plan?.my_live?.status || '');
   const theirLive = String(plan?.their_live?.status || '');
   /** Человеческое имя места: «Nømad · Carrer de Verdi 12». Видно только подтвердившим (OF.C3). */
-  const placeLabel = offline
-    ? [plan?.venue, plan?.address].filter(Boolean).join(' · ')
+  const placeLabel = wantsPlace
+    ? [plan?.venue, (plan as any)?.place ?? (offline ? plan?.address : '')].filter(Boolean).join(' · ')
     : '';
 
   /** Место уже стоит зелёной плашкой: встреча на носу и адрес открыт. */
-  const placeReady = offline && (phase === 'soon' || phase === 'now') && !!plan?.address_visible_to_me;
+  const placeReady = wantsPlace && (phase === 'soon' || phase === 'now') && !!placeLabel;
   /**
    * Договорились обо всём — зелёная плашка «Всё готово» ниже. Она называет и время, и место, и
    * час открытия ссылки, поэтому строки выше про то же самое не рисуются: одна новость, одно место
    * на экране. Раньше адрес стоял дважды, а про ссылку было сказано трижды.
    */
-  const allSet = phase === 'confirmed' && !plan?.pending && !!plan?.address_set;
+  const allSet = phase === 'confirmed' && !plan?.pending
+    && (!wantsPlace || placeSet) && (!wantsLink || linkSet);
 
   /** OF.22 «Открыть маршрут» — обычная карта по адресу; своей навигации у Kleal нет. */
   const openRoute = () => {
@@ -251,10 +271,12 @@ export default function Plan() {
         starts_at: Math.floor(d.getTime() / 1000),
         when: planWhenLabel(date, minutes, ru),
         district: wantsPlace ? district : '',
-        // В поле адреса живёт либо ссылка звонка, либо точное место (OF.20) — сервер в обоих
-        // случаях открывает его только подтвердившим, и это ровно нужное поведение. У гибрида
-        // ведущей остаётся ссылка: онлайн-часть без неё не существует, место можно донести позже.
-        address: (wantsLink ? link.trim() : '') || (wantsPlace ? address.trim() : ''),
+        // ДВА ВХОДА, А НЕ ОДИН. Раньше здесь стояло «ссылка, а если её нет — место», и у
+        // гибрида набранное в форме место просто не уезжало на сервер: человек его вводил, видел,
+        // как оно исчезает, и приходить было некуда. Теперь каждый вход едет в своё поле, а
+        // сервер и экран показывают их порознь (HY.20a/20b/20c).
+        address: wantsPlace ? address.trim() : '',
+        link: wantsLink ? link.trim() : '',
       });
       if (!r?.ok) {
         if (r?.error === 'NOT_MATCHED') throw new Error(CHAT.notMatched());
@@ -341,6 +363,28 @@ export default function Plan() {
     }
   };
 
+  /**
+   * HY.22 — сменить сторону встречи. Обратимо, и это не отмена: встреча остаётся, меняется вход.
+   *
+   * Отказы сервера называются словами, а не «не получилось»: «уйти в звонок» при отсутствующей
+   * ссылке — не сбой связи, а недостающая половина плана, и человеку надо сказать именно это.
+   */
+  const sendSide = async (side: 'in_person' | 'call') => {
+    if (!plan?.id) return;
+    setErr('');
+    try {
+      const r: any = await agent.planSide(plan.id, me, side);
+      if (!r?.ok) {
+        if (r?.error === 'NO_LINK') throw new Error(PLAN.sideNoLink());
+        if (r?.error === 'NO_PLACE') throw new Error(PLAN.sideNoPlace());
+        throw new Error(CHAT.planFailed());
+      }
+      if (r.plan) setPlan(r.plan); else await load();
+    } catch (e: any) {
+      setErr(String(e?.message || CHAT.planFailed()));
+    }
+  };
+
   /** OF.22/OF.22a/OF.23: «уже иду» / «опаздываю» / «на месте». Видит только собеседник. */
   const sendLive = async (status: 'otw' | 'late' | 'here') => {
     if (!plan?.id) return;
@@ -360,7 +404,9 @@ export default function Plan() {
     if (!plan?.id || !looksLikeUrl(v)) return;
     setErr('');
     try {
-      const r: any = await agent.planAddress(plan.id, me, v);
+      // Пустой адрес и ссылка отдельным полем: у гибрида место уже названо, и слать ссылку
+      // в поле адреса значило бы затереть его.
+      const r: any = await agent.planAddress(plan.id, me, '', undefined, v);
       if (!r?.ok) throw new Error(r?.error || 'failed');
       setLinkDraft('');
       await load();
@@ -429,7 +475,7 @@ export default function Plan() {
     router.push({ pathname: '/conversation', params: { who: other, title: intentTitle, photo } });
 
   /** Ссылка, как её отдал сервер: до подтверждения её просто нет в ответе. */
-  const serverLink = String(plan?.address || '');
+  const serverLink = String((plan as any)?.link ?? (mode === 'online' ? plan?.address : '') ?? '');
   const linkReady = phase === 'soon' || phase === 'now';
 
   return (
@@ -489,18 +535,21 @@ export default function Plan() {
                 {/* У отменённой встречи адрес не обещают: «откроется после твоего подтверждения»
                     было прямой неправдой — подтверждать больше нечего, а сервер закрывает адрес
                     отказавшемуся автоматически (его ответ перестал быть «подтвердил»). */}
-                {offline && phase !== 'cancelled'
-                  && !(placeReady && placeLabel) && !(allSet && plan.address_visible_to_me) ? (
+                {wantsPlace && phase !== 'cancelled'
+                  && !(placeReady && placeLabel) && !(allSet && placeLabel) ? (
                   <View style={s.metaRow}>
                     <IconPin size={16} c={color.muted} />
                     <Text style={s.metaText}>
-                      {!plan.address_set ? PLAN.noPlaceYet()
-                        : plan.address_visible_to_me ? placeLabel
+                      {!placeSet ? PLAN.noPlaceYet()
+                        : placeLabel ? placeLabel
                         : PLAN.addressAfterConfirm()}
                     </Text>
                   </View>
                 ) : null}
-                {plan.mode === 'online' ? (
+                {/* Строка ссылки. Стояла на «режим == online», а строка места — на «offline»:
+                    гибрид не тот и не другой, и на его экране не было НИ ОДНОЙ из двух — при том
+                    что у гибрида как раз оба входа и есть суть (HY.21 «both ways open»). */}
+                {wantsLink ? (
                   <View style={s.metaRow}>
                     <IconLink size={16} c={color.muted} />
                     {/* Когда ссылка открыта, об этом говорит зелёная карточка ниже — здесь только факт
@@ -512,7 +561,7 @@ export default function Plan() {
                         // Встреча позади — обещать, что ссылка «откроется в 18:14», уже неправда.
                         : phase === 'after' ? PLAN.modeOnline()
                         // O.20a: ссылки ещё нет — врать «откроется в …» нечем.
-                        : !plan.address_set ? PLAN.noLinkYet()
+                        : !linkSet ? PLAN.noLinkYet()
                         // Когда ниже стоит «Всё готово», час открытия ссылки назван там — здесь
                         // остаётся только формат встречи.
                         : allSet ? PLAN.modeOnline()
@@ -698,6 +747,40 @@ export default function Plan() {
 
               {/* O.20a: поле и две кнопки — ссылка или просьба хостить. Пока висит перенос, не показываем:
                   сперва договориться о времени, потом нести ссылку. */}
+              {/* HY.20c говорит прямо: «Start with the place, then the link». Место идёт
+                  первым, потому что от него зависит, кому вообще есть смысл идти живьём;
+                  ссылку можно донести и позже. Раньше блоки стояли наоборот, и у гибрида,
+                  где не задано ни одного входа, первым спрашивалась ссылка. */}
+              {needsPlace && !pendingChange && !countering ? (
+                <>
+                  <TextInput
+                    style={s.input}
+                    value={placeDraft}
+                    onChangeText={setPlaceDraft}
+                    placeholder={PLAN.placePlaceholder()}
+                    placeholderTextColor={color.neutral400}
+                    accessibilityLabel={PLAN.placePlaceholder()}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={!placeDraft.trim()}
+                    accessibilityState={{ disabled: !placeDraft.trim() }}
+                    style={[s.cta, !placeDraft.trim() && { opacity: 0.45 }]}
+                    onPress={savePlace}
+                  >
+                    <Text style={s.ctaText}>{PLAN.savePlace()}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={hostAsked}
+                    accessibilityState={{ disabled: hostAsked }}
+                    style={[s.ctaDark, hostAsked && { opacity: 0.45 }]}
+                    onPress={askPlace}
+                  >
+                    <Text style={s.ctaDarkText}>{hostAsked ? PLAN.hostAskedNote() : PLAN.askChoose(other)}</Text>
+                  </Pressable>
+                </>
+              ) : null}
               {needsLink && !pendingChange && !countering ? (
                 <>
                   <TextInput
@@ -733,36 +816,6 @@ export default function Plan() {
               ) : null}
 
               {/* OF.20a: согласовано, а точного места нет — поле и две кнопки, как у ссылки. */}
-              {needsPlace && !pendingChange && !countering ? (
-                <>
-                  <TextInput
-                    style={s.input}
-                    value={placeDraft}
-                    onChangeText={setPlaceDraft}
-                    placeholder={PLAN.placePlaceholder()}
-                    placeholderTextColor={color.neutral400}
-                    accessibilityLabel={PLAN.placePlaceholder()}
-                  />
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={!placeDraft.trim()}
-                    accessibilityState={{ disabled: !placeDraft.trim() }}
-                    style={[s.cta, !placeDraft.trim() && { opacity: 0.45 }]}
-                    onPress={savePlace}
-                  >
-                    <Text style={s.ctaText}>{PLAN.savePlace()}</Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={hostAsked}
-                    accessibilityState={{ disabled: hostAsked }}
-                    style={[s.ctaDark, hostAsked && { opacity: 0.45 }]}
-                    onPress={askPlace}
-                  >
-                    <Text style={s.ctaDarkText}>{hostAsked ? PLAN.hostAskedNote() : PLAN.askChoose(other)}</Text>
-                  </Pressable>
-                </>
-              ) : null}
 
               {/* Действия до встречи. «Другое время» — это counter (O.21b), а не новая встреча:
                   propose на живом плане честно бьётся об PLAN_EXISTS. Пока экран просит ссылку
@@ -878,6 +931,22 @@ export default function Plan() {
                   <Pressable accessibilityRole="button" style={s.cta} onPress={openChat}>
                     <Text style={s.ctaText}>{PLAN.messageThem(other)}</Text>
                   </Pressable>
+
+                  {/* HY.22: за полчаса до начала гибрид даёт то, чего не даёт ни звонок, ни
+                      встреча вживую, — уйти на другую сторону, не отменяя встречу. Кнопка
+                      переключает в обе стороны: на кадре 22a рядом с «ушёл в звонок» стоит
+                      «всё-таки приду живьём». */}
+                  {hybrid ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      style={s.ctaDark}
+                      onPress={() => sendSide(mySide === 'call' ? 'in_person' : 'call')}
+                    >
+                      <Text style={s.ctaDarkText}>
+                        {mySide === 'call' ? PLAN.goInPersonAfterAll() : PLAN.joinCallInstead()}
+                      </Text>
+                    </Pressable>
+                  ) : null}
 
                   {offline && myLive !== 'late' && myLive !== 'here' ? (
                     <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => sendLive('late')}>
@@ -1095,12 +1164,28 @@ function headline(phase: string, other: string, plan: any, me: string, ru: boole
   // O.C3: план прислали мне — экран зовёт подтвердить, а не сообщает «отправлено».
   if (phase === 'waiting' && !myConfirmed(plan, me)) return PLAN.sentPlan(other);
   // O.20a: согласовано, а звонку негде пройти — экран первым делом просит ссылку.
-  if (phase === 'confirmed' && plan?.mode === 'online' && !plan?.address_set) {
+  if (phase === 'confirmed' && plan?.mode === 'online' && !plan?.link_set && !plan?.address_set) {
     return PLAN.addLinkTitle();
   }
   // OF.20a: то же для офлайна — согласовано, а места нет.
-  if (phase === 'confirmed' && plan?.mode === 'offline' && !plan?.address_set) {
+  if (phase === 'confirmed' && plan?.mode === 'offline' && !plan?.place_set && !plan?.address_set) {
     return PLAN.pickPlaceTitle();
+  }
+  // HY.20a/20b/20c: у гибрида не хватать может каждого входа ПО ОТДЕЛЬНОСТИ, и это три разных
+  // кадра. Раньше сюда не попадала ни одна ветка — гибрид не «online» и не «offline», — поэтому
+  // экран согласованного гибрида без места и без ссылки говорил просто «Подтверждено».
+  if (phase === 'confirmed' && plan?.mode === 'hybrid') {
+    const hasPlace = !!plan?.place_set, hasLink = !!plan?.link_set;
+    if (!hasPlace && !hasLink) return PLAN.addBothTitle();
+    if (!hasLink) return PLAN.addLinkTitle();
+    if (!hasPlace) return PLAN.pickPlaceTitle();
+  }
+  // HY.22a/HY.22b/HY.C4: смена стороны — новость этого экрана, и она важнее счётчика: она
+  // отвечает на вопрос «где меня ждать». Своя смена и чужая читаются по-разному, поэтому это две
+  // разные строки, а не одна про «кто-то ушёл в звонок».
+  if (plan?.mode === 'hybrid' && (phase === 'confirmed' || phase === 'soon' || phase === 'now')) {
+    if (plan?.my_side === 'call') return PLAN.sideSwitchedTitle();
+    if (plan?.their_side === 'call') return PLAN.theySwitchedTitle(other);
   }
   // OF.22a/OF.C4: опоздание перекрывает счётчик — оно и есть новость этого экрана. Но только
   // когда встреча на носу: за восемь часов до неё «опаздывает» ничего не значит.
@@ -1147,8 +1232,20 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
   if (phase === 'waiting' && !myConfirmed(plan, me)) {
     return plan?.mode === 'offline' ? PLAN.sentPlanNoteOffline() : PLAN.sentPlanNote();
   }
-  if (phase === 'confirmed' && plan?.mode === 'online' && !plan?.address_set) {
+  if (phase === 'confirmed' && plan?.mode === 'online' && !plan?.link_set && !plan?.address_set) {
     return PLAN.addLinkNote(planWhen(plan, ru), other);
+  }
+  if (plan?.mode === 'hybrid' && (phase === 'confirmed' || phase === 'soon' || phase === 'now')) {
+    if (plan?.my_side === 'call') return PLAN.sideSwitchedNote(other);
+    if (plan?.their_side === 'call') return PLAN.theySwitchedNote(other);
+  }
+  // HY.20a/20b/20c — подпись под заголовком гибрида. Она объясняет ровно то, чего не хватает, и
+  // почему это важно: у гибрида недостающий вход отрезает не «часть удобства», а половину людей.
+  if (phase === 'confirmed' && plan?.mode === 'hybrid') {
+    const hasPlace = !!plan?.place_set, hasLink = !!plan?.link_set;
+    if (!hasPlace && !hasLink) return PLAN.addBothNote();
+    if (!hasLink) return PLAN.addLinkNote(planWhen(plan, ru), other);
+    if (!hasPlace) return PLAN.pickPlaceNote(planWhen(plan, ru), other);
   }
   // Офлайн говорит про адрес и дорогу, онлайн — про ссылку.
   if (plan?.mode === 'offline') {
@@ -1192,6 +1289,14 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
  */
 function statusFor(p: any, plan: any, phase: string, pendingChange: any, ru: boolean): string {
   const name = String(p?.name || '').trim().toLowerCase();
+  // HY.21/HY.22a/HY.22b: у гибрида в строке участника стоит СТОРОНА — «придёт живьём» или
+  // «будет на звонке». Без неё оба показывались одинаково «подтвердил(а)», и понять, кого ждать
+  // за столиком, а кого в звонке, было неоткуда.
+  const side = String(p?.side || '');
+  if (plan?.mode === 'hybrid' && side && phase !== 'cancelled' && phase !== 'after') {
+    if (side === 'call') return p?.is_me ? PLAN.sideCallMine() : PLAN.sideCall();
+    if (side === 'in_person') return p?.is_me ? PLAN.sideInPersonMine() : PLAN.sideInPerson();
+  }
   // OF.22/OF.22a/OF.23: живой статус — свежайшая правда об этом человеке, он перекрывает
   // «подтвердил(а)». Сервер кладёт его прямо в строку участника.
   const live = String(p?.live?.status || '');

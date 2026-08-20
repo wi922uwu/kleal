@@ -1195,10 +1195,10 @@ def match_candidates_legacy(intent, prof, ctx=None):
                ('Agent: not free today' if not c.get('open') else 'Agent: fit too weak')
         out.append({"name": c['name'], "score": score, "tier": tier, "kind": kind, "km": km,
                     "vibe": c['vibe'], "open": c['open'], "verified": c.get('verified'), "age": c.get('age'),
-                    "interests": c['interests'], "role": c.get('role'), "dealBreakers": c.get('dealBreakers'),
                     # Языки нужны карточке (O.13): без них человек решает, писать ли незнакомому,
                     # не зная, поймут ли его вообще. Внутри они у кандидата были всегда — просто
                     # никогда не выезжали наружу. `_langs_of` берёт обе формы хранения.
+                    "interests": c['interests'], "role": c.get('role'), "dealBreakers": c.get('dealBreakers'),
                     "langs": _langs_of(c) or c.get('langs') or [],
                     "reasons": reasons, "agree": agree, "note": note, "bucket": bcat})
     out.sort(key=lambda x: (-x['score'], x['name']))
@@ -4731,6 +4731,11 @@ GP_MAX_ROUNDS = 3
 # потому, что голосование СОВЕЩАТЕЛЬНОЕ: без срока молчащий держал бы его вечно, а организатору
 # нечего было бы решать. Истёк срок — считаем по тем, кто ответил.
 GP_VOTE_WINDOW = 6 * 3600
+# GRO.47-50. The call is considered over an hour after its start. Everybody gets three days to
+# answer; after two days the agent leaves one reminder in the group chat, then closes the prompt.
+GP_FEEDBACK_DELAY = 3600
+GP_FEEDBACK_REMINDER = 2 * 24 * 3600
+GP_FEEDBACK_WINDOW = 3 * 24 * 3600
 
 
 def _gplans():
@@ -4834,6 +4839,9 @@ def _gp_lock_due(now=None):
             if now >= float(p["starts_at"]) - GP_LOCK_BEFORE:
                 p["state"] = "locked"
                 p["updated"] = now
+                g = _gi_find(p.get("gid"))
+                if g and not p.get("feedback_members"):
+                    p["feedback_members"] = [m.get("name") for m in _gi_active(g) if m.get("name")]
                 changed = True
                 for v in _gvotes():
                     if v.get("plan_id") == p.get("id") and v.get("state") == "open":
@@ -4844,10 +4852,88 @@ def _gp_lock_due(now=None):
                         v["closed"] = now
                         v["decided"] = "kept"
                         v["why"] = "locked"
-                g = _gi_find(p.get("gid"))
                 if g:
                     g["state"] = "locked"
                     _gi_say(g, "The plan is locked — it starts in less than two hours.", code="plan_locked")
+    return changed
+
+
+def _gp_feedback_members(p):
+    """People entitled to the private post-call question.
+
+    The roster is frozen when the plan locks so a later leave cannot erase somebody's answer or
+    change a 2-of-3 outcome into 2-of-2. Older plans get the same snapshot lazily.
+    """
+    saved = [str(n).strip() for n in (p.get("feedback_members") or []) if str(n).strip()]
+    if saved:
+        return saved
+    g = _gi_find(p.get("gid"))
+    active = [m.get("name") for m in _gi_active(g) if m.get("name")] if g else []
+    return active or _gp_confirms(p)
+
+
+def _gp_feedback_times(p):
+    try:
+        starts = float(p.get("starts_at") or 0)
+    except (TypeError, ValueError):
+        starts = 0
+    return {
+        "due": starts + GP_FEEDBACK_DELAY if starts else 0,
+        "reminder": starts + GP_FEEDBACK_REMINDER if starts else 0,
+        "expires": starts + GP_FEEDBACK_WINDOW if starts else 0,
+    }
+
+
+def _gp_feedback_record(p, who):
+    me = _norm_name(who)
+    for name, value in (p.get("feedback") or {}).items():
+        if _norm_name(name) == me:
+            return value
+    return None
+
+
+def _gp_feedback_outcome(p):
+    members = _gp_feedback_members(p)
+    answers = [(_gp_feedback_record(p, n) or {}) for n in members]
+    answers = [v for v in answers if v.get("happened") is not None]
+    yes = sum(1 for v in answers if v.get("happened") is True)
+    no = sum(1 for v in answers if v.get("happened") is False)
+    needed = len(members) // 2 + 1
+    outcome = "held" if yes >= needed else "not_held" if no >= needed else "pending"
+    return {"state": outcome, "yes": yes, "no": no,
+            "answered": len(answers), "of": len(members)}
+
+
+def _gp_postcall_due(now=None):
+    """Emit the single GRO.50 reminder and close unanswered prompts after day three."""
+    now = now or time.time()
+    changed = False
+    for p in _gplans():
+        if p.get("state") not in ("confirmed", "locked", "done"):
+            continue
+        times = _gp_feedback_times(p)
+        if not times["due"] or now < times["due"]:
+            continue
+        if not p.get("feedback_members"):
+            p["feedback_members"] = _gp_feedback_members(p)
+            changed = True
+        outcome = _gp_feedback_outcome(p)
+        g = _gi_find(p.get("gid"))
+        if (now >= times["reminder"] and now < times["expires"]
+                and outcome["answered"] < outcome["of"] and not p.get("feedback_reminded")):
+            p["feedback_reminded"] = now
+            if g:
+                _gi_say(g, "Two days since %s — did it happen? One tap, and I’ll stop asking. "
+                         "It closes on its own tomorrow either way." % (g.get("title") or "the call"),
+                        code="feedback_reminder", title=g.get("title") or "")
+            changed = True
+        if now >= times["expires"] and p.get("state") != "done":
+            p["state"] = "done"
+            p["feedback_closed"] = now
+            p["updated"] = now
+            changed = True
+    if changed:
+        _save_store()
     return changed
 
 
@@ -4857,6 +4943,10 @@ def _gp_public(p, me=""):
     conf = _gp_confirms(p)
     g = _gi_find(p.get("gid"))
     act = [m.get("name") for m in _gi_active(g)] if g else []
+    now = time.time()
+    feedback_times = _gp_feedback_times(p)
+    feedback_outcome = _gp_feedback_outcome(p)
+    my_feedback = _gp_feedback_record(p, me)
     return {
         "id": p.get("id"), "gid": p.get("gid"), "version": p.get("version"),
         "when": p.get("when"), "place": p.get("place"), "note": p.get("note"),
@@ -4917,6 +5007,14 @@ def _gp_public(p, me=""):
         "accept_or_leave": bool(p.get("update")) and str(me or "") in act and str(me or "") not in conf,
         "editable": p.get("state") in ("proposed", "confirmed"),
         "locked": p.get("state") == "locked",
+        # GRO.47-50: only the viewer's answer is returned. The aggregate contains counts, never
+        # names or somebody else's private reason/rating.
+        "my_feedback": dict(my_feedback) if my_feedback else None,
+        "feedback_due": bool(feedback_times["due"] and now >= feedback_times["due"]
+                             and now < feedback_times["expires"]),
+        "feedback_expires_at": feedback_times["expires"] or None,
+        "feedback_reminder": bool(p.get("feedback_reminded")),
+        "feedback_outcome": feedback_outcome,
     }
 
 
@@ -5560,7 +5658,7 @@ def gp_status(pid, who, status, eta_min=None, idem=None):
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
 
-def gp_feedback(pid, who, happened=None, reason="", text="", idem=None):
+def gp_feedback(pid, who, happened=None, reason="", text="", rating=None, idem=None):
     """After the meeting: did it happen, and how was it. «Когда человек отправляет, этот план у нас
     переносится в историю планов.» The plan moves to history for THAT person as soon as they answer;
     it is marked done for everyone once every confirmed participant has."""
@@ -5574,26 +5672,46 @@ def gp_feedback(pid, who, happened=None, reason="", text="", idem=None):
             return {"ok": False, "error": "NO_SUCH_PLAN"}
         if p.get("state") not in ("locked", "confirmed", "done"):
             return _idem_put(idem, {"ok": False, "error": "NOT_YET"})
-        conf = _gp_confirms(p)
-        if who not in conf:
+        times = _gp_feedback_times(p)
+        if not times["due"] or now < times["due"]:
+            return _idem_put(idem, {"ok": False, "error": "NOT_YET"})
+        if now >= times["expires"]:
+            return _idem_put(idem, {"ok": False, "error": "EXPIRED"})
+        members = _gp_feedback_members(p)
+        canonical = next((n for n in members if _norm_name(n) == _norm_name(who)), None)
+        if not canonical:
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        p.setdefault("feedback_members", list(members))
         fb = p.setdefault("feedback", {})
-        fb[who] = {"happened": (None if happened is None else bool(happened)),
-                   "reason": str(reason or "")[:400], "text": str(text or "")[:1000], "t": now}
-        if all(n in fb for n in conf):
+        current = dict(fb.get(canonical) or {})
+        if happened is not None:
+            current["happened"] = bool(happened)
+        if reason:
+            current["reason"] = str(reason)[:400]
+        if text:
+            current["text"] = str(text)[:1000]
+        if rating not in (None, ""):
+            try:
+                current["rating"] = max(1, min(5, int(rating)))
+            except (TypeError, ValueError):
+                return _idem_put(idem, {"ok": False, "error": "BAD_RATING"})
+        if current.get("happened") is None:
+            return _idem_put(idem, {"ok": False, "error": "ANSWER_REQUIRED"})
+        current["t"] = now
+        fb[canonical] = current
+        answered = sum(1 for n in members if (_gp_feedback_record(p, n) or {}).get("happened") is not None)
+        if answered >= len(members):
             p["state"] = "done"
-            g = _gi_find(p.get("gid"))
-            if g:
-                g["state"] = "done"
         p["updated"] = now
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who),
-                                "answered": len(fb), "of": len(conf)})
+                                "answered": answered, "of": len(members)})
 
 
 def gp_for(who):
     """This person's plans — active and history — plus any vote waiting on them."""
     _gp_lock_due()
+    _gp_postcall_due()
     me = _norm_name(who)
     active, history, votes = [], [], []
     for p in _gplans():
@@ -5606,7 +5724,9 @@ def gp_for(who):
             continue
         view = _gp_public(p, who)
         view["title"] = g.get("title")
-        (history if p.get("state") in ("done", "cancelled") else active).append(view)
+        mine = _gp_feedback_record(p, who)
+        personal_done = bool(mine and mine.get("happened") is not None)
+        (history if p.get("state") in ("done", "cancelled") or personal_done else active).append(view)
     _gp_votes_due()
     for v in _gvotes():
         # Закрытое, но НЕ решённое голосование — это и есть экран GR.37/38: организатору «It’s your
@@ -5630,6 +5750,95 @@ def gp_for(who):
 # then you only see the district — that works both ways.» So the address is a per-VIEWER field released
 # by that viewer's own confirmation — not by the plan's overall state, and not by being the host.
 MP_LIVE = ("otw", "late", "here")        # OF.22 on the way / OF.22a running late / OF.23 I'm here
+
+# ВЫБОР СТОРОНЫ У ГИБРИДА (HY.22 / HY.22a / HY.22b / HY.C4).
+#
+# У гибрида два входа, и каждый идёт своим: один за столик, другой в звонок. Это НЕ отмена
+# (HY.23b говорит это прямым текстом: «this is not switching sides — it ends the meetup») и не
+# статус «опаздываю»: встреча продолжается, человек просто на другой её стороне.
+#
+# Почему отдельное поле, а не значение в `live`. `live` — про путь к ОДНОЙ точке: «иду»,
+# «опаздываю», «на месте». Сторона живёт дольше и значит другое: её выбирают заранее, её видит
+# второй, и она переключается туда и обратно сколько угодно. Смешать их значило бы, что «я на
+# месте» стирает выбор стороны, а «ухожу в звонок» стирает «опаздываю на 10 минут».
+MP_SIDES = ("in_person", "call")
+
+
+def mp_side(pid, who, side, idem=None):
+    """HY.22: сказать, с какой стороны придёшь. Обратимо — «Go in person after all» на кадре 22a."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    st = str(side or "").strip().lower()
+    if st not in MP_SIDES:
+        return {"ok": False, "error": "BAD_SIDE", "allowed": list(MP_SIDES)}
+    with _STORE_LOCK:
+        p = _mp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if not _mp_is_in(p, who):
+            return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        # Только у гибрида. У звонка «прийти живьём» некуда, у встречи вживую «уйти в звонок»
+        # не по чему — предлагать выбор там значило бы обещать несуществующее.
+        if p.get("mode") != "hybrid":
+            return _idem_put(idem, {"ok": False, "error": "NOT_HYBRID", "mode": p.get("mode")})
+        if p.get("state") not in ("proposed", "confirmed"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+        # Сторона, которой нет входа, — это тупик: уйти в звонок, которого не существует, значит
+        # не прийти вовсе. Пусть сперва донесут ссылку (HY.20a) или место (HY.20b).
+        if st == "call" and not _mp_link(p):
+            return _idem_put(idem, {"ok": False, "error": "NO_LINK"})
+        if st == "in_person" and not _mp_place(p):
+            return _idem_put(idem, {"ok": False, "error": "NO_PLACE"})
+        was = (p.get("sides") or {}).get(_norm_name(who))
+        p.setdefault("sides", {})[_norm_name(who)] = {"side": st, "t": time.time()}
+        p["updated"] = time.time()
+        # Второму говорят СРАЗУ и в ленту, а не только полем в плане: смысл кадра HY.22b целиком
+        # в том, что «она сказала заранее, и ты не сидишь за столиком один».
+        if was is None or was.get("side") != st:
+            _sys_msg(who, _mp_other(p, who), "plan_side", side=st)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
+
+
+def _looks_like_url(s):
+    s = str(s or "").strip().lower()
+    return s.startswith(("http://", "https://")) or "://" in s or s.startswith("www.")
+
+
+def _mp_link(p):
+    """Ссылка встречи — отдельно от места.
+
+    Раньше и то и другое лежало в ОДНОМ поле `address`: у звонка там была ссылка, у встречи вживую —
+    адрес, а у ГИБРИДА — что положили первым, то есть второе терялось молча. Борд «1:1 Hybrid» на
+    кадрах HY.20a/20b/20c требует обратного: у гибрида два входа, и каждый заполняется сам по себе,
+    потому что без ссылки не войдёт половина, а без места второй половине некуда идти.
+
+    Старые планы не переписываются, а ЧИТАЮТСЯ: у звонка `address` и есть ссылка; у гибрида,
+    созданного до этой правки, там лежит ссылка, если она похожа на ссылку, и место иначе — другого
+    признака в тех записях просто нет.
+    """
+    if p.get("link"):
+        return p["link"]
+    mode, addr = p.get("mode"), p.get("address") or ""
+    if mode == "online":
+        return addr
+    if mode == "hybrid" and _looks_like_url(addr):
+        return addr
+    return ""
+
+
+def _mp_place(p):
+    """Место встречи — та же развязка с другой стороны."""
+    if p.get("place"):
+        return p["place"]
+    mode, addr = p.get("mode"), p.get("address") or ""
+    if mode == "online":
+        return ""
+    if mode == "hybrid" and _looks_like_url(addr):
+        return ""
+    return addr
+
 MP_MODES = ("offline", "online", "hybrid")
 MP_MAX_AHEAD = 365 * 24 * 3600           # a first coffee is not scheduled for the year 31 billion
 MP_KEEP_AFTER = 24 * 3600                # a plan stays "active" for a day past its start, then history
@@ -5702,6 +5911,9 @@ def _mp_public(p, me=""):
                        # Пояс участника — чтобы экран мог показать чужое местное время, и только
                        # когда оно отличается от своего.
                        "tz": tzs.get(k) or "",
+                       # HY.22a/22b: с какой стороны человек придёт. Второму это видно — в том и
+                       # смысл: «она сказала заранее, и ты не сидишь за столиком один».
+                       "side": ((p.get("sides") or {}).get(k) or {}).get("side"),
                        "live": (p.get("live") or {}).get(k)})
     # OF.C3: released by the viewer's OWN confirmation — plus, always, to whoever typed it. Without
     # that second half a counter-proposal (which resets every confirmation) would hide the address
@@ -5719,6 +5931,18 @@ def _mp_public(p, me=""):
         "address": (p.get("address") or "") if opened else "",
         "address_set": bool(p.get("address")),
         "address_visible_to_me": bool(opened and p.get("address")),
+        # ДВА ВХОДА ОТДЕЛЬНЫМИ ПОЛЯМИ. Экран гибрида не мог показать ни места, ни ссылки: строка
+        # места стояла на «режим == offline», строка ссылки — на «режим == online», а гибрид не
+        # тот и не другой. Теперь наружу идут оба, и каждый со своим признаком «задан ли» —
+        # на этом различии держатся кадры HY.20a («место есть, ссылки нет»), HY.20b (наоборот)
+        # и HY.20c (нет ни того, ни другого).
+        #
+        # Правило открытия у обоих одно и то же (OF.C3): их видит подтвердивший и тот, кто их
+        # написал. Ссылка не безобиднее адреса — по ней входят в разговор.
+        "place": (_mp_place(p) if opened else ""),
+        "place_set": bool(_mp_place(p)),
+        "link": (_mp_link(p) if opened else ""),
+        "link_set": bool(_mp_link(p)),
         "note": p.get("note"), "cover": p.get("cover"),
         "host": p.get("host"), "guest": p.get("guest"), "other": _mp_other(p, me),
         "participants": people,
@@ -5732,6 +5956,9 @@ def _mp_public(p, me=""):
         # с сервером на минуту.
         "locked": _mp_frozen(p),
         "locks_at": (float(p["starts_at"]) - MP_LOCK_BEFORE) if p.get("starts_at") else None,
+        # Сторона парой my/their — как live и tz: экрану нужен один ключ, а не перебор участников.
+        "my_side": ((p.get("sides") or {}).get(who) or {}).get("side"),
+        "their_side": ((p.get("sides") or {}).get(_norm_name(_mp_other(p, me))) or {}).get("side"),
         "my_live": (p.get("live") or {}).get(who),
         "their_live": (p.get("live") or {}).get(_norm_name(_mp_other(p, me))),
         # Пояс собеседника рядом с their_live по той же причине: экрану нужен ОДИН ключ, а не
@@ -5757,7 +5984,7 @@ def _mp_public(p, me=""):
 
 
 def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", district="",
-               address="", note="", cover="", venue="", idem=None):
+               address="", note="", cover="", venue="", idem=None, link=""):
     """OF.20 — one side sends the meeting: when, which district, and (optionally) the exact address."""
     cached = _idem_get(idem)
     if cached is not None:
@@ -5794,6 +6021,10 @@ def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", distr
              "starts_at": sa, "when": str(when or "")[:120],
              "district": str(district or "")[:120], "address": str(address or "")[:200],
              "venue": str(venue or "")[:120], "address_by": frm if address else "",
+             # ДВА ВХОДА У ГИБРИДА. Раньше место и ссылка делили одно поле, и у гибрида второе
+             # молча пропадало: экран отправлял `address = link or place`. Теперь ссылка своя.
+             # У звонка и встречи вживую ничего не меняется — там как был один вход, так и есть.
+             "link": str(link or "")[:400], "link_by": frm if link else "",
              "pending": None,
              "note": str(note or "")[:400], "cover": str(cover or "")[:400],
              "state": "proposed", "version": 1,
@@ -5935,7 +6166,7 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
 
 
-def mp_address(pid, who, address="", venue="", idem=None):
+def mp_address(pid, who, address="", venue="", idem=None, link=""):
     """OF.20a «Pick the exact place» — naming the venue for a time both sides already agreed to.
 
     This deliberately does NOT go through counter. «Thursday 19:00 in Gràcia is agreed» — filling in
@@ -5961,12 +6192,17 @@ def mp_address(pid, who, address="", venue="", idem=None):
             p["address_by"] = who
         if venue:
             p["venue"] = str(venue)[:120]
+        # HY.20a/HY.20b: у гибрида второй вход доносят ОТДЕЛЬНО и в любом порядке — «место есть,
+        # ссылки нет» и «ссылка есть, места нет» это два разных кадра, а не одно поле по очереди.
+        if link:
+            p["link"] = str(link)[:400]
+            p["link_by"] = who
         p["updated"] = time.time()
-        if address or venue:
+        if address or venue or link:
             # Само место в ленту НЕ уходит: адрес открывается только подтвердившим (OF.C3), а лента
             # общая. В строке — сам факт, что место наконец названо; кто подтвердил, увидит его в плане.
             _sys_msg(who, _mp_other(p, who), "plan_place",
-                     kind="link" if p.get("mode") == "online" else "place")
+                     kind="link" if (link or p.get("mode") == "online") else "place")
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
 
@@ -7114,14 +7350,16 @@ class H(BaseHTTPRequestHandler):
                                            body.get("eta_min"), body.get("idem")))
         elif p == "/api/agent/gplan-feedback":
             send_json(self, 200, gp_feedback(body.get("id"), body.get("self"), body.get("happened"),
-                                             body.get("reason"), body.get("text"), body.get("idem")))
+                                             body.get("reason"), body.get("text"), body.get("rating"),
+                                             body.get("idem")))
         elif p == "/api/agent/mplan-propose":
             send_json(self, 200, mp_propose(body.get("self") or body.get("from"), body.get("to"),
                                             body.get("title"), body.get("mode") or "offline",
                                             body.get("starts_at"), body.get("when"),
                                             body.get("district"), body.get("address"),
                                             body.get("note"), body.get("cover"),
-                                            body.get("venue"), body.get("idem")))
+                                            body.get("venue"), body.get("idem"),
+                                            body.get("link")))
         elif p == "/api/agent/mplan-respond":
             send_json(self, 200, mp_respond(body.get("id"), body.get("self"), body.get("action"),
                                             body.get("starts_at"), body.get("when"),
@@ -7136,10 +7374,13 @@ class H(BaseHTTPRequestHandler):
                                              body.get("reason"), body.get("text"), body.get("idem")))
         elif p == "/api/agent/mplan-address":
             send_json(self, 200, mp_address(body.get("id"), body.get("self"), body.get("address"),
-                                            body.get("venue"), body.get("idem")))
+                                            body.get("venue"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/mplan-cancel":
             send_json(self, 200, mp_cancel(body.get("id"), body.get("self"),
                                            body.get("reason"), body.get("idem")))
+        elif p == "/api/agent/mplan-side":
+            send_json(self, 200, mp_side(body.get("id"), body.get("self"),
+                                         body.get("side"), body.get("idem")))
         elif p == "/api/agent/mplan-status":
             send_json(self, 200, mp_status(body.get("id"), body.get("self"), body.get("status"),
                                            body.get("eta_min"), body.get("idem")))
