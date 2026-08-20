@@ -2316,6 +2316,17 @@ console.log('\nчетыре находки сверки: слот, кнопка,
     // Поэтому переход сперва сворачивает стопку до главной.
     check('вкладка сворачивает стопку до главной', /dismissTo\('\/home'\);\s*router\.navigate/.test(nav));
     check('и «домой» тоже сворачивает', /onPress=\{\(\) => router\.dismissTo\('\/home'\)\}/.test(nav));
+    // Вкладка — смена раздела, а не шаг вглубь: со slide-анимацией её двойной переход
+    // (свернуть до главной + открыть) читался как перерисовка внахлёст.
+    {
+      const lay = code('app/_layout.tsx');
+      const tabs = ['home', 'activity', 'messages', 'profile/index'];
+      const missing = tabs.filter((t) =>
+        !new RegExp('name="' + t + '"[^>]*animation: \'none\'').test(lay));
+      check('вкладки открываются без анимации', missing.length === 0, missing.join(', '));
+      // А проваливание вглубь её сохраняет — там движение говорит, куда идёшь.
+      check('вглубь анимация осталась', /animation: 'slide_from_right'/.test(lay));
+    }
   }
 
   // ГИБРИД: два входа. Поле было одно, и место у гибрида просто не уезжало на сервер.

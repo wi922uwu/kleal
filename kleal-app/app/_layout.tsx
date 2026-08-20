@@ -39,7 +39,24 @@ export default function RootLayout() {
           contentStyle: { backgroundColor: color.bg },
           animation: 'slide_from_right',
         }}
-      />
+      >
+        {/*
+          ВКЛАДКИ НИЖНЕЙ ПАНЕЛИ ПЕРЕКЛЮЧАЮТСЯ БЕЗ АНИМАЦИИ.
+
+          Переход по панели — это два действия подряд: свернуть стопку до главной и открыть
+          вкладку (см. BottomNav — иначе чередование вкладок наращивает стопку). Со `slide_from_right`
+          оба видны по очереди: экран уезжает, показывается главная, поверх неё наезжает вкладка.
+          Со стороны это читается не как переход, а как перерисовка внахлёст.
+
+          Вкладка — не «шаг вглубь», а смена раздела, и ей уместнее жёсткая смена кадра.
+          Проваливание вглубь (карточка, план, разговор) анимацию сохраняет: там движение
+          вправо-влево говорит человеку, куда он идёт и как вернуться.
+        */}
+        <Stack.Screen name="home" options={{ animation: 'none' }} />
+        <Stack.Screen name="activity" options={{ animation: 'none' }} />
+        <Stack.Screen name="messages" options={{ animation: 'none' }} />
+        <Stack.Screen name="profile/index" options={{ animation: 'none' }} />
+      </Stack>
     </SafeAreaProvider>
   );
 }
