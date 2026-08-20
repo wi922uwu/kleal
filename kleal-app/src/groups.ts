@@ -162,17 +162,13 @@ export const ROOM = {
           `${who} is running late by about ${eta} min — the meetup is still on`)
       : T(`${who} опаздывает — встреча в силе`, `${who} is running late — the meetup is still on`),
   sysArrived: (who: string) => T(`${who} на месте`, `${who} is there`),
+  // Текст взят С БОКСА как есть: он там уже написан вторым агентом, и своя вторая копия
+  // означала бы две разных фразы на один код — тот же дубль, из-за которого файл не собрался.
+  sysFeedbackReminder: (title: string) => T(
+    `Прошло два дня после «${title || 'звонка'}». Он состоялся? Один ответ — и я больше не буду спрашивать. Завтра вопрос закроется сам.`,
+    `Two days since ${title || 'the call'} — did it happen? One tap, and I’ll stop asking. It closes on its own tomorrow either way.`
+  ),
   sysLinkSaved: () => T('Ссылка на звонок сохранена.', 'The call link is saved.'),
-  /**
-   * GRO.47-50 — напоминание про отзыв на третий день. Сервер шлёт его кодом, а разбора не было:
-   * в чат уезжала английская фраза сервера, минуя перевод. Текст мягкий намеренно: это
-   * напоминание, а не требование, и оно само закроется завтра.
-   */
-  sysFeedbackReminder: (title: string) =>
-    T(
-      `Два дня прошло${title ? ` с «${title}»` : ''} — расскажешь, состоялось ли? Одно нажатие, и я перестану спрашивать: завтра вопрос закроется сам.`,
-      `Two days since${title ? ` “${title}”` : ' then'} — did it happen? One tap and I’ll stop asking; it closes on its own tomorrow either way.`
-    ),
   sysVoteKept: (who: string) => T(`${who} оставил(а) план как есть`, `${who} kept the plan as it is`),
   sysPlanCountered: (who: string, when: string) =>
     T(`${who} предлагает изменить: ${when}. Все подтверждают заново.`,
@@ -352,8 +348,9 @@ export function groupSysLine(text: string, sys?: GroupSys): string {
   if (c === 'running_late') return ROOM.sysRunningLate(S(f.who), Number(f.eta || 0));
   if (c === 'arrived') return ROOM.sysArrived(S(f.who));
   if (c === 'link_saved') return ROOM.sysLinkSaved();
-  // Напоминание про отзыв (GRO.47-50). Код появился на сервере, разбора у него не было ни здесь,
-  // ни на боксе: строка уезжала в чат группы английской фразой сервера, мимо перевода.
+  // Напоминание про отзыв (GRO.47-50). Разбор был написан вторым агентом и живёт на боксе, но в
+  // git не попал — а без него строка уезжает в чат группы английской фразой сервера, мимо
+  // перевода. Здесь он ровно тот же, чтобы при слиянии не появилось двух разных.
   if (c === 'feedback_reminder') return ROOM.sysFeedbackReminder(S(f.title));
   if (c === 'vote_kept') return ROOM.sysVoteKept(S(f.who));
   if (c === 'vote_opened') return ROOM.sysVoteOpened(S(f.who), S(f.kind));
