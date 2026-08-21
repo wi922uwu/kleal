@@ -45,6 +45,8 @@ export default function AuthEmail() {
       }
       if (r?.error === 'bad email') setErr({ title: AUTH.badEmailTitle(), note: AUTH.badEmailNote() });
       else if (r?.error === 'too many') setErr({ title: AUTH.tooManyTitle(), note: AUTH.tooManyNote() });
+      // Повтор здесь не поможет никогда — и говорить «через минуту» значит гонять по кругу.
+      else if (r?.error === 'not allowed') setErr({ title: AUTH.notAllowedTitle(), note: AUTH.notAllowedNote() });
       else setErr({ title: AUTH.sendFailedTitle(), note: AUTH.sendFailedNote() });
     } catch {
       setErr({ title: AUTH.sendFailedTitle(), note: AUTH.offline() });

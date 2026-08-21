@@ -121,6 +121,13 @@ def send_code(to, code, lang="en", minutes=10):
         except Exception:
             pass
         print("[mail] %s HTTP %s: %s" % (provider, e.code, detail), flush=True)
+        # ОТКАЗ БЫВАЕТ ВРЕМЕННЫЙ И ПОСТОЯННЫЙ, и человеку это разные новости. Пока домен не
+        # подтверждён, провайдер разрешает писать только на адрес владельца аккаунта и отвечает
+        # 403 на всё остальное — сколько ни повторяй, письма не будет. Экран, говорящий «попробуй
+        # через минуту», в этом случае гоняет человека по кругу. Отделяем это одно состояние.
+        low = detail.lower()
+        if e.code == 403 and ("verify a domain" in low or "your own email address" in low):
+            return False, provider, "not allowed"
         return False, provider, "http %s" % e.code
     except Exception as e:
         print("[mail] %s failed: %s" % (provider, e), flush=True)

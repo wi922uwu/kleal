@@ -102,6 +102,7 @@ export default function AuthCode() {
     try {
       const r: any = await auth.requestCode(email, replyLang());
       if (r?.error === 'too many') setErr({ title: AUTH.tooManyTitle(), note: AUTH.tooManyNote() });
+      else if (r?.error === 'not allowed') setErr({ title: AUTH.notAllowedTitle(), note: AUTH.notAllowedNote() });
       else if (!r?.ok) setErr({ title: AUTH.sendFailedTitle(), note: AUTH.sendFailedNote() });
       setLeft(Number(r?.resend_in) > 0 ? Number(r.resend_in) : RESEND);
       setTimeout(() => input.current?.focus(), 40);

@@ -2291,6 +2291,10 @@ def request_code(email, lang="en", ip=""):
         # висит десять минут.
         with _CODE_LOCK:
             _CODES.pop(e, None)
+        # «Не разрешён получатель» — отдельная новость: домен ещё не подтверждён у провайдера, и
+        # повторять бессмысленно. Экран об этом скажет иначе, чем про временный сбой.
+        if detail == "not allowed":
+            return {"ok": False, "error": "not allowed"}
         return {"ok": False, "error": "send failed", "detail": detail}
     return {"ok": True, "resend_in": RESEND_AFTER, "sent": True, "via": how}
 

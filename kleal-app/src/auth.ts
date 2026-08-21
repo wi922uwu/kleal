@@ -58,6 +58,18 @@ export const AUTH = {
   sendFailedTitle: () => T('Письмо не ушло', 'We couldn’t send the email'),
   sendFailedNote: () =>
     T('Попробуй ещё раз через минуту.', 'Try again in a minute.'),
+  /**
+   * Отказ, который повтором не лечится: почтовый домен ещё не подтверждён у провайдера, и писать
+   * он разрешает только на один адрес. Прежний текст «попробуй через минуту» в этом случае гонял
+   * человека по кругу — минута ничего не меняет. Причину не называем внутренними словами: для
+   * человека важно, что дело в адресе и что делать дальше.
+   */
+  notAllowedTitle: () => T('На этот адрес пока не пишем', 'We can’t write to that address yet'),
+  notAllowedNote: () =>
+    T(
+      'Почта Kleal ещё настраивается. Попробуй другой адрес или напиши нам.',
+      'Kleal’s email is still being set up. Try another address or write to us.'
+    ),
   tooManyTitle: () => T('Слишком много попыток', 'Too many attempts'),
   tooManyNote: () =>
     T('Подожди час и попробуй снова.', 'Wait an hour and try again.'),
