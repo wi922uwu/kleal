@@ -19,7 +19,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CHAT, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS, planWhen, planPinned, sysLine } from '../src/chat';
+import {
+  CHAT, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS, planWhen, planPinned, planPhase, sysLine,
+} from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
@@ -67,6 +69,15 @@ export default function Conversation() {
   const since = useRef(0);
   /** MSG.06–MSG.11: живой план с этим человеком, заявка между нами, отметка чтения второй стороны. */
   const [livePlan, setLivePlan] = useState<any>(null);
+  /**
+   * Встреча с этим же человеком, которая уже прошла, — отдельно от живого плана.
+   *
+   * Подсказка MSG.08 утверждает «время так и не назначено». Сутки спустя сервер перекладывает
+   * план из plans в history (mp_for), livePlan обнуляется — и подсказка звала создать план пару,
+   * которая УЖЕ виделась. Живой план на её вопрос не отвечает: он про «есть ли план сейчас»,
+   * а подсказка — про «назначалось ли время вообще».
+   */
+  const [pastPlan, setPastPlan] = useState<any>(null);
   const [request, setRequest] = useState<any>(null);
   const [peerRead, setPeerRead] = useState(0);
   const [intentOpen, setIntentOpen] = useState(false);
@@ -142,6 +153,18 @@ export default function Conversation() {
       setLivePlan(all.find((p: any) =>
         (p.participants || []).some((x: any) => norm(x.name) === norm(other))
         && (p.state === 'proposed' || p.state === 'confirmed')) || null);
+      // История нужна ОДНОЙ подсказке и берётся отдельной выборкой. Слить её в `all` нельзя:
+      // сервер меняет корзину, а не state, — протухший `confirmed` тут же вернулся бы в шапку и
+      // в закреплённую карточку как живой план недельной давности.
+      // `|| []` обязателен: старый бокс history не отдаёт вовсе, а один общий catch на весь
+      // loadSide проглотил бы падение вместе с заявкой.
+      const seen = [...((pl as any)?.plans || []), ...((pl as any)?.history || [])]
+        .filter((p: any) =>
+          (p.participants || []).some((x: any) => norm(x.name) === norm(other))
+          && planPhase(p) === 'after')
+        .sort((a: any, b: any) => (b.starts_at || 0) - (a.starts_at || 0));
+      // 'cancelled' сюда не попадает намеренно: отменённая встреча — как раз повод предложить новую.
+      setPastPlan(seen[0] || null);
       const rows = [
         ...(Array.isArray(inb) ? inb : (inb as any)?.requests || []),
         ...(Array.isArray(out) ? out : (out as any)?.requests || []),
@@ -575,8 +598,10 @@ export default function Conversation() {
             </View>
           ) : null}
 
-          {/* MSG.08 — подсказка Kleal: счёт сообщений настоящий, план по кнопке, «пока нет» помнит. */}
-          {!livePlan && talk.length >= 8 && !noNudge ? (
+          {/* MSG.08 — подсказка Kleal: счёт сообщений настоящий, план по кнопке, «пока нет» помнит.
+              Прошедшая встреча гасит её так же, как живой план: звать назначить время тем, кто уже
+              виделся, — врать про их же историю. */}
+          {!livePlan && !pastPlan && talk.length >= 8 && !noNudge ? (
             <View style={s.nudge}>
               <Text style={s.nudgeLabel}>Kleal</Text>
               <Text style={s.nudgeText}>{THREAD.nudge(talk.length, other)}</Text>

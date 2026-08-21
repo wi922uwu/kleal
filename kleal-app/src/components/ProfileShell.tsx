@@ -183,7 +183,7 @@ const s = StyleSheet.create({
  * изменениями, и это видно по экрану.
  */
 export function EditSheet({
-  open, title, onClose, onAccept, acceptLabel, cancelLabel, children, scrollEnabled = true,
+  open, title, onClose, onAccept, acceptLabel, cancelLabel, children, scrollEnabled = true, maxHeight,
 }: {
   open: boolean;
   title: string;
@@ -199,6 +199,16 @@ export function EditSheet({
    * просто не было, и карта в профиле не двигалась вовсе.
    */
   scrollEnabled?: boolean;
+  /**
+   * Потолок высоты содержимого.
+   *
+   * Своей высоты у листа нет: он прижат к низу и растёт ВВЕРХ по содержимому, а прокрутить его
+   * нечем — внутренняя прокрутка без потолка просто разворачивается во всю длину. Пока внутри
+   * стоял список строк, это никому не мешало; лист с раскрытым полем (карта, циферблат) выносит
+   * кнопку «Применить» за верх экрана, и нажать её становится нечем. Просит потолок ровно один
+   * лист — правка интента со сводки; остальным десяти он не нужен и по умолчанию его нет.
+   */
+  maxHeight?: number;
   /** Кадры O.07a/O.10a: под главной кнопкой стоит тёмная «Cancel». Профильные листы её не просят —
    *  поэтому кнопка появляется только там, где подпись передана. Делает то же, что крестик. */
   cancelLabel?: string;
@@ -209,6 +219,7 @@ export function EditSheet({
   return (
     <Sheet visible={open} onClose={onClose} title={title} bottomInset={dockBottom(insets.bottom, kb, 18)} grip>
         <ScrollView contentContainerStyle={e.body} keyboardShouldPersistTaps="handled"
+                    style={maxHeight ? { maxHeight } : undefined}
                     scrollEnabled={scrollEnabled}>
           {children}
         </ScrollView>

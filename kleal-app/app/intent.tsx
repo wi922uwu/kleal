@@ -24,25 +24,30 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, TextInput,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+// Свайп от края (iOS) и аппаратная «назад» (Android) снимают экран мимо любого обработчика
+// кнопки. Единственный способ вклиниться — usePreventRemove; expo-router его не реэкспортирует,
+// поэтому берём из навигатора, на котором он и построен.
+import { usePreventRemove } from '@react-navigation/native';
 import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
   NATURE_TRAITS, NATURE_MAX,
   STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
-  DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzDisplay, tzOptions, tzCity, looksLikeUrl,
+  DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
 } from '../src/intent';
 import { SEXES, sexLabel, COMPOSER_PLACEHOLDER } from '../src/onboarding';
-import { TimeDial, RangeDial } from '../src/components/Dials';
+import { RangeDial } from '../src/components/Dials';
+import { WhenPicker } from '../src/components/WhenPicker';
 import { RadiusMap } from '../src/components/RadiusMap';
 import {
   IconChevronLeft, IconMic, IconPin, IconVideo, IconPlusRound, IconPerson, IconGroups,
-  IconCalendar, IconClock, IconGlobe, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar,
+  IconCalendar, IconClock, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar,
 } from '../src/components/icons';
 import { EditSheet } from '../src/components/ProfileShell';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
@@ -78,8 +83,11 @@ type Draft = {
 export default function Intent() {
   useLang();
   const router = useRouter();
+  /** Нужен ровно для одного: пропустить дальше действие, которое перехват задержал по ошибке. */
+  const nav = useNavigation();
   const st = useOnb();
   const insets = useSafeAreaInsets();
+  const win = useWindowDimensions();
   /** Android: клавиатура ложится поверх композера — окно под неё не ужимается. См. src/keyboard.ts. */
   const kb = useKeyboardInset();
   const scroller = useRef<ScrollView>(null);
@@ -117,6 +125,12 @@ export default function Intent() {
   }));
   /** Между шагом и шагом агент отвечает «Awesome!» и печатает — как на кадрах. */
   const [ack, setAck] = useState(false);
+  /**
+   * Пауза «Awesome!» держит таймер, и его идентификатор нигде не хранился. «Назад», нажатая в
+   * эти 900 мс, отступала на шаг — а потом таймер всё равно доводил движение ВПЕРЁД, и человек
+   * возвращался туда, откуда только что ушёл.
+   */
+  const ackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [busy, setBusy] = useState(false);
   /** Живой запрос поиска — чтобы кнопка «Отменить» рвала именно его. */
   const abortRef = useRef<AbortController | null>(null);
@@ -125,9 +139,19 @@ export default function Intent() {
   /** O.07a: лист пояса держит выбор у себя и отдаёт его в черновик только по «Применить». */
   const [tzOpen, setTzOpen] = useState(false);
   const [tzPick, setTzPick] = useState('');
-  /** O.10a: лист «что поменять» над сводкой; editPick — подсвеченная строка. */
+  /**
+   * O.10a: лист правки над сводкой. editPick — РАСКРЫТАЯ строка (одна за раз: лист растёт вверх
+   * по содержимому, и двух крупных полей разом он не выдерживает).
+   *
+   * edraft — черновик самого листа. Контролы шагов пишут в состояние немедленно, и если пустить
+   * их прямо в draft, «Отмена» станет враньём: лист закроется, а правки останутся. Правило листа
+   * записано в src/components/ProfileShell.tsx и здесь соблюдается так же, как в листе пояса.
+   */
   const [editOpen, setEditOpen] = useState(false);
   const [editPick, setEditPick] = useState('');
+  const [edraft, setEdraft] = useState<Draft | null>(null);
+  /** Пояс внутри листа правки разворачивается СПИСКОМ, а не вторым модалом — см. лист O.07a. */
+  const [tzInline, setTzInline] = useState(false);
   const [free, setFree] = useState('');
   /** Категория для строки сводки O.10. Приходит от агента фильтрации; пусто — строка не рисуется. */
   const [category, setCategory] = useState('');
@@ -162,10 +186,6 @@ export default function Intent() {
   const where = String(st.profile.city || '').trim();
   const homeLat = Number(st.profile.geo?.coarseLat ?? 41.3874);
   const homeLon = Number(st.profile.geo?.coarseLon ?? 2.1686);
-  const mapLat = draft.lat ?? homeLat;
-  const mapLon = draft.lon ?? homeLon;
-  /** Булавку увели от дома — говорим об этом словами и даём вернуть одним нажатием. */
-  const moved = draft.lat != null || draft.lon != null;
 
   const ctx = () => ({
     self: st.profile.name,
@@ -192,7 +212,8 @@ export default function Intent() {
     if (ack) return;
     setDraft((d) => ({ ...d, ...patch }));
     setAck(true);
-    setTimeout(() => {
+    ackTimer.current = setTimeout(() => {
+      ackTimer.current = null;
       setAck(false);
       setStep(next);
       scroller.current?.scrollTo({ y: 0, animated: false });
@@ -350,19 +371,125 @@ export default function Intent() {
   };
 
   /**
-   * Место и ссылка вынесены в блоки: у гибрида они стоят на ОДНОМ шаге (HY.09), у офлайна и
-   * онлайна — каждый на своём. Копия и поведение обязаны быть теми же; две копии одного блока
-   * разошлись бы на первой правке, и разошлись бы именно у гибрида, которого меньше видно.
+   * ПОЛЯ МАСТЕРА — ФУНКЦИИ ОТ ЧЕРНОВИКА, А НЕ ГОТОВЫЙ JSX.
+   *
+   * Каждое из них живёт теперь в двух местах: на своём шаге мастера (пишет прямо в draft) и в
+   * листе правки со сводки (пишет в черновик листа, чтобы «Отмена» и правда отменяла). Скопировать
+   * разметку в лист значило бы завести вторую копию — этот проект уже терял день на разъехавшихся
+   * копиях подготовки фото и `languages`, см. AGENTS.md.
+   *
+   * Место и ссылка вдобавок стоят у гибрида на ОДНОМ шаге (HY.09), а у офлайна и онлайна — каждое
+   * на своём: разойдись копии, разошлись бы именно у гибрида, которого меньше видно.
    */
-  const linkBroken = !!draft.link.trim() && !looksLikeUrl(draft.link);
+  type SetDraft = (fn: (d: Draft) => Draft) => void;
 
-  const linkBlock = (
+  /** Битая ссылка не пускает ни «Дальше» на шаге, ни «Применить» в листе — правило одно на оба. */
+  const linkBroken = (v: Draft) => !!v.link.trim() && !looksLikeUrl(v.link);
+
+  const sizeBlockOf = (v: Draft, set: SetDraft) => (
+    <View style={s.chipRowWrap}>
+      {SIZES.map(([k]) => (
+        <Chip key={k} label={sizeLabel(k)} on={v.size === k} onPress={() => set((x) => ({ ...x, size: k }))} />
+      ))}
+    </View>
+  );
+
+  /* O.07 — дата, круглый циферблат и пояс. Тот же WhenPicker, что у группового плана: разметка
+     здесь была своя и слово в слово такая же, а копии в этом проекте расходятся. */
+  const whenBlockOf = (v: Draft, set: SetDraft, onPressTz: () => void) => (
+    <WhenPicker
+      value={{ date: v.date, minutes: v.minutes, tz: v.tz }}
+      onChange={(w) => set((x) => ({ ...x, date: w.date, minutes: w.minutes, tz: w.tz }))}
+      onDragChange={setDragging}
+      onPressTz={onPressTz}
+    />
+  );
+
+  const whoBlockOf = (v: Draft, set: SetDraft) => (
+    <>
+      <LabelRow Icon={IconPlay} text={DETAILS.audience()} />
+      <View style={s.chipRowWrap}>
+        {SEXES.map(([k]) => (
+          <Chip key={k} label={sexLabel(k)} on={v.sex === k} onPress={() => set((x) => ({ ...x, sex: k }))} />
+        ))}
+      </View>
+
+      <LabelRow Icon={IconPerson} text={DETAILS.age()} />
+      <RangeDial
+        lo={v.minAge}
+        hi={v.maxAge}
+        onChange={(lo, hi) => set((x) => ({ ...x, minAge: lo, maxAge: hi }))}
+        onDragChange={setDragging}
+      />
+      <View style={s.boxRow}>
+        <NumBox
+          value={String(v.minAge)}
+          onChange={(t) => {
+            const n = Math.max(18, Math.min(v.maxAge, parseInt(t || '18', 10) || 18));
+            set((x) => ({ ...x, minAge: n }));
+          }}
+        />
+        <Text style={s.boxColon}>–</Text>
+        <NumBox
+          value={String(v.maxAge)}
+          onChange={(t) => {
+            const n = Math.min(80, Math.max(v.minAge, parseInt(t || '80', 10) || 80));
+            set((x) => ({ ...x, maxAge: n }));
+          }}
+        />
+      </View>
+    </>
+  );
+
+  /*
+    Характер. Оси те же, что заполняет тест личности, — просить можно только то, что у кандидата
+    в профиле есть. Ничего не отметив, человек не сужает поиск: подсказка говорит это прямо,
+    потому что молчащий фильтр люди трактуют как «значит, ищет всех подряд».
+  */
+  const natureBlockOf = (v: Draft, set: SetDraft) => (
+    <>
+      <LabelRow Icon={IconPerson} text={DETAILS.nature()} />
+      <Text style={s.natureHint}>{DETAILS.natureHint()}</Text>
+      <View style={s.chipRowWrap}>
+        {NATURE_TRAITS.map((t) => {
+          const on = v.nature[t.axis] === t.token;
+          const full = Object.keys(v.nature).length >= NATURE_MAX;
+          // Забита ли ось — видно по тому, что в ней уже стоит другой токен: тогда нажатие
+          // ЗАМЕНЯЕТ, а не добавляет, и потолок не мешает.
+          const busyAxis = !!v.nature[t.axis];
+          const blocked = !on && !busyAxis && full;
+          return (
+            <Chip
+              key={t.axis + t.token}
+              label={t.label()}
+              on={on}
+              dim={blocked}
+              onPress={() =>
+                set((x) => {
+                  const next = { ...x.nature };
+                  if (on) delete next[t.axis];
+                  else if (blocked) return x;
+                  else next[t.axis] = t.token;
+                  return { ...x, nature: next };
+                })
+              }
+            />
+          );
+        })}
+      </View>
+      {Object.keys(v.nature).length >= NATURE_MAX ? (
+        <Text style={s.natureHint}>{DETAILS.natureLimit()}</Text>
+      ) : null}
+    </>
+  );
+
+  const linkBlockOf = (v: Draft, set: SetDraft) => (
     <>
       <LabelRow Icon={IconLink} text={DETAILS.link()} />
       <TextInput
         style={s.linkInput}
-        value={draft.link}
-        onChangeText={(t) => setDraft((x) => ({ ...x, link: t }))}
+        value={v.link}
+        onChangeText={(t) => set((x) => ({ ...x, link: t }))}
         placeholder={DETAILS.linkPlaceholder()}
         placeholderTextColor={color.neutral400}
         autoCapitalize="none"
@@ -379,74 +506,206 @@ export default function Intent() {
 
   /* OF.09 — район картой, а не списком: круг показывает, что человек считает «рядом».
      Порядок с кадра: карта → точный адрес → радиус → записка о приватности. */
-  const placeBlock = (
-    <>
-      <LabelRow Icon={IconPin} text={DETAILS.district()} />
-      <View style={s.map}>
-        <RadiusMap
-          lat={mapLat}
-          lon={mapLon}
-          km={draft.radiusKm}
-          onMove={(la, lo) => setDraft((x) => ({ ...x, lat: la, lon: lo }))}
-          onDragChange={setDragging}
+  const placeBlockOf = (v: Draft, set: SetDraft) => {
+    // Центр и признак «булавку увели от дома» считаются от ТОГО ЖЕ черновика, что правится:
+    // иначе лист правки рисовал бы карту по draft, а двигал бы edraft.
+    const la = v.lat ?? homeLat;
+    const lo = v.lon ?? homeLon;
+    const away = v.lat != null || v.lon != null;
+    return (
+      <>
+        <LabelRow Icon={IconPin} text={DETAILS.district()} />
+        <View style={s.map}>
+          <RadiusMap
+            lat={la}
+            lon={lo}
+            km={v.radiusKm}
+            onMove={(la, lo) => set((x) => ({ ...x, lat: la, lon: lo }))}
+            onDragChange={setDragging}
+          />
+        </View>
+        <View style={s.mapHintRow}>
+          <Text style={s.mapHint}>{away ? DETAILS.centerMoved() : DETAILS.dragPin()}</Text>
+          {away ? (
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() => set((x) => ({ ...x, lat: undefined, lon: undefined }))}
+            >
+              <Text style={s.mapReset}>{DETAILS.backHome()}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт
+            только план после взаимного подтверждения (OF.C3). */}
+        <TextInput
+          style={s.linkInput}
+          value={v.address || ''}
+          onChangeText={(t) => set((x) => ({ ...x, address: t }))}
+          placeholder={DETAILS.exactAddress()}
+          placeholderTextColor={color.neutral400}
+          accessibilityLabel={DETAILS.exactAddress()}
         />
-      </View>
-      <View style={s.mapHintRow}>
-        <Text style={s.mapHint}>{moved ? DETAILS.centerMoved() : DETAILS.dragPin()}</Text>
-        {moved ? (
-          <Pressable
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => setDraft((x) => ({ ...x, lat: undefined, lon: undefined }))}
-          >
-            <Text style={s.mapReset}>{DETAILS.backHome()}</Text>
-          </Pressable>
-        ) : null}
-      </View>
 
-      {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт
-          только план после взаимного подтверждения (OF.C3). */}
-      <TextInput
-        style={s.linkInput}
-        value={draft.address || ''}
-        onChangeText={(t) => setDraft((x) => ({ ...x, address: t }))}
-        placeholder={DETAILS.exactAddress()}
-        placeholderTextColor={color.neutral400}
-        accessibilityLabel={DETAILS.exactAddress()}
-      />
+        <View style={s.radiusRow}>
+          <Text style={s.tzLabel}>{DETAILS.radius()}</Text>
+          <Text style={s.radiusValue}>{v.radiusKm} km</Text>
+        </View>
+        <Slider
+          minimumValue={1}
+          maximumValue={50}
+          step={1}
+          value={v.radiusKm}
+          onValueChange={(km) => set((x) => ({ ...x, radiusKm: Math.round(km) }))}
+          minimumTrackTintColor={color.primary}
+          maximumTrackTintColor={color.neutral100}
+          thumbTintColor={color.primary}
+        />
+        <Text style={s.privacyNote}>{DETAILS.exactAddressNote()}</Text>
+      </>
+    );
+  };
 
-      <View style={s.radiusRow}>
-        <Text style={s.tzLabel}>{DETAILS.radius()}</Text>
-        <Text style={s.radiusValue}>{draft.radiusKm} km</Text>
-      </View>
-      <Slider
-        minimumValue={1}
-        maximumValue={50}
-        step={1}
-        value={draft.radiusKm}
-        onValueChange={(km) => setDraft((x) => ({ ...x, radiusKm: Math.round(km) }))}
-        minimumTrackTintColor={color.primary}
-        maximumTrackTintColor={color.neutral100}
-        thumbTintColor={color.primary}
-      />
-      <Text style={s.privacyNote}>{DETAILS.exactAddressNote()}</Text>
-    </>
-  );
+  const linkBlock = linkBlockOf(draft, setDraft);
+  const placeBlock = placeBlockOf(draft, setDraft);
 
-  /** Отмеченные черты одной строкой — для сводки O.10 и листа правки. */
-  const natureSummary = NATURE_TRAITS.filter((t) => draft.nature[t.axis] === t.token)
+  /** Отмеченные черты одной строкой — для сводки O.10 и строк листа правки. */
+  const natureOf = (v: Draft) => NATURE_TRAITS.filter((t) => v.nature[t.axis] === t.token)
     .map((t) => t.label()).join(', ');
+  const natureSummary = natureOf(draft);
+
+  /**
+   * Строки листа правки. Значения считаются от ЧЕРНОВИКА ЛИСТА, а не от draft: поправив дату
+   * внутри раскрытой строки, человек обязан видеть новую дату в самой строке — иначе она врёт
+   * до «Применить». Третья строка ветвится по режиму так же, как шаг мастера.
+   */
+  const editRows = (v: Draft): [string, any, string, string][] => ([
+    ['size', IconGroups, EDIT_SHEET.format(), v.size ? sizeLabel(v.size) : '—'],
+    ['when', IconClock, EDIT_SHEET.datetime(), `${summaryDate(v.date)}, ${hhmm(v.minutes)}`],
+    ['who', IconPerson, EDIT_SHEET.audience(),
+      `${v.sex && v.sex !== 'Any' ? sexLabel(v.sex) + ', ' : ''}${v.minAge}–${v.maxAge}`],
+    ['nature', IconStar, DETAILS.nature(), natureOf(v) || EDIT_SHEET.noData()],
+    v.mode === 'hybrid'
+      ? ['both', IconPlusRound, DETAILS.bothRow(),
+          [v.address?.trim() || where, v.link.trim()].filter(Boolean).join(' · ') || EDIT_SHEET.noData()]
+      : v.mode === 'offline'
+        ? ['place', IconPin, DETAILS.district(), v.address?.trim() || where || EDIT_SHEET.noData()]
+        : ['link', IconLink, EDIT_SHEET.link(), v.link.trim() || EDIT_SHEET.noData()],
+  ]);
+
+  /** Контрол раскрытой строки — тот же, что на шаге мастера, только пишет в черновик листа. */
+  const editField = (k: string, v: Draft) => {
+    const set: SetDraft = (fn) => setEdraft((x) => (x ? fn(x) : x));
+    if (k === 'size') return sizeBlockOf(v, set);
+    if (k === 'who') return whoBlockOf(v, set);
+    if (k === 'nature') return natureBlockOf(v, set);
+    if (k === 'place') return placeBlockOf(v, set);
+    if (k === 'link') return linkBlockOf(v, set);
+    if (k === 'both') {
+      return (
+        <>
+          {placeBlockOf(v, set)}
+          <View style={s.bothSplit} />
+          {linkBlockOf(v, set)}
+        </>
+      );
+    }
+    // 'when'. Пояс разворачивается СПИСКОМ прямо здесь: лист построен на RN Modal, и второй
+    // модал поверх открытого — известная беда iOS. Отдельный «Применить» ему не нужен —
+    // отменяет весь лист целиком.
+    return (
+      <>
+        {whenBlockOf(v, set, () => setTzInline((o) => !o))}
+        {tzInline ? tzOptions().map((z) => (
+          <Pressable
+            key={z}
+            accessibilityRole="button"
+            accessibilityState={{ selected: z === v.tz }}
+            style={[s.pickRow, z === v.tz && s.pickRowOn]}
+            onPress={() => set((x) => ({ ...x, tz: z }))}
+          >
+            <Text style={s.pickText}>{tzCity(z)}</Text>
+            {z === v.tz ? <Text style={s.pickCheck}>✓</Text> : null}
+          </Pressable>
+        )) : null}
+      </>
+    );
+  };
+
+  /**
+   * Потолок высоты листа правки. 300 — это шапка, две кнопки и безопасные отступы, которые лист
+   * занимает ВНЕ прокрутки; ниже 240 не опускаемся, иначе на маленьком экране в лист не влезает
+   * даже одно поле.
+   */
+  const sheetMax = Math.max(240, Math.round(win.height - 300));
 
   /** Последний шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
   const lastStep: IntentStepId =
     draft.mode === 'offline' ? 'place' : draft.mode === 'hybrid' ? 'both' : 'link';
   const detailIndex = step === 'when' ? 0 : step === 'who' ? 1 : step === 'nature' ? 2 : 3;
 
+  /**
+   * ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЗАПИСАН ПОРЯДОК ШАГОВ НАЗАД.
+   *
+   * Вперёд шаги переключаются девятью разными setStep по всему JSX, а маршрут у мастера ОДИН:
+   * шаг живёт в состоянии экрана, в историю навигации он не пишется. Поэтому «назад» снимала
+   * весь маршрут /intent — а под ним лежит разговор создания (app/create.tsx открывает мастер
+   * поверх себя), и человек, поправлявший один шаг, оказывался у Бадди.
+   *
+   * Третий шаг ветвится по типу встречи, поэтому со сводки отступаем на lastStep, а не на
+   * фиксированное имя: иначе офлайн и гибрид уехали бы на чужой шаг.
+   */
+  const prevStep = (from: IntentStepId): IntentStepId | null =>
+    from === 'size' ? 'how'
+    : from === 'when' ? 'size'
+    : from === 'who' ? 'when'
+    : from === 'nature' ? 'who'
+    : from === 'link' || from === 'both' || from === 'place' ? 'nature'
+    : from === 'summary' ? lastStep
+    : null;
+
+  /**
+   * Один выход назад на оба входа — кнопку в шапке и системный жест.
+   *
+   * Порядок проверок идёт от верхнего слоя к нижнему. Иначе на Android «назад» при открытом
+   * листе срабатывает дважды: лист закрывается по onRequestClose И экран отступает на шаг.
+   */
+  const goBack = () => {
+    if (tzOpen || editOpen) { setTzOpen(false); setEditOpen(false); return; }
+    if (busy) { cancelSearch(); return; }
+    if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; setAck(false); }
+    const prev = prevStep(step);
+    if (!prev) { router.back(); return; }
+    setStep(prev);
+    // Шаг назад обязан открыться сверху — иначе он показывается серединой карточки, которую уже
+    // листали. Тот же сброс делает choose() при движении вперёд.
+    scroller.current?.scrollTo({ y: 0, animated: false });
+  };
+
+  /**
+   * Системный жест назад снимает экран НАТИВНО, не спрашивая JS: обработчик кнопки для него не
+   * выполняется вовсе, и правка одной кнопки его не лечила. Пока есть что закрыть или куда
+   * отступить — держим экран и отдаём событие тому же goBack(); на первом шаге предотвращение
+   * снимается само, и жест честно уводит в разговор создания.
+   */
+  usePreventRemove(step !== 'how' || tzOpen || editOpen || busy, (e) => {
+    // Перехват висит на СНЯТИИ ЭКРАНА, а не на жесте, и под него попадает всё, что уводит с
+    // маршрута, — включая «Все интенты» (dismissTo → POP_TO). Эта кнопка обязана остаться
+    // сквозным выходом: без неё из мастера стало бы некуда деться, кроме как назад по шагам.
+    // Поэтому задерживаем только «назад» (жест и кнопка дают GO_BACK либо POP), а всё остальное
+    // отправляем ещё раз — повторно перехвачено оно не будет: маршрут в этом действии уже
+    // помечен пройденным (VISITED_ROUTE_KEYS в @react-navigation/core).
+    const a = e.data.action;
+    if (a.type !== 'GO_BACK' && a.type !== 'POP') { nav.dispatch(a); return; }
+    goBack();
+  });
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={goBack}>
             <IconChevronLeft />
           </Pressable>
           <View style={{ flex: 1 }} />
@@ -517,134 +776,22 @@ export default function Intent() {
 
               {step === 'when' ? (
                 <View style={s.card}>
-                  <LabelRow Icon={IconCalendar} text={DETAILS.date()} />
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
-                    {dateChips().map((d) => (
-                      <Chip key={d.key} label={d.label} on={draft.date === d.key} onPress={() => setDraft((x) => ({ ...x, date: d.key }))} />
-                    ))}
-                  </ScrollView>
-
-                  <LabelRow Icon={IconClock} text={DETAILS.time()} />
-                  <TimeDial
-                    minutes={draft.minutes}
-                    onChange={(m) => setDraft((x) => ({ ...x, minutes: m }))}
-                    onDragChange={setDragging}
-                  />
-                  <View style={s.boxRow}>
-                    <NumBox
-                      value={String(Math.floor(draft.minutes / 60)).padStart(2, '0')}
-                      onChange={(t) => {
-                        const h = Math.max(0, Math.min(23, parseInt(t || '0', 10) || 0));
-                        setDraft((x) => ({ ...x, minutes: h * 60 + (x.minutes % 60) }));
-                      }}
-                    />
-                    <Text style={s.boxColon}>:</Text>
-                    <NumBox
-                      value={String(draft.minutes % 60).padStart(2, '0')}
-                      onChange={(t) => {
-                        const m = Math.max(0, Math.min(59, parseInt(t || '0', 10) || 0));
-                        setDraft((x) => ({ ...x, minutes: Math.floor(x.minutes / 60) * 60 + m }));
-                      }}
-                    />
-                  </View>
-
-                  {/* O.07a: строка открывает лист выбора, а не аккордеон — выбор применяется только по «Применить». */}
-                  <Pressable
-                    accessibilityRole="button"
-                    style={s.tzRow}
-                    onPress={() => { setTzPick(draft.tz); setTzOpen(true); }}
-                  >
-                    <IconGlobe />
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.tzLabel}>{DETAILS.timeZone()}</Text>
-                      <Text style={s.tzValue}>{tzDisplay(draft.tz)}</Text>
-                    </View>
-                    <Text style={s.chev}>⌄</Text>
-                  </Pressable>
-
+                  {/* O.07a: строка пояса открывает лист выбора — выбор применяется по «Применить». */}
+                  {whenBlockOf(draft, setDraft, () => { setTzPick(draft.tz); setTzOpen(true); })}
                   <Cta label={INTENT.next()} onPress={() => setStep('who')} />
                 </View>
               ) : null}
 
               {step === 'who' ? (
                 <View style={s.card}>
-                  <LabelRow Icon={IconPlay} text={DETAILS.audience()} />
-                  <View style={s.chipRowWrap}>
-                    {SEXES.map(([k]) => (
-                      <Chip key={k} label={sexLabel(k)} on={draft.sex === k} onPress={() => setDraft((x) => ({ ...x, sex: k }))} />
-                    ))}
-                  </View>
-
-                  <LabelRow Icon={IconPerson} text={DETAILS.age()} />
-                  <RangeDial
-                    lo={draft.minAge}
-                    hi={draft.maxAge}
-                    onChange={(lo, hi) => setDraft((x) => ({ ...x, minAge: lo, maxAge: hi }))}
-                    onDragChange={setDragging}
-                  />
-                  <View style={s.boxRow}>
-                    <NumBox
-                      value={String(draft.minAge)}
-                      onChange={(t) => {
-                        const v = Math.max(18, Math.min(draft.maxAge, parseInt(t || '18', 10) || 18));
-                        setDraft((x) => ({ ...x, minAge: v }));
-                      }}
-                    />
-                    <Text style={s.boxColon}>–</Text>
-                    <NumBox
-                      value={String(draft.maxAge)}
-                      onChange={(t) => {
-                        const v = Math.min(80, Math.max(draft.minAge, parseInt(t || '80', 10) || 80));
-                        setDraft((x) => ({ ...x, maxAge: v }));
-                      }}
-                    />
-                  </View>
-
+                  {whoBlockOf(draft, setDraft)}
                   <Cta label={INTENT.next()} onPress={() => setStep('nature')} />
                 </View>
               ) : null}
 
-              {/*
-                Четвёртый шаг: характер. Оси те же, что заполняет тест личности, — просить можно
-                только то, что у кандидата в профиле есть. Ничего не отметив, человек не сужает
-                поиск: подсказка говорит это прямо, потому что молчащий фильтр люди трактуют как
-                «значит, ищет всех подряд».
-              */}
               {step === 'nature' ? (
                 <View style={s.card}>
-                  <LabelRow Icon={IconPerson} text={DETAILS.nature()} />
-                  <Text style={s.natureHint}>{DETAILS.natureHint()}</Text>
-                  <View style={s.chipRowWrap}>
-                    {NATURE_TRAITS.map((t) => {
-                      const on = draft.nature[t.axis] === t.token;
-                      const full = Object.keys(draft.nature).length >= NATURE_MAX;
-                      // Забита ли ось — видно по тому, что в ней уже стоит другой токен: тогда
-                      // нажатие ЗАМЕНЯЕТ, а не добавляет, и потолок не мешает.
-                      const busyAxis = !!draft.nature[t.axis];
-                      const blocked = !on && !busyAxis && full;
-                      return (
-                        <Chip
-                          key={t.axis + t.token}
-                          label={t.label()}
-                          on={on}
-                          dim={blocked}
-                          onPress={() =>
-                            setDraft((x) => {
-                              const next = { ...x.nature };
-                              if (on) delete next[t.axis];
-                              else if (blocked) return x;
-                              else next[t.axis] = t.token;
-                              return { ...x, nature: next };
-                            })
-                          }
-                        />
-                      );
-                    })}
-                  </View>
-                  {Object.keys(draft.nature).length >= NATURE_MAX ? (
-                    <Text style={s.natureHint}>{DETAILS.natureLimit()}</Text>
-                  ) : null}
-
+                  {natureBlockOf(draft, setDraft)}
                   <Cta label={INTENT.next()} onPress={() => setStep(lastStep)} />
                   <Pressable
                     accessibilityRole="button"
@@ -658,7 +805,7 @@ export default function Intent() {
               {step === 'link' ? (
                 <View style={s.card}>
                   {linkBlock}
-                  <Cta label={INTENT.next()} disabled={linkBroken} onPress={toSummary} />
+                  <Cta label={INTENT.next()} disabled={linkBroken(draft)} onPress={toSummary} />
                 </View>
               ) : null}
 
@@ -673,7 +820,7 @@ export default function Intent() {
                   {placeBlock}
                   <View style={s.bothSplit} />
                   {linkBlock}
-                  <Cta label={INTENT.next()} disabled={linkBroken} onPress={toSummary} />
+                  <Cta label={INTENT.next()} disabled={linkBroken(draft)} onPress={toSummary} />
                 </View>
               ) : null}
 
@@ -693,8 +840,10 @@ export default function Intent() {
                   category={category}
                   busy={busy}
                   onStart={finish}
-                  // O.10a: «Поправить» спрашивает, ЧТО менять, а не гонит через весь мастер заново.
-                  onEdit={() => { setEditPick(''); setEditOpen(true); }}
+                  // O.10a: «Поправить» правит поле НА МЕСТЕ, а не гонит через весь мастер заново.
+                  // Черновик листа пересевается при каждом открытии — иначе второй заход показал
+                  // бы прошлый, уже отменённый черновик.
+                  onEdit={() => { setEditPick(''); setTzInline(false); setEdraft(draft); setEditOpen(true); }}
                 />
               ) : null}
             </>
@@ -744,54 +893,59 @@ export default function Intent() {
           ))}
         </EditSheet>
 
-        {/* O.10a — что менять в собранном интенте. «Изменить» ведёт на шаг подсвеченной строки. */}
+        {/*
+          O.10a — правка собранного интента.
+
+          Лист был УКАЗАТЕЛЕМ: строка только подсвечивалась, а «Изменить» уводило на шаг мастера —
+          и там стояла кнопка «Дальше», ведущая ДАЛЬШЕ по цепочке, а не обратно в сводку. Поправить
+          одну дату стоило четырёх экранов, и сводка на выходе заново дёргала agent.categorize.
+          Теперь строка раскрывается и поле правится тут же, тем же контролом, что на шаге.
+
+          Правки идут в edraft: «Отмена» и крестик обязаны отменять — правило листа записано в
+          src/components/ProfileShell.tsx. Строк «Тема интента» и «Режим встречи» здесь больше нет:
+          тему выбирают в разговоре создания (шага под неё в мастере не существует), а от режима
+          зависит, какие поля в этом же листе вообще есть.
+        */}
         <EditSheet
           open={editOpen}
           title={EDIT_SHEET.title()}
           onClose={() => setEditOpen(false)}
           onAccept={() => {
-            if (!editPick) return;
+            // Битую ссылку не пускает и «Дальше» на шаге. Пустить её тут значило бы завести
+            // обход собственной проверки через правку.
+            if (!edraft || linkBroken(edraft)) return;
+            setDraft(edraft);
             setEditOpen(false);
-            // Тема выбирается в разговоре создания, у мастера такого шага нет — «Изменить» по ней
-            // честно возвращает в тот разговор.
-            if (editPick === 'theme') { router.back(); return; }
-            setStep(editPick as IntentStepId);
           }}
-          acceptLabel={EDIT_SHEET.edit()}
+          acceptLabel={DETAILS.apply()}
           cancelLabel={DETAILS.cancel()}
+          // Циферблат и карта живут внутри прокрутки листа, и жест у них общий: пока прокрутка
+          // включена, она забирает вертикальное движение себе. То же место уже решено так в профиле.
+          scrollEnabled={!dragging}
+          // Своей высоты у листа нет — он растёт вверх по содержимому. С раскрытым полем «Применить»
+          // уезжала бы за верх экрана, и нажать её было бы нечем.
+          maxHeight={sheetMax}
         >
-          {([
-            ['theme', IconPencil, EDIT_SHEET.theme(), title || '—'],
-            ['how', IconVideo, EDIT_SHEET.mode(), draft.mode ? formatLabel(draft.mode) : '—'],
-            ['size', IconGroups, EDIT_SHEET.format(), draft.size ? sizeLabel(draft.size) : '—'],
-            ['when', IconClock, EDIT_SHEET.datetime(), `${summaryDate(draft.date)}, ${hhmm(draft.minutes)}`],
-            ['who', IconPerson, EDIT_SHEET.audience(),
-              `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`],
-            ['nature', IconStar, DETAILS.nature(), natureSummary || EDIT_SHEET.noData()],
-            draft.mode === 'hybrid'
-              ? ['both', IconPlusRound, DETAILS.bothRow(),
-                  [draft.address?.trim() || where, draft.link.trim()].filter(Boolean).join(' · ')
-                    || EDIT_SHEET.noData()]
-              : draft.mode === 'offline'
-                ? ['place', IconPin, DETAILS.district(),
-                    draft.address?.trim() || where || EDIT_SHEET.noData()]
-                : ['link', IconLink, EDIT_SHEET.link(), draft.link.trim() || EDIT_SHEET.noData()],
-          ] as [string, any, string, string][]).map(([k, Icon, label, value]) => (
-            <Pressable
-              key={k}
-              accessibilityRole="button"
-              accessibilityState={{ selected: editPick === k }}
-              style={[s.pickRow, editPick === k && s.pickRowOn]}
-              onPress={() => setEditPick(k)}
-            >
-              <Icon size={20} c={color.fg} />
-              <View style={{ flex: 1 }}>
-                <Text style={s.pickText}>{label}</Text>
-                <Text style={s.pickSub} numberOfLines={1}>{value}</Text>
-              </View>
-              {editPick === k ? <Text style={s.pickCheck}>✓</Text> : null}
-            </Pressable>
-          ))}
+          {edraft ? editRows(edraft).map(([k, Icon, label, value]) => (
+            <View key={k}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: editPick === k }}
+                style={[s.pickRow, editPick === k && s.pickRowOn]}
+                // Раскрыто РОВНО одно поле: два крупных разом (карта плюс циферблат) лист не держит.
+                onPress={() => { setTzInline(false); setEditPick(editPick === k ? '' : k); }}
+              >
+                <Icon size={20} c={color.fg} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.pickText}>{label}</Text>
+                  <Text style={s.pickSub} numberOfLines={1}>{value}</Text>
+                </View>
+                <Text style={s.chev}>{editPick === k ? '⌃' : '⌄'}</Text>
+              </Pressable>
+              {editPick === k ? <View style={s.editBody}>{editField(k, edraft)}</View> : null}
+            </View>
+          )) : null}
+          {edraft && linkBroken(edraft) ? <Text style={s.err}>{DETAILS.linkBad()}</Text> : null}
         </EditSheet>
 
         {busy ? <Searching onCancel={cancelSearch} /> : null}
@@ -1107,7 +1261,6 @@ const s = StyleSheet.create({
   },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   label: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
-  chipRow: { gap: space.sm, paddingVertical: 2 },
   natureHint: { ...type.bodySmall, color: color.muted } as any,
   /** Разделитель между «где» и «куда звонить» на шаге гибрида: два блока, а не один длинный. */
   bothSplit: { height: 1, backgroundColor: color.border, marginVertical: space.sm },
@@ -1127,9 +1280,8 @@ const s = StyleSheet.create({
   },
   boxColon: { fontSize: 18, color: color.muted },
 
-  tzRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
+  /** Подпись слева от значения радиуса на OF.09. Строка пояса и её значения — в WhenPicker. */
   tzLabel: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
-  tzValue: { ...type.bodySmall, color: color.muted } as any,
 
   // Строки листов O.07a/O.10a: выбранная — в рамке с галочкой, как на кадрах.
   pickRow: {
@@ -1141,6 +1293,8 @@ const s = StyleSheet.create({
   pickText: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
   pickSub: { ...type.bodySmall, color: color.muted } as any,
   pickCheck: { fontSize: 16, color: color.primary, fontWeight: '700' },
+  /** O.10a: раскрытое поле стоит под своей строкой и с ней же выровнено по левому краю. */
+  editBody: { paddingHorizontal: 14, paddingTop: space.sm, paddingBottom: space.md, gap: space.md },
   chev: { fontSize: 16, color: color.muted },
 
   linkInput: {

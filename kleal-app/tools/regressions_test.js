@@ -2413,6 +2413,287 @@ console.log('\nчетыре находки сверки: слот, кнопка,
   check('и шлёт ответ вместе с оценкой', /howMet \? \{ rating: value, how: howMet \}/.test(pl));
 }
 
+// ---------------------------------------------- прошедшая встреча и подсказка «время не назначено»
+//
+// MSG.08 звала создать план ПОСЛЕ состоявшейся встречи. Дело не в тексте: переписка знала о плане
+// только через `plans`, а сервер спустя MP_KEEP_AFTER (сутки) перекладывает план в `history` —
+// livePlan обнулялся, условие `!livePlan` снова становилось истинным, и пара, которая уже
+// виделась, читала «вы обменялись N сообщениями, а время так и не назначено». Ни падения, ни
+// красной строки — заметить можно только проверкой.
+//
+// Проверка не ищет строки: она вырезает НАСТОЯЩИЕ выражения из экрана, прогоняет их через
+// НАСТОЯЩИЙ planPhase и смотрит на ответ. Переписанное другими словами условие она переживёт,
+// потерянный смысл — нет.
+console.log('\nпрошедшая встреча не зовёт назначать время');
+{
+  const ts = require('typescript');
+  const conv = code('app/conversation.tsx');
+  const chat = code('src/chat.ts');
+
+  // Кусок исходника исполняется как есть: переписать его в тесте значило бы проверять копию.
+  const run = (snippet, scope) => {
+    const js = ts.transpileModule(snippet, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+    const keys = Object.keys(scope);
+    return new Function(...keys, js)(...keys.map((k) => scope[k]));
+  };
+  // Выражение, уходившее в setState: от начала выборки до `null)` включительно.
+  const expr = (from, call) => {
+    const a = conv.indexOf(from);
+    const b = conv.indexOf(call, a);
+    if (a < 0 || b < 0) return null;
+    const c = conv.indexOf('null);', b) + 4;
+    return conv.slice(a, b) + 'return ' + conv.slice(b + call.length, c) + ';';
+  };
+
+  const lead = Number((chat.match(/LINK_LEAD_MIN = (\d+)/) || [])[1] || 0);
+  const i0 = chat.indexOf('export function planPhase(');
+  const phaseSrc = chat.slice(i0, chat.indexOf('\n}\n', i0) + 2).replace('export ', '');
+  const planPhase = run(phaseSrc + '\nreturn planPhase;', { LINK_LEAD_MIN: lead });
+
+  const liveSrc = expr('const all = [', 'setLivePlan(');
+  const pastSrc = expr('const seen = ', 'setPastPlan(');
+  const n0 = conv.indexOf('{!livePlan');
+  const cond = n0 < 0 ? null : conv.slice(n0 + 1, conv.indexOf('? (', n0));
+  check('экран отделяет прошедшую встречу от живого плана', !!pastSrc && !!liveSrc && !!cond,
+    'без отдельной выборки прошедшего плана переписка снова знает только про живой');
+
+  if (pastSrc && liveSrc && cond) {
+    const at = (h) => Math.round(Date.now() / 1000) + h * 3600;
+    const pair = [{ name: 'Аня', confirmed: true }, { name: 'Иван', confirmed: true }];
+    const scope = (pl) => ({ pl, other: 'Аня', planPhase, norm: (v) => String(v || '').trim().toLowerCase() });
+    const live = (pl) => run(liveSrc, scope(pl));
+    const past = (pl) => run(pastSrc, scope(pl));
+    // Подсказка рисуется ровно по этому условию — берём его из JSX, а не пересказываем.
+    const nudge = (pl) => run('return (' + cond + ');',
+      { livePlan: live(pl), pastPlan: past(pl), talk: new Array(12), noNudge: false });
+
+    check('вчерашняя встреча — прошедшая',
+      planPhase({ state: 'confirmed', starts_at: at(-24), participants: pair }) === 'after');
+    check('отменённая — отменённая, а не прошедшая',
+      planPhase({ state: 'cancelled', starts_at: at(-24), participants: pair }) === 'cancelled');
+
+    // Фаза 2: сутки прошли, сервер убрал план из plans. Именно здесь подсказка и возвращалась.
+    const gone = { plans: [], history: [{ state: 'confirmed', starts_at: at(-48), participants: pair }] };
+    check('план уехал в history — подсказки нет', nudge(gone) === false,
+      'паре, которая уже виделась, снова предлагают назначить время');
+    check('и живым планом он не притворяется', live(gone) == null,
+      'слитая в plans история вернёт в шапку встречу недельной давности как «Подтверждено обоими»');
+
+    // Фаза 1: те же сутки, план ещё в plans. Карточка обязана остаться — через неё вход к оценке.
+    const fresh = { plans: [{ state: 'confirmed', starts_at: at(-2), participants: pair }], history: [] };
+    check('только что прошедшая встреча не гасит карточку', live(fresh) != null,
+      'карточка — единственный путь к «состоялась ли» и оценке');
+    check('и подсказки при ней тоже нет', nudge(fresh) === false);
+
+    // Итог подведён — часам тут веры нет, но встреча позади.
+    const done = { plans: [], history: [{ state: 'done', starts_at: at(-2), participants: pair }] };
+    check('подведённая встреча подсказку гасит', nudge(done) === false);
+
+    // Отмена — наоборот, повод предложить новое время.
+    const off = { plans: [], history: [{ state: 'cancelled', starts_at: at(-48), participants: pair }] };
+    check('после отмены подсказка остаётся', nudge(off) === true,
+      'иначе паре, у которой встречу отменили, больше никто не предложит новую');
+
+    // Плана не было вовсе — и старый бокс поля history не отдаёт.
+    check('без планов подсказка на месте', nudge({ plans: [] }) === true,
+      'обращение к history без `|| []` уронит loadSide в общий catch вместе с заявкой');
+
+    // Чужая встреча к этой переписке отношения не имеет.
+    const stranger = { plans: [], history: [{ state: 'confirmed', starts_at: at(-48),
+      participants: [{ name: 'Мила', confirmed: true }, { name: 'Иван', confirmed: true }] }] };
+    check('встреча с другим человеком не считается', nudge(stranger) === true);
+
+    // Будущая встреча — не прошедшая: подсказку гасит живой план, а не история.
+    const ahead = { plans: [{ state: 'confirmed', starts_at: at(48), participants: pair }], history: [] };
+    check('будущая встреча прошедшей не считается', past(ahead) == null && nudge(ahead) === false);
+  }
+}
+
+// ------------------------------------------------- «назад» в мастере отступает на шаг
+//
+// Шаг мастера живёт в состоянии экрана, а НЕ в истории навигации: сколько бы шагов человек ни
+// прошёл, запись в стопке одна. Кнопка «назад» делала router.back() — снимала эту одну запись,
+// то есть весь мастер, — а под ним лежит разговор создания (app/create.tsx открывает /intent
+// поверх себя). Со стороны это «поправил дату — выбросило в Бадди». Системный жест ломался
+// отдельно и той же кнопкой не лечился: свайп от края снимает экран нативно, мимо JS.
+console.log('\n«назад» в мастере интента отступает на шаг, а не выходит из мастера');
+{
+  const wiz = code('app/intent.tsx');
+  const src = read('app/intent.tsx');
+
+  // Порядок шагов назад ИСПОЛНЯЕМ, а не разглядываем. Регуляркой тут делать нечего: вопрос не в
+  // том, как написана лесенка, а в том, куда она приводит с каждого шага.
+  const from = src.indexOf('const prevStep = ');
+  const to = src.indexOf(': null;', from) + ': null;'.length;
+  check('порядок шагов назад нашёлся в исходнике', from >= 0 && to > from, 'переименовали prevStep?');
+  const js = src.slice(from, to).replace('(from: IntentStepId): IntentStepId | null =>', '(from) =>');
+  const make = new Function('lastStep', js + '\nreturn prevStep;');
+  const online = make('link');
+
+  check('со сводки отступают на последний шаг ДЕТАЛЕЙ, а не на фиксированный',
+    make('link')('summary') === 'link' && make('place')('summary') === 'place'
+    && make('both')('summary') === 'both',
+    'третий шаг ветвится по типу встречи: офлайн и гибрид уехали бы на чужой');
+
+  check('цепочка деталей ведёт к началу',
+    online('place') === 'nature' && online('both') === 'nature' && online('link') === 'nature'
+    && online('nature') === 'who' && online('who') === 'when'
+    && online('when') === 'size' && online('size') === 'how',
+    'разорванная цепочка возвращает не туда, откуда пришли');
+
+  check('с первого шага отступать некуда — и только с него',
+    online('how') === null,
+    'иначе «назад» на первом вопросе никуда не ведёт и мастер становится ловушкой');
+
+  // Добавили шаг и забыли обратный путь — самая дешёвая будущая поломка.
+  const union = read('src/intent.ts').match(/export type IntentStepId =([^;]+);/);
+  check('тип шагов нашёлся', !!union);
+  const steps = (union ? union[1].match(/'[a-z]+'/g) || [] : []).map((x) => x.slice(1, -1));
+  const orphan = steps.filter((k) => k !== 'how' && !online(k) && !make('place')(k) && !make('both')(k));
+  check('у каждого шага есть предыдущий', steps.length > 0 && orphan.length === 0,
+    'без обратного пути: ' + orphan.join(', '));
+
+  // Один выход назад на оба входа — кнопку и системный жест.
+  const gbAt = wiz.indexOf('const goBack = ()');
+  const gb = gbAt < 0 ? '' : wiz.slice(gbAt, wiz.indexOf('\n  };', gbAt) + 5);
+  check('goBack существует', gb.length > 0, 'кнопка и жест обязаны идти одной дорогой');
+
+  check('кнопка «назад» больше не снимает маршрут сама',
+    !/accessibilityLabel=\{T\('Назад'[\s\S]{0,220}router\.back\(\)/.test(wiz),
+    'router.back() в шапке снимает ВЕСЬ мастер и возвращает в разговор создания');
+
+  check('из мастера выходят только когда отступать некуда',
+    gb.indexOf('prevStep(step)') >= 0 && gb.indexOf('router.back()') > gb.indexOf('prevStep(step)'),
+    'выход обязан стоять ПОСЛЕ проверки предыдущего шага, а не вместо неё');
+
+  check('другого выхода по «назад» в мастере нет',
+    (wiz.match(/router\.back\(\)/g) || []).length === 1,
+    'вторая router.back() — это вторая дорога наружу, и она разойдётся с первой');
+
+  // Системный жест: свайп от края (iOS) и аппаратная кнопка (Android) минуют обработчик кнопки.
+  const prAt = wiz.indexOf('usePreventRemove(');
+  const pr = prAt < 0 ? '' : wiz.slice(prAt, wiz.indexOf('\n  });', prAt) + 6);
+  check('системный жест перехвачен и идёт тем же goBack',
+    /goBack\(\)/.test(pr) && /step/.test(pr),
+    'без перехвата свайп от края снимает экран целиком, и правка кнопки его не лечит');
+
+  // Перехват висит на СНЯТИИ ЭКРАНА, а не на жесте: под него попадает и «Все интенты»
+  // (dismissTo → POP_TO). Задержать её значило бы запереть человека в мастере.
+  check('намеренный выход из мастера перехват не глотает',
+    /'GO_BACK'/.test(pr) && /'POP'/.test(pr) && /dispatch\(a\)/.test(pr),
+    'задерживать можно только «назад»; всё остальное обязано быть отправлено дальше');
+  check('и «Все интенты» этим выходом остаётся',
+    /allBtn[\s\S]{0,160}dismissTo\('\/home'\)[\s\S]{0,80}navigate\('\/activity'\)/.test(wiz),
+    'кнопка называется «Все интенты» — значит ведёт к ним, а не в никуда');
+  check('перехват объявлен зависимостью, а не подобран из чужих узлов',
+    /"@react-navigation\/native"/.test(read('package.json')),
+    'usePreventRemove приезжает транзитивно от expo-router и может уехать с его версией');
+
+  // Пауза «Awesome!» уводит ВПЕРЁД через 900 мс. Без гашения таймера «назад», нажатая в эти
+  // 900 мс, отступала на шаг — и тут же возвращалась обратно.
+  check('пауза между шагами гасится при возврате',
+    /ackTimer\.current = setTimeout\(/.test(wiz) && /clearTimeout\(ackTimer\.current\)/.test(gb),
+    'иначе шаг назад отменяется таймером, который уже был заведён');
+
+  // Порядок веток goBack — смысл, а не оформление: верхний слой закрывается первым.
+  check('открытый лист закрывается раньше, чем отступает шаг',
+    gb.indexOf('setEditOpen(false)') >= 0
+    && gb.indexOf('setEditOpen(false)') < gb.indexOf('prevStep(step)'),
+    'на Android «назад» иначе закроет лист И отступит на шаг одним нажатием');
+  check('идущий поиск отменяется, а не остаётся без экрана',
+    gb.indexOf('cancelSearch()') >= 0 && gb.indexOf('cancelSearch()') < gb.indexOf('prevStep(step)'),
+    'иначе свайп во время запроса снимает экран, а ответ приезжает на размонтированный');
+}
+
+// ------------------------------------------------- поле интента правится в самом листе
+//
+// Лист «Что хочешь поменять?» был УКАЗАТЕЛЕМ: он подсвечивал строку, а «Изменить» отправляло на
+// шаг мастера — где стоит кнопка «Дальше», ведущая ДАЛЬШЕ по цепочке, а не обратно в сводку.
+// Правка одной даты стоила четырёх экранов, а возврат на сводку заново дёргал agent.categorize.
+console.log('\nправка интента со сводки происходит в самом листе');
+{
+  const wiz = code('app/intent.tsx');
+  const at = wiz.indexOf('title={EDIT_SHEET.title()}');
+  const sheet = at < 0 ? '' : wiz.slice(at, wiz.indexOf('</EditSheet>', at));
+  check('лист правки нашёлся', sheet.length > 0);
+
+  check('лист больше не отправляет на шаги мастера',
+    !/setStep\(/.test(sheet),
+    'уйдя на шаг, человек снова идёт по цепочке «Дальше», а сводка заново зовёт agent.categorize');
+
+  check('правка применяется целиком и по кнопке',
+    /setDraft\(edraft\)/.test(sheet),
+    'без этого лист остаётся указателем, а не редактором');
+
+  // «Отмена» обязана отменять: контролы шагов пишут в состояние немедленно, и прямая запись в
+  // draft превратила бы её в кнопку «закрыть, оставив всё как наделал».
+  check('правки идут в черновик листа, а не прямо в интент',
+    !/setDraft\(\(x\)/.test(sheet) && /setEdraft\(/.test(wiz),
+    'иначе «Отмена» закрывает лист, а изменения остаются — прямое нарушение правила листа');
+  check('черновик пересевается при каждом открытии',
+    /onEdit=\{\(\)[\s\S]{0,140}setEdraft\(draft\)/.test(wiz),
+    'второй заход в лист показал бы прошлый, уже отменённый черновик');
+
+  // Ключевая беда проекта — разъехавшиеся копии. Поле обязано быть построено ОДИН раз и
+  // подставляться и на шаг мастера, и в лист правки.
+  const once = [
+    ['<RadiusMap', 'карта района'],
+    ['DETAILS.linkNote()', 'блок ссылки'],
+    ['NATURE_TRAITS.map(', 'чипы характера'],
+    ['SEXES.map(', 'чипы аудитории'],
+    ['<RangeDial', 'кольцо возраста'],
+  ];
+  for (const [needle, name] of once) {
+    const n = wiz.split(needle).length - 1;
+    check(`${name} построен один раз`, n === 1,
+      `встречается ${n} раз — копии разойдутся на первой правке`);
+  }
+  check('дата и время берутся из общего WhenPicker, а не пишутся заново',
+    /<WhenPicker/.test(wiz) && !/TimeDial/.test(wiz),
+    'своя копия этого кадра в мастере уже была и разошлась бы с групповым планом');
+
+  // Убранные строки: под тему шага в мастере нет вовсе, а режим решает, какие поля в листе есть.
+  check('строки «тема» и «режим» из листа убраны',
+    !/EDIT_SHEET\.theme/.test(wiz) && !/EDIT_SHEET\.mode\b/.test(wiz),
+    'по теме лист умел только выйти из мастера — это был не «поправить», а «уйти»');
+
+  // Битую ссылку не пускает «Дальше» на шаге; правка не имеет права быть обходом этой проверки.
+  check('битая ссылка не проезжает через правку',
+    /linkBroken\(edraft\)/.test(sheet) && /DETAILS\.linkBad\(\)/.test(sheet),
+    'и человек обязан прочесть, почему кнопка не сработала');
+
+  // Лист построен на RN Modal: второй модал поверх открытого — известная беда iOS.
+  check('пояс разворачивается внутри листа, а не вторым модалом',
+    !/setTzOpen\(true\)/.test(sheet) && /tzInline/.test(wiz),
+    'два RN-модала одновременно на iOS открываются не всегда');
+
+  // Карта и циферблат живут внутри прокрутки листа — жест у них общий.
+  check('жест отдан содержимому листа', /scrollEnabled=\{!dragging\}/.test(sheet),
+    'иначе карту внутри листа не подвинуть, а циферблат дёргается на месте');
+
+  // Своей высоты у листа нет: он растёт вверх по содержимому и не прокручивается.
+  check('у листа с раскрытым полем есть потолок высоты',
+    /maxHeight=\{/.test(sheet) && /maxHeight\?: number/.test(code('src/components/ProfileShell.tsx')),
+    'без потолка «Применить» уезжает за верх экрана и нажать её нечем');
+
+  check('раскрыто ровно одно поле',
+    /editPick === k \? '' : k/.test(sheet),
+    'карта плюс циферблат разом не влезают ни в один потолок');
+
+  // Каждая строка обязана уметь раскрыться: строка без контрола выглядит как мёртвая.
+  const fAt = wiz.indexOf('const editField = (');
+  const field = fAt < 0 ? '' : wiz.slice(fAt, wiz.indexOf('\n  };', fAt));
+  const rAt = wiz.indexOf('const editRows = (');
+  const rows = rAt < 0 ? '' : wiz.slice(rAt, wiz.indexOf('\n  ]);', rAt));
+  const keys = (rows.match(/\['[a-z]+'/g) || []).map((x) => x.slice(2, -1));
+  const dead = keys.filter((k) => k !== 'when' && !field.includes(`'${k}'`));
+  check('у каждой строки листа есть свой контрол', keys.length >= 6 && dead.length === 0,
+    'строка без поля: ' + dead.join(', '));
+}
+
+// Итог — ОДИН и только в самом низу. Два агента правили файл параллельно, и каждый дописал свой
+// выход в конец своей секции: первое же падение в старых проверках убивало прогон здесь же, а
+// секции, дописанные ниже, молча не исполнялись — зелёный хвост при красном начале.
 console.log('');
 if (failed) {
   console.log(failed + ' проверок не прошло');
