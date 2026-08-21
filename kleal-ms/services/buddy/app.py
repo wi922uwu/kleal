@@ -54,6 +54,7 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
         sys.path.insert(0, _p)
 import kleal_lib as base                      # base._extract_json (keyless)
 import config                                  # the one topology table (ports/URLs/store paths)
+import mq                                      # очередь заданий: rabbit или ничего — решает KLEAL_MQ
 from llm_client import llm_complete, llm_stream
 import safety
 from http_util import send_json, read_json
@@ -1046,7 +1047,7 @@ def _post(base_url, path, payload, timeout=30):
 TEACH_STATS = {"sent": 0, "failed": 0, "last_error": None}
 
 
-def _teach(cat):
+def _teach(cat, phrase=""):
     """Hand filtration's verdict to matching so BOTH sides of a future search can resolve the word.
     Fire-and-forget on purpose: teaching is an optimisation, and a slow or dead matcher must never
     delay the answer the user is waiting for.
@@ -1063,6 +1064,28 @@ def _teach(cat):
                  for t in ((cat or {}).get("topics") or []) if str(t).strip()][:4]
         if not items:
             return
+
+        # ЧЕРЕЗ ОЧЕРЕДЬ, ЕСЛИ ОНА ЕСТЬ. Раньше здесь был поток «бросил POST и ушёл»: после
+        # переписывания матчинга адрес стал отвечать 404, и открытки НЕДЕЛЯМИ падали в
+        # несуществующий ящик — молча, потому что ответа никто не ждал. Счётчик ниже появился
+        # ровно после того случая.
+        #
+        # `mq.send` кладёт задание в outbox (таблица в той же базе) и сразу возвращается: запрос
+        # человека не ждёт ни брокера, ни матчинг. Лежащий брокер больше не теряет работу —
+        # задание дождётся его в базе.
+        if mq.ENABLED:
+            try:
+                # УЧИМ ФРАЗУ, А НЕ СЛОВА. Пословное обучение — это ровно то, из-за чего в карте
+                # оказались «gracia -> спорт/падел» и «weekend -> спорт/ракетки»: фильтрация
+                # возвращает темы ФРАЗЫ, а старый путь приписывал каждую из них отдельному слову.
+                # Без фразы задание не ставим вовсе — лучше не научить, чем научить неправде.
+                ph = str(phrase or "").strip()
+                if ph and mq.send("teach.phrases", {"phrases": [ph]}):
+                    TEACH_STATS["sent"] += 1
+                    return
+            except Exception as e:
+                TEACH_STATS["failed"] += 1
+                TEACH_STATS["last_error"] = "mq: %s: %s" % (type(e).__name__, str(e)[:120])
 
         def _send():
             try:
@@ -1855,7 +1878,7 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
     _req_parts = (_subj, "" if _agreed else str(last_user or ""), str(sig.get("interest") or ""))
     req_text = " ".join(x for x in _req_parts if x).strip() or " ".join(sig.get("topics") or [])
     cat = _categorize(req_text)
-    _teach(cat)
+    _teach(cat, req_text)
     intent = build_intent(sig, cat, _eff_user, lang)
     # Тема пришла из ВОПРОСА («Что такое фьючерсы?» → «Да») — карточка называется его словами:
     # «Поговорить про фьючерсы», а не 'Futures' из канонических тем фильтрации.
@@ -3092,8 +3115,9 @@ def intent_build(messages, profile, on_text=None):
     # 1.86s on EVERY request, including real ones. Streaming exists to make the common path feel
     # instant, so the common path wins; the rare chit-chat swap is handled by the explicit reset event.
     # «поговорить об этом» has no subject of its own; the referent does. Feed both.
-    _cat = _categorize((_subject + " " + last_user).strip() if _subject else last_user)
-    _teach(_cat)
+    _phrase = (_subject + " " + last_user).strip() if _subject else str(last_user or "")
+    _cat = _categorize(_phrase)
+    _teach(_cat, _phrase)
     _followup = bool(_FOLLOWUP.match(str(last_user or "").strip()))
     nothing_to_build = not ready and (_followup or (_cat is not None and not _real_topics(_cat)))
     if not valid or nothing_to_build:
@@ -3136,9 +3160,9 @@ def intent_build(messages, profile, on_text=None):
     # одного, по «bar» их трое. Реплики берём из bmsgs — там уже отобрано то, что относится к
     # плану, так что болтовня сюда не попадает.
     _asked = " ".join(str(m.get("content", "")) for m in bmsgs if m.get("role") == "user")[-600:]
-    cat = _categorize(" ".join(x for x in (_subject, _asked, str(activity or "")) if x).strip()
-                      or activity)
-    _teach(cat)
+    _phrase = " ".join(x for x in (_subject, _asked, str(activity or "")) if x).strip() or str(activity or "")
+    cat = _categorize(_phrase)
+    _teach(cat, _phrase)
     sig = _baseline_signals(profile)
     if obj.get("time"):
         sig["time"] = str(obj.get("time"))

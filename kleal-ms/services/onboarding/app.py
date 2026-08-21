@@ -9,6 +9,7 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
 import kleal_lib as base                      # keyless shared helpers/prompts
 import config                                  # the one topology table (ports/URLs/store paths)
+import db                                      # хранилище: postgres или файл — решает KLEAL_DB
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send, send_json, read_json
 import mailer                                  # письмо с кодом: провайдер выбирается окружением
@@ -2672,16 +2673,23 @@ def update_receiving(name, patch):
         if "quiet_hours" in clean:
             merged["quiet_hours"] = dict(r.get("quiet_hours") or {}, **clean["quiet_hours"])
         me["receiving"] = merged
-        tmp = USERS_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"users": users}, f, ensure_ascii=False)
-        os.replace(tmp, USERS_PATH)
+        _persist_users(users, touched=me)
     return {"ok": True, "receiving": merged}
 
 
 
 
 def _read_users():
+    """Все люди: из базы, если она ведущая, иначе из файла."""
+    if db.ENABLED:
+        try:
+            rows = db.load_users()
+            if rows:
+                return rows
+            # База пуста — перенос ещё не делали. Падаем на файл, а не отдаём пустую популяцию:
+            # пустой ответ здесь выглядит как «все пользователи пропали».
+        except Exception as e:
+            print("[users] postgres недоступен, читаю файл: %s: %s" % (type(e).__name__, str(e)[:120]))
     try:
         with open(USERS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -2689,6 +2697,37 @@ def _read_users():
         return users if isinstance(users, list) else []
     except Exception:
         return []
+
+
+def _persist_users(users, touched=None):
+    """Сохранить популяцию.
+
+    ГЛАВНОЕ ЗДЕСЬ — `touched`. В базе пишется ОДНА строка того человека, которого правили, а не
+    все семьсот: регистрация Sofia не имеет никакого отношения к строкам остальных, и переписывать
+    их значило бы ровно ту стену, из-за которой всё и затевалось. Без `touched` (перенос, массовая
+    правка) пишется пачка одной транзакцией.
+
+    Файл остаётся зеркалом, пока KLEAL_DB=mirror, и единственным хранилищем при KLEAL_DB=json.
+    """
+    wrote = False
+    if db.ENABLED:
+        try:
+            if touched is not None:
+                db.save_user(touched)
+            else:
+                db.save_users(users)
+            wrote = True
+        except Exception as e:
+            print("[users] запись в postgres не удалась, падаю на файл: %s: %s"
+                  % (type(e).__name__, str(e)[:120]))
+    if wrote and not db.MIRROR_JSON:
+        return True
+    tmp = USERS_PATH + ".tmp"
+    os.makedirs(os.path.dirname(os.path.abspath(USERS_PATH)), exist_ok=True)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"users": users}, f, ensure_ascii=False)
+    os.replace(tmp, USERS_PATH)
+    return True
 
 
 def get_user(name):
@@ -2791,10 +2830,7 @@ def update_user(name, patch):
         if row is None:
             return {"ok": False, "error": "unknown user"}
         row.update(clean)
-        tmp = USERS_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"users": users}, f, ensure_ascii=False)
-        os.replace(tmp, USERS_PATH)
+        _persist_users(users, touched=row)
     return {"ok": True, "user": row}
 
 def register_profile(profile):
@@ -2821,11 +2857,7 @@ def register_profile(profile):
         key = u["name"].strip().lower()
         users = [x for x in users if str(x.get("name", "")).strip().lower() != key]  # replace prior onboarding of same name
         users.append(u)
-        tmp = USERS_PATH + ".tmp"
-        os.makedirs(os.path.dirname(os.path.abspath(USERS_PATH)), exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"users": users}, f, ensure_ascii=False)
-        os.replace(tmp, USERS_PATH)
+        _persist_users(users, touched=u)
     return u
 
 

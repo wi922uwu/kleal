@@ -135,7 +135,41 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _status(self):
+        """Сводное здоровье: восемь сервисов, база и очередь — одним ответом.
+
+        Заведено потому, что диагноз в этой системе стоил захода на бокс руками: /health был у
+        трёх сервисов из восьми, а про базу и брокера не говорил никто. Здесь спрашиваются все
+        разом и с коротким тайм-аутом — страница состояния не имеет права висеть дольше секунды
+        из-за одного упавшего сервиса.
+        """
+        import json as _json
+        out = {"services": {}, "storage": None, "queue": None}
+        for name in ("llm", "onboarding", "profile", "matching", "buddy", "filtration", "admin"):
+            try:
+                u = config.url(name) + "/health"
+                with urllib.request.urlopen(u, timeout=1.5) as r:
+                    out["services"][name] = {"ok": r.status == 200, "code": r.status}
+            except Exception as e:
+                out["services"][name] = {"ok": False, "error": type(e).__name__}
+        try:
+            import db as _db
+            out["storage"] = {"mode": _db.MODE, "ok": _db.healthy(), "stats": _db.STATS}
+            if _db.ENABLED:
+                out["storage"]["outbox"] = _db.outbox_stats()
+        except Exception as e:
+            out["storage"] = {"mode": "?", "ok": False, "error": str(e)[:120]}
+        try:
+            import mq as _mq
+            out["queue"] = {"mode": _mq.MODE, "ok": _mq.healthy(), "stats": _mq.STATS}
+        except Exception as e:
+            out["queue"] = {"mode": "?", "ok": False, "error": str(e)[:120]}
+        body = _json.dumps(out, ensure_ascii=False, default=str).encode()
+        return self._serve(body, ctype="application/json; charset=utf-8")
+
     def _proxy(self):
+        if self.path.split("?")[0] in ("/status", "/api/status"):
+            return self._status()
         base, fwd = route(self.path)
         if base == "LANDING":
             return self._serve(LANDING.encode("utf-8"))

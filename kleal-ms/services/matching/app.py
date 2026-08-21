@@ -28,6 +28,8 @@ import kleal_candidates as kct                  # §16 events/rooms/venues candi
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send_json, read_json
 from config import FILTER_URL         # мост тем: адрес фильтрации, тот же, что у buddy
+import db                            # хранилище: postgres или файл — решает KLEAL_DB
+import mq                            # очередь заданий: rabbit или ничего — решает KLEAL_MQ
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("MATCHING_PORT", "7074"))
@@ -437,12 +439,43 @@ STORE_PATH = os.environ.get("KLEAL_STORE", os.path.join(os.path.dirname(os.path.
 # _record_outcome (which re-acquires it) without deadlocking — closes the read-then-write gap at the send boundary.
 _STORE_LOCK = threading.RLock()
 def _load_store():
+    """Состояние: из базы, если она ведущая, иначе из файла — как было всегда.
+
+    База не обязана быть: при KLEAL_DB=json (по умолчанию) сюда даже не заглядываем, и сервис
+    поднимается на машине, где postgres не установлен."""
+    if db.ENABLED:
+        try:
+            db.ensure_schema()
+            got = db.load_store()
+            if got:
+                return got
+            # База пуста, а файл есть — первый запуск после переноса ещё не случился. Читаем файл
+            # и НЕ падаем: пустое состояние выглядит как «все планы исчезли».
+        except Exception as e:
+            print("[store] postgres недоступен, читаю файл: %s: %s" % (type(e).__name__, str(e)[:120]))
     try:
         with open(STORE_PATH, "r", encoding="utf-8") as f: return json.load(f)
     except Exception:
         return {}
 SESSION = _load_store()
 def _save_store():
+    """Записать состояние.
+
+    В базе уезжают ТОЛЬКО изменившиеся ключи верхнего уровня (см. shared/db.py) — вместо
+    переписывания всего файла на каждое нажатие. Зеркало в файл остаётся, пока KLEAL_DB=mirror:
+    на время перехода JSON — бесплатная резервная копия, и откат ничего не стоит.
+
+    Ошибка базы НЕ роняет запрос: человек уже сделал действие, и падение на записи он прочитает
+    как «не сработало», хотя в памяти всё применилось. Пишем в файл и живём дальше.
+    """
+    if db.ENABLED:
+        try:
+            db.save_store(SESSION)
+            if not db.MIRROR_JSON:
+                return
+        except Exception as e:
+            print("[store] запись в postgres не удалась, падаю на файл: %s: %s"
+                  % (type(e).__name__, str(e)[:120]))
     try:
         with open(STORE_PATH, "w", encoding="utf-8") as f: json.dump(SESSION, f)
     except Exception:
@@ -718,17 +751,32 @@ def _langs_of(prof):
 
 def load_candidates():
     store = None
-    try:
-        m = os.path.getmtime(USERS_PATH)
-        if _users_cache["mtime"] != m:
-            with open(USERS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            lst = data.get("users") if isinstance(data, dict) else data
-            _users_cache["mtime"] = m
-            _users_cache["list"] = lst if isinstance(lst, list) else None
-        store = _users_cache["list"]
-    except Exception:
-        store = None
+    if db.ENABLED:
+        # Из базы. Отпечаток вместо mtime файла: перечитываем пул, только если кто-то
+        # зарегистрировался или поправил профиль, — на каждый поиск ходить за 714 строками незачем.
+        try:
+            v = db.users_version()
+            if _users_cache.get("ver") != v:
+                rows = db.load_users()
+                if rows:
+                    _users_cache["ver"] = v
+                    _users_cache["list"] = rows
+            if _users_cache.get("list"):
+                store = _users_cache["list"]
+        except Exception as e:
+            print("[pool] postgres недоступен, читаю файл: %s: %s" % (type(e).__name__, str(e)[:120]))
+    if store is None:
+        try:
+            m = os.path.getmtime(USERS_PATH)
+            if _users_cache["mtime"] != m:
+                with open(USERS_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                lst = data.get("users") if isinstance(data, dict) else data
+                _users_cache["mtime"] = m
+                _users_cache["list"] = lst if isinstance(lst, list) else None
+            store = _users_cache["list"]
+        except Exception:
+            store = None
     if not store:
         # No real people in the store. The demo pool used to stand in here so a fresh system would
         # not look dead — but the stand-ins ARE what a user reads as "mock users", and after the
