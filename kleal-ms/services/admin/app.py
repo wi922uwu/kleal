@@ -20,6 +20,12 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
         sys.path.insert(0, _p)
 import config                                  # the one topology table (ports/URLs/store paths)
 from http_util import send, send_json, read_json
+import ops                                     # операционный слой: база, очередь, мост тем
+try:
+    import db                                  # хранилище людей: то же, что у матчинга
+except Exception:
+    db = None
+from ui import PAGE                            # страница — отдельным файлом, см. её шапку
 
 PORT = config.PORTS["admin"]
 MATCH_URL = config.MATCH_URL
@@ -199,6 +205,20 @@ def _norm_user(u, keep_id=None, fill_defaults=True):
 
 # ---------------- store (atomic writes) ----------------
 def _read():
+    """Люди — ОТТУДА ЖЕ, ОТКУДА ИХ ЧИТАЕТ МАТЧИНГ.
+
+    Панель читала файл напрямую. Пока файл был единственным хранилищем, это работало; с переездом
+    на базу матчинг стал читать её, а панель осталась у файла — и показывала бы вчерашнюю
+    популяцию, не сказав об этом ни словом. Хуже: правка уезжала в файл, которого никто не
+    читает, то есть кнопка «Сохранить» врала.
+    """
+    if db is not None and db.ENABLED:
+        try:
+            rows = db.load_users()
+            if rows:
+                return rows
+        except Exception as e:
+            print("[admin] postgres недоступен, читаю файл: %s: %s" % (type(e).__name__, str(e)[:120]))
     try:
         with open(STORE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -208,7 +228,22 @@ def _read():
         return []
 
 
-def _write(users):
+def _write(users, touched=None):
+    """И записываются они туда же. `touched` — один человек вместо всей популяции: правка
+    Sofia не имеет отношения к строкам остальных семисот."""
+    wrote = False
+    if db is not None and db.ENABLED:
+        try:
+            if touched is not None:
+                db.save_user(touched)
+            else:
+                db.save_users(users)
+            wrote = True
+        except Exception as e:
+            print("[admin] запись в postgres не удалась, падаю на файл: %s: %s"
+                  % (type(e).__name__, str(e)[:120]))
+    if wrote and not db.MIRROR_JSON:
+        return
     tmp = STORE + ".tmp"
     os.makedirs(os.path.dirname(os.path.abspath(STORE)), exist_ok=True)
     with open(tmp, "w", encoding="utf-8") as f:
@@ -244,7 +279,7 @@ def add_user(u):
         users = _read()
         nu = _norm_user(u)
         users.append(nu)
-        _write(users)
+        _write(users, touched=nu)
         return nu
 
 
@@ -257,7 +292,7 @@ def update_user(uid, patch):
                 merged.update(patch or {})
                 # Editing an existing person never invents the fields they never gave.
                 users[i] = _norm_user(merged, keep_id=uid, fill_defaults=False)
-                _write(users)
+                _write(users, touched=users[i])
                 return users[i]
     return None
 
@@ -299,7 +334,7 @@ def apply_verb(name, verb):
             elif verb == "verify":
                 row["verified"] = True
             users[i] = row
-            _write(users)
+            _write(users, touched=row)
             return {"ok": True, "name": row.get("name"), "verb": verb,
                     "verified": bool(row.get("verified")),
                     "receiving": row.get("receiving"), "paused": bool(row.get("paused"))}
@@ -310,8 +345,16 @@ def delete_user(uid):
     with _LOCK:
         users = _read()
         n = len(users)
+        gone = next((u for u in users if u.get("id") == uid), None)
         users = [u for u in users if u.get("id") != uid]
         if len(users) != n:
+            # Удаление — единственное место, где база должна УБРАТЬ строку, а не переписать её:
+            # без этого человек исчезал бы из файла и оставался в поиске.
+            if db is not None and db.ENABLED and gone is not None:
+                try:
+                    db.delete_user(gone.get("name"))
+                except Exception as e:
+                    print("[admin] не смог удалить из postgres: %s" % str(e)[:120])
             _write(users)
             return True
     return False
@@ -442,6 +485,19 @@ def _searcher_profile(body):
     return p, None
 
 
+def _qs(handler, key, default=""):
+    """Один параметр запроса. В файле их разбирали трижды и каждый раз по-своему — эта копия
+    хотя бы одна на всех новых ручек."""
+    from urllib.parse import unquote
+    raw = handler.path.split("?", 1)[1] if "?" in handler.path else ""
+    for kv in raw.split("&"):
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            if k == key:
+                return unquote(v.replace("+", " "))
+    return default
+
+
 def _path(handler):
     return handler.path.split("?", 1)[0]
 
@@ -459,11 +515,26 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         p = _path(self)
         if p == "/admin" or p == "/admin/" or p == "/":
-            return send(self, 200, HTML, "text/html")
+            # Новая страница. Прежняя осталась в файле и доступна по ?legacy=1 — не из
+            # сентиментальности: у неё пять разделов, отлаженных на живых данных, и если новая
+            # где-то соврёт, откат должен быть длиной в один параметр, а не в выкладку.
+            if "legacy=1" in (self.path.split("?", 1)[1] if "?" in self.path else ""):
+                return send(self, 200, HTML, "text/html")
+            return send(self, 200, PAGE, "text/html")
         if not self._authed():
             return
         if p == "/api/admin/ping":
-            send_json(self, 200, {"ok": True})
+            # Отвечает не только «жив», но и чем сейчас живёт система: шапка панели показывает
+            # режим хранилища и очереди, чтобы «почему цифры не сходятся» не начиналось с догадок.
+            st = ops.storage()
+            q = ops.queue()
+            send_json(self, 200, {"ok": True, "storage": st.get("mode"), "queue": q.get("mode")})
+        elif p == "/api/admin/ops":
+            send_json(self, 200, ops.overview())
+        elif p == "/api/admin/dead":
+            send_json(self, 200, ops.dead_list(int(_qs(self, "limit", "25") or 25)))
+        elif p == "/api/admin/bridge":
+            send_json(self, 200, ops.bridge(_qs(self, "q")))
         elif p == "/api/admin/users":
             u = list_users()
             send_json(self, 200, {"count": len(u), "users": u})
@@ -501,7 +572,15 @@ class H(BaseHTTPRequestHandler):
         if not self._authed():
             return
         body = read_json(self)
-        if p == "/api/admin/users":
+        if p == "/api/admin/dead/retry":
+            # Единственное действие панели над очередью — и оно НЕ разрушительное: сообщение
+            # публикуется заново, а из мёртвой снимается только после успешной публикации.
+            # Кнопки «очистить» здесь нет намеренно: молча выбросить работу — ровно то, от чего
+            # уходили, заводя очередь.
+            send_json(self, 200, ops.dead_retry(int((body or {}).get("limit") or 50)))
+        elif p == "/api/admin/bridge/teach":
+            send_json(self, 200, ops.bridge_teach((body or {}).get("phrase")))
+        elif p == "/api/admin/users":
             send_json(self, 200, {"ok": True, "user": add_user(body)})
         elif p.startswith("/api/admin/user/") and p.endswith("/delete"):
             uid = p[len("/api/admin/user/"):-len("/delete")]
