@@ -526,6 +526,8 @@ def categorize(text):
 # ------------------------------------------------------------------ HTTP
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.split("?")[0] == "/health":
+            return send_json(self, 200, {"service": "filtration", "ok": True})
         if self.path == "/api/filter/categories":
             send_json(self, 200, {"categories": CATEGORIES})
         elif self.path == "/":

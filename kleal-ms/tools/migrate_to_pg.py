@@ -26,8 +26,28 @@ os.environ.setdefault("KLEAL_DB", "postgres")      # инструмент все
 import db  # noqa: E402
 
 
+def _norm_numbers(v):
+    """Привести числа к канону перед сравнением.
+
+    JSONB хранит числа как numeric — точно, но в своей записи: `1e+18` из файла читается обратно
+    как `1000000000000000000`. Значение то же, текст другой, и сверка по тексту объявила бы
+    расхождение там, где не потеряно ничего. Проверено на живом переносе: ровно два плана из
+    восьмидесяти одного, оба — тестовые «встречи через 31 миллиард лет» из mplan_smoke.
+
+    Целое, записанное как float, становится int; остальное не трогаем — округлять настоящие
+    дроби значило бы прятать настоящую потерю.
+    """
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    if isinstance(v, dict):
+        return {k: _norm_numbers(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm_numbers(x) for x in v]
+    return v
+
+
 def _digest(v):
-    return hashlib.sha256(json.dumps(v, ensure_ascii=False, sort_keys=True,
+    return hashlib.sha256(json.dumps(_norm_numbers(v), ensure_ascii=False, sort_keys=True,
                                      default=str).encode()).hexdigest()
 
 

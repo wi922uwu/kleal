@@ -261,6 +261,8 @@ def _send(h, code, obj, ctype="application/json"):
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.split("?")[0] == "/health":
+            return _send(self, 200, {"service": "llm", "ok": True})
         if self.path == "/llm/models":
             _send(self, 200, [{"id": k, "label": v["label"], "info": v["info"]} for k, v in MODELS.items()])
         elif self.path == "/":

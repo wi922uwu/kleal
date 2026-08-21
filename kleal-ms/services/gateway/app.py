@@ -150,6 +150,11 @@ class H(BaseHTTPRequestHandler):
                 u = config.url(name) + "/health"
                 with urllib.request.urlopen(u, timeout=1.5) as r:
                     out["services"][name] = {"ok": r.status == 200, "code": r.status}
+            except urllib.error.HTTPError as e:
+                # 404 — это «ручки нет», а не «сервис лежит». Показывать их одинаково значит
+                # каждый раз идти проверять руками живой сервис.
+                out["services"][name] = ({"ok": True, "note": "нет /health"} if e.code == 404
+                                         else {"ok": False, "code": e.code})
             except Exception as e:
                 out["services"][name] = {"ok": False, "error": type(e).__name__}
         try:

@@ -2962,6 +2962,9 @@ def _client_ip(handler):
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.split("?")[0] == "/health":
+            return send_json(self, 200, {"service": "onboarding", "ok": True,
+                                         "storage": db.MODE})
         if self.path == "/":
             send(self, 200, HTML, "text/html")
         elif self.path.split("?")[0] in ("/waitlist", "/join"):

@@ -46,8 +46,15 @@ MAX_ATTEMPTS = len(BACKOFF_MS)
 STATS = {"published": 0, "publish_failed": 0, "consumed": 0, "retried": 0,
          "dead": 0, "last_error": None}
 
-_conn_lock = threading.Lock()
-_conn = None
+# СОЕДИНЕНИЕ ЛОКАЛЬНО ДЛЯ ПОТОКА, И ЭТО НЕ ПЕДАНТИЗМ.
+#
+# `BlockingConnection` в pika потокобезопасным не является: он ведёт свой ввод-вывод сам и
+# ожидает, что его дёргает один поток. Общее соединение у воркера (который блокируется на
+# `start_consuming`) и у ретранслятора (который публикует раз в две секунды из другого потока)
+# ломается сразу — в логе это `AssertionError: _AsyncTransportBase._initate_abort() expected
+# _STATE_ABORTED_BY_USER`, и выглядит как «брокер отвалился», хотя брокер ни при чём.
+# Поймано на первой же проверке живучести очереди.
+_state = threading.local()
 
 
 def _pika():
@@ -56,23 +63,26 @@ def _pika():
 
 
 def _channel():
-    """Соединение и объявленная топология. Пересоздаётся при обрыве — Rabbit роняет idle-каналы,
-    и держаться за мёртвый значит терять первую же публикацию после паузы."""
-    global _conn
+    """Соединение ЭТОГО потока и объявленная топология. Пересоздаётся при обрыве — Rabbit роняет
+    idle-каналы, и держаться за мёртвый значит терять первую же публикацию после паузы."""
     pika = _pika()
-    with _conn_lock:
-        if _conn is not None and _conn.is_open:
+    conn = getattr(_state, "conn", None)
+    if conn is not None and conn.is_open:
+        try:
+            return conn.channel()
+        except Exception:
             try:
-                return _conn.channel()
+                conn.close()
             except Exception:
                 pass
-        params = pika.URLParameters(URL)
-        params.heartbeat = 30
-        params.blocked_connection_timeout = 15
-        _conn = pika.BlockingConnection(params)
-        ch = _conn.channel()
-        _declare(ch)
-        return ch
+    params = pika.URLParameters(URL)
+    params.heartbeat = 30
+    params.blocked_connection_timeout = 15
+    conn = pika.BlockingConnection(params)
+    _state.conn = conn
+    ch = conn.channel()
+    _declare(ch)
+    return ch
 
 
 def _declare(ch):

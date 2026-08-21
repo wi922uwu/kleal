@@ -7613,6 +7613,16 @@ def _apath(p):
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.split("?", 1)[0] == "/health":
+            # Своими руками, а не через send_json: в этом файле такого помощника нет, и вызов
+            # падал NameError прямо в обработчике — сервис оставался «active», а ручка рвала
+            # соединение. Поймано /status сразу после выкладки.
+            b = json.dumps({"service": "profile", "ok": True}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            return self.wfile.write(b)
         if self.path.split("?", 1)[0] == "/":   # ignore ?p=<onboarding profile> query
             b = HTML.encode("utf-8")
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")

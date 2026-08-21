@@ -7983,6 +7983,13 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         _p = self.path.split("?", 1)[0]
+        if _p == "/health":
+            # Ровно один вопрос: процесс жив и отвечает. Состояние базы и очереди собирает
+            # /status на шлюзе — учить каждый сервис одному и тому же значит заводить копии,
+            # которые расходятся молча.
+            return send_json(self, 200, {"service": "matching", "ok": True,
+                                         "pool": len(load_candidates() or []),
+                                         "storage": db.MODE, "queue": mq.MODE})
         if _p.startswith("/api/agent/video/"):
             return self._video_serve(_p.rsplit("/", 1)[-1])
         if self._restored_get() or self._restored_admin_get():
