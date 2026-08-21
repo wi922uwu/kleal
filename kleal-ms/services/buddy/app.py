@@ -2432,6 +2432,11 @@ Rules:
 - Never ask something the conversation already answered, and never ask a question whose answer would not change who you look for.
 - ready:true as soon as the activity is specific enough to describe to a stranger in one line. If the first message was ALREADY specific («хочу поиграть в падл», «хочу обсудить стартапы за ужином»), confirm it in one line and set ready:true immediately — asking anything then is noise.
 - Fold the answers into "activity" as one phrase: «coffee and startup talk», not just «coffee». That phrase is what the search runs on, so it is the whole point of asking.
+- NEVER say a meeting is scheduled, booked, arranged or agreed, and NEVER name a person. You only
+  phrase the ACTIVITY. Nobody has been found yet, nobody has agreed to anything, and nothing is in
+  anyone's calendar: the search runs later and the invitation is sent by the user, by hand. A
+  confirmation names the activity and nothing else — «Понял: обсудить опционы за кофе», never
+  «обсуждение с X запланировано». Saying otherwise is a false statement about a real person.
 - Keep reply short (1-2 sentences).
 - "hints": exactly 3, each at most 6 words, written as the USER's own words in __LANGNAME__, never
   questions back at them and never repeats of each other. If your "reply" asked a question, the hints
@@ -2531,6 +2536,60 @@ def _strip_foreign(reply):
     s = re.sub(r"\s+([,.;:!?])", r"\1", s)
     s = re.sub(r"[ \t]{2,}", " ", s)
     return s.strip()
+
+
+# ВСТРЕЧА НЕ НАЗНАЧЕНА, И ГОВОРИТЬ ОБРАТНОЕ НЕЛЬЗЯ.
+#
+# Сборщик интента только формулирует ЗАТЕЮ. Он никого не находит, ни с кем не договаривается и
+# ничего не ставит в календарь — поиск идёт позже и отдельно, а приглашение человек отправляет
+# руками. Но в промпте сказано «подтверди одной строкой», и 70B временами понимает подтверждение
+# как рапорт: «Хорошо, обсуждение опционов с Miguel Ángel Duarte запланировано». Снято с телефона
+# 21 августа. Оба утверждения ложны — встречи нет, и человек с таким именем ни о чём не
+# договаривался; вдобавок это имя живого пользователя в разговоре, где ему взяться неоткуда.
+#
+# Промпт это запрещает, но одного промпта мало — тот же приём, что и с языком ответа: правило
+# в промпте плюс проверка после генерации.
+# Ловим УТВЕРЖДЕНИЕ, что дело сделано, а не любое родственное слово. «Назначь удобное время сам»
+# и «поговорить про договорное право» — нормальные фразы, и глушить их нельзя: сторож, который
+# срабатывает на исправном ответе, хуже пропущенного срыва, потому что человек получает казённую
+# заглушку вместо живого вопроса. Поэтому только прошедшее и страдательное: «назначена», а не
+# «назначь»; «договорился», а не «договор».
+_PROMISE = re.compile(
+    r"(?:^|[\s,;:—-])(?:"
+    r"заплан(?:ирован\w*|ировали)|"
+    r"назначен\w*|назначил\w*|"
+    r"договорил\w*|договорённост\w*|договоренност\w*|"
+    r"забронирован\w*|забронировал\w*|"
+    r"записа(?:л|ла|ли)\s+(?:тебя|вас)|"
+    r"встреча\s+с\s+[А-ЯA-Z]|"
+    r"(?:is|was|has\s+been|have\s+been|been)\s+(?:scheduled|booked|arranged)|"
+    r"i(?:'ve|\s+have)?\s+arranged|set\s+up\s+(?:a|your)\s+(?:meeting|call)|"
+    r"agendad\w*|programad\w*|reservad\w*"
+    r")", re.I | re.U)
+
+
+def promises_a_meeting(reply):
+    """Обещает ли ответ то, чего сборщик не делал: назначенную встречу или договорённость."""
+    return bool(_PROMISE.search(str(reply or "")))
+
+
+# Нейтральное подтверждение вместо сорвавшегося. Говорит ровно то, что произошло: затея понята,
+# дальше человек сам выбирает время и место, а искать пойдём после.
+_READY_OK = {
+    "ru": "Понял — {a}. Дальше выбери время и место, и я поищу, с кем это сделать.",
+    "en": "Got it — {a}. Pick a time and place next, and I'll look for someone.",
+    "es": "Entendido — {a}. Elige hora y lugar, y buscaré con quién hacerlo.",
+}
+
+
+def neutral_ready(activity, lang):
+    a = str(activity or "").strip()
+    tpl = _READY_OK.get(lang, _READY_OK["en"])
+    if not a:
+        return {"ru": "Понял. Дальше выбери время и место, и я поищу, с кем это сделать.",
+                "en": "Got it. Pick a time and place next, and I'll look for someone.",
+                "es": "Entendido. Elige hora y lugar, y buscaré con quién hacerlo."}.get(lang, _READY_OK["en"])
+    return tpl.format(a=a)
 
 
 def _salvage(reply, lang):
@@ -2986,6 +3045,11 @@ def intent_build(messages, profile, on_text=None):
             break
     # Both attempts slipped: keep the extracted activity/time/ready (they are English by design and still
     # correct) but do not show the user an English sentence — swap in the neutral prompt in their language.
+    # Обещание встречи — то же лечение, что и чужой язык: правило в промпте плюс сторож здесь.
+    # Промпт держит 70B не всегда, а цена срыва тут выше языковой: человек читает, что встреча
+    # назначена, и ничего больше не делает.
+    if isinstance(obj, dict) and promises_a_meeting(obj.get("reply")):
+        obj = dict(obj, reply=neutral_ready(obj.get("activity"), lang))
     if isinstance(obj, dict) and obj.get("reply") and not _lang_ok(obj.get("reply"), lang):
         _sal = _salvage(obj.get("reply"), lang)
         obj = dict(obj, reply=_sal) if _sal else dict(obj, reply=(
@@ -3289,6 +3353,18 @@ class H(BaseHTTPRequestHandler):
                         _shown = ""
                     if _shown and len(_shown) > len(_final):
                         out = dict(out, reply=_clip(_shown))
+                        _final = (out.get("reply") or "").strip()
+                    # СТОРОЖ СТОИТ ПОСЛЕ СКЛЕЙКИ, а не только в сборке.
+                    #
+                    # Строка выше берёт текст ИЗ ПОТОКА, если он длиннее разобранного, — иначе
+                    # конверт обрезал бы длинный ответ вдвое. Но она же вернула бы обратно ровно
+                    # тот текст, который сборщик только что отверг: обещание назначенной встречи
+                    # длиннее нейтрального подтверждения всегда. Поэтому проверяем то, что реально
+                    # уедет на экран, и подменяем здесь — `replaced` при этом станет истинным сам,
+                    # и клиент перепишет пузырь.
+                    if promises_a_meeting(_final):
+                        out = dict(out, reply=neutral_ready(out.get("activity"),
+                                                            out.get("lang") or "en"))
                         _final = (out.get("reply") or "").strip()
                     emit("done", dict(out, replaced=(_shown != _final)))
                 except Exception as e:
