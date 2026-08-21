@@ -255,7 +255,7 @@ def topics_of(s):
     return {ph} if ph not in _TOPIC_STOP else set()
 
 
-def resolve_query_topics(topics):
+def resolve_query_topics(topics, phrase=""):
     """Разобрать НЕЗНАКОМЫЕ слова ЗАПРОСА через фильтрацию — по одному разу за всю жизнь слова.
 
     Мост работает по разобранным фразам, а интересы популяции разбираются заранее (tools/
@@ -269,12 +269,20 @@ def resolve_query_topics(topics):
     придумавший новое слово. Тайм-аут короткий и ошибка проглатывается: поиск без моста хуже, чем
     с ним, но поиск, ждущий модель, хуже обоих.
     """
-    unknown = [t for t in (topics or [])
-               if t and _norm_phrase(t) not in PHRASE_TOPICS and not cat_of(t)[0]][:4]
-    if not unknown:
-        return
+    ask = []
+    # ФРАЗА ЦЕЛИКОМ ВАЖНЕЕ СЛОВ. Измерено на живой фильтрации: «поговорить про опционы» ->
+    # [options, trading, finance, investing], а голое «options» -> [choice, selection,
+    # alternatives, possibilities]. То есть по скомпилированному слову мост построился бы к
+    # «вариантам выбора», а не к финансам, и запрос снова нашёл бы не тех. Контекст фразы —
+    # единственное, что отличает опцион от «варианта».
+    if phrase and _norm_phrase(phrase) not in PHRASE_TOPICS:
+        ask.append(phrase)
+    ask += [t for t in (topics or [])
+            if t and _norm_phrase(t) not in PHRASE_TOPICS and not cat_of(t)[0]][:3]
+    if not ask:
+        return topics_of(phrase) if phrase else set()
     items = []
-    for t in unknown:
+    for t in ask:
         try:
             req = urllib.request.Request(
                 FILTER_URL + "/api/filter/categorize",
@@ -288,6 +296,7 @@ def resolve_query_topics(topics):
             continue                      # фильтрация молчит — ищем без моста, а не не ищем вовсе
     if items:
         learn_phrases(items)
+    return topics_of(phrase) if phrase else set()
 
 
 def topic_bridge(a, b):
@@ -299,7 +308,27 @@ def topic_bridge(a, b):
     return bool(topics_of(a) & topics_of(b))
 
 
-def topical(topics, interests):
+# Темы ФРАЗЫ запроса на время одного поиска.
+#
+# Параметром их не передать: ранжирует не `_retrieve`, а движок (matching_core / core_v2), и он
+# зовёт впрыснутый `topical` РОВНО ДВУМЯ аргументами. Добавленный третий до него не доходил, и
+# мост молчал ровно там, где решается выдача, — проверено живьём: запрос уходил в «широкие
+# предложения», как будто моста нет.
+#
+# Локально для потока, а не глобально: сервис многопоточный, и общая переменная подмешивала бы
+# темы одного человека в поиск другого.
+_QCTX = threading.local()
+
+
+def _set_query_bridge(topics):
+    _QCTX.bridge = set(topics or ())
+
+
+def _query_bridge():
+    return getattr(_QCTX, "bridge", None) or ()
+
+
+def topical(topics, interests, bridge=()):
     """Best topical tier (4 exact > 3 sub-cat / мост тем > 2 broad-cat > 1 adjacent > 0 none) + matched.
 
     МОСТ ЧЕРЕЗ ТЕМЫ ФИЛЬТРАЦИИ стоит ярусом 3 — ниже точного совпадения, выше общей ветки. Он
@@ -311,6 +340,7 @@ def topical(topics, interests):
     оба слова, ей и верить — она рукописная и точнее. Мост нужен там, где она молчит.
     """
     matched = set(); best = 0
+    bridge = set(bridge) or set(_query_bridge())
     xb = [(x, cat_of(x)) for x in interests]
     for t in topics:
         bt, st = cat_of(t)
@@ -319,8 +349,10 @@ def topical(topics, interests):
             elif st and st == sx: best = max(best, 3)
             elif bt and bt == bx: best = max(best, 2)
             elif bt and bx and bx in ADJACENCY.get(bt, []): best = max(best, 1)
-            # Мост: обе стороны — фразы, и их наборы тем пересеклись по неслужебной теме.
-            elif topic_bridge(t, x): matched.add(_norm(x)); best = max(best, 3)
+            # Мост: наборы тем пересеклись по неслужебной теме. `bridge` — темы ФРАЗЫ запроса,
+            # они точнее скомпилированных слов (см. resolve_query_topics).
+            elif topic_bridge(t, x) or (bridge and (set(bridge) & topics_of(x))):
+                matched.add(_norm(x)); best = max(best, 3)
             # neither side is in the taxonomy -> fall back to a literal shared interest word, so real
             # interests the vocabulary doesn't cover ("apple", "рыбалка", "labubu") still match each other.
             elif not bt and not bx and _wshare(t, x): matched.add(_norm(x)); best = max(best, 4)
@@ -1564,11 +1596,11 @@ def _retrieve(intent, eligible, budget):
     # Интересы популяции разобраны заранее, а слово запроса может быть таким, какого нет ни у кого
     # («опционы»), — тогда мост без этого вызова молчит, и запрос снова находит одного. Один
     # вопрос фильтрации на слово за всю его жизнь, дальше из памяти.
-    resolve_query_topics(topics)
+    qbridge = resolve_query_topics(topics, str(intent.get("_query") or ""))
     scored, source_by = [], {}
     for c in eligible:
         nm = str(c.get("name", "")).strip().lower()
-        best = topical(topics, [str(x).lower() for x in (c.get("interests") or [])])[0]
+        best = topical(topics, [str(x).lower() for x in (c.get("interests") or [])], qbridge)[0]
         src = _retrieval_source(intent, c, best)
         source_by[nm] = src
         scored.append((_SOURCE_RANK.get(src, 3), -best, nm, c))
@@ -1686,6 +1718,26 @@ def match_candidates(intent, prof, ctx=None, diag=None, want=None):
     retrieval now caps the eligible pool at a budget BEFORE scoring, so `eligible` and `scored._in`
     legitimately differ and people can be lost between the gates and the ranker. A funnel that
     hides its narrowest stage is decoration."""
+    # МОСТ ТЕМ на время этого поиска: разбираем фразу запроса (один вопрос фильтрации на новое
+    # слово за всю его жизнь) и кладём её темы туда, откуда их возьмёт `topical` — включая вызовы
+    # из движка, который параметров не передаёт.
+    try:
+        _qb = resolve_query_topics(
+            [str(t).lower() for t in (intent.get("topics") or [])],
+            str(intent.get("_query") or ""))
+        _set_query_bridge(_qb)
+        # И ДВИЖКУ ТОЖЕ. Ярус решает не этот `topical`, а таксономия matching_core: впрыснутые
+        # помощники она берёт «для совместимости подписи» и не использует. Без этой строки мост
+        # работал ровно там, где ничего не решает, — проверено: `topical` давал 3, а движок ставил
+        # T5 «нет overlap», и человек снова видел одного кандидата.
+        try:
+            from matching_core.taxonomy import graph as _TX
+            _TX.set_bridge(_qb, topics_of)
+        except Exception:
+            pass
+    except Exception:
+        _set_query_bridge(())
+
     if not CORE_V2:
         return _persona_order(match_candidates_legacy(intent, prof, ctx), intent)
     ctx = ctx or {}
@@ -5111,19 +5163,34 @@ def _gp_public(p, me=""):
     feedback_times = _gp_feedback_times(p)
     feedback_outcome = _gp_feedback_outcome(p)
     my_feedback = _gp_feedback_record(p, me)
+    mode = p.get("mode") or (g.get("mode") if g else "offline") or "offline"
+    place = str(p.get("place") or "").strip()
+    link = str(p.get("link") or "").strip()
+    sides = dict(p.get("sides") or {})
+    side_counts = {"in_person": 0, "call": 0, "undecided": 0}
+    for name in act:
+        side = (sides.get(_norm_name(name)) or {}).get("side")
+        if side in ("in_person", "call"):
+            side_counts[side] += 1
+        else:
+            side_counts["undecided"] += 1
     return {
         "id": p.get("id"), "gid": p.get("gid"), "version": p.get("version"),
-        "when": p.get("when"), "place": p.get("place"), "note": p.get("note"),
+        "when": p.get("when"), "place": place, "note": p.get("note"),
         "starts_at": p.get("starts_at"), "state": p.get("state"),
         # Строка места — единственное, чем офлайн-борд отличается от онлайн-борда (GR.25 «Gràcia ·
         # Nømad» против GRO.25 «Video call · link saved»). Поэтому её различие живёт ЗДЕСЬ, в
         # данных, а не в двух экранах: два экрана разошлись бы на первой правке.
-        "mode": p.get("mode") or (g.get("mode") if g else "offline") or "offline",
-        "link": p.get("link") or "",
+        "mode": mode,
+        "link": link,
         # GRO.25a: интент завели без ссылки — план согласован, а подключиться некуда. Группе про
         # это говорят прямо, организатору дают вставить ссылку.
-        "needs_link": (p.get("mode") or (g.get("mode") if g else "")) == "online"
-                      and not (p.get("link") or ""),
+        "needs_link": mode in ("online", "hybrid") and not link,
+        "needs_place": mode == "hybrid" and not place,
+        "details_ready": mode != "hybrid" or bool(place and link),
+        "sides": sides if mode == "hybrid" else {},
+        "my_side": (sides.get(_norm_name(me)) or {}).get("side") if mode == "hybrid" else None,
+        "side_counts": side_counts if mode == "hybrid" else None,
         "confirmed": conf, "confirmed_count": len(conf),
         # Who has not answered THIS version — the counter is meaningless without it.
         "waiting": [n for n in act if n not in conf
@@ -5182,7 +5249,7 @@ def _gp_public(p, me=""):
     }
 
 
-def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None):
+def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None, link=""):
     """«Создать план» — available only at three. Sends ONE draft to the whole current roster; the
     organiser does not choose who it goes to, because choosing would make this a casting call."""
     cached = _idem_get(idem)
@@ -5211,6 +5278,8 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None):
             return _idem_put(idem, {"ok": False, "error": "TOO_LATE",
                                     "note": "a plan must start more than two hours from now, "
                                             "or nobody can confirm it"})
+        mode = str(g.get("mode") or "offline")
+        initial_link = str(link or (g.get("intent") or {}).get("link") or g.get("link") or "")[:400]
         p = {"id": "gp_%d_%s" % (int(now * 1000), hashlib.sha1(gid.encode("utf-8")).hexdigest()[:6]),
              "gid": gid, "owner": g.get("owner"), "version": 1, "round": 1,
              "when": str(when or "")[:120], "place": str(place or "")[:160],
@@ -5218,12 +5287,21 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None):
              # Онлайн или офлайн решает ИНТЕНТ, а не автор плана: группа собиралась под звонок или
              # под место, и подменять это на шаге плана значило бы позвать людей на одно, а свести
              # на другое. Ссылка приезжает оттуда же, если она была; если нет — GRO.25a.
-             "mode": str(g.get("mode") or "offline"),
-             "link": str((g.get("intent") or {}).get("link") or g.get("link") or "")[:400],
+             "mode": mode,
+             "link": initial_link,
              "state": "proposed", "responses": {}, "created": now, "updated": now}
+        if mode == "hybrid":
+            p["sides"] = {
+                _norm_name(m.get("name")): {
+                    "side": m.get("join") if m.get("join") in ("in_person", "call") else "in_person",
+                    "t": now,
+                }
+                for m in _gi_active(g)
+            }
         # The organiser proposing it IS their confirmation — asking them to agree with themselves
         # would be theatre, and it would make three people impossible with a group of exactly three.
-        p["responses"][g.get("owner")] = {"state": "confirmed", "t": now, "version": 1}
+        if mode != "hybrid" or (str(p.get("place") or "").strip() and initial_link.strip()):
+            p["responses"][g.get("owner")] = {"state": "confirmed", "t": now, "version": 1}
         _gplans().append(p)
         g["state"] = "planning"
         g["updated"] = now
@@ -5232,7 +5310,7 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None):
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
 
-def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, idem=None):
+def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, idem=None, link=""):
     """confirm | decline | counter.
 
     A COUNTER is not a vote against the plan — it is «внести своё предложение»: it replaces the
@@ -5293,6 +5371,8 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
                 p["when"] = str(when)[:120]
             if place:
                 p["place"] = str(place)[:160]
+            if link:
+                p["link"] = str(link)[:400]
             if note:
                 p["note"] = str(note)[:400]
             if starts_at:
@@ -5301,7 +5381,10 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
                 except (TypeError, ValueError):
                     pass
             # Everything confirmed against the old terms is void — including the organiser's own.
-            p["responses"] = {who: {"state": "confirmed", "t": now, "version": p["version"]}}
+            complete = p.get("mode") != "hybrid" or bool(str(p.get("place") or "").strip()
+                                                           and str(p.get("link") or "").strip())
+            p["responses"] = ({who: {"state": "confirmed", "t": now, "version": p["version"]}}
+                              if complete else {})
             p["state"] = "proposed"
             p["updated"] = now
             _gi_say(g, "%s suggested a change: %s%s. Everyone confirms again."
@@ -5317,6 +5400,12 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
             return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
         if action != "confirm":
             return {"ok": False, "error": "BAD_ACTION"}
+        if p.get("mode") == "hybrid" and not (str(p.get("place") or "").strip()
+                                                and str(p.get("link") or "").strip()):
+            return _idem_put(idem, {"ok": False, "error": "PLAN_INCOMPLETE",
+                                    "needs_place": not bool(str(p.get("place") or "").strip()),
+                                    "needs_link": not bool(str(p.get("link") or "").strip()),
+                                    "plan": _gp_public(p, who)})
         p["responses"][who] = {"state": "confirmed", "t": now, "version": v}
         p["updated"] = now
         conf = _gp_confirms(p)
@@ -5445,7 +5534,7 @@ def gp_fix(pid, who, idem=None):
                                 "plan": _gp_public(p, who)})
 
 
-def gp_vote_open(pid, who, kind, when="", place="", note="", starts_at=None, idem=None):
+def gp_vote_open(pid, who, kind, when="", place="", note="", starts_at=None, idem=None, link=""):
     """Once a plan is in force the organiser cannot simply change or drop it — «при нажатии на эту
     кнопку у нас выносится голосование». kind is 'edit' or 'cancel'."""
     cached = _idem_get(idem)
@@ -5471,7 +5560,8 @@ def gp_vote_open(pid, who, kind, when="", place="", note="", starts_at=None, ide
         vote = {"id": "gvo_%d" % int(now * 1000), "gid": p.get("gid"), "plan_id": pid,
                 "kind": kind, "by": who, "state": "open", "created": now,
                 "proposal": {"when": str(when or "")[:120], "place": str(place or "")[:160],
-                             "note": str(note or "")[:400], "starts_at": starts_at},
+                             "link": str(link or "")[:400], "note": str(note or "")[:400],
+                             "starts_at": starts_at},
                 # Whoever calls the vote has cast the first one, by calling it.
                 "votes": {who: True}}
         _gvotes().append(vote)
@@ -5602,11 +5692,14 @@ def _gp_apply_change(p, g, pr, by, now):
     но состав НЕ режется и встреча не отменяется: «the group carries on either way» (GR.33).
 
     Раунд не трогаем: это не встречное предложение, а правка сверху (см. `_gp_public`)."""
-    p["prev"] = {"when": p.get("when"), "place": p.get("place"), "starts_at": p.get("starts_at")}
+    p["prev"] = {"when": p.get("when"), "place": p.get("place"), "link": p.get("link"),
+                 "starts_at": p.get("starts_at")}
     if pr.get("when"):
         p["when"] = str(pr["when"])[:120]
     if pr.get("place"):
         p["place"] = str(pr["place"])[:160]
+    if pr.get("link"):
+        p["link"] = str(pr["link"])[:400]
     if pr.get("note"):
         p["note"] = str(pr["note"])[:400]
     if pr.get("starts_at"):
@@ -5628,7 +5721,7 @@ def _gp_apply_change(p, g, pr, by, now):
     return p
 
 
-def gp_update(pid, who, when="", place="", note="", starts_at=None, idem=None):
+def gp_update(pid, who, when="", place="", note="", starts_at=None, idem=None, link=""):
     """GR/GRO.32 «Change the time or place» — организатор правит утверждённый план напрямую.
 
     Почему не через голосование: голосование — инструмент УЧАСТНИКА, который хочет попросить
@@ -5660,7 +5753,7 @@ def gp_update(pid, who, when="", place="", note="", starts_at=None, idem=None):
         if any(v.get("plan_id") == pid and v.get("state") == "open" for v in _gvotes()):
             # Иначе группа отвечает на вопрос про время, которого уже нет.
             return _idem_put(idem, {"ok": False, "error": "VOTE_IN_PROGRESS"})
-        if not (when or place or starts_at):
+        if not (when or place or link or starts_at):
             return _idem_put(idem, {"ok": False, "error": "NOTHING_TO_CHANGE"})
         try:
             sa = float(starts_at) if starts_at else None
@@ -5669,7 +5762,8 @@ def gp_update(pid, who, when="", place="", note="", starts_at=None, idem=None):
         if sa is not None and sa - GP_LOCK_BEFORE <= now:
             return _idem_put(idem, {"ok": False, "error": "TOO_LATE",
                                     "note": "the new time must start more than two hours from now"})
-        _gp_apply_change(p, g, {"when": when, "place": place, "note": note, "starts_at": sa},
+        _gp_apply_change(p, g, {"when": when, "place": place, "link": link,
+                                "note": note, "starts_at": sa},
                          who, now)
         _save_store()
         return _idem_put(idem, {"ok": True, "updated": True, "plan": _gp_public(p, who)})
@@ -5696,7 +5790,7 @@ def gp_link(pid, who, link="", idem=None):
             return {"ok": False, "error": "NO_SUCH_GROUP"}
         if _norm_name(who) != _norm_name(g.get("owner")):
             return {"ok": False, "error": "NOT_ORGANIZER"}
-        if (p.get("mode") or g.get("mode")) != "online":
+        if (p.get("mode") or g.get("mode")) not in ("online", "hybrid"):
             return _idem_put(idem, {"ok": False, "error": "NOT_ONLINE"})
         if not link:
             return _idem_put(idem, {"ok": False, "error": "LINK_REQUIRED"})
@@ -5705,9 +5799,101 @@ def gp_link(pid, who, link="", idem=None):
             # такой «ссылке», не попадёт никуда, а узнает об этом за минуту до звонка.
             return _idem_put(idem, {"ok": False, "error": "BAD_LINK"})
         p["link"] = link
+        if p.get("mode") == "hybrid" and str(p.get("place") or "").strip():
+            p.setdefault("responses", {}).setdefault(
+                g.get("owner"), {"state": "confirmed", "t": now, "version": p.get("version")})
         p["updated"] = now
         g["link"] = link
         _gi_say(g, "The call link is saved.", code="link_saved")
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
+def gp_details(pid, who, place=None, link=None, idem=None):
+    """GRH.25a/25b: complete one missing entrance of a hybrid group plan.
+
+    Place and call link are independent resources. Saving one must never overwrite the other, and
+    nobody may confirm until both exist. Only the organiser edits these shared meeting details.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    now = time.time()
+    with _STORE_LOCK:
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return _idem_put(idem, {"ok": False, "error": "NOT_ORGANIZER"})
+        if (p.get("mode") or g.get("mode")) != "hybrid":
+            return _idem_put(idem, {"ok": False, "error": "NOT_HYBRID"})
+        if p.get("state") in ("locked", "cancelled", "done"):
+            return _idem_put(idem, {"ok": False, "error": "LOCKED"})
+        if place is None and link is None:
+            return _idem_put(idem, {"ok": False, "error": "NOTHING_TO_CHANGE"})
+        if place is not None:
+            value = str(place or "").strip()[:160]
+            if not value:
+                return _idem_put(idem, {"ok": False, "error": "PLACE_REQUIRED"})
+            p["place"] = value
+            _gi_say(g, "The meeting place is saved.", code="place_saved")
+        if link is not None:
+            value = str(link or "").strip()[:400]
+            if not value:
+                return _idem_put(idem, {"ok": False, "error": "LINK_REQUIRED"})
+            if not re.match(r"^(https?://|[a-z0-9.-]+\.[a-z]{2,})", value, re.I):
+                return _idem_put(idem, {"ok": False, "error": "BAD_LINK"})
+            p["link"] = value
+            g["link"] = value
+            _gi_say(g, "The call link is saved.", code="link_saved")
+        p["updated"] = now
+        if str(p.get("place") or "").strip() and str(p.get("link") or "").strip():
+            p.setdefault("responses", {}).setdefault(
+                g.get("owner"), {"state": "confirmed", "t": now, "version": p.get("version")})
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
+GP_SIDES = ("in_person", "call")
+
+
+def gp_side(pid, who, side, idem=None):
+    """GRH attendance switch. A member can move between the table and the call without cancelling."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    side = str(side or "").strip().lower()
+    if side not in GP_SIDES:
+        return {"ok": False, "error": "BAD_SIDE", "allowed": list(GP_SIDES)}
+    now = time.time()
+    with _STORE_LOCK:
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if p.get("mode") != "hybrid":
+            return _idem_put(idem, {"ok": False, "error": "NOT_HYBRID"})
+        if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
+            return _idem_put(idem, {"ok": False, "error": "NOT_A_PARTICIPANT"})
+        if p.get("state") not in ("proposed", "confirmed", "locked"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+        if side == "call" and not str(p.get("link") or "").strip():
+            return _idem_put(idem, {"ok": False, "error": "NO_LINK"})
+        if side == "in_person" and not str(p.get("place") or "").strip():
+            return _idem_put(idem, {"ok": False, "error": "NO_PLACE"})
+        previous = (p.get("sides") or {}).get(_norm_name(who), {}).get("side")
+        p.setdefault("sides", {})[_norm_name(who)] = {"side": side, "t": now}
+        p["updated"] = now
+        if previous != side:
+            _gi_say(g, "%s will join %s." % (who, "the call" if side == "call" else "in person"),
+                    code="attendance_side", who=who, side=side)
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
@@ -7527,7 +7713,7 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/gplan-begin":
             send_json(self, 200, gp_begin(body.get("gid"), body.get("self"), body.get("when"),
                                           body.get("place"), body.get("note"),
-                                          body.get("starts_at"), body.get("idem")))
+                                          body.get("starts_at"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/gplan-cancel":
             send_json(self, 200, gp_cancel(body.get("id"), body.get("self"), body.get("idem")))
         elif p == "/api/agent/gplan-fix":
@@ -7535,18 +7721,24 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/gplan-update":
             send_json(self, 200, gp_update(body.get("id"), body.get("self"), body.get("when"),
                                            body.get("place"), body.get("note"),
-                                           body.get("starts_at"), body.get("idem")))
+                                           body.get("starts_at"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/gplan-link":
             send_json(self, 200, gp_link(body.get("id"), body.get("self"),
                                          body.get("link"), body.get("idem")))
+        elif p == "/api/agent/gplan-details":
+            send_json(self, 200, gp_details(body.get("id"), body.get("self"),
+                                            body.get("place"), body.get("link"), body.get("idem")))
+        elif p == "/api/agent/gplan-side":
+            send_json(self, 200, gp_side(body.get("id"), body.get("self"),
+                                         body.get("side"), body.get("idem")))
         elif p == "/api/agent/gplan-respond":
             send_json(self, 200, gp_respond(body.get("id"), body.get("self"), body.get("action"),
                                             body.get("when"), body.get("place"), body.get("note"),
-                                            body.get("starts_at"), body.get("idem")))
+                                            body.get("starts_at"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/gplan-vote-open":
             send_json(self, 200, gp_vote_open(body.get("id"), body.get("self"), body.get("kind"),
                                               body.get("when"), body.get("place"), body.get("note"),
-                                              body.get("starts_at"), body.get("idem")))
+                                              body.get("starts_at"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/gplan-vote":
             send_json(self, 200, gp_vote(body.get("id"), body.get("self"),
                                          bool(body.get("yes")), body.get("idem")))
@@ -7890,8 +8082,15 @@ class H(BaseHTTPRequestHandler):
             intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
+            # ЧЕЛОВЕЧЕСКАЯ ФРАЗА ради моста тем. Приложение шлёт её отдельным полем `phrase`:
+            # в `topics` ей нельзя (русская строка буквально не совпадает ни с кем), а без неё
+            # фильтрация разбирает голое «options» как «варианты выбора», а не как опционы.
+            # Ставится ПОСЛЕ compile_intent — тот собирает свою структуру и чужих ключей не носит.
+            _phrase = str(intent.get("phrase") or body.get("query") or "")
             try:
                 intent = kc.compile_intent(intent, _intent_identity(intent), ctx, ctx.get('now') or time.time())  # §4.3 blocks
+                if _phrase:
+                    intent["_query"] = _phrase
                 snap = _request_snapshot(intent)
                 if not _pilot_enabled(intent):             # §1.2: a non-pilot decision type
                     # ...but STILL rank the people. Returning an empty slate here meant that adding
@@ -7948,6 +8147,14 @@ class H(BaseHTTPRequestHandler):
                     else ki.extract_constraints(query, intent)[1]
                 conf = ki.apply_confirmation(intent, confirmed_ids, cons, now=ctx.get("now"))
                 conf = kc.compile_intent(conf, _intent_identity(conf), ctx, ctx.get("now") or time.time())
+                # Исходная фраза едет с интентом ради моста тем: по ней фильтрация отличает
+                # «опционы» от «вариантов», а по скомпилированному слову — уже нет. Приложение
+                # шлёт её отдельным полем `phrase`, а не в `query`: `query` идёт ещё и в разбор
+                # ограничений, и человеческая подпись добавила бы туда условий, которых человек
+                # не ставил.
+                _ph = str((body.get("intent") or {}).get("phrase") or query or "")
+                if _ph:
+                    conf["_query"] = _ph
                 cands = match_candidates(conf, prof, ctx)
                 res = {"intent": conf, "candidates": cands, "snapshot": _request_snapshot(conf),
                        "confirmed": conf.get("_confirmed")}

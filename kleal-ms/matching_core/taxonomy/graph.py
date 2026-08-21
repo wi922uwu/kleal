@@ -104,6 +104,36 @@ def _wshare(a, b):
     return lvl
 
 
+# ---------------------------------------------------------------- мост тем фильтрации (внешний)
+#
+# Канон знает 405 узлов, но не знает ни «опционы», ни «finanzas», ни «economía». Между двумя
+# неизвестными ему словами остаётся лишь `_wshare` — буквально общий токен, — а у «опционы» и
+# «finanzas» общих токенов нет. Отсюда T5 «нет overlap» и запрос, находящий одного человека из 714.
+#
+# Знание о том, что эти слова про одно и то же, есть у фильтрации, но она живёт в другом сервисе,
+# и таксономия не имеет права ходить по сети: она обязана быть чистой и быстрой. Поэтому хозяин
+# процесса (services/matching/app.py) ВПРЫСКИВАЕТ готовое знание на время запроса, а здесь только
+# точка подключения. Ничего не впрыснули — движок работает ровно как раньше.
+_BRIDGE = None          # (темы_запроса:set, темы_интереса: callable(str)->set)
+
+
+def set_bridge(query_topics=None, topics_of=None):
+    """Впрыснуть знание на текущий поиск. Вызывается владельцем процесса, не самим движком."""
+    global _BRIDGE
+    _BRIDGE = (set(query_topics or ()), topics_of) if (query_topics and topics_of) else None
+
+
+def _bridged(x):
+    """Сошёлся ли интерес `x` с запросом по темам фильтрации."""
+    if not _BRIDGE:
+        return False
+    qt, fn = _BRIDGE
+    try:
+        return bool(qt & set(fn(x) or ()))
+    except Exception:
+        return False
+
+
 def similarity(topics, interests):
     """§6 + Аудит #4 — ЕДИНЫЙ semantic resolver. Canonical taxonomy (405 nodes) — авторитетный источник:
     если ОБЕ стороны пары резолвятся в каноне, уровень берётся из `canonical.similarity_nodes`. Seed-граф
@@ -141,6 +171,13 @@ def similarity(topics, interests):
                     matched.add(norm(x)); best = max(best, 4)
                 elif lvl:
                     best = max(best, lvl)
+    # Мост проверяется ПОСЛЕДНИМ и не спорит с каноном: он поднимает только тех, кого канон и
+    # `_wshare` не связали вовсе. Уровень 3 (sibling) — «про то же самое, но названо иначе»;
+    # выше нельзя, точное совпадение должно оставаться точным.
+    if best < 3 and _BRIDGE:
+        for x in interests:
+            if _bridged(x):
+                matched.add(norm(x)); best = max(best, 3)
     return best, matched
 
 
