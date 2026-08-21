@@ -151,8 +151,128 @@ def _wshare(a, b):
             if len(x) >= 5 and len(y) >= 5 and abs(len(x) - len(y)) <= 2 and x[:5] == y[:5]: return True
     return False
 
+# ============================================================ мост через темы фильтрации (фразами)
+#
+# ЗАЧЕМ. Рукописная таксономия знает «finance», но не знает «опционы», «finanzas», «economía».
+# Между незнакомыми словами остаётся лишь запасной путь «общее слово буквально», а у «опционы» и
+# «finanzas» общих слов нет. Поэтому запрос «поговорить про опционы» находил ровно одного человека
+# из 714 — того, у кого в профиле стоит само слово `finance`. Снято с телефона 21 августа.
+#
+# ПОЧЕМУ ФРАЗАМИ, А НЕ СЛОВАМИ. Ровно так уже пробовали, и это дало мусор. `_teach` в Бадди берёт
+# у фильтрации список тем ФРАЗЫ и учит каждое слово из него ОДНОЙ категорией фразы. Для «падел в
+# Грасии на выходных» темы — [padel, gracia, weekend], и в карту уходит «gracia → спорт/падел» и
+# «weekend → спорт/ракетки». Проверено на боксе: из 136 выученных слов такие — заметная часть.
+# Включи это в поиск, и все барселонцы совпадут по падлу.
+#
+# Здесь хранится другое: ФРАЗА -> её темы. Мы никогда не утверждаем, что «gracia» — это падел; мы
+# помним, что у фразы «падел в грасии на выходных» темы {padel, gracia, weekend}. Совпадение — это
+# пересечение наборов, и общие слова из него выброшены. Тогда «падел» и та фраза сходятся по
+# `padel`, а «поход на выходных» с ней — ни по чему.
+_PHRASES_PATH = os.environ.get(
+    "KLEAL_PHRASE_TOPICS",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "phrase_topics.json"))
+
+# Темы, по которым совпадать нельзя: они есть почти у всего и связали бы всех со всеми. Это НЕ
+# стоп-список интересов — «finance» интересом быть может, а вот темой для сближения «weekend» нет.
+_TOPIC_STOP = {
+    "weekend", "weekends", "weekday", "morning", "evening", "afternoon", "night", "today",
+    "tomorrow", "hour", "week", "month", "year", "time", "day", "days",
+    "people", "person", "friend", "friends", "partner", "someone", "somebody", "group", "company",
+    "meeting", "meet", "meetup", "hangout", "socializing", "friendship", "hello", "greeting",
+    "activity", "activities", "hobby", "hobbies", "fun", "new", "local", "city", "place", "places",
+    "work", "play", "playing", "watching", "doing", "making", "care", "match", "fire", "thing",
+    "things", "stuff", "interest", "interests", "conversation", "chat", "talk", "discussion",
+}
+
+_PHRASES_LOCK = threading.Lock()
+_PHRASES_CAP = 20000
+
+
+def _norm_phrase(s):
+    return " ".join(str(s or "").lower().split())[:120]
+
+
+def _load_phrases():
+    try:
+        with open(_PHRASES_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        out = {}
+        for k, v in d.items():
+            ts = {str(t).lower().strip() for t in (v or []) if str(t).strip()}
+            ts = {t for t in ts if t not in _TOPIC_STOP and len(t) >= 3}
+            if ts:
+                out[_norm_phrase(k)] = ts
+        return out
+    except Exception:
+        return {}
+
+
+PHRASE_TOPICS = _load_phrases()
+
+
+def learn_phrases(items):
+    """items: [{"phrase": "...", "topics": [...]}]. Возвращает, сколько фраз стало известно.
+
+    Пустой набор тем НЕ запоминается: «ничего не понял» и «понял, что тем нет» на поиске ведут
+    себя одинаково, а вот перезаписать этим уже известную фразу — значит её потерять.
+    """
+    added = 0
+    with _PHRASES_LOCK:
+        for it in items or []:
+            if not isinstance(it, dict):
+                continue
+            ph = _norm_phrase(it.get("phrase"))
+            ts = {str(t).lower().strip() for t in (it.get("topics") or []) if str(t).strip()}
+            ts = {t for t in ts if t not in _TOPIC_STOP and 3 <= len(t) <= 40}
+            if not ph or not ts or len(PHRASE_TOPICS) >= _PHRASES_CAP:
+                continue
+            if PHRASE_TOPICS.get(ph) == ts:
+                continue
+            PHRASE_TOPICS[ph] = ts
+            added += 1
+        if added:
+            try:
+                tmp = _PHRASES_PATH + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({k: sorted(v) for k, v in PHRASE_TOPICS.items()}, f, ensure_ascii=False)
+                os.replace(tmp, _PHRASES_PATH)   # атомарно: файл читается на каждом поиске
+            except Exception:
+                pass
+    return added
+
+
+def topics_of(s):
+    """Темы фразы. Сама фраза тоже считается темой — иначе два человека с одинаковым интересом,
+    которого фильтрация не видела, перестали бы сходиться через этот мост."""
+    ph = _norm_phrase(s)
+    if not ph:
+        return set()
+    got = PHRASE_TOPICS.get(ph)
+    if got:
+        return set(got) | ({ph} if ph not in _TOPIC_STOP else set())
+    return {ph} if ph not in _TOPIC_STOP else set()
+
+
+def topic_bridge(a, b):
+    """Сошлись ли две фразы по темам фильтрации. Хотя бы одна из них должна быть РАЗОБРАНА —
+    иначе это просто сравнение двух строк, которое и так делает `_wshare`, и мост тут ни при чём."""
+    pa, pb = _norm_phrase(a), _norm_phrase(b)
+    if pa not in PHRASE_TOPICS and pb not in PHRASE_TOPICS:
+        return False
+    return bool(topics_of(a) & topics_of(b))
+
+
 def topical(topics, interests):
-    """Best topical tier (4 exact > 3 sub-cat > 2 broad-cat > 1 adjacent > 0 none) + matched interests."""
+    """Best topical tier (4 exact > 3 sub-cat / мост тем > 2 broad-cat > 1 adjacent > 0 none) + matched.
+
+    МОСТ ЧЕРЕЗ ТЕМЫ ФИЛЬТРАЦИИ стоит ярусом 3 — ниже точного совпадения, выше общей ветки. Он
+    закрывает ровно ту дыру, из-за которой «поговорить про опционы» находило одного человека из
+    714: рукописная таксономия знает `finance`, но не знает ни «опционы», ни «finanzas», ни
+    «economía», а между двумя незнакомыми словами оставался лишь буквально общий токен.
+
+    Проверяется ПОСЛЕ ярусов таксономии и до запасного пути по словам: там, где таксономия знает
+    оба слова, ей и верить — она рукописная и точнее. Мост нужен там, где она молчит.
+    """
     matched = set(); best = 0
     xb = [(x, cat_of(x)) for x in interests]
     for t in topics:
@@ -162,6 +282,8 @@ def topical(topics, interests):
             elif st and st == sx: best = max(best, 3)
             elif bt and bt == bx: best = max(best, 2)
             elif bt and bx and bx in ADJACENCY.get(bt, []): best = max(best, 1)
+            # Мост: обе стороны — фразы, и их наборы тем пересеклись по неслужебной теме.
+            elif topic_bridge(t, x): matched.add(_norm(x)); best = max(best, 3)
             # neither side is in the taxonomy -> fall back to a literal shared interest word, so real
             # interests the vocabulary doesn't cover ("apple", "рыбалка", "labubu") still match each other.
             elif not bt and not bx and _wshare(t, x): matched.add(_norm(x)); best = max(best, 4)
@@ -7486,6 +7608,13 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, compare_scorers(_normalize_intent(body.get("intent")),
                                                  body.get("profile") if isinstance(body.get("profile"), dict) else {},
                                                  body.get("ctx") if isinstance(body.get("ctx"), dict) else {}))
+        elif p == "/api/agent/learn-phrases":
+            # Фраза целиком и её темы, как их увидела фильтрация. Отдельно от пословного
+            # /api/agent/learn: тот учит СЛОВО категорией фразы, и именно так в карту попали
+            # «gracia -> спорт/падел» и «weekend -> спорт/ракетки».
+            send_json(self, 200, {"ok": True,
+                                  "added": learn_phrases(body.get("items") or []),
+                                  "known": len(PHRASE_TOPICS)})
         elif p == "/api/agent/learn":
             # Teach the shared word -> (category, subcategory) map. Buddy calls this with what
             # filtration already worked out, so no extra model call is spent here.
