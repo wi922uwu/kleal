@@ -40,7 +40,12 @@ export default function AuthEmail() {
     try {
       const r: any = await auth.requestCode(email.trim(), replyLang());
       if (r?.ok) {
-        router.navigate({ pathname: '/auth-code', params: { email: email.trim() } });
+        // `dev_code` приходит только при включённом на сервере рубильнике отладки; в обычной
+        // работе его в ответе нет, и параметр уезжает пустым.
+        router.navigate({
+          pathname: '/auth-code',
+          params: { email: email.trim(), dev: String(r?.dev_code || '') },
+        });
         return;
       }
       if (r?.error === 'bad email') setErr({ title: AUTH.badEmailTitle(), note: AUTH.badEmailNote() });

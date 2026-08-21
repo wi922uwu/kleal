@@ -2224,6 +2224,26 @@ _CODE_LOCK = threading.Lock()
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 
 
+# КОД НА ЭКРАНЕ — ТОЛЬКО ПО ЯВНОМУ РУБИЛЬНИКУ, и по умолчанию он выключен.
+#
+# Пока почтовый домен не подтверждён, провайдер разрешает писать ровно на один адрес, и завести
+# второй аккаунт для проверки нечем. Поэтому есть режим, в котором код возвращается ручкой и
+# показывается рядом с полем ввода.
+#
+# Это ДЫРА, и она названа дырой намеренно: при включённом рубильнике любой, кто знает чужой адрес,
+# запрашивает код и читает его в ответе — то есть входит в чужой аккаунт. Отсюда три решения:
+# отдельная переменная (а не «включается, когда почта не настроена» — такое включилось бы само в
+# первый же сбой провайдера), громкая строка в лог при старте, и заметная пометка на экране, чтобы
+# никто не принял это за возможность продукта.
+def show_code_enabled():
+    return os.environ.get("KLEAL_SHOW_CODE", "").strip() in ("1", "true", "yes", "on")
+
+
+if show_code_enabled():
+    print("[auth] ВНИМАНИЕ: KLEAL_SHOW_CODE включён — код входа возвращается наружу и виден на "
+          "экране. Это режим отладки, в проде он обязан быть выключен.", flush=True)
+
+
 def _norm_email(e):
     return str(e or "").strip().lower()[:200]
 
@@ -2286,17 +2306,22 @@ def request_code(email, lang="en", ip=""):
                      "first": cur.get("first", now) if cur else now, "last": now}
         hits.append(now)
     ok, how, detail = mailer.send_code(e, code, lang=lang, minutes=CODE_TTL // 60)
+    dev = {"dev_code": code} if show_code_enabled() else {}
     if not ok:
-        # Письмо не ушло — код гасим. Иначе человек ждёт письма, которого не будет, а живой код
-        # висит десять минут.
-        with _CODE_LOCK:
-            _CODES.pop(e, None)
-        # «Не разрешён получатель» — отдельная новость: домен ещё не подтверждён у провайдера, и
-        # повторять бессмысленно. Экран об этом скажет иначе, чем про временный сбой.
-        if detail == "not allowed":
-            return {"ok": False, "error": "not allowed"}
-        return {"ok": False, "error": "send failed", "detail": detail}
-    return {"ok": True, "resend_in": RESEND_AFTER, "sent": True, "via": how}
+        # В режиме отладки код НЕ гасим даже при неудачной отправке: он и нужен ровно для тех
+        # адресов, на которые провайдер писать отказывается. В обычном режиме — гасим, иначе
+        # человек ждёт письма, которого не будет, а живой код висит десять минут.
+        if not dev:
+            with _CODE_LOCK:
+                _CODES.pop(e, None)
+            # «Не разрешён получатель» — отдельная новость: домен ещё не подтверждён у провайдера,
+            # и повторять бессмысленно. Экран об этом скажет иначе, чем про временный сбой.
+            if detail == "not allowed":
+                return {"ok": False, "error": "not allowed"}
+            return {"ok": False, "error": "send failed", "detail": detail}
+        return dict({"ok": True, "resend_in": RESEND_AFTER, "sent": False, "via": "dev",
+                     "mail_error": detail}, **dev)
+    return dict({"ok": True, "resend_in": RESEND_AFTER, "sent": True, "via": how}, **dev)
 
 
 def _new_session(accs, key):

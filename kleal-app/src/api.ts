@@ -295,9 +295,16 @@ export function isAbort(e: unknown): boolean {
 export type SignupResult = { ok?: boolean; error?: string; login?: string };
 
 export const auth = {
-  /** A.03.1 «Continue» — просим код. Ответ одинаков для знакомого и незнакомого адреса. */
+  /**
+   * A.03.1 «Continue» — просим код. Ответ одинаков для знакомого и незнакомого адреса.
+   *
+   * `dev_code` приходит ТОЛЬКО при включённом на сервере KLEAL_SHOW_CODE и существует, пока
+   * почтовый домен не подтверждён у провайдера: без него нельзя завести второй аккаунт для
+   * проверки, потому что писать он разрешает на один-единственный адрес.
+   */
   requestCode: (email: string, lang: string) =>
-    api.post<{ ok?: boolean; error?: string; resend_in?: number; sent?: boolean }>(
+    api.post<{ ok?: boolean; error?: string; resend_in?: number; sent?: boolean;
+               dev_code?: string; mail_error?: string }>(
       '/api/auth/code/request', { email, lang }
     ),
 

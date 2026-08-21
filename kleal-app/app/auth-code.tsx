@@ -21,7 +21,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { auth, setSession } from '../src/api';
-import { AUTH, CODE_LEN } from '../src/auth';
+import { AUTH, CODE_LEN, DEV_CODE } from '../src/auth';
 import { patch, applyDefaults } from '../src/state';
 import { useLang, T, replyLang } from '../src/i18n';
 import { color, radius as rad, space, type } from '../src/theme';
@@ -33,8 +33,14 @@ export default function AuthCode() {
   useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ email?: string }>();
+  const params = useLocalSearchParams<{ email?: string; dev?: string }>();
   const email = String(params.email || '');
+  /**
+   * Код, показанный на экране. Существует, только пока на сервере включён KLEAL_SHOW_CODE —
+   * то есть пока письмо на произвольный адрес не уходит и завести второй аккаунт нечем.
+   * Обновляется при повторной отправке: там приходит НОВЫЙ код, а старый гаснет.
+   */
+  const [devCode, setDevCode] = useState(String(params.dev || ''));
 
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -101,6 +107,7 @@ export default function AuthCode() {
     setCode('');
     try {
       const r: any = await auth.requestCode(email, replyLang());
+      setDevCode(String(r?.dev_code || ''));
       if (r?.error === 'too many') setErr({ title: AUTH.tooManyTitle(), note: AUTH.tooManyNote() });
       else if (r?.error === 'not allowed') setErr({ title: AUTH.notAllowedTitle(), note: AUTH.notAllowedNote() });
       else if (!r?.ok) setErr({ title: AUTH.sendFailedTitle(), note: AUTH.sendFailedNote() });
@@ -132,6 +139,19 @@ export default function AuthCode() {
 
         <Text style={s.h}>{AUTH.codeTitle()}</Text>
         <Text style={s.note}>{AUTH.codeNote(email, TTL_MIN)}</Text>
+
+        {/*
+          Полоса отладки. Нарочно не в стиле приложения — жёлтая, с пунктиром и словом «отладка»:
+          она обязана выглядеть как то, чего в продукте быть не должно. Появляется, только если
+          сервер прислал код, а он присылает его лишь при явно включённом рубильнике.
+        */}
+        {devCode ? (
+          <View style={s.devBox}>
+            <Text style={s.devTitle}>{DEV_CODE.title()}</Text>
+            <Text style={s.devCode} selectable>{devCode}</Text>
+            <Text style={s.devNote}>{DEV_CODE.note()}</Text>
+          </View>
+        ) : null}
 
         <Pressable
           accessibilityRole="none"
@@ -237,6 +257,17 @@ const s = StyleSheet.create({
   cellText: { ...type.h2, color: color.fg } as any,
   /** Поле лежит поверх ячеек и не видно: прозрачный текст, нулевая непрозрачность курсора. */
   hidden: { ...StyleSheet.absoluteFillObject, opacity: 0, color: 'transparent' } as any,
+
+  /** Отладочная полоса: намеренно чужеродная в этом интерфейсе — её нельзя не заметить. */
+  devBox: {
+    marginTop: space.md, padding: space.md, borderRadius: rad.lg,
+    backgroundColor: color.warnBg, borderWidth: 1, borderColor: color.warnText,
+    borderStyle: 'dashed', gap: 4,
+  },
+  devTitle: { ...type.caption, color: color.warnText, fontWeight: '700',
+              textTransform: 'uppercase', letterSpacing: 0.6 } as any,
+  devCode: { ...type.h2, color: color.warnText, fontWeight: '700', letterSpacing: 6 } as any,
+  devNote: { ...type.caption, color: color.warnText } as any,
 
   resendRow: { marginTop: space.md, alignItems: 'center' },
   resend: { ...type.bodySmall, color: color.muted } as any,
