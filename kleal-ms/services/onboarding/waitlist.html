@@ -1,0 +1,339 @@
+<title>Kleal Waitlist</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zalando+Sans+Expanded:wght@400;500;700&display=swap">
+
+<style>
+  /*
+    Страница — это САМА КАМПАНИЯ, а не сайт про кампанию.
+    Значения не подобраны на глаз: чёрный фон, коралл #F13A59, заголовок 96/700, надзаголовок
+    34/700 с разрядкой 2 и подпись 44/400 сняты прямо с кадров «IG · Feed» борда Kleal.
+    Поэтому панели идут в пропорции поста 4:5 и собраны той же лесенкой — надзаголовок,
+    утверждение, подпись, кнопка, подпись автора.
+
+    Тема одна и намеренно: это рекламная поверхность, а не документ. Раз так — фон и каждый цвет
+    выставлены явно, чтобы страница не одолжила чужой фон, куда бы её ни вставили.
+  */
+  :root {
+    --ink:    #000000;   /* земля — как у постов */
+    --rise:   #140A0D;   /* приподнятая поверхность: почти чёрный со сдвигом в коралл */
+    --coral:  #F13A59;   /* единственный акцент, снят с кадра */
+    --paper:  #F7F8FA;   /* крупные утверждения */
+    --white:  #FFFFFF;   /* обычный текст */
+    --ash:    #9EA6AD;   /* служебное: подписи, сноски */
+    --hair:   rgba(255, 255, 255, 0.14);
+
+    --face: 'Zalando Sans Expanded', 'Helvetica Neue', Arial, sans-serif;
+
+    /* Кегли текучие: на кадре 1080 в ширину, здесь ширина любая. */
+    --statement: clamp(38px, 8.4vw, 96px);
+    --lead:      clamp(17px, 3.1vw, 34px);
+    --eyebrow:   clamp(12px, 1.5vw, 17px);
+    --handle:    clamp(13px, 1.6vw, 18px);
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--ink);
+    color: var(--white);
+    font-family: var(--face);
+    font-weight: 400;
+    line-height: 1.35;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- панель = один пост -------------------------------------------------------------- */
+  .feed {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+
+  .post {
+    position: relative;
+    width: 100%;
+    max-width: 720px;
+    aspect-ratio: 4 / 5;
+    min-height: 560px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: clamp(18px, 2.6vw, 34px);
+    padding: clamp(28px, 5vw, 64px);
+    overflow: hidden;
+    border-bottom: 1px solid var(--hair);
+    background: var(--ink);
+  }
+
+  /* Квадратный пост 1:1 — на борде это отдельный формат «statement». */
+  .post.square { aspect-ratio: 1 / 1; }
+
+  /*
+    Свечение вместо фотографии. На борде у постов лежит картинка; своей у страницы нет, а
+    заглушка-стоковое фото выглядела бы дешевле пустоты. Поэтому — мягкий коралловый источник
+    света: он держит ту же композицию и не притворяется съёмкой.
+  */
+  .post::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(120% 80% at 18% 8%, rgba(241, 58, 89, 0.30) 0%, rgba(241, 58, 89, 0) 58%),
+      radial-gradient(90% 70% at 92% 96%, rgba(241, 58, 89, 0.16) 0%, rgba(241, 58, 89, 0) 62%);
+    pointer-events: none;
+  }
+  .post > * { position: relative; z-index: 1; }
+
+  .eyebrow {
+    margin: 0;
+    font-size: var(--eyebrow);
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--coral);
+  }
+
+  .statement {
+    margin: 0;
+    font-size: var(--statement);
+    font-weight: 700;
+    line-height: 1.04;
+    letter-spacing: -0.015em;
+    color: var(--paper);
+    text-wrap: balance;
+  }
+
+  .lead {
+    margin: 0;
+    max-width: 26ch;
+    font-size: var(--lead);
+    font-weight: 400;
+    line-height: 1.32;
+    color: var(--white);
+  }
+
+  .foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: clamp(6px, 1.4vw, 16px);
+  }
+
+  .handle {
+    font-size: var(--handle);
+    font-weight: 400;
+    color: var(--white);
+    opacity: 0.82;
+  }
+
+  /*
+    Логотип — словом, а не картинкой: одна гарнитура на всю страницу, и грузить нечего.
+    Без цветной буквы внутри: коралловая «l» посреди белого слова читается как «kIeal», то есть
+    как сбой отрисовки, а не как знак. Проверено на живой странице.
+  */
+  .mark {
+    font-size: clamp(15px, 1.9vw, 22px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--white);
+  }
+
+  .cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: flex-start;
+    padding: clamp(12px, 1.6vw, 20px) clamp(20px, 3vw, 38px);
+    border: 0;
+    border-radius: 999px;
+    background: var(--coral);
+    color: var(--white);
+    font-family: var(--face);
+    font-size: clamp(14px, 1.9vw, 22px);
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+    transition: transform 0.14s ease, filter 0.14s ease;
+  }
+  .cta:hover { filter: brightness(1.08); }
+  .cta:active { transform: translateY(1px); }
+  .cta:focus-visible { outline: 3px solid var(--white); outline-offset: 3px; }
+
+  /* ---- последняя панель: кнопка становится формой ------------------------------------- */
+  .join { background: var(--rise); }
+
+  .form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    max-width: 560px;
+  }
+
+  .field {
+    flex: 1 1 240px;
+    min-width: 0;
+    padding: clamp(12px, 1.6vw, 20px) clamp(16px, 2vw, 24px);
+    border: 1px solid var(--hair);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--white);
+    font-family: var(--face);
+    font-size: clamp(14px, 1.8vw, 20px);
+    font-weight: 400;
+  }
+  .field::placeholder { color: var(--ash); }
+  .field:focus { outline: none; border-color: var(--coral); }
+  .field:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }
+
+  .note {
+    margin: 0;
+    min-height: 1.4em;
+    font-size: var(--handle);
+    color: var(--ash);
+  }
+  .note.bad { color: var(--coral); }
+  .note.good { color: var(--paper); }
+
+  .fineprint {
+    margin: 0;
+    font-size: clamp(11px, 1.3vw, 14px);
+    color: var(--ash);
+    max-width: 44ch;
+  }
+
+  /*
+    ПЕРЕНОСЫ С БОРДА — ДЛЯ ШИРИНЫ БОРДА. На кадре пост 1080 в ширину, и разбивка строк там часть
+    композиции. На телефоне те же <br> рвут фразу не по смыслу: «Rooftop / tapas / in Gràcia — /
+    six spots». Поэтому ниже 560 они отключаются, и текст переносится сам. Проверено на 375.
+  */
+  @media (max-width: 560px) {
+    .statement br, .lead br { display: none; }
+    .statement { letter-spacing: -0.02em; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cta { transition: none; }
+  }
+</style>
+
+<main class="feed">
+
+  <!-- Пост 1 — type-led. Разбивка строк как на кадре: она часть композиции, а не перенос. -->
+  <section class="post">
+    <p class="eyebrow">Barcelona — Sat 19:30</p>
+    <h1 class="statement">Coffee<br>with 4 people<br>who love padel</h1>
+    <p class="lead">Your agent found the plan.<br>You just show up.</p>
+    <a class="cta" href="#join">Join the waitlist</a>
+    <div class="foot">
+      <span class="handle">@kleal / kleal.app</span>
+      <span class="mark">kleal</span>
+    </div>
+  </section>
+
+  <!-- Пост 2 — image-led: надзаголовок снизу, утверждение крупнее подписи. -->
+  <section class="post">
+    <p class="eyebrow">Thu 20:00 · Group of 6</p>
+    <h2 class="statement">Rooftop tapas<br>in Gràcia — six spots</h2>
+    <a class="cta" href="#join">Get a spot</a>
+    <div class="foot">
+      <span class="handle">@kleal / kleal.app</span>
+      <span class="mark">kleal</span>
+    </div>
+  </section>
+
+  <!-- Пост 3 — квадратный statement. -->
+  <section class="post square">
+    <p class="eyebrow">Kleal — your social agent in Barcelona</p>
+    <h2 class="statement">Less swiping.<br>More real plans.</h2>
+    <div class="foot">
+      <span class="handle">@kleal / kleal.app</span>
+      <span class="mark">kleal</span>
+    </div>
+  </section>
+
+  <!-- Пост 4 — тот же формат, но кнопка здесь работает. -->
+  <section class="post square join" id="join">
+    <p class="eyebrow">Opening in Barcelona</p>
+    <h2 class="statement">Get in before<br>the city fills up.</h2>
+    <p class="lead">Leave your email. We write once — when your part of the city opens.</p>
+
+    <form class="form" id="wl" novalidate>
+      <input class="field" id="email" type="email" name="email" inputmode="email"
+             autocomplete="email" autocapitalize="off" spellcheck="false"
+             placeholder="you@email.com" aria-label="Email">
+      <button class="cta" type="submit" id="go">Join the waitlist</button>
+    </form>
+    <p class="note" id="note" role="status" aria-live="polite"></p>
+    <p class="fineprint">One email about the launch. Nothing else, and nobody else gets the address.</p>
+
+    <div class="foot">
+      <span class="handle">@kleal / kleal.app</span>
+      <span class="mark">kleal</span>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  /*
+    Форма отправляет адрес и говорит, что произошло. Три правила, каждое из-за реального провала
+    таких форм:
+      — адрес проверяется до отправки, иначе человек ждёт ответа на опечатку;
+      — кнопка блокируется на время запроса, иначе двойное нажатие шлёт два письма;
+      — отказ называется словами. «Что-то пошло не так» не даёт человеку ни одного действия.
+  */
+  (function () {
+    var form = document.getElementById('wl');
+    var field = document.getElementById('email');
+    var button = document.getElementById('go');
+    var note = document.getElementById('note');
+    var looksLikeEmail = function (v) { return /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(String(v || '').trim()); };
+
+    var say = function (text, kind) {
+      note.textContent = text;
+      note.className = 'note' + (kind ? ' ' + kind : '');
+    };
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var value = field.value.trim();
+      if (!looksLikeEmail(value)) {
+        say('That doesn’t look like an email. Check the address.', 'bad');
+        field.focus();
+        return;
+      }
+      button.disabled = true;
+      var was = button.textContent;
+      button.textContent = 'Sending…';
+      say('');
+
+      fetch('/api/waitlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: value, source: 'landing' })
+      })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .then(function (d) {
+          if (d && d.ok) {
+            form.style.display = 'none';
+            say(d.already
+              ? 'You’re already on the list. We’ll write when Barcelona opens.'
+              : 'You’re on the list. We’ll write when Barcelona opens.', 'good');
+            return;
+          }
+          if (d && d.error === 'bad email') say('That doesn’t look like an email. Check the address.', 'bad');
+          else if (d && d.error === 'too many') say('Too many tries. Give it an hour.', 'bad');
+          else say('Couldn’t save that. Try again in a minute.', 'bad');
+        })
+        .catch(function () { say('No connection. Check your internet and try again.', 'bad'); })
+        .finally(function () { button.disabled = false; button.textContent = was; });
+    });
+  })();
+</script>

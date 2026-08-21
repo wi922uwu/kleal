@@ -2812,6 +2812,69 @@ ASSETS = {
 }
 
 
+# ---------------------------------------------------------------- лист ожидания (лендинг kleal.app)
+#
+# Отдельный файл, а не таблица аккаунтов: это не пользователи, а адреса, которые попросили написать
+# им один раз. Смешивать их с аккаунтами значило бы, что запись в лист похожа на регистрацию — а
+# она ею не является ни на сервере, ни для человека.
+WAITLIST_PATH = os.environ.get("KLEAL_WAITLIST",
+                               os.path.join(os.path.dirname(ACCOUNTS_PATH), "waitlist.json"))
+_WL_LOCK = threading.Lock()
+_WL_IP = {}
+_WL_IP_PER_HOUR = 30
+
+
+def join_waitlist(email, source="", ip=""):
+    """Записать адрес. Повтор — НЕ ошибка: человек нажал дважды или пришёл со второго устройства,
+    и «ты уже здесь» для него такой же успех, как и первая запись."""
+    e = _norm_email(email)
+    if not valid_email(e):
+        return {"ok": False, "error": "bad email"}
+    now = time.time()
+    with _WL_LOCK:
+        hits = [t for t in _WL_IP.get(str(ip or "?"), []) if t > now - 3600]
+        if len(hits) >= _WL_IP_PER_HOUR:
+            return {"ok": False, "error": "too many"}
+        hits.append(now)
+        _WL_IP[str(ip or "?")] = hits
+        try:
+            with open(WAITLIST_PATH, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+            rows = rows if isinstance(rows, list) else []
+        except Exception:
+            rows = []
+        if any(_norm_email((r or {}).get("email")) == e for r in rows):
+            return {"ok": True, "already": True}
+        rows.append({"email": e, "source": str(source or "")[:40], "at": int(now)})
+        try:
+            tmp = WAITLIST_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(rows, f, ensure_ascii=False)
+            os.replace(tmp, WAITLIST_PATH)
+        except Exception as ex:
+            return {"ok": False, "error": "save failed", "detail": str(ex)[:120]}
+    return {"ok": True, "already": False, "count": len(rows)}
+
+
+def waitlist_count():
+    try:
+        with open(WAITLIST_PATH, "r", encoding="utf-8") as f:
+            rows = json.load(f)
+        return len(rows) if isinstance(rows, list) else 0
+    except Exception:
+        return 0
+
+
+# ------------------------------------------------- лендинг листа ожидания (kleal.app)
+#
+# Отдаётся отсюда по той же причине, что и фотографии профиля: этот сервис уже владеет
+# записью адресов, а шлюз пробрасывает его пути без изменений. Отдельный сервис ради одной
+# страницы был бы ещё одним процессом, который надо помнить перезапускать.
+#
+# Вид снят с кадров «IG · Feed» борда: чёрный фон, коралл #F13A59, Zalando Sans Expanded.
+WAITLIST_HTML = '<title>Kleal Waitlist</title>\n<link rel="preconnect" href="https://fonts.googleapis.com">\n<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zalando+Sans+Expanded:wght@400;500;700&display=swap">\n\n<style>\n  /*\n    Страница — это САМА КАМПАНИЯ, а не сайт про кампанию.\n    Значения не подобраны на глаз: чёрный фон, коралл #F13A59, заголовок 96/700, надзаголовок\n    34/700 с разрядкой 2 и подпись 44/400 сняты прямо с кадров «IG · Feed» борда Kleal.\n    Поэтому панели идут в пропорции поста 4:5 и собраны той же лесенкой — надзаголовок,\n    утверждение, подпись, кнопка, подпись автора.\n\n    Тема одна и намеренно: это рекламная поверхность, а не документ. Раз так — фон и каждый цвет\n    выставлены явно, чтобы страница не одолжила чужой фон, куда бы её ни вставили.\n  */\n  :root {\n    --ink:    #000000;   /* земля — как у постов */\n    --rise:   #140A0D;   /* приподнятая поверхность: почти чёрный со сдвигом в коралл */\n    --coral:  #F13A59;   /* единственный акцент, снят с кадра */\n    --paper:  #F7F8FA;   /* крупные утверждения */\n    --white:  #FFFFFF;   /* обычный текст */\n    --ash:    #9EA6AD;   /* служебное: подписи, сноски */\n    --hair:   rgba(255, 255, 255, 0.14);\n\n    --face: \'Zalando Sans Expanded\', \'Helvetica Neue\', Arial, sans-serif;\n\n    /* Кегли текучие: на кадре 1080 в ширину, здесь ширина любая. */\n    --statement: clamp(38px, 8.4vw, 96px);\n    --lead:      clamp(17px, 3.1vw, 34px);\n    --eyebrow:   clamp(12px, 1.5vw, 17px);\n    --handle:    clamp(13px, 1.6vw, 18px);\n  }\n\n  * { box-sizing: border-box; }\n\n  html { -webkit-text-size-adjust: 100%; }\n\n  body {\n    margin: 0;\n    background: var(--ink);\n    color: var(--white);\n    font-family: var(--face);\n    font-weight: 400;\n    line-height: 1.35;\n    -webkit-font-smoothing: antialiased;\n  }\n\n  /* ---- панель = один пост -------------------------------------------------------------- */\n  .feed {\n    display: flex;\n    flex-direction: column;\n    align-items: center;\n    gap: 0;\n  }\n\n  .post {\n    position: relative;\n    width: 100%;\n    max-width: 720px;\n    aspect-ratio: 4 / 5;\n    min-height: 560px;\n    display: flex;\n    flex-direction: column;\n    justify-content: flex-end;\n    gap: clamp(18px, 2.6vw, 34px);\n    padding: clamp(28px, 5vw, 64px);\n    overflow: hidden;\n    border-bottom: 1px solid var(--hair);\n    background: var(--ink);\n  }\n\n  /* Квадратный пост 1:1 — на борде это отдельный формат «statement». */\n  .post.square { aspect-ratio: 1 / 1; }\n\n  /*\n    Свечение вместо фотографии. На борде у постов лежит картинка; своей у страницы нет, а\n    заглушка-стоковое фото выглядела бы дешевле пустоты. Поэтому — мягкий коралловый источник\n    света: он держит ту же композицию и не притворяется съёмкой.\n  */\n  .post::before {\n    content: "";\n    position: absolute;\n    inset: 0;\n    background:\n      radial-gradient(120% 80% at 18% 8%, rgba(241, 58, 89, 0.30) 0%, rgba(241, 58, 89, 0) 58%),\n      radial-gradient(90% 70% at 92% 96%, rgba(241, 58, 89, 0.16) 0%, rgba(241, 58, 89, 0) 62%);\n    pointer-events: none;\n  }\n  .post > * { position: relative; z-index: 1; }\n\n  .eyebrow {\n    margin: 0;\n    font-size: var(--eyebrow);\n    font-weight: 700;\n    letter-spacing: 0.12em;\n    text-transform: uppercase;\n    color: var(--coral);\n  }\n\n  .statement {\n    margin: 0;\n    font-size: var(--statement);\n    font-weight: 700;\n    line-height: 1.04;\n    letter-spacing: -0.015em;\n    color: var(--paper);\n    text-wrap: balance;\n  }\n\n  .lead {\n    margin: 0;\n    max-width: 26ch;\n    font-size: var(--lead);\n    font-weight: 400;\n    line-height: 1.32;\n    color: var(--white);\n  }\n\n  .foot {\n    display: flex;\n    align-items: center;\n    justify-content: space-between;\n    gap: 16px;\n    margin-top: clamp(6px, 1.4vw, 16px);\n  }\n\n  .handle {\n    font-size: var(--handle);\n    font-weight: 400;\n    color: var(--white);\n    opacity: 0.82;\n  }\n\n  /*\n    Логотип — словом, а не картинкой: одна гарнитура на всю страницу, и грузить нечего.\n    Без цветной буквы внутри: коралловая «l» посреди белого слова читается как «kIeal», то есть\n    как сбой отрисовки, а не как знак. Проверено на живой странице.\n  */\n  .mark {\n    font-size: clamp(15px, 1.9vw, 22px);\n    font-weight: 700;\n    letter-spacing: -0.02em;\n    color: var(--white);\n  }\n\n  .cta {\n    display: inline-flex;\n    align-items: center;\n    justify-content: center;\n    align-self: flex-start;\n    padding: clamp(12px, 1.6vw, 20px) clamp(20px, 3vw, 38px);\n    border: 0;\n    border-radius: 999px;\n    background: var(--coral);\n    color: var(--white);\n    font-family: var(--face);\n    font-size: clamp(14px, 1.9vw, 22px);\n    font-weight: 700;\n    text-decoration: none;\n    cursor: pointer;\n    transition: transform 0.14s ease, filter 0.14s ease;\n  }\n  .cta:hover { filter: brightness(1.08); }\n  .cta:active { transform: translateY(1px); }\n  .cta:focus-visible { outline: 3px solid var(--white); outline-offset: 3px; }\n\n  /* ---- последняя панель: кнопка становится формой ------------------------------------- */\n  .join { background: var(--rise); }\n\n  .form {\n    display: flex;\n    flex-wrap: wrap;\n    gap: 10px;\n    width: 100%;\n    max-width: 560px;\n  }\n\n  .field {\n    flex: 1 1 240px;\n    min-width: 0;\n    padding: clamp(12px, 1.6vw, 20px) clamp(16px, 2vw, 24px);\n    border: 1px solid var(--hair);\n    border-radius: 999px;\n    background: rgba(255, 255, 255, 0.04);\n    color: var(--white);\n    font-family: var(--face);\n    font-size: clamp(14px, 1.8vw, 20px);\n    font-weight: 400;\n  }\n  .field::placeholder { color: var(--ash); }\n  .field:focus { outline: none; border-color: var(--coral); }\n  .field:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }\n\n  .note {\n    margin: 0;\n    min-height: 1.4em;\n    font-size: var(--handle);\n    color: var(--ash);\n  }\n  .note.bad { color: var(--coral); }\n  .note.good { color: var(--paper); }\n\n  .fineprint {\n    margin: 0;\n    font-size: clamp(11px, 1.3vw, 14px);\n    color: var(--ash);\n    max-width: 44ch;\n  }\n\n  /*\n    ПЕРЕНОСЫ С БОРДА — ДЛЯ ШИРИНЫ БОРДА. На кадре пост 1080 в ширину, и разбивка строк там часть\n    композиции. На телефоне те же <br> рвут фразу не по смыслу: «Rooftop / tapas / in Gràcia — /\n    six spots». Поэтому ниже 560 они отключаются, и текст переносится сам. Проверено на 375.\n  */\n  @media (max-width: 560px) {\n    .statement br, .lead br { display: none; }\n    .statement { letter-spacing: -0.02em; }\n  }\n\n  @media (prefers-reduced-motion: reduce) {\n    .cta { transition: none; }\n  }\n</style>\n\n<main class="feed">\n\n  <!-- Пост 1 — type-led. Разбивка строк как на кадре: она часть композиции, а не перенос. -->\n  <section class="post">\n    <p class="eyebrow">Barcelona — Sat 19:30</p>\n    <h1 class="statement">Coffee<br>with 4 people<br>who love padel</h1>\n    <p class="lead">Your agent found the plan.<br>You just show up.</p>\n    <a class="cta" href="#join">Join the waitlist</a>\n    <div class="foot">\n      <span class="handle">@kleal / kleal.app</span>\n      <span class="mark">kleal</span>\n    </div>\n  </section>\n\n  <!-- Пост 2 — image-led: надзаголовок снизу, утверждение крупнее подписи. -->\n  <section class="post">\n    <p class="eyebrow">Thu 20:00 · Group of 6</p>\n    <h2 class="statement">Rooftop tapas<br>in Gràcia — six spots</h2>\n    <a class="cta" href="#join">Get a spot</a>\n    <div class="foot">\n      <span class="handle">@kleal / kleal.app</span>\n      <span class="mark">kleal</span>\n    </div>\n  </section>\n\n  <!-- Пост 3 — квадратный statement. -->\n  <section class="post square">\n    <p class="eyebrow">Kleal — your social agent in Barcelona</p>\n    <h2 class="statement">Less swiping.<br>More real plans.</h2>\n    <div class="foot">\n      <span class="handle">@kleal / kleal.app</span>\n      <span class="mark">kleal</span>\n    </div>\n  </section>\n\n  <!-- Пост 4 — тот же формат, но кнопка здесь работает. -->\n  <section class="post square join" id="join">\n    <p class="eyebrow">Opening in Barcelona</p>\n    <h2 class="statement">Get in before<br>the city fills up.</h2>\n    <p class="lead">Leave your email. We write once — when your part of the city opens.</p>\n\n    <form class="form" id="wl" novalidate>\n      <input class="field" id="email" type="email" name="email" inputmode="email"\n             autocomplete="email" autocapitalize="off" spellcheck="false"\n             placeholder="you@email.com" aria-label="Email">\n      <button class="cta" type="submit" id="go">Join the waitlist</button>\n    </form>\n    <p class="note" id="note" role="status" aria-live="polite"></p>\n    <p class="fineprint">One email about the launch. Nothing else, and nobody else gets the address.</p>\n\n    <div class="foot">\n      <span class="handle">@kleal / kleal.app</span>\n      <span class="mark">kleal</span>\n    </div>\n  </section>\n\n</main>\n\n<script>\n  /*\n    Форма отправляет адрес и говорит, что произошло. Три правила, каждое из-за реального провала\n    таких форм:\n      — адрес проверяется до отправки, иначе человек ждёт ответа на опечатку;\n      — кнопка блокируется на время запроса, иначе двойное нажатие шлёт два письма;\n      — отказ называется словами. «Что-то пошло не так» не даёт человеку ни одного действия.\n  */\n  (function () {\n    var form = document.getElementById(\'wl\');\n    var field = document.getElementById(\'email\');\n    var button = document.getElementById(\'go\');\n    var note = document.getElementById(\'note\');\n    var looksLikeEmail = function (v) { return /^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$/.test(String(v || \'\').trim()); };\n\n    var say = function (text, kind) {\n      note.textContent = text;\n      note.className = \'note\' + (kind ? \' \' + kind : \'\');\n    };\n\n    form.addEventListener(\'submit\', function (e) {\n      e.preventDefault();\n      var value = field.value.trim();\n      if (!looksLikeEmail(value)) {\n        say(\'That doesn’t look like an email. Check the address.\', \'bad\');\n        field.focus();\n        return;\n      }\n      button.disabled = true;\n      var was = button.textContent;\n      button.textContent = \'Sending…\';\n      say(\'\');\n\n      fetch(\'/api/waitlist\', {\n        method: \'POST\',\n        headers: { \'Content-Type\': \'application/json\' },\n        body: JSON.stringify({ email: value, source: \'landing\' })\n      })\n        .then(function (r) { return r.json().catch(function () { return {}; }); })\n        .then(function (d) {\n          if (d && d.ok) {\n            form.style.display = \'none\';\n            say(d.already\n              ? \'You’re already on the list. We’ll write when Barcelona opens.\'\n              : \'You’re on the list. We’ll write when Barcelona opens.\', \'good\');\n            return;\n          }\n          if (d && d.error === \'bad email\') say(\'That doesn’t look like an email. Check the address.\', \'bad\');\n          else if (d && d.error === \'too many\') say(\'Too many tries. Give it an hour.\', \'bad\');\n          else say(\'Couldn’t save that. Try again in a minute.\', \'bad\');\n        })\n        .catch(function () { say(\'No connection. Check your internet and try again.\', \'bad\'); })\n        .finally(function () { button.disabled = false; button.textContent = was; });\n    });\n  })();\n</script>\n'
+
+
 def _bearer(handler):
     """Токен сессии из заголовка. Только из заголовка: в теле он попал бы в логи прокси и в
     историю запросов, а в строке запроса — ещё и в referer."""
@@ -2840,6 +2903,8 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/":
             send(self, 200, HTML, "text/html")
+        elif self.path.split("?")[0] in ("/waitlist", "/join"):
+            send(self, 200, WAITLIST_HTML, "text/html")
         elif self.path.split("?")[0].startswith("/api/onboarding/photo/"):
             # Profile photos. Served from here because this service owns the user store and therefore
             # owns the write; the gateway already forwards /api/onboarding/* untouched, so a photo is
@@ -2928,6 +2993,9 @@ class H(BaseHTTPRequestHandler):
             return send_json(self, 200, {"ok": True, "login": acc.get("login") or acc.get("_key"),
                                          "email": acc.get("email") or "", "name": acc.get("name") or "",
                                          "profile": prof, "hasProfile": bool(prof)})
+        elif p == "/api/waitlist":
+            return send_json(self, 200, join_waitlist(body.get("email"), body.get("source"),
+                                                      _client_ip(self)))
         elif p == "/api/auth/signout":
             return send_json(self, 200, sign_out(_bearer(self)))
         elif p == "/api/onboarding/register":

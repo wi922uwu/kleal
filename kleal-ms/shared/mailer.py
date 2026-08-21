@@ -102,8 +102,15 @@ def send_code(to, code, lang="en", minutes=10):
 
     url, headers, body = _PROVIDERS[provider]
     try:
+        h = dict(headers(key))
+        # СВОЙ User-Agent ОБЯЗАТЕЛЕН. Ручки провайдеров стоят за Cloudflare, и он режет запрос по
+        # подписи клиента: urllib представляется «Python-urllib/3.x» и получает 403 с «error code:
+        # 1010» — это отказ Cloudflare, а НЕ провайдера, и по тексту он на отказ в ключе похож.
+        # Поймано на первой же настоящей отправке.
+        h.setdefault("User-Agent", "Kleal/1.0 (+https://aiopenware.com)")
+        h.setdefault("Accept", h.get("Accept", "application/json"))
         req = urllib.request.Request(url, data=json.dumps(body(sender, to, subject, html, text)).encode("utf-8"),
-                                     headers=headers(key))
+                                     headers=h)
         with urllib.request.urlopen(req, timeout=15) as r:
             r.read()
         return True, provider, ""
