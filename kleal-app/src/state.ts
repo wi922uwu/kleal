@@ -7,6 +7,7 @@
  */
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { setSession } from './api';
 
 export type Profile = {
   name?: string;
@@ -55,6 +56,11 @@ export type OnbState = {
   slide: number;
   step: number;            // индекс в SCRIPT; -1 = ещё не начали
   login: string | null;
+  /**
+   * Токен сессии. Хранится вместе с профилем и восстанавливается при запуске: без него человек
+   * разлогинивался бы каждым закрытием приложения, а весь смысл входа по коду — войти один раз.
+   */
+  session?: string | null;
   authMethod: string | null;
   msg?: MsgPrefs;
   /**
@@ -70,7 +76,7 @@ export type OnbState = {
 
 const KEY = 'kleal.onboarding';
 
-const empty = (): OnbState => ({ slide: 0, step: -1, login: null, authMethod: null, done: false, profile: {} });
+const empty = (): OnbState => ({ slide: 0, step: -1, login: null, authMethod: null, session: null, done: false, profile: {} });
 
 let state: OnbState = empty();
 const listeners = new Set<(s: OnbState) => void>();
@@ -119,6 +125,10 @@ export async function restore(): Promise<void> {
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (raw) state = { ...empty(), ...JSON.parse(raw) };
+    // Токен подставляется в запросы из api.ts, а не из состояния экранов, — значит при запуске его
+    // надо туда вернуть. Без этой строки человек считался бы вошедшим (профиль на месте, done
+    // стоит), а сервер видел бы каждый запрос без сессии.
+    setSession(String(state.session || ''));
   } catch {
     /* повреждённое состояние — начинаем заново, это онбординг, терять нечего */
   } finally {

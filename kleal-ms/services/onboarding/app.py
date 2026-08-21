@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (onboarding half, lines 16-301 + the embedded HTML).
 # Talks to llm-service over HTTP for every extract/reply/summary turn; holds NO model keys.
 # Contract: ../../shared/contracts.md. Owner: Dev A.
-import os, sys, json, re, threading, hashlib, hmac, time, base64
+import os, sys, json, re, threading, hashlib, hmac, time, base64, secrets
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
@@ -11,6 +11,7 @@ import kleal_lib as base                      # keyless shared helpers/prompts
 import config                                  # the one topology table (ports/URLs/store paths)
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send, send_json, read_json
+import mailer                                  # письмо с кодом: провайдер выбирается окружением
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = config.PORTS["onboarding"]
@@ -2195,6 +2196,214 @@ def attach_profile(login, name, profile=None):
             accs[key]["profile"] = {k: v for k, v in profile.items() if k != "photo"}
         _write_accounts(accs)
     return {"ok": True}
+
+# ============================================================================ вход по коду с почты
+#
+# Кадры A.03.1 … A.03.3. Одна и та же почта служит и входом, и регистрацией — отдельного «создать
+# аккаунт» на борде нет, и это правило, а не упрощение: человек не должен помнить, заводил он тут
+# аккаунт или нет.
+#
+# ЧТО ХРАНИТСЯ ГДЕ. Коды живут ТОЛЬКО в памяти: они действуют десять минут, и записывать секрет на
+# диск ради переживания перезапуска — плохой размен. Сессии, наоборот, на диске рядом с аккаунтом:
+# им жить месяцами, и потерять их при выкладке значит разлогинить всех.
+#
+# ЧЕГО НЕТ НАРУЖУ. Код не возвращается ни одной ручкой ни при каких настройках, а ответ на «пришли
+# код» одинаков для существующего и несуществующего адреса — иначе это бесплатный способ узнать,
+# кто зарегистрирован.
+CODE_TTL = 600           # 10 минут — ровно как написано на кадре A.03.2
+CODE_ATTEMPTS = 3        # кадр A.03.2b показывает «2 attempts left» после первой ошибки
+RESEND_AFTER = 30        # «Resend code in 0:30»
+SEND_PER_HOUR = 5        # на адрес
+IP_PER_HOUR = 20         # на источник
+SESSION_TTL = 90 * 24 * 3600
+
+_CODES = {}              # email -> {"hash","exp","left","sent","last"}
+_IP_HITS = {}            # ip -> [метки времени]
+_CODE_LOCK = threading.Lock()
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+
+
+def _norm_email(e):
+    return str(e or "").strip().lower()[:200]
+
+
+def valid_email(e):
+    return bool(_EMAIL_RE.match(_norm_email(e)))
+
+
+def _sha(s):
+    return hashlib.sha256(str(s).encode("utf-8")).hexdigest()
+
+
+def _gen_code():
+    """Шестизначный, с равномерным распределением. `secrets`, а не `random`: второй предсказуем по
+    нескольким выданным значениям, и это ровно тот случай, где предсказуемость означает вход."""
+    return "%06d" % secrets.randbelow(1000000)
+
+
+def _prune(now):
+    for k in [k for k, v in _CODES.items() if v.get("exp", 0) < now - 3600]:
+        _CODES.pop(k, None)
+    for k in list(_IP_HITS):
+        _IP_HITS[k] = [t for t in _IP_HITS[k] if t > now - 3600]
+        if not _IP_HITS[k]:
+            _IP_HITS.pop(k, None)
+
+
+def _acc_by_email(accs, email):
+    """Аккаунт по почте. Ищем и по ключу, и по полю: аккаунты, заведённые логином с паролем, лежат
+    под логином, а почта у них — обычное поле. Иначе один человек получил бы два аккаунта."""
+    e = _norm_email(email)
+    if e in accs:
+        return e
+    for k, v in accs.items():
+        if _norm_email((v or {}).get("email")) == e:
+            return k
+    return None
+
+
+def request_code(email, lang="en", ip=""):
+    """Кадр A.03.1 → «Continue». Ответ ВСЕГДА одинаковый, кроме явно кривого адреса."""
+    e = _norm_email(email)
+    if not valid_email(e):
+        return {"ok": False, "error": "bad email"}
+    now = time.time()
+    with _CODE_LOCK:
+        _prune(now)
+        hits = _IP_HITS.setdefault(str(ip or "?"), [])
+        if len(hits) >= IP_PER_HOUR:
+            return {"ok": False, "error": "too many", "retry_after": 3600}
+        cur = _CODES.get(e)
+        if cur and now - cur.get("last", 0) < RESEND_AFTER:
+            # Не ошибка: человек нажал «отправить ещё раз» раньше времени. Экран покажет счётчик.
+            return {"ok": True, "resend_in": int(RESEND_AFTER - (now - cur["last"])), "sent": False}
+        if cur and cur.get("sent", 0) >= SEND_PER_HOUR and now - cur.get("first", now) < 3600:
+            return {"ok": False, "error": "too many", "retry_after": 3600}
+        code = _gen_code()
+        _CODES[e] = {"hash": _sha(code), "exp": now + CODE_TTL, "left": CODE_ATTEMPTS,
+                     "sent": (cur.get("sent", 0) + 1) if cur else 1,
+                     "first": cur.get("first", now) if cur else now, "last": now}
+        hits.append(now)
+    ok, how, detail = mailer.send_code(e, code, lang=lang, minutes=CODE_TTL // 60)
+    if not ok:
+        # Письмо не ушло — код гасим. Иначе человек ждёт письма, которого не будет, а живой код
+        # висит десять минут.
+        with _CODE_LOCK:
+            _CODES.pop(e, None)
+        return {"ok": False, "error": "send failed", "detail": detail}
+    return {"ok": True, "resend_in": RESEND_AFTER, "sent": True, "via": how}
+
+
+def _new_session(accs, key):
+    tok = secrets.token_urlsafe(32)
+    acc = accs.setdefault(key, {})
+    sess = acc.setdefault("sessions", {})
+    now = int(time.time())
+    # Держим не больше десяти живых сессий на аккаунт: у человека телефон и, может, планшет, а
+    # неограниченный список — это склад ключей, который никто никогда не пересматривает.
+    for h in [h for h, v in sess.items() if (v or {}).get("exp", 0) < now]:
+        sess.pop(h, None)
+    if len(sess) >= 10:
+        for h in sorted(sess, key=lambda h: sess[h].get("created", 0))[:len(sess) - 9]:
+            sess.pop(h, None)
+    sess[_sha(tok)] = {"created": now, "exp": now + SESSION_TTL, "last": now}
+    return tok
+
+
+def verify_code(email, code, lang="en"):
+    """Кадр A.03.2 → «Verify». Три исхода борда: верный, неверный (со счётчиком), истёкший."""
+    e = _norm_email(email)
+    now = time.time()
+    with _CODE_LOCK:
+        rec = _CODES.get(e)
+        if not rec or rec.get("exp", 0) < now:
+            _CODES.pop(e, None)
+            return {"ok": False, "error": "expired"}
+        if not hmac.compare_digest(_sha(str(code or "").strip()), rec.get("hash", "")):
+            rec["left"] = int(rec.get("left", 1)) - 1
+            if rec["left"] <= 0:
+                _CODES.pop(e, None)
+                return {"ok": False, "error": "expired"}   # попытки кончились — код мёртв
+            return {"ok": False, "error": "wrong", "attempts_left": rec["left"]}
+        _CODES.pop(e, None)                                 # одноразовый: гасим до выдачи сессии
+
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        key = _acc_by_email(accs, e)
+        is_new = key is None
+        if is_new:
+            key = e
+            accs[key] = {"login": e, "email": e, "created": int(now), "auth": "code"}
+        else:
+            accs[key].setdefault("email", e)
+        tok = _new_session(accs, key)
+        acc = accs[key]
+        _write_accounts(accs)
+
+    prof = acc.get("profile") if isinstance(acc.get("profile"), dict) else None
+    # `isNew` — это про ПРОФИЛЬ, а не про запись в файле. Борд разводит два исхода: новому показать
+    # A.03.3 и увести в анкету, вернувшемуся — сразу на главную. Человек, который завёл аккаунт и
+    # бросил анкету на середине, по этому правилу пойдёт достраивать профиль, и это верно.
+    return {"ok": True, "token": tok, "login": acc.get("login") or key, "email": e,
+            "name": acc.get("name") or "", "profile": prof,
+            "isNew": bool(is_new or not prof), "hasProfile": bool(prof)}
+
+
+def session_owner(token):
+    """Кому принадлежит сессия. Возвращает запись аккаунта или None. Заодно продлевает `last` —
+    по нему потом можно будет чистить заброшенное."""
+    if not token:
+        return None
+    h = _sha(token)
+    now = int(time.time())
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        for key, acc in accs.items():
+            sess = (acc or {}).get("sessions") or {}
+            rec = sess.get(h)
+            if not rec:
+                continue
+            if rec.get("exp", 0) < now:
+                sess.pop(h, None)
+                _write_accounts(accs)
+                return None
+            if now - rec.get("last", 0) > 3600:
+                rec["last"] = now
+                _write_accounts(accs)
+            return dict(acc, _key=key)
+    return None
+
+
+def sign_out(token):
+    """Выход с ЭТОГО устройства. Остальные сессии не трогаем: разлогинить человека везде — это
+    отдельное осознанное действие, а не побочный эффект кнопки «выйти»."""
+    if not token:
+        return {"ok": True}
+    h = _sha(token)
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        for acc in accs.values():
+            if h in ((acc or {}).get("sessions") or {}):
+                acc["sessions"].pop(h, None)
+                _write_accounts(accs)
+                break
+    return {"ok": True}
+
+
+def attach_profile_by_token(token, name, profile=None):
+    """Привязать законченную анкету к аккаунту ПО СЕССИИ.
+
+    Раньше привязка шла по `login`, а его выставлял единственный экран «Логин и пароль» — и всякий,
+    кто входил иначе, доходил до конца анкеты с login = null. Профиль оставался только на телефоне:
+    переустановил приложение и войти обратно некуда. Теперь личность берётся из сессии, и привязка
+    происходит всегда.
+    """
+    acc = session_owner(token)
+    if not acc:
+        return {"ok": False, "error": "no session"}
+    return attach_profile(acc.get("_key"), name, profile)
+
 _R2M = {"watch": "watch", "play": "play", "discuss": "discuss", "practice": "practise",
         "practise": "practise", "attend": "attend", "meet": "meet"}
 
@@ -2603,6 +2812,30 @@ ASSETS = {
 }
 
 
+def _bearer(handler):
+    """Токен сессии из заголовка. Только из заголовка: в теле он попал бы в логи прокси и в
+    историю запросов, а в строке запроса — ещё и в referer."""
+    h = ""
+    try:
+        h = handler.headers.get("Authorization") or ""
+    except Exception:
+        return ""
+    h = h.strip()
+    return h[7:].strip() if h[:7].lower() == "bearer " else ""
+
+
+def _client_ip(handler):
+    """Источник запроса для счётчика частоты. За шлюзом видно только его адрес, поэтому сперва
+    смотрим X-Forwarded-For — иначе весь мир считался бы одним отправителем."""
+    try:
+        fwd = (handler.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        if fwd:
+            return fwd[:64]
+        return str(handler.client_address[0])[:64]
+    except Exception:
+        return "?"
+
+
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/":
@@ -2672,7 +2905,31 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/onboarding/signin":
             return send_json(self, 200, signin(body.get("login"), body.get("password")))
         elif p == "/api/onboarding/attach":
+            # Привязка по СЕССИИ, если она есть, и по логину иначе. Второй путь оставлен только для
+            # старых сборок на телефонах: они про сессии не знают, а разлогинивать их выкладкой
+            # нельзя. Новый клиент всегда шлёт токен.
+            tok = _bearer(self)
+            if tok:
+                return send_json(self, 200, attach_profile_by_token(tok, body.get("name"),
+                                                                    body.get("profile")))
             return send_json(self, 200, attach_profile(body.get("login"), body.get("name"), body.get("profile")))
+        elif p == "/api/auth/code/request":
+            return send_json(self, 200, request_code(body.get("email"), body.get("lang") or "en",
+                                                     _client_ip(self)))
+        elif p == "/api/auth/code/verify":
+            return send_json(self, 200, verify_code(body.get("email"), body.get("code"),
+                                                    body.get("lang") or "en"))
+        elif p == "/api/auth/session":
+            # «Кто я» по токену. Клиент зовёт на старте: сессия могла истечь или быть погашена.
+            acc = session_owner(_bearer(self))
+            if not acc:
+                return send_json(self, 200, {"ok": False, "error": "no session"})
+            prof = acc.get("profile") if isinstance(acc.get("profile"), dict) else None
+            return send_json(self, 200, {"ok": True, "login": acc.get("login") or acc.get("_key"),
+                                         "email": acc.get("email") or "", "name": acc.get("name") or "",
+                                         "profile": prof, "hasProfile": bool(prof)})
+        elif p == "/api/auth/signout":
+            return send_json(self, 200, sign_out(_bearer(self)))
         elif p == "/api/onboarding/register":
             # everyone who finishes onboarding is written into the shared user store (matchable + in admin)
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}

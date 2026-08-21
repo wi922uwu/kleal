@@ -41,8 +41,17 @@ export default function Auth() {
       <View style={s.btns}>
         <Btn kind="dark" label={T('Продолжить с Apple', 'Continue with Apple')} onPress={() => skipTo('apple')} />
         <Btn kind="ghost" label={T('Продолжить с Google', 'Continue with Google')} onPress={() => skipTo('google')} />
-        <Btn kind="primary" label={T('Продолжить по почте', 'Continue with email')} onPress={() => skipTo('email')} />
-        <Btn kind="ghost" label={T('Логин и пароль', 'Login and password')} onPress={() => router.navigate('/login')} />
+        {/*
+          Почта — единственная дверь, которая сегодня работает по-настоящему: A.03.1 → A.03.2.
+          Apple и Google остаются заглушками до дев-сборки (вход с Apple требует собственного
+          идентификатора приложения, которого у Expo Go нет), и это лучше видеть на экране, чем
+          в задачнике.
+
+          «Логин и пароль» снят: кадра A.03 такой двери не знает, а держать вход, который
+          обходит подтверждение почты, значит держать вторую личность у того же человека.
+        */}
+        <Btn kind="primary" label={T('Продолжить по почте', 'Continue with email')}
+             onPress={() => router.navigate('/auth-email')} />
       </View>
 
       <Text style={s.terms}>{AUTH_TERMS()}</Text>

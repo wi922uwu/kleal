@@ -4,6 +4,7 @@
 # Talks to llm-service over HTTP for parse/intro/negotiate; holds NO model keys. Owner: Dev B.
 # Endpoint names are FROZEN — the profile-service frontend hard-codes them (see ../../shared/contracts.md).
 import os, sys, json, re, threading, concurrent.futures, math, hashlib, time, copy, contextlib, traceback
+import urllib.request                        # мост тем: один вопрос фильтрации на НОВОЕ слово запроса
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
@@ -26,6 +27,7 @@ import kleal_groups as kg                       # §15 group formation core (PIL
 import kleal_candidates as kct                  # §16 events/rooms/venues candidate types (PILOT-DISABLED; keyless, LLM-free)
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send_json, read_json
+from config import FILTER_URL         # мост тем: адрес фильтрации, тот же, что у buddy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("MATCHING_PORT", "7074"))
@@ -251,6 +253,41 @@ def topics_of(s):
     if got:
         return set(got) | ({ph} if ph not in _TOPIC_STOP else set())
     return {ph} if ph not in _TOPIC_STOP else set()
+
+
+def resolve_query_topics(topics):
+    """Разобрать НЕЗНАКОМЫЕ слова ЗАПРОСА через фильтрацию — по одному разу за всю жизнь слова.
+
+    Мост работает по разобранным фразам, а интересы популяции разбираются заранее (tools/
+    teach_phrases.py). Со стороной запроса так нельзя: «опционы» никто не написал у себя в
+    профиле, поэтому фраза остаётся неизвестной, `topic_bridge` честно отвечает «нет», и запрос
+    снова находит одного. Проверено замером: `finance` после досева даёт 6 точных совпадений,
+    `options` — ноль.
+
+    Почему это не дорого, в отличие от разбора КАНДИДАТОВ. Слов в запросе четыре, а не по четыре
+    на каждого из семисот; спрошенное запоминается навсегда, так что платит только первый человек,
+    придумавший новое слово. Тайм-аут короткий и ошибка проглатывается: поиск без моста хуже, чем
+    с ним, но поиск, ждущий модель, хуже обоих.
+    """
+    unknown = [t for t in (topics or [])
+               if t and _norm_phrase(t) not in PHRASE_TOPICS and not cat_of(t)[0]][:4]
+    if not unknown:
+        return
+    items = []
+    for t in unknown:
+        try:
+            req = urllib.request.Request(
+                FILTER_URL + "/api/filter/categorize",
+                data=json.dumps({"text": str(t)}).encode(),
+                headers={"Content-Type": "application/json"})
+            d = json.loads(urllib.request.urlopen(req, timeout=6).read().decode())
+            ts = [str(x).lower().strip() for x in (d.get("topics") or []) if str(x).strip()]
+            if ts:
+                items.append({"phrase": str(t), "topics": ts})
+        except Exception:
+            continue                      # фильтрация молчит — ищем без моста, а не не ищем вовсе
+    if items:
+        learn_phrases(items)
 
 
 def topic_bridge(a, b):
@@ -1523,6 +1560,11 @@ def _retrieve(intent, eligible, budget):
     drops the no-overlap tail that the engine already discards (T5), so the slate is byte-identical for any
     eligible pool <= budget. Returns (retrieved_pool, source_by_name, stats)."""
     topics = [str(t).lower() for t in (intent.get("topics") or [])]
+    # МОСТ ТЕМ: сторона запроса разбирается ЗДЕСЬ, на входе в отбор, и только для новых слов.
+    # Интересы популяции разобраны заранее, а слово запроса может быть таким, какого нет ни у кого
+    # («опционы»), — тогда мост без этого вызова молчит, и запрос снова находит одного. Один
+    # вопрос фильтрации на слово за всю его жизнь, дальше из памяти.
+    resolve_query_topics(topics)
     scored, source_by = [], {}
     for c in eligible:
         nm = str(c.get("name", "")).strip().lower()

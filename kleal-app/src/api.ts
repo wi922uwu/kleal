@@ -24,6 +24,26 @@
 
 const DEFAULT_BASE = 'https://aiopenware.com';
 
+/**
+ * ТОКЕН СЕССИИ.
+ *
+ * Живёт здесь, а не в состоянии экрана: его должен подставлять КАЖДЫЙ запрос, а состояние знают
+ * только экраны. Значение приходит из памяти телефона при запуске (см. restore в src/state.ts) и
+ * меняется ровно в двух местах — вход и выход.
+ *
+ * В заголовке, а не в теле и не в строке запроса: в теле он оседает в логах прокси, в строке —
+ * ещё и в referer.
+ */
+let SESSION = '';
+
+export function setSession(token: string) {
+  SESSION = String(token || '');
+}
+
+export function getSession(): string {
+  return SESSION;
+}
+
 export const API_BASE: string =
   (process.env.EXPO_PUBLIC_API && String(process.env.EXPO_PUBLIC_API)) || DEFAULT_BASE;
 
@@ -96,7 +116,13 @@ async function request<T = Json>(
     const res = await fetch(API_BASE + path, {
       ...init,
       signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+      // Токен подставляется ЗДЕСЬ, в одном месте на все запросы. Разложить его по вызывающим
+      // значило бы гарантированно забыть в паре из полусотни.
+      headers: {
+        'Content-Type': 'application/json',
+        ...(SESSION ? { Authorization: `Bearer ${SESSION}` } : {}),
+        ...(init?.headers || {}),
+      },
     });
     const text = await res.text();
     let body: any = null;
@@ -268,6 +294,29 @@ export function isAbort(e: unknown): boolean {
 
 export type SignupResult = { ok?: boolean; error?: string; login?: string };
 
+export const auth = {
+  /** A.03.1 «Continue» — просим код. Ответ одинаков для знакомого и незнакомого адреса. */
+  requestCode: (email: string, lang: string) =>
+    api.post<{ ok?: boolean; error?: string; resend_in?: number; sent?: boolean }>(
+      '/api/auth/code/request', { email, lang }
+    ),
+
+  /** A.03.2 «Verify». Отказ приходит с причиной: wrong (со счётчиком попыток) или expired. */
+  verifyCode: (email: string, code: string, lang: string) =>
+    api.post<{
+      ok?: boolean; error?: string; attempts_left?: number;
+      token?: string; login?: string; email?: string; name?: string;
+      profile?: Json | null; isNew?: boolean; hasProfile?: boolean;
+    }>('/api/auth/code/verify', { email, code, lang }),
+
+  /** «Кто я» по токену: сессия могла истечь или быть погашена с другого устройства. */
+  session: () =>
+    api.post<{ ok?: boolean; login?: string; email?: string; name?: string;
+               profile?: Json | null; hasProfile?: boolean }>('/api/auth/session', {}),
+
+  signOut: () => api.post<{ ok?: boolean }>('/api/auth/signout', {}),
+};
+
 export const onboarding = {
   /** Создать логин. Пароль уходит один раз и на сервере лежит только PBKDF2-хеш. */
   signup: (login: string, password: string, name = '') =>
@@ -276,7 +325,14 @@ export const onboarding = {
   signin: (login: string, password: string) =>
     api.post<SignupResult>('/api/onboarding/signin', { login, password }),
 
-  /** Привязать собранный профиль к логину, чтобы следующий вход вёл в приложение, а не сюда же. */
+  /**
+   * Привязать собранный профиль к аккаунту, чтобы следующий вход вёл в приложение, а не сюда же.
+   *
+   * Личность сервер берёт ИЗ СЕССИИ — `login` остаётся только ради старых сборок на телефонах,
+   * которые про сессии не знают. Раньше привязка шла только по логину, а его выставлял
+   * единственный экран «Логин и пароль»: всякий, кто входил иначе, доходил до конца анкеты с
+   * login = null, и профиль оставался лежать только на телефоне.
+   */
   attach: (login: string, name: string, profile: Json) =>
     api.post('/api/onboarding/attach', { login, name, profile }),
 

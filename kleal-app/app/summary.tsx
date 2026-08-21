@@ -91,7 +91,12 @@ export default function Summary() {
     try {
       const r: any = await onboarding.register(profileForRegister());
       if (!r?.ok) throw new Error(r?.error || 'register failed');
-      if (st.login) await onboarding.attach(st.login, p.name || '', profileForAttach()).catch(() => {});
+      // ПРИВЯЗКА БЕЗУСЛОВНА. Раньше здесь стояло `if (st.login)`, а `login` выставлял единственный
+      // экран «Логин и пароль»: всякий, кто входил иначе, доходил до конца анкеты без него, и
+      // профиль не привязывался ни к чему — он оставался в памяти телефона и строкой в users.json
+      // по имени. Переустановил приложение и войти обратно некуда. Теперь личность сервер берёт из
+      // сессии; `login` едет рядом только ради старых сборок, которые про сессии не знают.
+      await onboarding.attach(st.login || '', p.name || '', profileForAttach()).catch(() => {});
       // Отметка ставится ТОЛЬКО после успешной записи: иначе следующий запуск пустил бы человека
       // в приложение с профилем, которого на сервере нет.
       patch({ done: true });
