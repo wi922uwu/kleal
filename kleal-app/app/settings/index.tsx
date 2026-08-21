@@ -15,6 +15,7 @@ import { ProfileShell, Card, Segments } from '../../src/components/ProfileShell'
 import { useLang, setLang, getLang } from '../../src/i18n';
 import { useOnb, reset } from '../../src/state';
 import { SETTINGS, SETTING_ROWS, SettingRow } from '../../src/settings';
+import { auth, setSession } from '../../src/api';
 import { SIGNOUT } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
@@ -25,7 +26,16 @@ export default function Settings() {
 
   const signOut = () => {
     const has = !!st.login;
-    const go = () => { reset(); router.replace('/'); };
+    const go = () => {
+      // Сессию гасим НА СЕРВЕРЕ, а не только на телефоне. Иначе выданный токен оставался бы
+      // рабочим ещё три месяца: «выйти» очищало бы память приложения, а ключ от аккаунта
+      // продолжал бы существовать. Не ждём ответа — выход не должен зависеть от связи, — но
+      // и не молчим: сервер гасит именно эту сессию, остальные устройства не трогая.
+      auth.signOut().catch(() => {});
+      setSession('');
+      reset();
+      router.replace('/');
+    };
     if (Platform.OS === 'web') {
       // eslint-disable-next-line no-alert
       if (typeof confirm === 'function' && confirm(SIGNOUT.ask(has))) go();
