@@ -36,7 +36,7 @@ import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
   NATURE_TRAITS, NATURE_MAX,
-  STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
+  STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL, GROUP_SIZE,
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
@@ -50,6 +50,7 @@ import {
   IconCalendar, IconClock, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar,
 } from '../src/components/icons';
 import { EditSheet } from '../src/components/ProfileShell';
+import { Sheet } from '../src/components/Sheet';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { resetGroupSession } from '../src/ginvites';
 import { useLang, T } from '../src/i18n';
@@ -113,6 +114,8 @@ export default function Intent() {
   const title = String(params.title || legacy || '').trim();
 
   const [step, setStep] = useState<IntentStepId>('how');
+  /** GO.06a: Plus в продукте ещё не подключён, но ветка Large group обязана объяснить предел. */
+  const [groupSizeOpen, setGroupSizeOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(() => ({
     date: dateChips(1)[0].key,
     minutes: 20 * 60,
@@ -394,6 +397,10 @@ export default function Intent() {
 
   /** Битая ссылка не пускает ни «Дальше» на шаге, ни «Применить» в листе — правило одно на оба. */
   const linkBroken = (v: Draft) => !!v.link.trim() && !looksLikeUrl(v.link);
+  /** В Group Online ссылка — третий обязательный шаг: без неё приглашённые придут в пустой звонок. */
+  const groupOnline = draft.mode === 'online' && draft.size === 'group';
+  const groupLinkBlocked = (v: Draft) =>
+    linkBroken(v) || (v.mode === 'online' && v.size === 'group' && !v.link.trim());
 
   const sizeBlockOf = (v: Draft, set: SetDraft) => (
     <View style={s.chipRowWrap}>
@@ -658,7 +665,8 @@ export default function Intent() {
   /** Последний шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
   const lastStep: IntentStepId =
     draft.mode === 'offline' ? 'place' : draft.mode === 'hybrid' ? 'both' : 'link';
-  const detailIndex = step === 'when' ? 0 : step === 'who' ? 1 : step === 'nature' ? 2 : 3;
+  const detailIndex = step === 'when' ? 0 : step === 'who' ? 1
+    : groupOnline && step === 'link' ? 2 : step === 'nature' ? 2 : 3;
 
   /**
    * ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЗАПИСАН ПОРЯДОК ШАГОВ НАЗАД.
@@ -690,7 +698,9 @@ export default function Intent() {
     if (tzOpen || editOpen) { setTzOpen(false); setEditOpen(false); return; }
     if (busy) { cancelSearch(); return; }
     if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; setAck(false); }
-    const prev = prevStep(step);
+    // GO.07–GO.09 содержит ровно три шага: у Group Online link идёт сразу после audience.
+    // Остальные флоу сохраняют свой шаг характера и общий prevStep без изменений.
+    const prev = groupOnline && step === 'link' ? 'who' : prevStep(step);
     if (!prev) { router.back(); return; }
     setStep(prev);
     // Шаг назад обязан открыться сверху — иначе он показывается серединой карточки, которую уже
@@ -755,11 +765,13 @@ export default function Intent() {
                 : SIZES.map(([k]) => (
                     <OptionRow
                       key={k}
-                      Icon={k === 'group' ? IconGroups : IconPerson}
+                      Icon={k === '1:1' ? IconPerson : IconGroups}
                       title={sizeLabel(k)}
                       sub={sizeSub(k)}
                       on={draft.size === k}
-                      onPress={() => choose({ size: k }, 'when')}
+                      onPress={() => k === 'group-plus'
+                        ? setGroupSizeOpen(true)
+                        : choose({ size: k }, 'when')}
                     />
                   ))}
               {ack ? <Ack /> : null}
@@ -785,7 +797,7 @@ export default function Intent() {
                       : DETAILS.subPlace()
                     }
                   />
-                  <Stepper current={detailIndex} />
+                  <Stepper current={detailIndex} count={groupOnline ? 3 : 4} />
                 </>
               )}
 
@@ -800,7 +812,7 @@ export default function Intent() {
               {step === 'who' ? (
                 <View style={s.card}>
                   {whoBlockOf(draft, setDraft)}
-                  <Cta label={INTENT.next()} onPress={() => setStep('nature')} />
+                  <Cta label={INTENT.next()} onPress={() => setStep(groupOnline ? 'link' : 'nature')} />
                 </View>
               ) : null}
 
@@ -820,7 +832,7 @@ export default function Intent() {
               {step === 'link' ? (
                 <View style={s.card}>
                   {linkBlock}
-                  <Cta label={INTENT.next()} disabled={linkBroken(draft)} onPress={toSummary} />
+                  <Cta label={INTENT.next()} disabled={groupLinkBlocked(draft)} onPress={toSummary} />
                 </View>
               ) : null}
 
@@ -885,6 +897,24 @@ export default function Intent() {
           </View>
         </View>
 
+        {/* GO.06a. Покупки Plus ещё нет: первичная кнопка показана, но честно выключена. */}
+        <Sheet visible={groupSizeOpen} onClose={() => setGroupSizeOpen(false)} title={GROUP_SIZE.plusTitle()}>
+          <Text style={s.plusBody}>{GROUP_SIZE.plusBody()}</Text>
+          <View style={[s.cta, { opacity: 0.45 }]} accessibilityRole="button" accessibilityState={{ disabled: true }}>
+            <Text style={s.ctaText}>{GROUP_SIZE.getPlus()}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            style={s.plusKeep}
+            onPress={() => {
+              setGroupSizeOpen(false);
+              choose({ size: 'group' }, 'when');
+            }}
+          >
+            <Text style={s.plusKeepText}>{GROUP_SIZE.keepAtFive()}</Text>
+          </Pressable>
+        </Sheet>
+
         {/* O.07a — часовой пояс. Выбор живёт в tzPick и попадает в черновик только по «Применить». */}
         <EditSheet
           open={tzOpen}
@@ -928,7 +958,7 @@ export default function Intent() {
           onAccept={() => {
             // Битую ссылку не пускает и «Дальше» на шаге. Пустить её тут значило бы завести
             // обход собственной проверки через правку.
-            if (!edraft || linkBroken(edraft)) return;
+            if (!edraft || groupLinkBlocked(edraft)) return;
             setDraft(edraft);
             setEditOpen(false);
           }}
@@ -961,6 +991,9 @@ export default function Intent() {
             </View>
           )) : null}
           {edraft && linkBroken(edraft) ? <Text style={s.err}>{DETAILS.linkBad()}</Text> : null}
+          {edraft && edraft.mode === 'online' && edraft.size === 'group' && !edraft.link.trim() ? (
+            <Text style={s.err}>{DETAILS.groupLinkRequired()}</Text>
+          ) : null}
         </EditSheet>
 
         {busy ? <Searching onCancel={cancelSearch} /> : null}
@@ -1020,10 +1053,10 @@ function Ack() {
 }
 
 /** Степпер 1–2–3 с кадров O.07–O.09: пройденное и текущее — красным, дальше — серым. */
-function Stepper({ current }: { current: number }) {
+function Stepper({ current, count = 4 }: { current: number; count?: number }) {
   return (
     <View style={s.stepper}>
-      {[0, 1, 2, 3].map((i) => (
+      {Array.from({ length: count }, (_, i) => i).map((i) => (
         <React.Fragment key={i}>
           {i > 0 ? <View style={[s.stepLine, i <= current && s.stepLineOn]} /> : null}
           <View style={[s.stepDot, i <= current && s.stepDotOn, i === current && s.stepDotNow]}>
@@ -1362,6 +1395,12 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   sumEditText: { ...type.button, color: color.fg } as any,
+  plusBody: { ...type.body, color: color.muted } as any,
+  plusKeep: {
+    height: 52, borderRadius: rad.full, backgroundColor: color.ink,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  plusKeepText: { ...type.button, color: color.onPrimary } as any,
 
   veil: {
     ...StyleSheet.absoluteFillObject, backgroundColor: color.bg, alignItems: 'center',
