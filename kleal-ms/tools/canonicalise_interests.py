@@ -35,6 +35,9 @@ GENERIC = {
     "meeting", "meetup", "friends", "community", "culture", "tradition", "lifestyle", "wellness",
     "entertainment", "game", "games", "play", "event", "events", "experience", "outdoor activities",
     "health", "art",  # 'art' is real but filtration attaches it to everything visual
+    # Вторая волна: концептуальные слова, ускользнувшие от списка выше, — найдены по живой жалобе
+    # («Акции» приводили гастрорынок первым тиром через дописанное обоим голое `market`).
+    "market", "talk", "quiet", "business", "product", "trip", "language",
 }
 
 

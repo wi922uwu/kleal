@@ -2,6 +2,10 @@
 import os
 # This harness ranks AGAINST the synthetic load pool, which live matching now excludes.
 os.environ.setdefault("KLEAL_INCLUDE_LOADTEST", "1")
+# Мост тем: слепок выученных фраз как фикстура. Без него харнесс мерил движок, который в проде не
+# существует, — кросс-языковые связки (кофе<->coffee) живут в выученном, а не в каноне.
+os.environ.setdefault("KLEAL_PHRASE_TOPICS",
+                      os.path.join(os.path.dirname(os.path.abspath(__file__)), "phrase_topics.seed.json"))
 
 """Matching-quality evaluation harness (gold battery over the loadtest pool).
 

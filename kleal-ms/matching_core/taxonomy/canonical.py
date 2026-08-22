@@ -32,6 +32,10 @@ def _norm(s):
     return str(s or "").strip().lower().replace(" ", "")
 
 
+# Насколько длиннее слова может быть алиас, чтобы это всё ещё считалось словоизменением. См. `_resolve`.
+_MORPH_TAIL = 2
+
+
 def _load():
     global AVAILABLE
     try:
@@ -96,26 +100,75 @@ def _family_id(nid):
 
 
 # --------------------------------------------------------------- публичный API
-def resolve_node(text):
-    """Строка интереса/темы -> node_id: точный алиас, затем СТРОГИЙ морфологический префикс.
-    review#A: короткие алиасы (len<5: 'remo','surf','lol') больше НЕ матчат несвязанные длинные слова
-    ('remote'→rowing, 'surface'→surfing, 'lollipop'→league) — иначе canonical давал ложный EXACT (уровень 4)."""
+def _resolve(text):
+    """node_id И КАК он получен: точным алиасом или догадкой по префиксу.
+
+    Различать обязательно, потому что от этого зависит уровень. Раньше догадка была неотличима
+    от попадания, и `similarity_nodes` выдавал за неё 4 — «точное совпадение». Так `market`
+    становился узлом `marketing` (префикс), `food` — узлом `food market`, и поиск про акции
+    приводил маркетологов и гастрономические рынки. Оттуда же жалоба «везде только первый тир»:
+    разные слова склеивались в один узел и все получали высший балл.
+
+    review#A уже подрезал это правило по минимальной длине ('remote'→rowing, 'surface'→surfing),
+    но осталось главное: префикс — это не словоизменение. Хвост в три и больше символов почти
+    всегда другое слово или вовсе второе слово составного имени узла, и именно так короткие
+    обиходные интересы проваливались в узкие узлы:
+
+        coffee (6) -> "coffee date"  (10)   человек про кофе, узел про свидание
+        wine   (4) -> "wine tasting" (11)   человек про вино, узел про дегустацию
+        food   (4) -> "food market"  (10)   человек про еду, узел про гастрорынок
+        market (6) -> "marketing"    (9)    запрос про акции, узел про маркетинг
+
+    Настоящее словоизменение короткое: hike/hiking, mercado/mercados, finanza/finanzas. Отсюда
+    порог в два символа — он оставляет склонение и отрезает словообразование.
+    """
     w = _norm(text)
+    if not w:
+        return None, False
     if w in ALIAS:
-        return ALIAS[w]                                       # точный алиас
+        return ALIAS[w], True                                 # точный алиас
+    # Кандидат выбирается детерминированно — ближайший по длине, при равенстве по алфавиту.
+    # Раньше побеждал первый в порядке словаря, то есть результат зависел от порядка загрузки
+    # и мог меняться между процессами.
+    best = None
     for alias, nid in ALIAS.items():
-        if len(alias) >= 5 and len(w) >= 4 and (alias.startswith(w) or w.startswith(alias)):
-            return nid                                        # морфологический вариант (оба достаточно длинные)
-    return None
+        if len(alias) < 5 or len(w) < 4 or abs(len(alias) - len(w)) > _MORPH_TAIL:
+            continue
+        if alias.startswith(w) or w.startswith(alias):
+            d = abs(len(alias) - len(w))
+            if best is None or (d, alias) < (best[0], best[1]):
+                best = (d, alias, nid)
+    return (best[2], False) if best else (None, False)
+
+
+def resolve_node(text):
+    """Строка интереса/темы -> node_id. Как резолвилось — см. `_resolve`."""
+    return _resolve(text)[0]
 
 
 def similarity_nodes(a_text, b_text):
-    """Уровень близости по КАНОНИЧЕСКОЙ иерархии: 4 exact, 3 sibling(family), 2 parent(macro), 1 adjacent, 0."""
-    na, nb = resolve_node(a_text), resolve_node(b_text)
+    """Уровень близости по КАНОНИЧЕСКОЙ иерархии: 4 exact, 3 sibling(family), 2 parent(macro), 1 adjacent, 0.
+
+    ЧЕТВЁРКА ТОЛЬКО ЗА ТОЧНОЕ. Попадания в один узел мало: в узел приходят и по догадке, а
+    `market` и `marketing` — разные слова. Выдавать за них «точное совпадение» значит ставить
+    маркетолога вровень с финансистом по запросу про акции, что и происходило.
+
+    Одинаковый текст сам по себе тоже не делает совпадение точным, если канон этого слова не
+    знает. `market` он только угадывает как `marketing`; человеку это слово не принадлежит — оно
+    дописано машиной в интересы («гастрономический рынок» → market) и машиной же добавлено в
+    запрос («акции» → market). Две догадки, встретившиеся на общем слове, — не «оба назвали одно
+    и то же», и первым тиром это быть не должно.
+
+    Слово, которого в каноне нет ВОВСЕ, сюда не попадает: оно не резолвится, ответ None, и его
+    судьбу решает буквальное сравнение в seed-графе, где одинаковый текст по-прежнему четвёрка.
+    Так «labubu» с «labubu» остаётся точным совпадением, а «market» с «market» — нет.
+    """
+    na, ea = _resolve(a_text)
+    nb, eb = _resolve(b_text)
     if not na or not nb:
         return None                      # не резолвится в каноне -> пусть решает seed-граф
     if na == nb:
-        return 4
+        return 4 if (ea and eb) else 3
     if NODES[na].get("family") and NODES[na]["family"] == NODES[nb].get("family"):
         return 3
     if NODES[na].get("macro") and NODES[na]["macro"] == NODES[nb].get("macro"):

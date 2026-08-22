@@ -257,48 +257,88 @@ def topics_of(s):
     return {ph} if ph not in _TOPIC_STOP else set()
 
 
+_TEACH_SENT = set()          # фразы, уже отправленные в очередь этим процессом — не слать дубли
+
+
 def resolve_query_topics(topics, phrase=""):
-    """Разобрать НЕЗНАКОМЫЕ слова ЗАПРОСА через фильтрацию — по одному разу за всю жизнь слова.
+    """Темы ЗАПРОСА для моста — только из уже выученного, без единого сетевого вызова.
 
-    Мост работает по разобранным фразам, а интересы популяции разбираются заранее (tools/
-    teach_phrases.py). Со стороной запроса так нельзя: «опционы» никто не написал у себя в
-    профиле, поэтому фраза остаётся неизвестной, `topic_bridge` честно отвечает «нет», и запрос
-    снова находит одного. Проверено замером: `finance` после досева даёт 6 точных совпадений,
-    `options` — ноль.
+    Раньше незнакомая фраза разбиралась фильтрацией прямо здесь, внутри поиска, и тут же
+    запоминалась. Это дало мост первому же запросу, но ценой, которую показала батарея: поиск
+    ждал модель (секунды на сценарий), а два одинаковых вызова подряд отвечали по-разному,
+    потому что первый УЧИЛСЯ между ними. Девяносто сценариев золотой батареи из девяноста трёх
+    упали ровно на «NON-DETERMINISTIC result» — и это не придирка теста: тот же поиск, повторённый
+    человеком, находил других людей.
 
-    Почему это не дорого, в отличие от разбора КАНДИДАТОВ. Слов в запросе четыре, а не по четыре
-    на каждого из семисот; спрошенное запоминается навсегда, так что платит только первый человек,
-    придумавший новое слово. Тайм-аут короткий и ошибка проглатывается: поиск без моста хуже, чем
-    с ним, но поиск, ждущий модель, хуже обоих.
+    Теперь путь поиска только читает. Незнакомое уходит заданием в `teach.phrases` — воркер
+    спросит фильтрацию и научит живой матчинг через /api/agent/learn-phrases, обычно за секунды.
+    А ТЕКУЩИЙ поиск строит мост из тем интента: вызывающий уже прогнал текст запроса через
+    фильтрацию, когда собирал интент, — это ответ той же модели, полученный до входа сюда.
+    Выученная фраза точнее тем, что несёт контекст («поговорить про опционы» -> финансы, голое
+    «options» -> варианты выбора), поэтому когда она есть — она в приоритете.
     """
+    ph = _norm_phrase(phrase) if phrase else ""
+    # «Выучено» проверяется по PHRASE_TOPICS напрямую: topics_of для этого не годится — она по
+    # замыслу считает темой САМУ фразу (сторона кандидатов на этом сходится), то есть непустой
+    # ответ у неё есть всегда, и фолбэк на темы интента никогда бы не сработал.
+    learned = bool(ph and PHRASE_TOPICS.get(ph))
+    # Чему научиться на будущее: сама фраза и до трёх слов запроса, которых нет ни в выученном,
+    # ни в таксономии. Дедупликация в памяти процесса: очередь и так переживёт дубль, но слать
+    # одно и то же на каждый повтор поиска — шум в outbox и в панели.
     ask = []
-    # ФРАЗА ЦЕЛИКОМ ВАЖНЕЕ СЛОВ. Измерено на живой фильтрации: «поговорить про опционы» ->
-    # [options, trading, finance, investing], а голое «options» -> [choice, selection,
-    # alternatives, possibilities]. То есть по скомпилированному слову мост построился бы к
-    # «вариантам выбора», а не к финансам, и запрос снова нашёл бы не тех. Контекст фразы —
-    # единственное, что отличает опцион от «варианта».
-    if phrase and _norm_phrase(phrase) not in PHRASE_TOPICS:
-        ask.append(phrase)
-    ask += [t for t in (topics or [])
-            if t and _norm_phrase(t) not in PHRASE_TOPICS and not cat_of(t)[0]][:3]
-    if not ask:
-        return topics_of(phrase) if phrase else set()
-    items = []
-    for t in ask:
+    if phrase and not learned and ph not in _TEACH_SENT:
+        ask.append(str(phrase))
+    ask += [str(t) for t in (topics or [])
+            if t and _norm_phrase(t) not in PHRASE_TOPICS and not cat_of(t)[0]
+            and _norm_phrase(t) not in _TEACH_SENT][:3]
+    if ask:
+        for a in ask:
+            _TEACH_SENT.add(_norm_phrase(a))
         try:
-            req = urllib.request.Request(
-                FILTER_URL + "/api/filter/categorize",
-                data=json.dumps({"text": str(t)}).encode(),
-                headers={"Content-Type": "application/json"})
-            d = json.loads(urllib.request.urlopen(req, timeout=6).read().decode())
-            ts = [str(x).lower().strip() for x in (d.get("topics") or []) if str(x).strip()]
-            if ts:
-                items.append({"phrase": str(t), "topics": ts})
+            mq.send("teach.phrases", {"phrases": ask})
         except Exception:
-            continue                      # фильтрация молчит — ищем без моста, а не не ищем вовсе
-    if items:
-        learn_phrases(items)
-    return topics_of(phrase) if phrase else set()
+            pass                          # очередь лежит — выучим в другой раз; поиск не ждёт
+    out = topics_of(phrase) if learned else set()
+    if not learned and ph and ph not in _TOPIC_STOP:
+        out.add(ph)                       # буквальное совпадение запроса с интересом — тоже мост
+    # Слова интента разворачиваются через topics_of, а не кладутся как есть: выученное слово несёт
+    # свои темы («кофе» -> coffee — иначе русский запрос никогда не сойдётся с английским
+    # интересом), невыученное остаётся самим собой. Порог в topics_join держит разросшийся набор:
+    # одного общего слова, как и раньше, мало.
+    for t in (topics or ()):
+        out |= topics_of(t)
+    return out
+
+def topics_join(ta, tb):
+    """Достаточно ли двум наборам тем ОБЩЕГО, чтобы считать фразы про одно и то же.
+
+    ОДНОГО СОВПАВШЕГО СЛОВА МАЛО, и это стоило ложных находок. Запрос «Акции» разбирается в
+    {finance, investing, market, stock}, а «mercado gastronómico» — в {cuisine, food, gastronomy,
+    market}. Пересечение есть — ровно `market`, — и мост радостно сводил биржу с продуктовым
+    рынком. Снято с панели 21 августа: в выдаче по «Акции» стояли рыбный рынок и уличная еда.
+
+    Частотой это не лечится: `market` встречается всего в одиннадцати фразах из 1683 (0,65%), то
+    есть по редкости он неотличим от честного `fishing`. Дело не в редкости, а в многозначности.
+
+    Поэтому мерим ДОЛЮ, а не факт: связываем, если общих тем хотя бы две, либо если общее
+    покрывает половину меньшего набора. Тогда:
+
+        «Акции» ~ «food market»   1 из 4 = 0.25   -> не связываем
+        «Акции» ~ «trading»       3 из 4 = 0.75   -> связываем
+        «Акции» ~ «finanzas»      2 общих         -> связываем
+        «Рыбалка» ~ «подлёдная рыбалка»  1 из 1   -> связываем
+
+    Последняя строка и есть причина, почему нельзя просто потребовать двух совпадений: у короткого
+    запроса тема одна, и одна же — всё, что у него есть.
+    """
+    if not ta or not tb:
+        return False
+    common = ta & tb
+    if not common:
+        return False
+    if len(common) >= 2:
+        return True
+    return len(common) / float(min(len(ta), len(tb))) >= 0.5
 
 
 def topic_bridge(a, b):
@@ -307,7 +347,7 @@ def topic_bridge(a, b):
     pa, pb = _norm_phrase(a), _norm_phrase(b)
     if pa not in PHRASE_TOPICS and pb not in PHRASE_TOPICS:
         return False
-    return bool(topics_of(a) & topics_of(b))
+    return topics_join(topics_of(a), topics_of(b))
 
 
 # Темы ФРАЗЫ запроса на время одного поиска.
@@ -353,7 +393,7 @@ def topical(topics, interests, bridge=()):
             elif bt and bx and bx in ADJACENCY.get(bt, []): best = max(best, 1)
             # Мост: наборы тем пересеклись по неслужебной теме. `bridge` — темы ФРАЗЫ запроса,
             # они точнее скомпилированных слов (см. resolve_query_topics).
-            elif topic_bridge(t, x) or (bridge and (set(bridge) & topics_of(x))):
+            elif topic_bridge(t, x) or (bridge and topics_join(set(bridge), topics_of(x))):
                 matched.add(_norm(x)); best = max(best, 3)
             # neither side is in the taxonomy -> fall back to a literal shared interest word, so real
             # interests the vocabulary doesn't cover ("apple", "рыбалка", "labubu") still match each other.
@@ -1756,6 +1796,48 @@ def _slate_budget(intent):
 
 
 def match_candidates(intent, prof, ctx=None, diag=None, want=None):
+    """Вход подбора: ставит мост тем НА ВРЕМЯ поиска и гарантированно снимает его после.
+
+    Мост — знание фильтрации о фразе запроса, впрыснутое в таксономию на один поиск (см.
+    resolve_query_topics и graph.set_bridge). Снятие в finally обязательно: слот потоко-локальный,
+    но поток живёт дольше запроса, и вызов, который моста не ставил — групповой подбор, батарея,
+    диагностика, — не должен наследовать решение прошлого поиска. Восстанавливается ПРЕЖНЕЕ
+    значение, а не пустота: если подбор однажды позовёт подбор, внутренний не снимет мост под
+    внешним.
+    """
+    prev_q = getattr(_QCTX, "bridge", None)
+    try:
+        from matching_core.taxonomy import graph as _TX
+        prev_fn = _TX._bridge_fn()
+    except Exception:
+        _TX, prev_fn = None, None
+    try:
+        _qb = resolve_query_topics(
+            [str(t).lower() for t in (intent.get("topics") or [])],
+            str(intent.get("_query") or ""))
+        _set_query_bridge(_qb)
+        # И ДВИЖКУ ТОЖЕ. Ярус решает не `topical`, а таксономия matching_core: впрыснутые
+        # помощники она берёт «для совместимости подписи» и не использует. Без этой строки мост
+        # работал ровно там, где ничего не решает: `topical` давал 3, а движок ставил T5 «нет
+        # overlap», и человек снова видел одного кандидата. Движку отдаётся ГОТОВОЕ РЕШЕНИЕ, а
+        # не два набора тем: правило «сколько общего достаточно» должно быть одно на обе стороны.
+        if _TX is not None:
+            _qbs = set(_qb or ())
+            _TX.set_bridge(lambda x: topics_join(_qbs, topics_of(x)) if _qbs else False)
+    except Exception:
+        _set_query_bridge(())
+    try:
+        return _match_candidates_engine(intent, prof, ctx, diag, want)
+    finally:
+        _QCTX.bridge = prev_q
+        if _TX is not None:
+            try:
+                _TX.set_bridge(prev_fn)
+            except Exception:
+                pass
+
+
+def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
     """Entry point. Policy hard gates run HERE (scoring only after ALLOW — spec §8), then §7 staged
     retrieval assembles the pool, then Core v2 scores it. KLEAL_CORE_V2=0 or an invalid config -> legacy
     scorer above, unchanged. The response is a superset of the legacy card contract.
@@ -1766,26 +1848,6 @@ def match_candidates(intent, prof, ctx=None, diag=None, want=None):
     retrieval now caps the eligible pool at a budget BEFORE scoring, so `eligible` and `scored._in`
     legitimately differ and people can be lost between the gates and the ranker. A funnel that
     hides its narrowest stage is decoration."""
-    # МОСТ ТЕМ на время этого поиска: разбираем фразу запроса (один вопрос фильтрации на новое
-    # слово за всю его жизнь) и кладём её темы туда, откуда их возьмёт `topical` — включая вызовы
-    # из движка, который параметров не передаёт.
-    try:
-        _qb = resolve_query_topics(
-            [str(t).lower() for t in (intent.get("topics") or [])],
-            str(intent.get("_query") or ""))
-        _set_query_bridge(_qb)
-        # И ДВИЖКУ ТОЖЕ. Ярус решает не этот `topical`, а таксономия matching_core: впрыснутые
-        # помощники она берёт «для совместимости подписи» и не использует. Без этой строки мост
-        # работал ровно там, где ничего не решает, — проверено: `topical` давал 3, а движок ставил
-        # T5 «нет overlap», и человек снова видел одного кандидата.
-        try:
-            from matching_core.taxonomy import graph as _TX
-            _TX.set_bridge(_qb, topics_of)
-        except Exception:
-            pass
-    except Exception:
-        _set_query_bridge(())
-
     if not CORE_V2:
         return _persona_order(match_candidates_legacy(intent, prof, ctx), intent)
     ctx = ctx or {}

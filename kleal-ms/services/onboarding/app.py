@@ -2074,10 +2074,16 @@ def _canon_interests(words):
     Same rule as tools/canonicalise_interests.py, which backfills people already in the store.
     """
     import urllib.request
+    # Вторая волна там же: концептуальные слова, ускользнувшие от первого списка. Найдены по
+    # живой жалобе — «Акции» приводили гастрономический рынок первым тиром, потому что фильтрация
+    # дописала обоим голое `market`. Класс тот же: слово-понятие, которое льстит любому запросу
+    # своей области («language» вместо «spanish», «business» вместо «marketing») и через границу
+    # областей врёт («market» у финансов и у еды). Настоящий сигнал — конкретика рядом с ними.
     GENERIC = {"sport", "sports", "exercise", "activity", "activities", "hobby", "hobbies", "fun",
                "leisure", "beverage", "drink", "drinks", "food", "social", "socializing", "people",
                "meeting", "meetup", "friends", "community", "culture", "tradition", "lifestyle",
-               "wellness", "entertainment", "game", "games", "play", "event", "events", "health", "art"}
+               "wellness", "entertainment", "game", "games", "play", "event", "events", "health", "art",
+               "market", "talk", "quiet", "business", "product", "trip", "language",}
     out = [str(w).strip() for w in (words or []) if str(w).strip()]
     have = {w.lower() for w in out}
     cands = []
