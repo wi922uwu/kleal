@@ -178,6 +178,10 @@ export const ROOM = {
     side === 'call'
       ? T(`${who} подключится по звонку.`, `${who} will join the call.`)
       : T(`${who} придёт лично.`, `${who} will join in person.`),
+  sysPlanModeChanged: (who: string, mode: string) =>
+    mode === 'online'
+      ? T(`${who} оставил(а) для этого плана только звонок.`, `${who} made this plan online only.`)
+      : T(`${who} оставил(а) для этого плана только встречу вживую.`, `${who} made this plan offline only.`),
   hybridHead: (total: number, atPlace: number, onCall: number) =>
     T(`${total} в группе · ${atPlace} лично · ${onCall} по звонку`,
       `${total} in the group · ${atPlace} coming · ${onCall} on the call`),
@@ -405,6 +409,7 @@ export function groupSysLine(text: string, sys?: GroupSys): string {
   if (c === 'link_saved') return ROOM.sysLinkSaved();
   if (c === 'place_saved') return ROOM.sysPlaceSaved();
   if (c === 'attendance_side') return ROOM.sysAttendanceSide(S(f.who), S(f.side));
+  if (c === 'plan_mode_changed') return ROOM.sysPlanModeChanged(S(f.who), S(f.mode));
   if (c === 'vote_kept') return ROOM.sysVoteKept(S(f.who));
   if (c === 'vote_opened') return ROOM.sysVoteOpened(S(f.who), S(f.kind));
   if (c === 'vote_closed')

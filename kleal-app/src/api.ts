@@ -978,8 +978,8 @@ export const group = {
    * голосованием, а оно требует утверждённого плана — то есть ровно того состояния, из которого
    * план и выпал. Он висел вечно. Группа при этом остаётся: люди никуда не делись.
    */
-  /** GR.45a: «уже иду» / «опаздываю» / «я на месте». Видит вся группа, а не один человек. */
-  planStatus: (id: string, self: string, status: 'otw' | 'late' | 'here', idem: string, etaMin?: number) =>
+  /** GR.45a/b: live attendance state. The whole group sees it immediately. */
+  planStatus: (id: string, self: string, status: 'otw' | 'late' | 'here' | 'cant_make_it', idem: string, etaMin?: number) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       '/api/agent/gplan-status', { id, self, status, idem, eta_min: etaMin }
     ),
@@ -1014,6 +1014,12 @@ export const group = {
   planDetails: (id: string, self: string, p: { place?: string; link?: string }, idem: string) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       '/api/agent/gplan-details', { id, self, ...p, idem }
+    ),
+
+  /** GRH.25a/25b: keep only the entrance that is already available for this plan. */
+  planMode: (id: string, self: string, mode: 'offline' | 'online', idem: string) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/gplan-mode', { id, self, mode, idem }
     ),
 
   /** GRH: участник выбирает, придет ли лично или подключится к звонку. */
