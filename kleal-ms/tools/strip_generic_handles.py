@@ -35,7 +35,18 @@ sys.path.insert(0, os.path.join(ROOT, "services", "matching"))
 
 import db  # noqa: E402
 
-STRIP = {"market", "talk", "quiet", "business", "product", "trip", "language"}
+# Первая волна — найдена по жалобе на выдачу («Акции» приводили гастрономический рынок).
+# Вторая — отобрана при разборе дыр таксономии: слова, которым разборщики ОТКАЗАЛИ в узле и
+# в алиасе именно как понятиям-зонтикам («fitness накрывает всю семью тренировок», «design
+# одинаково подходит столяру и интерфейсному дизайнеру»). Тот же критерий, независимая оценка.
+#
+# Проверено на живой выдаче: запрос «дизайн интерфейсов» ставил в первый ярус столяра с ручкой
+# `design` от «design collaboration», а людей с настоящим `ux design` — во второй.
+STRIP = {
+    "market", "talk", "quiet", "business", "product", "trip", "language",
+    "fitness", "job", "data", "management", "clothes", "socialize", "nature", "family",
+    "digital", "team", "performance", "training", "money", "design",
+}
 
 
 def _norm(s):

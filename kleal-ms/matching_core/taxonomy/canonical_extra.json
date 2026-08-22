@@ -1,0 +1,2023 @@
+{
+ "nodes": [
+  {
+   "id": "I_fishing",
+   "parent": "F_nature_outdoor",
+   "type": "activity",
+   "domain": "walk",
+   "ru": "рыбалка",
+   "en": "fishing",
+   "es": "pesca"
+  },
+  {
+   "id": "I_embroidery",
+   "parent": "F_crafts_making",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "вышивка",
+   "en": "embroidery",
+   "es": "bordado"
+  },
+  {
+   "id": "I_bookbinding",
+   "parent": "F_crafts_making",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "переплётное дело",
+   "en": "bookbinding",
+   "es": "encuadernación artesanal"
+  },
+  {
+   "id": "I_calligraphy",
+   "parent": "F_crafts_making",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "каллиграфия",
+   "en": "calligraphy",
+   "es": "caligrafía"
+  },
+  {
+   "id": "I_zines",
+   "parent": "F_books_writing",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "зины и фанзины",
+   "en": "zines and fanzines",
+   "es": "fanzines"
+  },
+  {
+   "id": "I_tattoo_art",
+   "parent": "F_visual_arts",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "татуировки",
+   "en": "tattoo art",
+   "es": "arte del tatuaje"
+  },
+  {
+   "id": "I_hip_hop",
+   "parent": "F_live_music",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "хип-хоп и рэп",
+   "en": "hip-hop and rap",
+   "es": "hip-hop y rap"
+  },
+  {
+   "id": "I_vinyl_records",
+   "parent": "F_live_music",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "винил и пластинки",
+   "en": "vinyl records",
+   "es": "vinilos"
+  },
+  {
+   "id": "I_indian_classical_dance",
+   "parent": "F_performing_arts",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "индийский классический танец",
+   "en": "indian classical dance",
+   "es": "danza clásica india"
+  },
+  {
+   "id": "I_puppetry",
+   "parent": "F_performing_arts",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "кукольный и теневой театр",
+   "en": "puppetry and shadow theatre",
+   "es": "teatro de títeres y sombras"
+  },
+  {
+   "id": "I_true_crime",
+   "parent": "F_screen_watch",
+   "type": "activity",
+   "domain": "watch_together",
+   "ru": "тру-крайм",
+   "en": "true crime",
+   "es": "true crime"
+  },
+  {
+   "id": "I_dominoes",
+   "parent": "F_tabletop",
+   "type": "activity",
+   "domain": "games",
+   "ru": "домино",
+   "en": "dominoes",
+   "es": "dominó"
+  },
+  {
+   "id": "I_betting",
+   "parent": "F_tabletop",
+   "type": "activity",
+   "domain": "games",
+   "ru": "ставки и азартные игры",
+   "en": "betting and gambling",
+   "es": "apuestas y juegos de azar"
+  },
+  {
+   "id": "I_sauna",
+   "parent": "F_mind_body",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "баня и сауна",
+   "en": "sauna and banya",
+   "es": "sauna"
+  },
+  {
+   "id": "I_spanish_cuisine",
+   "parent": "F_food_out",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "испанская кухня",
+   "en": "spanish cuisine",
+   "es": "cocina española"
+  },
+  {
+   "id": "I_dim_sum",
+   "parent": "F_food_out",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "дим-сам",
+   "en": "dim sum",
+   "es": "dim sum"
+  },
+  {
+   "id": "I_martial_arts",
+   "parent": "F_fitness_training",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "единоборства",
+   "en": "martial arts",
+   "es": "artes marciales"
+  },
+  {
+   "id": "I_parkour",
+   "parent": "F_adventure_sports",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "паркур",
+   "en": "parkour",
+   "es": "parkour"
+  },
+  {
+   "id": "I_cricket",
+   "parent": "F_team_sports",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "крикет",
+   "en": "cricket",
+   "es": "críquet"
+  },
+  {
+   "id": "I_mushroom_foraging",
+   "parent": "F_nature_outdoor",
+   "type": "activity",
+   "domain": "walk",
+   "ru": "сбор грибов",
+   "en": "mushroom foraging",
+   "es": "recogida de setas"
+  },
+  {
+   "id": "I_nature_conservation",
+   "parent": "F_sustainability",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "охрана и восстановление природы",
+   "en": "nature conservation",
+   "es": "conservación de la naturaleza"
+  },
+  {
+   "id": "I_mosaic_art",
+   "parent": "F_crafts_making",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "мозаика",
+   "en": "mosaic art",
+   "es": "mosaico"
+  },
+  {
+   "id": "I_metalworking",
+   "parent": "F_crafts_making",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "работа с металлом",
+   "en": "metalworking",
+   "es": "trabajo del metal"
+  },
+  {
+   "id": "I_polish_exchange",
+   "parent": "F_language_exchange",
+   "type": "activity",
+   "domain": "language_exchange",
+   "ru": "польский языковой обмен",
+   "en": "polish language exchange",
+   "es": "intercambio de polaco"
+  },
+  {
+   "id": "I_korean_exchange",
+   "parent": "F_language_exchange",
+   "type": "activity",
+   "domain": "language_exchange",
+   "ru": "корейский языковой обмен",
+   "en": "korean language exchange",
+   "es": "intercambio de coreano"
+  },
+  {
+   "id": "I_mathematics",
+   "parent": "F_ideas_discussion",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "математика",
+   "en": "mathematics",
+   "es": "matemáticas"
+  },
+  {
+   "id": "I_public_lectures",
+   "parent": "F_ideas_discussion",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "публичные лекции",
+   "en": "public talks and lectures",
+   "es": "charlas y conferencias"
+  },
+  {
+   "id": "I_escape_from_tarkov",
+   "parent": "F_battle_royale_action",
+   "type": "activity",
+   "domain": "games",
+   "ru": "escape from tarkov",
+   "en": "escape from tarkov",
+   "es": "escape from tarkov"
+  },
+  {
+   "id": "I_backgammon",
+   "parent": "F_tabletop",
+   "type": "activity",
+   "domain": "games",
+   "ru": "нарды",
+   "en": "backgammon",
+   "es": "backgammon"
+  },
+  {
+   "id": "I_flirting",
+   "parent": "F_dating_goals",
+   "type": "activity",
+   "domain": "dating",
+   "ru": "флирт",
+   "en": "flirting",
+   "es": "coqueteo"
+  },
+  {
+   "id": "I_nature_photography",
+   "parent": "F_photo_video",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "съёмка природы и пейзажа",
+   "en": "nature and landscape photography",
+   "es": "fotografía de naturaleza y paisaje"
+  },
+  {
+   "id": "I_photography",
+   "parent": "F_photo_video",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "фотография",
+   "en": "photography",
+   "es": "fotografía"
+  },
+  {
+   "id": "I_folk_traditional_music",
+   "parent": "F_live_music",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "традиционная и народная музыка",
+   "en": "traditional and folk music",
+   "es": "música tradicional y de raíz"
+  },
+  {
+   "id": "I_arabic_exchange",
+   "parent": "F_language_exchange",
+   "type": "activity",
+   "domain": "language_exchange",
+   "ru": "арабский языковой обмен",
+   "en": "arabic language exchange",
+   "es": "intercambio de árabe"
+  },
+  {
+   "id": "I_aperitivo",
+   "parent": "F_drinks",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "аперитив и вермут",
+   "en": "aperitivo and vermouth",
+   "es": "vermut y aperitivo"
+  },
+  {
+   "id": "I_professional_networking",
+   "parent": "F_career_networking",
+   "type": "activity",
+   "domain": "professional_networking",
+   "ru": "профессиональный нетворкинг",
+   "en": "professional networking",
+   "es": "networking profesional"
+  },
+  {
+   "id": "I_sound_production",
+   "parent": "F_photo_video",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "запись и монтаж звука",
+   "en": "sound recording and editing",
+   "es": "grabación y edición de sonido"
+  },
+  {
+   "id": "I_barbecue",
+   "parent": "F_food_out",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "барбекю и асадо",
+   "en": "barbecue and asado",
+   "es": "barbacoa y asado"
+  },
+  {
+   "id": "I_queer_party",
+   "parent": "F_nightlife_formats",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "квир-вечеринки",
+   "en": "queer party",
+   "es": "fiesta queer"
+  },
+  {
+   "id": "I_translation",
+   "parent": "F_practice_formats",
+   "type": "activity",
+   "domain": "language_exchange",
+   "ru": "перевод",
+   "en": "translation",
+   "es": "traducción"
+  },
+  {
+   "id": "I_homebrewing",
+   "parent": "F_drinks",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "домашнее пивоварение",
+   "en": "homebrewing",
+   "es": "elaboración casera de cerveza"
+  },
+  {
+   "id": "I_samba",
+   "parent": "F_live_music",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "самба",
+   "en": "samba",
+   "es": "samba"
+  },
+  {
+   "id": "I_dog_owners",
+   "parent": "F_pet_social",
+   "type": "activity",
+   "domain": "walk",
+   "ru": "владельцы собак",
+   "en": "dog owners",
+   "es": "dueños de perros"
+  },
+  {
+   "id": "I_injury_rehab",
+   "parent": "F_fitness_training",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "восстановление после травмы",
+   "en": "injury rehabilitation",
+   "es": "rehabilitación de lesiones"
+  },
+  {
+   "id": "I_weaving",
+   "parent": "F_crafts_making",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "ткачество",
+   "en": "weaving",
+   "es": "tejido en telar"
+  },
+  {
+   "id": "I_scale_models",
+   "parent": "F_crafts_making",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "моделизм",
+   "en": "scale modelling",
+   "es": "modelismo"
+  },
+  {
+   "id": "I_tango",
+   "parent": "F_nightlife_formats",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "танго",
+   "en": "tango",
+   "es": "tango"
+  },
+  {
+   "id": "I_card_games",
+   "parent": "F_tabletop",
+   "type": "activity",
+   "domain": "games",
+   "ru": "карточные игры",
+   "en": "card games",
+   "es": "juegos de cartas"
+  },
+  {
+   "id": "I_choir",
+   "parent": "F_live_music",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "хоровое пение",
+   "en": "choir singing",
+   "es": "canto coral"
+  },
+  {
+   "id": "I_kdrama",
+   "parent": "F_screen_watch",
+   "type": "activity",
+   "domain": "watch_together",
+   "ru": "дорамы",
+   "en": "k-dramas and asian series",
+   "es": "doramas y series asiáticas"
+  },
+  {
+   "id": "I_perfume_making",
+   "parent": "F_crafts_making",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "создание парфюма",
+   "en": "perfume making",
+   "es": "perfumería artesanal"
+  },
+  {
+   "id": "I_dancing",
+   "parent": "F_performing_arts",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "танцы",
+   "en": "dancing",
+   "es": "baile"
+  },
+  {
+   "id": "I_mentoring",
+   "parent": "F_career_networking",
+   "type": "activity",
+   "domain": "professional_networking",
+   "ru": "менторство",
+   "en": "mentoring",
+   "es": "mentoría profesional"
+  }
+ ],
+ "aliases": [
+  {
+   "alias": "рыбалка на гранд-юнион до рассвета",
+   "node": "I_fishing"
+  },
+  {
+   "alias": "fishing",
+   "node": "I_fishing"
+  },
+  {
+   "alias": "подлёдная рыбалка",
+   "node": "I_fishing"
+  },
+  {
+   "alias": "вышиваю",
+   "node": "I_embroidery"
+  },
+  {
+   "alias": "вышиваю под подкасты",
+   "node": "I_embroidery"
+  },
+  {
+   "alias": "encuadernación artesanal",
+   "node": "I_bookbinding"
+  },
+  {
+   "alias": "bookbinding",
+   "node": "I_bookbinding"
+  },
+  {
+   "alias": "chinese calligraphy",
+   "node": "I_calligraphy"
+  },
+  {
+   "alias": "caligrafía china",
+   "node": "I_calligraphy"
+  },
+  {
+   "alias": "hago caligrafía cuando estoy nerviosa",
+   "node": "I_calligraphy"
+  },
+  {
+   "alias": "fanzines en risografía",
+   "node": "I_zines"
+  },
+  {
+   "alias": "fanzines",
+   "node": "I_zines"
+  },
+  {
+   "alias": "zines",
+   "node": "I_zines"
+  },
+  {
+   "alias": "hand tattoos",
+   "node": "I_tattoo_art"
+  },
+  {
+   "alias": "tatuajes de flash en la cocina de una amiga",
+   "node": "I_tattoo_art"
+  },
+  {
+   "alias": "tatuajes a mano alzada",
+   "node": "I_tattoo_art"
+  },
+  {
+   "alias": "рэп по-каталански",
+   "node": "I_hip_hop"
+  },
+  {
+   "alias": "рэп",
+   "node": "I_hip_hop"
+  },
+  {
+   "alias": "vermut с винилом, у меня дома проигрыватель и триста пластинок",
+   "node": "I_vinyl_records"
+  },
+  {
+   "alias": "индийский классический танец, который тут никто не знает",
+   "node": "I_indian_classical_dance"
+  },
+  {
+   "alias": "indian classical dance",
+   "node": "I_indian_classical_dance"
+  },
+  {
+   "alias": "shadow theatre",
+   "node": "I_puppetry"
+  },
+  {
+   "alias": "construyo marionetas",
+   "node": "I_puppetry"
+  },
+  {
+   "alias": "teatro de sombras",
+   "node": "I_puppetry"
+  },
+  {
+   "alias": "подкасты про нераскрытые дела",
+   "node": "I_true_crime"
+  },
+  {
+   "alias": "домино в баре у порта",
+   "node": "I_dominoes"
+  },
+  {
+   "alias": "домино по пятницам",
+   "node": "I_dominoes"
+  },
+  {
+   "alias": "dominoes",
+   "node": "I_dominoes"
+  },
+  {
+   "alias": "gambling",
+   "node": "I_betting"
+  },
+  {
+   "alias": "считаю чужие ставки в уме",
+   "node": "I_betting"
+  },
+  {
+   "alias": "баня по субботам",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "spanish food",
+   "node": "I_spanish_cuisine"
+  },
+  {
+   "alias": "yum cha with people who order properly",
+   "node": "I_dim_sum"
+  },
+  {
+   "alias": "джиу-джитсу два раза в неделю",
+   "node": "I_martial_arts"
+  },
+  {
+   "alias": "паркур на лестницах монжуика",
+   "node": "I_parkour"
+  },
+  {
+   "alias": "parkour",
+   "node": "I_parkour"
+  },
+  {
+   "alias": "cricket in the park on sundays",
+   "node": "I_cricket"
+  },
+  {
+   "alias": "cricket",
+   "node": "I_cricket"
+  },
+  {
+   "alias": "крикет по воскресеньям в парке",
+   "node": "I_cricket"
+  },
+  {
+   "alias": "собираю грибы, места не скажу",
+   "node": "I_mushroom_foraging"
+  },
+  {
+   "alias": "восстановление среды после пожаров",
+   "node": "I_nature_conservation"
+  },
+  {
+   "alias": "собираю мусор с воды",
+   "node": "I_nature_conservation"
+  },
+  {
+   "alias": "trencadís",
+   "node": "I_mosaic_art"
+  },
+  {
+   "alias": "soldadura",
+   "node": "I_metalworking"
+  },
+  {
+   "alias": "польский",
+   "node": "I_polish_exchange"
+  },
+  {
+   "alias": "польский с ошибками, но вслух",
+   "node": "I_polish_exchange"
+  },
+  {
+   "alias": "intercambio de coreano",
+   "node": "I_korean_exchange"
+  },
+  {
+   "alias": "math",
+   "node": "I_mathematics"
+  },
+  {
+   "alias": "бесплатные лекции в cccb",
+   "node": "I_public_lectures"
+  },
+  {
+   "alias": "тарков",
+   "node": "I_escape_from_tarkov"
+  },
+  {
+   "alias": "тарков по ночам",
+   "node": "I_escape_from_tarkov"
+  },
+  {
+   "alias": "juego backgammon en el parque",
+   "node": "I_backgammon"
+  },
+  {
+   "alias": "тавли в кафенио на площади",
+   "node": "I_backgammon"
+  },
+  {
+   "alias": "тавли",
+   "node": "I_backgammon"
+  },
+  {
+   "alias": "flirt",
+   "node": "I_flirting"
+  },
+  {
+   "alias": "фотографирую скалы, а не людей",
+   "node": "I_nature_photography"
+  },
+  {
+   "alias": "fotografar as plantas do campus",
+   "node": "I_nature_photography"
+  },
+  {
+   "alias": "photography",
+   "node": "I_photography"
+  },
+  {
+   "alias": "fotografío fachadas feas",
+   "node": "I_photography"
+  },
+  {
+   "alias": "фаду по четвергам, но не для туристов",
+   "node": "I_folk_traditional_music"
+  },
+  {
+   "alias": "ребетика по средам",
+   "node": "I_folk_traditional_music"
+  },
+  {
+   "alias": "canto fado mal y en serio",
+   "node": "I_folk_traditional_music"
+  },
+  {
+   "alias": "doy clases de árabe a niños los sábados",
+   "node": "I_arabic_exchange"
+  },
+  {
+   "alias": "aperitivo",
+   "node": "I_aperitivo"
+  },
+  {
+   "alias": "vermut",
+   "node": "I_aperitivo"
+  },
+  {
+   "alias": "networking",
+   "node": "I_professional_networking"
+  },
+  {
+   "alias": "field recording",
+   "node": "I_sound_production"
+  },
+  {
+   "alias": "montaje de sonido",
+   "node": "I_sound_production"
+  },
+  {
+   "alias": "asado по воскресеньям, если найдётся терраса",
+   "node": "I_barbecue"
+  },
+  {
+   "alias": "мясо на решётке для двадцати человек",
+   "node": "I_barbecue"
+  },
+  {
+   "alias": "asado de domingo, aunque sea de a dos",
+   "node": "I_barbecue"
+  },
+  {
+   "alias": "квир-вечеринки, но с выходом до двух",
+   "node": "I_queer_party"
+  },
+  {
+   "alias": "translation",
+   "node": "I_translation"
+  },
+  {
+   "alias": "перевожу документы для таких же, как я",
+   "node": "I_translation"
+  },
+  {
+   "alias": "翻訳の話を延々と",
+   "node": "I_translation"
+  },
+  {
+   "alias": "варю пиво на кухне и уже трижды заливал соседей снизу",
+   "node": "I_homebrewing"
+  },
+  {
+   "alias": "roda de samba по воскресеньям",
+   "node": "I_samba"
+  },
+  {
+   "alias": "samba",
+   "node": "I_samba"
+  },
+  {
+   "alias": "dog",
+   "node": "I_dog_owners"
+  },
+  {
+   "alias": "пёс",
+   "node": "I_dog_owners"
+  },
+  {
+   "alias": "реабилитация плеча",
+   "node": "I_injury_rehab"
+  },
+  {
+   "alias": "telar de cintura",
+   "node": "I_weaving"
+  },
+  {
+   "alias": "waist loom",
+   "node": "I_weaving"
+  },
+  {
+   "alias": "maquetas de barcos",
+   "node": "I_scale_models"
+  },
+  {
+   "alias": "milonga los martes",
+   "node": "I_tango"
+  },
+  {
+   "alias": "tango",
+   "node": "I_tango"
+  },
+  {
+   "alias": "бридж",
+   "node": "I_card_games"
+  },
+  {
+   "alias": "cards",
+   "node": "I_card_games"
+  },
+  {
+   "alias": "хор",
+   "node": "I_choir"
+  },
+  {
+   "alias": "смотрю дорамы, которые тут никому не объяснить",
+   "node": "I_kdrama"
+  },
+  {
+   "alias": "hago perfumes",
+   "node": "I_perfume_making"
+  },
+  {
+   "alias": "dance",
+   "node": "I_dancing"
+  },
+  {
+   "alias": "새벽 빈 연습실에서 커버 댄스",
+   "node": "I_dancing"
+  },
+  {
+   "alias": "menteeler ile kahve",
+   "node": "I_mentoring"
+  },
+  {
+   "alias": "open water",
+   "node": "I_open_water_swim"
+  },
+  {
+   "alias": "charity",
+   "node": "I_charity_event"
+  },
+  {
+   "alias": "pottery",
+   "node": "I_ceramics"
+  },
+  {
+   "alias": "graffiti",
+   "node": "I_street_art"
+  },
+  {
+   "alias": "portfolio",
+   "node": "I_portfolio_review"
+  },
+  {
+   "alias": "series",
+   "node": "I_series_episode"
+  },
+  {
+   "alias": "силовая",
+   "node": "I_strength_training"
+  },
+  {
+   "alias": "gym",
+   "node": "I_gym_workout"
+  },
+  {
+   "alias": "haute cuisine",
+   "node": "I_fine_dining"
+  },
+  {
+   "alias": "small group",
+   "node": "I_small_group_chat"
+  },
+  {
+   "alias": "rock",
+   "node": "I_rock_concert"
+  },
+  {
+   "alias": "открытый микрофон в побле-сек",
+   "node": "I_open_mic"
+  },
+  {
+   "alias": "piwo rzemieślnicze",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "подтягивания в парке",
+   "node": "I_calisthenics"
+  },
+  {
+   "alias": "szachy",
+   "node": "I_chess"
+  },
+  {
+   "alias": "интеркамбио на испанском",
+   "node": "I_spanish_exchange"
+  },
+  {
+   "alias": "thesis",
+   "node": "I_thesis_accountability"
+  },
+  {
+   "alias": "играю в футбол на песке по четвергам",
+   "node": "I_football_play"
+  },
+  {
+   "alias": "силовая в межсезонье",
+   "node": "I_strength_training"
+  },
+  {
+   "alias": "fotografío mercados por la mañana",
+   "node": "I_street_photography"
+  },
+  {
+   "alias": "apex",
+   "node": "I_apex_legends"
+  },
+  {
+   "alias": "juego al ajedrez de madrugada",
+   "node": "I_chess"
+  },
+  {
+   "alias": "anime",
+   "node": "I_anime_watch"
+  },
+  {
+   "alias": "deep talk",
+   "node": "I_deep_conversation"
+  },
+  {
+   "alias": "english",
+   "node": "I_english_exchange"
+  },
+  {
+   "alias": "soft drinks",
+   "node": "I_non_alcoholic_drinks"
+  },
+  {
+   "alias": "weightlifting",
+   "node": "I_strength_training"
+  },
+  {
+   "alias": "rooftop",
+   "node": "I_rooftop_evening"
+  },
+  {
+   "alias": "gourmet",
+   "node": "I_fine_dining"
+  },
+  {
+   "alias": "indie",
+   "node": "I_indie_music"
+  },
+  {
+   "alias": "economy",
+   "node": "I_economics"
+  },
+  {
+   "alias": "street food по всему тетуану",
+   "node": "I_street_food"
+  },
+  {
+   "alias": "вожу группы в монтсеррат",
+   "node": "I_mountain_day"
+  },
+  {
+   "alias": "шью",
+   "node": "I_sewing"
+  },
+  {
+   "alias": "sea swimming all year round",
+   "node": "I_open_water_swim"
+  },
+  {
+   "alias": "смотрю по два сезона за ночь и потом жалею",
+   "node": "I_series_episode"
+  },
+  {
+   "alias": "funding",
+   "node": "I_fundraising"
+  },
+  {
+   "alias": "kringloop, шью из старого",
+   "node": "I_sewing"
+  },
+  {
+   "alias": "гуляю по кладбищу побленоу и читаю надписи",
+   "node": "I_local_history"
+  },
+  {
+   "alias": "interesting conversation",
+   "node": "I_topic_chat"
+  },
+  {
+   "alias": "estudo em dupla",
+   "node": "I_study_buddy"
+  },
+  {
+   "alias": "outdoor meal",
+   "node": "I_picnic_group"
+  },
+  {
+   "alias": "formula one",
+   "node": "I_formula_one_watch"
+  },
+  {
+   "alias": "уезжаю в горы раз в месяц, чтобы не сойти с ума",
+   "node": "I_mountain_day"
+  },
+  {
+   "alias": "隅田川沿いを歩く",
+   "node": "I_waterfront_walk"
+  },
+  {
+   "alias": "хочу читать сыну по-каталански без ошибок",
+   "node": "I_catalan_exchange"
+  },
+  {
+   "alias": "старые карты кольсеролы",
+   "node": "I_local_history"
+  },
+  {
+   "alias": "испанский для созвонов, а не для паэльи",
+   "node": "I_spanish_exchange"
+  },
+  {
+   "alias": "вожу коляску по лестницам этого города",
+   "node": "I_accessible_walk"
+  },
+  {
+   "alias": "разбор архитектуры на салфетке",
+   "node": "I_software_engineering"
+  },
+  {
+   "alias": "плаваю по сорок минут без остановки",
+   "node": "I_swimming_pool"
+  },
+  {
+   "alias": "бегаю с похмелья",
+   "node": "I_easy_run"
+  },
+  {
+   "alias": "серии",
+   "node": "I_series_episode"
+  },
+  {
+   "alias": "не пропускаю домашние матчи, даже безнадёжные",
+   "node": "I_football_match_watch"
+  },
+  {
+   "alias": "веду список видов с 1994 года",
+   "node": "I_birdwatching"
+  },
+  {
+   "alias": "schrebergarten",
+   "node": "I_urban_gardening"
+  },
+  {
+   "alias": "маршруты без самолётов по всей европе",
+   "node": "I_train_trip"
+  },
+  {
+   "alias": "куда деть двоих детей в дождливое воскресенье",
+   "node": "I_family_outing"
+  },
+  {
+   "alias": "считаю бюджет поездки в таблице до евро",
+   "node": "I_travel_planning"
+  },
+  {
+   "alias": "каталански",
+   "node": "I_catalan_exchange"
+  },
+  {
+   "alias": "leo manga en español muy despacio",
+   "node": "I_comics"
+  },
+  {
+   "alias": "dibujo en clase en vez de tomar apuntes",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "minecraft с внуком по видеосвязи",
+   "node": "I_minecraft"
+  },
+  {
+   "alias": "typesetting",
+   "node": "I_graphic_design"
+  },
+  {
+   "alias": "код и смарт-контракты",
+   "node": "I_web3"
+  },
+  {
+   "alias": "spanish",
+   "node": "I_spanish_exchange"
+  },
+  {
+   "alias": "beer",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "boxing",
+   "node": "I_boxing_training"
+  },
+  {
+   "alias": "startup",
+   "node": "I_startup_ideas"
+  },
+  {
+   "alias": "cocktail",
+   "node": "I_cocktail_bar"
+  },
+  {
+   "alias": "homework",
+   "node": "I_homework_help"
+  },
+  {
+   "alias": "urban planning",
+   "node": "I_urbanism"
+  },
+  {
+   "alias": "freelance",
+   "node": "I_freelancing"
+  },
+  {
+   "alias": "pomodoro",
+   "node": "I_pomodoro_room"
+  },
+  {
+   "alias": "psychology",
+   "node": "I_psychology_general"
+  },
+  {
+   "alias": "theater",
+   "node": "I_theatre"
+  },
+  {
+   "alias": "trivia",
+   "node": "I_trivia_quiz"
+  },
+  {
+   "alias": "salary",
+   "node": "I_salary_negotiation"
+  },
+  {
+   "alias": "смарт контракты",
+   "node": "I_web3"
+  },
+  {
+   "alias": "smart contracts",
+   "node": "I_web3"
+  },
+  {
+   "alias": "meaningful discussion",
+   "node": "I_deep_conversation"
+  },
+  {
+   "alias": "literature",
+   "node": "I_fiction"
+  },
+  {
+   "alias": "ultimate",
+   "node": "I_ultimate_frisbee"
+  },
+  {
+   "alias": "cante jondo",
+   "node": "I_flamenco"
+  },
+  {
+   "alias": "elder scrolls",
+   "node": "I_elder_scrolls_online"
+  },
+  {
+   "alias": "hago rutas por las escaleras del barrio",
+   "node": "I_neighborhood_walk"
+  },
+  {
+   "alias": "строю деревянные лодки",
+   "node": "I_woodworking"
+  },
+  {
+   "alias": "хересы, до которых тут никому нет дела",
+   "node": "I_wine_tasting"
+  },
+  {
+   "alias": "programming",
+   "node": "I_software_engineering"
+  },
+  {
+   "alias": "ecommerce для маленьких магазинов",
+   "node": "I_ecommerce"
+  },
+  {
+   "alias": "escritura",
+   "node": "I_creative_writing"
+  },
+  {
+   "alias": "nado en el mar también en enero",
+   "node": "I_open_water_swim"
+  },
+  {
+   "alias": "плаваю без гидрокостюма до января",
+   "node": "I_open_water_swim"
+  },
+  {
+   "alias": "смотрю бой по субботам",
+   "node": "I_boxing_mma_watch"
+  },
+  {
+   "alias": "дыхательные",
+   "node": "I_breathwork"
+  },
+  {
+   "alias": "respiración",
+   "node": "I_breathwork"
+  },
+  {
+   "alias": "хожу по местам из списка, который веду в заметках три года",
+   "node": "I_hidden_places"
+  },
+  {
+   "alias": "интервалы на стадионе",
+   "node": "I_interval_run"
+  },
+  {
+   "alias": "рисую чужих собак по фото",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "рисую людей в метро втихаря",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "рисую в четыре утра",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "хожу одна в кино по вторникам",
+   "node": "I_cinema"
+  },
+  {
+   "alias": "хожу в кино одна по средам",
+   "node": "I_cinema"
+  },
+  {
+   "alias": "dégustation de vins géorgiens",
+   "node": "I_wine_tasting"
+  },
+  {
+   "alias": "joyería con cera perdida",
+   "node": "I_jewelry_making"
+  },
+  {
+   "alias": "dibujo cómics sobre mi mudanza",
+   "node": "I_comics"
+  },
+  {
+   "alias": "не пью, и это усложняет всё",
+   "node": "I_non_alcoholic_drinks"
+  },
+  {
+   "alias": "органные концерты в санта-мария-дель-мар",
+   "node": "I_classical_music"
+  },
+  {
+   "alias": "voy a quiz nights y respondo mal",
+   "node": "I_trivia_quiz"
+  },
+  {
+   "alias": "сплю в машине, чтобы не платить за хостел",
+   "node": "I_road_trip"
+  },
+  {
+   "alias": "book club, но не про романы",
+   "node": "I_book_club"
+  },
+  {
+   "alias": "шахматы в доме престарелых",
+   "node": "I_chess"
+  },
+  {
+   "alias": "не знаю никого в этом городе",
+   "node": "I_newcomer_social"
+  },
+  {
+   "alias": "esmorzaret a les deu",
+   "node": "I_breakfast"
+  },
+  {
+   "alias": "examen",
+   "node": "I_exam_prep"
+  },
+  {
+   "alias": "тай-чи по видео",
+   "node": "I_tai_chi"
+  },
+  {
+   "alias": "beach",
+   "node": "I_beach_day"
+  },
+  {
+   "alias": "relationship",
+   "node": "I_long_term_relationship"
+  },
+  {
+   "alias": "skate",
+   "node": "I_skateboarding"
+  },
+  {
+   "alias": "trekking",
+   "node": "I_hiking"
+  },
+  {
+   "alias": "baldur's gate 3",
+   "node": "I_baldurs_gate_3"
+  },
+  {
+   "alias": "huerto",
+   "node": "I_urban_gardening"
+  },
+  {
+   "alias": "plantas",
+   "node": "I_urban_gardening"
+  },
+  {
+   "alias": "viewpoints",
+   "node": "I_city_viewpoints"
+  },
+  {
+   "alias": "green transport",
+   "node": "I_sustainable_mobility"
+  },
+  {
+   "alias": "jewellery",
+   "node": "I_jewelry_making"
+  },
+  {
+   "alias": "morning meal",
+   "node": "I_breakfast"
+  },
+  {
+   "alias": "indie hacking",
+   "node": "I_bootstrapping"
+  },
+  {
+   "alias": "escalada em sintra",
+   "node": "I_outdoor_climbing"
+  },
+  {
+   "alias": "surf, пока плохо",
+   "node": "I_surfing"
+  },
+  {
+   "alias": "juice",
+   "node": "I_non_alcoholic_drinks"
+  },
+  {
+   "alias": "waterfront",
+   "node": "I_waterfront_walk"
+  },
+  {
+   "alias": "online learning",
+   "node": "I_online_course_peer"
+  },
+  {
+   "alias": "ver um jogo do corinthians",
+   "node": "I_football_match_watch"
+  },
+  {
+   "alias": "каталанский",
+   "node": "I_catalan_exchange"
+  },
+  {
+   "alias": "wine",
+   "node": "I_wine_tasting"
+  },
+  {
+   "alias": "swimming",
+   "node": "I_swimming_pool"
+  },
+  {
+   "alias": "birds",
+   "node": "I_birdwatching"
+  },
+  {
+   "alias": "climbing",
+   "node": "I_outdoor_climbing"
+  },
+  {
+   "alias": "cyber",
+   "node": "I_cybersecurity"
+  },
+  {
+   "alias": "topic chat",
+   "node": "I_topic_chat"
+  },
+  {
+   "alias": "escalada",
+   "node": "I_outdoor_climbing"
+  },
+  {
+   "alias": "salsa",
+   "node": "I_salsa_night"
+  },
+  {
+   "alias": "german",
+   "node": "I_german_exchange"
+  },
+  {
+   "alias": "yarn",
+   "node": "I_knitting"
+  },
+  {
+   "alias": "tai",
+   "node": "I_tai_chi"
+  },
+  {
+   "alias": "casual relationships",
+   "node": "I_casual_dating"
+  },
+  {
+   "alias": "writing",
+   "node": "I_creative_writing"
+  },
+  {
+   "alias": "vinho natural",
+   "node": "I_natural_wine"
+  },
+  {
+   "alias": "clay",
+   "node": "I_ceramics"
+  },
+  {
+   "alias": "torno de alfarero",
+   "node": "I_ceramics"
+  },
+  {
+   "alias": "подтягивания",
+   "node": "I_calisthenics"
+  },
+  {
+   "alias": "гоняю на скейте по пассеч-маритим",
+   "node": "I_skateboarding"
+  },
+  {
+   "alias": "warcraft",
+   "node": "I_world_of_warcraft"
+  },
+  {
+   "alias": "семена, которыми меняются старики",
+   "node": "I_community_garden"
+  },
+  {
+   "alias": "знаю все ночные пекарни в городе",
+   "node": "I_late_cafe"
+  },
+  {
+   "alias": "esports",
+   "node": "I_esports_watch"
+  },
+  {
+   "alias": "соседский книжный клуб, который я развалила",
+   "node": "I_book_club"
+  },
+  {
+   "alias": "бегаю по утрам вдоль кармеля",
+   "node": "I_easy_run"
+  },
+  {
+   "alias": "fuerza",
+   "node": "I_strength_training"
+  },
+  {
+   "alias": "nado",
+   "node": "I_swimming_pool"
+  },
+  {
+   "alias": "nadar",
+   "node": "I_swimming_pool"
+  },
+  {
+   "alias": "плаваю в бассейне до работы",
+   "node": "I_swimming_pool"
+  },
+  {
+   "alias": "huerto comunitario junto al matadero",
+   "node": "I_community_garden"
+  },
+  {
+   "alias": "хожу в горы раз в месяц",
+   "node": "I_hiking"
+  },
+  {
+   "alias": "vj para salas pequeñas",
+   "node": "I_digital_art"
+  },
+  {
+   "alias": "jewelry",
+   "node": "I_jewelry_making"
+  },
+  {
+   "alias": "organ concerts",
+   "node": "I_classical_music"
+  },
+  {
+   "alias": "latte art on dead afternoons",
+   "node": "I_coffee_tasting"
+  },
+  {
+   "alias": "рисую пассажиров в маршрутке",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "рисую комиксы про соседей",
+   "node": "I_comics"
+  },
+  {
+   "alias": "тихие места, где можно читать статьи",
+   "node": "I_silent_reading"
+  },
+  {
+   "alias": "бранч по пятницам",
+   "node": "I_brunch"
+  },
+  {
+   "alias": "debates",
+   "node": "I_topic_chat"
+  },
+  {
+   "alias": "decentralized finance",
+   "node": "I_web3"
+  },
+  {
+   "alias": "sketching",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "tea",
+   "node": "I_tea_tasting"
+  },
+  {
+   "alias": "wood",
+   "node": "I_woodworking"
+  },
+  {
+   "alias": "software",
+   "node": "I_software_engineering"
+  },
+  {
+   "alias": "french",
+   "node": "I_french_exchange"
+  },
+  {
+   "alias": "indoor football",
+   "node": "I_futsal"
+  },
+  {
+   "alias": "founder",
+   "node": "I_founder_peer"
+  },
+  {
+   "alias": "exam",
+   "node": "I_exam_prep"
+  },
+  {
+   "alias": "baldur",
+   "node": "I_baldurs_gate_3"
+  },
+  {
+   "alias": "ping pong",
+   "node": "I_table_tennis"
+  },
+  {
+   "alias": "animal shelter",
+   "node": "I_animal_shelter"
+  },
+  {
+   "alias": "comics",
+   "node": "I_comics"
+  },
+  {
+   "alias": "sunset",
+   "node": "I_sunset_walk"
+  },
+  {
+   "alias": "atardecer",
+   "node": "I_sunset_walk"
+  },
+  {
+   "alias": "plants",
+   "node": "I_urban_gardening"
+  },
+  {
+   "alias": "electric bike",
+   "node": "I_e_bike_ride"
+  },
+  {
+   "alias": "discos de rock dos anos 90",
+   "node": "I_rock_concert"
+  },
+  {
+   "alias": "mountains",
+   "node": "I_mountain_day"
+  },
+  {
+   "alias": "specialty coffee",
+   "node": "I_coffee_tasting"
+  },
+  {
+   "alias": "боксирую грушу дома",
+   "node": "I_boxing_training"
+  },
+  {
+   "alias": "pottery wheel",
+   "node": "I_ceramics"
+  },
+  {
+   "alias": "рисую людей в кафе, пока они не видят",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "discuto de política hasta las tres",
+   "node": "I_politics_general"
+  },
+  {
+   "alias": "поднимаюсь бегом, спускаюсь шагом",
+   "node": "I_trail_run"
+  },
+  {
+   "alias": "меняю город каждые полгода",
+   "node": "I_remote_work"
+  },
+  {
+   "alias": "чай с мятой, который наливают с высоты",
+   "node": "I_tea_tasting"
+  },
+  {
+   "alias": "ищу, с кем ходить в оперу",
+   "node": "I_opera"
+  },
+  {
+   "alias": "escribo cartas largas a gente que no contesta",
+   "node": "I_creative_writing"
+  },
+  {
+   "alias": "kafe s koljaskoj",
+   "node": "I_parent_coffee"
+  },
+  {
+   "alias": "menú del día за 12 евро, знаю все в районе",
+   "node": "I_lunch"
+  },
+  {
+   "alias": "highball bars on weeknights",
+   "node": "I_cocktail_bar"
+  },
+  {
+   "alias": "три кота и вечная шерсть на всём",
+   "node": "I_cat_owners"
+  },
+  {
+   "alias": "banco de alimentos",
+   "node": "I_food_bank"
+  },
+  {
+   "alias": "развожу канареек и вожу их на конкурсы",
+   "node": "I_animal_lovers"
+  },
+  {
+   "alias": "подработка на чужих яхтах в перегонах",
+   "node": "I_sailing"
+  },
+  {
+   "alias": "bocadillo de calamares в шесть утра после смены",
+   "node": "I_street_food"
+  },
+  {
+   "alias": "снимаю на видео чужие трюки",
+   "node": "I_video_creation"
+  },
+  {
+   "alias": "ищу, где в барселоне нормальный чай",
+   "node": "I_tea_tasting"
+  },
+  {
+   "alias": "знаю, где в городе едят по-настоящему",
+   "node": "I_neighborhood_food_route"
+  },
+  {
+   "alias": "слушаю лекции на удвоенной скорости",
+   "node": "I_online_course_peer"
+  },
+  {
+   "alias": "sketch",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "poesia",
+   "node": "I_poetry"
+  },
+  {
+   "alias": "park",
+   "node": "I_park_walk"
+  },
+  {
+   "alias": "venture",
+   "node": "I_venture_capital"
+  },
+  {
+   "alias": "blockchain",
+   "node": "I_web3"
+  },
+  {
+   "alias": "defi",
+   "node": "I_web3"
+  },
+  {
+   "alias": "remote",
+   "node": "I_remote_work"
+  },
+  {
+   "alias": "dungeons",
+   "node": "I_dungeons_dragons"
+  },
+  {
+   "alias": "serious relationship",
+   "node": "I_long_term_relationship"
+  },
+  {
+   "alias": "secret locations",
+   "node": "I_hidden_places"
+  },
+  {
+   "alias": "novels",
+   "node": "I_fiction"
+  },
+  {
+   "alias": "gimnasio",
+   "node": "I_gym_workout"
+  },
+  {
+   "alias": "хожу в зал, пока дети в школе",
+   "node": "I_gym_workout"
+  },
+  {
+   "alias": "разбираю гуманитарку по вторникам",
+   "node": "I_food_bank"
+  },
+  {
+   "alias": "屋台めぐりが日課",
+   "node": "I_street_food"
+  },
+  {
+   "alias": "five-a-side по четвергам",
+   "node": "I_futsal"
+  },
+  {
+   "alias": "동네 산책",
+   "node": "I_neighborhood_walk"
+  },
+  {
+   "alias": "играю в шахматы в парке",
+   "node": "I_chess"
+  },
+  {
+   "alias": "боксирую",
+   "node": "I_boxing_training"
+  },
+  {
+   "alias": "boxeo",
+   "node": "I_boxing_training"
+  },
+  {
+   "alias": "мешок в подвале на верди",
+   "node": "I_boxing_training"
+  },
+  {
+   "alias": "бассейн на монжуике, два раза в неделю",
+   "node": "I_swimming_pool"
+  },
+  {
+   "alias": "swimming laps at highbridge",
+   "node": "I_swimming_pool"
+  },
+  {
+   "alias": "хожу на рынок абасерия в семь утра",
+   "node": "I_markets_discovery"
+  },
+  {
+   "alias": "mercados",
+   "node": "I_markets_discovery"
+  },
+  {
+   "alias": "помидоры на балконе",
+   "node": "I_urban_gardening"
+  },
+  {
+   "alias": "монтирую рилсы за 30 евро",
+   "node": "I_video_creation"
+  },
+  {
+   "alias": "интеркамбио для родителей",
+   "node": "I_parents_language_exchange"
+  },
+  {
+   "alias": "смотрю кино с включённым светом",
+   "node": "I_movie_home"
+  },
+  {
+   "alias": "política",
+   "node": "I_politics_general"
+  },
+  {
+   "alias": "politics",
+   "node": "I_politics_general"
+  },
+  {
+   "alias": "тихая компания",
+   "node": "I_quiet_company"
+  },
+  {
+   "alias": "гребной тренажёр в подвале",
+   "node": "I_rowing"
+  },
+  {
+   "alias": "рисую своих персонажей и никому не показываю",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "подтягивания на кольцах у моря",
+   "node": "I_calisthenics"
+  },
+  {
+   "alias": "вожу игры и краснею, когда отыгрываю злодея",
+   "node": "I_dungeons_dragons"
+  },
+  {
+   "alias": "revelado en blanco y negro",
+   "node": "I_film_photography"
+  },
+  {
+   "alias": "кафенио",
+   "node": "I_coffee_chat"
+  },
+  {
+   "alias": "смотрю нарезки вместо целых матчей",
+   "node": "I_football_match_watch"
+  },
+  {
+   "alias": "tenis los domingos",
+   "node": "I_tennis"
+  },
+  {
+   "alias": "security",
+   "node": "I_cybersecurity"
+  },
+  {
+   "alias": "advertising",
+   "node": "I_marketing"
+  },
+  {
+   "alias": "stardew",
+   "node": "I_stardew_valley"
+  },
+  {
+   "alias": "social gathering",
+   "node": "I_casual_hangout"
+  },
+  {
+   "alias": "стретчинг",
+   "node": "I_stretching"
+  },
+  {
+   "alias": "garden",
+   "node": "I_urban_gardening"
+  },
+  {
+   "alias": "user experience",
+   "node": "I_ux_design"
+  },
+  {
+   "alias": "climate",
+   "node": "I_climate_discussion"
+  },
+  {
+   "alias": "interview",
+   "node": "I_interview_practice"
+  },
+  {
+   "alias": "parents coffee",
+   "node": "I_parent_coffee"
+  },
+  {
+   "alias": "circus",
+   "node": "I_circus"
+  },
+  {
+   "alias": "meaningful talk",
+   "node": "I_deep_conversation"
+  },
+  {
+   "alias": "shared office",
+   "node": "I_social_coworking"
+  },
+  {
+   "alias": "tertúlies d'història",
+   "node": "I_history"
+  },
+  {
+   "alias": "accountability",
+   "node": "I_accountability_checkin"
+  },
+  {
+   "alias": "standup",
+   "node": "I_standup"
+  },
+  {
+   "alias": "plant based",
+   "node": "I_vegan_food"
+  },
+  {
+   "alias": "graphic",
+   "node": "I_graphic_design"
+  },
+  {
+   "alias": "шью чехлы для лодок",
+   "node": "I_sewing"
+  },
+  {
+   "alias": "cerâmica aos sábados",
+   "node": "I_ceramics"
+  },
+  {
+   "alias": "фудтраки и всё, что связано с едой на вынос",
+   "node": "I_street_food"
+  },
+  {
+   "alias": "vin nature",
+   "node": "I_natural_wine"
+  },
+  {
+   "alias": "ныряю зимой без гидрокостюма на спор",
+   "node": "I_open_water_swim"
+  },
+  {
+   "alias": "long term relationship",
+   "node": "I_long_term_relationship"
+  },
+  {
+   "alias": "бокс раз в неделю",
+   "node": "I_boxing_training"
+  },
+  {
+   "alias": "клуб починки одежды по четвергам",
+   "node": "I_repair_cafe"
+  },
+  {
+   "alias": "acting",
+   "node": "I_theatre"
+  },
+  {
+   "alias": "играю в футбол на богатель по воскресеньям",
+   "node": "I_football_play"
+  },
+  {
+   "alias": "дыхательные упражнения по бумажке от кардиолога",
+   "node": "I_breathwork"
+  },
+  {
+   "alias": "плёнка, проявляю дома в ванной",
+   "node": "I_film_photography"
+  },
+  {
+   "alias": "рисую планы районов по памяти",
+   "node": "I_drawing"
+  },
+  {
+   "alias": "перешиваю чужие вещи",
+   "node": "I_sewing"
+  },
+  {
+   "alias": "food bank",
+   "node": "I_food_bank"
+  },
+  {
+   "alias": "investing",
+   "node": "I_finance"
+  },
+  {
+   "alias": "cofounder",
+   "node": "I_cofounder_search"
+  },
+  {
+   "alias": "шью на заказ дома",
+   "node": "I_sewing"
+  }
+ ]
+}

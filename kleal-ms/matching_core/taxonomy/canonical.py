@@ -13,6 +13,18 @@ import json
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _JSON = os.path.join(_HERE, "canonical_taxonomy.json")
 
+# ДОПОЛНЕНИЯ ЖИВУТ ОТДЕЛЬНЫМ ФАЙЛОМ, и это не вкусовщина. `canonical_taxonomy.json` — выгрузка из
+# исходной таблицы (405 нод · 1249 алиасов); всё, что дописано в неё руками, исчезнет при следующей
+# перегенерации, причём молча. Поэтому наши узлы и алиасы лежат в `canonical_extra.json` и
+# приклеиваются поверх при загрузке: перегенерация базы их не трогает, а происхождение каждой
+# строки видно по файлу, в котором она лежит.
+#
+# ПОВЕРХ, А НЕ ВМЕСТО: существующий алиас дополнение перебить не может (см. `_load_extra`) — иначе
+# правка «на один случай» тихо переставила бы чужие пары.
+_EXTRA = os.path.join(_HERE, "canonical_extra.json")
+EXTRA_NODES = set()        # id узлов, пришедших из дополнения — для отчётов и проверок
+EXTRA_ALIASES = set()
+
 AVAILABLE = False
 NODES = {}                 # node_id -> {parent,type,domain,ru,en,es,family,macro}
 _TYPE = {}
@@ -54,10 +66,12 @@ def _load():
         n["macro"] = _ancestor(nid, "macro")
     for a in data.get("aliases", []):
         ALIAS[_norm(a["alias"])] = a["node"]
+    _load_extra()                          # узлы дополнения — ДО раскладки алиасов из ru/en/es
     for nid, n in NODES.items():
         for key in ("en", "ru", "es"):
             if n.get(key):
                 ALIAS.setdefault(_norm(n[key]), nid)
+    _extra_aliases()                       # алиасы дополнения — ПОСЛЕ, и только на свободные места
     for e in data.get("edges", []):
         rel, s, d = e.get("rel"), e.get("src"), e.get("dst")
         if rel == "adjacent":
@@ -79,6 +93,44 @@ def _load():
         if pa and pb and pa != pb:
             PURPOSE_BLOCKS.add((pa, pb)); PURPOSE_BLOCKS.add((pb, pa))
     AVAILABLE = True
+
+
+_EXTRA_DATA = {"nodes": [], "aliases": []}
+
+
+def _load_extra():
+    """Приклеить узлы дополнения. Узел с уже занятым id игнорируется, родитель обязан существовать."""
+    global _EXTRA_DATA
+    try:
+        with open(_EXTRA, encoding="utf-8") as f:
+            _EXTRA_DATA = json.load(f)
+    except Exception:
+        _EXTRA_DATA = {"nodes": [], "aliases": []}
+        return
+    for n in _EXTRA_DATA.get("nodes", []):
+        nid = n.get("id")
+        if not nid or nid in NODES:
+            continue                       # база победила: дополнение НЕ переопределяет
+        if n.get("parent") and n["parent"] not in NODES:
+            continue                       # висячий родитель сломал бы _ancestor
+        NODES[nid] = dict(n)
+        _TYPE[nid] = n.get("type") or "activity"
+        if n.get("parent"):
+            _PARENT[nid] = n["parent"]
+        NODES[nid]["family"] = _ancestor(nid, "family")
+        NODES[nid]["macro"] = _ancestor(nid, "macro")
+        EXTRA_NODES.add(nid)
+
+
+def _extra_aliases():
+    """Алиасы дополнения — только на СВОБОДНЫЕ имена. Занятое имя не перебиваем: чужая пара, уже
+    посчитанная по базе, не должна поменяться из-за нашей правки."""
+    for a in _EXTRA_DATA.get("aliases", []):
+        w, nid = _norm(a.get("alias")), a.get("node")
+        if not w or nid not in NODES or w in ALIAS:
+            continue
+        ALIAS[w] = nid
+        EXTRA_ALIASES.add(w)
 
 
 def _bare(x):
