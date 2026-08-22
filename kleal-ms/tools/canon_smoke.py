@@ -93,6 +93,29 @@ for t, x, want in [("market", "go-to-market", 3), ("market", "stock market", 3),
                    ("craft beer", "craft beer", 4), ("рыбалка", "подлёдная рыбалка", 3)]:
     check("wshare: %s ~ %s" % (t, x), TX.similarity([t], [x])[0], want)
 
+# ---------------------------------------------------------------- 2b. ширина и своё слово
+from matching_core.feature_builder.builder import _sem_value  # noqa: E402
+
+FULL = {"per_topic": {"a": 4, "b": 4, "c": 4, "d": 4}, "natural": 4}
+THIN = {"per_topic": {"a": 4, "b": 0, "c": 0, "d": 0}, "natural": 4}
+HANDLE = {"per_topic": {"a": 4, "b": 0, "c": 0, "d": 0}, "natural": 0}
+L3FULL = {"per_topic": {"a": 3, "b": 3, "c": 3, "d": 3}, "natural": 3}
+check("покрытие различает", _sem_value(4, FULL, 4) > _sem_value(4, THIN, 4), True)
+# Балл НЕ штрафует за ручку: штраф откатан, он бил по подробным описаниям на своём языке.
+check("ручка балл не режет", _sem_value(4, THIN, 4), _sem_value(4, HANDLE, 4))
+# ГЛАВНЫЙ ИНВАРИАНТ: полоса уровня 4 целиком выше полосы уровня 3, иначе ярус и балл разойдутся
+check("полосы уровней не пересекаются", _sem_value(4, HANDLE, 4) > _sem_value(3, L3FULL, 4), True)
+
+# ручка опознаётся и НЕ лишается яруса (её откатывали — см. graph.py)
+TX.set_topics_of(lambda x: {"natación en aguas abiertas": {"swimming", "water"}}.get(
+    str(x).lower(), {str(x).lower()}))
+b, _, info = TX.similarity_detail(["swimming"], ["natación en aguas abiertas", "swimming"])
+check("ручка держит ярус", b, 4)
+check("ручка помечена как не своё", info["natural"], 0)
+b, _, info = TX.similarity_detail(["chess"], ["chess"])
+check("своё слово помечено своим", (b, info["natural"]), (4, 4))
+TX.set_topics_of(None)
+
 # ---------------------------------------------------------------- 3. путь поиска только читает
 import urllib.request  # noqa: E402
 

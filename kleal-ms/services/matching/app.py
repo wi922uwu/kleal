@@ -1808,14 +1808,31 @@ def match_candidates(intent, prof, ctx=None, diag=None, want=None):
     prev_q = getattr(_QCTX, "bridge", None)
     try:
         from matching_core.taxonomy import graph as _TX
-        prev_fn = _TX._bridge_fn()
+        prev_fn, prev_tof = _TX._bridge_fn(), _TX._topics_of_fn()
     except Exception:
-        _TX, prev_fn = None, None
+        _TX, prev_fn, prev_tof = None, None, None
     try:
+        _phr = str(intent.get("_query") or intent.get("phrase") or "")
         _qb = resolve_query_topics(
-            [str(t).lower() for t in (intent.get("topics") or [])],
-            str(intent.get("_query") or ""))
+            [str(t).lower() for t in (intent.get("topics") or [])], _phr)
         _set_query_bridge(_qb)
+        # ФРАЗА ЗАПРОСА — ТОЖЕ ТЕМА. Сравнивались только темы от фильтрации, а сама фраза не
+        # сравнивалась ни с чем: поиск «mercado gastronómico» не находил человека, у которого
+        # ровно «mercado gastronómico» и написано, — первый ярус оставался пуст, а он лежал во
+        # втором рядом с чужими. Добавляем короткую фразу (до трёх слов — длинная это предложение,
+        # а не название занятия), чтобы буквальное попадание оставалось буквальным и не зависело
+        # от того, дописала ли фильтрация нужную ручку.
+        #
+        # СТАВИТСЯ ПЕРВОЙ, и это не косметика: normalize_for_scoring режет темы до четырёх
+        # (TOPIC_CAP в kleal_intent.py), а фильтрация обычно ровно четыре и возвращает — дописанная
+        # в конец фраза молча отваливалась. Проверено: «mercado gastronómico» не находил человека
+        # с ровно таким интересом, темы до движка доходили без фразы. Первое место ей и по смыслу:
+        # это собственные слова человека, они весомее четвёртой догадки модели.
+        _pn = _norm_phrase(_phr)
+        if _pn and len(_pn.split()) <= 3:
+            _tl = [str(t).lower() for t in (intent.get("topics") or [])]
+            if _pn not in _tl:
+                intent = dict(intent, topics=[_pn] + _tl)
         # И ДВИЖКУ ТОЖЕ. Ярус решает не `topical`, а таксономия matching_core: впрыснутые
         # помощники она берёт «для совместимости подписи» и не использует. Без этой строки мост
         # работал ровно там, где ничего не решает: `topical` давал 3, а движок ставил T5 «нет
@@ -1824,6 +1841,10 @@ def match_candidates(intent, prof, ctx=None, diag=None, want=None):
         if _TX is not None:
             _qbs = set(_qb or ())
             _TX.set_bridge(lambda x: topics_join(_qbs, topics_of(x)) if _qbs else False)
+            # Тот же разбор фразы отдаём для опознания ПРОИЗВОДНЫХ РУЧЕК: дописанное машиной слово
+            # не имеет права быть точным совпадением. Без этого «языковой обмен» приводил человека
+            # про уход за котами первым ярусом — по общей ручке `exchange`.
+            _TX.set_topics_of(topics_of)
     except Exception:
         _set_query_bridge(())
     try:
@@ -1833,6 +1854,7 @@ def match_candidates(intent, prof, ctx=None, diag=None, want=None):
         if _TX is not None:
             try:
                 _TX.set_bridge(prev_fn)
+                _TX.set_topics_of(prev_tof)
             except Exception:
                 pass
 

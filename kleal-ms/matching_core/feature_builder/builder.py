@@ -43,6 +43,39 @@ def _langs(seq):
     return {str(l)[:2].lower() for l in (seq or []) if str(l).strip()}
 
 
+# ШИРИНА СОВПАДЕНИЯ ВНУТРИ УРОВНЯ. Уровень отвечает на «про то ли это» и определяет ярус; сам по
+# себе он груб — значений всего четыре, поэтому у всех восьми человек в выдаче получался один и тот
+# же балл, и порядок между ними был произвольным. Замерено на живых выдачах: 250 кандидатов по 32
+# запросам дали ВСЕГО ПЯТЬ разных баллов, из них 71.3 — сто шестьдесят четыре раза.
+#
+# Внутри уровня различаем двумя признаками, оба уже посчитаны таксономией:
+# различаем ПОКРЫТИЕМ: какую долю тем запроса человек закрыл. Закрывший три темы из четырёх сильнее
+# закрывшего одну, хотя уровень у обоих четвёртый.
+#
+# ПРОБОВАЛИ И ОТКАТИЛИ: штрафовать совпадение, добытое машинной ручкой, а не собственным словом
+# (`natural` в taxonomy/graph.py — признак остался, он честный, но балл на него не смотрит). На
+# живых выдачах штраф бил ровно по тем, кого система должна беречь: преподавательница йоги, у
+# которой своё «йогу преподавала» плюс дописанный `yoga`, вставала НИЖЕ человека с вином и одним
+# тегом yoga; «продакт-менеджмент» кириллицей проигрывал playdate-профилю с английским тегом.
+# Причина понятна задним числом: чем подробнее человек описал увлечение на своём языке, тем вернее
+# его английская ручка окажется «производной» — то есть штраф начислялся за богатое описание.
+#
+# ПОЛОСЫ УРОВНЕЙ НЕ ПЕРЕСЕКАЮТСЯ, и это проверяемо: минимальный множитель 0.75, поэтому худшая
+# четвёрка даёт 0.75 > 0.65 = потолок тройки. Ярус и балл не могут разойтись.
+_BREADTH_FLOOR = 0.75          # доля балла, которую даёт сам уровень; остальное — покрытие тем
+
+
+def _sem_value(best, info, n_topics):
+    """Значение semantic_activity: уровень плюс ширина попадания, не покидая полосу уровня."""
+    base = SEM_VALUE[best]
+    per = (info or {}).get("per_topic") or {}
+    if n_topics > 0 and per:
+        cover = sum(SEM_VALUE.get(v, 0.0) for v in per.values()) / (float(n_topics) * SEM_VALUE[4])
+    else:
+        cover = 1.0
+    return round(base * (_BREADTH_FLOOR + (1.0 - _BREADTH_FLOOR) * max(0.0, min(1.0, cover))), 4)
+
+
 def build_features(intent, prof, cand, domain):
     """A->B evidence по 7 группам -> {group: (state, value, detail)}. Один matched-набор на semantic_activity
     (без double-count). online -> location not_applicable (исключается из знаменателя, C#2)."""
@@ -54,9 +87,10 @@ def build_features(intent, prof, cand, domain):
     if not topics or not ints:
         F["semantic_activity"] = (UNKNOWN, None, "")
     else:
-        best, matched = TX.similarity(topics, ints)
+        best, matched, info = TX.similarity_detail(topics, ints)
         if best >= 1:
-            F["semantic_activity"] = (K_MATCH, SEM_VALUE[best], ", ".join(sorted(matched)[:3]))
+            F["semantic_activity"] = (K_MATCH, _sem_value(best, info, len(topics)),
+                                      ", ".join(sorted(matched)[:3]))
         else:
             F["semantic_activity"] = (K_MISM, 0.05, "")
 
