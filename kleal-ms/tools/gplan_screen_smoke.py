@@ -327,6 +327,10 @@ cant = call("/api/agent/gplan-status", {"id": PH3, "self": M[1], "status": "cant
                                         "idem": "sh3c%d" % S})
 check("«не смогу» сохраняется как live-статус",
       (((cant.get("plan") or {}).get("my_live") or {}).get("status")) == "cant_make_it", cant)
+cant_counts = (cant.get("plan") or {}).get("side_counts") or {}
+check("«не смогу» исключает участника из счётчика присутствующих",
+      sum(int(cant_counts.get(k) or 0) for k in ("in_person", "call", "undecided")) == 2,
+      cant_counts)
 g3 = screen(OWN, gidH3)[3]
 check("live-статус не удаляет человека из группы", len(g3.get("members") or []) == 3,
       [m.get("name") for m in (g3.get("members") or [])])

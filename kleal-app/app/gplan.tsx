@@ -773,8 +773,8 @@ function formNote(
   }
   if (mode === 'update') return GPLAN.updateNote(String(p.when || ''), T('новое время', 'the new time'));
   if (mode === 'link') return GPLAN.linkNote(String(p.when || ''));
-  if (mode === 'details') return GPLAN.hybridIncomplete();
-  if (a.hybrid && p.details_ready === false) return GPLAN.hybridIncomplete();
+  if (mode === 'details') return GPLAN.hybridMissingNote(!!p.needs_place);
+  if (a.hybrid && p.details_ready === false) return GPLAN.hybridMissingNote(!!p.needs_place);
   const total = Number(a.g?.joined_count || (a.g?.members || []).length || 0);
   switch (f) {
     case 'none': return GPLAN.createNote();
@@ -932,7 +932,7 @@ function Actions(a: {
     return a.isOwner
       ? <><P label={p?.needs_place ? GPLAN.savePlace() : GPLAN.saveLink()} onPress={a.onDetailsOpen} />
            <S label={GPLAN.openChat()} onPress={a.onOpenChat} /></>
-      : <><Text style={s.dockNote}>{GPLAN.hybridIncomplete()}</Text>
+      : <><Text style={s.dockNote}>{GPLAN.hybridMissingNote(!!p.needs_place)}</Text>
            <S label={GPLAN.openChat()} onPress={a.onOpenChat} /></>;
   }
 

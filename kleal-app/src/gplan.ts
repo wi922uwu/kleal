@@ -129,6 +129,11 @@ export const GPLAN = {
   hybridMissingPlace: () => T('Ссылка сохранена. Осталось добавить место.', 'The link is set. Add the place.'),
   hybridMissingLink: () => T('Место сохранено. Осталось добавить ссылку.', 'The place is set. Add the call link.'),
   hybridIncomplete: () => T('Сначала добавь место и ссылку на звонок.', 'Add both the place and the call link first.'),
+  hybridMissingNote: (needsPlace: boolean) => needsPlace
+    ? T('После добавления места группа сможет подтвердить план.',
+        'Once the place is added, the group can confirm the plan.')
+    : T('После добавления ссылки группа сможет подтвердить план.',
+        'Once the call link is added, the group can confirm the plan.'),
   savePlace: () => T('Сохранить место', 'Save the place'),
   chooseSide: () => T('Как ты присоединишься?', 'How are you joining?'),
   inPerson: () => T('Лично', 'In person'),

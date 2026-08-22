@@ -5251,9 +5251,14 @@ def _gp_public(p, me=""):
     place = str(p.get("place") or "").strip()
     link = str(p.get("link") or "").strip()
     sides = dict(p.get("sides") or {})
+    live = dict(p.get("live") or {})
     side_counts = {"in_person": 0, "call": 0, "undecided": 0}
     for name in act:
-        side = (sides.get(_norm_name(name)) or {}).get("side")
+        key = _norm_name(name)
+        # «Не смогу прийти» сохраняет участника в группе, но не обещает группе его присутствие.
+        if (live.get(key) or {}).get("status") == "cant_make_it":
+            continue
+        side = (sides.get(key) or {}).get("side")
         if side in ("in_person", "call"):
             side_counts[side] += 1
         else:
@@ -5295,8 +5300,8 @@ def _gp_public(p, me=""):
         # GR.45a: кто уже в пути, кто опаздывает, кто на месте. Отдаётся ВСЕЙ группе, в отличие
         # от один-на-один, где это личное: здесь «опаздываю» адресовано всем сразу, и знать об
         # этом должен каждый, а не только тот, кто откроет чат.
-        "live": dict(p.get("live") or {}),
-        "my_live": (p.get("live") or {}).get(_norm_name(me)),
+        "live": live,
+        "my_live": live.get(_norm_name(me)),
         # Встреча уже идёт — кадр меняется с «заперто, через два часа» на «происходит сейчас».
         "started": bool(p.get("starts_at")) and time.time() >= float(p.get("starts_at") or 0)
                    and p.get("state") in ("confirmed", "locked"),

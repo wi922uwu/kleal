@@ -35,8 +35,8 @@ import { usePreventRemove } from '@react-navigation/native';
 import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
-  NATURE_TRAITS, NATURE_MAX, GROUP_SIZE_PLUS,
-  STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
+  NATURE_TRAITS, NATURE_MAX,
+  STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL, GROUP_SIZE,
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
@@ -114,6 +114,8 @@ export default function Intent() {
   const title = String(params.title || legacy || '').trim();
 
   const [step, setStep] = useState<IntentStepId>('how');
+  /** GO.06a: Plus в продукте ещё не подключён, но ветка Large group обязана объяснить предел. */
+  const [groupSizeOpen, setGroupSizeOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(() => ({
     date: dateChips(1)[0].key,
     minutes: 20 * 60,
@@ -139,8 +141,6 @@ export default function Intent() {
   const [dragging, setDragging] = useState(false);
   /** O.07a: лист пояса держит выбор у себя и отдаёт его в черновик только по «Применить». */
   const [tzOpen, setTzOpen] = useState(false);
-  /** GR.06a: большая группа объясняет Plus, но не включает несуществующий тариф. */
-  const [groupPlusOpen, setGroupPlusOpen] = useState(false);
   const [tzPick, setTzPick] = useState('');
   /**
    * O.10a: лист правки над сводкой. editPick — РАСКРЫТАЯ строка (одна за раз: лист растёт вверх
@@ -397,6 +397,10 @@ export default function Intent() {
 
   /** Битая ссылка не пускает ни «Дальше» на шаге, ни «Применить» в листе — правило одно на оба. */
   const linkBroken = (v: Draft) => !!v.link.trim() && !looksLikeUrl(v.link);
+  /** В Group Online ссылка — третий обязательный шаг: без неё приглашённые придут в пустой звонок. */
+  const groupOnline = draft.mode === 'online' && draft.size === 'group';
+  const groupLinkBlocked = (v: Draft) =>
+    linkBroken(v) || (v.mode === 'online' && v.size === 'group' && !v.link.trim());
 
   const sizeBlockOf = (v: Draft, set: SetDraft) => (
     <View style={s.chipRowWrap}>
@@ -661,9 +665,10 @@ export default function Intent() {
   /** Последний шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
   const lastStep: IntentStepId =
     draft.mode === 'offline' ? 'place' : draft.mode === 'hybrid' ? 'both' : 'link';
-  // На борде три смысловых шага: время, люди (включая уточнение характера), место/ссылка.
-  // `nature` остаётся отдельным вопросом, но не изображает несуществующий четвёртый этап.
-  const detailIndex = step === 'when' ? 0 : step === 'who' || step === 'nature' ? 1 : 2;
+  const compactThreeStep = groupOnline || draft.mode === 'offline';
+  const detailIndex = step === 'when' ? 0 : step === 'who' ? 1
+    : draft.mode === 'offline' && step === 'nature' ? 1
+    : compactThreeStep ? 2 : step === 'nature' ? 2 : 3;
 
   /**
    * ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЗАПИСАН ПОРЯДОК ШАГОВ НАЗАД.
@@ -692,11 +697,13 @@ export default function Intent() {
    * листе срабатывает дважды: лист закрывается по onRequestClose И экран отступает на шаг.
    */
   const goBack = () => {
-    if (groupPlusOpen) { setGroupPlusOpen(false); return; }
+    if (groupSizeOpen) { setGroupSizeOpen(false); return; }
     if (tzOpen || editOpen) { setTzOpen(false); setEditOpen(false); return; }
     if (busy) { cancelSearch(); return; }
     if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; setAck(false); }
-    const prev = prevStep(step);
+    // GO.07–GO.09 содержит ровно три шага: у Group Online link идёт сразу после audience.
+    // Остальные флоу сохраняют свой шаг характера и общий prevStep без изменений.
+    const prev = groupOnline && step === 'link' ? 'who' : prevStep(step);
     if (!prev) { router.back(); return; }
     setStep(prev);
     // Шаг назад обязан открыться сверху — иначе он показывается серединой карточки, которую уже
@@ -710,7 +717,7 @@ export default function Intent() {
    * отступить — держим экран и отдаём событие тому же goBack(); на первом шаге предотвращение
    * снимается само, и жест честно уводит в разговор создания.
    */
-  usePreventRemove(step !== 'how' || groupPlusOpen || tzOpen || editOpen || busy, (e) => {
+  usePreventRemove(step !== 'how' || groupSizeOpen || tzOpen || editOpen || busy, (e) => {
     // Перехват висит на СНЯТИИ ЭКРАНА, а не на жесте, и под него попадает всё, что уводит с
     // маршрута, — включая «Все интенты» (dismissTo → POP_TO). Эта кнопка обязана остаться
     // сквозным выходом: без неё из мастера стало бы некуда деться, кроме как назад по шагам.
@@ -766,7 +773,7 @@ export default function Intent() {
                       sub={sizeSub(k)}
                       on={draft.size === k}
                       onPress={() => k === 'group-plus'
-                        ? setGroupPlusOpen(true)
+                        ? setGroupSizeOpen(true)
                         : choose({ size: k }, 'when')}
                     />
                   ))}
@@ -793,7 +800,7 @@ export default function Intent() {
                       : DETAILS.subPlace()
                     }
                   />
-                  <Stepper current={detailIndex} />
+                  <Stepper current={detailIndex} count={compactThreeStep ? 3 : 4} />
                 </>
               )}
 
@@ -808,7 +815,7 @@ export default function Intent() {
               {step === 'who' ? (
                 <View style={s.card}>
                   {whoBlockOf(draft, setDraft)}
-                  <Cta label={INTENT.next()} onPress={() => setStep('nature')} />
+                  <Cta label={INTENT.next()} onPress={() => setStep(groupOnline ? 'link' : 'nature')} />
                 </View>
               ) : null}
 
@@ -828,7 +835,7 @@ export default function Intent() {
               {step === 'link' ? (
                 <View style={s.card}>
                   {linkBlock}
-                  <Cta label={INTENT.next()} disabled={linkBroken(draft)} onPress={toSummary} />
+                  <Cta label={INTENT.next()} disabled={groupLinkBlocked(draft)} onPress={toSummary} />
                 </View>
               ) : null}
 
@@ -893,6 +900,24 @@ export default function Intent() {
           </View>
         </View>
 
+        {/* GO.06a. Покупки Plus ещё нет: первичная кнопка показана, но честно выключена. */}
+        <Sheet visible={groupSizeOpen} onClose={() => setGroupSizeOpen(false)} title={GROUP_SIZE.plusTitle()}>
+          <Text style={s.plusBody}>{GROUP_SIZE.plusBody()}</Text>
+          <View style={[s.cta, { opacity: 0.45 }]} accessibilityRole="button" accessibilityState={{ disabled: true }}>
+            <Text style={s.ctaText}>{GROUP_SIZE.getPlus()}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            style={s.plusKeep}
+            onPress={() => {
+              setGroupSizeOpen(false);
+              choose({ size: 'group' }, 'when');
+            }}
+          >
+            <Text style={s.plusKeepText}>{GROUP_SIZE.keepAtFive()}</Text>
+          </Pressable>
+        </Sheet>
+
         {/* O.07a — часовой пояс. Выбор живёт в tzPick и попадает в черновик только по «Применить». */}
         <EditSheet
           open={tzOpen}
@@ -936,7 +961,7 @@ export default function Intent() {
           onAccept={() => {
             // Битую ссылку не пускает и «Дальше» на шаге. Пустить её тут значило бы завести
             // обход собственной проверки через правку.
-            if (!edraft || linkBroken(edraft)) return;
+            if (!edraft || groupLinkBlocked(edraft)) return;
             setDraft(edraft);
             setEditOpen(false);
           }}
@@ -969,33 +994,10 @@ export default function Intent() {
             </View>
           )) : null}
           {edraft && linkBroken(edraft) ? <Text style={s.err}>{DETAILS.linkBad()}</Text> : null}
+          {edraft && edraft.mode === 'online' && edraft.size === 'group' && !edraft.link.trim() ? (
+            <Text style={s.err}>{DETAILS.groupLinkRequired()}</Text>
+          ) : null}
         </EditSheet>
-
-        <Sheet
-          visible={groupPlusOpen}
-          onClose={() => setGroupPlusOpen(false)}
-          title={GROUP_SIZE_PLUS.title()}
-        >
-          <Text style={s.plusBody}>{GROUP_SIZE_PLUS.body()}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: true }}
-            disabled
-            style={[s.plusPrimary, { opacity: 0.45 }]}
-          >
-            <Text style={s.plusPrimaryText}>{GROUP_SIZE_PLUS.get()}</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            style={s.plusSecondary}
-            onPress={() => {
-              setGroupPlusOpen(false);
-              choose({ size: 'group' }, 'when');
-            }}
-          >
-            <Text style={s.plusSecondaryText}>{GROUP_SIZE_PLUS.keep()}</Text>
-          </Pressable>
-        </Sheet>
 
         {busy ? <Searching onCancel={cancelSearch} /> : null}
       </View>
@@ -1054,10 +1056,10 @@ function Ack() {
 }
 
 /** Степпер 1–2–3 с кадров O.07–O.09: пройденное и текущее — красным, дальше — серым. */
-function Stepper({ current }: { current: number }) {
+function Stepper({ current, count = 4 }: { current: number; count?: number }) {
   return (
     <View style={s.stepper}>
-      {[0, 1, 2].map((i) => (
+      {Array.from({ length: count }, (_, i) => i).map((i) => (
         <React.Fragment key={i}>
           {i > 0 ? <View style={[s.stepLine, i <= current && s.stepLineOn]} /> : null}
           <View style={[s.stepDot, i <= current && s.stepDotOn, i === current && s.stepDotNow]}>
@@ -1370,16 +1372,6 @@ const s = StyleSheet.create({
   ctaText: { ...type.button, color: color.onPrimary } as any,
   err: { ...type.bodySmall, color: color.primary, marginTop: space.sm } as any,
   plusBody: { ...type.body, color: color.muted, marginBottom: space.sm } as any,
-  plusPrimary: {
-    height: 52, borderRadius: rad.full, backgroundColor: color.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  plusPrimaryText: { ...type.button, color: color.onPrimary } as any,
-  plusSecondary: {
-    height: 52, borderRadius: rad.full, backgroundColor: color.fg,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  plusSecondaryText: { ...type.button, color: color.card } as any,
 
   dock: { paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
   field: {
@@ -1407,6 +1399,11 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   sumEditText: { ...type.button, color: color.fg } as any,
+  plusKeep: {
+    height: 52, borderRadius: rad.full, backgroundColor: color.ink,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  plusKeepText: { ...type.button, color: color.onPrimary } as any,
 
   veil: {
     ...StyleSheet.absoluteFillObject, backgroundColor: color.bg, alignItems: 'center',

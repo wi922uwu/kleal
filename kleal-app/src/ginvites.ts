@@ -146,13 +146,15 @@ export async function sendGroupInvite(who: string, to: string, intent: any, titl
   const name = String(to || '').trim();
   if (!from || !name) return { ok: false, error: 'no name' };
   if (!gid) {
+    // Группа должна получить ТОТ ЖЕ интент, который человек только что проверил в сводке.
+    // Сокращённая копия теряла link/dateKey/audience: для Group Online это означало, что
+    // созданный на первом приглашении gintent уже не знал ссылку звонка, хотя сводка её показывала.
     const payload = {
-      topics: intent?.topics || [], mode: intent?.mode,
-      time: intent?.time, place: intent?.place || intent?.area,
-      // Точное место не показывается приглашённым до согласия, но должно пережить набор группы:
-      // сервер хранит его внутри интента и использует при создании плана.
-      ...(intent?.address ? { address: intent.address } : {}),
-      ...(intent?.radiusKm != null ? { radiusKm: intent.radiusKm } : {}),
+      ...(intent || {}),
+      topics: intent?.topics || [],
+      mode: intent?.mode,
+      time: intent?.time,
+      place: intent?.place || intent?.area,
     };
     const c: any = await gapi.create(from, title, payload, newIdem('gic')).catch(() => null);
     const g = c?.group;
