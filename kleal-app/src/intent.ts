@@ -1,0 +1,526 @@
+/**
+ * Мастер интента — новый борд «1:1 Online», кадры O.05–O.09.
+ *
+ * UX-каркас: копия и правила здесь, вид в app/intent.tsx. Английские строки взяты с кадров
+ * ДОСЛОВНО, русские написаны, а не переведены машинно.
+ *
+ * Устройство по борду:
+ *
+ *  O.05  «How do you want to meet?» — строки Offline / Online / Hybrid с галочкой. Кнопки «Дальше»
+ *        нет: выбор строки сам ведёт дальше, агент коротко отвечает «Awesome!».
+ *  O.06  «How many people will there be?» — 1:1 или группа, устроено так же.
+ *  O.07–O.09  «A few details, and I'll search» — три шага под степпером 1–2–3: когда (дата,
+ *        круглый циферблат времени, часовой пояс) → кого (аудитория и кольцо возраста) → где
+ *        происходит звонок (ссылка). Последний шаг зависит от типа: у офлайна вместо ссылки район и
+ *        радиус (кадр прежнего борда OF.09 — в новом наборе офлайн-кадра нет).
+ *
+ *        ГИБРИД получает ОБА блока на одном шаге — кадр HY.09 «3 of 3 · place and link». Раньше он
+ *        шёл по ветке ссылки: считалось, что место гибрид оставляет свободным. Борд говорит
+ *        обратное и прямым текстом — HY.20a: «Anyone who can't come in person has no way to join
+ *        until you add a link», HY.20b: «Anyone who wants to come in person has nowhere to go until
+ *        you name a place — hybrid needs both».
+ *
+ * Тема сюда приходит ГОТОВОЙ из разговора создания (app/create.tsx): вопрос «что хочешь сделать?»
+ * здесь не задаётся — человек на него только что ответил.
+ *
+ * Ключи (offline/online/hybrid, 1:1/group, коды районов) НЕ придуманы заново — совпадают с теми,
+ * что уходят в /api/agent/plan и /api/agent/match.
+ */
+import { T, getLang } from './i18n';
+
+export type IntentStepId = 'how' | 'size' | 'when' | 'who' | 'nature' | 'place' | 'link' | 'both' | 'summary';
+
+// ---------------------------------------------------------------- общее
+
+export const INTENT = {
+  allIntents: () => T('Все интенты', 'All intents'),
+  awesome: () => T('Отлично!', 'Awesome!'),
+  next: () => T('Дальше', 'Next'),
+};
+
+// ---------------------------------------------------------------- O.05 · тип встречи
+
+export const STEP_HOW = {
+  ask: () => T('Как хочешь встретиться?', 'How do you want to meet?'),
+};
+
+/** [ключ, EN, RU, подпись EN, подпись RU]. Подписи — с кадра, дословно. */
+export const FORMATS: [string, string, string, string, string][] = [
+  ['offline', 'Offline', 'Офлайн', 'In person', 'Вживую'],
+  ['online', 'Online', 'Онлайн', 'Video / voice', 'Видео или голос'],
+  ['hybrid', 'Hybrid', 'Гибрид', 'Both online & offline', 'И онлайн, и вживую'],
+];
+export const formatLabel = (k: string) => {
+  const f = FORMATS.find((x) => x[0] === k);
+  return f ? T(f[2], f[1]) : k;
+};
+export const formatSub = (k: string) => {
+  const f = FORMATS.find((x) => x[0] === k);
+  return f ? T(f[4], f[3]) : '';
+};
+
+// ---------------------------------------------------------------- O.06 · сколько людей
+
+export const STEP_SIZE = {
+  ask: () => T('Сколько вас будет?', 'How many people will there be?'),
+};
+
+/**
+ * «Минимум 3» в подписи группы — то же GROUP_MIN_TOTAL, из которого собран групповой слой сервера:
+ * группа — это три человека и больше, включая тебя.
+ *
+ * Ключи совпадают с ALLOWED_FORMATS матчинга (matching_core/intent_compiler/compiler.py) и уходят
+ * в intent.format НАПРЯМУЮ. Это не косметика: §5.3 считает интент достаточно описанным только когда
+ * заполнены и mode, и format. Проверено на стенде — без format ответ приходит с
+ * minimally_sufficient.ok = false, то есть поиск идёт по недосказанному запросу.
+ */
+export const GROUP_MIN_TOTAL = 3;
+export const SIZES: [string, string, string, string, string][] = [
+  ['1:1', '1:1', '1:1', 'Just the two of us', 'Только вы вдвоём'],
+  // Без «3–5»: верхняя граница — не обещание продукта, а текущая настройка сервера (max_total),
+  // и печатать её на кнопке значит обещать число, которое правится в конфиге. Нижняя остаётся:
+  // она правило — группа не собирается, пока не наберётся троих, и об этом человек знать должен.
+  ['group', 'Group', 'Группа', 'free · needs at least 3', 'бесплатно · нужно минимум 3'],
+];
+export const sizeLabel = (k: string) => {
+  const s = SIZES.find((x) => x[0] === k);
+  return s ? T(s[2], s[1]) : k;
+};
+export const sizeSub = (k: string) => {
+  const s = SIZES.find((x) => x[0] === k);
+  return s ? T(s[4], s[3]) : '';
+};
+
+// ---------------------------------------------------------------- O.07–O.09 · детали
+
+/**
+ * Черты, которые можно попросить в другом человеке. Это ТЕ ЖЕ оси, что заполняет тест личности
+ * (src/profile.ts, AXIS_VALUE), — иначе просить было бы нечего: у кандидата в профиле лежат
+ * именно они.
+ *
+ * Взяты не все десять: спрашивать «что он приносит» и «что делает, когда отменили» на этапе
+ * поиска рано — человек этого про незнакомца не выбирает. Осталось то, что решает, сойдётесь ли
+ * вы за первый вечер: темп, глубина, энергия, планирование и одна черта про то, что он даёт.
+ *
+ * Внутри оси выбор ОДИН: «спокойный» и «заводной» — это две стороны одной оси, и отметить обе
+ * значит не отметить ничего. Экран так и ведёт себя — второй выбор заменяет первый.
+ */
+export type NatureTrait = { axis: string; token: string; label: () => string };
+
+export const NATURE_TRAITS: NatureTrait[] = [
+  { axis: 'energy', token: 'energised', label: () => T('Заводной', 'High-energy') },
+  { axis: 'energy', token: 'drained', label: () => T('Спокойный', 'Low-key') },
+  { axis: 'depth', token: 'deep', label: () => T('Говорит по душам', 'Goes deep') },
+  { axis: 'depth', token: 'light', label: () => T('Лёгкий, с юмором', 'Light and funny') },
+  { axis: 'pace', token: 'fast', label: () => T('Открывается сразу', 'Opens up fast') },
+  { axis: 'pace', token: 'slow', label: () => T('Сначала присматривается', 'Takes their time') },
+  { axis: 'planning', token: 'advance', label: () => T('Договаривается заранее', 'Plans ahead') },
+  { axis: 'planning', token: 'spontaneous', label: () => T('Спонтанный', 'Spontaneous') },
+  { axis: 'give', token: 'listen', label: () => T('Умеет слушать', 'A good listener') },
+  { axis: 'give', token: 'instigate', label: () => T('Вытащит из дома', 'Gets you out') },
+];
+
+/** Сколько черт имеет смысл просить. Больше — сужение без выигрыша, и об этом сказано вслух. */
+export const NATURE_MAX = 3;
+
+export const DETAILS = {
+  title: () => T('Пара деталей — и я ищу', "A few details, and I'll search"),
+  subWhen: () => T('Когда и где удобно?', 'When and where works best?'),
+  subWho: () => T('Кого ты ищешь?', 'Who are you looking for?'),
+  subNature: () => T('Какой человек тебе подойдёт?', 'What kind of person suits you?'),
+  subLink: () => T('Где пройдёт звонок?', 'Where does the call happen?'),
+  /** HY.09 — «place and link». Гибриду нужны оба, и на HY.20a/20b борд говорит это словами. */
+  subBoth: () => T('И место, и ссылка — гибриду нужны оба.',
+                   'Both the place and the link — hybrid needs both.'),
+  /** Строка листа правки у гибрида: один шаг, поэтому и строка одна. */
+  bothRow: () => T('Место и ссылка', 'Place and link'),
+  subPlace: () => T('Где удобно встретиться?', 'Where works best to meet?'),
+
+  date: () => T('Дата', 'Date'),
+  time: () => T('Время', 'Time'),
+  timeZone: () => T('Часовой пояс', 'Time Zone'),
+
+  audience: () => T('Аудитория', 'Audience'),
+  age: () => T('Возраст', 'Age'),
+
+  nature: () => T('Характер', 'Character'),
+  natureHint: () =>
+    T('Необязательно. Отметь то, что важно, — Kleal поднимет таких людей выше, но не спрячет остальных.',
+      'Optional. Mark what matters — Kleal lifts those people higher, it does not hide the rest.'),
+  natureLimit: () => T('Больше трёх не нужно — сузит выдачу без пользы.',
+                       'Three is enough — more narrows the results without helping.'),
+  natureSkip: () => T('Мне не принципиально', 'No preference'),
+
+  link: () => T('Ссылка', 'Link'),
+  linkPlaceholder: () => 'https://yourlink.com',
+  /** Дисклеймер с кадра O.09, дословно. */
+  linkNote: () =>
+    T(
+      'Ссылками делятся сами люди. Открывать её или нет — решаешь ты. Kleal не отвечает за сторонний контент и действия.',
+      'External links are shared by users. You choose whether to open them. Kleal isn’t responsible for third-party content or actions.'
+    ),
+
+  district: () => T('Район', 'District'),
+  /** OF.09: двигают КАРТУ, булавка стоит в центре — см. RadiusMap.native, там про долгое нажатие. */
+  dragPin: () => T('Ищешь не от дома? Подвинь карту под булавку.',
+                   'Searching from somewhere else? Move the map under the pin.'),
+  centerMoved: () => T('Ищем вокруг этой точки.', 'We’ll search around this spot.'),
+  backHome: () => T('Вернуть к дому', 'Back to home'),
+  radius: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),
+  /** OF.09: точное место — опционально уже на создании; чужим его не видно до взаимного «да». */
+  exactAddress: () => T('Точный адрес', 'Exact address'),
+  exactAddressPlaceholder: () => T('Кафе, бар или парк…', 'Search for a café, bar or park'),
+  exactAddressNote: () =>
+    T(
+      'Пока идёт подбор, виден только район. Точным местом вы делитесь после того, как оба согласитесь встретиться.',
+      'Only the district is shown while you’re matching. You share the exact spot after you both agree to meet.'
+    ),
+
+  /** O.10a: правку с битой ссылкой не применяем — на шаге мастера её так же не пускает «Дальше».
+   *  Молча отключённая кнопка читается как поломка листа, поэтому причина названа словами. */
+  linkBad: () => T('Ссылка не похожа на ссылку — поправь её, иначе применить нечего.',
+                   'That doesn’t look like a link — fix it before applying.'),
+
+  // O.07a — лист выбора пояса. Заголовок с кадра дословно.
+  tzSheetTitle: () => T('Часовой пояс GMT', 'Time Zone GMT'),
+  apply: () => T('Применить', 'Apply'),
+  cancel: () => T('Отмена', 'Cancel'),
+};
+
+/**
+ * O.10a — лист «что поменять» над сводкой. Подписи строк — с кадра; значения экран собирает из
+ * черновика сам.
+ *
+ * Строка РАСКРЫВАЕТСЯ и правится тут же. Раньше ключ строки был именем шага мастера, и «Изменить»
+ * туда уводило — а у каждого шага своя кнопка «Дальше», ведущая ДАЛЬШЕ по цепочке: правка одной
+ * даты стоила четырёх экранов. Поэтому здесь больше нет ни «Темы интента» (её выбирают в
+ * разговоре создания, шага под неё в мастере нет вовсе), ни «Режима встречи» (от него зависит,
+ * какие поля в этом же листе есть), ни подписи кнопки «Изменить» — кнопка теперь «Применить».
+ */
+export const EDIT_SHEET = {
+  title: () => T('Что хочешь поменять?', 'What are you going change?'),
+  format: () => T('Формат', 'Format'),
+  datetime: () => T('Дата и время', 'Date & Time'),
+  audience: () => T('Аудитория и возраст', 'Audience & Age'),
+  link: () => T('Ссылка', 'Link'),
+  noData: () => T('Нет данных', 'No Data'),
+};
+
+/** Город без пути и подчёркиваний: Europe/Buenos_Aires → «Buenos Aires». Строки листа O.07a. */
+export function tzCity(tz: string): string {
+  return String(tz || '').replace(/_/g, ' ').split('/').pop() || tz;
+}
+
+/**
+ * Даты для чипов — от сегодня, как на кадре: «Wed Jul 22», по-русски «ср, 22 июл.». Интент живёт
+ * часы-дни, календарь на месяц ему не нужен.
+ */
+export function dateChips(n = 8, from = new Date()): { key: string; label: string }[] {
+  const out: { key: string; label: string }[] = [];
+  const loc = getLang() === 'ru' ? 'ru-RU' : 'en-US';
+  for (let i = 0; i < n; i++) {
+    const d = new Date(from);
+    d.setDate(d.getDate() + i);
+    out.push({
+      // Ключ — из ЛОКАЛЬНЫХ частей даты, не из toISOString(): та отдаёт UTC, и после местной
+      // полуночи (пока UTC ещё вчера) чип «Пт, 7» носил ключ «-06» — план строился на вчера,
+      // и сервер честно отвечал IN_THE_PAST. Поймано вживую в симуляторе в 02:58.
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+      label: d.toLocaleDateString(loc, { weekday: 'short', month: 'short', day: 'numeric' }),
+    });
+  }
+  return out;
+}
+
+/** Минуты суток → «20:00». Одно место, чтобы циферблат, поля и запрос не разошлись в формате. */
+export function hhmm(minutes: number): string {
+  const m = ((Math.round(minutes) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Строка времени, которая уходит В ЗАПРОС, — всегда английская, независимо от языка интерфейса.
+ *
+ * Срочность на той стороне определяется поиском слов в тексте: SOON_WORDS = today/tonight/evening/
+ * tomorrow. Русских слов там нет ни одного. Отправить «сегодня 20:00» — значит получить urgency
+ * «none»: запрос на сегодняшний вечер ранжировался бы как «когда-нибудь».
+ */
+export function timeQueryFromDate(dateKey: string, minutes: number, from = new Date()): string {
+  const t = hhmm(minutes);
+  const today = from.toISOString().slice(0, 10);
+  const tomorrow = new Date(from);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (dateKey === today) return `today ${t}`;
+  if (dateKey === tomorrow.toISOString().slice(0, 10)) return `tomorrow ${t}`;
+  const d = new Date(dateKey + 'T12:00:00');
+  return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${t}`;
+}
+
+/**
+ * Человеческая подпись времени интента: «сб, 8 авг. · 20:00». Едет рядом с английским `time`,
+ * который читает сервер, — приглашённому показывается она, а не «today 20:00».
+ */
+export function planWhenLabel(dateKey: string, minutes: number): string {
+  const loc = getLang() === 'ru' ? 'ru-RU' : 'en-US';
+  const d = new Date(dateKey + 'T12:00:00');
+  const day = d.toLocaleDateString(loc, { weekday: 'short', day: 'numeric', month: 'short' });
+  return `${day} · ${hhmm(minutes)}`;
+}
+
+/** Часовой пояс устройства — IANA-имя, оно же уходит в ctx.tz. */
+/**
+ * Чужое местное время — и ТОЛЬКО когда оно отличается от своего.
+ *
+ * Спека: «Таймзона в UI — только при расхождении. Иначе визуальный шум в 95 % случаев». До этого
+ * пояс печатался всегда и всегда СВОЙ: чужого не было нигде, поэтому строку «20:00 Barcelona ·
+ * 19:00 London» с кадров O.14/O.21/O.C3 показать было нечем.
+ *
+ * Пустая строка означает «показывать нечего»: либо пояс собеседника неизвестен, либо он тот же.
+ * Выдумывать «19:00 в Лондоне» без данных нельзя — лучше не сказать ничего.
+ */
+export function peerLocalTime(startsAt?: number | null, peerTz?: string, ru = true): string {
+  const at = Number(startsAt || 0);
+  const tz = String(peerTz || '').trim();
+  if (!at || !tz) return '';
+  const mine = deviceTz();
+  if (!mine || tz === mine) return '';
+  try {
+    const d = new Date(at * 1000);
+    const fmt = (zone: string) =>
+      new Intl.DateTimeFormat(ru ? 'ru-RU' : 'en-GB',
+        { hour: '2-digit', minute: '2-digit', timeZone: zone, hour12: false }).format(d);
+    const theirs = fmt(tz);
+    // Совпало по часам — расхождения для человека нет, даже если зоны названы по-разному.
+    if (theirs === fmt(mine)) return '';
+    // Город из имени зоны: «Europe/London» → «London». Он понятнее смещения в часах.
+    const city = tz.split('/').pop()?.replace(/_/g, ' ') || tz;
+    return `${theirs} ${city}`;
+  } catch {
+    return '';
+  }
+}
+
+export function deviceTz(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+/** Подпись пояса в духе кадра («Barcelona, Spain (GMT+2)») — имя зоны плюс смещение. */
+export function tzDisplay(tz: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+      .formatToParts(new Date());
+    const off = parts.find((p) => p.type === 'timeZoneName')?.value || '';
+    return `${tz.replace(/_/g, ' ').split('/').pop()} (${off})`;
+  } catch {
+    return tz;
+  }
+}
+
+/**
+ * Зоны для выпадающего списка: устройство первым, дальше несколько ходовых. Список короткий
+ * намеренно — это выбор «я сейчас не там, где телефон думает», а не справочник всех зон мира.
+ */
+export function tzOptions(): string[] {
+  const base = [deviceTz(), 'Europe/Madrid', 'Europe/London', 'Europe/Berlin', 'Europe/Moscow', 'UTC'];
+  return base.filter((v, i) => base.indexOf(v) === i);
+}
+
+/**
+ * Наивная проверка ссылки. Не валидатор: по дисклеймеру борда ссылка — ответственность человека,
+ * здесь отсекается только то, что заведомо не откроется.
+ */
+export function looksLikeUrl(s: string): boolean {
+  return /^https?:\/\/\S+\.\S+/.test(String(s || '').trim());
+}
+
+// ---------------------------------------------------------------- O.10 · сводка перед поиском
+
+export const SUMMARY_O10 = {
+  title: () => T('Вот что получилось', "Here's what I got"),
+  /** Пузырь-примечание с кадра, дословно. */
+  note: () =>
+    T(
+      'Проверь — поправить можно что угодно. Поиск мы подгоним под настройки твоего профиля и этот интент.',
+      "Check it — edit anything if needed. We'll tailor the search to your profile settings and this intent."
+    ),
+  mode: () => T('Тип', 'Mode'),
+  format: () => T('Формат', 'Format'),
+  category: () => T('Категория', 'Category'),
+  audience: () => T('Аудитория', 'Audience'),
+  summaryLabel: () => T('Сводка Kleal:', 'Kleal summary:'),
+  start: () => T('Начать поиск', 'Start search'),
+  edit: () => T('Поправить', 'Edit'),
+};
+
+/** «Thu, 23 July» с кадра — дата сводки, на языке интерфейса. */
+export function summaryDate(dateKey: string): string {
+  const loc = getLang() === 'ru' ? 'ru-RU' : 'en-US';
+  const d = new Date(dateKey + 'T12:00:00');
+  return d.toLocaleDateString(loc, { weekday: 'short', day: 'numeric', month: 'long' });
+}
+
+/** Смещение пояса для строки времени: «(GMT+2)». Вырезается из tzDisplay, чтобы не считать дважды. */
+export function tzOffsetLabel(tz: string): string {
+  const m = tzDisplay(tz).match(/\(([^)]+)\)/);
+  return m ? `(${m[1]})` : '';
+}
+
+/**
+ * Профиль для поисковых вызовов — match, plan, intents.
+ *
+ * Собирался вручную в трёх экранах сразу (мастер интента, создание, разговор с Бадди), и с
+ * «Моей активностью» появилась бы четвёртая копия. Место опасное: `languages` сервер читает как
+ * ОБЪЕКТ (`languages.comfortable`), и на плоском списке ранжирование падает целиком, не сказав ни
+ * слова — эта ошибка уже случалась и стоила поиска, который «просто никого не находит».
+ *
+ * `override` — координаты, выбранные в мастере: человек мог указать не то место, где живёт.
+ */
+export function searchProfile(p: any, override?: { lat?: number; lon?: number }) {
+  return {
+    name: p?.name,
+    age: p?.age,
+    gender: p?.gender,
+    city: p?.city,
+    lat: override?.lat ?? p?.geo?.coarseLat,
+    lon: override?.lon ?? p?.geo?.coarseLon,
+    languages: p?.languages || {},
+  };
+}
+
+/**
+ * «Сводка Kleal» на O.10. На борде этот текст пишет модель («You want to speak Spanish, not study
+ * it…») — серверной ручки под это пока нет, и в каркасе стоит детерминированный шаблон из
+ * собранных фактов. Он не выдумывает ничего, чего человек не выбирал; умный пересказ — отдельная
+ * работа на стороне buddy, помечено в ROADMAP.
+ */
+export function intentSummaryText(o: {
+  topic: string; size?: string; sex?: string; minAge: number; maxAge: number;
+  dateKey: string; minutes: number;
+  /** Отмеченные черты одной строкой. Пусто — про характер в сводке не говорим вовсе. */
+  nature?: string;
+}): string {
+  const who =
+    o.size === 'group'
+      ? T('небольшую компанию', 'a small group')
+      : T('одного человека', 'one person');
+  const aud = o.sex && o.sex !== 'Any'
+    ? (o.sex === 'Female' ? T('женщину', 'a woman') : T('мужчину', 'a man')) + ', '
+    : '';
+  const when = `${summaryDate(o.dateKey)} ${T('около', 'around')} ${hhmm(o.minutes)}`;
+  // Характер — предпочтение, и сводка называет его именно так. Сказать «Kleal ищет спокойного»
+  // значило бы пообещать фильтр, которого нет: ранжирование поднимает таких выше, но не прячет
+  // остальных (см. wantPersona в app/intent.tsx).
+  const nat = String(o.nature || '').trim()
+    ? ' ' + T(`Из похожих подниму тех, кто ближе к «${o.nature!.toLowerCase()}».`,
+              `Among the matches I'll lift those closer to "${o.nature!.toLowerCase()}".`)
+    : '';
+  return (o.topic
+    ? T(
+        `Ты хочешь: ${o.topic}. Kleal ищет ${who} — ${aud}${o.minAge}–${o.maxAge}, со свободным временем ${when}.`,
+        `You're after: ${o.topic}. Kleal is looking for ${who} — ${aud}${o.minAge}–${o.maxAge}, free ${when}.`
+      )
+    : T(
+        `Kleal ищет ${who} — ${aud}${o.minAge}–${o.maxAge}, со свободным временем ${when}.`,
+        `Kleal is looking for ${who} — ${aud}${o.minAge}–${o.maxAge}, free ${when}.`
+      )) + nat;
+}
+
+// ---------------------------------------------------------------- районы (офлайн, прежний кадр OF.09)
+
+export const DISTRICTS: [string, string, string][] = [
+  ['center', 'Центр', 'Center'],
+  ['west', 'Запад', 'West'],
+  ['east', 'Восток', 'East'],
+  ['south', 'Юг', 'South'],
+  ['beach', 'Пляж', 'Beach'],
+];
+export const districtLabel = (k: string) => {
+  const d = DISTRICTS.find((x) => x[0] === k);
+  return d ? T(d[1], d[2]) : k;
+};
+/** Район в запросе — канонически английский: он попадает в карточки и планы, которые видят оба. */
+export const districtQuery = (k?: string) => {
+  const d = DISTRICTS.find((x) => x[0] === k);
+  return d ? d[2] : k || '';
+};
+
+// ---------------------------------------------------------------- поиск и выдача
+
+/** OF.11. */
+export const SEARCHING = {
+  title: () => T('Ищу людей, группы\nи места для тебя', 'Finding people, groups\nand places for you'),
+  step: () => T('Смотрю подходящие форматы', 'Scanning matching formats'),
+  note: () => T('Это займёт пару секунд.', 'This will take just a moment.'),
+  /**
+   * После шести секунд экран обязан заговорить. Подбор занимает полторы секунды; всё, что дольше,
+   * — уже не «пара секунд», и молчащий кружок в этот момент читается как зависание.
+   */
+  slow: () => T('Дольше обычного — связь медленная. Ещё жду.',
+                'Taking longer than usual — the connection is slow. Still waiting.'),
+  /** Выход есть всегда. Экран без выхода и есть то, что называют «висит». */
+  cancel: () => T('Отменить', 'Cancel'),
+  /** Отменил сам — это не сбой, и говорить о сбое нельзя. */
+  cancelled: () => T('Поиск отменён.', 'Search cancelled.'),
+  failed: () => T('Поиск не дошёл до сервера. Проверь связь и попробуй ещё раз.',
+                  'The search never reached the server. Check your connection and try again.'),
+};
+
+/** OF.12 / OF.11a. */
+export const RESULTS = {
+  best: () => T('Лучшее совпадение по запросу', 'Best fit for your request'),
+  empty: () => T('Пока никого по такому запросу', 'Nobody matches that yet'),
+  emptyNote: () =>
+    T(
+      'Можно расширить поиск — по расстоянию, времени или близким занятиям.',
+      'We can widen the search — by distance, time, or related activities.'
+    ),
+  widen: () => T('Расширить поиск', 'Widen the search'),
+  /**
+   * «Ещё» и «шире» — РАЗНОЕ, и путать их нельзя.
+   *
+   * «Показать ещё» отдаёт продолжение того же ранжирования: девятый после восьмого, запрос не
+   * меняется. «Расширить поиск» ослабляет сам запрос и потому обязано объясняться словами.
+   * Пока была только вторая кнопка, «покажи больше людей» было нечем выполнить: ослабление
+   * условий впускает больше народу в отбор, но вперёд выходят те же лучшие восемь — проверено,
+   * все четыре оси вернули ту же восьмёрку.
+   */
+  more: () => T('Показать ещё', 'Show more'),
+  allShown: (n: number) => T(`Это все — ${n}`, `That's everyone — ${n}`),
+  exhausted: () =>
+    T('Шире уже некуда — по этому запросу пока никого.', 'Nothing wider to try — nobody matches this yet.'),
+  found: (n: number) => T(`Нашлось: ${n}`, `Found ${n}`),
+};
+
+/**
+ * §12 лестница расширения.
+ *
+ * Оси — те же четыре, что понимает /api/agent/expand, и порядок здесь не произвольный: сначала
+ * самые дешёвые (близкие занятия), в конце самая грубая (удвоить радиус). Сервер расширяет РОВНО
+ * одну ось за раз и, если ось не передать, всегда берёт первую — то есть без этого списка кнопка
+ * «Расширить поиск» на второе нажатие возвращала бы ровно то же самое.
+ *
+ * Подпись к каждой ступени — обычными словами, а не кодом оси: человек должен понимать, почему
+ * выдача изменилась. Молчаливое расширение — это подмена его запроса своим.
+ */
+export type ExpandAxis = 'adjacent' | 'exactness' | 'parent' | 'radius';
+export const EXPAND_LADDER: ExpandAxis[] = ['adjacent', 'exactness', 'parent', 'radius'];
+
+export const axisExplain = (axis: ExpandAxis, radiusKm?: number) => {
+  switch (axis) {
+    case 'adjacent':
+      return T('Добавила близкие занятия, не только то, что ты назвал(а).',
+               'Added neighbouring activities, not just the one you named.');
+    case 'exactness':
+      return T('Перестала требовать точное совпадение.', 'Stopped requiring an exact match.');
+    case 'parent':
+      return T('Взяла категорию шире.', 'Went one category wider.');
+    case 'radius':
+      return radiusKm
+        ? T(`Расширила круг поиска до ${radiusKm} км.`, `Widened the search radius to ${radiusKm} km.`)
+        : T('Расширила круг поиска.', 'Widened the search radius.');
+  }
+};

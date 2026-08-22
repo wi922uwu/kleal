@@ -1,0 +1,435 @@
+[
+ {
+  "id": "nb1_dating_verified_combo",
+  "intent": {
+   "topics": [
+    "вино",
+    "прогулки"
+   ],
+   "type": "dating",
+   "role": "meet",
+   "mode": "offline",
+   "time": "This weekend",
+   "verifiedOnly": true,
+   "minAge": 18
+  },
+  "expect": {
+   "only_dating_ok": true,
+   "include_any": [
+    "dating_open"
+   ],
+   "exclude": [
+    "dating_closed",
+    "walk_eixample",
+    "minor_16"
+   ],
+   "nonempty": true
+  }
+ },
+ {
+  "id": "nb2_maxage_only_blocks_unknown_age",
+  "intent": {
+   "topics": [
+    "coffee"
+   ],
+   "type": "social",
+   "role": "meet",
+   "mode": "offline",
+   "time": "Tomorrow",
+   "maxAge": 35
+  },
+  "expect": {
+   "include_any": [
+    "coffee_en"
+   ],
+   "exclude": [
+    "sparse_one",
+    "minor_16"
+   ],
+   "nonempty": true
+  }
+ },
+ {
+  "id": "nb3_minage_only_blocks_unknown_age",
+  "intent": {
+   "topics": [
+    "падель",
+    "padel"
+   ],
+   "type": "sport",
+   "role": "play",
+   "mode": "offline",
+   "time": "Tomorrow 19:00",
+   "minAge": 30
+  },
+  "expect": {
+   "include_any": [
+    "padel"
+   ],
+   "top1": [
+    "padel"
+   ],
+   "exclude": [
+    "sparse_one"
+   ],
+   "forbid_outreach": [
+    "tennis"
+   ]
+  }
+ },
+ {
+  "id": "nb4_tight_radius_walk",
+  "intent": {
+   "topics": [
+    "прогулки",
+    "погулять"
+   ],
+   "type": "social",
+   "role": "meet",
+   "mode": "offline",
+   "time": "Today evening",
+   "radiusKm": 2
+  },
+  "expect": {
+   "include_any": [
+    "walk_eixample"
+   ],
+   "top1": [
+    "walk_eixample",
+    "dating_open",
+    "dating_closed"
+   ],
+   "exclude": [
+    "walk_far"
+   ],
+   "nonempty": true
+  }
+ },
+ {
+  "id": "nb5_huge_radius_keeps_locals_first",
+  "intent": {
+   "topics": [
+    "прогулки",
+    "walking"
+   ],
+   "type": "social",
+   "role": "meet",
+   "mode": "offline",
+   "time": "Today evening",
+   "radiusKm": 5000
+  },
+  "expect": {
+   "include_any": [
+    "walk_eixample"
+   ],
+   "order": [
+    [
+     "walk_eixample",
+     "walk_far"
+    ]
+   ],
+   "nonempty": true
+  }
+ },
+ {
+  "id": "nb6_madrid_searcher_flips_geo",
+  "profile": {
+   "name": "Madrid Tester",
+   "vibe": "chill",
+   "geo": {
+    "coarseLat": 40.416,
+    "coarseLon": -3.703
+   },
+   "languages": {
+    "comfortable": [
+     "ru",
+     "en"
+    ]
+   },
+   "interests": []
+  },
+  "intent": {
+   "topics": [
+    "прогулки",
+    "walking"
+   ],
+   "type": "social",
+   "role": "meet",
+   "mode": "offline",
+   "time": "Today evening"
+  },
+  "expect": {
+   "include_any": [
+    "walk_far"
+   ],
+   "exclude": [
+    "walk_eixample"
+   ],
+   "order": [
+    [
+     "walk_far",
+     "walk_eixample"
+    ]
+   ],
+   "nonempty": true
+  }
+ },
+ {
+  "id": "nb7_searcher_without_geo",
+  "profile": {
+   "name": "NoGeo Tester",
+   "vibe": "chill",
+   "languages": {
+    "comfortable": [
+     "ru",
+     "en"
+    ]
+   },
+   "interests": []
+  },
+  "intent": {
+   "topics": [
+    "кофе"
+   ],
+   "type": "social",
+   "role": "meet",
+   "mode": "offline",
+   "time": "Today evening"
+  },
+  "expect": {
+   "include_any": [
+    "coffee_ru"
+   ],
+   "cross_lang": [
+    "coffee_en"
+   ],
+   "exclude": [
+    "minor_16",
+    "paused_user",
+    "blocker",
+    "overloaded"
+   ],
+   "nonempty": true
+  }
+ },
+ {
+  "id": "nb8_online_mode_geo_not_applicable",
+  "profile": {
+   "name": "Madrid Tester",
+   "vibe": "chill",
+   "geo": {
+    "coarseLat": 40.416,
+    "coarseLon": -3.703
+   },
+   "languages": {
+    "comfortable": [
+     "ru",
+     "en"
+    ]
+   },
+   "interests": []
+  },
+  "intent": {
+   "topics": [
+    "прогулки",
+    "walking"
+   ],
+   "type": "social",
+   "role": "meet",
+   "mode": "online",
+   "time": "Today evening"
+  },
+  "expect": {
+   "include_any": [
+    "walk_eixample"
+   ],
+   "order": [
+    [
+     "walk_eixample",
+     "walk_far"
+    ]
+   ],
+   "nonempty": true
+  }
+ },
+ {
+  "id": "nb9_exact_required_drops_t2_keeps_t0",
+  "intent": {
+   "topics": [
+    "бранч"
+   ],
+   "type": "social",
+   "role": "meet",
+   "mode": "offline",
+   "time": "This weekend",
+   "exactMatchRequired": true
+  },
+  "expect": {
+   "include_any": [
+    "brunch"
+   ],
+   "top1": [
+    "brunch",
+    "coffee_en"
+   ],
+   "exclude": [
+    "english_club",
+    "barca_fans",
+    "dinner_food"
+   ],
+   "nonempty": true
+  }
+ },
+ {
+  "id": "nb10_quiet_hours_day_side_open",
+  "intent": {
+   "topics": [
+    "кино",
+    "cinema"
+   ],
+   "type": "social",
+   "role": "watch",
+   "mode": "offline",
+   "time": "Today evening"
+  },
+  "expect": {
+   "include_any": [
+    "cinema"
+   ],
+   "readiness_exact": {
+    "night_quiet": "open_now"
+   },
+   "no_outreach_tags_if_present": [
+    "busy_user",
+    "no_policy"
+   ]
+  }
+ },
+ {
+  "id": "nb11_broadconsent_stops_at_parent",
+  "intent": {
+   "topics": [
+    "падель",
+    "padel"
+   ],
+   "type": "sport",
+   "role": "play",
+   "mode": "offline",
+   "time": "Tomorrow 19:00",
+   "broadConsent": true
+  },
+  "expect": {
+   "include_any": [
+    "padel"
+   ],
+   "top1": [
+    "padel"
+   ],
+   "forbid_outreach": [
+    "gym_cross",
+    "yoga",
+    "running",
+    "football_play"
+   ]
+  }
+ },
+ {
+  "id": "nb12_two_required_langs_subset",
+  "intent": {
+   "topics": [
+    "шахматы",
+    "chess"
+   ],
+   "type": "gaming",
+   "role": "play",
+   "mode": "offline",
+   "time": "Flexible",
+   "requiredLanguages": [
+    "ru",
+    "en"
+   ]
+  },
+  "expect": {
+   "include_any": [
+    "chess_board"
+   ],
+   "exclude": [
+    "no_langs"
+   ],
+   "nonempty": true
+  }
+ },
+ {
+  "id": "nb13_night_domain_scope_beats_quiet",
+  "intent": {
+   "topics": [
+    "кофе",
+    "coffee"
+   ],
+   "type": "social",
+   "role": "meet",
+   "mode": "offline",
+   "time": "tonight"
+  },
+  "now": 1752613200,
+  "expect": {
+   "include_any": [
+    "coffee_ru"
+   ],
+   "readiness_exact": {
+    "games_only_recv": "passive_discovery",
+    "night_quiet": "open_later"
+   },
+   "no_outreach_tags_if_present": [
+    "games_only_recv",
+    "night_quiet",
+    "busy_user"
+   ]
+  }
+ },
+ {
+  "id": "nb14_multi_topic_no_full_match",
+  "intent": {
+   "topics": [
+    "рыбалка",
+    "йога",
+    "крипта"
+   ],
+   "type": "social",
+   "role": "meet",
+   "mode": "offline",
+   "time": "This weekend"
+  },
+  "expect": {
+   "nonempty": true,
+   "top1": [
+    "fishing",
+    "yoga",
+    "crypto"
+   ],
+   "exclude": [
+    "coffee_ru",
+    "coffee_en",
+    "dota_active"
+   ]
+  }
+ },
+ {
+  "id": "nb15_empty_topics_no_crash_no_leak",
+  "intent": {
+   "topics": [],
+   "type": "social",
+   "role": "meet",
+   "mode": "offline",
+   "time": "Flexible"
+  },
+  "expect": {
+   "exclude": [
+    "minor_16",
+    "paused_user",
+    "blocker",
+    "overloaded"
+   ]
+  }
+ }
+]
