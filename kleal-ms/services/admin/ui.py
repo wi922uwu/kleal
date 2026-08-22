@@ -355,22 +355,32 @@ VIEWS.lab = () => {
       <div class="hint" style="margin:8px 0">
         ищет: <b>${esc((r.searcher||{}).name||'—')}</b>
         · темы: ${(r.topics||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('') || '<span class="bad">ни одной</span>'}
-        · кандидатов: <b>${num((r.candidates||[]).length)}</b>${r.hasMore?' <span class="tag">есть ещё</span>':''}
+        · кандидатов: <b>${num((r.candidates||[]).length)}</b>${
+          r.hasMore ? ' <span class="tag">есть ещё</span>'
+          : ((r.candidates||[]).length < (r.limit||8)
+             ? ` <span class="tag">это все, кто подходит</span>` : '')}
         · виды: ${[...new Set((r.candidates||[]).map(c=>c.kind))].map(k=>`<span class="tag">${esc(k)}</span>`).join('')}</div>
       <div class="scroll"><table><thead><tr><th>кто</th><th>ярус</th><th>полоса</th><th>почему</th><th>интересы</th></tr></thead><tbody>
       ${(r.candidates||[]).map(c=>`<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.tier||'')}</td>
         <td>${esc(c.band_ru||c.band||'')}</td>
         <td class="muted">${esc((c.reasons_ru||c.reasons||[]).join('; ')).slice(0,120)}</td>
         <td>${(c.interests||[]).slice(0,4).map(i=>`<span class="tag">${esc(i)}</span>`).join('')}</td></tr>`).join('')}
-      </tbody></table></div>`:''}
+      </tbody></table></div>
+      ${(r.candidates||[]).length < (r.limit||8) && !r.hasMore ? `<div class="hint" style="margin-top:8px">
+        Меньше, чем просили, — и это не обрезка: движок отдал всех, у кого нашлось хоть какое-то
+        совпадение с темами <b>${(r.topics||[]).map(t=>esc(t)).join(', ')||'—'}</b>. Остальные не показаны
+        не потому, что не поместились, а потому что общего с запросом у них нет вовсе.</div>` : ''}`:''}
   </div>`;
 };
 async function runLab(){
+  // ВСЁ ИЗ ПОЛЕЙ ЧИТАЕТСЯ ДО busy(): он зовёт render(), а тот пересобирает разметку заново и
+  // возвращает контролам значения из S. Счётчик читался ПОСЛЕ — и выбор человека затирался
+  // восьмёркой из состояния ровно в тот момент, когда его собирались отправить.
   S.lq = document.getElementById('lq').value.trim();
   S.ls = document.getElementById('ls').value.trim();
+  const _n = document.getElementById('ln'); S.ln = _n ? parseInt(_n.value,10)||8 : 8;
   if (!S.lq){ S.lab_err='нечего искать — напиши фразу'; render(); return; }
   busy('lab', true); S.lab_err='';
-  const _n = document.getElementById('ln'); S.ln = _n ? parseInt(_n.value,10)||8 : 8;
   try { S.lab = await api('/api/admin/match-test', {body:{query:S.lq, self:S.ls, limit:S.ln}}); S.lab_busy=false; render(); }
   catch(e){ fail('lab', e); }
 }
