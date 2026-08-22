@@ -13,6 +13,32 @@ __pycache__/
 # node
 node_modules/
 package-lock.json
+!kleal-app/package-lock.json
+kleal-app/dist-*/
+
+# Expo application assets are source files.
+!kleal-app/assets/
+!kleal-app/assets/*.png
+
+# Production runtime data.
+kleal-ms/users.json*
+kleal-ms/accounts.json
+kleal-ms/waitlist.json
+kleal-ms/loadtest_index.json
+kleal-ms/admin_token.txt
+kleal-ms/services/matching/kleal_store.json*
+kleal-ms/services/matching/learned_topics.json
+kleal-ms/services/matching/phrase_topics.json
+kleal-ms/services/buddy/buddy_store.json
+kleal-ms/outbox/
+kleal-ms/photos/
+kleal-ms/voice/
+kleal-ms/video/
+kleal-ms/ops/logs/
+kleal-ms/ops/quarantine_*/
+*.bak*
+*.prev_*
+._*
 
 # build/ holds lots of scratch (base64 deploy scripts, figma screenshots, dumps, backups).
 # Ignore all of it EXCEPT the reusable deploy generators.
@@ -23,6 +49,7 @@ build/*
 
 # extracted content dumps + misc scratch
 *.png
+!kleal-app/assets/*.png
 docx_content.txt
 ods_content.txt
 xlsx_content.txt
