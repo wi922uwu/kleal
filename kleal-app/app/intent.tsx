@@ -35,7 +35,7 @@ import { usePreventRemove } from '@react-navigation/native';
 import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
-  NATURE_TRAITS, NATURE_MAX,
+  NATURE_TRAITS, NATURE_MAX, GROUP_SIZE_PLUS,
   STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
@@ -50,6 +50,7 @@ import {
   IconCalendar, IconClock, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar,
 } from '../src/components/icons';
 import { EditSheet } from '../src/components/ProfileShell';
+import { Sheet } from '../src/components/Sheet';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { resetGroupSession } from '../src/ginvites';
 import { useLang, T } from '../src/i18n';
@@ -138,6 +139,8 @@ export default function Intent() {
   const [dragging, setDragging] = useState(false);
   /** O.07a: лист пояса держит выбор у себя и отдаёт его в черновик только по «Применить». */
   const [tzOpen, setTzOpen] = useState(false);
+  /** GR.06a: большая группа объясняет Plus, но не включает несуществующий тариф. */
+  const [groupPlusOpen, setGroupPlusOpen] = useState(false);
   const [tzPick, setTzPick] = useState('');
   /**
    * O.10a: лист правки над сводкой. editPick — РАСКРЫТАЯ строка (одна за раз: лист растёт вверх
@@ -397,7 +400,7 @@ export default function Intent() {
 
   const sizeBlockOf = (v: Draft, set: SetDraft) => (
     <View style={s.chipRowWrap}>
-      {SIZES.map(([k]) => (
+      {SIZES.filter(([k]) => k !== 'group-plus').map(([k]) => (
         <Chip key={k} label={sizeLabel(k)} on={v.size === k} onPress={() => set((x) => ({ ...x, size: k }))} />
       ))}
     </View>
@@ -658,7 +661,9 @@ export default function Intent() {
   /** Последний шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
   const lastStep: IntentStepId =
     draft.mode === 'offline' ? 'place' : draft.mode === 'hybrid' ? 'both' : 'link';
-  const detailIndex = step === 'when' ? 0 : step === 'who' ? 1 : step === 'nature' ? 2 : 3;
+  // На борде три смысловых шага: время, люди (включая уточнение характера), место/ссылка.
+  // `nature` остаётся отдельным вопросом, но не изображает несуществующий четвёртый этап.
+  const detailIndex = step === 'when' ? 0 : step === 'who' || step === 'nature' ? 1 : 2;
 
   /**
    * ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЗАПИСАН ПОРЯДОК ШАГОВ НАЗАД.
@@ -687,6 +692,7 @@ export default function Intent() {
    * листе срабатывает дважды: лист закрывается по onRequestClose И экран отступает на шаг.
    */
   const goBack = () => {
+    if (groupPlusOpen) { setGroupPlusOpen(false); return; }
     if (tzOpen || editOpen) { setTzOpen(false); setEditOpen(false); return; }
     if (busy) { cancelSearch(); return; }
     if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; setAck(false); }
@@ -704,7 +710,7 @@ export default function Intent() {
    * отступить — держим экран и отдаём событие тому же goBack(); на первом шаге предотвращение
    * снимается само, и жест честно уводит в разговор создания.
    */
-  usePreventRemove(step !== 'how' || tzOpen || editOpen || busy, (e) => {
+  usePreventRemove(step !== 'how' || groupPlusOpen || tzOpen || editOpen || busy, (e) => {
     // Перехват висит на СНЯТИИ ЭКРАНА, а не на жесте, и под него попадает всё, что уводит с
     // маршрута, — включая «Все интенты» (dismissTo → POP_TO). Эта кнопка обязана остаться
     // сквозным выходом: без неё из мастера стало бы некуда деться, кроме как назад по шагам.
@@ -755,11 +761,13 @@ export default function Intent() {
                 : SIZES.map(([k]) => (
                     <OptionRow
                       key={k}
-                      Icon={k === 'group' ? IconGroups : IconPerson}
+                      Icon={k === '1:1' ? IconPerson : IconGroups}
                       title={sizeLabel(k)}
                       sub={sizeSub(k)}
                       on={draft.size === k}
-                      onPress={() => choose({ size: k }, 'when')}
+                      onPress={() => k === 'group-plus'
+                        ? setGroupPlusOpen(true)
+                        : choose({ size: k }, 'when')}
                     />
                   ))}
               {ack ? <Ack /> : null}
@@ -963,6 +971,32 @@ export default function Intent() {
           {edraft && linkBroken(edraft) ? <Text style={s.err}>{DETAILS.linkBad()}</Text> : null}
         </EditSheet>
 
+        <Sheet
+          visible={groupPlusOpen}
+          onClose={() => setGroupPlusOpen(false)}
+          title={GROUP_SIZE_PLUS.title()}
+        >
+          <Text style={s.plusBody}>{GROUP_SIZE_PLUS.body()}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ disabled: true }}
+            disabled
+            style={[s.plusPrimary, { opacity: 0.45 }]}
+          >
+            <Text style={s.plusPrimaryText}>{GROUP_SIZE_PLUS.get()}</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            style={s.plusSecondary}
+            onPress={() => {
+              setGroupPlusOpen(false);
+              choose({ size: 'group' }, 'when');
+            }}
+          >
+            <Text style={s.plusSecondaryText}>{GROUP_SIZE_PLUS.keep()}</Text>
+          </Pressable>
+        </Sheet>
+
         {busy ? <Searching onCancel={cancelSearch} /> : null}
       </View>
     </KeyboardAvoidingView>
@@ -1023,7 +1057,7 @@ function Ack() {
 function Stepper({ current }: { current: number }) {
   return (
     <View style={s.stepper}>
-      {[0, 1, 2, 3].map((i) => (
+      {[0, 1, 2].map((i) => (
         <React.Fragment key={i}>
           {i > 0 ? <View style={[s.stepLine, i <= current && s.stepLineOn]} /> : null}
           <View style={[s.stepDot, i <= current && s.stepDotOn, i === current && s.stepDotNow]}>
@@ -1335,6 +1369,17 @@ const s = StyleSheet.create({
   },
   ctaText: { ...type.button, color: color.onPrimary } as any,
   err: { ...type.bodySmall, color: color.primary, marginTop: space.sm } as any,
+  plusBody: { ...type.body, color: color.muted, marginBottom: space.sm } as any,
+  plusPrimary: {
+    height: 52, borderRadius: rad.full, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  plusPrimaryText: { ...type.button, color: color.onPrimary } as any,
+  plusSecondary: {
+    height: 52, borderRadius: rad.full, backgroundColor: color.fg,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  plusSecondaryText: { ...type.button, color: color.card } as any,
 
   dock: { paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
   field: {

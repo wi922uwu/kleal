@@ -77,10 +77,10 @@ export const STEP_SIZE = {
 export const GROUP_MIN_TOTAL = 3;
 export const SIZES: [string, string, string, string, string][] = [
   ['1:1', '1:1', '1:1', 'Just the two of us', 'Только вы вдвоём'],
-  // Без «3–5»: верхняя граница — не обещание продукта, а текущая настройка сервера (max_total),
-  // и печатать её на кнопке значит обещать число, которое правится в конфиге. Нижняя остаётся:
-  // она правило — группа не собирается, пока не наберётся троих, и об этом человек знать должен.
-  ['group', 'Group', 'Группа', 'free · needs at least 3', 'бесплатно · нужно минимум 3'],
+  ['group', 'Small group', 'Малая группа', '3–5 people · free · needs at least 3',
+    '3–5 человек · бесплатно · нужно минимум 3'],
+  ['group-plus', 'Large group', 'Большая группа', '6–20 people · with Kleal Plus',
+    '6–20 человек · с Kleal Plus'],
 ];
 export const sizeLabel = (k: string) => {
   const s = SIZES.find((x) => x[0] === k);
@@ -89,6 +89,17 @@ export const sizeLabel = (k: string) => {
 export const sizeSub = (k: string) => {
   const s = SIZES.find((x) => x[0] === k);
   return s ? T(s[4], s[3]) : '';
+};
+
+/** GR.06a — Plus ещё не продаётся: кадр объясняет предел, но не делает фальшивую покупку. */
+export const GROUP_SIZE_PLUS = {
+  title: () => T('Большие группы — с Plus', 'Bigger groups are with Plus'),
+  body: () => T(
+    'Бесплатно — до 5 человек. С Plus — до 20. Качество подбора одинаковое.',
+    'Free groups go up to 5 people. With Plus, up to 20. Match quality stays the same.'
+  ),
+  get: () => T('Получить Kleal Plus', 'Get Kleal Plus'),
+  keep: () => T('Оставить максимум 5', 'Keep it at 5'),
 };
 
 // ---------------------------------------------------------------- O.07–O.09 · детали

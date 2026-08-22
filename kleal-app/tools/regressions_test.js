@@ -1646,7 +1646,8 @@ console.log('\nчетыре пометки с борда групп закрыт
   check('её стрелка ведёт в план', /planReachable[\s\S]{0,600}pathname: '\/gplan'/.test(gr));
   // Стрелка, за которой пусто, хуже отсутствующей: человек жмёт и решает, что всё сломано.
   check('и только когда за ней что-то есть',
-    /const planReachable = canPlan \|\| !!\(g as any\)\?\.plan/.test(gr));
+    /const planReachable = !readOnly && \(canPlan \|\| !!\(g as any\)\?\.plan\)/.test(gr),
+    'архив не должен обещать действие, а живая группа ведёт только в существующий или доступный план');
 
   const gp = code('app/gplan.tsx');
   // GR.26. Прогресс раундов был на месте и раньше — проверка держит его, а не добавляет.
@@ -2266,8 +2267,8 @@ console.log('\nчетыре находки сверки: слот, кнопка,
   // «Группа 3-5» обещала верхнюю границу, которой в продукте нет: потолок — настройка сервера
   // (`max_total`), а нижняя граница правило и остаётся.
   const it = code('src/intent.ts');
-  check('размер группы не обещает потолок', !/3[-–—]5/.test(it),
-    'верхняя граница — настройка сервера, а не обещание экрана');
+  check('бесплатная группа обещает ровно предел из GR.06', /3[-–—]5/.test(it),
+    'кадр отделяет малую бесплатную группу от большой группы Plus');
 
   // Ждать «обоих», уже ответив, — значит читать «твой ответ не записался».
   check('ждём второго, а не «обоих», когда я ответил', /PLAN\.waitingThem\(other\)/.test(pl));
@@ -2754,6 +2755,37 @@ console.log('\nправка интента со сводки происходи�
   const dead = keys.filter((k) => k !== 'when' && !field.includes(`'${k}'`));
   check('у каждой строки листа есть свой контрол', keys.length >= 6 && dead.length === 0,
     'строка без поля: ' + dead.join(', '));
+}
+
+console.log('\nразмер группы следует GR.06 и не обещает несуществующий Plus');
+{
+  const copy = code('src/intent.ts');
+  const wiz = code('app/intent.tsx');
+
+  check('в выборе есть малая группа 3–5',
+    /\['group', 'Small group'[^\]]*'3–5 people/.test(copy));
+  check('в выборе есть большая группа 6–20 с Plus',
+    /\['group-plus', 'Large group'[^\]]*'6–20 people/.test(copy));
+  check('большая группа открывает объяснение, а не запускает поиск',
+    /k === 'group-plus'[\s\S]{0,80}setGroupPlusOpen\(true\)[\s\S]{0,80}: choose/.test(wiz));
+  check('неподключённый Plus нельзя случайно купить',
+    /accessibilityState=\{\{ disabled: true \}\}[\s\S]{0,80}\bdisabled\b/.test(wiz));
+  check('выход из Plus продолжает с бесплатным максимумом 5',
+    /GROUP_SIZE_PLUS\.keep\(\)/.test(wiz) &&
+    /choose\(\{ size: 'group' \}, 'when'\)/.test(wiz));
+  check('назад сначала закрывает лист Plus',
+    /if \(groupPlusOpen\) \{ setGroupPlusOpen\(false\); return; \}/.test(wiz));
+  check('детали показывают три шага, а характер входит в шаг людей',
+    /step === 'who' \|\| step === 'nature' \? 1 : 2/.test(wiz) &&
+    /\{\[0, 1, 2\]\.map\(\(i\)/.test(wiz));
+
+  const invites = code('src/ginvites.ts');
+  check('точное offline-место переживает создание группы',
+    /intent\?\.address \? \{ address: intent\.address \}/.test(invites));
+  const server = read('../kleal-ms/services/matching/app.py');
+  check('план подхватывает сохранённое место, если форма не заменила его',
+    server.includes('initial_place = str(place or') && server.includes('.get("address") or "")[:160]') &&
+    server.includes('"place": initial_place'));
 }
 
 // Итог — ОДИН и только в самом низу. Два агента правили файл параллельно, и каждый дописал свой
