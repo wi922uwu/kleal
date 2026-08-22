@@ -149,6 +149,10 @@ export async function sendGroupInvite(who: string, to: string, intent: any, titl
     const payload = {
       topics: intent?.topics || [], mode: intent?.mode,
       time: intent?.time, place: intent?.place || intent?.area,
+      // Точное место не показывается приглашённым до согласия, но должно пережить набор группы:
+      // сервер хранит его внутри интента и использует при создании плана.
+      ...(intent?.address ? { address: intent.address } : {}),
+      ...(intent?.radiusKm != null ? { radiusKm: intent.radiusKm } : {}),
     };
     const c: any = await gapi.create(from, title, payload, newIdem('gic')).catch(() => null);
     const g = c?.group;

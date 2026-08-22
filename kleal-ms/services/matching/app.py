@@ -5364,9 +5364,12 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None, li
                                             "or nobody can confirm it"})
         mode = str(g.get("mode") or "offline")
         initial_link = str(link or (g.get("intent") or {}).get("link") or g.get("link") or "")[:400]
+        # OF.09: автор уже указал точное место в мастере. Оно хранится внутри группового интента
+        # и не выдаётся приглашённым до согласия; когда группа дошла до плана, не просим его снова.
+        initial_place = str(place or (g.get("intent") or {}).get("address") or "")[:160]
         p = {"id": "gp_%d_%s" % (int(now * 1000), hashlib.sha1(gid.encode("utf-8")).hexdigest()[:6]),
              "gid": gid, "owner": g.get("owner"), "version": 1, "round": 1,
-             "when": str(when or "")[:120], "place": str(place or "")[:160],
+             "when": str(when or "")[:120], "place": initial_place,
              "note": str(note or "")[:400], "starts_at": sa,
              # Онлайн или офлайн решает ИНТЕНТ, а не автор плана: группа собиралась под звонок или
              # под место, и подменять это на шаге плана значило бы позвать людей на одно, а свести
