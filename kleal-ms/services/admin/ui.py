@@ -342,6 +342,9 @@ VIEWS.lab = () => {
       <input id="lq" style="flex:2;min-width:240px" placeholder="что ищем: поговорить про опционы" value="${esc(S.lq||'')}">
       <input id="ls" list="names" style="flex:1;min-width:170px" placeholder="от чьего имени" value="${esc(S.ls||'')}">
       <datalist id="names">${(S.names||[]).slice(0,2000).map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+      <select id="ln" style="min-width:110px">
+        ${[8,16,24,32,48].map(n=>`<option value="${n}" ${(S.ln||8)==n?'selected':''}>${n} человек</option>`).join('')}
+      </select>
       <button class="act primary" onclick="runLab()" ${S.lab_busy?'disabled':''}>${S.lab_busy?'Ищу…':'Искать'}</button>
     </div>
     <div class="hint">${S.names?('в списке '+num(S.names.length)+' человек — начни печатать имя'):'загружаю имена…'}</div>
@@ -352,7 +355,7 @@ VIEWS.lab = () => {
       <div class="hint" style="margin:8px 0">
         ищет: <b>${esc((r.searcher||{}).name||'—')}</b>
         · темы: ${(r.topics||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('') || '<span class="bad">ни одной</span>'}
-        · кандидатов: <b>${num((r.candidates||[]).length)}</b>
+        · кандидатов: <b>${num((r.candidates||[]).length)}</b>${r.hasMore?' <span class="tag">есть ещё</span>':''}
         · виды: ${[...new Set((r.candidates||[]).map(c=>c.kind))].map(k=>`<span class="tag">${esc(k)}</span>`).join('')}</div>
       <div class="scroll"><table><thead><tr><th>кто</th><th>ярус</th><th>полоса</th><th>почему</th><th>интересы</th></tr></thead><tbody>
       ${(r.candidates||[]).map(c=>`<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.tier||'')}</td>
@@ -367,7 +370,8 @@ async function runLab(){
   S.ls = document.getElementById('ls').value.trim();
   if (!S.lq){ S.lab_err='нечего искать — напиши фразу'; render(); return; }
   busy('lab', true); S.lab_err='';
-  try { S.lab = await api('/api/admin/match-test', {body:{query:S.lq, self:S.ls}}); S.lab_busy=false; render(); }
+  const _n = document.getElementById('ln'); S.ln = _n ? parseInt(_n.value,10)||8 : 8;
+  try { S.lab = await api('/api/admin/match-test', {body:{query:S.lq, self:S.ls, limit:S.ln}}); S.lab_busy=false; render(); }
   catch(e){ fail('lab', e); }
 }
 

@@ -629,10 +629,24 @@ class H(BaseHTTPRequestHandler):
             ctx = {"self": prof.get("name") or "", "uid": "admin-lab"}
             if body.get("now"):
                 ctx["now"] = float(body["now"])
-            r = _match_post("/api/agent/match", {"intent": intent, "profile": prof, "ctx": ctx})
+            # СКОЛЬКО ПОКАЗЫВАТЬ. Движок по умолчанию отдаёт ровно восемь (TOP_N в
+            # matching_core/allocation), и ручка /api/agent/match умеет больше только если ей
+            # передать `limit` — приложение так и делает кнопкой «Расширить поиск». Лаборатория
+            # его не передавала, поэтому «всего восемь» выглядело как потолок системы, хотя это
+            # был потолок ЗАПРОСА. Верхняя граница 48 — та же, что у движка.
+            try:
+                lim = int(body.get("limit") or 0)
+            except (TypeError, ValueError):
+                lim = 0
+            lim = max(0, min(48, lim))
+            payload = {"intent": intent, "profile": prof, "ctx": ctx}
+            if lim:
+                payload["limit"] = lim
+            r = _match_post("/api/agent/match", payload)
             send_json(self, 200, {"ok": "error" not in r, "searcher": prof,
                                   "searcherKnown": bool(rec), "topics": intent.get("topics") or [],
-                                  "intent": r.get("intent", intent),
+                                  "intent": r.get("intent", intent), "limit": lim or 8,
+                                  "hasMore": bool(r.get("has_more")),
                                   "candidates": r.get("candidates") or [], "error": r.get("error")})
         elif p == "/api/admin/funnel":
             # «Почему никого нет»: the shape of the search, not its result.
