@@ -323,18 +323,36 @@ VIEWS.person = () => {
 };
 
 // ---------------------------------------------------------------- Матчинг
+// Список имён для выбора ищущего. Грузится один раз и переиспользуется: без него поле было
+// просто строкой, и опечатка в имени молча превращала поиск в «от лица неизвестного Tester» —
+// движок отвечал не тем, а выглядело это как поломка подбора.
+LOADERS.lab = async () => {
+  if (S.names) return;
+  try { const r = await api('/api/admin/users?limit=2000'); S.names = (r.users||[]).map(u=>u.name).filter(Boolean); render(); }
+  catch(e){ /* без списка поле остаётся обычным вводом — это хуже, но не мешает */ }
+};
+
 VIEWS.lab = () => {
   const r = S.lab;
   return `<div class="card">
     <h2>Один поиск, весь разбор</h2>
-    <div class="hint">Тот же путь, что у приложения: фраза едет отдельным полем, по ней строится мост тем.</div>
+    <div class="hint">Тот же путь, что у приложения: темы собирает фильтрация, а фраза едет рядом —
+      по ней работает мост тем, иначе «опционы» разбираются как «варианты выбора».</div>
     <div class="row" style="margin:10px 0">
       <input id="lq" style="flex:2;min-width:240px" placeholder="что ищем: поговорить про опционы" value="${esc(S.lq||'')}">
-      <input id="ls" style="flex:1;min-width:160px" placeholder="от чьего имени" value="${esc(S.ls||'')}">
+      <input id="ls" list="names" style="flex:1;min-width:170px" placeholder="от чьего имени" value="${esc(S.ls||'')}">
+      <datalist id="names">${(S.names||[]).slice(0,2000).map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
       <button class="act primary" onclick="runLab()" ${S.lab_busy?'disabled':''}>${S.lab_busy?'Ищу…':'Искать'}</button>
     </div>
+    <div class="hint">${S.names?('в списке '+num(S.names.length)+' человек — начни печатать имя'):'загружаю имена…'}</div>
     ${errBox('lab')}
-    ${r?`<div class="hint" style="margin-bottom:8px">кандидатов: <b>${num((r.candidates||[]).length)}</b>
+    ${r?`
+      ${r.searcherKnown===false?`<div class="err">Такого человека в популяции нет — поиск ушёл от лица чужака
+        без интересов и координат, и пустой ответ тут ничего не значит. Выбери имя из списка.</div>`:''}
+      <div class="hint" style="margin:8px 0">
+        ищет: <b>${esc((r.searcher||{}).name||'—')}</b>
+        · темы: ${(r.topics||[]).map(t=>`<span class="tag">${esc(t)}</span>`).join('') || '<span class="bad">ни одной</span>'}
+        · кандидатов: <b>${num((r.candidates||[]).length)}</b>
         · виды: ${[...new Set((r.candidates||[]).map(c=>c.kind))].map(k=>`<span class="tag">${esc(k)}</span>`).join('')}</div>
       <div class="scroll"><table><thead><tr><th>кто</th><th>ярус</th><th>полоса</th><th>почему</th><th>интересы</th></tr></thead><tbody>
       ${(r.candidates||[]).map(c=>`<tr><td><b>${esc(c.name)}</b></td><td>${esc(c.tier||'')}</td>
@@ -345,7 +363,9 @@ VIEWS.lab = () => {
   </div>`;
 };
 async function runLab(){
-  S.lq = document.getElementById('lq').value; S.ls = document.getElementById('ls').value;
+  S.lq = document.getElementById('lq').value.trim();
+  S.ls = document.getElementById('ls').value.trim();
+  if (!S.lq){ S.lab_err='нечего искать — напиши фразу'; render(); return; }
   busy('lab', true); S.lab_err='';
   try { S.lab = await api('/api/admin/match-test', {body:{query:S.lq, self:S.ls}}); S.lab_busy=false; render(); }
   catch(e){ fail('lab', e); }

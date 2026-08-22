@@ -10,6 +10,7 @@ import sys
 import json
 import uuid
 import threading
+import re                                      # лаборатория: запасной разбор фразы на слова
 import urllib.request
 from urllib.parse import quote
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -594,12 +595,44 @@ class H(BaseHTTPRequestHandler):
             # no proposals are sent (that is /api/agent/negotiate, deliberately not exposed here).
             prof, rec = _searcher_profile(body)
             intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
+            # ЛАБОРАТОРИЯ СОБИРАЕТ ИНТЕНТ САМА, если ей дали фразу.
+            #
+            # Раньше ручка ждала готовый объект интента, а страница слала одну строку — и поиск
+            # уходил БЕЗ ЕДИНОЙ ТЕМЫ. Движок честно отвечал «никого по теме» и падал в широкие
+            # предложения, а выглядело это как «матчинг сломан».
+            #
+            # Темы берём у фильтрации — тем же вызовом, что делает приложение, — и кладём рядом
+            # ФРАЗУ: по ней работает мост тем, и без неё «опционы» разбираются как «варианты
+            # выбора». Лаборатория обязана повторять путь продукта, иначе она проверяет не его.
+            q = str(body.get("query") or "").strip()
+            if q and not (intent.get("topics") or []):
+                topics = []
+                try:
+                    fr = urllib.request.Request(
+                        config.FILTER_URL + "/api/filter/categorize",
+                        data=json.dumps({"text": q}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(fr, timeout=30) as rr:
+                        topics = [str(t).lower().strip()
+                                  for t in ((json.loads(rr.read().decode()) or {}).get("topics") or [])
+                                  if str(t).strip()]
+                except Exception:
+                    topics = []
+                if not topics:
+                    # Фильтрация молчит — не выдумываем: берём слова фразы, как их взял бы
+                    # запасной путь движка. Пустой поиск честнее умного, но неверного.
+                    topics = [w for w in re.findall(r"[\w\-]{3,}", q.lower())][:4]
+                intent = dict(intent, topics=topics, phrase=q)
+                intent.setdefault("mode", "offline")
+                intent.setdefault("format", "1:1")
+                intent.setdefault("time", "today")
             ctx = {"self": prof.get("name") or "", "uid": "admin-lab"}
             if body.get("now"):
                 ctx["now"] = float(body["now"])
             r = _match_post("/api/agent/match", {"intent": intent, "profile": prof, "ctx": ctx})
             send_json(self, 200, {"ok": "error" not in r, "searcher": prof,
-                                  "searcherKnown": bool(rec), "intent": r.get("intent", intent),
+                                  "searcherKnown": bool(rec), "topics": intent.get("topics") or [],
+                                  "intent": r.get("intent", intent),
                                   "candidates": r.get("candidates") or [], "error": r.get("error")})
         elif p == "/api/admin/funnel":
             # «Почему никого нет»: the shape of the search, not its result.
