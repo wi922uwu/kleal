@@ -5942,6 +5942,53 @@ def gp_details(pid, who, place=None, link=None, idem=None):
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
 
+GP_MODES = ("offline", "online")
+
+
+def gp_mode(pid, who, mode, idem=None):
+    """GRH.25a/25b: finish an incomplete hybrid plan using its available entrance only.
+
+    The board offers this as an explicit fallback beside the missing field: a saved place can
+    become an offline plan, and a saved call link can become an online plan. It changes this
+    meeting only; the group intent stays hybrid for future plans.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    target = str(mode or "").strip().lower()
+    if target not in GP_MODES:
+        return {"ok": False, "error": "BAD_MODE", "allowed": list(GP_MODES)}
+    now = time.time()
+    with _STORE_LOCK:
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return _idem_put(idem, {"ok": False, "error": "NOT_ORGANIZER"})
+        if p.get("mode") != "hybrid":
+            return _idem_put(idem, {"ok": False, "error": "NOT_HYBRID"})
+        if p.get("state") in ("locked", "cancelled", "done"):
+            return _idem_put(idem, {"ok": False, "error": "LOCKED"})
+        if target == "offline" and not str(p.get("place") or "").strip():
+            return _idem_put(idem, {"ok": False, "error": "NO_PLACE"})
+        if target == "online" and not str(p.get("link") or "").strip():
+            return _idem_put(idem, {"ok": False, "error": "NO_LINK"})
+
+        p["mode"] = target
+        p["sides"] = {}
+        p["updated"] = now
+        p.setdefault("responses", {}).setdefault(
+            g.get("owner"), {"state": "confirmed", "t": now, "version": p.get("version")})
+        _gi_say(g, "%s made this plan %s only." % (who, target),
+                code="plan_mode_changed", who=who, mode=target)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
 GP_SIDES = ("in_person", "call")
 
 
@@ -6043,7 +6090,7 @@ def gp_vote_close(vote_id, who, idem=None):
         return _idem_put(idem, _gp_vote_view(v, who))
 
 
-GP_LIVE = ("otw", "late", "here")     # GR.45a «уже иду» / «опаздываю» / «я на месте»
+GP_LIVE = ("otw", "late", "here", "cant_make_it")
 
 
 def gp_status(pid, who, status, eta_min=None, idem=None):
@@ -6088,6 +6135,9 @@ def gp_status(pid, who, status, eta_min=None, idem=None):
             _gi_say(g, "%s is running late." % who, code="running_late", who=who, eta=eta)
         elif st == "here":
             _gi_say(g, "%s is there." % who, code="arrived", who=who)
+        elif st == "cant_make_it":
+            _gi_say(g, "%s can\'t make it. The meetup stays on for everyone else.",
+                    code="cant_make_it", who=who)
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
@@ -7812,6 +7862,9 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/gplan-details":
             send_json(self, 200, gp_details(body.get("id"), body.get("self"),
                                             body.get("place"), body.get("link"), body.get("idem")))
+        elif p == "/api/agent/gplan-mode":
+            send_json(self, 200, gp_mode(body.get("id"), body.get("self"),
+                                         body.get("mode"), body.get("idem")))
         elif p == "/api/agent/gplan-side":
             send_json(self, 200, gp_side(body.get("id"), body.get("self"),
                                          body.get("side"), body.get("idem")))

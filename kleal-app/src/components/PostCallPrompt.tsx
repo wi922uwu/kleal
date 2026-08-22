@@ -241,7 +241,7 @@ export function PostCallPrompt() {
                       'Your reason stays private and is not shown to other participants.')
                   : PLAN.whatHappenedNote()}
               </Text>
-              {(plan.feedback_kind === 'group' ? groupReasons() : [
+              {(plan.feedback_kind === 'group' ? groupReasons(String(plan.mode || '')) : [
                 ['no_show', PLAN.reasonNoShow(other)],
                 ['couldnt_make', PLAN.reasonCouldnt()],
                 ['place_closed', PLAN.reasonClosed()],
@@ -292,7 +292,25 @@ export function feedbackStage(plan: any, nowMs = Date.now()): Stage | null {
   return null;
 }
 
-function groupReasons(): [string, string][] {
+export function groupReasons(mode: string): [string, string][] {
+  if (mode === 'hybrid') {
+    return [
+      ['nobody_came_or_joined', T('Никто не пришёл и не подключился', 'Nobody came or joined')],
+      ['couldnt_make', T('Я не смог прийти или подключиться', 'I couldn’t make it')],
+      ['others_didnt_come_or_join', T('Другие не пришли или не подключились', 'Others didn’t come or join')],
+      ['place_closed', T('Место было закрыто', 'The place was closed')],
+      ['other', T('Другое', 'Something else')],
+    ];
+  }
+  if (mode === 'offline') {
+    return [
+      ['nobody_came', T('Никто не пришёл', 'Nobody came')],
+      ['couldnt_make', T('Я не смог прийти', 'I couldn’t make it')],
+      ['others_didnt_come', T('Другие не пришли', 'Others didn’t come')],
+      ['place_closed', T('Место было закрыто', 'The place was closed')],
+      ['other', T('Другое', 'Something else')],
+    ];
+  }
   return [
     ['nobody_joined', T('Никто не подключился', 'Nobody joined')],
     ['couldnt_make', T('Я не смог подключиться', 'I couldn’t make it')],
