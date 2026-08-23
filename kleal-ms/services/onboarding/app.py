@@ -2514,7 +2514,7 @@ def _profile_to_user(p):
                 role = _R2M.get(str(r0).lower(), "meet")
                 break
     dating = bool((p.get("domains") or {}).get("dating", {}).get("enabled")) or \
-        ("dating" in [str(x).lower() for x in (p.get("goals") or {}).get("primary") or []])
+        ("dating" in base.goals_list(p))
     try:
         age = int(_first(p.get("age"), (p.get("ageRange") or "28").split("-")[0], 28))
     except (TypeError, ValueError):
@@ -2530,7 +2530,7 @@ def _profile_to_user(p):
     except (TypeError, ValueError):
         radius = None
     gender = str(p.get("gender") or "").strip() or None
-    goals = [str(x).strip() for x in ((p.get("goals") or {}).get("primary") or []) if str(x).strip()][:4]
+    goals = base.goals_list(p)[:4]
     sf = p.get("safety") or {}
     return {
         "id": "on" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8],

@@ -240,3 +240,28 @@ def parse_reply(text):
     text = text.replace("```json", "").replace("```", "")
     text = re.sub(r"\[(?:INTENT|EVENT|EVENT_UPDATE|SEARCH|BANNER|OPTIONS):[\s\S]*$", "", text, flags=re.I)
     return text.strip(), profile, intent, banner, search, options
+
+def goals_list(profile):
+    """Цели человека списком — в какой бы форме они ни лежали в хранилище.
+
+    ФОРМА МЕНЯЕТСЯ ПО ДОРОГЕ, и на этом всё ломалось. Регистрация ПРИНИМАЕТ словарь
+    `{"primary": [...]}`, а СОХРАНЯЕТ плоский список (onboarding/app.py, сборка чистого профиля).
+    Читатели же остались написаны под словарь: `(p.get("goals") or {}).get("primary")` на списке
+    даёт `AttributeError: 'list' object has no attribute 'get'`.
+
+    Цена ошибки была максимальной из возможных. Вызов стоял в `_baseline_signals`, через который
+    проходит СБОРКА ИНТЕНТА, исключение проглатывалось общим обработчиком, и человек видел «Что-то
+    я подвис — повтори, пожалуйста?». Повтор давал то же самое: интент не собирался НИКОГДА, ни
+    на каком ходу. В популяции `goals` списком у всех 766 профилей — то есть у всех до единого.
+
+    Поэтому чтение здесь, одно на всех, и оно принимает любую форму: словарь с `primary`, список,
+    одну строку. Новый читатель, написанный под свою догадку о форме, — это тот же баг заново.
+    """
+    g = (profile or {}).get("goals")
+    if isinstance(g, dict):
+        g = g.get("primary")
+    if isinstance(g, list):
+        return [str(x).strip().lower() for x in g if str(x).strip()]
+    if isinstance(g, str) and g.strip():
+        return [g.strip().lower()]
+    return []

@@ -997,7 +997,9 @@ def _baseline_signals(profile):
     if city:
         sig["area"] = str(city)
     dom = (p.get("domains") or {}).get("dating") or {}
-    if dom.get("enabled") is True or "dating" in _as_list((p.get("goals") or {}).get("primary")):
+    # Форму `goals` читает общий помощник: в хранилище это список, а не словарь, и прямой
+    # `.get("primary")` здесь ронял ВСЮ сборку интента (см. base.goals_list).
+    if dom.get("enabled") is True or "dating" in base.goals_list(p):
         sig["datingOk"] = True
     return sig
 
