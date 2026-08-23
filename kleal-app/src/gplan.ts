@@ -37,6 +37,8 @@ export type GPlan = {
   sides?: Record<string, { side?: 'in_person' | 'call'; t?: number }>;
   my_side?: 'in_person' | 'call' | null;
   side_counts?: { in_person?: number; call?: number; undecided?: number } | null;
+  live?: Record<string, { status?: 'otw' | 'late' | 'here' | 'cant_make_it' | string; eta_min?: number; t?: number }>;
+  my_live?: { status?: 'otw' | 'late' | 'here' | 'cant_make_it' | string; eta_min?: number; t?: number } | null;
   confirmed?: string[];
   confirmed_count?: number;
   waiting?: string[];
@@ -127,6 +129,11 @@ export const GPLAN = {
   hybridMissingPlace: () => T('Ссылка сохранена. Осталось добавить место.', 'The link is set. Add the place.'),
   hybridMissingLink: () => T('Место сохранено. Осталось добавить ссылку.', 'The place is set. Add the call link.'),
   hybridIncomplete: () => T('Сначала добавь место и ссылку на звонок.', 'Add both the place and the call link first.'),
+  hybridMissingNote: (needsPlace: boolean) => needsPlace
+    ? T('После добавления места группа сможет подтвердить план.',
+        'Once the place is added, the group can confirm the plan.')
+    : T('После добавления ссылки группа сможет подтвердить план.',
+        'Once the call link is added, the group can confirm the plan.'),
   savePlace: () => T('Сохранить место', 'Save the place'),
   chooseSide: () => T('Как ты присоединишься?', 'How are you joining?'),
   inPerson: () => T('Лично', 'In person'),
@@ -267,6 +274,21 @@ export const GPLAN = {
     `${atPlace} are at the place, ${onCall} are on the call. Both ways are open — Kleal can’t see either, so tomorrow we’ll ask everyone.`
   ),
   imLate: () => T('Я опаздываю', 'I’m running late'),
+  tellLateTitle: () => T('Сказать группе, что опаздываешь?', 'Tell them you’re running late?'),
+  tellLateNote: () => T(
+    'Группа увидит это сразу. Если удобнее, можно подключиться к звонку.',
+    'The group sees this right away. You can switch to the call instead.'
+  ),
+  switchToCall: () => T('Подключиться к звонку', 'Switch to the call'),
+  cantMakeTitle: () => T('Сказать, что ты не придёшь?', 'Tell them you can’t come?'),
+  cantMakeNote: () => T(
+    'Встреча продолжится для остальных. Это не отменяет групповой план.',
+    'The meetup stays on for everyone else. This does not cancel the group plan.'
+  ),
+  neverMind: () => T('Неважно', 'Never mind'),
+  cantMakeConfirm: () => T('Я не смогу', 'I can’t make it'),
+  makeOffline: () => T('Оставить только встречу вживую', 'Make it offline only'),
+  makeOnline: () => T('Оставить только звонок', 'Make it online only'),
   /** Второй раз говорить то же самое незачем: подпись сообщает, что группа уже знает. */
   lateSent: () => T('Группа знает, что ты опаздываешь', 'The group knows you’re late'),
 
@@ -427,6 +449,8 @@ export const GPLAN = {
   stChanging: () => T('Организатор · меняет', 'Organiser · changing it'),
   stChanged: () => T('Организатор · изменил(а)', 'Organiser · changed it'),
   stInGroup: () => T('В группе', 'In the group'),
+  stLate: () => T('Опаздывает', 'Running late'),
+  stCantMakeIt: () => T('Не сможет прийти', 'Can’t make it'),
   you: () => T('Ты', 'You'),
 
   // ---- общие отказы ------------------------------------------------------
@@ -465,6 +489,10 @@ export function memberState(
   const isOwner = eq(name, opts.owner);
   const isMe = eq(name, opts.me);
   const confirmed = (p.confirmed || []).some((c) => eq(c, name));
+  const live = Object.entries(p.live || {}).find(([key]) => eq(key, name))?.[1];
+
+  if (live?.status === 'cant_make_it') return { text: GPLAN.stCantMakeIt(), done: false };
+  if (live?.status === 'late') return { text: GPLAN.stLate(), done: false };
 
   if (confirmed) {
     if (p.update && eq(name, p.update.by)) return { text: GPLAN.stChanged(), done: true };

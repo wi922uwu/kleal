@@ -52,7 +52,8 @@ print("1. ГРУППОВОЙ ИНТЕНТ ОТКРЫТ — СОЗДАТЕЛЬ У
 print("=" * 76)
 c = call("/api/agent/gintent-create", {"self": OWNER, "title": "Падел в субботу",
                                        "intent": {"topics": ["padel"], "type": "sport",
-                                                  "time": "сб 18:00", "place": "Gràcia"},
+                                                  "time": "сб 18:00", "mode": "online",
+                                                  "link": "https://meet.example/group-online"},
                                        "idem": "gi-c-%d" % STAMP})
 g = (c or {}).get("group") or {}
 GID = g.get("gid")
@@ -64,6 +65,38 @@ check("сказано, скольких не хватает", g.get("need_more")
 same = call("/api/agent/gintent-create", {"self": OWNER, "idem": "gi-c-%d" % STAMP})
 check("повтор с тем же ключом не создаёт второй интент",
       ((same or {}).get("group") or {}).get("gid") == GID, (same.get("group") or {}).get("gid"))
+
+print()
+print("=" * 76)
+print("1b. GROUP ONLINE — ССЫЛКА ДОЕЗЖАЕТ ИЗ ИНТЕНТА В ПЛАН")
+print("=" * 76)
+link_owner = "GiLinkOwner%d" % STAMP
+link_guests = ["GiLinkGuest%d_%d" % (STAMP, i) for i in range(2)]
+link_group = call("/api/agent/gintent-create", {
+    "self": link_owner, "title": "Онлайн-практика",
+    "intent": {"topics": ["languages"], "mode": "online", "time": "сб 20:00",
+               "link": "https://meet.example/group-online"},
+    "idem": "gi-link-%d" % STAMP,
+})
+link_gid = ((link_group or {}).get("group") or {}).get("gid")
+for i, person in enumerate(link_guests):
+    sent = call("/api/agent/gintent-invite", {
+        "gid": link_gid, "self": link_owner, "to": person,
+        "idem": "gi-link-invite-%d-%d" % (STAMP, i),
+    })
+    invite_id = ((sent or {}).get("invite") or {}).get("id")
+    call("/api/agent/ginvite-respond", {
+        "id": invite_id, "self": person, "accept": True,
+        "idem": "gi-link-accept-%d-%d" % (STAMP, i),
+    })
+link_plan = call("/api/agent/gplan-begin", {
+    "gid": link_gid, "self": link_owner, "when": "сб 20:00",
+    "starts_at": time.time() + 48 * 3600,
+    "idem": "gi-link-plan-%d" % STAMP,
+})
+check("план подхватывает ссылку Group Online без повторного ввода",
+      ((link_plan.get("plan") or {}).get("link")) == "https://meet.example/group-online",
+      (link_plan.get("plan") or {}).get("link"))
 
 print()
 print("=" * 76)

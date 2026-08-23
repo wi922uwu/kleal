@@ -1646,7 +1646,8 @@ console.log('\nчетыре пометки с борда групп закрыт
   check('её стрелка ведёт в план', /planReachable[\s\S]{0,600}pathname: '\/gplan'/.test(gr));
   // Стрелка, за которой пусто, хуже отсутствующей: человек жмёт и решает, что всё сломано.
   check('и только когда за ней что-то есть',
-    /const planReachable = canPlan \|\| !!\(g as any\)\?\.plan/.test(gr));
+    /const planReachable = !readOnly && \(canPlan \|\| !!\(g as any\)\?\.plan\)/.test(gr),
+    'архив не должен обещать действие, а живая группа ведёт только в существующий или доступный план');
 
   const gp = code('app/gplan.tsx');
   // GR.26. Прогресс раундов был на месте и раньше — проверка держит его, а не добавляет.
@@ -2263,11 +2264,12 @@ console.log('\nчетыре находки сверки: слот, кнопка,
     /const locked = !!\(plan as any\)\?\.locked/.test(pl));
   check('под замком вместо кнопок стоит объяснение', /PLAN\.lockedNote\(\)/.test(pl));
 
-  // «Группа 3-5» обещала верхнюю границу, которой в продукте нет: потолок — настройка сервера
-  // (`max_total`), а нижняя граница правило и остаётся.
+  // GO.06 теперь разводит два реальных тарифа с борда: Free до 5 и Plus до 20. Большая группа
+  // не должна молча превращаться в обычную — её строка открывает отдельный лист.
   const it = code('src/intent.ts');
-  check('размер группы не обещает потолок', !/3[-–—]5/.test(it),
-    'верхняя граница — настройка сервера, а не обещание экрана');
+  check('размеры групп совпадают с Group Online', /Small group/.test(it) && /3[-–—]5/.test(it)
+    && /Large group/.test(it) && /6[-–—]20/.test(it),
+    'малую и большую группу нельзя снова склеить в одну строку');
 
   // Ждать «обоих», уже ответив, — значит читать «твой ответ не записался».
   check('ждём второго, а не «обоих», когда я ответил', /PLAN\.waitingThem\(other\)/.test(pl));
@@ -2752,8 +2754,90 @@ console.log('\nправка интента со сводки происходи�
   const rows = rAt < 0 ? '' : wiz.slice(rAt, wiz.indexOf('\n  ]);', rAt));
   const keys = (rows.match(/\['[a-z]+'/g) || []).map((x) => x.slice(2, -1));
   const dead = keys.filter((k) => k !== 'when' && !field.includes(`'${k}'`));
-  check('у каждой строки листа есть свой контрол', keys.length >= 6 && dead.length === 0,
+check('у каждой строки листа есть свой контрол', keys.length >= 6 && dead.length === 0,
     'строка без поля: ' + dead.join(', '));
+}
+
+console.log('\nразмер группы следует GR.06 и не обещает несуществующий Plus');
+{
+  const copy = code('src/intent.ts');
+  const wiz = code('app/intent.tsx');
+
+  check('в выборе есть малая группа 3–5',
+    /\['group', 'Small group'[^\]]*'3–5 people/.test(copy));
+  check('в выборе есть большая группа 6–20 с Plus',
+    /\['group-plus', 'Large group'[^\]]*'6–20 people/.test(copy));
+  check('большая группа открывает объяснение, а не запускает поиск',
+    /k === 'group-plus'[\s\S]{0,80}setGroupSizeOpen\(true\)[\s\S]{0,80}: choose/.test(wiz));
+  check('неподключённый Plus нельзя случайно купить',
+    /accessibilityState=\{\{ disabled: true \}\}/.test(wiz));
+  check('выход из Plus продолжает с бесплатным максимумом 5',
+    /GROUP_SIZE\.keepAtFive\(\)/.test(wiz) &&
+    /choose\(\{ size: 'group' \}, 'when'\)/.test(wiz));
+  check('назад сначала закрывает лист Plus',
+    /if \(groupSizeOpen\) \{ setGroupSizeOpen\(false\); return; \}/.test(wiz));
+  check('детали показывают три шага, а характер входит в шаг людей',
+    /draft\.mode === 'offline' && step === 'nature' \? 1/.test(wiz) &&
+    /count=\{compactThreeStep \? 3 : 4\}/.test(wiz));
+
+  const invites = code('src/ginvites.ts');
+  check('точное offline-место переживает создание группы',
+    /const payload = \{[\s\S]{0,100}\.\.\.\(intent \|\| \{\}\)/.test(invites),
+    'полный проверенный интент должен пережить создание группы без белого списка полей');
+  const server = read('../kleal-ms/services/matching/app.py');
+  check('план подхватывает сохранённое место, если форма не заменила его',
+    server.includes('initial_place = str(place or') && server.includes('.get("address") or "")[:160]') &&
+    server.includes('"place": initial_place'));
+}
+
+// ------------------------------------------------- Group Online · Figma 3642:301522
+console.log('\nGroup Online проходит весь подтверждённый canvas-флоу');
+{
+  const wiz = code('app/intent.tsx');
+  const copy = code('src/intent.ts');
+  const rs = code('app/results.tsx');
+  const gs = code('src/groups.ts');
+  const gi = code('src/ginvites.ts');
+
+  check('Large group открывает Plus-лист, а Keep it at 5 продолжает малой группой',
+     /k === 'group-plus'[\s\S]{0,100}setGroupSizeOpen\(true\)/.test(wiz)
+     && /GROUP_SIZE\.keepAtFive\(\)/.test(wiz)
+     && /choose\(\{ size: 'group' \}, 'when'\)/.test(wiz));
+  check('Group Online пропускает лишний шаг характера',
+    /setStep\(groupOnline \? 'link' : 'nature'\)/.test(wiz)
+    && /groupOnline && step === 'link' \? 'who' : prevStep\(step\)/.test(wiz));
+  check('у Group Online степпер ровно 1–2–3',
+    /<Stepper current=\{detailIndex\} count=\{compactThreeStep \? 3 : 4\}/.test(wiz)
+     && /Array\.from\(\{ length: count \}/.test(wiz));
+  check('пустая или битая ссылка не проходит ни Next, ни правку сводки',
+    /v\.mode === 'online' && v\.size === 'group' && !v\.link\.trim\(\)/.test(wiz)
+    && /disabled=\{groupLinkBlocked\(draft\)\}/.test(wiz)
+    && /groupLinkBlocked\(edraft\)/.test(wiz)
+    && /DETAILS\.groupLinkRequired\(\)/.test(wiz));
+  check('первое приглашение переносит в группу полный проверенный интент',
+    /const payload = \{[\s\S]{0,100}\.\.\.\(intent \|\| \{\}\)/.test(gi)
+    && /gapi\.create\(from, title, payload/.test(gi));
+  check('после первого приглашения выдача называется Invites sent',
+    /invitesSent:/.test(gs)
+    && /groupId\(\) \? GROUP\.invitesSent\(\) : GROUP\.header\(\)/.test(rs));
+  check('групповой кап ведёт к Cancel one instead на карточках',
+    /gmode \? \([\s\S]{0,240}CAP\.cancelOne\(\)/.test(rs));
+  check('Plus-копия и обязательность ссылки лежат вне JSX',
+    /export const GROUP_SIZE/.test(copy) && /groupLinkRequired:/.test(copy));
+}
+
+console.log('\nGroup Hybrid учитывает результаты ручного QA');
+{
+  const screen = code('app/gplan.tsx');
+  const copy = code('src/gplan.ts');
+  const server = read('../kleal-ms/services/matching/app.py');
+
+  check('неполный Hybrid называет только отсутствующее поле',
+    /hybridMissingNote: \(needsPlace: boolean\)/.test(copy)
+    && /GPLAN\.hybridMissingNote\(!!p\.needs_place\)/.test(screen));
+  check('«не смогу» исключает участника из счётчика присутствующих',
+    /if \(live\.get\(key\) or \{\}\)\.get\("status"\) == "cant_make_it":[\s\S]{0,80}continue/.test(server),
+    'участник остаётся в группе, но больше не считается среди присутствующих');
 }
 
 // Итог — ОДИН и только в самом низу. Два агента правили файл параллельно, и каждый дописал свой

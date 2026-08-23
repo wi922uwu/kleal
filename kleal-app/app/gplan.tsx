@@ -67,6 +67,8 @@ export default function GroupPlan() {
   const [voteSheet, setVoteSheet] = useState(false);
   const [decideSheet, setDecideSheet] = useState(false);
   const [actions, setActions] = useState(false);
+  const [lateSheet, setLateSheet] = useState(false);
+  const [cantMakeSheet, setCantMakeSheet] = useState(false);
 
   /**
    * Поля форм. Одни и те же на создание, предложение и правку — предлагают всегда одно и то же.
@@ -223,7 +225,12 @@ export default function GroupPlan() {
    * иначе не узнал бы вовсе.
    */
   const sayLate = () =>
-    act(() => gapi.planStatus(String(plan?.id), me, 'late', newIdem('gps')));
+    act(() => gapi.planStatus(String(plan?.id), me, 'late', newIdem('gps')),
+        () => setLateSheet(false));
+
+  const sayCantMakeIt = () =>
+    act(() => gapi.planStatus(String(plan?.id), me, 'cant_make_it', newIdem('gps')),
+        () => setCantMakeSheet(false));
 
   const askSwitch = () =>
     act(() => gapi.convertAsk(String(gid), me, newIdem('gcv')), () => setAsk1to1(false));
@@ -244,8 +251,22 @@ export default function GroupPlan() {
                                  ...(link.trim() ? { link: link.trim() } : {}) }, newIdem('gpd')),
         () => { setMode('view'); setPlace(''); setLink(''); });
 
+  const useSingleMode = (next: 'offline' | 'online') =>
+    act(() => gapi.planMode(String(plan?.id), me, next, newIdem('gpmode')),
+        () => { setMode('view'); setPlace(''); setLink(''); });
+
   const setSide = (side: 'in_person' | 'call') =>
     act(() => gapi.planSide(String(plan?.id), me, side, newIdem('gpside')));
+
+  const openCall = () => {
+    const href = String(plan?.link || '');
+    if (!href) { setErr(GPLAN.hybridMissingLink()); return; }
+    Linking.openURL(href).catch(() => setErr(GPLAN.failed()));
+  };
+
+  const switchToCall = () =>
+    act(() => gapi.planSide(String(plan?.id), me, 'call', newIdem('gpside')),
+        () => { setLateSheet(false); openCall(); });
 
   /** «Ask the group to host instead» (GRO.25a) — это реплика в общий чат, а не своя сущность. */
   const askHost = async () => {
@@ -489,7 +510,7 @@ export default function GroupPlan() {
           {/* Ссылка на звонок — кнопкой, а не текстом: её открывают, а не переписывают. */}
           {(online || hybrid) && plan?.link && mode === 'view' ? (
             <Pressable style={s.linkRow} accessibilityRole="link"
-                       onPress={() => Linking.openURL(String(plan.link)).catch(() => setErr(GPLAN.failed()))}>
+                       onPress={openCall}>
               <IconLink size={16} c={color.infoText} />
               <Text style={s.linkText}>{GPLAN.openLink()}</Text>
             </Pressable>
@@ -521,8 +542,9 @@ export default function GroupPlan() {
             canConvert={!!(g as any)?.can_convert}
             onSwitch1to1={() => setAsk1to1(true)}
             imLateSent={String((plan as any)?.my_live?.status || '') === 'late'}
-            onLate={sayLate}
-            onCantMakeIt={leave}
+            onLate={() => setLateSheet(true)}
+            onCantMakeIt={() => setCantMakeSheet(true)}
+            onOpenCall={openCall}
             onMoreTime={() => {}}
             onStay={confirm}
             onLeave={leave}
@@ -537,6 +559,7 @@ export default function GroupPlan() {
             onLinkSave={saveLink}
             onDetailsOpen={() => { setPlace(''); setLink(''); setMode('details'); }}
             onDetailsSave={saveDetails}
+            onUseSingleMode={useSingleMode}
             onAskHost={askHost}
             onCancelForm={() => { setMode('view'); setErr(''); }}
           />
@@ -591,6 +614,33 @@ export default function GroupPlan() {
             <Text style={s.quietText}>{T('Отмена', 'Cancel')}</Text>
           </Pressable>
         </Sheet>
+
+        <PlanSheet open={lateSheet} onClose={() => setLateSheet(false)}
+                   title={GPLAN.tellLateTitle()} body={GPLAN.tellLateNote()}>
+          {hybrid && plan?.link ? (
+            <Pressable accessibilityRole="button" style={s.primary} onPress={switchToCall}
+                       disabled={busy} accessibilityState={{ busy }}>
+              {busy ? <ActivityIndicator color={color.onPrimary} />
+                    : <Text style={s.primaryText}>{GPLAN.switchToCall()}</Text>}
+            </Pressable>
+          ) : null}
+          <Pressable accessibilityRole="button" style={hybrid && plan?.link ? s.secondary : s.primary}
+                     onPress={sayLate} disabled={busy}>
+            <Text style={hybrid && plan?.link ? s.secondaryText : s.primaryText}>{GPLAN.imLate()}</Text>
+          </Pressable>
+        </PlanSheet>
+
+        <PlanSheet open={cantMakeSheet} onClose={() => setCantMakeSheet(false)}
+                   title={GPLAN.cantMakeTitle()} body={GPLAN.cantMakeNote()}>
+          <Pressable accessibilityRole="button" style={s.primary} onPress={sayCantMakeIt}
+                     disabled={busy} accessibilityState={{ busy }}>
+            {busy ? <ActivityIndicator color={color.onPrimary} />
+                  : <Text style={s.primaryText}>{GPLAN.cantMakeConfirm()}</Text>}
+          </Pressable>
+          <Pressable accessibilityRole="button" style={s.quiet} onPress={() => setCantMakeSheet(false)}>
+            <Text style={s.quietText}>{GPLAN.neverMind()}</Text>
+          </Pressable>
+        </PlanSheet>
 
         {/* GR.36 — голос. Совещательность повторена здесь же: человек читает это в момент выбора. */}
         <PlanSheet open={voteSheet} onClose={() => setVoteSheet(false)}
@@ -723,8 +773,8 @@ function formNote(
   }
   if (mode === 'update') return GPLAN.updateNote(String(p.when || ''), T('новое время', 'the new time'));
   if (mode === 'link') return GPLAN.linkNote(String(p.when || ''));
-  if (mode === 'details') return GPLAN.hybridIncomplete();
-  if (a.hybrid && p.details_ready === false) return GPLAN.hybridIncomplete();
+  if (mode === 'details') return GPLAN.hybridMissingNote(!!p.needs_place);
+  if (a.hybrid && p.details_ready === false) return GPLAN.hybridMissingNote(!!p.needs_place);
   const total = Number(a.g?.joined_count || (a.g?.members || []).length || 0);
   switch (f) {
     case 'none': return GPLAN.createNote();
@@ -847,9 +897,11 @@ function Actions(a: {
   onInviteMore: () => void; onCancelPlan: () => void; onMoreTime: () => void;
   canConvert: boolean; onSwitch1to1: () => void;
   imLateSent: boolean; onLate: () => void; onCantMakeIt: () => void;
+  onOpenCall: () => void;
   onUpdateOpen: () => void; onUpdateSend: () => void; onAccept: () => void;
   onLinkOpen: () => void; onLinkSave: () => void; onAskHost: () => void; onCancelForm: () => void;
   onDetailsOpen: () => void; onDetailsSave: () => void;
+  onUseSingleMode: (mode: 'offline' | 'online') => void;
 }) {
   const P = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <Pressable accessibilityRole="button" style={[s.primary, a.busy && { opacity: 0.6 }]}
@@ -867,7 +919,11 @@ function Actions(a: {
   if (a.mode === 'suggest') return <><P label={GPLAN.suggestSend()} onPress={a.onSuggestSend} /><S label={GPLAN.cancel()} onPress={a.onCancelForm} /></>;
   if (a.mode === 'update') return <><P label={GPLAN.sendUpdate()} onPress={a.onUpdateSend} /><S label={GPLAN.keepTerms()} onPress={a.onCancelForm} /></>;
   if (a.mode === 'link') return <><P label={GPLAN.saveLink()} onPress={a.onLinkSave} /><S label={GPLAN.askHost()} onPress={a.onAskHost} /></>;
-  if (a.mode === 'details') return <><P label={a.plan?.needs_place ? GPLAN.savePlace() : GPLAN.saveLink()} onPress={a.onDetailsSave} /><S label={GPLAN.cancel()} onPress={a.onCancelForm} /></>;
+  if (a.mode === 'details') return <>
+    <P label={a.plan?.needs_place ? GPLAN.savePlace() : GPLAN.saveLink()} onPress={a.onDetailsSave} />
+    <S label={a.plan?.needs_place ? GPLAN.makeOnline() : GPLAN.makeOffline()}
+       onPress={() => a.onUseSingleMode(a.plan?.needs_place ? 'online' : 'offline')} />
+  </>;
 
   const p = a.plan;
   const mineDone = String(p?.my_response || '') === 'confirmed';
@@ -876,7 +932,7 @@ function Actions(a: {
     return a.isOwner
       ? <><P label={p?.needs_place ? GPLAN.savePlace() : GPLAN.saveLink()} onPress={a.onDetailsOpen} />
            <S label={GPLAN.openChat()} onPress={a.onOpenChat} /></>
-      : <><Text style={s.dockNote}>{GPLAN.hybridIncomplete()}</Text>
+      : <><Text style={s.dockNote}>{GPLAN.hybridMissingNote(!!p.needs_place)}</Text>
            <S label={GPLAN.openChat()} onPress={a.onOpenChat} /></>;
   }
 
@@ -940,7 +996,8 @@ function Actions(a: {
     // GR.45a: встреча идёт. «Опаздываю» видит вся группа — тем и отличается от один-на-один,
     // где это личное сообщение одному человеку.
     case 'now':
-      return <><P label={GPLAN.openChat()} onPress={a.onOpenChat} />
+      return <><P label={(a.online || a.hybrid) && p?.link ? GPLAN.openLink() : GPLAN.openChat()}
+                   onPress={(a.online || a.hybrid) && p?.link ? a.onOpenCall : a.onOpenChat} />
                <S label={a.imLateSent ? GPLAN.lateSent() : GPLAN.imLate()}
                   onPress={a.imLateSent ? a.onOpenChat : a.onLate} /></>;
     case 'closed':

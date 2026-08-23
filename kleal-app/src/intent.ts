@@ -77,10 +77,14 @@ export const STEP_SIZE = {
 export const GROUP_MIN_TOTAL = 3;
 export const SIZES: [string, string, string, string, string][] = [
   ['1:1', '1:1', '1:1', 'Just the two of us', 'Только вы вдвоём'],
-  // Без «3–5»: верхняя граница — не обещание продукта, а текущая настройка сервера (max_total),
-  // и печатать её на кнопке значит обещать число, которое правится в конфиге. Нижняя остаётся:
-  // она правило — группа не собирается, пока не наберётся троих, и об этом человек знать должен.
-  ['group', 'Group', 'Группа', 'free · needs at least 3', 'бесплатно · нужно минимум 3'],
+  // GO.06: бесплатный групповой режим на этом флоу — именно малая группа до пяти. Это не
+  // догадка клиента: тот же предел приходит из gintent как max_total и повторяется в выдаче.
+  ['group', 'Small group', 'Малая группа', '3–5 people · free · needs at least 3',
+    '3–5 человек · бесплатно · нужно минимум 3'],
+  // Большая группа не маскируется под доступную: строка открывает Plus-лист, а в draft этот ключ
+  // никогда не записывается, пока в продукте нет покупки тарифа.
+  ['group-plus', 'Large group', 'Большая группа', '6–20 people · with Kleal Plus',
+    '6–20 человек · с Kleal Plus'],
 ];
 export const sizeLabel = (k: string) => {
   const s = SIZES.find((x) => x[0] === k);
@@ -89,6 +93,17 @@ export const sizeLabel = (k: string) => {
 export const sizeSub = (k: string) => {
   const s = SIZES.find((x) => x[0] === k);
   return s ? T(s[4], s[3]) : '';
+};
+
+/** GO/OF.06a — единый лист после выбора Large group; покупки тарифа в продукте пока нет. */
+export const GROUP_SIZE = {
+  plusTitle: () => T('Большие группы — с Plus', 'Bigger groups are with Plus'),
+  plusBody: () => T(
+    'В бесплатной группе может быть до 5 человек. Plus поднимает предел до 20 и позволяет запускать несколько интентов одновременно. Качество ранжирования не зависит от тарифа.',
+    'Free groups go up to 5 people. Plus raises the ceiling to 20 and lets you run several intents at once. Matches are ranked the same either way.'
+  ),
+  getPlus: () => T('Подключить Kleal Plus', 'Get Kleal Plus'),
+  keepAtFive: () => T('Оставить максимум 5', 'Keep it at 5'),
 };
 
 // ---------------------------------------------------------------- O.07–O.09 · детали
@@ -180,6 +195,10 @@ export const DETAILS = {
    *  Молча отключённая кнопка читается как поломка листа, поэтому причина названа словами. */
   linkBad: () => T('Ссылка не похожа на ссылку — поправь её, иначе применить нечего.',
                    'That doesn’t look like a link — fix it before applying.'),
+  groupLinkRequired: () => T(
+    'Добавь ссылку на звонок — без неё участникам онлайн-группы некуда подключиться.',
+    'Add the call link — without it the online group has nowhere to join.'
+  ),
 
   // O.07a — лист выбора пояса. Заголовок с кадра дословно.
   tzSheetTitle: () => T('Часовой пояс GMT', 'Time Zone GMT'),

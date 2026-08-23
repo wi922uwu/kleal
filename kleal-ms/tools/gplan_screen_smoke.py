@@ -54,6 +54,8 @@ def frame_of(plan, vote, is_owner):
     st = plan.get("state")
     if st in ("cancelled", "done"):
         return "closed"
+    if plan.get("started"):
+        return "now"
     if st == "locked":
         return "locked"
     if st == "below_quorum":
@@ -277,6 +279,61 @@ check("а сам план уехал в историю отменённым",
 again = call("/api/agent/gplan-begin", {"gid": gid, "self": OWN, "when": "сб 18:00",
                                         "starts_at": time.time() + 60 * 3600, "idem": "sag%d" % S})
 check("и новый план завести можно", again.get("ok") is True, again)
+
+print()
+print("=" * 76)
+print("G. GROUP HYBRID: НЕДОСТАЮЩИЙ ВХОД, СТОРОНЫ И LIVE-СТАТУСЫ")
+print("=" * 76)
+check("started имеет приоритет над locked и показывает активную встречу",
+      frame_of({"state": "locked", "started": True}, None, False) == "now")
+
+gidH1 = make("h1", mode="hybrid", n=2)
+h1 = call("/api/agent/gplan-begin", {"gid": gidH1, "self": OWN, "when": "сб 18:00",
+                                      "place": "Nømad", "starts_at": time.time() + 40 * 3600,
+                                      "idem": "sh1%d" % S})
+PH1 = ((h1 or {}).get("plan") or {}).get("id")
+p = (screen(OWN, gidH1)[1])
+check("место есть, ссылка отсутствует", p.get("needs_link") is True and not p.get("needs_place"), p)
+bad = call("/api/agent/gplan-mode", {"id": PH1, "self": M[0], "mode": "offline"})
+check("режим меняет только организатор", bad.get("error") == "NOT_ORGANIZER", bad)
+off = call("/api/agent/gplan-mode", {"id": PH1, "self": OWN, "mode": "offline",
+                                     "idem": "sh1m%d" % S})
+check("без ссылки можно оставить план офлайновым",
+      off.get("ok") is True and (off.get("plan") or {}).get("mode") == "offline", off)
+
+gidH2 = make("h2", mode="hybrid", n=2)
+h2 = call("/api/agent/gplan-begin", {"gid": gidH2, "self": OWN, "when": "сб 19:00",
+                                      "link": "https://meet.example/hybrid",
+                                      "starts_at": time.time() + 40 * 3600, "idem": "sh2%d" % S})
+PH2 = ((h2 or {}).get("plan") or {}).get("id")
+on = call("/api/agent/gplan-mode", {"id": PH2, "self": OWN, "mode": "online",
+                                    "idem": "sh2m%d" % S})
+check("без места можно оставить план онлайновым",
+      on.get("ok") is True and (on.get("plan") or {}).get("mode") == "online", on)
+
+gidH3 = make("h3", mode="hybrid", n=2)
+h3 = call("/api/agent/gplan-begin", {"gid": gidH3, "self": OWN, "when": "сб 20:00",
+                                      "place": "Nømad", "link": "https://meet.example/live",
+                                      "starts_at": time.time() + 40 * 3600, "idem": "sh3%d" % S})
+PH3 = ((h3 or {}).get("plan") or {}).get("id")
+for n in M[:2]:
+    call("/api/agent/gplan-respond", {"id": PH3, "self": n, "action": "confirm"})
+side = call("/api/agent/gplan-side", {"id": PH3, "self": M[0], "side": "call",
+                                      "idem": "sh3s%d" % S})
+check("участник выбирает звонок, и счётчик обновляется",
+      (side.get("plan") or {}).get("my_side") == "call"
+      and ((side.get("plan") or {}).get("side_counts") or {}).get("call") == 1, side)
+cant = call("/api/agent/gplan-status", {"id": PH3, "self": M[1], "status": "cant_make_it",
+                                        "idem": "sh3c%d" % S})
+check("«не смогу» сохраняется как live-статус",
+      (((cant.get("plan") or {}).get("my_live") or {}).get("status")) == "cant_make_it", cant)
+cant_counts = (cant.get("plan") or {}).get("side_counts") or {}
+check("«не смогу» исключает участника из счётчика присутствующих",
+      sum(int(cant_counts.get(k) or 0) for k in ("in_person", "call", "undecided")) == 2,
+      cant_counts)
+g3 = screen(OWN, gidH3)[3]
+check("live-статус не удаляет человека из группы", len(g3.get("members") or []) == 3,
+      [m.get("name") for m in (g3.get("members") or [])])
 
 print()
 print("=" * 76)

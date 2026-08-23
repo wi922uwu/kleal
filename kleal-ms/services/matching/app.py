@@ -257,49 +257,57 @@ def topics_of(s):
     return {ph} if ph not in _TOPIC_STOP else set()
 
 
+_TEACH_SENT = set()          # фразы, уже отправленные в очередь этим процессом — не слать дубли
+
+
 def resolve_query_topics(topics, phrase=""):
-    """Разобрать НЕЗНАКОМЫЕ слова ЗАПРОСА через фильтрацию — по одному разу за всю жизнь слова.
+    """Темы ЗАПРОСА для моста — только из уже выученного, без единого сетевого вызова.
 
-    Мост работает по разобранным фразам, а интересы популяции разбираются заранее (tools/
-    teach_phrases.py). Со стороной запроса так нельзя: «опционы» никто не написал у себя в
-    профиле, поэтому фраза остаётся неизвестной, `topic_bridge` честно отвечает «нет», и запрос
-    снова находит одного. Проверено замером: `finance` после досева даёт 6 точных совпадений,
-    `options` — ноль.
+    Раньше незнакомая фраза разбиралась фильтрацией прямо здесь, внутри поиска, и тут же
+    запоминалась. Это дало мост первому же запросу, но ценой, которую показала батарея: поиск
+    ждал модель (секунды на сценарий), а два одинаковых вызова подряд отвечали по-разному,
+    потому что первый УЧИЛСЯ между ними. Девяносто сценариев золотой батареи из девяноста трёх
+    упали ровно на «NON-DETERMINISTIC result» — и это не придирка теста: тот же поиск, повторённый
+    человеком, находил других людей.
 
-    Почему это не дорого, в отличие от разбора КАНДИДАТОВ. Слов в запросе четыре, а не по четыре
-    на каждого из семисот; спрошенное запоминается навсегда, так что платит только первый человек,
-    придумавший новое слово. Тайм-аут короткий и ошибка проглатывается: поиск без моста хуже, чем
-    с ним, но поиск, ждущий модель, хуже обоих.
+    Теперь путь поиска только читает. Незнакомое уходит заданием в `teach.phrases` — воркер
+    спросит фильтрацию и научит живой матчинг через /api/agent/learn-phrases, обычно за секунды.
+    А ТЕКУЩИЙ поиск строит мост из тем интента: вызывающий уже прогнал текст запроса через
+    фильтрацию, когда собирал интент, — это ответ той же модели, полученный до входа сюда.
+    Выученная фраза точнее тем, что несёт контекст («поговорить про опционы» -> финансы, голое
+    «options» -> варианты выбора), поэтому когда она есть — она в приоритете.
     """
+    ph = _norm_phrase(phrase) if phrase else ""
+    # «Выучено» проверяется по PHRASE_TOPICS напрямую: topics_of для этого не годится — она по
+    # замыслу считает темой САМУ фразу (сторона кандидатов на этом сходится), то есть непустой
+    # ответ у неё есть всегда, и фолбэк на темы интента никогда бы не сработал.
+    learned = bool(ph and PHRASE_TOPICS.get(ph))
+    # Чему научиться на будущее: сама фраза и до трёх слов запроса, которых нет ни в выученном,
+    # ни в таксономии. Дедупликация в памяти процесса: очередь и так переживёт дубль, но слать
+    # одно и то же на каждый повтор поиска — шум в outbox и в панели.
     ask = []
-    # ФРАЗА ЦЕЛИКОМ ВАЖНЕЕ СЛОВ. Измерено на живой фильтрации: «поговорить про опционы» ->
-    # [options, trading, finance, investing], а голое «options» -> [choice, selection,
-    # alternatives, possibilities]. То есть по скомпилированному слову мост построился бы к
-    # «вариантам выбора», а не к финансам, и запрос снова нашёл бы не тех. Контекст фразы —
-    # единственное, что отличает опцион от «варианта».
-    if phrase and _norm_phrase(phrase) not in PHRASE_TOPICS:
-        ask.append(phrase)
-    ask += [t for t in (topics or [])
-            if t and _norm_phrase(t) not in PHRASE_TOPICS and not cat_of(t)[0]][:3]
-    if not ask:
-        return topics_of(phrase) if phrase else set()
-    items = []
-    for t in ask:
+    if phrase and not learned and ph not in _TEACH_SENT:
+        ask.append(str(phrase))
+    ask += [str(t) for t in (topics or [])
+            if t and _norm_phrase(t) not in PHRASE_TOPICS and not cat_of(t)[0]
+            and _norm_phrase(t) not in _TEACH_SENT][:3]
+    if ask:
+        for a in ask:
+            _TEACH_SENT.add(_norm_phrase(a))
         try:
-            req = urllib.request.Request(
-                FILTER_URL + "/api/filter/categorize",
-                data=json.dumps({"text": str(t)}).encode(),
-                headers={"Content-Type": "application/json"})
-            d = json.loads(urllib.request.urlopen(req, timeout=6).read().decode())
-            ts = [str(x).lower().strip() for x in (d.get("topics") or []) if str(x).strip()]
-            if ts:
-                items.append({"phrase": str(t), "topics": ts})
+            mq.send("teach.phrases", {"phrases": ask})
         except Exception:
-            continue                      # фильтрация молчит — ищем без моста, а не не ищем вовсе
-    if items:
-        learn_phrases(items)
-    return topics_of(phrase) if phrase else set()
-
+            pass                          # очередь лежит — выучим в другой раз; поиск не ждёт
+    out = topics_of(phrase) if learned else set()
+    if not learned and ph and ph not in _TOPIC_STOP:
+        out.add(ph)                       # буквальное совпадение запроса с интересом — тоже мост
+    # Слова интента разворачиваются через topics_of, а не кладутся как есть: выученное слово несёт
+    # свои темы («кофе» -> coffee — иначе русский запрос никогда не сойдётся с английским
+    # интересом), невыученное остаётся самим собой. Порог в topics_join держит разросшийся набор:
+    # одного общего слова, как и раньше, мало.
+    for t in (topics or ()):
+        out |= topics_of(t)
+    return out
 
 def topics_join(ta, tb):
     """Достаточно ли двум наборам тем ОБЩЕГО, чтобы считать фразы про одно и то же.
@@ -1788,6 +1796,70 @@ def _slate_budget(intent):
 
 
 def match_candidates(intent, prof, ctx=None, diag=None, want=None):
+    """Вход подбора: ставит мост тем НА ВРЕМЯ поиска и гарантированно снимает его после.
+
+    Мост — знание фильтрации о фразе запроса, впрыснутое в таксономию на один поиск (см.
+    resolve_query_topics и graph.set_bridge). Снятие в finally обязательно: слот потоко-локальный,
+    но поток живёт дольше запроса, и вызов, который моста не ставил — групповой подбор, батарея,
+    диагностика, — не должен наследовать решение прошлого поиска. Восстанавливается ПРЕЖНЕЕ
+    значение, а не пустота: если подбор однажды позовёт подбор, внутренний не снимет мост под
+    внешним.
+    """
+    prev_q = getattr(_QCTX, "bridge", None)
+    try:
+        from matching_core.taxonomy import graph as _TX
+        prev_fn, prev_tof = _TX._bridge_fn(), _TX._topics_of_fn()
+    except Exception:
+        _TX, prev_fn, prev_tof = None, None, None
+    try:
+        _phr = str(intent.get("_query") or intent.get("phrase") or "")
+        _qb = resolve_query_topics(
+            [str(t).lower() for t in (intent.get("topics") or [])], _phr)
+        _set_query_bridge(_qb)
+        # ФРАЗА ЗАПРОСА — ТОЖЕ ТЕМА. Сравнивались только темы от фильтрации, а сама фраза не
+        # сравнивалась ни с чем: поиск «mercado gastronómico» не находил человека, у которого
+        # ровно «mercado gastronómico» и написано, — первый ярус оставался пуст, а он лежал во
+        # втором рядом с чужими. Добавляем короткую фразу (до трёх слов — длинная это предложение,
+        # а не название занятия), чтобы буквальное попадание оставалось буквальным и не зависело
+        # от того, дописала ли фильтрация нужную ручку.
+        #
+        # СТАВИТСЯ ПЕРВОЙ, и это не косметика: normalize_for_scoring режет темы до четырёх
+        # (TOPIC_CAP в kleal_intent.py), а фильтрация обычно ровно четыре и возвращает — дописанная
+        # в конец фраза молча отваливалась. Проверено: «mercado gastronómico» не находил человека
+        # с ровно таким интересом, темы до движка доходили без фразы. Первое место ей и по смыслу:
+        # это собственные слова человека, они весомее четвёртой догадки модели.
+        _pn = _norm_phrase(_phr)
+        if _pn and len(_pn.split()) <= 3:
+            _tl = [str(t).lower() for t in (intent.get("topics") or [])]
+            if _pn not in _tl:
+                intent = dict(intent, topics=[_pn] + _tl)
+        # И ДВИЖКУ ТОЖЕ. Ярус решает не `topical`, а таксономия matching_core: впрыснутые
+        # помощники она берёт «для совместимости подписи» и не использует. Без этой строки мост
+        # работал ровно там, где ничего не решает: `topical` давал 3, а движок ставил T5 «нет
+        # overlap», и человек снова видел одного кандидата. Движку отдаётся ГОТОВОЕ РЕШЕНИЕ, а
+        # не два набора тем: правило «сколько общего достаточно» должно быть одно на обе стороны.
+        if _TX is not None:
+            _qbs = set(_qb or ())
+            _TX.set_bridge(lambda x: topics_join(_qbs, topics_of(x)) if _qbs else False)
+            # Тот же разбор фразы отдаём для опознания ПРОИЗВОДНЫХ РУЧЕК: дописанное машиной слово
+            # не имеет права быть точным совпадением. Без этого «языковой обмен» приводил человека
+            # про уход за котами первым ярусом — по общей ручке `exchange`.
+            _TX.set_topics_of(topics_of)
+    except Exception:
+        _set_query_bridge(())
+    try:
+        return _match_candidates_engine(intent, prof, ctx, diag, want)
+    finally:
+        _QCTX.bridge = prev_q
+        if _TX is not None:
+            try:
+                _TX.set_bridge(prev_fn)
+                _TX.set_topics_of(prev_tof)
+            except Exception:
+                pass
+
+
+def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
     """Entry point. Policy hard gates run HERE (scoring only after ALLOW — spec §8), then §7 staged
     retrieval assembles the pool, then Core v2 scores it. KLEAL_CORE_V2=0 or an invalid config -> legacy
     scorer above, unchanged. The response is a superset of the legacy card contract.
@@ -1798,30 +1870,6 @@ def match_candidates(intent, prof, ctx=None, diag=None, want=None):
     retrieval now caps the eligible pool at a budget BEFORE scoring, so `eligible` and `scored._in`
     legitimately differ and people can be lost between the gates and the ranker. A funnel that
     hides its narrowest stage is decoration."""
-    # МОСТ ТЕМ на время этого поиска: разбираем фразу запроса (один вопрос фильтрации на новое
-    # слово за всю его жизнь) и кладём её темы туда, откуда их возьмёт `topical` — включая вызовы
-    # из движка, который параметров не передаёт.
-    try:
-        _qb = resolve_query_topics(
-            [str(t).lower() for t in (intent.get("topics") or [])],
-            str(intent.get("_query") or ""))
-        _set_query_bridge(_qb)
-        # И ДВИЖКУ ТОЖЕ. Ярус решает не этот `topical`, а таксономия matching_core: впрыснутые
-        # помощники она берёт «для совместимости подписи» и не использует. Без этой строки мост
-        # работал ровно там, где ничего не решает, — проверено: `topical` давал 3, а движок ставил
-        # T5 «нет overlap», и человек снова видел одного кандидата.
-        try:
-            from matching_core.taxonomy import graph as _TX
-            # Движку отдаём ГОТОВОЕ РЕШЕНИЕ, а не два набора: правило «сколько общего достаточно»
-            # должно быть одно на обе стороны, иначе панель и приложение однажды разойдутся в том,
-            # что считают похожим, и разойдутся молча.
-            _qbs = set(_qb or ())
-            _TX.set_bridge(lambda x: topics_join(_qbs, topics_of(x)) if _qbs else False)
-        except Exception:
-            pass
-    except Exception:
-        _set_query_bridge(())
-
     if not CORE_V2:
         return _persona_order(match_candidates_legacy(intent, prof, ctx), intent)
     ctx = ctx or {}
@@ -5251,9 +5299,14 @@ def _gp_public(p, me=""):
     place = str(p.get("place") or "").strip()
     link = str(p.get("link") or "").strip()
     sides = dict(p.get("sides") or {})
+    live = dict(p.get("live") or {})
     side_counts = {"in_person": 0, "call": 0, "undecided": 0}
     for name in act:
-        side = (sides.get(_norm_name(name)) or {}).get("side")
+        key = _norm_name(name)
+        # «Не смогу прийти» сохраняет участника в группе, но не обещает группе его присутствие.
+        if (live.get(key) or {}).get("status") == "cant_make_it":
+            continue
+        side = (sides.get(key) or {}).get("side")
         if side in ("in_person", "call"):
             side_counts[side] += 1
         else:
@@ -5295,8 +5348,8 @@ def _gp_public(p, me=""):
         # GR.45a: кто уже в пути, кто опаздывает, кто на месте. Отдаётся ВСЕЙ группе, в отличие
         # от один-на-один, где это личное: здесь «опаздываю» адресовано всем сразу, и знать об
         # этом должен каждый, а не только тот, кто откроет чат.
-        "live": dict(p.get("live") or {}),
-        "my_live": (p.get("live") or {}).get(_norm_name(me)),
+        "live": live,
+        "my_live": live.get(_norm_name(me)),
         # Встреча уже идёт — кадр меняется с «заперто, через два часа» на «происходит сейчас».
         "started": bool(p.get("starts_at")) and time.time() >= float(p.get("starts_at") or 0)
                    and p.get("state") in ("confirmed", "locked"),
@@ -5364,9 +5417,12 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None, li
                                             "or nobody can confirm it"})
         mode = str(g.get("mode") or "offline")
         initial_link = str(link or (g.get("intent") or {}).get("link") or g.get("link") or "")[:400]
+        # OF.09: автор уже указал точное место в мастере. Оно хранится внутри группового интента
+        # и не выдаётся приглашённым до согласия; когда группа дошла до плана, не просим его снова.
+        initial_place = str(place or (g.get("intent") or {}).get("address") or "")[:160]
         p = {"id": "gp_%d_%s" % (int(now * 1000), hashlib.sha1(gid.encode("utf-8")).hexdigest()[:6]),
              "gid": gid, "owner": g.get("owner"), "version": 1, "round": 1,
-             "when": str(when or "")[:120], "place": str(place or "")[:160],
+             "when": str(when or "")[:120], "place": initial_place,
              "note": str(note or "")[:400], "starts_at": sa,
              # Онлайн или офлайн решает ИНТЕНТ, а не автор плана: группа собиралась под звонок или
              # под место, и подменять это на шаге плана значило бы позвать людей на одно, а свести
@@ -5942,6 +5998,53 @@ def gp_details(pid, who, place=None, link=None, idem=None):
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
 
+GP_MODES = ("offline", "online")
+
+
+def gp_mode(pid, who, mode, idem=None):
+    """GRH.25a/25b: finish an incomplete hybrid plan using its available entrance only.
+
+    The board offers this as an explicit fallback beside the missing field: a saved place can
+    become an offline plan, and a saved call link can become an online plan. It changes this
+    meeting only; the group intent stays hybrid for future plans.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    target = str(mode or "").strip().lower()
+    if target not in GP_MODES:
+        return {"ok": False, "error": "BAD_MODE", "allowed": list(GP_MODES)}
+    now = time.time()
+    with _STORE_LOCK:
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return _idem_put(idem, {"ok": False, "error": "NOT_ORGANIZER"})
+        if p.get("mode") != "hybrid":
+            return _idem_put(idem, {"ok": False, "error": "NOT_HYBRID"})
+        if p.get("state") in ("locked", "cancelled", "done"):
+            return _idem_put(idem, {"ok": False, "error": "LOCKED"})
+        if target == "offline" and not str(p.get("place") or "").strip():
+            return _idem_put(idem, {"ok": False, "error": "NO_PLACE"})
+        if target == "online" and not str(p.get("link") or "").strip():
+            return _idem_put(idem, {"ok": False, "error": "NO_LINK"})
+
+        p["mode"] = target
+        p["sides"] = {}
+        p["updated"] = now
+        p.setdefault("responses", {}).setdefault(
+            g.get("owner"), {"state": "confirmed", "t": now, "version": p.get("version")})
+        _gi_say(g, "%s made this plan %s only." % (who, target),
+                code="plan_mode_changed", who=who, mode=target)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
 GP_SIDES = ("in_person", "call")
 
 
@@ -6043,7 +6146,7 @@ def gp_vote_close(vote_id, who, idem=None):
         return _idem_put(idem, _gp_vote_view(v, who))
 
 
-GP_LIVE = ("otw", "late", "here")     # GR.45a «уже иду» / «опаздываю» / «я на месте»
+GP_LIVE = ("otw", "late", "here", "cant_make_it")
 
 
 def gp_status(pid, who, status, eta_min=None, idem=None):
@@ -6088,6 +6191,9 @@ def gp_status(pid, who, status, eta_min=None, idem=None):
             _gi_say(g, "%s is running late." % who, code="running_late", who=who, eta=eta)
         elif st == "here":
             _gi_say(g, "%s is there." % who, code="arrived", who=who)
+        elif st == "cant_make_it":
+            _gi_say(g, "%s can\'t make it. The meetup stays on for everyone else.",
+                    code="cant_make_it", who=who)
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
@@ -7812,6 +7918,9 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/gplan-details":
             send_json(self, 200, gp_details(body.get("id"), body.get("self"),
                                             body.get("place"), body.get("link"), body.get("idem")))
+        elif p == "/api/agent/gplan-mode":
+            send_json(self, 200, gp_mode(body.get("id"), body.get("self"),
+                                         body.get("mode"), body.get("idem")))
         elif p == "/api/agent/gplan-side":
             send_json(self, 200, gp_side(body.get("id"), body.get("self"),
                                          body.get("side"), body.get("idem")))

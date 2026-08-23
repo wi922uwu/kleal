@@ -408,7 +408,7 @@ export default function Results() {
     );
   }
 
-  const title = gmode ? GROUP.header()
+  const title = gmode ? (groupId() ? GROUP.invitesSent() : GROUP.header())
               : cands.length === 0 ? RESULTS.empty()
               : onlyFallback ? T('Прямых совпадений нет', 'No direct matches')
               : RESULTS.best();
@@ -572,20 +572,28 @@ export default function Results() {
         <View style={[s.sheetSend, { opacity: 0.45 }]}>
           <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
         </View>
-        <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
-        {/* «Отменить одно» — вот они, все открытые: отзыв тут же, без похода по экранам. */}
-        {(gmode ? groupPending().map((r) => ({ id: r.id, to: r.to })) : pendingOut).map((r) => (
-          <View key={r.id || r.to} style={s.capRow}>
-            <Text style={s.capName} numberOfLines={1}>{r.to}</Text>
-            <Pressable
-              accessibilityRole="button"
-              style={s.capBtn}
-              onPress={() => (gmode ? cancelGroupInvite(self, r.to) : withdrawInvite(self, r.to))}
-            >
-              <Text style={s.capBtnText}>{CAP.withdraw()}</Text>
-            </Pressable>
-          </View>
-        ))}
+        {/* На GR.15 цены нет: canvas только объясняет лимит и даёт два выхода. */}
+        {!gmode ? <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text> : null}
+        {gmode ? (
+          /* GR.15 возвращает к списку: у каждой открытой строки там уже есть своя Cancel. */
+          <Pressable accessibilityRole="button" style={s.sheetNot} onPress={() => setCapOpen(false)}>
+            <Text style={s.sheetNotText}>{CAP.cancelOne()}</Text>
+          </Pressable>
+        ) : (
+          /* В 1:1 MSG.22 сохраняет быстрый отзыв прямо из листа. */
+          pendingOut.map((r) => (
+            <View key={r.id || r.to} style={s.capRow}>
+              <Text style={s.capName} numberOfLines={1}>{r.to}</Text>
+              <Pressable
+                accessibilityRole="button"
+                style={s.capBtn}
+                onPress={() => withdrawInvite(self, r.to)}
+              >
+                <Text style={s.capBtnText}>{CAP.withdraw()}</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
       </Sheet>
 
       <InviteSheet
