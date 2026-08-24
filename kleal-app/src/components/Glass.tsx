@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { color, glass, radius, space, type } from '../theme';
+import { hCommit, hTap } from '../haptics';
 
 export function GlassPill({
   label,
@@ -49,7 +50,20 @@ export function GlassPill({
       accessibilityRole="button"
       accessibilityState={{ disabled: off, busy: !!busy }}
       disabled={off}
-      onPress={onPress}
+      /*
+        ОТКЛИК ЗДЕСЬ, А НЕ В ЭКРАНАХ. Кнопок этого вида уже с десяток, и вызов вибрации рядом с
+        каждым `onPress` означал бы, что однажды одна кнопка окажется молчаливой — а молчит она
+        ровно там, где про неё забыли, то есть в самом новом месте. Фирменная бьёт весомее прочих:
+        за ней что-то происходит, за остальными — просто переход.
+      */
+      onPress={
+        onPress &&
+        (() => {
+          if (brand) hCommit();
+          else hTap();
+          onPress();
+        })
+      }
       style={({ pressed }) => [
         s.wrap,
         brand && s.brandGlow,

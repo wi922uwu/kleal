@@ -22,7 +22,7 @@ import {
   View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
 import { auth, setSession } from '../src/api';
 import { AUTH, CODE_LEN, DEV_CODE } from '../src/auth';
 import { patch, applyDefaults } from '../src/state';
@@ -31,6 +31,7 @@ import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { GlassBack, GlassPane } from '../src/components/GlassField';
 import { GlassPill } from '../src/components/Glass';
 import { color, displayFamily, radius as rad, space, type } from '../src/theme';
+import { hFail, hOk, hTick } from '../src/haptics';
 
 const TTL_MIN = 10;          // столько же, сколько CODE_TTL на сервере
 const RESEND = 30;           // «Resend code in 0:30»
@@ -39,6 +40,7 @@ export default function AuthCode() {
   const lang = useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const nav = useNavigation();
   const params = useLocalSearchParams<{ email?: string; dev?: string }>();
   const email = String(params.email || '');
   /**
@@ -61,6 +63,40 @@ export default function AuthCode() {
     return () => clearInterval(id);
   }, [left]);
 
+  /**
+   * КЛАВИАТУРА ПОДНИМАЕТСЯ ПОСЛЕ ТОГО, КАК ЭКРАН ДОЕХАЛ, А НЕ ВМЕСТЕ С НИМ.
+   *
+   * `autoFocus` ставит фокус в момент монтирования — то есть в тот самый момент, когда начинается
+   * переход. Дальше на одном кадре сходятся три движения: сам переход (его ведёт система),
+   * подъём клавиатуры (его ведёт iOS) и подгонка разметки под клавиатуру, которую
+   * `KeyboardAvoidingView` считает в JS-потоке и на каждом кадре пересчитывает высоту. Третье
+   * упирается в главный поток, и переход теряет кадры — со стороны он «троит».
+   *
+   * `transitionEnd` — событие самого стека: оно приходит ровно тогда, когда анимация закончилась.
+   * `closing` отсекает обратный переход: уходя с экрана, поднимать клавиатуру незачем.
+   *
+   * ЗАПАСНОЙ ПУТЬ ОБЯЗАТЕЛЕН. Экран можно открыть и без перехода вовсе — по ссылке снаружи или
+   * первым в стопке. Тогда события не будет никогда, и без таймера поле осталось бы без фокуса, а
+   * человек — перед клавиатурой, которую надо вызывать руками. Задержка заведомо больше перехода,
+   * чтобы в обычном случае сработало событие, а не она.
+   */
+  useEffect(() => {
+    let done = false;
+    const focus = () => {
+      if (done) return;
+      done = true;
+      input.current?.focus();
+    };
+    const off = nav.addListener('transitionEnd' as any, (e: any) => {
+      if (!e?.data?.closing) focus();
+    });
+    const t = setTimeout(focus, 700);
+    return () => {
+      off();
+      clearTimeout(t);
+    };
+  }, [nav]);
+
   const full = code.length === CODE_LEN;
   /** A.03.2c: код мёртв — вместо «Подтвердить» просим новый. */
   const dead = !!err?.dead;
@@ -72,6 +108,8 @@ export default function AuthCode() {
     try {
       const r: any = await auth.verifyCode(email, value, replyLang());
       if (r?.ok && r?.token) {
+        // Отклик РАНЬШЕ перехода: пока экран уезжает, рука уже знает, что код принят.
+        hOk();
         setSession(r.token);
         // Личность и профиль приходят с сервера: у вернувшегося он уже есть, у нового — нет.
         patch({
@@ -90,10 +128,12 @@ export default function AuthCode() {
         return;
       }
       if (r?.error === 'wrong') {
+        hFail();
         setCode('');
         setErr({ title: AUTH.wrongTitle(), note: AUTH.wrongNote(Number(r?.attempts_left ?? 0)) });
         setTimeout(() => input.current?.focus(), 40);
       } else if (r?.error === 'expired') {
+        hFail();
         setCode('');
         setErr({ title: AUTH.expiredTitle(), note: AUTH.expiredNote(), dead: true });
       } else {
@@ -186,6 +226,8 @@ export default function AuthCode() {
               value={code}
               onChangeText={(v) => {
                 const digits = v.replace(/\D/g, '').slice(0, CODE_LEN);
+                // Щелчок только на ПРИБАВЛЕНИИ цифры: на стирании его нет и в системных полях.
+                if (digits.length > code.length) hTick();
                 setCode(digits);
                 if (err) setErr(null);
                 if (digits.length === CODE_LEN) verify(digits);   // шестая цифра — сразу проверяем
@@ -196,7 +238,6 @@ export default function AuthCode() {
               autoComplete="one-time-code"
               maxLength={CODE_LEN}
               editable={!busy}
-              autoFocus
               accessibilityLabel={AUTH.codeTitle()}
             />
           </Pressable>

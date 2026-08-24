@@ -28,6 +28,7 @@ import { SLIDES } from '../src/onboarding';
 import { useLang, T } from '../src/i18n';
 import { useOnb, patch } from '../src/state';
 import { color, displayFamily, font, radius, space, type } from '../src/theme';
+import { makePull } from '../src/haptics';
 
 export default function Intro() {
   const lang = useLang();
@@ -68,6 +69,13 @@ export default function Intro() {
   const OPEN_Y = -CURVE_H;                // поднят полностью: кривая ушла за верхний край
   const y = useRef(new Animated.Value(REST_Y)).current;
   const busy = useRef(false);
+  /**
+   * ДЛИННЫЙ ТАКТИЛЬНЫЙ ОТКЛИК НА ПРОТЯЖКЕ. Панель тянут пальцем, и без отклика это единственный
+   * жест в приложении, где рука не получает ничего: кнопка щёлкает, поле щёлкает, а тут тянешь
+   * вслепую. Дробь засечек по ходу, средний удар на точке невозврата и тяжёлый на пуске — устройство
+   * дроби и почему она не одно длинное событие описано в src/haptics.ts.
+   */
+  const pull = useRef(makePull()).current;
   /** Подпись гаснет на первой трети подъёма — дальше занавес идёт чистым. */
   const labelFade = y.interpolate({
     inputRange: [REST_Y - 120, REST_Y],
@@ -113,15 +121,20 @@ export default function Intro() {
         onStartShouldSetPanResponder: () => !busy.current,
         onMoveShouldSetPanResponder: (_e, g) =>
           !busy.current && Math.abs(g.dy) > 4 && Math.abs(g.dy) > Math.abs(g.dx),
+        onPanResponderGrant: () => pull.grab(),
         onPanResponderMove: (_e, g) => {
           const raw = REST_Y + g.dy;
           // Вверх — свободно до края, вниз — с сопротивлением: палец уходит втрое дальше пикселя.
           y.setValue(raw < REST_Y ? Math.max(raw, OPEN_Y) : REST_Y + g.dy / 3);
+          // Засечки считаются от ПРОТЯНУТОГО, а не от смещения панели: ниже покоя панель идёт
+          // втрое медленнее пальца, и по её ходу дробь там оказалась бы втрое реже.
+          pull.move(Math.max(0, -g.dy), -g.dy >= PULL_DONE);
         },
         onPanResponderRelease: (_e, g) => {
           const tapped = Math.abs(g.dy) < 6 && Math.abs(g.dx) < 6;
           const flung = g.vy < -0.55;
           const far = g.dy < -PULL_DONE;
+          pull.release(tapped || flung || far);
           if (tapped || flung || far) {
             busy.current = true;
             // Сначала занавес закрывает экран, потом под ним меняется слайд, потом занавес
@@ -144,9 +157,12 @@ export default function Intro() {
           }
           settle(REST_Y, g.vy);
         },
-        onPanResponderTerminate: () => settle(REST_Y, 0),
+        onPanResponderTerminate: () => {
+          pull.release(false);
+          settle(REST_Y, 0);
+        },
       }),
-    [y, REST_Y, OPEN_Y, i, last]
+    [y, REST_Y, OPEN_Y, i, last, pull]
   );
 
   return (

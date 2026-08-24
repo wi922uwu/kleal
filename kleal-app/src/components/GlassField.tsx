@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { color, glass, space, type } from '../theme';
+import { hTap } from '../haptics';
 
 /**
  * Стеклянная подложка: размытие того, что под ней, плюс белая плёнка.
@@ -49,7 +50,10 @@ export function GlassBack({ onPress, label }: { onPress: () => void; label: stri
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      onPress={onPress}
+      onPress={() => {
+        hTap();
+        onPress();
+      }}
       hitSlop={10}
       style={({ pressed }) => [s.back, pressed && s.pressed]}
     >
@@ -63,18 +67,19 @@ export function GlassBack({ onPress, label }: { onPress: () => void; label: stri
   );
 }
 
-/** Поле ввода с подписью над ним. */
-export function GlassInput({
-  label,
-  style,
-  bad,
-  ...input
-}: TextInputProps & {
+/**
+ * Поле ввода с подписью над ним.
+ *
+ * ССЫЛКА ПРОБРАСЫВАЕТСЯ НАРУЖУ, и это не «на всякий случай»: экран обязан уметь поставить фокус
+ * сам, в выбранный им момент. Клавиатура, поднимающаяся во время перехода, спорит с ним за главный
+ * поток — подробности в комментарии к фокусу в app/auth-email.tsx.
+ */
+export const GlassInput = React.forwardRef<TextInput, TextInputProps & {
   label?: string;
   style?: ViewStyle;
   /** Введено не то: кромка становится красной. Сам текст ошибки живёт под полем, в экране. */
   bad?: boolean;
-}) {
+}>(function GlassInput({ label, style, bad, ...input }, ref) {
   return (
     <View style={style}>
       {!!label && <Text style={s.label}>{label}</Text>}
@@ -82,6 +87,7 @@ export function GlassInput({
         <GlassPane radius={20} />
         <TextInput
           {...input}
+          ref={ref}
           style={s.input}
           placeholderTextColor={color.muted}
           selectionColor={color.primary}
@@ -89,7 +95,7 @@ export function GlassInput({
       </View>
     </View>
   );
-}
+});
 
 // ===== вид
 const PANE = Platform.select({
