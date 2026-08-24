@@ -2060,53 +2060,53 @@ def read_photo(uid):
         return None
 
 
-def _canon_interests(words):
-    """Give a free-typed interest an English handle the ranker can resolve.
+def _translate_interests(batch):
+    """Один вызов модели на всё непереводимое: список формулировок -> [{"en","ru","es"}].
 
-    The search side already canonicalises — «senderismo» becomes hiking/trail before matching sees
-    it — but the CANDIDATE side did not, so a person who typed «senderismo» or «настолки» stayed
-    invisible to the very search looking for them. The chip interests are canonical already; this
-    is for whatever someone typed into «Добавить своё».
-
-    Their own wording stays FIRST (it is what the card shows, and the only handle a novel interest
-    like "labubu" ever gets); filtration's canonical topics are appended. Best-effort by design: a
-    slow or down filtration must never block a registration, it just means no extra handle.
-    Same rule as tools/canonicalise_interests.py, which backfills people already in the store.
+    Модель, а не фильтрация: фильтрации задача «назови тему», и она отвечает темой ВСЕГДА, даже
+    когда темы нет, — на этом уже горели (интересы «hello» и «leisure» у живых людей). Здесь
+    задача другая: ПЕРЕВЕСТИ сказанное, сохранив специфичность. «Рыбачить на море» обязано стать
+    «sea fishing», а не «fishing»: именно уточнение делает человека находимым тем, кто ищет то же.
     """
-    import urllib.request
-    # Вторая волна там же: концептуальные слова, ускользнувшие от первого списка. Найдены по
-    # живой жалобе — «Акции» приводили гастрономический рынок первым тиром, потому что фильтрация
-    # дописала обоим голое `market`. Класс тот же: слово-понятие, которое льстит любому запросу
-    # своей области («language» вместо «spanish», «business» вместо «marketing») и через границу
-    # областей врёт («market» у финансов и у еды). Настоящий сигнал — конкретика рядом с ними.
-    GENERIC = {"sport", "sports", "exercise", "activity", "activities", "hobby", "hobbies", "fun",
-               "leisure", "beverage", "drink", "drinks", "food", "social", "socializing", "people",
-               "meeting", "meetup", "friends", "community", "culture", "tradition", "lifestyle",
-               "wellness", "entertainment", "game", "games", "play", "event", "events", "health", "art",
-               "market", "talk", "quiet", "business", "product", "trip", "language",}
-    out = [str(w).strip() for w in (words or []) if str(w).strip()]
-    have = {w.lower() for w in out}
-    cands = []
-    for w in out:
-        try:
-            req = urllib.request.Request(FILTER_URL + "/api/filter/categorize",
-                                         data=json.dumps({"text": w}).encode(),
-                                         headers={"Content-Type": "application/json"})
-            topics = json.loads(urllib.request.urlopen(req, timeout=6).read().decode()).get("topics") or []
-        except Exception:
-            topics = []                    # filtration unavailable -> keep the raw word, lose nothing
-        cands.append([str(t).strip().lower() for t in topics[:3]
-                      if str(t).strip().lower() and str(t).strip().lower() not in GENERIC])
-    # Round-robin, not first-come: filling from interest #1 until the cap left the LAST interest with
-    # no English handle at all — exactly the person whose «настолки» then matched nobody.
-    for depth in range(3):
-        for lst in cands:
-            if len(out) >= 8:
-                return out[:8]
-            if depth < len(lst) and lst[depth] not in have:
-                have.add(lst[depth])
-                out.append(lst[depth])
-    return out[:8]
+    sys_p = ("You translate personal interests for a social app. For EVERY input line return one "
+             "object {\"en\",\"ru\",\"es\"}: a short natural interest phrase (max 4 words) in each "
+             "language, preserving the SPECIFIC meaning (sea fishing, not fishing). No extra text — "
+             "answer with a JSON array only, same order and count as the input lines.")
+    raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_p},
+                                  {"role": "user", "content": "\n".join(batch)}], 0.2)
+    # Батч из ОДНОГО слова модель часто отдаёт голым объектом без массива — ловим оба вида.
+    # На этом уже споткнулись: единственное новое слово в правке профиля молча оставалось сырым.
+    try:
+        rows = json.loads(raw[raw.index("["):raw.rindex("]") + 1])
+        return rows if isinstance(rows, list) else []
+    except Exception:
+        pass
+    try:
+        one = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+        return [one] if isinstance(one, dict) and len(batch) == 1 else []
+    except Exception:
+        return []
+
+
+def _canon_interests(words):
+    """Свести интересы к АНГЛИЙСКИМ КЛЮЧАМ. Подписи для показа живут в общем словаре
+    (shared/interest_i18n.py), своё слово человека становится подписью его языка.
+
+    РАНЬШЕ здесь ДОПИСЫВАЛИСЬ английские «ручки» от фильтрации — к «cata de café» добавлялось
+    голое coffee, к «mercado gastronómico» голое market. Ручки-понятия трижды чистили миграциями
+    (strip_generic_handles: market, design, exchange…), потому что они льстили любому запросу
+    своей области и врали через границы областей. Теперь дописывать нечего: хранится сразу
+    английская форма, и подбор сравнивает английское с английским.
+
+    Best-effort остался прежним: модель молчит — слово хранится как есть, регистрация не ждёт
+    и не падает. Такое слово переведётся позже (миграцией или при следующей правке профиля).
+    """
+    try:
+        import interest_i18n
+        return interest_i18n.to_en(words, translate=_translate_interests)[:8]
+    except Exception:
+        out = [str(w).strip() for w in (words or []) if str(w).strip()]
+        return out[:8]
 
 # ---------------------------------------------------------------- accounts (dev sign-in)
 # A SEPARATE file from users.json on purpose. users.json is the matching store: it is read by the
@@ -3076,7 +3076,18 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         elif p == "/api/onboarding/profile":
-            send_json(self, 200, {"user": get_user(body.get("name"))})
+            _u = get_user(body.get("name"))
+            _resp = {"user": _u}
+            # Подписи интересов на языке интерфейса. Ключи в строке английские; читатель
+            # по-русски или по-испански получает словарь «ключ -> подпись» и рисует его.
+            _lng = str(body.get("lang") or "").lower()
+            if _u and _lng in ("ru", "es"):
+                try:
+                    import interest_i18n
+                    _resp["interestLabels"] = interest_i18n.labels_for(_u.get("interests") or [], _lng)
+                except Exception:
+                    pass
+            send_json(self, 200, _resp)
         elif p == "/api/onboarding/profile-update":
             try:
                 send_json(self, 200, update_user(body.get("name"),

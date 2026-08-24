@@ -1829,6 +1829,16 @@ def match_candidates(intent, prof, ctx=None, diag=None, want=None):
         # с ровно таким интересом, темы до движка доходили без фразы. Первое место ей и по смыслу:
         # это собственные слова человека, они весомее четвёртой догадки модели.
         _pn = _norm_phrase(_phr)
+        # Интересы хранятся английскими ключами, и у фразы запроса может быть известный ключ:
+        # «подлёдная рыбалка» в словаре подписей -> «ice fishing». Тогда первой темой идёт КЛЮЧ —
+        # буквальное сравнение снова буквальное, на каком бы языке человек ни спросил.
+        try:
+            import interest_i18n as _ii
+            _pk = _ii.key_of(_phr)
+            if _pk:
+                _pn = _pk
+        except Exception:
+            pass
         if _pn and len(_pn.split()) <= 3:
             _tl = [str(t).lower() for t in (intent.get("topics") or [])]
             if _pn not in _tl:
@@ -5299,9 +5309,14 @@ def _gp_public(p, me=""):
     place = str(p.get("place") or "").strip()
     link = str(p.get("link") or "").strip()
     sides = dict(p.get("sides") or {})
+    live = dict(p.get("live") or {})
     side_counts = {"in_person": 0, "call": 0, "undecided": 0}
     for name in act:
-        side = (sides.get(_norm_name(name)) or {}).get("side")
+        key = _norm_name(name)
+        # «Не смогу прийти» сохраняет участника в группе, но не обещает группе его присутствие.
+        if (live.get(key) or {}).get("status") == "cant_make_it":
+            continue
+        side = (sides.get(key) or {}).get("side")
         if side in ("in_person", "call"):
             side_counts[side] += 1
         else:
@@ -5343,8 +5358,8 @@ def _gp_public(p, me=""):
         # GR.45a: кто уже в пути, кто опаздывает, кто на месте. Отдаётся ВСЕЙ группе, в отличие
         # от один-на-один, где это личное: здесь «опаздываю» адресовано всем сразу, и знать об
         # этом должен каждый, а не только тот, кто откроет чат.
-        "live": dict(p.get("live") or {}),
-        "my_live": (p.get("live") or {}).get(_norm_name(me)),
+        "live": live,
+        "my_live": live.get(_norm_name(me)),
         # Встреча уже идёт — кадр меняется с «заперто, через два часа» на «происходит сейчас».
         "started": bool(p.get("starts_at")) and time.time() >= float(p.get("starts_at") or 0)
                    and p.get("state") in ("confirmed", "locked"),
@@ -5412,9 +5427,12 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None, li
                                             "or nobody can confirm it"})
         mode = str(g.get("mode") or "offline")
         initial_link = str(link or (g.get("intent") or {}).get("link") or g.get("link") or "")[:400]
+        # OF.09: автор уже указал точное место в мастере. Оно хранится внутри группового интента
+        # и не выдаётся приглашённым до согласия; когда группа дошла до плана, не просим его снова.
+        initial_place = str(place or (g.get("intent") or {}).get("address") or "")[:160]
         p = {"id": "gp_%d_%s" % (int(now * 1000), hashlib.sha1(gid.encode("utf-8")).hexdigest()[:6]),
              "gid": gid, "owner": g.get("owner"), "version": 1, "round": 1,
-             "when": str(when or "")[:120], "place": str(place or "")[:160],
+             "when": str(when or "")[:120], "place": initial_place,
              "note": str(note or "")[:400], "starts_at": sa,
              # Онлайн или офлайн решает ИНТЕНТ, а не автор плана: группа собиралась под звонок или
              # под место, и подменять это на шаге плана значило бы позвать людей на одно, а свести
@@ -5990,6 +6008,53 @@ def gp_details(pid, who, place=None, link=None, idem=None):
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
 
+GP_MODES = ("offline", "online")
+
+
+def gp_mode(pid, who, mode, idem=None):
+    """GRH.25a/25b: finish an incomplete hybrid plan using its available entrance only.
+
+    The board offers this as an explicit fallback beside the missing field: a saved place can
+    become an offline plan, and a saved call link can become an online plan. It changes this
+    meeting only; the group intent stays hybrid for future plans.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    target = str(mode or "").strip().lower()
+    if target not in GP_MODES:
+        return {"ok": False, "error": "BAD_MODE", "allowed": list(GP_MODES)}
+    now = time.time()
+    with _STORE_LOCK:
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return _idem_put(idem, {"ok": False, "error": "NOT_ORGANIZER"})
+        if p.get("mode") != "hybrid":
+            return _idem_put(idem, {"ok": False, "error": "NOT_HYBRID"})
+        if p.get("state") in ("locked", "cancelled", "done"):
+            return _idem_put(idem, {"ok": False, "error": "LOCKED"})
+        if target == "offline" and not str(p.get("place") or "").strip():
+            return _idem_put(idem, {"ok": False, "error": "NO_PLACE"})
+        if target == "online" and not str(p.get("link") or "").strip():
+            return _idem_put(idem, {"ok": False, "error": "NO_LINK"})
+
+        p["mode"] = target
+        p["sides"] = {}
+        p["updated"] = now
+        p.setdefault("responses", {}).setdefault(
+            g.get("owner"), {"state": "confirmed", "t": now, "version": p.get("version")})
+        _gi_say(g, "%s made this plan %s only." % (who, target),
+                code="plan_mode_changed", who=who, mode=target)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
+
+
 GP_SIDES = ("in_person", "call")
 
 
@@ -6091,7 +6156,7 @@ def gp_vote_close(vote_id, who, idem=None):
         return _idem_put(idem, _gp_vote_view(v, who))
 
 
-GP_LIVE = ("otw", "late", "here")     # GR.45a «уже иду» / «опаздываю» / «я на месте»
+GP_LIVE = ("otw", "late", "here", "cant_make_it")
 
 
 def gp_status(pid, who, status, eta_min=None, idem=None):
@@ -6136,6 +6201,9 @@ def gp_status(pid, who, status, eta_min=None, idem=None):
             _gi_say(g, "%s is running late." % who, code="running_late", who=who, eta=eta)
         elif st == "here":
             _gi_say(g, "%s is there." % who, code="arrived", who=who)
+        elif st == "cant_make_it":
+            _gi_say(g, "%s can\'t make it. The meetup stays on for everyone else.",
+                    code="cant_make_it", who=who)
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
@@ -7860,6 +7928,9 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/gplan-details":
             send_json(self, 200, gp_details(body.get("id"), body.get("self"),
                                             body.get("place"), body.get("link"), body.get("idem")))
+        elif p == "/api/agent/gplan-mode":
+            send_json(self, 200, gp_mode(body.get("id"), body.get("self"),
+                                         body.get("mode"), body.get("idem")))
         elif p == "/api/agent/gplan-side":
             send_json(self, 200, gp_side(body.get("id"), body.get("self"),
                                          body.get("side"), body.get("idem")))
@@ -8258,6 +8329,16 @@ class H(BaseHTTPRequestHandler):
                     res["has_more"] = len(cands) > _lim
                     res["candidates"] = cands = cands[:_lim]
                     res["shown"] = len(cands)
+                # Подписи интересов кандидатов на языке читателя — одним словарём на весь ответ:
+                # ключи в профилях английские, а карточки человек читает на своём языке.
+                _lng = str(body.get("lang") or "").lower()
+                if _lng in ("ru", "es") and cands:
+                    try:
+                        import interest_i18n as _ii
+                        _iw = sorted({str(w) for c in cands for w in (c.get("interests") or [])})
+                        res["interestLabels"] = _ii.labels_for(_iw, _lng)
+                    except Exception:
+                        pass
                 res.update(_section5_addendum(intent, str(body.get("query") or ""), cands))  # §5.1/§5.2
                 res["retrieval"] = _retrieval_report(cands)                                    # §7
                 res["expansion"] = expansion_ladder(intent, ctx)                               # §12

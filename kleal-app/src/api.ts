@@ -22,6 +22,11 @@
  * Модель осталась на поде: сервер ходит к ней по закрытому каналу, наружу она не смотрит.
  */
 
+// У api.ts до сих пор не было импортов — он самодостаточный слой над fetch. Эти два
+// нужны подписям интересов: язык интерфейса и реестр, куда сгружаются словари с сервера.
+import { getLang } from './i18n';
+import { registerInterestLabels } from './interest-label';
+
 const DEFAULT_BASE = 'https://aiopenware.com';
 
 /**
@@ -362,8 +367,16 @@ export const onboarding = {
 // ---------------------------------------------------------------- профиль
 
 export const profile = {
-  /** Прочитать сохранённую строку профиля. Ключ — имя: другого идентификатора у хранилища нет. */
-  get: (name: string) => api.post<{ user: Json | null }>('/api/onboarding/profile', { name }),
+  /** Прочитать сохранённую строку профиля. Ключ — имя: другого идентификатора у хранилища нет.
+   *  `lang` едет ради подписей: интересы в строке — английские ключи, а рядом с ответом сервер
+   *  кладёт словарь подписей на языке интерфейса; он сгружается в реестр interest-label. */
+  get: (name: string) =>
+    api.post<{ user: Json | null; interestLabels?: Record<string, string> }>(
+      '/api/onboarding/profile', { name, lang: getLang() }
+    ).then((r) => {
+      registerInterestLabels(r?.interestLabels, getLang());
+      return r;
+    }),
 
   /**
    * Изменить профиль. Сервер принимает только поля из своего белого списка (_PATCH_FIELDS) и молча
@@ -394,6 +407,16 @@ export const buddy = {
   storyInterests: (story: string, have: string[], lang: string) =>
     api.post<{ interests?: { key: string; label: string; why: string }[] }>(
       '/api/buddy/story-interests', { story, have, lang }
+    ),
+
+  /**
+   * Разговор, в котором интересы записываются сами. Один вызов на ход: сервер возвращает и
+   * реплику, и то, что он записал, — `added` с ключом, подписью словами человека и ЦИТАТОЙ из
+   * его реплики. Без цитаты сервер интерес отбрасывает: на выдуманных темах это уже ломалось.
+   */
+  interestsChat: (messages: Json[], prof: Json, lang: string) =>
+    api.post<{ reply?: string; added?: { key: string; label: string; why: string }[] }>(
+      '/api/buddy/interests-chat', { messages, profile: prof, lang }
     ),
 
   resummary: (prof: Json, current: string, personality = '', lang = 'ru') =>
@@ -472,7 +495,14 @@ export const agent = {
    * без этого кнопка «показать ещё» жила бы вечно и однажды снова нажималась бы впустую.
    */
   match: (intent: Json, profile: Json, ctx: Json = {}, signal?: AbortSignal, limit?: number) =>
-    api.post('/api/agent/match', limit ? { intent, profile, ctx, limit } : { intent, profile, ctx }, signal),
+    api.post<any>('/api/agent/match',
+      limit ? { intent, profile, ctx, limit, lang: getLang() }
+            : { intent, profile, ctx, lang: getLang() }, signal
+    ).then((r) => {
+      // Подписи интересов кандидатов: ключи английские, карточки читаются на языке интерфейса.
+      registerInterestLabels((r as any)?.interestLabels, getLang());
+      return r;
+    }),
 
   /**
    * §12 лестница расширения: на шаг шире по ОДНОЙ оси, а не «показать всех».
@@ -552,8 +582,12 @@ export const agent = {
    * Жалоба (O.13b). Причина — из словаря сервера (fake/harassment/spam/unsafe/underage/other):
    * «Спасибо, посмотрим» обязано соответствовать строке, которую кто-то реально откроет.
    */
-  report: (self: string, name: string, reason: string, text = '') =>
-    api.post<{ ok?: boolean; error?: string }>('/api/agent/report', { self, name, reason, text }),
+  report: (self: string, name: string, reason: string, text = '', idem?: string,
+           messageId?: string, threadType?: string, threadId?: string) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/report', {
+      self, name, reason, text, idem, message_id: messageId,
+      thread_type: threadType, thread_id: threadId,
+    }),
 
   /** Отозвать НЕотвеченное приглашение (O.15 «Cancel»). Отозвать может только отправитель. */
   withdraw: (id: string, self: string) =>
@@ -771,7 +805,47 @@ export type GroupInfo = {
   /** Скольких не хватает до минимума. 0 — можно планировать. */
   need_more?: number;
   planning_allowed?: boolean;
+  can_remove?: boolean;
+  can_end?: boolean;
+  read_only?: boolean;
+  read_only_reason?: string;
+  removed_at?: number;
+  removal_notice?: { code?: string; title?: string; other_intents_affected?: boolean };
+  closure_notice?: { code?: string; title?: string; owner?: string; closed_at?: number; other_intents_affected?: boolean };
   [k: string]: any;
+};
+
+export type GroupRemovalReason =
+  | 'inappropriate_messages_or_photos'
+  | 'suspected_fake_or_stolen_profile'
+  | 'not_responding'
+  | 'doesnt_fit_meetup'
+  | 'something_else';
+
+export type GroupReportReason =
+  | 'inappropriate_behaviour'
+  | 'insults_or_humiliation'
+  | 'harassment_or_threats'
+  | 'fake_profile'
+  | 'rule_violation';
+
+export type ReportEvidence = {
+  id: string;
+  url: string;
+  name: string;
+  mime_type: string;
+  size: number;
+};
+
+export type GroupReportResult = {
+  ok?: boolean;
+  error?: string;
+  id?: string;
+  case_no?: string;
+  status?: string;
+  at?: number;
+  protective_measures?: string[];
+  group?: GroupInfo;
 };
 
 export const group = {
@@ -822,11 +896,16 @@ export const group = {
       '/api/agent/gintent-approve', { gid, self, who, accept, idem }
     ),
 
-  /** Удалить участника. Только организатор и ТОЛЬКО с причиной — сервер иначе откажет
-   *  (REASON_REQUIRED). Группе объявляется нейтрально, без причины и без имени удалившего. */
-  remove: (gid: string, self: string, who: string, reason: string, idem: string) =>
-    api.post<{ ok?: boolean; error?: string }>(
-      '/api/agent/gintent-remove', { gid, self, who, reason, idem }
+  /** GR.51: удалить участника с одной причиной из закрытого списка. Произвольного текста нет. */
+  remove: (gid: string, self: string, who: string, reasonCode: GroupRemovalReason, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>(
+      '/api/agent/gintent-remove', { gid, self, who, reason_code: reasonCode, idem }
+    ),
+
+  /** S10 / GR.53-55: organiser closes the group before a plan is set. */
+  close: (gid: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>(
+      '/api/agent/gintent-close', { gid, self, idem }
     ),
 
   /** Выйти самому. Ниже минимума «Создать план» у оставшихся гаснет. */
@@ -834,6 +913,18 @@ export const group = {
     api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>(
       '/api/agent/gintent-leave', { gid, self, idem }
     ),
+
+  /** S11: optional evidence is uploaded first; the case itself remains a JSON action. */
+  uploadReportEvidence: (body: FormData) =>
+    multipart<{ ok?: boolean; error?: string } & Partial<ReportEvidence>>(
+      '/api/agent/report-evidence', body
+    ),
+
+  report: (gid: string, self: string, reason: GroupReportReason, text: string,
+           evidence: ReportEvidence[], idem: string) =>
+    api.post<GroupReportResult>('/api/agent/gintent-report', {
+      gid, self, reason, text, evidence, idem,
+    }),
 
   /**
    * GR.19 — организатор ПРОСИТ второго перевести группу в один на один. Именно просит: группа
@@ -865,10 +956,10 @@ export const group = {
   deleteMessage: (gid: string, self: string, id: string) =>
     api.post<{ ok?: boolean; error?: string }>('/api/agent/gmsg-delete', { gid, self, id }),
 
-  /** Чат группы, старые сверху; `since` — дотягивать только новое. Не участнику — NOT_A_MEMBER:
-   *  комнату читают только свои, и это проверка сервера, а не вежливость интерфейса. */
+  /** Чат группы, старые сверху. Активным — живая лента; удалённому — неизменяемая история до
+   *  удаления с `read_only`. Постороннему по-прежнему NOT_A_MEMBER. */
   thread: (gid: string, self: string, since = 0) =>
-    api.get<{ ok?: boolean; error?: string; messages?: Json[] }>(
+    api.get<{ ok?: boolean; error?: string; group?: GroupInfo; messages?: Json[] }>(
       `/api/agent/gintent-thread?gid=${encodeURIComponent(gid)}&self=${encodeURIComponent(self)}&since=${since}`
     ),
 
@@ -891,7 +982,7 @@ export const group = {
    * считается подтвердившим. Внутри двух часов до встречи план не заводится (TOO_LATE).
    * `starts_at` — unix-секунды точного начала: по нему сервер считает двухчасовой замок.
    */
-  planBegin: (gid: string, self: string, p: { when: string; place?: string; note?: string; starts_at?: number }, idem: string) =>
+  planBegin: (gid: string, self: string, p: { when: string; place?: string; link?: string; note?: string; starts_at?: number }, idem: string) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       '/api/agent/gplan-begin', { gid, self, ...p, idem }
     ),
@@ -917,8 +1008,8 @@ export const group = {
    * голосованием, а оно требует утверждённого плана — то есть ровно того состояния, из которого
    * план и выпал. Он висел вечно. Группа при этом остаётся: люди никуда не делись.
    */
-  /** GR.45a: «уже иду» / «опаздываю» / «я на месте». Видит вся группа, а не один человек. */
-  planStatus: (id: string, self: string, status: 'otw' | 'late' | 'here', idem: string, etaMin?: number) =>
+  /** GR.45a/b: live attendance state. The whole group sees it immediately. */
+  planStatus: (id: string, self: string, status: 'otw' | 'late' | 'here' | 'cant_make_it', idem: string, etaMin?: number) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       '/api/agent/gplan-status', { id, self, status, idem, eta_min: etaMin }
     ),
@@ -937,16 +1028,34 @@ export const group = {
 
   /** GR/GRO.32 — организатор правит УТВЕРЖДЁННЫЙ план. Каждый участник после этого принимает
    *  заново или выходит (GR.33); встреча при этом не отменяется. */
-  planUpdate: (id: string, self: string, p: { when?: string; place?: string; starts_at?: number },
+  planUpdate: (id: string, self: string, p: { when?: string; place?: string; link?: string; starts_at?: number },
                idem: string) =>
     api.post<{ ok?: boolean; error?: string; updated?: boolean; plan?: Json }>(
       '/api/agent/gplan-update', { id, self, ...p, idem }
     ),
 
-  /** GRO.25a — ссылка на звонок для онлайн-плана. Только организатор, только онлайн. */
+  /** GRO.25a / GRH.25a — ссылка на звонок для online/hybrid плана. */
   planLink: (id: string, self: string, link: string, idem: string) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       '/api/agent/gplan-link', { id, self, link, idem }
+    ),
+
+  /** GRH.25a/25b: дозаполнить один из двух независимых входов гибридной встречи. */
+  planDetails: (id: string, self: string, p: { place?: string; link?: string }, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/gplan-details', { id, self, ...p, idem }
+    ),
+
+  /** GRH.25a/25b: keep only the entrance that is already available for this plan. */
+  planMode: (id: string, self: string, mode: 'offline' | 'online', idem: string) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/gplan-mode', { id, self, mode, idem }
+    ),
+
+  /** GRH: участник выбирает, придет ли лично или подключится к звонку. */
+  planSide: (id: string, self: string, side: 'in_person' | 'call', idem: string) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/gplan-side', { id, self, side, idem }
     ),
 
   /** Открыть голосование: cancel — отменить встречу, edit — перенести (when/place/starts_at).
@@ -976,9 +1085,8 @@ export const group = {
       '/api/agent/gplan-vote-decide', { id, self, apply, idem }
     ),
 
-  /** «Состоялось?» после встречи. План закрывается, когда ответили ВСЕ участники (answered/of) —
-   *  в отличие от 1:1, где запись одна и дозаписывается. */
-  planFeedback: (id: string, self: string, v: { happened: boolean; text?: string; reason?: string }, idem: string) =>
+  /** «Состоялось?» и необязательная оценка — одна дозаписываемая приватная запись участника. */
+  planFeedback: (id: string, self: string, v: { happened?: boolean; text?: string; reason?: string; rating?: number }, idem: string) =>
     api.post<{ ok?: boolean; error?: string; answered?: number; of?: number; plan?: Json }>(
       '/api/agent/gplan-feedback', { id, self, ...v, idem }
     ),
@@ -990,3 +1098,4 @@ export const group = {
       `/api/agent/gplans?self=${encodeURIComponent(self)}`
     ),
 };
+

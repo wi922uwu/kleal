@@ -2120,6 +2120,101 @@ def story_interests(story, have=None, lang="ru"):
     return {"interests": out[:6]}
 
 
+INTERESTS_CHAT_PROMPT = '''You help a person tell you what they are into, so the app can find them
+people who are into the same thing. You are warm, curious and brief — one or two sentences, never a
+questionnaire. Reply in __LANGNAME__.
+
+Return ONE JSON object, nothing else:
+{"reply":"<your next line, __LANGNAME__, max 2 sentences>","added":[{"key":"<short English phrase>","label":"<the same thing as the person said it, their words>","why":"<the exact fragment of THEIR last message it comes from>"}]}
+
+ABOUT `reply`:
+- Ask about what they just told you — what makes it theirs. "Где обычно?" is better than "Что ещё?".
+- Never list options, never number things, never promise to save anything.
+- If they said nothing about themselves yet, ask what they like doing. Once.
+
+ABOUT `added` — the whole value of this depends on these rules:
+- ONLY things the person DOES or CARES ABOUT, and only from THEIR LAST MESSAGE.
+- NEVER invent. `why` must quote their message literally; if you cannot quote it, drop the item.
+- Feelings, greetings, agreement, small talk are not interests. "Мне нравится" alone is not an interest.
+- `key` is a short English phrase a matching engine can use, keeping what makes it SPECIFIC:
+  "рыбачить на море" -> "sea fishing", not "fishing". "играю в тарков" -> "escape from tarkov".
+- KEEP PROPER NOUNS as they are: game titles, place names, brands. Never translate a name into a
+  common word.
+- `label` is the person's OWN wording, not a translation of your key.
+- Usually 0 or 1 items. Two only if they clearly named two things. Empty list is the normal answer.'''
+
+
+def interests_chat(messages, profile, lang="ru"):
+    """Разговор, в котором интересы записываются сами — из сказанного, с обязательной цитатой.
+
+    ЗАЧЕМ ЭТО ОТДЕЛЬНАЯ РУЧКА. Раньше интересы набирались сеткой из 312 готовых чипов: человек
+    искал себя в чужом списке, а всё, чего в списке нет, уходило в поле «добавить своё» и оставалось
+    сырой строкой на языке ввода. Теперь человек просто рассказывает, а запись делает агент.
+
+    ОДИН ВЫЗОВ НА ХОД, а не два. Ответ и разбор в одном конверте: два последовательных вызова
+    удваивают ожидание, а ждёт человек, который просто разговаривает.
+
+    ЦИТАТА ОБЯЗАТЕЛЬНА, и это не формальность. Фильтрация возвращает тему ВСЕГДА, даже когда темы
+    нет: на «Привет, давно этим занимаюсь, приятное времяпрепровождение» она отвечала
+    [hiking, outdoor, leisure], и в профиль живого человека приезжали интересы «hello» и «enjoy».
+    Тот путь закрыли. Здесь модель обязана процитировать кусок ЕГО СОБСТВЕННОЙ реплики — то, что
+    нельзя процитировать, не было сказано. То же правило, что в story_interests.
+
+    Ключ сразу английский (shared/interest_i18n.py), подпись — слова человека: она становится
+    подписью его языка и не перезаписывается сгенерированной.
+    """
+    lang = str(lang or "ru").lower()
+    if lang not in ("ru", "en", "es"):
+        lang = "ru"
+    msgs = [m for m in (messages or []) if isinstance(m, dict)]
+    last_user = next((str(m.get("content", "")) for m in reversed(msgs) if m.get("role") == "user"), "")
+    convo = "\n".join((("User: " if m.get("role") == "user" else "Kleal: ") + str(m.get("content", "")))
+                       for m in msgs[-10:])
+    have = {str(x).strip().lower() for x in ((profile or {}).get("interests") or []) if str(x).strip()}
+    sys_p = INTERESTS_CHAT_PROMPT.replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
+    try:
+        raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_p},
+                                      {"role": "user", "content": convo[-4000:]}], 0.3)
+        obj = base._extract_json(str(raw or "")) or {}
+    except Exception:
+        obj = {}
+    reply = base.polish_reply(str(obj.get("reply") or ""))[:400]
+    if not reply:
+        reply = _L(lang, "Расскажи ещё — чем занимаешься?", "Tell me more — what are you into?")
+
+    low = last_user.lower()
+    picked = []
+    for it in (obj.get("added") or [])[:3]:
+        if not isinstance(it, dict):
+            continue
+        key = " ".join(str(it.get("key") or "").split())[:60]
+        label = " ".join(str(it.get("label") or "").split())[:60] or key
+        why = " ".join(str(it.get("why") or "").split())[:200]
+        # Процитированное обязано найтись в ЕГО реплике. Сравниваем по началу цитаты: модель
+        # склонна дописывать хвост, но начало она берёт из текста, если текст вообще был.
+        if not key or not why or why[:24].lower() not in low:
+            continue
+        if key.lower() in have or label.lower() in have:
+            continue
+        picked.append({"key": key, "label": label, "why": why})
+
+    added = []
+    if picked:
+        try:
+            import interest_i18n as ii
+            for it in picked:
+                # Ключ приходит уже английским; своя формулировка становится подписью его языка.
+                en = ii.to_en([it["key"]])
+                en = en[0] if en else it["key"].lower()
+                src = ii.lang_of(it["label"])
+                if src in ("ru", "es"):
+                    ii.learn(en, **{src: it["label"]})
+                added.append({"key": en, "label": it["label"], "why": it["why"]})
+        except Exception:
+            added = [{"key": it["key"].lower(), "label": it["label"], "why": it["why"]} for it in picked]
+    return {"reply": reply, "added": added, "lang": lang}
+
+
 def resummary(profile, current, lang="ru", personality=""):
     """Rewrite the profile summary to integrate the latest changes (adapt, don't append).
 
@@ -3417,6 +3512,12 @@ class H(BaseHTTPRequestHandler):
                 return send_json(self, 200, persona(prof, body.get("story") or "", ans,
                                                     body.get("current") or "", body.get("lang") or "ru",
                                                     body.get("axes") if isinstance(body.get("axes"), dict) else None))
+
+            if r == "/interests-chat":               # разговор, в котором интересы пишутся сами
+                return send_json(self, 200, interests_chat(
+                    body.get("messages") if isinstance(body.get("messages"), list) else [],
+                    body.get("profile") if isinstance(body.get("profile"), dict) else {},
+                    body.get("lang") or "ru"))
 
             if r == "/story-interests":              # что человек ДЕЛАЕТ — вычитанное из его истории
                 return send_json(self, 200, story_interests(
