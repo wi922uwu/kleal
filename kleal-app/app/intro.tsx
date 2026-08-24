@@ -26,7 +26,7 @@ export default function Intro() {
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
 
   const slides = SLIDES();
   const i = Math.min(st.slide, slides.length - 1);
@@ -44,7 +44,13 @@ export default function Intro() {
         resizeMode="cover"
       />
 
-      <View style={s.sheet}>
+      {/*
+        Листу задаётся МИНИМАЛЬНАЯ доля экрана, а волне — весь остаток (flexGrow ниже). Без этого
+        лист обнимал содержимое, волна оставалась полосой в 160 точек, и на высоких экранах между
+        индикатором и чёрным полем зияла белая пустота. Теперь чёрное тянется вверх ровно настолько,
+        насколько экран выше содержимого.
+      */}
+      <View style={[s.sheet, { minHeight: height * SHEET_SHARE }]}>
         {/* Гарнитура заголовка зависит от языка — см. displayFamily: в шрифте борда нет кириллицы. */}
         <Text style={[s.h, { fontFamily: displayFamily(lang) }]}>{sl.title}</Text>
         <Text style={s.sub}>{sl.sub}</Text>
@@ -60,12 +66,18 @@ export default function Intro() {
           попадать надо по волне, а не по невидимому прямоугольнику вокруг текста.
         */}
         <Pressable onPress={next} accessibilityRole="button" style={s.wave}>
-          <Svg width={width} height={WAVE_H} viewBox="0 0 390 160" preserveAspectRatio="none">
+          {/*
+            Кривая держит СВОИ пропорции (390×160) и стоит вверху блока, а всё под ней — сплошная
+            заливка. Растягивать сам путь нельзя: при `height="100%"` на высоком экране гребень
+            превращался в шпиль. Растёт чёрное поле, а не форма волны.
+          */}
+          <Svg width={width} height={CURVE_H} viewBox="0 0 390 160" preserveAspectRatio="none">
             <Path
               d="M0 132 C 78 132 120 20 195 20 C 270 20 312 132 390 132 L390 160 L0 160 Z"
               fill={color.ink}
             />
           </Svg>
+          <View style={s.waveFill} />
           <View style={[s.btnWrap, { bottom: Math.max(insets.bottom, space.lg) }]}>
             <Text style={s.btnText}>{T('Начать', "Let's Start")}</Text>
           </View>
@@ -76,7 +88,10 @@ export default function Intro() {
 }
 
 // ===== вид
-const WAVE_H = 160;
+/** Высота самой кривой — её пропорции из борда, они не меняются. */
+const CURVE_H = 160;
+/** Какую долю экрана лист занимает как минимум. В борде это 307 из 844. */
+const SHEET_SHARE = 0.44;
 
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ink, justifyContent: 'flex-end' },
@@ -105,7 +120,9 @@ const s = StyleSheet.create({
   bars: { flexDirection: 'row', gap: 6, marginTop: 32 },
   bar: { width: 28, height: 2, borderRadius: radius.full, backgroundColor: color.neutral300 },
   barOn: { backgroundColor: color.primary },
-  wave: { height: WAVE_H, justifyContent: 'flex-end', alignSelf: 'stretch', marginTop: space.lg },
+  wave: { flexGrow: 1, minHeight: CURVE_H, alignSelf: 'stretch', marginTop: space.lg },
+  /** Чёрное под кривой: на высоком экране оно и растёт, поднимая гребень выше. */
+  waveFill: { flex: 1, backgroundColor: color.ink },
   btnWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
   btnText: { fontFamily: font.textMedium, fontSize: 15, lineHeight: 20, color: color.onPrimary },
 });
