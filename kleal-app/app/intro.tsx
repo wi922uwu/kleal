@@ -55,7 +55,8 @@ export default function Intro() {
    * короткое движение без замаха считается нажатием — иначе кнопка перестала бы работать у тех,
    * кто просто жмёт.
    */
-  const dragY = useRef(new Animated.Value(0)).current;
+  const restH = Math.max(CURVE_H, height * WAVE_SHARE);
+  const waveH = useRef(new Animated.Value(restH)).current;
   const pan = useMemo(
     () =>
       PanResponder.create({
@@ -64,25 +65,25 @@ export default function Intro() {
         // дрожания пальца панель двигать не должны.
         onMoveShouldSetPanResponder: (_e, g) => g.dy < -4 && Math.abs(g.dy) > Math.abs(g.dx),
         onPanResponderMove: (_e, g) => {
-          if (g.dy < 0) dragY.setValue(Math.max(g.dy, -PULL_MAX));
+          if (g.dy < 0) waveH.setValue(restH + Math.min(-g.dy, PULL_MAX));
         },
         onPanResponderRelease: (_e, g) => {
           const pulled = g.dy < -PULL_DONE || g.vy < -0.6;
           const tapped = Math.abs(g.dy) < 6 && Math.abs(g.dx) < 6;
           if (pulled || tapped) {
-            // Возврат в ноль ДО перехода: следующий слайд рисуется на месте, а не приезжает
-            // сдвинутым — иначе первый кадр нового слайда виден задранным вверх.
-            dragY.setValue(0);
+            // Возврат к покою ДО перехода: следующий слайд рисуется на месте, а не приезжает
+            // растянутым — иначе первый кадр нового слайда виден задранным вверх.
+            waveH.setValue(restH);
             next();
             return;
           }
-          Animated.spring(dragY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+          Animated.spring(waveH, { toValue: restH, useNativeDriver: false, bounciness: 6 }).start();
         },
         onPanResponderTerminate: () => {
-          Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
+          Animated.spring(waveH, { toValue: restH, useNativeDriver: false }).start();
         },
       }),
-    [dragY, i, last]
+    [waveH, restH, i, last]
   );
 
   return (
@@ -94,7 +95,7 @@ export default function Intro() {
         resizeMode="cover"
       />
 
-      <Animated.View style={[s.sheet, { transform: [{ translateY: dragY }] }]}>
+      <View style={[s.sheet, { paddingBottom: restH }]}>
         {/* Гарнитура заголовка зависит от языка — см. displayFamily: в шрифте борда нет кириллицы. */}
         <Text style={[s.h, { fontFamily: displayFamily(lang) }]}>{sl.title}</Text>
         <Text style={s.sub}>{sl.sub}</Text>
@@ -115,11 +116,17 @@ export default function Intro() {
           расти, там ровно ноль — волна оставалась полосой в 160 точек, а между индикатором и
           чёрным зиял белый провал. Доля же поднимает гребень на любом экране предсказуемо.
         */}
-        <View
+        {/*
+          ЧЁРНОЕ ПРИБИТО К НИЗУ ЛИСТА И РАСТЁТ ВВЕРХ, наползая на белое. Двигать сам лист нельзя:
+          он уезжал от нижнего края, и под ним показывалась фотография — панель отрывалась от дна
+          экрана. Поэтому анимируется ВЫСОТА чёрного блока, а лист стоит на месте; его нижний
+          отступ равен высоте покоя, чтобы текст не оказался под волной.
+        */}
+        <Animated.View
           {...pan.panHandlers}
           accessibilityRole="button"
           accessibilityLabel={T('Начать', "Let's Start")}
-          style={[s.wave, { height: Math.max(CURVE_H, height * WAVE_SHARE) }]}
+          style={[s.wave, { height: waveH }]}
         >
           {/*
             Кривая держит СВОИ пропорции (390×160) и стоит вверху блока, а всё под ней — сплошная
@@ -136,8 +143,8 @@ export default function Intro() {
           <View style={[s.btnWrap, { bottom: Math.max(insets.bottom, space.lg) }]}>
             <Text style={s.btnText}>{T('Начать', "Let's Start")}</Text>
           </View>
-        </View>
-      </Animated.View>
+        </Animated.View>
+      </View>
     </View>
   );
 }
@@ -179,7 +186,7 @@ const s = StyleSheet.create({
   bars: { flexDirection: 'row', gap: 6, marginTop: 32 },
   bar: { width: 28, height: 2, borderRadius: radius.full, backgroundColor: color.neutral300 },
   barOn: { backgroundColor: color.primary },
-  wave: { alignSelf: 'stretch', marginTop: space.lg },
+  wave: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   /** Чёрное под кривой: на высоком экране оно и растёт, поднимая гребень выше. */
   waveFill: { flex: 1, backgroundColor: color.ink },
   btnWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
