@@ -190,8 +190,12 @@ try:
     got1 = M.resolve_query_topics(["stock", "market", "finance", "investing"], "Акции про рынок 2026")
     got2 = M.resolve_query_topics(["stock", "market", "finance", "investing"], "Акции про рынок 2026")
     check("без сети и детерминированно", got1 == got2 and isinstance(got1, set), True)
-    check("фолбэк — темы интента плюс сама фраза", got1,
-          {"stock", "market", "finance", "investing", "акции про рынок 2026"})
+    # ВХОЖДЕНИЕ, А НЕ РАВЕНСТВО. Мост складывают несколько источников, и список законно растёт:
+    # к темам интента добавляются стабильные метки концептов (concept:*, family:* из
+    # taxonomy/concepts.py). Проверка на точное множество ломалась от каждого такого пополнения,
+    # хотя правило — «темы интента и сама фраза обязаны быть в мосту» — целое.
+    check("фолбэк — темы интента плюс сама фраза",
+          {"stock", "market", "finance", "investing", "акции про рынок 2026"} - got1, set())
 finally:
     urllib.request.urlopen = _orig
 

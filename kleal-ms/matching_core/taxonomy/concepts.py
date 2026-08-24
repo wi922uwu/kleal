@@ -109,10 +109,70 @@ _CONCEPTS = {
         "spanish", "learn spanish", "practice spanish", "испанский", "учить испанский",
         "практиковать испанский", "espanol", "aprender espanol", "practicar espanol",
     )),
+    # Everyday life. The table grew out of finance and crypto complaints and barely covered what the
+    # cohort actually writes: `coffee` alone is 90 people, `paseo` 29, and neither resolved anywhere,
+    # so they matched only by literal string equality. Families stay narrow on purpose — a broad
+    # "drinks" or "outdoors" family would flatter every food or nature query in the domain.
+    #
+    # DATING FORMS ARE DELIBERATELY ABSENT from coffee: "кофе-свидание" / "cita de café" live in the
+    # dating domain and have their own canonical node. Folding them in here would make a person who
+    # likes coffee tasting an exact match for someone looking for a date.
+    "coffee": ("coffee_culture", (
+        "coffee", "кофе", "cafe", "café", "кофейня", "кофейни", "cafeteria",
+        "coffee tasting", "specialty coffee", "third wave coffee", "coffee roasting", "home roast",
+        "cata de café", "cata de cafe", "дегустация кофе", "спешелти", "обжарка кофе",
+        "coffee and conversation", "coffee catch-up", "кофе и разговор", "кофе поболтать",
+        "café para charlar", "café y conversación", "coffee talk",
+    )),
+    "tea": ("tea_culture", (
+        "tea", "чай", "té", "te", "tea tasting", "чайная церемония", "дегустация чая",
+        "cata de té", "cata de te", "чаепитие",
+    )),
+    "walking": ("walking_strolling", (
+        "walking", "go walking", "walk", "paseo", "paseos", "прогулка", "прогулки", "гулять",
+        "погулять", "caminar", "caminata", "dar un paseo", "neighborhood walk",
+        "прогулка по району", "paseo por el barrio", "long walk", "долгая прогулка",
+    )),
+    "reading": ("books_reading", (
+        "reading", "books", "book", "чтение", "книги", "читать", "lectura", "libros", "leer",
+        "silent reading", "тихое чтение", "reading and research", "book club", "книжный клуб",
+        "club de lectura", "fiction", "non-fiction", "novels", "художественная литература",
+    )),
+    "cinema": ("screen_watching", (
+        "cinema", "movie", "movies", "film", "films", "кино", "фильмы", "фильм",
+        "cine", "pelicula", "película", "peliculas", "películas",
+        "watching movies", "movie night", "киновечер", "noche de cine", "documentary",
+        "документалки", "documental",
+    )),
+    "stand_up_comedy": ("live_comedy", (
+        "stand up", "stand-up", "standup", "stand up comedy", "стендап", "стенд-ап",
+        "comedy", "комедия", "comedia", "open mic", "открытый микрофон", "micro abierto",
+    )),
+    "fishing": ("outdoor_fishing", (
+        "fishing", "рыбалка", "рыбачить", "pesca", "pescar",
+        "sea fishing", "морская рыбалка", "pesca en el mar",
+        "ice fishing", "подлёдная рыбалка", "подледная рыбалка",
+    )),
     "english_language": ("language_learning", (
         "english", "learn english", "practice english", "английский", "учить английский",
         "практиковать английский", "ingles", "aprender ingles", "practicar ingles",
     )),
+}
+
+
+# ПОНЯТИЕ НЕ ПРИМЕНЯЕТСЯ, если во фразе есть слово из этого списка.
+#
+# Сопоставление идёт по границам ТОКЕНОВ, а не по фразе целиком: односложный алиас находится
+# внутри любого словосочетания, где это слово встречается. Для «bitcoin» или «nasdaq» это
+# безобидно, для «кофе» — нет: «кофе-свидание» и «cita de café» содержат его буквально, и
+# любитель кофе становился ТОЧНЫМ совпадением для человека, ищущего свидание. Свидания — отдельная
+# область со своим согласием и своим гейтом; смешивать её с бытовой не имеет права ни одна таблица.
+#
+# Список намеренно узкий: он гасит понятие, а не подменяет его другим, и трогает только те слова,
+# у которых доказана двойная жизнь.
+_BLOCKED_WHEN = {
+    "coffee": ("свидание", "свидания", "date", "cita", "dating", "citas"),
+    "walking": ("свидание", "свидания", "date", "cita", "dating", "citas"),
 }
 
 
@@ -161,10 +221,14 @@ def _resolve_normalized(text):
     if not text:
         return frozenset()
     tokens = text.split()
+    seen = set(tokens)
     found = set()
     for concept, (_family, aliases) in _NORMALIZED.items():
-        if any(_contains_alias(tokens, alias) for alias in aliases):
-            found.add(concept)
+        if not any(_contains_alias(tokens, alias) for alias in aliases):
+            continue
+        if any(w in seen for w in _BLOCKED_WHEN.get(concept, ())):
+            continue                      # слово есть, но фраза не про это — см. _BLOCKED_WHEN
+        found.add(concept)
     return frozenset(found)
 
 
