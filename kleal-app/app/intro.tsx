@@ -11,8 +11,16 @@
  * ИНДИКАТОР — ПОЛОСКИ, а не точки: 28×2, активная фирменным красным. Точки были в прежней
  * версии и заметно меняли характер экрана.
  */
-import React from 'react';
-import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import React, { useMemo, useRef } from 'react';
+import {
+  Animated,
+  Image,
+  PanResponder,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
@@ -35,6 +43,48 @@ export default function Intro() {
 
   const next = () => (last ? router.navigate('/auth') : patch({ slide: i + 1 }));
 
+  /**
+   * ПАНЕЛЬ ТЯНЕТСЯ ПАЛЬЦЕМ. Едет за рукой вверх и на достаточном замахе делает то же, что тап по
+   * «Начать»; не дотянул — возвращается пружиной на место.
+   *
+   * PanResponder, а не жесты из отдельной библиотеки: в проекте так же сделаны диски возраста и
+   * свайп-ответ, и ставить ради одного экрана gesture-handler значило бы завести второй способ
+   * читать те же касания.
+   *
+   * ТАП ЖИВЁТ ЗДЕСЬ ЖЕ. Обычный Pressable под панорамой не получил бы касание вовсе, поэтому
+   * короткое движение без замаха считается нажатием — иначе кнопка перестала бы работать у тех,
+   * кто просто жмёт.
+   */
+  const dragY = useRef(new Animated.Value(0)).current;
+  const pan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        // Перехватываем только ВЕРТИКАЛЬ и только вверх: горизонтальные смахивания и случайные
+        // дрожания пальца панель двигать не должны.
+        onMoveShouldSetPanResponder: (_e, g) => g.dy < -4 && Math.abs(g.dy) > Math.abs(g.dx),
+        onPanResponderMove: (_e, g) => {
+          if (g.dy < 0) dragY.setValue(Math.max(g.dy, -PULL_MAX));
+        },
+        onPanResponderRelease: (_e, g) => {
+          const pulled = g.dy < -PULL_DONE || g.vy < -0.6;
+          const tapped = Math.abs(g.dy) < 6 && Math.abs(g.dx) < 6;
+          if (pulled || tapped) {
+            // Возврат в ноль ДО перехода: следующий слайд рисуется на месте, а не приезжает
+            // сдвинутым — иначе первый кадр нового слайда виден задранным вверх.
+            dragY.setValue(0);
+            next();
+            return;
+          }
+          Animated.spring(dragY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
+        },
+      }),
+    [dragY, i, last]
+  );
+
   return (
     <View style={s.wrap}>
       <Image
@@ -44,7 +94,7 @@ export default function Intro() {
         resizeMode="cover"
       />
 
-      <View style={s.sheet}>
+      <Animated.View style={[s.sheet, { transform: [{ translateY: dragY }] }]}>
         {/* Гарнитура заголовка зависит от языка — см. displayFamily: в шрифте борда нет кириллицы. */}
         <Text style={[s.h, { fontFamily: displayFamily(lang) }]}>{sl.title}</Text>
         <Text style={s.sub}>{sl.sub}</Text>
@@ -65,9 +115,10 @@ export default function Intro() {
           расти, там ровно ноль — волна оставалась полосой в 160 точек, а между индикатором и
           чёрным зиял белый провал. Доля же поднимает гребень на любом экране предсказуемо.
         */}
-        <Pressable
-          onPress={next}
+        <View
+          {...pan.panHandlers}
           accessibilityRole="button"
+          accessibilityLabel={T('Начать', "Let's Start")}
           style={[s.wave, { height: Math.max(CURVE_H, height * WAVE_SHARE) }]}
         >
           {/*
@@ -85,8 +136,8 @@ export default function Intro() {
           <View style={[s.btnWrap, { bottom: Math.max(insets.bottom, space.lg) }]}>
             <Text style={s.btnText}>{T('Начать', "Let's Start")}</Text>
           </View>
-        </Pressable>
-      </View>
+        </View>
+      </Animated.View>
     </View>
   );
 }
@@ -94,8 +145,12 @@ export default function Intro() {
 // ===== вид
 /** Высота самой кривой — её пропорции из борда, они не меняются. */
 const CURVE_H = 160;
-/** Какую долю экрана занимает чёрное поле с кнопкой. */
-const WAVE_SHARE = 0.3;
+/** Какую долю экрана занимает чёрное поле в покое. Тянется оно жестом, поэтому крупным быть не должно. */
+const WAVE_SHARE = 0.24;
+/** Насколько далеко панель уезжает за пальцем. */
+const PULL_MAX = 220;
+/** С какого замаха отпускание считается «увести дальше», а не «вернуть на место». */
+const PULL_DONE = 70;
 
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ink, justifyContent: 'flex-end' },
