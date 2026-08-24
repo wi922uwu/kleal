@@ -17,10 +17,10 @@ export type Slide = { title: string; sub: string; art: 'primary' | 'searching' |
 
 export const SLIDES: () => Slide[] = () => [
   {
-    title: T('Скажи Kleal,\nчем хочешь заняться', 'Tell Kleal what you\nwant to do'),
+    title: T('Скажи Kleal,\nчем хочешь заняться', 'Tell Kleal\nwhat you want to do'),
     sub: T(
-      'Кофе, партия, игра, прогулка, языковая практика — или просто «хочу куда-нибудь».',
-      'Coffee, a match, a game, a walk, language practice, or just something spontaneous.'
+      'Кофе, футбол, языковая практика, игра,\nпрогулка — или просто что-нибудь спонтанное',
+      'Coffee, football, language practice, a game,\na walk, or just something spontaneous'
     ),
     art: 'primary',
   },
@@ -42,6 +42,34 @@ export const SLIDES: () => Slide[] = () => [
   },
 ];
 
+/**
+ * Экран входа A.03. Заголовок — обещание продукта, а не приветствие: борд ставит его крупно
+ * над логотипом, и это первое, что человек читает про Kleal.
+ */
+export const AUTH_COPY = () => ({
+  title: T('Никаких свайпов.\nТолько живые планы', 'No swipes.\nJust real plans'),
+  apple: T('Продолжить с Apple', 'Continue with Apple'),
+  google: T('Продолжить с Google', 'Continue with Google'),
+  email: T('Продолжить по почте', 'Continue with Email'),
+});
+
+/**
+ * Эмодзи-россыпь за логотипом на экране входа — из борда, пять строк.
+ *
+ * Это КАРТИНКА, набранная текстом: список занятий, которыми люди тут занимаются. Переводить
+ * его не нужно, а держать в разметке — нельзя (правило: копия в src/*.ts), поэтому лежит здесь.
+ */
+export const AUTH_EMOJI_ROWS = [
+  '⚽️ 🎮 ☕️ 🎨 🏃 🍕 🎬 🚴 🧩 🍸',
+  '🎾 🍣 🏕️ 🎤 🧘 🥐 📸 🎳',
+  '🎲 🍜 🏔️ 🎭 🏄 🍦 🎯',
+  '🏓 ♟️ 🍔 🛶 🎧 🧗 🍰 🪩 🏸 🍿',
+  '🏐 👾 🥟 🥾 🎟️ ⛷️ 🎶 🍹 🧺 🎱',
+];
+
+/** Подпись под логотипом на первом кадре — только для читающих экраном, на глаз её нет. */
+export const WELCOME_A11Y = () => T('Kleal', 'Kleal');
+
 export const AUTH_TERMS = () =>
   T(
     'Продолжая, ты соглашаешься с Условиями и Политикой конфиденциальности.',
@@ -56,7 +84,6 @@ export type StepId =
   | 'area'       // A.06 — страна, радиус, карта
   | 'languages'  // A.07 — языки с флагами
   | 'hobbies'    // A.08 — увлечения с эмодзи
-  | 'funnel'     // A.08 продолжение — разговор про интересы, ведёт модель
   | 'photo';     // A.09–A.13 — фото
 
 /**
@@ -69,8 +96,7 @@ export const STEP_PROGRESS: Record<StepId, number> = {
   basics: 10,
   area: 30,
   languages: 45,
-  hobbies: 60,
-  funnel: 70,
+  hobbies: 65,
   photo: 80,
 };
 
@@ -257,12 +283,17 @@ export const OWN_INPUT = {
 };
 
 export const STEP_HOBBIES = {
-  bot: () => T('Чем любишь заниматься? С этого я и начну искать людей.',
-                'What do you like doing? That’s where I start looking for people.'),
+  bot: () => T('Чем любишь заниматься? Расскажи своими словами — я запишу.',
+                'What do you like doing? Tell me in your own words — I’ll write it down.'),
   hint: () =>
-    T('Выбери из готовых или напиши своё', 'Choose from the pre-written options or write your own'),
-  own: () => T('Добавить своё', 'Add your own'),
-  cta: () => T('Дальше', 'Next'),
+    T('Пиши как есть: «рыбачу на море по выходным»',
+      'Just say it: “I fish at sea on weekends”'),
+  /** Подпись над записанным. Появляется только когда есть что показать. */
+  saved: () => T('Записал', 'Noted'),
+  /** Пусто и человек молчит — подсказка вместо пустоты, а не ещё один вопрос. */
+  empty: () => T('Пока ничего не записал — расскажи, чем занимаешься',
+                 'Nothing noted yet — tell me what you’re into'),
+  cta: () => T('Готово', 'Done'),
 };
 
 /** Порядок и эмодзи — с кадра A.08. Ключи те же, что понимает матчинг. */

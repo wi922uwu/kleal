@@ -20,15 +20,14 @@ import * as ImagePicker from 'expo-image-picker';
 import { squarePhoto } from '../src/photo';
 import {
   STEP_PROGRESS, HEADER_TITLE, STEP_START, STEP_BASICS, SEXES, sexLabel,
-  STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES, hobbyLabel,
-  hobbyPlain, STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME, FUNNEL, FUNNEL_OUT_RE, FUNNEL_MORE_RE,
+  STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES,
+  STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME,
   OWN_INPUT, parseName,
 } from '../src/onboarding';
-import { InterestChips } from '../src/components/InterestChips';
-import { labelOf, funnelWorthy } from '../src/interests-wheel';
+import { interestLabel, registerInterestLabels } from '../src/interest-label';
 import { useLang, T, getLang , replyLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
-import { onboarding, agent } from '../src/api';
+import { onboarding, agent, buddy as buddyApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
@@ -67,14 +66,9 @@ export default function Chat() {
   const [thread, setThread] = useState<Msg[]>([]);
   const [step, setStep] = useState<StepId>('start');
   const [typing, setTyping] = useState(false);
-  const [funnel, setFunnel] = useState<Msg2[]>([]);
-  const [funnelOpts, setFunnelOpts] = useState<string[]>([]);
-  const [funnelTurns, setFunnelTurns] = useState(0);
-  const [funnelCap, setFunnelCap] = useState(10);
-  const [funnelDone, setFunnelDone] = useState(false);
-  /** «Это всё» нажали — Kleal предупредил и ждёт ответа. Живёт здесь, а не в виджете: спрашивает
-   *  бровка под шапкой, а отвечают кнопки в ленте. */
-  const [funnelEnding, setFunnelEnding] = useState(false);
+  /** Нить разговора об увлечениях. Ref, а не состояние: её читает и дописывает обработчик
+   *  отправки, перерисовка ей не нужна — на экране живёт общая лента. */
+  const hobbyThread = useRef<Msg2[]>([]);
   // Лента стоит, пока крутят кольцо возраста: иначе один и тот же жест двигает и то, и другое.
   const [dragging, setDragging] = useState(false);
   // Номер прохода. Меняется при «Начать заново» и служит ключом виджетам, чтобы те начинали с
@@ -131,20 +125,11 @@ export default function Chat() {
     }, 500);
   }, [say]);
 
-  /** «Это всё»: Kleal сначала говорит, что будет дальше, и только потом уходит с шага. */
-  const askEnd = useCallback(() => {
-    setFunnelEnding((was) => {
-      if (!was) say('bot', FUNNEL.endAsk());
-      return true;
-    });
-  }, [say]);
-
   /** Начать онбординг заново. Спрашиваем: это стирает всё, что человек уже ввёл. */
   const restart = () => {
     const wipe = () => {
       reset();
       setThread([]);
-      setFunnel([]);
       setStep('start');
       setRunId((n) => n + 1);
       started.current = false;
@@ -186,90 +171,13 @@ export default function Chat() {
     botAfter(botLine);
   };
 
+
   /**
-   * Ход разговора про интересы.
-   *
-   * Ведёт модель: она задаёт по одному вопросу, сама дописывает профиль и сама предлагает варианты
-   * ответа. Здесь только два решения. Первое — когда разговор закончен: агент перестал спрашивать
-   * (в реплике нет вопроса и нет вариантов) И сервер сказал funnelComplete. Второе — предохранитель:
-   * счётчик ходов, чтобы человек не остался в бесконечном опросе, если модель заладит спрашивать.
-   *
-   * Бессмыслицу («фцыпфцп») сервер распознаёт и переспрашивает — такой ход НЕ засчитывается, иначе
-   * набором мусора можно было бы «доспамить» до кнопки «Продолжить».
+   * ВЫХОД С ШАГА УВЛЕЧЕНИЙ. Имя историческое: раньше отсюда выходили из воронки-расспроса,
+   * которая шла после сетки чипов. Сетки и воронки больше нет — запись происходит в самом
+   * разговоре, — а выход остался тем же и по тем же причинам.
    */
-  const funnelTurn = async (text?: string, hist?: Msg2[]) => {
-    const base = hist || funnel;
-    const next = text ? [...base, { role: 'user', content: text }] : base;
-    if (text) setFunnel(next);
-    setTyping(true);
-    try {
-      // Профиль уходит БЕЗ фото: это data-URL на сотни килобайт, и на каждом ходу разговора он
-      // гонялся бы туда и обратно без всякой пользы — модель его всё равно не видит.
-      const r: any = await onboarding.chat({
-        messages: next, profile: profileForAttach(), lang: replyLang(),
-      });
-      setTyping(false);
-      const reply = String(r?.reply || '');
-      if (reply) {
-        say('bot', reply);
-        setFunnel([...next, { role: 'assistant', content: reply }]);
-      } else {
-        setFunnel(next);
-      }
-      // Слияние, а не замена: подробности в mergeProfile. Замена стирала всё, о чём в ЭТОМ
-      // разговоре не заходила речь.
-      if (r?.profile && typeof r.profile === 'object') {
-        patch({ profile: mergeProfile(getState().profile, r.profile) });
-      }
-      const opts: string[] = Array.isArray(r?.options) ? r.options.map(String) : [];
-      setFunnelOpts(opts);
-      const turns = text && !r?.gibberish ? funnelTurns + 1 : funnelTurns;
-      setFunnelTurns(turns);
-      const asks = reply.includes('?') || opts.length > 0;
-      setFunnelDone((!!r?.funnelComplete && !asks) || turns >= funnelCap);
-    } catch {
-      setTyping(false);
-      say('bot', T('Связь на секунду пропала. Повторишь?', 'I lost the connection for a second. Say that again?'));
-    }
-  };
-
-  /** Разговор начинается сразу после выбора чипов и с той же затравки, что в веб-версии. */
-  /**
-   * Обогащать интересы по репликам разговора ПЫТАЛИСЬ — и откатили, потому что фильтрация
-   * возвращает тему всегда, даже когда её нет. На «Привет, давно этим занимаюсь, мне нравится»
-   * она уверенно ответила [hiking, outdoor, leisure], и в профиль живого человека приехали
-   * интересы, которых он не заводил: «hello», «enjoy», «long time», «walking». Отсеять это
-   * стоп-словами нельзя — выдуманные темы выглядят как настоящие.
-   *
-   * Правильное место для такой работы — извлечение на сервере (EXTRACT_V2), где модель видит весь
-   * разговор и понимает, что «мне нравится» не увлечение. Здесь оставлена только эта запись, чтобы
-   * следующий не начал с той же идеи.
-   */
-
-  const startFunnel = (picks: string[]) => {
-    const seed: Msg2[] = [
-      { role: 'assistant', content: FUNNEL.seedBot },
-      { role: 'user', content: FUNNEL.seedUser(picks) },
-    ];
-    setFunnel(seed);
-    setFunnelTurns(0);
-    setFunnelCap(FUNNEL.cap(picks.length));
-    setFunnelOpts([]);
-    setFunnelDone(false);
-    setStep('funnel');
-    funnelTurn(undefined, seed);
-  };
-
-  /** Из разговора обратно к чипам — за следующим интересом. */
-  const moreInterests = () => {
-    setFunnelOpts([]);
-    setFunnelDone(false);
-    setStep('hobbies');
-    botAfter(FUNNEL.back());
-  };
-
   const leaveFunnel = () => {
-    setFunnelOpts([]);
     // Пришли из профиля — туда и возвращаемся. Не `replace`: тот подменял только верхний экран,
     // а приславший ОСТАВАЛСЯ в стопке под разговором — и человек получал ДВЕ копии «Интересов»
     // подряд, из которых надо было выходить дважды. `dismissTo` снимает разговор и возвращает к
@@ -284,14 +192,41 @@ export default function Chat() {
   const send = async (text: string) => {
     say('me', text);
 
-    // Шаг увлечений: написанное словами — это НОВЫЙ интерес, а не реплика в разговоре. Пока текст
-    // уходил в /api/onboarding/chat прямо отсюда, шаг не менялся, и сетка чипов с кнопкой «Дальше»
-    // оставалась висеть под каждым вопросом агента. Теперь интерес просто добавляется и загорается
-    // рядом с остальными, а разговор начинается по «Дальше».
+    // ШАГ УВЛЕЧЕНИЙ: сказанное разбирает сервер, а не клиент.
+    //
+    // Раньше написанное падало в профиль КАК ЕСТЬ — сырой строкой на языке ввода, потому что
+    // разбирать было нечем. Теперь один вызов на ход отдаёт и реплику, и записанное: ключ уже
+    // английский (им ищет матчинг), подпись — слова человека, и каждый интерес подтверждён
+    // цитатой из его же реплики.
     if (step === 'hobbies') {
-      const key = text.trim();
-      const cur: string[] = get('interests.explicit') || [];
-      if (key && !cur.includes(key)) set('interests.explicit', [...cur, key]);
+      const next: Msg2[] = [...hobbyThread.current, { role: 'user', content: text }];
+      hobbyThread.current = next;
+      setTyping(true);
+      try {
+        const r = await buddyApi.interestsChat(next as any, profileForAttach(), replyLang());
+        setTyping(false);
+        const reply = String(r?.reply || '');
+        if (reply) {
+          say('bot', reply);
+          hobbyThread.current = [...next, { role: 'assistant', content: reply }];
+        }
+        const added = Array.isArray(r?.added) ? r!.added! : [];
+        if (added.length) {
+          const cur: string[] = get('interests.explicit') || [];
+          const keys = added.map((a) => String(a.key || '').trim()).filter(Boolean);
+          const fresh = keys.filter((k) => !cur.includes(k));
+          if (fresh.length) set('interests.explicit', [...cur, ...fresh]);
+          // Подпись — слова человека. Кладём в тот же реестр, куда сгружаются словари сервера,
+          // иначе до следующего чтения профиля чип показывал бы английский ключ.
+          const lang = getLang();
+          registerInterestLabels(
+            Object.fromEntries(added.map((a) => [String(a.key), String(a.label || a.key)])), lang
+          );
+        }
+      } catch {
+        setTyping(false);
+        say('bot', T('Связь на секунду пропала. Повторишь?', 'I lost the connection for a second. Say that again?'));
+      }
       return;
     }
 
@@ -306,8 +241,8 @@ export default function Chat() {
       return;
     }
 
-    setFunnelOpts([]);
-    funnelTurn(text);
+    // Шаги, у которых свой разбор, вернулись выше. Сюда доходит текст на шагах, где ответа от
+    // модели не ждут (возраст, область, языки, фото): там ведёт виджет, а написанное — мимо.
   };
 
   // Процент — это «сколько пройдено онбординга». Для того, кто зашёл из профиля дополнить одну
@@ -324,8 +259,6 @@ export default function Chat() {
       onBack={() => router.back()}
       onSend={send}
       scrollEnabled={!dragging}
-      composerPlaceholder={step === 'funnel' ? FUNNEL.compose() : undefined}
-      brow={step === 'funnel' && !funnelEnding && !funnelDone ? <FunnelBrow onPress={askEnd} /> : null}
       headerExtra={
         hasProgress(st.profile) ? (
           <Pressable accessibilityRole="button" onPress={restart} hitSlop={10}>
@@ -341,11 +274,7 @@ export default function Chat() {
           goto={goto}
           onDrag={setDragging}
           onDone={() => router.navigate('/summary')}
-          startFunnel={startFunnel}
-          funnel={{
-            opts: funnelOpts, done: funnelDone, ask: funnelTurn, leave: leaveFunnel, more: moreInterests,
-            ending: funnelEnding, askEnd, keepGoing: () => setFunnelEnding(false),
-          }}
+          leave={leaveFunnel}
         />
       }
     />
@@ -353,17 +282,6 @@ export default function Chat() {
 }
 
 // ============================================================ виджеты шагов
-
-type FunnelBits = {
-  opts: string[];
-  done: boolean;
-  ask: (text: string) => void;
-  leave: () => void;
-  more: () => void;
-  ending: boolean;
-  askEnd: () => void;
-  keepGoing: () => void;
-};
 
 /**
  * Поле «своё» рядом с чипами. Отдельный компонент, потому что нужен и увлечениям, и языкам, и в
@@ -399,15 +317,15 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
 }
 
 function StepWidget({
-  step, say, goto, onDone, onDrag, startFunnel, funnel,
+  step, say, goto, onDone, onDrag, leave,
 }: {
   step: StepId;
   say: (who: 'bot' | 'me', text: string, photo?: string) => void;
   goto: (s: StepId, line: string) => void;
   onDone: () => void;
   onDrag: (dragging: boolean) => void;
-  startFunnel: (picks: string[]) => void;
-  funnel: FunnelBits;
+  /** Выход с шага увлечений: в профиль, откуда пришли, или дальше по онбордингу. */
+  leave: () => void;
 }) {
   const st = useOnb();
 
@@ -417,9 +335,7 @@ function StepWidget({
   // иначе ScrollView забирает вертикальный жест себе и точка дёргается на месте.
   if (step === 'area') return <AreaW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'languages') return <LangW say={say} goto={goto} />;
-  // onDrag и здесь: колесо интересов крутится тем же жестом, каким лента прокручивается.
-  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} />;
-  if (step === 'funnel') return <FunnelW {...funnel} say={say} />;
+  if (step === 'hobbies') return <HobbyW say={say} leaveFunnel={leave} />;
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
 }
@@ -605,178 +521,43 @@ function LangW({ say, goto }: any) {
 }
 
 /** A.08 — увлечения с эмодзи. */
-/**
- * Разговор про интересы — варианты от модели и всегда доступный выход.
- *
- * Свой «Это всё» дорисовывается ТОЛЬКО когда среди предложенных вариантов выхода ещё нет: на
- * закрывающем ходу модель сама предлагает «Это всё», и без этой проверки чип печатался бы дважды.
- * Проверка — тем же выражением, каким сервер узнаёт этот ответ.
- *
- * Пока модель спрашивает, отвечать можно и словами в композере — чипы это ускорение, а не рельсы.
- */
-function FunnelW({ opts, done, ask, leave, more, ending, askEnd, keepGoing, say }: FunnelBits & { say: any }) {
-  // Подтверждение выхода живёт в Chat: спрашивает бровка под шапкой, отвечают эти две кнопки.
-  if (ending) {
-    return (
-      <View style={cs.widget}>
-        <Cta label={FUNNEL.endNo()} kind="muted" onPress={keepGoing} />
-        <Cta label={FUNNEL.endYes()} onPress={leave} />
-      </View>
-    );
-  }
-  // Разговор про этот интерес окончен. Дальше два честных пути, и оба названы: рассказать про
-  // следующий интерес или закончить с интересами вовсе. Одна кнопка «Продолжить» не говорила, куда
-  // именно продолжает, и добавить второй интерес после разговора было нечем.
-  if (done) {
-    return (
-      <View style={cs.widget}>
-        <Cta label={FUNNEL.more()} kind="muted" onPress={more} />
-        <Cta label={FUNNEL.finish()} onPress={askEnd} />
-      </View>
-    );
-  }
-  // Выход рисуется ВСЕГДА, а не только когда пришли варианты: по-русски модель их почти не
-  // присылает, и без этого закончить разговор можно было только исчерпав счётчик ходов.
-
-  // Вариант делает то, что на нём написано. «Добавить ещё интерес» возвращает к чипам, «это всё»
-  // заканчивает разговор — а не отправляет свой же текст обратно агенту, после чего тот
-  // переспрашивает словами и никакого выбора интересов не появляется.
-  const press = (o: string) => {
-    if (FUNNEL_MORE_RE.test(o)) { say('me', o); more(); return; }
-    if (FUNNEL_OUT_RE.test(o)) { say('me', o); askEnd(); return; }
-    say('me', o);
-    ask(o);
-  };
-
-  // Выхода здесь больше нет: он живёт бровкой под шапкой (см. FunnelBrow). Кнопка в ленте
-  // спорила размером с самими ответами и уезжала вверх вместе с прокруткой — а закончить разговор
-  // человек может захотеть в любой момент, не долистывая до низа.
-  return (
-    <View style={cs.widget}>
-      <View style={cs.row}>
-        {opts.map((o) => (
-          <Chip key={o} label={o} onPress={() => press(o)} />
-        ))}
-      </View>
-    </View>
-  );
-}
-
-/**
- * Бровка «Это всё» — тонкая строка сразу под шапкой, на всё время разговора про интересы.
- *
- * Спрашивает подтверждение той же репликой, что и раньше: уйти отсюда мимоходом значит остаться
- * с профилем из одного слова, и Kleal сначала говорит, что будет дальше.
- */
-function FunnelBrow({ onPress }: { onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="button" style={s.brow} onPress={onPress}>
-      <Text style={s.browText}>{FUNNEL.done()}</Text>
-      <Text style={s.browChev}>›</Text>
-    </Pressable>
-  );
-}
-
-/**
- * A.08 — увлечения.
- *
- * Уже выбранное отмечено с самого начала, и это не удобство, а защита. Виджет писал
- * `set('interests.explicit', sel)` из пустого списка, то есть при повторном заходе на этот шаг
- * СТИРАЛ все интересы и заменял их новым выбором. Пока сюда нельзя было вернуться, это не
- * проявлялось; кнопка «Добавить интересы» в профиле делает вход обычным делом.
- */
-/** `onDrag` больше не принимается: чипы не крутятся, отбирать прокрутку у ленты не за что. */
-function HobbyW({ say, startFunnel, leaveFunnel }: any) {
+function HobbyW({ say, leaveFunnel }: any) {
   const st = useOnb();
-  const [ownOpen, setOwnOpen] = useState(false);
-  const [had] = useState<string[]>(() => get('interests.explicit') || []);
-  const [sel, setSel] = useState<string[]>(had);
-  const toggle = (k: string) => setSel((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
-
-  // Написанное своими словами попадает в профиль из композера и должно тут же появиться среди
-  // чипов — зажжённым. Иначе человек написал «прогулки с кофе», а на экране ничего не изменилось.
+  const [busy, setBusy] = useState(false);
   const explicit: string[] = st.profile.interests?.explicit || [];
-  const key = explicit.join('|');
-  useEffect(() => {
-    setSel((p) => Array.from(new Set([...p, ...explicit])));
-  }, [key]);
 
-  /**
-   * «Добавить» с колеса: в набор уходит ВСЯ цепочка — родители и лист (Спорт → Ракетки → Падел
-   * кладёт все три ключа). Матчинг сравнивает буквально, и по родителям человека находят те, кто
-   * искал шире. Реплика в ленту НЕ пишется здесь: одно эхо на «Дальше», как у чипов, — иначе
-   * каждая добавка дублировалась бы итоговым списком.
-   */
-  const addFromWheel = (keys: string[]) => {
-    setSel((p) => Array.from(new Set([...p, ...keys])));
+  const drop = (k: string) => {
+    const cur: string[] = get('interests.explicit') || [];
+    set('interests.explicit', cur.filter((x) => x !== k));
   };
 
   return (
     <View style={cs.widget}>
-      {/*
-        Чипы вместо колеса (15 августа). Колесо было решением от 10 августа и остаётся в
-        репозитории неудалённым — src/components/CipherWheel.tsx: решение о виде этого шага
-        менялось уже дважды, и вернуть его должно стоить одной строки, а не восстановления из
-        истории.
-
-        Жест колесу был нужен, чипам — нет: они не крутятся, и прокрутку у ленты отбирать не за
-        что. Поэтому onDrag сюда больше не передаётся.
-      */}
-      <InterestChips selected={sel} onAdd={addFromWheel} onRemove={toggle} />
-
-      {/* Собранное — чипами ниже: снять лишнее можно до «Дальше». */}
-      <View style={cs.row}>
-        {sel.map((k) => (
-          <Chip key={k} label={labelOf(k) === k ? hobbyLabel(k) : labelOf(k)} on onPress={() => toggle(k)} />
-        ))}
-        <Chip label={'+ ' + STEP_HOBBIES.own()} onPress={() => setOwnOpen((o) => !o)} />
-      </View>
-
-      {/*
-        Поле прямо здесь, а не курсор в композере внизу.
-        Раньше кнопка лишь ставила фокус в строку сообщения — на телефоне это незаметно: человек
-        жмёт «добавить своё», visibly ничего не происходит, и он делает вывод, что не работает.
-        Поле рядом с кнопкой показывает, что от него хотят.
-      */}
-      {ownOpen ? (
-        <OwnField
-          placeholder={OWN_INPUT.hobbyPlaceholder()}
-          onAdd={(v) => {
-            setSel((p) => (p.includes(v) ? p : [...p, v]));
-            setOwnOpen(false);
-          }}
-        />
-      ) : null}
+      {explicit.length ? (
+        <>
+          <Text style={cs.hint}>{STEP_HOBBIES.saved()}</Text>
+          <View style={cs.row}>
+            {explicit.map((k) => (
+              <Chip key={k} label={interestLabel(k)} on onPress={() => drop(k)} />
+            ))}
+          </View>
+        </>
+      ) : (
+        <Text style={cs.hint}>{STEP_HOBBIES.empty()}</Text>
+      )}
       <Cta
         label={STEP_HOBBIES.cta()}
-        disabled={!sel.length}
+        disabled={!explicit.length || busy}
         onPress={() => {
-          set('interests.explicit', sel);
-          say('me', sel.map((k) => (labelOf(k) === k ? hobbyPlain(k) : labelOf(k))).join(', '));
-          // Расспрашиваем только про НОВОЕ: про то, что уже обсуждали, спрашивать заново — значит
-          // показывать, что услышанное не сохранилось.
-          const added = sel.filter((k) => !had.includes(k));
-          if (!added.length) { leaveFunnel(); return; }
-          // Дальше не фото, а разговор: колесо говорит ЧТО выбрано, но не как человек этим занят.
-          //
-          // В затравку уходят КЛЮЧИ (coffee, padel), а не подписи («Кофе», «Падел»). Разговор
-          // ведёт модель, и она же переписывает профиль целиком — с русскими подписями в истории
-          // она и в interests.explicit кладёт «Кофе». Матчинг ищет по ключам: «Кофе» не совпадёт
-          // с coffee ни у кого. Проверено — так и было, пока сюда уходили подписи.
-          //
-          // И только САМОЕ ТОЧНОЕ из добавленного: цепочка колеса кладёт в профиль и родителей
-          // (sport, racquet sports, padel), но разговор про падел — это разговор про падел.
-          // «Чем тебе нравится спорт?» после такого выбора значило бы не услышать ответа.
-          const worth = funnelWorthy(added);
-          if (!worth.length) { leaveFunnel(); return; }
-          startFunnel(worth);
+          setBusy(true);
+          // Запись уже произошла — на каждом ходу разговора. Здесь только выход: в профиль,
+          // откуда пришли, или дальше по онбордингу.
+          leaveFunnel();
         }}
       />
     </View>
   );
 }
-
-/** A.09–A.13 — снять, загрузить или пропустить; затем подтверждение. */
 function PhotoW({ say, onDone, name }: any) {
   const [uri, setUri] = useState<string | null>(null);
   const [stage, setStage] = useState<'ask' | 'result' | 'confirmed'>('ask');
