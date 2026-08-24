@@ -89,6 +89,18 @@ r = C("intercambio de idiomas en español")
 check("es idiomas -> languages", r["category"] == "languages", r["category"])
 check("es idiomas -> type language", r["type"] == "language")
 
+# Finance/crypto aliases must survive without the LLM, including compounds and multilingual input.
+for _q, _cat, _topic in (
+    ("поговорить про блокчейн", "tech", "crypto"),
+    ("discuss web3 and defi", "tech", "crypto"),
+    ("trading forex and nasdaq", "career", "investing"),
+    ("hablar de mercados financieros", "career", "investing"),
+    ("обсудить фондовый рынок", "career", "investing"),
+):
+    _r = C(_q)
+    check("finance fallback category: %s" % _q[:28], _r["category"] == _cat, str(_r))
+    check("finance fallback topic: %s" % _q[:28], _topic in _r["topics"], str(_r["topics"]))
+
 r = C("busco una cita")
 check("es cita -> dating", r["category"] == "dating", r["category"])
 

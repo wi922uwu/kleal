@@ -7,6 +7,7 @@ parent (tier T2) · adjacent purpose (T3) · negative edge (penalty/constraint) 
 3 sibling(sub), 2 parent(broad), 1 adjacent, 0 none.
 """
 import re
+import threading
 
 # broad -> {sub -> [канонические слова]}
 TAXONOMY = {
@@ -91,15 +92,21 @@ def _wtok(s):
 def _wshare(a, b):
     """Уровень общего слова между OFF-taxonomy строками (labubu/рыбалка и т.п.):
       4 — литеральное совпадение (labubu==labubu) — exact/alias;
-      2 — префиксная морфо-близость (painting~paintball: родственно, НО не точное) — parent-уровень;
-      0 — нет. Раньше префикс-5 тоже давал 4 и склеивал НЕсвязанные слова в фальшивый T1."""
-    A, B = _wtok(a), _wtok(b)
+      2 — безопасная суффиксная морфо-близость (apple~apples) — parent-уровень;
+      0 — нет. Общий префикс сам по себе недостаточен: cryptography != cryptocurrency."""
+    from . import concepts as X
+    # Generic polysemes may support a match only with context resolved elsewhere. Alone they caused
+    # stock market == food market and any "project" == any other project.
+    ambiguous = {"market", "mercado", "рынок", "project", "проект",
+                 "exchange", "intercambio", "обмен"}
+    A = [w for w in _wtok(a) if w not in ambiguous]
+    B = [w for w in _wtok(b) if w not in ambiguous]
     lvl = 0
     for x in A:
         for y in B:
             if x == y:
                 return 4                                    # точное литеральное совпадение
-            if len(x) >= 5 and len(y) >= 5 and abs(len(x) - len(y)) <= 2 and x[:5] == y[:5]:
+            if X.token_equivalent(x, y):
                 lvl = max(lvl, 2)                            # лишь морфо-близость -> parent, не exact
     return lvl
 
@@ -114,7 +121,7 @@ def _wshare(a, b):
 # и таксономия не имеет права ходить по сети: она обязана быть чистой и быстрой. Поэтому хозяин
 # процесса (services/matching/app.py) ВПРЫСКИВАЕТ готовое знание на время запроса, а здесь только
 # точка подключения. Ничего не впрыснули — движок работает ровно как раньше.
-_BRIDGE = None          # callable(интерес:str) -> bool
+_CTX = threading.local()
 
 
 def set_bridge(is_related=None):
@@ -125,16 +132,29 @@ def set_bridge(is_related=None):
     продуктовый рынок похожими, другая нет, и понять, кто прав, можно только чтением обеих.
     Решение принимает владелец процесса, здесь только точка подключения.
     """
-    global _BRIDGE
-    _BRIDGE = is_related if callable(is_related) else None
+    _CTX.bridge = is_related if callable(is_related) else None
+
+
+def _bridge_fn():
+    return getattr(_CTX, "bridge", None)
+
+
+def set_topics_of(resolver=None):
+    """Install the phrase resolver for this request (kept for bridge provenance/parity)."""
+    _CTX.topics_of = resolver if callable(resolver) else None
+
+
+def _topics_of_fn():
+    return getattr(_CTX, "topics_of", None)
 
 
 def _bridged(x):
     """Сошёлся ли интерес `x` с запросом."""
-    if not _BRIDGE:
+    bridge = _bridge_fn()
+    if not bridge:
         return False
     try:
-        return bool(_BRIDGE(x))
+        return bool(bridge(x))
     except Exception:
         return False
 
@@ -144,7 +164,7 @@ def similarity(topics, interests):
     если ОБЕ стороны пары резолвятся в каноне, уровень берётся из `canonical.similarity_nodes`. Seed-граф
     ниже — только bootstrap/fallback для концептов, которых в каноне нет. Уровни: 4 exact/alias >
     3 sibling > 2 parent > 1 adjacent > 0. Complementary roles и negative edges — отдельные матрицы."""
-    from . import canonical as C
+    from . import canonical as C, concepts as X
     canon = C.AVAILABLE
     matched, best = set(), 0
     xb = [(x, resolve(x)) for x in interests]
@@ -153,6 +173,14 @@ def similarity(topics, interests):
         nt = norm(t)
         t_in_canon = C.resolve_node(t) if canon else None
         for x, (bx, sx) in xb:
+            # Free-form compound/multilingual concepts are evaluated before the curated graph. They
+            # return only exact or direct-family levels and never broad category adjacency.
+            concept_lvl = X.similarity(t, x)
+            if concept_lvl:
+                if concept_lvl >= 4:
+                    matched.add(norm(x))
+                best = max(best, concept_lvl)
+                continue
             # --- Аудит #4: canonical АВТОРИТЕТНО решает пару, если резолвит обе стороны ---
             if t_in_canon and C.resolve_node(x):
                 lvl = C.similarity_nodes(t, x)
@@ -179,7 +207,7 @@ def similarity(topics, interests):
     # Мост проверяется ПОСЛЕДНИМ и не спорит с каноном: он поднимает только тех, кого канон и
     # `_wshare` не связали вовсе. Уровень 3 (sibling) — «про то же самое, но названо иначе»;
     # выше нельзя, точное совпадение должно оставаться точным.
-    if best < 3 and _BRIDGE:
+    if best < 3 and _bridge_fn():
         for x in interests:
             if _bridged(x):
                 matched.add(norm(x)); best = max(best, 3)

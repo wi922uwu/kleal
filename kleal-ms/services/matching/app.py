@@ -145,14 +145,23 @@ def _wtok(s):
     return [w for w in re.findall(r"[a-zа-яё0-9]+", str(s).lower()) if len(w) >= 3]
 
 def _wshare(a, b):
-    """A literal shared interest word between two OFF-TAXONOMY strings. Exact token, or a long common stem
-    (>=5-char shared prefix AND near-equal length) to catch RU inflection ('технику'~'техника',
-    'apple'~'apples') WITHOUT false matches like 'apple'~'application' or 'anime'~'animals'."""
-    A, B = _wtok(a), _wtok(b)
+    """Literal or safely inflected shared word between two OFF-TAXONOMY strings.
+
+    Generic polysemes need resolved context, and arbitrary common prefixes are insufficient:
+    stock market != food market and cryptography != cryptocurrency.
+    """
+    try:
+        from matching_core.taxonomy import concepts as _concepts
+    except Exception:
+        _concepts = None
+    ambiguous = {"market", "mercado", "рынок", "project", "проект",
+                 "exchange", "intercambio", "обмен"}
+    A = [w for w in _wtok(a) if w not in ambiguous]
+    B = [w for w in _wtok(b) if w not in ambiguous]
     for x in A:
         for y in B:
             if x == y: return True
-            if len(x) >= 5 and len(y) >= 5 and abs(len(x) - len(y)) <= 2 and x[:5] == y[:5]: return True
+            if _concepts is not None and _concepts.token_equivalent(x, y): return True
     return False
 
 # ============================================================ мост через темы фильтрации (фразами)
@@ -251,10 +260,18 @@ def topics_of(s):
     ph = _norm_phrase(s)
     if not ph:
         return set()
+    # Deterministic concept tags complement the learned phrase map. They make compound interests
+    # ("trading forex", "street photography") useful on their first request without writing to the
+    # production phrase store, while broad ambiguous words intentionally receive no tags.
+    try:
+        from matching_core.taxonomy import concepts as _concepts
+        stable = _concepts.topic_tags(ph)
+    except Exception:
+        stable = set()
     got = PHRASE_TOPICS.get(ph)
     if got:
-        return set(got) | ({ph} if ph not in _TOPIC_STOP else set())
-    return {ph} if ph not in _TOPIC_STOP else set()
+        return set(got) | stable | ({ph} if ph not in _TOPIC_STOP else set())
+    return stable | ({ph} if ph not in _TOPIC_STOP else set())
 
 
 _TEACH_SENT = set()          # фразы, уже отправленные в очередь этим процессом — не слать дубли
@@ -1795,6 +1812,42 @@ def _slate_budget(intent):
     return max(_core.TOP_N, min(2 * kg._MAX_MVP_SIZE, seats + 4))
 
 
+@contextlib.contextmanager
+def _matching_topic_context(intent):
+    """Install one request's phrase/canonicalization context and restore the prior one."""
+    intent = intent or {}
+    prev_q = getattr(_QCTX, "bridge", None)
+    try:
+        from matching_core.taxonomy import graph as _TX
+        prev_fn, prev_tof = _TX._bridge_fn(), _TX._topics_of_fn()
+    except Exception:
+        _TX, prev_fn, prev_tof = None, None, None
+    effective = intent
+    try:
+        _phr = str(intent.get("_query") or intent.get("phrase") or "")
+        _qb = resolve_query_topics(
+            [str(t).lower() for t in (intent.get("topics") or [])], _phr)
+        _set_query_bridge(_qb)
+        _pn = _norm_phrase(_phr)
+        if _pn and len(_pn.split()) <= 3:
+            _tl = [str(t).lower() for t in (intent.get("topics") or [])]
+            if _pn not in _tl:
+                effective = dict(intent, topics=[_pn] + _tl)
+        if _TX is not None:
+            _qbs = set(_qb or ())
+            _TX.set_bridge(lambda x: topics_join(_qbs, topics_of(x)) if _qbs else False)
+            _TX.set_topics_of(topics_of)
+    except Exception:
+        _set_query_bridge(())
+    try:
+        yield effective
+    finally:
+        _QCTX.bridge = prev_q
+        if _TX is not None:
+            _TX.set_bridge(prev_fn)
+            _TX.set_topics_of(prev_tof)
+
+
 def match_candidates(intent, prof, ctx=None, diag=None, want=None):
     """Вход подбора: ставит мост тем НА ВРЕМЯ поиска и гарантированно снимает его после.
 
@@ -1805,58 +1858,8 @@ def match_candidates(intent, prof, ctx=None, diag=None, want=None):
     значение, а не пустота: если подбор однажды позовёт подбор, внутренний не снимет мост под
     внешним.
     """
-    prev_q = getattr(_QCTX, "bridge", None)
-    try:
-        from matching_core.taxonomy import graph as _TX
-        prev_fn, prev_tof = _TX._bridge_fn(), _TX._topics_of_fn()
-    except Exception:
-        _TX, prev_fn, prev_tof = None, None, None
-    try:
-        _phr = str(intent.get("_query") or intent.get("phrase") or "")
-        _qb = resolve_query_topics(
-            [str(t).lower() for t in (intent.get("topics") or [])], _phr)
-        _set_query_bridge(_qb)
-        # ФРАЗА ЗАПРОСА — ТОЖЕ ТЕМА. Сравнивались только темы от фильтрации, а сама фраза не
-        # сравнивалась ни с чем: поиск «mercado gastronómico» не находил человека, у которого
-        # ровно «mercado gastronómico» и написано, — первый ярус оставался пуст, а он лежал во
-        # втором рядом с чужими. Добавляем короткую фразу (до трёх слов — длинная это предложение,
-        # а не название занятия), чтобы буквальное попадание оставалось буквальным и не зависело
-        # от того, дописала ли фильтрация нужную ручку.
-        #
-        # СТАВИТСЯ ПЕРВОЙ, и это не косметика: normalize_for_scoring режет темы до четырёх
-        # (TOPIC_CAP в kleal_intent.py), а фильтрация обычно ровно четыре и возвращает — дописанная
-        # в конец фраза молча отваливалась. Проверено: «mercado gastronómico» не находил человека
-        # с ровно таким интересом, темы до движка доходили без фразы. Первое место ей и по смыслу:
-        # это собственные слова человека, они весомее четвёртой догадки модели.
-        _pn = _norm_phrase(_phr)
-        if _pn and len(_pn.split()) <= 3:
-            _tl = [str(t).lower() for t in (intent.get("topics") or [])]
-            if _pn not in _tl:
-                intent = dict(intent, topics=[_pn] + _tl)
-        # И ДВИЖКУ ТОЖЕ. Ярус решает не `topical`, а таксономия matching_core: впрыснутые
-        # помощники она берёт «для совместимости подписи» и не использует. Без этой строки мост
-        # работал ровно там, где ничего не решает: `topical` давал 3, а движок ставил T5 «нет
-        # overlap», и человек снова видел одного кандидата. Движку отдаётся ГОТОВОЕ РЕШЕНИЕ, а
-        # не два набора тем: правило «сколько общего достаточно» должно быть одно на обе стороны.
-        if _TX is not None:
-            _qbs = set(_qb or ())
-            _TX.set_bridge(lambda x: topics_join(_qbs, topics_of(x)) if _qbs else False)
-            # Тот же разбор фразы отдаём для опознания ПРОИЗВОДНЫХ РУЧЕК: дописанное машиной слово
-            # не имеет права быть точным совпадением. Без этого «языковой обмен» приводил человека
-            # про уход за котами первым ярусом — по общей ручке `exchange`.
-            _TX.set_topics_of(topics_of)
-    except Exception:
-        _set_query_bridge(())
-    try:
-        return _match_candidates_engine(intent, prof, ctx, diag, want)
-    finally:
-        _QCTX.bridge = prev_q
-        if _TX is not None:
-            try:
-                _TX.set_bridge(prev_fn)
-                _TX.set_topics_of(prev_tof)
-            except Exception:
-                pass
+    with _matching_topic_context(intent) as effective:
+        return _match_candidates_engine(effective, prof, ctx, diag, want)
 
 
 def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
@@ -3088,7 +3091,7 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
 # Mirrors core_v2.search() decision-for-decision, but CLASSIFIES every pool candidate instead of silently
 # dropping it — so a matching test panel can show who matched and why, who was gated out (and the gate),
 # and who was considered-but-filtered — plus the per-feature-group breakdown behind each score.
-def explain_match(intent, prof, ctx=None):
+def _explain_match_engine(intent, prof, ctx=None):
     if not CORE_V2:
         return {"error": "Core v2 disabled (KLEAL_CORE_V2=0) — nothing to explain", "matched": [], "excluded": [], "considered": []}
     ctx = ctx or {}
@@ -3222,6 +3225,12 @@ def explain_match(intent, prof, ctx=None):
         "snapshot": _request_snapshot(intent),      # §4 immutable per-request version snapshot
         "payment_invariant": PAYMENT_INVARIANT,     # §0 dec.10 / §11.3
     }
+
+
+def explain_match(intent, prof, ctx=None):
+    """Slate diagnostic with the exact same phrase/canonicalization context as real matching."""
+    with _matching_topic_context(intent) as effective:
+        return _explain_match_engine(effective, prof, ctx)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -8408,7 +8417,8 @@ class H(BaseHTTPRequestHandler):
                                     {"step": "eligibility hard gates", "ok": False, "detail": why}],
                                 "drop_reason": "blocked by policy: %s" % why}})
                         else:
-                            tr = _core.explain(intent, prof, ctx2, cand, _H, _CORE_CFG)
+                            with _matching_topic_context(intent) as effective:
+                                tr = _core.explain(effective, prof, ctx2, cand, _H, _CORE_CFG)
                             tr["steps"].insert(0, {"step": "eligibility hard gates", "ok": True,
                                                    "detail": decision})
                             send_json(self, 200, {"ok": True, "trace": tr})

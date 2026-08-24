@@ -2,6 +2,7 @@
 """§6 taxonomy + governance — unit + property (§23.3; §6 governance invariant)."""
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from matching_core.taxonomy import graph as TX, governance as GOV
@@ -25,6 +26,31 @@ def run():
     check("TX8 off-taxonomy literal", TX.similarity(["labubu"], ["labubu"])[0] == 4)
     check("TX9 negative edge", TX.is_negative("ranked", "casual"))
     check("TX10 complementary role (не similarity)", TX.is_complementary("support", "carry"))
+
+    # Free-form canonicalization: compounds, languages and conservative domain boundaries.
+    for left, right, level in (
+        ("crypto", "trading forex", 3), ("blockchain", "forex", 3), ("web3", "nasdaq", 3),
+        ("криптовалютами", "mercado de valores", 3), ("bitcoin", "инвестиции", 3),
+        ("trail running", "ciclismo", 3), ("anime", "японская анимация", 4),
+        ("language exchange", "practicar español", 3), ("street photography", "fotografía", 4),
+    ):
+        check("concept positive: %s / %s" % (left, right), TX.similarity([left], [right])[0] == level)
+    for left, right in (
+        ("stock market", "food market"), ("crypto", "software development"),
+        ("gaming", "software engineering"), ("anime", "machine learning"),
+        ("football", "financial markets"), ("language exchange", "currency exchange"),
+        ("cryptography", "cryptocurrency"),
+    ):
+        check("concept negative: %s / %s" % (left, right), TX.similarity([left], [right])[0] == 0)
+
+    # A request bridge must never leak into another worker thread.
+    TX.set_bridge(lambda _x: True)
+    child = []
+    th = threading.Thread(target=lambda: child.append(TX.similarity(["alphafoo"], ["betabar"])[0]))
+    th.start(); th.join()
+    check("bridge is request-thread-local", child == [0])
+    check("bridge remains active in owner thread", TX.similarity(["alphafoo"], ["betabar"])[0] == 3)
+    TX.set_bridge(None)
 
     # --- §6 governance: добавление alias НЕ повышает existing pair (shadow replay) ---
     before = TX.similarity(["dota2"], ["chess"])[0]     # parent=2
