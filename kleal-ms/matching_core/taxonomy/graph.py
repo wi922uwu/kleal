@@ -7,6 +7,7 @@ parent (tier T2) · adjacent purpose (T3) · negative edge (penalty/constraint) 
 3 sibling(sub), 2 parent(broad), 1 adjacent, 0 none.
 """
 import re
+import threading
 
 # broad -> {sub -> [канонические слова]}
 TAXONOMY = {
@@ -89,26 +90,25 @@ def _wtok(s):
 
 
 def _wshare(a, b):
-    """Уровень близости OFF-taxonomy строк (labubu/рыбалка и т.п.):
-      4 — совпадение ЦЕЛИКОМ (labubu==labubu) — exact/alias;
-      3 — общий токен при более длинной стороне (market ~ go-to-market: то же поле, не то же самое);
-      2 — префиксная морфо-близость (painting~paintball) — parent-уровень;
-      0 — нет.
-
-    Раньше ЛЮБОЙ общий токен давал 4: «go-to-market» и «stock market» были «точным совпадением»
-    запроса `market`, и человек про вывод продукта вставал первым тиром в поиск про акции.
-    Точное — это когда сказано ТО ЖЕ САМОЕ, а не когда в сказанном есть то же слово."""
-    A, B = _wtok(a), _wtok(b)
-    # Целиком — это нормированные СТРОКИ, не множества токенов: токенизатор выбрасывает короткие
-    # слова, и «go-to-market» превращается в {market} — множества совпали бы у разных фраз.
+    """Уровень общего слова между OFF-taxonomy строками (labubu/рыбалка и т.п.):
+      4 — литеральное совпадение (labubu==labubu) — exact/alias;
+      2 — безопасная суффиксная морфо-близость (apple~apples) — parent-уровень;
+      0 — нет. Общий префикс сам по себе недостаточен: cryptography != cryptocurrency."""
+    from . import concepts as X
+    # Generic polysemes may support a match only with context resolved elsewhere. Alone they caused
+    # stock market == food market and any "project" == any other project.
+    ambiguous = {"market", "mercado", "рынок", "project", "проект",
+                 "exchange", "intercambio", "обмен"}
+    A = [w for w in _wtok(a) if w not in ambiguous]
+    B = [w for w in _wtok(b) if w not in ambiguous]
     if norm(a) and norm(a) == norm(b):
-        return 4                                            # сказано одно и то же
+        return 4
     lvl = 0
     for x in A:
         for y in B:
             if x == y:
-                lvl = max(lvl, 3)                            # общее слово в разных фразах
-            elif len(x) >= 5 and len(y) >= 5 and abs(len(x) - len(y)) <= 2 and x[:5] == y[:5]:
+                lvl = max(lvl, 3)                            # общий токен в разных фразах
+            if X.token_equivalent(x, y):
                 lvl = max(lvl, 2)                            # лишь морфо-близость -> parent, не exact
     return lvl
 
@@ -123,7 +123,7 @@ def _wshare(a, b):
 # и таксономия не имеет права ходить по сети: она обязана быть чистой и быстрой. Поэтому хозяин
 # процесса (services/matching/app.py) ВПРЫСКИВАЕТ готовое знание на время запроса, а здесь только
 # точка подключения. Ничего не впрыснули — движок работает ровно как раньше.
-_BRIDGE_TL = None       # потоко-локальный слот; создаётся лениво, см. set_bridge
+_CTX = threading.local()
 
 
 def set_bridge(is_related=None):
@@ -133,61 +133,25 @@ def set_bridge(is_related=None):
     то есть во второй копии. Копии таких правил расходятся молча: одна сторона считает биржу и
     продуктовый рынок похожими, другая нет, и понять, кто прав, можно только чтением обеих.
     Решение принимает владелец процесса, здесь только точка подключения.
-
-    Слот ПОТОКО-ЛОКАЛЬНЫЙ, и это не перестраховка: матчинг обслуживает запросы параллельными
-    потоками, и глобальный мост означал, что чужой поиск переставляет решение ПОД ТВОИМ —
-    половина кандидатов оценена с одним мостом, половина с другим, и никакой лог этого не
-    покажет. Хозяин обязан снять мост после поиска (set_bridge() без аргумента): поток, который
-    моста не ставил — групповой подбор, батарея, — не должен наследовать чужой.
     """
-    global _BRIDGE_TL
-    if _BRIDGE_TL is None:
-        import threading
-        _BRIDGE_TL = threading.local()
-    _BRIDGE_TL.fn = is_related if callable(is_related) else None
+    _CTX.bridge = is_related if callable(is_related) else None
 
 
 def _bridge_fn():
-    return getattr(_BRIDGE_TL, "fn", None) if _BRIDGE_TL is not None else None
+    return getattr(_CTX, "bridge", None)
 
 
-# ПРОИЗВОДНЫЕ РУЧКИ. Фильтрация дописывает человеку английские ручки к его собственным словам:
-# «natación en aguas abiertas» -> swimming, «cata de café» -> coffee, «intercambio sobre cuidado de
-# mascotas» -> exchange. Ручка — не слово человека, а догадка машины о том, что он имел в виду, и
-# иногда догадка мимо: запрос «языковой обмен» приводил человека про уход за котами (общая ручка
-# `exchange`), «пробежка по утрам» — рабочую фокус-сессию (`morning`).
-#
-# ПРОБОВАЛИ И ОТКАТИЛИ: запрещать ручке быть точным совпадением. Замерено на тридцати двух живых
-# запросах — стало хуже, чем было. «Плавание», «аниме», «испанский язык» ушли из первого яруса
-# целиком: для них ручка ЕДИНСТВЕННЫЙ мост между языками, потому что испанской фразы канон не
-# знает, а общих слов у «natación en aguas abiertas» и «плавание» нет. Ручка чинит ровно то, ради
-# чего заведена, и отнимать у неё ярус нельзя.
-#
-# Поэтому различение перенесено в БАЛЛ: `natural` — лучший уровень, добытый СОБСТВЕННЫМ словом
-# человека. Совпал только по ручке — ярус тот же, балл ниже, и в выдаче он стоит под теми, кто
-# сказал это сам. Ярус отвечает на «про то ли это», балл — «насколько уверенно».
-#
-# Опознаётся ручка тем же мостом: слово ВЫВОДИМО из другой фразы того же человека. Своё слово из
-# соседнего не выводится, поэтому «senderismo» остаётся собственным, а приписанное к нему
-# «hiking» — производным.
-_TOPICS_OF_TL = None
-
-
-def set_topics_of(fn=None):
-    """Впрыснуть разбор фразы на темы (тот же, что у моста) — им опознаются производные ручки."""
-    global _TOPICS_OF_TL
-    if _TOPICS_OF_TL is None:
-        import threading
-        _TOPICS_OF_TL = threading.local()
-    _TOPICS_OF_TL.fn = fn if callable(fn) else None
+def set_topics_of(resolver=None):
+    """Install the phrase resolver for this request (kept for bridge provenance/parity)."""
+    _CTX.topics_of = resolver if callable(resolver) else None
 
 
 def _topics_of_fn():
-    return getattr(_TOPICS_OF_TL, "fn", None) if _TOPICS_OF_TL is not None else None
+    return getattr(_CTX, "topics_of", None)
 
 
 def _derived_set(interests):
-    """Нормированные интересы, выводимые из ДРУГОГО интереса того же человека."""
+    """Нормированные интересы, выводимые из другого интереса того же человека."""
     fn = _topics_of_fn()
     if not fn or len(interests) < 2:
         return frozenset()
@@ -197,23 +161,23 @@ def _derived_set(interests):
     except Exception:
         return frozenset()
     out = set()
-    for i, w in enumerate(norms):
-        if not w or " " in w:
-            continue                    # ручка всегда одно слово; фразы человек пишет сам
-        for j, ts in enumerate(topics):
-            if j != i and w in ts:
-                out.add(w)
+    for i, word in enumerate(norms):
+        if not word or " " in word:
+            continue
+        for j, resolved in enumerate(topics):
+            if j != i and word in resolved:
+                out.add(word)
                 break
     return frozenset(out)
 
 
 def _bridged(x):
     """Сошёлся ли интерес `x` с запросом."""
-    fn = _bridge_fn()
-    if not fn:
+    bridge = _bridge_fn()
+    if not bridge:
         return False
     try:
-        return bool(fn(x))
+        return bool(bridge(x))
     except Exception:
         return False
 
@@ -228,13 +192,8 @@ def similarity_detail(topics, interests):
     """§6 + Аудит #4 — ЕДИНЫЙ semantic resolver. Canonical taxonomy (405 nodes) — авторитетный источник:
     если ОБЕ стороны пары резолвятся в каноне, уровень берётся из `canonical.similarity_nodes`. Seed-граф
     ниже — только bootstrap/fallback для концептов, которых в каноне нет. Уровни: 4 exact/alias >
-    3 sibling > 2 parent > 1 adjacent > 0. Complementary roles и negative edges — отдельные матрицы.
-
-    Третьим значением — уровень ПО КАЖДОЙ теме запроса. Без него наружу уходил только максимум, и
-    человек, закрывший одну тему из четырёх, был неотличим от закрывшего все четыре: у восьми
-    кандидатов в выдаче получался один и тот же балл, а порядок между ними — произвольный.
-    """
-    from . import canonical as C
+    3 sibling > 2 parent > 1 adjacent > 0. Complementary roles и negative edges — отдельные матрицы."""
+    from . import canonical as C, concepts as X
     canon = C.AVAILABLE
     matched, best, natural = set(), 0, 0
     per_topic = {}
@@ -246,6 +205,16 @@ def similarity_detail(topics, interests):
         t_in_canon = C.resolve_node(t) if canon else None
         lvl_t = 0
         for x, (bx, sx) in xb:
+            # Free-form compound/multilingual concepts are evaluated before the curated graph. They
+            # return only exact or direct-family levels and never broad category adjacency.
+            concept_lvl = X.similarity(t, x)
+            if concept_lvl:
+                if concept_lvl >= 4:
+                    matched.add(norm(x))
+                lvl_t = max(lvl_t, concept_lvl)
+                if norm(x) not in derived:
+                    natural = max(natural, concept_lvl)
+                continue
             # --- Аудит #4: canonical АВТОРИТЕТНО решает пару, если резолвит обе стороны ---
             if t_in_canon and C.resolve_node(x):
                 lvl = C.similarity_nodes(t, x)
@@ -260,7 +229,7 @@ def similarity_detail(topics, interests):
                 continue
             # --- seed fallback: концепт вне канона (bootstrap для unknown) ---
             if norm(x) == nt:
-                matched.add(norm(x)); lvl_t = max(lvl_t, 4)         # exact/alias
+                matched.add(norm(x)); lvl_t = max(lvl_t, 4)        # exact/alias
                 if norm(x) not in derived:
                     natural = max(natural, 4)
             elif st and st == sx:
@@ -270,7 +239,7 @@ def similarity_detail(topics, interests):
             elif bt and bx and bx in ADJACENCY.get(bt, []):
                 lvl_t = max(lvl_t, 1)                               # adjacent purpose
             elif not bt and not bx:
-                lvl = _wshare(t, x)                                 # off-taxonomy: 4 литерал / 3 токен / 2 морфо
+                lvl = _wshare(t, x)                                 # off-taxonomy: 4 literal / 3 token / 2 morphology
                 if lvl >= 4:
                     matched.add(norm(x))
                 if lvl:
@@ -286,9 +255,6 @@ def similarity_detail(topics, interests):
         for x in interests:
             if _bridged(x):
                 matched.add(norm(x)); best = max(best, 3)
-                # Мост — решение про ЗАПРОС ЦЕЛИКОМ, а не про отдельную тему, поэтому потемно он
-                # ничего не поднимает. Так связанный только мостом кандидат честно оказывается у
-                # нижнего края своего уровня: связь есть, но какую именно тему он закрыл — неизвестно.
                 break
     return best, matched, {"per_topic": per_topic, "natural": natural}
 
