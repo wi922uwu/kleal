@@ -44,13 +44,7 @@ export default function Intro() {
         resizeMode="cover"
       />
 
-      {/*
-        Листу задаётся МИНИМАЛЬНАЯ доля экрана, а волне — весь остаток (flexGrow ниже). Без этого
-        лист обнимал содержимое, волна оставалась полосой в 160 точек, и на высоких экранах между
-        индикатором и чёрным полем зияла белая пустота. Теперь чёрное тянется вверх ровно настолько,
-        насколько экран выше содержимого.
-      */}
-      <View style={[s.sheet, { minHeight: height * SHEET_SHARE }]}>
+      <View style={s.sheet}>
         {/* Гарнитура заголовка зависит от языка — см. displayFamily: в шрифте борда нет кириллицы. */}
         <Text style={[s.h, { fontFamily: displayFamily(lang) }]}>{sl.title}</Text>
         <Text style={s.sub}>{sl.sub}</Text>
@@ -65,7 +59,17 @@ export default function Intro() {
           Волна и кнопка — одна нажимаемая область: в борде подпись стоит на гребне волны, и
           попадать надо по волне, а не по невидимому прямоугольнику вокруг текста.
         */}
-        <Pressable onPress={next} accessibilityRole="button" style={s.wave}>
+        {/*
+          ВЫСОТА ЧЁРНОГО ПОЛЯ ЗАДАНА ДОЛЕЙ ЭКРАНА, а не остатком места.
+          Через `flexGrow` не вышло: лист обнимает содержимое, и свободного места, в которое можно
+          расти, там ровно ноль — волна оставалась полосой в 160 точек, а между индикатором и
+          чёрным зиял белый провал. Доля же поднимает гребень на любом экране предсказуемо.
+        */}
+        <Pressable
+          onPress={next}
+          accessibilityRole="button"
+          style={[s.wave, { height: Math.max(CURVE_H, height * WAVE_SHARE) }]}
+        >
           {/*
             Кривая держит СВОИ пропорции (390×160) и стоит вверху блока, а всё под ней — сплошная
             заливка. Растягивать сам путь нельзя: при `height="100%"` на высоком экране гребень
@@ -90,8 +94,8 @@ export default function Intro() {
 // ===== вид
 /** Высота самой кривой — её пропорции из борда, они не меняются. */
 const CURVE_H = 160;
-/** Какую долю экрана лист занимает как минимум. В борде это 307 из 844. */
-const SHEET_SHARE = 0.44;
+/** Какую долю экрана занимает чёрное поле с кнопкой. */
+const WAVE_SHARE = 0.3;
 
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ink, justifyContent: 'flex-end' },
@@ -120,7 +124,7 @@ const s = StyleSheet.create({
   bars: { flexDirection: 'row', gap: 6, marginTop: 32 },
   bar: { width: 28, height: 2, borderRadius: radius.full, backgroundColor: color.neutral300 },
   barOn: { backgroundColor: color.primary },
-  wave: { flexGrow: 1, minHeight: CURVE_H, alignSelf: 'stretch', marginTop: space.lg },
+  wave: { alignSelf: 'stretch', marginTop: space.lg },
   /** Чёрное под кривой: на высоком экране оно и растёт, поднимая гребень выше. */
   waveFill: { flex: 1, backgroundColor: color.ink },
   btnWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
