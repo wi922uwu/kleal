@@ -13,10 +13,13 @@
  *   A.03.2c  — код истёк или попытки кончились: главная кнопка меняется на «Отправить новый»;
  *   A.03.2d  — проверяем: кнопка занята, поле закрыто.
  * Истёкший и неверный — разные кадры именно потому, что делать в них надо разное.
+ *
+ * ЯЧЕЙКИ — ТО ЖЕ СТЕКЛО, что поле на предыдущем экране: `GlassPane` другой формы. Своя пара слоёв
+ * здесь означала бы второе стекло в приложении, которое разойдётся с первым при первой правке.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TextInput, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform,
+  View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -24,13 +27,16 @@ import { auth, setSession } from '../src/api';
 import { AUTH, CODE_LEN, DEV_CODE } from '../src/auth';
 import { patch, applyDefaults } from '../src/state';
 import { useLang, T, replyLang } from '../src/i18n';
-import { color, radius as rad, space, type } from '../src/theme';
+import { Ambient, GLOW_FORM } from '../src/components/Ambient';
+import { GlassBack, GlassPane } from '../src/components/GlassField';
+import { GlassPill } from '../src/components/Glass';
+import { color, displayFamily, radius as rad, space, type } from '../src/theme';
 
 const TTL_MIN = 10;          // столько же, сколько CODE_TTL на сервере
 const RESEND = 30;           // «Resend code in 0:30»
 
 export default function AuthCode() {
-  useLang();
+  const lang = useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ email?: string; dev?: string }>();
@@ -123,138 +129,142 @@ export default function AuthCode() {
   const cells = useMemo(() => Array.from({ length: CODE_LEN }, (_, i) => code[i] || ''), [code]);
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: color.bg }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <View style={[s.wrap, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 16 }]}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={T('Назад', 'Back')}
-          style={s.back}
-          onPress={() => (router.canGoBack() ? router.back() : router.replace('/auth-email'))}
-        >
-          <Text style={s.backGlyph}>‹</Text>
-        </Pressable>
-
-        <Text style={s.h}>{AUTH.codeTitle()}</Text>
-        <Text style={s.note}>{AUTH.codeNote(email, TTL_MIN)}</Text>
-
-        {/*
-          Полоса отладки. Нарочно не в стиле приложения — жёлтая, с пунктиром и словом «отладка»:
-          она обязана выглядеть как то, чего в продукте быть не должно. Появляется, только если
-          сервер прислал код, а он присылает его лишь при явно включённом рубильнике.
-        */}
-        {devCode ? (
-          <View style={s.devBox}>
-            <Text style={s.devTitle}>{DEV_CODE.title()}</Text>
-            <Text style={s.devCode} selectable>{devCode}</Text>
-            <Text style={s.devNote}>{DEV_CODE.note()}</Text>
-          </View>
-        ) : null}
-
-        <Pressable
-          accessibilityRole="none"
-          style={s.cells}
-          onPress={() => input.current?.focus()}
-        >
-          {cells.map((ch, i) => (
-            <View
-              key={i}
-              style={[
-                s.cell,
-                !!ch && s.cellFilled,
-                i === code.length && !busy && s.cellActive,
-                !!err && s.cellBad,
-              ]}
-            >
-              <Text style={s.cellText}>{ch}</Text>
-            </View>
-          ))}
-          {/* Настоящее поле — прозрачное и поверх ячеек: автозаполнение из письма приходит в него. */}
-          <TextInput
-            ref={input}
-            style={s.hidden}
-            value={code}
-            onChangeText={(v) => {
-              const digits = v.replace(/\D/g, '').slice(0, CODE_LEN);
-              setCode(digits);
-              if (err) setErr(null);
-              if (digits.length === CODE_LEN) verify(digits);   // шестая цифра — сразу проверяем
-            }}
-            keyboardType="number-pad"
-            inputMode="numeric"
-            textContentType="oneTimeCode"
-            autoComplete="one-time-code"
-            maxLength={CODE_LEN}
-            editable={!busy}
-            autoFocus
-            accessibilityLabel={AUTH.codeTitle()}
+    <View style={s.wrap}>
+      {/* Фон — ЗА клавиатурным контейнером: внутри него он сжимался бы вместе с формой. */}
+      <Ambient glows={GLOW_FORM} />
+      <KeyboardAvoidingView
+        style={s.fill}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={[s.page, { paddingTop: insets.top + space.sm, paddingBottom: insets.bottom + space.lg }]}>
+          <GlassBack
+            label={T('Назад', 'Back')}
+            onPress={() => (router.canGoBack() ? router.back() : router.replace('/auth-email'))}
           />
-        </Pressable>
 
-        {err ? (
-          <View style={s.errBox}>
-            <Text style={s.errTitle}>{err.title}</Text>
-            <Text style={s.errNote}>{err.note}</Text>
-          </View>
-        ) : (
+          {/* Гарнитура заголовка зависит от языка — см. displayFamily. */}
+          <Text style={[s.h, { fontFamily: displayFamily(lang) }]}>{AUTH.codeTitle()}</Text>
+          <Text style={s.note}>{AUTH.codeNote(email, TTL_MIN)}</Text>
+
+          {/*
+            Полоса отладки. Нарочно не в стиле приложения — жёлтая, с пунктиром и словом «отладка»:
+            она обязана выглядеть как то, чего в продукте быть не должно. Появляется, только если
+            сервер прислал код, а он присылает его лишь при явно включённом рубильнике.
+          */}
+          {devCode ? (
+            <View style={s.devBox}>
+              <Text style={s.devTitle}>{DEV_CODE.title()}</Text>
+              <Text style={s.devCode} selectable>{devCode}</Text>
+              <Text style={s.devNote}>{DEV_CODE.note()}</Text>
+            </View>
+          ) : null}
+
           <Pressable
-            accessibilityRole="button"
-            disabled={left > 0 || busy}
-            onPress={resend}
-            style={s.resendRow}
+            accessibilityRole="none"
+            style={s.cells}
+            onPress={() => input.current?.focus()}
           >
-            <Text style={[s.resend, left <= 0 && !busy && s.resendOn]}>
-              {left > 0 ? AUTH.resendIn(left) : AUTH.resend()}
-            </Text>
+            {cells.map((ch, i) => (
+              <View
+                key={i}
+                style={[
+                  s.cell,
+                  // Кромка ячейки — единственное, что различает состояния: заливка у всех одна.
+                  !!ch && s.cellFilled,
+                  i === code.length && !busy && s.cellActive,
+                  !!err && s.cellBad,
+                ]}
+              >
+                <GlassPane radius={rad.lg} />
+                <Text style={s.cellText}>{ch}</Text>
+              </View>
+            ))}
+            {/* Настоящее поле — прозрачное и поверх ячеек: автозаполнение из письма приходит в него. */}
+            <TextInput
+              ref={input}
+              style={s.hidden}
+              value={code}
+              onChangeText={(v) => {
+                const digits = v.replace(/\D/g, '').slice(0, CODE_LEN);
+                setCode(digits);
+                if (err) setErr(null);
+                if (digits.length === CODE_LEN) verify(digits);   // шестая цифра — сразу проверяем
+              }}
+              keyboardType="number-pad"
+              inputMode="numeric"
+              textContentType="oneTimeCode"
+              autoComplete="one-time-code"
+              maxLength={CODE_LEN}
+              editable={!busy}
+              autoFocus
+              accessibilityLabel={AUTH.codeTitle()}
+            />
           </Pressable>
-        )}
 
-        <View style={{ flex: 1 }} />
+          {err ? (
+            <View style={s.errBox}>
+              <Text style={s.errTitle}>{err.title}</Text>
+              <Text style={s.errNote}>{err.note}</Text>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              disabled={left > 0 || busy}
+              onPress={resend}
+              style={s.resendRow}
+            >
+              <Text style={[s.resend, left <= 0 && !busy && s.resendOn]}>
+                {left > 0 ? AUTH.resendIn(left) : AUTH.resend()}
+              </Text>
+            </Pressable>
+          )}
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: busy || (!dead && !full), busy }}
-          disabled={busy || (!dead && !full)}
-          style={[s.cta, (busy || (!dead && !full)) && s.ctaOff]}
-          onPress={() => (dead ? resend() : verify(code))}
-        >
-          {busy
-            ? <ActivityIndicator color={color.onPrimary} />
-            : <Text style={s.ctaText}>{dead ? AUTH.sendNew() : AUTH.verify()}</Text>}
-        </Pressable>
+          <View style={s.fill} />
 
-        <Pressable
-          accessibilityRole="button"
-          style={s.link}
-          onPress={() => router.replace('/auth-email')}
-        >
-          <Text style={s.linkText}>{AUTH.otherEmail()}</Text>
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
+          <GlassPill
+            tone="brand"
+            label={dead ? AUTH.sendNew() : AUTH.verify()}
+            disabled={!dead && !full}
+            busy={busy}
+            onPress={() => (dead ? resend() : verify(code))}
+            style={s.cta}
+          />
+          {/* Вторая дверь — стеклянная, а не фирменная: уйти на другой адрес это отступление, а
+              не то, ради чего человек сюда пришёл. */}
+          <GlassPill
+            label={AUTH.otherEmail()}
+            onPress={() => router.replace('/auth-email')}
+            style={s.second}
+          />
+        </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
 // ===== вид
 const s = StyleSheet.create({
-  wrap: { flex: 1, paddingHorizontal: 24 },
-  back: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.card,
-          alignItems: 'center', justifyContent: 'center', marginBottom: space.lg },
-  backGlyph: { fontSize: 24, lineHeight: 26, color: color.fg, marginTop: -2 },
-  h: { ...type.h2, color: color.fg } as any,
-  note: { ...type.body, color: color.muted, marginTop: space.sm } as any,
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  fill: { flex: 1 },
+  page: { flex: 1, paddingHorizontal: 24 },
+  h: { ...type.display, color: color.fg, marginTop: 28 } as any,
+  note: { ...type.displaySub, color: color.muted, marginTop: space.sm } as any,
 
-  cells: { flexDirection: 'row', gap: space.sm, marginTop: space.xl },
+  cells: { flexDirection: 'row', gap: space.sm, marginTop: 32 },
   cell: {
-    flex: 1, height: 56, borderRadius: rad.lg, backgroundColor: color.card,
-    borderWidth: 1, borderColor: color.line, alignItems: 'center', justifyContent: 'center',
+    flex: 1,
+    height: 56,
+    borderRadius: rad.lg,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#FFFFFF55',
   },
-  cellFilled: { borderColor: color.neutral400 },
-  cellActive: { borderColor: color.primary },
-  cellBad: { borderColor: color.danger },
-  cellText: { ...type.h2, color: color.fg } as any,
+  cellFilled: { borderColor: color.neutral300 },
+  cellActive: { borderWidth: 1, borderColor: color.primary },
+  cellBad: { borderWidth: 1, borderColor: color.danger },
+  cellText: { ...type.codeDigit, color: color.fg } as any,
   /** Поле лежит поверх ячеек и не видно: прозрачный текст, нулевая непрозрачность курсора. */
   hidden: { ...StyleSheet.absoluteFillObject, opacity: 0, color: 'transparent' } as any,
 
@@ -264,23 +274,20 @@ const s = StyleSheet.create({
     backgroundColor: color.warnBg, borderWidth: 1, borderColor: color.warnText,
     borderStyle: 'dashed', gap: 4,
   },
-  devTitle: { ...type.caption, color: color.warnText, fontWeight: '700',
+  devTitle: { ...type.fine, color: color.warnText,
               textTransform: 'uppercase', letterSpacing: 0.6 } as any,
-  devCode: { ...type.h2, color: color.warnText, fontWeight: '700', letterSpacing: 6 } as any,
-  devNote: { ...type.caption, color: color.warnText } as any,
+  devCode: { ...type.codeDigit, color: color.warnText, letterSpacing: 6 } as any,
+  devNote: { ...type.fine, color: color.warnText } as any,
 
-  resendRow: { marginTop: space.md, alignItems: 'center' },
-  resend: { ...type.bodySmall, color: color.muted } as any,
-  resendOn: { color: color.primary, fontWeight: '700' },
+  resendRow: { marginTop: space.lg, alignItems: 'center' },
+  resend: { ...type.fine, color: color.muted } as any,
+  resendOn: { ...type.fieldLabel, color: color.primary } as any,
 
-  errBox: { marginTop: space.md, padding: space.md, borderRadius: rad.lg, backgroundColor: color.dangerBg },
-  errTitle: { ...type.labelMedium, color: color.danger, fontWeight: '700' } as any,
-  errNote: { ...type.bodySmall, color: color.danger, marginTop: 2 } as any,
+  errBox: { marginTop: space.lg, alignItems: 'center' },
+  errTitle: { ...type.fieldLabel, color: color.danger } as any,
+  errNote: { ...type.fine, color: color.danger, marginTop: 2, textAlign: 'center' } as any,
 
-  cta: { height: 56, borderRadius: rad.full, backgroundColor: color.primary,
-         alignItems: 'center', justifyContent: 'center' },
-  ctaOff: { opacity: 0.45 },
-  ctaText: { ...type.button, color: color.onPrimary } as any,
-  link: { height: 48, alignItems: 'center', justifyContent: 'center' },
-  linkText: { ...type.labelMedium, color: color.fg } as any,
+  // Кнопка входа выше стеклянных: у неё в борде своя высота, 56 против 52.
+  cta: { height: 56 },
+  second: { marginTop: space.md },
 });

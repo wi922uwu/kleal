@@ -72,6 +72,10 @@ export const color = {
 export const glass = {
   darkAlpha: 0.78,
   lightAlpha: 0.42,
+  /** Главная кнопка: фирменный цвет не сплошной, сквозь него просвечивает фон. */
+  brandAlpha: 0.82,
+  /** Во сколько раз бледнеет заливка выключенной кнопки. Подпись при этом не гаснет. */
+  offAlpha: 0.3,
   /** Сила размытия подложки. В борде 24 у кнопок, 8–11 у логотипа. */
   blur: 24,
   logoBlur: 10,
@@ -168,6 +172,19 @@ export const type = {
   displaySub: { fontFamily: font.text, fontSize: 15, lineHeight: 22 },
   /** Подпись на стеклянной кнопке — Geist 15/20 полужирный. */
   glassLabel: { fontFamily: font.textSemibold, fontSize: 15, lineHeight: 20 },
+  /**
+   * Ступени экранов входа по коду (A.03.1–A.03.3). Они набраны Geist, и вес тут задан СЕМЕЙСТВОМ,
+   * а не `fontWeight`: на подключённом файле вес не работает вовсе — см. комментарий к `font`.
+   * Ступени выше (`body`, `labelMedium`) остались на `fontWeight` ради экранов, где шрифт
+   * системный, поэтому подменять их нельзя — нужны свои.
+   */
+  fieldLabel: { fontFamily: font.textMedium, fontSize: 13, lineHeight: 16 },
+  /** Цифра в ячейке кода: крупнее подписи и с разрядкой, чтобы шесть ячеек читались как число. */
+  codeDigit: { fontFamily: font.textSemibold, fontSize: 20, lineHeight: 28, letterSpacing: 0.1 },
+  /** Мелкое под кнопкой: условия, счётчик повторной отправки. */
+  fine: { fontFamily: font.text, fontSize: 12, lineHeight: 16 },
+  /** Подзаголовок финального экрана — он один на весь кадр, поэтому крупнее обычного. */
+  displaySubLg: { fontFamily: font.text, fontSize: 17, lineHeight: 26 },
 } as const;
 
 export const shadow = {
