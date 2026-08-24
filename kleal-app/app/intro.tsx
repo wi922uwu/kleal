@@ -11,7 +11,7 @@
  * ИНДИКАТОР — ПОЛОСКИ, а не точки: 28×2, активная фирменным красным. Точки были в прежней
  * версии и заметно меняли характер экрана.
  */
-import React, { useMemo, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import {
   Animated,
   Image,
@@ -22,7 +22,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
 import { SLIDES } from '../src/onboarding';
 import { useLang, T } from '../src/i18n';
@@ -74,6 +74,27 @@ export default function Intro() {
     outputRange: [0, 1],
     extrapolate: 'clamp',
   });
+
+  /**
+   * ВОЗВРАТ НА ЭТОТ ЭКРАН ПОДНИМАЕТ ЗАНАВЕС ОБРАТНО.
+   *
+   * На последнем слайде занавес уезжает вверх и НЕ возвращается: экран уходит целиком, опускать
+   * нечего. Но уходит он не насовсем — переход на вход это `navigate`, интро остаётся в стопке, и
+   * протяжка от левого края возвращает сюда. А возвращает она экран в том виде, в каком он остался:
+   * занавес поднят во весь рост, `busy` взведён — то есть сплошная чёрная заливка, которая не
+   * отвечает ни на нажатие, ни на жест, потому что `busy` глушит сам обработчик. Тупик без выхода,
+   * из которого можно только убить приложение.
+   *
+   * Поэтому состояние сбрасывается не после ухода, а при КАЖДОМ появлении: каким бы путём сюда ни
+   * вернулись, экран открывается в покое. Первый вызов на монтировании ничего не меняет — там уже
+   * стоят ровно эти значения.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      y.setValue(REST_Y);
+      busy.current = false;
+    }, [y, REST_Y])
+  );
 
   const settle = (toValue: number, velocity: number, after?: () => void) =>
     Animated.spring(y, {
