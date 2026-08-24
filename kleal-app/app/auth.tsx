@@ -19,6 +19,7 @@ import { useLang } from '../src/i18n';
 import { patch, applyDefaults } from '../src/state';
 import { Ambient, GLOW_SIGNIN } from '../src/components/Ambient';
 import { GlassPill } from '../src/components/Glass';
+import { EmojiTicker } from '../src/components/EmojiTicker';
 import { LogoMark } from '../src/components/Logo';
 import { color, displayFamily, font, space, type } from '../src/theme';
 
@@ -49,13 +50,7 @@ export default function Auth() {
 
         <View style={s.hero}>
           {/* Строки эмодзи и капля стоят в одной стопке: капля перекрывает середину строк. */}
-          <View style={s.rows} pointerEvents="none">
-            {AUTH_EMOJI_ROWS.map((row, n) => (
-              <Text key={n} style={s.emoji} numberOfLines={1}>
-                {row}
-              </Text>
-            ))}
-          </View>
+          <EmojiTicker rows={AUTH_EMOJI_ROWS} />
           <LogoMark width={186} />
         </View>
 
@@ -114,8 +109,6 @@ const s = StyleSheet.create({
     marginBottom: 36,
     overflow: 'hidden',
   },
-  rows: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', gap: 12 },
-  emoji: { fontSize: 32, lineHeight: 40, letterSpacing: 6, textAlign: 'center', width: 560, marginLeft: -105 },
   btns: { gap: space.md },
   email: { marginTop: 28 },
   gIcon: { width: 20, height: 20 },
