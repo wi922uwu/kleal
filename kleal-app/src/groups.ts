@@ -12,6 +12,7 @@
  *    already in», а не «кого ещё позвали» (GR.16).
  */
 import { T } from './i18n';
+import { normalizeIntentSize } from './intent';
 import type { Msg } from './chat';
 
 /**
@@ -23,7 +24,7 @@ export function isGroupIntent(intent: any): boolean {
   if (!intent || typeof intent !== 'object') return false;
   const flat = String(intent.format || '').toLowerCase();
   const block = String(intent.mode_format?.format || '').toLowerCase();
-  return flat === 'group' || block === 'group' || Number(intent.groupSize || 0) >= 3;
+  return (normalizeIntentSize(flat, intent.groupSize) || normalizeIntentSize(block, intent.groupSize)) === 'group';
 }
 
 /** Заголовок группы для gintent-create: подпись человека, а не ключи поиска. */
@@ -48,8 +49,8 @@ export const GROUP = {
    */
   regime: (min: number, max: number, cap: number) =>
     T(
-      `Малая группа · ${min}–${max} человек · не больше ${cap} приглашений разом · кто первым согласится, тот в группе`,
-      `Small group · ${min}–${max} people · ${cap} open invites at a time on Free · first ${max} who accept are in`
+      `Группа · ${min}–${max} человек · не больше ${cap} приглашений разом · кто первым согласится, тот в группе`,
+      `Group · ${min}–${max} people · ${cap} open invites at a time on Free · first ${max} who accept are in`
     ),
 
   /**

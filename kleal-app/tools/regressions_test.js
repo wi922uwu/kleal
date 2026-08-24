@@ -2264,12 +2264,12 @@ console.log('\nчетыре находки сверки: слот, кнопка,
     /const locked = !!\(plan as any\)\?\.locked/.test(pl));
   check('под замком вместо кнопок стоит объяснение', /PLAN\.lockedNote\(\)/.test(pl));
 
-  // GO.06 теперь разводит два реальных тарифа с борда: Free до 5 и Plus до 20. Большая группа
-  // не должна молча превращаться в обычную — её строка открывает отдельный лист.
+  // Тип группы один. Free/Plus — предел числового контрола внутри него, а не третий формат.
   const it = code('src/intent.ts');
-  check('размеры групп совпадают с Group Online', /Small group/.test(it) && /3[-–—]5/.test(it)
-    && /Large group/.test(it) && /6[-–—]20/.test(it),
-    'малую и большую группу нельзя снова склеить в одну строку');
+  check('создание показывает один Group с полным диапазоном размеров',
+    /\['group', 'Group', 'Группа'/.test(it) && /GROUP_FREE_MAX_TOTAL = 5/.test(it)
+    && /GROUP_PLUS_MAX_TOTAL = 20/.test(it) && !/\['group-plus'/.test(it),
+    'Free/Plus должны быть пределами одного числового контрола');
 
   // Ждать «обоих», уже ответив, — значит читать «твой ответ не записался».
   check('ждём второго, а не «обоих», когда я ответил', /PLAN\.waitingThem\(other\)/.test(pl));
@@ -2593,7 +2593,7 @@ console.log('\n«назад» в мастере интента отступае�
   const from = src.indexOf('const prevStep = ');
   const to = src.indexOf(': null;', from) + ': null;'.length;
   check('порядок шагов назад нашёлся в исходнике', from >= 0 && to > from, 'переименовали prevStep?');
-  const js = src.slice(from, to).replace('(from: IntentStepId): IntentStepId | null =>', '(from) =>');
+  const js = src.slice(from, to).replace(/\(from: IntentStepId, grouped = false\): IntentStepId \| null =>/, '(from, grouped = false) =>');
   const make = new Function('lastStep', js + '\nreturn prevStep;');
   const online = make('link');
 
@@ -2607,6 +2607,9 @@ console.log('\n«назад» в мастере интента отступае�
     && online('nature') === 'who' && online('who') === 'when'
     && online('when') === 'size' && online('size') === 'how',
     'разорванная цепочка возвращает не туда, откуда пришли');
+  check('Group возвращается с деталей через видимый размер',
+    online('when', true) === 'capacity' && online('capacity', true) === 'size',
+    'размер группы нельзя потерять при Back');
 
   check('с первого шага отступать некуда — и только с него',
     online('how') === null,
@@ -2630,7 +2633,7 @@ console.log('\n«назад» в мастере интента отступае�
     'router.back() в шапке снимает ВЕСЬ мастер и возвращает в разговор создания');
 
   check('из мастера выходят только когда отступать некуда',
-    gb.indexOf('prevStep(step)') >= 0 && gb.indexOf('router.back()') > gb.indexOf('prevStep(step)'),
+    gb.indexOf('prevStep(step,') >= 0 && gb.indexOf('router.back()') > gb.indexOf('prevStep(step,'),
     'выход обязан стоять ПОСЛЕ проверки предыдущего шага, а не вместо неё');
 
   check('другого выхода по «назад» в мастере нет',
@@ -2665,10 +2668,10 @@ console.log('\n«назад» в мастере интента отступае�
   // Порядок веток goBack — смысл, а не оформление: верхний слой закрывается первым.
   check('открытый лист закрывается раньше, чем отступает шаг',
     gb.indexOf('setEditOpen(false)') >= 0
-    && gb.indexOf('setEditOpen(false)') < gb.indexOf('prevStep(step)'),
+    && gb.indexOf('setEditOpen(false)') < gb.indexOf('prevStep(step,'),
     'на Android «назад» иначе закроет лист И отступит на шаг одним нажатием');
   check('идущий поиск отменяется, а не остаётся без экрана',
-    gb.indexOf('cancelSearch()') >= 0 && gb.indexOf('cancelSearch()') < gb.indexOf('prevStep(step)'),
+    gb.indexOf('cancelSearch()') >= 0 && gb.indexOf('cancelSearch()') < gb.indexOf('prevStep(step,'),
     'иначе свайп во время запроса снимает экран, а ответ приезжает на размонтированный');
 }
 
@@ -2758,24 +2761,34 @@ check('у каждой строки листа есть свой контрол'
     'строка без поля: ' + dead.join(', '));
 }
 
-console.log('\nразмер группы следует GR.06 и не обещает несуществующий Plus');
+console.log('\nединый Group собирает размер отдельно и не обещает несуществующий Plus');
 {
   const copy = code('src/intent.ts');
   const wiz = code('app/intent.tsx');
 
-  check('в выборе есть малая группа 3–5',
-    /\['group', 'Small group'[^\]]*'3–5 people/.test(copy));
-  check('в выборе есть большая группа 6–20 с Plus',
-    /\['group-plus', 'Large group'[^\]]*'6–20 people/.test(copy));
-  check('большая группа открывает объяснение, а не запускает поиск',
-    /k === 'group-plus'[\s\S]{0,80}setGroupSizeOpen\(true\)[\s\S]{0,80}: choose/.test(wiz));
+  check('верхнеуровневых вариантов ровно два: 1:1 и Group',
+    /export const SIZES[^;]+\['1:1'[^;]+\['group', 'Group'/.test(copy)
+    && !/\['group-plus'/.test(copy) && !/Small group|Large group|Малая группа|Большая группа/.test(copy));
+  check('Group ведёт в отдельный числовой шаг',
+    /k === 'group' \? 'capacity' : 'when'/.test(wiz)
+    && /step === 'capacity'/.test(wiz) && /groupSizeBlockOf\(draft, setDraft, 'draft'\)/.test(wiz));
+  check('числовой шаг сохраняет поддержку 3–20',
+    /GROUP_MIN_TOTAL = 3/.test(copy) && /GROUP_PLUS_MAX_TOTAL = 20/.test(copy)
+    && /GROUP_SIZE\.plusLimit\(\)/.test(wiz));
   check('неподключённый Plus нельзя случайно купить',
     /accessibilityState=\{\{ disabled: true \}\}/.test(wiz));
-  check('выход из Plus продолжает с бесплатным максимумом 5',
+  check('выход из Plus явно выбирает бесплатный максимум 5',
     /GROUP_SIZE\.keepAtFive\(\)/.test(wiz) &&
-    /choose\(\{ size: 'group' \}, 'when'\)/.test(wiz));
+    /groupSize: GROUP_FREE_MAX_TOTAL/.test(wiz));
   check('назад сначала закрывает лист Plus',
     /if \(groupSizeOpen\) \{ setGroupSizeOpen\(false\); return; \}/.test(wiz));
+  check('старые small/large/group-plus нормализуются в Group',
+    /'group-plus', 'small', 'large', 'small-group', 'large-group'/.test(copy)
+    && /normalizeIntentSize\(legacySize, params\.groupSize\)/.test(wiz));
+  check('выбранный размер уходит в intent, summary и создание группы',
+    /intent\.groupSize = draft\.groupSize \|\| GROUP_MIN_TOTAL/.test(wiz)
+    && /GROUP_SIZE\.people\(draft\.groupSize \|\| GROUP_MIN_TOTAL\)/.test(wiz)
+    && /max_total: requestedTotal/.test(code('src/ginvites.ts')));
   check('детали показывают три шага, а характер входит в шаг людей',
     /draft\.mode === 'offline' && step === 'nature' \? 1/.test(wiz) &&
     /count=\{compactThreeStep \? 3 : 4\}/.test(wiz));
@@ -2799,13 +2812,13 @@ console.log('\nGroup Online проходит весь подтверждённы
   const gs = code('src/groups.ts');
   const gi = code('src/ginvites.ts');
 
-  check('Large group открывает Plus-лист, а Keep it at 5 продолжает малой группой',
-     /k === 'group-plus'[\s\S]{0,100}setGroupSizeOpen\(true\)/.test(wiz)
+  check('Group Online использует единый Group и видимый размер',
+     /k === 'group' \? 'capacity' : 'when'/.test(wiz)
      && /GROUP_SIZE\.keepAtFive\(\)/.test(wiz)
-     && /choose\(\{ size: 'group' \}, 'when'\)/.test(wiz));
+     && /groupSize: GROUP_FREE_MAX_TOTAL/.test(wiz));
   check('Group Online пропускает лишний шаг характера',
     /setStep\(groupOnline \? 'link' : 'nature'\)/.test(wiz)
-    && /groupOnline && step === 'link' \? 'who' : prevStep\(step\)/.test(wiz));
+    && /groupOnline && step === 'link' \? 'who' : prevStep\(step, draft\.size === 'group'\)/.test(wiz));
   check('у Group Online степпер ровно 1–2–3',
     /<Stepper current=\{detailIndex\} count=\{compactThreeStep \? 3 : 4\}/.test(wiz)
      && /Array\.from\(\{ length: count \}/.test(wiz));

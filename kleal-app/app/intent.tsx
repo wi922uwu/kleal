@@ -36,7 +36,8 @@ import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
   NATURE_TRAITS, NATURE_MAX,
-  STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL, GROUP_SIZE,
+  STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL, GROUP_FREE_MAX_TOTAL,
+  GROUP_PLUS_MAX_TOTAL, GROUP_SIZE, normalizeIntentSize, initialGroupSize,
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
@@ -61,7 +62,9 @@ import { color, radius as rad, space, type } from '../src/theme';
 
 type Draft = {
   mode?: string;
-  size?: string;
+  size?: '1:1' | 'group';
+  /** Полный состав, включая организатора. Отдельное видимое решение внутри единого Group-flow. */
+  groupSize?: number;
   date: string;
   /** Минуты от полуночи. 1200 = 20:00 — значение с кадра O.07. */
   minutes: number;
@@ -105,7 +108,10 @@ export default function Intent() {
    * `topic` (единственное число) поддержан для старых ссылок: он трактуется и как ключ, и как
    * подпись, — так вело себя приложение до разделения.
    */
-  const params = useLocalSearchParams<{ topics?: string; title?: string; topic?: string }>();
+  const params = useLocalSearchParams<{
+    topics?: string; title?: string; topic?: string;
+    size?: string; format?: string; groupSize?: string;
+  }>();
   const legacy = String(params.topic || '').trim();
   const topics = String(params.topics || legacy || '')
     .split(',')
@@ -114,9 +120,14 @@ export default function Intent() {
   const title = String(params.title || legacy || '').trim();
 
   const [step, setStep] = useState<IntentStepId>('how');
-  /** GO.06a: Plus в продукте ещё не подключён, но ветка Large group обязана объяснить предел. */
+  const legacySize = params.size ?? params.format;
+  const normalizedSize = normalizeIntentSize(legacySize, params.groupSize);
+  /** Plus в продукте ещё не подключён, но диапазон 6–20 остаётся видимой частью Group-flow. */
   const [groupSizeOpen, setGroupSizeOpen] = useState(false);
+  const [groupSizeTarget, setGroupSizeTarget] = useState<'draft' | 'edit'>('draft');
   const [draft, setDraft] = useState<Draft>(() => ({
+    size: normalizedSize,
+    groupSize: normalizedSize === 'group' ? initialGroupSize(legacySize, params.groupSize) : undefined,
     date: dateChips(1)[0].key,
     minutes: 20 * 60,
     tz: deviceTz(),
@@ -287,7 +298,7 @@ export default function Intent() {
       // groupSize же увёл бы запрос в групповую ветку, где 1:1 просто нечего делать.
       format: draft.size === 'group' ? 'group' : '1:1',
     };
-    if (draft.size === 'group') intent.groupSize = GROUP_MIN_TOTAL;
+    if (draft.size === 'group') intent.groupSize = draft.groupSize || GROUP_MIN_TOTAL;
     if (draft.sex && draft.sex !== 'Any') intent.sex = draft.sex;
     if (draft.minAge) intent.minAge = draft.minAge;
     if (draft.maxAge) intent.maxAge = draft.maxAge;
@@ -404,11 +415,64 @@ export default function Intent() {
 
   const sizeBlockOf = (v: Draft, set: SetDraft) => (
     <View style={s.chipRowWrap}>
-      {SIZES.filter(([k]) => k !== 'group-plus').map(([k]) => (
-        <Chip key={k} label={sizeLabel(k)} on={v.size === k} onPress={() => set((x) => ({ ...x, size: k }))} />
+      {SIZES.map(([k]) => (
+        <Chip
+          key={k}
+          label={sizeLabel(k)}
+          on={v.size === k}
+          onPress={() => set((x) => ({
+            ...x,
+            size: k as Draft['size'],
+            groupSize: k === 'group' ? (x.groupSize || GROUP_MIN_TOTAL) : undefined,
+          }))}
+        />
       ))}
     </View>
   );
+
+  /** Один числовой контрол вместо двух пользовательских типов группы. */
+  const groupSizeBlockOf = (v: Draft, set: SetDraft, target: 'draft' | 'edit') => {
+    const total = v.groupSize || GROUP_MIN_TOTAL;
+    const change = (next: number) => {
+      if (next > GROUP_FREE_MAX_TOTAL) {
+        setGroupSizeTarget(target);
+        setGroupSizeOpen(true);
+        return;
+      }
+      set((x) => ({ ...x, size: 'group', groupSize: Math.max(GROUP_MIN_TOTAL, next) }));
+    };
+    return (
+      <View>
+        <View style={s.capacityControl}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={T('Уменьшить размер группы', 'Decrease group size')}
+            accessibilityState={{ disabled: total <= GROUP_MIN_TOTAL }}
+            disabled={total <= GROUP_MIN_TOTAL}
+            style={[s.capacityButton, total <= GROUP_MIN_TOTAL && s.capacityButtonOff]}
+            onPress={() => change(total - 1)}
+          >
+            <Text style={s.capacityButtonText}>−</Text>
+          </Pressable>
+          <View style={s.capacityValue}>
+            <Text style={s.capacityNumber}>{total}</Text>
+            <Text style={s.capacityPeople}>{GROUP_SIZE.people(total)}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={T('Увеличить размер группы', 'Increase group size')}
+            accessibilityHint={total >= GROUP_FREE_MAX_TOTAL ? GROUP_SIZE.plusLimit() : undefined}
+            style={s.capacityButton}
+            onPress={() => change(Math.min(GROUP_PLUS_MAX_TOTAL, total + 1))}
+          >
+            <Text style={s.capacityButtonText}>+</Text>
+          </Pressable>
+        </View>
+        <Text style={s.capacityFree}>{GROUP_SIZE.freeLimit()}</Text>
+        <Text style={s.capacityPlus}>{GROUP_SIZE.plusLimit()}</Text>
+      </View>
+    );
+  };
 
   /* O.07 — дата, круглый циферблат и пояс. Тот же WhenPicker, что у группового плана: разметка
      здесь была своя и слово в слово такая же, а копии в этом проекте расходятся. */
@@ -605,6 +669,9 @@ export default function Intent() {
    */
   const editRows = (v: Draft): [string, any, string, string][] => ([
     ['when', IconClock, EDIT_SHEET.datetime(), `${summaryDate(v.date)}, ${hhmm(v.minutes)}`],
+    ...(v.size === 'group'
+      ? ([['groupSize', IconPerson, GROUP_SIZE.row(), GROUP_SIZE.people(v.groupSize || GROUP_MIN_TOTAL)]] as [string, any, string, string][])
+      : []),
     ['who', IconPerson, EDIT_SHEET.audience(),
       `${v.sex && v.sex !== 'Any' ? sexLabel(v.sex) + ', ' : ''}${v.minAge}–${v.maxAge}`],
     ['nature', IconStar, DETAILS.nature(), natureOf(v) || EDIT_SHEET.noData()],
@@ -620,6 +687,7 @@ export default function Intent() {
   const editField = (k: string, v: Draft) => {
     const set: SetDraft = (fn) => setEdraft((x) => (x ? fn(x) : x));
     if (k === 'size') return sizeBlockOf(v, set);
+    if (k === 'groupSize') return groupSizeBlockOf(v, set, 'edit');
     if (k === 'who') return whoBlockOf(v, set);
     if (k === 'nature') return natureBlockOf(v, set);
     if (k === 'place') return placeBlockOf(v, set);
@@ -681,9 +749,10 @@ export default function Intent() {
    * Третий шаг ветвится по типу встречи, поэтому со сводки отступаем на lastStep, а не на
    * фиксированное имя: иначе офлайн и гибрид уехали бы на чужой шаг.
    */
-  const prevStep = (from: IntentStepId): IntentStepId | null =>
+  const prevStep = (from: IntentStepId, grouped = false): IntentStepId | null =>
     from === 'size' ? 'how'
-    : from === 'when' ? 'size'
+    : from === 'capacity' ? 'size'
+    : from === 'when' ? (grouped ? 'capacity' : 'size')
     : from === 'who' ? 'when'
     : from === 'nature' ? 'who'
     : from === 'link' || from === 'both' || from === 'place' ? 'nature'
@@ -703,7 +772,7 @@ export default function Intent() {
     if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; setAck(false); }
     // GO.07–GO.09 содержит ровно три шага: у Group Online link идёт сразу после audience.
     // Остальные флоу сохраняют свой шаг характера и общий prevStep без изменений.
-    const prev = groupOnline && step === 'link' ? 'who' : prevStep(step);
+    const prev = groupOnline && step === 'link' ? 'who' : prevStep(step, draft.size === 'group');
     if (!prev) { router.back(); return; }
     setStep(prev);
     // Шаг назад обязан открыться сверху — иначе он показывается серединой карточки, которую уже
@@ -772,12 +841,29 @@ export default function Intent() {
                       title={sizeLabel(k)}
                       sub={sizeSub(k)}
                       on={draft.size === k}
-                      onPress={() => k === 'group-plus'
-                        ? setGroupSizeOpen(true)
-                        : choose({ size: k }, 'when')}
+                      onPress={() => choose(
+                        {
+                          size: k as Draft['size'],
+                          groupSize: k === 'group' ? (draft.groupSize || GROUP_MIN_TOTAL) : undefined,
+                        },
+                        k === 'group' ? 'capacity' : 'when'
+                      )}
                     />
                   ))}
               {ack ? <Ack /> : null}
+            </>
+          ) : step === 'capacity' ? (
+            <>
+              <QuestionHead title={GROUP_SIZE.ask()} sub={GROUP_SIZE.sub()} />
+              <View style={s.card}>
+                {groupSizeBlockOf(draft, setDraft, 'draft')}
+                <Cta
+                  label={INTENT.next()}
+                  onPress={() => draft.groupSize && draft.groupSize > GROUP_FREE_MAX_TOTAL
+                    ? (setGroupSizeTarget('draft'), setGroupSizeOpen(true))
+                    : setStep('when')}
+                />
+              </View>
             </>
           ) : (
             <>
@@ -900,7 +986,7 @@ export default function Intent() {
           </View>
         </View>
 
-        {/* GO.06a. Покупки Plus ещё нет: первичная кнопка показана, но честно выключена. */}
+        {/* Покупки Plus ещё нет: предел 20 виден внутри Group-flow, но недоступное действие честно выключено. */}
         <Sheet visible={groupSizeOpen} onClose={() => setGroupSizeOpen(false)} title={GROUP_SIZE.plusTitle()}>
           <Text style={s.plusBody}>{GROUP_SIZE.plusBody()}</Text>
           <View style={[s.cta, { opacity: 0.45 }]} accessibilityRole="button" accessibilityState={{ disabled: true }}>
@@ -911,7 +997,12 @@ export default function Intent() {
             style={s.plusKeep}
             onPress={() => {
               setGroupSizeOpen(false);
-              choose({ size: 'group' }, 'when');
+              if (groupSizeTarget === 'edit') {
+                setEdraft((x) => x ? ({ ...x, size: 'group', groupSize: GROUP_FREE_MAX_TOTAL }) : x);
+              } else {
+                setDraft((x) => ({ ...x, size: 'group', groupSize: GROUP_FREE_MAX_TOTAL }));
+                setStep('when');
+              }
             }}
           >
             <Text style={s.plusKeepText}>{GROUP_SIZE.keepAtFive()}</Text>
@@ -1151,6 +1242,9 @@ function SummaryCard({
   const facts: [string, string][] = [
     [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—'],
     [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—'],
+    ...(draft.size === 'group'
+      ? ([[GROUP_SIZE.row(), GROUP_SIZE.people(draft.groupSize || GROUP_MIN_TOTAL)]] as [string, string][])
+      : []),
     ...(category ? ([[SUMMARY_O10.category(), category]] as [string, string][]) : []),
     ...(nature ? ([[DETAILS.nature(), nature]] as [string, string][]) : []),
     [SUMMARY_O10.audience(),
@@ -1203,7 +1297,7 @@ function SummaryCard({
         </View>
         <Text style={s.sumSummaryText}>
           {intentSummaryText({
-            topic, size: draft.size, sex: draft.sex,
+            topic, size: draft.size, groupSize: draft.groupSize, sex: draft.sex,
             minAge: draft.minAge, maxAge: draft.maxAge,
             dateKey: draft.date, minutes: draft.minutes,
             nature: nature,
@@ -1323,6 +1417,20 @@ const s = StyleSheet.create({
   },
   chipOn: { backgroundColor: color.primary, borderColor: color.primary },
   chipText: { ...type.labelMedium, color: color.fg } as any,
+  capacityControl: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.lg,
+  },
+  capacityButton: {
+    width: 52, height: 52, borderRadius: rad.full, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  capacityButtonOff: { opacity: 0.4 },
+  capacityButtonText: { fontSize: 28, lineHeight: 30, color: color.fg } as any,
+  capacityValue: { minWidth: 96, alignItems: 'center' },
+  capacityNumber: { fontSize: 34, lineHeight: 38, fontWeight: '700', color: color.fg } as any,
+  capacityPeople: { ...type.caption, color: color.muted } as any,
+  capacityFree: { ...type.bodySmall, color: color.fg, textAlign: 'center' } as any,
+  capacityPlus: { ...type.caption, color: color.muted, textAlign: 'center' } as any,
 
   boxRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
   numBox: {

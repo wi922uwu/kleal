@@ -26,9 +26,9 @@
  * Ключи (offline/online/hybrid, 1:1/group, коды районов) НЕ придуманы заново — совпадают с теми,
  * что уходят в /api/agent/plan и /api/agent/match.
  */
-import { T, getLang } from './i18n';
+import { T, getLang, plural } from './i18n';
 
-export type IntentStepId = 'how' | 'size' | 'when' | 'who' | 'nature' | 'place' | 'link' | 'both' | 'summary';
+export type IntentStepId = 'how' | 'size' | 'capacity' | 'when' | 'who' | 'nature' | 'place' | 'link' | 'both' | 'summary';
 
 // ---------------------------------------------------------------- общее
 
@@ -75,28 +75,57 @@ export const STEP_SIZE = {
  * minimally_sufficient.ok = false, то есть поиск идёт по недосказанному запросу.
  */
 export const GROUP_MIN_TOTAL = 3;
+export const GROUP_FREE_MAX_TOTAL = 5;
+export const GROUP_PLUS_MAX_TOTAL = 20;
+export type IntentSize = '1:1' | 'group';
 export const SIZES: [string, string, string, string, string][] = [
   ['1:1', '1:1', '1:1', 'Just the two of us', 'Только вы вдвоём'],
-  // GO.06: бесплатный групповой режим на этом флоу — именно малая группа до пяти. Это не
-  // догадка клиента: тот же предел приходит из gintent как max_total и повторяется в выдаче.
-  ['group', 'Small group', 'Малая группа', '3–5 people · free · needs at least 3',
-    '3–5 человек · бесплатно · нужно минимум 3'],
-  // Большая группа не маскируется под доступную: строка открывает Plus-лист, а в draft этот ключ
-  // никогда не записывается, пока в продукте нет покупки тарифа.
-  ['group-plus', 'Large group', 'Большая группа', '6–20 people · with Kleal Plus',
-    '6–20 человек · с Kleal Plus'],
+  ['group', 'Group', 'Группа', 'Choose the number of people next', 'Размер выберешь на следующем шаге'],
 ];
+
+/**
+ * Старые deep links и сохранённые черновики называли один и тот же групповой flow по-разному.
+ * Ни один групповой legacy-токен не должен проваливаться в 1:1 из-за незнакомой строки.
+ */
+export function normalizeIntentSize(value: unknown, groupSize?: unknown): IntentSize | undefined {
+  const raw = String(value ?? '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  if (['1:1', '1-to-1', 'one-to-one', 'one-on-one', 'oneonone', 'pair', 'solo'].includes(raw)) return '1:1';
+  if ([
+    'group', 'group-plus', 'small', 'large', 'small-group', 'large-group',
+    'smallgroup', 'largegroup', 'party', 'crowd',
+  ].includes(raw)) return 'group';
+  const total = Number(groupSize);
+  return Number.isFinite(total) && total >= GROUP_MIN_TOTAL ? 'group' : undefined;
+}
+
+/** Legacy large/group-plus starts at its old lower bound; all other group links start at three. */
+export function initialGroupSize(value: unknown, groupSize?: unknown): number {
+  const parsed = Number(groupSize);
+  if (Number.isFinite(parsed)) {
+    return Math.max(GROUP_MIN_TOTAL, Math.min(GROUP_PLUS_MAX_TOTAL, Math.round(parsed)));
+  }
+  const raw = String(value ?? '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  return ['large', 'large-group', 'largegroup', 'group-plus', 'crowd'].includes(raw)
+    ? GROUP_FREE_MAX_TOTAL + 1
+    : GROUP_MIN_TOTAL;
+}
 export const sizeLabel = (k: string) => {
-  const s = SIZES.find((x) => x[0] === k);
+  const s = SIZES.find((x) => x[0] === normalizeIntentSize(k));
   return s ? T(s[2], s[1]) : k;
 };
 export const sizeSub = (k: string) => {
-  const s = SIZES.find((x) => x[0] === k);
+  const s = SIZES.find((x) => x[0] === normalizeIntentSize(k));
   return s ? T(s[4], s[3]) : '';
 };
 
-/** GO/OF.06a — единый лист после выбора Large group; покупки тарифа в продукте пока нет. */
+/** Размер — отдельный шаг единого Group-flow; тариф не превращается в третий формат. */
 export const GROUP_SIZE = {
+  ask: () => T('Сколько человек будет в группе?', 'How many people will be in the group?'),
+  sub: () => T('Включая тебя. Минимум 3 человека.', 'Including you. At least 3 people.'),
+  row: () => T('Размер группы', 'Group size'),
+  people: (n: number) => T(`${n} ${plural(n, 'человек', 'человека', 'человек')}`, `${n} people`),
+  freeLimit: () => T('До 5 человек — бесплатно', 'Up to 5 people is free'),
+  plusLimit: () => T('6–20 человек доступны с Kleal Plus', '6–20 people are available with Kleal Plus'),
   plusTitle: () => T('Большие группы — с Plus', 'Bigger groups are with Plus'),
   plusBody: () => T(
     'В бесплатной группе может быть до 5 человек. Plus поднимает предел до 20 и позволяет запускать несколько интентов одновременно. Качество ранжирования не зависит от тарифа.',
@@ -417,14 +446,16 @@ export function searchProfile(p: any, override?: { lat?: number; lon?: number })
  * работа на стороне buddy, помечено в ROADMAP.
  */
 export function intentSummaryText(o: {
-  topic: string; size?: string; sex?: string; minAge: number; maxAge: number;
+  topic: string; size?: string; groupSize?: number; sex?: string; minAge: number; maxAge: number;
   dateKey: string; minutes: number;
   /** Отмеченные черты одной строкой. Пусто — про характер в сводке не говорим вовсе. */
   nature?: string;
 }): string {
   const who =
-    o.size === 'group'
-      ? T('небольшую компанию', 'a small group')
+    normalizeIntentSize(o.size, o.groupSize) === 'group'
+      ? (o.groupSize
+          ? T(`группу из ${o.groupSize} человек`, `a group of ${o.groupSize}`)
+          : T('группу', 'a group'))
       : T('одного человека', 'one person');
   const aud = o.sex && o.sex !== 'Any'
     ? (o.sex === 'Female' ? T('женщину', 'a woman') : T('мужчину', 'a man')) + ', '

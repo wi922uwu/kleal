@@ -156,7 +156,11 @@ export async function sendGroupInvite(who: string, to: string, intent: any, titl
       time: intent?.time,
       place: intent?.place || intent?.area,
     };
-    const c: any = await gapi.create(from, title, payload, newIdem('gic')).catch(() => null);
+    const requestedTotal = Number(intent?.groupSize);
+    const opts = Number.isFinite(requestedTotal) && requestedTotal >= 3
+      ? { min_total: 3, max_total: requestedTotal }
+      : {};
+    const c: any = await gapi.create(from, title, payload, newIdem('gic'), opts).catch(() => null);
     const g = c?.group;
     if (!c?.ok || !g?.gid) return { ok: false, error: String(c?.error || 'create failed') };
     gid = String(g.gid);
