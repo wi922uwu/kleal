@@ -3,6 +3,7 @@ import { View, ActivityIndicator } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useFonts } from 'expo-font';
 import { initLang } from '../src/i18n';
 import { restore } from '../src/state';
 import { startSummaryWatch } from '../src/profile';
@@ -10,6 +11,21 @@ import { color } from '../src/theme';
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
+
+  /**
+   * ШРИФТЫ БОРДА. Special Gothic Expanded One — заголовки входных экранов, Geist — весь остальной
+   * текст. Ключи здесь это `fontFamily` в стилях (см. `font` в theme.ts), поэтому имена должны
+   * совпадать буквально: опечатка не роняет сборку, а тихо возвращает системный шрифт.
+   *
+   * Каждое начертание Geist — ОТДЕЛЬНЫЙ файл и отдельное семейство: в React Native `fontWeight`
+   * поверх подключённого файла не работает, движок не синтезирует полужирный.
+   */
+  const [fontsReady] = useFonts({
+    SpecialGothicExpandedOne: require('../assets/fonts/SpecialGothicExpandedOne.ttf'),
+    'Geist-400': require('../assets/fonts/Geist-400.ttf'),
+    'Geist-500': require('../assets/fonts/Geist-500.ttf'),
+    'Geist-600': require('../assets/fonts/Geist-600.ttf'),
+  });
 
   // Язык и незаконченный онбординг читаются до первого кадра: иначе экран успевает нарисоваться
   // по-английски и тут же перерисоваться по-русски, и это видно.
@@ -22,7 +38,9 @@ export default function RootLayout() {
     });
   }, []);
 
-  if (!ready) {
+  // Ждём и состояние, и шрифты: первый экран набран Special Gothic, и подмена системного на
+  // фирменный уже после первого кадра видна как скачок заголовка.
+  if (!ready || !fontsReady) {
     return (
       <View style={{ flex: 1, backgroundColor: color.bg, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator color={color.primary} />
