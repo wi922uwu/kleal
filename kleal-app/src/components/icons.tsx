@@ -295,3 +295,12 @@ export const IconDots = ({ size = 20, c = color.fg }: P) => (
     <Circle cx={19} cy={12} r={1.7} />
   </Svg>
 );
+
+/** Треугольник с восклицательным знаком — метка ошибки на плашке (кадр A.03.2c). */
+export const IconAlertTriangle = ({ size = 18, c = '#fff' }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M10.3 3.6 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0z" />
+    <Line x1={12} y1={9} x2={12} y2={13} />
+    <Line x1={12} y1={17} x2={12.01} y2={17} />
+  </Svg>
+);

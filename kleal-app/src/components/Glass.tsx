@@ -18,8 +18,9 @@ import {
   ActivityIndicator, Platform, Pressable, StyleSheet, Text, View, ViewStyle,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { color, glass, radius, space, type } from '../theme';
+import { color, font, glass, radius, space, type } from '../theme';
 import { hCommit, hTap } from '../haptics';
+import { IconAlertTriangle } from './icons';
 
 export function GlassPill({
   label,
@@ -99,31 +100,56 @@ export function GlassPill({
         ]}
       />
       <View style={s.row}>
-        {busy ? (
-          <ActivityIndicator color={dark || brand ? color.onPrimary : color.fg} />
-        ) : (
-          <>
-            {icon}
-            {/*
-              У ВЫКЛЮЧЕННОЙ КНОПКИ ГАСНЕТ ЗАЛИВКА, А НЕ ПОДПИСЬ. Гасить кнопку целиком проще, но
-              белая подпись на побледневшем красном теряет контраст и читается хуже, чем сам
-              выключенный вид требует. Поэтому бледнеет фон, а подпись переходит в серый — на
-              светлой заливке он контрастнее белого.
-            */}
-            <Text
-              style={[
-                s.label,
-                dark || brand ? s.labelDark : s.labelLight,
-                disabled && s.labelOff,
-              ]}
-              numberOfLines={1}
-            >
-              {label}
-            </Text>
-          </>
-        )}
+        {/*
+          ВЕРТУШКА СТОИТ РЯДОМ С ПОДПИСЬЮ, А НЕ ВМЕСТО НЕЁ — так в кадре A.03.2d. Подмена подписи
+          кружком стирает единственное, что говорит, какое действие сейчас идёт: человек нажал
+          «Подтвердить» и смотрит на безымянный кружок. Иконка на время работы уступает место
+          вертушке — две картинки слева от подписи превратили бы кнопку в панель.
+        */}
+        {busy ? <ActivityIndicator size="small" color={dark || brand ? color.onPrimary : color.fg} /> : icon}
+        <Text
+          style={[s.label, dark || brand ? s.labelDark : s.labelLight, disabled && s.labelOff]}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
       </View>
     </Pressable>
+  );
+}
+
+/**
+ * Плашка ошибки — кадр A.03.2c.
+ *
+ * Это то же стекло, что у главной кнопки: фирменный цвет на 82%, размытие подложки, светлая кромка
+ * и цветное свечение под ней. Разница только в форме (радиус 8 вместо 28) и в том, что слева стоит
+ * треугольник. Так и задумано: плашка — «кнопка, которая случилась», и родство с ней читается сразу.
+ *
+ * ПОЧЕМУ НЕ КРАСНЫЙ ТЕКСТ НА ФОНЕ. На кремовой подложке красная строка сливается с фирменным
+ * красным кнопки под ней: два красных на одном экране, и оба означают разное. Плашка отделяет
+ * сообщение от действия физически — у неё есть край.
+ *
+ * ЗАГОЛОВОК И ПОЯСНЕНИЕ — ОДИН АБЗАЦ, а не две строки: в борде это единый текстовый прогон 13/18,
+ * и разбивать его на два блока значит получить лишний вертикальный ритм там, где его нет.
+ */
+export function GlassToast({ title, note, style }: { title: string; note?: string; style?: ViewStyle }) {
+  return (
+    <View accessibilityRole="alert" style={[s.toast, style]}>
+      <BlurView intensity={glass.blur} tint="dark" style={StyleSheet.absoluteFill} />
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          { backgroundColor: color.primary, opacity: glass.brandAlpha },
+        ]}
+      />
+      <View style={s.toastIcon}>
+        <IconAlertTriangle size={18} />
+      </View>
+      <Text style={s.toastText}>
+        <Text style={s.toastTitle}>{title}</Text>
+        {note ? ' ' + note : ''}
+      </Text>
+    </View>
   );
 }
 
@@ -167,6 +193,31 @@ const s = StyleSheet.create({
   off: { shadowOpacity: 0, elevation: 0, borderColor: '#FFFFFF33' },
   labelOff: { color: color.muted },
   pressed: { opacity: 0.85 },
+  toast: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#FFFFFF55',
+    ...Platform.select({
+      ios: {
+        // Тень фирменного цвета, а не серая: плашка светится тем же, чем горит кнопка.
+        shadowColor: color.primary,
+        shadowOpacity: 0.3,
+        shadowRadius: 20,
+        shadowOffset: { width: 0, height: 8 },
+      },
+      android: { elevation: 8 },
+    }),
+  },
+  // Треугольник стоит по первой строке текста, а не по центру плашки: на двух строках центр уезжает.
+  toastIcon: { paddingTop: 1 },
+  toastText: { ...type.fine, fontSize: 13, lineHeight: 18, color: color.onPrimary, flex: 1 } as any,
+  toastTitle: { fontFamily: font.textSemibold } as any,
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.sm },
   label: { ...type.glassLabel } as any,
   labelDark: { color: color.onPrimary },

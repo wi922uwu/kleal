@@ -22,7 +22,7 @@ import { AUTH_TERMS } from '../src/onboarding';
 import { useLang, T, replyLang } from '../src/i18n';
 import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { GlassBack, GlassInput } from '../src/components/GlassField';
-import { GlassPill } from '../src/components/Glass';
+import { GlassPill, GlassToast } from '../src/components/Glass';
 import { color, displayFamily, space, type } from '../src/theme';
 import { hFail } from '../src/haptics';
 
@@ -142,12 +142,8 @@ export default function AuthEmail() {
             accessibilityLabel={AUTH.emailLabel()}
           />
 
-          {err ? (
-            <View style={s.errBox}>
-              <Text style={s.errTitle}>{err.title}</Text>
-              <Text style={s.errNote}>{err.note}</Text>
-            </View>
-          ) : null}
+          {/* Та же плашка, что на экране кода: ошибка входа выглядит одинаково на обоих шагах. */}
+          {err ? <GlassToast title={err.title} note={err.note} style={s.toast} /> : null}
 
           <View style={s.fill} />
 
@@ -174,9 +170,7 @@ const s = StyleSheet.create({
   h: { ...type.display, color: color.fg, marginTop: 28 } as any,
   note: { ...type.displaySub, color: color.muted, marginTop: space.sm } as any,
   field: { marginTop: 32 },
-  errBox: { marginTop: space.md },
-  errTitle: { ...type.fieldLabel, color: color.danger } as any,
-  errNote: { ...type.fine, color: color.danger, marginTop: 2 } as any,
+  toast: { marginTop: space.md },
   // Кнопка входа выше стеклянных: у неё в борде своя высота, 56 против 52.
   cta: { height: 56 },
   terms: { ...type.fine, color: color.muted, textAlign: 'center', marginTop: space.md } as any,

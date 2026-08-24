@@ -29,7 +29,7 @@ import { patch, applyDefaults } from '../src/state';
 import { useLang, T, replyLang } from '../src/i18n';
 import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { GlassBack, GlassPane } from '../src/components/GlassField';
-import { GlassPill } from '../src/components/Glass';
+import { GlassPill, GlassToast } from '../src/components/Glass';
 import { color, displayFamily, radius as rad, space, type } from '../src/theme';
 import { hFail, hOk, hTick } from '../src/haptics';
 
@@ -134,7 +134,8 @@ export default function AuthCode() {
         setTimeout(() => input.current?.focus(), 40);
       } else if (r?.error === 'expired') {
         hFail();
-        setCode('');
+        // Цифры НЕ стираются: в кадре A.03.2c они на месте. Стирать их незачем — этот код мёртв,
+        // и повторять его человек не будет; зато видно, что именно он ввёл.
         setErr({ title: AUTH.expiredTitle(), note: AUTH.expiredNote(), dead: true });
       } else {
         setErr({ title: AUTH.sendFailedTitle(), note: AUTH.sendFailedNote() });
@@ -242,23 +243,23 @@ export default function AuthCode() {
             />
           </Pressable>
 
-          {err ? (
-            <View style={s.errBox}>
-              <Text style={s.errTitle}>{err.title}</Text>
-              <Text style={s.errNote}>{err.note}</Text>
-            </View>
-          ) : (
-            <Pressable
-              accessibilityRole="button"
-              disabled={left > 0 || busy}
-              onPress={resend}
-              style={s.resendRow}
-            >
-              <Text style={[s.resend, left <= 0 && !busy && s.resendOn]}>
-                {left > 0 ? AUTH.resendIn(left) : AUTH.resend()}
-              </Text>
-            </Pressable>
-          )}
+          {/*
+            СЧЁТЧИК ОСТАЁТСЯ ВИДИМЫМ ВМЕСТЕ С ОШИБКОЙ — так в кадре A.03.2c, и это не мелочь: ошибка
+            «код истёк» без строки «отправить ещё раз» оставляет человека с сообщением о беде и без
+            выхода из неё. Раньше одно подменяло другое, и выход исчезал ровно тогда, когда нужен.
+          */}
+          <Pressable
+            accessibilityRole="button"
+            disabled={left > 0 || busy}
+            onPress={resend}
+            style={s.resendRow}
+          >
+            <Text style={[s.resend, left <= 0 && !busy && s.resendOn]}>
+              {left > 0 ? AUTH.resendIn(left) : AUTH.resend()}
+            </Text>
+          </Pressable>
+
+          {err ? <GlassToast title={err.title} note={err.note} style={s.toast} /> : null}
 
           <View style={s.fill} />
 
@@ -324,9 +325,7 @@ const s = StyleSheet.create({
   resend: { ...type.fine, color: color.muted } as any,
   resendOn: { ...type.fieldLabel, color: color.primary } as any,
 
-  errBox: { marginTop: space.lg, alignItems: 'center' },
-  errTitle: { ...type.fieldLabel, color: color.danger } as any,
-  errNote: { ...type.fine, color: color.danger, marginTop: 2, textAlign: 'center' } as any,
+  toast: { marginTop: space.md },
 
   // Кнопка входа выше стеклянных: у неё в борде своя высота, 56 против 52.
   cta: { height: 56 },
