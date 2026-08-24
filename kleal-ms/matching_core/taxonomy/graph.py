@@ -101,11 +101,13 @@ def _wshare(a, b):
                  "exchange", "intercambio", "обмен"}
     A = [w for w in _wtok(a) if w not in ambiguous]
     B = [w for w in _wtok(b) if w not in ambiguous]
+    if norm(a) and norm(a) == norm(b):
+        return 4
     lvl = 0
     for x in A:
         for y in B:
             if x == y:
-                return 4                                    # точное литеральное совпадение
+                lvl = max(lvl, 3)                            # общий токен в разных фразах
             if X.token_equivalent(x, y):
                 lvl = max(lvl, 2)                            # лишь морфо-близость -> parent, не exact
     return lvl
@@ -148,6 +150,27 @@ def _topics_of_fn():
     return getattr(_CTX, "topics_of", None)
 
 
+def _derived_set(interests):
+    """Нормированные интересы, выводимые из другого интереса того же человека."""
+    fn = _topics_of_fn()
+    if not fn or len(interests) < 2:
+        return frozenset()
+    norms = [norm(x) for x in interests]
+    try:
+        topics = [set(fn(x) or ()) for x in interests]
+    except Exception:
+        return frozenset()
+    out = set()
+    for i, word in enumerate(norms):
+        if not word or " " in word:
+            continue
+        for j, resolved in enumerate(topics):
+            if j != i and word in resolved:
+                out.add(word)
+                break
+    return frozenset(out)
+
+
 def _bridged(x):
     """Сошёлся ли интерес `x` с запросом."""
     bridge = _bridge_fn()
@@ -160,18 +183,27 @@ def _bridged(x):
 
 
 def similarity(topics, interests):
+    """Уровень и совпавшие интересы. Полная картина — `similarity_detail`."""
+    best, matched, _ = similarity_detail(topics, interests)
+    return best, matched
+
+
+def similarity_detail(topics, interests):
     """§6 + Аудит #4 — ЕДИНЫЙ semantic resolver. Canonical taxonomy (405 nodes) — авторитетный источник:
     если ОБЕ стороны пары резолвятся в каноне, уровень берётся из `canonical.similarity_nodes`. Seed-граф
     ниже — только bootstrap/fallback для концептов, которых в каноне нет. Уровни: 4 exact/alias >
     3 sibling > 2 parent > 1 adjacent > 0. Complementary roles и negative edges — отдельные матрицы."""
     from . import canonical as C, concepts as X
     canon = C.AVAILABLE
-    matched, best = set(), 0
+    matched, best, natural = set(), 0, 0
+    per_topic = {}
+    derived = _derived_set(interests)
     xb = [(x, resolve(x)) for x in interests]
     for t in topics:
         bt, st = resolve(t)
         nt = norm(t)
         t_in_canon = C.resolve_node(t) if canon else None
+        lvl_t = 0
         for x, (bx, sx) in xb:
             # Free-form compound/multilingual concepts are evaluated before the curated graph. They
             # return only exact or direct-family levels and never broad category adjacency.
@@ -179,31 +211,43 @@ def similarity(topics, interests):
             if concept_lvl:
                 if concept_lvl >= 4:
                     matched.add(norm(x))
-                best = max(best, concept_lvl)
+                lvl_t = max(lvl_t, concept_lvl)
+                if norm(x) not in derived:
+                    natural = max(natural, concept_lvl)
                 continue
             # --- Аудит #4: canonical АВТОРИТЕТНО решает пару, если резолвит обе стороны ---
             if t_in_canon and C.resolve_node(x):
                 lvl = C.similarity_nodes(t, x)
                 if lvl >= 4:
-                    matched.add(norm(x)); best = max(best, 4)
+                    matched.add(norm(x)); lvl_t = max(lvl_t, 4)
+                    if norm(x) not in derived:
+                        natural = max(natural, 4)
                 elif lvl:
-                    best = max(best, lvl)
+                    lvl_t = max(lvl_t, lvl)
+                    if norm(x) not in derived:
+                        natural = max(natural, lvl)
                 continue
             # --- seed fallback: концепт вне канона (bootstrap для unknown) ---
             if norm(x) == nt:
-                matched.add(norm(x)); best = max(best, 4)          # exact/alias
+                matched.add(norm(x)); lvl_t = max(lvl_t, 4)        # exact/alias
+                if norm(x) not in derived:
+                    natural = max(natural, 4)
             elif st and st == sx:
-                best = max(best, 3)                                 # sibling (та же sub)
+                lvl_t = max(lvl_t, 3)                               # sibling (та же sub)
             elif bt and bt == bx:
-                best = max(best, 2)                                 # parent (тот же broad)
+                lvl_t = max(lvl_t, 2)                               # parent (тот же broad)
             elif bt and bx and bx in ADJACENCY.get(bt, []):
-                best = max(best, 1)                                 # adjacent purpose
+                lvl_t = max(lvl_t, 1)                               # adjacent purpose
             elif not bt and not bx:
-                lvl = _wshare(t, x)                                 # off-taxonomy: 4 литерал / 2 морфо
+                lvl = _wshare(t, x)                                 # off-taxonomy: 4 literal / 3 token / 2 morphology
                 if lvl >= 4:
-                    matched.add(norm(x)); best = max(best, 4)
-                elif lvl:
-                    best = max(best, lvl)
+                    matched.add(norm(x))
+                if lvl:
+                    lvl_t = max(lvl_t, lvl)
+                    if norm(x) not in derived:
+                        natural = max(natural, lvl)
+        per_topic[norm(t)] = lvl_t
+        best = max(best, lvl_t)
     # Мост проверяется ПОСЛЕДНИМ и не спорит с каноном: он поднимает только тех, кого канон и
     # `_wshare` не связали вовсе. Уровень 3 (sibling) — «про то же самое, но названо иначе»;
     # выше нельзя, точное совпадение должно оставаться точным.
@@ -211,7 +255,8 @@ def similarity(topics, interests):
         for x in interests:
             if _bridged(x):
                 matched.add(norm(x)); best = max(best, 3)
-    return best, matched
+                break
+    return best, matched, {"per_topic": per_topic, "natural": natural}
 
 
 def is_negative(a, b):

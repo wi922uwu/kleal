@@ -1829,6 +1829,15 @@ def _matching_topic_context(intent):
             [str(t).lower() for t in (intent.get("topics") or [])], _phr)
         _set_query_bridge(_qb)
         _pn = _norm_phrase(_phr)
+        # Profiles store canonical interest keys. Prefer that key when the query phrase has one,
+        # so a translated label still compares literally with the stored interest.
+        try:
+            import interest_i18n as _ii
+            _pk = _ii.key_of(_phr)
+            if _pk:
+                _pn = _pk
+        except Exception:
+            pass
         if _pn and len(_pn.split()) <= 3:
             _tl = [str(t).lower() for t in (intent.get("topics") or [])]
             if _pn not in _tl:
@@ -8328,6 +8337,14 @@ class H(BaseHTTPRequestHandler):
                     res["has_more"] = len(cands) > _lim
                     res["candidates"] = cands = cands[:_lim]
                     res["shown"] = len(cands)
+                _lng = str(body.get("lang") or "").lower()
+                if _lng in ("ru", "es") and cands:
+                    try:
+                        import interest_i18n as _ii
+                        _iw = sorted({str(w) for c in cands for w in (c.get("interests") or [])})
+                        res["interestLabels"] = _ii.labels_for(_iw, _lng)
+                    except Exception:
+                        pass
                 res.update(_section5_addendum(intent, str(body.get("query") or ""), cands))  # §5.1/§5.2
                 res["retrieval"] = _retrieval_report(cands)                                    # §7
                 res["expansion"] = expansion_ladder(intent, ctx)                               # §12
