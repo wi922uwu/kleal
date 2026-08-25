@@ -87,6 +87,19 @@ export default function Chat() {
   const [justAdded, setJustAdded] = useState<string[]>([]);
   // Лента стоит, пока крутят кольцо возраста: иначе один и тот же жест двигает и то, и другое.
   const [dragging, setDragging] = useState(false);
+  /*
+    СОСТОЯНИЕ КОЛОДЫ ЖИВЁТ ЗДЕСЬ, А НЕ В ВИДЖЕТЕ ШАГА, И ЭТО НЕ ВКУСОВЩИНА.
+
+    ChatShell рисует виджет как `{!typing ? widget : null}` — то есть на каждый ход агента виджет
+    СНИМАЕТСЯ и ставится заново. Всё, что он хранил у себя, при этом пропадает. Ровно поэтому здесь
+    же лежат `chips`, `justAdded` и `fork`.
+
+    Колода на это наступила: пройденные карточки и признак «заход кончен» были внутри виджета, и
+    ответ агента их стирал — карточки возвращались сами и начинали снова с «Бега», по которому
+    только что свайпнули. Со стороны это выглядело так, будто кнопка «Записать» не сработала.
+  */
+  const [deckSeen, setDeckSeen] = useState<string[]>([]);
+  const [deckOn, setDeckOn] = useState(true);
   // Номер прохода. Меняется при «Начать заново» и служит ключом виджетам, чтобы те начинали с
   // чистого листа. Иначе внутри них остаётся своё состояние: спрятанные кнопки первого кадра,
   // выбранные увлечения, набранный возраст — всё от предыдущей попытки, которой уже нет.
@@ -150,6 +163,8 @@ export default function Chat() {
       reset();
       setThread([]);
       setStep('start');
+      setDeckSeen([]);
+      setDeckOn(true);
       setRunId((n) => n + 1);
       started.current = false;
       setTyping(true);
@@ -338,6 +353,16 @@ export default function Chat() {
           added={justAdded}
           onFork={onFork}
           onChip={send}
+          deckSeen={deckSeen}
+          deckOn={deckOn}
+          onDeckMore={() => setDeckOn(true)}
+          onDeckPass={(picked: string[], seen: string[]) => {
+            setDeckSeen((p) => [...p, ...seen]);
+            setDeckOn(false);
+            // В разговор уходит ОДНА реплика на весь заход — так агент отвечает один раз и по
+            // всему списку сразу, а не вопросом на каждую карту.
+            if (picked.length) send(picked.join(', '));
+          }}
           onDrop={(k: string) => setJustAdded((p) => p.filter((x) => x !== k))}
         />
       }
@@ -382,6 +407,7 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
 
 function StepWidget({
   step, say, goto, onDone, onDrag, leave, fork, chips, added, onFork, onChip, onDrop,
+  deckSeen, deckOn, onDeckMore, onDeckPass,
 }: {
   step: StepId;
   say: (who: 'bot' | 'me', text: string, photo?: string) => void;
@@ -399,6 +425,11 @@ function StepWidget({
   onFork?: (which: 'know' | 'help') => void;
   onChip?: (text: string) => void;
   onDrop?: (key: string) => void;
+  /** Карточки, по которым уже провели пальцем за этот разговор. Живёт в экране — см. там почему. */
+  deckSeen: string[];
+  deckOn: boolean;
+  onDeckMore: () => void;
+  onDeckPass: (picked: string[], seen: string[]) => void;
 }) {
   const st = useOnb();
 
@@ -410,7 +441,8 @@ function StepWidget({
   if (step === 'languages') return <LangW say={say} goto={goto} />;
   if (step === 'hobbies') return (
     <HobbyW say={say} leaveFunnel={leave} fork={fork} chips={chips} added={added}
-            onFork={onFork} onChip={onChip} onDrop={onDrop} onDrag={onDrag} />
+            onFork={onFork} onChip={onChip} onDrop={onDrop} onDrag={onDrag}
+            deckSeen={deckSeen} deckOn={deckOn} onDeckMore={onDeckMore} onDeckPass={onDeckPass} />
   );
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -590,21 +622,16 @@ function LangW({ say, goto }: any) {
 }
 
 /** A.08 — увлечения с эмодзи. */
-function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop, onDrag }: any) {
+function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop, onDrag,
+                 deckSeen, deckOn, onDeckMore, onDeckPass }: any) {
   const st = useOnb();
   const [busy, setBusy] = useState(false);
   /*
-    ПРОЙДЕННОЕ ПОМНИТ ШАГ, А НЕ КОЛОДА. После захода агент отвечает и предлагает новое — колода
-    пересобирается и встаёт с начала. Если бы решённые карточки не отсеивались здесь, следующий
-    заход начался бы с того же «Бега», по которому только что свайпнули.
+    ПРОЙДЕННОЕ И ПРИЗНАК «ЗАХОД КОНЧЕН» ПРИХОДЯТ СВЕРХУ, А НЕ ХРАНЯТСЯ ЗДЕСЬ. Этот виджет снимают
+    с экрана на каждый ход агента (`{!typing ? widget : null}` в ChatShell), и всё своё он теряет.
+    Разбор — в комментарии к `deckSeen` в самом экране.
   */
-  const [done, setDone] = useState<string[]>([]);
-  /*
-    КОЛОДА НЕ ВОЗВРАЩАЕТСЯ САМА. Заход кончился — карточки уходят, и экран остаётся за ответом
-    агента. Пока они возвращались сразу, нажатие на «Записать» выглядело несработавшим: человек
-    жал кнопку, а на месте кнопки снова была колода, поверх вопроса, который он не успел прочесть.
-  */
-  const [deckOn, setDeckOn] = useState(true);
+  const done: string[] = deckSeen || [];
   // Показываем записанное ЗА ЭТОТ разговор. Всё, что было в профиле раньше, человек видит на
   // экране «Интересы», откуда пришёл; повторять его здесь значит прятать новое среди старого.
   const explicit: string[] = added || [];
@@ -657,18 +684,12 @@ function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop, 
           key={done.length}
           items={deckFor(chips, done)}
           onDragChange={onDrag}
-          onPass={(picked: string[], seen: string[]) => {
-            setDone((p: string[]) => [...p, ...seen]);
-            setDeckOn(false);
-            // В разговор уходит ОДНА реплика на весь заход — так агент отвечает один раз и по
-            // всему списку сразу, а не вопросом на каждую карту.
-            if (picked.length) onChip?.(picked.join(', '));
-          }}
+          onPass={onDeckPass}
         />
       ) : deckFor(chips, done).length ? (
         // Карточки кончились совсем — звать их обратно не за чем, и кнопки нет.
         <View style={cs.row}>
-          <Chip label={STEP_HOBBIES.deckMore()} onPress={() => setDeckOn(true)} />
+          <Chip label={STEP_HOBBIES.deckMore()} onPress={onDeckMore} />
         </View>
       ) : null}
       {explicit.length ? (

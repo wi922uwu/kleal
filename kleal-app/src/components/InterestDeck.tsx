@@ -51,6 +51,8 @@ const DEPTH = 3;
 /** На сколько уходит вниз и мельчает каждая следующая. */
 const STEP_Y = 14;
 const STEP_S = 0.055;
+/** Сила белой плёнки на одну ступень глубины. */
+const VEIL = 0.16;
 const CARD_H = 176;
 const CARD_R = 34;
 /** Где кончается стопка и начинается подвал. Место под кнопку отведено всегда — см. подвал. */
@@ -334,9 +336,9 @@ export function InterestDeck({ items, onPass, onDragChange }: {
               pointerEvents="none"
               style={[
                 s.card,
-                s.behind,
                 {
                   width: CARD_W,
+                  shadowColor: deckTone[items[at + d].tone].glow,
                   // Самая дальняя проявляется по ходу жеста: иначе она возникала бы разом в тот
                   // кадр, когда верхняя улетела.
                   opacity: d === DEPTH - 1 ? prog : 1,
@@ -352,8 +354,17 @@ export function InterestDeck({ items, onPass, onDragChange }: {
                 Нижние приглушены белой плёнкой, а не своим бледным свечением: так у них остаётся
                 собственный цвет — видно, что следующая карта про другое, — но спорить с верхней он
                 уже не может.
+
+                ПЛЁНКА ГАСНЕТ ПО ХОДУ ЖЕСТА, А НЕ СКАЧКОМ. Раньше она держала свою силу всё время,
+                пока верхнюю тянут, и слетала разом в кадр подмены — карта в этот миг заметно
+                светлела, и это читалось как мигнувшая чужая. Теперь сила плёнки считается от той
+                же глубины, что и положение: у второй карты к моменту подмены она уже ноль, у
+                третьей — ровно столько, сколько положено второй.
               */}
-              <View style={[s.veil, { opacity: 0.16 + d * 0.16 }]} pointerEvents="none" />
+              <Animated.View
+                style={[s.veil, { opacity: Animated.add(VEIL * d, Animated.multiply(prog, -VEIL)) }]}
+                pointerEvents="none"
+              />
             </Animated.View>
           )
         )}
@@ -409,8 +420,6 @@ const s = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     elevation: 5,
   },
-  /** Нижние глушатся, иначе стопка читается как три равных предложения сразу. */
-  behind: { shadowOpacity: 0.12, shadowColor: color.ink },
   sheen: {
     ...StyleSheet.absoluteFillObject,
     borderTopWidth: StyleSheet.hairlineWidth,
