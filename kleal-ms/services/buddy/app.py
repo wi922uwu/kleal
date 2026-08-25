@@ -2886,6 +2886,40 @@ _READY_OK = {
 }
 
 
+# ВОПРОС ПРО ЛОГИСТИКУ, КОТОРЫЙ ЗАДАВАТЬ НЕЛЬЗЯ.
+#
+# Промпт запрещает это прямым текстом и перечислением: «not when, not what day, not what time, not
+# where, not which district, and NOT how many people (not «вдвоём или компанией»)». 70B правило
+# всё равно нарушает — на живом экране он спросил «Хочется бегать один или с компанией?», а
+# воспроизведение дало ещё «где — в парке или по набережной?» и «утром или вечером?». Все три —
+# ровно те поля, которые человек ставит ползунками на следующем экране; спросить их здесь значит
+# заставить ответить дважды.
+#
+# Лечение то же, что у обещания встречи: правило в промпте ПЛЮС детерминированный сторож здесь.
+# Отрицательные инструкции эта модель держит плохо, и спорить с ней дешевле готовым ответом.
+_ASKS_LOGISTICS = re.compile(
+    r"(?i)("
+    r"когда\b|во\s*сколько|в\s*кака?о?ю?е?\s*врем|утром\s+или|вечером\s+или|днём\s+или"
+    r"|какой\s+день|в\s*какой\s+день|на\s+выходных\s+или"
+    # «куда» само по себе НЕ ловится: «спокойно посидеть или куда-то выбраться?» — вопрос про
+    # настроение, и промпт приводит его как ХОРОШИЙ. Ловим только когда спрашивают место.
+    r"|\bгде\b|куда\s+(именно|пойд|поед|идти|ехать|лучше)|в\s*каком\s+районе"
+    r"|в\s*каком\s+городе|далеко\s+ли"
+    r"|сколько\s+(человек|вас|народу)|один\s+или\s+с\s+компанией|вдвоём\s+или"
+    r"|одному\s+или|наедине\s+или|один\s+на\s+один\s+или|компанией\s+или"
+    r"|\bwhen\b|what\s+time|which\s+day|\bwhere\b|which\s+(district|area|city)"
+    r"|how\s+many\s+people|one[- ]on[- ]one\s+or|alone\s+or"
+    r"|\bcuándo\b|\bcuando\b|a\s+qué\s+hora|\bdónde\b|\bdonde\b|cuánta?s?\s+personas"
+    r"|solo\s+o\s+con"
+    r")")
+
+
+def asks_logistics(reply):
+    """Спрашивает ли ответ про время, место или размер компании — то, что спрашивать не его дело."""
+    t = str(reply or "")
+    return bool("?" in t and _ASKS_LOGISTICS.search(t))
+
+
 def neutral_ready(activity, lang):
     a = str(activity or "").strip()
     tpl = _READY_OK.get(lang, _READY_OK["en"])
@@ -3354,6 +3388,12 @@ def intent_build(messages, profile, on_text=None):
     # назначена, и ничего больше не делает.
     if isinstance(obj, dict) and promises_a_meeting(obj.get("reply")):
         obj = dict(obj, reply=neutral_ready(obj.get("activity"), lang))
+    # Спросил про логистику — значит спрашивать было нечего: занятие уже названо, а всё
+    # остальное человек поставит руками. Подтверждаем и идём дальше, а не выдумываем второй
+    # вопрос: лишний вопрос здесь стоит дороже, чем пропущенное уточнение.
+    if isinstance(obj, dict) and asks_logistics(obj.get("reply")):
+        obj = dict(obj, reply=neutral_ready(obj.get("activity") or last_user, lang),
+                   ready=True, hints=[])
     if isinstance(obj, dict) and obj.get("reply") and not _lang_ok(obj.get("reply"), lang):
         _sal = _salvage(obj.get("reply"), lang)
         obj = dict(obj, reply=_sal) if _sal else dict(obj, reply=(
