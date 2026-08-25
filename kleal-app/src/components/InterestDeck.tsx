@@ -1,5 +1,5 @@
 /**
- * Колода интересов — то, что предложил агент, разложенное картами.
+ * Колода интересов — то, что человек выбирает на шаге увлечений.
  *
  * ПОЧЕМУ КОЛОДА, А НЕ РЯД ЧИПОВ. Чипы просят выбрать: человек читает шесть подписей разом,
  * сравнивает и решает, какие «правильные». Карта спрашивает про одну вещь и требует одного
@@ -13,8 +13,8 @@
  * ЖЕСТ ТОЛЬКО У ВЕРХНЕЙ КАРТЫ. Нижние — картинка глубины: они не ловят касания вовсе, иначе палец,
  * соскользнувший с верхней, начал бы тащить вторую.
  *
- * ВСЁ ДВИЖЕНИЕ НА НАТИВНОМ ДРАЙВЕРЕ: сдвиг, поворот, прозрачность, масштаб. JS участвует ровно
- * дважды за карту — на щелчке при переходе порога и на решении при отпускании.
+ * ВСЁ ДВИЖЕНИЕ НА НАТИВНОМ ДРАЙВЕРЕ: сдвиг, поворот, прозрачность. JS участвует ровно дважды за
+ * карту — на щелчке при переходе порога и на решении при отпускании.
  */
 import React, { useMemo, useRef, useState } from 'react';
 import {
@@ -25,10 +25,12 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import { DeckCard } from '../interests-deck';
 import { STEP_HOBBIES } from '../onboarding';
 import { useLang } from '../i18n';
 import { hCommit, hTap, hTick } from '../haptics';
-import { color, displayFamily, radius as rad, space, type } from '../theme';
+import { color, deckTone, displayFamily, radius as rad, space, type } from '../theme';
 
 /** С какого сдвига отпускание считается решением, а не промахом. */
 const DECIDE = 96;
@@ -37,13 +39,53 @@ const DEPTH = 3;
 /** На сколько уходит вниз и мельчает каждая следующая. */
 const STEP_Y = 12;
 const STEP_S = 0.05;
+const CARD_H = 208;
+
+/**
+ * Лицо карточки: градиент своего тона, знак и подпись.
+ *
+ * ГРАДИЕНТ НАРИСОВАН SVG, А НЕ expo-linear-gradient — последнего в проекте нет, а
+ * `react-native-svg` уже стоит. Ставить зависимость ради заливки значит увеличить сборку и список
+ * того, что придётся чинить при переезде на новый SDK.
+ *
+ * РАЗМЕР ЗАЛИВКИ — ЧЕСТНЫЕ ТОЧКИ, А НЕ ПРОЦЕНТЫ. Проценты внутри SVG считаются от области
+ * просмотра, и у слоя без `viewBox` она берётся по ширине: заливка закрашивала бы верхнюю часть
+ * карты и обрывалась резкой горизонталью. Тот же случай уже был на пузыре реплики.
+ */
+function Face({ item, w }: { item: DeckCard; w: number }) {
+  const lang = useLang();
+  const [from, to] = deckTone[item.tone];
+  const id = `t-${item.tone}`;
+  return (
+    <>
+      <Svg width={w} height={CARD_H} style={StyleSheet.absoluteFill}>
+        <Defs>
+          <LinearGradient id={id} x1="0" y1="0" x2="0.7" y2="1">
+            <Stop offset="0" stopColor={from} />
+            <Stop offset="1" stopColor={to} />
+          </LinearGradient>
+        </Defs>
+        <Rect x={0} y={0} width={w} height={CARD_H} fill={`url(#${id})`} />
+      </Svg>
+      {/*
+        Светлая полоса по верхней кромке — та же внутренняя тень, что у стеклянных кнопок. Без неё
+        карта выглядит наклейкой: у настоящей поверхности верх всегда светлее, потому что свет
+        падает сверху.
+      */}
+      <View style={s.sheen} pointerEvents="none" />
+      <Text style={s.emoji}>{item.emoji}</Text>
+      <Text style={[s.label, { fontFamily: displayFamily(lang) }]} numberOfLines={2}>
+        {item.label}
+      </Text>
+    </>
+  );
+}
 
 export function InterestDeck({ items, onAdd, onSkip }: {
-  items: string[];
-  onAdd: (item: string) => void;
-  onSkip?: (item: string) => void;
+  items: DeckCard[];
+  onAdd: (item: DeckCard) => void;
+  onSkip?: (item: DeckCard) => void;
 }) {
-  const lang = useLang();
   const { width } = useWindowDimensions();
   const [at, setAt] = useState(0);
   const x = useRef(new Animated.Value(0)).current;
@@ -54,7 +96,7 @@ export function InterestDeck({ items, onAdd, onSkip }: {
   const FLY = width + CARD_W;
 
   /** Убрать верхнюю карту в сторону и показать следующую. */
-  const decide = (dir: -1 | 1, item: string) => {
+  const decide = (dir: -1 | 1, item: DeckCard) => {
     if (dir < 0) hCommit();
     else hTap();
     Animated.timing(x, {
@@ -70,8 +112,6 @@ export function InterestDeck({ items, onAdd, onSkip }: {
       setAt((n) => n + 1);
     });
   };
-
-  const top = items[at];
 
   const pan = useMemo(
     () =>
@@ -112,7 +152,7 @@ export function InterestDeck({ items, onAdd, onSkip }: {
     [at, items]
   );
 
-  if (!top) return null;
+  if (!items[at]) return null;
 
   /*
     Поворот вокруг дальнего края, а не центра: карта не крутится волчком, а заваливается — так же,
@@ -130,24 +170,19 @@ export function InterestDeck({ items, onAdd, onSkip }: {
   return (
     <View style={[s.wrap, { width: CARD_W }]}>
       {/*
-        Стопка рисуется СВЕРХУ ВНИЗ по порядку, но выводится в обратном: последняя карта должна
-        оказаться ниже всех, а React кладёт позже написанное поверх.
+        Стопка рисуется от дальней карты к ближней: React кладёт написанное позже поверх, поэтому
+        верхняя (d = 0) идёт последней.
       */}
       {Array.from({ length: DEPTH }, (_, d) => DEPTH - 1 - d)
         .filter((d) => items[at + d])
         .map((d) =>
           d === 0 ? (
             <Animated.View
-              key={items[at] + at}
+              key={items[at].key + at}
               {...pan.panHandlers}
-              style={[
-                s.card,
-                { width: CARD_W, transform: [{ translateX: x }, { rotate }] },
-              ]}
+              style={[s.card, { width: CARD_W, transform: [{ translateX: x }, { rotate }] }]}
             >
-              <Text style={[s.label, { fontFamily: displayFamily(lang) }]} numberOfLines={3}>
-                {items[at]}
-              </Text>
+              <Face item={items[at]} w={CARD_W} />
 
               {/* Метки решения проявляются по ходу движения — до отпускания видно, что случится. */}
               <Animated.View style={[s.mark, s.markAdd, { opacity: addOn }]}>
@@ -159,20 +194,23 @@ export function InterestDeck({ items, onAdd, onSkip }: {
             </Animated.View>
           ) : (
             <View
-              key={items[at + d] + (at + d)}
+              key={items[at + d].key + (at + d)}
               pointerEvents="none"
               style={[
                 s.card,
-                s.behind,
                 {
                   width: CARD_W,
                   transform: [{ translateY: d * STEP_Y }, { scale: 1 - d * STEP_S }],
                 },
               ]}
             >
-              <Text style={[s.label, s.labelBehind, { fontFamily: displayFamily(lang) }]} numberOfLines={3}>
-                {items[at + d]}
-              </Text>
+              <Face item={items[at + d]} w={CARD_W} />
+              {/*
+                Нижние приглушены белой плёнкой, а не своим бледным градиентом: так у них остаётся
+                собственный цвет — видно, что следующая карта про другое, — но спорить с верхней он
+                уже не может.
+              */}
+              <View style={[s.veil, { opacity: 0.35 + d * 0.2 }]} pointerEvents="none" />
             </View>
           )
         )}
@@ -183,29 +221,32 @@ export function InterestDeck({ items, onAdd, onSkip }: {
 }
 
 // ===== вид
-const CARD_H = 168;
-
 const s = StyleSheet.create({
   /** Высота с запасом: под стопкой ещё подсказка, а сами карты уходят вниз на DEPTH шагов. */
-  wrap: { height: CARD_H + (DEPTH - 1) * STEP_Y + 44, alignSelf: 'center', marginTop: space.sm },
+  wrap: { height: CARD_H + (DEPTH - 1) * STEP_Y + 40, alignSelf: 'center', marginTop: space.sm },
   card: {
     position: 'absolute',
     height: CARD_H,
-    borderRadius: rad.xxl,
-    backgroundColor: color.card,
+    borderRadius: 28,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: space.lg,
     shadowColor: color.ink,
-    shadowOpacity: 0.1,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 5,
   },
-  /** Нижние карты глушатся, иначе стопка читается как три равных предложения сразу. */
-  behind: { shadowOpacity: 0.05 },
-  label: { ...type.display, fontSize: 22, lineHeight: 30, color: color.fg, textAlign: 'center' } as any,
-  labelBehind: { color: color.neutral400 },
+  sheen: {
+    ...StyleSheet.absoluteFillObject,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: '#FFFFFF99',
+    borderRadius: 28,
+  },
+  veil: { ...StyleSheet.absoluteFillObject, backgroundColor: color.card },
+  emoji: { fontSize: 52, lineHeight: 60, marginBottom: space.sm },
+  label: { ...type.display, fontSize: 21, lineHeight: 28, color: color.fg, textAlign: 'center' } as any,
   mark: {
     position: 'absolute',
     top: space.md,
@@ -216,7 +257,7 @@ const s = StyleSheet.create({
   },
   markAdd: { left: space.md, backgroundColor: color.primary },
   markAddText: { ...type.labelSmall, color: color.onPrimary } as any,
-  markSkip: { right: space.md, backgroundColor: color.neutral100 },
+  markSkip: { right: space.md, backgroundColor: '#FFFFFFE6' },
   markSkipText: { ...type.labelSmall, color: color.muted } as any,
   hint: {
     position: 'absolute',

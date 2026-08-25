@@ -31,6 +31,7 @@ import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
 import { InterestDeck } from '../src/components/InterestDeck';
+import { deckFor } from '../src/interests-deck';
 import { GlassChip, GlassPill } from '../src/components/Glass';
 import { IconCheckCircle } from '../src/components/icons';
 import { color, radius as rad, type } from '../src/theme';
@@ -629,10 +630,12 @@ function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop }
         требует одного движения — и на неё отвечают не выбирая, а вспоминая.
         Смысл действия прежний: свайп влево равен нажатию на чип, то есть уходит той же репликой
         в разговор. Пропуск никуда не отправляется — он местный, просто следующая карта.
+
+        Колода СТОИТ ВСЕГДА, а не только когда агент что-то предложил: подсказок бывает три-четыре
+        за ход, а иногда ни одной, и на пустом шаге человеку было бы не с чем работать. Личные
+        подсказки идут первыми, за ними каталог — см. src/interests-deck.ts.
       */}
-      {chips?.length ? (
-        <InterestDeck items={chips} onAdd={(c) => onChip?.(c)} />
-      ) : null}
+      <InterestDeck items={deckFor(chips)} onAdd={(c) => onChip?.(c.label)} />
       {explicit.length ? (
         <>
           <Text style={cs.hint}>{STEP_HOBBIES.saved()}</Text>
