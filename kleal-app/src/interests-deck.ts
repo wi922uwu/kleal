@@ -11,11 +11,14 @@
  * английского ключа — попытка подсунуть его напрямую разошлась бы с тем, как интересы пишутся при
  * обычном ответе словами.
  *
- * ЛИЦО КАРТЫ — ЭТО ПАРА «ЗНАК + ТОН», А НЕ УНИКАЛЬНАЯ ВЁРСТКА. Сорок четыре по-настоящему разных
- * макета невозможно ни нарисовать, ни удержать в порядке: они разъедутся на второй же правке.
- * Зато знак у каждой свой, а тон — один из восьми, и по нему видно, о чём карта, ещё до чтения:
- * зелёные про улицу, тёплые про еду, синие про учёбу. Внутри тона карты всё равно не путаются —
- * их различает знак.
+ * ЛИЦО КАРТЫ — ЭТО ТОН, А НЕ УНИКАЛЬНАЯ ВЁРСТКА. Сорок четыре по-настоящему разных макета
+ * невозможно ни нарисовать, ни удержать в порядке: они разъедутся на второй же правке. Тон — один
+ * из восьми, и по нему видно, о чём карта, ещё до чтения: зелёные про улицу, тёплые про еду, синие
+ * про учёбу.
+ *
+ * ЗНАКОВ НА КАРТАХ НЕТ. Эмодзи тут были и ушли: на сорока четырёх карточках подряд они начинают
+ * спорить с подписью — глаз цепляется за рисунок и читает слово вторым, а слово и есть ответ,
+ * который уйдёт в разговор.
  */
 import { T } from './i18n';
 
@@ -26,14 +29,12 @@ export type DeckCard = {
   key: string;
   /** Что уйдёт репликой в разговор, если свайпнуть влево. */
   label: string;
-  emoji: string;
   tone: DeckTone;
 };
 
-const card = (key: string, ru: string, en: string, emoji: string, tone: DeckTone): DeckCard => ({
+const card = (key: string, ru: string, en: string, tone: DeckTone): DeckCard => ({
   key,
   label: T(ru, en),
-  emoji,
   tone,
 });
 
@@ -45,69 +46,74 @@ const card = (key: string, ru: string, en: string, emoji: string, tone: DeckTone
  * другое, и каждая требует отдельного решения, а не продолжения предыдущего.
  */
 export const DECK = (): DeckCard[] => [
-  card('run', 'Бег', 'Running', '🏃', 'lime'),
-  card('coffee', 'Кофе', 'Coffee', '☕️', 'sand'),
-  card('boardgames', 'Настольные игры', 'Board games', '🎲', 'violet'),
-  card('hiking', 'Походы', 'Hiking', '🏕', 'teal'),
-  card('cinema', 'Кино', 'Cinema', '🎬', 'slate'),
-  card('swimming', 'Плавание', 'Swimming', '🏊', 'teal'),
-  card('cooking', 'Готовка', 'Cooking', '🍳', 'amber'),
-  card('books', 'Книги', 'Books', '📚', 'sand'),
-  card('gym', 'Тренажёрный зал', 'The gym', '🏋️', 'slate'),
-  card('concerts', 'Концерты', 'Live music', '🎤', 'rose'),
-  card('languages', 'Языки', 'Languages', '🗣', 'indigo'),
-  card('cycling', 'Велосипед', 'Cycling', '🚴', 'lime'),
-  card('wine', 'Вино', 'Wine', '🍷', 'rose'),
-  card('museums', 'Музеи', 'Museums', '🏛', 'slate'),
-  card('yoga', 'Йога', 'Yoga', '🧘', 'violet'),
-  card('breakfast', 'Завтраки', 'Breakfasts', '🥐', 'amber'),
-  card('console', 'Приставка', 'Console games', '🎮', 'indigo'),
-  card('sea', 'Море', 'The sea', '🌊', 'teal'),
-  card('photo', 'Фотография', 'Photography', '📸', 'sand'),
-  card('tennis', 'Теннис', 'Tennis', '🎾', 'lime'),
-  card('theatre', 'Театр', 'Theatre', '🎭', 'violet'),
-  card('markets', 'Рынки', 'Food markets', '🧺', 'amber'),
-  card('coding', 'Программирование', 'Coding', '👨‍💻', 'indigo'),
-  card('dancing', 'Танцы', 'Dancing', '💃', 'rose'),
-  card('mountains', 'Горы', 'Mountains', '🏔', 'teal'),
-  card('quiz', 'Квизы', 'Quiz nights', '🧠', 'violet'),
-  card('football', 'Футбол', 'Football', '⚽️', 'lime'),
-  card('podcasts', 'Подкасты', 'Podcasts', '🎧', 'indigo'),
-  card('streetfood', 'Стритфуд', 'Street food', '🌮', 'amber'),
-  card('exhibitions', 'Выставки', 'Exhibitions', '🖼', 'slate'),
-  card('climbing', 'Скалолазание', 'Climbing', '🧗', 'lime'),
-  card('karaoke', 'Караоке', 'Karaoke', '🎙', 'rose'),
-  card('citywalks', 'Прогулки по городу', 'City walks', '🚶', 'sand'),
-  card('chess', 'Шахматы', 'Chess', '♟️', 'slate'),
-  card('picnic', 'Пикник', 'Picnics', '🧃', 'lime'),
-  card('series', 'Сериалы', 'Series', '📺', 'indigo'),
-  card('billiards', 'Бильярд', 'Pool', '🎱', 'violet'),
-  card('spa', 'Спа', 'Spa', '🧖', 'rose'),
-  card('camping', 'Кемпинг', 'Camping', '⛺️', 'teal'),
-  card('courses', 'Курсы', 'Courses', '🎓', 'indigo'),
-  card('bowling', 'Боулинг', 'Bowling', '🎳', 'violet'),
-  card('vinyl', 'Винил', 'Vinyl', '🎵', 'sand'),
-  card('dogwalks', 'Прогулки с собакой', 'Dog walks', '🐕', 'lime'),
-  card('meditation', 'Медитация', 'Meditation', '🌤', 'slate'),
+  card('run', 'Бег', 'Running', 'lime'),
+  card('coffee', 'Кофе', 'Coffee', 'sand'),
+  card('boardgames', 'Настольные игры', 'Board games', 'violet'),
+  card('hiking', 'Походы', 'Hiking', 'teal'),
+  card('cinema', 'Кино', 'Cinema', 'slate'),
+  card('swimming', 'Плавание', 'Swimming', 'teal'),
+  card('cooking', 'Готовка', 'Cooking', 'amber'),
+  card('books', 'Книги', 'Books', 'sand'),
+  card('gym', 'Тренажёрный зал', 'The gym', 'slate'),
+  card('concerts', 'Концерты', 'Live music', 'rose'),
+  card('languages', 'Языки', 'Languages', 'indigo'),
+  card('cycling', 'Велосипед', 'Cycling', 'lime'),
+  card('wine', 'Вино', 'Wine', 'rose'),
+  card('museums', 'Музеи', 'Museums', 'slate'),
+  card('yoga', 'Йога', 'Yoga', 'violet'),
+  card('breakfast', 'Завтраки', 'Breakfasts', 'amber'),
+  card('console', 'Приставка', 'Console games', 'indigo'),
+  card('sea', 'Море', 'The sea', 'teal'),
+  card('photo', 'Фотография', 'Photography', 'sand'),
+  card('tennis', 'Теннис', 'Tennis', 'lime'),
+  card('theatre', 'Театр', 'Theatre', 'violet'),
+  card('markets', 'Рынки', 'Food markets', 'amber'),
+  card('coding', 'Программирование', 'Coding', 'indigo'),
+  card('dancing', 'Танцы', 'Dancing', 'rose'),
+  card('mountains', 'Горы', 'Mountains', 'teal'),
+  card('quiz', 'Квизы', 'Quiz nights', 'violet'),
+  card('football', 'Футбол', 'Football', 'lime'),
+  card('podcasts', 'Подкасты', 'Podcasts', 'indigo'),
+  card('streetfood', 'Стритфуд', 'Street food', 'amber'),
+  card('exhibitions', 'Выставки', 'Exhibitions', 'slate'),
+  card('climbing', 'Скалолазание', 'Climbing', 'lime'),
+  card('karaoke', 'Караоке', 'Karaoke', 'rose'),
+  card('citywalks', 'Прогулки по городу', 'City walks', 'sand'),
+  card('chess', 'Шахматы', 'Chess', 'slate'),
+  card('picnic', 'Пикник', 'Picnics', 'lime'),
+  card('series', 'Сериалы', 'Series', 'indigo'),
+  card('billiards', 'Бильярд', 'Pool', 'violet'),
+  card('spa', 'Спа', 'Spa', 'rose'),
+  card('camping', 'Кемпинг', 'Camping', 'teal'),
+  card('courses', 'Курсы', 'Courses', 'indigo'),
+  card('bowling', 'Боулинг', 'Bowling', 'violet'),
+  card('vinyl', 'Винил', 'Vinyl', 'sand'),
+  card('dogwalks', 'Прогулки с собакой', 'Dog walks', 'lime'),
+  card('meditation', 'Медитация', 'Meditation', 'slate'),
 ];
 
 /**
  * Колода для шага: сначала подсказки агента, потом каталог.
  *
- * Подсказки приходят строками и своего оформления не имеют — им достаётся розовый тон и звёздочка.
- * Это честно: они и правда особенные, потому что придуманы под конкретного человека, а не выбраны
- * из общего списка.
+ * Подсказки приходят строками и своего оформления не имеют — им достаётся розовый тон: он же у
+ * действия во всём приложении, и личное предложение выделяется тем, каким цветом светится.
+ *
+ * ВТОРОЙ СПИСОК — УЖЕ РЕШЁННОЕ. Колода пересобирается после каждого захода: агент отвечает и
+ * предлагает новое, а карточки, по которым человек уже провёл пальцем, обязаны исчезнуть — иначе
+ * следующий заход начнётся с того же «Бега», по которому только что свайпнули.
  *
  * Совпадения выбрасываются по подписи: если агент предложил «Бег», второй такой же карты из
  * каталога быть не должно — человек решит, что его не услышали.
  */
-export const deckFor = (suggestions: string[] = []): DeckCard[] => {
-  const own = suggestions.filter(Boolean).map((label, i) => ({
-    key: `own-${i}`,
-    label,
-    emoji: '✨',
-    tone: 'rose' as DeckTone,
-  }));
-  const taken = new Set(own.map((c) => c.label.trim().toLowerCase()));
-  return [...own, ...DECK().filter((c) => !taken.has(c.label.trim().toLowerCase()))];
+export const deckFor = (suggestions: string[] = [], done: string[] = []): DeckCard[] => {
+  const norm = (s: string) => s.trim().toLowerCase();
+  const seen = new Set(done.filter(Boolean).map(norm));
+
+  const own = suggestions
+    .filter(Boolean)
+    .filter((label) => !seen.has(norm(label)))
+    .map((label, i) => ({ key: `own-${i}`, label, tone: 'rose' as DeckTone }));
+
+  own.forEach((c) => seen.add(norm(c.label)));
+  return [...own, ...DECK().filter((c) => !seen.has(norm(c.label)))];
 };

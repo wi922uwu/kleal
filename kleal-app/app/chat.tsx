@@ -410,7 +410,7 @@ function StepWidget({
   if (step === 'languages') return <LangW say={say} goto={goto} />;
   if (step === 'hobbies') return (
     <HobbyW say={say} leaveFunnel={leave} fork={fork} chips={chips} added={added}
-            onFork={onFork} onChip={onChip} onDrop={onDrop} />
+            onFork={onFork} onChip={onChip} onDrop={onDrop} onDrag={onDrag} />
   );
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -590,9 +590,15 @@ function LangW({ say, goto }: any) {
 }
 
 /** A.08 — увлечения с эмодзи. */
-function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop }: any) {
+function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop, onDrag }: any) {
   const st = useOnb();
   const [busy, setBusy] = useState(false);
+  /*
+    ПРОЙДЕННОЕ ПОМНИТ ШАГ, А НЕ КОЛОДА. После захода агент отвечает и предлагает новое — колода
+    пересобирается и встаёт с начала. Если бы решённые карточки не отсеивались здесь, следующий
+    заход начался бы с того же «Бега», по которому только что свайпнули.
+  */
+  const [done, setDone] = useState<string[]>([]);
   // Показываем записанное ЗА ЭТОТ разговор. Всё, что было в профиле раньше, человек видит на
   // экране «Интересы», откуда пришёл; повторять его здесь значит прятать новое среди старого.
   const explicit: string[] = added || [];
@@ -628,14 +634,27 @@ function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop }
         ПРЕДЛОЖЕННОЕ ИДЁТ КОЛОДОЙ, А НЕ РЯДОМ ЧИПОВ. Чипы просили выбрать: человек читал шесть
         подписей разом, сравнивал и решал, какие «правильные». Карта спрашивает про одну вещь и
         требует одного движения — и на неё отвечают не выбирая, а вспоминая.
-        Смысл действия прежний: свайп влево равен нажатию на чип, то есть уходит той же репликой
-        в разговор. Пропуск никуда не отправляется — он местный, просто следующая карта.
+        Свайп влево НЕ уходит репликой сразу. Заход набирается молча, и в разговор попадает один
+        список по кнопке «Готово» — иначе агент отвечал вопросом на каждую карту и колода уезжала
+        вниз за ответом. Пропуск не отправляется вовсе — он местный, просто следующая карта.
 
         Колода СТОИТ ВСЕГДА, а не только когда агент что-то предложил: подсказок бывает три-четыре
         за ход, а иногда ни одной, и на пустом шаге человеку было бы не с чем работать. Личные
         подсказки идут первыми, за ними каталог — см. src/interests-deck.ts.
       */}
-      <InterestDeck items={deckFor(chips)} onAdd={(c) => onChip?.(c.label)} />
+      <InterestDeck
+        // Ключ по числу пройденных: заход кончился — колода собирается заново, с начала нового
+        // списка. Без ключа она осталась бы стоять на старом месте в укоротившемся списке.
+        key={done.length}
+        items={deckFor(chips, done)}
+        onDragChange={onDrag}
+        onPass={(picked: string[], seen: string[]) => {
+          setDone((p: string[]) => [...p, ...seen]);
+          // В разговор уходит ОДНА реплика на весь заход — так агент отвечает один раз и по всему
+          // списку сразу, а не вопросом на каждую карту.
+          if (picked.length) onChip?.(picked.join(', '));
+        }}
+      />
       {explicit.length ? (
         <>
           <Text style={cs.hint}>{STEP_HOBBIES.saved()}</Text>
