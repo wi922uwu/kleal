@@ -7,6 +7,7 @@
 // была невидимой — ни падения, ни красной строки, — и заметить возврат можно только так.
 const fs = require('fs');
 const path = require('path');
+require('./time_input_test').run();
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
