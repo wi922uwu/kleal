@@ -2192,6 +2192,8 @@ ABOUT `added` — the whole value depends on these rules:
 - NEVER invent. `why` must quote their message literally; if you cannot quote it, drop the item.
 - One message may name TWO interests ("пить воду диджей музыку" -> the DJ music is an interest,
   drinking water is not). Take every real one, skip the rest.
+- A LIST IS A LIST. If the last message is just names separated by commas ("Бег, Кофе, Походы,
+  Языки"), every name is one they chose: `added` holds ALL of them, never a sample.
 - Bodily necessities are not interests: drinking water, sleeping, eating, breathing, resting.
 - Feelings, greetings, agreement, small talk are not interests.
 
@@ -2404,7 +2406,12 @@ def interests_chat(messages, profile, lang="ru", recorded=None):
     have = {str(x).strip().lower() for x in ((profile or {}).get("interests") or []) if str(x).strip()}
     have |= {str(it.get("key", "")).strip().lower() for it in (recorded or []) if isinstance(it, dict)}
     picked = []
-    for it in (obj.get("added") or [])[:3]:
+    # ПОТОЛОК НА ХОД — НЕ ТРИ. Три ставились под разговор словами: там человек называет одно-два
+    # увлечения за реплику, и всё сверх этого было бы фантазией модели. Но колода карточек отдаёт
+    # ЗАХОД целиком — десять-двенадцать имён одной репликой, — и обрезка по трём молча теряла
+    # остальные: человек видел, что записалось меньше, чем он выбрал. Потолок остаётся (сторож от
+    # модели, которая начнёт выдумывать), но по размеру захода, а не по размеру фразы.
+    for it in (obj.get("added") or [])[:20]:
         if not isinstance(it, dict):
             continue
         key = " ".join(str(it.get("key") or "").split())[:60]
