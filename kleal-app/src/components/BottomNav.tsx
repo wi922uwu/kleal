@@ -19,7 +19,6 @@
  */
 import React from 'react';
 import { View, StyleSheet, Platform, Pressable } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { IconLayers, IconSearch, IconMessages, IconProfile } from './icons';
@@ -83,14 +82,6 @@ export function BottomNav({ active }: { active?: Tab }) {
   return (
     <View style={[s.wrap, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
       <View style={s.bar}>
-        {/*
-          Стекло панели плотнее кнопочного (72% против 42%): под ней проезжает содержимое экрана, и
-          на просвет сквозь редкую плёнку знаки терялись бы ровно тогда, когда под панелью что-то
-          пёстрое — то есть на ленте карточек, где панель и нужна.
-        */}
-        <BlurView intensity={32} tint="light" style={StyleSheet.absoluteFill} />
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: color.glassLight, opacity: 0.72 }]} />
-
         <View style={s.side}>
           {item('intents', nav[0], IconLayers)}
           {item('search', nav[1], IconSearch)}
@@ -104,9 +95,13 @@ export function BottomNav({ active }: { active?: Tab }) {
       </View>
 
       {/*
-        КАПЛЯ ПОВЕРХ ПИЛЮЛИ, А НЕ ВНУТРИ НЕЁ. В кадре она чуть выше панели и выходит за её верхнюю
-        кромку; ребёнком пилюли с `overflow: hidden` (а он нужен, чтобы скруглить размытие) её
-        просто срезало бы сверху.
+        КАПЛЯ ПОВЕРХ ПИЛЮЛИ, А НЕ ВНУТРИ НЕЁ: у пилюли `overflow: hidden` — он нужен, чтобы скруглить
+        размытие, — и ребёнком её каплю срезало бы по кромке.
+
+        РОВНО ПО ЦЕНТРУ ПИЛЮЛИ. Первая версия поднимала её на две точки ВВЕРХ — я прочитал в кадре
+        «выходит за кромку», а там ровно наоборот: слой капли начинается на две точки НИЖЕ верха
+        панели и при высоте 44 в панели 48 стоит по центру. Сверка кадра с нашим снимком в одном
+        масштабе показала сдвиг на десять точек — на глаз это читалось как «капля вылезает».
       */}
       <Pressable
         accessibilityRole="button"
@@ -122,7 +117,7 @@ export function BottomNav({ active }: { active?: Tab }) {
           router.dismissTo('/home');
         }}
       >
-        <LogoMark width={42} />
+        <LogoMark width={DROP} />
       </Pressable>
     </View>
   );
@@ -138,19 +133,38 @@ const NAV_FAB = () => T('Главная', 'Home');
 // ===== вид
 /** Размеры пилюли из борда: 310×48 при ширине экрана 390, то есть по 40 с каждой стороны. */
 const BAR_H = 48;
+/**
+ * Ширина капли.
+ *
+ * В кадре её слой 42×44, но это РАМКА слоя, а не видимое пятно: у выгруженной картинки по краям
+ * прозрачные поля, и при ширине 42 розовое пятно выходило 28 точек против 33 в кадре — на глаз
+ * капля была заметно мельче. Число подобрано замером: сняли панель с экрана, положили рядом с
+ * кадром в одном масштабе и сравнили границы пятна, а не рамки.
+ */
+const DROP = 48;
 
 const s = StyleSheet.create({
   wrap: { paddingHorizontal: 40, alignItems: 'center' },
+  /*
+    ПИЛЮЛЯ БЕЛАЯ, А НЕ ПОЛУПРОЗРАЧНАЯ, И ЭТО ИСПРАВЛЕНИЕ ПО КАДРУ.
+
+    Сначала я взял из борда верхний слой — белое на 72% с размытием подложки — и получил панель,
+    которая красит собой то, что под ней: на голубой главной она голубела, а мягкое свечение по
+    краю капли переставало сливаться с фоном и читалось как обводка вокруг неё.
+
+    В кадре под этим слоем лежит ВТОРОЙ, сплошной белый на 100%. То есть 72% наложены на белое, и
+    вместе они дают просто белое; размытие под непрозрачной заливкой не видно вовсе. Поэтому здесь
+    одна белая заливка без размытия: результат тот же, слоёв на два меньше, и на панели, которая
+    висит на десяти экранах, это ещё и дешевле по отрисовке.
+  */
   bar: {
     width: '100%',
     height: BAR_H,
     borderRadius: 40,
-    overflow: 'hidden',
+    backgroundColor: color.card,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: space.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#FFFFFF88',
     ...Platform.select({
       ios: { shadowColor: color.ink, shadowOpacity: 0.12, shadowRadius: 24, shadowOffset: { width: 0, height: 8 } },
       android: { elevation: 8 },
@@ -162,17 +176,18 @@ const s = StyleSheet.create({
   gap: { flex: 1, minWidth: 72 },
   item: { width: 40, height: 32, alignItems: 'center', justifyContent: 'center' },
   off: { opacity: 0.38 },
+  /*
+    СВОЕЙ ТЕНИ У КАПЛИ НЕТ, И ЭТО ИСПРАВЛЕНИЕ. Была фирменная: `shadowColor` красный, радиус 12.
+    Под прозрачной картинкой iOS считает тень по её альфе, и на мягком крае капли это давало две
+    вещи, которых в кадре нет вовсе, — чёткую светлую обводку по контуру и розовое свечение,
+    вытекающее из-под панели вниз. Мягкая тень у капли уже нарисована в самой картинке.
+  */
   drop: {
     position: 'absolute',
     alignSelf: 'center',
-    // Капля выше пилюли на пару точек — ровно как в кадре, где она выходит за верхнюю кромку.
-    top: -2,
-    width: 42,
+    top: (BAR_H - DROP * (501 / 558)) / 2,
+    width: DROP,
     alignItems: 'center',
     justifyContent: 'center',
-    ...Platform.select({
-      ios: { shadowColor: color.primary, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
-      android: { elevation: 10 },
-    }),
   },
 });
