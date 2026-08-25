@@ -2676,6 +2676,40 @@ console.log('\n«назад» в мастере интента отступае�
     'иначе свайп во время запроса снимает экран, а ответ приезжает на размонтированный');
 }
 
+// ------------------------------------------------- запущенный интент закрывает мастер
+//
+// Результаты раньше открывались через navigate поверх /intent. Мастер оставался под ними, поэтому
+// стрелка, Android Back и iOS swipe возвращали на summary, а затем через все шаги создания.
+console.log('\nиз результатов запущенного интента назад ведёт прямо домой');
+{
+  const helper = code('src/results-navigation.ts');
+  const results = code('app/results.tsx');
+  const entries = ['app/intent.tsx', 'app/myintent.tsx', 'app/activity.tsx', 'app/group.tsx'];
+
+  check('выдача строит стабильный стек home → results',
+    helper.indexOf("router.dismissTo('/home')") >= 0
+    && helper.indexOf("router.navigate('/results')") > helper.indexOf("router.dismissTo('/home')"),
+    'сначала надо удалить завершённый мастер, и только потом открыть выдачу');
+  check('все точки входа используют один сброс стека',
+    entries.every((f) => code(f).includes('openResults(router)'))
+    && entries.every((f) => !code(f).includes("router.navigate('/results')")),
+    'повторное открытие активного интента не должно оставлять activity/myintent под выдачей');
+  check('экранная стрелка не делает обычный back',
+    (results.match(/onPress=\{leaveResults\}/g) || []).length === 2
+    && !results.includes('onPress={() => router.back()}'),
+    'и обычная, и устаревшая выдача обязаны закрываться на Home');
+  check('Android Back и iOS gesture перехвачены на выдаче',
+    results.includes('usePreventRemove(true')
+    && results.includes("action.type !== 'GO_BACK'")
+    && results.includes("action.type !== 'POP'")
+    && results.includes('leaveResults();'),
+    'нативное снятие экрана не вызывает обработчик экранной стрелки');
+  check('пошаговый back незавершённого мастера сохранён',
+    code('app/intent.tsx').includes('const prev = groupOnline')
+    && code('app/intent.tsx').includes('setStep(prev)'),
+    'сбрасывать стек можно только после запуска поиска');
+}
+
 // ------------------------------------------------- поле интента правится в самом листе
 //
 // Лист «Что хочешь поменять?» был УКАЗАТЕЛЕМ: он подсвечивал строку, а «Изменить» отправляло на

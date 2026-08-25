@@ -35,6 +35,7 @@ import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo, type GroupRemo
 import { ROOM, GROUP, groupSysLine, roomMsg, type GroupSys } from '../src/groups';
 import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
+import { openResults } from '../src/results-navigation';
 import { IconChevronLeft, IconChevronRight, IconPerson, IconSend, IconDots } from '../src/components/icons';
 import { interestLabels } from '../src/interest-label';
 import { Sheet, SheetItem } from '../src/components/Sheet';
@@ -301,7 +302,7 @@ export default function GroupRoom() {
         query: '',
       });
       setInfo(false);
-      router.navigate('/results');
+      openResults(router);
     } catch {
       setErr(GROUP.sendFailed());
     } finally {

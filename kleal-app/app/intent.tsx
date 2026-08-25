@@ -57,6 +57,7 @@ import { resetGroupSession } from '../src/ginvites';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { setResults, patchResults } from '../src/results-store';
+import { openResults } from '../src/results-navigation';
 import { agent, isAbort } from '../src/api';
 import { color, radius as rad, space, type } from '../src/theme';
 
@@ -218,7 +219,7 @@ export default function Intent() {
       profile: profile(),
       query: query || '',
     });
-    router.navigate('/results');
+    openResults(router);
   };
 
   /** Выбор строки на O.05/O.06: галочка, «Awesome!», и через паузу следующий вопрос. */

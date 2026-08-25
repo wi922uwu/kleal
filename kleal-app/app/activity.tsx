@@ -27,6 +27,7 @@ import { agent, group as gapi, mediaUrl } from '../src/api';
 import { searchProfile } from '../src/intent';
 import { type Row } from '../src/messages';
 import { setResults } from '../src/results-store';
+import { openResults } from '../src/results-navigation';
 import {
   ACT, CHIP_TONE, INTENT_ID_KEY, PLAN_STATE, chipLabel, ctaLabel, intentState, intentTitle,
   intentWhen, intentWhere, planCard,
@@ -149,7 +150,7 @@ export default function Activity() {
         profile: prof,
         query: intentTitle(row),
       });
-      router.navigate('/results');
+      openResults(router);
     } catch {
       setErr(ACT.loadFailed());
     } finally {

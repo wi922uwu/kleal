@@ -27,7 +27,8 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
+import { usePreventRemove } from '@react-navigation/native';
 import { RESULTS, EXPAND_LADDER, ExpandAxis, axisExplain } from '../src/intent';
 import { CANDS, PREFS, CAP, Cand, candSubtitle, candWhere, candSummary, isHidden } from '../src/candidates';
 import { CHAT, ReqStatus, activeChatWith } from '../src/chat';
@@ -78,10 +79,23 @@ function prefsFromIntent(it: any): Prefs {
 export default function Results() {
   useLang();
   const router = useRouter();
+  const nav = useNavigation();
   const insets = useSafeAreaInsets();
   const win = useWindowDimensions();
   // Читаем один раз: последующие render'ы не должны затирать уже расширенную выдачу исходной.
   const initial = useMemo(() => takeResults(), []);
+
+  /**
+   * Выдача относится к уже запущенному интенту, поэтому назад из неё всегда означает «домой».
+   * Перехват нужен не только экранной стрелке: Android Back и iOS swipe иначе снимают маршрут
+   * нативно и могут открыть старый стек, если экран попал сюда по устаревшей точке входа.
+   */
+  const leaveResults = useCallback(() => router.dismissTo('/home'), [router]);
+  usePreventRemove(true, (e) => {
+    const action = e.data.action;
+    if (action.type !== 'GO_BACK' && action.type !== 'POP') { nav.dispatch(action); return; }
+    leaveResults();
+  });
 
   const [intent, setIntent] = useState<any>(initial?.intent || {});
   const [cands, setCands] = useState<Cand[]>(initial?.candidates || []);
@@ -389,7 +403,7 @@ export default function Results() {
     return (
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={leaveResults}>
             <Text style={s.backIcon}>‹</Text>
           </Pressable>
           <Text style={s.headTitle}>{T('Выдача устарела', 'These results are gone')}</Text>
@@ -421,7 +435,7 @@ export default function Results() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={leaveResults}>
           <Text style={s.backIcon}>‹</Text>
         </Pressable>
         {/* Красная точка + заголовок — шапка кадра O.12. */}
