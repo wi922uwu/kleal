@@ -85,9 +85,17 @@ _CONCEPTS = {
     "league_of_legends": ("video_games", ("league of legends",)),
     "counter_strike": ("video_games", ("counter strike", "counter strike 2", "cs2")),
     "valorant": ("video_games", ("valorant", "валорант")),
+    # Шахматы — ОТДЕЛЬНОЕ понятие в той же семье, а не синоним настолок. Замер калибровочной
+    # батареей: запрос «шахматы» приводил игроков в «Катан» первым ярусом, потому что одно
+    # понятие накрывало и то и другое. В каноне I_chess — самостоятельный узел, то есть таблица
+    # была ГРУБЕЕ канона и, проверяясь раньше него, стирала различие. Теперь шахматы сходятся с
+    # шахматами на 4, с настолками — на 3 по семье.
+    "chess": ("tabletop_games", (
+        "chess", "шахматы", "ajedrez", "chess club", "шахматный клуб",
+    )),
     "tabletop_games": ("tabletop_games", (
-        "board games", "tabletop games", "chess", "catan", "настольные игры", "настолки", "шахматы",
-        "juegos de mesa", "ajedrez",
+        "board games", "tabletop games", "catan", "настольные игры", "настолки",
+        "juegos de mesa", "strategy board games", "стратегические настольные игры",
     )),
 
     # Culture and learning compounds that are common in profiles.

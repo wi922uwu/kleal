@@ -102,10 +102,29 @@ def validate_and_normalize(intent, source="llm"):
     out["topics"] = toks[:TOPIC_CAP]
 
     out["radiusKm"] = _clamp_num(out.get("radiusKm"), 1.0, RADIUS_MAX_KM) if out.get("radiusKm") is not None else None
-    mn = _clamp_num(out.get("minAge"), AGE_FLOOR, AGE_CEIL, as_int=True) if out.get("minAge") is not None else None
-    mx = _clamp_num(out.get("maxAge"), AGE_FLOOR, AGE_CEIL, as_int=True) if out.get("maxAge") is not None else None
+    # ВОЗРАСТНОЕ ОКНО. Два прежних «ремонта» молча меняли смысл запроса, и оба нашлись
+    # калибровочной батареей (tools/calib_matching.py, ось «возраст»).
+    #
+    # 1. Верхняя граница поднималась до 18. Просьба «14..17» превращалась в «ровно 18», и на
+    #    запрос про несовершеннолетних приходил восемнадцатилетний. Теперь maxAge зажимается
+    #    ТОЛЬКО сверху: окно, целиком лежащее ниже совершеннолетия, остаётся невыполнимым и
+    #    честно не находит никого — вместо того чтобы найти не тех.
+    # 2. При minAge > maxAge выбрасывалась ВЕРХНЯЯ граница, то есть «25..23» (опечатка в одну
+    #    цифру) становилось «25 и старше», и человек получал шестидесятилетних. Границы теперь
+    #    меняются местами: обе высказаны человеком, и порядок — единственное, что в них не так.
+    mn = _clamp_num(out.get("minAge"), 0, AGE_CEIL, as_int=True) if out.get("minAge") is not None else None
+    mx = _clamp_num(out.get("maxAge"), 0, AGE_CEIL, as_int=True) if out.get("maxAge") is not None else None
     if mn is not None and mx is not None and mn > mx:
-        report.append("minAge>maxAge -> drop maxAge"); mx = None
+        report.append("minAge>maxAge -> swap"); mn, mx = mx, mn
+    # Порядок здесь важнее, чем кажется: подъём нижней границы к совершеннолетию делается ПОСЛЕ
+    # обмена и ТОЛЬКО когда верхняя граница законна. Иначе «14..17» проходило подъём (14->18),
+    # становилось перевёрнутым (18>17), обменивалось и схлопывалось в «18..18» — просьба про
+    # несовершеннолетних оборачивалась восемнадцатилетним в выдаче.
+    if mx is None or mx >= AGE_FLOOR:
+        if mn is not None:
+            mn = max(AGE_FLOOR, mn)
+    else:
+        report.append("окно целиком ниже %d — оставлено невыполнимым" % AGE_FLOOR)
     out["minAge"], out["maxAge"] = mn, mx
     # requiredLanguages: 2-char truncation only, dedup, order-preserving. Directly-set gate semantics kept.
     rl = out.get("requiredLanguages")
