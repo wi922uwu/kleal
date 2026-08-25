@@ -23,6 +23,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { BottomNav } from '../src/components/BottomNav';
 import { CardStack } from '../src/components/CardStack';
 import { ArcCarousel } from '../src/components/ArcCarousel';
+import { hCommit } from '../src/haptics';
 import { Ambient, GLOW_SIGNIN } from '../src/components/Ambient';
 import { WHEEL } from '../src/wheel';
 import {
@@ -362,10 +363,21 @@ function EmptyInviteCard() {
           <IconClock />
           <Text style={s.meta} numberOfLines={1}>{HOME.noInvitesNote()}</Text>
         </View>
+        {/*
+          КНОПКА ЗАВОДИТ ИНТЕНТ, А НЕ ОТКРЫВАЕТ СПИСОК. Сначала она вела во вкладку интентов — но
+          приглашений нет ровно потому, что человеку пока не с чем к кому-то прийти. Показать ему
+          в этот момент пустой список значит ответить «смотри, тут тоже ничего». Приглашения
+          появляются в ответ на затею, поэтому кнопка ведёт туда, где затея заводится.
+          Без `seed`: что именно человек хочет, он ещё не сказал — в отличие от нажатия по
+          предмету в колесе, где фраза уже выбрана.
+        */}
         <Pressable
           accessibilityRole="button"
           style={({ pressed }) => [s.meetBtn, pressed && { opacity: 0.9 }]}
-          onPress={() => router.navigate('/activity')}
+          onPress={() => {
+            hCommit();
+            router.navigate('/create');
+          }}
         >
           <Text style={s.meetBtnText}>{HOME.discover()}</Text>
         </Pressable>
