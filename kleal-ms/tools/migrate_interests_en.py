@@ -37,9 +37,18 @@ BATCH = 12
 
 
 def translate(batch):
-    """Перевод батча. Промпт и разбор — общие с онбордингом (shared/interest_i18n.py)."""
-    raw = llm_complete(config.MODEL_ID, [{"role": "system", "content": ii.TRANSLATE_PROMPT},
-                                         {"role": "user", "content": "\n".join(batch)}], 0.2)
+    """Перевод батча. Промпт и разбор — общие с онбордингом (shared/interest_i18n.py).
+
+    Сбой ОДНОЙ пачки не имеет права ронять прогон на тысячу с лишним слов: модель отвечает 502,
+    когда занята, и терять из-за этого час работы незачем. Пустой ответ означает «эту пачку
+    пропускаем», а не «всё сломалось» — непереведённое доберёт следующий запуск, он идемпотентен.
+    """
+    try:
+        raw = llm_complete(config.MODEL_ID, [{"role": "system", "content": ii.TRANSLATE_PROMPT},
+                                             {"role": "user", "content": "\n".join(batch)}], 0.2)
+    except Exception as e:
+        print("      пачка пропущена: %s" % str(e)[:60])
+        return []
     return ii.parse_translation(raw, batch)
 
 

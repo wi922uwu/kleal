@@ -231,11 +231,14 @@ export default function Chat() {
         const recorded = cur0.map((k) => ({ key: k, label: interestLabel(k) }));
         const r = await buddyApi.interestsChat(next as any, profileForAttach(), replyLang(), recorded);
         setTyping(false);
-        const reply = String(r?.reply || '');
-        if (reply) {
-          say('bot', reply);
-          hobbyThread.current = [...next, { role: 'assistant', content: reply }];
-        }
+        // ПУСТОЙ ОТВЕТ ТОЖЕ НАДО ОЗВУЧИТЬ. Раньше пустая реплика молча не показывалась ничем, и
+        // человек оставался перед собственным сообщением: ни ответа, ни ошибки, ни признака
+        // работы. Поймано на скриншоте живого экрана. Сервер почти всегда что-то отвечает —
+        // значит сюда доехал сбой связи или чужой ответ, и об этом надо сказать вслух.
+        const reply = String(r?.reply || '')
+          || T('Что-то я замолчал. Повтори, пожалуйста?', 'I went quiet there. Say that again?');
+        say('bot', reply);
+        hobbyThread.current = [...next, { role: 'assistant', content: reply }];
         setChips(Array.isArray((r as any)?.chips) ? (r as any).chips.map(String) : []);
         const added = Array.isArray(r?.added) ? r!.added! : [];
         if (added.length) {
