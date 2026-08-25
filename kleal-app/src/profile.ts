@@ -127,6 +127,37 @@ export async function pushInterests(): Promise<boolean> {
   }
 }
 
+/**
+ * Подтянуть подписи интересов на языке интерфейса.
+ *
+ * ЗАЧЕМ ОТДЕЛЬНЫЙ ВЫЗОВ. Интересы хранятся английскими ключами, а переводы живут в серверном
+ * словаре и приезжают рядом с ответом `/api/onboarding/profile`. Вызывать эту ручку было НЕКОМУ:
+ * экран профиля берёт строку из состояния устройства, и до сервера за подписями никто не ходил —
+ * поэтому в русском интерфейсе среди своих же чипов светились `podcasts` и `dancing`, а рядом
+ * стояли «Бег» и «Йога» (те попадали в лесенку из словаря колеса).
+ *
+ * Отпечаток по набору ключей и языку: перерисовка экрана не должна дёргать сеть, а смена языка —
+ * должна, иначе после переключения останутся подписи прошлого языка.
+ */
+let _labelSig: string | null = null;
+
+export async function syncInterestLabels(): Promise<boolean> {
+  const st = getState();
+  const name = st.profile.name;
+  if (!name) return false;
+  const keys = explicitInterests(st.profile);
+  if (!keys.length) return false;
+  const sig = getLang() + '|' + keys.join('|');
+  if (sig === _labelSig) return false;
+  try {
+    await profileApi.get(name);        // сам сгружает interestLabels в реестр — см. src/api.ts
+    _labelSig = sig;
+    return true;
+  } catch {
+    return false;                       // сеть отвалилась — отпечаток не трогаем, попробуем позже
+  }
+}
+
 export async function adaptSummary(): Promise<boolean> {
   if (_resumBusy) return false;
   setBusy(true);

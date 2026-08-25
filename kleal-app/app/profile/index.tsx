@@ -22,8 +22,7 @@ import { useOnb, set, reset } from '../../src/state';
 import { mediaUrl, profile as profileApi } from '../../src/api';
 import {
   PROFILE_TITLE, HUB, SIGNOUT, HUB_ROWS, SHEETS, WHOAMI, profileData, fmtUpdated, adaptSummary,
-  onSummaryBusy,
-} from '../../src/profile';
+  onSummaryBusy, syncInterestLabels } from '../../src/profile';
 import { langName, searchLangs } from '../../src/languages';
 import { writeFact, patchFor } from '../../src/fields';
 import { SETTINGS } from '../../src/settings';
@@ -138,6 +137,10 @@ export default function ProfileHub() {
    * оттуда: пока в профиле меньше двух содержательных вещей, описывать нечего, и просить у модели
    * текст про пустоту — значит получить выдумку.
    */
+  // Подписи интересов на языке интерфейса: в строке лежат английские ключи, переводы приезжают
+  // с сервера. Главный экран профиля показывает те же чипы, что и «Интересы», — значит и здесь.
+  useEffect(() => { syncInterestLabels(); }, [lang, d.interests.length]);
+
   const autoTried = useRef(false);
   useEffect(() => {
     if (autoTried.current || busy || summary) return;

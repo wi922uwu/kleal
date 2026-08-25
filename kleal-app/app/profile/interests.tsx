@@ -15,7 +15,8 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { ProfileShell, Card } from '../../src/components/ProfileShell';
 import { useLang, T } from '../../src/i18n';
 import { useOnb, set, get } from '../../src/state';
-import { profileData, INTERESTS_SCREEN as C, SECTIONS, adaptSummary, pushInterests } from '../../src/profile';
+import { profileData, INTERESTS_SCREEN as C, SECTIONS, adaptSummary, pushInterests,
+         syncInterestLabels } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function Interests() {
@@ -50,6 +51,9 @@ export default function Interests() {
   useFocusEffect(
     useCallback(() => {
       pushInterests();
+      // И подписи: интересы в строке — английские ключи, переводы приезжают с сервера. Вызывать
+      // ручку профиля было некому, поэтому среди своих же чипов светились `podcasts` и `dancing`.
+      syncInterestLabels();
     }, [])
   );
 
