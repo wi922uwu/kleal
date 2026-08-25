@@ -22,10 +22,8 @@ import {
   STEP_PROGRESS, HEADER_TITLE, STEP_START, STEP_BASICS, SEXES, sexLabel,
   STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES,
   STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME,
-  OWN_INPUT, parseName, SCENE } from '../src/onboarding';
+  OWN_INPUT, parseName } from '../src/onboarding';
 import { interestLabel, registerInterestLabels } from '../src/interest-label';
-import { parseTurn, answerText, type DiscoverTurn, type SceneOption } from '../src/scene';
-import { SceneWidget, SuggestPicker } from '../src/components/SceneWidget';
 import { useLang, T, getLang , replyLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding, agent, buddy as buddyApi } from '../src/api';
@@ -72,13 +70,12 @@ export default function Chat() {
    *  отправки, перерисовка ей не нужна — на экране живёт общая лента. */
   const hobbyThread = useRef<Msg2[]>([]);
   /**
-   * ВЕТКА «ПОМОГИ РАЗОБРАТЬСЯ». `stage` живёт отдельно от `turn`, потому что развилка появляется
-   * ДО первого хода сервера: на ней ещё нечего разбирать, а кнопки уже нужны.
-   *   fork  — две кнопки, человек ещё не выбрал
-   *   off   — первая ветка: он пишет словами, опросник не при чём
-   *   on    — идут сцены, `turn` держит последнюю
+   * ПОДСКАЗКИ-ОТВЕТЫ к вопросу, который агент только что задал. Тап по подсказке — то же самое,
+   * что напечатать её руками: composer остаётся живым, подсказки только избавляют от набора.
+   * `fork` — первый ход на входе с профиля: две дороги, пока человек не сказал ничего.
    */
-  const [discover, setDiscover] = useState<DiscoverState>({ stage: 'off' });
+  const [chips, setChips] = useState<string[]>([]);
+  const [fork, setFork] = useState(false);
   // Лента стоит, пока крутят кольцо возраста: иначе один и тот же жест двигает и то, и другое.
   const [dragging, setDragging] = useState(false);
   // Номер прохода. Меняется при «Начать заново» и служит ключом виджетам, чтобы те начинали с
@@ -123,7 +120,7 @@ export default function Chat() {
       } else if (entry) {
         // Вход с экрана интересов — единственное место, где человек уже сказал «хочу добавить»,
         // но ещё не сказал ЧТО. Здесь и стоит развилка: первой репликой предлагаем обе дороги.
-        if (entry === 'hobbies') setDiscover({ stage: 'fork' });
+        if (entry === 'hobbies') setFork(true);
         say('bot',
           entry === 'hobbies' ? STEP_HOBBIES.forkBot()
           : entry === 'languages' ? STEP_LANGUAGES.bot()
@@ -191,77 +188,15 @@ export default function Chat() {
    * разговоре, — а выход остался тем же и по тем же причинам.
    */
   /**
-   * Ход опросника. Держит ленту и нить в одном месте: реплика агента уходит и на экран, и в
-   * историю, потому что по ней он импровизирует следующую сцену.
+   * Развилка на входе с экрана интересов. «Знаю, чем» реплики не оставляет — человек ничего не
+   * сказал, и пузырь с текстом кнопки потом читался бы как его слова; оно просто убирает кнопки
+   * и оставляет композер. «Помоги разобраться» отправляет обычную реплику: дальше работает тот
+   * же разговор, только начатый с честного «не знаю».
    */
-  const runDiscover = useCallback(async (next: Msg2[]) => {
-    setDiscover((d) => ({ ...d, stage: 'on', busy: true }));
-    setTyping(true);
-    try {
-      const r = await buddyApi.discoverChat(next as any, profileForAttach(), replyLang());
-      setTyping(false);
-      const turn = parseTurn(r);
-      if (turn?.reply) {
-        say('bot', turn.reply);
-        hobbyThread.current = [...next, { role: 'assistant', content: turn.reply }];
-      }
-      // Ход без сцены и без подборки — сервер ответил текстом. Разговор продолжается словами:
-      // возвращаем человека в первую ветку, а не оставляем перед пустым местом.
-      setDiscover(turn?.scene || turn?.suggest ? { stage: 'on', turn } : { stage: 'off' });
-    } catch {
-      setTyping(false);
-      say('bot', T('Связь на секунду пропала. Повторишь?',
-                   'I lost the connection for a second. Say that again?'));
-      setDiscover({ stage: 'off' });
-    }
-  }, [say]);
-
-  /** Развилка. «Знаю, чем» реплики не оставляет — человек ничего не сказал. */
   const onFork = useCallback((which: 'know' | 'help') => {
-    if (which === 'know') return setDiscover({ stage: 'off' });
-    const line = STEP_HOBBIES.forkHelp();
-    say('me', line);
-    const next: Msg2[] = [...hobbyThread.current, { role: 'user', content: line }];
-    hobbyThread.current = next;
-    runDiscover(next);
-  }, [say, runDiscover]);
-
-  /** Тап по сцене приходит обычной репликой человека — см. src/scene.ts. */
-  const onSceneAnswer = useCallback((picked: SceneOption[]) => {
-    const text = answerText(picked);
-    if (!text) return;
-    say('me', text);
-    const next: Msg2[] = [...hobbyThread.current, { role: 'user', content: text }];
-    hobbyThread.current = next;
-    runDiscover(next);
-  }, [say, runDiscover]);
-
-  /**
-   * Подборка принята. Запись идёт ТЕМ ЖЕ путём, что и в первой ветке: ключи в `interests.explicit`,
-   * подписи в реестр, отправка — `pushInterests()` при возврате на экран интересов. Второго пути
-   * записи нет и не будет: расходятся они молча.
-   *
-   * Пустой набор — «ни одно не про меня»: даём ещё один круг сцен, но ровно один. Бесконечно
-   * подбирать нельзя, это правило продукта.
-   */
-  const onSuggestAdd = useCallback((keys: string[]) => {
-    const items = discover.turn?.suggest || [];
-    if (!keys.length) {
-      const line = SCENE.none();
-      say('me', line);
-      const next: Msg2[] = [...hobbyThread.current, { role: 'user', content: line }];
-      hobbyThread.current = next;
-      return runDiscover(next);
-    }
-    const cur: string[] = get('interests.explicit') || [];
-    const merged = [...cur, ...keys.filter((k) => !cur.includes(k))];
-    set('interests.explicit', merged);
-    registerInterestLabels(
-      Object.fromEntries(items.filter((i) => keys.includes(i.key)).map((i) => [i.key, i.label])),
-      getLang()
-    );
-    setDiscover({ stage: 'off' });
-  }, [discover, say, runDiscover]);
+    setFork(false);
+    if (which === 'help') send(STEP_HOBBIES.forkHelpSaid());
+  }, []);
 
   const leaveFunnel = () => {
     // Пришли из профиля — туда и возвращаемся. Не `replace`: тот подменял только верхний экран,
@@ -287,6 +222,7 @@ export default function Chat() {
     if (step === 'hobbies') {
       const next: Msg2[] = [...hobbyThread.current, { role: 'user', content: text }];
       hobbyThread.current = next;
+      setChips([]);            // подсказка к прошлому вопросу поверх нового — обман
       setTyping(true);
       try {
         // Записанное уходит на сервер: по нему он опознаёт уточнение (и просит заменить, а не
@@ -300,6 +236,7 @@ export default function Chat() {
           say('bot', reply);
           hobbyThread.current = [...next, { role: 'assistant', content: reply }];
         }
+        setChips(Array.isArray((r as any)?.chips) ? (r as any).chips.map(String) : []);
         const added = Array.isArray(r?.added) ? r!.added! : [];
         if (added.length) {
           // УТОЧНЕНИЕ ЗАМЕНЯЕТ, А НЕ ДОБАВЛЯЕТ. «рыбалка» -> «рыбалка на море» это один интерес,
@@ -372,10 +309,10 @@ export default function Chat() {
           onDrag={setDragging}
           onDone={() => router.navigate('/summary')}
           leave={leaveFunnel}
-          discover={discover}
+          fork={fork}
+          chips={chips}
           onFork={onFork}
-          onAnswer={onSceneAnswer}
-          onAdd={onSuggestAdd}
+          onChip={send}
         />
       }
     />
@@ -417,12 +354,8 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
   );
 }
 
-/** Состояние ветки «помоги разобраться». См. discover в экране. */
-type DiscoverState = { stage: 'off' | 'fork' | 'on'; turn?: DiscoverTurn; busy?: boolean };
-
-
 function StepWidget({
-  step, say, goto, onDone, onDrag, leave, discover, onFork, onAnswer, onAdd,
+  step, say, goto, onDone, onDrag, leave, fork, chips, onFork, onChip,
 }: {
   step: StepId;
   say: (who: 'bot' | 'me', text: string, photo?: string) => void;
@@ -431,11 +364,12 @@ function StepWidget({
   onDrag: (dragging: boolean) => void;
   /** Выход с шага увлечений: в профиль, откуда пришли, или дальше по онбордингу. */
   leave: () => void;
-  /** Состояние ветки «помоги разобраться»; см. DiscoverState в этом файле. */
-  discover?: DiscoverState;
+  /** Развилка первым ходом: две дороги, пока человек ничего не сказал. */
+  fork?: boolean;
+  /** Подсказки-ответы к последнему вопросу агента. Тап равен набору руками. */
+  chips?: string[];
   onFork?: (which: 'know' | 'help') => void;
-  onAnswer?: (picked: SceneOption[]) => void;
-  onAdd?: (keys: string[]) => void;
+  onChip?: (text: string) => void;
 }) {
   const st = useOnb();
 
@@ -446,8 +380,8 @@ function StepWidget({
   if (step === 'area') return <AreaW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'languages') return <LangW say={say} goto={goto} />;
   if (step === 'hobbies') return (
-    <HobbyW say={say} leaveFunnel={leave} discover={discover}
-            onFork={onFork} onAnswer={onAnswer} onAdd={onAdd} />
+    <HobbyW say={say} leaveFunnel={leave} fork={fork} chips={chips}
+            onFork={onFork} onChip={onChip} />
   );
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -627,37 +561,20 @@ function LangW({ say, goto }: any) {
 }
 
 /** A.08 — увлечения с эмодзи. */
-function HobbyW({ say, leaveFunnel, discover, onFork, onAnswer, onAdd }: any) {
+function HobbyW({ say, leaveFunnel, fork, chips, onFork, onChip }: any) {
   const st = useOnb();
   const [busy, setBusy] = useState(false);
   const explicit: string[] = st.profile.interests?.explicit || [];
 
-  // РАЗВИЛКА ПЕРВЫМ ХОДОМ. Пока человек не выбрал и ничего не рассказал — две кнопки. «Знаю, чем»
-  // реплики не оставляет: он ничего не сказал, а пузырь с текстом кнопки потом читался бы как
-  // его слова. Оно просто убирает развилку и оставляет композер, который и есть первая ветка.
-  if (discover?.stage === 'fork') {
+  // РАЗВИЛКА ПЕРВЫМ ХОДОМ. Пока человек не выбрал и ничего не рассказал — две кнопки. Дальше
+  // работает обычный разговор: он пишет сам, а подсказки только избавляют от набора.
+  if (fork) {
     return (
       <View style={cs.widget}>
         <View style={cs.row}>
           <Chip label={STEP_HOBBIES.forkKnow()} onPress={() => onFork('know')} />
           <Chip label={STEP_HOBBIES.forkHelp()} on onPress={() => onFork('help')} />
         </View>
-      </View>
-    );
-  }
-
-  if (discover?.turn?.scene) {
-    return (
-      <View style={cs.widget}>
-        <SceneWidget scene={discover.turn.scene} busy={discover.busy} onAnswer={onAnswer} />
-      </View>
-    );
-  }
-
-  if (discover?.turn?.suggest) {
-    return (
-      <View style={cs.widget}>
-        <SuggestPicker items={discover.turn.suggest} busy={discover.busy} onAdd={onAdd} />
       </View>
     );
   }
@@ -669,6 +586,16 @@ function HobbyW({ say, leaveFunnel, discover, onFork, onAnswer, onAdd }: any) {
 
   return (
     <View style={cs.widget}>
+      {/* ПОДСКАЗКИ ВЫШЕ ЗАПИСАННОГО. Это ответ на вопрос, который человек читает прямо сейчас,
+          а записанное — итог прошлых ходов; порядок на экране повторяет порядок разговора.
+          Тап равен набору руками: композер живой, подсказки только избавляют от печати. */}
+      {chips?.length ? (
+        <View style={cs.row}>
+          {chips.map((c: string) => (
+            <Chip key={c} label={c} onPress={() => onChip?.(c)} />
+          ))}
+        </View>
+      ) : null}
       {explicit.length ? (
         <>
           <Text style={cs.hint}>{STEP_HOBBIES.saved()}</Text>
