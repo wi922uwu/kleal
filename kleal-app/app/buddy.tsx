@@ -275,7 +275,7 @@ export default function Buddy() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" style={s.back} onPress={() => router.back()}>
+          <Pressable accessibilityRole="button" style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <IconChevronLeft />
           </Pressable>
           <View style={{ flex: 1 }} />

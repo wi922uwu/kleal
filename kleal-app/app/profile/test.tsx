@@ -121,7 +121,7 @@ export default function PersonalityTest() {
         title={C.title()}
         onBack={() => router.back()}
         footer={
-          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.back()}>
+          <Pressable accessibilityRole="button" style={s.cta} onPress={() => (router.canGoBack() ? router.back() : router.replace('/profile'))}>
             <Text style={s.ctaText}>{C.keep()}</Text>
           </Pressable>
         }

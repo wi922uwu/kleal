@@ -444,7 +444,7 @@ export default function Conversation() {
         {/* MSG.06: шапка одним рядом — назад, аватар, имя со статусом, многоточие. Отдельной
             полосы интента больше нет: интент живёт в закреплённом плане и в листе за «•••». */}
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <IconChevronLeft />
           </Pressable>
           {photo ? (

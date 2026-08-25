@@ -168,7 +168,7 @@ export default function Candidate() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
           <Text style={s.backIcon}>‹</Text>
         </Pressable>
         <View style={{ flex: 1 }} />

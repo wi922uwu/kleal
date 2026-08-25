@@ -253,7 +253,16 @@ export default function Create() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" style={s.back} onPress={() => router.back()}>
+          {/*
+            У «НАЗАД» ОБЯЗАН БЫТЬ ЗАПАСНОЙ ПУТЬ. Голый `router.back()` молча ничего не делает, когда
+            возвращаться некуда, — навигатор отвечает «GO_BACK was not handled», и кнопка выглядит
+            сломанной. А некуда бывает чаще, чем кажется: экран открыт по ссылке снаружи, или он
+            оказался первым после холодного старта. Поймано ровно здесь, на создании интента,
+            открытом по ссылке.
+            `replace` на корень — единственная законная его форма (см. правило в наборе проверок):
+            он подменяет ТЕКУЩИЙ экран, а не кладёт вторую главную поверх первой.
+          */}
+          <Pressable accessibilityRole="button" style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <IconChevronLeft />
           </Pressable>
           <View style={{ flex: 1 }} />

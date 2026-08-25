@@ -522,7 +522,7 @@ export default function Plan() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <IconChevronLeft />
           </Pressable>
           <Text style={s.headTitle} numberOfLines={1}>{intentTitle || T('Встреча', 'Meetup')}</Text>

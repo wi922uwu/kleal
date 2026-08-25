@@ -389,7 +389,7 @@ export default function Results() {
     return (
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <Text style={s.backIcon}>‹</Text>
           </Pressable>
           <Text style={s.headTitle}>{T('Выдача устарела', 'These results are gone')}</Text>
@@ -421,7 +421,7 @@ export default function Results() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => router.back()}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
           <Text style={s.backIcon}>‹</Text>
         </Pressable>
         {/* Красная точка + заголовок — шапка кадра O.12. */}
