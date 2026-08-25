@@ -23,6 +23,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { BottomNav } from '../src/components/BottomNav';
 import { CardStack } from '../src/components/CardStack';
 import { ArcCarousel, ARC_COPIES, ARC_PITCH } from '../src/components/ArcCarousel';
+import { NotifyBubble } from '../src/components/NotifyBubble';
 import { hCommit } from '../src/haptics';
 import { Ambient, GLOW_SIGNIN } from '../src/components/Ambient';
 import { WHEEL } from '../src/wheel';
@@ -181,14 +182,14 @@ export default function Home() {
         <View style={[s.head, { paddingTop: insets.top + 6 }]}>
           {/* Гарнитура зависит от языка — см. displayFamily: в шрифте борда нет кириллицы. */}
           <Text style={[s.hello, { fontFamily: displayFamily(lang) }]}>{HOME.hello()}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={T('Уведомления', 'Notifications')}
-            style={s.bell}
-          >
-            <IconBell />
-            {invites.length ? <View style={s.bellDot} /> : null}
-          </Pressable>
+          {/*
+            Колокольчик больше не молчит: под ним разворачивается пузырь с приглашениями — см.
+            src/components/NotifyBubble.tsx. Точка «есть новое» осталась там же, внутри него.
+          */}
+          <NotifyBubble
+            invites={invites}
+            onPick={(inv) => router.navigate({ pathname: '/invite', params: { id: inv.id } })}
+          />
         </View>
 
         <ScrollView
@@ -303,7 +304,17 @@ export default function Home() {
           )}
         </ScrollView>
 
-        <View style={[s.dock, { paddingBottom: kb ? 6 : navH + 6 }]}>
+        {/*
+          ДОК ПОДНЯТ НАД ПАНЕЛЬЮ НА ЗАМЕТНЫЙ ЗАЗОР, А НЕ НА ШЕСТЬ ТОЧЕК.
+
+          Шести хватало, чтобы не наезжать, но не хватало, чтобы читаться отдельно: строка ввода,
+          «история разговоров» и панель слипались в одну кучу у нижнего края, а карточка
+          приглашений прижималась к ним сверху. Теперь между доком и панелью настоящий промежуток —
+          и карточка вместе с ним уезжает выше, потому что лента занимает то, что осталось.
+
+          С поднятой клавиатурой зазор снова маленький: там панели нет вовсе, а место дорого.
+        */}
+        <View style={[s.dock, { paddingBottom: kb ? 6 : navH + space.lg }]}>
           <View style={s.askRow}>
             <View style={s.askAvatar}>
               <IconImagePlaceholder size={22} />
@@ -568,14 +579,6 @@ const s = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: space.md },
   /* Насыщенность задаётся ГАРНИТУРОЙ, а не `fontWeight`: на подключённом файле вес не работает. */
   hello: { flex: 1, fontSize: 26, lineHeight: 34, color: color.fg },
-  bell: {
-    width: 42, height: 42, borderRadius: 21, backgroundColor: color.onCoverSoft,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  bellDot: {
-    position: 'absolute', top: 10, right: 11, width: 8, height: 8,
-    borderRadius: 4, backgroundColor: color.primary,
-  },
 
   /*
     `flexGrow` и центрирование нужны ради колеса: без них содержимое прижимается к шапке, и «по
@@ -645,7 +648,7 @@ const s = StyleSheet.create({
   faceMore: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
   faceMoreText: { ...type.labelSmall, color: color.muted, fontWeight: '700' } as any,
 
-  dock: { paddingHorizontal: 16, gap: 8, paddingBottom: 6 },
+  dock: { paddingHorizontal: 16, gap: space.md, paddingBottom: 6 },
   askRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   askAvatar: {
     width: 46, height: 46, borderRadius: 23, backgroundColor: color.onCoverSoft,
