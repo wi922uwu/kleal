@@ -586,7 +586,7 @@ const s = StyleSheet.create({
     колесом: когда колесо и карточка вместе выше экрана, лента должна прокручиваться, а не
     сжимать их — `flex: 1` на блоке в прокрутке как раз и приводит к сжатию.
   */
-  scroll: { flexGrow: 1, justifyContent: 'center', paddingBottom: space.lg, gap: space.sm },
+  scroll: { flexGrow: 1, justifyContent: 'center', paddingBottom: 20, gap: space.sm },
   wheel: { gap: space.lg },
   /** Пустая карточка стоит вплотную к колесу — она его продолжение, а не отдельная секция. */
   emptyCard: { marginTop: 0 },
@@ -648,7 +648,13 @@ const s = StyleSheet.create({
   faceMore: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
   faceMoreText: { ...type.labelSmall, color: color.muted, fontWeight: '700' } as any,
 
-  dock: { paddingHorizontal: 16, gap: space.md, paddingBottom: 6 },
+  /*
+    ОТБИВКА НАД ДОКОМ БОЛЬШЕ, ЧЕМ ЗАЗОР ВНУТРИ НЕГО. Было восемь точек и там, и там: карточка
+    приглашений и строка ввода — оба белые прямоугольника — почти касались друг друга и читались
+    как один блок в две полосы. Между РАЗНЫМИ вещами промежуток обязан быть заметно больше, чем
+    между частями одной; иначе граница пропадает, и глаз собирает их вместе.
+  */
+  dock: { paddingHorizontal: 16, gap: space.md, paddingTop: 20, paddingBottom: 6 },
   askRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   askAvatar: {
     width: 46, height: 46, borderRadius: 23, backgroundColor: color.onCoverSoft,
