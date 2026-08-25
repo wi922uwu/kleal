@@ -46,6 +46,12 @@ STRIP = {
     "market", "talk", "quiet", "business", "product", "trip", "language",
     "fitness", "job", "data", "management", "clothes", "socialize", "nature", "family",
     "digital", "team", "performance", "training", "money", "design",
+    # Найдено на живом экране: разговор про форекс приводил людей с ЯЗЫКОВЫМ обменом. Ручка
+    # `exchange` дописана к «catalan language exchange», а тема запроса про валютный рынок тоже
+    # свелась к `exchange` — два машинных расширения встретились на общем слове и дали точное
+    # совпадение. Слово уже считается многозначным в _wshare и запрещено в алиасах; в профилях
+    # ему тоже не место.
+    "exchange", "обмен", "intercambio",
 }
 
 

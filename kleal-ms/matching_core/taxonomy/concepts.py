@@ -32,6 +32,9 @@ _CONCEPTS = {
     )),
     "forex_trading": ("financial_markets", (
         "forex", "fx trading", "currency trading", "форекс", "валютный рынок", "comercio de divisas",
+        # Полное имя рынка. Без него «форекс» разбирался как голое `exchange`, и запрос про
+        # валютный рынок приводил людей с ЯЗЫКОВЫМ обменом — по одному общему слову.
+        "foreign exchange", "foreign exchange market", "иностранный обмен", "mercado de divisas",
     )),
     "equity_markets": ("financial_markets", (
         "nasdaq", "stock trading", "stock market", "stocks", "equities", "financial markets",
