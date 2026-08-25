@@ -30,6 +30,7 @@ import { onboarding, agent, buddy as buddyApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
+import { InterestDeck } from '../src/components/InterestDeck';
 import { GlassChip, GlassPill } from '../src/components/Glass';
 import { IconCheckCircle } from '../src/components/icons';
 import { color, radius as rad, type } from '../src/theme';
@@ -622,12 +623,15 @@ function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop }
       {/* ПОДСКАЗКИ ВЫШЕ ЗАПИСАННОГО. Это ответ на вопрос, который человек читает прямо сейчас,
           а записанное — итог прошлых ходов; порядок на экране повторяет порядок разговора.
           Тап равен набору руками: композер живой, подсказки только избавляют от печати. */}
+      {/*
+        ПРЕДЛОЖЕННОЕ ИДЁТ КОЛОДОЙ, А НЕ РЯДОМ ЧИПОВ. Чипы просили выбрать: человек читал шесть
+        подписей разом, сравнивал и решал, какие «правильные». Карта спрашивает про одну вещь и
+        требует одного движения — и на неё отвечают не выбирая, а вспоминая.
+        Смысл действия прежний: свайп влево равен нажатию на чип, то есть уходит той же репликой
+        в разговор. Пропуск никуда не отправляется — он местный, просто следующая карта.
+      */}
       {chips?.length ? (
-        <View style={cs.row}>
-          {chips.map((c: string) => (
-            <Chip key={c} label={c} onPress={() => onChip?.(c)} />
-          ))}
-        </View>
+        <InterestDeck items={chips} onAdd={(c) => onChip?.(c)} />
       ) : null}
       {explicit.length ? (
         <>
