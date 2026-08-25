@@ -2077,14 +2077,32 @@ def _persona_by_name():
     return out
 
 
+# Порядок ярусов (§7.1): T0 взаимный запрос, T1 прямой интерес, T2 родственная категория,
+# T3 смежный контекст, T4 другой тип решения, T5 без пересечения.
+_TIER_ORDER = {"T0": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4, "T5": 5}
+
+
 def _persona_order(slate, intent):
     """§ product: «сначала те, кто подходят и заполнили интерес и характер».
 
-    Three keys, in this order:
-      1. the band the ENGINE gave the card — relevance stays the engine's business;
-      2. how many of the asked-for traits the person actually has;
-      3. whether their profile can be read at all — interests AND a taken test.
-    Ties fall back to the engine's own position, so the sort is stable end to end."""
+    Ключи по порядку:
+      1. ЯРУС — про то ли это вообще;
+      2. полоса, которую дал движок, — насколько уверенно;
+      3. сколько запрошенных черт характера у человека есть;
+      4. читается ли профиль вообще — есть и интересы, и пройденный тест.
+    При равенстве — позиция от движка, чтобы сортировка была устойчивой от начала до конца.
+
+    ЯРУС СТАЛ ПЕРВЫМ КЛЮЧОМ. Раньше первой была полоса, а она выводится из уверенности
+    (lcb/coverage), не из яруса, — и ярусы в выдаче перемешивались: человек спрашивал про
+    велоспорт и получал бегуна (T2) ВЫШЕ велосипедиста (T1), потому что у бегуна профиль был
+    полнее. Замерено калибровочной батареей: 7% выдач с перестановкой, 108 перевёрнутых пар;
+    шесть из десяти оставшихся содержательных сбоев ЗОЛОТОЙ батареи — та же перестановка
+    (spanish_native ниже spanish_learner, gym_cross ниже yoga, dinner_food ниже brunch).
+
+    Почему ярус важнее уверенности: карточка показывает ИНТЕРЕСЫ, и несовпадение по ним человек
+    видит глазами. Уверенность ему не показана ничем, поэтому объяснить ею порядок невозможно —
+    выдача просто выглядит перепутанной.
+    """
     slate = list(slate or [])
     want = {str(k): str(v) for k, v in ((intent or {}).get("wantPersona") or {}).items()
             if isinstance(v, str) and v}
@@ -2109,9 +2127,10 @@ def _persona_order(slate, intent):
                 continue
             c.setdefault("reasons_ru", []).append("%s — как ты просил(а)" % say[0])
             c.setdefault("reasons_en", []).append("%s — as you asked" % say[1])
-        keyed.append((bands[band], -len(hits), 0 if filled else 1, i, c))
-    keyed.sort(key=lambda t: t[:4])
-    return [t[4] for t in keyed]
+        tier = _TIER_ORDER.get(str(c.get("tier") or ""), 9)
+        keyed.append((tier, bands[band], -len(hits), 0 if filled else 1, i, c))
+    keyed.sort(key=lambda t: t[:5])
+    return [t[5] for t in keyed]
 
 
 def _apply_policy(slate, policy_by):

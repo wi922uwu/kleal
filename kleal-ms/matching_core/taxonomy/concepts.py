@@ -96,6 +96,32 @@ _CONCEPTS = {
     "chess": ("tabletop_games", (
         "chess", "шахматы", "ajedrez", "chess club", "шахматный клуб",
     )),
+    # РОЛЕВЫЕ ИГРЫ. Слово «rpg» не резолвилось НИГДЕ — ни в каноне, ни здесь, — хотя сами игры в
+    # каноне есть (I_dungeons_dragons, I_baldurs_gate_3, I_genshin_impact). Запрос «поиграть в rpg»
+    # добраться до них не мог, и кандидатов подбирал мост выученных фраз наугад: на живом экране
+    # он выдал подлёдную рыбалку и counter-strike, причём обоих «Мэтчем».
+    #
+    # Семья общая для настольных и компьютерных ролевых: человеку, спросившему «поиграть в rpg»,
+    # подходит и D&D, и Baldur's Gate. Внутри семьи это РАЗНЫЕ понятия — настольная кампания и
+    # одиночная игра не одно и то же, — поэтому точное совпадение остаётся точным, а между собой
+    # они сходятся на 3.
+    "rpg_general": ("rpg_games", (
+        "rpg", "рпг", "ролевые игры", "ролевая игра", "role playing", "role-playing",
+        "role playing game", "juegos de rol", "juego de rol", "jrpg", "crpg",
+    )),
+    "tabletop_rpg": ("rpg_games", (
+        "dungeons & dragons", "dungeons and dragons", "dnd", "d&d", "днд",
+        "подземелья и драконы", "pathfinder", "настольные ролевые игры",
+    )),
+    "crpg_titles": ("rpg_games", (
+        "baldur's gate", "baldurs gate", "baldur's gate 3", "divinity original sin",
+        "the witcher", "witcher", "ведьмак", "skyrim", "скайрим", "elden ring", "элден ринг",
+        "fallout", "фоллаут", "disco elysium",
+    )),
+    "gacha_rpg": ("rpg_games", (
+        "genshin impact", "геншин", "genshin", "honkai star rail",
+    )),
+
     "tabletop_games": ("tabletop_games", (
         "board games", "tabletop games", "catan", "настольные игры", "настолки",
         "juegos de mesa", "strategy board games", "стратегические настольные игры",
