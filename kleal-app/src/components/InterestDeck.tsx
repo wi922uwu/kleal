@@ -53,6 +53,8 @@ const STEP_Y = 14;
 const STEP_S = 0.055;
 const CARD_H = 176;
 const CARD_R = 34;
+/** Где кончается стопка и начинается подвал. Место под кнопку отведено всегда — см. подвал. */
+const FOOT_TOP = CARD_H + (DEPTH - 1) * STEP_Y + 12;
 
 /**
  * Ступени затухания свечения.
@@ -140,7 +142,15 @@ export function InterestDeck({ items, onPass, onDragChange }: {
   const { width } = useWindowDimensions();
   const [at, setAt] = useState(0);
   const [picked, setPicked] = useState<string[]>([]);
-  const x = useRef(new Animated.Value(0)).current;
+  /*
+    СДВИГ — СВЕЖЕЕ ЗНАЧЕНИЕ НА КАЖДУЮ КАРТУ, А НЕ ОДНО ОБЩЕЕ.
+    Общее приходилось сбрасывать в ноль после вылета — и на кадр между сбросом и перерисовкой
+    улетевшая карта возвращалась в середину. Это и был «на секунду показывается другая»: сброс
+    значения бьёт по нативному виду немедленно, а новый список React показывает своим тактом
+    позже. Новое значение рождается вместе с новым разворотом стопки, сбрасывать нечего, и кадра
+    с чужой картой не существует.
+  */
+  const [x, setX] = useState(() => new Animated.Value(0));
   /** Подъём карты под пальцем: она отрывается от стопки, пока её держат. */
   const grab = useRef(new Animated.Value(0)).current;
   /** Толчок счётчика на кнопке — по нему видно, что карта засчиталась. */
@@ -187,11 +197,10 @@ export function InterestDeck({ items, onPass, onDragChange }: {
         Animated.spring(pop, { toValue: 1, useNativeDriver: true, damping: 9, stiffness: 320, mass: 0.7 }).start();
       }
       const next = at + 1;
-      setAt(next);
-      // Позиция сбрасывается в ТОМ ЖЕ такте, что и смена карты: обе правки успевают до кадра, и
-      // улетевшая не показывается на миг вернувшейся в центр.
-      x.setValue(0);
       armed.current = 0;
+      // Обе правки одним тактом: новый разворот стопки и новое нулевое значение сдвига.
+      setAt(next);
+      setX(new Animated.Value(0));
       if (next >= items.length) flush();
     });
   };
@@ -249,7 +258,7 @@ export function InterestDeck({ items, onPass, onDragChange }: {
           Animated.spring(x, { toValue: 0, useNativeDriver: true, damping: 20, stiffness: 260 }).start();
         },
       }),
-    [at, items]
+    [at, items, x]
   );
 
   const top = items[at];
@@ -350,6 +359,13 @@ export function InterestDeck({ items, onPass, onDragChange }: {
         )}
 
       <View style={s.foot} pointerEvents="box-none">
+        {/*
+          Подсказка НЕ уступает место кнопке. Раньше уступала — и тот, кто уже добавил одну
+          карточку, терял единственное постоянное напоминание, куда что тянуть: метки на карте
+          видно только во время самого жеста. Место под кнопку отведено всегда, поэтому её
+          появление ничего не двигает.
+        */}
+        <Text style={s.hint}>{STEP_HOBBIES.deckHint()}</Text>
         {picked.length ? (
           <Animated.View
             style={{
@@ -365,12 +381,10 @@ export function InterestDeck({ items, onPass, onDragChange }: {
               }}
               style={({ pressed }) => [s.done, pressed && s.doneOn]}
             >
-              <Text style={s.doneText}>{STEP_HOBBIES.deckDone(picked.length)}</Text>
+              <Text style={s.doneText}>{STEP_HOBBIES.deckSave(picked.length)}</Text>
             </Pressable>
           </Animated.View>
-        ) : (
-          <Text style={s.hint}>{STEP_HOBBIES.deckHint()}</Text>
-        )}
+        ) : null}
       </View>
     </View>
   );
@@ -379,7 +393,7 @@ export function InterestDeck({ items, onPass, onDragChange }: {
 // ===== вид
 const s = StyleSheet.create({
   /** Высота с запасом: под стопкой ещё кнопка захода, а сами карты уходят вниз на DEPTH шагов. */
-  wrap: { height: CARD_H + (DEPTH - 1) * STEP_Y + 56, alignSelf: 'center', marginTop: space.sm },
+  wrap: { height: FOOT_TOP + 64, alignSelf: 'center', marginTop: space.sm },
   card: {
     position: 'absolute',
     height: CARD_H,
@@ -427,7 +441,7 @@ const s = StyleSheet.create({
   markAddText: { ...type.labelSmall, color: color.primary } as any,
   markSkip: { right: space.md, backgroundColor: '#FFFFFFF2' },
   markSkipText: { ...type.labelSmall, color: color.muted } as any,
-  foot: { position: 'absolute', bottom: 0, alignSelf: 'center', alignItems: 'center' },
+  foot: { position: 'absolute', top: FOOT_TOP, left: 0, right: 0, alignItems: 'center', gap: space.sm },
   hint: { ...type.fine, color: color.muted, textAlign: 'center' } as any,
   done: {
     height: 40,
