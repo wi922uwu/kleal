@@ -15,11 +15,13 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Animated, Easing,
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
   ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { hOk, hTick } from '../src/haptics';
 import { IconChevronLeft, IconMic, IconSpark } from '../src/components/icons';
 import { useLang, getLang, T , replyLang } from '../src/i18n';
 import { useOnb } from '../src/state';
@@ -84,6 +86,20 @@ export default function Create() {
   const [versions, setVersions] = useState<{ topics: string[]; title: string }[]>([]);
   /** Закреплённая сводка развёрнута. Свёрнута по умолчанию — она не должна съедать половину чата. */
   const [sumOpen, setSumOpen] = useState(false);
+  /**
+   * ПЕРВОЕ ПОЯВЛЕНИЕ СВОДКИ РАСКРЫВАЕТ ЕЁ САМО.
+   *
+   * Свёрнутой она была задумана нарочно: одна строка не закрывает разговор. Но именно в момент,
+   * когда она появляется впервые, показывать одну строку неправильно — это единственный кадр, ради
+   * которого весь разговор и шёл, а он проскакивал незамеченным. Дальше человек сворачивает её
+   * сам, и его выбор больше не трогаем: раскрытие однократное.
+   */
+  const shown = useRef(false);
+  useEffect(() => {
+    if (!ready || shown.current) return;
+    shown.current = true;
+    setSumOpen(true);
+  }, [ready]);
   const started = useRef(false);
   const rolls = useRef(0);
 
@@ -422,6 +438,77 @@ function PinnedSummary({
   onToggle: () => void;
   onCreate: () => void;
 }) {
+  /**
+   * СВОДКА ОБЪЯВЛЯЕТ О СЕБЕ, А НЕ ПРОСТО ВОЗНИКАЕТ.
+   *
+   * Она появляется под шапкой мгновенно и без единого признака движения — глазу не за что
+   * зацепиться, и самый важный кадр разговора человек попросту не замечает. Здесь два разных
+   * события и два разных отклика на них:
+   *
+   *   ПОЯВИЛАСЬ ВПЕРВЫЕ — съезжает сверху и проявляется, с системным «получилось». Это итог
+   *     разговора, и отклик тут тот же, что у принятого кода: не «нажал», а «вышло».
+   *   ПЕРЕСОБРАЛАСЬ ПОСЛЕ ОТВЕТА — короткий толчок и щелчок. Полное появление на каждом уточнении
+   *     читалось бы как «сводка пропала и пришла новая», а она та же самая, просто другая внутри.
+   *
+   * Обе анимации на нативном драйвере: сдвиг, прозрачность и масштаб. Ни одна не трогает разметку,
+   * поэтому лента под сводкой не дёргается.
+   */
+  const drop = useRef(new Animated.Value(0)).current;
+  const squash = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
+  const seen = useRef(versions.length);
+
+  /**
+   * ПОЯВЛЕНИЕ СОБРАНО ИЗ ТРЁХ ДВИЖЕНИЙ, А НЕ ИЗ ОДНОГО.
+   *
+   * Обычная пружина «сверху вниз» даёт въезд, а не падение: карточка приезжает и замирает. Каплю
+   * узнают по другому — по тому, что она РАСПЛЮЩИВАЕТСЯ при ударе и потом отыгрывает обратно.
+   * Поэтому здесь:
+   *   падение   — ускоряющееся (`Easing.in`), а не ровное: ровное читается как «переместили»;
+   *   удар      — короткое сжатие по высоте и растяжение по ширине, 90 мс, на пределе заметности;
+   *   отдача    — пружина с малым затуханием, та самая «бамбл»: пара затухающих колебаний.
+   *
+   * Объём сохраняется: насколько сжали по высоте, настолько растянули по ширине. Без этого
+   * карточка не расплющивается, а просто дёргается в размере — глаз читает это как сбой.
+   *
+   * Всё на нативном драйвере: сдвиг и масштаб. Разметку не трогает ни одно из трёх, поэтому лента
+   * под сводкой стоит на месте.
+   */
+  useEffect(() => {
+    hOk();
+    Animated.sequence([
+      Animated.timing(drop, {
+        toValue: 1,
+        duration: 240,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(squash, {
+        toValue: 1,
+        duration: 90,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.spring(squash, {
+        toValue: 0,
+        useNativeDriver: true,
+        damping: 9,
+        stiffness: 260,
+        mass: 0.7,
+      }),
+    ]).start();
+  }, [drop, squash]);
+
+  useEffect(() => {
+    if (versions.length === seen.current) return;
+    seen.current = versions.length;
+    hTick();
+    Animated.sequence([
+      Animated.timing(pulse, { toValue: 1, duration: 130, useNativeDriver: true }),
+      Animated.spring(pulse, { toValue: 0, useNativeDriver: true, damping: 11, stiffness: 240 }),
+    ]).start();
+  }, [pulse, versions.length]);
+
   const prev = versions.length > 1 ? versions[versions.length - 2] : null;
   const added = prev ? cur.topics.filter((t) => !prev.topics.includes(t)) : [];
   const gone = prev ? prev.topics.filter((t) => !cur.topics.includes(t)) : [];
@@ -429,7 +516,21 @@ function PinnedSummary({
   const changed = added.length || gone.length || renamed;
 
   return (
-    <View style={s.pin}>
+    <Animated.View
+      style={[
+        s.pin,
+        {
+          opacity: drop,
+          transform: [
+            { translateY: drop.interpolate({ inputRange: [0, 1], outputRange: [-34, 0] }) },
+            // Удар: шире и ниже. Отдача возвращает обе стороны к единице с парой колебаний.
+            { scaleX: squash.interpolate({ inputRange: [0, 1], outputRange: [1, 1.07] }) },
+            { scaleY: squash.interpolate({ inputRange: [0, 1], outputRange: [1, 0.91] }) },
+            { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.03] }) },
+          ],
+        },
+      ]}
+    >
       <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} style={s.pinHead} onPress={onToggle}>
         <View style={{ flex: 1 }}>
           <Text style={s.pinLabel}>{CREATE.summaryLabel()}</Text>
@@ -468,7 +569,7 @@ function PinnedSummary({
           </Pressable>
         </>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 
