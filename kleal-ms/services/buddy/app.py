@@ -2160,10 +2160,22 @@ WHAT MAKES A GOOD QUESTION: it makes the interest MORE SPECIFIC, so the engine c
 who do the SAME thing. Ask about the KIND, the STYLE, the LEVEL, sometimes the PLACE when the place
 changes what the activity is ("в бассейне" and "в открытой воде" are different swims).
 
-WHEN THEY DO NOT KNOW WHERE TO START ("не знаю, с чего начать", "не знаю", "все"), do NOT fall
-back to "а чем ещё занимаешься?" — that is the question they just failed to answer. Ask a NARROWING
-question with two or three natural answers and put those answers in `chips`: "Дома или на улице?",
-"Одному или с людьми?", "Руками или головой?". Each answer narrows the next question.
+WHEN THEY DO NOT KNOW WHERE TO START ("не знаю, с чего начать", "не знаю", "все"), nothing has
+been named yet — so a REFINING question has nothing to refine. Measured on a live screen: right
+after "не знаю, с чего начать" the model asked "Делаешь ЭТО дома или на улице?", and "это" pointed
+at nothing. Never use "это"/"этим"/"им" unless the person named the thing in this conversation.
+Do NOT fall back to "а чем ещё занимаешься?" either — that is the question they just failed.
+
+Ask about what they ACTUALLY DID. Memory is far easier to answer than preference, and the answer
+names real activities you can refine afterwards:
+  "На что уходит вечер, когда ничего не запланировано?"
+  "Чем занимался в прошлые выходные?"
+  "Что последнее делал, когда было хорошо?"
+An open question like these has no small set of natural answers — return `chips` EMPTY for it.
+Invent nothing: putting made-up hobbies in chips is the one thing you must never do.
+
+Only once they have named something may you narrow it, and then the chips are the answers to your
+own narrowing question ("В бассейне" / "В открытой воде").
 
 NEVER ASK WHO THEY DO IT WITH. They are here BECAUSE they have no one to do it with — that is the
 whole reason the app exists. "С кем обычно играешь?" is at best pointless and at worst a sore spot,
@@ -2216,6 +2228,18 @@ ABOUT `replaces` — refining, not repeating:
 # Дежурные фразы «идём дальше». РАЗНЫЕ намеренно: первая версия возвращала одну и ту же строку,
 # она же на следующем ходу опознавалась как повтор и подставлялась снова — замкнутый круг, 165
 # одинаковых реплик на 450 ходов прогона. Выбор по числу ходов, чтобы соседние не совпадали.
+# ВОПРОСЫ, КОТОРЫЕ ПРОМПТ ЗАПРЕЩАЕТ, А МОДЕЛЬ ВСЁ РАВНО ЗАДАЁТ. Правило «не спрашивай про чувства,
+# причины и частоту» держится не всегда: на живом прогоне после «гуляю по набережной» пришло «Что
+# тебе нравится в прогулках по набережной?». Такой вопрос ничего не даёт подбору — ответ на него
+# не сужает интерес, — и человек читает его как пустую болтовню. Сторож дешевле уговоров.
+_BAD_QUESTION = re.compile(
+    r"(?i)(что\s+(тебе|вам|теб[яе])\s+(нравится|привлекает|цепляет)"
+    r"|почему\s+(именно|тебе|вам|это)|как\s+часто|сколько\s+раз"
+    r"|что\s+(ты\s+)?чувствуешь|какие\s+эмоц"
+    r"|what\s+do\s+you\s+(like|enjoy)\s+about|why\s+(exactly|this)|how\s+often"
+    r"|qu[ée]\s+te\s+gusta\s+de|con\s+qu[ée]\s+frecuencia)")
+
+
 _MOVE_ON = {
     "ru": ["А чем ещё занимаешься?", "Что ещё любишь делать?",
            "Расскажи про что-нибудь другое — чем ещё увлекаешься?",
@@ -2361,7 +2385,7 @@ def interests_chat(messages, profile, lang="ru", recorded=None):
     _names = set()
     for it in known:
         _names |= {w for w in re.findall(r"[\w]+", str(it).lower()) if len(w) > 2}
-    if not reply or _asked_before(reply, msgs, skip_words=_names):
+    if not reply or _BAD_QUESTION.search(reply) or _asked_before(reply, msgs, skip_words=_names):
         _turn = sum(1 for m in msgs if m.get("role") == "assistant")
         _bank = _MOVE_ON.get(lang) or _MOVE_ON["en"]
         reply = _bank[_turn % len(_bank)]

@@ -76,6 +76,13 @@ export default function Chat() {
    */
   const [chips, setChips] = useState<string[]>([]);
   const [fork, setFork] = useState(false);
+  /**
+   * Записанное ЗА ЭТОТ разговор. Раньше под «Записал» показывался весь профиль целиком, и человек,
+   * пришедший добавить один интерес, видел ряд из пяти старых — где именно среди них появился
+   * новый, было не разобрать. Здесь только то, что агент записал сейчас; всё остальное человек
+   * и так видит на экране «Интересы», откуда пришёл.
+   */
+  const [justAdded, setJustAdded] = useState<string[]>([]);
   // Лента стоит, пока крутят кольцо возраста: иначе один и тот же жест двигает и то, и другое.
   const [dragging, setDragging] = useState(false);
   // Номер прохода. Меняется при «Начать заново» и служит ключом виджетам, чтобы те начинали с
@@ -259,6 +266,12 @@ export default function Chat() {
             if (!cur.includes(key)) cur = [...cur, key];
           }
           set('interests.explicit', cur);
+          setJustAdded((p) => {
+            const keys = added.map((a) => String(a.key || '').trim()).filter(Boolean);
+            const gone = added.map((a) => String(a.replaces || '').trim()).filter(Boolean);
+            const kept = p.filter((k) => !gone.includes(k) && !keys.includes(k));
+            return [...kept, ...keys];
+          });
           // Подпись — слова человека. Кладём в тот же реестр, куда сгружаются словари сервера,
           // иначе до следующего чтения профиля чип показывал бы английский ключ.
           const lang = getLang();
@@ -320,8 +333,10 @@ export default function Chat() {
           leave={leaveFunnel}
           fork={fork}
           chips={chips}
+          added={justAdded}
           onFork={onFork}
           onChip={send}
+          onDrop={(k: string) => setJustAdded((p) => p.filter((x) => x !== k))}
         />
       }
     />
@@ -364,7 +379,7 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
 }
 
 function StepWidget({
-  step, say, goto, onDone, onDrag, leave, fork, chips, onFork, onChip,
+  step, say, goto, onDone, onDrag, leave, fork, chips, added, onFork, onChip, onDrop,
 }: {
   step: StepId;
   say: (who: 'bot' | 'me', text: string, photo?: string) => void;
@@ -377,8 +392,11 @@ function StepWidget({
   fork?: boolean;
   /** Подсказки-ответы к последнему вопросу агента. Тап равен набору руками. */
   chips?: string[];
+  /** Записанное за ЭТОТ разговор — не весь профиль. */
+  added?: string[];
   onFork?: (which: 'know' | 'help') => void;
   onChip?: (text: string) => void;
+  onDrop?: (key: string) => void;
 }) {
   const st = useOnb();
 
@@ -389,8 +407,8 @@ function StepWidget({
   if (step === 'area') return <AreaW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'languages') return <LangW say={say} goto={goto} />;
   if (step === 'hobbies') return (
-    <HobbyW say={say} leaveFunnel={leave} fork={fork} chips={chips}
-            onFork={onFork} onChip={onChip} />
+    <HobbyW say={say} leaveFunnel={leave} fork={fork} chips={chips} added={added}
+            onFork={onFork} onChip={onChip} onDrop={onDrop} />
   );
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -570,10 +588,13 @@ function LangW({ say, goto }: any) {
 }
 
 /** A.08 — увлечения с эмодзи. */
-function HobbyW({ say, leaveFunnel, fork, chips, onFork, onChip }: any) {
+function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop }: any) {
   const st = useOnb();
   const [busy, setBusy] = useState(false);
-  const explicit: string[] = st.profile.interests?.explicit || [];
+  // Показываем записанное ЗА ЭТОТ разговор. Всё, что было в профиле раньше, человек видит на
+  // экране «Интересы», откуда пришёл; повторять его здесь значит прятать новое среди старого.
+  const explicit: string[] = added || [];
+  const hasAny: boolean = !!(st.profile.interests?.explicit || []).length;
 
   // РАЗВИЛКА ПЕРВЫМ ХОДОМ. Пока человек не выбрал и ничего не рассказал — две кнопки. Дальше
   // работает обычный разговор: он пишет сам, а подсказки только избавляют от набора.
@@ -588,9 +609,12 @@ function HobbyW({ say, leaveFunnel, fork, chips, onFork, onChip }: any) {
     );
   }
 
+  // Снятие чипа убирает интерес И из профиля, И из показанного за этот разговор: списка теперь
+  // два, и обновить один — значит оставить чип висеть после нажатия.
   const drop = (k: string) => {
     const cur: string[] = get('interests.explicit') || [];
     set('interests.explicit', cur.filter((x) => x !== k));
+    onDrop?.(k);
   };
 
   return (
@@ -619,7 +643,7 @@ function HobbyW({ say, leaveFunnel, fork, chips, onFork, onChip }: any) {
       )}
       <Cta
         label={STEP_HOBBIES.cta()}
-        disabled={!explicit.length || busy}
+        disabled={(!explicit.length && !hasAny) || busy}
         onPress={() => {
           setBusy(true);
           // Запись уже произошла — на каждом ходу разговора. Здесь только выход: в профиль,
