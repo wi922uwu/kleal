@@ -12,7 +12,7 @@
 import React, { forwardRef, useState } from 'react';
 import { mediaUrl } from '../api';
 import {
-  View, Text, StyleSheet, ScrollView, ActivityIndicator, Image,
+  View, Text, StyleSheet, ScrollView, Image,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
@@ -22,6 +22,7 @@ import { Composer } from './Composer';
 import { Ambient, GLOW_FORM } from './Ambient';
 import { LogoFace } from './Logo';
 import Markdown from './Markdown';
+import { Thinking } from './Thinking';
 import { color, displayFamily, radius as rad, space, type } from '../theme';
 import { useLang } from '../i18n';
 
@@ -186,7 +187,7 @@ export const ChatShell = forwardRef<ScrollView, {
             */}
             {typing ? (
               <View style={[s.rowBot, s.typing]}>
-                <ActivityIndicator size="small" color={color.muted} />
+                <Thinking />
               </View>
             ) : null}
 

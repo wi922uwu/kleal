@@ -30,6 +30,7 @@ import { buddy as buddyApi } from '../src/api';
 import { CREATE, topicsOf, titleOf, unpackHistory, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
 import Markdown from '../src/components/Markdown';
+import { Thinking } from '../src/components/Thinking';
 import { makeReveal } from '../src/reveal';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string ;
@@ -324,11 +325,8 @@ export default function Create() {
             </View>
           ))}
 
-          {typing ? (
-            <View style={[s.bub, s.bubBot, { alignSelf: 'flex-start' }]}>
-              <ActivityIndicator size="small" color={color.muted} />
-            </View>
-          ) : null}
+          {/* Ожидание — не вертушка, а живая строка: см. src/components/Thinking.tsx. */}
+          {typing ? <Thinking /> : null}
 
           {/* Варианты по профилю — только на пустом экране, до первого ответа. */}
           {thread.length === 0 ? (

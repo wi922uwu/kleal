@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  ActivityIndicator, KeyboardAvoidingView, Platform, Modal,
+  KeyboardAvoidingView, Platform, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -25,6 +25,7 @@ import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import Markdown from '../src/components/Markdown';
+import { Thinking } from '../src/components/Thinking';
 import { makeReveal } from '../src/reveal';
 
 /**
@@ -336,11 +337,8 @@ export default function Buddy() {
               </View>
             );
           })}
-          {typing ? (
-            <View style={[s.bub, s.bubBot, { alignSelf: 'flex-start' }]}>
-              <ActivityIndicator size="small" color={color.muted} />
-            </View>
-          ) : null}
+          {/* Ожидание — не вертушка, а живая строка: см. src/components/Thinking.tsx. */}
+          {typing ? <Thinking /> : null}
         </ScrollView>
 
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
