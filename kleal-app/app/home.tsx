@@ -20,9 +20,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
-import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import { BottomNav } from '../src/components/BottomNav';
 import { CardStack } from '../src/components/CardStack';
+import { ArcCarousel } from '../src/components/ArcCarousel';
+import { Ambient, GLOW_SIGNIN } from '../src/components/Ambient';
+import { WHEEL } from '../src/wheel';
 import {
   IconBell, IconCalendar, IconClock, IconPin, IconBookmark, IconMic,
   IconChat, IconGroups, IconImagePlaceholder,
@@ -127,7 +129,12 @@ export default function Home() {
 
   return (
     <View style={s.wrap}>
-      <Sky />
+      {/*
+        ФОН ТОТ ЖЕ, ЧТО НА ВХОДНЫХ ЭКРАНАХ. До этого главная была единственным местом с голубым
+        небом: человек проходил четыре кремовых экрана подряд и попадал на пятый, будто из другого
+        приложения. Пятна тут те же, что на экране входа, — и кремовая бумага под ними.
+      */}
+      <Ambient glows={GLOW_SIGNIN} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[s.head, { paddingTop: insets.top + 6 }]}>
           <Text style={s.hello}>{HOME.hello(me.split(' ')[0] || T('друг', 'there'))}</Text>
@@ -150,6 +157,30 @@ export default function Home() {
             <ActivityIndicator style={{ marginTop: 40 }} color={color.primary} />
           ) : (
             <>
+              {/*
+                ПУСТАЯ ГЛАВНАЯ — НЕ ПУСТОЙ ЭКРАН. Пока нет ни плана, ни групп, ни приглашений,
+                середину занимает колесо занятий: одна картинка крупно, соседние выглядывают
+                из-за краёв. Это не заглушка «тут ничего нет», а первое, что показывает, о чём
+                вообще приложение, — и единственное место, где у пустой главной есть что делать
+                руками.
+                Как только появляется хоть одна секция, колесо уходит: оно занимает пол-экрана и
+                спорило бы с настоящим содержимым.
+              */}
+              {!nextPlan && !groups.length && !invites.length && !inviteError ? (
+                <View style={s.wheel}>
+                  {/*
+                    Нажатие по центральному предмету открывает создание интента с уже сказанной
+                    фразой: `seed` в app/create.tsx кладёт её в ленту как реплику человека и сразу
+                    отдаёт агенту. Поэтому колесо — не витрина: оно начинает разговор, а не
+                    показывает, что бывает.
+                  */}
+                  <ArcCarousel
+                    items={WHEEL()}
+                    onPick={(it) => router.navigate({ pathname: '/create', params: { seed: it.query } })}
+                  />
+                </View>
+              ) : null}
+
               {nextPlan ? (
                 <>
                   <Section icon={<IconCalendar size={18} />} title={HOME.next()} />
@@ -265,21 +296,6 @@ export default function Home() {
 }
 
 /** Небо за экраном. Заливка снизу вверх по тем же цветам, что в вебе. */
-function Sky() {
-  return (
-    <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
-      <Defs>
-        <LinearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor="#b9d3ea" />
-          <Stop offset="0.45" stopColor="#cfe1f2" />
-          <Stop offset="1" stopColor="#dcebfa" />
-        </LinearGradient>
-      </Defs>
-      <Rect x="0" y="0" width="100%" height="100%" fill="url(#sky)" />
-    </Svg>
-  );
-}
-
 function Section({ icon, title }: { icon: React.ReactNode; title: string }) {
   return (
     <View style={s.sec}>
@@ -460,7 +476,7 @@ function GroupInviteCard({ inv }: { inv: HomeInvite }) {
 }
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: '#dcebfa' },
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: space.md },
   hello: { flex: 1, fontSize: 26, lineHeight: 32, fontWeight: '700', color: color.fg },
   bell: {
@@ -472,7 +488,10 @@ const s = StyleSheet.create({
     borderRadius: 4, backgroundColor: color.primary,
   },
 
-  scroll: { paddingBottom: space.lg, gap: space.sm },
+  // `flexGrow` нужен ровно ради колеса: без него содержимое ленты сжимается по высоте, и
+  // «по центру экрана» превращается в «сразу под шапкой».
+  scroll: { flexGrow: 1, paddingBottom: space.lg, gap: space.sm },
+  wheel: { flex: 1, justifyContent: 'center' },
   sec: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, marginTop: space.md },
   secText: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
   empty: { ...type.bodySmall, color: color.ink, opacity: 0.65, paddingHorizontal: 20 } as any,

@@ -40,6 +40,14 @@ export const hTick = () => {
 export const hOk = () => {
   if (canBuzz) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 };
+/**
+ * Сильный удар — им отмечается выбор, после которого экран меняется целиком.
+ *
+ * Тяжелее «сделал» намеренно: обычная кнопка ведёт на следующий шаг того же дела, а этот отклик
+ * означает, что дело НАЧАЛОСЬ. Тратить его на что-то мельче нельзя — если тяжёлый удар звучит
+ * часто, он перестаёт отличаться от среднего, и ступень теряется.
+ */
+export const hStrong = () => impact(Haptics.ImpactFeedbackStyle.Heavy);
 /** Не вышло. */
 export const hFail = () => {
   if (canBuzz) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
