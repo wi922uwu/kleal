@@ -36,10 +36,10 @@ import {
   HOME, splitWhen, planWhere, joinableGroups, homeInvites,
   Group, HomeInvite,
 } from '../src/home';
-import { color, radius as rad, space, type } from '../src/theme';
+import { color, displayFamily, radius as rad, space, type } from '../src/theme';
 
 export default function Home() {
-  useLang();
+  const lang = useLang();
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
@@ -137,7 +137,8 @@ export default function Home() {
       <Ambient glows={GLOW_SIGNIN} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[s.head, { paddingTop: insets.top + 6 }]}>
-          <Text style={s.hello}>{HOME.hello(me.split(' ')[0] || T('друг', 'there'))}</Text>
+          {/* Гарнитура зависит от языка — см. displayFamily: в шрифте борда нет кириллицы. */}
+          <Text style={[s.hello, { fontFamily: displayFamily(lang) }]}>{HOME.hello()}</Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={T('Уведомления', 'Notifications')}
@@ -178,6 +179,13 @@ export default function Home() {
                     items={WHEEL()}
                     onPick={(it) => router.navigate({ pathname: '/create', params: { seed: it.query } })}
                   />
+                  {/*
+                    Карточка приглашений стоит ПОД колесом и в пустом виде — кадр «Home Card ·
+                    Empty». Она нужна именно тут: колесо говорит, чем заняться самому, а карточка
+                    отвечает на невысказанный вопрос «а мне-то кто-нибудь написал». Без неё пустая
+                    главная выглядела бы так, будто приглашений в приложении нет вовсе.
+                  */}
+                  <EmptyInviteCard />
                 </View>
               ) : null}
 
@@ -340,6 +348,32 @@ function GroupCard({ g, myArea }: { g: Group; myArea: string }) {
   );
 }
 
+/** «Home Card · Empty»: то же тело, что у приглашения, но вместо человека — заглушка. */
+function EmptyInviteCard() {
+  const router = useRouter();
+  return (
+    <View style={[s.meet, s.emptyCard]}>
+      <View style={[s.meetAva, s.meetAvaEmpty]}>
+        <IconImagePlaceholder size={30} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={s.meetName} numberOfLines={1}>{HOME.noInvites()}</Text>
+        <View style={s.meetMeta}>
+          <IconClock />
+          <Text style={s.meta} numberOfLines={1}>{HOME.noInvitesNote()}</Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          style={({ pressed }) => [s.meetBtn, pressed && { opacity: 0.9 }]}
+          onPress={() => router.navigate('/activity')}
+        >
+          <Text style={s.meetBtnText}>{HOME.discover()}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 function DirectInviteCard({ inv }: { inv: HomeInvite }) {
   const router = useRouter();
   const w = splitWhen(inv.intent.when || '');
@@ -478,7 +512,8 @@ function GroupInviteCard({ inv }: { inv: HomeInvite }) {
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ambientBase },
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: space.md },
-  hello: { flex: 1, fontSize: 26, lineHeight: 32, fontWeight: '700', color: color.fg },
+  /* Насыщенность задаётся ГАРНИТУРОЙ, а не `fontWeight`: на подключённом файле вес не работает. */
+  hello: { flex: 1, fontSize: 26, lineHeight: 34, color: color.fg },
   bell: {
     width: 42, height: 42, borderRadius: 21, backgroundColor: color.onCoverSoft,
     alignItems: 'center', justifyContent: 'center',
@@ -488,10 +523,16 @@ const s = StyleSheet.create({
     borderRadius: 4, backgroundColor: color.primary,
   },
 
-  // `flexGrow` нужен ровно ради колеса: без него содержимое ленты сжимается по высоте, и
-  // «по центру экрана» превращается в «сразу под шапкой».
-  scroll: { flexGrow: 1, paddingBottom: space.lg, gap: space.sm },
-  wheel: { flex: 1, justifyContent: 'center' },
+  /*
+    `flexGrow` и центрирование нужны ради колеса: без них содержимое прижимается к шапке, и «по
+    центру экрана» превращается в «сразу под ней». Центрируется именно СОДЕРЖИМОЕ, а не блок с
+    колесом: когда колесо и карточка вместе выше экрана, лента должна прокручиваться, а не
+    сжимать их — `flex: 1` на блоке в прокрутке как раз и приводит к сжатию.
+  */
+  scroll: { flexGrow: 1, justifyContent: 'center', paddingBottom: space.lg, gap: space.sm },
+  wheel: { gap: space.lg },
+  /** Пустая карточка стоит вплотную к колесу — она его продолжение, а не отдельная секция. */
+  emptyCard: { marginTop: 0 },
   sec: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, marginTop: space.md },
   secText: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
   empty: { ...type.bodySmall, color: color.ink, opacity: 0.65, paddingHorizontal: 20 } as any,
@@ -533,6 +574,9 @@ const s = StyleSheet.create({
   meetBtn: {
     height: 44, borderRadius: rad.full, backgroundColor: color.primary,
     alignItems: 'center', justifyContent: 'center', marginTop: 12,
+    // Свечение фирменного цвета под кнопкой — как у всех главных кнопок приложения.
+    shadowColor: color.primary, shadowOpacity: 0.3, shadowRadius: 14, shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
   },
   meetBtnText: { ...type.button, color: color.onPrimary } as any,
 
