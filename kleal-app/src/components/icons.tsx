@@ -304,3 +304,16 @@ export const IconAlertTriangle = ({ size = 18, c = '#fff' }: P) => (
     <Line x1={12} y1={17} x2={12.01} y2={17} />
   </Svg>
 );
+
+/**
+ * Стопка слоёв — первая вкладка новой панели («Layers 2» в борде).
+ *
+ * Прежний знак был кругом с тремя линиями, то есть «списком». Стопка говорит другое: интентов
+ * много и они лежат друг на друге — это ближе к тому, чем вкладка на самом деле является.
+ */
+export const IconLayers = ({ size = 24, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M12 2.7 2.6 7.4 12 12.1l9.4-4.7L12 2.7z" />
+    <Path d="M2.6 13.1 12 17.8l9.4-4.7" />
+  </Svg>
+);

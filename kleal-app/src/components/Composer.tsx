@@ -112,9 +112,9 @@ const s = StyleSheet.create({
     paddingTop: space.sm,
   },
   back: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -123,7 +123,9 @@ const s = StyleSheet.create({
   },
   field: {
     flex: 1,
-    height: 36,
+    // Высота выросла с 36 из борда: там она посчитана под кегль подсказки, а строка набирается
+    // репликой — 22 пункта межстрочного в 36 не помещаются, текст обрезался бы сверху и снизу.
+    height: 44,
     borderRadius: rad.full,
     overflow: 'hidden',
     flexDirection: 'row',
@@ -139,8 +141,11 @@ const s = StyleSheet.create({
     }),
   },
   /*
-    Кегль поля — тот же, каким набрана подсказка в борде (11/16). Крупнее он спорил бы с репликами
-    в ленте: строка ввода не должна выглядеть весомее того, что уже сказано.
+    КЕГЛЬ ПОЛЯ — КАК У РЕПЛИКИ, А НЕ КАК У ПОДСКАЗКИ. В борде надпись «Message…» набрана 11-м, и
+    первая версия взяла этот кегль на само поле — но 11 пунктов это размер ПОДСКАЗКИ, серой и
+    неподвижной. В поле по нему набирают живой текст, иногда длинный, и на телефоне он читался
+    мелко до неудобства. Здесь тот же кегль, что в пузырях: набранное и отправленное выглядят
+    одинаково, и это правильнее, чем совпасть с борда подписью.
   */
-  input: { flex: 1, color: color.fg, ...type.chatHint, paddingVertical: 0 } as any,
+  input: { flex: 1, color: color.fg, ...type.bubble, paddingVertical: 0 } as any,
 });

@@ -6,58 +6,71 @@
  * человек должен увидеть, куда попал, ещё до первого действия.
  */
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { IconImagePlaceholder } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
+import { Ambient, GLOW_DONE } from '../src/components/Ambient';
+import { GlassPill } from '../src/components/Glass';
 import { useLang } from '../src/i18n';
 import { DONE_SCREEN } from '../src/onboarding';
-import { color, radius as rad, type } from '../src/theme';
+import { color, displayFamily, glass, radius as rad, space, type } from '../src/theme';
 
 export default function Done() {
-  useLang();
+  const lang = useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
   return (
-    <View style={[s.wrap, { paddingTop: insets.top }]}>
-      <View style={s.body}>
-        <View style={s.circle}>
-          {/* Тот же значок-заглушка изображения, что на борде */}
-          <IconImagePlaceholder size={64} />
+    <View style={s.wrap}>
+      {/* Тот же тёплый фон, что на «Ты в деле»: оба кадра — исходы, а не шаги. */}
+      <Ambient glows={GLOW_DONE} />
+      <View style={[s.page, { paddingTop: insets.top }]}>
+        <View style={s.body}>
+          <View style={s.circle}>
+            <BlurView intensity={glass.blur} tint="light" style={StyleSheet.absoluteFill} />
+            <View
+              style={[StyleSheet.absoluteFill, { backgroundColor: color.glassLight, opacity: glass.lightAlpha }]}
+            />
+            {/* Тот же значок-заглушка изображения, что на борде */}
+            <IconImagePlaceholder size={55} />
+          </View>
+          {/* Гарнитура заголовка зависит от языка — см. displayFamily. */}
+          <Text style={[s.title, { fontFamily: displayFamily(lang) }]}>{DONE_SCREEN.title()}</Text>
         </View>
-        <Text style={s.title}>{DONE_SCREEN.title()}</Text>
-      </View>
 
-      <View style={s.ctaWrap}>
-        {/* Кнопка обещает создание интента — и открывает именно его. Главная подкладывается ВНИЗ,
-            чтобы «назад» из создания вело на неё, а не обратно в поздравление. */}
-        <Pressable
-          accessibilityRole="button"
-          style={s.cta}
-          onPress={() => { router.dismissTo('/home'); router.navigate('/create'); }}
-        >
-          <Text style={s.ctaText}>{DONE_SCREEN.cta()}</Text>
-        </Pressable>
-      </View>
+        <View style={s.ctaWrap}>
+          {/* Кнопка обещает создание интента — и открывает именно его. Главная подкладывается ВНИЗ,
+              чтобы «назад» из создания вело на неё, а не обратно в поздравление. */}
+          <GlassPill
+            tone="brand"
+            label={DONE_SCREEN.cta()}
+            style={s.cta}
+            onPress={() => { router.dismissTo('/home'); router.navigate('/create'); }}
+          />
+        </View>
 
-      <BottomNav />
+        <BottomNav />
+      </View>
     </View>
   );
 }
 
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
-  body: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 30, paddingHorizontal: 28 },
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  page: { flex: 1 },
+  body: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28, paddingHorizontal: 20 },
+  /** Круг 200 и значок 55 внутри — размеры из кадра. */
   circle: {
-    width: 190, height: 190, borderRadius: rad.full, backgroundColor: color.neutral100,
+    width: 200, height: 200, borderRadius: rad.full, overflow: 'hidden',
     alignItems: 'center', justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: '#FFFFFF88',
   },
-  title: { fontSize: 26, lineHeight: 34, fontWeight: '700', color: color.fg, textAlign: 'center' },
-  ctaWrap: { paddingHorizontal: 20, marginBottom: 46 },
-  cta: { height: 54, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
-  ctaText: { ...type.button, color: color.onPrimary } as any,
-
+  title: { ...type.display, color: color.fg, textAlign: 'center' } as any,
+  ctaWrap: { paddingHorizontal: 20, marginBottom: space.lg },
+  /** Кнопка финала ниже входной: 52 против 56 — так в кадре. */
+  cta: { height: 52 },
 });
