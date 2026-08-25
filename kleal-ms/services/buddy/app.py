@@ -2120,48 +2120,186 @@ def story_interests(story, have=None, lang="ru"):
     return {"interests": out[:6]}
 
 
+# Телесные надобности — не увлечения, но модель их записывает: на живом экране «пить воду» стало
+# интересом, а диджей-музыка из той же реплики потерялась. Список короткий и буквальный: он гасит
+# запись, а не подменяет её другой.
+# Граница слова в конце НЕ ставится намеренно: русские формы склоняются («вод-у», «сп-ать»), и
+# `\b` после основы упирается в окончание — проверено, «пить воду» проходило насквозь.
+_NOT_AN_INTEREST = re.compile(
+    r"(?i)(\bdrink(ing)?\s+water|\bwater\s+drink|\bsleep(ing)?\b|\beat(ing)?\s+food"
+    r"|\bbreath(e|ing)\b|\brest(ing)?\b|пить\s+вод|попить|спать|дышать|отдыхать|кушать)")
+
+
 INTERESTS_CHAT_PROMPT = '''You help a person tell you what they are into, so the app can find them
-people who are into the same thing. You are warm, curious and brief — one or two sentences, never a
-questionnaire. Reply in __LANGNAME__.
+people who share it. You are warm, curious and brief. Reply in __LANGNAME__.
 
 Return ONE JSON object, nothing else:
-{"reply":"<your next line, __LANGNAME__, max 2 sentences>","added":[{"key":"<short English phrase>","label":"<the same thing as the person said it, their words>","why":"<the exact fragment of THEIR last message it comes from>"}]}
+{"reply":"<your next line, __LANGNAME__, ONE sentence>",
+ "added":[{"key":"<short English phrase>","label":"<clean name in THEIR language>",
+           "why":"<exact fragment of THEIR last message>","replaces":"<key you are refining, or empty>"}]}
 
-ABOUT `reply`:
-- Ask about what they just told you — what makes it theirs. "Где обычно?" is better than "Что ещё?".
-- Never list options, never number things, never promise to save anything.
-- If they said nothing about themselves yet, ask what they like doing. Once.
+TWO QUESTIONS PER INTEREST, THEN MOVE ON. This is the most important rule.
+- Read your OWN earlier questions in the transcript. Count how many you already asked about the
+  thing you are about to ask about. If the answer is two — STOP asking about it. Ask what ELSE
+  they are into: "А чем ещё занимаешься?"
+- Never ask a question you already asked, even reworded.
+- If their answer is empty of content ("все", "да", "не знаю"), do not dig. Move to something else.
+- One question per reply. Never two questions in one sentence.
 
-ABOUT `added` — the whole value of this depends on these rules:
-- ONLY things the person DOES or CARES ABOUT, and only from THEIR LAST MESSAGE.
+WHAT MAKES A GOOD QUESTION: it asks about the ACTIVITY — where, with whom, how often, what kind.
+Not about feelings ("что вам нравится в ритме"), not about opinions, not "почему".
+
+ABOUT `added` — the whole value depends on these rules:
+- ONLY things the person DOES, and only from THEIR LAST MESSAGE.
 - NEVER invent. `why` must quote their message literally; if you cannot quote it, drop the item.
-- Feelings, greetings, agreement, small talk are not interests. "Мне нравится" alone is not an interest.
-- `key` is a short English phrase a matching engine can use, keeping what makes it SPECIFIC:
-  "рыбачить на море" -> "sea fishing", not "fishing". "играю в тарков" -> "escape from tarkov".
-- KEEP PROPER NOUNS as they are: game titles, place names, brands. Never translate a name into a
-  common word.
-- `label` is the person's OWN wording, not a translation of your key.
-- Usually 0 or 1 items. Two only if they clearly named two things. Empty list is the normal answer.'''
+- One message may name TWO interests ("пить воду диджей музыку" -> the DJ music is an interest,
+  drinking water is not). Take every real one, skip the rest.
+- Bodily necessities are not interests: drinking water, sleeping, eating, breathing, resting.
+- Feelings, greetings, agreement, small talk are not interests.
+
+AN ANSWER NAMING A PLACE, TIME OR COMPANY IS A DETAIL, NOT A NEW INTEREST.
+- "в парке", "по субботам", "с друзьями", "дома", "с лодки" answer YOUR question about something
+  already noted. They never create a new interest and never compound into one.
+- If the detail makes the noted interest genuinely more specific ("рыбалка" + "на море" ->
+  sea fishing), return the refined interest with `replaces`. Otherwise return an EMPTY `added`.
+- Never glue an unrelated detail onto an interest: "пишу код" + "с лодки" is not "coding from a
+  boat". If the detail does not fit, ignore it.
+
+ABOUT `key` — short English phrase a matching engine uses:
+- Keep what makes the interest SPECIFIC: "рыбачить на море" -> "sea fishing", not "fishing".
+- DROP circumstance: weather, time of day, mood, who paid. "рыбалка на солнце" -> "fishing",
+  because sunshine is not a kind of fishing. "бегаю по утрам" -> "running", not "morning running".
+- KEEP PROPER NOUNS: game titles, place names, brands. Never turn a name into a common word.
+- At most three words. "sea fishing from a boat" is too long — "sea fishing" is the interest,
+  the boat is a detail.
+
+ABOUT `label` — how the chip reads to the person. THEIR language, THEIR word, but CLEAN:
+- Dictionary form, not the case they happened to use: "доту" -> "Дота 2", "рыбалкой" -> "Рыбалка".
+- Short noun phrase, 1-3 words. Not a sentence, not a verb phrase.
+- "рыбалкой на солнце" -> "Рыбалка". "люблю в доту играть" -> "Дота 2".
+- A NOUN, not a verb: "Писать код" is wrong, "Программирование" is right. "Гулять с собакой" is
+  wrong, "Прогулки с собакой" is right.
+
+ABOUT `replaces` — refining, not repeating:
+- When they make an EARLIER interest more precise, return the refined one and put the OLD key in
+  `replaces`. "рыбалка" then "на море" -> {"key":"sea fishing","replaces":"fishing"}.
+- Already-noted interests are listed below as ALREADY NOTED. Never add one of those again.
+- Usually 0 or 1 items. Empty list is the normal answer.'''
 
 
-def interests_chat(messages, profile, lang="ru"):
+# Дежурные фразы «идём дальше». РАЗНЫЕ намеренно: первая версия возвращала одну и ту же строку,
+# она же на следующем ходу опознавалась как повтор и подставлялась снова — замкнутый круг, 165
+# одинаковых реплик на 450 ходов прогона. Выбор по числу ходов, чтобы соседние не совпадали.
+_MOVE_ON = {
+    "ru": ["А чем ещё занимаешься?", "Что ещё любишь делать?",
+           "Расскажи про что-нибудь другое — чем ещё увлекаешься?",
+           "А кроме этого?"],
+    "en": ["What else are you into?", "What else do you like doing?",
+           "Tell me about something else — what else do you do?", "And besides that?"],
+    "es": ["¿Qué más te gusta hacer?", "¿Qué más haces?",
+           "Cuéntame de otra cosa — ¿qué más te gusta?", "¿Y aparte de eso?"],
+}
+
+
+# Слова, с которых человек начинает рассказ о себе, а модель тащит их в подпись чипа: «люблю в
+# доту играть» -> «люблю в доту играть». Чип — это ИМЯ занятия, а не цитата.
+_LABEL_JUNK = re.compile(
+    r"(?i)^(я\s+)?(очень\s+)?(люблю|нравится|обожаю|увлекаюсь|занимаюсь|хожу\s+на|хожу\s+в|"
+    r"играю\s+в|играю\s+на|i\s+like|i\s+love|i\s+enjoy|me\s+gusta|me\s+encanta)\s+")
+# Предлог в начале — след срезанного глагола: «люблю в доту играть» -> «в доту играть».
+_LABEL_PREP = re.compile(r"(?i)^(в|во|на|по|про|с|со|за|о|об|при|the|a|an|el|la|los|las)\s+")
+
+
+# Ответы без содержания. После двух подряд агент перестаёт спрашивать «а чем ещё»: на прогоне в
+# 450 ходов эта фраза прозвучала 116 раз, потому что человек отвечал «все» и «да», а собеседник
+# исправно уходил на новый круг. Живому человеку это читается как допрос.
+_EMPTY_ANSWER = re.compile(
+    r"(?i)^\s*(все|всё|да|нет|ну|ок|окей|ага|угу|не\s+знаю|хз|наверное|как-то\s+так|"
+    r"yes|no|ok|okay|yeah|dunno|idk|nada|si|no\s+se)\s*[.!?]*\s*$")
+
+# Конец разговора говорится ОДИН раз развёрнуто, дальше — коротко. Одна и та же фраза, выданная
+# трижды подряд, читается как заевший бот, даже когда она по смыслу верна.
+_ENOUGH = {
+    "ru": ["Хорошо, записал. Добавишь ещё — расскажи, или жми «Готово».", "Ок.", "Понял."],
+    "en": ["Alright, noted. Tell me more if you like, or hit “Done”.", "Okay.", "Got it."],
+    "es": ["Vale, anotado. Cuéntame más si quieres, o pulsa «Listo».", "Vale.", "Entendido."],
+}
+
+
+def _clean_label(label):
+    """Подпись чипа: имя занятия, короткое и с большой буквы.
+
+    Модель промпт слушает не всегда: на прогоне в 450 ходов тринадцать процентов подписей были
+    длиннее трёх слов, четыре процента начинались глаголом. Здесь не уговоры, а обрезка.
+    """
+    t = " ".join(str(label or "").split())
+    prev = None
+    while prev != t:                        # «я очень люблю играть в...» снимается послойно
+        prev = t
+        t = _LABEL_JUNK.sub("", t).strip()
+    prev = None
+    while prev != t:
+        prev = t
+        t = _LABEL_PREP.sub("", t).strip()
+    t = t.strip(" .,;:!?—-\u00ab\u00bb\"'")
+    if len(t.split()) > 3:
+        t = " ".join(t.split()[:3])
+    return (t[:1].upper() + t[1:]) if t else t
+
+
+def _asked_before(reply, messages, skip_words=(), thresh=0.85):
+    """Спрашивали ли уже почти это же.
+
+    Сравнение по словам, а не по строке: модель переформулирует вопрос («что вам нравится в
+    ритме» -> «что именно в ритме вас привлекает»), и точное сравнение таких повторов не ловит.
+
+    НАЗВАНИЕ ИНТЕРЕСА ИЗ СРАВНЕНИЯ ИСКЛЮЧАЕТСЯ, и это не мелочь. Все вопросы про одно занятие
+    содержат его имя, поэтому «Где обычно играешь в Доту 2?» и «С кем обычно играешь в Доту 2?»
+    совпадали на три четверти слов — сторож объявлял повтором нормальное уточнение и обрывал
+    разговор на втором ходу. Замерено: так он срабатывал в 68% сценариев.
+
+    Порог высокий (0.85): дешевле пропустить один повтор, чем задушить живой разговор.
+    """
+    skip = {str(w).lower() for w in skip_words}
+
+    def words(t):
+        out = {w for w in re.findall(r"[\w]+", str(t or "").lower()) if len(w) > 2}
+        return out - skip
+    now = words(reply)
+    if len(now) < 3:
+        return False
+    for m in (messages or []):
+        if m.get("role") != "assistant":
+            continue
+        prev = words(m.get("content"))
+        if len(prev) < 3:
+            continue
+        if len(now & prev) / float(min(len(now), len(prev))) >= thresh:
+            return True
+    return False
+
+
+def interests_chat(messages, profile, lang="ru", recorded=None):
     """Разговор, в котором интересы записываются сами — из сказанного, с обязательной цитатой.
 
     ЗАЧЕМ ЭТО ОТДЕЛЬНАЯ РУЧКА. Раньше интересы набирались сеткой из 312 готовых чипов: человек
     искал себя в чужом списке, а всё, чего в списке нет, уходило в поле «добавить своё» и оставалось
     сырой строкой на языке ввода. Теперь человек просто рассказывает, а запись делает агент.
 
-    ОДИН ВЫЗОВ НА ХОД, а не два. Ответ и разбор в одном конверте: два последовательных вызова
-    удваивают ожидание, а ждёт человек, который просто разговаривает.
+    ОДИН ВЫЗОВ НА ХОД, а не два: ответ и разбор в одном конверте, потому что ждёт человек.
 
-    ЦИТАТА ОБЯЗАТЕЛЬНА, и это не формальность. Фильтрация возвращает тему ВСЕГДА, даже когда темы
-    нет: на «Привет, давно этим занимаюсь, приятное времяпрепровождение» она отвечала
-    [hiking, outdoor, leisure], и в профиль живого человека приезжали интересы «hello» и «enjoy».
-    Тот путь закрыли. Здесь модель обязана процитировать кусок ЕГО СОБСТВЕННОЙ реплики — то, что
-    нельзя процитировать, не было сказано. То же правило, что в story_interests.
+    ЦИТАТА ОБЯЗАТЕЛЬНА. Фильтрация возвращает тему ВСЕГДА, даже когда темы нет: на «Привет, давно
+    этим занимаюсь» она отвечала [hiking, outdoor, leisure], и в профиль живого человека приезжали
+    интересы «hello» и «enjoy». Здесь модель обязана процитировать кусок ЕГО реплики — то, что
+    нельзя процитировать, не было сказано.
 
-    Ключ сразу английский (shared/interest_i18n.py), подпись — слова человека: она становится
-    подписью его языка и не перезаписывается сгенерированной.
+    ТРИ СТОРОЖА ПОВЕРХ МОДЕЛИ, каждый от увиденного на живом экране:
+      1. `replaces` — уточнение заменяет запись, а не плодит новую. Было: «рыбалкой на солнце»,
+         «рыбачить с лодки на море» — два чипа про одну рыбалку.
+      2. повтор вопроса — модель переспрашивала одно и то же пятью формулировками подряд, и
+         разговор не двигался, пока человек сам не менял тему.
+      3. телесные надобности — «пить воду» записывалось интересом, а диджей-музыка из той же
+         реплики терялась.
     """
     lang = str(lang or "ru").lower()
     if lang not in ("ru", "en", "es"):
@@ -2169,8 +2307,20 @@ def interests_chat(messages, profile, lang="ru"):
     msgs = [m for m in (messages or []) if isinstance(m, dict)]
     last_user = next((str(m.get("content", "")) for m in reversed(msgs) if m.get("role") == "user"), "")
     convo = "\n".join((("User: " if m.get("role") == "user" else "Kleal: ") + str(m.get("content", "")))
-                       for m in msgs[-10:])
-    have = {str(x).strip().lower() for x in ((profile or {}).get("interests") or []) if str(x).strip()}
+                       for m in msgs[-12:])
+    # Уже записанное показывается модели ЯВНО: без этого она предлагала то же самое второй раз,
+    # а `replaces` ей было не на что нацелить.
+    known = []
+    for it in (recorded or []):
+        if isinstance(it, dict) and it.get("key"):
+            known.append("%s (%s)" % (str(it.get("label") or it["key"]), it["key"]))
+        elif isinstance(it, str) and it.strip():
+            known.append(it.strip())
+    if not known:
+        known = [str(x) for x in ((profile or {}).get("interests") or []) if str(x).strip()]
+    if known:
+        convo = "ALREADY NOTED: " + "; ".join(known[:12]) + "\n" + convo
+
     sys_p = INTERESTS_CHAT_PROMPT.replace("__LANGNAME__", _LANGNAME.get(lang, "Russian"))
     try:
         raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_p},
@@ -2178,40 +2328,63 @@ def interests_chat(messages, profile, lang="ru"):
         obj = base._extract_json(str(raw or "")) or {}
     except Exception:
         obj = {}
-    reply = base.polish_reply(str(obj.get("reply") or ""))[:400]
-    if not reply:
-        reply = _L(lang, "Расскажи ещё — чем занимаешься?", "Tell me more — what are you into?")
+
+    reply = base.polish_reply(str(obj.get("reply") or ""))[:300]
+    # Сторож повтора: тот же вопрос другими словами — это не разговор, а тупик. Уводим сами,
+    # каждый раз другой фразой (см. _MOVE_ON), иначе дежурная реплика сама станет повтором.
+    _names = set()
+    for it in known:
+        _names |= {w for w in re.findall(r"[\w]+", str(it).lower()) if len(w) > 2}
+    if not reply or _asked_before(reply, msgs, skip_words=_names):
+        _turn = sum(1 for m in msgs if m.get("role") == "assistant")
+        _bank = _MOVE_ON.get(lang) or _MOVE_ON["en"]
+        reply = _bank[_turn % len(_bank)]
+    # Два пустых ответа подряд — человек не хочет продолжать. Перестаём спрашивать вовсе:
+    # третий вопрос подряд в никуда превращает разговор в допрос.
+    _tail = [str(m.get("content", "")) for m in msgs if m.get("role") == "user"][-2:]
+    if len(_tail) == 2 and all(_EMPTY_ANSWER.match(t or "") for t in _tail):
+        _bank = _ENOUGH.get(lang) or _ENOUGH["en"]
+        # Сколько раз уже говорили «достаточно» — по собственным репликам, а не по счётчику
+        # снаружи: ручка без состояния, а история приходит целиком.
+        _said = sum(1 for m in msgs if m.get("role") == "assistant"
+                    and str(m.get("content", "")).strip() in _bank)
+        reply = _bank[min(_said, len(_bank) - 1)]
 
     low = last_user.lower()
+    have = {str(x).strip().lower() for x in ((profile or {}).get("interests") or []) if str(x).strip()}
+    have |= {str(it.get("key", "")).strip().lower() for it in (recorded or []) if isinstance(it, dict)}
     picked = []
     for it in (obj.get("added") or [])[:3]:
         if not isinstance(it, dict):
             continue
         key = " ".join(str(it.get("key") or "").split())[:60]
-        label = " ".join(str(it.get("label") or "").split())[:60] or key
+        label = " ".join(str(it.get("label") or "").split())[:40] or key
         why = " ".join(str(it.get("why") or "").split())[:200]
-        # Процитированное обязано найтись в ЕГО реплике. Сравниваем по началу цитаты: модель
-        # склонна дописывать хвост, но начало она берёт из текста, если текст вообще был.
+        repl = " ".join(str(it.get("replaces") or "").split()).lower()[:60]
         if not key or not why or why[:24].lower() not in low:
             continue
-        if key.lower() in have or label.lower() in have:
+        if key.lower() in have and not repl:
             continue
-        picked.append({"key": key, "label": label, "why": why})
+        if _NOT_AN_INTEREST.search(key) or _NOT_AN_INTEREST.search(label):
+            continue                       # телесная надобность, а не увлечение
+        label = _clean_label(label)
+        picked.append({"key": key, "label": label, "why": why, "replaces": repl})
 
     added = []
     if picked:
         try:
             import interest_i18n as ii
             for it in picked:
-                # Ключ приходит уже английским; своя формулировка становится подписью его языка.
                 en = ii.to_en([it["key"]])
                 en = en[0] if en else it["key"].lower()
                 src = ii.lang_of(it["label"])
                 if src in ("ru", "es"):
                     ii.learn(en, **{src: it["label"]})
-                added.append({"key": en, "label": it["label"], "why": it["why"]})
+                added.append({"key": en, "label": it["label"], "why": it["why"],
+                              "replaces": it["replaces"]})
         except Exception:
-            added = [{"key": it["key"].lower(), "label": it["label"], "why": it["why"]} for it in picked]
+            added = [{"key": it["key"].lower(), "label": it["label"], "why": it["why"],
+                      "replaces": it["replaces"]} for it in picked]
     return {"reply": reply, "added": added, "lang": lang}
 
 
@@ -3517,7 +3690,8 @@ class H(BaseHTTPRequestHandler):
                 return send_json(self, 200, interests_chat(
                     body.get("messages") if isinstance(body.get("messages"), list) else [],
                     body.get("profile") if isinstance(body.get("profile"), dict) else {},
-                    body.get("lang") or "ru"))
+                    body.get("lang") or "ru",
+                    body.get("recorded") if isinstance(body.get("recorded"), list) else None))
 
             if r == "/story-interests":              # что человек ДЕЛАЕТ — вычитанное из его истории
                 return send_json(self, 200, story_interests(

@@ -414,9 +414,11 @@ export const buddy = {
    * реплику, и то, что он записал, — `added` с ключом, подписью словами человека и ЦИТАТОЙ из
    * его реплики. Без цитаты сервер интерес отбрасывает: на выдуманных темах это уже ломалось.
    */
-  interestsChat: (messages: Json[], prof: Json, lang: string) =>
-    api.post<{ reply?: string; added?: { key: string; label: string; why: string }[] }>(
-      '/api/buddy/interests-chat', { messages, profile: prof, lang }
+  interestsChat: (messages: Json[], prof: Json, lang: string,
+                  recorded: { key: string; label: string }[] = []) =>
+    api.post<{ reply?: string;
+               added?: { key: string; label: string; why: string; replaces?: string }[] }>(
+      '/api/buddy/interests-chat', { messages, profile: prof, lang, recorded }
     ),
 
   resummary: (prof: Json, current: string, personality = '', lang = 'ru') =>

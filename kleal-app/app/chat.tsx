@@ -204,7 +204,11 @@ export default function Chat() {
       hobbyThread.current = next;
       setTyping(true);
       try {
-        const r = await buddyApi.interestsChat(next as any, profileForAttach(), replyLang());
+        // Записанное уходит на сервер: по нему он опознаёт уточнение (и просит заменить, а не
+        // добавить второй чип) и не предлагает то, что уже отмечено.
+        const cur0: string[] = get('interests.explicit') || [];
+        const recorded = cur0.map((k) => ({ key: k, label: interestLabel(k) }));
+        const r = await buddyApi.interestsChat(next as any, profileForAttach(), replyLang(), recorded);
         setTyping(false);
         const reply = String(r?.reply || '');
         if (reply) {
@@ -213,10 +217,17 @@ export default function Chat() {
         }
         const added = Array.isArray(r?.added) ? r!.added! : [];
         if (added.length) {
-          const cur: string[] = get('interests.explicit') || [];
-          const keys = added.map((a) => String(a.key || '').trim()).filter(Boolean);
-          const fresh = keys.filter((k) => !cur.includes(k));
-          if (fresh.length) set('interests.explicit', [...cur, ...fresh]);
+          // УТОЧНЕНИЕ ЗАМЕНЯЕТ, А НЕ ДОБАВЛЯЕТ. «рыбалка» -> «рыбалка на море» это один интерес,
+          // ставший точнее; без этого на экране копились три чипа про одно и то же.
+          let cur: string[] = get('interests.explicit') || [];
+          for (const a of added) {
+            const key = String(a.key || '').trim();
+            if (!key) continue;
+            const old = String(a.replaces || '').trim();
+            if (old) cur = cur.filter((x) => x !== old);
+            if (!cur.includes(key)) cur = [...cur, key];
+          }
+          set('interests.explicit', cur);
           // Подпись — слова человека. Кладём в тот же реестр, куда сгружаются словари сервера,
           // иначе до следующего чтения профиля чип показывал бы английский ключ.
           const lang = getLang();
