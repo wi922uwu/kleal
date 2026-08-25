@@ -31,6 +31,7 @@ import { onboarding, agent, buddy as buddyApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
+import { GlassChip, GlassPill } from '../src/components/Glass';
 import { IconCheckCircle } from '../src/components/icons';
 import { color, radius as rad, type } from '../src/theme';
 
@@ -344,33 +345,26 @@ function Hint({ children }: { children: React.ReactNode }) {
   return <Text style={cs.hint}>{children}</Text>;
 }
 
+/*
+  Чип и главная кнопка шага — из общего стеклянного набора, а не свои. Своих было ровно два вида на
+  весь онбординг, и оба разошлись бы с экранами входа при первой же правке: там уже стекло, здесь
+  ещё плоские плашки. Обёртки оставлены, чтобы не править полсотни мест вызова.
+*/
 function Chip({ label, on, onPress }: { label: string; on?: boolean; onPress?: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityState={{ selected: !!on }}
-      style={({ pressed }) => [s.chip, on && s.chipOn, pressed && { opacity: 0.85 }]}
-    >
-      <Text style={[s.chipText, on && { color: color.onPrimary }]}>{label}</Text>
-    </Pressable>
-  );
+  return <GlassChip label={label} on={on} onPress={onPress} />;
 }
 
 function Cta({ label, onPress, disabled, kind = 'primary' }: {
   label: string; onPress?: () => void; disabled?: boolean; kind?: 'primary' | 'dark' | 'muted';
 }) {
-  const bg = kind === 'primary' ? color.primary : kind === 'dark' ? color.ink : color.neutral100;
-  const fg = kind === 'muted' ? color.fg : color.onPrimary;
   return (
-    <Pressable
-      onPress={disabled ? undefined : onPress}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: !!disabled }}
-      style={({ pressed }) => [s.cta, { backgroundColor: bg, opacity: disabled ? 0.45 : pressed ? 0.9 : 1 }]}
-    >
-      <Text style={[s.ctaText, { color: fg }]}>{label}</Text>
-    </Pressable>
+    <GlassPill
+      label={label}
+      onPress={onPress}
+      disabled={disabled}
+      tone={kind === 'primary' ? 'brand' : kind === 'dark' ? 'dark' : 'light'}
+      style={s.cta}
+    />
   );
 }
 
@@ -677,14 +671,8 @@ const s = StyleSheet.create({
   },
   ownAddText: { ...type.button, color: color.onPrimary } as any,
   restart: { ...type.caption, color: color.primary } as any,
-  chip: {
-    height: 38, paddingHorizontal: 14, borderRadius: rad.full, borderWidth: 1,
-    borderColor: color.border, backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
-  },
-  chipOn: { backgroundColor: color.primary, borderColor: color.primary },
-  chipText: { ...type.labelMedium, color: color.fg } as any,
-  cta: { height: 52, borderRadius: rad.full, alignItems: 'center', justifyContent: 'center' },
-  ctaText: { ...type.button } as any,
+  /** Высота из борда: главная кнопка шага ниже входной — 48 против 56. */
+  cta: { height: 48 },
 
   resultPhoto: { width: '100%', height: 260, borderRadius: rad.md },
   doneCard: {

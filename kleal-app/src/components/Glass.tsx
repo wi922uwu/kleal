@@ -153,6 +153,60 @@ export function GlassToast({ title, note, style }: { title: string; note?: strin
   );
 }
 
+/**
+ * Стеклянный чип — быстрый ответ в разговоре (кадры A.04 и A.08).
+ *
+ * ЭТО НЕ МАЛЕНЬКАЯ КНОПКА, а ответ, который уже написан за человека. Отсюда и вид: невыбранный
+ * почти прозрачен и не спорит с репликой над ним, выбранный заливается фирменным на 82% — ровно
+ * тем же, чем главная кнопка. Общая заливка это не совпадение: нажатый чип и есть отправленный
+ * ответ, и он обязан выглядеть как действие, а не как пометка.
+ *
+ * КЕГЛЬ САМЫЙ МЕЛКИЙ В ПРИЛОЖЕНИИ (11/16, из борда). Чипов на шаге увлечений одиннадцать, они
+ * должны укладываться в три строки и оставлять место ленте; крупнее — и виджет съедает экран.
+ */
+export function GlassChip({
+  label,
+  on,
+  onPress,
+  icon,
+}: {
+  label: string;
+  /** Выбран: заливается фирменным, подпись становится белой. */
+  on?: boolean;
+  onPress?: () => void;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: !!on }}
+      onPress={
+        onPress &&
+        (() => {
+          hTap();
+          onPress();
+        })
+      }
+      style={({ pressed }) => [s.chip, on && s.chipOn, pressed && s.pressed]}
+    >
+      <BlurView intensity={glass.blur} tint={on ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+      <View
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            backgroundColor: on ? color.primary : color.glassLight,
+            opacity: on ? glass.brandAlpha : glass.lightAlpha,
+          },
+        ]}
+      />
+      {icon}
+      <Text style={[s.chipText, on && s.chipTextOn]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
 // ===== вид
 const s = StyleSheet.create({
   wrap: {
@@ -193,6 +247,30 @@ const s = StyleSheet.create({
   off: { shadowOpacity: 0, elevation: 0, borderColor: '#FFFFFF33' },
   labelOff: { color: color.muted },
   pressed: { opacity: 0.85 },
+  chip: {
+    height: 36,
+    borderRadius: radius.full,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#FFFFFF88',
+    ...Platform.select({
+      ios: { shadowColor: color.ink, shadowOpacity: 0.1, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+      android: { elevation: 2 },
+    }),
+  },
+  chipOn: {
+    borderColor: '#FFFFFF55',
+    ...Platform.select({
+      ios: { shadowColor: color.primary, shadowOpacity: 0.3, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } },
+      android: { elevation: 5 },
+    }),
+  },
+  chipText: { ...type.chatHint, color: color.fg } as any,
+  chipTextOn: { color: color.onPrimary },
   toast: {
     flexDirection: 'row',
     alignItems: 'flex-start',

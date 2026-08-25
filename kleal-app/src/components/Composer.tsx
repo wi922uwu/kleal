@@ -6,12 +6,14 @@
  * на последнем шаге анкеты, сводку тоже можно поправить словами.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { View, TextInput, Pressable, StyleSheet } from 'react-native';
+import { View, TextInput, Pressable, StyleSheet, Platform } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { COMPOSER_PLACEHOLDER } from '../onboarding';
 import { useKeyboardInset, dockBottom } from '../keyboard';
 import { T } from '../i18n';
 import { IconChevronLeft, IconMic } from './icons';
-import { color, radius as rad, space } from '../theme';
+import { color, glass, radius as rad, space, type } from '../theme';
+import { hTap } from '../haptics';
 
 export function Composer({
   onBack,
@@ -57,18 +59,32 @@ export function Composer({
         accessibilityRole="button"
         accessibilityLabel={T('Назад', 'Back')}
         style={s.back}
-        onPress={onBack}
+        onPress={() => {
+          hTap();
+          onBack?.();
+        }}
       >
+        <BlurView intensity={glass.blur} tint="light" style={StyleSheet.absoluteFill} />
+        <View
+          style={[StyleSheet.absoluteFill, { backgroundColor: color.glassLight, opacity: glass.lightAlpha }]}
+        />
         <IconChevronLeft />
       </Pressable>
       <View style={s.field}>
+        {/*
+          Поле — стекло, а не серая плашка: под ним фирменный фон, и сплошная заливка вырезала бы
+          в нём прямоугольник. Плотность 72% (в борде именно она) — выше, чем у кнопок: сюда пишут,
+          и текст обязан читаться на любом месте фона.
+        */}
+        <BlurView intensity={glass.blur} tint="light" style={StyleSheet.absoluteFill} />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: color.glassLight, opacity: 0.72 }]} />
         <TextInput
           ref={input}
           style={s.input}
           value={draft}
           onChangeText={setDraft}
           placeholder={placeholder || COMPOSER_PLACEHOLDER()}
-          placeholderTextColor={color.neutral400}
+          placeholderTextColor={color.muted}
           onSubmitEditing={send}
           returnKeyType="send"
           editable={!!onSend}
@@ -82,33 +98,49 @@ export function Composer({
 }
 
 const s = StyleSheet.create({
+  /*
+    ДОК ПРОЗРАЧЕН. В борде у композера стоит заливка `#F7F8FA` — но это цвет фона ОБЫЧНЫХ экранов,
+    доставшийся компоненту по умолчанию: сам кадр стоит на фирменном кремовом. Непрозрачная полоса
+    поверх него отрезала бы низ экрана серым прямоугольником, поэтому здесь фона нет вовсе, а
+    держат строку стеклянные кнопка и поле.
+  */
   dock: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.md,
-    paddingHorizontal: 16,
+    paddingHorizontal: space.lg,
     paddingTop: space.sm,
-    backgroundColor: color.bg,
   },
   back: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: color.border,
-    backgroundColor: color.card,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#FFFFFF88',
   },
   field: {
     flex: 1,
-    height: 48,
+    height: 36,
     borderRadius: rad.full,
-    backgroundColor: color.neutral100,
+    overflow: 'hidden',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 18,
+    paddingLeft: space.lg,
+    paddingRight: 14,
     gap: space.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#FFFFFF88',
+    ...Platform.select({
+      ios: { shadowColor: color.ink, shadowOpacity: 0.1, shadowRadius: 16, shadowOffset: { width: 0, height: 6 } },
+      android: { elevation: 3 },
+    }),
   },
-  input: { flex: 1, color: color.fg, fontSize: 15 },
+  /*
+    Кегль поля — тот же, каким набрана подсказка в борде (11/16). Крупнее он спорил бы с репликами
+    в ленте: строка ввода не должна выглядеть весомее того, что уже сказано.
+  */
+  input: { flex: 1, color: color.fg, ...type.chatHint, paddingVertical: 0 } as any,
 });

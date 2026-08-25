@@ -58,6 +58,8 @@ export const color = {
   ambientAmber: '#F5A65B',
   /** Второй конец градиента логотипа: капля переливается из фирменного красного в маджентовый. */
   brandMagenta: '#DD48FF',
+  /** Светлый конец градиента на пузыре человека: он идёт из этого в `primary`, а не наоборот. */
+  brandSoft: '#F87389',
 
   /**
    * СТЕКЛО. Кнопки входа — полупрозрачные пилюли с размытием того, что под ними. Значения из
@@ -185,6 +187,16 @@ export const type = {
   fine: { fontFamily: font.text, fontSize: 12, lineHeight: 16 },
   /** Подзаголовок финального экрана — он один на весь кадр, поэтому крупнее обычного. */
   displaySubLg: { fontFamily: font.text, fontSize: 17, lineHeight: 26 },
+
+  /**
+   * РАЗГОВОР (кадры A.04–A.13). Ступеней три и они мельче входных: на экране одновременно и
+   * реплики, и время под ними, и подсказка, и чипы — крупная шкала превратила бы это в свалку.
+   */
+  chatTitle: { fontFamily: font.textSemibold, fontSize: 17, lineHeight: 24 },
+  /** Текст в пузыре — тот же кегль, что подзаголовки входа: реплика читается как обычная фраза. */
+  bubble: { fontFamily: font.text, fontSize: 15, lineHeight: 22 },
+  /** Подсказка под пузырём и подпись на чипе — самая мелкая ступень приложения. */
+  chatHint: { fontFamily: font.textMedium, fontSize: 11, lineHeight: 16 },
 } as const;
 
 export const shadow = {
