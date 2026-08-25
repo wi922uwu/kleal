@@ -39,6 +39,15 @@ const ROUTE: Partial<Record<Tab, string>> = {
 /** Пятая цель — капля посередине. Она не вкладка, поэтому у неё свой ключ. */
 type Target = Tab | 'home';
 
+/**
+ * Насколько далеко от центра знака касание ещё считается «по нему».
+ *
+ * Знаки стоят в 56 точках друг от друга, поэтому 26 — это чуть меньше половины промежутка: зоны
+ * не смыкаются, и между ними остаётся полоска, где ничего не выбирается. Так и задумано: панель
+ * отвечает на касание по знаку, а не на любое касание внизу экрана.
+ */
+const REACH = 26;
+
 export function BottomNav({ active }: { active?: Tab }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -65,6 +74,10 @@ export function BottomNav({ active }: { active?: Tab }) {
    * тех же координатах, в которых приходит палец.
    */
   const [spots, setSpots] = useState<Record<string, number>>({});
+  /** Вертикальные границы пилюли: за ними жест не наш. Замеряются вместе с центрами знаков. */
+  const band = useRef<{ top: number; bottom: number } | null>(null);
+  /** Что сейчас подсвечено. Состояние, а не ссылка: от него зависит цвет знака. */
+  const [lit, setLit] = useState<Target | null>(null);
   /**
    * ГДЕ СЕЙЧАС «ПОДНЯТО» — И ЭТО НЕ ПАЛЕЦ.
    *
@@ -87,8 +100,7 @@ export function BottomNav({ active }: { active?: Tab }) {
   const ORDER: Target[] = ['intents', 'search', 'home', 'messages', 'profile'];
   const canPick = (t: Target) => (t === 'home' ? true : !!ROUTE[t as Tab] && active !== t);
 
-  /** Ближайшая цель к точке `x`. Выключенные пропускаются: вести по ним не к чему. */
-  /** Притянуть подъём к цели. Расстояние всегда небольшое — соседние знаки в 56 точках друг от друга. */
+  /** Притянуть подсветку к цели. Расстояние всегда небольшое — соседние знаки в 56 точках друг от друга. */
   const pull = (t: Target | null) => {
     const c = t ? spots[t] : null;
     if (c == null) return;
@@ -101,14 +113,27 @@ export function BottomNav({ active }: { active?: Tab }) {
     }).start();
   };
 
-  const nearest = (x: number): Target | null => {
+  /**
+   * Цель под точкой — или ничего.
+   *
+   * ПУСТОЕ МЕСТО ОСТАЁТСЯ ПУСТЫМ. Сначала бралась просто ближайшая цель: касание у самого края
+   * экрана, в сорока точках от пилюли, выбирало крайний знак и щёлкало. Панель ловила всю полосу
+   * внизу экрана и отвечала на то, что человек в неё не адресовал.
+   *
+   * Теперь у каждого знака своя зона в `REACH` точек, и между зонами есть промежутки, где не
+   * происходит ничего. Плюс вертикальная проверка: ниже пилюли идёт отступ под домашнюю черту, и
+   * касания там тоже не наши.
+   */
+  const nearest = (x: number, y?: number): Target | null => {
+    const b = band.current;
+    if (y != null && b && (y < b.top - 8 || y > b.bottom + 8)) return null;
     let best: Target | null = null;
     let bestD = Infinity;
     for (const t of ORDER) {
       const c = spots[t];
       if (c == null || !canPick(t)) continue;
       const d = Math.abs(x - c);
-      if (d < bestD) { bestD = d; best = t; }
+      if (d <= REACH && d < bestD) { bestD = d; best = t; }
     }
     return best;
   };
@@ -147,16 +172,24 @@ export function BottomNav({ active }: { active?: Tab }) {
   const pan = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
+        // Жест берётся, только если под пальцем ДЕЙСТВИТЕЛЬНО есть цель. Иначе касание проходит
+        // мимо панели и достаётся тому, что под ней, — как и должно быть с пустым местом.
+        onStartShouldSetPanResponder: (e) => !!nearest(e.nativeEvent.pageX, e.nativeEvent.pageY),
+        onMoveShouldSetPanResponder: (e) => !!nearest(e.nativeEvent.pageX, e.nativeEvent.pageY),
         onPanResponderGrant: (e) => {
-          const t = nearest(e.nativeEvent.pageX);
+          const t = nearest(e.nativeEvent.pageX, e.nativeEvent.pageY);
           hot.current = t;
-          // Первый подъём БЕЗ пружины: иначе он летел бы к знаку через полэкрана от того места,
-          // где палец лежал в прошлый раз, — и это читалось бы как чужое движение.
+          setLit(t);
+          // Первая подсветка БЕЗ пружины: иначе она летела бы через полпанели от того места, где
+          // палец лежал в прошлый раз, — и это читалось бы как чужое движение.
           if (t && spots[t] != null) snap.setValue(spots[t]);
           press.setValue(1);
-          if (t) hTick();
+          /*
+            ЩЕЛЧКА ПРИ КАСАНИИ НЕТ, И ЭТО ИСПРАВЛЕНИЕ. Он тут был — «взял цель». Но на обычном
+            нажатии, которым панелью и пользуются в девяти случаях из десяти, получалось два
+            ощущения подряд: щелчок на касании и удар на отпускании. Одно действие — один отклик.
+            Щелчок остался там, где он что-то сообщает: на СМЕНЕ цели во время ведения.
+          */
         },
         onPanResponderMove: (_e, g) => {
           const t = nearest(g.moveX);
@@ -164,6 +197,7 @@ export function BottomNav({ active }: { active?: Tab }) {
           // дробь без нижней границы интервала (см. src/haptics.ts).
           if (t !== hot.current) {
             hot.current = t;
+            setLit(t);
             pull(t);
             if (t) hTick();
           }
@@ -171,6 +205,7 @@ export function BottomNav({ active }: { active?: Tab }) {
         onPanResponderRelease: (_e, g) => {
           const t = hot.current;
           hot.current = null;
+          setLit(null);
           Animated.timing(press, { toValue: 0, duration: 160, useNativeDriver: true }).start();
           /*
             УВЕДЁННЫЙ ВНИЗ ПАЛЕЦ ОТМЕНЯЕТ ВЫБОР. Панель у самого края экрана, и «передумал» здесь
@@ -185,6 +220,7 @@ export function BottomNav({ active }: { active?: Tab }) {
         },
         onPanResponderTerminate: () => {
           hot.current = null;
+          setLit(null);
           Animated.timing(press, { toValue: 0, duration: 160, useNativeDriver: true }).start();
         },
       }),
@@ -192,26 +228,26 @@ export function BottomNav({ active }: { active?: Tab }) {
   );
 
   /**
-   * ПУЗЫРЬ ПОД ПАЛЬЦЕМ.
+   * ПОДСВЕТКА ПОД ПАЛЬЦЕМ — БЕЗ ДВИЖЕНИЯ ЗНАКА.
    *
-   * Знак не просто подсвечивается, а всплывает — и всплывает РОВНО ОДИН: подъём притянут к центру
-   * ближайшего (см. `snap`), соседние лишь чуть ведут плечом. По этому и видно, куда попадёшь, ещё
-   * до отпускания.
+   * Сначала знак под пальцем всплывал: поднимался и увеличивался. На пилюле высотой 48 это
+   * читалось как прыжок из плоскости — эффектно и лишне, потому что панель не должна на себя
+   * смотреть. Осталось тихое: под знаком проступает подложка, сам знак меняет цвет на фирменный.
+   * Ничего не двигается, а «куда попадёшь» видно так же ясно.
    *
-   * Считается всё интерполяцией ОДНОГО значения — положения пальца, — поэтому живёт на нативном
-   * драйвере. Множитель `press` выключает увеличение целиком, когда панель не держат: без него
-   * знаки застывали бы поднятыми там, где палец оторвался.
+   * Подложка ПРИТЯНУТА к центру ближайшего знака (см. `snap`), поэтому при ведении она не
+   * размазывается между двумя, а перескакивает и оседает — тот самый магнит.
    *
-   * ЧИСЛА НАРОЧНО МАЛЕНЬКИЕ. Первая версия поднимала знак почти в полтора раза — на панели высотой
-   * 48 это выглядело аттракционом и перетягивало внимание с экрана на себя. Подсказка «попадёшь
-   * сюда» должна быть заметна ровно настолько, чтобы её увидеть, и ни на сколько больше.
+   * Считается интерполяцией одного значения, живёт на нативном драйвере. Множитель `press`
+   * выключает подсветку целиком, когда панель не держат: без него она застыла бы там, где палец
+   * оторвался.
    */
   const magnify = (cx: number | undefined, out: [number, number, number]) => {
     if (cx == null) return out[2];
     const at = snap.interpolate({
-      // Диапазон уже прежнего: подъём теперь стоит НА знаке, и растягивать влияние на два соседних
-      // незачем — соседи должны лишь чуть повести плечом, а не подниматься вместе с ним.
-      inputRange: [cx - 72, cx - 40, cx, cx + 40, cx + 72],
+      // Узкий диапазон: горит РОВНО один знак. Подложка, растянутая на соседей, снова превратила бы
+      // подсказку в размазанное пятно, от которого и уходили.
+      inputRange: [cx - 40, cx - 26, cx, cx + 26, cx + 40],
       outputRange: [out[2], out[1], out[0], out[1], out[2]],
       extrapolate: 'clamp',
     });
@@ -240,12 +276,7 @@ export function BottomNav({ active }: { active?: Tab }) {
         style={[
           s.item,
           !to && s.off,
-          live && {
-            transform: [
-              { translateY: magnify(cx, [-6, -2, 0]) as any },
-              { scale: magnify(cx, [1.18, 1.06, 1]) as any },
-            ],
-          },
+
         ]}
       >
         {/*
@@ -256,13 +287,7 @@ export function BottomNav({ active }: { active?: Tab }) {
         {live ? (
           <Animated.View
             pointerEvents="none"
-            style={[
-              s.bubble,
-              {
-                opacity: magnify(cx, [0.1, 0.03, 0]) as any,
-                transform: [{ scale: magnify(cx, [0.92, 0.78, 0.6]) as any }],
-              },
-            ]}
+            style={[s.bubble, { opacity: magnify(cx, [1, 0, 0]) as any }]}
           />
         ) : null}
         {/*
@@ -275,7 +300,7 @@ export function BottomNav({ active }: { active?: Tab }) {
           accessibilityLabel={label}
           onPress={live ? () => go(tab) : undefined}
         >
-          <Icon size={24} c={on ? color.primary : color.muted} />
+          <Icon size={24} c={on || lit === tab ? color.primary : color.muted} />
         </Pressable>
       </Animated.View>
     );
@@ -283,7 +308,18 @@ export function BottomNav({ active }: { active?: Tab }) {
 
   return (
     <View style={[s.wrap, { paddingBottom: Math.max(insets.bottom, space.md) }]} {...pan.panHandlers}>
-      <View style={s.bar}>
+      <View
+        style={s.bar}
+        // Границы пилюли по вертикали — чтобы касание ниже неё, в отступе под домашнюю черту, не
+        // считалось нажатием по панели.
+        ref={(r: any) => {
+          if (!r || band.current) return;
+          r.measureInWindow?.((_x: number, y: number, _w: number, h: number) => {
+            band.current = { top: y, bottom: y + h };
+          });
+        }}
+        collapsable={false}
+      >
         <View style={s.side}>
           {item('intents', nav[0], IconLayers)}
           {item('search', nav[1], IconSearch)}
@@ -307,23 +343,15 @@ export function BottomNav({ active }: { active?: Tab }) {
 
         Капля — такая же цель, как знаки: палец доводят до неё и отпускают, и она всплывает так же.
       */}
-      <Animated.View
-        ref={spot('home') as any}
-        collapsable={false}
-        style={[
-          s.drop,
-          {
-            transform: [
-              { translateY: magnify(spots.home, [-6, -2, 0]) as any },
-              { scale: magnify(spots.home, [1.12, 1.05, 1]) as any },
-            ],
-          },
-        ]}
-      >
+      <View ref={spot('home') as any} collapsable={false} style={s.drop}>
+        <Animated.View
+          pointerEvents="none"
+          style={[s.dropLit, { opacity: magnify(spots.home, [1, 0, 0]) as any }]}
+        />
         <Pressable accessibilityRole="button" accessibilityLabel={NAV_FAB()} onPress={() => go('home')}>
           <LogoMark width={DROP} />
         </Pressable>
-      </Animated.View>
+      </View>
     </View>
   );
 }
@@ -385,12 +413,24 @@ const s = StyleSheet.create({
   gap: { flex: 1, minWidth: 72 },
   item: { width: 40, height: 32, alignItems: 'center', justifyContent: 'center' },
   off: { opacity: 0.38 },
+  /*
+    Подложка под знаком — единственный признак того, что палец здесь. Цвет нейтральный, а не
+    фирменный: фирменным становится сам знак, и две красные вещи одна на другой слились бы в пятно.
+  */
   bubble: {
     position: 'absolute',
     width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: color.primary,
+    height: 32,
+    borderRadius: 12,
+    backgroundColor: color.neutral100,
+  },
+  /** То же под каплей, только круглое и чуть шире её: капля сама по себе не меняет вида. */
+  dropLit: {
+    position: 'absolute',
+    width: DROP + 8,
+    height: DROP + 8,
+    borderRadius: (DROP + 8) / 2,
+    backgroundColor: color.neutral100,
   },
   /*
     СВОЕЙ ТЕНИ У КАПЛИ НЕТ, И ЭТО ИСПРАВЛЕНИЕ. Была фирменная: `shadowColor` красный, радиус 12.
