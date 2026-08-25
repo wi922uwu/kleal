@@ -41,7 +41,16 @@ import { color, radius as rad, space, type } from '../theme';
 /** Отступ пузыря от краёв экрана — тот же, что у карточек главной. */
 const EDGE = 16;
 /** Потолок высоты: выше пузырь начинает спорить с экраном, ради которого он и не стал экраном. */
-const MAX_H = 340;
+const MAX_H = 420;
+/**
+ * Пол высоты.
+ *
+ * ПУСТОЙ ПУЗЫРЬ — ТОЖЕ ОКНО. Первая версия сжималась по содержимому, и на пустых уведомлениях
+ * получалась полоска в две строки: она читалась не как ответ, а как обрезок, и нажатие по
+ * колокольчику выглядело неудачным. Окно одного роста и с содержимым, и без него: пустота внутри
+ * него — это сообщение, а не отсутствие окна.
+ */
+const MIN_H = 236;
 
 export function NotifyBubble({ invites, onPick }: {
   invites: HomeInvite[];
@@ -53,7 +62,7 @@ export function NotifyBubble({ invites, onPick }: {
   const grow = useRef(new Animated.Value(0)).current;
 
   const W = width - EDGE * 2;
-  const H = Math.min(MAX_H, 92 + invites.length * 64);
+  const H = Math.max(MIN_H, Math.min(MAX_H, 92 + invites.length * 64));
 
   useEffect(() => {
     if (open) {
@@ -103,7 +112,9 @@ export function NotifyBubble({ invites, onPick }: {
               top: insets.top + 54,
               right: EDGE,
               width: W,
-              maxHeight: H,
+              // ВЫСОТА, А НЕ ПОТОЛОК. С `maxHeight` окно сжималось по содержимому, и пустое
+              // состояние не могло растянуться до своего роста: `flex` внутри нечего было делить.
+              height: H,
               opacity: grow,
               transform: [
                 { translateX: Animated.multiply(short, W / 2) },
@@ -147,11 +158,12 @@ export function NotifyBubble({ invites, onPick }: {
             </ScrollView>
           ) : (
             /* Пустой пузырь честнее закрытого: точки на колокольчике нет, но нажать по нему можно
-               всегда, и ответ «пока тихо» — тоже ответ. */
-            <>
+               всегда, и «уведомлений пока не было» — тоже ответ. Заодно вторая строка объясняет,
+               ЧТО сюда придёт, — иначе окно сообщает только об отсутствии. */
+            <View style={s.empty}>
               <Text style={s.emptyTitle}>{HOME.bellQuiet()}</Text>
-              <Text style={s.emptyNote}>{HOME.noInvitesNote()}</Text>
-            </>
+              <Text style={s.emptyNote}>{HOME.bellQuietNote()}</Text>
+            </View>
           )}
         </Animated.View>
       </Modal>
@@ -189,6 +201,8 @@ const s = StyleSheet.create({
   name: { ...type.title, color: color.fg } as any,
   sub: { ...type.bodySmall, color: color.muted } as any,
   go: { ...type.h2, color: color.neutral400 } as any,
-  emptyTitle: { ...type.title, color: color.fg } as any,
-  emptyNote: { ...type.bodySmall, color: color.muted } as any,
+  /** Пустой текст стоит по центру окна, а не липнет к заголовку: иначе низ выглядит отрезанным. */
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: space.sm, paddingHorizontal: space.md },
+  emptyTitle: { ...type.title, color: color.fg, textAlign: 'center' } as any,
+  emptyNote: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
 });
