@@ -40,6 +40,54 @@ _ES_HINT = re.compile(r"[áéíóúñü¿¡]", re.I)
 _LATINISH = re.compile(r"^[a-z0-9][a-z0-9 \-'&+/.]*$", re.I)
 
 
+# ПРОМПТ ПЕРЕВОДА — ОДИН НА ВСЕХ. Онбординг переводит по одному слову в правке профиля, миграция —
+# батчами по всей популяции; разойдись эти два текста, и один и тот же интерес получил бы разные
+# ключи в зависимости от того, каким путём попал в базу.
+#
+# Два правила добавлены по итогам первого прогона на живых данных:
+#   * ИМЕНА СОБСТВЕННЫЕ. «тарков по ночам» стал «night tarot» — модель приняла Escape from Tarkov
+#     за карты таро. Ключ уходит в подбор, и человек начинает искать гадалок.
+#   * НЕ ВЫДУМЫВАТЬ ИНТЕРЕС. «жду ноября» и «тепло, когда некому позвонить в воскресенье» — это
+#     не увлечения, а строки о себе. Пустой ответ честнее: слово останется как написано, подбор по
+#     нему всё равно бессмысленен, а выдуманный ключ ещё и уводит к чужим людям.
+TRANSLATE_PROMPT = (
+    "You translate personal interests for a social app. Input: one interest per line. "
+    "Return a JSON array only — one object per input line, same order and count, no extra text.\n"
+    "Each object: {\"en\",\"ru\",\"es\"} — a short natural interest phrase, max 4 words, in each language.\n"
+    "RULES:\n"
+    "1. Keep the SPECIFIC meaning: 'sea fishing', not 'fishing'.\n"
+    "2. Proper nouns stay proper nouns: game titles, brands, places, bands. "
+    "'тарков' is the game Escape from Tarkov -> 'escape from tarkov', never 'tarot'. "
+    "Transliterate to Latin if needed; never translate their literal meaning.\n"
+    "3. If a line is NOT an interest — a mood, a complaint, a personal note, a life circumstance "
+    "('waiting for november', 'my son started school') — return {\"en\":\"\"} for that line. "
+    "Do not invent an interest that is not there.\n"
+    "4. If a line mixes a personal story with a real activity, keep the activity only: "
+    "'обжариваю кофе дома на сковороде' -> 'home coffee roasting'."
+)
+
+
+def parse_translation(raw, batch):
+    """Ответ модели -> список строк {"en","ru","es"} длиной с батч (или []).
+
+    Батч из одного слова модель часто отдаёт голым объектом без массива — принимаем оба вида.
+    На этом уже споткнулись: единственное новое слово в правке профиля молча оставалось сырым.
+    """
+    try:
+        rows = json.loads(raw[raw.index("["):raw.rindex("]") + 1])
+        if isinstance(rows, list) and len(rows) == len(batch):
+            return rows
+    except Exception:
+        pass
+    try:
+        one = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+        if isinstance(one, dict) and len(batch) == 1:
+            return [one]
+    except Exception:
+        pass
+    return []
+
+
 def _norm(s):
     return " ".join(str(s or "").strip().lower().split())
 

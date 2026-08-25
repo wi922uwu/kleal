@@ -37,25 +37,28 @@ BATCH = 12
 
 
 def translate(batch):
-    sys_p = ("You translate personal interests for a social app. For EVERY input line return one "
-             "object {\"en\",\"ru\",\"es\"}: a short natural interest phrase (max 4 words) in each "
-             "language, preserving the SPECIFIC meaning (sea fishing, not fishing). No extra text — "
-             "answer with a JSON array only, same order and count as the input lines.")
-    raw = llm_complete(config.MODEL_ID, [{"role": "system", "content": sys_p},
+    """Перевод батча. Промпт и разбор — общие с онбордингом (shared/interest_i18n.py)."""
+    raw = llm_complete(config.MODEL_ID, [{"role": "system", "content": ii.TRANSLATE_PROMPT},
                                          {"role": "user", "content": "\n".join(batch)}], 0.2)
-    # Батч из одного слова модель отдаёт голым объектом — принимаем оба вида (см. onboarding).
-    try:
-        rows = json.loads(raw[raw.index("["):raw.rindex("]") + 1])
-        if isinstance(rows, list) and len(rows) == len(batch):
-            return rows
-    except Exception:
-        pass
-    try:
-        one = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
-        return [one] if isinstance(one, dict) and len(batch) == 1 else []
-    except Exception:
-        return []
-    return []
+    return ii.parse_translation(raw, batch)
+
+
+def restore(path):
+    """Вернуть интересы из бэкапа, снятого прошлым прогоном. Ключ бэкапа — имя, значение —
+    прежний список; строки, которых уже нет, пропускаются молча."""
+    with open(path, encoding="utf-8") as f:
+        old = json.load(f)
+    users = db.load_users() or []
+    by = {str(u.get("name")): u for u in users}
+    n = 0
+    for nm, ints in old.items():
+        u = by.get(nm)
+        if u is not None and (u.get("interests") or []) != ints:
+            u["interests"] = ints
+            db.save_user(u)
+            n += 1
+    print("восстановлено строк: %d из %d" % (n, len(old)))
+    return 0
 
 
 def main():
@@ -63,7 +66,12 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--labels", action="store_true",
                     help="только дозаполнить ru/es подписи существующих ключей")
+    ap.add_argument("--restore", metavar="BACKUP",
+                    help="вернуть интересы из бэкапа прошлого прогона и выйти")
     a = ap.parse_args()
+
+    if a.restore:
+        return restore(a.restore)
 
     users = db.load_users() or []
     print("людей: %d, хранилище: %s, словарь: %s" % (len(users), db.MODE, ii.PATH))

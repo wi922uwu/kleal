@@ -2065,27 +2065,13 @@ def _translate_interests(batch):
 
     Модель, а не фильтрация: фильтрации задача «назови тему», и она отвечает темой ВСЕГДА, даже
     когда темы нет, — на этом уже горели (интересы «hello» и «leisure» у живых людей). Здесь
-    задача другая: ПЕРЕВЕСТИ сказанное, сохранив специфичность. «Рыбачить на море» обязано стать
-    «sea fishing», а не «fishing»: именно уточнение делает человека находимым тем, кто ищет то же.
+    задача другая: ПЕРЕВЕСТИ сказанное, сохранив специфичность. Текст промпта и разбор ответа —
+    общие с миграцией (shared/interest_i18n.py), иначе два пути дали бы разные ключи одному слову.
     """
-    sys_p = ("You translate personal interests for a social app. For EVERY input line return one "
-             "object {\"en\",\"ru\",\"es\"}: a short natural interest phrase (max 4 words) in each "
-             "language, preserving the SPECIFIC meaning (sea fishing, not fishing). No extra text — "
-             "answer with a JSON array only, same order and count as the input lines.")
-    raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_p},
+    import interest_i18n
+    raw = llm_complete(MODEL_ID, [{"role": "system", "content": interest_i18n.TRANSLATE_PROMPT},
                                   {"role": "user", "content": "\n".join(batch)}], 0.2)
-    # Батч из ОДНОГО слова модель часто отдаёт голым объектом без массива — ловим оба вида.
-    # На этом уже споткнулись: единственное новое слово в правке профиля молча оставалось сырым.
-    try:
-        rows = json.loads(raw[raw.index("["):raw.rindex("]") + 1])
-        return rows if isinstance(rows, list) else []
-    except Exception:
-        pass
-    try:
-        one = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
-        return [one] if isinstance(one, dict) and len(batch) == 1 else []
-    except Exception:
-        return []
+    return interest_i18n.parse_translation(raw, batch)
 
 
 def _canon_interests(words):
