@@ -111,7 +111,10 @@ def _wshare(a, b):
     ambiguous = {"market", "mercado", "рынок", "project", "проект",
                  "exchange", "intercambio", "обмен",
                  "game", "games", "игра", "игры", "juego", "juegos",
-                 "role", "playing", "роль"}
+                 "role", "playing", "роль",
+                 # «стартапы» -> тема `business` -> цепляло «business language», то есть интерес
+                 # к ЯЗЫКУ, а не к делу. Тот же зонтик, что market.
+                 "business", "бизнес", "negocio"}
     A = [w for w in _wtok(a) if w not in ambiguous]
     B = [w for w in _wtok(b) if w not in ambiguous]
     if norm(a) and norm(a) == norm(b):

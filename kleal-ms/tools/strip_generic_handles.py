@@ -42,6 +42,16 @@ import db  # noqa: E402
 #
 # Проверено на живой выдаче: запрос «дизайн интерфейсов» ставил в первый ярус столяра с ручкой
 # `design` от «design collaboration», а людей с настоящим `ux design` — во второй.
+# СЛОВА, КОТОРЫЕ НИКТО НЕ ПИШЕТ О СЕБЕ. Они бывают только обрывком машинного разбора: «talk»
+# отрезано от «conversation group», «exchange» — от «language exchange», «market» — от
+# «mercado gastronómico». Для них проверка выводимости лишняя и вредна: мост не всегда знает
+# фразу-источник, и обрывок оставался жить. Замерено — запрос «поговорить про музыку» приводил
+# четверых первым ярусом по голому `talk`.
+#
+# Список намеренно короткий. «bar», «music», «news» сюда НЕ входят: их люди пишут о себе всерьёз,
+# и вычищать их значило бы отнимать настоящий интерес.
+ALWAYS_STRIP = {"talk", "exchange", "market", "обмен", "intercambio"}
+
 STRIP = {
     "market", "talk", "quiet", "business", "product", "trip", "language",
     "fitness", "job", "data", "management", "clothes", "socialize", "nature", "family",
@@ -87,6 +97,9 @@ def main():
         norms = [_norm(w) for w in ints]
         drop = set()
         for i, w in enumerate(norms):
+            if w in ALWAYS_STRIP:
+                drop.add(i)          # обрывок разбора: источник искать не нужно
+                continue
             if w not in STRIP:
                 continue
             for j, o in enumerate(norms):
