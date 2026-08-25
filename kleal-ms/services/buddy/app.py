@@ -2146,8 +2146,19 @@ TWO QUESTIONS PER INTEREST, THEN MOVE ON. This is the most important rule.
 - If their answer is empty of content ("все", "да", "не знаю"), do not dig. Move to something else.
 - One question per reply. Never two questions in one sentence.
 
-WHAT MAKES A GOOD QUESTION: it asks about the ACTIVITY — where, with whom, how often, what kind.
-Not about feelings ("что вам нравится в ритме"), not about opinions, not "почему".
+WHAT MAKES A GOOD QUESTION: it makes the interest MORE SPECIFIC, so the engine can find people
+who do the SAME thing. Ask about the KIND, the STYLE, the LEVEL, sometimes the PLACE when the place
+changes what the activity is ("в бассейне" and "в открытой воде" are different swims).
+
+NEVER ASK WHO THEY DO IT WITH. They are here BECAUSE they have no one to do it with — that is the
+whole reason the app exists. "С кем обычно играешь?" is at best pointless and at worst a sore spot,
+and the answer tells the engine nothing.
+
+NEVER ask about feelings ("что вам нравится в ритме"), opinions, or "почему". Never ask how often.
+Time, place, group size and gender are collected on their own screens later — do not ask for them.
+
+Good: "Какие настолки — стратегии или что-то лёгкое?" "Ты бегаешь по городу или по трейлам?"
+Bad: "С кем играешь?" "Как часто?" "Что тебе в этом нравится?" "Почему именно это?"
 
 ABOUT `added` — the whole value depends on these rules:
 - ONLY things the person DOES, and only from THEIR LAST MESSAGE.
