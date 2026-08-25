@@ -118,10 +118,18 @@ def cases():
             {"include_tag": t, "note": "кросс-язык es"})
         add("int_top_%s" % t, "интересы", {"topics": [en], "phrase": en},
             {"t1_all_tag": t, "note": "первый ярус только свои"})
-    # порядок по силе: свои раньше родственных
+    # ПОРЯДОК ПО СИЛЕ. Проверка «точное выше родственного» кусается только там, где точных
+    # НЕ ХВАТАЕТ на выдачу и движку приходится добирать родственными. На полном пуле в каждом
+    # кластере 39 человек, восьмёрка набирается своими, и проверка молчит — измерено: 0 из 40
+    # срабатываний. Поэтому выборка сужается возрастным окном: в полосе кластер даёт единицы.
     for en, _ru, _es in CLUSTERS:
         add("ord_%s" % _tag(en), "интересы", {"topics": [en], "phrase": en},
-            {"level_order": _tag(en), "note": "точное выше родственного"})
+            {"level_order": _tag(en), "note": "точное выше родственного (полный пул)"})
+        for lo, hi in AGE_BANDS[:4]:
+            add("ord_scarce_%d_%s" % (lo, _tag(en)), "интересы",
+                {"topics": [en], "phrase": en, "minAge": lo, "maxAge": hi},
+                {"level_order": _tag(en), "all_age_within": [lo, hi],
+                 "note": "точных мало — добор обязан идти ПОСЛЕ них"})
     # чужой кластер не должен всплывать первым ярусом. Три разных «чужих» на кластер: одним
     # промахом можно ошибиться, тремя — уже видно систему.
     for i, (en, _ru, _es) in enumerate(CLUSTERS):
@@ -173,10 +181,16 @@ def cases():
             {"topics": [en], "wantPersona": {"energy": "drained", "depth": "deep"}},
             {"persona_more_hits_first": True, "no_shrink": True})
     # Вайб как признак social_context — отдельная механика, проверяем, что клеш не наверху.
+    # Вайб: на полном пуле столкновение до верхушки не доходило ни разу (0 из 28). Сужаем
+    # возрастом — тогда выбирать не из кого, и признак social_context виден.
     for mv in VIBES:
         for en, _ru, _es in CLUSTERS[:4]:
             add("vibe_%s_%s" % (mv, _tag(en)), "характер", {"topics": [en]},
                 {"no_clash_top": 3}, prof={"vibe": mv})
+        for lo, hi in AGE_BANDS[:3]:
+            add("vibe_scarce_%s_%d" % (mv, lo), "характер",
+                {"topics": ["coffee"], "minAge": lo, "maxAge": hi},
+                {"no_clash_top": 3, "all_age_within": [lo, hi]}, prof={"vibe": mv})
 
     # ---- КОМБИНАЦИИ ----------------------------------------------------------------------
     for lo, hi in AGE_BANDS[:10]:
@@ -261,15 +275,18 @@ def judge(sc, cands, users, tags_of, prof):
         if drops:
             F.append("полоса ухудшилась и вернулась на месте %d (%s)" % (drops[0] + 1, seen[:6]))
     n = e.get("no_clash_top")
-    if n:
+    if n and cands:
+        # Столкновение наверху — сбой ТОЛЬКО если ниже стоял неконфликтный, которого обошли.
+        # Требовать чистой верхушки безусловно нечестно: когда выбирать не из кого, показать
+        # конфликтующего правильнее, чем не показать никого.
         mv = str(prof.get("vibe") or "")
-        bad = []
-        for c in cands[:n]:
-            cv = str((users.get(c.get("name")) or {}).get("vibe") or "")
-            if (mv, cv) in CLASH or (cv, mv) in CLASH:
-                bad.append("%s:%s" % (c.get("name"), cv))
-        if bad:
-            F.append("столкновение характеров в верхушке: %s" % ", ".join(bad))
+        vib = lambda c: str((users.get(c.get("name")) or {}).get("vibe") or "")
+        clash = lambda cv: (mv, cv) in CLASH or (cv, mv) in CLASH
+        top_bad = [(i, c) for i, c in enumerate(cands[:n]) if clash(vib(c))]
+        calm_below = [i for i, c in enumerate(cands) if i >= n and not clash(vib(c))]
+        if top_bad and calm_below:
+            F.append("конфликтующий на месте %d обошёл неконфликтного с места %d"
+                     % (top_bad[0][0] + 1, calm_below[0] + 1))
     # Пожелание по характеру НЕ фильтрует: выдача не имеет права стать короче.
     if e.get("no_shrink") and sc.get("_base_n") is not None:
         if len(cands) < sc["_base_n"]:
