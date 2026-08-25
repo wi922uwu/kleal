@@ -61,13 +61,17 @@ export type ArcItem = {
  */
 const PITCH = 245;
 /**
- * Сторона центральной картинки.
+ * Сторона центральной картинки, если высоту не задали снаружи.
  *
- * Занимает почти всю ширину экрана — так и задумано: посреди пустой главной стоит один крупный
- * предмет, а не значок. Больше сделать нельзя: между шапкой и строкой «Чем хочешь заняться?»
- * остаётся около 580 точек, и в них должны уместиться и сама картинка, и съезд соседних по дуге.
+ * ОБЫЧНО ЕЁ ЗАДАЮТ. Колесо стоит на пустой главной вместе с карточкой приглашений, и сколько
+ * места ему достанется, знает только экран: это зависит от высоты телефона, от выреза, от
+ * клавиатуры и от того, что ещё внизу. Подобранное на глаз число на одном аппарате смотрелось
+ * ровно, а на другом уводило карточку за нижний край — что и случилось.
  */
-const BOX = 270;
+const BOX_FALLBACK = 270;
+/** Меньше — предмет перестаёт читаться, больше — не остаётся места ни на что другое. */
+const BOX_MIN = 150;
+const BOX_MAX = 320;
 /**
  * Во сколько раз мельче соседняя.
  *
@@ -93,11 +97,18 @@ export const ARC_PITCH = PITCH;
 export const ARC_COPIES = COPIES;
 /** Высота подписи под картинкой вместе с отступом над ней. */
 const CAP = 48;
-/** Высота полосы: картинка, подпись, место, куда съезжают соседние, и запас под наклон. */
-const BAND = BOX + CAP + LIFT + 24;
+/** Что полоса добавляет к самой картинке: подпись, место под съезд соседних и запас под наклон. */
+const EXTRA = CAP + LIFT + 24;
 
-export function ArcCarousel({ items, onPick, progress }: {
+export function ArcCarousel({ items, onPick, progress, height }: {
   items: ArcItem[];
+  /**
+   * Сколько места колесу отвели. Из него считается размер картинки, а не наоборот.
+   *
+   * Так экран остаётся хозяином раскладки: он знает, сколько осталось после шапки, карточки и
+   * дока, и колесо укладывается в остаток — вместо того чтобы выталкивать соседей за край.
+   */
+  height?: number;
   /** Нажали по ТОЙ, что сейчас по центру. По соседней жест означает «подвинь её сюда». */
   onPick?: (item: ArcItem) => void;
   /**
@@ -112,6 +123,8 @@ export function ArcCarousel({ items, onPick, progress }: {
   const lang = useLang();
   const { width } = useWindowDimensions();
   const n = items.length;
+  const BAND = height ?? BOX_FALLBACK + EXTRA;
+  const BOX = Math.max(BOX_MIN, Math.min(BOX_MAX, BAND - EXTRA));
   /**
    * СДВИГ НАЧИНАЕТСЯ СО СТАРТОВОГО, А НЕ С НУЛЯ.
    *
@@ -167,11 +180,11 @@ export function ArcCarousel({ items, onPick, progress }: {
   };
 
   return (
-    <View style={s.wrap} pointerEvents="box-none">
+    <View style={[s.wrap, { height: BAND }]} pointerEvents="box-none">
       <Animated.ScrollView
         ref={list as any}
         horizontal
-        style={s.strip}
+        style={{ height: BAND }}
         showsHorizontalScrollIndicator={false}
         // Магнит: лента останавливается только на шаге, а не там, где кончилась инерция.
         snapToInterval={PITCH}
@@ -213,7 +226,7 @@ export function ArcCarousel({ items, onPick, progress }: {
           return (
             <Animated.View
               key={it.key}
-              style={[s.slot, { opacity, transform: [{ translateY: y }, { rotate }, { scale }] }]}
+              style={[s.slot, { height: BAND }, { opacity, transform: [{ translateY: y }, { rotate }, { scale }] }]}
             >
               {/*
                 ДВА РАЗНЫХ ЖЕСТА ОДНИМ НАЖАТИЕМ, и различает их положение предмета.
@@ -239,7 +252,7 @@ export function ArcCarousel({ items, onPick, progress }: {
                 <Image
                   accessibilityIgnoresInvertColors
                   source={it.source}
-                  style={s.pic}
+                  style={{ width: BOX, height: BOX }}
                   resizeMode="contain"
                 />
                 {/*
@@ -271,10 +284,9 @@ const s = StyleSheet.create({
     заранее оставить — прокрутка обрезает всё, что вышло за её край, а `overflow: visible` на ней
     не работает.
   */
-  wrap: { height: BAND, justifyContent: 'center' },
-  strip: { height: BAND },
+  wrap: { justifyContent: 'center' },
   /** Ячейка ровно в шаг ленты: от этого зависит, что центр ячейки совпадает с центром экрана. */
-  slot: { width: PITCH, height: BAND, alignItems: 'center', justifyContent: 'flex-start' },
+  slot: { width: PITCH, alignItems: 'center', justifyContent: 'flex-start' },
   cap: { ...type.wheelLabel, color: color.fg, textAlign: 'center', marginTop: space.md } as any,
   /*
     ТЕНИ У КАРТИНКИ НЕТ, И ЭТО НЕ ЗАБЫЛИ. Она тут была — мягкая, чтобы предмет не висел плоской
@@ -283,5 +295,5 @@ const s = StyleSheet.create({
     было почти не видно, на крупном она читается сразу.
     Правильная тень тут — часть самой картинки: у предметов в наборе она уже нарисована.
   */
-  pic: { width: BOX, height: BOX },
+  pic: {},
 });

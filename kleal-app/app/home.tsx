@@ -63,6 +63,19 @@ export default function Home() {
    * меняется вместе с картинкой, и оба читают одно значение на стороне UI.
    */
   const wheelAt = useRef(new Animated.Value(0)).current;
+  /**
+   * СКОЛЬКО МЕСТА ОСТАЛОСЬ КОЛЕСУ — ЗАМЕР, А НЕ ПОДБОР.
+   *
+   * Колесо и карточка приглашений делят пустую главную. Пока размер колеса стоял числом, всё
+   * держалось на том, что подобрано оно было под ЭТОТ телефон: на другом сумма переставала
+   * помещаться, лента становилась прокручиваемой, и кнопка «Найти людей» уезжала под строку ввода
+   * — карточка западала.
+   *
+   * Теперь меряются оба: видимая высота ленты и высота карточки. Колесу отдаётся ровно остаток, и
+   * прокручиваться становится нечему.
+   */
+  const [viewH, setViewH] = useState(0);
+  const [cardH, setCardH] = useState(0);
   /** Какое приглашение сверху стопки. Живёт в экране: он знает, какие уже разобрали. */
   const [invIdx, setInvIdx] = useState(0);
   /**
@@ -193,6 +206,7 @@ export default function Home() {
         </View>
 
         <ScrollView
+          onLayout={(e) => setViewH(e.nativeEvent.layout.height)}
           contentContainerStyle={s.scroll}
           keyboardShouldPersistTaps="handled"
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={color.primary} />}
@@ -221,6 +235,8 @@ export default function Home() {
                   <ArcCarousel
                     items={WHEEL()}
                     progress={wheelAt}
+                    // Остаток: видимая часть ленты минус карточка, промежуток между ними и отбивки.
+                    height={viewH && cardH ? Math.max(220, viewH - cardH - space.lg - 20) : undefined}
                     onPick={(it) => router.navigate({ pathname: '/create', params: { seed: it.query } })}
                   />
                   {/*
@@ -229,7 +245,7 @@ export default function Home() {
                     отвечает на невысказанный вопрос «а мне-то кто-нибудь написал». Без неё пустая
                     главная выглядела бы так, будто приглашений в приложении нет вовсе.
                   */}
-                  <EmptyInviteCard />
+                  <EmptyInviteCard onHeight={setCardH} />
                 </View>
               ) : null}
 
@@ -403,10 +419,10 @@ function GroupCard({ g, myArea }: { g: Group; myArea: string }) {
 }
 
 /** «Home Card · Empty»: то же тело, что у приглашения, но вместо человека — заглушка. */
-function EmptyInviteCard() {
+function EmptyInviteCard({ onHeight }: { onHeight?: (h: number) => void }) {
   const router = useRouter();
   return (
-    <View style={[s.meet, s.emptyCard]}>
+    <View style={[s.meet, s.emptyCard]} onLayout={(e) => onHeight?.(e.nativeEvent.layout.height)}>
       <View style={[s.meetAva, s.meetAvaEmpty]}>
         <IconImagePlaceholder size={30} />
       </View>
