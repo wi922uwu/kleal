@@ -2290,6 +2290,110 @@ def _asked_before(reply, messages, skip_words=(), thresh=0.85):
     return False
 
 
+# ---------------------------------------------------------------- «помоги разобраться»
+# Запасные сцены на случай, когда ход модели не прошёл сторожей (discover.parse_turn вернул
+# пустое). Их три, они разного вида и не про ярлыки — то же требование, что к живым сценам.
+# Показывать вместо сцены извинение нельзя: человек уже согласился на опрос и ждёт вопроса.
+_FALLBACK_SCENES = {
+    "ru": [("Пятница, восемь вечера, планов нет.", "cards",
+            ["Ушёл бы гулять по городу", "Позвал бы двоих домой", "Остался бы один и не жалел"]),
+           ("Внезапно свободная суббота и хорошая погода.", "pair",
+            ["Уехал бы за город", "Остался бы в городе"]),
+           ("Что из этого было с тобой за последний месяц?", "multi",
+            ["Досмотрел сериал за ночь", "Гулял без цели дольше часа", "Готовил дольше, чем ел",
+             "Слушал одно и то же по кругу", "Списался с тем, кого давно не видел"])],
+    "en": [("Friday, eight in the evening, no plans.", "cards",
+            ["Head out and walk the city", "Have two people over", "Stay in and not regret it"]),
+           ("A free Saturday and good weather.", "pair",
+            ["Leave town", "Stay in the city"]),
+           ("Which of these happened to you last month?", "multi",
+            ["Finished a series overnight", "Walked with no destination", "Cooked longer than you ate",
+             "Played one thing on repeat", "Texted someone you had not seen in ages"])],
+    "es": [("Viernes, ocho de la tarde, sin planes.", "cards",
+            ["Salir a caminar por la ciudad", "Invitar a dos personas", "Quedarte solo sin lamentarlo"]),
+           ("Un sábado libre y buen tiempo.", "pair",
+            ["Salir de la ciudad", "Quedarte en la ciudad"]),
+           ("¿Qué de esto te pasó el último mes?", "multi",
+            ["Terminaste una serie de noche", "Caminaste sin rumbo", "Cocinaste más de lo que comiste",
+             "Escuchaste lo mismo en bucle", "Escribiste a alguien de hace tiempo"])],
+}
+
+
+def discover_chat(messages, profile, lang="ru", on_text=None):
+    """Ход опросника «помоги разобраться»: сцена или подборка в конце.
+
+    Живёт рядом с `interests_chat`, но говорит другим ртом: там человек рассказывает, а агент
+    записывает; здесь человек не знает, что сказать, и спрашивает агент. Промпт, разбор и все
+    сторожа — в `discover.py`, здесь только вызов модели и запасной ход.
+
+    ЗАПАСНОЙ ХОД — СЦЕНА, А НЕ ИЗВИНЕНИЕ. Человек согласился на опрос и ждёт вопроса; «что-то я
+    подвис» на этом месте обрывает ветку, из которой он сам выйти не сможет. Поэтому не прошедший
+    сторожей ход подменяется заготовленной сценой того же вида.
+    """
+    import discover as D
+    lang = str(lang or "ru").lower()
+    if lang not in ("ru", "en", "es"):
+        lang = "ru"
+    msgs = [m for m in (messages or []) if isinstance(m, dict)]
+    sys_p, convo = D.build_prompt(msgs, profile, _LANGNAME.get(lang, "Russian"))
+    _pool = D.sample_pool(profile, seed=len(msgs) and 1 or 0)
+    try:
+        if on_text is not None:
+            raw = llm_stream(MODEL_ID, [{"role": "system", "content": sys_p},
+                                        {"role": "user", "content": convo}], 0.6, "reply", on_text)
+        else:
+            raw = llm_complete(MODEL_ID, [{"role": "system", "content": sys_p},
+                                          {"role": "user", "content": convo}], 0.6)
+        out = D.parse_turn(str(raw or ""), msgs, lang, pool=_pool)
+    except Exception:
+        out = {}
+    if out:
+        return out
+    bank = _FALLBACK_SCENES.get(lang) or _FALLBACK_SCENES["en"]
+    text, widget, opts = bank[D.scenes_so_far(msgs) % len(bank)]
+    return {"reply": text, "scene": {"widget": widget,
+            "options": [{"id": "o%d" % (i + 1), "label": o} for i, o in enumerate(opts)]},
+            "fallback": True}
+
+
+def _sse_discover(handler, msgs, prof, lang):
+    """Сцена по мере написания. Виджет приходит в `done`: варианты предлагаются к уже
+    прочитанному, и показать их раньше самой сцены значило бы просить выбор вслепую."""
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("X-Accel-Buffering", "no")
+    handler.send_header("Connection", "close")
+    handler.end_headers()
+    alive = [True]
+
+    def emit(event, obj):
+        if not alive[0]:
+            return
+        try:
+            handler.wfile.write(("event: %s\ndata: %s\n\n" % (
+                event, json.dumps(obj, ensure_ascii=False))).encode("utf-8"))
+            handler.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            alive[0] = False
+
+    shown = []
+
+    def sink(t):
+        shown.append(t)
+        emit("delta", {"t": t})
+
+    try:
+        out = discover_chat(msgs, prof, lang, on_text=sink)
+        # Запасная сцена — ДРУГОЙ текст, чем тот, что человек уже видел набегающим. То же
+        # правило, что в построителе интентов: клиент переписывает пузырь, а не оставляет
+        # оборванную половину висеть над настоящим ответом.
+        emit("done", dict(out, replaced=("".join(shown).strip() != str(out.get("reply") or "").strip())))
+    except Exception as e:
+        emit("error", {"error": str(e)[:200]})
+    return
+
+
 def interests_chat(messages, profile, lang="ru", recorded=None):
     """Разговор, в котором интересы записываются сами — из сказанного, с обязательной цитатой.
 
@@ -3738,10 +3842,19 @@ class H(BaseHTTPRequestHandler):
                                                     body.get("axes") if isinstance(body.get("axes"), dict) else None))
 
             if r == "/interests-chat":               # разговор, в котором интересы пишутся сами
+                _msgs = body.get("messages") if isinstance(body.get("messages"), list) else []
+                _prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+                _lang = body.get("lang") or "ru"
+                # ВТОРАЯ ВЕТКА ТОЙ ЖЕ РУЧКИ. Человек, не назвавший ни одного интереса, попадает
+                # в опросник сценами: спрашивает агент, а не он. История разговора одна на обе
+                # ветки — она и нужна модели, чтобы импровизировать по прошлым ответам, и
+                # позволяет человеку в любой момент бросить тапать и написать словами.
+                if str(body.get("mode") or "") == "discover":
+                    if not body.get("stream"):
+                        return send_json(self, 200, discover_chat(_msgs, _prof, _lang))
+                    return _sse_discover(self, _msgs, _prof, _lang)
                 return send_json(self, 200, interests_chat(
-                    body.get("messages") if isinstance(body.get("messages"), list) else [],
-                    body.get("profile") if isinstance(body.get("profile"), dict) else {},
-                    body.get("lang") or "ru",
+                    _msgs, _prof, _lang,
                     body.get("recorded") if isinstance(body.get("recorded"), list) else None))
 
             if r == "/story-interests":              # что человек ДЕЛАЕТ — вычитанное из его истории

@@ -414,6 +414,16 @@ export const buddy = {
    * реплику, и то, что он записал, — `added` с ключом, подписью словами человека и ЦИТАТОЙ из
    * его реплики. Без цитаты сервер интерес отбрасывает: на выдуманных темах это уже ломалось.
    */
+  /**
+   * Ветка «помоги разобраться»: та же ручка, режим сцен. История разговора одна на обе ветки —
+   * агент импровизирует по прошлым ответам, и человек может в любой момент бросить тапать и
+   * написать словами.
+   */
+  discoverChat: (messages: Json[], prof: Json, lang: string) =>
+    api.post<{ reply?: string; scene?: Json; suggest?: Json[]; fallback?: boolean }>(
+      '/api/buddy/interests-chat', { messages, profile: prof, lang, mode: 'discover' }
+    ),
+
   interestsChat: (messages: Json[], prof: Json, lang: string,
                   recorded: { key: string; label: string }[] = []) =>
     api.post<{ reply?: string;
