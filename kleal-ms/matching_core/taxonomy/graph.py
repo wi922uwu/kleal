@@ -97,8 +97,21 @@ def _wshare(a, b):
     from . import concepts as X
     # Generic polysemes may support a match only with context resolved elsewhere. Alone they caused
     # stock market == food market and any "project" == any other project.
+    # ЗОНТИЧНЫЕ ТОКЕНЫ: сами по себе не признак родства, только вместе с конкретикой.
+    #
+    # Вторая волна найдена по живой жалобе: запрос «поиграть в rpg» приводил человека с ИИ,
+    # теннисом и мясом на решётке — его цеплял общий токен `games` из «strategy board games».
+    # Понятия тут ни при чём (rpg и настолки в разных семьях), и мост его честно отвергал:
+    # тащил именно этот путь. `role`/`playing` — оттуда же, фильтрация отдаёт их темами для
+    # «поиграть в rpg», и оба ничего не значат в одиночку.
+    #
+    # Настоящие совпадения от этого не страдают: «board games» ~ «настольные игры» решает
+    # таблица понятий, а «board games» ~ «board games» — сравнение строки целиком, и оба пути
+    # идут мимо токенов.
     ambiguous = {"market", "mercado", "рынок", "project", "проект",
-                 "exchange", "intercambio", "обмен"}
+                 "exchange", "intercambio", "обмен",
+                 "game", "games", "игра", "игры", "juego", "juegos",
+                 "role", "playing", "роль"}
     A = [w for w in _wtok(a) if w not in ambiguous]
     B = [w for w in _wtok(b) if w not in ambiguous]
     if norm(a) and norm(a) == norm(b):

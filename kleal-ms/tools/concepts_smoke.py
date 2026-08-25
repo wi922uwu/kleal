@@ -90,6 +90,23 @@ for a, b in (("rpg", "dungeons & dragons"), ("rpg", "baldur's gate 3"), ("rpg", 
 for b in ("counter-strike 2", "dota 2", "board games", "подлёдная рыбалка", "натуральное вино"):
     check("rpg НЕ связан с %s" % b, X.similarity("rpg", b), 0)
 
+# ---------------------------------------------------------------- зонтичные токены
+# Общий токен-зонтик — не признак родства. Найдено живой жалобой: «поиграть в rpg» приводило
+# человека с ИИ, теннисом и мясом на решётке — цеплял общий `games` из «strategy board games».
+# Проверяется через движок, а не через таблицу: правило живёт в _wshare (taxonomy/graph.py).
+from matching_core.taxonomy import graph as _G  # noqa: E402
+
+_G.set_bridge(None)
+_G.set_topics_of(None)
+for a, b in (("games", "strategy board games"), ("game", "tennis"),
+             ("role", "role playing games"), ("playing", "board games"),
+             ("market", "stock market"), ("exchange", "language exchange")):
+    check("зонтик не роднит: %s ~ %s" % (a, b), _G.similarity([a], [b])[0], 0)
+# ...но конкретика рядом с зонтиком работает как прежде
+for a, b, want in (("board games", "настольные игры", 4), ("board games", "board games", 4),
+                   ("board games", "strategy board games", 4), ("rpg", "dungeons & dragons", 3)):
+    check("конкретика цела: %s ~ %s" % (a, b), _G.similarity([a], [b])[0], want)
+
 # ---------------------------------------------------------------- семья не смешивает области
 check("финансы и игры не пересекаются", X.similarity("nasdaq", "valorant"), 0)
 check("разработка — не финансы", X.similarity("programming", "trading"), 0)
