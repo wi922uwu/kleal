@@ -329,7 +329,7 @@ export default function Buddy() {
             }
             return (
               <View key={i} style={s.answer}>
-                <Markdown text={m.text} caret={!!m.live} />
+                <Markdown text={m.text} />
                 {/* Время под ответом приглушено сильнее, чем под репликой: у страницы оно
                     служебная пометка, а не часть разговора. */}
                 <Text style={[s.time, s.timeAnswer]}>{m.at}</Text>

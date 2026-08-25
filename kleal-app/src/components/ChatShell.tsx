@@ -170,18 +170,23 @@ export const ChatShell = forwardRef<ScrollView, {
                   </MeBubble>
                 ) : (
                   <BotBubble>
-                    <Markdown text={m.text} caret={!!m.live} />
+                    <Markdown text={m.text} />
                   </BotBubble>
                 )}
                 <Text style={s.time}>{m.at}</Text>
               </View>
             ))}
 
+            {/*
+              «ПЕЧАТАЕТ» — БЕЗ ПУЗЫРЯ. Сначала вертушка стояла в том же стеклянном пузыре, что и
+              реплики: пустой прямоугольник с размытием, на розовом фоне читавшийся как непонятный
+              цветной блок. Пузырь — форма СКАЗАННОГО, а пока агент печатает, сказанного ещё нет:
+              рисовать его заранее значит показывать пустую реплику. Осталась одна вертушка на том
+              же отступе, на котором через мгновение появится сам пузырь.
+            */}
             {typing ? (
-              <View style={s.rowBot}>
-                <BotBubble>
-                  <ActivityIndicator size="small" color={color.muted} />
-                </BotBubble>
+              <View style={[s.rowBot, s.typing]}>
+                <ActivityIndicator size="small" color={color.muted} />
               </View>
             ) : null}
 
@@ -242,6 +247,8 @@ const s = StyleSheet.create({
   trackFill: { height: 2, backgroundColor: color.primary, borderRadius: rad.full },
   thread: { paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.lg },
   rowBot: { alignItems: 'flex-start', marginTop: space.md },
+  /** Вертушка встаёт там же, где начнётся пузырь, — чтобы появление реплики не сдвигало ленту. */
+  typing: { paddingHorizontal: space.lg, paddingVertical: space.sm },
   rowMe: { alignItems: 'flex-end', marginTop: space.md },
   bubBot: {
     maxWidth: '86%',

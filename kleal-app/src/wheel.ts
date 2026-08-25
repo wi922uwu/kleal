@@ -19,7 +19,26 @@
  * предметов вместо 6,6.
  */
 import type { ArcItem } from './components/ArcCarousel';
+import type { Glow } from './components/Ambient';
+import { color } from './theme';
 import { T } from './i18n';
+
+/**
+ * ПОДЛОЖКА У КАЖДОГО ПРЕДМЕТА СВОЯ, И РАЗНИЦА НАРОЧНО МАЛЕНЬКАЯ.
+ *
+ * Фон не «меняется на другой», а чуть поворачивается: те же три пятна фирменных цветов, только
+ * ведущий цвет и его место разные. Если сделать палитры контрастными, листание превратится в
+ * мигание — а задача обратная: заметить смену можно, только если специально следить.
+ *
+ * ЦВЕТА ТОЛЬКО ИЗ ТОКЕНОВ. Соблазн подобрать оттенок под сам предмет (дерево — коричневый, вишня —
+ * бордовый) велик, но тогда фирменный слой перестаёт быть фирменным и превращается в фон под
+ * картинку. Поэтому набор один и тот же, меняется только кто в нём главный.
+ */
+const mood = (lead: string, second: string, third: string): Glow[] => [
+  { c: lead, x: 0.42, y: 0.42, rx: 1.05, ry: 0.62, a: 0.5 },
+  { c: second, x: 0.92, y: 0.12, rx: 0.62, ry: 0.34, a: 0.45 },
+  { c: third, x: 0.08, y: 0.3, rx: 0.6, ry: 0.32, a: 0.2 },
+];
 
 /**
  * ПОДПИСЬ — ЭТО ПРЕДЛОЖЕНИЕ, А НЕ НАЗВАНИЕ ПРЕДМЕТА. Под кроссовком стоит «Побегаем?», а не
@@ -37,20 +56,26 @@ import { T } from './i18n';
 export const WHEEL = (): ArcItem[] => [
   { key: 'sneaker', label: T('Побегаем?', 'Go for a run?'),
     query: T('Хочу побегать', 'I want to go for a run'),
+    glows: mood(color.ambientPink, color.ambientAmber, color.ambientViolet),
     source: require('../assets/art/wheel/sneaker.png') },
   { key: 'padel', label: T('Партию в падел?', 'A game of padel?'),
     query: T('Хочу сыграть в падел', 'I want to play padel'),
+    glows: mood(color.ambientAmber, color.ambientPink, color.ambientViolet),
     source: require('../assets/art/wheel/padel.png') },
   { key: 'gamepad', label: T('Поиграем?', 'Play something?'),
     query: T('Хочу поиграть в приставку', 'I want to play console games'),
+    glows: mood(color.ambientViolet, color.ambientPink, color.ambientAmber),
     source: require('../assets/art/wheel/gamepad.png') },
   { key: 'cherries', label: T('Поедим фруктов?', 'Grab some fruit?'),
     query: T('Хочу сходить на рынок за фруктами', 'I want to hit the market for fruit'),
+    glows: mood(color.primary, color.ambientAmber, color.ambientPink),
     source: require('../assets/art/wheel/cherries.png') },
   { key: 'laptop', label: T('Поработаем рядом?', 'Work side by side?'),
     query: T('Хочу поработать в кофейне за компанию', 'I want to work from a cafe with someone'),
+    glows: mood(color.ambientPink, color.ambientViolet, color.ambientAmber),
     source: require('../assets/art/wheel/laptop.png') },
   { key: 'disco', label: T('Потанцуем?', 'Go dancing?'),
     query: T('Хочу пойти танцевать', 'I want to go dancing'),
+    glows: mood(color.brandMagenta, color.ambientViolet, color.ambientPink),
     source: require('../assets/art/wheel/disco.png') },
 ];

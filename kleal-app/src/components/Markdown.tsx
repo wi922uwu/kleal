@@ -26,7 +26,7 @@
  * Неузнанная строка становится обычным абзацем: показать текст как есть всегда лучше, чем съесть.
  */
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Animated } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { color, radius as rad, space, type } from '../theme';
 
 // ---------------------------------------------------------------- разбор
@@ -206,9 +206,7 @@ export function parseInline(src: string): Inline[] {
 
 // ---------------------------------------------------------------- вид
 
-function Rich({ src, style, tail, fade }: {
-  src: string; style?: any; tail?: React.ReactNode; fade?: boolean;
-}) {
+function Rich({ src, style }: { src: string; style?: any }) {
   const parts = parseInline(src);
   return (
     <Text style={style}>
@@ -221,45 +219,11 @@ function Rich({ src, style, tail, fade }: {
             t.code ? s.codeInline : null,
           ]}
         >
-          {/* Гаснет только САМЫЙ конец последнего куска — там, где сейчас пишут. */}
-          {fade && i === parts.length - 1 && !t.code
-            ? fadeTail(t.text, true).map((p, j) => (
-                <Text key={j} style={p.o < 1 ? { opacity: p.o } : null}>{p.t}</Text>
-              ))
-            : t.text}
+          {t.text}
         </Text>
       ))}
-      {/* Курсор — ВНУТРИ той же строки, а не под ней. Отдельной строкой он читался как
-          посторонний элемент, а не как место, где сейчас пишут (сообщено с телефона). */}
-      {tail}
     </Text>
   );
-}
-
-/**
- * ГАСНУЩИЙ ХВОСТ — «размытие» на конце строки, пока идёт печать.
- *
- * Настоящее размытие текста в React Native стоит нативного модуля и маски; здесь оно не нужно.
- * Тот же эффект даёт градиент прозрачности по последним символам: буквы не выскакивают, а
- * проявляются, и граница написанного перестаёт быть резкой.
- *
- * Ступеней три и они короткие: длинный градиент читается как «текст выцвел», а не как «текст
- * ещё пишется».
- */
-const FADE = [0.72, 0.42, 0.18];
-
-function fadeTail(text: string, on: boolean) {
-  if (!on || text.length < 4) return [{ t: text, o: 1 }];
-  const n = Math.min(6, Math.max(3, Math.round(text.length * 0.12)));
-  const head = text.slice(0, text.length - n);
-  const tailChars = text.slice(text.length - n);
-  const per = Math.ceil(n / FADE.length);
-  const parts: { t: string; o: number }[] = head ? [{ t: head, o: 1 }] : [];
-  for (let i = 0; i < FADE.length; i++) {
-    const piece = tailChars.slice(i * per, (i + 1) * per);
-    if (piece) parts.push({ t: piece, o: FADE[i] });
-  }
-  return parts;
 }
 
 function Table({ head, rows }: { head: string[]; rows: string[][] }) {
@@ -288,34 +252,17 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
   );
 }
 
-/**
- * Мигающий курсор — знак «ещё пишется».
- *
- * Стоит ОТДЕЛЬНОЙ строкой под текстом, а не приклеен к последнему слову: приклеенный он ездил бы
- * вместе с переносами строк и прыгал бы на каждом кадре. Здесь он спокойно мигает на месте, и
- * этого достаточно, чтобы отличить «пишет» от «закончил».
- */
-function Caret() {
-  const a = React.useRef(new Animated.Value(1)).current;
-  React.useEffect(() => {
-    // Плавно и НЕ до нуля: жёсткое мигание с постоянным шагом — то же механическое ощущение,
-    // что и ровная выдача букв. Гаснет до трети, разгорается дольше, чем гаснет: так пульс
-    // читается как дыхание, а не как индикатор загрузки.
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(a, { toValue: 0.3, duration: 620, useNativeDriver: true }),
-      Animated.timing(a, { toValue: 1, duration: 380, useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  }, [a]);
-  // ЗНАК, а не прямоугольник. Прямоугольник — это View, а View внутри строки текста в React
-  // Native встать не может: он всегда уезжает на строку ниже. Символ же течёт вместе с текстом
-  // и переносится вместе с ним.
-  return <Animated.Text style={[s.caret, { opacity: a }]}>▍</Animated.Text>;
-}
 
-/** Ответ модели, свёрстанный документом. `text` — то, что она напечатала, как есть. */
-export default function Markdown({ text, caret }: { text: string; caret?: boolean }) {
+/**
+ * Ответ модели, свёрстанный документом. `text` — то, что она напечатала, как есть.
+ *
+ * НИ КУРСОРА, НИ УГАСАЮЩЕГО ХВОСТА. Пока текст приезжал, в конце мигала фирменная полоса, а
+ * последние символы шли с падающей прозрачностью — вместе это читалось как розовый блок и
+ * размытие на краю фразы, а не как «здесь сейчас пишут». Печать и без них видна: буквы
+ * появляются. Оба приёма убраны целиком, а не приглушены: полумеры тут дали бы то же пятно,
+ * только бледнее.
+ */
+export default function Markdown({ text }: { text: string }) {
   const blocks = React.useMemo(() => parseBlocks(text), [text]);
   return (
     <View style={s.doc}>
@@ -323,29 +270,25 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
         // Курсор рисуется в последнем блоке — там, где сейчас пишут. Если последний блок не
         // текстовый (таблица, код), внутрь его не поставить, и тогда он идёт отдельной строкой:
         // это редкий случай и он честнее, чем курсор посреди таблицы.
-        const tail = caret && i === blocks.length - 1 ? <Caret /> : null;
-        const fade = !!tail;
         // Отбивка сверху у заголовка больше, чем снизу: заголовок принадлежит тому, что под ним.
         // Равные отступы — самая частая причина, по которой длинный текст читается кашей.
         const first = i === 0;
         switch (b.kind) {
           case 'h':
             return (
-              <Rich key={i} src={b.text} tail={tail} fade={fade}
+              <Rich key={i} src={b.text}
                     style={[
                       b.level === 1 ? s.h1 : b.level === 2 ? s.h2 : s.h3,
                       first && { marginTop: 0 },
                     ]} />
             );
           case 'p':
-            return <Rich key={i} src={b.text} style={s.p} tail={tail} fade={fade} />;
+            return <Rich key={i} src={b.text} style={s.p} />;
           case 'quote':
             return (
               <View key={i} style={s.quote}>
                 {b.lines.map((l, j) => (
-                  <Rich key={j} src={l} style={s.quoteText}
-                        tail={j === b.lines.length - 1 ? tail : null}
-                        fade={fade && j === b.lines.length - 1} />
+                  <Rich key={j} src={l} style={s.quoteText} />
                 ))}
               </View>
             );
@@ -355,8 +298,7 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
                 {b.items.map((it, j) => (
                   <View key={j} style={s.li}>
                     <Text style={s.marker}>•</Text>
-                    <Rich src={it} style={s.liText} tail={j === b.items.length - 1 ? tail : null}
-                          fade={fade && j === b.items.length - 1} />
+                    <Rich src={it} style={s.liText} />
                   </View>
                 ))}
               </View>
@@ -367,8 +309,7 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
                 {b.items.map((it, j) => (
                   <View key={j} style={s.li}>
                     <Text style={s.marker}>{j + 1}.</Text>
-                    <Rich src={it} style={s.liText} tail={j === b.items.length - 1 ? tail : null}
-                          fade={fade && j === b.items.length - 1} />
+                    <Rich src={it} style={s.liText} />
                   </View>
                 ))}
               </View>
@@ -387,8 +328,6 @@ export default function Markdown({ text, caret }: { text: string; caret?: boolea
             return null;
         }
       })}
-      {caret && blocks.length && ['table', 'code', 'hr'].includes(blocks[blocks.length - 1].kind)
-        ? <Caret /> : null}
     </View>
   );
 }
@@ -441,7 +380,4 @@ const s = StyleSheet.create({
   code: { ...type.mono, color: color.fg } as any,
 
   hr: { height: 1, backgroundColor: color.border, marginVertical: space.md },
-  // Курсор — тонкая полоса высотой в строку. Ширина в два пункта: толще выглядит как опечатка.
-  // Знак в строке: цвет и размер от текста, а не свои. Полупрозрачность даёт мигание.
-  caret: { color: color.primary, fontSize: 15, lineHeight: 22 } as any,
 });

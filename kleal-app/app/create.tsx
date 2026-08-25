@@ -293,7 +293,7 @@ export default function Create() {
                   <Text style={[s.bubText, { color: color.onPrimary }]}>{m.text}</Text>
                 </View>
               ) : (
-                <Markdown text={m.text} caret={!!(m as any).live} />
+                <Markdown text={m.text} />
               )}
               <Text style={[s.time, m.who !== 'me' && s.timeAnswer]}>{m.at}</Text>
             </View>

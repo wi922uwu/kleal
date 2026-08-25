@@ -20,7 +20,7 @@
  * момент на экране стоит точно такая же картинка, поэтому подмены не видно. Одной копии не
  * хватило бы: у настоящего `ScrollView` есть край, и он бы упирался.
  */
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Image,
@@ -34,6 +34,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import type { Glow } from './Ambient';
 import { hStrong, hTick } from '../haptics';
 import { color, displayFamily, space, type } from '../theme';
 import { useLang } from '../i18n';
@@ -45,6 +46,8 @@ export type ArcItem = {
   label: string;
   /** Что уйдёт в разговор, если по предмету нажать: «Хочу побегать». */
   query: string;
+  /** Пятна подложки, пока этот предмет по центру. Разница между наборами намеренно небольшая. */
+  glows?: Glow[];
 };
 
 /**
@@ -78,15 +81,33 @@ const LIFT = 70;
 const TILT = 24;
 /** Сколько копий набора выложено подряд. Три — минимум, при котором края не видно. */
 const COPIES = 3;
+/**
+ * Шаг ленты наружу.
+ *
+ * Нужен тому, кто рисует фон: подложка меняется вместе с колесом, и её слои считают свою
+ * непрозрачность от того же сдвига и с тем же шагом. Держать это число в двух местах значило бы
+ * однажды подвинуть колесо и не заметить, что фон отстал на полкартинки.
+ */
+export const ARC_PITCH = PITCH;
+/** Сколько копий набора в ленте — фону нужно знать, через сколько шагов предмет возвращается. */
+export const ARC_COPIES = COPIES;
 /** Высота подписи под картинкой вместе с отступом над ней. */
 const CAP = 48;
 /** Высота полосы: картинка, подпись, место, куда съезжают соседние, и запас под наклон. */
 const BAND = BOX + CAP + LIFT + 24;
 
-export function ArcCarousel({ items, onPick }: {
+export function ArcCarousel({ items, onPick, progress }: {
   items: ArcItem[];
   /** Нажали по ТОЙ, что сейчас по центру. По соседней жест означает «подвинь её сюда». */
   onPick?: (item: ArcItem) => void;
+  /**
+   * Сдвиг ленты наружу — чтобы фон менялся вместе с колесом.
+   *
+   * Передаётся ГОТОВОЕ значение, а не колбэк с числом: колбэк означал бы кадр за кадром через
+   * JS-поток, а так и колесо, и подложка читают одно и то же значение на стороне UI, и разъехаться
+   * они не могут в принципе — даже на самом резком броске пальца.
+   */
+  progress?: Animated.Value;
 }) {
   const lang = useLang();
   const { width } = useWindowDimensions();
@@ -101,7 +122,12 @@ export function ArcCarousel({ items, onPick }: {
    * пальцем, — и потому чинится ровно здесь.
    */
   const start = n * PITCH;
-  const x = useRef(new Animated.Value(start)).current;
+  const own = useRef(new Animated.Value(start)).current;
+  const x = progress ?? own;
+  // Переданное снаружи значение начинается с нуля — ставим его на середину набора, как своё.
+  useEffect(() => {
+    x.setValue(start);
+  }, [x, start]);
   const list = useRef<ScrollView>(null);
   const [at, setAt] = useState(n);
 

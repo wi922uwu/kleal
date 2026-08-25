@@ -13,16 +13,16 @@
  * файла на сервере нет — он отдаёт 404, и живой веб показывает голубую заливку. Здесь градиент по
  * тем же цветам: рисовать фотографию, которой нет, не из чего.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Image,
+  Animated, View, Text, StyleSheet, ScrollView, Pressable, Image,
   ActivityIndicator, RefreshControl, KeyboardAvoidingView, Platform, Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { BottomNav } from '../src/components/BottomNav';
 import { CardStack } from '../src/components/CardStack';
-import { ArcCarousel } from '../src/components/ArcCarousel';
+import { ArcCarousel, ARC_COPIES, ARC_PITCH } from '../src/components/ArcCarousel';
 import { hCommit } from '../src/haptics';
 import { Ambient, GLOW_SIGNIN } from '../src/components/Ambient';
 import { WHEEL } from '../src/wheel';
@@ -57,6 +57,11 @@ export default function Home() {
    * безопасной зоны, которая на разных телефонах разная.
    */
   const [navH, setNavH] = useState(96);
+  /**
+   * Сдвиг колеса. Живёт ЗДЕСЬ, а не внутри карусели, потому что от него зависит и фон: подложка
+   * меняется вместе с картинкой, и оба читают одно значение на стороне UI.
+   */
+  const wheelAt = useRef(new Animated.Value(0)).current;
   /** Какое приглашение сверху стопки. Живёт в экране: он знает, какие уже разобрали. */
   const [invIdx, setInvIdx] = useState(0);
   /**
@@ -136,6 +141,42 @@ export default function Home() {
         приложения. Пятна тут те же, что на экране входа, — и кремовая бумага под ними.
       */}
       <Ambient glows={GLOW_SIGNIN} />
+      {/*
+        ПОДЛОЖКА ПЕРЕТЕКАЕТ ВМЕСТЕ С КОЛЕСОМ.
+
+        Слоёв столько же, сколько предметов; каждый нарисован один раз и больше не перерисовывается,
+        меняется только его непрозрачность — и та считается интерполяцией сдвига ленты на нативном
+        драйвере. Отсюда и плавность на любой скорости: JS в этом не участвует вовсе, а значит
+        резкий бросок пальца не может «перескочить» цвет.
+
+        Пик у каждого слоя повторяется ТРИЖДЫ — по разу на копию ленты (колесо бесконечное и
+        выложено тремя копиями). Между пиками слой стоит на нуле, так что суммарно на экране всегда
+        один слой или плавная смесь двух соседних.
+
+        Кремовая подложка одинаковая во всех слоях и вдобавок залита в самом экране, поэтому в
+        момент пересменки фон не может провалиться в белое.
+      */}
+      {WHEEL().map((it, i) =>
+        it.glows ? (
+          <Animated.View
+            key={it.key}
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFill,
+              {
+                opacity: wheelAt.interpolate({
+                  inputRange: Array.from({ length: ARC_COPIES }, (_, k) => (k * WHEEL().length + i) * ARC_PITCH)
+                    .flatMap((p) => [p - ARC_PITCH, p, p + ARC_PITCH]),
+                  outputRange: Array.from({ length: ARC_COPIES }).flatMap(() => [0, 1, 0]),
+                  extrapolate: 'clamp',
+                }),
+              },
+            ]}
+          >
+            <Ambient glows={it.glows} />
+          </Animated.View>
+        ) : null
+      )}
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[s.head, { paddingTop: insets.top + 6 }]}>
           {/* Гарнитура зависит от языка — см. displayFamily: в шрифте борда нет кириллицы. */}
@@ -178,6 +219,7 @@ export default function Home() {
                   */}
                   <ArcCarousel
                     items={WHEEL()}
+                    progress={wheelAt}
                     onPick={(it) => router.navigate({ pathname: '/create', params: { seed: it.query } })}
                   />
                   {/*
