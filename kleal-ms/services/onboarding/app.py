@@ -2086,13 +2086,17 @@ def _canon_interests(words):
 
     Best-effort остался прежним: модель молчит — слово хранится как есть, регистрация не ждёт
     и не падает. Такое слово переведётся позже (миграцией или при следующей правке профиля).
+
+    Потолок здесь — ВТОРОЙ на том же пути: строку сначала собирает _profile_to_user, потом она
+    проходит сюда. Пока тут стояло восемь, поднимать потолок там было бесполезно — обрезалось
+    следом. Оба числа обязаны совпадать, иначе меньшее молча побеждает.
     """
     try:
         import interest_i18n
-        return interest_i18n.to_en(words, translate=_translate_interests)[:8]
+        return interest_i18n.to_en(words, translate=_translate_interests)[:INTERESTS_MAX]
     except Exception:
         out = [str(w).strip() for w in (words or []) if str(w).strip()]
-        return out[:8]
+        return out[:INTERESTS_MAX]
 
 # ---------------------------------------------------------------- accounts (dev sign-in)
 # A SEPARATE file from users.json on purpose. users.json is the matching store: it is read by the
@@ -2478,7 +2482,13 @@ def _profile_to_user(p):
     p = p or {}
     name = str(_first(p.get("name"), "New user")).strip() or "New user"
     ints = p.get("interests") or {}
-    interests = [str(x).strip().lower() for x in (ints.get("explicit") if isinstance(ints, dict) else ints) or [] if str(x).strip()][:6]
+    # ПОТОЛОК ОБЩИЙ С _canon_interests — см. INTERESTS_MAX.
+    # ШЕСТЬ БЫЛО ПОТОЛКОМ АНКЕТЫ, А НЕ ЧЕЛОВЕКА. Когда интересы набирались чипами, шести хватало
+    # с запасом. Колода карточек отдаёт двенадцать за один заход, разговор дописывает ещё — и всё,
+    # что не влезло, ТИХО не доезжало до строки, по которой ищут: человек добавлял «Гарри Поттер»
+    # в онбординге и не находил его в своей же карточке. Двадцать — это уже про человека: столько
+    # можно назвать, не выдумывая.
+    interests = [str(x).strip().lower() for x in (ints.get("explicit") if isinstance(ints, dict) else ints) or [] if str(x).strip()][:INTERESTS_MAX]
     langs = (p.get("languages") or {})
     ll = langs.get("comfortable") or langs.get("fluent") or langs.get("native") or [] if isinstance(langs, dict) else []
     langs = [c for c in (_lang_code(x) for x in ll if str(x).strip()) if c][:4] or ["en"]
@@ -2744,6 +2754,7 @@ def get_user(name):
 _PATCH_FIELDS = {"age", "gender", "area", "radiusKm", "lat", "lon", "langs", "interests",
                  "goals", "formats", "summary", "story", "personality", "persona", "vibe", "safety",
                  "tz"}
+INTERESTS_MAX = 20      # сколько интересов доезжает до строки, по которой ищут; см. _canon_interests
 STORY_MAX = 4000        # a life story, not a novel — and update_user writes straight into the row
 PROSE_MAX = 900         # what buddy actually returns for a summary / personality paragraph
 
