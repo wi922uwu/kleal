@@ -26,9 +26,9 @@
  * Ключи (offline/online/hybrid, 1:1/group, коды районов) НЕ придуманы заново — совпадают с теми,
  * что уходят в /api/agent/plan и /api/agent/match.
  */
-import { T, getLang } from './i18n';
+import { T, getLang, plural } from './i18n';
 
-export type IntentStepId = 'how' | 'size' | 'when' | 'who' | 'nature' | 'place' | 'link' | 'both' | 'summary';
+export type IntentStepId = 'how' | 'size' | 'capacity' | 'when' | 'who' | 'nature' | 'place' | 'link' | 'both' | 'summary';
 
 // ---------------------------------------------------------------- общее
 
@@ -75,20 +75,64 @@ export const STEP_SIZE = {
  * minimally_sufficient.ok = false, то есть поиск идёт по недосказанному запросу.
  */
 export const GROUP_MIN_TOTAL = 3;
+export const GROUP_FREE_MAX_TOTAL = 5;
+export const GROUP_PLUS_MAX_TOTAL = 20;
+export type IntentSize = '1:1' | 'group';
 export const SIZES: [string, string, string, string, string][] = [
   ['1:1', '1:1', '1:1', 'Just the two of us', 'Только вы вдвоём'],
-  // Без «3–5»: верхняя граница — не обещание продукта, а текущая настройка сервера (max_total),
-  // и печатать её на кнопке значит обещать число, которое правится в конфиге. Нижняя остаётся:
-  // она правило — группа не собирается, пока не наберётся троих, и об этом человек знать должен.
-  ['group', 'Group', 'Группа', 'free · needs at least 3', 'бесплатно · нужно минимум 3'],
+  ['group', 'Group', 'Группа', 'Choose the number of people next', 'Размер выберешь на следующем шаге'],
 ];
+
+/**
+ * Старые deep links и сохранённые черновики называли один и тот же групповой flow по-разному.
+ * Ни один групповой legacy-токен не должен проваливаться в 1:1 из-за незнакомой строки.
+ */
+export function normalizeIntentSize(value: unknown, groupSize?: unknown): IntentSize | undefined {
+  const raw = String(value ?? '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  if (['1:1', '1-to-1', 'one-to-one', 'one-on-one', 'oneonone', 'pair', 'solo'].includes(raw)) return '1:1';
+  if ([
+    'group', 'group-plus', 'small', 'large', 'small-group', 'large-group',
+    'smallgroup', 'largegroup', 'party', 'crowd',
+  ].includes(raw)) return 'group';
+  const total = Number(groupSize);
+  return Number.isFinite(total) && total >= GROUP_MIN_TOTAL ? 'group' : undefined;
+}
+
+/** Legacy large/group-plus starts at its old lower bound; all other group links start at three. */
+export function initialGroupSize(value: unknown, groupSize?: unknown): number {
+  const parsed = Number(groupSize);
+  if (Number.isFinite(parsed)) {
+    return Math.max(GROUP_MIN_TOTAL, Math.min(GROUP_PLUS_MAX_TOTAL, Math.round(parsed)));
+  }
+  const raw = String(value ?? '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  return ['large', 'large-group', 'largegroup', 'group-plus', 'crowd'].includes(raw)
+    ? GROUP_FREE_MAX_TOTAL + 1
+    : GROUP_MIN_TOTAL;
+}
 export const sizeLabel = (k: string) => {
-  const s = SIZES.find((x) => x[0] === k);
+  const s = SIZES.find((x) => x[0] === normalizeIntentSize(k));
   return s ? T(s[2], s[1]) : k;
 };
 export const sizeSub = (k: string) => {
-  const s = SIZES.find((x) => x[0] === k);
+  const s = SIZES.find((x) => x[0] === normalizeIntentSize(k));
   return s ? T(s[4], s[3]) : '';
+};
+
+/** Размер — отдельный шаг единого Group-flow; тариф не превращается в третий формат. */
+export const GROUP_SIZE = {
+  ask: () => T('Сколько человек будет в группе?', 'How many people will be in the group?'),
+  sub: () => T('Включая тебя. Минимум 3 человека.', 'Including you. At least 3 people.'),
+  row: () => T('Размер группы', 'Group size'),
+  people: (n: number) => T(`${n} ${plural(n, 'человек', 'человека', 'человек')}`, `${n} people`),
+  freeLimit: () => T('До 5 человек — бесплатно', 'Up to 5 people is free'),
+  plusLimit: () => T('6–20 человек доступны с Kleal Plus', '6–20 people are available with Kleal Plus'),
+  plusTitle: () => T('Большие группы — с Plus', 'Bigger groups are with Plus'),
+  plusBody: () => T(
+    'В бесплатной группе может быть до 5 человек. Plus поднимает предел до 20 и позволяет запускать несколько интентов одновременно. Качество ранжирования не зависит от тарифа.',
+    'Free groups go up to 5 people. Plus raises the ceiling to 20 and lets you run several intents at once. Matches are ranked the same either way.'
+  ),
+  getPlus: () => T('Подключить Kleal Plus', 'Get Kleal Plus'),
+  keepAtFive: () => T('Оставить максимум 5', 'Keep it at 5'),
 };
 
 // ---------------------------------------------------------------- O.07–O.09 · детали
@@ -180,6 +224,10 @@ export const DETAILS = {
    *  Молча отключённая кнопка читается как поломка листа, поэтому причина названа словами. */
   linkBad: () => T('Ссылка не похожа на ссылку — поправь её, иначе применить нечего.',
                    'That doesn’t look like a link — fix it before applying.'),
+  groupLinkRequired: () => T(
+    'Добавь ссылку на звонок — без неё участникам онлайн-группы некуда подключиться.',
+    'Add the call link — without it the online group has nowhere to join.'
+  ),
 
   // O.07a — лист выбора пояса. Заголовок с кадра дословно.
   tzSheetTitle: () => T('Часовой пояс GMT', 'Time Zone GMT'),
@@ -193,17 +241,30 @@ export const DETAILS = {
  *
  * Строка РАСКРЫВАЕТСЯ и правится тут же. Раньше ключ строки был именем шага мастера, и «Изменить»
  * туда уводило — а у каждого шага своя кнопка «Дальше», ведущая ДАЛЬШЕ по цепочке: правка одной
- * даты стоила четырёх экранов. Поэтому здесь больше нет ни «Темы интента» (её выбирают в
- * разговоре создания, шага под неё в мастере нет вовсе), ни «Режима встречи» (от него зависит,
- * какие поля в этом же листе есть), ни подписи кнопки «Изменить» — кнопка теперь «Применить».
+ * даты стоила четырёх экранов. Теперь режим и формат тоже правятся здесь, с показом только
+ * обязательной зависимости (размер группы и, для Group Online, ссылка). Темы интента нет:
+ * её выбирают в разговоре создания, отдельного шага/контрола под неё в мастере не существует.
  */
 export const EDIT_SHEET = {
-  title: () => T('Что хочешь поменять?', 'What are you going change?'),
+  title: () => T('Что хочешь поменять?', 'What do you want to change?'),
+  mode: () => T('Тип встречи', 'Meeting mode'),
   format: () => T('Формат', 'Format'),
+  date: () => T('Дата', 'Date'),
+  time: () => T('Время', 'Time'),
   datetime: () => T('Дата и время', 'Date & Time'),
+  timezone: () => T('Часовой пояс', 'Time zone'),
   audience: () => T('Аудитория и возраст', 'Audience & Age'),
   link: () => T('Ссылка', 'Link'),
   noData: () => T('Нет данных', 'No Data'),
+  change: (label: string) => T(`Изменить: ${label}`, `Edit: ${label}`),
+  groupSizeNeeded: () => T(
+    'Для группы выбери количество участников здесь же.',
+    'Choose the number of participants here for the group.',
+  ),
+  groupOnlineLinkNeeded: () => T(
+    'Для группового онлайн-интента нужна ссылка. Добавь её здесь — остальные параметры не изменятся.',
+    'A group online intent needs a link. Add it here; the other settings will stay unchanged.',
+  ),
 };
 
 /** Город без пути и подчёркиваний: Europe/Buenos_Aires → «Buenos Aires». Строки листа O.07a. */
@@ -398,14 +459,16 @@ export function searchProfile(p: any, override?: { lat?: number; lon?: number })
  * работа на стороне buddy, помечено в ROADMAP.
  */
 export function intentSummaryText(o: {
-  topic: string; size?: string; sex?: string; minAge: number; maxAge: number;
+  topic: string; size?: string; groupSize?: number; sex?: string; minAge: number; maxAge: number;
   dateKey: string; minutes: number;
   /** Отмеченные черты одной строкой. Пусто — про характер в сводке не говорим вовсе. */
   nature?: string;
 }): string {
   const who =
-    o.size === 'group'
-      ? T('небольшую компанию', 'a small group')
+    normalizeIntentSize(o.size, o.groupSize) === 'group'
+      ? (o.groupSize
+          ? T(`группу из ${o.groupSize} человек`, `a group of ${o.groupSize}`)
+          : T('группу', 'a group'))
       : T('одного человека', 'one person');
   const aud = o.sex && o.sex !== 'Any'
     ? (o.sex === 'Female' ? T('женщину', 'a woman') : T('мужчину', 'a man')) + ', '

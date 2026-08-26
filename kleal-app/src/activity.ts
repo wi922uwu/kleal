@@ -15,7 +15,7 @@
  */
 import { T, getLang, plural } from './i18n';
 import { HOME, splitWhen, planWhere } from './home';
-import { intentSummaryText } from './intent';
+import { GROUP_MIN_TOTAL, GROUP_SIZE, intentSummaryText, normalizeIntentSize } from './intent';
 
 /** Ключ, которым интент помечает сам себя в отправленном приглашении. См. `pendingFor`. */
 export const INTENT_ID_KEY = 'kleal_intent_id';
@@ -188,8 +188,12 @@ export function intentFacts(row: IntentRow): { label: string; value: string }[] 
   push(T('Формат', 'Mode'), i.mode === 'online' ? T('Онлайн', 'Online')
     : i.mode === 'hybrid' ? T('Гибрид', 'Hybrid')
     : i.mode === 'offline' ? T('Вживую', 'Offline') : '');
-  push(T('Состав', 'Format'), i.format === 'group' ? T('Группа', 'Group')
-    : i.format === '1:1' ? T('Один на один', '1:1') : '');
+  const normalizedSize = normalizeIntentSize(i.format || i.size, i.groupSize);
+  push(T('Состав', 'Format'), normalizedSize === 'group' ? T('Группа', 'Group')
+    : normalizedSize === '1:1' ? T('Один на один', '1:1') : '');
+  if (normalizedSize === 'group') {
+    push(GROUP_SIZE.row(), GROUP_SIZE.people(Number(i.groupSize) || GROUP_MIN_TOTAL));
+  }
   push(T('Тема', 'Category'), i.topics);
   /**
    * Пол и возраст читаются ТЕМИ ЖЕ ключами, какими их пишет мастер: `sex` из SEXES («Male» /
@@ -222,7 +226,8 @@ export function intentSummary(row: IntentRow): string {
   const topics = Array.isArray(i.topics) ? i.topics.join(', ') : '';
   return intentSummaryText({
     topic: String(row.title || topics || '').trim(),
-    size: i.format === 'group' ? 'group' : undefined,
+    size: normalizeIntentSize(i.format || i.size, i.groupSize),
+    groupSize: Number(i.groupSize) || undefined,
     sex: i.sex,
     minAge: Number(i.minAge) || 18,
     maxAge: Number(i.maxAge) || 35,

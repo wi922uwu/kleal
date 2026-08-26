@@ -12,6 +12,7 @@
  *    already in», а не «кого ещё позвали» (GR.16).
  */
 import { T } from './i18n';
+import { normalizeIntentSize } from './intent';
 import type { Msg } from './chat';
 
 /**
@@ -23,7 +24,7 @@ export function isGroupIntent(intent: any): boolean {
   if (!intent || typeof intent !== 'object') return false;
   const flat = String(intent.format || '').toLowerCase();
   const block = String(intent.mode_format?.format || '').toLowerCase();
-  return flat === 'group' || block === 'group' || Number(intent.groupSize || 0) >= 3;
+  return (normalizeIntentSize(flat, intent.groupSize) || normalizeIntentSize(block, intent.groupSize)) === 'group';
 }
 
 /** Заголовок группы для gintent-create: подпись человека, а не ключи поиска. */
@@ -39,6 +40,8 @@ export function groupTitleOf(intent: any, query = ''): string {
 export const GROUP = {
   /** Шапка выдачи в групповом режиме — GR.14, дословно. */
   header: () => T('Кто подходит твоей группе', 'Who fits your group'),
+  /** После первого отправленного приглашения тот же список становится GR.17. */
+  invitesSent: () => T('Приглашения отправлены', 'Invites sent'),
 
   /**
    * Строка регламента под шапкой — GR.14. Числа живые: минимум и потолок приходят с группы,
@@ -46,8 +49,8 @@ export const GROUP = {
    */
   regime: (min: number, max: number, cap: number) =>
     T(
-      `Малая группа · ${min}–${max} человек · не больше ${cap} приглашений разом · кто первым согласится, тот в группе`,
-      `Small group · ${min}–${max} people · ${cap} open invites at a time on Free · first ${max} who accept are in`
+      `Группа · ${min}–${max} человек · не больше ${cap} приглашений разом · кто первым согласится, тот в группе`,
+      `Group · ${min}–${max} people · ${cap} open invites at a time on Free · first ${max} who accept are in`
     ),
 
   /**
@@ -137,6 +140,10 @@ export const ROOM = {
     T(`${who} предлагает перейти в один на один`, `${who} asked to switch to one-on-one`),
   sysConvertDeclined: (who: string) => T(`${who} хочет оставить группу`, `${who} wants to keep the group`),
   sysConverted: () => T('Группа стала перепиской один на один.', 'The group is now a one-on-one.'),
+  sysGroupClosed: (who: string, title: string) => T(
+    `${who} закрыл(а) «${title}» до назначения плана. Ты ни при чём. Чат останется архивом только для чтения, а остальные твои интенты не затронуты.`,
+    `${who} closed ${title} before a plan was set. Nothing you did. The chat stays as a read-only archive, and your other intents aren’t affected.`
+  ),
   /** Роль перешла не по своей воле — говорим обоих поимённо, иначе группа не понимает, к кому идти. */
   sysLeftHeir: (who: string, heir: string) =>
     T(`${who} вышел(ла). Теперь организатор — ${heir}`, `${who} left. ${heir} is now the organiser`),
@@ -169,6 +176,19 @@ export const ROOM = {
     `Two days since ${title || 'the call'} — did it happen? One tap, and I’ll stop asking. It closes on its own tomorrow either way.`
   ),
   sysLinkSaved: () => T('Ссылка на звонок сохранена.', 'The call link is saved.'),
+  sysPlaceSaved: () => T('Место встречи сохранено.', 'The meeting place is saved.'),
+  sysAttendanceSide: (who: string, side: string) =>
+    side === 'call'
+      ? T(`${who} подключится по звонку.`, `${who} will join the call.`)
+      : T(`${who} придёт лично.`, `${who} will join in person.`),
+  sysPlanModeChanged: (who: string, mode: string) =>
+    mode === 'online'
+      ? T(`${who} оставил(а) для этого плана только звонок.`, `${who} made this plan online only.`)
+      : T(`${who} оставил(а) для этого плана только встречу вживую.`, `${who} made this plan offline only.`),
+  hybridHead: (total: number, atPlace: number, onCall: number) =>
+    T(`${total} в группе · ${atPlace} лично · ${onCall} по звонку`,
+      `${total} in the group · ${atPlace} coming · ${onCall} on the call`),
+  sideLabel: (side: string) => side === 'call' ? T('по звонку', 'on the call') : T('лично', 'in person'),
   sysVoteKept: (who: string) => T(`${who} оставил(а) план как есть`, `${who} kept the plan as it is`),
   sysPlanCountered: (who: string, when: string) =>
     T(`${who} предлагает изменить: ${when}. Все подтверждают заново.`,
@@ -227,6 +247,46 @@ export const ROOM = {
   offline: () => T('Сообщение не ушло. Проверь связь.', 'The message didn’t send. Check your connection.'),
   gone: () => T('Этой группы больше нет.', 'This group is gone.'),
   notMember: () => T('Ты больше не в этой группе.', 'You’re not in this group any more.'),
+
+  // ---- S9 / GR.51: organiser removes a joined member ---------------------
+  removeMember: () => T('Удалить', 'Remove'),
+  removeTitle: (who: string) => T(`Почему ты удаляешь ${who}?`, `Why are you removing ${who}?`),
+  removeConfirm: (who: string) => T(`Удалить ${who}`, `Remove ${who}`),
+  removeFailed: () => T('Не получилось удалить участника. Попробуй ещё раз.',
+                         'Couldn’t remove this member. Try again.'),
+  removalReasons: () => [
+    { code: 'inappropriate_messages_or_photos' as const,
+      label: T('Неуместные сообщения или фотографии', 'Inappropriate messages or photos') },
+    { code: 'suspected_fake_or_stolen_profile' as const,
+      label: T('Подозрение на поддельный или украденный профиль', 'Suspected fake or stolen profile') },
+    { code: 'not_responding' as const, label: T('Не отвечает', 'Not responding') },
+    { code: 'doesnt_fit_meetup' as const,
+      label: T('Не подходит для этой встречи', "Doesn't fit this meetup") },
+    { code: 'something_else' as const, label: T('Другая причина', 'Something else') },
+  ],
+
+  // ---- S9 / GR.52: removed person's view ---------------------------------
+  removedNotice: (title: string) => T(
+    `Тебя удалили из группы «${title}». Я не могу раскрыть причину. Остальные твои интенты не затронуты.`,
+    `You were removed from ${title}. I can’t share the reason. Your other intents aren’t affected.`
+  ),
+  readOnlyHistory: () => T('История доступна только для чтения', 'History is read-only'),
+
+  // ---- S10 / GR.53-55: organiser closes the group before a plan exists --
+  endGroup: () => T('Завершить группу', 'End the group'),
+  endTitle: (title: string) => T(`Завершить «${title}»?`, `End ${title}?`),
+  endBody: (members: string) => T(
+    `${members} узнают, что группа закрыта. Чат останется архивом только для чтения, а открытые приглашения отменятся. Следующие 30 дней встреча один на один всё ещё требует согласия обоих и использует план 1:1.`,
+    `${members} are told the group is closed. The chat stays as a read-only archive and the open invites are cancelled. For the next 30 days, meeting either of them one-on-one still needs their agreement and uses a 1:1 plan.`
+  ),
+  keepGoing: () => T('Продолжить', 'Keep it going'),
+  endConfirm: () => T('Завершить группу', 'End the group'),
+  endFailed: () => T('Не получилось завершить группу. Попробуй ещё раз.',
+                      'Couldn’t end the group. Try again.'),
+  closedNotice: (owner: string, title: string) => T(
+    `${owner} закрыл(а) «${title}» до назначения плана. Ты ни при чём. Чат останется архивом только для чтения, а остальные твои интенты не затронуты.`,
+    `${owner} closed ${title} before a plan was set. Nothing you did. The chat stays as a read-only archive, and your other intents aren’t affected.`
+  ),
 
   /** Экран состава — GR.24. */
   infoTitle: () => T('Кто в группе', 'Who’s in'),
@@ -336,6 +396,7 @@ export function groupSysLine(text: string, sys?: GroupSys): string {
   if (c === 'convert_asked') return ROOM.sysConvertAsked(S(f.who));
   if (c === 'convert_declined') return ROOM.sysConvertDeclined(S(f.who));
   if (c === 'converted') return ROOM.sysConverted();
+  if (c === 'group_closed') return ROOM.sysGroupClosed(S(f.who), S(f.title));
   if (c === 'quorum_back') return ROOM.sysQuorumBack();
   if (c === 'below_quorum') return ROOM.sysBelowQuorum();
   if (c === 'plan_locked') return ROOM.sysPlanLocked();
@@ -347,11 +408,11 @@ export function groupSysLine(text: string, sys?: GroupSys): string {
   if (c === 'plan_cancelled') return ROOM.sysPlanCancelled(S(f.who));
   if (c === 'running_late') return ROOM.sysRunningLate(S(f.who), Number(f.eta || 0));
   if (c === 'arrived') return ROOM.sysArrived(S(f.who));
-  if (c === 'link_saved') return ROOM.sysLinkSaved();
-  // Напоминание про отзыв (GRO.47-50). Разбор был написан вторым агентом и живёт на боксе, но в
-  // git не попал — а без него строка уезжает в чат группы английской фразой сервера, мимо
-  // перевода. Здесь он ровно тот же, чтобы при слиянии не появилось двух разных.
   if (c === 'feedback_reminder') return ROOM.sysFeedbackReminder(S(f.title));
+  if (c === 'link_saved') return ROOM.sysLinkSaved();
+  if (c === 'place_saved') return ROOM.sysPlaceSaved();
+  if (c === 'attendance_side') return ROOM.sysAttendanceSide(S(f.who), S(f.side));
+  if (c === 'plan_mode_changed') return ROOM.sysPlanModeChanged(S(f.who), S(f.mode));
   if (c === 'vote_kept') return ROOM.sysVoteKept(S(f.who));
   if (c === 'vote_opened') return ROOM.sysVoteOpened(S(f.who), S(f.kind));
   if (c === 'vote_closed')

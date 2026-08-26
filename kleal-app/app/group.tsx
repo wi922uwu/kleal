@@ -30,10 +30,12 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo, type VoicePayload, type VideoPayload } from '../src/api';
+import { group as gapi, agent, mediaUrl, newIdem, type GroupInfo, type GroupRemovalReason,
+  type VoicePayload, type VideoPayload } from '../src/api';
 import { ROOM, GROUP, groupSysLine, roomMsg, type GroupSys } from '../src/groups';
 import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
+import { openResults } from '../src/results-navigation';
 import { IconChevronLeft, IconChevronRight, IconPerson, IconSend, IconDots } from '../src/components/icons';
 import { interestLabels } from '../src/interest-label';
 import { Sheet, SheetItem } from '../src/components/Sheet';
@@ -76,11 +78,18 @@ export default function GroupRoom() {
   const [info, setInfo] = useState(false);
   const [leaveAsk, setLeaveAsk] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [endAsk, setEndAsk] = useState(false);
+  const [ending, setEnding] = useState(false);
+  /** GR.51: member, selected closed-list reason, and the one in-flight destructive request. */
+  const [removeWho, setRemoveWho] = useState('');
+  const [removeReason, setRemoveReason] = useState<GroupRemovalReason | ''>('');
+  const [removing, setRemoving] = useState(false);
   /** GR.19/GR.20: спрашиваю я или спрашивают меня — два листа поверх одного экрана. */
   const [ask1to1, setAsk1to1] = useState(false);
   const leftForOneOnOne = useRef(false);
   const [busy1to1, setBusy1to1] = useState(false);
   const [adopting, setAdopting] = useState(false);
+  const readOnly = !!g?.read_only;
   /** Время последнего известного сообщения — по нему сервер отдаёт только новые. */
   const since = useRef(0);
 
@@ -95,10 +104,10 @@ export default function GroupRoom() {
     }]);
     setErr('');
   }, [gid, me]);
-  const voice = useVoiceMessage(deliverVoice, !me || !gid || !!fatal);
+  const voice = useVoiceMessage(deliverVoice, !me || !gid || !!fatal || readOnly);
 
   /** Кружок в комнате — тем же путём, что и текст: ключ, состояние, повтор. */
-  const canSend = !!me && !!gid && !fatal;
+  const canSend = !!me && !!gid && !fatal && !readOnly;
   const sendCircle = (payload: VideoPayload) => {
     if (!canSend) return;
     const local: Row = {
@@ -121,7 +130,7 @@ export default function GroupRoom() {
       //
       // Один раз и только на ПЕРЕХОД, а не на состояние: сторожок нужен потому, что опрос идёт
       // дальше, и без него replace повторялся бы каждые несколько секунд, забивая переписку.
-      if (r?.group?.state === 'converted_1to1' && !leftForOneOnOne.current) {
+      if (!r?.group?.read_only && r?.group?.state === 'converted_1to1' && !leftForOneOnOne.current) {
         const peer = (r.group.members || [])
           .map((x: any) => String(x?.name || ''))
           .find((x: string) => x && x.toLowerCase() !== me.toLowerCase());
@@ -162,7 +171,7 @@ export default function GroupRoom() {
 
   // Лёгкий опрос: в группе пишут не мгновенно, а сокет ради нескольких реплик избыточен.
   // Спит, пока экран не виден: раньше тикал и из свёрнутого приложения.
-  usePolling(load, 4000, !fatal);
+  usePolling(load, 4000, !fatal && !readOnly);
 
   /** Прижимать ленту к низу — только если человек и так внизу, иначе чужая реплика выдёргивает
    *  читающего старое сообщение обратно вниз каждые четыре секунды. */
@@ -194,7 +203,7 @@ export default function GroupRoom() {
 
   const send = () => {
     const text = draft.trim();
-    if (!text || !me || !gid) return;
+    if (!text || !me || !gid || readOnly) return;
     setDraft('');
     atBottom.current = true;
     const local: Row = {
@@ -209,7 +218,7 @@ export default function GroupRoom() {
   /** Реакция ставится сразу и откатывается, если не прошла: ждать ответа ради своего же нажатия
    *  незачем, а объяснять неудачу нечем — человек нажмёт ещё раз. */
   const react = useCallback(async (m: Row, emoji: string) => {
-    if (!m.id || !gid) return;
+    if (!m.id || !gid || readOnly) return;
     const mine = String(me).trim().toLowerCase();
     const flip = (r?: Record<string, string[]>) => {
       const next = { ...(r || {}) };
@@ -226,10 +235,10 @@ export default function GroupRoom() {
     } catch {
       setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, r: flip(x.r) } : x)));
     }
-  }, [gid, me]);
+  }, [gid, me, readOnly]);
 
   const removeMsg = useCallback(async (m: Row) => {
-    if (!m.id || !gid) return;
+    if (!m.id || !gid || readOnly) return;
     setPicked(null);
     setMsgs((prev) => prev.map((x) => (x.id === m.id ? { ...x, text: '', deleted: true, r: undefined } : x)));
     try {
@@ -237,7 +246,25 @@ export default function GroupRoom() {
     } catch {
       setErr(ROOM.offline());
     }
-  }, [gid, me]);
+  }, [gid, me, readOnly]);
+
+  /** GR.51: no free text reaches the server; the chosen code is the complete decision record. */
+  const removeMember = async () => {
+    if (!gid || !removeWho || !removeReason || removing) return;
+    setRemoving(true);
+    try {
+      const r: any = await gapi.remove(gid, me, removeWho, removeReason, newIdem('grm'));
+      if (!r?.ok) { setErr(ROOM.removeFailed()); return; }
+      setRemoveWho('');
+      setRemoveReason('');
+      if (r?.group) setG(r.group);
+      await load();
+    } catch {
+      setErr(ROOM.removeFailed());
+    } finally {
+      setRemoving(false);
+    }
+  };
 
   /**
    * «Позвать ещё людей» — новый поиск по интенту ЭТОЙ группы, и приглашения из него уходят в неё
@@ -275,7 +302,7 @@ export default function GroupRoom() {
         query: '',
       });
       setInfo(false);
-      router.navigate('/results');
+      openResults(router);
     } catch {
       setErr(GROUP.sendFailed());
     } finally {
@@ -330,7 +357,8 @@ export default function GroupRoom() {
     .map((m: any) => String(m?.name || ''))
     .find((n: string) => n && n.toLowerCase() !== me.toLowerCase()) || '';
   /** Спросили МЕНЯ — лист GR.20 открывается сам: это вопрос, а не уведомление. */
-  const askedMe = String((g as any)?.pending_1to1?.to || '').toLowerCase() === me.toLowerCase();
+  const askedMe = !readOnly
+    && String((g as any)?.pending_1to1?.to || '').toLowerCase() === me.toLowerCase();
 
   const leave = async () => {
     if (leaving || !gid) return;
@@ -348,13 +376,36 @@ export default function GroupRoom() {
     }
   };
 
+  const endGroup = async () => {
+    if (ending || !gid) return;
+    setEnding(true);
+    try {
+      const r: any = await gapi.close(gid, me, newIdem('gclose'));
+      if (!r?.ok) { setErr(ROOM.endFailed()); return; }
+      if (r?.group) setG(r.group);
+      setEndAsk(false);
+      setInfo(false);
+      await load();
+    } catch {
+      setErr(ROOM.endFailed());
+    } finally {
+      setEnding(false);
+    }
+  };
+
   const members = (g?.members || []) as { name?: string; photo?: string }[];
   const others = members.map((m) => String(m.name || '')).filter((n) => n && n !== me);
   const n = Number(g?.joined_count || members.length || 0);
   const min = Number(g?.min_total || 3);
-  const canPlan = !!g?.planning_allowed;
+  const groupPlan = (g as any)?.plan || null;
+  const hybridPlan = String(groupPlan?.mode || g?.mode || '') === 'hybrid' ? groupPlan : null;
+  const sideCounts = hybridPlan?.side_counts || {};
+  const headCount = hybridPlan
+    ? ROOM.hybridHead(n, Number(sideCounts.in_person || 0), Number(sideCounts.call || 0))
+    : ROOM.headCount(n, min);
+  const canPlan = !readOnly && !!g?.planning_allowed;
   // За стрелкой должно что-то БЫТЬ: либо план уже есть, либо состав дорос и его можно создать.
-  const planReachable = canPlan || !!(g as any)?.plan;
+  const planReachable = !readOnly && (canPlan || !!(g as any)?.plan);
 
   if (fatal) {
     return (
@@ -391,7 +442,7 @@ export default function GroupRoom() {
             <View style={{ flex: 1 }}>
               <Text style={s.intentTitle} numberOfLines={1}>{g?.title || ''}</Text>
               <Text style={[s.intentSub, canPlan && { color: color.successText }]} numberOfLines={1}>
-                {ROOM.headCount(n, min)}
+                {headCount}
               </Text>
             </View>
             <IconChevronRight size={20} c={color.muted} />
@@ -411,7 +462,7 @@ export default function GroupRoom() {
             <Text style={s.headTitle} numberOfLines={1}>{g?.title || ''}</Text>
             {/* GR.21: при полном составе подзаголовок сам зовёт делать план. */}
             <Text style={[s.headSub, canPlan && { color: color.successText }]} numberOfLines={1}>
-              {ROOM.headCount(n, min)}
+              {headCount}
             </Text>
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={ROOM.infoTitle()} style={s.back}
@@ -428,16 +479,27 @@ export default function GroupRoom() {
 
         <ScrollView ref={scroller} contentContainerStyle={s.thread} keyboardShouldPersistTaps="handled">
           {loading && !msgs.length ? <ActivityIndicator style={{ marginTop: 24 }} color={color.primary} /> : null}
+          {readOnly ? (
+            <View style={s.removedNotice} accessibilityRole="alert">
+              <Text style={s.removedNoticeText}>
+                {g?.read_only_reason === 'group_closed'
+                  ? ROOM.closedNotice(String(g?.closure_notice?.owner || g?.owner || ''),
+                                      String(g?.closure_notice?.title || g?.title || 'this group'))
+                  : ROOM.removedNotice(String(g?.removal_notice?.title || g?.title || 'this group'))}
+              </Text>
+              <Text style={s.removedNoticeSub}>{ROOM.readOnlyHistory()}</Text>
+            </View>
+          ) : null}
           <MessageFeed
             msgs={msgs}
             me={me}
             ru={getLang() === 'ru'}
             showAuthor
             sysText={(m) => groupSysLine(String(m.text || ''), (m as any).sys)}
-            onReply={setReplyTo}
+            onReply={readOnly ? () => {} : setReplyTo}
             onReact={react}
-            onPick={setPicked}
-            onRetry={deliver}
+            onPick={readOnly ? () => {} : setPicked}
+            onRetry={readOnly ? () => {} : deliver}
           />
           {err ? <Text style={s.err}>{err}</Text> : null}
         </ScrollView>
@@ -473,7 +535,7 @@ export default function GroupRoom() {
           </Pressable>
         </Sheet>
 
-        <Sheet visible={!!picked} onClose={() => setPicked(null)}>
+        <Sheet visible={!!picked && !readOnly} onClose={() => setPicked(null)}>
           <View style={s.reactRow}>
             {REACTIONS.map((e) => (
               <Pressable
@@ -504,7 +566,7 @@ export default function GroupRoom() {
         </Sheet>
 
         {/* На что отвечаем — видно ДО отправки, иначе цитата становится сюрпризом. */}
-        {replyTo ? (
+        {!readOnly && replyTo ? (
           <View style={s.replyBar}>
             <View style={s.replyStripe} />
             <View style={{ flex: 1 }}>
@@ -517,6 +579,11 @@ export default function GroupRoom() {
           </View>
         ) : null}
 
+        {readOnly ? (
+          <View style={[s.readOnlyDock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
+            <Text style={s.readOnlyDockText}>{ROOM.readOnlyHistory()}</Text>
+          </View>
+        ) : (
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
           <View style={s.field}>
             {/*
@@ -575,6 +642,7 @@ export default function GroupRoom() {
             </View>
           ) : null}
         </View>
+        )}
 
         {/* GR.24 — состав. Лист, а не отдельный маршрут: это справка о той же комнате. */}
         <Sheet visible={info} onClose={() => setInfo(false)} title={ROOM.infoTitle()}>
@@ -602,6 +670,7 @@ export default function GroupRoom() {
           {members.map((m, i) => {
             const nm = String(m.name || '');
             const owner = nm.trim().toLowerCase() === String(g?.owner || '').trim().toLowerCase();
+            const memberSide = hybridPlan?.sides?.[nm.trim().toLowerCase()]?.side;
             return (
               <View key={nm + i} style={s.memberRow}>
                 {/* Заглушка снизу, фото сверху — см. тот же приём в app/gplan.tsx: пока фото
@@ -619,7 +688,22 @@ export default function GroupRoom() {
                 </Text>
                 <Text style={s.memberRole}>
                   {owner ? ROOM.roleOrganiser() : ROOM.roleMember()}
+                  {memberSide ? ` · ${ROOM.sideLabel(memberSide)}` : ''}
                 </Text>
+                {g?.can_remove && !owner ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${ROOM.removeMember()} ${nm}`}
+                    hitSlop={8}
+                    onPress={() => {
+                      setInfo(false);
+                      setRemoveReason('');
+                      setTimeout(() => setRemoveWho(nm), 250);
+                    }}
+                  >
+                    <Text style={s.memberRemove}>{ROOM.removeMember()}</Text>
+                  </Pressable>
+                ) : null}
               </View>
             );
           })}
@@ -635,6 +719,26 @@ export default function GroupRoom() {
             </Pressable>
           ) : null}
 
+          {!readOnly ? (
+            <Pressable accessibilityRole="button" style={s.sheetNot}
+                       onPress={() => {
+                         setInfo(false);
+                         setTimeout(() => router.navigate({
+                           pathname: '/group-report',
+                           params: { gid, title: String(g?.title || '') },
+                         }), 250);
+                       }}>
+              <Text style={s.sheetReportText}>{T('Сообщить о проблеме', 'Report a problem')}</Text>
+            </Pressable>
+          ) : null}
+
+          {g?.can_end ? (
+            <Pressable accessibilityRole="button" style={s.sheetNot}
+                       onPress={() => { setInfo(false); setTimeout(() => setEndAsk(true), 250); }}>
+              <Text style={s.sheetNotText}>{ROOM.endGroup()}</Text>
+            </Pressable>
+          ) : null}
+
           {/*
             Выход доступен ВСЕМ, включая организатора, — и это расхождение с бордом, сделанное
             осознанно. GR.24 пишет: «participants can leave, and you can't: as organiser you
@@ -646,9 +750,64 @@ export default function GroupRoom() {
 
             Удаление участника организатором — отдельный флоу с причиной (GR.51), не эта кнопка.
           */}
-          <Pressable accessibilityRole="button" style={s.sheetNot}
+          {!readOnly ? <Pressable accessibilityRole="button" style={s.sheetNot}
                      onPress={() => { setInfo(false); setTimeout(() => setLeaveAsk(true), 250); }}>
             <Text style={s.sheetNotText}>{ROOM.leave()}</Text>
+          </Pressable> : null}
+        </Sheet>
+
+        {/* S10 / GR.53: ending is only offered before a group plan exists. */}
+        <Sheet visible={endAsk} onClose={() => setEndAsk(false)}>
+          <Text style={s.sheetTitle}>{ROOM.endTitle(String(g?.title || ''))}</Text>
+          <Text style={s.sheetBody}>{ROOM.endBody(others.join(' and '))}</Text>
+          <Pressable accessibilityRole="button" style={s.sheetSend}
+                     disabled={ending} accessibilityState={{ busy: ending }}
+                     onPress={ending ? undefined : () => setEndAsk(false)}>
+            <Text style={s.sheetSendText}>{ROOM.keepGoing()}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={s.ctaDark}
+                     disabled={ending} accessibilityState={{ busy: ending }}
+                     onPress={ending ? undefined : endGroup}>
+            {ending ? <ActivityIndicator color={color.onPrimary} />
+                    : <Text style={s.ctaText}>{ROOM.endConfirm()}</Text>}
+          </Pressable>
+        </Sheet>
+
+        {/* GR.51 — exact closed list from the board. No text field by design. */}
+        <Sheet visible={!!removeWho} onClose={() => { setRemoveWho(''); setRemoveReason(''); }}>
+          <Text style={s.sheetTitle}>{ROOM.removeTitle(removeWho)}</Text>
+          <View style={s.reasonList}>
+            {ROOM.removalReasons().map((r) => {
+              const selected = removeReason === r.code;
+              return (
+                <Pressable
+                  key={r.code}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  style={s.reasonRow}
+                  onPress={() => setRemoveReason(r.code)}
+                >
+                  <View style={[s.radio, selected && s.radioOn]}>
+                    {selected ? <View style={s.radioDot} /> : null}
+                  </View>
+                  <Text style={s.reasonText}>{r.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            disabled={!removeReason || removing}
+            accessibilityState={{ disabled: !removeReason, busy: removing }}
+            style={[s.sheetSend, (!removeReason || removing) && { opacity: 0.45 }]}
+            onPress={removeMember}
+          >
+            {removing ? <ActivityIndicator color={color.onPrimary} />
+                      : <Text style={s.sheetSendText}>{ROOM.removeConfirm(removeWho)}</Text>}
+          </Pressable>
+          <Pressable accessibilityRole="button" style={s.sheetNot}
+                     onPress={() => { setRemoveWho(''); setRemoveReason(''); }}>
+            <Text style={s.sheetNotText}>{ROOM.cancelBtn()}</Text>
           </Pressable>
         </Sheet>
 
@@ -756,8 +915,16 @@ const s = StyleSheet.create({
   time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
   err: { ...type.bodySmall, color: color.primary, textAlign: 'center', marginTop: space.sm } as any,
   fatal: { ...type.body, color: color.muted, paddingHorizontal: 20, paddingTop: space.lg } as any,
+  removedNotice: {
+    marginHorizontal: 2, marginBottom: space.md, padding: 14,
+    borderRadius: rad.lg, backgroundColor: color.card, borderWidth: 1, borderColor: color.border,
+  },
+  removedNoticeText: { ...type.body, color: color.fg } as any,
+  removedNoticeSub: { ...type.caption, color: color.muted, marginTop: 6 } as any,
 
   dock: { paddingHorizontal: 16, paddingTop: space.sm, gap: space.sm, backgroundColor: color.bg },
+  readOnlyDock: { paddingHorizontal: 20, paddingTop: 14, backgroundColor: color.bg },
+  readOnlyDockText: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
   field: {
     height: 48, borderRadius: rad.full, backgroundColor: color.neutral100,
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, gap: space.sm,
@@ -778,10 +945,21 @@ const s = StyleSheet.create({
   sheetSendText: { ...type.button, color: color.onPrimary } as any,
   sheetNot: { height: 52, borderRadius: rad.full, backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
   sheetNotText: { ...type.button, color: color.fg } as any,
+  sheetReportText: { ...type.button, color: color.danger } as any,
 
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   memberAv: { width: 36, height: 36, borderRadius: rad.full },
   memberAvEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
   memberName: { flex: 1, ...type.body, color: color.fg } as any,
   memberRole: { ...type.caption, color: color.muted } as any,
+  memberRemove: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
+  reasonList: { gap: 2, paddingBottom: space.sm },
+  reasonRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 },
+  radio: {
+    width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: color.neutral300,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  radioOn: { borderColor: color.primary },
+  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary },
+  reasonText: { flex: 1, ...type.body, color: color.fg } as any,
 });

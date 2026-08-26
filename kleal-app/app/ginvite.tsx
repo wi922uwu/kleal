@@ -36,6 +36,7 @@ export default function GroupInvite() {
   const me = String(st.profile.name || '');
 
   const [g, setG] = useState<GroupInfo | null>(null);
+  const [groupId, setGroupId] = useState(gid);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   /** Итог ответа — им же экран и заканчивается: показать результат честнее, чем молча уйти. */
@@ -47,17 +48,32 @@ export default function GroupInvite() {
    * мест, которые GR.16 обещает показать приглашённому.
    */
   const load = useCallback(async () => {
-    if (!gid || !me) { setLoading(false); return; }
+    if (!me || (!id && !gid)) { setLoading(false); return; }
     try {
-      const r: any = await gapi.get(gid, me);
-      if (r?.group) setG(r.group);
-      else setOutcome('gone');
+      const r: any = id ? await gapi.inviteDetail(id, me) : await gapi.get(gid, me);
+      if (r?.group) {
+        setG(r.group);
+        setGroupId(String(r.group.gid || r.invite?.gid || gid));
+      } else {
+        setOutcome('gone');
+      }
     } catch {
+      // Compatibility fallback while older matching instances are rolling over.
+      if (gid) {
+        try {
+          const r: any = await gapi.get(gid, me);
+          if (r?.group) {
+            setG(r.group);
+            setGroupId(gid);
+            return;
+          }
+        } catch { /* closed invitation */ }
+      }
       setOutcome('gone');
     } finally {
       setLoading(false);
     }
-  }, [gid, me]);
+  }, [gid, id, me]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -72,7 +88,7 @@ export default function GroupInvite() {
       if (!r?.ok) { setOutcome(r?.error === 'NO_SUCH_INVITE' ? 'gone' : 'error'); return; }
       // Вошёл — сразу в общий чат, как и обещано на GR.16. replace, а не push: приглашения
       // больше нет, и «назад» не должно возвращать к нему.
-      router.replace({ pathname: '/group', params: { gid } });
+      router.replace({ pathname: '/group', params: { gid: groupId } });
     } catch {
       setOutcome('error');
     } finally {

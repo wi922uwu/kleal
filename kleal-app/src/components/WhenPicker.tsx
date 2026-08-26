@@ -24,6 +24,10 @@ import { TimeDial } from './Dials';
 import { DETAILS, dateChips, planWhenLabel, tzDisplay } from '../intent';
 import { IconCalendar, IconClock, IconGlobe } from './icons';
 import { color, radius as rad, space, type } from '../theme';
+import {
+  editableTimePartValue, formatTimePart, normalizeTimePart, parseClockPaste,
+  replaceTimePart, sanitizeTimePartInput, splitClock, type TimePart,
+} from '../timeInput';
 
 export type WhenValue = {
   /** Локальный ключ даты «2026-08-24». Локальный, а не UTC: см. комментарий у dateChips. */
@@ -92,6 +96,44 @@ export function WhenPicker({
   days?: number;
 }) {
   const set = (patch: Partial<WhenValue>) => onChange({ ...value, ...patch });
+  const clock = splitClock(value.minutes);
+  const [hourText, setHourText] = React.useState(() => formatTimePart(clock.hours));
+  const [minuteText, setMinuteText] = React.useState(() => formatTimePart(clock.minutes));
+  const [hourFocused, setHourFocused] = React.useState(false);
+  const [minuteFocused, setMinuteFocused] = React.useState(false);
+
+  // The dial and external form changes stay authoritative while a field is idle. A focused field
+  // deliberately keeps its draft: rewriting "0" as "00" between keystrokes is the original bug.
+  React.useEffect(() => {
+    if (!hourFocused) setHourText(formatTimePart(clock.hours));
+  }, [clock.hours, hourFocused]);
+  React.useEffect(() => {
+    if (!minuteFocused) setMinuteText(formatTimePart(clock.minutes));
+  }, [clock.minutes, minuteFocused]);
+
+  const editPart = (part: TimePart, raw: string) => {
+    const pasted = parseClockPaste(raw);
+    if (pasted) {
+      setHourText(formatTimePart(pasted.hours));
+      setMinuteText(formatTimePart(pasted.minutes));
+      set({ minutes: pasted.hours * 60 + pasted.minutes });
+      return;
+    }
+    const text = sanitizeTimePartInput(raw);
+    if (part === 'hours') setHourText(text);
+    else setMinuteText(text);
+    const parsed = editableTimePartValue(text, part);
+    if (parsed != null) set({ minutes: replaceTimePart(value.minutes, part, parsed) });
+  };
+
+  const finishPart = (part: TimePart, text: string) => {
+    const current = splitClock(value.minutes);
+    const normalized = normalizeTimePart(text, part, current[part]);
+    if (part === 'hours') setHourText(normalized.text);
+    else setMinuteText(normalized.text);
+    const minutes = replaceTimePart(value.minutes, part, normalized.value);
+    if (minutes !== value.minutes) set({ minutes });
+  };
 
   return (
     <View style={s.wrap}>
@@ -127,19 +169,19 @@ export function WhenPicker({
       />
       <View style={s.boxRow}>
         <NumBox
-          value={String(Math.floor(value.minutes / 60)).padStart(2, '0')}
-          onChange={(t) => {
-            const h = Math.max(0, Math.min(23, parseInt(t || '0', 10) || 0));
-            set({ minutes: h * 60 + (value.minutes % 60) });
-          }}
+          value={hourText}
+          part="hours"
+          onChange={(t) => editPart('hours', t)}
+          onFocusChange={setHourFocused}
+          onFinish={(t) => finishPart('hours', t)}
         />
         <Text style={s.boxColon}>:</Text>
         <NumBox
-          value={String(value.minutes % 60).padStart(2, '0')}
-          onChange={(t) => {
-            const m = Math.max(0, Math.min(59, parseInt(t || '0', 10) || 0));
-            set({ minutes: Math.floor(value.minutes / 60) * 60 + m });
-          }}
+          value={minuteText}
+          part="minutes"
+          onChange={(t) => editPart('minutes', t)}
+          onFocusChange={setMinuteFocused}
+          onFinish={(t) => finishPart('minutes', t)}
         />
       </View>
 
@@ -158,16 +200,25 @@ export function WhenPicker({
 }
 
 /** Маленькое числовое поле под циферблатом — «20 : 00» с кадра. */
-function NumBox({ value, onChange }: { value: string; onChange: (t: string) => void }) {
+function NumBox({ value, part, onChange, onFocusChange, onFinish }: {
+  value: string;
+  part: TimePart;
+  onChange: (t: string) => void;
+  onFocusChange: (focused: boolean) => void;
+  onFinish: (t: string) => void;
+}) {
   return (
     <TextInput
       style={s.numBox}
       value={value}
       onChangeText={onChange}
+      onFocus={() => onFocusChange(true)}
+      onBlur={() => { onFocusChange(false); onFinish(value); }}
+      onSubmitEditing={() => onFinish(value)}
       keyboardType="number-pad"
-      maxLength={2}
       selectTextOnFocus
-      accessibilityLabel={value}
+      testID={`when-${part}`}
+      accessibilityLabel={part === 'hours' ? 'HH' : 'MM'}
     />
   );
 }

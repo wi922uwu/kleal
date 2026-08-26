@@ -34,6 +34,7 @@ import {
   searchProfile,
 } from '../src/intent';
 import { setResults } from '../src/results-store';
+import { openResults } from '../src/results-navigation';
 import {
   ACT, INTENT_ID_KEY, ctaLabel, intentFacts, intentState, intentSummary, intentTitle, intentWhen,
   intentWhere, stateLine,
@@ -156,7 +157,7 @@ export default function MyIntent() {
         profile: prof,
         query: intentTitle(row),
       });
-      router.navigate('/results');
+      openResults(router);
     } catch {
       setErr(ACT.loadFailed());
     } finally {

@@ -244,16 +244,20 @@ export function groupRows(groups: any[], invites: any[], ru: boolean): Row[] {
     // вкладках, причём во второй с подписью «можно делать план» — про план, который уже сделан.
     // Список групп несёт состояние плана в `plan` (см. `_gi_public`), его просто никто не читал.
     const st = String((g.plan || {}).state || '');
-    if (st === 'proposed' || st === 'confirmed' || st === 'locked' || st === 'below_quorum') continue;
+    if (!g.read_only && (st === 'proposed' || st === 'confirmed' || st === 'locked' || st === 'below_quorum')) continue;
     rows.push({
       key: 'g:' + String(g.gid || ''),
       kind: 'group',
       gid: String(g.gid || ''),
       title: String(g.title || ''),
-      sub: ru ? `Группа · ${n} из ${min}` : `Group · ${n} of ${min}`,
+      sub: g.read_only
+        ? (ru ? 'Группа · Только чтение' : 'Group · Read-only')
+        : (ru ? `Группа · ${n} из ${min}` : `Group · ${n} of ${min}`),
       // Подсказка говорит то, что человеку нужно решить прямо сейчас: добрать людей или уже
       // планировать. Пересказывать последнюю реплику здесь нечем — сервер её в списке не отдаёт.
-      teaser: need
+      teaser: g.read_only
+        ? (ru ? 'Вы больше не состоите в этой группе' : 'You are no longer in this group')
+        : need
         ? (ru ? `Нужен(ы) ещё ${need}` : `Need ${need} more`)
         : (ru ? 'Людей достаточно — можно делать план' : 'Enough people — you can make a plan'),
       t: Number(g.updated || g.created || 0),

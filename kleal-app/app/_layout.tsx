@@ -9,6 +9,7 @@ import { initLang } from '../src/i18n';
 import { restore } from '../src/state';
 import { startSummaryWatch } from '../src/profile';
 import { color } from '../src/theme';
+import { PostCallPrompt } from '../src/components/PostCallPrompt';
 
 /**
  * КАРТИНКИ ГРУЗЯТСЯ ДО ТОГО, КАК ПОНАДОБЯТСЯ.
@@ -74,6 +75,7 @@ export default function RootLayout() {
       setReady(true);
       // Остальное греется уже под нарисованной заставкой и никого не ждёт.
       Asset.loadAsync(ART_REST).catch(() => {});
+
       // Сводка догоняет профиль сама, с какого бы экрана он ни изменился. Включается ПОСЛЕ
       // restore(): иначе первое же восстановление с диска выглядит как правка и зовёт модель.
       startSummaryWatch();
@@ -149,6 +151,7 @@ export default function RootLayout() {
         <Stack.Screen name="messages" options={{ animation: 'none' }} />
         <Stack.Screen name="profile/index" options={{ animation: 'none' }} />
       </Stack>
+      <PostCallPrompt />
     </SafeAreaProvider>
   );
 }

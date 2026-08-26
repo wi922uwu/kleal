@@ -36,7 +36,8 @@ import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
   NATURE_TRAITS, NATURE_MAX,
-  STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL,
+  STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL, GROUP_FREE_MAX_TOTAL,
+  GROUP_PLUS_MAX_TOTAL, GROUP_SIZE, normalizeIntentSize, initialGroupSize,
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
@@ -50,17 +51,24 @@ import {
   IconCalendar, IconClock, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar,
 } from '../src/components/icons';
 import { EditSheet } from '../src/components/ProfileShell';
+import { Sheet } from '../src/components/Sheet';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { resetGroupSession } from '../src/ginvites';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { setResults, patchResults } from '../src/results-store';
+import { openResults } from '../src/results-navigation';
+import {
+  applyIntentEdit, beginIntentEdit, IntentEditTarget,
+} from '../src/intent-edit';
 import { agent, isAbort } from '../src/api';
 import { color, radius as rad, space, type } from '../src/theme';
 
 type Draft = {
   mode?: string;
-  size?: string;
+  size?: '1:1' | 'group';
+  /** Полный состав, включая организатора. Отдельное видимое решение внутри единого Group-flow. */
+  groupSize?: number;
   date: string;
   /** Минуты от полуночи. 1200 = 20:00 — значение с кадра O.07. */
   minutes: number;
@@ -104,7 +112,10 @@ export default function Intent() {
    * `topic` (единственное число) поддержан для старых ссылок: он трактуется и как ключ, и как
    * подпись, — так вело себя приложение до разделения.
    */
-  const params = useLocalSearchParams<{ topics?: string; title?: string; topic?: string }>();
+  const params = useLocalSearchParams<{
+    topics?: string; title?: string; topic?: string;
+    size?: string; format?: string; groupSize?: string;
+  }>();
   const legacy = String(params.topic || '').trim();
   const topics = String(params.topics || legacy || '')
     .split(',')
@@ -113,7 +124,14 @@ export default function Intent() {
   const title = String(params.title || legacy || '').trim();
 
   const [step, setStep] = useState<IntentStepId>('how');
+  const legacySize = params.size ?? params.format;
+  const normalizedSize = normalizeIntentSize(legacySize, params.groupSize);
+  /** Plus в продукте ещё не подключён, но диапазон 6–20 остаётся видимой частью Group-flow. */
+  const [groupSizeOpen, setGroupSizeOpen] = useState(false);
+  const [groupSizeTarget, setGroupSizeTarget] = useState<'draft' | 'edit'>('draft');
   const [draft, setDraft] = useState<Draft>(() => ({
+    size: normalizedSize,
+    groupSize: normalizedSize === 'group' ? initialGroupSize(legacySize, params.groupSize) : undefined,
     date: dateChips(1)[0].key,
     minutes: 20 * 60,
     tz: deviceTz(),
@@ -148,10 +166,9 @@ export default function Intent() {
    * записано в src/components/ProfileShell.tsx и здесь соблюдается так же, как в листе пояса.
    */
   const [editOpen, setEditOpen] = useState(false);
-  const [editPick, setEditPick] = useState('');
+  /** Выбранный параметр — одновременно режим листа и белый список полей для commit. */
+  const [editPick, setEditPick] = useState<IntentEditTarget | ''>('');
   const [edraft, setEdraft] = useState<Draft | null>(null);
-  /** Пояс внутри листа правки разворачивается СПИСКОМ, а не вторым модалом — см. лист O.07a. */
-  const [tzInline, setTzInline] = useState(false);
   const [free, setFree] = useState('');
   /** Категория для строки сводки O.10. Приходит от агента фильтрации; пусто — строка не рисуется. */
   const [category, setCategory] = useState('');
@@ -204,7 +221,7 @@ export default function Intent() {
       profile: profile(),
       query: query || '',
     });
-    router.navigate('/results');
+    openResults(router);
   };
 
   /** Выбор строки на O.05/O.06: галочка, «Awesome!», и через паузу следующий вопрос. */
@@ -284,7 +301,7 @@ export default function Intent() {
       // groupSize же увёл бы запрос в групповую ветку, где 1:1 просто нечего делать.
       format: draft.size === 'group' ? 'group' : '1:1',
     };
-    if (draft.size === 'group') intent.groupSize = GROUP_MIN_TOTAL;
+    if (draft.size === 'group') intent.groupSize = draft.groupSize || GROUP_MIN_TOTAL;
     if (draft.sex && draft.sex !== 'Any') intent.sex = draft.sex;
     if (draft.minAge) intent.minAge = draft.minAge;
     if (draft.maxAge) intent.maxAge = draft.maxAge;
@@ -394,21 +411,104 @@ export default function Intent() {
 
   /** Битая ссылка не пускает ни «Дальше» на шаге, ни «Применить» в листе — правило одно на оба. */
   const linkBroken = (v: Draft) => !!v.link.trim() && !looksLikeUrl(v.link);
+  /** В Group Online ссылка — третий обязательный шаг: без неё приглашённые придут в пустой звонок. */
+  const groupOnline = draft.mode === 'online' && draft.size === 'group';
+  const groupLinkBlocked = (v: Draft) =>
+    linkBroken(v) || (v.mode === 'online' && v.size === 'group' && !v.link.trim());
 
   const sizeBlockOf = (v: Draft, set: SetDraft) => (
     <View style={s.chipRowWrap}>
       {SIZES.map(([k]) => (
-        <Chip key={k} label={sizeLabel(k)} on={v.size === k} onPress={() => set((x) => ({ ...x, size: k }))} />
+        <Chip
+          key={k}
+          label={sizeLabel(k)}
+          on={v.size === k}
+          onPress={() => set((x) => ({
+            ...x,
+            size: k as Draft['size'],
+            groupSize: k === 'group' ? (x.groupSize || GROUP_MIN_TOTAL) : undefined,
+          }))}
+        />
       ))}
     </View>
   );
 
+  /** Режим в листе не двигает мастер: выбранное значение коммитится обратно прямо в summary. */
+  const modeBlockOf = (v: Draft, set: SetDraft) => (
+    <View style={s.chipRowWrap}>
+      {FORMATS.map(([k]) => (
+        <Chip
+          key={k}
+          label={formatLabel(k)}
+          on={v.mode === k}
+          onPress={() => set((x) => ({ ...x, mode: k }))}
+        />
+      ))}
+    </View>
+  );
+
+  /** Один числовой контрол вместо двух пользовательских типов группы. */
+  const groupSizeBlockOf = (v: Draft, set: SetDraft, target: 'draft' | 'edit') => {
+    const total = v.groupSize || GROUP_MIN_TOTAL;
+    const change = (next: number) => {
+      if (next > GROUP_FREE_MAX_TOTAL) {
+        setGroupSizeTarget(target);
+        setGroupSizeOpen(true);
+        return;
+      }
+      set((x) => ({ ...x, size: 'group', groupSize: Math.max(GROUP_MIN_TOTAL, next) }));
+    };
+    return (
+      <View>
+        <View style={s.capacityControl}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={T('Уменьшить размер группы', 'Decrease group size')}
+            accessibilityState={{ disabled: total <= GROUP_MIN_TOTAL }}
+            disabled={total <= GROUP_MIN_TOTAL}
+            style={[s.capacityButton, total <= GROUP_MIN_TOTAL && s.capacityButtonOff]}
+            onPress={() => change(total - 1)}
+          >
+            <Text style={s.capacityButtonText}>−</Text>
+          </Pressable>
+          <View style={s.capacityValue}>
+            <Text style={s.capacityNumber}>{total}</Text>
+            <Text style={s.capacityPeople}>{GROUP_SIZE.people(total)}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={T('Увеличить размер группы', 'Increase group size')}
+            accessibilityHint={total >= GROUP_FREE_MAX_TOTAL ? GROUP_SIZE.plusLimit() : undefined}
+            style={s.capacityButton}
+            onPress={() => change(Math.min(GROUP_PLUS_MAX_TOTAL, total + 1))}
+          >
+            <Text style={s.capacityButtonText}>+</Text>
+          </Pressable>
+        </View>
+        <Text style={s.capacityFree}>{GROUP_SIZE.freeLimit()}</Text>
+        <Text style={s.capacityPlus}>{GROUP_SIZE.plusLimit()}</Text>
+      </View>
+    );
+  };
+
   /* O.07 — дата, круглый циферблат и пояс. Тот же WhenPicker, что у группового плана: разметка
      здесь была своя и слово в слово такая же, а копии в этом проекте расходятся. */
-  const whenBlockOf = (v: Draft, set: SetDraft, onPressTz: () => void) => (
+  const whenBlockOf = (
+    v: Draft,
+    set: SetDraft,
+    onPressTz?: () => void,
+    only?: 'date' | 'time',
+  ) => (
     <WhenPicker
       value={{ date: v.date, minutes: v.minutes, tz: v.tz }}
-      onChange={(w) => set((x) => ({ ...x, date: w.date, minutes: w.minutes, tz: w.tz }))}
+      // В точечной правке общий контрол остаётся единым, но соседнее значение не меняется даже
+      // внутри edraft. Поэтому дата и время сохраняются независимо, без копии WhenPicker.
+      onChange={(w) => set((x) => ({
+        ...x,
+        date: only === 'time' ? x.date : w.date,
+        minutes: only === 'date' ? x.minutes : w.minutes,
+        tz: w.tz,
+      }))}
       onDragChange={setDragging}
       onPressTz={onPressTz}
     />
@@ -584,36 +684,88 @@ export default function Intent() {
     .map((t) => t.label()).join(', ');
   const natureSummary = natureOf(draft);
 
-  /**
-   * Строки листа правки. Значения считаются от ЧЕРНОВИКА ЛИСТА, а не от draft: поправив дату
-   * внутри раскрытой строки, человек обязан видеть новую дату в самой строке — иначе она врёт
-   * до «Применить». Последняя строка ветвится по режиму так же, как шаг мастера.
+  /** Полная карта параметр → точный контрол.
    *
-   * ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ. Тема, режим и формат правятся только на своих шагах, а не отсюда.
-   * Тема — то, ради чего интент вообще заводился; режим (вживую / звонок / гибрид) и формат
-   * (1:1 / группа) ПЕРЕОПРЕДЕЛЯЮТ набор остальных полей: у звонка нет места, у гибрида два входа,
-   * у группы другой смысл у «сколько вас». Менять их прямо в листе значило бы перестраивать
-   * список под пальцем — строка, которую человек собирался открыть, исчезала бы или меняла смысл
-   * на полпути. Кому нужно поменять их, возвращается на шаг — теперь «назад» ведёт именно туда.
+   *  ЧЕГО ЗДЕСЬ НЕТ. Тема и категория — это исходная фраза и вычисленная подпись, а не параметры
+   *  мастера, и правки они не знают.
+   *
+   *  Тип встречи и формат тоже не строки листа, и это решение продукта, а не упущение: они
+   *  задаются на своих шагах мастера, где рядом стоит всё, что от них зависит — место и ссылка от
+   *  типа, размер группы от формата. Поменять их отсюда значит одним движением обнулить соседние
+   *  строки: выбрал «онлайн» — и адрес, который человек только что вписал, молча перестаёт
+   *  существовать. Размер группы остаётся: он ничего за собой не тянет.
    */
-  const editRows = (v: Draft): [string, any, string, string][] => ([
-    ['when', IconClock, EDIT_SHEET.datetime(), `${summaryDate(v.date)}, ${hhmm(v.minutes)}`],
-    ['who', IconPerson, EDIT_SHEET.audience(),
+  const editRows = (v: Draft): [IntentEditTarget, any, string, string][] => ([
+    ...(v.size === 'group'
+      ? ([['groupSize', IconPerson, GROUP_SIZE.row(), GROUP_SIZE.people(v.groupSize || GROUP_MIN_TOTAL)]] as [IntentEditTarget, any, string, string][])
+      : []),
+    ['date', IconCalendar, EDIT_SHEET.date(), summaryDate(v.date)],
+    ['time', IconClock, EDIT_SHEET.time(), hhmm(v.minutes)],
+    ['timezone', IconClock, EDIT_SHEET.timezone(), tzCity(v.tz)],
+    ['audience', IconPerson, EDIT_SHEET.audience(),
       `${v.sex && v.sex !== 'Any' ? sexLabel(v.sex) + ', ' : ''}${v.minAge}–${v.maxAge}`],
     ['nature', IconStar, DETAILS.nature(), natureOf(v) || EDIT_SHEET.noData()],
-    v.mode === 'hybrid'
-      ? ['both', IconPlusRound, DETAILS.bothRow(),
-          [v.address?.trim() || where, v.link.trim()].filter(Boolean).join(' · ') || EDIT_SHEET.noData()]
-      : v.mode === 'offline'
-        ? ['place', IconPin, DETAILS.district(), v.address?.trim() || where || EDIT_SHEET.noData()]
-        : ['link', IconLink, EDIT_SHEET.link(), v.link.trim() || EDIT_SHEET.noData()],
+    ...(v.mode !== 'online'
+      ? ([['place', IconPin, DETAILS.district(), v.address?.trim() || where || EDIT_SHEET.noData()]] as [IntentEditTarget, any, string, string][])
+      : []),
+    ...(v.mode !== 'offline'
+      ? ([['link', IconLink, EDIT_SHEET.link(), v.link.trim() || EDIT_SHEET.noData()]] as [IntentEditTarget, any, string, string][])
+      : []),
   ]);
 
   /** Контрол раскрытой строки — тот же, что на шаге мастера, только пишет в черновик листа. */
-  const editField = (k: string, v: Draft) => {
+  const editField = (k: IntentEditTarget, v: Draft) => {
     const set: SetDraft = (fn) => setEdraft((x) => (x ? fn(x) : x));
-    if (k === 'size') return sizeBlockOf(v, set);
-    if (k === 'who') return whoBlockOf(v, set);
+    if (k === 'mode') {
+      return (
+        <>
+          {modeBlockOf(v, set)}
+          {v.mode === 'online' && v.size === 'group' && !v.link.trim() ? (
+            <>
+              <Text style={s.natureHint}>{EDIT_SHEET.groupOnlineLinkNeeded()}</Text>
+              {linkBlockOf(v, set)}
+            </>
+          ) : null}
+        </>
+      );
+    }
+    if (k === 'size') {
+      return (
+        <>
+          {sizeBlockOf(v, set)}
+          {v.size === 'group' ? (
+            <>
+              <Text style={s.natureHint}>{EDIT_SHEET.groupSizeNeeded()}</Text>
+              {groupSizeBlockOf(v, set, 'edit')}
+            </>
+          ) : null}
+          {v.mode === 'online' && v.size === 'group' && !v.link.trim() ? (
+            <>
+              <Text style={s.natureHint}>{EDIT_SHEET.groupOnlineLinkNeeded()}</Text>
+              {linkBlockOf(v, set)}
+            </>
+          ) : null}
+        </>
+      );
+    }
+    if (k === 'groupSize') return groupSizeBlockOf(v, set, 'edit');
+    if (k === 'date') return whenBlockOf(v, set, undefined, 'date');
+    if (k === 'time') return whenBlockOf(v, set, undefined, 'time');
+    if (k === 'timezone') {
+      return tzOptions().map((z) => (
+        <Pressable
+          key={z}
+          accessibilityRole="button"
+          accessibilityState={{ selected: z === v.tz }}
+          style={[s.pickRow, z === v.tz && s.pickRowOn]}
+          onPress={() => set((x) => ({ ...x, tz: z }))}
+        >
+          <Text style={s.pickText}>{tzCity(z)}</Text>
+          {z === v.tz ? <Text style={s.pickCheck}>✓</Text> : null}
+        </Pressable>
+      ));
+    }
+    if (k === 'audience') return whoBlockOf(v, set);
     if (k === 'nature') return natureBlockOf(v, set);
     if (k === 'place') return placeBlockOf(v, set);
     if (k === 'link') return linkBlockOf(v, set);
@@ -626,26 +778,27 @@ export default function Intent() {
         </>
       );
     }
-    // 'when'. Пояс разворачивается СПИСКОМ прямо здесь: лист построен на RN Modal, и второй
-    // модал поверх открытого — известная беда iOS. Отдельный «Применить» ему не нужен —
-    // отменяет весь лист целиком.
-    return (
-      <>
-        {whenBlockOf(v, set, () => setTzInline((o) => !o))}
-        {tzInline ? tzOptions().map((z) => (
-          <Pressable
-            key={z}
-            accessibilityRole="button"
-            accessibilityState={{ selected: z === v.tz }}
-            style={[s.pickRow, z === v.tz && s.pickRowOn]}
-            onPress={() => set((x) => ({ ...x, tz: z }))}
-          >
-            <Text style={s.pickText}>{tzCity(z)}</Text>
-            {z === v.tz ? <Text style={s.pickCheck}>✓</Text> : null}
-          </Pressable>
-        )) : null}
-      </>
-    );
+    return null;
+  };
+
+  const openEdit = (target: IntentEditTarget | '' = '') => {
+    setEditPick(target);
+    setEdraft(beginIntentEdit(draft));
+    setEditOpen(true);
+  };
+
+  const chooseEditTarget = (target: IntentEditTarget) => {
+    // Переключение строки отменяет незавершённую правку предыдущей: один лист — один параметр.
+    setEdraft(beginIntentEdit(draft));
+    setEditPick(target);
+  };
+
+  const editBlocked = (v: Draft, target: IntentEditTarget | '') => {
+    if (!target) return false;
+    const touchesLink = target === 'link' || target === 'both' || target === 'mode' || target === 'size';
+    return (touchesLink && linkBroken(v))
+      || ((target === 'link' || target === 'mode' || target === 'size')
+        && v.mode === 'online' && v.size === 'group' && !v.link.trim());
   };
 
   /**
@@ -658,7 +811,10 @@ export default function Intent() {
   /** Последний шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
   const lastStep: IntentStepId =
     draft.mode === 'offline' ? 'place' : draft.mode === 'hybrid' ? 'both' : 'link';
-  const detailIndex = step === 'when' ? 0 : step === 'who' ? 1 : step === 'nature' ? 2 : 3;
+  const compactThreeStep = groupOnline || draft.mode === 'offline';
+  const detailIndex = step === 'when' ? 0 : step === 'who' ? 1
+    : draft.mode === 'offline' && step === 'nature' ? 1
+    : compactThreeStep ? 2 : step === 'nature' ? 2 : 3;
 
   /**
    * ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЗАПИСАН ПОРЯДОК ШАГОВ НАЗАД.
@@ -671,9 +827,10 @@ export default function Intent() {
    * Третий шаг ветвится по типу встречи, поэтому со сводки отступаем на lastStep, а не на
    * фиксированное имя: иначе офлайн и гибрид уехали бы на чужой шаг.
    */
-  const prevStep = (from: IntentStepId): IntentStepId | null =>
+  const prevStep = (from: IntentStepId, grouped = false): IntentStepId | null =>
     from === 'size' ? 'how'
-    : from === 'when' ? 'size'
+    : from === 'capacity' ? 'size'
+    : from === 'when' ? (grouped ? 'capacity' : 'size')
     : from === 'who' ? 'when'
     : from === 'nature' ? 'who'
     : from === 'link' || from === 'both' || from === 'place' ? 'nature'
@@ -687,10 +844,13 @@ export default function Intent() {
    * листе срабатывает дважды: лист закрывается по onRequestClose И экран отступает на шаг.
    */
   const goBack = () => {
+    if (groupSizeOpen) { setGroupSizeOpen(false); return; }
     if (tzOpen || editOpen) { setTzOpen(false); setEditOpen(false); return; }
     if (busy) { cancelSearch(); return; }
     if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; setAck(false); }
-    const prev = prevStep(step);
+    // GO.07–GO.09 содержит ровно три шага: у Group Online link идёт сразу после audience.
+    // Остальные флоу сохраняют свой шаг характера и общий prevStep без изменений.
+    const prev = groupOnline && step === 'link' ? 'who' : prevStep(step, draft.size === 'group');
     if (!prev) { router.back(); return; }
     setStep(prev);
     // Шаг назад обязан открыться сверху — иначе он показывается серединой карточки, которую уже
@@ -704,7 +864,7 @@ export default function Intent() {
    * отступить — держим экран и отдаём событие тому же goBack(); на первом шаге предотвращение
    * снимается само, и жест честно уводит в разговор создания.
    */
-  usePreventRemove(step !== 'how' || tzOpen || editOpen || busy, (e) => {
+  usePreventRemove(step !== 'how' || groupSizeOpen || tzOpen || editOpen || busy, (e) => {
     // Перехват висит на СНЯТИИ ЭКРАНА, а не на жесте, и под него попадает всё, что уводит с
     // маршрута, — включая «Все интенты» (dismissTo → POP_TO). Эта кнопка обязана остаться
     // сквозным выходом: без неё из мастера стало бы некуда деться, кроме как назад по шагам.
@@ -755,14 +915,33 @@ export default function Intent() {
                 : SIZES.map(([k]) => (
                     <OptionRow
                       key={k}
-                      Icon={k === 'group' ? IconGroups : IconPerson}
+                      Icon={k === '1:1' ? IconPerson : IconGroups}
                       title={sizeLabel(k)}
                       sub={sizeSub(k)}
                       on={draft.size === k}
-                      onPress={() => choose({ size: k }, 'when')}
+                      onPress={() => choose(
+                        {
+                          size: k as Draft['size'],
+                          groupSize: k === 'group' ? (draft.groupSize || GROUP_MIN_TOTAL) : undefined,
+                        },
+                        k === 'group' ? 'capacity' : 'when'
+                      )}
                     />
                   ))}
               {ack ? <Ack /> : null}
+            </>
+          ) : step === 'capacity' ? (
+            <>
+              <QuestionHead title={GROUP_SIZE.ask()} sub={GROUP_SIZE.sub()} />
+              <View style={s.card}>
+                {groupSizeBlockOf(draft, setDraft, 'draft')}
+                <Cta
+                  label={INTENT.next()}
+                  onPress={() => draft.groupSize && draft.groupSize > GROUP_FREE_MAX_TOTAL
+                    ? (setGroupSizeTarget('draft'), setGroupSizeOpen(true))
+                    : setStep('when')}
+                />
+              </View>
             </>
           ) : (
             <>
@@ -785,7 +964,7 @@ export default function Intent() {
                       : DETAILS.subPlace()
                     }
                   />
-                  <Stepper current={detailIndex} />
+                  <Stepper current={detailIndex} count={compactThreeStep ? 3 : 4} />
                 </>
               )}
 
@@ -800,7 +979,7 @@ export default function Intent() {
               {step === 'who' ? (
                 <View style={s.card}>
                   {whoBlockOf(draft, setDraft)}
-                  <Cta label={INTENT.next()} onPress={() => setStep('nature')} />
+                  <Cta label={INTENT.next()} onPress={() => setStep(groupOnline ? 'link' : 'nature')} />
                 </View>
               ) : null}
 
@@ -820,7 +999,7 @@ export default function Intent() {
               {step === 'link' ? (
                 <View style={s.card}>
                   {linkBlock}
-                  <Cta label={INTENT.next()} disabled={linkBroken(draft)} onPress={toSummary} />
+                  <Cta label={INTENT.next()} disabled={groupLinkBlocked(draft)} onPress={toSummary} />
                 </View>
               ) : null}
 
@@ -855,10 +1034,8 @@ export default function Intent() {
                   category={category}
                   busy={busy}
                   onStart={finish}
-                  // O.10a: «Поправить» правит поле НА МЕСТЕ, а не гонит через весь мастер заново.
-                  // Черновик листа пересевается при каждом открытии — иначе второй заход показал
-                  // бы прошлый, уже отменённый черновик.
-                  onEdit={() => { setEditPick(''); setTzInline(false); setEdraft(draft); setEditOpen(true); }}
+                  onEdit={() => openEdit()}
+                  onEditField={openEdit}
                 />
               ) : null}
             </>
@@ -884,6 +1061,29 @@ export default function Intent() {
             </Pressable>
           </View>
         </View>
+
+        {/* Покупки Plus ещё нет: предел 20 виден внутри Group-flow, но недоступное действие честно выключено. */}
+        <Sheet visible={groupSizeOpen} onClose={() => setGroupSizeOpen(false)} title={GROUP_SIZE.plusTitle()}>
+          <Text style={s.plusBody}>{GROUP_SIZE.plusBody()}</Text>
+          <View style={[s.cta, { opacity: 0.45 }]} accessibilityRole="button" accessibilityState={{ disabled: true }}>
+            <Text style={s.ctaText}>{GROUP_SIZE.getPlus()}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            style={s.plusKeep}
+            onPress={() => {
+              setGroupSizeOpen(false);
+              if (groupSizeTarget === 'edit') {
+                setEdraft((x) => x ? ({ ...x, size: 'group', groupSize: GROUP_FREE_MAX_TOTAL }) : x);
+              } else {
+                setDraft((x) => ({ ...x, size: 'group', groupSize: GROUP_FREE_MAX_TOTAL }));
+                setStep('when');
+              }
+            }}
+          >
+            <Text style={s.plusKeepText}>{GROUP_SIZE.keepAtFive()}</Text>
+          </Pressable>
+        </Sheet>
 
         {/* O.07a — часовой пояс. Выбор живёт в tzPick и попадает в черновик только по «Применить». */}
         <EditSheet
@@ -917,19 +1117,19 @@ export default function Intent() {
           Теперь строка раскрывается и поле правится тут же, тем же контролом, что на шаге.
 
           Правки идут в edraft: «Отмена» и крестик обязаны отменять — правило листа записано в
-          src/components/ProfileShell.tsx. Строк «Тема интента» и «Режим встречи» здесь больше нет:
-          тему выбирают в разговоре создания (шага под неё в мастере не существует), а от режима
-          зависит, какие поля в этом же листе вообще есть.
+          src/components/ProfileShell.tsx. editPick — белый список commit: даже общий WhenPicker
+          не может случайно поменять дату вместе со временем. Режим/формат доступны здесь же;
+          обязательный размер или Group Online-ссылка показываются внутри выбранного параметра.
         */}
         <EditSheet
           open={editOpen}
           title={EDIT_SHEET.title()}
           onClose={() => setEditOpen(false)}
           onAccept={() => {
-            // Битую ссылку не пускает и «Дальше» на шаге. Пустить её тут значило бы завести
-            // обход собственной проверки через правку.
-            if (!edraft || linkBroken(edraft)) return;
-            setDraft(edraft);
+            if (!edraft || editBlocked(edraft, editPick)) return;
+            // Пустой target означает, что человек открыл общий список и ничего не выбрал.
+            // В остальных случаях коммитится только белый список выбранного параметра.
+            if (editPick) setDraft((current) => applyIntentEdit(current, edraft, editPick));
             setEditOpen(false);
           }}
           acceptLabel={DETAILS.apply()}
@@ -948,7 +1148,7 @@ export default function Intent() {
                 accessibilityState={{ expanded: editPick === k }}
                 style={[s.pickRow, editPick === k && s.pickRowOn]}
                 // Раскрыто РОВНО одно поле: два крупных разом (карта плюс циферблат) лист не держит.
-                onPress={() => { setTzInline(false); setEditPick(editPick === k ? '' : k); }}
+                onPress={() => editPick === k ? setEditPick('') : chooseEditTarget(k)}
               >
                 <Icon size={20} c={color.fg} />
                 <View style={{ flex: 1 }}>
@@ -960,7 +1160,13 @@ export default function Intent() {
               {editPick === k ? <View style={s.editBody}>{editField(k, edraft)}</View> : null}
             </View>
           )) : null}
-          {edraft && linkBroken(edraft) ? <Text style={s.err}>{DETAILS.linkBad()}</Text> : null}
+          {edraft && editPick && editBlocked(edraft, editPick) && linkBroken(edraft) ? (
+            <Text style={s.err}>{DETAILS.linkBad()}</Text>
+          ) : null}
+          {edraft && editPick && (editPick === 'link' || editPick === 'mode' || editPick === 'size')
+            && edraft.mode === 'online' && edraft.size === 'group' && !edraft.link.trim() ? (
+            <Text style={s.err}>{DETAILS.groupLinkRequired()}</Text>
+          ) : null}
         </EditSheet>
 
         {busy ? <Searching onCancel={cancelSearch} /> : null}
@@ -1020,10 +1226,10 @@ function Ack() {
 }
 
 /** Степпер 1–2–3 с кадров O.07–O.09: пройденное и текущее — красным, дальше — серым. */
-function Stepper({ current }: { current: number }) {
+function Stepper({ current, count = 4 }: { current: number; count?: number }) {
   return (
     <View style={s.stepper}>
-      {[0, 1, 2, 3].map((i) => (
+      {Array.from({ length: count }, (_, i) => i).map((i) => (
         <React.Fragment key={i}>
           {i > 0 ? <View style={[s.stepLine, i <= current && s.stepLineOn]} /> : null}
           <View style={[s.stepDot, i <= current && s.stepDotOn, i === current && s.stepDotNow]}>
@@ -1099,7 +1305,7 @@ function Cta({ label, onPress, disabled, busy }: {
  * рисовать фотографию, которой нет, не из чего.
  */
 function SummaryCard({
-  topic, draft, category, where, nature, busy, onStart, onEdit,
+  topic, draft, category, where, nature, busy, onStart, onEdit, onEditField,
 }: {
   topic: string;
   draft: Draft;
@@ -1111,14 +1317,18 @@ function SummaryCard({
   busy: boolean;
   onStart: () => void;
   onEdit: () => void;
+  onEditField: (target: IntentEditTarget) => void;
 }) {
-  const facts: [string, string][] = [
-    [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—'],
-    [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—'],
+  const facts: [string, string, IntentEditTarget?][] = [
+    [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—', 'mode'],
+    [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—', 'size'],
+    ...(draft.size === 'group'
+      ? ([[GROUP_SIZE.row(), GROUP_SIZE.people(draft.groupSize || GROUP_MIN_TOTAL), 'groupSize']] as [string, string, IntentEditTarget][])
+      : []),
     ...(category ? ([[SUMMARY_O10.category(), category]] as [string, string][]) : []),
-    ...(nature ? ([[DETAILS.nature(), nature]] as [string, string][]) : []),
+    [DETAILS.nature(), nature || EDIT_SHEET.noData(), 'nature'],
     [SUMMARY_O10.audience(),
-      `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`],
+      `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`, 'audience'],
   ];
   return (
     <View style={s.card}>
@@ -1126,36 +1336,67 @@ function SummaryCard({
       {topic ? <Text style={s.sumTopic}>{topic}</Text> : null}
 
       <View style={s.sumMeta}>
-        <IconCalendar />
-        <Text style={s.sumMetaText}>{summaryDate(draft.date)}</Text>
-        <IconClock />
-        {/* Пояс — только при РАСХОЖДЕНИИ с поясом устройства. Совпадает (обычный случай) — и
-            «(GMT+2)» ничего не сообщает: человек и так в нём живёт. А вот пояс, выбранный вручную
-            в шаге выше, обязан быть виден: иначе встреча молча назначается не на тот час. */}
-        <Text style={s.sumMetaText}>
-          {hhmm(draft.minutes)}{draft.tz && draft.tz !== deviceTz() ? ` ${tzOffsetLabel(draft.tz)} ${tzCity(draft.tz)}` : ''}
-        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={EDIT_SHEET.change(EDIT_SHEET.date())}
+          style={s.sumMetaAction}
+          onPress={() => onEditField('date')}
+        >
+          <IconCalendar />
+          <Text style={s.sumMetaText}>{summaryDate(draft.date)}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={EDIT_SHEET.change(EDIT_SHEET.time())}
+          style={s.sumMetaAction}
+          onPress={() => onEditField('time')}
+        >
+          <IconClock />
+          {/* Пояс показывается только при расхождении с поясом устройства. */}
+          <Text style={s.sumMetaText}>
+            {hhmm(draft.minutes)}{draft.tz && draft.tz !== deviceTz() ? ` ${tzOffsetLabel(draft.tz)} ${tzCity(draft.tz)}` : ''}
+          </Text>
+        </Pressable>
       </View>
       {/* Гибрид показывает ОБЕ строки: у него и место, и ссылка (HY.09). Раньше условие места
           было привязано к офлайну, и гибрид уезжал в поиск, показав человеку только ссылку. */}
-      {draft.mode !== 'offline' && draft.link.trim() ? (
-        <View style={s.sumMeta}>
+      {draft.mode !== 'offline' ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={EDIT_SHEET.change(EDIT_SHEET.link())}
+          style={s.sumMeta}
+          onPress={() => onEditField('link')}
+        >
           <IconLink size={16} c={color.muted} />
-          <Text style={s.sumMetaText} numberOfLines={1}>{draft.link.trim()}</Text>
-        </View>
+          <Text style={s.sumMetaText} numberOfLines={1}>{draft.link.trim() || EDIT_SHEET.noData()}</Text>
+        </Pressable>
       ) : null}
-      {draft.mode !== 'online' && where ? (
-        <View style={s.sumMeta}>
+      {draft.mode !== 'online' ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={EDIT_SHEET.change(DETAILS.district())}
+          style={s.sumMeta}
+          onPress={() => onEditField('place')}
+        >
           <IconPin size={16} c={color.muted} />
-          <Text style={s.sumMetaText}>{where} · {draft.radiusKm} km</Text>
-        </View>
+          <Text style={s.sumMetaText}>
+            {where ? `${where} · ${draft.radiusKm} km` : EDIT_SHEET.noData()}
+          </Text>
+        </Pressable>
       ) : null}
 
-      {facts.map(([k, v]) => (
-        <View key={k} style={s.sumRow}>
+      {facts.map(([k, v, target]) => (
+        <Pressable
+          key={k}
+          accessibilityRole={target ? 'button' : undefined}
+          accessibilityLabel={target ? EDIT_SHEET.change(k) : undefined}
+          style={({ pressed }) => [s.sumRow, target && pressed && { opacity: 0.7 }]}
+          onPress={target ? () => onEditField(target) : undefined}
+        >
           <Text style={s.sumKey}>{k}</Text>
           <Text style={s.sumVal}>{v}</Text>
-        </View>
+          {target ? <Text style={s.sumRowEdit}>›</Text> : null}
+        </Pressable>
       ))}
 
       <View style={s.sumSummaryBox}>
@@ -1167,7 +1408,7 @@ function SummaryCard({
         </View>
         <Text style={s.sumSummaryText}>
           {intentSummaryText({
-            topic, size: draft.size, sex: draft.sex,
+            topic, size: draft.size, groupSize: draft.groupSize, sex: draft.sex,
             minAge: draft.minAge, maxAge: draft.maxAge,
             dateKey: draft.date, minutes: draft.minutes,
             nature: nature,
@@ -1287,6 +1528,20 @@ const s = StyleSheet.create({
   },
   chipOn: { backgroundColor: color.primary, borderColor: color.primary },
   chipText: { ...type.labelMedium, color: color.fg } as any,
+  capacityControl: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space.lg,
+  },
+  capacityButton: {
+    width: 52, height: 52, borderRadius: rad.full, backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  capacityButtonOff: { opacity: 0.4 },
+  capacityButtonText: { fontSize: 28, lineHeight: 30, color: color.fg } as any,
+  capacityValue: { minWidth: 96, alignItems: 'center' },
+  capacityNumber: { fontSize: 34, lineHeight: 38, fontWeight: '700', color: color.fg } as any,
+  capacityPeople: { ...type.caption, color: color.muted } as any,
+  capacityFree: { ...type.bodySmall, color: color.fg, textAlign: 'center' } as any,
+  capacityPlus: { ...type.caption, color: color.muted, textAlign: 'center' } as any,
 
   boxRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
   numBox: {
@@ -1335,6 +1590,7 @@ const s = StyleSheet.create({
   },
   ctaText: { ...type.button, color: color.onPrimary } as any,
   err: { ...type.bodySmall, color: color.primary, marginTop: space.sm } as any,
+  plusBody: { ...type.body, color: color.muted, marginBottom: space.sm } as any,
 
   dock: { paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
   field: {
@@ -1349,10 +1605,12 @@ const s = StyleSheet.create({
   },
   sumTopic: { fontSize: 19, fontWeight: '700', color: color.fg },
   sumMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sumMetaAction: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   sumMetaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
   sumRow: { flexDirection: 'row', justifyContent: 'space-between', gap: space.md },
   sumKey: { ...type.bodySmall, color: color.muted } as any,
   sumVal: { ...type.bodySmall, color: color.fg, flex: 1, textAlign: 'right' } as any,
+  sumRowEdit: { ...type.bodySmall, color: color.primary } as any,
   sumSummaryBox: { backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.md, gap: 6 },
   sumSummaryHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sumSummaryLabel: { ...type.labelMedium, color: color.primary, fontWeight: '700' } as any,
@@ -1362,6 +1620,11 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   sumEditText: { ...type.button, color: color.fg } as any,
+  plusKeep: {
+    height: 52, borderRadius: rad.full, backgroundColor: color.ink,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  plusKeepText: { ...type.button, color: color.onPrimary } as any,
 
   veil: {
     ...StyleSheet.absoluteFillObject, backgroundColor: color.bg, alignItems: 'center',

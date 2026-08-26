@@ -27,7 +27,8 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
+import { usePreventRemove } from '@react-navigation/native';
 import { RESULTS, EXPAND_LADDER, ExpandAxis, axisExplain } from '../src/intent';
 import { CANDS, PREFS, CAP, Cand, candSubtitle, candWhere, candSummary, isHidden } from '../src/candidates';
 import { CHAT, ReqStatus, activeChatWith } from '../src/chat';
@@ -78,10 +79,23 @@ function prefsFromIntent(it: any): Prefs {
 export default function Results() {
   useLang();
   const router = useRouter();
+  const nav = useNavigation();
   const insets = useSafeAreaInsets();
   const win = useWindowDimensions();
   // Читаем один раз: последующие render'ы не должны затирать уже расширенную выдачу исходной.
   const initial = useMemo(() => takeResults(), []);
+
+  /**
+   * Выдача относится к уже запущенному интенту, поэтому назад из неё всегда означает «домой».
+   * Перехват нужен не только экранной стрелке: Android Back и iOS swipe иначе снимают маршрут
+   * нативно и могут открыть старый стек, если экран попал сюда по устаревшей точке входа.
+   */
+  const leaveResults = useCallback(() => router.dismissTo('/home'), [router]);
+  usePreventRemove(true, (e) => {
+    const action = e.data.action;
+    if (action.type !== 'GO_BACK' && action.type !== 'POP') { nav.dispatch(action); return; }
+    leaveResults();
+  });
 
   const [intent, setIntent] = useState<any>(initial?.intent || {});
   const [cands, setCands] = useState<Cand[]>(initial?.candidates || []);
@@ -389,7 +403,7 @@ export default function Results() {
     return (
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={leaveResults}>
             <Text style={s.backIcon}>‹</Text>
           </Pressable>
           <Text style={s.headTitle}>{T('Выдача устарела', 'These results are gone')}</Text>
@@ -408,7 +422,7 @@ export default function Results() {
     );
   }
 
-  const title = gmode ? GROUP.header()
+  const title = gmode ? (groupId() ? GROUP.invitesSent() : GROUP.header())
               : cands.length === 0 ? RESULTS.empty()
               : onlyFallback ? T('Прямых совпадений нет', 'No direct matches')
               : RESULTS.best();
@@ -421,7 +435,7 @@ export default function Results() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={leaveResults}>
           <Text style={s.backIcon}>‹</Text>
         </Pressable>
         {/* Красная точка + заголовок — шапка кадра O.12. */}
@@ -572,20 +586,28 @@ export default function Results() {
         <View style={[s.sheetSend, { opacity: 0.45 }]}>
           <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
         </View>
-        <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
-        {/* «Отменить одно» — вот они, все открытые: отзыв тут же, без похода по экранам. */}
-        {(gmode ? groupPending().map((r) => ({ id: r.id, to: r.to })) : pendingOut).map((r) => (
-          <View key={r.id || r.to} style={s.capRow}>
-            <Text style={s.capName} numberOfLines={1}>{r.to}</Text>
-            <Pressable
-              accessibilityRole="button"
-              style={s.capBtn}
-              onPress={() => (gmode ? cancelGroupInvite(self, r.to) : withdrawInvite(self, r.to))}
-            >
-              <Text style={s.capBtnText}>{CAP.withdraw()}</Text>
-            </Pressable>
-          </View>
-        ))}
+        {/* На GR.15 цены нет: canvas только объясняет лимит и даёт два выхода. */}
+        {!gmode ? <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text> : null}
+        {gmode ? (
+          /* GR.15 возвращает к списку: у каждой открытой строки там уже есть своя Cancel. */
+          <Pressable accessibilityRole="button" style={s.sheetNot} onPress={() => setCapOpen(false)}>
+            <Text style={s.sheetNotText}>{CAP.cancelOne()}</Text>
+          </Pressable>
+        ) : (
+          /* В 1:1 MSG.22 сохраняет быстрый отзыв прямо из листа. */
+          pendingOut.map((r) => (
+            <View key={r.id || r.to} style={s.capRow}>
+              <Text style={s.capName} numberOfLines={1}>{r.to}</Text>
+              <Pressable
+                accessibilityRole="button"
+                style={s.capBtn}
+                onPress={() => withdrawInvite(self, r.to)}
+              >
+                <Text style={s.capBtnText}>{CAP.withdraw()}</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
       </Sheet>
 
       <InviteSheet
