@@ -58,6 +58,8 @@ export default function Buddy() {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
   const [typing, setTyping] = useState(false);
+  /** Ответ ещё идёт: точки могли погаснуть, но история пока не дописана. */
+  const [busy, setBusy] = useState(false);
   const [sheet, setSheet] = useState(false);
   /** Что распознал Kleal — заголовок для окна и для реплики «а я думал…». */
   const [what, setWhat] = useState('');
@@ -84,10 +86,11 @@ export default function Buddy() {
    * Что сделать с готовым ответом. Развилка та же, что была до потока, — вынесена отдельно,
    * потому что теперь она срабатывает в `done`, а не сразу после запроса.
    *
-   * `shown` — показался ли текст потоком. От него зависит и то, печатать ли реплику (уже
-   * напечатана), и то, надо ли её УБРАТЬ, если ответ оказался планом.
+   * `shown` — НОМЕР записи, показанной потоком, или −1, если потоком не приходило. Раньше это
+   * был просто «да/нет», и снималась «последняя» запись ленты; последней же могла оказаться
+   * реплика человека, отправленная посреди ответа.
    */
-  const finish = useCallback((r: any, reply: string, text: string, next: Turn[], shown: boolean) => {
+  const finish = useCallback((r: any, reply: string, text: string, next: Turn[], shown: number) => {
     if (looksLikeIntent(r)) {
       /**
        * Распознан план — на экране реплики быть не должно, вместо неё окно выбора. Раньше человек
@@ -98,7 +101,9 @@ export default function Buddy() {
        * В историю ответ всё же кладём: он был, модель на него опирается, и после «продолжим
        * общаться» разговор не должен начинаться с пустоты.
        */
-      if (shown) setThread((prev) => prev.slice(0, -1));
+      // Снимаем СВОЮ запись по номеру: «последняя» могла оказаться репликой человека,
+      // отправленной посреди ответа.
+      if (shown >= 0) setThread((prev) => prev.filter((_, i) => i !== shown));
       // Фраза, а не подпись карточки: «поговорить про Jesus», см. intentPhrase.
       const label = intentPhrase(r, text);
       setTurns(reply ? [...next, { role: 'assistant', content: reply }] : next);
@@ -108,7 +113,7 @@ export default function Buddy() {
       return;
     }
     if (reply) {
-      if (!shown) say('bot', reply);       // потоком не приходило — печатаем целиком
+      if (shown < 0) say('bot', reply);    // потоком не приходило — печатаем целиком
       setTurns([...next, { role: 'assistant', content: reply }]);
     }
   }, [say]);
@@ -128,9 +133,35 @@ export default function Buddy() {
     const next: Turn[] = [...hist, { role: 'user', content: text }];
     setTurns(next);
     setTyping(true);
+    /*
+      ОТВЕТ ЗАНЯТ ДО КОНЦА, А НЕ ДО ПЕРВОГО СЛОВА.
+
+      `typing` гаснет на первом же куске — иначе точки висели бы поверх начавшего появляться
+      текста. Но занятость на этом не кончается: реплика, отправленная посреди ответа, уходила со
+      СТАРОЙ историей (своего ответа модель в ней ещё не видела), а `done` следом переписывал
+      историю целиком — и эта реплика пропадала из неё вовсе. Модель отвечала так, будто её и не
+      было: повторяла сказанное про ту же доту.
+
+      Поэтому занятость держится до `done`/`error` и отдельно от точек.
+    */
+    setBusy(true);
 
     let acc = '';
     let opened = false;
+    /*
+      НОМЕР СВОЕГО ПУЗЫРЯ, А НЕ «ПОСЛЕДНИЙ В ЛЕНТЕ».
+
+      Поток дописывал ответ в последнюю запись ленты — и пока это был его собственный пузырь, всё
+      сходилось. Но `setTyping(false)` срабатывает на ПЕРВОМ куске, а не в конце: с этого момента
+      композер снова живой, и человек может отправить свою реплику прямо посреди ответа. Она
+      ложится в ленту последней — и следующий кусок потока переписывал ЕЁ ТЕКСТ, оставив `who:
+      'me'`. На экране получался красный пузырь «от человека» с ответом агента целиком, вместе с
+      сырой разметкой. Именно это и было на присланных снимках.
+
+      Запоминаем место своей записи один раз, при создании, и правим только его — да и то лишь
+      если там по-прежнему стоит реплика агента.
+    */
+    let at = -1;
 
     /**
      * Показ развязан с приходом: буквы приезжают рывками (201 кусок на 656 символов, между ними
@@ -140,9 +171,14 @@ export default function Buddy() {
     const show = (shown: string) => {
       setTyping(false);
       setThread((prev) => {
-        if (!opened) { opened = true; return [...prev, { who: 'bot', text: shown, at: now(), live: true }]; }
+        if (!opened) {
+          opened = true;
+          at = prev.length;
+          return [...prev, { who: 'bot', text: shown, at: now(), live: true }];
+        }
         const out = prev.slice();
-        out[out.length - 1] = { ...out[out.length - 1], text: shown, live: true };
+        if (out[at]?.who !== 'bot') return out;   // чужой пузырь не трогаем
+        out[at] = { ...out[at], text: shown, live: true };
         return out;
       });
     };
@@ -163,17 +199,18 @@ export default function Buddy() {
          * Поэтому здесь не извинение, а ВТОРАЯ ПОПЫТКА обычным запросом. Извиняемся только если
          * и она не прошла: тогда связи действительно нет.
          */
-        if (opened) { rev.stop(); setTyping(false); resolve(); return; }   // половина уже на экране
+        if (opened) { rev.stop(); setTyping(false); setBusy(false); resolve(); return; }   // половина уже на экране
         try {
           const r: any = await buddyApi.chat(next, profile());
           setTyping(false);
           const reply = String(r?.reply || '');
-          if (reply) finish(r, reply, text, next, false);
+          if (reply) finish(r, reply, text, next, -1);
           else say('bot', BUDDY.offline());
         } catch {
           setTyping(false);
           say('bot', BUDDY.offline());
         }
+        setBusy(false);
         resolve();
       },
       done: (r: any) => {
@@ -189,12 +226,14 @@ export default function Buddy() {
           rev.stop();
           setThread((prev) => {
             const out = prev.slice();
-            const cur = out[out.length - 1];
-            out[out.length - 1] = { ...cur, text: r?.replaced ? reply : cur.text, live: false };
+            const cur = out[at];
+            if (cur?.who !== 'bot') return out;
+            out[at] = { ...cur, text: r?.replaced ? reply : cur.text, live: false };
             return out;
           });
         }
-        finish(r, reply, text, next, opened);
+        finish(r, reply, text, next, opened ? at : -1);
+        setBusy(false);
         resolve();
       },
     });
@@ -237,7 +276,7 @@ export default function Buddy() {
 
   const submit = () => {
     const t = draft.trim();
-    if (!t || typing) return;
+    if (!t || typing || busy) return;
     setDraft('');
     say('me', t);
     send(t, turns);
@@ -360,8 +399,16 @@ export default function Buddy() {
               />
             ) : null}
             {voice.phase === 'idle' && draft.trim() ? (
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={submit} hitSlop={8}>
-                <IconSend size={18} c={color.primary} />
+              // Пока ответ идёт, кнопка ГАСНЕТ, а не молчит: нажатие без ответа читается как
+              // сломанное приложение, а бледная кнопка — как «сейчас нельзя».
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={T('Отправить', 'Send')}
+                onPress={submit}
+                disabled={busy}
+                hitSlop={8}
+              >
+                <IconSend size={18} c={busy ? color.neutral400 : color.primary} />
               </Pressable>
             ) : (
               <VoiceMessageControl voice={voice} />
