@@ -71,3 +71,33 @@ kleal-app/dist/
 kleal-app/ios/
 kleal-app/android/
 *.tsbuildinfo
+
+# ---------------------------------------------------------------- боевое дерево
+# Эти правила нужны, потому что история теперь общая с дроплетом: то, что не закрыто здесь,
+# может уехать в git при коммите С БОКСА. А там рядом с кодом лежат профили живых людей, хеши
+# паролей, админский токен и их голосовые.
+users.json*
+accounts.json*
+admin_token.txt
+*token*.txt
+interest_i18n.json
+interests_backup.*.json
+strip_handles.*.json
+waitlist.json
+kleal_store.json
+*_store.json
+kleal-ms/video/
+kleal-ms/voice/
+kleal-ms/media/
+kleal-ms/photos/
+kleal-ms/uploads/
+
+# Копии, которые оставляют за собой скрипты выкладки: на боксе их триста шестьдесят семь.
+*.bak_*
+*.prev_*
+._*
+*.log
+*.pid
+staging-flow-*/
+.codex-stage-*/
+backups/

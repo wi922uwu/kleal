@@ -7,6 +7,7 @@
 #   /menu                       -> local landing (two-button page)
 #   /api/buddy/*                -> buddy-service    (path unchanged)   [the conversational agent]
 #   /api/filter/*               -> filtration-service (path unchanged) [the categorisation agent]
+#   /api/speech/*               -> llm-service      (path unchanged)   [server-side ElevenLabs key]
 #   /api/agent/*                -> matching-service  (path unchanged)   [profile JS hard-codes these]
 #   /api/onboarding/* /api/v2/* -> onboarding-service (path unchanged)  [/api/v2/* = legacy alias]
 #   /profile /profile/*         -> profile-service    (strip /profile)
@@ -30,6 +31,7 @@ PROF = config.PROFILE_URL
 MATCH = config.MATCH_URL
 BUDDY = config.BUDDY_URL
 FILTER = config.FILTER_URL
+LLM = config.LLM_URL
 PORT = config.PORTS["gateway"]
 
 LANDING = """<!doctype html><html lang="ru"><head><meta charset="utf-8">
@@ -86,6 +88,8 @@ def route(path):
         return (BUDDY, path)
     if path.startswith("/api/filter/"):
         return (FILTER, path)
+    if path.startswith("/api/speech/"):
+        return (LLM, path)
     if path.startswith("/api/agent/"):
         return (MATCH, path)
     if path.startswith("/api/onboarding/") or path.startswith("/api/v2/"):   # /api/v2/* = legacy alias
@@ -147,13 +151,20 @@ class H(BaseHTTPRequestHandler):
         out = {"services": {}, "storage": None, "queue": None}
         for name in ("llm", "onboarding", "profile", "matching", "buddy", "filtration", "admin"):
             try:
-                u = config.url(name) + "/health"
+                # llm НАМЕРЕННО по порту, а не по config.url: на боксе LLM_URL указывает на
+                # туннель к поду (17071), и опрос по нему проверял бы модель, а не сервис.
+                # Обе вещи полезны, но называться «llm» должен процесс, который мы перезапускаем.
+                u = ("http://127.0.0.1:%d" % config.PORTS["llm"] if name == "llm"
+                     else config.url(name)) + "/health"
                 with urllib.request.urlopen(u, timeout=1.5) as r:
                     out["services"][name] = {"ok": r.status == 200, "code": r.status}
             except urllib.error.HTTPError as e:
                 # 404 — это «ручки нет», а не «сервис лежит». Показывать их одинаково значит
                 # каждый раз идти проверять руками живой сервис.
+                # 404 — ручки нет; 401/403 — есть, но за паролем (админка). И то и другое
+                # означает «процесс жив и отвечает», а не «сервис лежит».
                 out["services"][name] = ({"ok": True, "note": "нет /health"} if e.code == 404
+                                         else {"ok": True, "note": "под паролем"} if e.code in (401, 403)
                                          else {"ok": False, "code": e.code})
             except Exception as e:
                 out["services"][name] = {"ok": False, "error": type(e).__name__}
