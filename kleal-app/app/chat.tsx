@@ -105,6 +105,20 @@ export default function Chat() {
   // выбранные увлечения, набранный возраст — всё от предыдущей попытки, которой уже нет.
   const [runId, setRunId] = useState(0);
   const started = useRef(false);
+  /*
+    ВИДЖЕТ ПРЯЧЕТ ОЧЕРЕДЬ, А НЕ ТОЧКИ. Прятать его по «печатает» почти хватало, но между репликами
+    есть вдох в 280 мс, когда точек уже нет, а следующей реплики ещё нет, — и кнопки на это время
+    выскакивали. Поймано на снимке: «Зачем это нужно?» и «Поехали!» стояли под приветствием за
+    секунду до вопроса, на который отвечают. Признак «очередь идёт» держится от первой реплики до
+    последней и вдохов не знает.
+  */
+  const [queue, setQueue] = useState(false);
+  /** Экран ещё на месте? Очередь реплик длинная, и уйти с него успевают раньше, чем она кончится. */
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const say = useCallback((who: 'bot' | 'me', text: string, photo?: string) => {
     setThread((t) => [...t, { who, text, at: now(), photo }]);
@@ -127,34 +141,30 @@ export default function Chat() {
     const resumed = !entry && hasProgress(st.profile);
     const at = entry || resumeStep(st.profile);
     setStep(at);
-    setTyping(true);
-    setTimeout(() => {
-      setTyping(false);
-      if (resumed) {
-        say('bot', RESUME.line(st.profile.name || ''));
-        const line =
-          at === 'basics' ? STEP_BASICS.bot()
-          : at === 'area' ? STEP_AREA.bot()
-          : at === 'languages' ? STEP_LANGUAGES.bot()
-          : at === 'hobbies' ? STEP_HOBBIES.bot()
-          : STEP_PHOTO.ask();
-        setTimeout(() => say('bot', line), 700);
-      } else if (entry) {
-        // Вход с экрана интересов — единственное место, где человек уже сказал «хочу добавить»,
-        // но ещё не сказал ЧТО. Здесь и стоит развилка: первой репликой предлагаем обе дороги.
-        if (entry === 'hobbies') setFork(true);
-        say('bot',
-          entry === 'hobbies' ? STEP_HOBBIES.forkBot()
-          : entry === 'languages' ? STEP_LANGUAGES.bot()
-          : entry === 'area' ? STEP_AREA.bot()
-          : entry === 'basics' ? STEP_BASICS.bot()
-          : STEP_START.ask());
-      } else {
-        // Знакомство идёт первым: человек должен понять, куда попал, прежде чем его о чём-то просят.
-        say('bot', STEP_START.intro());
-        setTimeout(() => say('bot', STEP_START.ask()), 1400);
-      }
-    }, 500);
+    if (resumed) {
+      botLines([
+        RESUME.line(st.profile.name || ''),
+        at === 'basics' ? STEP_BASICS.bot()
+        : at === 'area' ? STEP_AREA.bot()
+        : at === 'languages' ? STEP_LANGUAGES.bot()
+        : at === 'hobbies' ? STEP_HOBBIES.bot()
+        : STEP_PHOTO.ask(),
+      ], 500);
+    } else if (entry) {
+      // Вход с экрана интересов — единственное место, где человек уже сказал «хочу добавить»,
+      // но ещё не сказал ЧТО. Здесь и стоит развилка: первой репликой предлагаем обе дороги.
+      if (entry === 'hobbies') setFork(true);
+      botLines([
+        entry === 'hobbies' ? STEP_HOBBIES.forkBot()
+        : entry === 'languages' ? STEP_LANGUAGES.bot()
+        : entry === 'area' ? STEP_AREA.bot()
+        : entry === 'basics' ? STEP_BASICS.bot()
+        : STEP_START.ask(),
+      ], 500);
+    } else {
+      // Знакомство идёт первым: человек должен понять, куда попал, прежде чем его о чём-то просят.
+      botLines([STEP_START.intro(), STEP_START.ask()], 500);
+    }
   }, [say]);
 
   /** Начать онбординг заново. Спрашиваем: это стирает всё, что человек уже ввёл. */
@@ -166,14 +176,8 @@ export default function Chat() {
       setDeckSeen([]);
       setDeckOn(true);
       setRunId((n) => n + 1);
-      started.current = false;
-      setTyping(true);
-      setTimeout(() => {
-        setTyping(false);
-        say('bot', STEP_START.intro());
-        setTimeout(() => say('bot', STEP_START.ask()), 1400);
-        started.current = true;
-      }, 400);
+      started.current = true;
+      botLines([STEP_START.intro(), STEP_START.ask()], 400);
     };
     if (Platform.OS === 'web') {
       // Alert.alert на вебе не показывает кнопок — там это window.confirm.
@@ -192,13 +196,45 @@ export default function Chat() {
     return () => clearTimeout(id);
   }, [thread.length, typing, step]);
 
-  const botAfter = (text: string, ms = 650) => {
-    setTyping(true);
-    setTimeout(() => {
-      setTyping(false);
-      say('bot', text);
-    }, ms);
+  /**
+   * РЕПЛИКИ АГЕНТА ПРИХОДЯТ ПО ОДНОЙ, С «ПЕЧАТАЕТ» МЕЖДУ НИМИ.
+   *
+   * Раньше вторая реплика ставилась голым `setTimeout` через 600–1400 мс, и получалось два изъяна
+   * сразу.
+   *
+   * ПЕРВЫЙ — ДВА ПУЗЫРЯ РАЗОМ. Полторы секунды без единого признака работы читаются как «оба
+   * пришли вместе»: между ними нечего ждать, и человек видит не разговор, а выгруженный текст.
+   * Пауза теперь по длине строки, и на ней стоят те же три точки, что и на ответе модели, —
+   * ожидание становится видимым, а с ним и то, что реплики две.
+   *
+   * ВТОРОЙ, ХУДШИЙ — ОТВЕТ ОБГОНЯЛ ВОПРОС. Виджет шага показывается, только пока агент не
+   * печатает; между двумя `say` он был виден — то есть кнопки «Зачем?» и «Поехали!» стояли под
+   * ПЕРВОЙ репликой, за секунду до вопроса, на который они отвечают. Кто успевал нажать, получал
+   * свой ответ, а следом — обогнавший его вопрос «Расскажешь пару деталей о себе?». Пока очередь
+   * не кончилась, агент считается печатающим, и нажимать не на что.
+   */
+  const beat = (text: string) => Math.min(2200, 620 + text.length * 18);
+
+  const botLines = (lines: string[], lead?: number) => {
+    const ls = lines.filter(Boolean);
+    if (!ls.length) return;
+    setQueue(true);
+    const step = (i: number, wait: number) => {
+      setTyping(true);
+      setTimeout(() => {
+        if (!alive.current) return;
+        setTyping(false);
+        say('bot', ls[i]);
+        // Короткий вдох между «сказал» и «снова печатает»: без него точки появляются в тот же
+        // кадр, что и пузырь, и выглядят частью его.
+        if (i + 1 < ls.length) setTimeout(() => alive.current && step(i + 1, beat(ls[i + 1])), 280);
+        else setQueue(false);
+      }, wait);
+    };
+    step(0, lead ?? beat(ls[0]));
   };
+
+  const botAfter = (text: string, ms?: number) => botLines([text], ms);
 
   const goto = (next: StepId, botLine: string) => {
     setStep(next);
@@ -235,8 +271,7 @@ export default function Chat() {
     // тому экрану, который уже открыт.
     if (back) { router.dismissTo(back as any); return; }
     setStep('photo');
-    botAfter(STEP_PHOTO.greet(st.profile.name || ''));
-    setTimeout(() => say('bot', STEP_PHOTO.ask()), 1900);
+    botLines([STEP_PHOTO.greet(st.profile.name || ''), STEP_PHOTO.ask()]);
   };
 
   /** Свободный текст — сюда отвечает модель, а не сценарий. Поле ввода живёт в Composer. */
@@ -339,12 +374,13 @@ export default function Chat() {
           </Pressable>
         ) : null
       }
-      widget={
+      widget={queue ? null : (
         <StepWidget
           key={runId}
           step={step}
           say={say}
           goto={goto}
+          bot={botLines}
           onDrag={setDragging}
           onDone={() => router.navigate('/summary')}
           leave={leaveFunnel}
@@ -365,7 +401,7 @@ export default function Chat() {
           }}
           onDrop={(k: string) => setJustAdded((p) => p.filter((x) => x !== k))}
         />
-      }
+      )}
     />
   );
 }
@@ -407,7 +443,7 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
 
 function StepWidget({
   step, say, goto, onDone, onDrag, leave, fork, chips, added, onFork, onChip, onDrop,
-  deckSeen, deckOn, onDeckMore, onDeckPass,
+  deckSeen, deckOn, onDeckMore, onDeckPass, bot,
 }: {
   step: StepId;
   say: (who: 'bot' | 'me', text: string, photo?: string) => void;
@@ -430,10 +466,12 @@ function StepWidget({
   deckOn: boolean;
   onDeckMore: () => void;
   onDeckPass: (picked: string[], seen: string[]) => void;
+  /** Очередь реплик агента: по одной, с «печатает» между ними. */
+  bot: (lines: string[], lead?: number) => void;
 }) {
   const st = useOnb();
 
-  if (step === 'start') return <StartW say={say} goto={goto} />;
+  if (step === 'start') return <StartW say={say} bot={bot} />;
   if (step === 'basics') return <BasicsW say={say} goto={goto} onDrag={onDrag} />;
   // onDrag — не косметика: пока палец тащит булавку по карте, лента анкеты обязана молчать,
   // иначе ScrollView забирает вертикальный жест себе и точка дёргается на месте.
@@ -476,7 +514,7 @@ function Cta({ label, onPress, disabled, kind = 'primary' }: {
 }
 
 /** A.04 — согласие, потом имя. Имя человек пишет в композер: так на борде. */
-function StartW({ say }: any) {
+function StartW({ say, bot }: any) {
   const st = useOnb();
   const [asked, setAsked] = useState(false);
   const [gone, setGone] = useState(false);
@@ -498,7 +536,7 @@ function StartW({ say }: any) {
             onPress={() => {
               setAsked(true);
               say('me', STEP_START.why());
-              setTimeout(() => say('bot', STEP_START.whyAnswer()), 600);
+              bot([STEP_START.whyAnswer()]);
             }}
           />
         )}
@@ -508,7 +546,7 @@ function StartW({ say }: any) {
           onPress={() => {
             setGone(true);
             say('me', STEP_START.go());
-            setTimeout(() => say('bot', STEP_START.askName()), 600);
+            bot([STEP_START.askName()]);
           }}
         />
       </View>
