@@ -1773,6 +1773,44 @@ def _tz_by_name():
     return out
 
 
+def _stamp_matched_first(cards, topics):
+    """Поставить СОВПАВШИЕ интересы в начало списка на карточке.
+
+    Карточка показывает три первых интереса, а список приходил в том порядке, в каком человек
+    его завёл. Получалось так: сводка пишет «Общее: dota2», а чипы показывают подлёдную рыбалку,
+    поиск работы и силовую тренировку — того единственного, из-за чего человек вообще попал в
+    выдачу, на карточке НЕТ. Проверено на трёх подряд: apex legends, minecraft, dota2 — ни один
+    не был виден.
+
+    Порядок внутри группы сохраняется (устойчивая сортировка): совпавшие идут в своём исходном
+    порядке, за ними всё остальное в своём. Ни один интерес не выбрасывается — меняется только
+    очередь, потому что решает её не человек, а ширина экрана.
+
+    Ставится ЗДЕСЬ, рядом с фотографией, по той же причине: карточки собираются в четырёх местах,
+    и это единственная точка, где слейт уже окончателен.
+    """
+    ts = [str(t).lower() for t in (topics or []) if str(t).strip()]
+    if not ts:
+        return cards
+    for c in (cards or []):
+        if not isinstance(c, dict):
+            continue
+        ints = c.get("interests") or []
+        if len(ints) < 2:
+            continue
+        try:
+            from matching_core.taxonomy import graph as _G
+            lvl = {}
+            for x in ints:
+                lvl[id(x)] = _G.similarity(ts, [str(x).lower()])[0]
+            if not any(lvl.values()):
+                continue                       # ничего не совпало — переставлять нечего
+            c["interests"] = sorted(ints, key=lambda x: -lvl.get(id(x), 0))
+        except Exception:
+            pass                               # порядок чипов не повод ронять выдачу
+    return cards
+
+
 def _stamp_photo(cards):
     """Put each person's real photo onto their card, in ONE place.
 
@@ -1972,6 +2010,7 @@ def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
     for c in slate:                                        # §7.1 retrieval-source provenance (additive)
         c.setdefault("retrieval_source", source_by.get(str(c.get("name", "")).strip().lower(), 0))
     _stamp_photo(slate)                                    # the person's real face, from the store row
+    _stamp_matched_first(slate, intent.get("topics"))     # чипы начинаются с того, из-за чего нашли
     _stamp_allocation_trace(slate, ctx, _alloc_cfg(ctx))  # §11.2 step 6 allocation reasons (additive, read-only)
     if diag is not None:
         diag['slate'] = len(slate)
@@ -2125,7 +2164,7 @@ def _persona_order(slate, intent):
             say = _NATURE_SAY.get((k, want[k]))
             if not say:
                 continue
-            c.setdefault("reasons_ru", []).append("%s — как ты просил(а)" % say[0])
+            c.setdefault("reasons_ru", []).append("%s — как ты и хочешь" % say[0])
             c.setdefault("reasons_en", []).append("%s — as you asked" % say[1])
         tier = _TIER_ORDER.get(str(c.get("tier") or ""), 9)
         keyed.append((tier, bands[band], -len(hits), 0 if filled else 1, i, c))
@@ -6326,7 +6365,9 @@ def gp_for(who):
 # The board sets the rules. From OF.C3, verbatim: «Confirm and the exact address opens for you. Until
 # then you only see the district — that works both ways.» So the address is a per-VIEWER field released
 # by that viewer's own confirmation — not by the plan's overall state, and not by being the host.
-MP_LIVE = ("otw", "late", "here")        # OF.22 on the way / OF.22a running late / OF.23 I'm here
+# OF.22 иду / OF.22a опаздываю / OF.23 я на месте / «не смогу» внутри заморозки — тоже живой
+# статус, а не отмена: встреча остаётся, второй просто знает, что его не ждут (см. mp_respond).
+MP_LIVE = ("otw", "late", "here", "cant_make_it")
 
 # ВЫБОР СТОРОНЫ У ГИБРИДА (HY.22 / HY.22a / HY.22b / HY.C4).
 #
@@ -6436,11 +6477,28 @@ def _mp_find(pid):
 
 
 def _mp_of(a, b):
-    """The plan in force between two people — one at a time, like the single open proposal per pair."""
-    key = _pair_key(a, b)
+    """The plan in force between two people — one at a time, like the single open proposal per pair.
+
+    ДЕЙСТВУЮЩИЙ — ЗНАЧИТ ЕЩЁ НЕ ПРОШЕДШИЙ. Состояния было мало: `done` ставится только когда об
+    исходе ответили ОБЕ стороны, и пара, где второй просто не открыл приложение, оставалась
+    запертой навсегда — новый план не создать, потому что «уже есть действующий». Встреча
+    состоялась неделю назад, а `confirmed` держит пару мёртвой хваткой.
+
+    Горизонт — MP_KEEP_AFTER, тот же, по которому `mp_for` разделяет живое и историю. За ним план
+    перестаёт быть действующим, даже если об исходе не сказал никто: спрашивать об исходе можно и
+    дальше (`mp_feedback` принимает и `done`), а вот запрещать людям встречаться — уже нет.
+    """
+    key, now = _pair_key(a, b), time.time()
     for p in _mplans():
-        if p.get("pair") == key and p.get("state") in ("proposed", "confirmed"):
-            return p
+        if p.get("pair") != key or p.get("state") not in ("proposed", "confirmed"):
+            continue
+        try:
+            starts = float(p.get("starts_at") or 0)
+        except (TypeError, ValueError):
+            starts = 0
+        if starts and now >= starts + MP_KEEP_AFTER:
+            continue                       # встреча давно прошла — держать пару больше не за что
+        return p
     return None
 
 
@@ -6633,14 +6691,24 @@ MP_LOCK_BEFORE = GP_LOCK_BEFORE
 
 
 def _mp_frozen(p, now=None):
-    """Меньше двух часов до начала — план больше не правится."""
+    """Заморозка правок — ОКНО вокруг встречи, а не полупрямая от T−2ч в бесконечность.
+
+    Верхней границы не было, и план месячной давности считался замороженным навсегда. Из-за этого
+    `mp_cancel` у любого прошедшего плана отвечал LOCKED — единственная ручка со словом «отменить»
+    не работала вообще. Заморозка защищает человека, который уже вышел из дома; через сутки после
+    начала защищать нечего, а запертая запись мешает паре жить дальше.
+
+    Верх — MP_KEEP_AFTER, тот же горизонт, по которому `mp_for` разделяет живое и историю: за
+    границей окна план для всех уже история, и правила живого плана к нему не применяются.
+    """
     try:
         starts = float(p.get("starts_at") or 0)
     except (TypeError, ValueError):
         return False
     if not starts:
         return False
-    return (now or time.time()) >= starts - MP_LOCK_BEFORE
+    t = now or time.time()
+    return starts - MP_LOCK_BEFORE <= t < starts + MP_KEEP_AFTER
 
 
 def mp_respond(pid, who, action, starts_at=None, when="", district="",
@@ -6684,6 +6752,20 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
         if act in ("counter", "accept_change", "reject_change") and _mp_frozen(p, now):
             return _idem_put(idem, {"ok": False, "error": "LOCKED",
                                     "note": "less than two hours before the meeting"})
+        if act == "decline" and _mp_frozen(p, now):
+            # СПЕКА, СЛОВО В СЛОВО: «Остаётся только „I can't make it" — оно встречу не отменяет».
+            # Комментарий выше это правило называл, а код строкой ниже ставил `cancelled` — то
+            # есть за двадцать минут до встречи кнопка «Не смогу» необратимо рвала план, и второй,
+            # уже вышедший из дома, узнавал об отмене вместо «задерживаюсь».
+            #
+            # Внутри заморозки это ЖИВОЙ СТАТУС рядом с живым планом, как «опаздываю» и «я на
+            # месте»: встреча остаётся, второй видит честное «не придёт» и решает сам.
+            p.setdefault("live", {})[k] = {"status": "cant_make_it", "eta_min": None, "t": now,
+                                           "note": str(note or "")[:200]}
+            p["updated"] = now
+            _sys_msg(who, peer, "plan_cant_make_it", at=p.get("starts_at"))
+            _save_store()
+            return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who), "cancelled": False})
         if act == "decline":
             p["state"] = "cancelled"
             p["cancelled_by"] = who
@@ -6983,6 +7065,12 @@ def block_user(who, name, on=True, idem=None):
                     p["cancel_reason"] = "blocked"
                     p["updated"] = now
                     closed["plans"] += 1
+                    # ВТОРОМУ ГОВОРЯТ. Отмена шла молча: подтверждённая встреча исчезала у
+                    # человека без единого слова, а экран тут же предлагал создать новую — то
+                    # есть он приходил в назначенное место, не зная, что встречи нет. Причину
+                    # блокировки не называем и назвать не можем: она принадлежит тому, кто
+                    # заблокировал. Но факт отмены — принадлежит обоим.
+                    _sys_msg(who, _mp_other(p, who), "plan_cancelled", at=p.get("starts_at"))
         _save_store()
         return _idem_put(idem, {"ok": True, "blocked": list(lst), "closed": closed})
 

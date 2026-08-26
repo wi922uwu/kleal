@@ -862,6 +862,8 @@ export type SysMsg = {
   mode?: string;
   district?: string;
   kind?: string;
+  /** С какой стороны человек придёт у гибрида: 'in_person' | 'call' (событие plan_side). */
+  side?: string;
 };
 
 /**
@@ -1022,6 +1024,26 @@ export function sysLine(sys: SysMsg | undefined, me: string, ru: boolean): strin
     case 'plan_cancelled':
       return mine ? T('Ты отменил(а) встречу', 'You called the meetup off')
                   : T(`${by} отменил(а) встречу`, `${by} called the meetup off`);
+    /*
+     * ТРИ СОБЫТИЯ, КОТОРЫЕ СЕРВЕР СЛАЛ В ПУСТОТУ. `sysLine` отдаёт пустую строку на незнакомый
+     * код, а пустая строка в ленте не рисуется ничем — то есть событие уходило и исчезало.
+     * Каждое из трёх обещано в коде сервера словами «второму говорят СРАЗУ и в ленту».
+     */
+    case 'plan_cant_make_it':
+      // Внутри двухчасовой заморозки «не смогу» встречу НЕ отменяет (спека OF): она остаётся,
+      // и второй должен понять именно это, иначе прочитает как отмену и никуда не пойдёт.
+      return mine
+        ? T('Ты предупредил(а), что не придёшь. Встреча не отменена', 'You said you cannot make it. The meetup still stands')
+        : T(`${by} не сможет прийти. Встреча не отменена — решай сам(а)`,
+            `${by} cannot make it. The meetup still stands — it is your call`);
+    case 'moved_to_call':
+      return T('Встреча переехала в звонок', 'The meetup moved to a call');
+    case 'plan_side':
+      return sys.side === 'call'
+        ? (mine ? T('Ты придёшь звонком', 'You are joining by call')
+                : T(`${by} придёт звонком`, `${by} is joining by call`))
+        : (mine ? T('Ты придёшь лично', 'You are coming in person')
+                : T(`${by} придёт лично`, `${by} is coming in person`));
     default:
       return '';
   }

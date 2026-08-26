@@ -661,15 +661,25 @@ export const agent = {
   deleteMessage: (self: string, id: string) =>
     api.post<{ ok?: boolean; error?: string }>('/api/agent/message-delete', { self, id }),
 
+  /*
+   * КЛЮЧ ПОВТОРА НА КАЖДОМ ИЗМЕНЯЮЩЕМ ВЫЗОВЕ ПЛАНА.
+   *
+   * Групповая ветка несла `idem` с самого начала, ветка 1:1 — ни на одном вызове, хотя
+   * сервер принимает ключ у всех mp_* и хранит ответ по нему. Значит двойной тап или
+   * повтор после обрыва проходил ВТОРЫМ действием: второе подтверждение, второй перенос,
+   * второй отзыв. Ключ делает ЭКРАН на человеческое действие, поэтому он в значении по
+   * умолчанию — вызов без него получает свежий ключ, а вызывающий, которому нужен ретрай
+   * тем же ключом, передаёт его явно.
+   */
   /**
    * Предложить встречу (O.20). Сервер откажет, если человек ещё не принял приглашение
    * (NOT_MATCHED) или если время уже прошло (IN_THE_PAST) — оба случая называются на экране.
    */
-  planPropose: (self: string, to: string, p: Json) =>
+  planPropose: (self: string, to: string, p: Json, idem = newIdem('mp-propose')) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       // Ответ отдаёт план целиком в `plan`, id лежит ВНУТРИ него — сверху `id` нет.
       // Ещё один отказ, о котором стоит знать: PLAN_EXISTS, у пары может быть только одна встреча.
-      '/api/agent/mplan-propose', { self, to, ...p }
+      '/api/agent/mplan-propose', { self, to, ...p, idem }
     ),
 
   /**
@@ -678,9 +688,10 @@ export const agent = {
    * Контрпредложение (counter) НЕ отменяет встречу — оно паркуется рядом, а старое время
    * продолжает действовать, пока второй не ответит. Это правило борда, и оно живёт на сервере.
    */
-  planRespond: (id: string, self: string, action: string, extra: Json = {}) =>
+  planRespond: (id: string, self: string, action: string, extra: Json = {},
+                idem = newIdem('mp-respond')) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
-      '/api/agent/mplan-respond', { id, self, action, ...extra }
+      '/api/agent/mplan-respond', { id, self, action, ...extra, idem }
     ),
 
   /**
@@ -694,9 +705,10 @@ export const agent = {
    * Оба открываются только подтвердившим (OF.C3). venue — человеческое имя места («Nømad»),
    * address — куда идти.
    */
-  planAddress: (id: string, self: string, address: string, venue?: string, link?: string) =>
+  planAddress: (id: string, self: string, address: string, venue?: string, link?: string,
+                idem = newIdem('mp-address')) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
-      '/api/agent/mplan-address', { id, self, address, venue, link }
+      '/api/agent/mplan-address', { id, self, address, venue, link, idem }
     ),
 
   /**
@@ -709,9 +721,10 @@ export const agent = {
    * Сервер откажет, если стороны, которую выбирают, ещё не существует (нет ссылки или нет места):
    * уйти в звонок, которого нет, значит не прийти вовсе.
    */
-  planSide: (id: string, self: string, side: 'in_person' | 'call') =>
+  planSide: (id: string, self: string, side: 'in_person' | 'call',
+             idem = newIdem('mp-side')) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
-      '/api/agent/mplan-side', { id, self, side }
+      '/api/agent/mplan-side', { id, self, side, idem }
     ),
 
   /**
@@ -721,24 +734,25 @@ export const agent = {
    * закрытой двери или сидит в звонке один. И это не отмена — у гибрида ссылка уже открыта, в том
    * и разница со встречей вживую.
    */
-  planMoveToCall: (id: string, self: string) =>
+  planMoveToCall: (id: string, self: string, idem = newIdem('mp-call')) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
-      '/api/agent/mplan-move-to-call', { id, self }
+      '/api/agent/mplan-move-to-call', { id, self, idem }
     ),
 
   /** OF.22/OF.22a/OF.23 — «уже иду» / «опаздываю» / «я на месте». Видит только собеседник,
    *  и только у подтверждённого плана: сервер отклонит статус к встрече, которой ещё нет. */
-  planStatus: (id: string, self: string, status: 'otw' | 'late' | 'here', eta_min?: number) =>
+  planStatus: (id: string, self: string, status: 'otw' | 'late' | 'here' | 'cant_make_it',
+               eta_min?: number, idem = newIdem('mp-status')) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
-      '/api/agent/mplan-status', { id, self, status, eta_min }
+      '/api/agent/mplan-status', { id, self, status, eta_min, idem }
     ),
 
   /**
    * «Состоялось ли» и отзыв — ОДНА запись: второй вызов дописывается в первый, а не заменяет его.
    * Иначе оценка встречи стёрла бы ответ на вопрос, была ли она вообще.
    */
-  planFeedback: (id: string, self: string, v: Json) =>
-    api.post<{ ok?: boolean; error?: string }>('/api/agent/mplan-feedback', { id, self, ...v }),
+  planFeedback: (id: string, self: string, v: Json, idem = newIdem('mp-feedback')) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/mplan-feedback', { id, self, ...v, idem }),
 
   /** Планы этого человека: живые и прошедшие. */
   /** `with` — собеседник, ради его часового пояса: на форме плана самого плана ещё нет. */
