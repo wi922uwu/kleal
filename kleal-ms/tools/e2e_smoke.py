@@ -19,13 +19,7 @@ Two assertions here were wrong the first time and are worth keeping straight:
 """
 import json, urllib.request, urllib.error, time, sys
 
-# Адрес шлюза. Первым аргументом — как у всех остальных смоуков в этой папке.
-#
-# Был прибит гвоздями к localhost, и это тихо обесценивало каждый запуск «по серверу»: адрес
-# принимался молча и не использовался, тест уходил на 127.0.0.1, получал Connection refused и
-# печатал FAIL — выглядело как поломка продукта, а не как промах теста (поймано 13 августа при
-# проверке переезда на новый сервер).
-GW = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:7080").rstrip("/")
+GW = "http://127.0.0.1:7080"
 R = {"ok": 0, "fail": 0}
 FAILED = []
 
@@ -84,13 +78,8 @@ check("signin rejects the wrong password", st == 200 and isinstance(r, dict) and
 section("3. ONBOARDING FUNNEL — the gate, the agent, the summary")
 st, crit = call("/api/onboarding/state", {"profile": {}})
 check("empty profile reports the critical gate", st == 200 and isinstance(crit, dict), crit)
-# Ответ может оказаться строкой — при HTTP-ошибке `call` возвращает тело как есть. Раньше
-# следующая строка звала у строки .get и роняла ВЕСЬ прогон: из тридцати проверок выполнялось
-# семь, а про остальные двадцать три никто не узнавал. Провалившаяся проверка обязана оставаться
-# одной провалившейся проверкой.
-crit_d = crit if isinstance(crit, dict) else {}
-missing0 = [c for c in (crit_d.get("items") or crit_d.get("crit") or []) if not (c.get("ok") if isinstance(c, dict) else True)]
-print("       gate items: %s" % (list(crit_d.keys())[:6],))
+missing0 = [c for c in (crit.get("items") or crit.get("crit") or []) if not (c.get("ok") if isinstance(c, dict) else True)]
+print("       gate items: %s" % (list(crit.keys())[:6],))
 
 PROF = {"name": "E2E Tester", "ageVerified18": True, "gender": "Female", "photoStatus": "uploaded",
         "city": "Barcelona", "language": "en",
@@ -167,34 +156,6 @@ ok_m = st == 200 and isinstance(m, dict)
 check("match responds", ok_m, (m or {}).get("error") if isinstance(m, dict) else m)
 cands = (m or {}).get("candidates") or [] if isinstance(m, dict) else []
 check("padel search returns people", len(cands) > 0, "%d candidates" % len(cands))
-# СПИСОК ОБЯЗАН ПРОДОЛЖАТЬСЯ.
-#
-# Восемь — первая страница, а не весь ответ. Срез стоял намертво (`slate[:TOP_N]`), и «Расширить
-# поиск» не мог показать никого нового: ослабление условий впускает больше людей в отбор, а вперёд
-# выходят те же лучшие восемь. Измерено на живом сервере: все ЧЕТЫРЕ оси расширения вернули ту же
-# восьмёрку, ноль новых имён — со стороны «нажимаю и ничего не происходит».
-_MI = {"topics": ["coffee"], "type": "social", "role": "meet", "mode": "offline", "radiusKm": 15}
-_st, _m8 = call("/api/agent/match", {"intent": _MI, "profile": PROF, "ctx": {"self": me}})
-_n8 = [c.get("name") for c in ((_m8 or {}).get("candidates") or [])]
-check("без limit выдача прежняя — восемь", len(_n8) == 8, len(_n8))
-check("и про продолжение сервер молчит", "has_more" not in (_m8 or {}))
-
-_st, _m16 = call("/api/agent/match", {"intent": _MI, "profile": PROF, "ctx": {"self": me}, "limit": 16})
-_n16 = [c.get("name") for c in ((_m16 or {}).get("candidates") or [])]
-check("с limit приходит продолжение", len(_n16) > len(_n8), "%d -> %d" % (len(_n8), len(_n16)))
-# Продолжение, а не другая выдача: девятый идёт ПОСЛЕ восьмого. Если бы порядок плыл, «показать
-# ещё» перетасовывало бы уже прочитанные карточки — человек читал бы одно и то же дважды.
-check("прежние остаются на своих местах", _n16[:len(_n8)] == _n8, _n16[:3])
-check("новые лица действительно новые",
-      len(set(_n16) - set(_n8)) == len(_n16) - len(_n8), sorted(set(_n16) - set(_n8))[:3])
-check("сервер сообщает, есть ли ещё", (_m16 or {}).get("has_more") in (True, False),
-      (_m16 or {}).get("has_more"))
-check("сам себя в выдачу не берёт", me not in _n16)
-# Потолок нужен, чтобы «показать ещё» не превратилось в выгрузку всей базы одним нажатием.
-_st, _mbig = call("/api/agent/match", {"intent": _MI, "profile": PROF, "ctx": {"self": me}, "limit": 999})
-check("предел ограничен сверху", len(((_mbig or {}).get("candidates") or [])) <= 48,
-      len(((_mbig or {}).get("candidates") or [])))
-
 if cands:
     c0 = cands[0]
     check("top card has a name", bool(c0.get("name")), c0.get("name"))

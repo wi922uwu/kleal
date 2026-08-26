@@ -10,6 +10,7 @@
 #   ops/run.sh restart <svc>  stop then start one, detached
 #   ops/run.sh stop [svc]     stop one, or all
 #   ops/run.sh status         what is listening, and on which port
+#   ops/run.sh tunnel         print the public address; `tunnel restart` gets a NEW one
 #
 # Ports come from shared/config.py, so this script has no port table of its own to drift.
 # Services are started with cwd = <kleal-ms> because each one resolves `shared/` relative to
@@ -38,7 +39,7 @@ print(config.PORTS[sys.argv[1]])
 EOF
 }
 
-usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 start_one() {
   local svc="$1" bg="$2"
@@ -106,6 +107,37 @@ case "${1:-}" in
       fi
       printf "%-12s %-6s %s\n" "$s" "$p" "$state"
     done
+    ;;
+  tunnel)
+    # The public address of the gateway. The tunnel is ephemeral: the name lives as long as the
+    # process, and a dead one NEVER comes back by itself — it needs a new process and a new address
+    # written into kleal-app/src/api.ts. Hence `restart` is a separate word: the bare form only
+    # reports, so checking the address can never cost you the one you already had.
+    CF="${CLOUDFLARED:-/root/cloudflared-linux-amd64}"
+    p="$(KLEAL_ROOT="$ROOT" port_of gateway)"
+    LOG="${CF_LOG:-/root/cf$p.log}"
+    match="[t]unnel .*--url http://localhost:$p"
+    if [ "${2:-}" = "restart" ]; then
+      [ -x "$CF" ] || { echo "no cloudflared at $CF" >&2; exit 1; }
+      # NOT `pkill -f` on a string containing the port. Typed as an ssh one-liner, that pattern also
+      # matches the command line of the very shell running it, so pkill kills itself before reaching
+      # the start — which reads as a flaky connection, not as a bug. Living in a file is what makes
+      # this safe: the shell's argv is just `bash ops/run.sh tunnel restart`.
+      ps ax -o pid=,args= | grep "$match" | awk '{print $1}' | while read -r pid; do kill "$pid"; done
+      sleep 2
+      : > "$LOG"
+      # --protocol http2 on purpose: the default is QUIC over UDP 7844, and where UDP is filtered the
+      # tunnel comes up and falls apart seconds later.
+      SETSID=""; command -v setsid >/dev/null 2>&1 && SETSID="setsid"
+      ( cd /root && nohup $SETSID "$CF" tunnel --protocol http2 --url "http://localhost:$p" \
+          >> "$LOG" 2>&1 < /dev/null & )
+      sleep 20
+    fi
+    url="$(grep -ho 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG" | head -1)"
+    [ -n "$url" ] || { echo "no address in $LOG — read the log" >&2; exit 1; }
+    echo "$url"
+    echo "processes: $(ps ax -o args= | grep -c "$match")   (more than 1 means leftovers from retries)"
+    echo "put it in kleal-app/src/api.ts → DEFAULT_BASE"
     ;;
   *) start_one "$1" fg ;;
 esac

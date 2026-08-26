@@ -101,3 +101,16 @@ kleal-ms/uploads/
 staging-flow-*/
 .codex-stage-*/
 backups/
+
+# Старые снимки, оставленные прошлыми переездами. Кода в них нет, только копии.
+matching_core.preswap/
+_matching_core_bak_*/
+services/_matching_removed_*/
+kleal-ms/matching_core.preswap/
+kleal-ms/_matching_core_bak_*/
+kleal-ms/services/_matching_removed_*/
+kleal-ms/ops/quarantine_*/
+kleal-ms/outbox/
+kleal-ms/loadtest_index.json
+kleal-ms/services/matching/phrase_topics.json
+kleal-ms/ops/.gateway-url

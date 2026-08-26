@@ -50,18 +50,9 @@ case "${1:-}" in
     echo "→ обновляю ops/ и перезапускаю сторож"
     PIDS="$($POD_SSH "ps -eo pid,command | grep -E 'expo-tunnel|expo start --port|cloudflared .*localhost:19000' | grep -v grep | awk '{print \$1}' | tr '\n' ' '")"
     [ -n "$PIDS" ] && $POD_SSH "for p in $PIDS; do kill -9 \$p 2>/dev/null; done; sleep 3"
-    # Везём ТОЛЬКО скрипты. Точечные файлы в ops/ — это рабочее состояние ПОДА: текущий адрес
-    # (.expo-url), журнал сторожа, логи Metro и cloudflared. Раньше tar забирал их вместе со
-    # скриптами и клал маковские поверх подовых — после чего на поде в журнале стояли пути
-    # /Users/ivan/…, а .expo-url показывал туннель, поднятый на ноутбуке. Сторож честно проверял
-    # чужой адрес, не находил его и менял имя по кругу.
-    COPYFILE_DISABLE=1 tar -czf - -C "$ROOT" --exclude='./ops/.*' ./ops \
-      | $POD_SSH "tar -xzf - -C $POD_DIR && chmod +x $POD_DIR/ops/*.sh"
-    # Запуск отдельным вызовом и с `exit 0` внутри: иначе ssh держит канал открытым, пока жив
-    # сторож, вызов висит до таймаута, а убитый по таймауту ssh уносит с собой и сторожа.
-    $POD_SSH "cd $POD_DIR && setsid nohup ./ops/expo-tunnel.sh >/root/expo-pod.log 2>&1 </dev/null & exit 0" || true
-    sleep 45
-    echo "  сторож поднят заново, адрес: $($POD_SSH "cat $POD_DIR/ops/.expo-url" 2>/dev/null)"
+    COPYFILE_DISABLE=1 tar -czf - -C "$ROOT" ./ops | $POD_SSH "tar -xzf - -C $POD_DIR && chmod +x $POD_DIR/ops/*.sh"
+    $POD_SSH "cd $POD_DIR && nohup setsid ./ops/expo-tunnel.sh > /root/expo-pod.log 2>&1 < /dev/null &" || true
+    echo "  сторож поднят заново, адрес будет НОВЫЙ"
     exit 0 ;;
   --list)
     [ $# -ge 2 ] || { echo "какой набор? сейчас есть: groups" >&2; exit 1; }

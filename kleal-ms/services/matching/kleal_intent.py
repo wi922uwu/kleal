@@ -24,13 +24,7 @@ import kleal_contracts as kc
 # type is never coerced away (which would silently change the domain). Off-list -> deny-safe 'social'.
 TYPE_ALLOWLIST = {"dinner", "sport", "gaming", "networking", "dating", "language", "social", "other", "event"}
 ROLE_ALLOWLIST = {"play", "watch", "discuss", "practise", "attend", "meet"}
-# «hybrid» — третий режим встречи, а не опечатка: он есть в мастере создания с самого начала, есть
-# в планах (MP_MODES) и имеет собственный раздел борда (кадры HY.*, «both ways open»). Здесь его не
-# было, и это тихо переписывало КАЖДЫЙ гибридный интент в offline — со всеми последствиями офлайна,
-# включая жёсткий гейт радиуса. То есть человек указывал ссылку на звонок, а поиск отсекал всех, кто
-# не мог доехать, и ссылка не спасала никого. Проверено на стенде: гибрид с радиусом 3 км возвращал
-# ровно ту же восьмёрку, что и офлайн, а mode внутри ранжирования читался как 'offline'.
-MODE_ALLOWLIST = {"offline", "online", "hybrid"}
+MODE_ALLOWLIST = {"offline", "online"}
 RADIUS_MAX_KM, AGE_FLOOR, AGE_CEIL, TOPIC_CAP = 500.0, 18, 120, 4
 # §15 MVP band on TOTAL headcount (the asker included), so one above kleal_groups._MAX_MVP_SIZE,
 # which counts SEATS. The value is duplicated rather than imported because this module deliberately
@@ -102,29 +96,10 @@ def validate_and_normalize(intent, source="llm"):
     out["topics"] = toks[:TOPIC_CAP]
 
     out["radiusKm"] = _clamp_num(out.get("radiusKm"), 1.0, RADIUS_MAX_KM) if out.get("radiusKm") is not None else None
-    # ВОЗРАСТНОЕ ОКНО. Два прежних «ремонта» молча меняли смысл запроса, и оба нашлись
-    # калибровочной батареей (tools/calib_matching.py, ось «возраст»).
-    #
-    # 1. Верхняя граница поднималась до 18. Просьба «14..17» превращалась в «ровно 18», и на
-    #    запрос про несовершеннолетних приходил восемнадцатилетний. Теперь maxAge зажимается
-    #    ТОЛЬКО сверху: окно, целиком лежащее ниже совершеннолетия, остаётся невыполнимым и
-    #    честно не находит никого — вместо того чтобы найти не тех.
-    # 2. При minAge > maxAge выбрасывалась ВЕРХНЯЯ граница, то есть «25..23» (опечатка в одну
-    #    цифру) становилось «25 и старше», и человек получал шестидесятилетних. Границы теперь
-    #    меняются местами: обе высказаны человеком, и порядок — единственное, что в них не так.
-    mn = _clamp_num(out.get("minAge"), 0, AGE_CEIL, as_int=True) if out.get("minAge") is not None else None
-    mx = _clamp_num(out.get("maxAge"), 0, AGE_CEIL, as_int=True) if out.get("maxAge") is not None else None
+    mn = _clamp_num(out.get("minAge"), AGE_FLOOR, AGE_CEIL, as_int=True) if out.get("minAge") is not None else None
+    mx = _clamp_num(out.get("maxAge"), AGE_FLOOR, AGE_CEIL, as_int=True) if out.get("maxAge") is not None else None
     if mn is not None and mx is not None and mn > mx:
-        report.append("minAge>maxAge -> swap"); mn, mx = mx, mn
-    # Порядок здесь важнее, чем кажется: подъём нижней границы к совершеннолетию делается ПОСЛЕ
-    # обмена и ТОЛЬКО когда верхняя граница законна. Иначе «14..17» проходило подъём (14->18),
-    # становилось перевёрнутым (18>17), обменивалось и схлопывалось в «18..18» — просьба про
-    # несовершеннолетних оборачивалась восемнадцатилетним в выдаче.
-    if mx is None or mx >= AGE_FLOOR:
-        if mn is not None:
-            mn = max(AGE_FLOOR, mn)
-    else:
-        report.append("окно целиком ниже %d — оставлено невыполнимым" % AGE_FLOOR)
+        report.append("minAge>maxAge -> drop maxAge"); mx = None
     out["minAge"], out["maxAge"] = mn, mx
     # requiredLanguages: 2-char truncation only, dedup, order-preserving. Directly-set gate semantics kept.
     rl = out.get("requiredLanguages")

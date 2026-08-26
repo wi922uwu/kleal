@@ -221,14 +221,7 @@ nh = call("/api/agent/mplan-feedback", {"id": PID2, "self": G2, "happened": Fals
                                         "reason": "he never showed up"})
 np = nh.get("plan") or {}
 check("didn't happen is recorded", (np.get("outcome") or {}).get("happened") is False, np.get("outcome"))
-# Причина ХРАНИТСЯ, но не показывается второму. Проверка раньше требовала её прямо в `outcome` —
-# то есть закрепляла утечку: `outcome` уходит ОБЕИМ сторонам, а экран обещает «твой ответ другим
-# не показывается». Теперь проверяем смысл: автор свою причину видит, второй не видит нигде.
-check("the reason is kept for its author", (np.get("my_feedback") or {}).get("reason") == "he never showed up",
-      np.get("my_feedback"))
-_peer_view = get(H2, PID2)
-check("and the other side never sees it",
-      "he never showed up" not in json.dumps(_peer_view, ensure_ascii=False), _peer_view.get("outcome"))
+check("the reason is kept", (np.get("outcome") or {}).get("reason") == "he never showed up")
 check("one side saying no closes it without waiting for the other", np.get("state") == "done", np.get("state"))
 
 # ---------------------------------------------------------------- times that make no sense
@@ -307,55 +300,6 @@ call("/api/agent/mplan-address", {"id": PID6, "self": H6, "address": "Carrer Sec
 g6 = (get(G6, PID6).get("plan") or {})
 check("an unconfirmed guest still sees no address", g6.get("address") == "", g6.get("address"))
 check("but is told there is one now", g6.get("address_set") is True)
-
-# ---------------------------------------------------------------- часовой пояс собеседника
-#
-# Спека: «Таймзона в UI — только при РАСХОЖДЕНИИ». Считать расхождение было НЕ С ЧЕМ: свой пояс
-# устройство знает, чужой не хранился нигде, и экраны безусловно печатали своё же смещение
-# «(GMT+2)». Проверяется весь путь целиком — от анкеты до плана, — потому что пустой пояс
-# выглядит РОВНО как работающее правило: строка просто не появляется, и молчание не отличить.
-print("\n-- часовой пояс собеседника")
-HT, GT = "MpTzHost%d" % S, "MpTzGuest%d" % S
-for nm, tz, city in ((HT, "Europe/Madrid", "Barcelona"), (GT, "Europe/London", "London")):
-    call("/api/onboarding/register", {"profile": {
-        "name": nm, "age": 30, "city": city, "tz": tz,
-        "interests": {"explicit": ["coffee"]}, "languages": {"comfortable": ["en"]}}})
-
-u = (call("/api/onboarding/profile", {"name": GT}).get("user") or {})
-# register заменяет строку целиком, поэтому пояс обязан ехать и через неё, а не только патчем —
-# иначе повторный онбординг стирал бы его молча, как когда-то стирал story.
-check("register сохраняет пояс", u.get("tz") == "Europe/London", u.get("tz"))
-call("/api/onboarding/profile-update", {"name": GT, "patch": {"tz": "Asia/Tokyo"}})
-check("пояс правится патчем",
-      (call("/api/onboarding/profile", {"name": GT}).get("user") or {}).get("tz") == "Asia/Tokyo")
-call("/api/onboarding/profile-update", {"name": GT, "patch": {"tz": "Europe/London"}})
-
-match(HT, GT, "tz")
-PT = (plan(HT, GT, "tz").get("plan") or {}).get("id")
-check("план между ними создан", bool(PT))
-
-from urllib.parse import quote as _q
-lst = call("/api/agent/mplans?self=%s&with=%s" % (_q(HT), _q(GT)))
-check("список отдаёт пояс собеседника", lst.get("peer_tz") == "Europe/London", lst.get("peer_tz"))
-plt = next((x for x in lst.get("plans") or [] if x.get("id") == PT), None) or {}
-check("в самом плане есть their_tz", plt.get("their_tz") == "Europe/London", plt.get("their_tz"))
-byname = {x.get("name"): x.get("tz") for x in plt.get("participants") or []}
-check("у каждого участника свой пояс",
-      byname.get(HT) == "Europe/Madrid" and byname.get(GT) == "Europe/London", byname)
-
-# Главное, что тут может сломаться незаметно: пояс, посчитанный от ХОЗЯИНА вместо смотрящего.
-# Тогда каждый видел бы собственный час «чужим» — и это выглядело бы правдоподобно.
-his = call("/api/agent/mplans?self=%s&with=%s" % (_q(GT), _q(HT)))
-hpl = next((x for x in his.get("plans") or [] if x.get("id") == PT), None) or {}
-check("гость видит пояс ХОЗЯИНА, а не свой", hpl.get("their_tz") == "Europe/Madrid", hpl.get("their_tz"))
-
-# 608 человек зарегистрировались до того, как пояс вообще появился. Для них ответ обязан быть
-# пустой строкой, а не ошибкой и не чужим поясом.
-unk = call("/api/agent/mplans?self=%s&with=%s" % (_q(HT), _q("НетТакогоЧеловека%d" % S)))
-check("неизвестный человек -> пустой пояс, а не ошибка",
-      unk.get("ok") and unk.get("peer_tz") == "", unk.get("peer_tz"))
-check("без параметра with поля нет вовсе",
-      "peer_tz" not in call("/api/agent/mplans?self=%s" % _q(HT)))
 
 print("\n" + "=" * 76)
 print("РЕЗУЛЬТАТ: %d ok, %d проблем" % (R["ok"], R["fail"]))

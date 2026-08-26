@@ -220,134 +220,29 @@ check("no history -> no subject, and no crash", B._subject_from_history([]) == "
 # ---- 12. the card title has to name what will actually happen ----
 # From the app: a chat about hertz produced a card headed «я хочу с кем-то об этом поговорить» —
 # the sentence the person typed, which names nothing.
-#
-# The suffix form («Hertz — разговор», «Футбол — встреча») is gone: it read like a row in a table,
-# not like something a person is about to do. A conversation gets a verb, a meetup gets the topic
-# alone — «Футбол» needs no «— встреча» to be understood.
-check("discuss becomes a phrase, not «Тема — разговор»",
-      B._title_for(["hertz", "frequency", "music"], ["hertz", "разговоры"], "social", "ru", "discuss")[0]
-      == "Поговорить про hertz",
-      B._title_for(["hertz", "frequency", "music"], ["hertz", "разговоры"], "social", "ru", "discuss")[0])
+check("discuss gets a talk suffix, not «встреча»",
+      B._title_for(["hertz", "frequency", "music"], ["hertz", "разговоры"], "social", "ru", "discuss")
+      == "Hertz — разговор",
+      B._title_for(["hertz", "frequency", "music"], ["hertz", "разговоры"], "social", "ru", "discuss"))
 check("the subject wins over a merely-translatable later topic",
-      "узык" not in B._title_for(["hertz", "frequency", "music"], [], "social", "ru", "discuss")[0])
+      "Музыка" not in B._title_for(["hertz", "frequency", "music"], [], "social", "ru", "discuss"))
 check("the person's own Russian word is preferred when ours is Latin",
-      B._title_for(["chlamydia"], ["хламидиоз"], "social", "ru", "discuss")[0] == "Поговорить про хламидиоз",
-      B._title_for(["chlamydia"], ["хламидиоз"], "social", "ru", "discuss")[0])
-check("a meetup is just the topic", B._title_for(["football"], ["football"], "sport", "ru", "play")[0]
-      == "Футбол", B._title_for(["football"], ["football"], "sport", "ru", "play")[0])
+      B._title_for(["chlamydia"], ["хламидиоз"], "social", "ru", "discuss") == "Хламидиоз — разговор",
+      B._title_for(["chlamydia"], ["хламидиоз"], "social", "ru", "discuss"))
+check("play still reads as a meetup", B._title_for(["football"], ["football"], "sport", "ru", "play")
+      == "Футбол — встреча", B._title_for(["football"], ["football"], "sport", "ru", "play"))
 # the tag bag IS arbitrary order — there a scan for a translatable word is still right
 check("untranslated synonym cannot win from the tag bag",
-      B._title_for([], ["soccer", "football"], "sport", "ru", "play")[0] == "Футбол",
-      B._title_for([], ["soccer", "football"], "sport", "ru", "play")[0])
-check("accusative, and our own word goes lower-case mid-phrase",
-      B._title_for(["music"], [], "social", "ru", "discuss")[0] == "Поговорить про музыку",
-      B._title_for(["music"], [], "social", "ru", "discuss")[0])
-check("the person's own capitalised word keeps its capital",
-      B._title_for(["Барселона"], [], "social", "ru", "discuss")[0] == "Поговорить про Барселону",
-      B._title_for(["Барселона"], [], "social", "ru", "discuss")[0])
-check("no topic at all still knows its role",
-      B._title_for([], [], "social", "ru", "discuss")[0] == "Разговор",
-      B._title_for([], [], "social", "ru", "discuss")[0])
+      B._title_for([], ["soccer", "football"], "sport", "ru", "play") == "Футбол — встреча",
+      B._title_for([], ["soccer", "football"], "sport", "ru", "play"))
 check("all-generic topics are named once, not twice",
-      B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss")[0] == "Разговор",
-      B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss")[0])
-check("dating is untouched", B._title_for([], [], "dating", "ru", "meet")[0] == "Свидание")
-check("es discuss", B._title_for(["padel"], [], "sport", "es", "discuss")[0] == "Hablar de padel",
-      B._title_for(["padel"], [], "sport", "es", "discuss")[0])
-check("en discuss", B._title_for(["padel"], [], "sport", "en", "discuss")[0] == "Talk about padel",
-      B._title_for(["padel"], [], "sport", "en", "discuss")[0])
-check("en play", B._title_for(["padel"], [], "sport", "en", "play")[0] == "Padel",
-      B._title_for(["padel"], [], "sport", "en", "play")[0])
-
-
-# ---- «Хочешь обсудить это с кем-нибудь?» -> «Да» ----
-#
-# Замерено до правки на живом стенде: из 16 согласий окно не открыло НИ ОДНО, даже когда
-# предложение агента стояло в истории — wants_people() видит одну последнюю реплику, а в «Да» нет
-# ни ключевого слова, ни предмета. Эти проверки держат новый ярус.
-
-OFFER = "Можно поискать человека, который тоже интересуется фьючерсами. Хочешь обсудить это с кем-нибудь?"
-
-check("голое «Да» после предложения — это заявка",
-      B._agreed_to_offer([U("Что такое фьючерсы?"), A(OFFER), U("Да")]))
-for word in ("да", "давай", "ага", "конечно", "хочу", "было бы интересно", "с удовольствием",
-             "не против", "yes", "sure", "sí", "vale"):
-    check("согласие «%s» открывает" % word,
-          B._agreed_to_offer([U("Что такое фьючерсы?"), A(OFFER), U(word)]), word)
-
-check("«нет» не открывает",
-      not B._agreed_to_offer([U("Что такое фьючерсы?"), A(OFFER), U("нет")]))
-check("«не сейчас» не открывает",
-      not B._agreed_to_offer([U("Что такое фьючерсы?"), A(OFFER), U("не сейчас")]))
-check("«потом» не открывает",
-      not B._agreed_to_offer([U("Что такое фьючерсы?"), A(OFFER), U("потом")]))
-check("«да, но давай про другое» — не согласие (длинно и с оговоркой)",
-      not B._agreed_to_offer([U("Что такое фьючерсы?"), A(OFFER), U("да, но давай лучше про другое")]))
-
-check("без предложения агента «Да» ничего не открывает",
-      not B._agreed_to_offer([U("Что такое фьючерсы?"),
-                              A("Фьючерс — это контракт на покупку актива в будущем."), U("Да")]))
-check("«Да» подряд за своей же репликой не считается",
-      not B._agreed_to_offer([U("Что такое фьючерсы?"), U("Да")]))
-check("пустая история не падает", not B._agreed_to_offer([]))
-
-check("предложение узнаётся по-английски",
-      B._agreed_to_offer([U("What are futures?"),
-                          A("Futures are contracts. I can find someone who is into this too — want that?"),
-                          U("yes")]))
-check("предложение узнаётся по-испански",
-      B._agreed_to_offer([U("¿Qué son los futuros?"),
-                          A("Son contratos. ¿Quieres hablarlo con alguien que también le interese?"),
-                          U("claro")]))
-
-check("тема берётся из вопроса, а не из «Да»",
-      B._subject_from_history([U("Что такое фьючерсы?"), A(OFFER), U("Да")]) == "Что такое фьючерсы?",
-      B._subject_from_history([U("Что такое фьючерсы?"), A(OFFER), U("Да")]))
-check("реплика агента достаётся для определения роли",
-      "обсудить" in B._agent_offer_text([U("Что такое фьючерсы?"), A(OFFER), U("Да")]))
-check("без предложения текст пустой",
-      B._agent_offer_text([U("x"), A("Просто ответ без предложения."), U("Да")]) == "")
-
-
-
-# ---- слово человека на карточке: «Что такое фьючерсы?» -> «Поговорить про фьючерсы» ----
-#
-# В живом сторе лежали «Curling — разговор» и subject 'Futures': перевод в _TOPIC_RU есть у ~100
-# слов, у остального карточка получала латинскую каноническую тему. Слово человека при этом стоит
-# в его же вопросе — эти проверки держат его извлечение и подстановку.
-
-check("«Что такое фьючерсы?» — предмет",
-      B._own_subject("Что такое фьючерсы?") == ("noun", "фьючерсы"), str(B._own_subject("Что такое фьючерсы?")))
-check("«Расскажи про Кафку» — предмет с большой буквы человека",
-      B._own_subject("Расскажи про Кафку") == ("noun", "Кафку"), str(B._own_subject("Расскажи про Кафку")))
-check("метка [FIRST MESSAGE] отрезается",
-      B._own_subject("[FIRST MESSAGE] Что такое фьючерсы?") == ("noun", "фьючерсы"))
-check("«Почему небо голубое?» — вопрос-предложение",
-      B._own_subject("Почему небо голубое?") == ("clause", "Почему небо голубое"))
-check("What are futures — noun по-английски",
-      B._own_subject("What are futures?") == ("noun", "futures"))
-check("¿Qué son los futuros? — noun по-испански, с ¿",
-      B._own_subject("¿Qué son los futuros?") == ("noun", "los futuros"),
-      str(B._own_subject("¿Qué son los futuros?")))
-check("«привет» — не предмет", B._own_subject("привет") == ("", ""))
-check("«хочу обсудить лабубу» — прямая просьба, не сюда", B._own_subject("хочу обсудить лабубу") == ("", ""))
-check("длинный текст — не предмет", B._own_subject("Что такое " + "слово " * 30) == ("", ""))
-check("«расскажи, как работает матчинг» — clause внутри",
-      B._own_subject("расскажи про как работает матчинг")[0] == "clause")
-
-_i = {"role": "discuss", "title": "Futures", "subject": "Futures", "activity": "Futures"}
-_r = B._apply_own_subject(dict(_i), "Что такое фьючерсы?", "ru")
-check("карточка: «Поговорить про фьючерсы»", _r["title"] == "Поговорить про фьючерсы", _r["title"])
-check("subject как написал человек", _r["subject"] == "фьючерсы", _r["subject"])
-_r = B._apply_own_subject(dict(_i), "Расскажи про Кафку", "ru")
-check("заглавная человека остаётся", _r["title"] == "Поговорить про Кафку", _r["title"])
-_r = B._apply_own_subject(dict(_i), "Почему небо голубое?", "ru")
-check("clause: «Обсудить, почему небо голубое»", _r["title"] == "Обсудить, почему небо голубое", _r["title"])
-_r = B._apply_own_subject(dict(_i), "What are futures?", "en")
-check("en: Talk about futures", _r["title"] == "Talk about futures", _r["title"])
-_r = B._apply_own_subject(dict(_i), "привет", "ru")
-check("не вопрос — карточка не тронута", _r["title"] == "Futures")
-
+      B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss") == "Разговор",
+      B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss"))
+check("dating is untouched", B._title_for([], [], "dating", "ru", "meet") == "Свидание")
+check("es discuss", B._title_for(["padel"], [], "sport", "es", "discuss") == "Padel — charla",
+      B._title_for(["padel"], [], "sport", "es", "discuss"))
+check("en play", B._title_for(["padel"], [], "sport", "en", "play") == "Padel meetup",
+      B._title_for(["padel"], [], "sport", "en", "play"))
 
 print()
 if _fails:

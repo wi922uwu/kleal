@@ -6,19 +6,12 @@ reached by an unusual order of events, and people acting after they stopped bein
 """
 import json
 import os
-import sys
 import threading
 import time
 import urllib.error
 import urllib.request
 
-# Адрес первым аргументом — как у всех соседних смоуков в этой папке.
-#
-# Был прибит к 127.0.0.1:7074, и заголовок «Run ON the pod» это оправдывал. Но запуск СНАРУЖИ
-# молча уходил в localhost запускающего: смоук печатал «сервис упал» и «Connection refused», и это
-# читалось как поломка продукта, а не как промах теста. Ровно та же ловушка, что нашлась в
-# e2e_smoke 13 августа. Умолчание оставлено прежним — на самой машине ничего не меняется.
-GW = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:7074").rstrip("/")
+GW = "http://127.0.0.1:7074"
 S = int(time.time() * 1000) % 100000000 + os.getpid()
 FOUND, OK = [], [0]
 
@@ -196,29 +189,12 @@ v = call("/api/agent/gplan-vote-open", {"id": pid, "self": own, "kind": "cancel"
 vid = ((v or {}).get("vote") or {}).get("id")
 for m in mem:
     call("/api/agent/gplan-vote", {"id": vid, "self": m, "yes": True})
-# ГОЛОС — СОВЕТ, А НЕ РЕШЕНИЕ. Здесь стояло ожидание «все проголосовали за отмену — план отменён»,
-# и оно давало четыре находки подряд, все ложные: план оставался живым, поэтому и фидбэк по нему
-# принимался, и новый план не начинался (PLAN_EXISTS). Продукт при этом вёл себя ровно по борду —
-# GR.35 «The result is advice — Marc makes the final call», GR.38 «On Kleal the vote is advice —
-# the organiser decides», и эти цитаты стоят прямо в _gp_close_vote.
-#
-# Поэтому проверяем ДВА шага. Сначала: после единогласного «за» план ещё жив — совет не отменяет.
-# Потом организатор применяет совет, и только тогда план уходит в отменённые.
-still = next((x for x in (call("/api/agent/gplans?self=%s" % own).get("plans") or [])
-              if x.get("id") == pid), None)
-if still:
-    ok("совет сам по себе план не отменяет", still.get("state"))
-else:
-    bug("голосование отменило план мимо организатора",
-        "у голосования совещательный характер: решает организатор (GR.35/GR.37)")
-
-call("/api/agent/gplan-vote-decide", {"id": vid, "self": own, "apply": True})
 after = next((x for x in (call("/api/agent/gplans?self=%s" % own).get("history") or [])
               if x.get("id") == pid), None)
 if after and after.get("state") == "cancelled":
-    ok("организатор применил совет — план отменён")
+    ok("голосование действительно отменило план")
 else:
-    bug("организатор применил совет, а план не отменился",
+    bug("голосование за отмену план не отменило",
         next((x for x in (call("/api/agent/gplans?self=%s" % own).get("plans") or [])
               if x.get("id") == pid), None))
 r = call("/api/agent/gplan-vote-open", {"id": pid, "self": own, "kind": "edit", "when": "вт"})

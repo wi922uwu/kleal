@@ -183,9 +183,7 @@ def remote(base):
           {"email": mail, "code": "000000"}).get("error") == "wrong")
     check("счётчик попыток приходит", isinstance(post("/api/auth/code/verify",
           {"email": mail, "code": "000001"}).get("attempts_left"), int))
-    # Токен только из ASCII: заголовки HTTP кодируются latin-1, и кириллица в них — падение
-    # клиента, а не проверка сервера.
-    check("чужая сессия не проходит", post("/api/auth/session", {}, "not-a-real-token").get("ok") is False)
+    check("чужая сессия не проходит", post("/api/auth/session", {}, "мусор").get("ok") is False)
 
 
 if __name__ == "__main__":
