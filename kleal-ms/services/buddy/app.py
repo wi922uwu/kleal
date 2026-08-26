@@ -427,6 +427,23 @@ def _own_subject(text):
             return ("noun", x[:48]) if 0 < len(x.split()) <= 4 else ("", "")
     if _SUBJ_CLAUSE.match(t):
         return "clause", t[:64]
+    # КОРОТКОЕ НАЗВАНИЕ БЕЗ ВОПРОСА — ТОЖЕ ПРЕДМЕТ, И ОН ВАЖНЕЕ СЛОВ ФИЛЬТРАЦИИ.
+    #
+    # Человек написал «кофейни» и согласился на предложение. Предмет собирался из тем фильтрации, а
+    # она вернула «кофеен» — родительный падеж, вытащенный из бегущего текста. Заголовок вышел
+    # «Поговорить про кофеен». Просклонять обратно нечем: винительный множественного у неодушевлённых
+    # совпадает с именительным, но из родительного его не вывести — «кофеен» → «кофейни» это уже
+    # словарь, а не правило.
+    #
+    # Зато есть слово, которое склонять не надо: то, которым человек назвал тему САМ. Оно пришло
+    # именительным, потому что он писал его отдельной репликой, а не в середине фразы. Берём его,
+    # если это действительно название: не длиннее трёх слов, не глагол («поиграть в футбол») и не
+    # служебное слово. Всё остальное по-прежнему собирается как раньше.
+    words = [w for w in re.split(r"[\s,]+", t) if w]
+    if 0 < len(words) <= 3 and not any(_is_verbish(w) or _NOT_A_SUBJECT.match(w) for w in words):
+        low = t.lower()
+        if low not in _GENERIC_TOPIC and low not in _NO_ACTIVITY and not _TIMEISH.match(t):
+            return "noun", t[:48]
     return "", ""
 
 
@@ -1122,7 +1139,8 @@ def _categorize(text):
 # Topics are canonicalised to English for the ranker, so a Russian user's intent came back titled
 # "Coffee — встреча". Titles are user-facing: put the topic back into their language.
 _TOPIC_RU = {
-    'coffee':'Кофе','tea':'Чай','brunch':'Бранч','dinner':'Ужин','food':'Еда','restaurant':'Ресторан',
+    'coffee':'Кофе','cafe':'Кофейни','coffee shop':'Кофейни','coffeeshop':'Кофейни',
+    'tea':'Чай','brunch':'Бранч','dinner':'Ужин','food':'Еда','restaurant':'Ресторан',
     'cooking':'Готовка','beer':'Пиво','bar':'Бар','wine':'Вино','party':'Вечеринка','club':'Клуб',
     'walk':'Прогулка','football':'Футбол','basketball':'Баскетбол','volleyball':'Волейбол',
     'tennis':'Теннис','padel':'Падель','running':'Бег','cycling':'Велосипед','swimming':'Плавание',
