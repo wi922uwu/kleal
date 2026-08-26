@@ -357,6 +357,15 @@ def delete_user(uid):
                 except Exception as e:
                     print("[admin] не смог удалить из postgres: %s" % str(e)[:120])
             _write(users)
+            # Repeated-interest evidence belongs to the same profile lifecycle.  The matching
+            # service stores only hashes/canonical ids, but it must still forget them when the
+            # account is erased.  Best effort keeps the established admin delete available if
+            # matching is temporarily down; the failure is visible in the service log.
+            if gone is not None and gone.get("name"):
+                forgotten = _match_post("/api/agent/interest-suggestion-forget",
+                                        {"self": gone.get("name")}, timeout=8)
+                if forgotten.get("error"):
+                    print("[admin] не смог удалить interest evidence: %s" % forgotten["error"][:160])
             return True
     return False
 

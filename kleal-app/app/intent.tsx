@@ -56,12 +56,14 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { resetGroupSession } from '../src/ginvites';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
+import { explicitInterests } from '../src/profile';
+import { offerInterestSuggestion } from '../src/interest-suggestions';
 import { setResults, patchResults } from '../src/results-store';
 import { openResults } from '../src/results-navigation';
 import {
   applyIntentEdit, beginIntentEdit, IntentEditTarget,
 } from '../src/intent-edit';
-import { agent, isAbort } from '../src/api';
+import { agent, isAbort, newIdem } from '../src/api';
 import { color, radius as rad, space, type } from '../src/theme';
 
 type Draft = {
@@ -352,8 +354,14 @@ export default function Intent() {
     //
     // Ждать ответа мы при этом не начинаем: человек шёл искать людей, а не сохранять карточку.
     // Не доехал id — приглашение уйдёт как раньше, без привязки, и это хуже, но не поломка.
-    const savedId = agent.intentSave(String(st.profile.name || ''), intent, title || topics.join(', '), undefined, true)
-      .then((r: any) => String(r?.id || ''))
+    const savedId = agent.intentSave(
+      String(st.profile.name || ''), intent, title || topics.join(', '), undefined, true,
+      newIdem('interest-evidence'), explicitInterests(st.profile),
+    )
+      .then((r: any) => {
+        if (r?.interest_suggestion) offerInterestSuggestion(r.interest_suggestion);
+        return String(r?.id || '');
+      })
       .catch(() => '');
 
     // Отмена принадлежит человеку: экран поиска даёт кнопку, и она рвёт именно этот запрос.

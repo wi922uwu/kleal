@@ -505,9 +505,26 @@ export const agent = {
    * `launched` — «поиск по этому интенту уже запускали». Обратно в «ещё не искали» он не
    * отыгрывается, и это правило сервера, а не экрана.
    */
-  intentSave: (self: string, intent: Json, title: string, id?: string, launched = false) =>
-    api.post<{ ok?: boolean; id?: string; merged?: boolean; error?: string }>(
-      '/api/agent/intent-save', { self, intent, title, id, launched }
+  intentSave: (self: string, intent: Json, title: string, id?: string, launched = false,
+               eventId?: string, profileInterests: string[] = []) =>
+    api.post<{ ok?: boolean; id?: string; merged?: boolean; error?: string; interest_suggestion?: Json }>(
+      '/api/agent/intent-save', {
+        self, intent, title, id, launched, event_id: eventId, profile_interests: profileInterests,
+      }
+    ),
+
+  /** Накопленное сервером предложение. Чтение не считает новым доказательством. */
+  interestSuggestion: (self: string, profileInterests: string[] = []) =>
+    api.post<{ suggestion?: Json | null }>(
+      '/api/agent/interest-suggestion', { self, profile_interests: profileInterests }
+    ),
+
+  /** Сервер узнаёт о подтверждении только ПОСЛЕ успешной записи интереса в профиль. */
+  interestSuggestionAction: (self: string, suggestionId: string, action: 'confirm' | 'dismiss') =>
+    api.post<{ ok?: boolean; error?: string }>(
+      '/api/agent/interest-suggestion-action', {
+        self, suggestion_id: suggestionId, action,
+      }
     ),
 
   intentDelete: (self: string, id: string) =>

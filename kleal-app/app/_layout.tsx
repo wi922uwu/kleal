@@ -8,6 +8,7 @@ import { restore } from '../src/state';
 import { startSummaryWatch } from '../src/profile';
 import { color } from '../src/theme';
 import { PostCallPrompt } from '../src/components/PostCallPrompt';
+import { InterestSuggestionPrompt } from '../src/components/InterestSuggestionPrompt';
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
@@ -58,6 +59,7 @@ export default function RootLayout() {
         <Stack.Screen name="messages" options={{ animation: 'none' }} />
         <Stack.Screen name="profile/index" options={{ animation: 'none' }} />
       </Stack>
+      <InterestSuggestionPrompt />
       <PostCallPrompt />
     </SafeAreaProvider>
   );

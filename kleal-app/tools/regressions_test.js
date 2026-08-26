@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 require('./time_input_test').run();
+require('./interest_suggestion_test').run();
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -577,13 +578,13 @@ console.log('\nвкладка «Моя активность» связана и�
 
   // Самое тихое звено: ручки хранения были на сервере всё время, а звать их было некому.
   check('мастер запоминает затею, и сразу запущенной',
-    /agent\.intentSave\(/.test(wiz) && /, true\)/.test(wiz),
+    /agent\.intentSave\([\s\S]{0,260}, true(?:\s*[,\)])/.test(wiz),
     'без записи список пуст всегда — показывать нечего, а не некому');
   // Смотрим на СМЫСЛ: запись не ждут и её сбой гасят. Проверка держалась за точную форму вызова
   // и упала, когда к нему добавился разбор ответа ради id затеи, — правка ничего не изменила по
   // существу, а проверка сообщила о поломке.
   check('сбой записи не отменяет поиск',
-    /agent[\s\S]{0,80}\.intentSave\([\s\S]{0,220}\.catch\(\(\) => ''\)/.test(wiz)
+    /agent[\s\S]{0,80}\.intentSave\([\s\S]{0,520}\.catch\(\(\) => ''\)/.test(wiz)
     || /agent\.intentSave\([^;]*\)\s*\n?\s*\.catch\(\(\) => \{\}\)/.test(wiz),
     'человек шёл искать людей, а не сохранять карточку');
 

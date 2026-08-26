@@ -25,6 +25,7 @@ import kleal_protocol as kp                   # §13 typed agent protocol (actio
 import kleal_states as ks                      # §14 transaction state machines + race protection (keyless, LLM-free)
 import kleal_groups as kg                       # §15 group formation core (PILOT-DISABLED scaffolding; keyless, LLM-free)
 import kleal_candidates as kct                  # §16 events/rooms/venues candidate types (PILOT-DISABLED; keyless, LLM-free)
+from interest_suggestions import InterestSuggestionTracker
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send_json, read_json
 from config import FILTER_URL         # мост тем: адрес фильтрации, тот же, что у buddy
@@ -537,6 +538,29 @@ def _save_store():
         with open(STORE_PATH, "w", encoding="utf-8") as f: json.dump(SESSION, f)
     except Exception:
         pass
+
+# One versioned top-level document works with both the JSON store and its PostgreSQL JSONB adapter.
+# Only canonical ids and bounded evidence metadata live there; raw user text never does.
+_INTEREST_TRACKER = InterestSuggestionTracker(
+    SESSION.setdefault("_interest_suggestions", {}), _STORE_LOCK, _save_store)
+
+def _negative_interest_topics(intent):
+    out = []
+    for key in ("negative_topics", "negatedTopics", "excludedTopics", "exclude"):
+        value = (intent or {}).get(key)
+        if isinstance(value, list):
+            out.extend(value)
+    return out
+
+def _interest_suggestion_pending(owner, profile_interests=None):
+    return _INTEREST_TRACKER.pending(owner, profile_interests)
+
+def _interest_suggestion_action(owner, suggestion_id, action):
+    return _INTEREST_TRACKER.act(owner, suggestion_id, action)
+
+def _interest_suggestion_forget(owner):
+    return _INTEREST_TRACKER.forget(owner)
+
 def _session(uid="me"):
     with _STORE_LOCK:
         u = SESSION.setdefault(str(uid or "me"), {})
@@ -4019,11 +4043,19 @@ def thread_mark_read(self_name, other):
 def _intents():
     return SESSION.setdefault("_intents", [])
 
-def save_intent(owner, intent, title, iid=None, launched=None):
+def save_intent(owner, intent, title, iid=None, launched=None, event_id=None, profile_interests=None):
     owner = str(owner or "").strip()
     if not owner or not isinstance(intent, dict):
         return {"ok": False, "error": "owner and intent required"}
     now = time.time()
+    def result_with_signal(result, saved_id):
+        if launched and event_id:
+            signal = _INTEREST_TRACKER.record(
+                owner, event_id, intent.get("topics") or [], profile_interests,
+                _negative_interest_topics(intent), saved_id, now)
+            if signal.get("suggestion"):
+                result["interest_suggestion"] = signal["suggestion"]
+        return result
     with _STORE_LOCK:
         rows = _intents()
         if iid:
@@ -4034,7 +4066,7 @@ def save_intent(owner, intent, title, iid=None, launched=None):
                     if launched:
                         r["launched"] = now
                     _save_store()
-                    return {"ok": True, "id": iid}
+                    return result_with_signal({"ok": True, "id": iid}, iid)
         # the same request twice should update, not pile up a second identical card
         key = json.dumps(intent.get("topics") or [], sort_keys=True) + "|" + str(intent.get("role") or "")
         for r in rows:
@@ -4043,13 +4075,13 @@ def save_intent(owner, intent, title, iid=None, launched=None):
                 if launched:
                     r["launched"] = now
                 _save_store()
-                return {"ok": True, "id": r["id"], "merged": True}
+                return result_with_signal({"ok": True, "id": r["id"], "merged": True}, r["id"])
         nid = "in_%d" % int(now * 1000)
         rows.append({"id": nid, "owner": owner, "title": title or "", "intent": intent,
                      "key": key, "created": now, "updated": now,
                      "launched": now if launched else None})
     _save_store()
-    return {"ok": True, "id": nid}
+    return result_with_signal({"ok": True, "id": nid}, nid)
 
 def delete_intent(owner, iid):
     with _STORE_LOCK:
@@ -7852,7 +7884,16 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/agent/intent-save":
             send_json(self, 200, save_intent(body.get("self"), body.get("intent") or {},
                                              body.get("title"), body.get("id"),
-                                             bool(body.get("launched"))))
+                                             bool(body.get("launched")), body.get("event_id"),
+                                             body.get("profile_interests") or []))
+        elif p == "/api/agent/interest-suggestion":
+            send_json(self, 200, {"suggestion": _interest_suggestion_pending(
+                body.get("self"), body.get("profile_interests") or [])})
+        elif p == "/api/agent/interest-suggestion-action":
+            send_json(self, 200, _interest_suggestion_action(
+                body.get("self"), body.get("suggestion_id"), body.get("action")))
+        elif p == "/api/agent/interest-suggestion-forget":
+            send_json(self, 200, _interest_suggestion_forget(body.get("self")))
         elif p == "/api/agent/intent-delete":
             send_json(self, 200, delete_intent(body.get("self"), body.get("id")))
         elif p == "/api/agent/intents":
