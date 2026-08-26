@@ -342,8 +342,13 @@ export function addConfirmedInterest(canonical: string, label: string, token: st
   const p = getState().profile as any;
   const have = explicitInterests(p);
   if (have.some((x) => x.trim().toLowerCase() === key)) return false;
+  // A model-proposed label may repeat the grammatical case from the sentence ("в доту" ->
+  // "доту"). Known taxonomy keys already have reviewed, nominative labels in the wheel, so those
+  // always win. Free-form canonicals still use the server-normalized proposal label.
+  const builtInLabel = interestLabel(key);
+  const savedLabel = builtInLabel !== key ? builtInLabel : String(label || key).trim() || key;
   set('interests.explicit', [...have, key]);
-  set('interests.labels', { ...((p.interests || {}).labels || {}), [key]: String(label || key).trim() || key });
+  set('interests.labels', { ...((p.interests || {}).labels || {}), [key]: savedLabel });
   set('interests.confirmations', { ...((p.interests || {}).confirmations || {}), [key]: token });
   _sentInterests = null;
   return true;

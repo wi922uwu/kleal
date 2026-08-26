@@ -34,6 +34,10 @@ check('backend blocks unconfirmed direct profile updates',
   /"unconfirmed interests"/.test(onboardingBackend) && /interest_norm\.trusted_interest/.test(onboardingBackend));
 check('only confirmed canonical values enter local profile state',
   /export function addConfirmedInterest/.test(profile) && /interests\.confirmations/.test(profile));
+check('known canonical interests use reviewed dictionary-form labels instead of model inflections',
+  /const builtInLabel = interestLabel\(key\)/.test(profile) &&
+  /const savedLabel = builtInLabel !== key/.test(profile) &&
+  /interests\.labels'[\s\S]{0,140}\[key\]: savedLabel/.test(profile));
 check('confirmation receipts are not attached as durable profile facts',
   /delete p\.interests\.confirmations/.test(state));
 
