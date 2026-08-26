@@ -2787,6 +2787,29 @@ function pushProfile(patch){
   fetch('/api/onboarding/profile-update',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name:me,patch})}).catch(()=>{});
 }
+async function addNormalisedInterest(raw){
+  const v=String(raw||'').trim(); if(!v||!ESHEET||ESHEET.kind!=='interests') return;
+  try{
+    const existing=ESHEET.draft.map(x=>x.name);
+    const nr=await fetch('/api/onboarding/interest-normalize',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text:v,existing:existing,lang:(LANG==='ru'?'ru':'en')})}).then(x=>x.json());
+    if(nr.status==='duplicate'){ toast(T('Уже есть в интересах','Already in your interests')); return; }
+    const opts=Array.isArray(nr.options)?nr.options:[];
+    if(!opts.length){ toast(nr.error||T('Не удалось уточнить интерес','Could not clarify that interest')); return; }
+    let pick=opts[0];
+    if(opts.length>1){
+      const answer=prompt((nr.question||T('Как записать этот интерес?','How should this interest be saved?'))+'\n'+
+        opts.map((o,i)=>(i+1)+'. '+o.label).join('\n'),'1');
+      const idx=parseInt(answer||'',10)-1; if(!(idx>=0&&idx<opts.length)) return; pick=opts[idx];
+    } else if(!confirm(T('Сохранить как «'+pick.label+'»?','Save as “'+pick.label+'”?'))) return;
+    const cr=await fetch('/api/onboarding/interest-confirm',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:(DATA.name||''),token:pick.token})}).then(x=>x.json());
+    if(!cr.ok) throw new Error(cr.error||'confirm failed');
+    const key=cr.canonical||pick.canonical;
+    if(!ESHEET.draft.some(x=>x.name.toLowerCase()===key.toLowerCase())) ESHEET.draft.push({name:key,used:true});
+    render();
+  }catch(e){ toast(T('Ничего не сохранено. Попробуй ещё раз.','Nothing was saved. Try again.')); }
+}
 const _LANG_NAMES={en:['Английский','English'],es:['Испанский','Spanish'],ru:['Русский','Russian'],
   fr:['Французский','French'],de:['Немецкий','German'],it:['Итальянский','Italian'],
   ca:['Каталанский','Catalan'],pt:['Португальский','Portuguese'],uk:['Украинский','Ukrainian'],
@@ -7449,8 +7472,7 @@ function doAct(act, ds){
     case 'esheet-int': { const d=ESHEET.draft[+ds.v]; if(d) d.used=!d.used; render(); break; }
     case 'esheet-int-del': { ESHEET.draft.splice(+ds.v,1); render(); break; }
     case 'esheet-int-add': { const el=document.getElementById('eshAdd'), v=el?el.value.trim():'';
-      if(v && !ESHEET.draft.some(x=>x.name.toLowerCase()===v.toLowerCase())) ESHEET.draft.push({name:v,used:true});
-      render(); break; }
+      addNormalisedInterest(v); break; }
     // Vibe/depth moved out of the sheet onto the screen itself (the sheet is prose only now), so
     // they toggle DATA directly — and `vibe` is a whitelisted field, so the store follows.
     // These chips are DISPLAY only. They used to push on[0] — the first still-ticked chip in list

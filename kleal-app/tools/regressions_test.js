@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 require('./time_input_test').run();
+require('./interest_normalization_test');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -1733,7 +1734,8 @@ console.log('\nистория даёт интересы, заголовок гр
   // Ничего не добавляется само: интересы, проставленные за человека, это ярлыки, которых он не
   // выбирал. Ровно то же правило, что у редактора профиля, — там тоже сперва подтверждение.
   check('добавляет только подтверждённое',
-    /suggest\.filter\(\(x\) => picked\[x\.key\]\)\.map/.test(pers));
+    /const chosen = suggest\.filter\(\(x\) => picked\[x\.key\]\)/.test(pers) &&
+    /profileApi\.confirmInterest/.test(pers) && /addConfirmedInterest/.test(pers));
   const pr = code('src/profile.ts');
   check('подтверждённое уходит и на сервер, а не только в телефон',
     /export async function addInterests[\s\S]{0,700}pushInterests\(\)/.test(pr));

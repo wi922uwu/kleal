@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image, TextInput,
+  View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image, TextInput, Modal,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -28,16 +28,19 @@ import { InterestChips } from '../src/components/InterestChips';
 import { labelOf, funnelWorthy } from '../src/interests-wheel';
 import { useLang, T, getLang , replyLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
-import { onboarding, agent } from '../src/api';
+import { onboarding, agent, profile as profileApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
 import { IconCheckCircle } from '../src/components/icons';
 import { color, radius as rad, type } from '../src/theme';
+import { addConfirmedInterest, explicitInterests } from '../src/profile';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string; photo?: string };
 /** Реплика в истории, которая уходит модели. Отличается от Msg: у неё роль, а не сторона экрана. */
 type Msg2 = { role: string; content: string };
+type InterestOption = { canonical: string; label: string; token: string };
+type InterestDialog = { status: string; question?: string; error?: string; canonical?: string; options: InterestOption[] };
 
 /** Порядок шагов — он же список допустимых значений для входа по ссылке. */
 const ORDER: StepId[] = ['start', 'basics', 'area', 'languages', 'hobbies', 'photo'];
@@ -81,6 +84,8 @@ export default function Chat() {
   // чистого листа. Иначе внутри них остаётся своё состояние: спрятанные кнопки первого кадра,
   // выбранные увлечения, набранный возраст — всё от предыдущей попытки, которой уже нет.
   const [runId, setRunId] = useState(0);
+  const [interestDialog, setInterestDialog] = useState<InterestDialog | null>(null);
+  const [interestBusy, setInterestBusy] = useState(false);
   const started = useRef(false);
 
   const say = useCallback((who: 'bot' | 'me', text: string, photo?: string) => {
@@ -186,6 +191,52 @@ export default function Chat() {
     botAfter(botLine);
   };
 
+  const normalizeOwnInterest = async (text: string) => {
+    const raw = String(text || '').trim();
+    if (!raw || interestBusy) return;
+    setInterestBusy(true);
+    try {
+      const r = await profileApi.normalizeInterest(raw, explicitInterests(getState().profile), replyLang());
+      setInterestDialog({
+        status: String(r.status || (r.ok ? 'ready' : 'unavailable')),
+        question: r.question,
+        error: r.error,
+        canonical: r.canonical,
+        options: Array.isArray(r.options) ? r.options : [],
+      });
+    } catch {
+      setInterestDialog({
+        status: 'unavailable', options: [],
+        error: T('Не удалось уточнить интерес. Ничего не сохранено — попробуй ещё раз.',
+                 'Could not clarify that interest. Nothing was saved — try again.'),
+      });
+    } finally {
+      setInterestBusy(false);
+    }
+  };
+
+  const confirmOwnInterest = async (option: InterestOption) => {
+    if (interestBusy) return;
+    setInterestBusy(true);
+    try {
+      const r = await profileApi.confirmInterest(String(getState().profile.name || ''), option.token);
+      if (!r.ok || !r.canonical || !r.token) throw new Error(r.error || 'confirmation failed');
+      if (getState().done && r.persisted !== true) throw new Error('profile interest was not persisted');
+      addConfirmedInterest(r.canonical, r.label || option.label, r.token);
+      setInterestDialog(null);
+      say('bot', T(`Добавила «${r.label || option.label}» в интересы.`,
+                   `Added “${r.label || option.label}” to your interests.`));
+    } catch {
+      setInterestDialog({
+        status: 'unavailable', options: [],
+        error: T('Подтверждение истекло или связь пропала. Ничего не сохранено — введи интерес ещё раз.',
+                 'The confirmation expired or the connection dropped. Nothing was saved — enter it again.'),
+      });
+    } finally {
+      setInterestBusy(false);
+    }
+  };
+
   /**
    * Ход разговора про интересы.
    *
@@ -289,9 +340,7 @@ export default function Chat() {
     // оставалась висеть под каждым вопросом агента. Теперь интерес просто добавляется и загорается
     // рядом с остальными, а разговор начинается по «Дальше».
     if (step === 'hobbies') {
-      const key = text.trim();
-      const cur: string[] = get('interests.explicit') || [];
-      if (key && !cur.includes(key)) set('interests.explicit', [...cur, key]);
+      normalizeOwnInterest(text);
       return;
     }
 
@@ -315,7 +364,8 @@ export default function Chat() {
   const pct = entry ? null : (STEP_PROGRESS[step] ?? 0);
 
   return (
-    <ChatShell
+    <>
+      <ChatShell
       ref={scroller}
       title={HEADER_TITLE()}
       pct={pct}
@@ -342,13 +392,47 @@ export default function Chat() {
           onDrag={setDragging}
           onDone={() => router.navigate('/summary')}
           startFunnel={startFunnel}
+          addOwnInterest={normalizeOwnInterest}
           funnel={{
             opts: funnelOpts, done: funnelDone, ask: funnelTurn, leave: leaveFunnel, more: moreInterests,
             ending: funnelEnding, askEnd, keepGoing: () => setFunnelEnding(false),
           }}
         />
       }
-    />
+      />
+      <Modal transparent visible={!!interestDialog} animationType="fade"
+             onRequestClose={() => !interestBusy && setInterestDialog(null)}>
+        <View style={s.interestScrim}>
+          <View style={s.interestSheet}>
+            <Text style={s.interestTitle}>
+              {interestDialog?.status === 'duplicate'
+                ? T('Уже есть в интересах', 'Already in your interests')
+                : T('Как записать этот интерес?', 'How should this interest be saved?')}
+            </Text>
+            <Text style={s.interestBody}>
+              {interestDialog?.status === 'duplicate'
+                ? T(`Этот интерес уже сохранён как «${interestDialog.canonical || ''}».`,
+                    `This interest is already saved as “${interestDialog.canonical || ''}”.`)
+                : interestDialog?.question || interestDialog?.error ||
+                  T('Выбери нейтральную формулировку. До подтверждения ничего не сохранится.',
+                    'Choose a neutral formulation. Nothing is saved until you confirm.')}
+            </Text>
+            {(interestDialog?.options || []).map((option) => (
+              <Pressable key={option.token} accessibilityRole="button"
+                         disabled={interestBusy} style={s.interestOption}
+                         onPress={() => confirmOwnInterest(option)}>
+                <Text style={s.interestOptionText}>{option.label}</Text>
+              </Pressable>
+            ))}
+            {interestBusy ? <ActivityIndicator color={color.primary} /> : null}
+            <Pressable accessibilityRole="button" disabled={interestBusy} style={s.interestCancel}
+                       onPress={() => setInterestDialog(null)}>
+              <Text style={s.interestCancelText}>{T('Отмена', 'Cancel')}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -399,7 +483,7 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
 }
 
 function StepWidget({
-  step, say, goto, onDone, onDrag, startFunnel, funnel,
+  step, say, goto, onDone, onDrag, startFunnel, addOwnInterest, funnel,
 }: {
   step: StepId;
   say: (who: 'bot' | 'me', text: string, photo?: string) => void;
@@ -407,6 +491,7 @@ function StepWidget({
   onDone: () => void;
   onDrag: (dragging: boolean) => void;
   startFunnel: (picks: string[]) => void;
+  addOwnInterest: (text: string) => void;
   funnel: FunnelBits;
 }) {
   const st = useOnb();
@@ -418,7 +503,8 @@ function StepWidget({
   if (step === 'area') return <AreaW say={say} goto={goto} onDrag={onDrag} />;
   if (step === 'languages') return <LangW say={say} goto={goto} />;
   // onDrag и здесь: колесо интересов крутится тем же жестом, каким лента прокручивается.
-  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel} leaveFunnel={funnel.leave} />;
+  if (step === 'hobbies') return <HobbyW say={say} startFunnel={startFunnel}
+                                              addOwnInterest={addOwnInterest} leaveFunnel={funnel.leave} />;
   if (step === 'funnel') return <FunnelW {...funnel} say={say} />;
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -686,7 +772,7 @@ function FunnelBrow({ onPress }: { onPress: () => void }) {
  * проявлялось; кнопка «Добавить интересы» в профиле делает вход обычным делом.
  */
 /** `onDrag` больше не принимается: чипы не крутятся, отбирать прокрутку у ленты не за что. */
-function HobbyW({ say, startFunnel, leaveFunnel }: any) {
+function HobbyW({ say, startFunnel, addOwnInterest, leaveFunnel }: any) {
   const st = useOnb();
   const [ownOpen, setOwnOpen] = useState(false);
   const [had] = useState<string[]>(() => get('interests.explicit') || []);
@@ -742,7 +828,7 @@ function HobbyW({ say, startFunnel, leaveFunnel }: any) {
         <OwnField
           placeholder={OWN_INPUT.hobbyPlaceholder()}
           onAdd={(v) => {
-            setSel((p) => (p.includes(v) ? p : [...p, v]));
+            addOwnInterest(v);
             setOwnOpen(false);
           }}
         />
@@ -895,6 +981,23 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   ownAddText: { ...type.button, color: color.onPrimary } as any,
+  interestScrim: {
+    flex: 1, backgroundColor: 'rgba(16,18,24,0.42)', paddingHorizontal: 20,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  interestSheet: {
+    width: '100%', maxWidth: 440, borderRadius: rad.lg, backgroundColor: color.card,
+    padding: 20, gap: 12,
+  },
+  interestTitle: { ...type.title, color: color.fg } as any,
+  interestBody: { ...type.bodySmall, color: color.muted } as any,
+  interestOption: {
+    minHeight: 48, borderRadius: rad.full, backgroundColor: color.primary,
+    paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center',
+  },
+  interestOptionText: { ...type.button, color: color.onPrimary } as any,
+  interestCancel: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  interestCancelText: { ...type.button, color: color.muted } as any,
   restart: { ...type.caption, color: color.primary } as any,
   chip: {
     height: 38, paddingHorizontal: 14, borderRadius: rad.full, borderWidth: 1,

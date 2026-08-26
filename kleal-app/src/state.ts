@@ -27,7 +27,13 @@ export type Profile = {
     maxDistanceKm?: number;
   };
   languages?: { comfortable?: string[] };
-  interests?: { explicit?: string[] };
+  interests?: {
+    explicit?: string[];
+    /** Localised labels for canonical free-text keys that are not in the built-in wheel. */
+    labels?: Record<string, string>;
+    /** Short-lived receipts used only to validate first registration; never stored as profile data. */
+    confirmations?: Record<string, string>;
+  };
   safety?: { publicPlacesOnly?: boolean; hideExactLocation?: boolean; verifiedOnly?: boolean };
   /** Часовой пояс именем зоны (Europe/Madrid). Спрашивать нечего — устройство знает сам. */
   tz?: string;
@@ -257,6 +263,10 @@ export function profileForRegister(): Profile {
 export function profileForAttach(): Profile {
   const p: Profile = { ...state.profile, tz: deviceTz() };
   delete p.photo;
+  if (p.interests) {
+    p.interests = { ...p.interests };
+    delete p.interests.confirmations;
+  }
   return p;
 }
 
