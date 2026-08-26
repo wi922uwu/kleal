@@ -335,6 +335,20 @@ export async function addInterests(keys: string[]): Promise<boolean> {
   return pushInterests();
 }
 
+/** Apply only a server-validated proposal after the person tapped its confirmation button. */
+export function addConfirmedInterest(canonical: string, label: string, token: string): boolean {
+  const key = String(canonical || '').trim().toLowerCase();
+  if (!key || !token) return false;
+  const p = getState().profile as any;
+  const have = explicitInterests(p);
+  if (have.some((x) => x.trim().toLowerCase() === key)) return false;
+  set('interests.explicit', [...have, key]);
+  set('interests.labels', { ...((p.interests || {}).labels || {}), [key]: String(label || key).trim() || key });
+  set('interests.confirmations', { ...((p.interests || {}).confirmations || {}), [key]: token });
+  _sentInterests = null;
+  return true;
+}
+
 export const HUB_ROWS: HubRow[] = [
   {
     id: 'interests', kind: 'screen',
@@ -564,6 +578,7 @@ export function profileData(op: Profile | any): ProfileData {
   // Тот же класс ошибки, что с `languages`: одно поле, две формы, и молчаливо пустой результат
   // вместо ошибки. Поэтому здесь не «какая форма правильная», а «понимаем обе».
   const ints = explicitInterests(op);
+  const interestLabelsByKey = (!Array.isArray(op.interests) && op.interests?.labels) || {};
   const rolesRaw = (op.interests && op.interests.roles) || {};
   const exp = (op.interests && op.interests.experienceByInterest) || {};
   const games = (op.domains && op.domains.games) || {};
@@ -605,7 +620,7 @@ export function profileData(op: Profile | any): ProfileData {
     // рассказал ли он о них хоть что-то сверх названия.
     const conf: Interest['conf'] = i < 2 ? 'High' : kv.length ? 'Medium' : 'Low';
     const used = !(op.interests && op.interests.unused && op.interests.unused.includes(name));
-    return { name, label: interestLabel(name), conf, used, kv };
+    return { name, label: String(interestLabelsByKey[name] || interestLabel(name)), conf, used, kv };
   });
 
   const basics: Row[] = [];

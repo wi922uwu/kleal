@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image, TextInput,
+  View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image, TextInput, Modal,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -26,7 +26,8 @@ import {
 import { interestLabel, registerInterestLabels } from '../src/interest-label';
 import { useLang, T, getLang , replyLang } from '../src/i18n';
 import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
-import { onboarding, agent, buddy as buddyApi } from '../src/api';
+import { onboarding, agent, buddy as buddyApi, profile as profileApi } from '../src/api';
+import { addConfirmedInterest, explicitInterests } from '../src/profile';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
@@ -39,6 +40,16 @@ import { color, radius as rad, type } from '../src/theme';
 type Msg = { who: 'bot' | 'me'; text: string; at: string; photo?: string };
 /** Реплика в истории, которая уходит модели. Отличается от Msg: у неё роль, а не сторона экрана. */
 type Msg2 = { role: string; content: string };
+type BuddyInterest = { key?: string; label?: string; why?: string; replaces?: string };
+type InterestOption = { canonical: string; label: string; token: string };
+type InterestDialog = {
+  status: string;
+  question?: string;
+  error?: string;
+  canonical?: string;
+  options: InterestOption[];
+  source: BuddyInterest;
+};
 
 /** Порядок шагов — он же список допустимых значений для входа по ссылке. */
 const ORDER: StepId[] = ['start', 'basics', 'area', 'languages', 'hobbies', 'photo'];
@@ -85,6 +96,11 @@ export default function Chat() {
    * и так видит на экране «Интересы», откуда пришёл.
    */
   const [justAdded, setJustAdded] = useState<string[]>([]);
+  /** Buddy discovers candidates, but discovery is not consent. They wait here until the person
+   *  confirms each canonical formulation in the modal. */
+  const pendingInterests = useRef<BuddyInterest[]>([]);
+  const [interestDialog, setInterestDialog] = useState<InterestDialog | null>(null);
+  const [interestBusy, setInterestBusy] = useState(false);
   // Лента стоит, пока крутят кольцо возраста: иначе один и тот же жест двигает и то, и другое.
   const [dragging, setDragging] = useState(false);
   /*
@@ -274,6 +290,86 @@ export default function Chat() {
     botLines([STEP_PHOTO.greet(st.profile.name || ''), STEP_PHOTO.ask()]);
   };
 
+  const openInterestProposal = async (source?: BuddyInterest) => {
+    const item = source || pendingInterests.current.shift();
+    if (!item) {
+      setInterestDialog(null);
+      return;
+    }
+    const raw = String(item.why || item.label || item.key || '').trim();
+    if (!raw) {
+      await openInterestProposal();
+      return;
+    }
+    setInterestBusy(true);
+    try {
+      const r = await profileApi.normalizeInterest(raw, explicitInterests(getState().profile), replyLang());
+      setInterestDialog({
+        status: String(r.status || (r.ok ? 'ready' : 'unavailable')),
+        question: r.question,
+        error: r.error,
+        canonical: r.canonical,
+        options: Array.isArray(r.options) ? r.options : [],
+        source: item,
+      });
+    } catch {
+      setInterestDialog({
+        status: 'unavailable', options: [], source: item,
+        error: T('Не удалось уточнить интерес. Ничего не сохранено — попробуй ещё раз.',
+                 'Could not clarify that interest. Nothing was saved — try again.'),
+      });
+    } finally {
+      setInterestBusy(false);
+    }
+  };
+
+  const queueInterestProposals = async (items: BuddyInterest[]) => {
+    const clean = items.filter((x) => String(x?.why || x?.label || x?.key || '').trim());
+    pendingInterests.current = clean.slice(1);
+    if (clean[0]) await openInterestProposal(clean[0]);
+  };
+
+  const closeInterestProposal = () => {
+    if (interestBusy) return;
+    setInterestDialog(null);
+    void openInterestProposal();
+  };
+
+  const confirmInterestProposal = async (option: InterestOption) => {
+    if (!interestDialog || interestBusy) return;
+    const source = interestDialog.source;
+    setInterestBusy(true);
+    try {
+      const r = await profileApi.confirmInterest(String(getState().profile.name || ''), option.token);
+      if (!r.ok || !r.canonical || !r.token) throw new Error(r.error || 'confirmation failed');
+      if (getState().done && r.persisted !== true) throw new Error('profile interest was not persisted');
+
+      const old = String(source.replaces || '').trim();
+      if (old) {
+        const current = explicitInterests(getState().profile).filter((x) => x !== old);
+        set('interests.explicit', current);
+        setJustAdded((xs) => xs.filter((x) => x !== old));
+      }
+      const label = r.label || option.label;
+      const added = addConfirmedInterest(r.canonical, label, r.token);
+      registerInterestLabels({ [r.canonical]: label }, getLang());
+      if (added) {
+        setJustAdded((xs) => [...xs.filter((x) => x !== r.canonical), r.canonical!]);
+        say('bot', T(`Добавила «${label}» в интересы.`, `Added “${label}” to your interests.`));
+      }
+      setInterestDialog(null);
+      await openInterestProposal();
+    } catch {
+      setInterestDialog({
+        ...interestDialog, status: 'unavailable', options: [],
+        error: T('Подтверждение истекло или связь пропала. Ничего не сохранено — введи интерес ещё раз.',
+                 'The confirmation expired or the connection dropped. Nothing was saved — enter it again.'),
+      });
+    } finally {
+      setInterestBusy(false);
+    }
+  };
+
   /** Свободный текст — сюда отвечает модель, а не сценарий. Поле ввода живёт в Composer. */
   const send = async (text: string) => {
     say('me', text);
@@ -305,31 +401,12 @@ export default function Chat() {
         say('bot', reply);
         hobbyThread.current = [...next, { role: 'assistant', content: reply }];
         setChips(Array.isArray((r as any)?.chips) ? (r as any).chips.map(String) : []);
-        const added = Array.isArray(r?.added) ? r!.added! : [];
+        const added = (Array.isArray(r?.added) ? r!.added! : []) as BuddyInterest[];
         if (added.length) {
-          // УТОЧНЕНИЕ ЗАМЕНЯЕТ, А НЕ ДОБАВЛЯЕТ. «рыбалка» -> «рыбалка на море» это один интерес,
-          // ставший точнее; без этого на экране копились три чипа про одно и то же.
-          let cur: string[] = get('interests.explicit') || [];
-          for (const a of added) {
-            const key = String(a.key || '').trim();
-            if (!key) continue;
-            const old = String(a.replaces || '').trim();
-            if (old) cur = cur.filter((x) => x !== old);
-            if (!cur.includes(key)) cur = [...cur, key];
-          }
-          set('interests.explicit', cur);
-          setJustAdded((p) => {
-            const keys = added.map((a) => String(a.key || '').trim()).filter(Boolean);
-            const gone = added.map((a) => String(a.replaces || '').trim()).filter(Boolean);
-            const kept = p.filter((k) => !gone.includes(k) && !keys.includes(k));
-            return [...kept, ...keys];
-          });
-          // Подпись — слова человека. Кладём в тот же реестр, куда сгружаются словари сервера,
-          // иначе до следующего чтения профиля чип показывал бы английский ключ.
-          const lang = getLang();
-          registerInterestLabels(
-            Object.fromEntries(added.map((a) => [String(a.key), String(a.label || a.key)])), lang
-          );
+          // Buddy may discover an interest and quote the exact words, but it is not a writer. Each
+          // candidate crosses the normalizer and an explicit confirmation modal before local state
+          // or the database changes. Multiple deck picks are confirmed sequentially.
+          await queueInterestProposals(added);
         }
       } catch {
         setTyping(false);
@@ -358,51 +435,93 @@ export default function Chat() {
   const pct = entry ? null : (STEP_PROGRESS[step] ?? 0);
 
   return (
-    <ChatShell
-      ref={scroller}
-      title={HEADER_TITLE()}
-      pct={pct}
-      thread={thread}
-      typing={typing}
-      onBack={() => router.back()}
-      onSend={send}
-      scrollEnabled={!dragging}
-      headerExtra={
-        hasProgress(st.profile) ? (
-          <Pressable accessibilityRole="button" onPress={restart} hitSlop={10}>
-            <Text style={s.restart}>{RESUME.restart()}</Text>
-          </Pressable>
-        ) : null
-      }
-      widget={queue ? null : (
-        <StepWidget
-          key={runId}
-          step={step}
-          say={say}
-          goto={goto}
-          bot={botLines}
-          onDrag={setDragging}
-          onDone={() => router.navigate('/summary')}
-          leave={leaveFunnel}
-          fork={fork}
-          chips={chips}
-          added={justAdded}
-          onFork={onFork}
-          onChip={send}
-          deckSeen={deckSeen}
-          deckOn={deckOn}
-          onDeckMore={() => setDeckOn(true)}
-          onDeckPass={(picked: string[], seen: string[]) => {
-            setDeckSeen((p) => [...p, ...seen]);
-            setDeckOn(false);
-            // В разговор уходит ОДНА реплика на весь заход — так агент отвечает один раз и по
-            // всему списку сразу, а не вопросом на каждую карту.
-            if (picked.length) send(picked.join(', '));
-          }}
-          onDrop={(k: string) => setJustAdded((p) => p.filter((x) => x !== k))}
-        />
-      )}
-    />
+    <>
+      <ChatShell
+        ref={scroller}
+        title={HEADER_TITLE()}
+        pct={pct}
+        thread={thread}
+        typing={typing}
+        onBack={() => router.back()}
+        onSend={send}
+        scrollEnabled={!dragging}
+        headerExtra={
+          hasProgress(st.profile) ? (
+            <Pressable accessibilityRole="button" onPress={restart} hitSlop={10}>
+              <Text style={s.restart}>{RESUME.restart()}</Text>
+            </Pressable>
+          ) : null
+        }
+        widget={queue ? null : (
+          <StepWidget
+            key={runId}
+            step={step}
+            say={say}
+            goto={goto}
+            bot={botLines}
+            onDrag={setDragging}
+            onDone={() => router.navigate('/summary')}
+            leave={leaveFunnel}
+            fork={fork}
+            chips={chips}
+            added={justAdded}
+            onFork={onFork}
+            onChip={send}
+            deckSeen={deckSeen}
+            deckOn={deckOn}
+            onDeckMore={() => setDeckOn(true)}
+            onDeckPass={(picked: string[], seen: string[]) => {
+              setDeckSeen((p) => [...p, ...seen]);
+              setDeckOn(false);
+              // В разговор уходит ОДНА реплика на весь заход — так агент отвечает один раз и по
+              // всему списку сразу, а не вопросом на каждую карту.
+              if (picked.length) send(picked.join(', '));
+            }}
+            onDrop={(k: string) => setJustAdded((p) => p.filter((x) => x !== k))}
+          />
+        )}
+      />
+      <Modal transparent visible={!!interestDialog} animationType="fade"
+             onRequestClose={closeInterestProposal}>
+        <View style={s.interestScrim}>
+          <View style={s.interestSheet}>
+            <Text style={s.interestTitle}>
+              {interestDialog?.status === 'duplicate'
+                ? T('Уже есть в интересах', 'Already in your interests')
+                : T('Как записать этот интерес?', 'How should this interest be saved?')}
+            </Text>
+            <Text style={s.interestBody}>
+              {interestDialog?.status === 'duplicate'
+                ? T(`Этот интерес уже сохранён как «${interestDialog.canonical || ''}».`,
+                    `This interest is already saved as “${interestDialog.canonical || ''}”.`)
+                : interestDialog?.question || interestDialog?.error ||
+                  T('Выбери нейтральную формулировку. До подтверждения ничего не сохранится.',
+                    'Choose a neutral formulation. Nothing is saved until you confirm.')}
+            </Text>
+            {(interestDialog?.options || []).map((option) => (
+              <Pressable key={option.token} accessibilityRole="button"
+                         disabled={interestBusy} style={s.interestOption}
+                         onPress={() => confirmInterestProposal(option)}>
+                <Text style={s.interestOptionText}>{option.label}</Text>
+              </Pressable>
+            ))}
+            {interestDialog?.status === 'unavailable' ? (
+              <Pressable accessibilityRole="button" disabled={interestBusy} style={s.interestOption}
+                         onPress={() => interestDialog && openInterestProposal(interestDialog.source)}>
+                <Text style={s.interestOptionText}>{T('Повторить', 'Try again')}</Text>
+              </Pressable>
+            ) : null}
+            {interestBusy ? <ActivityIndicator color={color.primary} /> : null}
+            <Pressable accessibilityRole="button" disabled={interestBusy} style={s.interestCancel}
+                       onPress={closeInterestProposal}>
+              <Text style={s.interestCancelText}>
+                {interestDialog?.options?.length ? T('Отмена', 'Cancel') : T('Продолжить', 'Continue')}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -874,6 +993,21 @@ const s = StyleSheet.create({
   },
   ownAddText: { ...type.button, color: color.onPrimary } as any,
   restart: { ...type.caption, color: color.primary } as any,
+  interestScrim: {
+    flex: 1, backgroundColor: color.scrim, justifyContent: 'center', padding: 24,
+  },
+  interestSheet: {
+    backgroundColor: color.card, borderRadius: rad.lg, padding: 20, gap: 12,
+  },
+  interestTitle: { ...type.title, color: color.fg } as any,
+  interestBody: { ...type.bodySmall, color: color.muted } as any,
+  interestOption: {
+    minHeight: 48, borderRadius: rad.full, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16,
+  },
+  interestOptionText: { ...type.button, color: color.onPrimary, textAlign: 'center' } as any,
+  interestCancel: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  interestCancelText: { ...type.button, color: color.muted } as any,
   /** Высота из борда: главная кнопка шага ниже входной — 48 против 56. */
   cta: { height: 48 },
 

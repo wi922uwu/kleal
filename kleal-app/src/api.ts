@@ -179,7 +179,7 @@ const LLM_TIMEOUT_MS = 120000;
  * человеческого терпения.
  */
 const RANK_TIMEOUT_MS = 25000;
-const LLM_PATHS = /\/api\/(buddy|onboarding\/chat|agent\/plan)/;
+const LLM_PATHS = /\/api\/(buddy|onboarding\/(?:chat|interest-normalize)|agent\/plan)/;
 const RANK_PATHS = /\/api\/agent\/(match|expand)/;
 
 const timeoutFor = (path: string) =>
@@ -385,6 +385,23 @@ export const profile = {
    */
   update: (name: string, patch: Json) =>
     api.post<{ ok?: boolean; error?: string }>('/api/onboarding/profile-update', { name, patch }),
+
+  /** Free text is a proposal until the person confirms one canonical formulation. */
+  normalizeInterest: (text: string, existing: string[], lang: string) =>
+    api.post<{
+      ok?: boolean;
+      status?: 'ready' | 'clarify' | 'duplicate' | 'invalid' | 'unavailable';
+      canonical?: string;
+      question?: string;
+      error?: string;
+      options?: { canonical: string; label: string; token: string }[];
+    }>('/api/onboarding/interest-normalize', { text, existing, lang }),
+
+  /** This second request is the explicit-confirmation boundary and the only novel-interest writer. */
+  confirmInterest: (name: string, token: string) =>
+    api.post<{ ok?: boolean; error?: string; canonical?: string; label?: string; token?: string; persisted?: boolean }>(
+      '/api/onboarding/interest-confirm', { name, token }
+    ),
 
   /** Доступность (§4.4 receiving policy). Без `receiving` — просто чтение текущего статуса. */
   receiving: (name: string, receiving: Json = {}) =>

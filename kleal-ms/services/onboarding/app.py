@@ -13,6 +13,7 @@ import db                                      # хранилище: postgres и
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send, send_json, read_json
 import mailer                                  # письмо с кодом: провайдер выбирается окружением
+import interest_normalization as interest_norm
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = config.PORTS["onboarding"]
@@ -383,9 +384,16 @@ def _v2_union_interests(prior, fresh, merged):
         if isinstance(v, str):
             return [v]
         return [x for x in (v or []) if isinstance(x, str) and x.strip()]
+    prior_items = lst(prior)
+    prior_keys = {x.strip().lower() for x in prior_items}
     out, seen = [], set()
-    for x in lst(prior) + lst(fresh) + lst(merged):
+    for x in prior_items + lst(fresh) + lst(merged):
         k = x.strip().lower()
+        # Extraction discovers text; it does not express consent. Only existing values and governed
+        # taxonomy keys may survive this legacy merge path. Novel free text must cross the explicit
+        # interest-normalize -> interest-confirm boundary first.
+        if k not in prior_keys and not interest_norm.trusted_interest(k):
+            continue
         if k and k not in seen:
             seen.add(k)
             out.append(x.strip())
@@ -2190,7 +2198,12 @@ def attach_profile(login, name, profile=None):
         if isinstance(profile, dict):
             # photo is a data URL and can be megabytes; it already travels through shared-origin
             # localStorage, so it has no business in the credential file.
-            accs[key]["profile"] = {k: v for k, v in profile.items() if k != "photo"}
+            clean_profile = {k: v for k, v in profile.items() if k != "photo"}
+            # Confirmation receipts are short-lived capabilities, not durable profile facts.
+            if isinstance(clean_profile.get("interests"), dict):
+                clean_profile["interests"] = dict(clean_profile["interests"])
+                clean_profile["interests"].pop("confirmations", None)
+            accs[key]["profile"] = clean_profile
         _write_accounts(accs)
     return {"ok": True}
 
@@ -2816,15 +2829,6 @@ def update_user(name, patch):
             clean.pop("persona")          # not a dict: leave whatever the row already holds
         else:
             clean["persona"] = cp
-    # Интересы, дописанные ПОСЛЕ онбординга, канонизируются ровно так же, как при регистрации.
-    #
-    # Здесь этого не было, и получалась асимметрия, которую никто бы не заподозрил: тот же самый
-    # интерес, добавленный в анкете, получал английскую ручку («настолки» → boardgames), а
-    # добавленный потом из профиля — не получал ничего и оставался виден только тому, кто наберёт
-    # то же слово. Проверено на стенде двумя одинаковыми людьми: у зарегистрированного в строке
-    # ['настолки', 'boardgames'], у дописавшего — ['настолки'].
-    if isinstance(clean.get("interests"), list):
-        clean["interests"] = _canon_interests(clean["interests"]) or clean["interests"]
     if not clean:
         return {"ok": False, "error": "no editable fields in patch"}
     with _REG_LOCK:
@@ -2832,13 +2836,61 @@ def update_user(name, patch):
         row = next((x for x in users if str(x.get("name", "")).strip().lower() == key), None)
         if row is None:
             return {"ok": False, "error": "unknown user"}
+        if isinstance(clean.get("interests"), list):
+            requested = [str(x).strip().lower() for x in clean["interests"] if str(x).strip()]
+            have = {str(x).strip().lower() for x in (row.get("interests") or []) if str(x).strip()}
+            # A full-list profile sync may remove existing values or add governed catalogue keys.
+            # Novel free text is accepted only after interest-confirm has already persisted the
+            # canonical key in this row. A direct API request cannot bypass the confirmation UI.
+            rejected = [x for x in requested if x not in have and not interest_norm.trusted_interest(x)]
+            if rejected:
+                return {"ok": False, "error": "unconfirmed interests", "interests": rejected[:6]}
+            clean["interests"] = _canon_interests(requested) or requested
         row.update(clean)
         _persist_users(users, touched=row)
     return {"ok": True, "user": row}
 
-def register_profile(profile):
+
+def confirm_interest(name, token, owner_key=""):
+    """Persist one schema-validated proposal after its owner explicitly confirms it."""
+    rec = interest_norm.mark_confirmed(token, owner=owner_key)
+    if not rec:
+        return {"ok": False, "error": "interest proposal expired"}
+    canonical = str(rec.get("canonical") or "").strip().lower()
+    if not canonical:
+        return {"ok": False, "error": "invalid interest proposal"}
+    key = str(name or "").strip().lower()
+    if not key:
+        # During onboarding no user row exists yet. The receipt travels only in device state and is
+        # validated again by register_profile before the first database write.
+        return {"ok": True, "canonical": canonical, "label": rec.get("label"), "token": token,
+                "persisted": False}
+    with _REG_LOCK:
+        users = _read_users()
+        row = next((x for x in users if str(x.get("name", "")).strip().lower() == key), None)
+        if row is None:
+            return {"ok": True, "canonical": canonical, "label": rec.get("label"), "token": token,
+                    "persisted": False}
+        current = [str(x).strip().lower() for x in (row.get("interests") or []) if str(x).strip()]
+        if canonical not in current:
+            if len(current) >= INTERESTS_MAX:
+                return {"ok": False, "error": "interest limit reached"}
+            current.append(canonical)
+        row["interests"] = _canon_interests(current) or current
+        _persist_users(users, touched=row)
+    return {"ok": True, "canonical": canonical, "label": rec.get("label"), "token": token,
+            "persisted": True, "user": row}
+
+
+def register_profile(profile, owner_key=""):
     """Append/replace this person in the shared store (de-dupe by name). Atomic write."""
     u = _profile_to_user(profile)
+    ints = (profile or {}).get("interests") or {}
+    confirmations = ints.get("confirmations") if isinstance(ints, dict) else {}
+    confirmed_input = list(u.get("interests") or [])
+    invalid = interest_norm.validate_confirmations(confirmed_input, confirmations, owner=owner_key)
+    if invalid:
+        raise ValueError("unconfirmed interests: " + ", ".join(invalid[:6]))
     u["interests"] = _canon_interests(u.get("interests")) or u.get("interests")
     # The photo arrives as a data URL and becomes a file. Re-onboarding replaces the whole row, so a
     # second pass that carries no photo must KEEP the one already on disk — same reason the story is
@@ -2861,6 +2913,7 @@ def register_profile(profile):
         users = [x for x in users if str(x.get("name", "")).strip().lower() != key]  # replace prior onboarding of same name
         users.append(u)
         _persist_users(users, touched=u)
+    interest_norm.validate_confirmations(confirmed_input, confirmations, consume=True, owner=owner_key)
     return u
 
 
@@ -3069,7 +3122,9 @@ class H(BaseHTTPRequestHandler):
             # everyone who finishes onboarding is written into the shared user store (matchable + in admin)
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             try:
-                send_json(self, 200, {"ok": True, "user": register_profile(prof)})
+                owner = session_owner(_bearer(self))
+                send_json(self, 200, {"ok": True, "user": register_profile(
+                    prof, (owner or {}).get("_key") or "")})
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         elif p == "/api/onboarding/profile":
@@ -3085,6 +3140,24 @@ class H(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             send_json(self, 200, _resp)
+        elif p == "/api/onboarding/interest-normalize":
+            owner = session_owner(_bearer(self))
+            if not owner:
+                return send_json(self, 200, {"ok": False, "status": "invalid", "error": "no session"})
+            existing = body.get("existing") if isinstance(body.get("existing"), list) else []
+            send_json(self, 200, interest_norm.normalize(
+                body.get("text"), existing, body.get("lang") or "en", llm_complete, MODEL_ID,
+                owner.get("_key") or ""))
+        elif p == "/api/onboarding/interest-confirm":
+            owner = session_owner(_bearer(self))
+            if not owner:
+                return send_json(self, 200, {"ok": False, "error": "no session"})
+            requested_name = str(body.get("name") or "").strip()
+            owned_name = str(owner.get("name") or "").strip()
+            if requested_name and owned_name and requested_name.lower() != owned_name.lower():
+                return send_json(self, 200, {"ok": False, "error": "profile does not belong to session"})
+            send_json(self, 200, confirm_interest(
+                requested_name, body.get("token"), owner.get("_key") or ""))
         elif p == "/api/onboarding/profile-update":
             try:
                 send_json(self, 200, update_user(body.get("name"),
