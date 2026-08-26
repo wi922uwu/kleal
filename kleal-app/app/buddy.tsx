@@ -76,6 +76,14 @@ export default function Buddy() {
     return () => clearTimeout(id);
   }, [thread.length, typing]);
 
+  // Лист выехал — ждать больше нечего, точки гаснут. Не в тот же такт, что `setSheet(true)`:
+  // им надо продержаться ровно ту долю секунды, пока идёт выезд.
+  useEffect(() => {
+    if (!sheet) return;
+    const id = setTimeout(() => setTyping(false), 260);
+    return () => clearTimeout(id);
+  }, [sheet]);
+
   const profile = () => ({
     name: st.profile.name, age: st.profile.age, city: st.profile.city,
     interests: st.profile.interests?.explicit || [],
@@ -109,6 +117,13 @@ export default function Buddy() {
       setTurns(reply ? [...next, { role: 'assistant', content: reply }] : next);
       setTopic(text);
       setWhat(label);
+      /*
+        ТОЧКИ ГОРЯТ, ПОКА ОКНО НЕ ВЫШЛО. Реплику мы только что сняли с экрана, а лист выезжает не
+        мгновенно — и между этими двумя моментами оставалась пустота: текст был и пропал, а взамен
+        пока ничего. Со стороны это читается как «приложение подвисло», хотя оно как раз работает.
+        Те же точки, что и на ожидании ответа: одно и то же ожидание — один и тот же знак.
+      */
+      setTyping(true);
       setSheet(true);
       return;
     }

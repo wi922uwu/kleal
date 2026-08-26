@@ -704,6 +704,12 @@ _GENERIC_TOPIC = {"sport", "sports", "game", "games", "gaming", "activity", "act
                   "хобби", "встреча", "встречи", "люди", "компания", "развлечения",
                   "разговор", "разговоры", "беседа", "общение", "conversation", "conversations",
                   "discussion", "conversación", "conversacion", "charla", "tertulia",
+                  # «обсуждение» тут не хватало, и оно доехало до экрана: попап сказал «Похоже, ты
+                  # хочешь поговорить про обсуждение» — предметом разговора оказалось слово
+                  # «разговор». Снято с телефона. Соседние формы добавлены заодно: список и
+                  # существует ровно затем, чтобы способ назвать беседу не подменял её предмет.
+                  "обсуждение", "обсуждения", "дискуссия", "дискуссии", "болтовня",
+                  "chat", "chatting", "chatter", "discusión", "discusion", "plática", "platica",
                   # verbs describing HOW, not WHAT — filtration emits them alongside the real topic
                   "play", "playing", "talk", "talking", "discussing", "drinking", "eating",
                   "watching", "hanging", "hang", "hangout", "chill", "joining", "learning",
@@ -1908,38 +1914,19 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
     out["intent"] = intent
     out["category"] = cat
 
-    if not intent.get("rankable"):
-        # Categorised fine, but the ranker has no vocabulary for it yet (e.g. "labubu"). Say so — do not
-        # silently return an empty list, and do not match the wrong people just to show a card.
-        out["match"] = {"intent": intent, "top": None, "candidates": [], "fallback": None}
-        out["reply"] = (reply + "\n\n" + _NEW.get(lang, _NEW["en"]) % (intent.get("category") or "?")).strip()
-        return out
-
-    block, cards = run_match(intent, sig, uid, lang, owner=(profile or {}).get("name"))
-    out["match"] = block
-    out["matches"] = cards
-    if block.get("top"):
-        t = block["top"]
-        # prefer the localized reason the matcher already produced (reasons_ru/en); humanize is the
-        # legacy fallback and can leak untranslated interest words into an English reply
-        why = (t.get("reason") or humanize(t.get("reasons"), lang)
-               or ("хороший фит" if lang == "ru" else "a great fit"))
-        band = t.get("band")
-        if block.get("broadened"):
-            # Exact search found nobody; these are related-activity people. Say so — never present
-            # a broadened result as if it were a match for what was asked.
-            names = ", ".join(str(c.get("name")) for c in (block.get("candidates") or [])[:3]) or t.get("name")
-            line = _BROADENED.get(lang, _BROADENED["en"]) % names
-        elif band in ("especially_close", "strong_option"):
-            line = _CLICK.get(lang, _CLICK["en"]) % (t.get("name"), why)          # confident: real fit + reachable
-        elif band == "broader_option":
-            line = _BROADER.get(lang, _BROADER["en"]) % (t.get("name"), why)        # honest: broader, not perfect
-        else:                                                   # needs_clarification / unknown
-            line = _NEEDCLAR.get(lang, _NEEDCLAR["en"]) % t.get("name")              # honest: exists, but firm up details
-        out["reply"] = (reply + "\n\n" + line).strip()
-    else:
-        catn = intent.get("category")
-        out["reply"] = (reply + "\n\n" + (_FILED.get(lang, _FILED["en"]) % catn if catn else _NO_ONE.get(lang, _NO_ONE["en"]))).strip()
+    # ЛЮДЕЙ ДО ИНТЕНТА И ПОИСКА НЕ ТРОГАЕМ. Раньше отсюда шёл настоящий вызов ранжирования, и его
+    # верхний кандидат приклеивался к реплике по имени: «Мы можем свести тебя с Artjom Sokolov».
+    # На экране при этом не было ни поиска, ни карточек, ни согласия человека — агент называл
+    # живого пользователя посреди болтовни, за спиной у обоих.
+    #
+    # Разговор ведёт К интенту, а не подменяет собой поиск: человек соглашается («Создать интент»),
+    # интент строится, и только тогда идёт ранжирование — на экране результатов, где карточки
+    # видно, а не в прозе. Поэтому здесь ровно одно: `intent` в ответе, чтобы клиенту было что
+    # предложить. Ни `match`, ни `matches`, ни приписок «нашёл / никого нет» — всё это отчёты о
+    # поиске, которого не было.
+    #
+    # Клиенту это ничего не ломает: `looksLikeIntent` смотрит только на `intent`, а экраны поиска
+    # зовут ранжирование сами (agent.match).
     return out
 
 
