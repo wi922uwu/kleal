@@ -23,7 +23,7 @@ check('Buddy discoveries are queued for confirmation instead of written as raw i
   /await queueInterestProposals\(added\)/.test(chat) &&
   !/for \(const a of added\)[\s\S]{0,300}set\('interests\.explicit'/.test(chat));
 check('both profile interest entry points lead to the guarded conversation',
-  (interestsScreen.match(/\/chat\?step=hobbies&back=\/profile\/interests/g) || []).length === 2);
+  (interestsScreen.match(/router\.navigate\('\/chat\?step=hobbies&back=\/profile\/interests'\)/g) || []).length === 2);
 check('story-derived interests cross the same normalizer boundary',
   /profileApi\.normalizeInterest/.test(personality) && /profileApi\.confirmInterest/.test(personality));
 check('proposal UI has explicit confirm and cancel paths',
