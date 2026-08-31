@@ -108,6 +108,7 @@ export const MAP = {
   showAll: () => T('Показать все', 'Show all'),
   map: () => T('Карта', 'Map'),
   list: () => T('Список', 'List'),
+  online: () => T('Онлайн', 'Online'),
   empty: () => T('Рядом пока никого', 'Nobody nearby yet'),
   emptyNote: () =>
     T('Открытые встречи появятся здесь, как только их кто-нибудь назначит поблизости.',
@@ -137,6 +138,7 @@ export const MAP = {
   oneToOne: () => T('1:1', '1:1'),
   group: (n: number) => T(`Группа · ${n}`, `Group · ${n}`),
   meetingPlace: () => T('Место встречи', 'Meeting place'),
+  country: () => T('Страна', 'Country'),
   openIntent: () => T('Открыть', 'Open'),
   respond: () => T('Ответить', 'Respond'),
   notNow: () => T('Не сейчас', 'Not now'),

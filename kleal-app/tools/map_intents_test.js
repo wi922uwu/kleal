@@ -101,7 +101,7 @@ assert(!mapSource.includes('agent.explore(me)'), 'Map no longer guesses privacy/
 assert(mapSource.includes("setView('list')") && mapSource.includes("setView('map')"), 'Map and List share the same feed');
 assert(mapSource.includes("pathname: '/map-intent'"), 'marker/card opens exact intent detail');
 assert(mapSource.includes('onPress={group ? onOpen : onRespond}'), 'Group marker opens Group detail instead of sending a 1:1 invite');
-assert(detailSource.includes("agent.mapFeed(me, 'offline')") && detailSource.includes('item.id === id'), 'detail reloads a still-visible item by id');
+assert(detailSource.includes('agent.mapFeed(me, feedView)') && detailSource.includes('candidate.id === id'), 'detail reloads a still-visible item by id from the selected feed');
 assert(mapSource.includes('Location.requestForegroundPermissionsAsync()'));
 assert(!/useEffect\s*\(\s*\(\)\s*=>\s*\{?\s*locate\(/.test(mapSource), 'viewing Map does not request location permission');
 assert(nativeMapSource.includes('if (seen.has(k)) continue'), 'exact overlaps collapse to one visible marker');

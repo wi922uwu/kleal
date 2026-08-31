@@ -3,21 +3,37 @@ import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { agent, mediaUrl } from '../src/api';
-import { MAP, type ExplorePin } from '../src/explore';
+import { MAP } from '../src/explore';
 import { buildOfflineIntentMapModel } from '../src/offline-map-feed';
+import { buildOnlineIntentGlobeModel } from '../src/online-intent-globe';
+import { confirmedOnlineCountryRows } from '../src/online-map-feed';
+import { useLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { IconChevronLeft } from '../src/components/icons';
 import { color, radius, shadow, space, type } from '../src/theme';
+
+type IntentDetailItem = {
+  id: string;
+  title: string;
+  who: string;
+  photo?: string;
+  mode: 'offline' | 'online' | 'hybrid';
+  kind: 'one_to_one' | 'group';
+  count?: number;
+  area?: string;
+};
 
 /** Privacy-safe detail for an item opened from Map/List. It reloads by id instead of passing PII in route params. */
 export default function MapIntentDetail() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ id?: string }>();
+  const params = useLocalSearchParams<{ id?: string; view?: string }>();
   const id = String(params.id || '').trim();
+  const feedView = params.view === 'online' ? 'online' : 'offline';
+  const lang = useLang();
   const st = useOnb();
   const me = String(st.profile?.name || '').trim();
-  const [pin, setPin] = useState<ExplorePin | null>(null);
+  const [pin, setPin] = useState<IntentDetailItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
@@ -25,8 +41,38 @@ export default function MapIntentDetail() {
     setLoading(true);
     try {
       if (!id || !me) throw new Error('missing identity or intent id');
-      const response = await agent.mapFeed(me, 'offline');
-      const found = buildOfflineIntentMapModel(response).pins.find((item) => item.id === id) || null;
+      const response = await agent.mapFeed(me, feedView);
+      let found: IntentDetailItem | null = null;
+      if (feedView === 'online') {
+        const model = buildOnlineIntentGlobeModel(
+          confirmedOnlineCountryRows((response as any)?.items || []),
+          { locale: lang },
+        );
+        for (const country of model.countries) {
+          const item = country.intents.find((candidate) => candidate.id === id);
+          if (item) {
+            found = {
+              id: item.id, title: item.title, who: item.who, mode: item.mode,
+              kind: item.format === 'group' ? 'group' : 'one_to_one',
+              count: item.participantCount, area: country.name,
+            };
+            break;
+          }
+        }
+        if (!found) {
+          const item = model.unknown.find((candidate) => candidate.id === id);
+          if (item) found = {
+            id: item.id, title: item.title, who: item.who, mode: item.mode,
+            kind: item.format === 'group' ? 'group' : 'one_to_one', count: item.participantCount,
+          };
+        }
+      } else {
+        const item = buildOfflineIntentMapModel(response).pins.find((candidate) => candidate.id === id);
+        if (item) found = {
+          id: item.id, title: item.title, who: item.who, photo: item.photo,
+          mode: item.mode || 'offline', kind: item.kind || 'one_to_one', count: item.count, area: item.area,
+        };
+      }
       if (!found) throw new Error('intent is no longer visible');
       setPin(found);
       setFailed(false);
@@ -36,7 +82,7 @@ export default function MapIntentDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, me]);
+  }, [feedView, id, lang, me]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -72,7 +118,7 @@ export default function MapIntentDetail() {
           </View>
           <View style={s.card}>
             <Text style={s.title}>{pin.title}</Text>
-            {pin.area ? <><Text style={s.label}>{MAP.meetingPlace()}</Text><Text style={s.address}>{pin.area}</Text></> : null}
+            {pin.area ? <><Text style={s.label}>{feedView === 'online' ? MAP.country() : MAP.meetingPlace()}</Text><Text style={s.address}>{pin.area}</Text></> : null}
           </View>
         </ScrollView>
       ) : null}

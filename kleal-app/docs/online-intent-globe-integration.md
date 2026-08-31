@@ -75,6 +75,15 @@ country code, so no exact/profile coordinates can accidentally cross the compone
 That fork does not yet include the client API wrapper or Map/List screen wiring. Those remain the
 integration owner's files; this component branch deliberately does not edit them.
 
+The privacy blocker in `186fe6e` was fixed in Fork 2's separate local commit `23247bd`: city/area,
+device/IP location, raw intent country, and venue-geocoder country no longer participate in online
+placement. Confirmed live-profile country (or its persisted snapshot) is stamped
+`countrySource: "confirmed_profile_country"`; rows without that provenance remain available with
+`locationAvailable: false` and no country or centroid. The integration still applies
+`confirmedOnlineCountryRows` before the globe adapter as a defence-in-depth boundary: only that
+exact provenance plus `locationAvailable: true` can create a country marker; all other rows are
+stripped of country fields and remain in the unknown-location list.
+
 Hybrid belongs in both adapters: keep it in the existing Offline/Hybrid map feed and also pass it
 to this Online/Hybrid model. Do not partition it away at the screen switch.
 
