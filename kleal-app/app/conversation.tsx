@@ -236,7 +236,9 @@ export default function Conversation() {
       // переподключаться и писать снова.
       const code = String((e as any)?.body?.error || (e as any)?.message || '');
       setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'failed' } : x)));
-      setErr(code === 'BLOCKED' ? CHAT.blocked() : CHAT.offline());
+      setErr(code === 'BLOCKED' ? CHAT.blocked()
+             : code === 'NOT_MATCHED' ? CHAT.writeNotMatched()
+             : CHAT.offline());
     }
   }, [me, other]);
 
@@ -323,8 +325,23 @@ export default function Conversation() {
     deliver(local);
   }, !me || !other);
 
+  /**
+   * План — тому, кто уже принял приглашение, и никому больше.
+   *
+   * Сервер это правило держит сам (`NOT_MATCHED`), а лист действий его не знал: на экране, где
+   * даже написать нельзя — «приглашение не принято», — «Создать план» открывалась как обычно,
+   * человек заполнял форму, выбирал время и получал отказ уже на отправке. Поймано на живом
+   * телефоне. Причину называем ДО формы, а не после заполненной.
+   */
+  const canPlan = request?.status === 'accepted';
+
   const startPending = (kind: 'plan' | 'end') => {
     if (pending) return;
+    if (kind === 'plan' && !canPlan) {
+      setActions(false);
+      setErr(CHAT.notMatched());
+      return;
+    }
     setActions(false);
     setPending({ kind, n: 4 });
   };
@@ -739,7 +756,12 @@ export default function Conversation() {
 
         <Sheet visible={actions} onClose={() => setActions(false)} title={CHAT.actionsTitle()}>
 
-            <Pressable accessibilityRole="button" style={s.actPri} onPress={() => startPending('plan')}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canPlan }}
+              style={[s.actPri, !canPlan && { opacity: 0.45 }]}
+              onPress={() => startPending('plan')}
+            >
               <Text style={s.actPriText}>{CHAT.createPlan()}</Text>
             </Pressable>
 

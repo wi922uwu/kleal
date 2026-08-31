@@ -21,20 +21,32 @@ import { squarePhoto } from '../src/photo';
 import {
   STEP_PROGRESS, HEADER_TITLE, STEP_START, STEP_BASICS, SEXES, sexLabel,
   STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES,
-  STEP_PHOTO, StepId, resumeStep, hasProgress, RESUME,
-  OWN_INPUT, parseName } from '../src/onboarding';
+  STEP_PHOTO, StepId, resumeStep, hasProgress, onbComplete, RESUME,
+  OWN_INPUT, parseName, CONFIRM_INTEREST } from '../src/onboarding';
 import { interestLabel, registerInterestLabels } from '../src/interest-label';
-import { useLang, T, getLang , replyLang } from '../src/i18n';
-import { useOnb, set, get, patch, reset, profileForAttach, mergeProfile, getState } from '../src/state';
+import { isKnownInterest } from '../src/interests-known';
+import { saveConversation } from '../src/history';
+import { addConfirmedInterest } from '../src/profile';
+import { profile as profileApi } from '../src/api';
+import { useLang, T, getLang, replyLang, noticeWritten } from '../src/i18n';
+import { useOnb, set, get, patch, resetProfile, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding, agent, buddy as buddyApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
-import { InterestDeck } from '../src/components/InterestDeck';
-import { deckFor } from '../src/interests-deck';
+import { MindMap } from '../src/components/MindMap';
 import { GlassChip, GlassPill } from '../src/components/Glass';
 import { IconCheckCircle } from '../src/components/icons';
 import { color, radius as rad, type } from '../src/theme';
+
+/**
+ * Слово, которого нет в колесе, и то, что о нём ответил сервер.
+ *
+ * `options` появляются только у неоднозначного слова: сервер уже выдал квитанцию на КАЖДОЕ
+ * прочтение, и человеку остаётся выбрать своё. Однозначное записывается без вопроса.
+ */
+type NovelOption = { canonical: string; label: string; token: string };
+type Novel = { text: string; label: string; question?: string; options?: NovelOption[] };
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string; photo?: string };
 /** Реплика в истории, которая уходит модели. Отличается от Msg: у неё роль, а не сторона экрана. */
@@ -79,6 +91,14 @@ export default function Chat() {
   const [chips, setChips] = useState<string[]>([]);
   const [fork, setFork] = useState(false);
   /**
+   * КАРТА ПЕРЕД РАЗГОВОРОМ — ТОЛЬКО В ОНБОРДИНГЕ. Человек, пришедший сюда впервые, ещё не знает,
+   * что от него хотят, и поле готовых пузырей отвечает на это быстрее любого вопроса. Из профиля
+   * («Добавить интерес») заходят с другим настроением: список уже есть, человек пришёл дописать
+   * одно — там остаётся развилка «Знаю, чем / Помоги разобраться».
+   */
+  const [mapOpen, setMapOpen] = useState(false);
+  const [mapPicked, setMapPicked] = useState<string[]>([]);
+  /**
    * Записанное ЗА ЭТОТ разговор. Раньше под «Записал» показывался весь профиль целиком, и человек,
    * пришедший добавить один интерес, видел ряд из пяти старых — где именно среди них появился
    * новый, было не разобрать. Здесь только то, что агент записал сейчас; всё остальное человек
@@ -88,18 +108,26 @@ export default function Chat() {
   // Лента стоит, пока крутят кольцо возраста: иначе один и тот же жест двигает и то, и другое.
   const [dragging, setDragging] = useState(false);
   /*
-    СОСТОЯНИЕ КОЛОДЫ ЖИВЁТ ЗДЕСЬ, А НЕ В ВИДЖЕТЕ ШАГА, И ЭТО НЕ ВКУСОВЩИНА.
-
-    ChatShell рисует виджет как `{!typing ? widget : null}` — то есть на каждый ход агента виджет
-    СНИМАЕТСЯ и ставится заново. Всё, что он хранил у себя, при этом пропадает. Ровно поэтому здесь
-    же лежат `chips`, `justAdded` и `fork`.
-
-    Колода на это наступила: пройденные карточки и признак «заход кончен» были внутри виджета, и
-    ответ агента их стирал — карточки возвращались сами и начинали снова с «Бега», по которому
-    только что свайпнули. Со стороны это выглядело так, будто кнопка «Записать» не сработала.
+    ПО ТОЙ ЖЕ ПРИЧИНЕ, ЧТО И КОЛОДА, — см. разбор выше. Обе подсказки первого шага жили внутри
+    самого виджета, и ответ агента их воскрешал: человек отвечал «Поехали!», агент спрашивал имя,
+    а под вопросом об имени снова висели «Зачем это нужно?» и «Поехали!» — подсказки к реплике,
+    которой на экране уже две штуки назад. Нажатое должно уходить насовсем, поэтому хранится здесь.
   */
-  const [deckSeen, setDeckSeen] = useState<string[]>([]);
-  const [deckOn, setDeckOn] = useState(true);
+  /*
+    ПРИДУМАННЫЕ ИНТЕРЕСЫ ЖДУТ ЗДЕСЬ, А НЕ ПИШУТСЯ СРАЗУ.
+
+    Сервер разбирает реплику и возвращает `added` — то, что он расслышал интересом. Раньше всё это
+    падало в профиль без разговора. Но с 27.08 `register` отклоняет ВЕСЬ профиль, если хоть один
+    ключ неизвестен общей таксономии: человек проходил анкету до конца и упирался в «Профиль не
+    сохранился», не понимая, из-за чего.
+
+    Ключ из своего словаря (дерево или колода) пишем сразу — их сервер принимает все, это проверено.
+    Придуманное словами кладём сюда и спрашиваем. Так же устроен экран личности: модель предлагает,
+    записывает человек.
+  */
+  const [pending, setPending] = useState<Novel[]>([]);
+  const [startAsked, setStartAsked] = useState(false);
+  const [startGone, setStartGone] = useState(false);
   // Номер прохода. Меняется при «Начать заново» и служит ключом виджетам, чтобы те начинали с
   // чистого листа. Иначе внутри них остаётся своё состояние: спрятанные кнопки первого кадра,
   // выбранные увлечения, набранный возраст — всё от предыдущей попытки, которой уже нет.
@@ -120,6 +148,29 @@ export default function Chat() {
     return () => { alive.current = false; };
   }, []);
 
+  /*
+    ОНБОРДИНГ В ИСТОРИЮ НЕ ПИШЕТСЯ, И ЭТО НЕ ЭКОНОМИЯ.
+
+    Анкету человек проходит ОДИН раз. Строка «Знакомство с Kleal» навсегда первой и единственной в
+    списке — это не история разговоров, а памятник регистрации: искать в ней нечего, перечитывать
+    незачем, а место в списке она займёт у всего остального.
+
+    Заход СЮДА ЖЕ из профиля («Интересы → Добавить») — другое дело: он повторяется сколько угодно
+    раз и является настоящим разговором с Kleal. Его и пишем — по признаку `entry`.
+  */
+  const threadRef = useRef<Msg[]>([]);
+  threadRef.current = thread;
+  const convId = useRef(String(Date.now())).current;
+  useEffect(() => () => {
+    if (!entry) return;
+    saveConversation({
+      id: convId,
+      startedAt: Number(convId),
+      topic: STEP_HOBBIES.mapTitle(),
+      lines: threadRef.current.map((m) => ({ who: m.who, text: m.text, at: m.at })),
+    });
+  }, [convId, entry]);
+
   const say = useCallback((who: 'bot' | 'me', text: string, photo?: string) => {
     setThread((t) => [...t, { who, text, at: now(), photo }]);
   }, []);
@@ -136,18 +187,29 @@ export default function Chat() {
     // приложения, а не продолжение анкеты. Expo Go после обновления открывает последний маршрут,
     // и человек, давно закончивший, каждый раз оказывался на шаге фото.
     if (st.done && !entry) { router.replace('/home'); return; }
+    /*
+      ЗАПОЛНИЛ ВСЁ, НО НЕ НАЖАЛ «ГОТОВО» — это не шаг анкеты, это сводка. Раньше такой человек
+      получал от `resumeStep` последнюю оставшуюся ступень, 'photo', и снова видел просьбу про
+      фото, которое уже добавил или уже пропустил. Отметка `done` ставится только на сводке, и
+      добраться до неё повторно было нечем.
+    */
+    if (!entry && onbComplete(st.profile)) { router.replace('/summary'); return; }
     started.current = true;
     // Явный вход не «продолжает с того места»: человек пришёл за конкретной вещью.
     const resumed = !entry && hasProgress(st.profile);
     const at = entry || resumeStep(st.profile);
     setStep(at);
     if (resumed) {
+      // Вернувшийся на шаг увлечений видит ТУ ЖЕ карту, что и дошедший до него сразу: возобновление
+      // — это всё ещё онбординг, и правило «шаг начинается с карты» живёт в обоих входах, иначе
+      // порядок экранов зависит от того, закрывал человек приложение или нет.
+      if (at === 'hobbies') setMapOpen(true);
       botLines([
         RESUME.line(st.profile.name || ''),
         at === 'basics' ? STEP_BASICS.bot()
         : at === 'area' ? STEP_AREA.bot()
         : at === 'languages' ? STEP_LANGUAGES.bot()
-        : at === 'hobbies' ? STEP_HOBBIES.bot()
+        : at === 'hobbies' ? '' // карта уже спрашивает собой
         : STEP_PHOTO.ask(),
       ], 500);
     } else if (entry) {
@@ -168,13 +230,17 @@ export default function Chat() {
   }, [say]);
 
   /** Начать онбординг заново. Спрашиваем: это стирает всё, что человек уже ввёл. */
+  /**
+   * Начать анкету заново. Стирает СОБРАННОЕ, но не вход: см. разбор у `resetProfile` в state.ts.
+   * Спрашиваем всегда — это единственное необратимое действие на экране.
+   */
   const restart = () => {
     const wipe = () => {
-      reset();
+      resetProfile();
       setThread([]);
       setStep('start');
-      setDeckSeen([]);
-      setDeckOn(true);
+      setStartAsked(false);
+      setStartGone(false);
       setRunId((n) => n + 1);
       started.current = true;
       botLines([STEP_START.intro(), STEP_START.ask()], 400);
@@ -238,9 +304,139 @@ export default function Chat() {
 
   const goto = (next: StepId, botLine: string) => {
     setStep(next);
+    // Шаг увлечений в онбординге начинается с карты. Реплику агента при этом не показываем:
+    // она спрашивает, а карта уже отвечает на тот же вопрос собой.
+    if (next === 'hobbies' && !entry) { setMapOpen(true); return; }
     botAfter(botLine);
   };
 
+  /**
+   * Карта закрыта. Выбранное уходит ТЕМ ЖЕ путём, что и всё остальное на этом шаге — ключами в
+   * `interests.explicit`, — а разговор начинается уже поверх выбранного: агент видит его в
+   * `recorded` и не предлагает того, что человек только что отметил.
+   */
+  /*
+   * БЕЗ useCallback НАМЕРЕННО. `botAfter` пересоздаётся каждый рендер, и замороженный обработчик
+   * увёл бы за собой реплику агента из самого первого рендера — на этом уже обжигались с `onFork`
+   * (тап уходил по ветке онбординга и до API не доходил).
+   */
+  const onMapDone = ((keys: string[]) => {
+    const cur: string[] = get('interests.explicit') || [];
+    const merged = [...cur, ...keys.filter((k) => !cur.includes(k))];
+    set('interests.explicit', merged);
+    setJustAdded((p) => [...p, ...keys.filter((k) => !p.includes(k))]);
+    setMapOpen(false);
+    /*
+      ВЫБРАННОЕ УХОДИТ РЕПЛИКОЙ, И РАЗГОВОР НАЧИНАЕТ АГЕНТ, А НЕ ЧЕЛОВЕК.
+
+      Раньше здесь была одна статичная строка «Отметил. Расскажи про что-нибудь подробнее» — и
+      всё останавливалось: агент ждал, человек не знал, что писать, и шаг заканчивался списком
+      голых ключей. Между тем расспрос УЖЕ описан в промпте на сервере, и там он назван главным
+      правилом: «TWO QUESTIONS PER INTEREST, THEN MOVE ON». Модель просто никогда не получала хода.
+
+      Отправляем то же, что отправляет шаг языков и что отправляла колода, — выбранное списком.
+      Промпт разбирает список как список интересов («A LIST IS A LIST»), а `recorded` не даёт ему
+      записать их заново. Дальше он ведёт расспрос сам: два вопроса на интерес, потом следующий.
+    */
+    const labels = merged.map((k) => interestLabel(k)).filter(Boolean);
+    if (labels.length) send(labels.join(', '));
+    else botAfter(STEP_HOBBIES.afterMap());
+  });
+
+
+  /**
+   * ПОДТВЕРДИТЬ ПРИДУМАННЫЙ ИНТЕРЕС — та же граница, что на экране личности.
+   *
+   * Два запроса, и второй существует именно ради человека: первый просит у модели каноническую
+   * формулировку, второй записывает её ТОЛЬКО после нажатия. Сервер иначе и не примет — он держит
+   * эту границу сам (`validate_confirmations`), и обойти её запросом нельзя.
+   *
+   * Имя передаём пустым НАМЕРЕННО. В анкете строки человека в базе ещё нет, и сервер это
+   * предусмотрел: «During onboarding no user row exists yet. The receipt travels only in device
+   * state and is validated again by register_profile before the first database write». Квитанция
+   * (`token`) уезжает в `interests.confirmations` и предъявляется при регистрации.
+   */
+  /**
+   * ЧУЖОЕ СЛОВО ЗАПИСЫВАЕТСЯ САМО. Спрашиваем только там, где сервер сам не уверен.
+   *
+   * Раньше КАЖДЫЙ интерес вне колеса требовал нажатия: модель отдаёт английский ключ из своей
+   * таксономии, а приложение знает только колесо — список заметно меньше, — и всё, чего в колесе
+   * нет, уезжало в вопрос. Вопрос показывался по одному и не снимался сам, так что «Записать
+   * пуэр?» висело над разговором про Малевича, а интересы, набранные следом, стояли в очереди за
+   * ним и не записывались вовсе. Поймано на живом телефоне.
+   *
+   * Нажатие тут ничего и не проверяло: слово взято из реплики САМОГО человека — сервер не примет
+   * добавленное без цитаты из неё (`interests_chat`), — а квитанцию всё равно запрашивает клиент.
+   * Значит, спрашивать надо не «записать ли», а только тогда, когда сервер вернул выбор.
+   *
+   * Идёт ПОСЛЕ реплики и молча: два запроса на интерес не должны задерживать ответ агента, а
+   * извиняться за слово, которого человек не просил записывать, незачем.
+   */
+  const absorbNovel = async (items: { text: string; label: string }[]) => {
+    for (const item of items) {
+      try {
+        const cur: string[] = get('interests.explicit') || [];
+        const r = await profileApi.normalizeInterest(item.text, cur, replyLang());
+        if (r.status === 'duplicate') continue;
+        const opts = r.status === 'ready' ? r.options || [] : [];
+        if (opts.length !== 1) {
+          // Сервер предложил несколько прочтений — это и есть тот случай, когда решает человек.
+          const choice = r.status === 'clarify' ? r.options || [] : [];
+          if (choice.length) {
+            const q = { ...item, question: String(r.question || ''), options: choice };
+            setPending((p) => (p.some((x) => x.text === item.text) ? p : [...p, q]));
+          }
+          continue;
+        }
+        const ok = await profileApi.confirmInterest('', opts[0].token);
+        if (ok.ok && ok.canonical && ok.token) {
+          addConfirmedInterest(ok.canonical, ok.label || opts[0].label || item.label, ok.token);
+          setJustAdded((p) => (p.includes(ok.canonical!) ? p : [...p, ok.canonical!]));
+        }
+      } catch {
+        // Связь. Слово не потеряно: следующий ход отдаёт его снова вместе с той же цитатой.
+      }
+    }
+  };
+
+  const confirmPending = async (item: Novel, opt?: NovelOption) => {
+    setPending((p) => p.filter((x) => x.text !== item.text));
+    // Вариант сервера уже несёт квитанцию — нормализовать второй раз нечего.
+    if (opt) {
+      try {
+        const ok = await profileApi.confirmInterest('', opt.token);
+        if (ok.ok && ok.canonical && ok.token) {
+          addConfirmedInterest(ok.canonical, ok.label || opt.label, ok.token);
+          setJustAdded((p) => (p.includes(ok.canonical!) ? p : [...p, ok.canonical!]));
+        } else botAfter(CONFIRM_INTEREST.unclear());
+      } catch {
+        botAfter(CONFIRM_INTEREST.unclear());
+      }
+      return;
+    }
+    try {
+      const cur: string[] = get('interests.explicit') || [];
+      const r = await profileApi.normalizeInterest(item.text, cur, replyLang());
+      const opt = r.status === 'ready' && r.options?.length ? r.options[0] : null;
+      if (!opt) {
+        // Дубль — молча: интерес уже записан, говорить «не смог» было бы неправдой.
+        if (r.status !== 'duplicate') botAfter(CONFIRM_INTEREST.unclear());
+        return;
+      }
+      const ok = await profileApi.confirmInterest('', opt.token);
+      if (ok.ok && ok.canonical && ok.token) {
+        addConfirmedInterest(ok.canonical, ok.label || opt.label, ok.token);
+        setJustAdded((p) => (p.includes(ok.canonical!) ? p : [...p, ok.canonical!]));
+      } else {
+        botAfter(CONFIRM_INTEREST.unclear());
+      }
+    } catch {
+      botAfter(CONFIRM_INTEREST.unclear());
+    }
+  };
+
+  const skipPending = (item: Novel) =>
+    setPending((p) => p.filter((x) => x.text !== item.text));
 
   /**
    * ВЫХОД С ШАГА УВЛЕЧЕНИЙ. Имя историческое: раньше отсюда выходили из воронки-расспроса,
@@ -264,6 +460,21 @@ export default function Chat() {
     if (which === 'help') send(STEP_HOBBIES.forkHelpSaid());
   };
 
+  /**
+   * «Готово» на шаге увлечений: сначала сказать, что запись закончена, потом уйти.
+   *
+   * Реплика обязательна, а не вежливость. Шаг обрывался молча — нажал и оказался на фото, — и
+   * человек не знал ни что интересы сохранены, ни что по ним теперь будут искать, ни что их можно
+   * поправить. Про число говорим прямо: оно и есть итог разговора.
+   */
+  const finishHobbies = () => {
+    const n = (get('interests.explicit') || []).length;
+    botAfter(STEP_HOBBIES.done(n));
+    // Уходим ПОСЛЕ реплики, а не вместе с ней: иначе строка появляется на экране, который в тот
+    // же кадр снимают, и человек её не читает. Задержка равна вдоху между репликами агента.
+    setTimeout(() => alive.current && leaveFunnel(), 900);
+  };
+
   const leaveFunnel = () => {
     // Пришли из профиля — туда и возвращаемся. Не `replace`: тот подменял только верхний экран,
     // а приславший ОСТАВАЛСЯ в стопке под разговором — и человек получал ДВЕ копии «Интересов»
@@ -277,6 +488,8 @@ export default function Chat() {
   /** Свободный текст — сюда отвечает модель, а не сценарий. Поле ввода живёт в Composer. */
   const send = async (text: string) => {
     say('me', text);
+    // Человек пишет по-русски на английском телефоне — интерфейс идёт за ним, а не за системой.
+    noticeWritten(text);
 
     // ШАГ УВЛЕЧЕНИЙ: сказанное разбирает сервер, а не клиент.
     //
@@ -288,6 +501,9 @@ export default function Chat() {
       const next: Msg2[] = [...hobbyThread.current, { role: 'user', content: text }];
       hobbyThread.current = next;
       setChips([]);            // подсказка к прошлому вопросу поверх нового — обман
+      // Вопрос про прошлый интерес тоже снимаем. Он относился к прошлому ходу: висеть над
+      // новым разговором значит спрашивать про пуэр, когда речь давно про Малевича.
+      setPending([]);
       setTyping(true);
       try {
         // Записанное уходит на сервер: по нему он опознаёт уточнение (и просит заменить, а не
@@ -310,14 +526,21 @@ export default function Chat() {
           // УТОЧНЕНИЕ ЗАМЕНЯЕТ, А НЕ ДОБАВЛЯЕТ. «рыбалка» -> «рыбалка на море» это один интерес,
           // ставший точнее; без этого на экране копились три чипа про одно и то же.
           let cur: string[] = get('interests.explicit') || [];
+          const ask: { text: string; label: string }[] = [];
           for (const a of added) {
             const key = String(a.key || '').trim();
             if (!key) continue;
             const old = String(a.replaces || '').trim();
             if (old) cur = cur.filter((x) => x !== old);
-            if (!cur.includes(key)) cur = [...cur, key];
+            // РАЗВИЛКА: своё пишем сразу, чужое слово уносим на нормализацию. Разбор — `absorbNovel`.
+            if (isKnownInterest(key)) {
+              if (!cur.includes(key)) cur = [...cur, key];
+            } else if (!cur.includes(key) && !ask.some((x) => x.text === key)) {
+              ask.push({ text: key, label: String(a.label || key) });
+            }
           }
           set('interests.explicit', cur);
+          if (ask.length) absorbNovel(ask);
           setJustAdded((p) => {
             const keys = added.map((a) => String(a.key || '').trim()).filter(Boolean);
             const gone = added.map((a) => String(a.replaces || '').trim()).filter(Boolean);
@@ -367,6 +590,34 @@ export default function Chat() {
       onBack={() => router.back()}
       onSend={send}
       scrollEnabled={!dragging}
+      /*
+        ПОКА АГЕНТ ТОЛЬКО ПРЕДСТАВИЛСЯ, ПИСАТЬ НЕЧЕГО. На первом шаге он здоровается и ждёт
+        «Поехали!» — а поле ввода выглядело обычным, приглашало «Сообщение…» и молчало в ответ на
+        касание (`editable={!!onSend}` отключал ввод, но не вид). Сообщено с телефона. Поле
+        оживает ровно тогда, когда появляется, что в него писать: после нажатия или если имя уже
+        известно — то есть на возобновлении, где разговор уже идёт.
+      */
+      composerDisabled={step === 'start' && !startGone && !st.profile.name}
+      /*
+        КНОПКА «ГОТОВО» ЖИВЁТ ПОД ШАПКОЙ, А НЕ В ЛЕНТЕ.
+
+        В ленте она ехала вместе с виджетом и повторялась под каждой репликой агента: чтобы
+        закончить разговор, надо было доскроллить до низа, а по дороге прочитать список
+        записанного столько раз, сколько было ходов. Здесь она одна и неподвижна.
+
+        Показываем только на шаге увлечений и только когда карта закрыта: пока выбирают пузыри,
+        у поля своя кнопка с порогом в три интереса, и две кнопки выхода разом — это выбор между
+        выходами.
+      */
+      brow={step === 'hobbies' && !mapOpen && !queue ? (
+        <View style={s.browWrap}>
+          <Cta
+            label={STEP_HOBBIES.cta()}
+            disabled={!(st.profile.interests?.explicit || []).length}
+            onPress={finishHobbies}
+          />
+        </View>
+      ) : null}
       headerExtra={
         hasProgress(st.profile) ? (
           <Pressable accessibilityRole="button" onPress={restart} hitSlop={10}>
@@ -387,18 +638,20 @@ export default function Chat() {
           fork={fork}
           chips={chips}
           added={justAdded}
+          pending={pending}
+          onConfirmPending={confirmPending}
+          onSkipPending={skipPending}
+          startAsked={startAsked}
+          startGone={startGone}
+          onStartAsked={() => setStartAsked(true)}
+          onStartGone={() => setStartGone(true)}
+          mapOpen={mapOpen}
+          mapPicked={mapPicked}
+          onMapPick={(k: string) => setMapPicked((p) =>
+            p.includes(k) ? p.filter((x) => x !== k) : [...p, k])}
+          onMapDone={onMapDone}
           onFork={onFork}
           onChip={send}
-          deckSeen={deckSeen}
-          deckOn={deckOn}
-          onDeckMore={() => setDeckOn(true)}
-          onDeckPass={(picked: string[], seen: string[]) => {
-            setDeckSeen((p) => [...p, ...seen]);
-            setDeckOn(false);
-            // В разговор уходит ОДНА реплика на весь заход — так агент отвечает один раз и по
-            // всему списку сразу, а не вопросом на каждую карту.
-            if (picked.length) send(picked.join(', '));
-          }}
           onDrop={(k: string) => setJustAdded((p) => p.filter((x) => x !== k))}
         />
       )}
@@ -443,7 +696,10 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
 
 function StepWidget({
   step, say, goto, onDone, onDrag, leave, fork, chips, added, onFork, onChip, onDrop,
-  deckSeen, deckOn, onDeckMore, onDeckPass, bot,
+  bot,
+  mapOpen, mapPicked, onMapPick, onMapDone,
+  pending, onConfirmPending, onSkipPending,
+  startAsked, startGone, onStartAsked, onStartGone,
 }: {
   step: StepId;
   say: (who: 'bot' | 'me', text: string, photo?: string) => void;
@@ -461,17 +717,30 @@ function StepWidget({
   onFork?: (which: 'know' | 'help') => void;
   onChip?: (text: string) => void;
   onDrop?: (key: string) => void;
-  /** Карточки, по которым уже провели пальцем за этот разговор. Живёт в экране — см. там почему. */
-  deckSeen: string[];
-  deckOn: boolean;
-  onDeckMore: () => void;
-  onDeckPass: (picked: string[], seen: string[]) => void;
+  /** Карта интересов вместо разговора — первый проход онбординга. */
+  mapOpen?: boolean;
+  mapPicked?: string[];
+  onMapPick?: (key: string) => void;
+  onMapDone?: (keys: string[]) => void;
+  /** Придуманные интересы, ждущие подтверждения. Живут в экране — см. там почему. */
+  pending?: Novel[];
+  onConfirmPending?: (item: Novel, opt?: NovelOption) => void;
+  onSkipPending?: (item: Novel) => void;
+  /** Подсказки первого шага: что уже нажато. Живёт в экране — см. там почему. */
+  startAsked: boolean;
+  startGone: boolean;
+  onStartAsked: () => void;
+  onStartGone: () => void;
   /** Очередь реплик агента: по одной, с «печатает» между ними. */
   bot: (lines: string[], lead?: number) => void;
 }) {
   const st = useOnb();
 
-  if (step === 'start') return <StartW say={say} bot={bot} />;
+  if (step === 'start') return (
+    <StartW say={say} bot={bot}
+            asked={startAsked} gone={startGone}
+            onAsked={onStartAsked} onGone={onStartGone} />
+  );
   if (step === 'basics') return <BasicsW say={say} goto={goto} onDrag={onDrag} />;
   // onDrag — не косметика: пока палец тащит булавку по карте, лента анкеты обязана молчать,
   // иначе ScrollView забирает вертикальный жест себе и точка дёргается на месте.
@@ -480,7 +749,8 @@ function StepWidget({
   if (step === 'hobbies') return (
     <HobbyW say={say} leaveFunnel={leave} fork={fork} chips={chips} added={added}
             onFork={onFork} onChip={onChip} onDrop={onDrop} onDrag={onDrag}
-            deckSeen={deckSeen} deckOn={deckOn} onDeckMore={onDeckMore} onDeckPass={onDeckPass} />
+            mapOpen={mapOpen} mapPicked={mapPicked} onMapPick={onMapPick} onMapDone={onMapDone}
+            pending={pending} onConfirmPending={onConfirmPending} onSkipPending={onSkipPending} />
   );
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
   return null;
@@ -514,10 +784,8 @@ function Cta({ label, onPress, disabled, kind = 'primary' }: {
 }
 
 /** A.04 — согласие, потом имя. Имя человек пишет в композер: так на борде. */
-function StartW({ say, bot }: any) {
+function StartW({ say, bot, asked, gone, onAsked, onGone }: any) {
   const st = useOnb();
-  const [asked, setAsked] = useState(false);
-  const [gone, setGone] = useState(false);
 
   // Нажатая кнопка должна исчезать — как на всех остальных шагах, где виджет уступает место
   // следующему вопросу. Здесь шаг не меняется (имя человек пишет в композер), поэтому прятать
@@ -534,7 +802,7 @@ function StartW({ say, bot }: any) {
           <Chip
             label={STEP_START.why()}
             onPress={() => {
-              setAsked(true);
+              onAsked();
               say('me', STEP_START.why());
               bot([STEP_START.whyAnswer()]);
             }}
@@ -544,7 +812,7 @@ function StartW({ say, bot }: any) {
           label={STEP_START.go()}
           on
           onPress={() => {
-            setGone(true);
+            onGone();
             say('me', STEP_START.go());
             bot([STEP_START.askName()]);
           }}
@@ -660,20 +928,79 @@ function LangW({ say, goto }: any) {
 }
 
 /** A.08 — увлечения с эмодзи. */
-function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop, onDrag,
-                 deckSeen, deckOn, onDeckMore, onDeckPass }: any) {
+function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone,
+                 pending, onConfirmPending, onSkipPending,
+                 say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop, onDrag,
+                 }: any) {
   const st = useOnb();
   const [busy, setBusy] = useState(false);
-  /*
-    ПРОЙДЕННОЕ И ПРИЗНАК «ЗАХОД КОНЧЕН» ПРИХОДЯТ СВЕРХУ, А НЕ ХРАНЯТСЯ ЗДЕСЬ. Этот виджет снимают
-    с экрана на каждый ход агента (`{!typing ? widget : null}` в ChatShell), и всё своё он теряет.
-    Разбор — в комментарии к `deckSeen` в самом экране.
-  */
-  const done: string[] = deckSeen || [];
   // Показываем записанное ЗА ЭТОТ разговор. Всё, что было в профиле раньше, человек видит на
   // экране «Интересы», откуда пришёл; повторять его здесь значит прятать новое среди старого.
   const explicit: string[] = added || [];
   const hasAny: boolean = !!(st.profile.interests?.explicit || []).length;
+
+  /*
+   * КАРТА ЗАНИМАЕТ ВЕСЬ ВИДЖЕТ и стоит первой веткой: пока она открыта, ни развилки, ни подсказок,
+   * ни списка записанного — они про разговор, которого ещё не было. Порог в три интереса взят с
+   * борда («Choose at least 3 interests»); ниже него «Дальше» не нажимается, и это единственное
+   * место, где экран человека ограничивает.
+   */
+  if (mapOpen) {
+    const picked: string[] = mapPicked || [];
+    const need = 3;
+    return (
+      <View style={cs.widget}>
+        {/*
+          ЗАГОЛОВОК НАД КАРТОЙ. Была одна подсказка — «Веди пальцем, то что под ним приблизится», —
+          то есть инструкция к жесту, а не ответ на вопрос «что это вообще». Человек видел поле
+          цветных кружков и не понимал, что от него хотят: сообщено с телефона. Сначала — ЧТО
+          выбираем, и только потом — как.
+        */}
+        <Text style={cs.mapTitle}>{STEP_HOBBIES.mapTitle()}</Text>
+        <Text style={cs.hint}>{STEP_HOBBIES.mapHint()}</Text>
+        <MindMap width={330} height={430} selected={picked}
+                 onToggle={(k) => onMapPick?.(k)} onDrag={onDrag} />
+        <View style={cs.row}>
+          {picked.slice(-6).map((k: string) => (
+            <Chip key={k} label={interestLabel(k)} on onPress={() => onMapPick?.(k)} />
+          ))}
+        </View>
+        <Cta
+          label={picked.length >= need
+            ? STEP_HOBBIES.mapCount(picked.length)
+            : STEP_HOBBIES.mapMin(need)}
+          disabled={picked.length < need}
+          onPress={() => onMapDone?.(picked)}
+        />
+      </View>
+    );
+  }
+
+  /*
+    ВОПРОС ПРО ПРИДУМАННЫЙ ИНТЕРЕС стоит ПЕРЕД остальным виджетом и вместо подсказок к реплике.
+    Причина простая: пока он висит, всё прочее — не то, что сейчас требует ответа. Подсказки к
+    вопросу агента вернутся сами, как только на этот ответят.
+
+    Кнопок ровно две, и отказ такая же кнопка, как согласие: молча проигнорированный вопрос
+    оставил бы интерес в подвешенном состоянии до конца анкеты, где он и уронил бы регистрацию.
+  */
+  if (pending && pending.length) {
+    const item = pending[0];
+    const opts = item.options || [];
+    return (
+      <View style={cs.widget}>
+        <Hint>{opts.length ? item.question || CONFIRM_INTEREST.ask() : CONFIRM_INTEREST.ask()}</Hint>
+        <View style={cs.row}>
+          {opts.length
+            ? opts.map((o: NovelOption) => (
+                <Chip key={o.token} label={o.label || o.canonical} on onPress={() => onConfirmPending?.(item, o)} />
+              ))
+            : <Chip label={CONFIRM_INTEREST.yes(item.label)} on onPress={() => onConfirmPending?.(item)} />}
+          <Chip label={CONFIRM_INTEREST.no()} onPress={() => onSkipPending?.(item)} />
+        </View>
+      </View>
+    );
+  }
 
   // РАЗВИЛКА ПЕРВЫМ ХОДОМ. Пока человек не выбрал и ничего не рассказал — две кнопки. Дальше
   // работает обычный разговор: он пишет сам, а подсказки только избавляют от набора.
@@ -715,43 +1042,28 @@ function HobbyW({ say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop, 
         за ход, а иногда ни одной, и на пустом шаге человеку было бы не с чем работать. Личные
         подсказки идут первыми, за ними каталог — см. src/interests-deck.ts.
       */}
-      {deckOn ? (
-        <InterestDeck
-          // Ключ по числу пройденных: новый заход собирается заново, с начала нового списка. Без
-          // ключа колода осталась бы стоять на старом месте в укоротившемся списке.
-          key={done.length}
-          items={deckFor(chips, done)}
-          onDragChange={onDrag}
-          onPass={onDeckPass}
-        />
-      ) : deckFor(chips, done).length ? (
-        // Карточки кончились совсем — звать их обратно не за чем, и кнопки нет.
-        <View style={cs.row}>
-          <Chip label={STEP_HOBBIES.deckMore()} onPress={onDeckMore} />
-        </View>
-      ) : null}
-      {explicit.length ? (
-        <>
-          <Text style={cs.hint}>{STEP_HOBBIES.saved()}</Text>
-          <View style={cs.row}>
-            {explicit.map((k) => (
-              <Chip key={k} label={interestLabel(k)} on onPress={() => drop(k)} />
-            ))}
-          </View>
-        </>
-      ) : (
-        <Text style={cs.hint}>{STEP_HOBBIES.empty()}</Text>
-      )}
-      <Cta
-        label={STEP_HOBBIES.cta()}
-        disabled={(!explicit.length && !hasAny) || busy}
-        onPress={() => {
-          setBusy(true);
-          // Запись уже произошла — на каждом ходу разговора. Здесь только выход: в профиль,
-          // откуда пришли, или дальше по онбордингу.
-          leaveFunnel();
-        }}
-      />
+      {/*
+        КОЛОДЫ КАРТОЧЕК ЗДЕСЬ БОЛЬШЕ НЕТ.
+
+        Она решала ту же задачу, что и карта интересов: дать выбор тем, кто не знает, с чего
+        начать. Две витрины одного и того же на одном шаге — это выбор между выборами: человек
+        свайпал «Бег» влево-вправо, не понимая, чем это отличается от поля пузырей, которое он
+        видел минуту назад. Карта показывает полторы сотни занятий разом и своими кустами, а
+        колода — по одному и вслепую.
+
+        Остальное на шаге осталось: разговор, подсказки к реплике, записанное и выход.
+      */}
+      {/*
+        СПИСКА «ЗАПИСАЛ» ЗДЕСЬ БОЛЬШЕ НЕТ, И КНОПКИ ВЫХОДА ТОЖЕ.
+
+        Оба уехали вверх, под шапку. Внизу они стояли под каждой репликой агента и росли вместе с
+        разговором: к пятому вопросу лента наполовину состояла из повторяющегося списка того, что
+        человек и так только что назвал. А сам список он всё равно увидит в профиле — там ему и
+        место, там его можно править спокойно.
+
+        Кнопка «Готово» под шапкой стоит НЕПОДВИЖНО и видна всегда: раньше её выносило вниз вместе
+        с лентой, и чтобы закончить, приходилось доскроллить до конца разговора.
+      */}
     </View>
   );
 }
@@ -874,6 +1186,8 @@ const s = StyleSheet.create({
   },
   ownAddText: { ...type.button, color: color.onPrimary } as any,
   restart: { ...type.caption, color: color.primary } as any,
+  /** Полоса под шапкой: та же ширина полей, что у ленты, чтобы кнопка стояла по её краю. */
+  browWrap: { paddingHorizontal: 16, paddingBottom: 8 },
   /** Высота из борда: главная кнопка шага ниже входной — 48 против 56. */
   cta: { height: 48 },
 
