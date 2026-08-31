@@ -36,6 +36,7 @@ const offline = {
   count: 1,
   owner: { displayName: 'Map test user' },
   privacy: 'exact_intent_location',
+  locationAvailable: true,
 };
 
 const hybrid = {
@@ -55,6 +56,7 @@ const rejected = [
   { ...offline, id: 'deleted', status: 'deleted' },
   { ...offline, id: 'draft', status: 'draft' },
   { ...offline, id: 'profile-coordinate', privacy: 'country_only' },
+  { ...offline, id: 'declared-unavailable', locationAvailable: false },
   { ...offline, id: 'bad-lat', lat: 91 },
   { ...offline, id: 'zero-island', lat: 0, lng: 0 },
 ];
@@ -74,13 +76,16 @@ assert.strictEqual(model.pins[1].kind, 'group');
 assert.strictEqual(model.pins[1].lon, hybrid.lon, 'transitional lon alias remains supported');
 assert.strictEqual(model.pins[1].count, 8);
 assert.strictEqual(model.partial, true);
-assert.strictEqual(model.unavailableCount, 2);
+assert.strictEqual(model.unavailableCount, 3, 'client does not under-report unavailable rows when metadata is stale');
 assert.strictEqual(model.pins.filter((pin) => pin.id === offline.id).length, 1, 'duplicate id is removed');
 
-const missing = buildOfflineIntentMapModel({ items: [{ ...offline, id: 'missing-coordinates', lng: undefined }] });
+const missing = buildOfflineIntentMapModel({ items: [
+  { ...offline, id: 'missing-coordinates', lng: undefined },
+  { ...offline, id: 'explicitly-unavailable', locationAvailable: false },
+] });
 assert.strictEqual(missing.pins.length, 0);
 assert.strictEqual(missing.partial, true);
-assert.strictEqual(missing.unavailableCount, 1);
+assert.strictEqual(missing.unavailableCount, 2);
 
 const overlap = explore.stackedAt(model.pins);
 assert.strictEqual(overlap.get(explore.pinKey(model.pins[0])), 2, 'same-address intents are exposed as an overlap stack');

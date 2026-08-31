@@ -19,6 +19,7 @@ export type MapFeedItem = {
   count: number;
   owner: { id?: string; displayName: string; photo?: string };
   privacy: 'exact_intent_location' | 'country_only';
+  locationAvailable: boolean;
 };
 
 export type MapFeedResponse = {
@@ -74,6 +75,14 @@ export function buildOfflineIntentMapModel(payload: MapFeedResponse | null | und
     if (status !== 'launched') { rejectedCount += 1; continue; }
     if (kind !== 'one_to_one' && kind !== 'group') { rejectedCount += 1; continue; }
     if (privacy !== 'exact_intent_location') { rejectedCount += 1; continue; }
+
+    // Contract-level availability is authoritative. Fail closed even if a malformed response
+    // accidentally combines `locationAvailable:false` with stale coordinates.
+    if (row.locationAvailable !== true) {
+      seen.add(id);
+      missingCoordinates += 1;
+      continue;
+    }
 
     const lat = number(row.lat);
     const lon = number(row.lng) ?? number(row.lon);
