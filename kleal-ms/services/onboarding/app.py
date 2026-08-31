@@ -2513,6 +2513,9 @@ def _profile_to_user(p):
         vibe = vb.lower()
     geo = p.get("geo") or {}
     area = str(_first(p.get("city"), (geo.get("comfortableAreas") or [None])[0], "") or "").strip()
+    # Country is a distinct confirmed profile fact. Keeping it in the matching row lets online
+    # discovery expose country-level placement without deriving or returning the person's point.
+    country = str(p.get("country") or "").strip()[:80]
     # role from the first interest's role, normalised to matching's vocabulary
     role = "meet"
     roles = (ints.get("roles") if isinstance(ints, dict) else None) or {}
@@ -2545,7 +2548,7 @@ def _profile_to_user(p):
         "id": "on" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8],
         "name": name, "interests": interests or ["social"],
         # vibe/entities used to be invented ('chill', '<Interest> scene') — collected-or-absent now
-        "vibe": vibe, "langs": langs, "area": area,
+        "vibe": vibe, "langs": langs, "area": area, "country": country,
         "km": None, "lat": lat, "lon": lon, "radiusKm": radius, "open": True, "role": role,
         "gender": gender, "goals": goals, "summary": str(p.get("summary") or "")[:PROSE_MAX],
         # register_profile replaces the whole row, so the story must be carried here too or
@@ -2764,7 +2767,7 @@ def get_user(name):
 # РАСХОЖДЕНИИ», а расхождение не с чем было считать: свой пояс устройство знает, чужой не хранился
 # нигде, и кадры O.14/O.21 со строкой «20:00 Barcelona · 19:00 London» показать было физически
 # нечем. Имя зоны, а не смещение: смещение меняется дважды в год, а зона — нет.
-_PATCH_FIELDS = {"age", "gender", "area", "radiusKm", "lat", "lon", "langs", "interests",
+_PATCH_FIELDS = {"age", "gender", "area", "country", "radiusKm", "lat", "lon", "langs", "interests",
                  "goals", "formats", "summary", "story", "personality", "persona", "vibe", "safety",
                  "tz"}
 INTERESTS_MAX = 20      # сколько интересов доезжает до строки, по которой ищут; см. _canon_interests
@@ -2823,6 +2826,11 @@ def update_user(name, patch):
                 clean[_k] = clean[_k][:_cap]
             else:
                 clean.pop(_k)
+    if "country" in clean:
+        if isinstance(clean["country"], str) and clean["country"].strip():
+            clean["country"] = clean["country"].strip()[:80]
+        else:
+            clean.pop("country")
     if "persona" in clean:
         cp = _clean_persona(clean["persona"])
         if cp is None:

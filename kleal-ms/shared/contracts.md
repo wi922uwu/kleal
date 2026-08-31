@@ -76,7 +76,7 @@ This is the shared vocabulary: matching resolves candidate interests through it,
 
 ### matching — `/api/agent/*`
 
-`match · plan · explain · explore · intro · negotiate · feedback · save · weights · pool` plus the
+`match · plan · explain · explore · map-feed · intro · negotiate · feedback · save · weights · pool` plus the
 restored `intents · intent-save · intent-delete · propose · respond · withdraw · request-archive ·
 message · inbox · outbox · thread · threads · groups · group-create · group-join · group-leave`
 and the diagnostics `funnel · stability · diversity · learn · admin/person · admin/cohorts ·
@@ -97,13 +97,13 @@ This has broken twice by drift: two services independently computed the path, on
 `KLEAL_USERS` split the store — registrations went into a file the matcher never read, and
 nothing reported it. Never recompute this path locally; import it.
 
-Row shape (34 fields, all of which have at least one reader — audited 2026-07-27):
+Row shape (35 fields, all of which have at least one reader — audited 2026-09-01):
 
 | group | fields |
 |---|---|
 | identity | `id` `name` `age` `gender` `verified` `source` |
 | interests | `interests` `vibe` `goals` `role` `formats` `langs` |
-| geo | `area` `lat` `lon` `radiusKm` `km` |
+| geo | `area` `country` `lat` `lon` `radiusKm` `km` |
 | availability | `open` `paused` `pending` `lastActiveDays` `receiving` |
 | safety | `safety` `datingOk` `dealBreakers` `blocksMe` `declinedOwnerDaysAgo` |
 | agent memory | `summary` `story` `personality` `persona` `intents` `entities` |
@@ -113,6 +113,10 @@ Notes that matter:
 - **`km` is `None` for every real person, by design.** A stored distance is meaningless — it
   depends on who is looking. It is computed only for the demo pool. Comparing it to a float
   raised `TypeError` and made every search return zero candidates; guard with `isinstance`.
+- `country` is the confirmed country-level profile fact. `/api/agent/map-feed?view=online` may
+  expose it and a public country centroid; it must never substitute or return `lat`/`lon` from the
+  profile row. Existing rows created before this field remain valid and may be reported as
+  unavailable until the profile is saved again.
 - **`gender` has no reader in matching.** Onboarding collects it and `tools/` writes it, but the
   ranking never consults it, so the "Кто" selector in the UI currently does nothing.
 - `summary` / `story` / `personality` / `persona` / `intents` / `entities` are empty across the
@@ -180,6 +184,18 @@ drop-in for `core_v2`, and app.py reaches the engine only through `_core.*`, so 
 exports and the adapter does not is a crash waiting for its code path (`_in_quiet_hours`,
 `ALL_DOMAINS`, `explain` were all missing). And `match_candidates` had lost its `diag` parameter,
 which broke the admin funnel outright.
+
+### Intent map feed
+
+`GET /api/agent/map-feed?view=offline|online&self=<name>&limit=<n>` returns
+`{items, partial, unavailableCount}` from the persisted intent stores.
+
+Each item has `id`, `title`, `mode`, `kind`, `status`, `count`, `owner`, `privacy` and, when
+available, its view-specific location. The offline view contains only offline/hybrid intents and
+uses `address` + `lat`/`lng` from the intent venue. The online view contains only online/hybrid
+intents and uses `country`/`countryCode` plus a public country centroid. It never returns an
+address or owner/profile coordinates. Missing geodata is represented by
+`locationAvailable:false` and response metadata; fake coordinates are forbidden.
 
 ### Open: the message endpoints are unauthenticated
 

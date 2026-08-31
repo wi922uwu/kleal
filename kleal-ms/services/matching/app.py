@@ -25,6 +25,7 @@ import kleal_protocol as kp                   # §13 typed agent protocol (actio
 import kleal_states as ks                      # §14 transaction state machines + race protection (keyless, LLM-free)
 import kleal_groups as kg                       # §15 group formation core (PILOT-DISABLED scaffolding; keyless, LLM-free)
 import kleal_candidates as kct                  # §16 events/rooms/venues candidate types (PILOT-DISABLED; keyless, LLM-free)
+import intent_map_feed as imf                   # privacy-safe offline/online intent map read models
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send_json, read_json
 from config import FILTER_URL         # мост тем: адрес фильтрации, тот же, что у buddy
@@ -493,6 +494,13 @@ def set_weights(patch):
 
 # ---- server-side session store (file-backed) — mirrors the client's localStorage + holds the feedback loop ----
 STORE_PATH = os.environ.get("KLEAL_STORE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "kleal_store.json"))
+# Geocoding is a best-effort enrichment, never a persistence prerequisite. Successful lookups are
+# cached beside the store (or at KLEAL_GEOCODE_CACHE) and failures are bounded by timeout/retry.
+_MAP_GEOCODER = imf.SafeGeocoder(
+    cache_path=os.environ.get("KLEAL_GEOCODE_CACHE", STORE_PATH + ".geocode-cache.json"),
+    timeout=float(os.environ.get("KLEAL_GEOCODE_TIMEOUT", "1.25")),
+    attempts=int(os.environ.get("KLEAL_GEOCODE_ATTEMPTS", "2")),
+)
 # §14: a REENTRANT lock so the accept transaction can hold ONE lock across revalidate + slot-claim +
 # _record_outcome (which re-acquires it) without deadlocking — closes the read-then-write gap at the send boundary.
 _STORE_LOCK = threading.RLock()
@@ -3173,6 +3181,24 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
     return out[:limit]
 
 
+# ---------------------------------------------------------------- Map feed: two privacy-distinct intent projections
+def map_feed_payload(view="offline", self_name="", limit=60):
+    users = load_candidates()
+    return imf.build_feed(
+        imf.collect_sources(users, SESSION.get("_intents") or [], SESSION.get("_gintents") or [],
+                            self_name=self_name),
+        view=view,
+        limit=limit,
+        geocoder=_MAP_GEOCODER,
+        geocode_budget=int(os.environ.get("KLEAL_MAP_GEOCODE_BUDGET", "4")),
+    )
+
+
+def _prepare_map_intent(owner, intent):
+    profile = imf.owner_profile_for(load_candidates(), owner)
+    return imf.prepare_persisted_intent(intent, profile, _MAP_GEOCODER)
+
+
 # ---------------------------------------------------------------- explain: full diagnostic of one search
 # Mirrors core_v2.search() decision-for-decision, but CLASSIFIES every pool candidate instead of silently
 # dropping it — so a matching test panel can show who matched and why, who was gated out (and the gate),
@@ -4100,28 +4126,40 @@ def save_intent(owner, intent, title, iid=None, launched=None):
     owner = str(owner or "").strip()
     if not owner or not isinstance(intent, dict):
         return {"ok": False, "error": "owner and intent required"}
+    # Snapshot confirmed country and resolve an explicitly supplied meeting address when possible.
+    # Failure is intentionally non-fatal: the intent is still saved and map-feed reports partial data.
+    intent = _prepare_map_intent(owner, intent)
     now = time.time()
+    key = imf.persistence_key(intent)
     with _STORE_LOCK:
         rows = _intents()
         if iid:
             for r in rows:
                 if r.get("id") == iid and _norm_name(r.get("owner")) == _norm_name(owner):
-                    r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+                    r.update({"intent": intent, "title": title or r.get("title"), "updated": now,
+                              "key": key})
                     # once a search has actually run this never flips back to "not started"
                     if launched:
                         r["launched"] = now
                     _save_store()
                     return {"ok": True, "id": iid}
-        # the same request twice should update, not pile up a second identical card
-        key = json.dumps(intent.get("topics") or [], sort_keys=True) + "|" + str(intent.get("role") or "")
+        # The same request twice updates one row, but a different mode/date/address is a different
+        # intent even when topics and role match. The previous topics|role key collapsed those plans.
         for r in rows:
-            if _norm_name(r.get("owner")) == _norm_name(owner) and r.get("key") == key:
-                r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+            same_owner = _norm_name(r.get("owner")) == _norm_name(owner)
+            same_intent = r.get("key") == key or imf.persistence_key(r.get("intent") or {}) == key
+            if same_owner and same_intent:
+                r.update({"intent": intent, "title": title or r.get("title"), "updated": now,
+                          "key": key})
                 if launched:
                     r["launched"] = now
                 _save_store()
                 return {"ok": True, "id": r["id"], "merged": True}
-        nid = "in_%d" % int(now * 1000)
+        base_id = "in_%d" % int(now * 1000)
+        taken = {str(r.get("id") or "") for r in rows}
+        nid, suffix = base_id, 1
+        while nid in taken:
+            nid, suffix = "%s_%d" % (base_id, suffix), suffix + 1
         rows.append({"id": nid, "owner": owner, "title": title or "", "intent": intent,
                      "key": key, "created": now, "updated": now,
                      "launched": now if launched else None})
@@ -4358,7 +4396,7 @@ def gi_create(owner, intent, title="", min_total=None, max_total=None, idem=None
     cached = _idem_get(idem)
     if cached is not None:
         return cached
-    intent = intent if isinstance(intent, dict) else {}
+    intent = _prepare_map_intent(owner, intent if isinstance(intent, dict) else {})
     try:
         mn = int(min_total or GI_MIN_TOTAL)
     except (TypeError, ValueError):
@@ -8388,6 +8426,23 @@ class H(BaseHTTPRequestHandler):
                 store = {"path": os.path.abspath(USERS_PATH), "error": str(e)[:120]}
             send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None,
                                   "bySource": src, "store": store, "users": c})
+        elif self.path.split("?")[0] == "/api/agent/map-feed":
+            from urllib.parse import parse_qs, urlsplit
+            q = parse_qs(urlsplit(self.path).query)
+            view = str((q.get("view") or ["offline"])[0]).strip().lower()
+            claimed = str((q.get("self") or [""])[0]).strip()
+            # Prefer authenticated identity when available; the query name is compatibility for the
+            # current Expo bundle and must never influence location fields.
+            me = kleal_auth.caller_name(self) or claimed
+            try:
+                lim = int((q.get("limit") or [60])[0])
+            except (TypeError, ValueError):
+                lim = 60
+            try:
+                send_json(self, 200, map_feed_payload(view=view, self_name=me, limit=lim))
+            except ValueError as e:
+                send_json(self, 400, {"error": str(e), "items": [],
+                                      "partial": False, "unavailableCount": 0})
         elif self.path.split("?")[0] == "/api/agent/explore":
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
