@@ -20,9 +20,12 @@ import intent_map_feed as mf
 
 
 FAILS = []
+CHECKS = 0
 
 
 def check(name, ok, got=None):
+    global CHECKS
+    CHECKS += 1
     print(("  ok  " if ok else "FAIL  ") + name + ("" if ok else " -> %r" % (got,)))
     if not ok:
         FAILS.append(name)
@@ -74,10 +77,28 @@ check("online privacy is explicit country-only",
 city_country = rec("city-country", "online", country=None,
                    owner_profile={"name": "Porto user", "area": "Porto", "lat": 90, "lon": 90})
 city_feed = mf.build_feed([city_country], "online", geocode_budget=0)
-check("known profile city provides country-level fallback without profile coordinates",
-      city_feed["items"][0].get("countryCode") == "PT" and
-      (city_feed["items"][0].get("lat"), city_feed["items"][0].get("lng")) == (39.3999, -8.2245),
-      city_feed)
+check("city alone cannot infer a country marker",
+      city_feed["items"][0].get("locationAvailable") is False and
+      "country" not in city_feed["items"][0] and "countryCode" not in city_feed["items"][0] and
+      "lat" not in city_feed["items"][0] and "lng" not in city_feed["items"][0], city_feed)
+untrusted_country = rec("untrusted-country", "online", country=None,
+                        owner_profile={"name": "Untrusted", "area": "Unknown"})
+untrusted_country["intent"].update({"country": "Portugal", "countryCode": "PT"})
+untrusted_feed = mf.build_feed([untrusted_country], "online", geocode_budget=0)
+check("raw intent country without trusted provenance cannot position a card",
+      untrusted_feed["items"][0].get("locationAvailable") is False and
+      "country" not in untrusted_feed["items"][0], untrusted_feed)
+trusted_snapshot = rec("trusted-snapshot", "online", country=None,
+                       owner_profile={"name": "Migrated", "area": "Unknown"})
+trusted_snapshot["intent"].update({
+    "country": "Portugal", "countryCode": "PT",
+    "countrySource": "confirmed_profile_country",
+})
+trusted_feed = mf.build_feed([trusted_snapshot], "online", geocode_budget=0)
+check("server-stamped country snapshot remains usable",
+      trusted_feed["items"][0].get("countryCode") == "PT" and
+      trusted_feed["items"][0].get("countrySource") == "confirmed_profile_country" and
+      trusted_feed["items"][0].get("locationAvailable") is True, trusted_feed)
 unknown_country = rec("unknown-country", "online", country=None,
                       owner_profile={"name": "Unknown", "area": "Atlantis", "lat": 10, "lon": 20})
 unknown_feed = mf.build_feed([unknown_country], "online", geocode_budget=0)
@@ -162,7 +183,13 @@ with tempfile.TemporaryDirectory() as td:
         {"country": "Spain", "area": "Barcelona"}, geo)
     check("save preparation snapshots country and venue point",
           prepared.get("country") == "Spain" and prepared.get("countryCode") == "ES" and
+          prepared.get("countrySource") == "confirmed_profile_country" and
           prepared.get("lat") == 41.42 and prepared.get("lon") == 2.19, prepared)
+    unconfirmed = mf.prepare_persisted_intent(
+        {"mode": "online", "country": "Portugal", "countryCode": "PT"},
+        {"area": "Lisboa"}, geo)
+    check("save preparation does not trust raw or city-derived country",
+          unconfirmed.get("countrySource") is None, unconfirmed)
 
     failed_calls = {"n": 0}
 
@@ -191,6 +218,10 @@ with tempfile.TemporaryDirectory() as td:
                       "topics": ["books"], "title": "Legacy reading", "open": True}]},
         {"id": "u_ivan", "name": "Ivan", "source": "onboarding", "open": True,
          "country": "Portugal", "area": "Lisboa", "lat": 77.0, "lon": 66.0},
+        {"id": "u_city", "name": "CityOnly", "source": "onboarding", "open": True,
+         "area": "Lisboa", "lat": 55.0, "lon": 44.0,
+         "intents": [{"id": "legacy-city-only", "mode": "online", "format": "1:1",
+                      "topics": ["music"], "title": "City-only legacy", "open": True}]},
         {"id": "u_me", "name": "Viewer", "source": "onboarding", "open": True,
          "country": "France", "area": "Paris"},
     ]
@@ -260,10 +291,19 @@ with tempfile.TemporaryDirectory() as td:
         check("real endpoint excludes viewer's own intent", "mine" not in {x["id"] for x in first["items"]}, first)
         check("real GET is retry/idempotency safe", first == retry, retry)
         check("real online feed includes persisted and legacy launched/public paths",
-              {x["id"] for x in online_http["items"]} == {"saved-online", "legacy-on"}, online_http)
+              {"saved-online", "legacy-on", "legacy-city-only"} ==
+              {x["id"] for x in online_http["items"]}, online_http)
+        city_only_item = next(x for x in online_http["items"] if x["id"] == "legacy-city-only")
+        check("real HTTP path keeps city-only country placement unavailable",
+              city_only_item.get("locationAvailable") is False and
+              "country" not in city_only_item and "countryCode" not in city_only_item and
+              "lat" not in city_only_item and "lng" not in city_only_item, city_only_item)
         check("real online response cannot leak stored profile coordinates",
-              all((x.get("lat"), x.get("lng")) in ((39.3999, -8.2245), (40.4637, -3.7492))
-                  for x in online_http["items"]), online_http)
+              all(
+                  not x.get("locationAvailable") or
+                  (x.get("lat"), x.get("lng")) in ((39.3999, -8.2245), (40.4637, -3.7492))
+                  for x in online_http["items"]
+              ), online_http)
         try:
             urllib.request.urlopen(base + "/api/agent/map-feed?view=invalid", timeout=3)
             invalid_code = 200
@@ -280,4 +320,4 @@ print()
 if FAILS:
     print("FAILED %d: %s" % (len(FAILS), ", ".join(FAILS)))
     sys.exit(1)
-print("ALL PASS (%d checks)" % 30)
+print("ALL PASS (%d checks)" % CHECKS)

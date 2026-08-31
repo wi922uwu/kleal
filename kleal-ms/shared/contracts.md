@@ -193,8 +193,10 @@ which broke the admin funnel outright.
 Each item has `id`, `title`, `mode`, `kind`, `status`, `count`, `owner`, `privacy` and, when
 available, its view-specific location. The offline view contains only offline/hybrid intents and
 uses `address` + `lat`/`lng` from the intent venue. The online view contains only online/hybrid
-intents and uses `country`/`countryCode` plus a public country centroid. It never returns an
-address or owner/profile coordinates. Missing geodata is represented by
+intents and uses confirmed profile `country`/`countryCode`, `countrySource` set to
+`confirmed_profile_country`, plus a public country centroid. City, area, device geo, IP and raw
+intent country fields are never country fallbacks. It never returns an address or owner/profile
+coordinates. Missing or unconfirmed country data is represented by
 `locationAvailable:false` and response metadata; fake coordinates are forbidden.
 
 ### Open: the message endpoints are unauthenticated

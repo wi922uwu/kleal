@@ -46,22 +46,6 @@ _COUNTRIES = {
            "aliases": ("united states", "united states of america", "usa", "us", "сша")},
 }
 
-_CITY_COUNTRY = {
-    # The exact countries/cities currently offered by AreaPicker.
-    "barcelona": "ES", "madrid": "ES", "valencia": "ES", "sevilla": "ES",
-    "malaga": "ES", "bilbao": "ES", "palma": "ES", "zaragoza": "ES",
-    "lisboa": "PT", "lisbon": "PT", "porto": "PT", "faro": "PT",
-    "coimbra": "PT", "braga": "PT", "funchal": "PT",
-    "roma": "IT", "rome": "IT", "milano": "IT", "milan": "IT", "napoli": "IT",
-    "torino": "IT", "firenze": "IT", "bologna": "IT", "venezia": "IT", "palermo": "IT",
-    "berlin": "DE", "munchen": "DE", "munich": "DE", "hamburg": "DE", "koln": "DE",
-    "cologne": "DE", "frankfurt": "DE", "stuttgart": "DE", "dusseldorf": "DE",
-    "leipzig": "DE",
-    "paris": "FR", "lyon": "FR", "marseille": "FR", "toulouse": "FR", "nice": "FR",
-    "bordeaux": "FR", "nantes": "FR", "lille": "FR",
-}
-
-
 def _fold(value):
     raw = unicodedata.normalize("NFKD", str(value or ""))
     return " ".join("".join(ch for ch in raw if not unicodedata.combining(ch)).lower().split())
@@ -75,11 +59,9 @@ for _code, _row in _COUNTRIES.items():
         _COUNTRY_ALIASES[_fold(_alias)] = _code
 
 
-def country_info(country=None, country_code=None, city=None):
-    """Return canonical country data without consulting owner coordinates."""
+def country_info(country=None, country_code=None):
+    """Return canonical country data from an explicit country fact only."""
     code = _COUNTRY_ALIASES.get(_fold(country_code)) or _COUNTRY_ALIASES.get(_fold(country))
-    if not code and city:
-        code = _CITY_COUNTRY.get(_fold(city))
     row = _COUNTRIES.get(code)
     if row:
         return {"country": row["name"], "countryCode": code,
@@ -253,25 +235,29 @@ def prepare_persisted_intent(intent, owner_profile=None, geocoder=None):
     """Snapshot country and best-effort venue coordinates without mutating input."""
     out = dict(intent or {})
     owner_profile = owner_profile if isinstance(owner_profile, dict) else {}
-    if not out.get("country"):
-        info = country_info(
-            owner_profile.get("country"), owner_profile.get("countryCode"),
-            owner_profile.get("area") or owner_profile.get("city"),
-        )
-        if info:
-            out["country"] = info.get("country")
-            if info.get("countryCode"):
-                out["countryCode"] = info["countryCode"]
+    # Never bless client-supplied or city-derived country. Only the profile's explicit country
+    # fact is snapshotted, with provenance that the online projector can verify later.
+    info = country_info(owner_profile.get("country"), owner_profile.get("countryCode"))
+    if info:
+        out["country"] = info.get("country")
+        if info.get("countryCode"):
+            out["countryCode"] = info["countryCode"]
+        else:
+            out.pop("countryCode", None)
+        out["countrySource"] = "confirmed_profile_country"
+    else:
+        out.pop("countrySource", None)
     address, lat, lng = _venue(out)
     if normalize_mode(out.get("mode")) in ("offline", "hybrid") and address and (
             lat is None or lng is None) and geocoder is not None:
         found = geocoder.geocode(address)
         if found:
             out["lat"], out["lon"] = found["lat"], found["lng"]
-            if not out.get("country") and found.get("country"):
-                out["country"] = found["country"]
-            if not out.get("countryCode") and found.get("countryCode"):
-                out["countryCode"] = found["countryCode"]
+            # Venue country is not an owner-country fact and cannot position an online card.
+            if found.get("country"):
+                out["venueCountry"] = found["country"]
+            if found.get("countryCode"):
+                out["venueCountryCode"] = found["countryCode"]
     return out
 
 
@@ -489,12 +475,18 @@ def build_feed(records, view, limit=60, geocoder=None, geocode_budget=4):
                 unavailable += 1
         else:
             item["privacy"] = "country_only"
-            info = country_info(
-                intent.get("country") or owner_profile.get("country"),
-                intent.get("countryCode") or owner_profile.get("countryCode"),
-                owner_profile.get("area") or owner_profile.get("city"),
-            )
+            # Live profile country is authoritative. Persisted country is accepted only when the
+            # backend stamped its provenance; raw intent fields, area and city are untrusted.
+            profile_country = owner_profile.get("country")
+            profile_code = owner_profile.get("countryCode")
+            if profile_country or profile_code:
+                info = country_info(profile_country, profile_code)
+            elif intent.get("countrySource") == "confirmed_profile_country":
+                info = country_info(intent.get("country"), intent.get("countryCode"))
+            else:
+                info = None
             if info:
+                item["countrySource"] = "confirmed_profile_country"
                 if info.get("country"):
                     item["country"] = info["country"]
                 if info.get("countryCode"):
