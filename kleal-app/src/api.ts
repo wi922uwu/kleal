@@ -600,6 +600,12 @@ export const agent = {
       `/api/agent/explore?limit=${limit}&self=${encodeURIComponent(self)}`
     ),
 
+  /** Privacy-safe intent-address feed for the Map/List search screen. */
+  mapFeed: (self: string, view: 'offline' | 'online' = 'offline', limit = 60) =>
+    api.get<{ items?: Json[]; partial?: boolean; unavailableCount?: number }>(
+      `/api/agent/map-feed?view=${view}&limit=${limit}&self=${encodeURIComponent(self)}`
+    ),
+
   /**
    * То же, но с профилем: сервер отбирает только совместимые интенты. Главный экран строже
    * обзора — там показываются люди, к которым есть смысл обращаться, а не все подряд.
@@ -1157,4 +1163,3 @@ export const group = {
       `/api/agent/gplans?self=${encodeURIComponent(self)}`
     ),
 };
-

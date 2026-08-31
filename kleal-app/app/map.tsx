@@ -11,17 +11,18 @@
  * Данные для неё лежали готовые: `/api/agent/explore` отдаёт открытые интенты с координатами, и до
  * сих пор её не звал ни один экран.
  *
- * СЕГМЕНТЫ «КАРТА / СПИСОК». Список — это существующая выдача, а не вторая её копия: переключатель
- * уводит на `/results`, чтобы у двух видов не разошлись ни отбор, ни порядок.
+ * СЕГМЕНТЫ «КАРТА / СПИСОК». Оба вида используют один privacy-safe map-feed model, поэтому
+ * фильтры, порядок и доступность Offline/Hybrid интентов не расходятся.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image, ActivityIndicator, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
 import { agent, mediaUrl } from '../src/api';
 import { useOnb } from '../src/state';
-import { MAP, ExplorePin, explorePins, stackedAt, centerOf } from '../src/explore';
+import { MAP, ExplorePin, stackedAt, centerOf } from '../src/explore';
+import { buildOfflineIntentMapModel } from '../src/offline-map-feed';
 import { sendInvite } from '../src/invites';
 import { ExploreMap } from '../src/components/ExploreMap';
 import { BottomNav } from '../src/components/BottomNav';
@@ -40,6 +41,10 @@ export default function MapScreen() {
   const [pins, setPins] = useState<ExplorePin[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [view, setView] = useState<'map' | 'list'>('map');
+  const [partial, setPartial] = useState(false);
+  const [partialCount, setPartialCount] = useState(0);
+  const [geoDenied, setGeoDenied] = useState(false);
   const [picked, setPicked] = useState<ExplorePin | null>(null);
   const [sending, setSending] = useState(false);
   /** Скрытые «не сейчас» — только на время сеанса: это не отказ, а «убери с глаз». */
@@ -50,11 +55,18 @@ export default function MapScreen() {
 
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
+    setLoading(true);
     try {
-      const r: any = await agent.explore(me);
-      setPins(explorePins(r?.plans || []));
+      const r: any = await agent.mapFeed(me, 'offline');
+      const model = buildOfflineIntentMapModel(r);
+      setPins(model.pins);
+      setPartial(model.partial);
+      setPartialCount(model.unavailableCount);
       setFailed(false);
     } catch {
+      setPins([]);
+      setPartial(false);
+      setPartialCount(0);
       setFailed(true);
     } finally {
       setLoading(false);
@@ -73,14 +85,13 @@ export default function MapScreen() {
   const locate = useCallback(async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') return;
+      if (status !== 'granted') { setGeoDenied(true); return; }
       const pos = await Location.getCurrentPositionAsync({});
       home.current = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+      setGeoDenied(false);
       setShowMe(true);
       setRecenter((n) => n + 1);
-    } catch {
-      /* геопозиция не обязана быть — молча остаёмся там, где стояли */
-    }
+    } catch { setGeoDenied(true); }
   }, []);
 
   const respond = useCallback(async () => {
@@ -101,11 +112,14 @@ export default function MapScreen() {
   }, [picked]);
 
   const center = home.current || centerOf(visible);
+  const openIntent = useCallback((pin: ExplorePin) => {
+    router.navigate({ pathname: '/map-intent', params: { id: pin.id } } as any);
+  }, [router]);
 
   return (
     <View style={s.root}>
       {/* Карта на всю площадь: панели лежат поверх неё, как на кадре. */}
-      <View style={StyleSheet.absoluteFill}>
+      {view === 'map' ? <View style={StyleSheet.absoluteFill}>
         <ExploreMap
           pins={visible}
           center={center}
@@ -115,7 +129,29 @@ export default function MapScreen() {
           recenter={recenter}
           selectedId={picked?.id || null}
         />
-      </View>
+      </View> : (
+        <ScrollView
+          style={StyleSheet.absoluteFill}
+          contentContainerStyle={[s.list, { paddingTop: insets.top + 88, paddingBottom: 160 + insets.bottom }]}
+          showsVerticalScrollIndicator={false}
+        >
+          {visible.map((pin) => (
+            <Pressable key={pin.id} accessibilityRole="button" onPress={() => openIntent(pin)} style={s.listRow}>
+              {pin.photo ? <Image source={{ uri: mediaUrl(pin.photo) }} style={s.listAvatar} /> : (
+                <View style={[s.listAvatar, s.avatarEmpty]}><Text style={s.avatarInitial}>{(pin.who || '?').slice(0, 1).toUpperCase()}</Text></View>
+              )}
+              <View style={s.listText}>
+                <Text style={s.cardWho} numberOfLines={1}>{pin.title || pin.who}</Text>
+                <Text style={s.cardTitle} numberOfLines={1}>
+                  {pin.mode === 'hybrid' ? MAP.hybrid() : MAP.offline()} · {pin.kind === 'group' ? MAP.group(pin.count || 1) : MAP.oneToOne()}
+                </Text>
+                {pin.area ? <Text style={s.meta} numberOfLines={2}>{pin.area}</Text> : null}
+              </View>
+              <View style={s.chev}><IconChevronLeft size={20} c={color.neutral400} /></View>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
 
       {/* Плашка «сколько рядом» — верх кадра. Прячется, когда показывать нечего. */}
       {visible.length ? (
@@ -139,7 +175,7 @@ export default function MapScreen() {
           <Text style={s.summaryText} numberOfLines={1}>{MAP.nearby(visible.length)}</Text>
           <Pressable
             accessibilityRole="button"
-            onPress={() => router.push('/results')}
+            onPress={() => setView('list')}
             style={s.showAll}
           >
             <Text style={s.showAllText}>{MAP.showAll()}</Text>
@@ -162,18 +198,31 @@ export default function MapScreen() {
         </View>
       ) : null}
 
+      {!loading && partial ? (
+        <View style={[s.notice, { top: insets.top + (visible.length ? 80 : 188) }]}>
+          <Text style={s.noticeText}>{MAP.partial(partialCount)}</Text>
+          <Pressable accessibilityRole="button" onPress={load}><Text style={s.noticeAction}>{MAP.retry()}</Text></Pressable>
+        </View>
+      ) : null}
+
+      {geoDenied ? (
+        <View style={[s.notice, { bottom: 220 + insets.bottom }]}>
+          <Text style={s.noticeText}>{MAP.noGeo()}</Text>
+        </View>
+      ) : null}
+
       {/* «Где я» — над карточкой выбранного, чтобы она её не накрывала. */}
-      <Pressable
+      {view === 'map' ? <Pressable
         accessibilityRole="button"
         accessibilityLabel={MAP.locate()}
         onPress={locate}
         style={[s.locate, { bottom: (picked ? 152 + 24 : 0) + 156 + insets.bottom }]}
       >
         <IconLocate size={20} c={color.fg} />
-      </Pressable>
+      </Pressable> : null}
 
       {picked ? <PinPreview pin={picked} sending={sending} onRespond={respond} onNotNow={notNow}
-                            onOpen={() => router.push('/results')} bottom={140 + insets.bottom} /> : null}
+                            onOpen={() => openIntent(picked)} bottom={140 + insets.bottom} /> : null}
 
       {/* Панель поиска и сегменты — низ кадра, над нижней навигацией. */}
       <View style={[s.bar, { bottom: 84 + insets.bottom }]}>
@@ -181,14 +230,14 @@ export default function MapScreen() {
           <IconSearch size={20} c={color.fg} />
         </Pressable>
         <View style={s.segments}>
-          <View style={[s.segment, s.segmentOn]}>
+          <Pressable onPress={() => setView('map')} style={[s.segment, view === 'map' && s.segmentOn]}>
             <IconMap size={18} c={color.onPrimary} />
-            <Text style={[s.segmentText, s.segmentTextOn]}>{MAP.map()}</Text>
-          </View>
+            <Text style={[s.segmentText, view === 'map' && s.segmentTextOn]}>{MAP.map()}</Text>
+          </Pressable>
           <Pressable
             accessibilityRole="button"
-            onPress={() => router.push('/results')}
-            style={s.segment}
+            onPress={() => { setPicked(null); setView('list'); }}
+            style={[s.segment, view === 'list' && s.segmentOn]}
           >
             <IconList size={18} c={color.onPrimary} />
             <Text style={s.segmentText}>{MAP.list()}</Text>
@@ -221,6 +270,7 @@ function PinPreview({
   bottom: number;
 }) {
   const who = [pin.who, pin.age ? String(pin.age) : ''].filter(Boolean).join(', ');
+  const group = pin.kind === 'group';
   return (
     <View style={[s.card, { bottom }]}>
       <Pressable accessibilityRole="button" onPress={onOpen} style={s.cardHead}>
@@ -250,14 +300,14 @@ function PinPreview({
       <View style={s.actions}>
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: sending }}
-          onPress={onRespond}
-          style={[s.primary, sending && { opacity: 0.6 }]}
+          accessibilityState={{ disabled: !group && sending }}
+          onPress={group ? onOpen : onRespond}
+          style={[s.primary, !group && sending && { opacity: 0.6 }]}
         >
-          <Text style={s.primaryText}>{sending ? '…' : 'Respond'}</Text>
+          <Text style={s.primaryText}>{!group && sending ? '…' : (group ? MAP.openIntent() : MAP.respond())}</Text>
         </Pressable>
         <Pressable accessibilityRole="button" onPress={onNotNow} style={s.secondary}>
-          <Text style={s.secondaryText}>Not now</Text>
+          <Text style={s.secondaryText}>{MAP.notNow()}</Text>
         </Pressable>
       </View>
     </View>
@@ -306,6 +356,22 @@ const s = StyleSheet.create({
     backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center',
   },
   retryText: { ...type.button, color: color.fg } as any,
+  notice: {
+    position: 'absolute', left: space.xl, right: space.xl, minHeight: 44,
+    flexDirection: 'row', alignItems: 'center', gap: space.sm,
+    paddingHorizontal: space.md, paddingVertical: space.sm,
+    borderRadius: radius.xl, backgroundColor: color.card, ...shadow.card,
+  },
+  noticeText: { ...type.bodySmall, color: color.fg, flex: 1 } as any,
+  noticeAction: { ...type.button, color: color.primary } as any,
+
+  list: { paddingHorizontal: space.xl, gap: space.sm, backgroundColor: color.bg },
+  listRow: {
+    minHeight: 92, flexDirection: 'row', alignItems: 'center', gap: space.md,
+    padding: space.md, borderRadius: radius.xl, backgroundColor: color.card, ...shadow.card,
+  },
+  listAvatar: { width: 52, height: 52, borderRadius: 26 },
+  listText: { flex: 1, gap: 3 },
 
   locate: {
     position: 'absolute', right: space.xl, width: 44, height: 44, borderRadius: 22,

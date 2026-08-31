@@ -29,6 +29,10 @@ export type ExplorePin = {
   lon: number;
   /** Расстояние в км, как его посчитал сервер. Может отсутствовать. */
   dist?: number;
+  /** Map-feed-only metadata. Legacy explore rows deliberately leave these undefined. */
+  mode?: 'offline' | 'hybrid';
+  kind?: 'one_to_one' | 'group';
+  count?: number;
 };
 
 const num = (v: any): number | undefined => {
@@ -118,4 +122,22 @@ export const MAP = {
   noGeo: () =>
     T('Не видно, где вы. Разрешите доступ к геопозиции, чтобы карта открывалась рядом с вами.',
       'We cannot see where you are. Allow location access so the map opens near you.'),
+  partial: (n: number) =>
+    n > 0
+      ? T(`${n} ${n === 1 ? 'интент пока без точки' : 'интента пока без точки'}`,
+          `${n} intent${n === 1 ? '' : 's'} cannot be placed yet`)
+      : T('Часть интентов пока без точки', 'Some intents cannot be placed yet'),
+  back: () => T('Назад', 'Back'),
+  intentDetails: () => T('Интент', 'Intent'),
+  detailUnavailable: () => T('Интент недоступен', 'Intent unavailable'),
+  detailUnavailableNote: () => T('Возможно, он уже закрыт или удалён.', 'It may have been closed or deleted.'),
+  someone: () => T('Участник Kleal', 'Kleal member'),
+  offline: () => T('Офлайн', 'Offline'),
+  hybrid: () => T('Гибрид', 'Hybrid'),
+  oneToOne: () => T('1:1', '1:1'),
+  group: (n: number) => T(`Группа · ${n}`, `Group · ${n}`),
+  meetingPlace: () => T('Место встречи', 'Meeting place'),
+  openIntent: () => T('Открыть', 'Open'),
+  respond: () => T('Ответить', 'Respond'),
+  notNow: () => T('Не сейчас', 'Not now'),
 };
