@@ -20,6 +20,29 @@ export type Lang = 'ru' | 'en';
 export type ReplyLang = 'ru' | 'en' | 'es';
 
 let reply: ReplyLang = 'en';
+/**
+ * Язык, который даёт СИСТЕМА телефона. Хранится отдельно от выбранного и не затирается им.
+ *
+ * Без этого испанский агент гас навсегда. Испанцу интерфейс достаётся английским (перевода нет), а
+ * агент — испанским. Стоило один раз тронуть переключатель языка, и `setLang` записывал `reply`
+ * равным интерфейсу: испанский пропадал, сохранялся в память как «en», и при следующем запуске
+ * `initLang` брал сохранённое и уже никогда не перечитывал систему. Вернуть можно было только
+ * переустановкой.
+ */
+let systemReply: ReplyLang = 'en';
+
+/** Что говорит система телефона. `ca-ES` и прочие испанские варианты тоже считаются испанскими. */
+function localeReply(): ReplyLang {
+  const l = Localization.getLocales?.()[0];
+  const tag = String(l?.languageCode || 'en').toLowerCase();
+  if (tag === 'ru') return 'ru';
+  if (tag === 'es') return 'es';
+  // Каталонский, галисийский и баскский телефоны — это Испания: агенту там уместнее испанский,
+  // чем английский. Интерфейс от этого не меняется, он и так английский.
+  const region = String((l as any)?.regionCode || '').toUpperCase();
+  if (region === 'ES') return 'es';
+  return 'en';
+}
 
 /**
  * Язык ответов агента. Отличается от языка интерфейса ровно в одном случае — испанская система:
@@ -63,7 +86,13 @@ export function plural(n: number, one: string, few: string, many: string): strin
 export function setLang(l: Lang) {
   if (l === current) return;
   current = l;
-  reply = l;                       // выбрал язык интерфейса — на нём же отвечает и агент
+  /*
+    ВЫБОР ИНТЕРФЕЙСА НЕ ОТМЕНЯЕТ ЯЗЫК СИСТЕМЫ. Выбрал русский — агент говорит по-русски, это и
+    правда выбор. А «английский» в этом переключателе означает не «говори по-английски», а «нет
+    моего языка»: испанцу выбирать нечего, у него в списке только RU и EN. Поэтому на английском
+    агент возвращается к системному языку, и испанский переживает переключение.
+  */
+  reply = l === 'ru' ? 'ru' : systemReply;
   AsyncStorage.setItem(KEY, l).catch(() => {});
   listeners.forEach((fn) => fn(l));
 }
@@ -76,15 +105,17 @@ export async function initLang(): Promise<Lang> {
   } catch {
     saved = null;
   }
+  // Систему читаем ВСЕГДА, а не только когда сохранённого нет: язык агента выводится из неё, и
+  // сохранённый выбор интерфейса его не заменяет.
+  systemReply = localeReply();
   if (saved === 'ru' || saved === 'en') {
     current = saved;
-    reply = saved;
+    reply = saved === 'ru' ? 'ru' : systemReply;
   } else {
     // Русский только при явно русской локали; всё остальное — английский.
-    const tag = String(Localization.getLocales?.()[0]?.languageCode || 'en').toLowerCase();
-    current = tag === 'ru' ? 'ru' : 'en';
+    current = systemReply === 'ru' ? 'ru' : 'en';
     // Испанскую систему интерфейс показать не может, а агент — может, и должен.
-    reply = tag === 'ru' ? 'ru' : tag === 'es' ? 'es' : 'en';
+    reply = systemReply;
   }
   listeners.forEach((fn) => fn(current));
   return current;

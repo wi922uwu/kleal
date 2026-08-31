@@ -11,8 +11,15 @@ Everything here is verified against the running services, not against intent.
 
 ## 1. Topology
 
-One public door. Every service binds `127.0.0.1`; only the gateway binds `0.0.0.0`, and exactly
-one tunnel points at it.
+Every application service binds `127.0.0.1`. The public edge is **nginx** (`:80`/`:443`, certbot,
+`aiopenware.com`), which proxies `/` to the gateway.
+
+> **Проверено 2026-08-27; прежняя формулировка была неверна.** Здесь стояло «one public door …
+> exactly one tunnel points at it». Туннель cloudflared заменён на nginx с сертификатом, и наружу
+> сейчас смотрят `443`, `80`, `8081` (nginx → Expo `:8082`), `7080` (шлюз **дополнительно** висит
+> на `0.0.0.0` — вход в обход TLS), `22` и `25672` (межузловой порт RabbitMQ). Кроме того, nginx
+> уводит `/admin` и `/api/admin/` **прямо в админку `:7077`, мимо шлюза**, — то есть «одна дверь»
+> не выполняется и на уровне маршрутизации.
 
 ```
 browser ──► gateway :7080 ──► onboarding :7072   (also the default route for "/")
@@ -23,7 +30,14 @@ browser ──► gateway :7080 ──► onboarding :7072   (also the default r
                                   │
    admin :7077 (own tunnel, token-gated, NOT proxied by the gateway)
                                   │
-   every service ──► llm :7071 ──► vLLM :8002   (the only holder of model keys)
+   every service ──► :17071 ──[туннель]──► ПОД llm :7071 ──► vLLM :8002
+
+   ВНИМАНИЕ: 17071, а не 7071. Модель живёт на ДРУГОЙ машине (RunPod 195.26.233.30:24309),
+   связь — юнит kleal-llm-tunnel: autossh -L 17071:127.0.0.1:7071. В юните сервисов стоит
+   LLM_URL=http://127.0.0.1:17071.
+   На дроплете при этом крутится СВОЙ kleal@llm на 127.0.0.1:7071, к которому никто не
+   обращается и который упал бы при обращении: его SELF_BASE смотрит на localhost:8002/v1,
+   а vLLM на дроплете нет. Не перепутать с живым.
 ```
 
 Ports, URLs and store paths come from **`shared/config.py`** and nowhere else. Old environment

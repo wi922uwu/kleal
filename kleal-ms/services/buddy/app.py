@@ -294,7 +294,24 @@ def _is_affirmation(text):
         return False
     if _REFUSE.match(t):
         return False
-    return bool(_AFFIRM_HEAD.match(t))
+    m = _AFFIRM_HEAD.match(t)
+    if not m:
+        return False
+    # ГОЛОЕ СОГЛАСИЕ — ЭТО СОГЛАСИЕ И БОЛЬШЕ НИЧЕГО. Ограничения в пять слов мало: «хочу покататься
+    # на серфе» начинается с «хочу», укладывается в четыре слова и до этой правки считалось
+    # согласием. Дальше `_subject_from_history` пропускал его как пустое и брал темой предыдущую
+    # реплику — «привет». Карточка называлась «попрактиковать привет с кем-нибудь»; снято с
+    # телефона. Темы при этом извлекались верно (surfing, water, beach) — ломалась только подпись.
+    #
+    # Поэтому: срезаем согласия одно за другим и смотрим, осталось ли что-то своё. «да хочу» — два
+    # согласия подряд, остатка нет. «хочу покататься на серфе» — остаток есть, и это предмет.
+    rest = t[m.end():].strip(" \t!.?…,-—")
+    while rest:
+        m2 = _AFFIRM_HEAD.match(rest)
+        if not m2:
+            break
+        rest = rest[m2.end():].strip(" \t!.?…,-—")
+    return not rest
 
 
 # Предложение агента найти живого собеседника. Ищем связку «глагол предложения» + «кто-то»:
@@ -339,6 +356,31 @@ _NO_OFFER_CTX = re.compile(
     r"licen[cs]e|your\s+company|who\s+made\s+you|"
     r"let'?s\s+play|word\s+game)",
     re.I | re.U)
+
+
+def strip_trailing_question(reply):
+    """Убрать последнее предложение, если оно вопрос.
+
+    ЗАЧЕМ ОТДЕЛЬНО ОТ `strip_trailing_offer`. Та срезает только ПРЕДЛОЖЕНИЕ найти собеседника
+    (глагол предложения плюс «кого-нибудь»). Но после согласия модель задаёт и другие вопросы —
+    «Ты интересуешься конкретными проектами?» — и они тоже держат окно закрытым: клиент прячет его
+    от ЛЮБОГО вопроса в конце, не разбирая, о чём он.
+
+    Применяется ТОЛЬКО когда человек уже согласился и замысел собран. В обычном разговоре вопрос
+    агента — это работа, а не помеха: он уточняет, чего человек хочет, и срезать его нельзя.
+    """
+    t = str(reply or "").rstrip()
+    if not t.endswith(("?", "？")):
+        return t
+    # Граница по концу предыдущей фразы. Берём последнюю из возможных, чтобы отрезать РОВНО один
+    # вопрос, а не половину ответа.
+    cut = max(t.rfind(". "), t.rfind("! "), t.rfind("…"), t.rfind("\n"))
+    if cut < 0:
+        return t                            # весь ответ — один вопрос, резать нечего
+    head = t[:cut + 1].rstrip()
+    # Если после отсечения осталась пустота или огрызок, лучше оставить как есть, чем отдать
+    # человеку обрубок: та же причина, что у `strip_trailing_offer`.
+    return head if len(head) >= 20 else t
 
 
 def strip_trailing_offer(reply):
@@ -549,6 +591,23 @@ Known so far (baseline from their profile): __SIG__
 You ALREADY KNOW this person — that block is their profile. Never ask for anything already in it: not
 their name, not their city, not their languages. If "name" is there, address them by it naturally
 instead of asking who they are.
+
+THAT BLOCK DESCRIBES THEM, NEVER YOU. You have no interests, no city and no languages of your own.
+Caught on a live screen: the profile held technika / K-pop / sport and Kleal answered «Ты уже знаешь,
+что МНЕ нравится техника, K-pop и спорт. А ты?» — it claimed the person's own interests as its own
+and then asked them what they were into. Speak about anything from that block in the SECOND person
+(«ты любишь…», «you are into…») or do not mention it at all. Never «мне нравится», never «я люблю»
+about anything you read there.
+
+A BARE GREETING IS NOT A TOPIC. «привет», «hi», «hola», «здарова» on its own gives you nothing to
+work with, and the profile is not a substitute for a topic. Do NOT recite their profile back at
+them, do NOT ask several questions at once, and do NOT offer to find them anyone — the offer rule
+below already forbids it after «привет», and it was broken in the same reply. Greet them back and
+ask ONE open question about what they feel like right now.
+
+ONE QUESTION PER MESSAGE, ALWAYS. Not one offer plus two questions: one question, total. The same
+live reply asked three in a row («А ты? Что тебя интересует в последнее время? Хочешь поговорить об
+этом с кем-нибудь?») — that is an interrogation, not a conversation.
 
 Reply as ONE JSON object only, nothing outside it:
 {"reply":"<your natural, helpful message>","signals":{<only fields you newly learned THIS turn; may include "interest">},"match":true|false}
@@ -1750,7 +1809,7 @@ def _lenient_json(raw):
     return None
 
 
-def buddy_chat(messages, profile, signals, uid=None, on_text=None):
+def buddy_chat(messages, profile, signals, uid=None, on_text=None, lang=None):
     sig = _merge_signals(_baseline_signals(profile), signals)
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
                        else ("Buddy: " + str(m.get("content", "")))) for m in (messages or [])[-12:])
@@ -1767,10 +1826,20 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
     if _users <= 1 and not _agent:
         convo = "[FIRST MESSAGE — you have never spoken with this person before]\n" + convo
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
-    lang = thread_lang(messages, last_user)
+    # ЯЗЫК С КЛИЕНТА ГЛАВНЕЕ УГАДАННОГО. Приложение знает язык человека наверняка — из настроек
+    # телефона, — а `thread_lang` читает текст, и на коротких испанских репликах ошибается: из
+    # восемнадцати правдоподобных первых фраз испанца («correr», «tenis», «museo», «bici») восемь
+    # опознались английским, а решение наследуется на весь разговор. Угадывание остаётся запасным
+    # путём: старые сборки языка не шлют.
+    lang = str(lang or "").strip().lower() if lang else ""
+    if lang not in ("ru", "en", "es"):
+        lang = thread_lang(messages, last_user)
     # «Хочешь обсудить это с кем-нибудь?» — «Да». Считается ДО модели: решение здесь целиком
     # в истории, и мнение 70B на него не влияет (см. _agreed_to_offer).
     _agreed = _agreed_to_offer(messages)
+    # Список, а не переменная: значение ставится внутри вложенной ветки, и в Python это иначе
+    # потребовало бы `nonlocal`, которого здесь нет.
+    _trimmed = [False]
     # The age gate lived ONLY in intent_build(), i.e. on the composer path — /chat, which is the
     # path the app's buddy actually uses, had none. A sweep of «мне 15 лет, хочу найти друзей»
     # got "Хорошо, давай начнём поиск" back. The model is never asked; this is deterministic and
@@ -1796,14 +1865,20 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
     if harmful_use_of_a_person(messages):
         return {"reply": HARM_REPLY.get(lang, HARM_REPLY["en"]), "signals": sig, "lang": lang,
                 "match": None, "intent": None, "matches": [], "tool_call": None, "category": None}
-    # Two attempts: the language directive still slips occasionally (a stray foreign glyph in a technical
-    # word — "积云"/"биζнес"). Re-roll once, colder, and prefer the language-clean answer; keep the first
-    # usable one as a fallback so a fussy guard never leaves the user with no reply.
+    # ТРИ ПОПЫТКИ, А НЕ ДВЕ. Двух хватало, пока сторож языка работал вхолостую: его вывод в этой
+    # ветке выбрасывали, и негодный ответ всё равно доезжал до человека. Как только сторож начали
+    # слушать, стало видно, насколько часто 70B клеит алфавиты внутри слова: на вопросе «расскажи
+    # про падел» — два отказа из трёх замеров. Ответ при этом модель умеет: третий замер дал
+    # чистое «Падел — это увлекательный спорт».
+    #
+    # Это брак выборки, а не непонимание вопроса, и лечится он ещё одним прогоном холоднее. Лишний
+    # вызов случается ТОЛЬКО когда предыдущий негоден — на здоровом ответе цикл выходит на первой.
+    _cmsgs_temps = (0.35, 0.2, 0.1)
     _cmsgs = [{"role": "system", "content": _buddy_sys(sig, lang)},
               {"role": "user", "content": convo}]
     obj = None
     _why = []                      # почему не вышло — иначе сбой виден только человеку на экране
-    for _attempt in range(2):
+    for _attempt in range(len(_cmsgs_temps)):
         raw = ""
         try:
             # Поток — только на ПЕРВОЙ попытке. Вторая существует потому, что первая оказалась
@@ -1812,7 +1887,7 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
             if on_text is not None and _attempt == 0:
                 raw = llm_stream(MODEL_ID, _cmsgs, 0.35, "reply", on_text)
             else:
-                raw = llm_complete(MODEL_ID, _cmsgs, 0.35 if _attempt == 0 else 0.2)
+                raw = llm_complete(MODEL_ID, _cmsgs, _cmsgs_temps[_attempt])
             cand = _lenient_json(raw)
             if not isinstance(cand, dict):
                 # Голый текст — это ответ, а не отказ. Конверт нужен нам, а не человеку.
@@ -1832,6 +1907,28 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
         if _sal:
             obj = dict(cand, reply=_sal)
             break
+
+    # РУБЕЖ ЯЗЫКА, КОТОРОГО ЗДЕСЬ НЕ БЫЛО. Строка `obj = cand` выше держит первый структурно
+    # годный ответ «even if its language is wrong» — с расчётом, что его поймают позже. В сборщике
+    # интентов ловят (см. одноимённую проверку там), а в разговоре не ловили ни разу, и сломанный
+    # текст уходил человеку как есть. Снято с телефона: «Падел - это fascinирующий спорт» —
+    # английский корень вклеен внутрь русского слова. `_LAT_GLUE` такую склейку видит, то есть
+    # сторож всё это время работал правильно, а его вывод просто выбрасывали.
+    #
+    # Сначала пробуем починить шов: `_salvage` разводит слипшиеся алфавиты пробелом. Не помогло —
+    # значит это не косноязычие, а брак генерации, и лучше короткая честная строка, чем текст,
+    # который читается как поломка приложения.
+    if isinstance(obj, dict) and obj.get("reply") and not _lang_ok(obj.get("reply"), lang):
+        _sal = _salvage(obj.get("reply"), lang)
+        if not _sal:
+            # ЧТО ИМЕННО ЗАБРАКОВАНО — В ЖУРНАЛ. Без этого замена видна только человеку на экране,
+            # и отличить «модель сломалась» от «сторож придирается» нельзя ниоткуда. Ровно на это
+            # уже наступили: первая редакция сторожа глушила годные ответы, и понять причину можно
+            # было только по строке, которой не было.
+            print("[buddy] отвергнут ответ (lang=%s): %r" % (lang, str(obj.get("reply"))[:200]),
+                  flush=True)
+        obj = dict(obj, reply=_sal) if _sal else dict(obj, reply=BROKEN_REPLY.get(
+            lang, BROKEN_REPLY["en"]))
 
     if isinstance(obj, dict) and obj.get("reply"):
         reply = _clip(str(obj.get("reply")))
@@ -1863,6 +1960,33 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
         # («Keep match: false when you offer»), и оно не соблюдается.
         if want_match and not _agreed and _TRAILING_OFFER.search(str(obj.get("reply") or "").rstrip()):
             want_match = False
+        # ...А ЕСЛИ ЧЕЛОВЕК УЖЕ СОГЛАСИЛСЯ — СРЕЗАЕМ ХВОСТ, и без этого поток замыкался в кольцо.
+        #
+        # Правило выше говорит «предложение и окно взаимоисключающи» и намеренно не применяется к
+        # согласию: отменять согласие нельзя. Но реплику при этом никто не трогал, а модель, вопреки
+        # прямому запрету в промпте («you must NOT ask the same question a second time»), предлагала
+        # то же самое ещё раз. Дальше срабатывало правило КЛИЕНТА: окно не выезжает, если ответ
+        # кончается вопросом (app/buddy.tsx — «окно не перебивает вопрос агента»). Две стороны
+        # решали верно и в сумме давали кольцо.
+        #
+        # Снято с телефона: «крипта» -> «да» -> «да» -> «да хочу» -> «да хочу» — четыре согласия
+        # подряд, и каждый раз в ответ то же предложение. Окно не открылось ни разу.
+        #
+        # Поэтому: согласились — вопрос из ответа убираем. Тогда клиент видит утверждение, окно
+        # выезжает, и человек попадает туда, куда четырежды просился.
+        if want_match and _agreed:
+            # Правим `reply`, а НЕ `obj["reply"]`: наружу уходит именно локальная переменная, она
+            # извлечена из `obj` выше, и правка словаря на неё уже не влияет. Первая версия этой
+            # починки трогала словарь — и не меняла ничего, хотя выглядела рабочей.
+            _cut = strip_trailing_question(strip_trailing_offer(str(reply or "")))
+            if _cut and _cut != reply:
+                reply = _cut
+                obj["reply"] = _cut
+                # Пометка для ПОТОКА. Там показанный текст побеждает итоговый, если он длиннее, —
+                # правило спасает от обрезанного конверта. Но здесь мы укоротили ответ НАМЕРЕННО,
+                # и без этой пометки поток вернул бы вопрос обратно, отменив починку. Проверено:
+                # обычным запросом хвост срезался, потоком — нет, а приложение ходит потоком.
+                _trimmed[0] = True
     else:
         # LLM down: only the strong, explicit ask triggers a search — never a bare activity mention.
         # Согласие на уже прозвучавшее предложение проходит и здесь: оно не требует модели, всё
@@ -1879,7 +2003,8 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None):
             0 if want_match else (2 if _mid else 1)]
 
     out = {"reply": reply, "signals": sig, "lang": lang, "match": None,
-           "intent": None, "matches": [], "tool_call": None, "category": None}
+           "intent": None, "matches": [], "tool_call": None, "category": None,
+           "trimmed": bool(_trimmed[0])}
     if not want_match:
         return out
 
@@ -2152,6 +2277,22 @@ four words, phrased the way the person would say them. If you asked "В басс
 typing; typing must always stay possible, so never write "choose one of the options".
 Give chips only when your question has a small set of natural answers. An open question ("а чем
 ещё занимаешься?") has none — return an empty list rather than inventing hobbies for them.
+
+ASK ABOUT WHAT IS ALREADY NOTED. If the transcript starts with «ALREADY NOTED: …», that list is
+what THIS PERSON has just chosen, and your questions must be about THOSE things — one at a time, in
+the order they are listed. Nothing else is on the table until they are covered.
+
+Caught on a live screen: the person had picked Общение, Винил, Культура, Тех — and the very next
+question was «На что уходит вечер, когда ничего не запланировано?». That is the opener for someone
+who has named NOTHING, and asking it of someone who has just named four things tells them you were
+not listening. With a non-empty ALREADY NOTED you may never use it, nor any other question about
+what they are into in general: they answered that already, with the list.
+
+Take the first item and narrow it the way the rules below describe — kind, style, level, sometimes
+place. Then the second. Do NOT copy any example wording from this prompt: ask about THEIR item, in
+your own words.
+`ALREADY NOTED` is also there so you do not propose the same things back — but its FIRST job is to
+tell you what to talk about.
 
 TWO QUESTIONS PER INTEREST, THEN MOVE ON. This is the most important rule.
 - Read your OWN earlier questions in the transcript. Count how many you already asked about the
@@ -2997,6 +3138,39 @@ def neutral_ready(activity, lang):
     return tpl.format(a=a)
 
 
+# Ответ пришёл сломанным настолько, что показывать его нельзя: чужой язык или склеенные алфавиты
+# внутри слова. Просим повторить — это честнее, чем молча выдать брак за ответ.
+BROKEN_REPLY = {
+    "ru": "Что-то я сбился. Повтори, пожалуйста?",
+    "en": "I lost the thread there. Say that again?",
+    "es": "Me he liado. ¿Puedes repetirlo?",
+}
+
+
+# Слово, в котором есть И латиница, И кириллица: «fascinирующий», «Завтраsounds». Это всегда брак
+# генерации — настоящих таких слов не бывает, — и содержания в нём нет: английский корень с русским
+# окончанием не несёт смысла, который стоило бы спасать.
+_HYBRID = re.compile(r"\b(?=[^\s]*[A-Za-z])(?=[^\s]*[а-яА-ЯёЁ])[^\s]+", re.U)
+
+
+def _drop_hybrids(text):
+    """Выбросить слова-гибриды и подчистить пробелы после них.
+
+    ПОЧЕМУ ВЫБРОСИТЬ, А НЕ РАЗВЕСТИ ПРОБЕЛОМ. `polish_reply` разводит слипшиеся алфавиты, и для
+    двух нормальных слов, съевших пробел, это верно. Здесь другое: «fascinирующий» — не два слова,
+    а одно испорченное, и пробел даёт «fascin ирующий» — та же поломка, только заметнее.
+
+    ПОЧЕМУ НЕ ПЕРЕКАТ. Пробовал: три попытки на разных температурах дали склейку три раза из трёх
+    на одном и том же слове. Это устойчивая яма выборки, а не случайный сбой, и лишний вызов её не
+    обходит. Зато предложение без прилагательного остаётся и грамотным, и правдивым: «Падел — это
+    спорт, который набирает популярность».
+    """
+    out = _HYBRID.sub("", str(text or ""))
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    out = re.sub(r"\s+([,.;:!?…»])", r"\1", out)
+    return out.strip()
+
+
 def _salvage(reply, lang):
     """The reply if it is usable in `lang` — cleaned of stray glyphs if that is all that was wrong.
 
@@ -3010,7 +3184,14 @@ def _salvage(reply, lang):
     if _lang_ok(s, lang):
         return base.polish_reply(s)
     s2 = _strip_foreign(s)
-    return base.polish_reply(s2) if (s2 and _lang_ok(s2, lang)) else ""
+    if s2 and _lang_ok(s2, lang):
+        return base.polish_reply(s2)
+    # Последняя попытка: убрать слова-гибриды. Годится, только если после них осталась фраза, а не
+    # огрызок — иначе честнее показать, что ответа нет.
+    s3 = _drop_hybrids(s2 or s)
+    if s3 and len(s3) >= 40 and _lang_ok(s3, lang):
+        return base.polish_reply(s3)
+    return ""
 
 
 # Filtration answers a bare greeting with topics: "привет" -> ['hello','greeting'],
@@ -3394,14 +3575,21 @@ def intent_suggest(profile, lang="en", seed=""):
     return {"suggestions": [], "lang": lang}
 
 
-def intent_build(messages, profile, on_text=None):
+def intent_build(messages, profile, on_text=None, lang=None):
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     # The whole thread is the conversation's memory; the builder normally sees only the plan-relevant
     # part — unless the ask points back at the chat, in which case the chat is what it is about.
     _refers_back = bool(_ANAPHORA.search(last_user))
     _subject = _subject_from_history(messages) if _refers_back else ""
     bmsgs = _builder_msgs(messages, keep_chat=_refers_back)
-    lang = thread_lang(messages, last_user)
+    # ЯЗЫК С КЛИЕНТА ГЛАВНЕЕ УГАДАННОГО. Приложение знает язык человека наверняка — из настроек
+    # телефона, — а `thread_lang` читает текст, и на коротких испанских репликах ошибается: из
+    # восемнадцати правдоподобных первых фраз испанца («correr», «tenis», «museo», «bici») восемь
+    # опознались английским, а решение наследуется на весь разговор. Угадывание остаётся запасным
+    # путём: старые сборки языка не шлют.
+    lang = str(lang or "").strip().lower() if lang else ""
+    if lang not in ("ru", "en", "es"):
+        lang = thread_lang(messages, last_user)
     # Before anything else, and before the model: a person who has said they are under 18 gets no
     # intent built, on this turn or any later one. The reply is fixed text, not a generation, so
     # there is nothing to argue with and no way for a later turn to talk it back open.
@@ -3611,6 +3799,7 @@ class H(BaseHTTPRequestHandler):
                 # то есть до всякой проверки готового ответа, — а третий рубеж только на ней и
                 # держится. Скорость здесь уступает: показать инструкцию и стереть её через
                 # секунду хуже, чем ответить на секунду позже.
+                _lang = str(body.get("lang") or "").strip().lower()
                 _sv, _sd = safety.check_conversation(body.get("messages") or [])
                 if (body.get("stream") and _sv == "ok"
                         and isinstance(body.get("messages"), list) and body["messages"]):
@@ -3646,7 +3835,7 @@ class H(BaseHTTPRequestHandler):
 
                     try:
                         out = buddy_chat(body["messages"], profile, body.get("signals") or {},
-                                         uid, on_text=sink)
+                                         uid, on_text=sink, lang=_lang)
                         # Показанное может РАЗОЙТИСЬ с итогом: вторая попытка, обрезка по границе,
                         # заготовка при отказе. Тогда экран обязан заменить текст, а не оставить
                         # оборванную половину висеть над настоящим ответом.
@@ -3668,7 +3857,10 @@ class H(BaseHTTPRequestHandler):
                         # ответа. Правило «длиннее — значит полнее» здесь перестаёт работать.
                         if '"reply"' in _shown or '"match"' in _shown:
                             _shown = ""
-                        if _shown and len(_shown) > len(_final):
+                        # Намеренно укороченный ответ показанный текст НЕ перебивает: см. пометку
+                        # `trimmed` в buddy_chat. Иначе срезанный хвостовой вопрос возвращался бы,
+                        # и окно создания затеи снова не открывалось.
+                        if _shown and len(_shown) > len(_final) and not out.get("trimmed"):
                             out = dict(out, reply=_clip(_shown))
                             _final = (out.get("reply") or "").strip()
                         # Сравниваем ПО СУЩЕСТВУ, а не посимвольно: показанное отличается от итога
@@ -3679,13 +3871,15 @@ class H(BaseHTTPRequestHandler):
                         emit("error", {"error": str(e)[:200]})
                     return
                 if isinstance(body.get("messages"), list) and body["messages"]:
-                    res = buddy_chat(body["messages"], profile, body.get("signals") or {}, uid)   # stateless
+                    res = buddy_chat(body["messages"], profile, body.get("signals") or {}, uid,
+                                     lang=body.get("lang"))   # stateless
                 elif uid and body.get("message"):
                     s = _session(uid)                                                             # stateful
                     if profile:
                         s["profile"] = profile
                     s["thread"] = (s.get("thread") or [])[-22:] + [{"role": "user", "content": str(body["message"])}]
-                    res = buddy_chat(s["thread"], s.get("profile") or {}, s.get("signals") or {}, uid)
+                    res = buddy_chat(s["thread"], s.get("profile") or {}, s.get("signals") or {}, uid,
+                                     lang=body.get("lang"))
                     s["thread"].append({"role": "assistant", "content": res.get("reply", "")})
                     s["signals"] = res.get("signals") or {}
                     if res.get("intent"):
@@ -3722,7 +3916,7 @@ class H(BaseHTTPRequestHandler):
                 msgs = body.get("messages") if isinstance(body.get("messages"), list) else []
                 prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
                 if not body.get("stream"):
-                    return send_json(self, 200, intent_build(msgs, prof))
+                    return send_json(self, 200, intent_build(msgs, prof, lang=body.get("lang")))
                 # Streamed variant. Deltas start flowing before we know whether this turn is small talk
                 # or a real intent — that verdict only exists once the whole JSON envelope has parsed,
                 # so it rides in `done` and the client applies its usual branching there.
@@ -3750,7 +3944,7 @@ class H(BaseHTTPRequestHandler):
                     emit("delta", {"t": t})
 
                 try:
-                    out = intent_build(msgs, prof, on_text=sink)
+                    out = intent_build(msgs, prof, on_text=sink, lang=body.get("lang"))
                     # A re-roll, or the hand-off to the conversational agent, produces a DIFFERENT reply
                     # from the one the user just watched appear. Tell the client so it can replace the
                     # bubble instead of leaving a stale half-sentence stranded above the real answer.

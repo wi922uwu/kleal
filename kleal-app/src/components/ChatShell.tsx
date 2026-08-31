@@ -111,12 +111,14 @@ export const ChatShell = forwardRef<ScrollView, {
   scrollEnabled?: boolean;
   /** Подсказка в поле ввода, когда она зависит от шага. */
   composerPlaceholder?: string;
+  /** Поле ввода недоступно: на шаге, где ждут нажатия, писать пока нечего. */
+  composerDisabled?: boolean;
   /** Поставить курсор в поле ввода — по кнопке «написать своё». */
   focusSignal?: number;
   onBack?: () => void;
   onSend?: (text: string) => void;
 }>(function ChatShell(
-  { title, pct, thread, typing, widget, headerExtra, brow, scrollEnabled = true, composerPlaceholder, focusSignal, onBack, onSend },
+  { title, pct, thread, typing, widget, headerExtra, brow, scrollEnabled = true, composerPlaceholder, composerDisabled, focusSignal, onBack, onSend },
   scroller
 ) {
   const lang = useLang();
@@ -194,7 +196,8 @@ export const ChatShell = forwardRef<ScrollView, {
             {!typing ? widget : null}
           </ScrollView>
 
-          <Composer onBack={onBack} onSend={onSend} placeholder={composerPlaceholder} focusSignal={focusSignal} bottomInset={insets.bottom} />
+          <Composer onBack={onBack} onSend={onSend} placeholder={composerPlaceholder}
+                    disabled={composerDisabled} focusSignal={focusSignal} bottomInset={insets.bottom} />
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -231,6 +234,8 @@ export function BotHint({ children }: { children: React.ReactNode }) {
 export const chatStyles = StyleSheet.create({
   widget: { gap: space.md, marginTop: space.md, width: '100%' },
   hint: { ...type.caption, color: color.muted } as any,
+  /** Заголовок виджета: что человек сейчас делает. Стоит НАД подсказкой к жесту. */
+  mapTitle: { ...type.labelMedium, color: color.fg } as any,
   label: { ...type.bodySmall, color: color.muted } as any,
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   rowSplit: { flexDirection: 'row', gap: space.sm },

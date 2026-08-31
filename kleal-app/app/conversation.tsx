@@ -236,7 +236,9 @@ export default function Conversation() {
       // переподключаться и писать снова.
       const code = String((e as any)?.body?.error || (e as any)?.message || '');
       setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'failed' } : x)));
-      setErr(code === 'BLOCKED' ? CHAT.blocked() : CHAT.offline());
+      setErr(code === 'BLOCKED' ? CHAT.blocked()
+             : code === 'NOT_MATCHED' ? CHAT.writeNotMatched()
+             : CHAT.offline());
     }
   }, [me, other]);
 

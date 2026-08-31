@@ -5,10 +5,14 @@
  * людей: список из восьми карточек подряд — это ровно та лента, от которой Kleal отказывается.
  * Стопка показывает ОДНОГО человека и говорит, сколько ещё за ним.
  *
- * Это НЕ свайп-колода. Свайпы — названный враг продукта («социальное трение: свайпы, холодные
- * сообщения, мёртвые чаты»), и жест «отбросить человека вбок» здесь означал бы ровно то, чего
- * продукт избегает. Верхняя карточка живёт, пока по ней не приняли решение; «дальше» — тихая
- * кнопка, а не бросок.
+ * ЛИСТАНИЕ — НЕ СВАЙП-КОЛОДА, и разница здесь смысловая, а не техническая. Свайпы названы врагом
+ * продукта («социальное трение: свайпы, холодные сообщения, мёртвые чаты»), но запрещён там
+ * конкретный жест — ОТБРОСИТЬ человека вбок, то есть принять решение броском. Здесь жест ничего
+ * не решает и никого не выбрасывает: он перелистывает, и назад тоже. Карточка остаётся в колоде,
+ * решение по ней принимают, открыв её.
+ *
+ * Поэтому листание в обе стороны обязательно. Односторонняя лента была бы тем самым отбрасыванием:
+ * пролистнул — потерял. Раньше на этом месте стояла кнопка «Дальше ›», она умела только вперёд.
  *
  * Геометрия с борда, не на глаз (Invite Stack 350×131 при карточке 350×110):
  *   Layer · 3rd   322×100   — на 28 уже и на 10 ниже
@@ -17,7 +21,7 @@
  * Отсюда PEEK: сумма выступающих краёв = 131 − 110 = 21, по 10–11 на слой.
  */
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Pressable, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, PanResponder } from 'react-native';
 import { HOME } from '../home';
 import { color, radius as rad, space, type } from '../theme';
 
@@ -29,14 +33,15 @@ const LAYERS = 3;             // верхняя + два края: борд ри
 export function CardStack<T_ extends { key: string }>({
   items,
   index,
-  onNext,
+  onIndex,
   render,
   emptyHint,
 }: {
   items: T_[];
   /** Какая карточка сверху. Хранится СНАРУЖИ: экран знает, по кому уже приняли решение. */
   index: number;
-  onNext: () => void;
+  /** Куда перешли. Двусторонний: листают и вперёд, и назад. */
+  onIndex: (i: number) => void;
   render: (item: T_) => React.ReactNode;
   /** Что сказать, когда стопка кончилась. Пусто — не рисовать ничего. */
   emptyHint?: string;
@@ -62,6 +67,47 @@ export function CardStack<T_ extends { key: string }>({
   if (!items.length || index >= items.length) {
     return emptyHint ? <Text style={s.empty}>{emptyHint}</Text> : null;
   }
+
+  /*
+    ЖЕСТ. Палец ведёт верхнюю карточку за собой, отпускание решает: ушла дальше порога — листаем,
+    не ушла — возвращаем на место. Порог в шестьдесят точек взят не на глаз: меньше — и колода
+    перелистывается от случайного касания при прокрутке ленты, больше — жест приходится
+    «дожимать».
+
+    ВЕРТИКАЛЬ ОТДАЁМ ЛЕНТЕ. Колода живёт внутри прокручиваемой главной, и захват жеста по любому
+    движению означал бы, что палец, начавший скроллить с карточки, не прокрутит экран. Поэтому
+    берём только те движения, где горизонталь вдвое обгоняет вертикаль.
+  */
+  const dx = useRef(new Animated.Value(0)).current;
+  const idxRef = useRef(index);
+  idxRef.current = index;
+  const lenRef = useRef(items.length);
+  lenRef.current = items.length;
+  const goRef = useRef(onIndex);
+  goRef.current = onIndex;
+
+  const pan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) =>
+        Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+      onPanResponderMove: (_e, g) => dx.setValue(g.dx),
+      onPanResponderRelease: (_e, g) => {
+        const i = idxRef.current;
+        const last = lenRef.current - 1;
+        const next = g.dx < -60 && i < last ? i + 1
+                   : g.dx > 60 && i > 0 ? i - 1
+                   : i;
+        // Возврат на место — всегда, даже когда листаем: карточка следующей проявляется своей
+        // анимацией с нуля, и оставленное смещение сдвинуло бы её вбок.
+        Animated.timing(dx, { toValue: 0, duration: 160, easing: Easing.out(Easing.quad),
+                              useNativeDriver: true }).start();
+        if (next !== i) goRef.current(next);
+      },
+      onPanResponderTerminate: () => {
+        Animated.timing(dx, { toValue: 0, duration: 160, useNativeDriver: true }).start();
+      },
+    })
+  ).current;
 
   const top = items[index];
   /** Сколько слоёв-краёв рисовать: только столько, сколько карточек реально осталось за верхней. */
@@ -93,23 +139,25 @@ export function CardStack<T_ extends { key: string }>({
           );
         })}
 
-        <Animated.View style={{ opacity: fade, transform: [{ translateY: rise }] }}>
+        <Animated.View
+          {...pan.panHandlers}
+          style={{ opacity: fade, transform: [{ translateY: rise }, { translateX: dx }] }}
+        >
           {render(top)}
         </Animated.View>
       </View>
 
       {/*
-        Строка под стопкой: сколько осталось и как перейти к следующему. «Дальше» — тихая
-        кнопка, а не жест: отбрасывать человека взмахом здесь нельзя по смыслу продукта.
+        Точки вместо кнопки: они говорят, сколько карточек и где мы, но ничего не обещают нажать.
+        Кнопка «Дальше ›» стояла здесь, пока листать было нечем; с жестом она стала бы вторым
+        способом сделать то же самое, а два способа на одно действие — это выбор там, где его не
+        требуется делать.
       */}
-      {left > 1 ? (
-        <View style={s.foot}>
-          {/* Копия — в src/home.ts: голое «Ещё 1» по-русски обрывок, и склонять число в
-              компоненте вида нельзя по правилу проекта (текст живёт в src/*.ts). */}
-          <Text style={s.left}>{HOME.invitesLeft(left - 1)}</Text>
-          <Pressable accessibilityRole="button" hitSlop={8} onPress={onNext} style={s.next}>
-            <Text style={s.nextText}>{HOME.invitesNext()} ›</Text>
-          </Pressable>
+      {items.length > 1 ? (
+        <View style={s.dots}>
+          {items.map((it, i) => (
+            <View key={it.key} style={[s.dot, i === index && s.dotOn]} />
+          ))}
         </View>
       ) : null}
     </View>
@@ -128,9 +176,9 @@ const s = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.07, shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 }, elevation: 2,
   },
-  foot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 24 },
-  left: { ...type.caption, color: color.ink, opacity: 0.6 } as any,
-  next: { paddingVertical: 4, paddingHorizontal: 6 },
-  nextText: { ...type.labelMedium, color: color.primary, fontWeight: '600' } as any,
+  dots: { flexDirection: 'row', alignSelf: 'center', gap: 6, paddingTop: 2 },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: color.ink, opacity: 0.18 },
+  /** Текущая — фирменным и без прозрачности: точка-указатель, а не просто «ярче». */
+  dotOn: { backgroundColor: color.primary, opacity: 1 },
   empty: { ...type.bodySmall, color: color.ink, opacity: 0.65, paddingHorizontal: 20 } as any,
 });

@@ -24,7 +24,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
-import { SLIDES } from '../src/onboarding';
+import { SLIDES, INTRO_CTA } from '../src/onboarding';
 import { useLang, T } from '../src/i18n';
 import { useOnb, patch } from '../src/state';
 import { color, displayFamily, font, radius, space, type } from '../src/theme';
@@ -68,6 +68,22 @@ export default function Intro() {
   const REST_Y = height - restH;          // в покое видна только волна
   const OPEN_Y = -CURVE_H;                // поднят полностью: кривая ушла за верхний край
   const y = useRef(new Animated.Value(REST_Y)).current;
+  /** Сдвиг листа при листании вбок. Ноль — кадр на месте. */
+  const slideX = useRef(new Animated.Value(0)).current;
+  /**
+   * Сменить кадр: текущий доводится до края, кадр подменяется, новый приходит с другой стороны.
+   * Без этого подмена читалась бы как мигание, а не как листание.
+   */
+  const step = (to: number, out: number) => {
+    busy.current = true;
+    Animated.timing(slideX, { toValue: out, duration: 150, useNativeDriver: true }).start(() => {
+      patch({ slide: to });
+      slideX.setValue(-out);
+      Animated.spring(slideX, { toValue: 0, useNativeDriver: true,
+                                damping: 22, stiffness: 200, mass: 0.9 })
+        .start(() => { busy.current = false; });
+    });
+  };
   const busy = useRef(false);
   /**
    * ДЛИННЫЙ ТАКТИЛЬНЫЙ ОТКЛИК НА ПРОТЯЖКЕ. Панель тянут пальцем, и без отклика это единственный
@@ -102,6 +118,43 @@ export default function Intro() {
       y.setValue(REST_Y);
       busy.current = false;
     }, [y, REST_Y])
+  );
+
+  /**
+   * ГОРИЗОНТАЛЬНОЕ ЛИСТАНИЕ ПЕРВЫХ ДВУХ КАДРОВ.
+   *
+   * Чёрный занавес — это ПУСК, а не «дальше». Пока он стоял на всех трёх кадрах, он и означал на
+   * них разное: дважды листал, на третий раз запускал. Теперь его на первых двух нет вовсе, а
+   * кадры листаются пальцем вбок — тем жестом, который для карусели и ожидают.
+   *
+   * Порог в сорок точек и требование, чтобы горизонталь была больше вертикали: иначе лист
+   * перелистывался бы от случайного косого движения при попытке потянуть занавес.
+   */
+  const swipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_e, g) =>
+          !busy.current && Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.4,
+        onPanResponderMove: (_e, g) => {
+          // Кадр едет за пальцем, но с сопротивлением на краях: за первым и последним двигаться
+          // некуда, и упругость честнее, чем мёртвая остановка.
+          const edge = (g.dx > 0 && i === 0) || (g.dx < 0 && last);
+          slideX.setValue(edge ? g.dx / 4 : g.dx);
+        },
+        onPanResponderRelease: (_e, g) => {
+          const go = Math.abs(g.dx) > 40 || Math.abs(g.vx) > 0.5;
+          const fwd = g.dx < 0;
+          if (go && fwd && !last) return step(i + 1, -width);
+          if (go && !fwd && i > 0) return step(i - 1, width);
+          Animated.spring(slideX, { toValue: 0, useNativeDriver: true,
+                                    damping: 22, stiffness: 200, mass: 0.9 }).start();
+        },
+        onPanResponderTerminate: () => {
+          Animated.spring(slideX, { toValue: 0, useNativeDriver: true,
+                                    damping: 22, stiffness: 200, mass: 0.9 }).start();
+        },
+      }),
+    [i, last, width, slideX]
   );
 
   const settle = (toValue: number, velocity: number, after?: () => void) =>
@@ -166,7 +219,7 @@ export default function Intro() {
   );
 
   return (
-    <View style={s.wrap}>
+    <View style={s.wrap} {...swipe.panHandlers}>
       <Image
         accessibilityIgnoresInvertColors
         source={require('../assets/art/usp-friends-v2.jpg')}
@@ -174,7 +227,14 @@ export default function Intro() {
         resizeMode="cover"
       />
 
-      <View style={[s.sheet, { paddingBottom: restH }]}>
+      {/*
+        ОТСТУП СНИЗУ ЗАВИСИТ ОТ КАДРА: на первых двух занавеса нет, и держать под него место
+        значило бы оставить внизу пустую белую полосу в четверть экрана.
+      */}
+      <Animated.View
+        style={[s.sheet, { paddingBottom: last ? restH : space.xl + insets.bottom },
+                { transform: [{ translateX: slideX }] }]}
+      >
         {/* Гарнитура заголовка зависит от языка — см. displayFamily: в шрифте борда нет кириллицы. */}
         <Text style={[s.h, { fontFamily: displayFamily(lang) }]}>{sl.title}</Text>
         <Text style={s.sub}>{sl.sub}</Text>
@@ -185,16 +245,17 @@ export default function Intro() {
           ))}
         </View>
 
-      </View>
+      </Animated.View>
 
       {/*
         ЗАНАВЕС ПОВЕРХ ВСЕГО — брат листа, а не его ребёнок: внутри листа он упирался в его край.
         Высота — экран плюс кривая, чтобы в поднятом виде гребень ушёл за верхнюю границу.
       */}
+      {last ? (
       <Animated.View
         {...pan.panHandlers}
         accessibilityRole="button"
-        accessibilityLabel={T('Начать', "Let's Start")}
+        accessibilityLabel={INTRO_CTA.start()}
         style={[s.wave, { height: height + CURVE_H, transform: [{ translateY: y }] }]}
       >
         {/*
@@ -209,6 +270,7 @@ export default function Intro() {
         </Svg>
         <View style={s.waveFill} />
       </Animated.View>
+      ) : null}
 
       {/*
         ПОДПИСЬ — ОТДЕЛЬНО ОТ ЗАНАВЕСА и прибита к низу ЭКРАНА.
@@ -217,12 +279,14 @@ export default function Intro() {
         гаснет по мере подъёма: к середине пути её уже нет, и занавес закрывает экран чистым.
         `pointerEvents=none` — чтобы касание доставалось занавесу, а не ей.
       */}
+      {last ? (
       <Animated.View
         pointerEvents="none"
         style={[s.cta, { bottom: Math.max(insets.bottom, space.lg), opacity: labelFade }]}
       >
-        <Text style={s.btnText}>{T('Начать', "Let's Start")}</Text>
+        <Text style={s.btnText}>{INTRO_CTA.start()}</Text>
       </Animated.View>
+      ) : null}
     </View>
   );
 }

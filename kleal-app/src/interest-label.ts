@@ -19,8 +19,15 @@
  *
  *   0. подписи с сервера  — общий словарь interest_i18n (см. ниже), главный источник;
  *   1. дерево колеса      — ключи подборщика, которого больше нет; лежат в старых профилях;
- *   2. встроенные HOBBIES — десять чипов первого шага онбординга;
- *   3. сырой текст        — написанное руками, ещё не переведённое.
+ *   2. колода интересов   — 36 карточек, из которых собрана карта онбординга;
+ *   3. встроенные HOBBIES — десять чипов первого шага онбординга;
+ *   4. сырой текст        — написанное руками, ещё не переведённое.
+ *
+ * КОЛОДА ПОЯВИЛАСЬ ЗДЕСЬ ПОЗЖЕ ОСТАЛЬНЫХ, и по той же причине, по которой заведён весь файл.
+ * Часть её ключей дерево колеса не знает — оно старше. Пока подписи брались только оттуда, человек
+ * выбирал на карте «Языки» и «Танцы», а под картой и дальше в профиле у него стояли `languages` и
+ * `dancing`: карта рисует подпись из карточки, а всё остальное приложение спрашивало словарь,
+ * которому этих ключей не давали. Поймано на симуляторе на трёх выбранных пузырях.
  *
  * Третья ступень когда-то была ответом «это человек написал сам, такое не переводится». Теперь
  * переводится: ключ в профиле английский, а подпись на языке человека приходит с сервера нулевой
@@ -35,6 +42,7 @@
  */
 import { labelOf } from './interests-wheel';
 import { hobbyPlain } from './onboarding';
+import { DECK } from './interests-deck';
 import { getLang } from './i18n';
 
 /**
@@ -58,6 +66,21 @@ export function registerInterestLabels(map: unknown, lang: string): void {
   }
 }
 
+/**
+ * Подписи колоды на текущем языке. Пересобираются при смене языка: `DECK()` зовёт `T`, поэтому
+ * один раз посчитанный словарь после переключения показывал бы прошлый язык.
+ */
+let deckCache: { lang: string; map: Record<string, string> } | null = null;
+function deckLabel(k: string): string | null {
+  const lang = getLang();
+  if (!deckCache || deckCache.lang !== lang) {
+    const map: Record<string, string> = {};
+    for (const c of DECK()) map[c.key.toLowerCase()] = c.label;
+    deckCache = { lang, map };
+  }
+  return deckCache.map[k.toLowerCase()] || null;
+}
+
 /** Подпись интереса на текущем языке. Неизвестный ключ возвращается как есть — это своё слово. */
 export function interestLabel(key: string): string {
   const k = String(key || '').trim();
@@ -66,6 +89,8 @@ export function interestLabel(key: string): string {
   if (srv) return srv;
   const wheel = labelOf(k);
   if (wheel !== k) return wheel;
+  const deck = deckLabel(k);
+  if (deck) return deck;
   const hobby = hobbyPlain(k);
   if (hobby !== k) return hobby;
   return k;

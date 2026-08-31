@@ -24,7 +24,8 @@
 
 // У api.ts до сих пор не было импортов — он самодостаточный слой над fetch. Эти два
 // нужны подписям интересов: язык интерфейса и реестр, куда сгружаются словари с сервера.
-import { getLang } from './i18n';
+import { Image as RNImage } from 'react-native';
+import { getLang, replyLang } from './i18n';
 import { registerInterestLabels } from './interest-label';
 
 const DEFAULT_BASE = 'https://aiopenware.com';
@@ -89,6 +90,31 @@ export type VoicePayload = {
  */
 export const mediaUrl = (url: string) =>
   !url || /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : API_BASE + url;
+
+/**
+ * Согреть чужие фотографии до того, как их покажут.
+ *
+ * Лица людей приходят с сервера файлами и раньше не грелись никем: карточка рисовалась пустой, и
+ * лицо проявлялось через паузу — на приглашении, в выдаче, в ленте сообщений. `Image.prefetch`
+ * кладёт файл в тот же кэш, из которого потом читает `<Image>`, поэтому показ становится
+ * мгновенным без единой правки в разметке.
+ *
+ * ОШИБКИ ГЛОТАЮТСЯ НАМЕРЕННО, и по той же причине, что у предзагрузки картинок при запуске: без
+ * фотографии экран некрасив, без экрана его нет вовсе. Недоступное лицо не должно ронять список.
+ *
+ * Уже согретое просить повторно дёшево — кэш отвечает сразу, — но одинаковые адреса всё же
+ * отсеиваются: в выдаче один человек попадается в нескольких списках.
+ */
+const warmed = new Set<string>();
+
+export function warmPhotos(urls: Array<string | undefined | null>): void {
+  for (const raw of urls || []) {
+    const u = mediaUrl(String(raw || '').trim());
+    if (!u || warmed.has(u)) continue;
+    warmed.add(u);
+    RNImage.prefetch(u).catch(() => {});
+  }
+}
 
 export class ApiError extends Error {
   status: number;
@@ -179,7 +205,7 @@ const LLM_TIMEOUT_MS = 120000;
  * человеческого терпения.
  */
 const RANK_TIMEOUT_MS = 25000;
-const LLM_PATHS = /\/api\/(buddy|onboarding\/chat|agent\/plan)/;
+const LLM_PATHS = /\/api\/(buddy|onboarding\/(?:chat|interest-normalize)|agent\/plan)/;
 const RANK_PATHS = /\/api\/agent\/(match|expand)/;
 
 const timeoutFor = (path: string) =>
@@ -386,6 +412,23 @@ export const profile = {
   update: (name: string, patch: Json) =>
     api.post<{ ok?: boolean; error?: string }>('/api/onboarding/profile-update', { name, patch }),
 
+  /** Free text is a proposal until the person confirms one canonical formulation. */
+  normalizeInterest: (text: string, existing: string[], lang: string) =>
+    api.post<{
+      ok?: boolean;
+      status?: 'ready' | 'clarify' | 'duplicate' | 'invalid' | 'unavailable';
+      canonical?: string;
+      question?: string;
+      error?: string;
+      options?: { canonical: string; label: string; token: string }[];
+    }>('/api/onboarding/interest-normalize', { text, existing, lang }),
+
+  /** This second request is the explicit-confirmation boundary and the only novel-interest writer. */
+  confirmInterest: (name: string, token: string) =>
+    api.post<{ ok?: boolean; error?: string; canonical?: string; label?: string; token?: string; persisted?: boolean }>(
+      '/api/onboarding/interest-confirm', { name, token }
+    ),
+
   /** Доступность (§4.4 receiving policy). Без `receiving` — просто чтение текущего статуса. */
   receiving: (name: string, receiving: Json = {}) =>
     api.post<{ ok?: boolean; status?: string; error?: string }>('/api/onboarding/receiving', { name, receiving }),
@@ -444,11 +487,11 @@ export const buddy = {
   chatStream: (messages: Json[], prof: Json,
                on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void },
                signals: Json = {}) =>
-    sse('/api/buddy/chat', { messages, profile: prof, signals, stream: true }, on),
+    sse('/api/buddy/chat', { messages, profile: prof, signals, stream: true, lang: replyLang() }, on),
 
   chat: (messages: Json[], prof: Json, signals: Json = {}) =>
     api.post<{ reply?: string; intent?: Json | null; signals?: Json; lang?: string }>(
-      '/api/buddy/chat', { messages, profile: prof, signals }
+      '/api/buddy/chat', { messages, profile: prof, signals, lang: replyLang() }
     ),
 
   /**
@@ -465,11 +508,11 @@ export const buddy = {
    */
   intentBuildStream: (messages: Json[], prof: Json,
                       on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void }) =>
-    sse('/api/buddy/intent-build', { messages, profile: prof, stream: true }, on),
+    sse('/api/buddy/intent-build', { messages, profile: prof, stream: true, lang: replyLang() }, on),
 
   intentBuild: (messages: Json[], prof: Json) =>
     api.post<{ reply?: string; valid?: boolean; ready?: boolean; intent?: Json | null; hints?: string[] }>(
-      '/api/buddy/intent-build', { messages, profile: prof }
+      '/api/buddy/intent-build', { messages, profile: prof, lang: replyLang() }
     ),
 
   /** Три варианта из профиля для пустого экрана создания. `seed` меняет выборку для «Ещё варианты». */

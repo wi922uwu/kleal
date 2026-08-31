@@ -41,6 +41,7 @@ import {
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
+  rollIntentName, intentNameOptions,
 } from '../src/intent';
 import { SEXES, sexLabel, COMPOSER_PLACEHOLDER } from '../src/onboarding';
 import { RangeDial } from '../src/components/Dials';
@@ -48,13 +49,14 @@ import { WhenPicker } from '../src/components/WhenPicker';
 import { RadiusMap } from '../src/components/RadiusMap';
 import {
   IconChevronLeft, IconMic, IconPin, IconVideo, IconPlusRound, IconPerson, IconGroups,
-  IconCalendar, IconClock, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar,
+  IconCalendar, IconClock, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar, IconDice,
 } from '../src/components/icons';
 import { EditSheet } from '../src/components/ProfileShell';
 import { Sheet } from '../src/components/Sheet';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { resetGroupSession } from '../src/ginvites';
 import { useLang, T } from '../src/i18n';
+import { suggestAddress, type AddressHit } from '../src/geocode';
 import { useOnb } from '../src/state';
 import { setResults, patchResults } from '../src/results-store';
 import { openResults } from '../src/results-navigation';
@@ -86,6 +88,17 @@ type Draft = {
   /** OF.09: центр поиска. Пусто — берётся из профиля; заполняется, когда булавку передвинули. */
   lat?: number;
   lon?: number;
+  /**
+   * Координаты пришли ОТ АДРЕСА, а не от перетаскивания булавки. Разница решает, можно ли ставить
+   * их на общую карту точно.
+   *
+   * Булавка на карте радиуса — это «ищи вокруг вон той точки», то есть место, где человек
+   * находится. Такое публиковать нельзя: контракт geo_privacy держит домашнюю точку огрублённой,
+   * и это правильно. Адрес же он называет сам и именно для того, чтобы туда пришли, — площадка не
+   * его дом, и прятать её незачем (`can_be_first_meeting_place` в том же контракте прямо отделяет
+   * место встречи от домашнего и рабочего).
+   */
+  venue?: boolean;
 };
 
 export default function Intent() {
@@ -121,7 +134,13 @@ export default function Intent() {
     .split(',')
     .map((t) => t.trim())
     .filter(Boolean);
-  const title = String(params.title || legacy || '').trim();
+  const paramTitle = String(params.title || legacy || '').trim();
+  /*
+    НАЗВАНИЕ ЖИВЁТ В СОСТОЯНИИ, А НЕ В ПАРАМЕТРЕ МАРШРУТА, потому что его теперь можно менять
+    костями на сводке. Параметр остаётся начальным значением: он пришёл из разговора создания и
+    правильно быть первым предложением.
+  */
+  const [title, setTitle] = useState(paramTitle);
 
   const [step, setStep] = useState<IntentStepId>('how');
   const legacySize = params.size ?? params.format;
@@ -322,6 +341,24 @@ export default function Intent() {
       // OF.09: точное место ранжирование не читает — оно нужно ПОЗЖЕ, когда из мэтча собирается
       // план: форма плана подхватит его, чтобы не спрашивать дважды. В выдачу уходит только район.
       if (draft.address?.trim()) intent.address = draft.address.trim();
+      /*
+        КООРДИНАТЫ ЕДУТ В САМУ ЗАТЕЮ, а не только в профиль поиска.
+
+        В профиль они клались и раньше — оттуда считается расстояние до кандидатов. Но карта
+        рисует пины по координатам ЗАТЕИ, и без них она ставила встречу туда, где живёт автор:
+        назначил в Грасии, а на карте пин у дома в Побленоу.
+
+        На карту они уходят ОГРУБЛЁННЫМИ до зоны ~500 м — снапит сервер (`_zone_point` в
+        services/matching). Точный адрес остаётся в `address` и открывается только плану после
+        взаимного подтверждения, как и было.
+      */
+      // ТОЛЬКО КООРДИНАТЫ ПЛОЩАДКИ. Булавка карты радиуса сюда НЕ попадает: она означает «ищи
+      // вокруг вон той точки», то есть где человек находится, и уезжает в профиль поиска, где и
+      // нужна. На общую карту идёт только то, что человек назвал адресом встречи.
+      if (draft.venue && draft.lat != null && draft.lon != null) {
+        intent.lat = draft.lat;
+        intent.lon = draft.lon;
+      }
     }
     if (wantsLink) {
       // Иначе §5.3 требует город, которого у онлайн-встречи нет по определению. Гибриду это тоже
@@ -629,7 +666,7 @@ export default function Intent() {
             lat={la}
             lon={lo}
             km={v.radiusKm}
-            onMove={(la, lo) => set((x) => ({ ...x, lat: la, lon: lo }))}
+            onMove={(la, lo) => set((x) => ({ ...x, lat: la, lon: lo, venue: false }))}
             onDragChange={setDragging}
           />
         </View>
@@ -639,7 +676,7 @@ export default function Intent() {
             <Pressable
               accessibilityRole="button"
               hitSlop={8}
-              onPress={() => set((x) => ({ ...x, lat: undefined, lon: undefined }))}
+              onPress={() => set((x) => ({ ...x, lat: undefined, lon: undefined, venue: false }))}
             >
               <Text style={s.mapReset}>{DETAILS.backHome()}</Text>
             </Pressable>
@@ -648,13 +685,11 @@ export default function Intent() {
 
         {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт
             только план после взаимного подтверждения (OF.C3). */}
-        <TextInput
-          style={s.linkInput}
+        <AddressField
           value={v.address || ''}
-          onChangeText={(t) => set((x) => ({ ...x, address: t }))}
-          placeholder={DETAILS.exactAddress()}
-          placeholderTextColor={color.neutral400}
-          accessibilityLabel={DETAILS.exactAddress()}
+          onChange={(t) => set((x) => ({ ...x, address: t }))}
+          onPick={(hit) => set((x) => ({ ...x, address: hit.label,
+                                         lat: hit.lat, lon: hit.lon, venue: true }))}
         />
 
         <View style={s.radiusRow}>
@@ -1028,6 +1063,19 @@ export default function Intent() {
               {step === 'summary' ? (
                 <SummaryCard
                   topic={title}
+                  /*
+                    Костей НЕТ, если предлагать нечего: темы могут прийти такими, что словарь их
+                    не знает ни одной, и тогда любое нажатие ничего не изменит. Кнопка, которая
+                    заведомо не сработает, хуже её отсутствия.
+                  */
+                  onRollTopic={
+                    intentNameOptions(topics, { size: draft.size, minutes: draft.minutes }, title).length
+                      ? () => {
+                          const next = rollIntentName(topics, { size: draft.size, minutes: draft.minutes }, title);
+                          if (next) setTitle(next);
+                        }
+                      : undefined
+                  }
                   where={where}
                   nature={natureSummary}
                   draft={draft}
@@ -1305,9 +1353,11 @@ function Cta({ label, onPress, disabled, busy }: {
  * рисовать фотографию, которой нет, не из чего.
  */
 function SummaryCard({
-  topic, draft, category, where, nature, busy, onStart, onEdit, onEditField,
+  topic, onRollTopic, draft, category, where, nature, busy, onStart, onEdit, onEditField,
 }: {
   topic: string;
+  /** Кости у названия: подобрать другое. Пусто — костей нет (нечего предлагать). */
+  onRollTopic?: () => void;
   draft: Draft;
   /** Отмеченные черты одной строкой. Собраны на экране — здесь только показываются. */
   nature: string;
@@ -1320,8 +1370,15 @@ function SummaryCard({
   onEditField: (target: IntentEditTarget) => void;
 }) {
   const facts: [string, string, IntentEditTarget?][] = [
-    [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—', 'mode'],
-    [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—', 'size'],
+    /*
+      ТИП И ФОРМАТ БЕЗ СТРЕЛКИ И БЕЗ НАЖАТИЯ. Это первые два решения всего создания, и от них
+      зависит остальное: у офлайна спрашивают место и радиус, у онлайна — ссылку; у группы есть
+      размер, у 1:1 его нет. Правка отсюда означала бы возврат в начало цепочки с уже собранными
+      ответами на вопросы, которых при другом выборе не задают. Менять их надо через «Поправить»,
+      проходя цепочку заново, — а стрелка обещала правку на месте.
+    */
+    [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—'],
+    [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—'],
     ...(draft.size === 'group'
       ? ([[GROUP_SIZE.row(), GROUP_SIZE.people(draft.groupSize || GROUP_MIN_TOTAL), 'groupSize']] as [string, string, IntentEditTarget][])
       : []),
@@ -1333,7 +1390,22 @@ function SummaryCard({
   return (
     <View style={s.card}>
       <View style={s.cover}><IconImagePlaceholder size={44} /></View>
-      {topic ? <Text style={s.sumTopic}>{topic}</Text> : null}
+      {topic ? (
+        <View style={s.sumTopicRow}>
+          <Text style={s.sumTopic} numberOfLines={2}>{topic}</Text>
+          {onRollTopic ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={SUMMARY_O10.roll()}
+              onPress={onRollTopic}
+              hitSlop={12}
+              style={({ pressed }) => [s.sumRoll, pressed && { opacity: 0.6 }]}
+            >
+              <IconDice size={20} c={color.muted} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={s.sumMeta}>
         <Pressable
@@ -1467,6 +1539,69 @@ function Searching({ onCancel }: { onCancel?: () => void }) {
 // ============================================================ вид
 // Оформление UX-каркаса: значения — из токенов темы; при натягивании UI меняется этот блок.
 
+/**
+ * Поле точного адреса с подсказками.
+ *
+ * ЗАЧЕМ ПОДСКАЗКИ, А НЕ ПРОСТО СТРОКА. Строку человек пишет как помнит — «Верди 12», «verdi 12
+ * gracia», — и она остаётся строкой: у затеи так и оставались координаты ДОМА автора, потому что
+ * взять настоящие было неоткуда. На карте встреча оказывалась не там, где её назначили, и узнавал
+ * об этом тот, кто приходил не по адресу.
+ *
+ * Выбранная подсказка приносит И подпись, И координаты: булавка выше сама уезжает на выбранное
+ * место, а интент уходит в поиск с настоящей точкой. Написанное руками по-прежнему принимается —
+ * подсказка это помощь, а не пропуск.
+ *
+ * ПОЧЕМУ ЗАПРОС НЕ НА КАЖДУЮ БУКВУ. У геокодера жёсткий лимит (см. src/geocode.ts), и печатающий
+ * человек выдал бы десяток запросов на одно слово. Ждём паузу в наборе: перестал печатать — ищем.
+ */
+function AddressField({ value, onChange, onPick }: {
+  value: string;
+  onChange: (t: string) => void;
+  onPick: (hit: AddressHit) => void;
+}) {
+  const lang = useLang();
+  const [hits, setHits] = useState<AddressHit[]>([]);
+  /** Что уже выбрано: по этой строке не ищем снова, иначе список лезет поверх выбранного. */
+  const picked = useRef('');
+
+  useEffect(() => {
+    const q = value.trim();
+    if (!q || q === picked.current) { setHits([]); return; }
+    let alive = true;
+    const id = setTimeout(() => {
+      suggestAddress(q, lang).then((r) => { if (alive) setHits(r); });
+    }, 450);
+    return () => { alive = false; clearTimeout(id); };
+  }, [value, lang]);
+
+  return (
+    <View>
+      <TextInput
+        style={s.linkInput}
+        value={value}
+        onChangeText={onChange}
+        placeholder={DETAILS.exactAddress()}
+        placeholderTextColor={color.neutral400}
+        accessibilityLabel={DETAILS.exactAddress()}
+      />
+      {hits.length ? (
+        <View style={s.addrList}>
+          {hits.map((h, i) => (
+            <Pressable
+              key={h.label + i}
+              accessibilityRole="button"
+              onPress={() => { picked.current = h.label; setHits([]); onPick(h); }}
+              style={({ pressed }) => [s.addrRow, pressed && { opacity: 0.85 }]}
+            >
+              <Text style={s.addrText} numberOfLines={2}>{h.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.bg },
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: space.sm },
@@ -1571,6 +1706,19 @@ const s = StyleSheet.create({
     height: 48, borderRadius: rad.md, backgroundColor: color.neutral100,
     paddingHorizontal: 14, color: color.fg, fontSize: 15,
   },
+  /**
+   * Список подсказок под полем. Не всплывающий поверх содержимого, а обычным блоком в потоке:
+   * лист правки прокручивается, и всплывающий слой уезжал бы от своего поля.
+   */
+  addrList: {
+    marginTop: 6, borderRadius: rad.md, backgroundColor: color.card,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: color.border, overflow: 'hidden',
+  },
+  addrRow: {
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.line,
+  },
+  addrText: { ...type.bodySmall, color: color.fg } as any,
   noteRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   note: { flex: 1, ...type.caption, color: color.muted } as any,
 
@@ -1603,7 +1751,15 @@ const s = StyleSheet.create({
     height: 128, borderRadius: rad.lg, backgroundColor: color.neutral100,
     alignItems: 'center', justifyContent: 'center',
   },
-  sumTopic: { fontSize: 19, fontWeight: '700', color: color.fg },
+  /*
+    Название и кости в одной строке. `flex: 1` у самого текста, а не у строки: длинное название
+    переносится на вторую строку и упирается в кости, а не уезжает под них. Кости прижаты к верху
+    (`alignItems: 'flex-start'`) — при двух строках значок, стоящий по центру, выглядит съехавшим.
+  */
+  sumTopicRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  sumTopic: { fontSize: 19, fontWeight: '700', color: color.fg, flex: 1 },
+  /** Отступ сверху равен разнице кегля и значка — так значок стоит на одной линии с первой строкой. */
+  sumRoll: { paddingTop: 2 },
   sumMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sumMetaAction: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   sumMetaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,

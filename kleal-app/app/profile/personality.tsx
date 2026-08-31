@@ -17,7 +17,7 @@ import { useOnb, set, getState } from '../../src/state';
 import { mediaUrl, profile as profileApi, buddy } from '../../src/api';
 import {
   PERSONALITY as C, STORY_MAX, fmtUpdated, adaptSummary,
-  AXIS_LABEL, AXIS_VALUE, AXIS_ORDER, addInterests, explicitInterests,
+  AXIS_LABEL, AXIS_VALUE, AXIS_ORDER, addConfirmedInterest, explicitInterests,
 } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
@@ -43,7 +43,7 @@ export default function Personality() {
    * Само ничего не добавляется. Интересы, проставленные за человека, это ярлыки, которых он не
    * выбирал, и найдут его по ним не те люди.
    */
-  const [suggest, setSuggest] = useState<{ key: string; label: string; why: string }[]>([]);
+  const [suggest, setSuggest] = useState<{ key: string; label: string; why: string; token: string }[]>([]);
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [addedNote, setAddedNote] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -54,7 +54,17 @@ export default function Personality() {
     setAddedNote(false);
     try {
       const r: any = await buddy.storyInterests(text, explicitInterests(p), replyLang());
-      const list = (r?.interests || []) as { key: string; label: string; why: string }[];
+      const raw = (r?.interests || []) as { key: string; label: string; why: string }[];
+      // Story extraction remains a proposal. Each key crosses the same schema-validated
+      // normalization boundary as the free-text popup before it can be shown for confirmation.
+      const list = (await Promise.all(raw.map(async (item) => {
+        try {
+          const nr = await profileApi.normalizeInterest(item.key, explicitInterests(p), replyLang());
+          const option = nr.status === 'ready' && nr.options?.length === 1 ? nr.options[0] : null;
+          return option ? { key: option.canonical, label: option.label || item.label,
+                            why: item.why, token: option.token } : null;
+        } catch { return null; }
+      }))).filter(Boolean) as { key: string; label: string; why: string; token: string }[];
       setSuggest(list);
       // Отмечено всё сразу: человек уже написал это про себя, и заставлять его отмечать заново
       // — лишний шаг. Снять галочку с лишнего дешевле, чем проставить четыре.
@@ -67,9 +77,16 @@ export default function Personality() {
   };
 
   const applyPicked = async () => {
-    const keys = suggest.filter((x) => picked[x.key]).map((x) => x.key);
-    if (!keys.length) return;
-    await addInterests(keys);
+    const chosen = suggest.filter((x) => picked[x.key]);
+    if (!chosen.length) return;
+    for (const item of chosen) {
+      try {
+        const r = await profileApi.confirmInterest(String(p.name || ''), item.token);
+        if (r.ok && r.canonical && r.token && (!getState().done || r.persisted === true)) {
+          addConfirmedInterest(r.canonical, r.label || item.label, r.token);
+        }
+      } catch { /* an expired proposal is not written locally or remotely */ }
+    }
     setSuggest([]);
     setPicked({});
     setAddedNote(true);

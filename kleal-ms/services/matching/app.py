@@ -29,6 +29,7 @@ from llm_client import llm_complete           # the ONLY model access (HTTP -> l
 from http_util import send_json, read_json
 from config import FILTER_URL         # мост тем: адрес фильтрации, тот же, что у buddy
 import db                            # хранилище: postgres или файл — решает KLEAL_DB
+import kleal_auth                     # кто прислал запрос; пока ТОЛЬКО наблюдение, см. _watch_owner
 import mq                            # очередь заданий: rabbit или ничего — решает KLEAL_MQ
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -3125,8 +3126,26 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
                 plan["dist"] = round(float(km), 1)
             except (TypeError, ValueError):
                 pass
-        if c.get("lat") is not None and c.get("lon") is not None:
-            plan["lat"], plan["lon"] = c["lat"], c["lon"]
+        # Координата ВСТРЕЧИ важнее координаты автора. Место человек назвал сам, когда заводил
+        # интент; точка автора — это его район из профиля, одна на все его интенты. Пока брали
+        # только её, карта поиска сводила все встречи города в одну булавку: замерено на живой
+        # выдаче — двенадцать интентов на три точки, девять из них в запасном центре.
+        # КООРДИНАТА ЗАТЕИ, А НЕ АВТОРА, И ТОЧНАЯ.
+        #
+        # Разница между двумя видами точки, и она принципиальна. Домашняя точка человека и метка,
+        # которую он ставит в профиле, огрублены и такими остаются: geo_privacy держит их закрытыми,
+        # и правильно. Адрес встречи — другое: человек называет его САМ и именно для того, чтобы
+        # туда пришли. Прятать площадку значит сделать карту бесполезной — по зоне в полкилометра
+        # на встречу не придёшь.
+        #
+        # Сюда попадает только адрес: клиент кладёт lat/lon в затею лишь когда их дал выбранный
+        # адрес (`venue`), а булавка карты радиуса — «ищи вокруг вон той точки» — уезжает в профиль
+        # поиска и на карту не идёт. Запасной вариант ниже — координаты автора из его строки, они
+        # уже огрублены онбордингом.
+        p_lat = intent.get("lat") if intent.get("lat") is not None else c.get("lat")
+        p_lon = intent.get("lon") if intent.get("lon") is not None else c.get("lon")
+        if p_lat is not None and p_lon is not None:
+            plan["lat"], plan["lon"] = p_lat, p_lon
         out.append(plan)
         if intent_id:
             seen.add(intent_id)
@@ -8075,13 +8094,22 @@ class H(BaseHTTPRequestHandler):
                                              body.get("reason"), body.get("text"), body.get("rating"),
                                              body.get("idem")))
         elif p == "/api/agent/mplan-propose":
-            send_json(self, 200, mp_propose(body.get("self") or body.get("from"), body.get("to"),
-                                            body.get("title"), body.get("mode") or "offline",
-                                            body.get("starts_at"), body.get("when"),
-                                            body.get("district"), body.get("address"),
-                                            body.get("note"), body.get("cover"),
-                                            body.get("venue"), body.get("idem"),
-                                            body.get("link")))
+            # ОТКАЗ ОБЯЗАН БЫТЬ ВИДЕН В ЖУРНАЛЕ. Человек четырежды подряд нажал «предложить», план
+            # не появился, а в журнале не осталось ни одной причины — только следы чтений. Снаружи
+            # пришлось перебирать запреты по одному и всё равно не сойтись. Пишем КОД отказа и
+            # выбранное время, без имён и без содержимого: причина нужна, переписка в журнале — нет.
+            _mp = mp_propose(body.get("self") or body.get("from"), body.get("to"),
+                             body.get("title"), body.get("mode") or "offline",
+                             body.get("starts_at"), body.get("when"),
+                             body.get("district"), body.get("address"),
+                             body.get("note"), body.get("cover"),
+                             body.get("venue"), body.get("idem"),
+                             body.get("link"))
+            if not (_mp or {}).get("ok"):
+                print("[mplan] отказ=%s starts_at=%s mode=%s"
+                      % (str((_mp or {}).get("error") or "?")[:32],
+                         body.get("starts_at"), body.get("mode")), flush=True)
+            send_json(self, 200, _mp)
         elif p == "/api/agent/mplan-respond":
             send_json(self, 200, mp_respond(body.get("id"), body.get("self"), body.get("action"),
                                             body.get("starts_at"), body.get("when"),
@@ -8251,7 +8279,56 @@ class H(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _watch_owner(self, body=None):
+        """НАБЛЮДЕНИЕ, А НЕ ЗАПРЕТ. Ничего не блокирует и ничего не меняет в ответе.
+
+        ЗАЧЕМ. В этом сервисе человек до сих пор определяется ИМЕНЕМ, которое сам же и прислал:
+        шестьдесят с лишним ручек принимают `self`/`name`/`from` из запроса и по нему достают
+        чужие заявки, переписку и планы. Заголовок `Authorization` при этом уже доезжает — шлюз
+        его пробрасывает, — но никто его не читает.
+
+        Включать запрет вслепую нельзя: связка «аккаунт → строка» проставлена у шестнадцати строк
+        из восьмисот двадцати восьми, и отказ по несовпадению выкинул бы из поиска тех, кто вошёл
+        раньше. Сначала надо узнать ЦИФРУ: сколько живого трафика вообще приходит с токеном и как
+        часто заявленное имя расходится с именем из сессии. Её сейчас не существует.
+
+        В ЖУРНАЛ НЕ ПОПАДАЮТ НИ ИМЕНА, НИ АДРЕСА — только признаки. Журнал читают в отладке, и
+        превращать его во вторую копию персональных данных нельзя.
+        """
+        try:
+            claimed = ""
+            if isinstance(body, dict):
+                for k in ("self", "name", "from", "me", "uid"):
+                    v = body.get(k)
+                    if isinstance(v, str) and v.strip():
+                        claimed = v.strip()
+                        break
+            if not claimed and "?" in self.path:
+                from urllib.parse import parse_qs, urlparse
+                q = parse_qs(urlparse(self.path).query)
+                for k in ("self", "name", "from", "me", "uid"):
+                    if q.get(k) and str(q[k][0]).strip():
+                        claimed = str(q[k][0]).strip()
+                        break
+            mine = kleal_auth.caller_name(self)
+            has_tok = bool(kleal_auth.bearer(self))
+            if not claimed and not has_tok:
+                return                       # ручка не про личность — молчим
+            if claimed and mine and claimed.strip().lower() == mine.strip().lower():
+                verdict = "совпало"
+            elif claimed and mine:
+                verdict = "РАСХОЖДЕНИЕ"
+            elif claimed and not mine:
+                verdict = "имя без сессии"
+            else:
+                verdict = "сессия без имени"
+            print("[owner] %s | токен=%s | путь=%s"
+                  % (verdict, "да" if has_tok else "нет", self.path.split("?", 1)[0]), flush=True)
+        except Exception:
+            pass                             # наблюдение не имеет права мешать работе
+
     def do_GET(self):
+        self._watch_owner()
         _p = self.path.split("?", 1)[0]
         if _p == "/health":
             # Ровно один вопрос: процесс жив и отвечает. Состояние базы и очереди собирает
@@ -8383,6 +8460,7 @@ class H(BaseHTTPRequestHandler):
         if self.path.split("?", 1)[0] == "/api/agent/video":
             return self._video_upload()
         body = read_json(self)
+        self._watch_owner(body)
         p = self.path
         if self._restored_post(p, body) or self._restored_admin_post(p, body):
             return

@@ -9,7 +9,7 @@ import { Alert, View, Text, StyleSheet, ScrollView, Pressable, Image } from 'rea
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useLang, T, replyLang } from '../src/i18n';
-import { useOnb, patch, set, profileForRegister, profileForAttach } from '../src/state';
+import { useOnb, patch, set, get, getState, profileForRegister, profileForAttach } from '../src/state';
 import { mediaUrl, onboarding } from '../src/api';
 import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';
 import { Composer } from '../src/components/Composer';
@@ -24,9 +24,33 @@ export default function Summary() {
   const insets = useSafeAreaInsets();
   const p = st.profile;
 
-  const [text, setText] = useState('');
+  /*
+    СВОДКА НАЧИНАЕТСЯ С СОХРАНЁННОЙ, А НЕ С ПУСТОТЫ, и рядом живёт признак «ещё идёт».
+
+    Раньше `text` был пуст, а рисовалось `text || fallback` — и запасной перечень («Интересы: …
+    Языки: … Обычно бывает: …») показывался ВСЕГДА, пока не ответит модель. Человек успевал
+    прочитать машинное перечисление, и оно на глазах подменялось живой фразой: выглядело так,
+    будто экран сам себя переписывает (сообщено с телефона со скриншотом).
+
+    Запасной вариант заводился на случай «модель молчит или упала» — вот пусть только для него и
+    остаётся. Пока ответ в пути, показываем, что он в пути; у вернувшегося на экран показываем
+    его прошлую сводку, и мигания нет вовсе.
+  */
+  const [text, setText] = useState(String((st.profile as any)?.summary || '').trim());
+  const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState('');
+  /*
+    НАЗВАННЫЕ СЕРВЕРОМ ИНТЕРЕСЫ ДЕРЖИМ ОТДЕЛЬНО ОТ ТЕКСТА ОШИБКИ.
+
+    Текст говорит «убери их» — а убирать было нечем: на сводке нет редактора интересов, назад
+    ведёт в анкету, которая при заполненном профиле возвращает обратно сюда. Человек оказывался в
+    петле: ни вперёд, ни назад (сообщено с телефона со скриншотом). Список нужен, чтобы предложить
+    единственное действие, которое здесь имеет смысл, — убрать и сохранить.
+  */
+  const [rejected, setRejected] = useState<string[]>([]);
+  /** Сервер попросил войти. Держим отдельно от текста ошибки: под ним появляется кнопка входа. */
+  const [needsSignIn, setNeedsSignIn] = useState(false);
 
   /**
    * «Profile confidence» на борде — 74 %, без объяснения, откуда. Считаю по тому, что реально
@@ -55,7 +79,8 @@ export default function Summary() {
         // хотя описание уже было составлено минуту назад.
         if (next) { set('summary', next); set('summaryUpdated', Date.now()); }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, []);
 
@@ -85,12 +110,59 @@ export default function Summary() {
    * Возвращает true, только когда профиль действительно записан: не записался — никуда не уходим,
    * а показываем ошибку. Уйти с непрописанным профилем нельзя ни одной кнопкой.
    */
+  /**
+   * Убрать названные сервером интересы и сохранить снова.
+   *
+   * Сравнение по нижнему регистру: сервер называет их канонической ручкой (`bowling`), а в профиле
+   * лежит ровно она же — но регистр по дороге терять нельзя, иначе не совпадёт и кнопка сделает
+   * вид, что сработала. Заодно чистим подпись и квитанцию: оставленная квитанция к выброшенному
+   * интересу — мусор, который переживёт анкету.
+   */
+  const dropRejected = async () => {
+    const off = new Set(rejected.map((x) => x.trim().toLowerCase()));
+    const cur: string[] = get('interests.explicit') || [];
+    set('interests.explicit', cur.filter((k) => !off.has(String(k).trim().toLowerCase())));
+    const prof: any = getState().profile || {};
+    const strip = (o: any) => Object.fromEntries(
+      Object.entries(o || {}).filter(([k]) => !off.has(String(k).trim().toLowerCase())));
+    set('interests.labels', strip((prof.interests || {}).labels));
+    set('interests.confirmations', strip((prof.interests || {}).confirmations));
+    setRejected([]);
+    if (await register()) router.replace('/done');
+  };
+
   const register = async (): Promise<boolean> => {
     setSending(true);
     setErr('');
     try {
       const r: any = await onboarding.register(profileForRegister());
-      if (!r?.ok) throw new Error(r?.error || 'register failed');
+      if (!r?.ok) {
+        // Сервер ОТВЕТИЛ и отказал — это не обрыв связи. Самая частая причина: интерес, которого
+        // нет в каталоге; сервер называет его прямо, и человеку надо показать именно это.
+        // Пока здесь стояло «проверь связь», люди чинили интернет вместо интереса.
+        const why = String(r?.error || '');
+        /*
+          НЕТ СЕССИИ — НЕ ОШИБКА, А РАЗВИЛКА. Профиль пишется только своему аккаунту, и человек без
+          сессии на этом устройстве не сохранит его никогда, сколько бы раз ни нажал. Такое бывает
+          у тех, кто заводил профиль до появления сессий или вышел из аккаунта.
+          Показываем не «не сохранилось», а дорогу ко входу: после него анкета сама вернёт сюда —
+          профиль лежит в памяти телефона, а возобновление ведёт на сводку, когда всё заполнено.
+        */
+        if (/sign\s*in\s*required/i.test(why)) {
+          setNeedsSignIn(true);
+          setErr(SUMMARY.saveNeedsSignIn());
+          return false;
+        }
+        const m = why.match(/unconfirmed interests:\s*(.+)/i);
+        // Сервер отдаёт их и списком (`interests`), и строкой в тексте ошибки. Берём список, если
+        // он есть: разбирать строку обратно — терять то, что уже разобрано.
+        const named: string[] = Array.isArray(r?.interests) && r.interests.length
+          ? r.interests.map(String)
+          : (m ? m[1].split(',').map((x: string) => x.trim()).filter(Boolean) : []);
+        setRejected(named);
+        setErr(m ? SUMMARY.saveRejectedInterests(m[1].trim()) : SUMMARY.saveRejected(why || '—'));
+        return false;
+      }
       // ПРИВЯЗКА БЕЗУСЛОВНА. Раньше здесь стояло `if (st.login)`, а `login` выставлял единственный
       // экран «Логин и пароль»: всякий, кто входил иначе, доходил до конца анкеты без него, и
       // профиль не привязывался ни к чему — он оставался в памяти телефона и строкой в users.json
@@ -102,8 +174,8 @@ export default function Summary() {
       patch({ done: true });
       return true;
     } catch {
-      setErr(T('Профиль не сохранился. Проверь связь и попробуй ещё раз.',
-               'Your profile didn’t save. Check your connection and try again.'));
+      // Сюда попадает только настоящий обрыв: запрос не дошёл или ответ не разобрался.
+      setErr(SUMMARY.saveOffline());
       return false;
     } finally {
       setSending(false);
@@ -128,10 +200,9 @@ export default function Summary() {
     // и «назад» из профиля вело бы обратно в неё. Онбординг закончен, возвращаться некуда:
     // сворачиваем стопку до главной и открываем профиль поверх неё.
     if (await register()) { router.dismissAll(); router.navigate('/home'); router.navigate('/profile'); return; }
-    Alert.alert(
-      T('Профиль не сохранился', 'Your profile didn’t save'),
-      T('Проверь связь и попробуй ещё раз.', 'Check your connection and try again.')
-    );
+    // Причина уже разобрана в register() и лежит в err — Alert обязан говорить то же самое,
+    // иначе на одном экране два разных объяснения одной неудачи.
+    Alert.alert(T('Профиль не сохранился', 'Your profile didn’t save'), err || SUMMARY.saveOffline());
   };
 
   return (
@@ -174,7 +245,9 @@ export default function Summary() {
             <Text style={s.cardTitle}>{SUMMARY.klealSummary()}</Text>
             <Text style={s.cardMeta}>{SUMMARY.updatedToday()}</Text>
           </View>
-          <Text style={s.para}>{text || fallback}</Text>
+          <Text style={[s.para, !text && loading && s.paraWait]}>
+            {text || (loading ? SUMMARY.composing() : fallback)}
+          </Text>
           <Pressable
             accessibilityRole="button"
             style={[s.cta, sending && { opacity: 0.6 }]}
@@ -191,6 +264,26 @@ export default function Summary() {
         </View>
 
         {err ? <Text style={s.err}>{err}</Text> : null}
+        {/*
+          Кнопка появляется ТОЛЬКО когда сервер назвал конкретные интересы. При обрыве связи её нет:
+          там убирать нечего, там надо повторить.
+        */}
+        {rejected.length ? (
+          <Pressable accessibilityRole="button" onPress={dropRejected} disabled={sending}
+                     style={({ pressed }) => [s.drop, pressed && { opacity: 0.85 }]}>
+            <Text style={s.dropText}>{SUMMARY.dropRejected()}</Text>
+          </Pressable>
+        ) : null}
+        {/*
+          Дорога ко входу вместо тупика. Собранное никуда не девается: оно лежит в памяти телефона,
+          и возобновление анкеты приведёт человека обратно сюда — на сводку, раз всё заполнено.
+        */}
+        {needsSignIn ? (
+          <Pressable accessibilityRole="button" onPress={() => router.navigate('/auth')}
+                     style={({ pressed }) => [s.drop, pressed && { opacity: 0.85 }]}>
+            <Text style={s.dropText}>{SUMMARY.saveGoSignIn()}</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
 
       <View style={s.foot}>
@@ -244,6 +337,20 @@ const s = StyleSheet.create({
 
   cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   ctaText: { ...type.button, color: color.onPrimary } as any,
+  /** Ожидание — приглушённым: это ещё не описание, и путать его с описанием нельзя. */
+  paraWait: { color: color.muted } as any,
   err: { ...type.bodySmall, color: color.primary } as any,
+  /** Единственное действие, которое на этом экране имеет смысл при отказе, — потому и заметное. */
+  drop: {
+    marginTop: space.md,
+    alignSelf: 'flex-start',
+    paddingHorizontal: space.lg,
+    height: 44,
+    borderRadius: rad.full,
+    backgroundColor: color.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropText: { ...type.button, color: color.onPrimary } as any,
   foot: { paddingHorizontal: 20, paddingTop: space.md },
 });

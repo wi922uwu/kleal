@@ -93,3 +93,82 @@ export async function reverseGeocode(lat: number, lon: number, lang = 'ru'): Pro
     return null;
   }
 }
+
+/* ============================================================================================
+   ПРЯМОЙ ПОИСК: строка → варианты адресов с координатами.
+
+   Зачем отдельно от обратного. Обратное отвечает на «что за точка под булавкой», прямое — на «где
+   находится то, что человек печатает». Второе нужно для точного адреса офлайн-затеи: пока поле
+   было простой строкой, интент уезжал с координатами ДОМА автора, и встреча на карте оказывалась
+   не там, где её назначили.
+
+   ПОЧЕМУ ВАРИАНТЫ, А НЕ ОДИН ОТВЕТ. «Verdi 12» в Барселоне есть на нескольких улицах, а без
+   подсказки человек не узнает, что попал не туда, — узнает тот, кто придёт не по адресу. Выбор
+   делает человек, приложение только показывает, что нашлось.
+
+   ПОЧЕМУ ТОЛЬКО ИСПАНИЯ. `countrycodes=es` — запуск идёт по испанским городам, а без ограничения
+   «Gran Via» находится в пяти странах и первым идёт не тот. Появятся другие страны — снимать этот
+   параметр надо вместе с городом профиля, а не просто так.
+   ============================================================================================ */
+
+export type AddressHit = {
+  /** Что показать в списке: «Carrer de Verdi, 12, Gràcia, Barcelona». */
+  label: string;
+  city: string;
+  lat: number;
+  lon: number;
+};
+
+const SEARCH = 'https://nominatim.openstreetmap.org/search';
+/** Меньше пяти — не выбор, больше — список, который не читают. */
+const LIMIT = 5;
+/** Короче этого искать бессмысленно: «ба» найдёт пол-Испании и потратит запрос из лимита. */
+const MIN_Q = 3;
+
+const hits = new Map<string, AddressHit[]>();
+
+/**
+ * Найти адреса по строке. Пустой список — ничего не нашлось ИЛИ сеть молчит; для поля это одно и
+ * то же: подсказать нечего, человек допишет руками.
+ *
+ * Тот же троттлинг, что у обратного геокодирования, — политика Nominatim одна на оба вызова, и
+ * очередь у них общая.
+ */
+export async function suggestAddress(query: string, lang = 'ru'): Promise<AddressHit[]> {
+  const q = String(query || '').trim();
+  if (q.length < MIN_Q) return [];
+  const k = q.toLowerCase() + '|' + lang;
+  const cached = hits.get(k);
+  if (cached) return cached;
+  try {
+    await throttle();
+    const url = `${SEARCH}?format=jsonv2&addressdetails=1&limit=${LIMIT}`
+      + `&countrycodes=es&accept-language=${encodeURIComponent(lang)}`
+      + `&q=${encodeURIComponent(q)}`;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const headers: Record<string, string> = Platform.OS === 'web' ? {} : { 'User-Agent': UA };
+    const res = await fetch(url, { headers, signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const rows: any[] = await res.json();
+    const out: AddressHit[] = [];
+    for (const r of rows || []) {
+      const lat = Number(r?.lat);
+      const lon = Number(r?.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const a = r?.address || {};
+      const city = String(a.city || a.town || a.village || a.municipality || '').trim();
+      // Берём первые три части `display_name`: улица, дом, район. Дальше идут город, провинция и
+      // страна — они одинаковы у всех вариантов и только мешают их различать.
+      const label = String(r?.display_name || '').split(',').slice(0, 3).map((x) => x.trim())
+        .filter(Boolean).join(', ');
+      if (!label) continue;
+      out.push({ label, city, lat, lon });
+    }
+    hits.set(k, out);
+    return out;
+  } catch {
+    return [];                          // не кэшируем: сеть моргнула — на следующей букве попробуем
+  }
+}

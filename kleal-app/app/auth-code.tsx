@@ -49,6 +49,13 @@ export default function AuthCode() {
    * Обновляется при повторной отправке: там приходит НОВЫЙ код, а старый гаснет.
    */
   const [devCode, setDevCode] = useState(String(params.dev || ''));
+  /*
+    Отладочный код СВЁРНУТ, пока его не попросят. Раньше он показывался сразу, и это было верно,
+    пока письма не уходили вовсе: другого способа войти не было. Теперь домен подтверждён, письмо
+    доходит, и готовый код на экране мешает — он перебивает то самое поле, ради которого экран
+    существует, и приучает не открывать почту. Разворачивается нажатием и сворачивается обратно.
+  */
+  const [devOpen, setDevOpen] = useState(false);
 
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -123,7 +130,21 @@ export default function AuthCode() {
           applyDefaults();
           router.replace('/auth-done');            // A.03.3 → анкета
         } else {
-          router.dismissTo('/home');               // вернувшийся идёт сразу на главную
+          /*
+            replace, А НЕ dismissTo, И ЭТО БЫЛА НАСТОЯЩАЯ ПОЛОМКА. `dismissTo` возвращает к
+            маршруту, который УЖЕ ЛЕЖИТ В СТЕКЕ, а при входе с нуля стек такой:
+            `/` → `/intro` → `/auth` → `/auth-email` → `/auth-code`. Главной в нём никогда не было,
+            и переход не срабатывал: сервер отвечал «не новый», а человек оставался в потоке входа
+            и заново видел анкету. Сообщено с телефона: «повторно захожу с зарегистрированной
+            почты — снова попадаю на онбординг».
+
+            В `candidate.tsx` и `done.tsx` тот же вызов уместен: туда приходят уже изнутри
+            приложения, и главная в стеке есть.
+
+            `replace`, а не `navigate`: экраны входа не должны оставаться позади: «назад» с главной
+            означает выход из приложения, а не возврат к вводу кода.
+          */
+          router.replace('/home');
         }
         return;
       }
@@ -194,9 +215,22 @@ export default function AuthCode() {
           */}
           {devCode ? (
             <View style={s.devBox}>
-              <Text style={s.devTitle}>{DEV_CODE.title()}</Text>
-              <Text style={s.devCode} selectable>{devCode}</Text>
-              <Text style={s.devNote}>{DEV_CODE.note()}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: devOpen }}
+                onPress={() => setDevOpen((v) => !v)}
+                hitSlop={8}
+                style={({ pressed }) => [s.devHead, pressed && { opacity: 0.7 }]}
+              >
+                <Text style={s.devTitle}>{DEV_CODE.title()}</Text>
+                <Text style={s.devToggle}>{devOpen ? DEV_CODE.hide() : DEV_CODE.show()}</Text>
+              </Pressable>
+              {devOpen ? (
+                <>
+                  <Text style={s.devCode} selectable>{devCode}</Text>
+                  <Text style={s.devNote}>{DEV_CODE.note()}</Text>
+                </>
+              ) : null}
             </View>
           ) : null}
 
@@ -316,6 +350,9 @@ const s = StyleSheet.create({
     backgroundColor: color.warnBg, borderWidth: 1, borderColor: color.warnText,
     borderStyle: 'dashed', gap: 4,
   },
+  /** Заголовок и переключатель в одну строку: свёрнутая полоса — это одна строка, а не блок. */
+  devHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  devToggle: { ...type.fine, color: color.warnText, textDecorationLine: 'underline' } as any,
   devTitle: { ...type.fine, color: color.warnText,
               textTransform: 'uppercase', letterSpacing: 0.6 } as any,
   devCode: { ...type.codeDigit, color: color.warnText, letterSpacing: 6 } as any,

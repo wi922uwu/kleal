@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { ProfileShell, Card, Segments } from '../../src/components/ProfileShell';
 import { useLang, setLang, getLang } from '../../src/i18n';
 import { useOnb, reset } from '../../src/state';
+import { forgetOwner } from '../../src/history';
 import { SETTINGS, SETTING_ROWS, SettingRow } from '../../src/settings';
 import { auth, setSession } from '../../src/api';
 import { SIGNOUT } from '../../src/profile';
@@ -32,6 +33,10 @@ export default function Settings() {
       // продолжал бы существовать. Не ждём ответа — выход не должен зависеть от связи, — но
       // и не молчим: сервер гасит именно эту сессию, остальные устройства не трогая.
       auth.signOut().catch(() => {});
+      // ПОРЯДОК ВАЖЕН: историю стираем ДО того, как гасим сессию. Владелец записи определяется по
+      // логину или токену, и после `setSession('')` их может уже не быть — тогда стирать было бы
+      // нечего, а переписка осталась бы лежать на диске.
+      forgetOwner();
       setSession('');
       reset();
       router.replace('/');

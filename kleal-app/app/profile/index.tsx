@@ -19,6 +19,7 @@ import {
 } from '../../src/components/icons';
 import { useLang, getLang, setLang } from '../../src/i18n';
 import { useOnb, set, reset } from '../../src/state';
+import { forgetOwner } from '../../src/history';
 import { mediaUrl, profile as profileApi } from '../../src/api';
 import {
   PROFILE_TITLE, HUB, SIGNOUT, HUB_ROWS, SHEETS, WHOAMI, profileData, fmtUpdated, adaptSummary,
@@ -113,7 +114,8 @@ export default function ProfileHub() {
 
   const signOut = () => {
     const has = !!st.login;
-    const go = () => { reset(); router.replace('/'); };
+    const go = () => { forgetOwner();   // выход из аккаунта уносит и переписку — см. src/history.ts
+      reset(); router.replace('/'); };
     if (Platform.OS === 'web') {
       // Alert.alert на вебе рисуется без кнопок — там это window.confirm.
       // eslint-disable-next-line no-alert

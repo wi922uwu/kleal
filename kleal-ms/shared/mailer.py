@@ -167,10 +167,22 @@ _T = {
     },
 }
 
-_CORAL = "#F2415A"
-_INK = "#12141A"
-_MUTED = "#7A8091"
-_BG = "#F4F5F7"
+# ЦВЕТА ВЗЯТЫ ИЗ ТОКЕНОВ ПРИЛОЖЕНИЯ, а не подобраны на глаз. Здесь стояли похожие, но другие:
+# #F2415A вместо фирменного #F13A59, серый #7A8091 вместо #5A616E, фон #F4F5F7 вместо кремового.
+# Разница мелкая по числам и заметная в жизни: письмо открывают за минуту до того, как увидят
+# экран, и два почти одинаковых красных читаются как подделка одного из них.
+#
+# Дублировать значения приходится: mailer живёт на сервере и до src/theme.ts не дотягивается.
+# Если тронешь палитру там — поправь и здесь, других копий нет.
+_PRIMARY = "#F13A59"        # color.primary
+_MAGENTA = "#DD48FF"        # color.brandMagenta — второй конец фирменного градиента
+_INK = "#181B22"            # color.fg
+_MUTED = "#5A616E"          # color.muted
+_BG = "#F5F1EC"             # color.ambientBase — кремовая земля, общая для всех экранов
+_CARD = "#FFFFFF"           # color.card
+_LINE = "#ECEEF2"           # color.line
+_FIELD = "#F7F8FA"          # color.bg — подложка под кодом
+_WASH  = "#FDF1F3"          # тёплая нота: фирменный, разбавленный до бумаги
 
 
 def render_code_email(code, lang="en", minutes=10):
@@ -184,56 +196,89 @@ def render_code_email(code, lang="en", minutes=10):
     text = "%s\n\n%s\n\n%s\n\n%s\n\n%s" % (t["hi"], t["lead"] % minutes, code,
                                            t["not_you"], t["foot"])
 
+    # КОД РАЗЛОЖЕН ПО КЛЕТКАМ, ПО ОДНОЙ ЦИФРЕ. Одной строкой с разрядкой он не помещался на
+    # телефоне и переносился посреди числа — сообщено с устройства. Клетки заданы долями (шесть по
+    # 16.66%), поэтому сужаются вместе с письмом и не переносятся никогда. Заодно это привычный
+    # вид поля для кода: ровно так он набирается в самом приложении.
+    cells = "".join(
+        '<td width="16.66%" align="center" style="padding:0 3px;">'
+        '<div style="background:{field};border:1px solid {line};border-radius:14px;'
+        'padding:14px 0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;'
+        'font-size:26px;line-height:30px;font-weight:700;color:{ink};">{d}</div></td>'.format(
+            field=_FIELD, line=_LINE, ink=_INK, d=d)
+        for d in code)
+
+    # СВЕТЛЫЕ НОТЫ ВМЕСТО ЦВЕТНОЙ ПЛИТЫ. Раньше шапкой была насыщенная градиентная плашка во всю
+    # ширину — рядом с приложением это чужое: там кремовая бумага и едва различимые пятна, а
+    # фирменный цвет появляется точечно. Здесь то же: тёплая полоса поверх карточки и градиент
+    # только на самом лице.
     html = """<!doctype html>
 <html lang="{lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{subject}</title></head>
+<title>{subject}</title>
+<style>
+  @media only screen and (max-width:440px) {{
+    .pad {{ padding-left:20px !important; padding-right:20px !important; }}
+    .digit {{ font-size:21px !important; padding:11px 0 !important; }}
+  }}
+</style>
+</head>
 <body style="margin:0;padding:0;background:{bg};">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;">{pre}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-       style="background:{bg};padding:32px 16px;">
+       style="background:{bg};padding:44px 14px;">
   <tr><td align="center">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-           style="max-width:480px;background:#FFFFFF;border-radius:20px;overflow:hidden;
+           style="max-width:470px;background:{card};border-radius:24px;overflow:hidden;
+                  box-shadow:0 6px 22px rgba(24,27,34,0.08);
                   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
 
-      <!-- шапка: «картинка» без картинки — плашка цвета марки с кругом и знаком -->
-      <tr><td style="background:{coral};padding:36px 32px 32px 32px;" align="center">
+      <!-- Тёплая нота: очень светлая полоса, а не заливка цветом. -->
+      <tr><td style="background-color:{wash};
+                     background-image:linear-gradient(180deg,{wash} 0%,{card} 100%);
+                     padding:34px 32px 4px 32px;" class="pad" align="center">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-          <td align="center" style="width:72px;height:72px;background:#FFFFFF;border-radius:36px;
-                                    font-size:30px;line-height:72px;color:{coral};font-weight:700;">&#10022;</td>
-        </tr></table>
-        <div style="margin-top:18px;color:#FFFFFF;font-size:22px;font-weight:700;
-                    letter-spacing:-0.3px;">kleal</div>
-      </td></tr>
-
-      <tr><td style="padding:32px 32px 8px 32px;">
-        <div style="font-size:22px;line-height:28px;font-weight:700;color:{ink};">{hi}</div>
-        <div style="margin-top:10px;font-size:15px;line-height:22px;color:{muted};">{lead}</div>
-      </td></tr>
-
-      <!-- сам код: крупно, моноширинно, с разрядкой -->
-      <tr><td style="padding:24px 32px 8px 32px;" align="center">
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
-          <td align="center" style="background:{bg};border-radius:14px;padding:22px 12px;">
-            <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-                         font-size:34px;line-height:38px;font-weight:700;color:{ink};
-                         letter-spacing:6px;">{spaced}</span>
+          <td align="center" valign="middle"
+              style="width:56px;height:56px;border-radius:28px;
+                     background-color:{primary};
+                     background-image:linear-gradient(135deg,{primary} 0%,{magenta} 100%);">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td style="width:9px;height:9px;background:{ink};border-radius:5px;font-size:0;line-height:0;">&nbsp;</td>
+              <td style="width:9px;font-size:0;line-height:0;">&nbsp;</td>
+              <td style="width:9px;height:9px;background:{ink};border-radius:5px;font-size:0;line-height:0;">&nbsp;</td>
+            </tr></table>
           </td>
         </tr></table>
       </td></tr>
 
-      <tr><td style="padding:16px 32px 28px 32px;">
+      <tr><td style="padding:20px 32px 0 32px;" class="pad" align="center">
+        <div style="font-size:23px;line-height:29px;font-weight:700;color:{ink};
+                    letter-spacing:-0.3px;">{hi}</div>
+        <div style="margin-top:8px;font-size:15px;line-height:22px;color:{muted};">{lead}</div>
+      </td></tr>
+
+      <tr><td style="padding:22px 29px 4px 29px;" class="pad">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+          <tr>{cells}</tr>
+        </table>
+      </td></tr>
+
+      <tr><td style="padding:16px 32px 26px 32px;" class="pad" align="center">
         <div style="font-size:13px;line-height:20px;color:{muted};">{not_you}</div>
       </td></tr>
 
-      <tr><td style="padding:18px 32px 26px 32px;border-top:1px solid #ECEEF2;">
+      <tr><td style="padding:16px 32px 24px 32px;border-top:1px solid {line};" class="pad" align="center">
         <div style="font-size:12px;line-height:18px;color:{muted};">{foot}</div>
       </td></tr>
     </table>
+
+    <div style="max-width:470px;margin:16px auto 0 auto;font-size:12px;line-height:18px;
+                color:{muted};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,
+                Helvetica,Arial,sans-serif;">Kleal</div>
   </td></tr>
 </table>
-</body></html>""".format(lang=lang, subject=subject, bg=_BG, coral=_CORAL, ink=_INK, muted=_MUTED,
+</body></html>""".format(lang=lang, subject=subject, bg=_BG, primary=_PRIMARY, magenta=_MAGENTA,
+                         card=_CARD, line=_LINE, field=_FIELD, ink=_INK, muted=_MUTED, wash=_WASH,
                          pre=t["pre"] % minutes, hi=t["hi"], lead=t["lead"] % minutes,
-                         spaced=spaced, not_you=t["not_you"], foot=t["foot"])
+                         cells=cells, not_you=t["not_you"], foot=t["foot"])
     return subject, html, text
