@@ -98,7 +98,8 @@ const detailSource = fs.readFileSync(path.join(__dirname, '..', 'app/map-intent.
 assert(apiSource.includes('/api/agent/map-feed?view=${view}&limit=${limit}&self=${encodeURIComponent(self)}'));
 assert(mapSource.includes("agent.mapFeed(me, 'offline')"), 'Map loads the offline view of the new feed');
 assert(!mapSource.includes('agent.explore(me)'), 'Map no longer guesses privacy/mode from legacy explore rows');
-assert(mapSource.includes("setView('list')") && mapSource.includes("setView('map')"), 'Map and List share the same feed');
+assert(mapSource.includes("setView('map')") && mapSource.includes("setView('online')"), 'Search switches between offline Map and Online globe');
+assert(!mapSource.includes("setView('list')") && !mapSource.includes('MAP.list()') && !mapSource.includes('<IconList'), 'legacy List segment is removed');
 assert(mapSource.includes("pathname: '/map-intent'"), 'marker/card opens exact intent detail');
 assert(mapSource.includes('onPress={group ? onOpen : onRespond}'), 'Group marker opens Group detail instead of sending a 1:1 invite');
 assert(detailSource.includes('agent.mapFeed(me, feedView)') && detailSource.includes('candidate.id === id'), 'detail reloads a still-visible item by id from the selected feed');

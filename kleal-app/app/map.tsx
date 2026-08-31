@@ -11,11 +11,11 @@
  * Данные для неё лежали готовые: `/api/agent/explore` отдаёт открытые интенты с координатами, и до
  * сих пор её не звал ни один экран.
  *
- * СЕГМЕНТЫ «КАРТА / СПИСОК». Оба вида используют один privacy-safe map-feed model, поэтому
- * фильтры, порядок и доступность Offline/Hybrid интентов не расходятся.
+ * СЕГМЕНТЫ «КАРТА / ОНЛАЙН». Карта показывает Offline/Hybrid по адресу встречи, а мировой
+ * обзор — Online/Hybrid только на уровне подтверждённой страны.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Location from 'expo-location';
@@ -31,7 +31,7 @@ import { ExploreMap } from '../src/components/ExploreMap';
 import { OnlineIntentGlobe } from '../src/components/OnlineIntentGlobe';
 import { BottomNav } from '../src/components/BottomNav';
 import {
-  IconSearch, IconSliders, IconLocate, IconMap, IconList, IconGlobe, IconClock, IconChevronLeft,
+  IconSearch, IconSliders, IconLocate, IconMap, IconGlobe, IconClock, IconChevronLeft,
 } from '../src/components/icons';
 import { categoryIcon, iconNameFor } from '../src/components/category-icons';
 import { color, radius, shadow, space, type } from '../src/theme';
@@ -46,7 +46,7 @@ export default function MapScreen() {
   const [pins, setPins] = useState<ExplorePin[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
-  const [view, setView] = useState<'map' | 'list' | 'online'>('map');
+  const [view, setView] = useState<'map' | 'online'>('map');
   const [partial, setPartial] = useState(false);
   const [partialCount, setPartialCount] = useState(0);
   const [geoDenied, setGeoDenied] = useState(false);
@@ -160,29 +160,7 @@ export default function MapScreen() {
           recenter={recenter}
           selectedId={picked?.id || null}
         />
-      </View> : view === 'list' ? (
-        <ScrollView
-          style={StyleSheet.absoluteFill}
-          contentContainerStyle={[s.list, { paddingTop: insets.top + 88, paddingBottom: 160 + insets.bottom }]}
-          showsVerticalScrollIndicator={false}
-        >
-          {visible.map((pin) => (
-            <Pressable key={pin.id} accessibilityRole="button" onPress={() => openIntent(pin)} style={s.listRow}>
-              {pin.photo ? <Image source={{ uri: mediaUrl(pin.photo) }} style={s.listAvatar} /> : (
-                <View style={[s.listAvatar, s.avatarEmpty]}><Text style={s.avatarInitial}>{(pin.who || '?').slice(0, 1).toUpperCase()}</Text></View>
-              )}
-              <View style={s.listText}>
-                <Text style={s.cardWho} numberOfLines={1}>{pin.title || pin.who}</Text>
-                <Text style={s.cardTitle} numberOfLines={1}>
-                  {pin.mode === 'hybrid' ? MAP.hybrid() : MAP.offline()} · {pin.kind === 'group' ? MAP.group(pin.count || 1) : MAP.oneToOne()}
-                </Text>
-                {pin.area ? <Text style={s.meta} numberOfLines={2}>{pin.area}</Text> : null}
-              </View>
-              <View style={s.chev}><IconChevronLeft size={20} c={color.neutral400} /></View>
-            </Pressable>
-          ))}
-        </ScrollView>
-      ) : (
+      </View> : (
         <View style={StyleSheet.absoluteFill}>
           <OnlineIntentGlobe
             model={onlineModel}
@@ -215,13 +193,6 @@ export default function MapScreen() {
             ) : null}
           </View>
           <Text style={s.summaryText} numberOfLines={1}>{MAP.nearby(visible.length)}</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setView('list')}
-            style={s.showAll}
-          >
-            <Text style={s.showAllText}>{MAP.showAll()}</Text>
-          </Pressable>
         </View>
       ) : null}
 
@@ -275,14 +246,6 @@ export default function MapScreen() {
           <Pressable onPress={() => setView('map')} style={[s.segment, view === 'map' && s.segmentOn]}>
             <IconMap size={18} c={color.onPrimary} />
             <Text style={[s.segmentText, view === 'map' && s.segmentTextOn]}>{MAP.map()}</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => { setPicked(null); setView('list'); }}
-            style={[s.segment, view === 'list' && s.segmentOn]}
-          >
-            <IconList size={18} c={color.onPrimary} />
-            <Text style={s.segmentText}>{MAP.list()}</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -386,12 +349,6 @@ const s = StyleSheet.create({
   faceMore: { backgroundColor: color.neutral100 },
   faceMoreText: { ...type.labelSmall, color: color.muted } as any,
   summaryText: { ...type.body, color: color.fg, flex: 1 } as any,
-  showAll: {
-    height: 40, paddingHorizontal: space.lg, borderRadius: radius.full,
-    backgroundColor: color.fg, alignItems: 'center', justifyContent: 'center',
-  },
-  showAllText: { ...type.button, color: color.onPrimary } as any,
-
   spin: { position: 'absolute', alignSelf: 'center' },
   empty: {
     position: 'absolute', left: space.xl, right: space.xl,
@@ -414,14 +371,6 @@ const s = StyleSheet.create({
   },
   noticeText: { ...type.bodySmall, color: color.fg, flex: 1 } as any,
   noticeAction: { ...type.button, color: color.primary } as any,
-
-  list: { paddingHorizontal: space.xl, gap: space.sm, backgroundColor: color.bg },
-  listRow: {
-    minHeight: 92, flexDirection: 'row', alignItems: 'center', gap: space.md,
-    padding: space.md, borderRadius: radius.xl, backgroundColor: color.card, ...shadow.card,
-  },
-  listAvatar: { width: 52, height: 52, borderRadius: 26 },
-  listText: { flex: 1, gap: 3 },
 
   locate: {
     position: 'absolute', right: space.xl, width: 44, height: 44, borderRadius: 22,
