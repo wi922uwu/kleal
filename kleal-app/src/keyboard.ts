@@ -46,15 +46,29 @@ export function useKeyboardInset(): number {
     */
     const show = (e: any) => {
       const kbH = Math.round(Number(e?.endCoordinates?.height || 0));
+      const top = Math.round(Number(e?.endCoordinates?.screenY || 0));
       const win = Dimensions.get('window').height;
       const scr = Dimensions.get('screen').height;
+      /*
+        СЧИТАЕМ ПО ВЕРХНЕМУ КРАЮ, А НЕ ПО ВЫСОТЕ КЛАВИАТУРЫ — и вот почему.
+
+        Замер с живого телефона: kbH=244, screenY=540, окно и экран по 832. Клавиатура занимает
+        540..784, а ниже неё лежит ещё панель навигации 784..832. Закрыто СНИЗУ 292 точки, а не
+        244: собственная высота клавиатуры про панель не знает, и подъём на неё оставлял композер
+        под панелью ровно на её толщину. Это и было видно на телефоне.
+
+        Верхний край отвечает на нужный вопрос прямо: всё, что ниже него, закрыто. Из этого
+        вычитается то, на сколько окно УЖЕ короче экрана: ужала система сама — добавка нулевая;
+        окно во весь экран (edge-to-edge, SDK 54) — поднимаем на всё закрытое. `kbH` остаётся
+        запасным на случай, когда края нет.
+      */
       const already = Math.max(0, Math.round(scr - win));
-      const next = Math.max(0, kbH - already);
+      const covered = top > 0 ? Math.max(0, scr - top) : kbH;
+      const next = Math.max(0, covered - already);
       // ЗАМЕР НА ЖИВОМ ТЕЛЕФОНЕ. Дважды починка «по рассуждению» не сработала; третий раз гадать
       // нельзя. Виден только в дев-сборке, в журнале Metro: journalctl -u kleal-expo | grep '[kb]'
       if (__DEV__) {
-        console.log('[kb] ' + JSON.stringify({ kbH, win, scr, already, next,
-                                               screenY: Math.round(Number(e?.endCoordinates?.screenY || 0)) }));
+        console.log('[kb] ' + JSON.stringify({ kbH, top, win, scr, already, covered, next }));
       }
       setInset(next);
     };
