@@ -2007,7 +2007,6 @@ HTML = HTML.replace("__PROFILE_URL__", os.environ.get("PROFILE_URL", "").rstrip(
 # without KLEAL_USERS split the store in two and registrations landed in a file the matcher never read.
 USERS_PATH = config.USERS
 _REG_LOCK = threading.Lock()
-FILTER_URL = config.FILTER_URL
 
 # ---------------------------------------------------------------- profile photos
 # The photo a person uploads during onboarding used to be thrown away: the client deleted it from
