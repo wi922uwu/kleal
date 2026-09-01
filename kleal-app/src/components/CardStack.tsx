@@ -11,24 +11,30 @@
  * не решает и никого не выбрасывает: он перелистывает, и назад тоже. Карточка остаётся в колоде,
  * решение по ней принимают, открыв её.
  *
- * Поэтому листание в обе стороны обязательно. Односторонняя лента была бы тем самым отбрасыванием:
- * пролистнул — потерял. Раньше на этом месте стояла кнопка «Дальше ›», она умела только вперёд.
+ * Поэтому листание в обе стороны обязательно, а на краях колода упирается, а не уезжает в пустоту.
  *
  * Геометрия с борда, не на глаз (Invite Stack 350×131 при карточке 350×110):
  *   Layer · 3rd   322×100   — на 28 уже и на 10 ниже
  *   Layer · 2nd   340×106   — на 10 уже и на 4 ниже
  *   Home Card     350×110   — верхняя, полная
- * Отсюда PEEK: сумма выступающих краёв = 131 − 110 = 21, по 10–11 на слой.
+ * Отсюда DROP: сумма выступающих краёв = 131 − 110 = 21, по 10–11 на слой.
  */
-import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Easing, PanResponder } from 'react-native';
-import { HOME } from '../home';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Animated, Easing, PanResponder, Pressable } from 'react-native';
+import { hTick } from '../haptics';
 import { color, radius as rad, space, type } from '../theme';
 
 /** Насколько каждый следующий слой уже и ниже. С борда: 350→340→322 и 110→106→100. */
 const INSET = [0, 5, 14];     // по горизонтали, с каждой стороны
 const DROP = [0, 11, 21];     // насколько слой выглядывает снизу
 const LAYERS = 3;             // верхняя + два края: борд рисует ровно столько
+
+/** Порог листания: четверть карточки, но не меньше этого — на узком экране четверть слишком мала. */
+const MIN_TURN = 56;
+/** Бросок засчитывается по скорости, даже если палец не дошёл до порога: так листают на самом деле. */
+const FLICK = 0.32;
+/** Сопротивление на краю: карточка идёт за пальцем втрое медленнее и никуда не уходит. */
+const RUBBER = 0.32;
 
 export function CardStack<T_ extends { key: string }>({
   items,
@@ -46,106 +52,139 @@ export function CardStack<T_ extends { key: string }>({
   /** Что сказать, когда стопка кончилась. Пусто — не рисовать ничего. */
   emptyHint?: string;
 }) {
-  const left = items.length - index;
-
   /*
-    ЖЕСТ. Палец ведёт верхнюю карточку за собой, отпускание решает: ушла дальше порога — листаем,
-    не ушла — возвращаем на место. Порог в шестьдесят точек взят не на глаз: меньше — и колода
-    перелистывается от случайного касания при прокрутке ленты, больше — жест приходится
-    «дожимать».
-
-    ВЕРТИКАЛЬ ОТДАЁМ ЛЕНТЕ. Колода живёт внутри прокручиваемой главной, и захват жеста по любому
-    движению означал бы, что палец, начавший скроллить с карточки, не прокрутит экран. Поэтому
-    берём только те движения, где горизонталь вдвое обгоняет вертикаль.
+    ВСЕ ХУКИ ДО ЕДИНОГО ВЫЗЫВАЮТСЯ ДО ЛЮБОГО ВЫХОДА. Раньше проверка «колода пуста» стояла выше
+    жеста, а жест держит пять ссылок: на пустой колоде компонент звал три хука, на непустой
+    восемь. Колода пустеет на ходу — приглашение разобрали, встреча ушла в прошлое, `index`
+    перерос список, — и React упирается в разное число хуков между отрисовками: ломается жест
+    (значения достаются из чужих ячеек) или падает экран.
   */
-  const dx = useRef(new Animated.Value(0)).current;
+  const [w, setW] = useState(0);
+
+  /** Смещение верхней карточки. Один источник для всего: и её движение, и отклик слоёв под ней. */
+  const shift = useRef(new Animated.Value(0)).current;
+  /** Появление новой карточки: она проступает на месте, а не прилетает. */
+  const fade = useRef(new Animated.Value(1)).current;
+  const rise = useRef(new Animated.Value(0)).current;
+
   const idxRef = useRef(index);
   idxRef.current = index;
   const lenRef = useRef(items.length);
   lenRef.current = items.length;
   const goRef = useRef(onIndex);
   goRef.current = onIndex;
+  const wRef = useRef(320);
+  wRef.current = w || 320;
+  /** Пока карточка уезжает, новый жест не принимаем: иначе индекс перескакивает через один. */
+  const busy = useRef(false);
 
-  const pan = useRef(
-    PanResponder.create({
-      /*
-        ПЕРЕХВАТ, А НЕ ПРОСЬБА. Колода живёт внутри прокручиваемой главной, и по обычному
-        `onMoveShouldSetPanResponder` лента успевала забрать жест первой: палец вёл вбок, а
-        экран уезжал вверх — со стороны это и есть «листание не работает через раз».
-        Захватываем сами, но только явную горизонталь: вертикаль по-прежнему достаётся ленте.
-      */
-      onMoveShouldSetPanResponderCapture: (_e, g) =>
-        Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6,
-      onMoveShouldSetPanResponder: (_e, g) =>
-        Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6,
-      onPanResponderMove: (_e, g) => dx.setValue(g.dx),
-      onPanResponderRelease: (_e, g) => {
-        const i = idxRef.current;
-        const last = lenRef.current - 1;
-        const next = g.dx < -60 && i < last ? i + 1
-                   : g.dx > 60 && i > 0 ? i - 1
-                   : i;
-        if (next !== i) {
-          // Перелистнули — смещение снимаем МГНОВЕННО. Плавный возврат тут накладывался на
-          // собственное появление новой карточки, и она въезжала сбоку, хотя должна проступать
-          // на месте: два движения на один переход читаются как рывок.
-          dx.setValue(0);
-          goRef.current(next);
-        } else {
-          // Не дотянули — карточка возвращается на место, и это единственный случай, когда
-          // возврат должен быть виден: он объясняет, что жест засчитан не был.
-          Animated.timing(dx, { toValue: 0, duration: 160, easing: Easing.out(Easing.quad),
-                                useNativeDriver: true }).start();
-        }
-      },
-      onPanResponderTerminate: () => {
-        Animated.timing(dx, { toValue: 0, duration: 160, useNativeDriver: true }).start();
-      },
-    })
-  ).current;
-
-  /**
-   * Смена карточки — короткое проявление, а не подмена без предупреждения. Пружины нет
-   * намеренно: карточка не «прилетает», она проступает на месте предыдущей, и взгляд остаётся
-   * там же, где был.
-   */
-  const fade = useRef(new Animated.Value(1)).current;
-  const rise = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     fade.setValue(0);
     rise.setValue(6);
     Animated.parallel([
-      Animated.timing(fade, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-      Animated.timing(rise, { toValue: 0, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(fade, { toValue: 1, duration: 170, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(rise, { toValue: 0, duration: 210, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start();
   }, [index]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /*
-    ВЫХОД СТОИТ ПОСЛЕ ВСЕХ ХУКОВ, И ЭТО НЕ ПРИДИРКА. Он был выше жеста, а жест держит пять
-    `useRef` — значит на пустой колоде компонент звал три хука, а на непустой восемь. Стоит
-    колоде опустеть на ходу (приглашение разобрали, встреча ушла в прошлое, `index` перерос
-    список), и React упирается в разное число хуков между отрисовками: в лучшем случае ломается
-    жест, потому что `dx` и ссылки на индекс достаются из чужих ячеек, в худшем — экран падает.
+    ЖЕСТ.
+
+    ПЕРЕХВАТ, А НЕ ПРОСЬБА. Колода живёт внутри прокручиваемой главной, и по обычному
+    `onMoveShouldSetPanResponder` лента успевала забрать движение первой: палец вёл вбок, а экран
+    уезжал вверх. Захватываем сами, но только явную горизонталь — вертикаль по-прежнему достаётся
+    ленте, иначе палец, начавший скроллить с карточки, не прокрутил бы экран.
+
+    КРАЙ УПИРАЕТСЯ, А НЕ ПУСКАЕТ В ПУСТОТУ. На первой карточке вправо и на последней влево движение
+    идёт втрое медленнее и обрывается: рука чувствует границу колоды раньше, чем глаз успевает
+    решить, что приложение сломалось.
   */
+  const pan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponderCapture: (_e, g) =>
+        !busy.current && Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6,
+      onMoveShouldSetPanResponder: (_e, g) =>
+        !busy.current && Math.abs(g.dx) > 6 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6,
+      onPanResponderMove: (_e, g) => {
+        const i = idxRef.current;
+        const edge = (g.dx > 0 && i === 0) || (g.dx < 0 && i >= lenRef.current - 1);
+        shift.setValue(edge ? g.dx * RUBBER : g.dx);
+      },
+      onPanResponderRelease: (_e, g) => {
+        const i = idxRef.current;
+        const last = lenRef.current - 1;
+        const far = Math.max(MIN_TURN, wRef.current * 0.25);
+        const next = (g.dx < -far || g.vx < -FLICK) && i < last;
+        const prev = (g.dx > far || g.vx > FLICK) && i > 0;
+        if (!next && !prev) {
+          // Не дотянули — карточка возвращается пружиной. Возврат обязан быть виден: он и
+          // объясняет, что жест засчитан не был.
+          Animated.spring(shift, { toValue: 0, useNativeDriver: true, speed: 18, bounciness: 5 }).start();
+          return;
+        }
+        busy.current = true;
+        hTick();
+        Animated.timing(shift, {
+          toValue: (next ? -1 : 1) * wRef.current * 1.1,
+          duration: 190,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start(() => {
+          /*
+            ПОРЯДОК ЗДЕСЬ ВАЖЕН И СТОИЛ ОТДЕЛЬНОГО РАЗБОРА. Сначала гасим, потом возвращаем
+            смещение, и только потом меняем индекс. Если вернуть смещение раньше, уехавшая
+            карточка на один кадр окажется на месте в полной яркости — и переход читается как
+            мигание. Гашение снимает этот кадр: что бы ни оказалось под ним, оно уже невидимо и
+            проявится своей анимацией.
+          */
+          fade.setValue(0);
+          shift.setValue(0);
+          busy.current = false;
+          goRef.current(next ? i + 1 : i - 1);
+        });
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(shift, { toValue: 0, useNativeDriver: true, speed: 18, bounciness: 5 }).start();
+      },
+    })
+  ).current;
+
   if (!items.length || index >= items.length) {
     return emptyHint ? <Text style={s.empty}>{emptyHint}</Text> : null;
   }
 
+  const width = w || 320;
+  const far = Math.max(MIN_TURN, width * 0.25);
   const top = items[index];
+  const left = items.length - index;
   /** Сколько слоёв-краёв рисовать: только столько, сколько карточек реально осталось за верхней. */
   const behind = Math.min(LAYERS - 1, Math.max(0, left - 1));
 
+  /*
+    ОТКЛИК ВСЕЙ КОЛОДЫ, А НЕ ОДНОЙ КАРТОЧКИ. Раньше двигалась только верхняя, а края под ней
+    стояли неподвижно — со стороны это читалось как одна карточка, съезжающая по неподвижному
+    фону, а не как колода. Теперь пока верхняя уходит, нижние подтягиваются на её место: ближний
+    край поднимается и расширяется до полной ширины, дальний занимает место ближнего.
+
+    Только ВПЕРЁД (палец влево): при возврате назад карточка не уходит из колоды, и подтягиваться
+    нижним некуда — движение там было бы враньём о том, что происходит.
+  */
+  const reveal = (from: number, to: number) =>
+    shift.interpolate({ inputRange: [-far, 0], outputRange: [to, from], extrapolate: 'clamp' });
+
   return (
     <View style={s.wrap}>
-      <View style={s.stack}>
+      <View style={s.stack} onLayout={(e) => setW(e.nativeEvent.layout.width)}>
         {/*
           Края карточек снизу — не картинка «для красоты», а счётчик: видно, что за этой есть ещё.
           Рисуются ПЕРВЫМИ, чтобы верхняя легла поверх без возни с zIndex.
         */}
         {Array.from({ length: behind }, (_, i) => {
           const n = i + 1;                        // 1 — ближний край, 2 — дальний
+          const base = Math.max(1, width - INSET[n] * 2);
+          const grown = Math.max(1, width - INSET[n - 1] * 2);
           return (
-            <View
+            <Animated.View
               key={n}
               pointerEvents="none"
               style={[
@@ -154,7 +193,12 @@ export function CardStack<T_ extends { key: string }>({
                   left: INSET[n],
                   right: INSET[n],
                   bottom: -DROP[n],
-                  opacity: 1 - n * 0.28,
+                  opacity: reveal(1 - n * 0.28, 1 - (n - 1) * 0.28),
+                  transform: [
+                    // Знак минусовой: слой лежит НИЖЕ на DROP[n] и поднимается на место верхнего.
+                    { translateY: reveal(0, -(DROP[n] - DROP[n - 1])) },
+                    { scaleX: reveal(1, grown / base) },
+                  ],
                 },
               ]}
             />
@@ -163,7 +207,32 @@ export function CardStack<T_ extends { key: string }>({
 
         <Animated.View
           {...pan.panHandlers}
-          style={{ opacity: fade, transform: [{ translateY: rise }, { translateX: dx }] }}
+          style={{
+            opacity: fade,
+            transform: [
+              { translateY: rise },
+              { translateX: shift },
+              /*
+                Наклон и уменьшение — обратная связь пальцу, а не украшение: карточка ведёт себя
+                как предмет, который тянут за угол, и по ней видно, засчитается жест или нет.
+                Величины намеренно маленькие: это листание, а не бросок.
+              */
+              {
+                rotate: shift.interpolate({
+                  inputRange: [-width, 0, width],
+                  outputRange: ['-4deg', '0deg', '4deg'],
+                  extrapolate: 'clamp',
+                }),
+              },
+              {
+                scale: shift.interpolate({
+                  inputRange: [-far, 0, far],
+                  outputRange: [0.97, 1, 0.97],
+                  extrapolate: 'clamp',
+                }),
+              },
+            ],
+          }}
         >
           {render(top)}
         </Animated.View>
@@ -171,14 +240,26 @@ export function CardStack<T_ extends { key: string }>({
 
       {/*
         Точки вместо кнопки: они говорят, сколько карточек и где мы, но ничего не обещают нажать.
-        Кнопка «Дальше ›» стояла здесь, пока листать было нечем; с жестом она стала бы вторым
-        способом сделать то же самое, а два способа на одно действие — это выбор там, где его не
-        требуется делать.
+        И всё же нажимаются — на них целятся, когда карточек три-четыре и нужна конкретная. Промах
+        по шеститочечной цели неизбежен, поэтому область нажатия расширена, а сама точка осталась
+        того же размера, что на борде.
       */}
       {items.length > 1 ? (
         <View style={s.dots}>
           {items.map((it, i) => (
-            <View key={it.key} style={[s.dot, i === index && s.dotOn]} />
+            <Pressable
+              key={it.key}
+              accessibilityRole="button"
+              hitSlop={10}
+              onPress={() => {
+                if (i === index || busy.current) return;
+                hTick();
+                shift.setValue(0);
+                onIndex(i);
+              }}
+            >
+              <View style={[s.dot, i === index && s.dotOn]} />
+            </Pressable>
           ))}
         </View>
       ) : null}
