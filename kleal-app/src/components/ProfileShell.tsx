@@ -44,7 +44,9 @@ export function ProfileShell({
         {right || <View style={{ width: 40 }} />}
       </View>
       <ScrollView
-        contentContainerStyle={[s.scroll, { paddingBottom: (footer ? 96 : 28) + (nav ? 84 : 0) + insets.bottom }]}
+        // Клавиатура входит в отступ прокрутки: без этого поле внутри страницы (история, тест)
+        // оставалось под ней — прокручивать было некуда.
+        contentContainerStyle={[s.scroll, { paddingBottom: (footer ? 96 : 28) + (nav ? 84 : 0) + insets.bottom + kb }]}
         keyboardShouldPersistTaps="handled"
       >
         {children}

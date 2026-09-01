@@ -15,6 +15,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useNavigation, useRouter } from 'expo-router';
 import { auth } from '../src/api';
 import { AUTH, looksLikeEmail } from '../src/auth';
@@ -30,6 +31,8 @@ export default function AuthEmail() {
   const lang = useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  /** Android: клавиатура ложится поверх экрана — окно под неё не ужимается. См. src/keyboard.ts. */
+  const kb = useKeyboardInset();
   const nav = useNavigation();
   const input = useRef<TextInput>(null);
   const [email, setEmail] = useState('');
@@ -113,7 +116,8 @@ export default function AuthEmail() {
         style={s.fill}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <View style={[s.page, { paddingTop: insets.top + space.sm, paddingBottom: insets.bottom + space.lg }]}>
+        <View style={[s.page, { paddingTop: insets.top + space.sm,
+                                paddingBottom: dockBottom(insets.bottom + space.lg, kb) }]}>
           <GlassBack
             label={T('Назад', 'Back')}
             onPress={() => (router.canGoBack() ? router.back() : router.replace('/auth'))}

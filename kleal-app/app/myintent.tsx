@@ -41,6 +41,7 @@ import {
   type IntentRow,
 } from '../src/activity';
 import { EditSheet } from '../src/components/ProfileShell';
+import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { TimeDial, RangeDial } from '../src/components/Dials';
 import { IconChevronLeft, IconCalendar, IconClock, IconPin, IconPencil, IconImagePlaceholder } from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
@@ -66,6 +67,8 @@ export default function MyIntent() {
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
+  /** Android: клавиатура ложится поверх экрана — окно под неё не ужимается. См. src/keyboard.ts. */
+  const kb = useKeyboardInset();
   const me = String(st.profile.name || '');
   const params = useLocalSearchParams<{ id?: string; edit?: string }>();
   const id = String(params.id || '').trim();
@@ -289,7 +292,7 @@ export default function MyIntent() {
             {err ? <Text style={s.err}>{err}</Text> : null}
           </ScrollView>
 
-          <View style={[s.dock, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
+          <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb, space.md) }]}>
             {/* Просмотр: главное действие и круглый карандаш рядом — он включает правку. */}
             {mode === 'view' ? (
               <View style={s.dockRow}>

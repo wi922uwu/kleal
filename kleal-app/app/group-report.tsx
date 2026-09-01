@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import {
   ActivityIndicator, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
+import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
@@ -27,6 +28,8 @@ export default function GroupReportScreen() {
   useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  /** Android: клавиатура ложится поверх экрана — окно под неё не ужимается. См. src/keyboard.ts. */
+  const kb = useKeyboardInset();
   const st = useOnb();
   const params = useLocalSearchParams<{ gid?: string; title?: string }>();
   const gid = String(params.gid || '').trim();
@@ -149,7 +152,7 @@ export default function GroupReportScreen() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <Header title={T('Сообщить о проблеме', 'Report a problem')} onBack={() => router.back()} />
-      <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={[s.body, { paddingBottom: kb }]} keyboardShouldPersistTaps="handled">
         {groupTitle ? <Text style={s.context} numberOfLines={2}>{groupTitle}</Text> : null}
         <Text style={s.sectionTitle}>{T('Что произошло?', 'What happened?')}</Text>
         <View style={s.reasons}>
