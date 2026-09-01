@@ -35,11 +35,22 @@ import { color, deckTone, font } from '../theme';
 import { useLang } from '../i18n';
 
 /** Во сколько раз вырастает пузырь ровно под пальцем. */
-const PEAK = 2;
-/** Радиус действия лупы. */
-const REACH = 78;
+const PEAK = 2.6;
+/** Радиус действия лупы. Шире — значит в неё попадает больше соседей, и стекло читается стеклом. */
+const REACH = 96;
 /** Какую долю пути до пальца проходит пузырь в самой сильной точке. */
-const PULL = 0.3;
+const PULL = 0.34;
+/**
+ * ВЫТАЛКИВАНИЕ ПО КРАЮ ЛУПЫ — то, чем настоящее увеличительное стекло отличается от простого
+ * «стало больше». У линзы центр тянет к себе, а по ободу изображение расходится наружу; без этого
+ * поле просто раздувается в одном месте и выглядит подменой, а не оптикой.
+ * Сильнее всего на полпути к краю зоны, у центра и за краем — ноль.
+ */
+const PUSH = 0.18;
+/** Сколько поле дышит в покое: пузыри едва заметно плывут, как в исходной работе с холстом. */
+const DRIFT = 1.6;
+/** Насколько крупнее становится пузырь в момент выбора — короткий отклик, гаснет сам. */
+const POP = 0.5;
 /** Насколько кадр приближает значение к цели. Меньше — плавнее и ленивее. */
 const EASE = 0.22;
 /** Ниже этого поле считается пришедшим в покой, и цикл кадров останавливается. */
@@ -66,6 +77,10 @@ type Node = {
   x: number;
   y: number;
   r: number;
+  /** Своя фаза дрейфа: без неё всё поле качалось бы в такт, и это читалось бы как дрожь экрана. */
+  ph: number;
+  /** Остаток отклика на выбор: единица в момент нажатия, гаснет за несколько кадров. */
+  pop: number;
 };
 
 export function MindMap({ width, height, selected, onToggle, onDrag }: {
@@ -84,11 +99,12 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
   const nodes = useRef<Node[]>([]);
   const circles = useRef<any[]>([]);
   useMemo(() => {
-    nodes.current = bubbles.map((b) => {
+    nodes.current = bubbles.map((b, i) => {
       const hx = b.x * width;
       const hy = b.y * height;
       const hr = b.size / 2;
-      return { b, hx, hy, hr, x: hx, y: hy, r: hr };
+      // Появление: пузыри вырастают из ничего — цель у них обычная, а начинают они с нуля.
+      return { b, hx, hy, hr, x: hx, y: hy, r: 0, ph: (i % 17) * 0.37 + (i % 5) * 1.1, pop: 0 };
     });
     circles.current = [];
   }, [bubbles, width, height]);
@@ -110,11 +126,13 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
 
     Цикл САМ ОСТАНАВЛИВАЕТСЯ, когда двигаться стало некуда: поле в покое не тратит ни кадра.
   */
+  const beat = useRef(0);
   const tick = () => {
     const f = finger.current;
     let moving = 0;
     let best: Node | null = null;
-    let bestBell = 0.62;                       // ниже этого имя не показываем: рано
+    let bestBell = 0.55;                       // ниже этого имя не показываем: рано
+    const t = (beat.current += 0.018);
     for (let i = 0; i < nodes.current.length; i++) {
       const n = nodes.current[i];
       let bell = 0;
@@ -122,9 +140,20 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
         bell = near(f.x - n.hx) * near(f.y - n.hy);
         if (bell > bestBell) { bestBell = bell; best = n; }
       }
-      const tr = n.hr * (1 + bell * (PEAK - 1));
-      const tx = n.hx + (f.on ? (f.x - n.hx) * bell * PULL : 0);
-      const ty = n.hy + (f.on ? (f.y - n.hy) * bell * PULL : 0);
+      /*
+        СМЕЩЕНИЕ ЛУПЫ — ДВА СЛАГАЕМЫХ, А НЕ ОДНО. Ближние тянутся к пальцу, средние по ободу чуть
+        расходятся наружу: `4·bell·(1−bell)` даёт горб ровно на полпути и ноль на обоих концах.
+        Это и есть разница между «увеличили» и «посмотрели через стекло».
+      */
+      const rim = 4 * bell * (1 - bell);
+      const k = bell * PULL - rim * PUSH;
+      // Дыхание поля: медленный круг радиусом чуть больше пикселя, у каждого своя фаза.
+      const dx0 = Math.cos(t + n.ph) * DRIFT;
+      const dy0 = Math.sin(t * 0.9 + n.ph * 1.3) * DRIFT;
+      if (n.pop > 0.01) n.pop *= 0.82; else n.pop = 0;
+      const tr = n.hr * (1 + bell * (PEAK - 1) + n.pop * POP);
+      const tx = n.hx + dx0 + (f.on ? (f.x - n.hx) * k : 0);
+      const ty = n.hy + dy0 + (f.on ? (f.y - n.hy) * k : 0);
       const dr = tr - n.r;
       const dx = tx - n.x;
       const dy = ty - n.y;
@@ -137,10 +166,21 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
     }
     const key = best ? best.b.key : '';
     if (key !== hotKey.current) { hotKey.current = key; setHot(best); }
-    frame.current = moving > CALM || f.on ? requestAnimationFrame(tick) : null;
+    // Поле дышит и без пальца, поэтому цикл не засыпает, пока карта на экране. `moving` остаётся:
+    // по нему видно, что кадр не пустой, а `CALM` — порог, ниже которого шаг не делаем вовсе.
+    frame.current = requestAnimationFrame(tick);
   };
   const wake = () => { if (frame.current == null) frame.current = requestAnimationFrame(tick); };
-  useEffect(() => () => { if (frame.current != null) cancelAnimationFrame(frame.current); }, []);
+  useEffect(() => {
+    wake();                                    // появление начинается само, без касания
+    return () => { if (frame.current != null) cancelAnimationFrame(frame.current); };
+  }, []);
+
+  /** Нажатие отзывается ростом: без отклика непонятно, засчиталось ли. */
+  const popAt = (key: string) => {
+    const n = nodes.current.find((x) => x.b.key === key);
+    if (n) n.pop = 1;
+  };
 
   /** Что под пальцем — по ВИДИМОМУ размеру и месту, а не по покою. */
   const hit = useRef<(x: number, y: number) => string | null>(() => null);
@@ -179,7 +219,7 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
       },
       onPanResponderRelease: (e) => {
         const k = hit.current(e.nativeEvent.locationX, e.nativeEvent.locationY);
-        if (k) toggle.current(k);
+        if (k) { popAt(k); toggle.current(k); }
         finger.current = { x: -1, y: -1, on: false };
         drag.current?.(false);
         wake();
