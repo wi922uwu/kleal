@@ -20,6 +20,7 @@ export function Composer({
   onSend,
   placeholder,
   focusSignal,
+  disabled = false,
   bottomInset = 0,
 }: {
   onBack?: () => void;
@@ -31,6 +32,15 @@ export function Composer({
    * это событие, оно повторяется, и второе нажатие на ту же кнопку тоже должно сработать.
    */
   focusSignal?: number;
+  /**
+   * Поле недоступно, и это ВИДНО.
+   *
+   * Раньше недоступность выражалась только через `editable={!!onSend}`: поле выглядело обычным,
+   * приглашало «Сообщение…», а на касание не отзывалось ничем. На первом шаге онбординга, где
+   * агент ещё только представился и ждёт «Поехали!», человек тыкал в живое на вид поле и не
+   * понимал, почему оно молчит. Отключение обязано быть заметным.
+   */
+  disabled?: boolean;
   bottomInset?: number;
 }) {
   const [draft, setDraft] = useState('');
@@ -70,7 +80,7 @@ export function Composer({
         />
         <IconChevronLeft />
       </Pressable>
-      <View style={s.field}>
+      <View style={[s.field, disabled && s.fieldOff]} pointerEvents={disabled ? 'none' : 'auto'}>
         {/*
           Поле — стекло, а не серая плашка: под ним фирменный фон, и сплошная заливка вырезала бы
           в нём прямоугольник. Плотность 72% (в борде именно она) — выше, чем у кнопок: сюда пишут,
@@ -87,7 +97,7 @@ export function Composer({
           placeholderTextColor={color.muted}
           onSubmitEditing={send}
           returnKeyType="send"
-          editable={!!onSend}
+          editable={!disabled && !!onSend}
         />
         <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={send}>
           <IconMic />
@@ -104,6 +114,8 @@ const s = StyleSheet.create({
     поверх него отрезала бы низ экрана серым прямоугольником, поэтому здесь фона нет вовсе, а
     держат строку стеклянные кнопка и поле.
   */
+  /** Приглушение недоступного поля. Кнопка «назад» остаётся живой: уйти можно всегда. */
+  fieldOff: { opacity: 0.45 },
   dock: {
     flexDirection: 'row',
     alignItems: 'center',

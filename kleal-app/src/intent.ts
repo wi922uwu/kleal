@@ -27,6 +27,7 @@
  * что уходят в /api/agent/plan и /api/agent/match.
  */
 import { T, getLang, plural } from './i18n';
+import { interestLabel } from './interest-label';
 
 export type IntentStepId = 'how' | 'size' | 'capacity' | 'when' | 'who' | 'nature' | 'place' | 'link' | 'both' | 'summary';
 
@@ -415,6 +416,8 @@ export const SUMMARY_O10 = {
   summaryLabel: () => T('Сводка Kleal:', 'Kleal summary:'),
   start: () => T('Начать поиск', 'Start search'),
   edit: () => T('Поправить', 'Edit'),
+  /** Кости у названия. Подпись только для озвучки — на экране стоит значок. */
+  roll: () => T('Подобрать другое название', 'Suggest another name'),
 };
 
 /** «Thu, 23 July» с кадра — дата сводки, на языке интерфейса. */
@@ -587,3 +590,97 @@ export const axisExplain = (axis: ExpandAxis, radiusKm?: number) => {
         : T('Расширила круг поиска.', 'Widened the search radius.');
   }
 };
+
+/**
+ * ДРУГОЕ НАЗВАНИЕ ИНТЕНТА — то, что предлагают кости на сводке.
+ *
+ * ЗАЧЕМ. Название приходит из разговора создания, и оно не всегда удачное: модель называет интент
+ * по первой фразе человека, а тот мог сказать длинно, косо или про другое. Переписать руками можно
+ * всегда, но чаще человеку нужно не «своё», а «нормальное» — и быстрее ткнуть, чем печатать.
+ *
+ * ПОЧЕМУ БЕЗ МОДЕЛИ. Название складывается из того, что на этом же экране уже известно: тема,
+ * формат, время. Запрос к модели стоил бы ожидания и сети на действии, которое человек нажмёт
+ * пять раз подряд, перебирая. Здесь ответ мгновенный, работает без связи и ничего не может
+ * придумать про интент такого, чего в интенте нет.
+ *
+ * ГЛАВНАЯ ТОНКОСТЬ — ПАДЕЖИ. Тема подставляется в рамку как есть, в именительном: «Кофе», «Йога»,
+ * «Настольные игры». Поэтому рамки построены так, чтобы тема стояла отдельным словом и не требовала
+ * склонения. «Сходить на {X}» звучало бы хорошо с кофе и футболом, но дало бы «сходить на йога» и
+ * «сходить на настольные игры» — а тем в дереве три сотни, и проверить каждую нельзя. Все рамки
+ * ниже безопасны для любой темы.
+ */
+const NAME_FRAMES = (x: string, two: boolean, evening: boolean): string[] => {
+  const base = [
+    T(`${x} — ищу компанию`, `${x} — looking for company`),
+    T(`Просто ${x.toLowerCase()}`, `Just ${x.toLowerCase()}`),
+    T(`${x}: кто со мной?`, `${x}: anyone in?`),
+    T(`${x} и разговор`, `${x} and a chat`),
+    T(`${x} без планов`, `${x}, no plans`),
+    // Здесь стояло «Хочу {x}» — и это была ровно та ошибка, от которой предостерегает комментарий
+    // выше: «хотеть» требует падежа, и на живых подписях выходило «Хочу йога». Поймано прогоном по
+    // десяти реальным темам. Замена ничего от темы не требует.
+    T(`${x} — можно вместе`, `${x} — let's do it together`),
+  ];
+  // Рамки, привязанные к настройкам интента: их добавляем, только если настройка вправду такая.
+  if (two) base.push(T(`${x} вдвоём`, `${x} for two`));
+  else base.push(T(`${x} компанией`, `${x} with a group`));
+  if (evening) base.push(T(`${x} вечером`, `${x} tonight`));
+  return base;
+};
+
+/**
+ * Кандидаты в название по теме и настройкам интента. Текущее имя исключено — кости, которые
+ * возвращают то же самое, читаются как сломанные.
+ *
+ * `topics` — английские ключи; подпись берём через общий словарь, чтобы название было на языке
+ * человека и совпадало с тем, как та же тема подписана везде в приложении.
+ */
+export function intentNameOptions(
+  topics: string[],
+  opts: { size?: string; minutes?: number },
+  avoid = ''
+): string[] {
+  /*
+    БЕРЁМ ТОЛЬКО ТЕ ТЕМЫ, КОТОРЫЕ СЛОВАРЬ УМЕЕТ НАЗВАТЬ, и это не придирка.
+
+    `interestLabel` при промахе возвращает ключ КАК ЕСТЬ — это правильное поведение (своё слово
+    лучше пустоты), но для названия оно давало смесь языков. Поймано на живом экране: темы пришли
+    `['run', 'jogging']`, «run» словарь знает как «Бег», а «jogging» не знает ни дерево, ни колода —
+    и получилось «Бег и jogging — можно вместе». Темы приходят из разговора создания, то есть с
+    сервера, и совпадать со словарём приложения не обязаны.
+
+    Признак «словарь знает» — подпись отличается от ключа. Для английского языка это тоже верно:
+    там подпись у известного ключа всё равно своя («running» -> «Running»).
+  */
+  const named = (topics || [])
+    .map((t) => String(t || '').trim())
+    .filter(Boolean)
+    .map((k) => ({ key: k, label: interestLabel(k) }))
+    .filter((x) => x.label && x.label !== x.key);
+  if (!named.length) return [];
+  const first = named[0].label;
+  // Две темы складываем в одну подпись: «Кофе и прогулка» точнее, чем просто «Кофе».
+  const pair = named.length > 1 ? named[1].label : '';
+  const subject = pair ? T(`${first} и ${pair.toLowerCase()}`, `${first} and ${pair.toLowerCase()}`) : first;
+
+  const two = opts.size !== 'group';
+  const evening = typeof opts.minutes === 'number' && opts.minutes >= 17 * 60;
+  const seen = String(avoid || '').trim().toLowerCase();
+  const out: string[] = [];
+  for (const n of [...NAME_FRAMES(subject, two, evening), ...(pair ? NAME_FRAMES(first, two, evening) : [])]) {
+    const clean = n.trim();
+    if (clean && clean.toLowerCase() !== seen && !out.includes(clean)) out.push(clean);
+  }
+  return out;
+}
+
+/** Одно случайное имя из подходящих. Пусто — тем нет, и предлагать нечего. */
+export function rollIntentName(
+  topics: string[],
+  opts: { size?: string; minutes?: number },
+  avoid = ''
+): string {
+  const all = intentNameOptions(topics, opts, avoid);
+  if (!all.length) return '';
+  return all[Math.floor(Math.random() * all.length)];
+}

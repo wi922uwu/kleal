@@ -34,6 +34,7 @@ export type Tab = 'intents' | 'search' | 'messages' | 'profile';
 /** Что уже есть в приложении. Остальное — приглушено. */
 const ROUTE: Partial<Record<Tab, string>> = {
   profile: '/profile', messages: '/messages', intents: '/activity',
+  search: '/map',        // поиск на карте — app/map.tsx
 };
 
 /** Пятая цель — капля посередине. Она не вкладка, поэтому у неё свой ключ. */

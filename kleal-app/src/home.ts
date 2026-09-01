@@ -5,7 +5,7 @@
  * сервера: группы из /api/agent/groups и адресованные пользователю приглашения из
  * /api/agent/home-invites. Потенциальные совпадения без явного приглашения сюда не попадают.
  */
-import { T, getLang } from './i18n';
+import { T, getLang, plural } from './i18n';
 
 export const HOME = {
   /*
@@ -209,3 +209,31 @@ export function homeInvites(rows: any[]): HomeInvite[] {
       } : undefined,
     }));
 }
+
+/**
+ * Экран истории разговоров. Копия отдельным блоком: раньше кнопка на главной обещала историю, а
+ * открывала сегмент прошедших затей во вкладке «Интенты» — это не разговоры, и в коде это было
+ * прямо признано. Теперь у неё есть куда вести.
+ */
+export const HISTORY = {
+  title: () => T('История разговоров', 'Conversation history'),
+  close: () => T('Закрыть', 'Close'),
+  empty: () => T('Разговоров пока нет', 'No conversations yet'),
+  emptyHint: () =>
+    T('Здесь будут все твои разговоры с Kleal — можно перечитать, о чём договорились.',
+      'Every conversation with Kleal shows up here — you can read back what you agreed on.'),
+  /** Честная оговорка: история живёт на устройстве. Разбор — в src/history.ts. */
+  local: () =>
+    T('История хранится на этом телефоне и пропадёт при переустановке.',
+      'History is kept on this phone and is lost if you reinstall.'),
+  /**
+   * Согласование берётся из `plural()`, а не пишется здесь заново. Первая редакция этой строки
+   * выкладывала ту же арифметику руками — ровно то, ради чего помощник и заведён: одиннадцать
+   * ведёт себя не как один, а сто двадцать один — как один, и ошибиться легко.
+   */
+  lines: (n: number) =>
+    T(n + ' ' + plural(n, 'реплика', 'реплики', 'реплик'),
+      n + (n === 1 ? ' message' : ' messages')),
+  clear: () => T('Очистить историю', 'Clear history'),
+  clearAsk: () => T('Удалить все сохранённые разговоры?', 'Delete every saved conversation?'),
+};
