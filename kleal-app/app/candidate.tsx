@@ -130,7 +130,11 @@ export default function Candidate() {
           const r: any = await agent.block(self, name, true);
           if (!r?.ok) throw new Error(r?.error || 'block failed');
         } else {
-          await agent.feedback(name, 'reject', self);
+          // Ответ ПРОВЕРЯЕМ, как и у блокировки рядом. Сервер теперь может отказать (личные
+          // записи привязаны к сессии), а молчащий отказ выглядел бы как «нажал и скрылось»:
+          // карточка уходит, а ранжирование о решении так и не узнало.
+          const r: any = await agent.feedback(name, 'reject', self);
+          if (!r?.ok) throw new Error(r?.error || 'feedback failed');
         }
         setPending(null);
         setOptions(false);

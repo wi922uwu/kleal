@@ -25,10 +25,12 @@ import kleal_protocol as kp                   # §13 typed agent protocol (actio
 import kleal_states as ks                      # §14 transaction state machines + race protection (keyless, LLM-free)
 import kleal_groups as kg                       # §15 group formation core (PILOT-DISABLED scaffolding; keyless, LLM-free)
 import kleal_candidates as kct                  # §16 events/rooms/venues candidate types (PILOT-DISABLED; keyless, LLM-free)
+import intent_map_feed as imf                   # privacy-safe offline/online intent map read models
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send_json, read_json
 from config import FILTER_URL         # мост тем: адрес фильтрации, тот же, что у buddy
 import db                            # хранилище: postgres или файл — решает KLEAL_DB
+import kleal_auth                     # кто прислал запрос; пока ТОЛЬКО наблюдение, см. _watch_owner
 import mq                            # очередь заданий: rabbit или ничего — решает KLEAL_MQ
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -492,6 +494,13 @@ def set_weights(patch):
 
 # ---- server-side session store (file-backed) — mirrors the client's localStorage + holds the feedback loop ----
 STORE_PATH = os.environ.get("KLEAL_STORE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "kleal_store.json"))
+# Geocoding is a best-effort enrichment, never a persistence prerequisite. Successful lookups are
+# cached beside the store (or at KLEAL_GEOCODE_CACHE) and failures are bounded by timeout/retry.
+_MAP_GEOCODER = imf.SafeGeocoder(
+    cache_path=os.environ.get("KLEAL_GEOCODE_CACHE", STORE_PATH + ".geocode-cache.json"),
+    timeout=float(os.environ.get("KLEAL_GEOCODE_TIMEOUT", "1.25")),
+    attempts=int(os.environ.get("KLEAL_GEOCODE_ATTEMPTS", "2")),
+)
 # §14: a REENTRANT lock so the accept transaction can hold ONE lock across revalidate + slot-claim +
 # _record_outcome (which re-acquires it) without deadlocking — closes the read-then-write gap at the send boundary.
 _STORE_LOCK = threading.RLock()
@@ -537,6 +546,41 @@ def _save_store():
         with open(STORE_PATH, "w", encoding="utf-8") as f: json.dump(SESSION, f)
     except Exception:
         pass
+def _me_or_claimed(handler, claimed):
+    """Имя своей строки, если сессия его называет; иначе — заявленное в запросе.
+
+    ЗАПРЕТА ЗДЕСЬ НЕТ, И ЭТО НАМЕРЕННО. Опросные ручки (планы, переписки, входящие) принимают за
+    неделю 22788 запросов без токена — это бот-эмулятор `kleal-life` на петле, у которого аккаунта
+    нет и быть не может. Отказ выкинул бы его целиком, а вместе с ним и всю проверку сценариев.
+
+    Но ПОДМЕНА закрыта: вошедший человек получает СВОИ планы и переписку, что бы он ни написал в
+    `self`. Сессия сильнее запроса. Осталось ровно одно окно — запрос совсем без токена; закрыть
+    его можно будет, когда у эмулятора появится собственный внутренний ключ, а у шести аккаунтов,
+    чей профиль не доехал до users.json, — строка, по которой их узнаёт `caller_name`.
+    """
+    mine = kleal_auth.caller_name(handler)
+    return mine or claimed
+
+
+def _own_uid(handler):
+    """ЧЬИ ЭТО ЗАПИСИ — решает сессия, а не тело запроса. Пусто, если назвать себя нечем.
+
+    Личные записи этого сервиса — оценки кандидатов, чёрный список и сохранённые поиски — лежат
+    в SESSION под ключом `uid`, и до сих пор этот ключ приходил ИЗ ЗАПРОСА: `body.get("uid", "me")`.
+    Знать надо было ровно одно — как человека зовут на экране, — и посторонний читал его чёрный
+    список, дописывал за него оценки и удалял сохранённые поиски. Проверки не было никакой.
+
+    ПОЧЕМУ ЗДЕСЬ МОЖНО ЗАПРЕЩАТЬ, А НА СОСЕДНИХ РУЧКАХ ЕЩЁ НЕТ. Наблюдение (`_watch_owner`) за
+    неделю дало цифры: 2593 запроса с сессией и совпавшим именем, 22788 — с именем и БЕЗ сессии,
+    одно расхождение. Запрет вслепую выкинул бы девять из десяти. Но у этих четырёх ручек за ту же
+    неделю НОЛЬ обращений — ни одного, ни с токеном, ни без, — поэтому их можно закрыть сегодня и
+    ничего не сломать. Опросные ручки (mplans, threads, inbox) закрываются отдельно и после того,
+    как станет ясно, чей это трафик без токена: у приложения токен есть всегда, когда человек вошёл
+    (kleal-app/src/api.ts).
+    """
+    return kleal_auth.caller_name(handler)
+
+
 def _session(uid="me"):
     with _STORE_LOCK:
         u = SESSION.setdefault(str(uid or "me"), {})
@@ -3125,8 +3169,26 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
                 plan["dist"] = round(float(km), 1)
             except (TypeError, ValueError):
                 pass
-        if c.get("lat") is not None and c.get("lon") is not None:
-            plan["lat"], plan["lon"] = c["lat"], c["lon"]
+        # Координата ВСТРЕЧИ важнее координаты автора. Место человек назвал сам, когда заводил
+        # интент; точка автора — это его район из профиля, одна на все его интенты. Пока брали
+        # только её, карта поиска сводила все встречи города в одну булавку: замерено на живой
+        # выдаче — двенадцать интентов на три точки, девять из них в запасном центре.
+        # КООРДИНАТА ЗАТЕИ, А НЕ АВТОРА, И ТОЧНАЯ.
+        #
+        # Разница между двумя видами точки, и она принципиальна. Домашняя точка человека и метка,
+        # которую он ставит в профиле, огрублены и такими остаются: geo_privacy держит их закрытыми,
+        # и правильно. Адрес встречи — другое: человек называет его САМ и именно для того, чтобы
+        # туда пришли. Прятать площадку значит сделать карту бесполезной — по зоне в полкилометра
+        # на встречу не придёшь.
+        #
+        # Сюда попадает только адрес: клиент кладёт lat/lon в затею лишь когда их дал выбранный
+        # адрес (`venue`), а булавка карты радиуса — «ищи вокруг вон той точки» — уезжает в профиль
+        # поиска и на карту не идёт. Запасной вариант ниже — координаты автора из его строки, они
+        # уже огрублены онбордингом.
+        p_lat = intent.get("lat") if intent.get("lat") is not None else c.get("lat")
+        p_lon = intent.get("lon") if intent.get("lon") is not None else c.get("lon")
+        if p_lat is not None and p_lon is not None:
+            plan["lat"], plan["lon"] = p_lat, p_lon
         out.append(plan)
         if intent_id:
             seen.add(intent_id)
@@ -3152,6 +3214,24 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
         str(p.get("title") or "").lower(),
     ))
     return out[:limit]
+
+
+# ---------------------------------------------------------------- Map feed: two privacy-distinct intent projections
+def map_feed_payload(view="offline", self_name="", limit=60):
+    users = load_candidates()
+    return imf.build_feed(
+        imf.collect_sources(users, SESSION.get("_intents") or [], SESSION.get("_gintents") or [],
+                            self_name=self_name),
+        view=view,
+        limit=limit,
+        geocoder=_MAP_GEOCODER,
+        geocode_budget=int(os.environ.get("KLEAL_MAP_GEOCODE_BUDGET", "4")),
+    )
+
+
+def _prepare_map_intent(owner, intent):
+    profile = imf.owner_profile_for(load_candidates(), owner)
+    return imf.prepare_persisted_intent(intent, profile, _MAP_GEOCODER)
 
 
 # ---------------------------------------------------------------- explain: full diagnostic of one search
@@ -4081,28 +4161,40 @@ def save_intent(owner, intent, title, iid=None, launched=None):
     owner = str(owner or "").strip()
     if not owner or not isinstance(intent, dict):
         return {"ok": False, "error": "owner and intent required"}
+    # Snapshot confirmed country and resolve an explicitly supplied meeting address when possible.
+    # Failure is intentionally non-fatal: the intent is still saved and map-feed reports partial data.
+    intent = _prepare_map_intent(owner, intent)
     now = time.time()
+    key = imf.persistence_key(intent)
     with _STORE_LOCK:
         rows = _intents()
         if iid:
             for r in rows:
                 if r.get("id") == iid and _norm_name(r.get("owner")) == _norm_name(owner):
-                    r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+                    r.update({"intent": intent, "title": title or r.get("title"), "updated": now,
+                              "key": key})
                     # once a search has actually run this never flips back to "not started"
                     if launched:
                         r["launched"] = now
                     _save_store()
                     return {"ok": True, "id": iid}
-        # the same request twice should update, not pile up a second identical card
-        key = json.dumps(intent.get("topics") or [], sort_keys=True) + "|" + str(intent.get("role") or "")
+        # The same request twice updates one row, but a different mode/date/address is a different
+        # intent even when topics and role match. The previous topics|role key collapsed those plans.
         for r in rows:
-            if _norm_name(r.get("owner")) == _norm_name(owner) and r.get("key") == key:
-                r.update({"intent": intent, "title": title or r.get("title"), "updated": now})
+            same_owner = _norm_name(r.get("owner")) == _norm_name(owner)
+            same_intent = r.get("key") == key or imf.persistence_key(r.get("intent") or {}) == key
+            if same_owner and same_intent:
+                r.update({"intent": intent, "title": title or r.get("title"), "updated": now,
+                          "key": key})
                 if launched:
                     r["launched"] = now
                 _save_store()
                 return {"ok": True, "id": r["id"], "merged": True}
-        nid = "in_%d" % int(now * 1000)
+        base_id = "in_%d" % int(now * 1000)
+        taken = {str(r.get("id") or "") for r in rows}
+        nid, suffix = base_id, 1
+        while nid in taken:
+            nid, suffix = "%s_%d" % (base_id, suffix), suffix + 1
         rows.append({"id": nid, "owner": owner, "title": title or "", "intent": intent,
                      "key": key, "created": now, "updated": now,
                      "launched": now if launched else None})
@@ -4339,7 +4431,7 @@ def gi_create(owner, intent, title="", min_total=None, max_total=None, idem=None
     cached = _idem_get(idem)
     if cached is not None:
         return cached
-    intent = intent if isinstance(intent, dict) else {}
+    intent = _prepare_map_intent(owner, intent if isinstance(intent, dict) else {})
     try:
         mn = int(min_total or GI_MIN_TOTAL)
     except (TypeError, ValueError):
@@ -7883,7 +7975,7 @@ class H(BaseHTTPRequestHandler):
         if base in ("/api/agent/mplans", "/api/agent/mplan", "/api/agent/safety"):
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
                 if "?" in self.path else {}
-            me = unquote(q.get("self", "").replace("+", " "))
+            me = _me_or_claimed(self, unquote(q.get("self", "").replace("+", " ")))
             if base == "/api/agent/safety":
                 send_json(self, 200, safety_for(me))
             elif base == "/api/agent/mplans":
@@ -7901,7 +7993,7 @@ class H(BaseHTTPRequestHandler):
                     "/api/agent/gplans", "/api/agent/home-invites", "/api/agent/ginvite"):
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
                 if "?" in self.path else {}
-            me = unquote(q.get("self", "").replace("+", " "))
+            me = _me_or_claimed(self, unquote(q.get("self", "").replace("+", " ")))
             gid = unquote(q.get("gid", "").replace("+", " "))
             # Все четыре ручки отдают план — значит все четыре обязаны сперва провести время.
             _gp_sweep()
@@ -7928,7 +8020,7 @@ class H(BaseHTTPRequestHandler):
             return False
         q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
             if "?" in self.path else {}
-        me = unquote(q.get("self", "").replace("+", " "))
+        me = _me_or_claimed(self, unquote(q.get("self", "").replace("+", " ")))
         if base == "/api/agent/threads":
             send_json(self, 200, {"threads": threads_for(me)})
         elif base == "/api/agent/thread":
@@ -8075,13 +8167,22 @@ class H(BaseHTTPRequestHandler):
                                              body.get("reason"), body.get("text"), body.get("rating"),
                                              body.get("idem")))
         elif p == "/api/agent/mplan-propose":
-            send_json(self, 200, mp_propose(body.get("self") or body.get("from"), body.get("to"),
-                                            body.get("title"), body.get("mode") or "offline",
-                                            body.get("starts_at"), body.get("when"),
-                                            body.get("district"), body.get("address"),
-                                            body.get("note"), body.get("cover"),
-                                            body.get("venue"), body.get("idem"),
-                                            body.get("link")))
+            # ОТКАЗ ОБЯЗАН БЫТЬ ВИДЕН В ЖУРНАЛЕ. Человек четырежды подряд нажал «предложить», план
+            # не появился, а в журнале не осталось ни одной причины — только следы чтений. Снаружи
+            # пришлось перебирать запреты по одному и всё равно не сойтись. Пишем КОД отказа и
+            # выбранное время, без имён и без содержимого: причина нужна, переписка в журнале — нет.
+            _mp = mp_propose(body.get("self") or body.get("from"), body.get("to"),
+                             body.get("title"), body.get("mode") or "offline",
+                             body.get("starts_at"), body.get("when"),
+                             body.get("district"), body.get("address"),
+                             body.get("note"), body.get("cover"),
+                             body.get("venue"), body.get("idem"),
+                             body.get("link"))
+            if not (_mp or {}).get("ok"):
+                print("[mplan] отказ=%s starts_at=%s mode=%s"
+                      % (str((_mp or {}).get("error") or "?")[:32],
+                         body.get("starts_at"), body.get("mode")), flush=True)
+            send_json(self, 200, _mp)
         elif p == "/api/agent/mplan-respond":
             send_json(self, 200, mp_respond(body.get("id"), body.get("self"), body.get("action"),
                                             body.get("starts_at"), body.get("when"),
@@ -8251,7 +8352,56 @@ class H(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _watch_owner(self, body=None):
+        """НАБЛЮДЕНИЕ, А НЕ ЗАПРЕТ. Ничего не блокирует и ничего не меняет в ответе.
+
+        ЗАЧЕМ. В этом сервисе человек до сих пор определяется ИМЕНЕМ, которое сам же и прислал:
+        шестьдесят с лишним ручек принимают `self`/`name`/`from` из запроса и по нему достают
+        чужие заявки, переписку и планы. Заголовок `Authorization` при этом уже доезжает — шлюз
+        его пробрасывает, — но никто его не читает.
+
+        Включать запрет вслепую нельзя: связка «аккаунт → строка» проставлена у шестнадцати строк
+        из восьмисот двадцати восьми, и отказ по несовпадению выкинул бы из поиска тех, кто вошёл
+        раньше. Сначала надо узнать ЦИФРУ: сколько живого трафика вообще приходит с токеном и как
+        часто заявленное имя расходится с именем из сессии. Её сейчас не существует.
+
+        В ЖУРНАЛ НЕ ПОПАДАЮТ НИ ИМЕНА, НИ АДРЕСА — только признаки. Журнал читают в отладке, и
+        превращать его во вторую копию персональных данных нельзя.
+        """
+        try:
+            claimed = ""
+            if isinstance(body, dict):
+                for k in ("self", "name", "from", "me", "uid"):
+                    v = body.get(k)
+                    if isinstance(v, str) and v.strip():
+                        claimed = v.strip()
+                        break
+            if not claimed and "?" in self.path:
+                from urllib.parse import parse_qs, urlparse
+                q = parse_qs(urlparse(self.path).query)
+                for k in ("self", "name", "from", "me", "uid"):
+                    if q.get(k) and str(q[k][0]).strip():
+                        claimed = str(q[k][0]).strip()
+                        break
+            mine = kleal_auth.caller_name(self)
+            has_tok = bool(kleal_auth.bearer(self))
+            if not claimed and not has_tok:
+                return                       # ручка не про личность — молчим
+            if claimed and mine and claimed.strip().lower() == mine.strip().lower():
+                verdict = "совпало"
+            elif claimed and mine:
+                verdict = "РАСХОЖДЕНИЕ"
+            elif claimed and not mine:
+                verdict = "имя без сессии"
+            else:
+                verdict = "сессия без имени"
+            print("[owner] %s | токен=%s | путь=%s"
+                  % (verdict, "да" if has_tok else "нет", self.path.split("?", 1)[0]), flush=True)
+        except Exception:
+            pass                             # наблюдение не имеет права мешать работе
+
     def do_GET(self):
+        self._watch_owner()
         _p = self.path.split("?", 1)[0]
         if _p == "/health":
             # Ровно один вопрос: процесс жив и отвечает. Состояние базы и очереди собирает
@@ -8289,8 +8439,10 @@ class H(BaseHTTPRequestHandler):
         elif self.path == "/api/agent/outcomes":
             send_json(self, 200, dict(_success_metrics(), match_capsules=_match_capsules()))  # §1 + §4.9
         elif self.path.split("?")[0] == "/api/agent/saved_searches":       # §12.2 step 7
-            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
-            send_json(self, 200, {"saved_searches": _list_saved_searches(q.get("uid", "me"))})
+            _uid = _own_uid(self)
+            if not _uid:
+                return send_json(self, 200, {"saved_searches": [], "error": "sign in required"})
+            send_json(self, 200, {"saved_searches": _list_saved_searches(_uid)})
         elif self.path == "/api/agent/load":
             send_json(self, 200, {"state": _session("me").get("state")})
         elif self.path == "/api/agent/pool":
@@ -8311,6 +8463,23 @@ class H(BaseHTTPRequestHandler):
                 store = {"path": os.path.abspath(USERS_PATH), "error": str(e)[:120]}
             send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None,
                                   "bySource": src, "store": store, "users": c})
+        elif self.path.split("?")[0] == "/api/agent/map-feed":
+            from urllib.parse import parse_qs, urlsplit
+            q = parse_qs(urlsplit(self.path).query)
+            view = str((q.get("view") or ["offline"])[0]).strip().lower()
+            claimed = str((q.get("self") or [""])[0]).strip()
+            # Prefer authenticated identity when available; the query name is compatibility for the
+            # current Expo bundle and must never influence location fields.
+            me = kleal_auth.caller_name(self) or claimed
+            try:
+                lim = int((q.get("limit") or [60])[0])
+            except (TypeError, ValueError):
+                lim = 60
+            try:
+                send_json(self, 200, map_feed_payload(view=view, self_name=me, limit=lim))
+            except ValueError as e:
+                send_json(self, 400, {"error": str(e), "items": [],
+                                      "partial": False, "unavailableCount": 0})
         elif self.path.split("?")[0] == "/api/agent/explore":
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
@@ -8383,6 +8552,7 @@ class H(BaseHTTPRequestHandler):
         if self.path.split("?", 1)[0] == "/api/agent/video":
             return self._video_upload()
         body = read_json(self)
+        self._watch_owner(body)
         p = self.path
         if self._restored_post(p, body) or self._restored_admin_post(p, body):
             return
@@ -8549,10 +8719,16 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         elif p == "/api/agent/feedback":
+            _uid = _own_uid(self)
+            if not _uid:
+                return send_json(self, 200, {"ok": False, "error": "sign in required"})
+
             def _do_feedback():                                # §23.2.13 idempotent write (opt-in idempotency_key)
-                ok = record_feedback(body.get("name"), body.get("decision"), body.get("uid", "me"),
+                ok = record_feedback(body.get("name"), body.get("decision"), _uid,
                                      purpose=body.get("purpose"))   # §17.2 optional mode-scoped feedback (dating isolation)
-                return {"ok": bool(ok), "feedback": _session("me").get("feedback")}
+                # Читаем ОТТУДА ЖЕ, куда писали. Раньше запись шла в `uid`, а ответ отдавал общую
+                # корзину "me": человек ставил оценку и получал обратно чужие.
+                return {"ok": bool(ok), "feedback": _session(_uid).get("feedback")}
             send_json(self, 200, _idempotent(body.get("idempotency_key"), "feedback",
                                              body.get("name"), body.get("decision"), _do_feedback))
         elif p == "/api/agent/outcome":
@@ -8566,7 +8742,7 @@ class H(BaseHTTPRequestHandler):
                 if prior is not None:                  # the read-then-write gap so a concurrent replay can't double-append.
                     payload = dict(prior, duplicate=True, error_code="DUPLICATE")
                 else:
-                    ok = _record_outcome(body.get("name"), body.get("stage"), body.get("uid", "me"))
+                    ok = _record_outcome(body.get("name"), body.get("stage"), _own_uid(self) or "me")
                     payload = {"ok": bool(ok), "stages": list(_OUTCOME_STAGES),
                                "metrics": _success_metrics(), "match_capsules": _match_capsules()}
                     if key and ok:                     # memoize only a real applied outcome (a failed record can retry)
@@ -8642,14 +8818,23 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/agent/save_search":
             # §12.2 step 7: persist a search to notify later (SESSION only; no users.json writer).
             intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
-            send_json(self, 200, {"id": _save_search(intent, body.get("uid", "me")),
-                                  "saved_searches": _list_saved_searches(body.get("uid", "me"))})
+            _uid = _own_uid(self)
+            if not _uid:
+                return send_json(self, 200, {"ok": False, "error": "sign in required"})
+            send_json(self, 200, {"id": _save_search(intent, _uid),
+                                  "saved_searches": _list_saved_searches(_uid)})
         elif p == "/api/agent/save_search/check":
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
-            send_json(self, 200, {"checked": _check_saved_searches(prof, body.get("uid", "me"))})
+            _uid = _own_uid(self)
+            if not _uid:
+                return send_json(self, 200, {"checked": [], "error": "sign in required"})
+            send_json(self, 200, {"checked": _check_saved_searches(prof, _uid)})
         elif p == "/api/agent/save_search/delete":
-            send_json(self, 200, {"deleted": _delete_saved_search(body.get("id"), body.get("uid", "me")),
-                                  "saved_searches": _list_saved_searches(body.get("uid", "me"))})
+            _uid = _own_uid(self)
+            if not _uid:
+                return send_json(self, 200, {"ok": False, "error": "sign in required"})
+            send_json(self, 200, {"deleted": _delete_saved_search(body.get("id"), _uid),
+                                  "saved_searches": _list_saved_searches(_uid)})
         elif p == "/api/agent/revalidate":
             # §8.2 #3-#7: re-decide a pair against the live store at a checkpoint; POLICY_CHANGED if stricter.
             intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
