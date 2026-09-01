@@ -33,7 +33,7 @@ import {
 } from '../src/components/icons';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { mediaUrl, agent } from '../src/api';
+import { mediaUrl, warmPhotos, agent } from '../src/api';
 import {
   HOME, splitWhen, planWhere, joinableGroups, homeInvites,
   Group, HomeInvite,
@@ -75,8 +75,6 @@ export default function Home() {
    * прокручиваться становится нечему.
    */
   const [viewH, setViewH] = useState(0);
-  /** Высота всего, что стоит под колесом: колесо занимает ровно то, что осталось. */
-  const [belowH, setBelowH] = useState(0);
   /** Какое приглашение сверху стопки. Живёт в экране: он знает, какие уже разобрали. */
   const [invIdx, setInvIdx] = useState(0);
   /**
@@ -111,6 +109,15 @@ export default function Home() {
     setGroups(joinableGroups((g as any)?.groups || []));
     if (i) {
       const next = homeInvites((i as any)?.invites || []);
+      /*
+        Лица греем СРАЗУ, как только пришёл список, — до того, как стопку нарисуют. Без этого
+        карточка появлялась пустой и лицо проявлялось через паузу: файл начинали качать только в
+        тот момент, когда `<Image>` впервые оказывался на экране.
+
+        Греем всю стопку, а не первое приглашение: их пролистывают подряд, и второе лицо нужно
+        через секунду после первого.
+      */
+      warmPhotos(next.map((x: any) => x?.from?.photo));
       setInvites((prev) => {
         // Индекс стопки только РОС и не сбрасывался никогда. `load()` дёргается при каждом
         // возвращении на экран, и после ответа на приглашение список приходит короче — а индекс
@@ -150,12 +157,22 @@ export default function Home() {
 
 
   /*
-    СКОЛЬКО МЕСТА ОСТАЛОСЬ КОЛЕСУ. Оно занимает всё, что не занято тем, что стоит под ним: иначе
-    либо внизу зияет пустота, либо на коротком экране колесо не влезает вовсе. Нижний предел — на
-    случай, когда секций много: колесо ужимается до него, а лента дальше прокручивается, вместо
-    того чтобы схлопнуться в полоску.
+    РАЗМЕР КОЛЕСА НЕ ЗАВИСИТ ОТ ТОГО, ЧТО ПОД НИМ.
+
+    Раньше он был остатком: `viewH - belowH`. Замысел понятен — чтобы ни внизу не зияла пустота,
+    ни колесо не вылезало за экран. Но следствие оказалось хуже причины: стоило появиться плану,
+    и нижний блок вырастал (колода вместо одинокой карточки — соседняя карточка выглядывает, под
+    ней точки, да и сама карточка встречи выше пустой), а колесо на ту же величину СЖИМАЛОСЬ.
+    Кроссовок на главной становился меньше просто потому, что вечером назначена встреча. Сообщено
+    с телефона; со стороны это читается как поломка, а не как вёрстка, — размер одного и того же
+    предмета не должен зависеть от чужих новостей.
+
+    Теперь колесо считается от видимой области и только от неё: доля даёт стабильную высоту на
+    любом экране, нижняя граница спасает короткие, верхняя оставляет место, чтобы из-под колеса
+    выглядывала первая карточка и было видно, что там что-то есть. Не поместилось — лента честно
+    прокручивается: она и так ScrollView, ради этого сжимать картинку не нужно.
   */
-  const wheelH = viewH && belowH ? Math.max(220, viewH - belowH - 20) : undefined;
+  const wheelH = viewH ? Math.max(220, Math.min(Math.round(viewH * 0.62), viewH - 160)) : undefined;
 
   return (
     <View style={s.wrap}>
@@ -260,27 +277,16 @@ export default function Home() {
                 осталось. Мерить каждую секцию отдельно значило бы держать три состояния вместо
                 одного и заводить четвёртое на каждой новой секции.
               */}
-              <View style={s.below} onLayout={(e) => setBelowH(e.nativeEvent.layout.height)}>
-              {nextPlan ? (
-                <>
-                  <Section icon={<IconCalendar size={18} />} title={HOME.next()} />
-                  <Pressable
-                    accessibilityRole="button"
-                    style={s.nextCard}
-                    onPress={() => router.navigate({ pathname: '/plan', params: { id: String(nextPlan.id || '') } })}
-                  >
-                    <Text style={s.nextTitle} numberOfLines={1}>
-                      {String(nextPlan.title || '').trim() || HOME.next()}
-                    </Text>
-                    <Text style={s.nextWhen} numberOfLines={1}>
-                      {[String(nextPlan.when || '').trim(),
-                        nextPlan.mode === 'online' ? HOME.onCall() : String(nextPlan.venue || nextPlan.district || '').trim()]
-                        .filter(Boolean).join(' · ')}
-                    </Text>
-                    <Text style={s.nextGo}>{HOME.goToPlan()}  ›</Text>
-                  </Pressable>
-                </>
-              ) : null}
+              <View style={s.below}>
+              {/*
+                ВСТРЕЧА И ПРИГЛАШЕНИЯ — ОДНА КАРТОЧКА, А НЕ ДВЕ ПЛАШКИ ПОДРЯД. Здесь стояла своя
+                плашка со своим заголовком-секцией, своим радиусом (16 против 20) и своей вёрсткой
+                — три отличия от карточки ниже на расстоянии двенадцати пикселей. Рядом это
+                читалось как два разных приложения.
+                Обе строки живут внутри `EmptyInviteCard` и разделены волосяной линией; когда
+                приглашения настоящие, они идут каруселью, и встреча остаётся отдельной карточкой
+                в том же оформлении — стопка складывается только там, где ей есть с чем сложиться.
+              */}
 
               {groups.length ? (
                 <>
@@ -296,9 +302,31 @@ export default function Home() {
                   </ScrollView>
                 </>
               ) : null}
-              {invites.length || inviteError ? (
+              {/*
+                ВСТРЕЧА И ПРИГЛАШЕНИЯ — ОДНА КОЛОДА, а не две плашки подряд.
+
+                Здесь стояли две карточки одна под другой, и обе видно целиком. На экране это
+                читается как два не связанных блока: сначала «что у меня назначено», потом
+                «кто ко мне просится». Колода говорит иначе — вот верхнее, а за ним есть ещё, — и
+                это ровно тот приём, который продукт уже применяет к приглашениям: показать ОДНО и
+                сказать, сколько за ним. Геометрия краёв взята оттуда же, с борда (Invite Stack).
+
+                Встреча идёт первой: она про назначенное время, и её нельзя задвинуть за
+                приглашение, которого может и не быть. «Дальше ›» под колодой переводит к
+                следующей — ничего не становится недоступным.
+              */}
+              {nextPlan || invites.length || inviteError ? (
                 <View style={s.stack}>
-                  <Section icon={<IconBell size={18} />} title={HOME.invites()} />
+                  {/*
+                    ЗАГОЛОВКА У СМЕШАННОЙ КОЛОДЫ НЕТ, и это не экономия места. Он обязан называть
+                    то, что под ним, а под ним лежат разные вещи и меняются по «Дальше»: встреча,
+                    потом приглашение. Любая одна подпись врала бы в половине состояний — и
+                    «Приглашения» над карточкой встречи, и «Ближайшая встреча» над приглашением.
+                    Карточки называют себя сами: у встречи подпись над названием, у приглашений —
+                    имя человека. Заголовок остаётся там, где он честен: когда в колоде одни
+                    приглашения.
+                  */}
+                  {nextPlan ? null : <Section icon={<IconBell size={18} />} title={HOME.invites()} />}
                   {inviteError ? (
                     <View style={s.inviteError}>
                       <Text style={s.empty}>{HOME.inviteLoadFailed()}</Text>
@@ -315,23 +343,34 @@ export default function Home() {
                       каждому человеку принимается отдельно, а не сравнением витрины.
                     */
                     <CardStack
-                      items={invites.map((inv) => ({ ...inv, key: String(inv.id) }))}
+                      items={[
+                        // Встреча — такой же житель колоды, как приглашение. `kind` отличает её
+                        // при отрисовке: у стопки один список, а карточки в нём разные.
+                        ...(nextPlan ? [{ key: 'plan', kind: 'plan', plan: nextPlan } as any] : []),
+                        ...(invites.length
+                          ? invites.map((inv) => ({ ...inv, kind: 'invite', key: String(inv.id) } as any))
+                          // Пустая карточка приглашений — тоже житель: без неё колода из одной
+                          // встречи не сказала бы человеку, что приглашений просто нет.
+                          : [{ key: 'empty', kind: 'empty' } as any]),
+                      ]}
                       index={invIdx}
-                      onNext={() => setInvIdx((n) => n + 1)}
+                      onIndex={setInvIdx}
                       emptyHint={invites.length ? HOME.invitesAllSeen() : ''}
-                      render={(inv) => (inv.type === 'group'
-                        ? <GroupInviteCard inv={inv} />
-                        : <DirectInviteCard inv={inv} />
+                      render={(it: any) => (
+                        it.kind === 'plan' ? <View style={s.meet}><NextMeetRow plan={it.plan} /></View>
+                        : it.kind === 'empty' ? <EmptyInviteCard />
+                        : it.type === 'group' ? <GroupInviteCard inv={it} />
+                        : <DirectInviteCard inv={it} />
                       )}
                     />
                   )}
                 </View>
               ) : (
                 /*
-                  Карточка приглашений в ПУСТОМ виде — кадр «Home Card · Empty». Она стоит ровно
-                  там, где стоял бы настоящий блок: колесо говорит, чем заняться самому, а она
-                  отвечает на невысказанный вопрос «а мне-то кто-нибудь написал». Без неё главная
-                  выглядела бы так, будто приглашений в приложении нет вовсе.
+                  Ни встречи, ни приглашений — колоду разворачивать не из чего, показываем ту же
+                  пустую карточку саму по себе. Кадр «Home Card · Empty»: колесо говорит, чем
+                  заняться самому, а она отвечает на невысказанный вопрос «а мне-то кто-нибудь
+                  написал».
                 */
                 <EmptyInviteCard />
               )}
@@ -365,10 +404,15 @@ export default function Home() {
               <IconMic />
             </Pressable>
           </View>
-          {/* Кнопка обещает историю — и открывает её сегмент во вкладке «Интенты». Раньше она
-              вела в чат с Бадди: это разговор, но не история, и вернуться к прошлым затеям
-              оттуда было нельзя. */}
-          <Pressable accessibilityRole="button" style={s.hist} onPress={() => router.navigate('/activity?seg=history')}>
+          {/*
+            Кнопка обещает историю РАЗГОВОРОВ — теперь она её и открывает.
+
+            До этого она вела в сегмент прошедших ЗАТЕЙ во вкладке «Интенты»: планы, а не
+            разговоры. Ещё раньше — в чат с Бадди: это разговор, но не история. Оба раза подпись
+            обещала одно, а кнопка делала другое, и второе было записано прямо здесь как
+            компромисс. Экран истории теперь есть — модальным окном, см. app/history.tsx.
+          */}
+          <Pressable accessibilityRole="button" style={s.hist} onPress={() => router.navigate('/history')}>
             <IconChat />
             <Text style={s.histText}>{HOME.history()}</Text>
             <Text style={s.histArrow}>›</Text>
@@ -433,6 +477,46 @@ function GroupCard({ g, myArea }: { g: Group; myArea: string }) {
             <Text style={s.footText}>{HOME.hosting(g.host)}</Text>
           )}
         </View>
+      </View>
+    </Pressable>
+  );
+}
+
+/**
+ * Ближайшая встреча СТРОКОЙ, в том же сложении, что и приглашение: круглый значок слева, справа
+ * подпись, название, время с местом и переход.
+ *
+ * Раньше это была отдельная плашка с другим радиусом и другой вёрсткой, стоявшая прямо над
+ * карточкой приглашений. Два разных оформления в двенадцати пикселях друг от друга читаются
+ * как случайность, а не как замысел.
+ */
+function NextMeetRow({ plan }: { plan: any }) {
+  const router = useRouter();
+  const when = [String(plan.when || '').trim(),
+                plan.mode === 'online' ? HOME.onCall()
+                  : String(plan.venue || plan.district || '').trim()].filter(Boolean).join(' · ');
+  return (
+    <Pressable
+      accessibilityRole="button"
+      style={({ pressed }) => [s.nextRow, pressed && { opacity: 0.7 }]}
+      onPress={() => router.navigate({ pathname: '/plan', params: { id: String(plan.id || '') } })}
+    >
+      <View style={[s.meetAva, s.meetAvaEmpty]}>
+        <IconCalendar size={26} c={color.muted} />
+      </View>
+      <View style={{ flex: 1 }}>
+        {/* Подпись над названием — иначе, потеряв заголовок секции, строка перестаёт называть себя. */}
+        <Text style={s.stackCap}>{HOME.next()}</Text>
+        <Text style={s.meetName} numberOfLines={1}>
+          {String(plan.title || '').trim() || HOME.next()}
+        </Text>
+        {when ? (
+          <View style={s.meetMeta}>
+            <IconClock />
+            <Text style={s.meta} numberOfLines={1}>{when}</Text>
+          </View>
+        ) : null}
+        <Text style={s.nextGo}>{HOME.goToPlan()}  ›</Text>
       </View>
     </Pressable>
   );
@@ -707,6 +791,16 @@ const s = StyleSheet.create({
   askText: { flex: 1, color: color.neutral400, fontSize: 15 },
   navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   /** Карточка ближайшей встречи — кадр O.01, блок Activity. Только токены, как и всё на экране. */
+  /** Строка встречи внутри своей карточки: то же сложение, что у приглашения. */
+  /*
+    `flex: 1` ОБЯЗАТЕЛЕН. Карточка `meet` — строка, и эта нажимаемая строка её единственный ребёнок:
+    без растяжения она сжимается по содержимому, а колонка текста внутри получает нулевую ширину —
+    на снимке от значка календаря остались только он сам да часики, весь текст исчез.
+  */
+  nextRow: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
+  /** Подпись над названием: карточка обязана называть себя, раз заголовка секции над ней нет. */
+  stackCap: { ...type.labelSmall, color: color.muted, marginBottom: 2 } as any,
+
   nextCard: {
     marginHorizontal: space.lg, marginBottom: space.md, padding: space.lg,
     borderRadius: rad.lg, backgroundColor: color.card, gap: 4,
