@@ -65,11 +65,6 @@ export function useKeyboardInset(): number {
       const already = Math.max(0, Math.round(scr - win));
       const covered = top > 0 ? Math.max(0, scr - top) : kbH;
       const next = Math.max(0, covered - already);
-      // ЗАМЕР НА ЖИВОМ ТЕЛЕФОНЕ. Дважды починка «по рассуждению» не сработала; третий раз гадать
-      // нельзя. Виден только в дев-сборке, в журнале Metro: journalctl -u kleal-expo | grep '[kb]'
-      if (__DEV__) {
-        console.log('[kb] ' + JSON.stringify({ kbH, top, win, scr, already, covered, next }));
-      }
       setInset(next);
     };
     const s1 = Keyboard.addListener('keyboardDidShow', show);
@@ -83,8 +78,14 @@ export function useKeyboardInset(): number {
 
 /**
  * Отступ снизу для панели с полем ввода: пока клавиатуры нет — безопасная зона (жест-бар),
- * когда она открыта — её высота. Складывать их нельзя: клавиатура и так закрывает жест-бар.
+ * когда она открыта — всё, что она закрыла. Складывать их нельзя: клавиатура и так закрывает
+ * жест-бар.
+ *
+ * ЗАЗОР НАД КЛАВИАТУРОЙ. Ровный подъём ставит поле впритык к её верхнему краю — две светлые
+ * плашки без единой границы читаются как одна, и непонятно, где кончается ввод и начинаются
+ * клавиши. Сообщено с телефона со ссылкой на Telegram, где такой зазор есть. Он равен той же
+ * величине, что и покой без клавиатуры (`min`): поле дышит одинаково в обоих состояниях.
  */
 export function dockBottom(safeBottom: number, keyboard: number, min = 10): number {
-  return keyboard > 0 ? keyboard : Math.max(safeBottom, min);
+  return keyboard > 0 ? keyboard + min : Math.max(safeBottom, min);
 }
