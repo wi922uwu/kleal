@@ -106,7 +106,9 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
     });
     if (!open) return roots.map((b, i) => mk(b, b.x * width, b.y * canvasH, 38, i));
     const n = leaves.length || 1;
-    const r = Math.max(20, Math.min(30, Math.sqrt((width * canvasH * 0.3) / (n * Math.PI))));
+    // Нижний предел 22, а не 20: при 27 занятиях в самой густой категории (social) диаметр
+    // выходил 43 точки — на одну меньше пальца. Предел срабатывает только там, где тесно.
+    const r = Math.max(22, Math.min(30, Math.sqrt((width * canvasH * 0.3) / (n * Math.PI))));
     const cx = width / 2;
     const cy = canvasH / 2;
     const span = Math.min(width, canvasH) / 2 - r - 6;
