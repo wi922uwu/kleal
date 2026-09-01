@@ -182,6 +182,7 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
         const { locationX: x, locationY: y } = e.nativeEvent;
         from.current = { x, y };
         moved.current = false;
+        // На касании — сразу в точку: тайминг от края поля протащил бы лупу через всю карту.
         finger.setValue({ x, y });
         drag.current?.(true);
       },
@@ -190,7 +191,26 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
         if (Math.abs(x - from.current.x) > TAP_SLOP || Math.abs(y - from.current.y) > TAP_SLOP) {
           moved.current = true;
         }
-        finger.setValue({ x, y });
+        /*
+          ПАЛЕЦ ДВИГАЕМ АНИМАЦИЕЙ, А НЕ ПРИСВОЕНИЕМ, И ЭТО НЕ ПРО ПЛАВНОСТЬ — ЭТО ПРО ПОТОК.
+
+          `setValue` держит весь граф на стороне JS: на каждое движение пальца пересчитывались
+          триста с лишним видов, и каждому уходил свой вызов через мост. Отсюда рывки, которые
+          никакими сокращениями до конца не вылечить — это потолок самого способа.
+
+          Тайминг с нативным драйвером переносит ВЕСЬ счёт вниз: вычитание, интерполяция,
+          умножение и сложение — всё это нативные узлы, а сдвиг с масштабом и прозрачностью —
+          нативные свойства. JS на каждое движение делает один вызов вместо трёхсот, дальше
+          телефон считает кадры сам. Каждый новый старт отменяет предыдущий.
+
+          Короткая длительность заодно даёт то самое перетекание: пузыри не прыгают за пальцем
+          рывками с частотой событий касания, а догоняют его.
+        */
+        Animated.timing(finger, {
+          toValue: { x, y },
+          duration: 90,
+          useNativeDriver: true,
+        }).start();
       },
       onPanResponderRelease: (e) => {
         /*
