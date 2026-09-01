@@ -24,6 +24,7 @@ import { BottomNav } from '../src/components/BottomNav';
 import { CardStack } from '../src/components/CardStack';
 import { ArcCarousel, ARC_COPIES, ARC_PITCH } from '../src/components/ArcCarousel';
 import { NotifyBubble } from '../src/components/NotifyBubble';
+import Svg, { Path } from 'react-native-svg';
 import { hCommit } from '../src/haptics';
 import { Ambient, GLOW_SIGNIN } from '../src/components/Ambient';
 import { WHEEL } from '../src/wheel';
@@ -490,21 +491,53 @@ function GroupCard({ g, myArea }: { g: Group; myArea: string }) {
  * карточкой приглашений. Два разных оформления в двенадцати пикселях друг от друга читаются
  * как случайность, а не как замысел.
  */
+/**
+ * Стрелка «дальше» в круглой кнопке. Своя, а не из общего набора: там сейчас чинят соседние
+ * иконки, и лезть туда ради одной фигуры — верный способ разъехаться с чужой правкой.
+ * Прямая стрелка, а не шеврон: на кадре она именно такая.
+ */
+const ArrowRight = ({ size = 20, c = color.onPrimary }: { size?: number; c?: string }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M5 12h13M12 6l6 6-6 6" stroke={c} strokeWidth={2.2}
+          strokeLinecap="round" strokeLinejoin="round" />
+  </Svg>
+);
+
 function NextMeetRow({ plan }: { plan: any }) {
   const router = useRouter();
-  const when = [String(plan.when || '').trim(),
-                plan.mode === 'online' ? HOME.onCall()
-                  : String(plan.venue || plan.district || '').trim()].filter(Boolean).join(' · ');
+  const ru = useLang() === 'ru';
+  /*
+    КАРТОЧКА ЧИТАЕТСЯ ОДНИМ ВЗГЛЯДОМ, И ПОРЯДОК В НЕЙ НЕ СЛУЧАЕН: когда — что — куда нажать.
+
+    Дата стоит отдельной плиткой и отбита волосяной линией: число крупно, месяц под ним. Время
+    ушло в строку под названием, к часам; действие вернулось направо, в одну строку с названием.
+    Иначе всё съезжало в одну длинную подпись, слева стояла пустая плитка календаря, а «К плану»
+    занимала третью строку — карточка вырастала вдвое, и самое главное, КОГДА, тонуло в середине.
+
+    Число и месяц берём из `starts_at`, а не разбираем готовую подпись: она собрана не здесь, и
+    зависеть от её формата значило бы ломаться при каждой его правке. Нет отметки времени —
+    показываем подпись как есть: это честнее выдуманной даты.
+  */
+  const at = Number(plan.starts_at || 0);
+  const d = at ? new Date(at * 1000) : null;
+  const loc = ru ? 'ru-RU' : 'en-US';
+  const mon = d ? d.toLocaleDateString(loc, { month: 'short' }).replace(/\.$/, '') : '';
+  const time = d ? d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: !ru }) : '';
+  const place = plan.mode === 'online' ? HOME.onCall() : String(plan.venue || plan.district || '').trim();
+  const when = [time || String(plan.when || '').trim(), place].filter(Boolean).join(' · ');
   return (
     <Pressable
       accessibilityRole="button"
       style={({ pressed }) => [s.nextRow, pressed && { opacity: 0.7 }]}
       onPress={() => router.navigate({ pathname: '/plan', params: { id: String(plan.id || '') } })}
     >
-      <View style={[s.meetAva, s.meetAvaEmpty]}>
-        <IconCalendar size={26} c={color.muted} />
+      <View style={s.dateTile}>
+        <IconCalendar size={20} c={color.fg} />
+        {d ? <Text style={s.dateDay}>{d.getDate()}</Text> : null}
+        {mon ? <Text style={s.dateMon}>{mon}</Text> : null}
       </View>
-      <View style={{ flex: 1 }}>
+      <View style={s.dateRule} />
+      <View style={s.nextText}>
         {/* Подпись над названием — иначе, потеряв заголовок секции, строка перестаёт называть себя. */}
         <Text style={s.stackCap}>{HOME.next()}</Text>
         <Text style={s.meetName} numberOfLines={1}>
@@ -516,7 +549,10 @@ function NextMeetRow({ plan }: { plan: any }) {
             <Text style={s.meta} numberOfLines={1}>{when}</Text>
           </View>
         ) : null}
-        <Text style={s.nextGo}>{HOME.goToPlan()}  ›</Text>
+      </View>
+      <View style={s.goWrap}>
+        <Text style={s.nextGo} numberOfLines={1}>{HOME.goToPlan()}</Text>
+        <View style={s.goBtn}><ArrowRight /></View>
       </View>
     </Pressable>
   );
@@ -797,7 +833,19 @@ const s = StyleSheet.create({
     без растяжения она сжимается по содержимому, а колонка текста внутри получает нулевую ширину —
     на снимке от значка календаря остались только он сам да часики, весь текст исчез.
   */
-  nextRow: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
+  nextRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  /** Дата плиткой: значок сверху, число крупно, месяц под ним. Узкая колонка — ширина у названия. */
+  dateTile: { width: 34, alignItems: 'center' },
+  dateDay: { fontSize: 20, lineHeight: 24, fontWeight: '800', color: color.fg, marginTop: 4 } as any,
+  dateMon: { fontSize: 12, lineHeight: 15, color: color.muted, marginTop: 1 } as any,
+  /** Волосяная отбивка: дата — это отдельный столбец, а не начало той же строки. */
+  dateRule: { width: 1, alignSelf: 'stretch', marginVertical: 2, backgroundColor: color.line },
+  nextText: { flex: 1 },
+  goWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  goBtn: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
   /** Подпись над названием: карточка обязана называть себя, раз заголовка секции над ней нет. */
   stackCap: { ...type.labelSmall, color: color.muted, marginBottom: 2 } as any,
 
@@ -809,7 +857,7 @@ const s = StyleSheet.create({
   },
   nextTitle: { ...type.title, color: color.fg } as any,
   nextWhen: { ...type.bodySmall, color: color.muted } as any,
-  nextGo: { ...type.labelMedium, color: color.primary, marginTop: 4 } as any,
+  nextGo: { ...type.labelMedium, color: color.primary, fontWeight: '600' } as any,
 
   hist: {
     alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8,
