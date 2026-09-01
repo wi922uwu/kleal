@@ -1,276 +1,244 @@
 /**
- * Карта интересов: одно полотно, живое поле и лупа под пальцем.
+ * Карта интересов: восемь кустов, в которые ЗАХОДЯТ.
  *
- * УСТРОЙСТВО ВЗЯТО У ДВУХ РАБОТ, И ОБЕ ВЫБРАНЫ ЗА ОДНО И ТО ЖЕ РЕШЕНИЕ.
+ * ПОЧЕМУ НЕ ОДНО ПЛОТНОЕ ПОЛЕ. Раньше все девяносто занятий лежали разом. Арифметика этого не
+ * прощает: на поле 330×430 при девяноста восьми кружках на каждый приходится квадрат 38×38 точек,
+ * а палец накрывает 44×44 — касание физически перекрывает больше одной цели, и средний спутник в
+ * двадцать точек вдвое меньше минимума, который рекомендуют и Apple, и Google (48). Отсюда обе
+ * жалобы сразу: «за малейшее движение пролистывает десяток» и «палец закрывает то, куда жмёшь».
+ * Лупа этого не лечит — она показывает, что под пальцем, уже ПОСЛЕ того, как ты туда попал.
  *
- *  — «Gates Foundation bubbles» Джима Валландингема (vlandham/gates_bubbles). Там пузыри
- *    притягиваются к центру своей группы и расталкиваются силой, пропорциональной ПЛОЩАДИ
- *    (`charge = -r²/8`), а движение гасится (`damper 0.1`, `friction 0.9`). Отсюда у нас
- *    раскладка кустов — она посчитана заранее в `mindmap.ts`, потому что поле не меняется и
- *    гонять симуляцию в каждом кадре незачем.
+ * Поэтому шагов два. Сверху — восемь категорий по семьдесят шесть точек: промахнуться нельзя.
+ * Нажал — заходишь внутрь, и то же поле занимает один куст: два десятка занятий по сорок-шестьдесят
+ * точек каждое. Целей стало меньше, а каждая — крупнее пальца.
  *
- *  — «JS Interactive Canvas Bubbles» (codepen aashish2058/MWydyoe). Там нет ни одного объекта на
- *    пузырь: всё поле рисуется В ОДИН ХОЛСТ, а радиус каждого пузыря в каждом кадре ДОГОНЯЕТ свою
- *    цель — близко к курсору цель больше, далеко меньше. Отсюда у нас всё остальное.
+ * ЗАЩЁЛКИ ВМЕСТО СКОЛЬЖЕНИЯ. Внутри куста выделенное держится за пузырь и не перескакивает на
+ * соседа, пока тот не окажется заметно ближе (гистерезис). Палец дрожит — выделение стоит; повёл
+ * осознанно — щёлкнуло и перешло. Так устроен барабан выбора в iOS, и по той же причине: чтобы
+ * движение считалось шагами, а не сантиметрами.
  *
- * ПОЧЕМУ ЭТО ВАЖНО ИМЕННО ЗДЕСЬ. Прошлая версия держала по отдельному `Animated.View` на пузырь,
- * и каждому на каждом кадре меняла сдвиг по двум осям и масштаб — под четыреста нативных свойств
- * в кадре. Телефон это не тянул: поток был занят настолько, что не успевал даже разогнать
- * собственный переключатель анимации. Теперь на всё поле ОДИН вид — `<Svg>`, — а девяносто восемь
- * кружков внутри него получают новые `cx/cy/r` напрямую через `setNativeProps`, минуя React.
- * Ни перерисовки дерева, ни `Animated`-графа, ни состояния во время жеста.
+ * ЛУПА ОСТАЛАСЬ, НО СТАЛА ПОДТВЕРЖДЕНИЕМ, А НЕ СПОСОБОМ ПРОЧИТАТЬ. Цели теперь и так читаются;
+ * увеличение говорит «вот это ты сейчас возьмёшь». Отсюда скромный пик.
  *
- * ЧТО ДЕЛАЕТ ЛУПА. Под пальцем пузырь вырастает вдвое и подтягивается к нему на треть расстояния;
- * дальше края зоны — ничего. Значения не подставляются рывком, а сглаживаются по кадрам (как
- * радиусы в той работе с холстом), поэтому поле «перетекает» к пальцу, а не прыгает за ним.
- *
- * ВЫБОР — НА ОТПУСКАНИИ. Прижал, повёл, увидел имя, отпустил — записалось. Отпустил над пустым
- * местом — не записалось ничего, и это же способ передумать.
+ * ДВИЖОК ТОТ ЖЕ, ЧТО БЫЛ, и он взят у двух работ. Раскладка кустов — Gates Foundation bubbles
+ * (vlandham): притяжение к центру группы и отталкивание по площади. Отрисовка и ход кадров —
+ * JS Interactive Canvas Bubbles (codepen aashish2058): всё поле в ОДИН холст, а размеры и места в
+ * каждом кадре догоняют цель. Поэтому здесь один <Svg> на всё, а кружки внутри получают новые
+ * cx/cy/r напрямую через setNativeProps, минуя React.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { PanResponder, StyleSheet, Text, View } from 'react-native';
+import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { buildMap, ROOT_TONE, type Bubble } from '../mindmap';
-import { color, deckTone, font } from '../theme';
-import { useLang } from '../i18n';
+import { color, deckTone, font, radius as rad } from '../theme';
+import { T, useLang } from '../i18n';
 import { hTap, hCommit } from '../haptics';
 
-/** Во сколько раз вырастает пузырь ровно под пальцем. */
-const PEAK = 4.6;
-/**
- * ДВА РАДИУСА, И ЭТО РАЗНЫЕ ВЕЩИ.
- *
- * `REACH` — докуда поле РАССТУПАЕТСЯ. Он широкий: чем больше соседей чуть подвинулось, тем больше
- * это похоже на стекло, а не на подмену одного кружка.
- *
- * `REACH_ZOOM` — докуда что-то РАСТЁТ. Он узкий, чуть больше самого пузыря, и падает квадратом.
- * Раньше радиус был один на всё, и вместе с нужным разрастались двое-трое соседей: под пальцем
- * оказывалось пятно вместо предмета, и непонятно было, что именно ты сейчас выберешь. Растёт то,
- * на чём палец, — остальное только уступает дорогу.
- */
-const REACH = 96;
-const REACH_ZOOM = 34;
-/*
-  ФИЗИКА ПРИГЛУШЕНА НАМЕРЕННО. Расступание и дыхание — приправа: они говорят, что поле живое, и на
-  этом их работа кончается. Когда их слышно наравне с увеличением, взгляд ловит движение вокруг
-  вместо того, на что наведён палец, и выбирать становится труднее, а не легче. Тянем и толкаем
-  вдвое слабее прежнего, дышим втрое тише, а шаг к цели делаем крупнее — поле охотнее замирает.
-*/
-/** Какую долю пути до пальца проходит пузырь в самой сильной точке. */
-const PULL = 0.14;
-/**
- * ВЫТАЛКИВАНИЕ ПО КРАЮ ЛУПЫ — то, чем настоящее увеличительное стекло отличается от простого
- * «стало больше». У линзы центр тянет к себе, а по ободу изображение расходится наружу; без этого
- * поле просто раздувается в одном месте и выглядит подменой, а не оптикой.
- * Сильнее всего на полпути к краю зоны, у центра и за краем — ноль.
- */
-const PUSH = 0.07;
-/** Сколько поле дышит в покое: пузыри едва заметно плывут, как в исходной работе с холстом. */
-const DRIFT = 0.5;
-/** Насколько крупнее становится пузырь в момент выбора — короткий отклик, гаснет сам. */
-const POP = 0.5;
-/** Насколько кадр приближает значение к цели. Меньше — плавнее и ленивее. */
+/** Во сколько раз вырастает то, что под пальцем. Скромно: это подтверждение, а не чтение. */
+const PEAK = 1.55;
+/** Докуда достаёт увеличение. Соразмерно пузырю: растёт то, на чём палец. */
+const REACH_ZOOM = 46;
+/** Насколько сосед должен быть ближе, чтобы выделение к нему перескочило. Это и есть защёлка. */
+const HOLD = 16;
+/** Насколько кадр приближает значение к цели. */
 const EASE = 0.3;
-/** Ниже этого поле считается пришедшим в покой, и цикл кадров останавливается. */
-const CALM = 0.35;
+/** Тихое дыхание поля. */
+const DRIFT = 0.5;
+/** Короткий прирост в момент выбора. */
+const POP = 0.45;
 /** Насколько палец может сползти, и это всё ещё тап. */
 const TAP_SLOP = 6;
-/** Запас при попадании — по видимому размеру. */
-const TAP_SLACK = 8;
-
-/**
- * Доля увеличения. Считается по ЧЕСТНОМУ расстоянию, а не по осям: круг под пальцем должен быть
- * кругом. Квадрат гасит хвост — на двадцати точках остаётся пять процентов, и сосед не растёт.
- */
-function zoom(dx: number, dy: number): number {
-  const d2 = dx * dx + dy * dy;
-  if (d2 >= REACH_ZOOM * REACH_ZOOM) return 0;
-  const t = 1 - Math.sqrt(d2) / REACH_ZOOM;
-  // Куб, а не квадрат: пик подняли до 3.6, и при квадрате вместе с ним подрастал бы сосед в
-  // двадцати точках — до полутора раз. Куб оставляет ему восемнадцать процентов, как и было.
-  return t * t * t;
-}
-
-/** Доля близости для РАССТУПАНИЯ: 1 под пальцем, 0 за краем зоны. Та же ломаная, что и была. */
-function near(v: number): number {
-  const a = Math.min(Math.abs(v), REACH);
-  const half = REACH / 2;
-  return a <= half ? 1 - 0.55 * (a / half) : 0.45 * (1 - (a - half) / half);
-}
+/** Высота шапки в раскрытом кусте. */
+const HEAD_H = 34;
 
 type Node = {
-  b: Bubble;
-  /** Дом — место в покое, в пикселях. */
-  hx: number;
-  hy: number;
-  hr: number;
-  /** Где и какого размера СЕЙЧАС. */
-  x: number;
-  y: number;
-  r: number;
-  /** Своя фаза дрейфа: без неё всё поле качалось бы в такт, и это читалось бы как дрожь экрана. */
-  ph: number;
-  /** Остаток отклика на выбор: единица в момент нажатия, гаснет за несколько кадров. */
-  pop: number;
+  key: string;
+  label: string;
+  root: string;
+  kind: 'root' | 'leaf';
+  hx: number; hy: number; hr: number;
+  x: number; y: number; r: number;
+  ph: number; pop: number;
 };
+
+/** Золотой угол: раскладывает N точек по полю без рядов и без сгущений. */
+const GOLDEN = Math.PI * (3 - Math.sqrt(5));
 
 export function MindMap({ width, height, selected, onToggle, onDrag }: {
   width: number;
   height: number;
   selected: string[];
   onToggle: (key: string) => void;
-  /** Остановить ленту чата на время жеста: иначе она едет под пальцем вместе с лупой. */
+  /** Остановить ленту чата на время жеста: иначе она едет под пальцем. */
   onDrag?: (dragging: boolean) => void;
 }) {
-  // Язык в зависимостях обязателен: подписи собираются внутри `buildMap` через `T()`.
   const lang = useLang();
-  const bubbles = useMemo(() => buildMap(width, height), [width, height, lang]);
+  const all = useMemo(() => buildMap(width, height), [width, height, lang]);
+  /** В какой куст зашли. null — обзор из восьми категорий. */
+  const [open, setOpen] = useState<string | null>(null);
 
-  /** Состояние поля живёт в ref, а не в React: во время жеста перерисовки быть не должно. */
-  const nodes = useRef<Node[]>([]);
-  const circles = useRef<any[]>([]);
-  useMemo(() => {
-    nodes.current = bubbles.map((b, i) => {
-      const hx = b.x * width;
-      const hy = b.y * height;
-      const hr = b.size / 2;
-      // Появление: пузыри вырастают из ничего — цель у них обычная, а начинают они с нуля.
-      return { b, hx, hy, hr, x: hx, y: hy, r: 0, ph: (i % 17) * 0.37 + (i % 5) * 1.1, pop: 0 };
-    });
-    circles.current = [];
-  }, [bubbles, width, height]);
+  const roots = useMemo(() => all.filter((b) => b.kind === 'root'), [all]);
+  const openRoot = useMemo(() => roots.find((r) => r.key === open) || null, [roots, open]);
+  const leaves = useMemo(
+    () => (open ? all.filter((b) => b.kind === 'leaf' && b.root === open) : []),
+    [all, open]
+  );
 
-  /** Куда указывает палец. -1 значит «пальца нет», и поле возвращается домой. */
-  const finger = useRef({ x: -1, y: -1, on: false });
-  const frame = useRef<number | null>(null);
-  /** Имя под пальцем. Единственное, что идёт через состояние, — и меняется оно редко. */
-  const [hot, setHot] = useState<Node | null>(null);
-  const hotKey = useRef<string>('');
+  /** Сколько занятий уже отмечено в каждом кусте — это и есть подпись на категории. */
+  const picked = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const b of all) if (b.kind === 'leaf' && selected.includes(b.key)) m[b.root] = (m[b.root] || 0) + 1;
+    return m;
+  }, [all, selected]);
+
+  const canvasH = open ? height - HEAD_H : height;
 
   /*
-    ОДИН ЦИКЛ КАДРОВ НА ВСЁ ПОЛЕ.
-
-    В каждом кадре у каждого пузыря считается цель — размер и место — и текущее значение делает
-    к ней один шаг. Это ровно приём той работы с холстом: там радиус увеличивался на единицу за
-    кадр, пока курсор рядом, и уменьшался обратно, когда он ушёл. Шаг долей, а не единицей, чтобы
-    скорость не зависела от размера пузыря.
-
-    Цикл САМ ОСТАНАВЛИВАЕТСЯ, когда двигаться стало некуда: поле в покое не тратит ни кадра.
+    РАСКЛАДКА. В обзоре берём центры категорий как есть — они уже разложены по спирали Фибоначчи в
+    mindmap.ts — и увеличиваем сами кружки. В кусте раскладываем его занятия по золотому углу на
+    всё поле, а радиус считаем от их числа: чем меньше занятий, тем крупнее каждое, и наоборот.
+    Нижний предел — двадцать точек радиуса, то есть сорок диаметра: это уже палец.
   */
+  const view = useMemo<Node[]>(() => {
+    const mk = (b: Bubble, hx: number, hy: number, hr: number, i: number): Node => ({
+      key: b.key, label: b.label, root: b.root, kind: b.kind,
+      hx, hy, hr, x: hx, y: hy, r: 0, ph: (i % 17) * 0.37 + (i % 5) * 1.1, pop: 0,
+    });
+    if (!open) return roots.map((b, i) => mk(b, b.x * width, b.y * canvasH, 38, i));
+    const n = leaves.length || 1;
+    const r = Math.max(20, Math.min(30, Math.sqrt((width * canvasH * 0.3) / (n * Math.PI))));
+    const cx = width / 2;
+    const cy = canvasH / 2;
+    const span = Math.min(width, canvasH) / 2 - r - 6;
+    return leaves.map((b, i) => {
+      const a = i * GOLDEN;
+      const d = span * Math.sqrt((i + 0.5) / n);
+      return mk(b, cx + d * Math.cos(a), cy + d * Math.sin(a), r, i);
+    });
+  }, [open, roots, leaves, width, canvasH]);
+
+  const nodes = useRef<Node[]>([]);
+  const circles = useRef<any[]>([]);
+  useMemo(() => { nodes.current = view.map((n) => ({ ...n })); circles.current = []; }, [view]);
+
+  const finger = useRef({ x: -1, y: -1, on: false });
+  const frame = useRef<number | null>(null);
   const beat = useRef(0);
   const lastBuzz = useRef(0);
+  /** Что сейчас выделено. Держится защёлкой, а не пересчитывается заново каждый кадр. */
+  const held = useRef<string>('');
+  const [hot, setHot] = useState<Node | null>(null);
+
   const tick = () => {
     const f = finger.current;
-    let moving = 0;
-    let best: Node | null = null;
-    let bestBell = 0.3;                        // ниже этого имя не показываем: палец ещё не на нём
     const t = (beat.current += 0.018);
-    for (let i = 0; i < nodes.current.length; i++) {
-      const n = nodes.current[i];
-      let bell = 0;
+    const list = nodes.current;
+
+    /*
+      ЗАЩЁЛКА. Ближайший к пальцу считается честно, но выделение переходит к нему, только если он
+      ближе удерживаемого на HOLD точек. Без этого запаса на границе двух пузырей выделение
+      трепещет между ними, и каждое дрожание пальца отзывается щелчком.
+    */
+    if (f.on) {
+      let bestKey = '';
+      let bestD = Infinity;
+      let heldD = Infinity;
+      for (const n of list) {
+        const d = Math.hypot(f.x - n.hx, f.y - n.hy);
+        if (n.key === held.current) heldD = d;
+        if (d < bestD) { bestD = d; bestKey = n.key; }
+      }
+      if (bestKey && bestKey !== held.current && bestD + HOLD < heldD) {
+        held.current = bestKey;
+        const now = Date.now();
+        if (now - lastBuzz.current > 45) { lastBuzz.current = now; hTap(); }
+        setHot(list.find((n) => n.key === bestKey) || null);
+      }
+    }
+
+    for (let i = 0; i < list.length; i++) {
+      const n = list[i];
       let zm = 0;
       if (f.on) {
-        bell = near(f.x - n.hx) * near(f.y - n.hy);
-        zm = zoom(f.x - n.x, f.y - n.y);
-        if (zm > bestBell) { bestBell = zm; best = n; }
+        const d = Math.hypot(f.x - n.x, f.y - n.y);
+        if (d < REACH_ZOOM) { const k = 1 - d / REACH_ZOOM; zm = k * k * k; }
+        // Выделенное поднято до полного увеличения, даже если палец сполз: защёлка держит и вид.
+        if (n.key === held.current) zm = Math.max(zm, 1);
       }
-      /*
-        СМЕЩЕНИЕ ЛУПЫ — ДВА СЛАГАЕМЫХ, А НЕ ОДНО. Ближние тянутся к пальцу, средние по ободу чуть
-        расходятся наружу: `4·bell·(1−bell)` даёт горб ровно на полпути и ноль на обоих концах.
-        Это и есть разница между «увеличили» и «посмотрели через стекло».
-      */
-      const rim = 4 * bell * (1 - bell);
-      const k = bell * PULL - rim * PUSH;
-      // Дыхание поля: медленный круг радиусом чуть больше пикселя, у каждого своя фаза.
-      const dx0 = Math.cos(t + n.ph) * DRIFT;
-      const dy0 = Math.sin(t * 0.9 + n.ph * 1.3) * DRIFT;
       if (n.pop > 0.01) n.pop *= 0.82; else n.pop = 0;
       const tr = n.hr * (1 + zm * (PEAK - 1) + n.pop * POP);
-      const tx = n.hx + dx0 + (f.on ? (f.x - n.hx) * k : 0);
-      const ty = n.hy + dy0 + (f.on ? (f.y - n.hy) * k : 0);
-      const dr = tr - n.r;
-      const dx = tx - n.x;
-      const dy = ty - n.y;
+      const tx = n.hx + Math.cos(t + n.ph) * DRIFT;
+      const ty = n.hy + Math.sin(t * 0.9 + n.ph * 1.3) * DRIFT;
+      const dr = tr - n.r, dx = tx - n.x, dy = ty - n.y;
       if (Math.abs(dr) < 0.05 && Math.abs(dx) < 0.05 && Math.abs(dy) < 0.05) continue;
-      n.r += dr * EASE;
-      n.x += dx * EASE;
-      n.y += dy * EASE;
-      moving += Math.abs(dr) + Math.abs(dx) + Math.abs(dy);
+      n.r += dr * EASE; n.x += dx * EASE; n.y += dy * EASE;
       circles.current[i]?.setNativeProps({ cx: n.x, cy: n.y, r: n.r });
     }
-    const key = best ? best.b.key : '';
-    if (key !== hotKey.current) {
-      hotKey.current = key;
-      setHot(best);
-      /*
-        ЩЕЛЧОК НА КАЖДОМ НОВОМ ПУЗЫРЕ — то же, что у барабана выбора в iOS: палец ведут не глядя на
-        мелкие подписи, и отклик рукой говорит «ты перешёл на следующий» раньше, чем это прочитают
-        глазом. Порог по времени нужен: при быстром ведении через густое место смена может успеть
-        произойти дважды за кадр, и вместо щелчков вышла бы сплошная дрожь.
-      */
-      const now = Date.now();
-      if (key && now - lastBuzz.current > 45) { lastBuzz.current = now; hTap(); }
-    }
-    // Поле дышит и без пальца, поэтому цикл не засыпает, пока карта на экране. `moving` остаётся:
-    // по нему видно, что кадр не пустой, а `CALM` — порог, ниже которого шаг не делаем вовсе.
     frame.current = requestAnimationFrame(tick);
   };
   const wake = () => { if (frame.current == null) frame.current = requestAnimationFrame(tick); };
   useEffect(() => {
-    wake();                                    // появление начинается само, без касания
+    wake();
     return () => { if (frame.current != null) cancelAnimationFrame(frame.current); };
   }, []);
 
-  /** Нажатие отзывается ростом: без отклика непонятно, засчиталось ли. */
-  const popAt = (key: string) => {
-    const n = nodes.current.find((x) => x.b.key === key);
-    if (n) n.pop = 1;
-  };
-
-  /** Что под пальцем — по ВИДИМОМУ размеру и месту, а не по покою. */
-  const hit = useRef<(x: number, y: number) => string | null>(() => null);
-  hit.current = (x, y) => {
-    let key: string | null = null;
-    let bestD = Infinity;
-    for (const n of nodes.current) {
-      const dx = x - n.x;
-      const dy = y - n.y;
-      const d = Math.sqrt(dx * dx + dy * dy);
-      if (d <= n.r + TAP_SLACK && d < bestD) { bestD = d; key = n.b.key; }
-    }
-    return key;
-  };
-  const from = useRef({ x: 0, y: 0 });
+  const openRef = useRef(open); openRef.current = open;
   const toggle = useRef(onToggle); toggle.current = onToggle;
   const drag = useRef(onDrag); drag.current = onDrag;
+  const from = useRef({ x: 0, y: 0 });
+  const enter = useRef((k: string) => { setOpen(k); });
+
+  /** Что под пальцем — по ВИДИМОМУ месту и размеру. */
+  const at = (x: number, y: number): Node | null => {
+    let best: Node | null = null;
+    let bestD = Infinity;
+    for (const n of nodes.current) {
+      const d = Math.hypot(x - n.x, y - n.y);
+      if (d <= n.r + 10 && d < bestD) { bestD = d; best = n; }
+    }
+    return best;
+  };
 
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      // Лента чата попросит жест себе, как только палец поедет вертикально. Отказываем.
       onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (e) => {
         const { locationX: x, locationY: y } = e.nativeEvent;
         from.current = { x, y };
         finger.current = { x, y, on: true };
+        const n = at(x, y);
+        held.current = n ? n.key : '';
+        setHot(n);
         drag.current?.(true);
         wake();
       },
       onPanResponderMove: (e) => {
-        const { locationX: x, locationY: y } = e.nativeEvent;
-        finger.current = { x, y, on: true };
+        finger.current = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY, on: true };
         wake();
       },
-      onPanResponderRelease: (e) => {
-        const k = hit.current(e.nativeEvent.locationX, e.nativeEvent.locationY);
-        // Выбор отзывается ЗАМЕТНЕЕ перехода: рука должна отличать «навёлся» от «записал».
-        if (k) { popAt(k); hCommit(); toggle.current(k); }
+      onPanResponderRelease: () => {
+        /*
+          БЕРЁМ ТО, ЧТО ВЫДЕЛЕНО, А НЕ ТО, ЧТО ПОД ПАЛЬЦЕМ. Это и есть ответ на «палец закрывает
+          то, куда жмёшь»: выделенное видно рядом с пальцем и подписано, и именно оно и запишется.
+        */
+        const k = held.current;
+        const n = k ? nodes.current.find((x) => x.key === k) : null;
+        if (n) {
+          n.pop = 1;
+          hCommit();
+          if (n.kind === 'root') enter.current(n.key); else toggle.current(n.key);
+        }
+        held.current = '';
+        setHot(null);
         finger.current = { x: -1, y: -1, on: false };
         drag.current?.(false);
         wake();
       },
       onPanResponderTerminate: () => {
+        held.current = '';
+        setHot(null);
         finger.current = { x: -1, y: -1, on: false };
         drag.current?.(false);
         wake();
@@ -279,72 +247,78 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
   ).current;
 
   return (
-    <View style={[s.field, { width, height }]} {...pan.panHandlers}>
-      {/*
-        ВСЁ ПОЛЕ — ОДИН ВИД. Кружки внутри получают новые координаты напрямую, без участия React:
-        девяносто восемь `setNativeProps` вместо девяноста восьми перерисованных компонентов.
-      */}
-      <Svg width={width} height={height}>
-        {bubbles.map((b, i) => {
-          const t = deckTone[ROOT_TONE[b.root] || 'slate'];
-          const on = selected.includes(b.key);
-          return (
-            <Circle
-              key={b.key}
-              ref={(el: any) => { circles.current[i] = el; }}
-              cx={b.x * width}
-              cy={b.y * height}
-              r={b.size / 2}
-              fill={on ? color.primary : t.wash}
-              stroke={on ? color.primary : t.halo}
-              strokeWidth={b.kind === 'root' ? 1.5 : 1}
-            />
-          );
-        })}
-      </Svg>
-
-      {/* Категории подписаны всегда — по ним и ведут палец. */}
-      {bubbles.filter((b) => b.kind === 'root').map((b) => (
-        <Text
-          key={`r-${b.key}`}
-          numberOfLines={1}
-          style={[s.rootLabel, { left: b.x * width - 45, top: b.y * height + b.size / 2 + 4 }]}
-        >
-          {b.label}
-        </Text>
-      ))}
-
-      {/*
-        ИМЯ ПОД ПАЛЬЦЕМ — ОДНА ПЛАШКА НА ВСЁ ПОЛЕ, А НЕ ПО ОДНОЙ НА ПУЗЫРЬ.
-
-        Раньше их было сто пятьдесят, у каждой своя прозрачность в общем графе. Показывается всё
-        равно одна — та, что под пальцем; значит и держать надо одну. Встаёт она НАД точкой
-        касания: палец закрывает ровно то, что увеличивает, и это лечится так же, как в iOS у
-        выделения текста — нужное выносят выше пальца.
-      */}
-      {hot && hot.b.kind === 'leaf' ? (
-        <View pointerEvents="none"
-              style={[s.plate, { left: hot.hx - 48, top: hot.hy - hot.hr * PEAK - 22 }]}>
-          <Text numberOfLines={1} style={s.plateText}>{hot.b.label}</Text>
+    <View style={{ width, alignSelf: 'center' }}>
+      {open ? (
+        <View style={s.head}>
+          <Pressable accessibilityRole="button" onPress={() => { hTap(); setOpen(null); }} style={s.back}>
+            <Text style={s.backText}>‹  {T('Все темы', 'All topics')}</Text>
+          </Pressable>
+          <Text style={s.headName} numberOfLines={1}>{openRoot?.label || ''}</Text>
         </View>
       ) : null}
+
+      <View style={{ width, height: canvasH }} {...pan.panHandlers}>
+        <Svg width={width} height={canvasH}>
+          {view.map((n, i) => {
+            const t = deckTone[ROOT_TONE[n.root] || 'slate'];
+            const on = selected.includes(n.key);
+            return (
+              <Circle
+                key={n.key}
+                ref={(el: any) => { circles.current[i] = el; }}
+                cx={n.hx} cy={n.hy} r={0}
+                fill={on ? color.primary : t.wash}
+                stroke={on ? color.primary : t.halo}
+                strokeWidth={n.kind === 'root' ? 2 : 1.5}
+              />
+            );
+          })}
+        </Svg>
+
+        {/* Категории подписаны всегда, и рядом — сколько из них уже отмечено. */}
+        {!open && view.map((n) => (
+          <View key={`l-${n.key}`} pointerEvents="none"
+                style={[s.rootWrap, { left: n.hx - 48, top: n.hy + n.hr + 4 }]}>
+            <Text numberOfLines={1} style={s.rootLabel}>{n.label}</Text>
+            {picked[n.key] ? <Text style={s.rootCount}>{picked[n.key]}</Text> : null}
+          </View>
+        ))}
+
+        {/*
+          ИМЯ ВЫДЕЛЕННОГО ВСТАЁТ НАД ТОЧКОЙ КАСАНИЯ. Палец закрывает ровно то, что увеличивает, —
+          лечится так же, как в iOS у выделения текста: нужное выносят выше пальца.
+        */}
+        {hot ? (
+          <View pointerEvents="none"
+                style={[s.plate, { left: Math.max(4, Math.min(width - 116, hot.hx - 56)),
+                                   top: Math.max(2, hot.hy - hot.hr * PEAK - 26) }]}>
+            <Text numberOfLines={1} style={s.plateText}>{hot.label}</Text>
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  field: { position: 'relative', alignSelf: 'center' },
+  head: { height: HEAD_H, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 2 },
+  back: { paddingVertical: 4, paddingRight: 6 },
+  backText: { fontFamily: font.textMedium, fontSize: 13, color: color.primary } as any,
+  headName: { flex: 1, fontFamily: font.textMedium, fontSize: 15, color: color.fg } as any,
+  rootWrap: { position: 'absolute', width: 96, alignItems: 'center' },
   rootLabel: {
-    position: 'absolute', width: 90, textAlign: 'center',
-    fontFamily: font.textMedium, fontSize: 10, lineHeight: 13, color: color.fg,
+    width: 96, textAlign: 'center',
+    fontFamily: font.textMedium, fontSize: 12, lineHeight: 15, color: color.fg,
+  } as any,
+  rootCount: {
+    marginTop: 1, fontFamily: font.textMedium, fontSize: 11, lineHeight: 13, color: color.primary,
   } as any,
   plate: {
-    position: 'absolute', width: 96, height: 18, borderRadius: 9,
-    backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 6,
+    position: 'absolute', width: 112, height: 22, borderRadius: rad.full,
+    backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8,
   },
   plateText: {
-    fontFamily: font.textMedium, fontSize: 10, lineHeight: 12,
+    fontFamily: font.textMedium, fontSize: 12, lineHeight: 14,
     color: color.onPrimary, textAlign: 'center',
   } as any,
 });
