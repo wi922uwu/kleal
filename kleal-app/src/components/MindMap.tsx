@@ -101,7 +101,7 @@ const bellAt = (dx: number, dy: number) => near(dx) * near(dy);
  * под лупой и поднимается выше, и читается крупнее — ровно тогда, когда это нужно.
  */
 const PLATE_GAP = 5;
-const PLATE_H = 11;
+const PLATE_H = 15;
 
 /** Ступени затухания свечения — те же пять, что у карточки колоды; разбор там же. */
 const BLOOM: [string, number][] = [['0', 1], ['0.3', 0.88], ['0.55', 0.58], ['0.78', 0.24], ['1', 0]];
@@ -122,9 +122,20 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
   */
   const lang = useLang();
   const bubbles = useMemo(() => buildMap(width, height), [width, height, lang]);
-  const finger = useRef(new Animated.ValueXY({ x: -9999, y: -9999 })).current;
-  /** 1 — палец на поле, 0 — отпущен. Гасит лупу целиком, не трогая её геометрию. */
-  const live = useRef(new Animated.Value(0)).current;
+  /*
+    ПАЛЕЦ — ЕДИНСТВЕННЫЙ ИСТОЧНИК ЛУПЫ, И ОТДЕЛЬНОГО ВЫКЛЮЧАТЕЛЯ У НЕЁ БОЛЬШЕ НЕТ.
+
+    Был: `live` — значение 0/1, которое разгонялось таймингом на касании и гасло на отпускании, а
+    весь масштаб на него умножался. На живом телефоне оно НЕ РАЗГОНЯЛОСЬ: замер показал `live: 0`
+    через секунду после старта тайминга, при том что жест доходил полностью — grant, move, release
+    и верные попадания. Умножение на ноль обнуляло и увеличение, и притяжение: поле стояло намертво.
+
+    Выключатель тут и не нужен. Когда палец уходит с поля, его координаты уезжают за край, обе доли
+    близости честно становятся нулём — лупа гаснет сама, тем же выражением, что её и рисует. Одним
+    узлом меньше, и ломаться в нём нечему.
+  */
+  const OFF = -9999;
+  const finger = useRef(new Animated.ValueXY({ x: OFF, y: OFF })).current;
 
   /*
    * Кого выбрали, решается ЗДЕСЬ, а не нажатием на пузырь: жест целиком принадлежит полю.
@@ -173,7 +184,6 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
         moved.current = false;
         finger.setValue({ x, y });
         drag.current?.(true);
-        Animated.timing(live, { toValue: 1, duration: 160, useNativeDriver: false }).start();
       },
       onPanResponderMove: (e) => {
         const { locationX: x, locationY: y } = e.nativeEvent;
@@ -197,12 +207,13 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
         */
         const k = hit.current(e.nativeEvent.locationX, e.nativeEvent.locationY);
         if (k) toggle.current(k);
+        // Палец ушёл — уводим его за край поля: доли близости обнуляются сами, и лупа гаснет.
+        finger.setValue({ x: OFF, y: OFF });
         drag.current?.(false);
-        Animated.timing(live, { toValue: 0, duration: 240, useNativeDriver: false }).start();
       },
       onPanResponderTerminate: () => {
+        finger.setValue({ x: OFF, y: OFF });
         drag.current?.(false);
-        Animated.timing(live, { toValue: 0, duration: 240, useNativeDriver: false }).start();
       },
     })
   ).current;
@@ -234,10 +245,9 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
       });
     const bell = Animated.multiply(near(finger.x as Animated.Value, cx),
                                    near(finger.y as Animated.Value, cy));
-    const grip = Animated.multiply(bell, live);
     const scale = Animated.add(
       new Animated.Value(1),
-      Animated.multiply(grip, new Animated.Value(PEAK - 1))
+      Animated.multiply(bell, new Animated.Value(PEAK - 1))
     );
     /*
       СДВИГ К ПАЛЬЦУ. Доля пути от покоя до пальца, взвешенная тем же колоколом: под пальцем —
@@ -246,7 +256,7 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
     */
     const pull = (v: Animated.Value, c: number) =>
       Animated.multiply(Animated.subtract(v, new Animated.Value(c)),
-                        Animated.multiply(grip, new Animated.Value(PULL)));
+                        Animated.multiply(bell, new Animated.Value(PULL)));
     const tx = pull(finger.x as Animated.Value, cx);
     const ty = pull(finger.y as Animated.Value, cy);
     // Категория подписана всегда — по ней и ведут палец. Спутник проявляется вместе с увеличением:
@@ -262,7 +272,7 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
       extrapolate: 'clamp',
     });
     return { b, cx, cy, scale, labelOpacity, tx, ty };
-  }), [bubbles, width, height, finger, live]);
+  }), [bubbles, width, height, finger]);
 
   return (
     <View style={[s.field, { width, height }]} {...pan.panHandlers}>
@@ -286,21 +296,27 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
 }
 
 /** Подпись спутника: едет и растёт вместе со своим кругом, но живёт в верхнем слое. */
+/**
+ * Подпись спутника. У НЕЁ ОДНО АНИМИРОВАННОЕ СВОЙСТВО — ПРОЗРАЧНОСТЬ, и это про телефон.
+ *
+ * Раньше плашка ездила и росла вместе со своим кругом: полтораста слотов, у каждого сдвиг по двум
+ * осям, масштаб и прозрачность — четыреста с лишним значений, пересчитываемых на КАЖДОМ движении
+ * пальца, поверх шестисот у самих кругов. Отсюда и рывки.
+ *
+ * Ездить ей и не нужно. Видна она только у того, что выросло почти целиком, то есть у пузыря прямо
+ * под пальцем, — а он к пальцу почти не смещается: доля пути считается от расстояния, а оно там
+ * близко к нулю. Место под неё берём по УВЕЛИЧЕННОМУ кругу, чтобы она не наехала на него в момент
+ * появления. Заодно буквы стали настоящего размера вместо растянутых вдвое семипиксельных.
+ */
 function PlateView({ g }: { g: Graph }) {
-  const { b, cx, cy, scale, labelOpacity, tx, ty } = g;
-  const d = b.size;
+  const { b, cx, cy, labelOpacity } = g;
+  const lift = (b.size * PEAK) / 2 + PLATE_GAP + PLATE_H;
   return (
     <Animated.View
       pointerEvents="none"
-      style={[
-        s.plateSlot,
-        { left: cx - d / 2, top: cy - d / 2, width: d, height: d,
-          transform: [{ translateX: tx }, { translateY: ty }, { scale }] },
-      ]}
+      style={[s.plate, { left: cx - 44, top: cy - lift, opacity: labelOpacity }]}
     >
-      <Animated.View style={[s.plate, { bottom: d + PLATE_GAP, opacity: labelOpacity }]}>
-        <Text numberOfLines={1} style={s.plateText}>{b.label}</Text>
-      </Animated.View>
+      <Text numberOfLines={1} style={s.plateText}>{b.label}</Text>
     </Animated.View>
   );
 }
@@ -338,11 +354,20 @@ function BubbleView({ g, on }: { g: Graph; on: boolean }) {
         s.slot,
         { left: cx - d / 2, top: cy - d / 2, width: d, height: d,
           zIndex: root ? 2 : 1, transform: [{ translateX: tx }, { translateY: ty }, { scale }] },
+        /*
+          ТЕНЬ ТОЛЬКО У КАТЕГОРИЙ И У ВЫБРАННОГО. На Android каждая тень — это `elevation`, то есть
+          отдельный слой композитора; полтораста слоёв, которые вдобавок двигаются на каждом кадре,
+          телефон честно не тянет. У спутника в девять-девятнадцать точек тени всё равно не видно —
+          её роль там играет светлая кромка. У восьми категорий и у выбранного она остаётся.
+        */
         on ? { ...s.onShadow, shadowColor: color.primary }
-           : { ...s.toneShadow, shadowColor: t.glow },
+           : root ? { ...s.toneShadow, shadowColor: t.glow } : null,
       ]}
     >
-      <View style={[s.dot, { width: d, height: d, borderRadius: d / 2 }]}>
+      <View style={[s.dot, { width: d, height: d, borderRadius: d / 2 },
+                    // Спутнику кромку рисуем прямо на круге: отдельный слой поверх — это ещё
+                    // полтораста видов на поле, а линия та же самая.
+                    !root && { borderWidth: StyleSheet.hairlineWidth, borderColor: '#FFFFFFA6' }]}>
         {/*
           Свечение рисуется SVG: `expo-linear-gradient` в проекте нет, а `react-native-svg` стоит.
           Координаты — честные точки (`userSpaceOnUse`), не проценты: на процентах радиус считается
@@ -379,8 +404,8 @@ function BubbleView({ g, on }: { g: Graph; on: boolean }) {
           </Svg>
         )}
         {/* Светлая кромка сверху — та же, что у стеклянных кнопок: у настоящей поверхности верх
-            всегда светлее, без неё круг выглядит наклейкой. */}
-        <View style={[s.sheen, { borderRadius: d / 2 }]} pointerEvents="none" />
+            всегда светлее, без неё круг выглядит наклейкой. Спутнику она уже нарисована выше. */}
+        {root ? <View style={[s.sheen, { borderRadius: d / 2 }]} pointerEvents="none" /> : null}
       </View>
       {/*
         ПОДПИСЬ КАТЕГОРИИ — ПОД КРУГОМ, А НЕ В НЁМ. Пока категорий было восемь по шестьдесят четыре
@@ -450,8 +475,7 @@ const s = StyleSheet.create({
   */
   plate: {
     position: 'absolute',
-    left: -44,
-    right: -44,
+    width: 88,
     height: PLATE_H,
     borderRadius: rad.full,
     backgroundColor: color.ink,
@@ -461,8 +485,8 @@ const s = StyleSheet.create({
   },
   plateText: {
     fontFamily: font.textMedium,
-    fontSize: 7,
-    lineHeight: 9,
+    fontSize: 9,
+    lineHeight: 11,
     color: color.onPrimary,
     textAlign: 'center',
   } as any,
