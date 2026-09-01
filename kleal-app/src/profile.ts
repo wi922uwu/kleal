@@ -335,6 +335,25 @@ export async function addInterests(keys: string[]): Promise<boolean> {
   return pushInterests();
 }
 
+/** Apply only a server-validated proposal after the person tapped its confirmation button. */
+export function addConfirmedInterest(canonical: string, label: string, token: string): boolean {
+  const key = String(canonical || '').trim().toLowerCase();
+  if (!key || !token) return false;
+  const p = getState().profile as any;
+  const have = explicitInterests(p);
+  if (have.some((x) => x.trim().toLowerCase() === key)) return false;
+  // A model-proposed label may repeat the grammatical case from the sentence ("в доту" ->
+  // "доту"). Known taxonomy keys already have reviewed, nominative labels in the wheel, so those
+  // always win. Free-form canonicals still use the server-normalized proposal label.
+  const builtInLabel = interestLabel(key);
+  const savedLabel = builtInLabel !== key ? builtInLabel : String(label || key).trim() || key;
+  set('interests.explicit', [...have, key]);
+  set('interests.labels', { ...((p.interests || {}).labels || {}), [key]: savedLabel });
+  set('interests.confirmations', { ...((p.interests || {}).confirmations || {}), [key]: token });
+  _sentInterests = null;
+  return true;
+}
+
 export const HUB_ROWS: HubRow[] = [
   {
     id: 'interests', kind: 'screen',
@@ -390,6 +409,14 @@ export const HUB_ROWS: HubRow[] = [
 export const WHOAMI = {
   title: () => T('Кто ты', 'About you'),
   name: () => T('Имя', 'Name'),
+  /**
+   * Имя стоит в шапке чужой переписки и в карточке кандидата, поэтому адрес почты здесь —
+   * не опечатка, а утечка. Живой случай был ровно такой: человек ходил по приложению под
+   * собственным адресом, и его читали посторонние.
+   */
+  nameBad: () =>
+    T('Так тебя увидят другие. Адрес почты, ссылка или номер именем не будут.',
+      'This is what other people see. An email, link or number can’t be a name.'),
   surname: () => T('Фамилия', 'Surname'),
   /** Фамилия не обязательна: людям, которые не хотят её называть, нельзя закрывать регистрацию. */
   surnameNote: () =>
@@ -564,6 +591,7 @@ export function profileData(op: Profile | any): ProfileData {
   // Тот же класс ошибки, что с `languages`: одно поле, две формы, и молчаливо пустой результат
   // вместо ошибки. Поэтому здесь не «какая форма правильная», а «понимаем обе».
   const ints = explicitInterests(op);
+  const interestLabelsByKey = (!Array.isArray(op.interests) && op.interests?.labels) || {};
   const rolesRaw = (op.interests && op.interests.roles) || {};
   const exp = (op.interests && op.interests.experienceByInterest) || {};
   const games = (op.domains && op.domains.games) || {};
@@ -605,7 +633,7 @@ export function profileData(op: Profile | any): ProfileData {
     // рассказал ли он о них хоть что-то сверх названия.
     const conf: Interest['conf'] = i < 2 ? 'High' : kv.length ? 'Medium' : 'Low';
     const used = !(op.interests && op.interests.unused && op.interests.unused.includes(name));
-    return { name, label: interestLabel(name), conf, used, kv };
+    return { name, label: String(interestLabelsByKey[name] || interestLabel(name)), conf, used, kv };
   });
 
   const basics: Row[] = [];

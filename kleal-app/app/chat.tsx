@@ -22,7 +22,7 @@ import {
   STEP_PROGRESS, HEADER_TITLE, STEP_START, STEP_BASICS, SEXES, sexLabel,
   STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES,
   STEP_PHOTO, StepId, resumeStep, hasProgress, onbComplete, RESUME,
-  OWN_INPUT, parseName, CONFIRM_INTEREST } from '../src/onboarding';
+  OWN_INPUT, parseName, isName, CONFIRM_INTEREST } from '../src/onboarding';
 import { interestLabel, registerInterestLabels } from '../src/interest-label';
 import { isKnownInterest } from '../src/interests-known';
 import { saveConversation } from '../src/history';
@@ -193,25 +193,33 @@ export default function Chat() {
       фото, которое уже добавил или уже пропустил. Отметка `done` ставится только на сводке, и
       добраться до неё повторно было нечем.
     */
-    if (!entry && onbComplete(st.profile)) { router.replace('/summary'); return; }
+    if (!entry && onbComplete(st.profile) && isName(st.profile.name)) { router.replace('/summary'); return; }
     started.current = true;
+    /*
+      ИМЯ, КОТОРОЕ ИМЕНЕМ НЕ ЯВЛЯЕТСЯ, СНИМАЕТСЯ ЗДЕСЬ — иначе оно бессмертно.
+
+      Живой случай: человек ответил на «Как тебя зовут?» своим адресом почты, разбор пропустил его
+      дословно, привязка увезла в аккаунт, и с тех пор вход возвращал адрес обратно в профиль. Сам
+      он выйти оттуда не мог: анкета видела заполненное имя и на шаг имени больше не заходила, а
+      с экрана сводки любая дорога начинается с записи, которую сервер теперь и не примет.
+
+      Снимаем на входе в анкету: дальше по этой же функции пустое имя означает «спросить заново», и
+      человек отвечает один раз. Остальное собранное остаётся на месте — стирать город и интересы
+      из-за имени было бы наказанием за чужую ошибку.
+    */
+    const bad = !!st.profile.name && !isName(st.profile.name);
+    if (bad) set('name', '');
+    const prof = bad ? { ...st.profile, name: '' } : st.profile;
     // Явный вход не «продолжает с того места»: человек пришёл за конкретной вещью.
-    const resumed = !entry && hasProgress(st.profile);
-    const at = entry || resumeStep(st.profile);
+    const resumed = !entry && hasProgress(prof);
+    const at = entry || resumeStep(prof);
     setStep(at);
     if (resumed) {
       // Вернувшийся на шаг увлечений видит ТУ ЖЕ карту, что и дошедший до него сразу: возобновление
       // — это всё ещё онбординг, и правило «шаг начинается с карты» живёт в обоих входах, иначе
       // порядок экранов зависит от того, закрывал человек приложение или нет.
       if (at === 'hobbies') setMapOpen(true);
-      botLines([
-        RESUME.line(st.profile.name || ''),
-        at === 'basics' ? STEP_BASICS.bot()
-        : at === 'area' ? STEP_AREA.bot()
-        : at === 'languages' ? STEP_LANGUAGES.bot()
-        : at === 'hobbies' ? '' // карта уже спрашивает собой
-        : STEP_PHOTO.ask(),
-      ], 500);
+      botLines([RESUME.line(prof.name || ''), stepBot(at)], 500);
     } else if (entry) {
       // Вход с экрана интересов — единственное место, где человек уже сказал «хочу добавить»,
       // но ещё не сказал ЧТО. Здесь и стоит развилка: первой репликой предлагаем обе дороги.
@@ -301,6 +309,14 @@ export default function Chat() {
   };
 
   const botAfter = (text: string, ms?: number) => botLines([text], ms);
+
+  /** Чем шаг здоровается. Одна таблица на возобновление и на возврат после починки имени. */
+  const stepBot = (at: StepId) =>
+    at === 'basics' ? STEP_BASICS.bot()
+    : at === 'area' ? STEP_AREA.bot()
+    : at === 'languages' ? STEP_LANGUAGES.bot()
+    : at === 'hobbies' ? ''            // карта уже спрашивает собой
+    : STEP_PHOTO.ask();
 
   const goto = (next: StepId, botLine: string) => {
     setStep(next);
@@ -566,9 +582,25 @@ export default function Chat() {
     // в поиске и к нему обращался агент. Заодно из «Иван Петров» достаётся фамилия.
     if (step === 'start' && !st.profile.name) {
       const parsed = parseName(text);
-      if (parsed.name) set('name', parsed.name);
+      /*
+        БЕЗ ИМЕНИ ДАЛЬШЕ НЕ ИДЁМ, и это второй живой случай на том же шаге. Раньше `goto` стоял
+        безусловно: разбор не понял ответ — имя оставалось пустым, анкета всё равно уезжала на
+        возраст, а сервер подписывал строку «New user». Под этим именем человека и видели в чужой
+        переписке. Теперь спрашиваем ещё раз и говорим, почему это важно.
+      */
+      if (!parsed.name) { botAfter(STEP_START.notAName()); return; }
+      set('name', parsed.name);
       if (parsed.surname) set('surname', parsed.surname);
-      goto('basics', STEP_BASICS.bot());
+      /*
+        ДАЛЬШЕ — ТУДА, ГДЕ ОСТАНОВИЛИСЬ, а не всегда на возраст. У того, кто пришёл сюда чинить
+        подпись, остальное уже собрано: гнать его по всей анкете заново значит наказывать за
+        ошибку, которую сделала анкета. Новичку это ничего не меняет: без возраста ступень и есть
+        'basics'.
+      */
+      const p2 = { ...st.profile, name: parsed.name };
+      if (onbComplete(p2)) { router.replace('/summary'); return; }
+      const at = resumeStep(p2);
+      goto(at, stepBot(at));
       return;
     }
 

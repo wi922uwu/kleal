@@ -19,11 +19,13 @@ import {
 } from '../../src/components/icons';
 import { useLang, getLang, setLang } from '../../src/i18n';
 import { useOnb, set, reset } from '../../src/state';
+import { forgetOwner } from '../../src/history';
 import { mediaUrl, profile as profileApi } from '../../src/api';
 import {
   PROFILE_TITLE, HUB, SIGNOUT, HUB_ROWS, SHEETS, WHOAMI, profileData, fmtUpdated, adaptSummary,
   onSummaryBusy, syncInterestLabels } from '../../src/profile';
 import { langName, searchLangs } from '../../src/languages';
+import { isName, SUMMARY } from '../../src/onboarding';
 import { writeFact, patchFor } from '../../src/fields';
 import { SETTINGS } from '../../src/settings';
 import { AreaPicker, Area, DEFAULT_AREA, PLACES } from '../../src/components/AreaPicker';
@@ -76,7 +78,8 @@ export default function ProfileHub() {
    * там записано, почему переименование не создаёт вторую строку молча.
    */
   const saveWhoAmI = async (v: { name: string; surname: string; age: number; photo?: string }) => {
-    if (v.name.trim()) set('name', v.name.trim());
+    // Лист сюда с непригодным именем уже не пускает; проверка остаётся вторым рубежом.
+    if (isName(v.name)) set('name', v.name.trim());
     // Пустую фамилию записываем тоже — иначе стереть её было бы нельзя.
     set('surname', v.surname.trim());
     if (v.age) set('age', v.age);
@@ -113,7 +116,8 @@ export default function ProfileHub() {
 
   const signOut = () => {
     const has = !!st.login;
-    const go = () => { reset(); router.replace('/'); };
+    const go = () => { forgetOwner();   // выход из аккаунта уносит и переписку — см. src/history.ts
+      reset(); router.replace('/'); };
     if (Platform.OS === 'web') {
       // Alert.alert на вебе рисуется без кнопок — там это window.confirm.
       // eslint-disable-next-line no-alert
@@ -165,6 +169,30 @@ export default function ProfileHub() {
         </Pressable>
       }
     >
+      {/*
+        ПОДПИСЬ, КОТОРАЯ ИМЕНЕМ НЕ ЯВЛЯЕТСЯ, ЗДЕСЬ И ЛОВИТСЯ.
+
+        У живого человека профиль назывался его собственным адресом почты, и адрес читал каждый,
+        кому он писал. Сам он это починить не мог: анкета с заполненным именем на шаг имени не
+        заходит, а правка в листе «Кто ты» до сервера не доезжает — имя туда уходит только вместе
+        с регистрацией. Значит починка живёт в анкете, а сюда ставится дорога к ней: анкета снимет
+        непригодную подпись, спросит имя и на заполненном профиле сама выведет на сводку, где
+        «Готово» и перепишет строку.
+
+        Строка появляется только у испорченного имени: у всех остальных её нет вовсе.
+      */}
+      {!isName(p.name) ? (
+        <Card>
+          <Text style={s.badNameText}>{WHOAMI.nameBad()}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.navigate('/chat')}
+            style={({ pressed }) => [s.badNameBtn, pressed && { opacity: 0.85 }]}
+          >
+            <Text style={s.badNameBtnText}>{SUMMARY.saveFixName()}</Text>
+          </Pressable>
+        </Card>
+      ) : null}
       {/* Верхняя карточка — кнопка: за ней имя, возраст и фото (кадр B.01 их не редактирует, но
           менять их больше негде — «Основного» в списке ниже нет). */}
       <Pressable
@@ -358,6 +386,14 @@ const s = StyleSheet.create({
   whoPhotoBtnText: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
   whoRemove: { ...type.caption, color: color.primary, textAlign: 'center' } as any,
   whoPhotoErr: { ...type.caption, color: color.danger, textAlign: 'center' } as any,
+
+  // Карточка про испорченное имя. Тон предупреждения, а не ошибки: человек ничего не ломал.
+  badNameText: { ...type.body, color: color.fg } as any,
+  badNameBtn: {
+    height: 44, borderRadius: rad.full, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center', marginTop: space.sm,
+  },
+  badNameBtnText: { ...type.labelMedium, color: color.onPrimary, fontWeight: '700' } as any,
   whoInput: {
     height: 48, borderRadius: rad.md, backgroundColor: color.neutral100,
     paddingHorizontal: 14, color: color.fg, fontSize: 16,
@@ -438,6 +474,8 @@ function WhoAmISheet({
   const [photo, setPhoto] = useState<string>(String(p.photo || ''));
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoErr, setPhotoErr] = useState('');
+  /** Отказ по имени. Держим рядом с полем, а не в общем месте: чинится он прямо здесь. */
+  const [nameErr, setNameErr] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -446,6 +484,7 @@ function WhoAmISheet({
     setAge(String(p.age || ''));
     setPhoto(String(p.photo || ''));
     setPhotoErr('');
+    setNameErr(false);
   }, [open]);
 
   const pick = async () => {
@@ -476,7 +515,12 @@ function WhoAmISheet({
       open={open}
       title={WHOAMI.title()}
       onClose={onClose}
-      onAccept={() => onAccept({ name, surname, age: parseInt(age, 10) || 0, photo })}
+      onAccept={() => {
+        // Пустое имя лист принимал и раньше — оно просто не записывалось. Адрес записывался.
+        if (!isName(name)) { setNameErr(true); return; }
+        setNameErr(false);
+        onAccept({ name, surname, age: parseInt(age, 10) || 0, photo });
+      }}
       acceptLabel={SHEETS.accept()}
     >
       <View style={s.whoPhotoRow}>
@@ -511,11 +555,12 @@ function WhoAmISheet({
       <TextInput
         style={s.whoInput}
         value={name}
-        onChangeText={setName}
+        onChangeText={(v) => { setName(v); if (nameErr) setNameErr(false); }}
         placeholder={WHOAMI.name()}
         placeholderTextColor={color.neutral400}
         accessibilityLabel={WHOAMI.name()}
       />
+      {nameErr ? <Text style={s.whoPhotoErr}>{WHOAMI.nameBad()}</Text> : null}
       <Text style={s.whoNote}>{WHOAMI.nameNote()}</Text>
 
       <Text style={s.basicTitle}>{WHOAMI.surname()}</Text>
