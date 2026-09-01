@@ -10,7 +10,13 @@
 Тогда обратная сборка тождественна по построению, и доказывать нечего — но проверка всё равно
 стоит: она поймает следующую особенность, о которой мы ещё не знаем.
 """
+import argparse
 import ast, io, json, re, sys
+
+ap = argparse.ArgumentParser(description="реестр интересов: собрать или проверить")
+ap.add_argument("--check", action="store_true",
+                help="ничего не писать; сказать, разошлись ли реестр и литерал в матчинге")
+ARGS = ap.parse_args()
 
 MATCHING = "/opt/kleal/kleal-ms/services/matching/app.py"
 WHEEL = "/opt/kleal/kleal-app/src/interests-wheel.ts"
@@ -62,6 +68,35 @@ print("структура воспроизводится: %s" % ("ДА" if same_
 print("синонимы воспроизводятся:  %s" % ("ДА" if same_syn else "НЕТ"))
 if not (same_tax and same_syn):
     sys.exit("НЕ ЗАПИСЫВАЮ")
+if ARGS.check:
+    """СТОРОЖ ПРОТИВ РАСХОЖДЕНИЯ.
+
+    Литерал в матчинге снять пока нельзя: его читает разбором services/onboarding/
+    interest_normalization.py, и без него каталог станет пустым, а вместе с ним отвалится
+    сохранение профиля у всех. Значит источников два, и вопрос не «как их слить», а «как
+    заметить, что они разошлись». Именно этого не было, когда зеркало таксономии в buddy
+    отстало на 283 слова и молча резало воронку треть года.
+
+    Правьте shared/interests.json, потом прогоняйте эту проверку. Она сравнивает реестр с
+    литералом и падает, если они разъехались.
+    """
+    try:
+        with io.open(OUT, encoding="utf-8") as f:
+            saved = json.load(f)
+    except Exception as e:
+        sys.exit("реестр не читается: %s" % e)
+    ok_t = saved.get("tree") == tree
+    ok_s = saved.get("synonyms") == syn
+    print("\nПРОВЕРКА: реестр против литерала в матчинге")
+    print("  структура: %s" % ("сходится" if ok_t else "РАСХОДИТСЯ"))
+    print("  синонимы:  %s" % ("сходится" if ok_s else "РАСХОДЯТСЯ"))
+    if not ok_t:
+        a = {w for g in (saved.get("tree") or {}).values() for ws in g.values() for w in ws}
+        b = {w for g in tree.values() for ws in g.values() for w in ws}
+        print("    только в реестре: %d %s" % (len(a - b), sorted(a - b)[:8]))
+        print("    только в коде:    %d %s" % (len(b - a), sorted(b - a)[:8]))
+    sys.exit(0 if (ok_t and ok_s) else 1)
+
 with io.open(OUT, "w", encoding="utf-8") as f:
     json.dump(reg, f, ensure_ascii=False, indent=1)
 print("\nзаписано:", OUT)
