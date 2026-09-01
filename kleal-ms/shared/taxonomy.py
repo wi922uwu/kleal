@@ -17,39 +17,41 @@
 Когда таксономия наконец переедет сюда целиком, поменяется только тело `_source()`; всё, что зовёт
 `broad_of()` и `words()`, останется прежним.
 """
-import ast
+import io
+import json
 import os
 
-_MATCHING = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "services", "matching", "app.py"))
+_REGISTRY = os.path.join(os.path.dirname(__file__), "interests.json")
 
 _CACHE = {}
 
 
-def _literal_assignments(path, wanted):
-    """Прочитать литеральные константы из чужого модуля, не импортируя его."""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            tree = ast.parse(f.read(), filename=path)
-        out = {}
-        for node in tree.body:
-            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
-                continue
-            target = node.targets[0]
-            if isinstance(target, ast.Name) and target.id in wanted:
-                out[target.id] = ast.literal_eval(node.value)
-        return out
-    except Exception:
-        return {}
-
-
 def _source():
+    """Дерево и синонимы из общего реестра.
+
+    Раньше литералы вычитывались разбором ast прямо из services/matching/app.py — приём рабочий,
+    но он оставлял источником файл на восемь тысяч строк, куда таксономия попала исторически.
+    Теперь источник — shared/interests.json, собранный tools/build_interests.py и доказавший, что
+    воспроизводит прежние литералы до последнего ключа. Ранжировщик перейдёт на него следующим
+    шагом; пока он читает свой литерал, а сборка следит, чтобы они не разошлись.
+    """
     if "tax" not in _CACHE:
-        vals = _literal_assignments(_MATCHING, {"TAXONOMY", "SYNONYMS"})
-        tax = vals.get("TAXONOMY")
-        syn = vals.get("SYNONYMS")
-        _CACHE["tax"] = tax if isinstance(tax, dict) else {}
-        _CACHE["syn"] = syn if isinstance(syn, dict) else {}
+        try:
+            with io.open(_REGISTRY, encoding="utf-8") as f:
+                reg = json.load(f)
+        except Exception:
+            reg = {}
+        _CACHE["tax"] = reg.get("tree") or {}
+        _CACHE["syn"] = reg.get("synonyms") or {}
+        _CACHE["lab"] = reg.get("labels") or {}
     return _CACHE["tax"], _CACHE["syn"]
+
+
+def label(key, lang="ru"):
+    """Подпись ключа на языке экрана. Пусто — подписи нет, и выдумывать её здесь нечем."""
+    _source()
+    row = _CACHE["lab"].get(str(key or "").strip().lower()) or {}
+    return row.get("ru" if str(lang).startswith("ru") else "en", "")
 
 
 def broad_of():

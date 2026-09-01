@@ -1,0 +1,1885 @@
+{
+ "version": 1,
+ "note": "Единственный источник интересов. Ключ канонический английский. `tree` — структура, какой её понимает ранжировщик; `labels` — подписи для экрана; `synonyms` — прочие написания. Собирается tools/build_interests.py; менять руками можно, но потом обязательно прогнать сборку — она проверяет, что источники сходятся.",
+ "tree": {
+  "sports": {
+   "team": [
+    "football",
+    "soccer",
+    "basketball",
+    "volleyball",
+    "handball",
+    "rugby",
+    "cricket",
+    "hockey",
+    "baseball",
+    "futsal",
+    "ultimate",
+    "waterpolo"
+   ],
+   "racket": [
+    "tennis",
+    "padel",
+    "badminton",
+    "squash",
+    "pingpong",
+    "tabletennis",
+    "pickleball",
+    "racquetball"
+   ],
+   "endurance": [
+    "running",
+    "jogging",
+    "cycling",
+    "biking",
+    "swimming",
+    "triathlon",
+    "marathon",
+    "rowing",
+    "spinning",
+    "hyrox",
+    "duathlon"
+   ],
+   "strength": [
+    "gym",
+    "fitness",
+    "workout",
+    "crossfit",
+    "boxing",
+    "mma",
+    "climbing",
+    "bouldering",
+    "calisthenics",
+    "powerlifting",
+    "weightlifting",
+    "kettlebell",
+    "kickboxing",
+    "judo",
+    "karate",
+    "bjj",
+    "wrestling",
+    "muaythai",
+    "fencing"
+   ],
+   "mindbody": [
+    "yoga",
+    "pilates",
+    "stretching",
+    "meditation",
+    "breathwork",
+    "taichi",
+    "qigong"
+   ]
+  },
+  "social": {
+   "coffee": [
+    "coffee",
+    "tea",
+    "brunch",
+    "cafe",
+    "matcha",
+    "espresso"
+   ],
+   "dining": [
+    "dinner",
+    "lunch",
+    "food",
+    "restaurant",
+    "cooking"
+   ],
+   "nightlife": [
+    "bar",
+    "drinks",
+    "pub",
+    "beer",
+    "wine",
+    "party",
+    "club",
+    "clubbing",
+    "cocktails",
+    "mezcal",
+    "sake"
+   ],
+   "casual": [
+    "walk",
+    "walking",
+    "stroll",
+    "hang",
+    "hangout",
+    "chill",
+    "talk",
+    "chat",
+    "park",
+    "terrace"
+   ],
+   "foodie": [
+    "baking",
+    "bbq",
+    "streetfood",
+    "vegan",
+    "vegetarian",
+    "tapas",
+    "sushi",
+    "foodie",
+    "picnic",
+    "ramen",
+    "pizza",
+    "pasta"
+   ],
+   "wellness": [
+    "spa",
+    "sauna",
+    "wellness",
+    "selfcare",
+    "massage"
+   ],
+   "community": [
+    "volunteering",
+    "charity",
+    "meetup",
+    "community",
+    "activism",
+    "sustainability"
+   ],
+   "pets": [
+    "dogs",
+    "dog",
+    "cats",
+    "pets",
+    "dogwalk"
+   ],
+   "family": [
+    "parenting",
+    "kids",
+    "playdate",
+    "family",
+    "mums"
+   ]
+  },
+  "games": {
+   "esports": [
+    "dota",
+    "valorant",
+    "cs",
+    "league",
+    "apex",
+    "fortnite",
+    "fifa",
+    "overwatch",
+    "gaming",
+    "rocketleague",
+    "r6",
+    "rainbow6",
+    "starcraft",
+    "hearthstone",
+    "tekken",
+    "smash",
+    "cod",
+    "warzone"
+   ],
+   "tabletop": [
+    "chess",
+    "boardgames",
+    "poker",
+    "cards",
+    "dnd",
+    "tabletop",
+    "catan",
+    "monopoly",
+    "risk",
+    "magic",
+    "mtg",
+    "warhammer",
+    "ttrpg",
+    "trivia",
+    "quiz",
+    "mahjong",
+    "backgammon",
+    "escaperoom"
+   ],
+   "console": [
+    "playstation",
+    "xbox",
+    "nintendo",
+    "switch",
+    "console",
+    "ps5"
+   ],
+   "pc": [
+    "minecraft",
+    "roblox",
+    "valheim",
+    "terraria",
+    "stardew"
+   ],
+   "mobile": [
+    "mobile",
+    "clashroyale",
+    "pubg",
+    "genshin",
+    "mobilegaming"
+   ]
+  },
+  "culture": {
+   "screen": [
+    "cinema",
+    "movies",
+    "film",
+    "series",
+    "documentary",
+    "netflix",
+    "marvel",
+    "sitcom"
+   ],
+   "visual": [
+    "art",
+    "museum",
+    "gallery",
+    "photography",
+    "exhibition",
+    "painting",
+    "sketching",
+    "illustration",
+    "streetart",
+    "graffiti",
+    "sculpture"
+   ],
+   "stage": [
+    "theatre",
+    "opera",
+    "ballet",
+    "standup",
+    "comedy",
+    "improv",
+    "musical",
+    "circus"
+   ],
+   "reading": [
+    "books",
+    "reading",
+    "literature",
+    "bookclub",
+    "scifi",
+    "fantasy",
+    "nonfiction"
+   ],
+   "urbanism": [
+    "architecture",
+    "urbanism",
+    "city"
+   ],
+   "anime": [
+    "anime",
+    "manga",
+    "kdrama",
+    "cosplay",
+    "kpop"
+   ],
+   "craft": [
+    "pottery",
+    "ceramics",
+    "knitting",
+    "crochet",
+    "sewing",
+    "woodworking",
+    "calligraphy",
+    "diy"
+   ],
+   "writing": [
+    "writing",
+    "poetry",
+    "journaling",
+    "blogging"
+   ],
+   "history": [
+    "history",
+    "heritage",
+    "archaeology"
+   ]
+  },
+  "tech": {
+   "startups": [
+    "startup",
+    "startups",
+    "product",
+    "founder",
+    "entrepreneur",
+    "business"
+   ],
+   "engineering": [
+    "ai",
+    "ml",
+    "programming",
+    "coding",
+    "software",
+    "data",
+    "crypto",
+    "blockchain",
+    "devops",
+    "cloud",
+    "cybersecurity",
+    "security",
+    "python",
+    "javascript",
+    "rust",
+    "golang",
+    "opensource",
+    "frontend",
+    "backend"
+   ],
+   "career": [
+    "networking",
+    "investing",
+    "investor",
+    "career",
+    "mentorship",
+    "consulting",
+    "finance",
+    "vc",
+    "freelance",
+    "remote"
+   ],
+   "design": [
+    "design",
+    "ux",
+    "ui",
+    "figma",
+    "branding",
+    "typography",
+    "motion"
+   ],
+   "dataai": [
+    "datascience",
+    "analytics",
+    "statistics",
+    "bigdata"
+   ],
+   "web3": [
+    "web3",
+    "defi",
+    "nft",
+    "dao",
+    "ethereum",
+    "bitcoin",
+    "solidity",
+    "degen"
+   ],
+   "growth": [
+    "marketing",
+    "sales",
+    "saas",
+    "growth",
+    "b2b",
+    "pm"
+   ]
+  },
+  "music": {
+   "listening": [
+    "concert",
+    "gig",
+    "festival",
+    "music",
+    "vinyl",
+    "livemusic",
+    "playlist"
+   ],
+   "making": [
+    "guitar",
+    "piano",
+    "drums",
+    "dj",
+    "jam",
+    "producing",
+    "singing",
+    "karaoke",
+    "band",
+    "bass",
+    "synth",
+    "ableton",
+    "songwriting",
+    "choir"
+   ],
+   "electronic": [
+    "rave",
+    "techno",
+    "edm"
+   ],
+   "genres": [
+    "jazz",
+    "rock",
+    "hiphop",
+    "rap",
+    "classical",
+    "indie",
+    "pop",
+    "metal",
+    "punk",
+    "reggae",
+    "funk",
+    "soul",
+    "house",
+    "disco"
+   ],
+   "dance": [
+    "salsa",
+    "bachata",
+    "tango",
+    "swing",
+    "ballroom",
+    "zumba"
+   ]
+  },
+  "outdoors": {
+   "hiking": [
+    "hiking",
+    "trekking",
+    "nature",
+    "camping",
+    "mountains",
+    "trail",
+    "outdoor",
+    "outdoors",
+    "backpacking",
+    "trailrunning",
+    "mountaineering"
+   ],
+   "watersnow": [
+    "surfing",
+    "kayaking",
+    "skiing",
+    "snowboard",
+    "paddleboard",
+    "sup",
+    "windsurf",
+    "kitesurf",
+    "wakeboard",
+    "snorkeling",
+    "freediving",
+    "scuba"
+   ],
+   "travel": [
+    "travel",
+    "roadtrip",
+    "sightseeing",
+    "vanlife",
+    "digitalnomad",
+    "hostels",
+    "cityhop"
+   ],
+   "fishing": [
+    "fishing"
+   ],
+   "naturelife": [
+    "birdwatching",
+    "foraging",
+    "gardening",
+    "plants",
+    "stargazing",
+    "botany"
+   ],
+   "adventure": [
+    "paragliding",
+    "skydiving",
+    "caving",
+    "canyoning"
+   ]
+  },
+  "learning": {
+   "language": [
+    "spanish",
+    "english",
+    "french",
+    "german",
+    "italian",
+    "portuguese",
+    "russian",
+    "language",
+    "languages",
+    "exchange",
+    "practice"
+   ],
+   "skills": [
+    "course",
+    "workshop",
+    "study",
+    "bootcamp",
+    "certification",
+    "tutoring",
+    "studygroup"
+   ],
+   "langs2": [
+    "japanese",
+    "korean",
+    "mandarin",
+    "chinese",
+    "arabic",
+    "catalan",
+    "dutch",
+    "swedish",
+    "hindi",
+    "polish",
+    "turkish",
+    "greek"
+   ],
+   "academic": [
+    "psychology",
+    "economics",
+    "science",
+    "neuroscience"
+   ],
+   "personal": [
+    "publicspeaking",
+    "debate",
+    "productivity"
+   ]
+  }
+ },
+ "labels": {
+  "sports": {
+   "ru": "Спорт",
+   "en": "Sport"
+  },
+  "team": {
+   "ru": "Командный",
+   "en": "Team"
+  },
+  "football": {
+   "ru": "Футбол",
+   "en": "Football"
+  },
+  "basketball": {
+   "ru": "Баскетбол",
+   "en": "Basketball"
+  },
+  "volleyball": {
+   "ru": "Волейбол",
+   "en": "Volleyball"
+  },
+  "futsal": {
+   "ru": "Мини-футбол",
+   "en": "Futsal"
+  },
+  "handball": {
+   "ru": "Гандбол",
+   "en": "Handball"
+  },
+  "rugby": {
+   "ru": "Регби",
+   "en": "Rugby"
+  },
+  "hockey": {
+   "ru": "Хоккей",
+   "en": "Hockey"
+  },
+  "racket": {
+   "ru": "Ракетки",
+   "en": "Racquets"
+  },
+  "padel": {
+   "ru": "Падел",
+   "en": "Padel"
+  },
+  "tennis": {
+   "ru": "Теннис",
+   "en": "Tennis"
+  },
+  "badminton": {
+   "ru": "Бадминтон",
+   "en": "Badminton"
+  },
+  "squash": {
+   "ru": "Сквош",
+   "en": "Squash"
+  },
+  "pingpong": {
+   "ru": "Настольный теннис",
+   "en": "Ping-pong"
+  },
+  "pickleball": {
+   "ru": "Пиклбол",
+   "en": "Pickleball"
+  },
+  "endurance": {
+   "ru": "Выносливость",
+   "en": "Endurance"
+  },
+  "running": {
+   "ru": "Бег",
+   "en": "Running"
+  },
+  "cycling": {
+   "ru": "Вело",
+   "en": "Cycling"
+  },
+  "swimming": {
+   "ru": "Плавание",
+   "en": "Swimming"
+  },
+  "triathlon": {
+   "ru": "Триатлон",
+   "en": "Triathlon"
+  },
+  "marathon": {
+   "ru": "Марафон",
+   "en": "Marathon"
+  },
+  "rowing": {
+   "ru": "Гребля",
+   "en": "Rowing"
+  },
+  "strength": {
+   "ru": "Зал и сила",
+   "en": "Gym & strength"
+  },
+  "gym": {
+   "ru": "Зал",
+   "en": "Gym"
+  },
+  "crossfit": {
+   "ru": "Кроссфит",
+   "en": "CrossFit"
+  },
+  "calisthenics": {
+   "ru": "Турники",
+   "en": "Calisthenics"
+  },
+  "powerlifting": {
+   "ru": "Пауэрлифтинг",
+   "en": "Powerlifting"
+  },
+  "boxing": {
+   "ru": "Бокс",
+   "en": "Boxing"
+  },
+  "mma": {
+   "ru": "ММА",
+   "en": "MMA"
+  },
+  "bjj": {
+   "ru": "Джиу-джитсу",
+   "en": "BJJ"
+  },
+  "climbing": {
+   "ru": "Скалолазание",
+   "en": "Climbing"
+  },
+  "bouldering": {
+   "ru": "Боулдеринг",
+   "en": "Bouldering"
+  },
+  "mindbody": {
+   "ru": "Тело и практики",
+   "en": "Body & practice"
+  },
+  "yoga": {
+   "ru": "Йога",
+   "en": "Yoga"
+  },
+  "pilates": {
+   "ru": "Пилатес",
+   "en": "Pilates"
+  },
+  "meditation": {
+   "ru": "Медитация",
+   "en": "Meditation"
+  },
+  "breathwork": {
+   "ru": "Дыхание",
+   "en": "Breathwork"
+  },
+  "stretching": {
+   "ru": "Растяжка",
+   "en": "Stretching"
+  },
+  "taichi": {
+   "ru": "Тайцзи",
+   "en": "Tai chi"
+  },
+  "social": {
+   "ru": "Общение",
+   "en": "Social"
+  },
+  "coffee": {
+   "ru": "Кофе",
+   "en": "Coffee"
+  },
+  "cafe": {
+   "ru": "По кофейням",
+   "en": "Cafe hopping"
+  },
+  "espresso": {
+   "ru": "Эспрессо",
+   "en": "Espresso"
+  },
+  "matcha": {
+   "ru": "Матча",
+   "en": "Matcha"
+  },
+  "tea": {
+   "ru": "Чай",
+   "en": "Tea"
+  },
+  "brunch": {
+   "ru": "Бранчи",
+   "en": "Brunch"
+  },
+  "dining": {
+   "ru": "Поесть",
+   "en": "Eating out"
+  },
+  "dinner": {
+   "ru": "Ужины",
+   "en": "Dinners"
+  },
+  "restaurant": {
+   "ru": "Рестораны",
+   "en": "Restaurants"
+  },
+  "cooking": {
+   "ru": "Готовка",
+   "en": "Cooking"
+  },
+  "baking": {
+   "ru": "Выпечка",
+   "en": "Baking"
+  },
+  "tapas": {
+   "ru": "Тапас",
+   "en": "Tapas"
+  },
+  "sushi": {
+   "ru": "Суши",
+   "en": "Sushi"
+  },
+  "ramen": {
+   "ru": "Рамен",
+   "en": "Ramen"
+  },
+  "vegan": {
+   "ru": "Веган",
+   "en": "Vegan"
+  },
+  "streetfood": {
+   "ru": "Стритфуд",
+   "en": "Street food"
+  },
+  "nightlife": {
+   "ru": "Ночная жизнь",
+   "en": "Nightlife"
+  },
+  "bar": {
+   "ru": "Бары",
+   "en": "Bars"
+  },
+  "wine": {
+   "ru": "Вино",
+   "en": "Wine"
+  },
+  "beer": {
+   "ru": "Пиво",
+   "en": "Beer"
+  },
+  "cocktails": {
+   "ru": "Коктейли",
+   "en": "Cocktails"
+  },
+  "club": {
+   "ru": "Клубы",
+   "en": "Clubs"
+  },
+  "party": {
+   "ru": "Вечеринки",
+   "en": "Parties"
+  },
+  "casual": {
+   "ru": "Просто погулять",
+   "en": "Just hang out"
+  },
+  "walk": {
+   "ru": "Прогулки",
+   "en": "Walks"
+  },
+  "park": {
+   "ru": "Парки",
+   "en": "Parks"
+  },
+  "terrace": {
+   "ru": "Террасы",
+   "en": "Terraces"
+  },
+  "picnic": {
+   "ru": "Пикники",
+   "en": "Picnics"
+  },
+  "hangout": {
+   "ru": "Поболтать",
+   "en": "Hang out"
+  },
+  "wellness": {
+   "ru": "Спа и забота",
+   "en": "Spa & self-care"
+  },
+  "spa": {
+   "ru": "Спа",
+   "en": "Spa"
+  },
+  "sauna": {
+   "ru": "Сауна",
+   "en": "Sauna"
+  },
+  "massage": {
+   "ru": "Массаж",
+   "en": "Massage"
+  },
+  "selfcare": {
+   "ru": "Забота о себе",
+   "en": "Self-care"
+  },
+  "community": {
+   "ru": "Волонтёрство",
+   "en": "Volunteering"
+  },
+  "volunteering": {
+   "ru": "Помогать",
+   "en": "Volunteering"
+  },
+  "charity": {
+   "ru": "Благотворительность",
+   "en": "Charity"
+  },
+  "sustainability": {
+   "ru": "Экология",
+   "en": "Sustainability"
+  },
+  "activism": {
+   "ru": "Активизм",
+   "en": "Activism"
+  },
+  "meetup": {
+   "ru": "Митапы",
+   "en": "Meetups"
+  },
+  "pets": {
+   "ru": "Питомцы",
+   "en": "Pets"
+  },
+  "dogs": {
+   "ru": "Собаки",
+   "en": "Dogs"
+  },
+  "dogwalk": {
+   "ru": "Выгул вместе",
+   "en": "Dog walks"
+  },
+  "cats": {
+   "ru": "Кошки",
+   "en": "Cats"
+  },
+  "family": {
+   "ru": "Семья и дети",
+   "en": "Family & kids"
+  },
+  "parenting": {
+   "ru": "Родительство",
+   "en": "Parenting"
+  },
+  "kids": {
+   "ru": "С детьми",
+   "en": "With kids"
+  },
+  "playdate": {
+   "ru": "Плейдейты",
+   "en": "Playdates"
+  },
+  "games": {
+   "ru": "Игры",
+   "en": "Games"
+  },
+  "tabletop": {
+   "ru": "Настолки",
+   "en": "Board games"
+  },
+  "boardgames": {
+   "ru": "Настольные",
+   "en": "Board games"
+  },
+  "chess": {
+   "ru": "Шахматы",
+   "en": "Chess"
+  },
+  "poker": {
+   "ru": "Покер",
+   "en": "Poker"
+  },
+  "dnd": {
+   "ru": "Ролевые",
+   "en": "Tabletop RPG"
+  },
+  "catan": {
+   "ru": "Катан",
+   "en": "Catan"
+  },
+  "magic": {
+   "ru": "Magic",
+   "en": "Magic"
+  },
+  "warhammer": {
+   "ru": "Warhammer",
+   "en": "Warhammer"
+  },
+  "backgammon": {
+   "ru": "Нарды",
+   "en": "Backgammon"
+  },
+  "trivia": {
+   "ru": "Квизы",
+   "en": "Trivia"
+  },
+  "escaperoom": {
+   "ru": "Квесты",
+   "en": "Escape rooms"
+  },
+  "esports": {
+   "ru": "Киберспорт",
+   "en": "Esports"
+  },
+  "dota": {
+   "ru": "Dota",
+   "en": "Dota"
+  },
+  "cs": {
+   "ru": "CS",
+   "en": "CS"
+  },
+  "valorant": {
+   "ru": "Valorant",
+   "en": "Valorant"
+  },
+  "league": {
+   "ru": "League of Legends",
+   "en": "League of Legends"
+  },
+  "apex": {
+   "ru": "Apex",
+   "en": "Apex"
+  },
+  "overwatch": {
+   "ru": "Overwatch",
+   "en": "Overwatch"
+  },
+  "rocketleague": {
+   "ru": "Rocket League",
+   "en": "Rocket League"
+  },
+  "fifa": {
+   "ru": "FIFA",
+   "en": "FIFA"
+  },
+  "console": {
+   "ru": "Консоли",
+   "en": "Console"
+  },
+  "playstation": {
+   "ru": "PlayStation",
+   "en": "PlayStation"
+  },
+  "xbox": {
+   "ru": "Xbox",
+   "en": "Xbox"
+  },
+  "nintendo": {
+   "ru": "Nintendo",
+   "en": "Nintendo"
+  },
+  "pc": {
+   "ru": "PC",
+   "en": "PC"
+  },
+  "minecraft": {
+   "ru": "Minecraft",
+   "en": "Minecraft"
+  },
+  "stardew": {
+   "ru": "Stardew Valley",
+   "en": "Stardew Valley"
+  },
+  "valheim": {
+   "ru": "Valheim",
+   "en": "Valheim"
+  },
+  "terraria": {
+   "ru": "Terraria",
+   "en": "Terraria"
+  },
+  "mobilegaming": {
+   "ru": "Мобильные",
+   "en": "Mobile"
+  },
+  "pubg": {
+   "ru": "PUBG",
+   "en": "PUBG"
+  },
+  "genshin": {
+   "ru": "Genshin",
+   "en": "Genshin"
+  },
+  "clashroyale": {
+   "ru": "Clash Royale",
+   "en": "Clash Royale"
+  },
+  "culture": {
+   "ru": "Культура",
+   "en": "Culture"
+  },
+  "screen": {
+   "ru": "Кино и сериалы",
+   "en": "Films & series"
+  },
+  "cinema": {
+   "ru": "Кино",
+   "en": "Films"
+  },
+  "series": {
+   "ru": "Сериалы",
+   "en": "Series"
+  },
+  "documentary": {
+   "ru": "Документальное",
+   "en": "Documentary"
+  },
+  "sitcom": {
+   "ru": "Ситкомы",
+   "en": "Sitcoms"
+  },
+  "marvel": {
+   "ru": "Marvel",
+   "en": "Marvel"
+  },
+  "anime": {
+   "ru": "Аниме и Азия",
+   "en": "Anime & Asia"
+  },
+  "manga": {
+   "ru": "Манга",
+   "en": "Manga"
+  },
+  "kdrama": {
+   "ru": "К-дорамы",
+   "en": "K-drama"
+  },
+  "kpop": {
+   "ru": "K-pop",
+   "en": "K-pop"
+  },
+  "cosplay": {
+   "ru": "Косплей",
+   "en": "Cosplay"
+  },
+  "visual": {
+   "ru": "Искусство",
+   "en": "Art"
+  },
+  "museum": {
+   "ru": "Музеи",
+   "en": "Museums"
+  },
+  "gallery": {
+   "ru": "Галереи",
+   "en": "Galleries"
+  },
+  "exhibition": {
+   "ru": "Выставки",
+   "en": "Exhibitions"
+  },
+  "photography": {
+   "ru": "Фотография",
+   "en": "Photography"
+  },
+  "painting": {
+   "ru": "Живопись",
+   "en": "Painting"
+  },
+  "sketching": {
+   "ru": "Скетчинг",
+   "en": "Sketching"
+  },
+  "streetart": {
+   "ru": "Стритарт",
+   "en": "Street art"
+  },
+  "stage": {
+   "ru": "Сцена",
+   "en": "Stage"
+  },
+  "standup": {
+   "ru": "Стендап",
+   "en": "Stand-up"
+  },
+  "improv": {
+   "ru": "Импров",
+   "en": "Improv"
+  },
+  "theatre": {
+   "ru": "Театр",
+   "en": "Theatre"
+  },
+  "opera": {
+   "ru": "Опера",
+   "en": "Opera"
+  },
+  "ballet": {
+   "ru": "Балет",
+   "en": "Ballet"
+  },
+  "musical": {
+   "ru": "Мюзиклы",
+   "en": "Musicals"
+  },
+  "reading": {
+   "ru": "Книги",
+   "en": "Books"
+  },
+  "books": {
+   "ru": "Читать",
+   "en": "Reading"
+  },
+  "bookclub": {
+   "ru": "Книжный клуб",
+   "en": "Book club"
+  },
+  "scifi": {
+   "ru": "Фантастика",
+   "en": "Sci-fi"
+  },
+  "fantasy": {
+   "ru": "Фэнтези",
+   "en": "Fantasy"
+  },
+  "nonfiction": {
+   "ru": "Нон-фикшн",
+   "en": "Non-fiction"
+  },
+  "literature": {
+   "ru": "Классика",
+   "en": "Literature"
+  },
+  "craft": {
+   "ru": "Рукоделие",
+   "en": "Craft"
+  },
+  "pottery": {
+   "ru": "Керамика",
+   "en": "Pottery"
+  },
+  "knitting": {
+   "ru": "Вязание",
+   "en": "Knitting"
+  },
+  "sewing": {
+   "ru": "Шитьё",
+   "en": "Sewing"
+  },
+  "woodworking": {
+   "ru": "Дерево",
+   "en": "Woodworking"
+  },
+  "calligraphy": {
+   "ru": "Каллиграфия",
+   "en": "Calligraphy"
+  },
+  "diy": {
+   "ru": "Своими руками",
+   "en": "DIY"
+  },
+  "writing": {
+   "ru": "Тексты",
+   "en": "Writing"
+  },
+  "poetry": {
+   "ru": "Поэзия",
+   "en": "Poetry"
+  },
+  "journaling": {
+   "ru": "Дневник",
+   "en": "Journaling"
+  },
+  "blogging": {
+   "ru": "Блог",
+   "en": "Blogging"
+  },
+  "history": {
+   "ru": "История и город",
+   "en": "History & city"
+  },
+  "heritage": {
+   "ru": "Наследие",
+   "en": "Heritage"
+  },
+  "archaeology": {
+   "ru": "Археология",
+   "en": "Archaeology"
+  },
+  "architecture": {
+   "ru": "Архитектура",
+   "en": "Architecture"
+  },
+  "urbanism": {
+   "ru": "Урбанистика",
+   "en": "Urbanism"
+  },
+  "music": {
+   "ru": "Музыка",
+   "en": "Music"
+  },
+  "listening": {
+   "ru": "Концерты",
+   "en": "Live music"
+  },
+  "concert": {
+   "ru": "Концерты",
+   "en": "Concerts"
+  },
+  "festival": {
+   "ru": "Фестивали",
+   "en": "Festivals"
+  },
+  "gig": {
+   "ru": "Небольшие площадки",
+   "en": "Small gigs"
+  },
+  "vinyl": {
+   "ru": "Винил",
+   "en": "Vinyl"
+  },
+  "livemusic": {
+   "ru": "Живая музыка",
+   "en": "Live music"
+  },
+  "making": {
+   "ru": "Играю сам",
+   "en": "I play"
+  },
+  "guitar": {
+   "ru": "Гитара",
+   "en": "Guitar"
+  },
+  "piano": {
+   "ru": "Пианино",
+   "en": "Piano"
+  },
+  "drums": {
+   "ru": "Барабаны",
+   "en": "Drums"
+  },
+  "bass": {
+   "ru": "Бас",
+   "en": "Bass"
+  },
+  "singing": {
+   "ru": "Вокал",
+   "en": "Singing"
+  },
+  "dj": {
+   "ru": "Диджеинг",
+   "en": "DJing"
+  },
+  "producing": {
+   "ru": "Продакшн",
+   "en": "Producing"
+  },
+  "band": {
+   "ru": "Группа",
+   "en": "Band"
+  },
+  "karaoke": {
+   "ru": "Караоке",
+   "en": "Karaoke"
+  },
+  "genres": {
+   "ru": "Жанры",
+   "en": "Genres"
+  },
+  "indie": {
+   "ru": "Инди",
+   "en": "Indie"
+  },
+  "rock": {
+   "ru": "Рок",
+   "en": "Rock"
+  },
+  "jazz": {
+   "ru": "Джаз",
+   "en": "Jazz"
+  },
+  "hiphop": {
+   "ru": "Хип-хоп",
+   "en": "Hip-hop"
+  },
+  "classical": {
+   "ru": "Классика",
+   "en": "Classical"
+  },
+  "metal": {
+   "ru": "Метал",
+   "en": "Metal"
+  },
+  "funk": {
+   "ru": "Фанк",
+   "en": "Funk"
+  },
+  "soul": {
+   "ru": "Соул",
+   "en": "Soul"
+  },
+  "electronic": {
+   "ru": "Электроника",
+   "en": "Electronic"
+  },
+  "techno": {
+   "ru": "Техно",
+   "en": "Techno"
+  },
+  "house": {
+   "ru": "Хаус",
+   "en": "House"
+  },
+  "rave": {
+   "ru": "Рейвы",
+   "en": "Raves"
+  },
+  "edm": {
+   "ru": "EDM",
+   "en": "EDM"
+  },
+  "dance": {
+   "ru": "Танцы",
+   "en": "Dance"
+  },
+  "salsa": {
+   "ru": "Сальса",
+   "en": "Salsa"
+  },
+  "bachata": {
+   "ru": "Бачата",
+   "en": "Bachata"
+  },
+  "tango": {
+   "ru": "Танго",
+   "en": "Tango"
+  },
+  "swing": {
+   "ru": "Свинг",
+   "en": "Swing"
+  },
+  "ballroom": {
+   "ru": "Бальные",
+   "en": "Ballroom"
+  },
+  "zumba": {
+   "ru": "Зумба",
+   "en": "Zumba"
+  },
+  "outdoors": {
+   "ru": "Природа",
+   "en": "Outdoors"
+  },
+  "hiking": {
+   "ru": "Походы",
+   "en": "Hiking"
+  },
+  "trekking": {
+   "ru": "Треккинг",
+   "en": "Trekking"
+  },
+  "mountains": {
+   "ru": "Горы",
+   "en": "Mountains"
+  },
+  "trail": {
+   "ru": "Тропы",
+   "en": "Trails"
+  },
+  "camping": {
+   "ru": "Кемпинг",
+   "en": "Camping"
+  },
+  "backpacking": {
+   "ru": "С рюкзаком",
+   "en": "Backpacking"
+  },
+  "trailrunning": {
+   "ru": "Трейлраннинг",
+   "en": "Trail running"
+  },
+  "watersnow": {
+   "ru": "Вода и снег",
+   "en": "Water & snow"
+  },
+  "surfing": {
+   "ru": "Сёрфинг",
+   "en": "Surfing"
+  },
+  "kayaking": {
+   "ru": "Каяк",
+   "en": "Kayaking"
+  },
+  "sup": {
+   "ru": "Сапборд",
+   "en": "Paddleboard"
+  },
+  "kitesurf": {
+   "ru": "Кайт",
+   "en": "Kitesurf"
+  },
+  "scuba": {
+   "ru": "Дайвинг",
+   "en": "Scuba"
+  },
+  "snorkeling": {
+   "ru": "Снорклинг",
+   "en": "Snorkeling"
+  },
+  "skiing": {
+   "ru": "Лыжи",
+   "en": "Skiing"
+  },
+  "snowboard": {
+   "ru": "Сноуборд",
+   "en": "Snowboard"
+  },
+  "travel": {
+   "ru": "Путешествия",
+   "en": "Travel"
+  },
+  "roadtrip": {
+   "ru": "Роудтрипы",
+   "en": "Road trips"
+  },
+  "sightseeing": {
+   "ru": "По городу",
+   "en": "Sightseeing"
+  },
+  "cityhop": {
+   "ru": "Города на выходные",
+   "en": "City breaks"
+  },
+  "vanlife": {
+   "ru": "Ванлайф",
+   "en": "Van life"
+  },
+  "digitalnomad": {
+   "ru": "Номадство",
+   "en": "Digital nomad"
+  },
+  "hostels": {
+   "ru": "Хостелы",
+   "en": "Hostels"
+  },
+  "naturelife": {
+   "ru": "Сад и звёзды",
+   "en": "Garden & stars"
+  },
+  "gardening": {
+   "ru": "Сад",
+   "en": "Gardening"
+  },
+  "plants": {
+   "ru": "Растения",
+   "en": "Plants"
+  },
+  "birdwatching": {
+   "ru": "Птицы",
+   "en": "Birdwatching"
+  },
+  "stargazing": {
+   "ru": "Звёзды",
+   "en": "Stargazing"
+  },
+  "foraging": {
+   "ru": "Травы и грибы",
+   "en": "Foraging"
+  },
+  "fishing": {
+   "ru": "Рыбалка",
+   "en": "Fishing"
+  },
+  "adventure": {
+   "ru": "Адреналин",
+   "en": "Adrenaline"
+  },
+  "paragliding": {
+   "ru": "Параплан",
+   "en": "Paragliding"
+  },
+  "skydiving": {
+   "ru": "Парашют",
+   "en": "Skydiving"
+  },
+  "canyoning": {
+   "ru": "Каньонинг",
+   "en": "Canyoning"
+  },
+  "caving": {
+   "ru": "Спелео",
+   "en": "Caving"
+  },
+  "tech": {
+   "ru": "Дело",
+   "en": "Work & tech"
+  },
+  "engineering": {
+   "ru": "Код и ИИ",
+   "en": "Code & AI"
+  },
+  "coding": {
+   "ru": "Программирование",
+   "en": "Coding"
+  },
+  "ai": {
+   "ru": "ИИ",
+   "en": "AI"
+  },
+  "python": {
+   "ru": "Python",
+   "en": "Python"
+  },
+  "javascript": {
+   "ru": "JavaScript",
+   "en": "JavaScript"
+  },
+  "rust": {
+   "ru": "Rust",
+   "en": "Rust"
+  },
+  "data": {
+   "ru": "Данные",
+   "en": "Data"
+  },
+  "cybersecurity": {
+   "ru": "Безопасность",
+   "en": "Security"
+  },
+  "opensource": {
+   "ru": "Опенсорс",
+   "en": "Open source"
+  },
+  "devops": {
+   "ru": "DevOps",
+   "en": "DevOps"
+  },
+  "startups": {
+   "ru": "Стартапы",
+   "en": "Startups"
+  },
+  "startup": {
+   "ru": "Свой проект",
+   "en": "Own project"
+  },
+  "founder": {
+   "ru": "Основателям",
+   "en": "Founders"
+  },
+  "product": {
+   "ru": "Продукт",
+   "en": "Product"
+  },
+  "entrepreneur": {
+   "ru": "Предпринимательство",
+   "en": "Entrepreneurship"
+  },
+  "business": {
+   "ru": "Бизнес",
+   "en": "Business"
+  },
+  "design": {
+   "ru": "Дизайн",
+   "en": "Design"
+  },
+  "ux": {
+   "ru": "UX",
+   "en": "UX"
+  },
+  "ui": {
+   "ru": "UI",
+   "en": "UI"
+  },
+  "figma": {
+   "ru": "Figma",
+   "en": "Figma"
+  },
+  "branding": {
+   "ru": "Бренд",
+   "en": "Branding"
+  },
+  "typography": {
+   "ru": "Типографика",
+   "en": "Typography"
+  },
+  "motion": {
+   "ru": "Моушн",
+   "en": "Motion"
+  },
+  "web3": {
+   "ru": "Крипта",
+   "en": "Crypto"
+  },
+  "crypto": {
+   "ru": "Криптовалюты",
+   "en": "Crypto"
+  },
+  "bitcoin": {
+   "ru": "Биткоин",
+   "en": "Bitcoin"
+  },
+  "ethereum": {
+   "ru": "Эфир",
+   "en": "Ethereum"
+  },
+  "defi": {
+   "ru": "DeFi",
+   "en": "DeFi"
+  },
+  "nft": {
+   "ru": "NFT",
+   "en": "NFT"
+  },
+  "dao": {
+   "ru": "DAO",
+   "en": "DAO"
+  },
+  "career": {
+   "ru": "Карьера и связи",
+   "en": "Career & network"
+  },
+  "networking": {
+   "ru": "Нетворкинг",
+   "en": "Networking"
+  },
+  "investing": {
+   "ru": "Инвестиции",
+   "en": "Investing"
+  },
+  "finance": {
+   "ru": "Финансы",
+   "en": "Finance"
+  },
+  "mentorship": {
+   "ru": "Менторство",
+   "en": "Mentorship"
+  },
+  "freelance": {
+   "ru": "Фриланс",
+   "en": "Freelance"
+  },
+  "remote": {
+   "ru": "Удалёнка",
+   "en": "Remote"
+  },
+  "growth": {
+   "ru": "Маркетинг",
+   "en": "Marketing"
+  },
+  "marketing": {
+   "ru": "Маркетинг",
+   "en": "Marketing"
+  },
+  "sales": {
+   "ru": "Продажи",
+   "en": "Sales"
+  },
+  "saas": {
+   "ru": "SaaS",
+   "en": "SaaS"
+  },
+  "pm": {
+   "ru": "Продакт-менеджмент",
+   "en": "Product management"
+  },
+  "learning": {
+   "ru": "Учёба",
+   "en": "Learning"
+  },
+  "language": {
+   "ru": "Языки",
+   "en": "Languages"
+  },
+  "exchange": {
+   "ru": "Языковой обмен",
+   "en": "Language exchange"
+  },
+  "spanish": {
+   "ru": "Испанский",
+   "en": "Spanish"
+  },
+  "english": {
+   "ru": "Английский",
+   "en": "English"
+  },
+  "french": {
+   "ru": "Французский",
+   "en": "French"
+  },
+  "german": {
+   "ru": "Немецкий",
+   "en": "German"
+  },
+  "italian": {
+   "ru": "Итальянский",
+   "en": "Italian"
+  },
+  "portuguese": {
+   "ru": "Португальский",
+   "en": "Portuguese"
+  },
+  "catalan": {
+   "ru": "Каталанский",
+   "en": "Catalan"
+  },
+  "japanese": {
+   "ru": "Японский",
+   "en": "Japanese"
+  },
+  "korean": {
+   "ru": "Корейский",
+   "en": "Korean"
+  },
+  "mandarin": {
+   "ru": "Китайский",
+   "en": "Mandarin"
+  },
+  "arabic": {
+   "ru": "Арабский",
+   "en": "Arabic"
+  },
+  "skills": {
+   "ru": "Курсы и практика",
+   "en": "Courses & practice"
+  },
+  "course": {
+   "ru": "Курсы",
+   "en": "Courses"
+  },
+  "workshop": {
+   "ru": "Воркшопы",
+   "en": "Workshops"
+  },
+  "studygroup": {
+   "ru": "Учебная группа",
+   "en": "Study group"
+  },
+  "bootcamp": {
+   "ru": "Буткемпы",
+   "en": "Bootcamps"
+  },
+  "tutoring": {
+   "ru": "Репетиторство",
+   "en": "Tutoring"
+  },
+  "academic": {
+   "ru": "Наука",
+   "en": "Science"
+  },
+  "psychology": {
+   "ru": "Психология",
+   "en": "Psychology"
+  },
+  "neuroscience": {
+   "ru": "Нейронаука",
+   "en": "Neuroscience"
+  },
+  "economics": {
+   "ru": "Экономика",
+   "en": "Economics"
+  },
+  "science": {
+   "ru": "Наука вообще",
+   "en": "Science"
+  },
+  "personal": {
+   "ru": "Навыки",
+   "en": "Personal skills"
+  },
+  "publicspeaking": {
+   "ru": "Публичные выступления",
+   "en": "Public speaking"
+  },
+  "debate": {
+   "ru": "Дебаты",
+   "en": "Debate"
+  },
+  "productivity": {
+   "ru": "Продуктивность",
+   "en": "Productivity"
+  }
+ },
+ "synonyms": {
+  "soccer": "football",
+  "movies": "cinema",
+  "movie": "cinema",
+  "film": "cinema",
+  "ml": "ai",
+  "biking": "cycling",
+  "jogging": "running",
+  "theater": "theatre",
+  "board": "boardgames",
+  "boardgames": "boardgames",
+  "lol": "league",
+  "csgo": "cs",
+  "cs2": "cs",
+  "game": "gaming",
+  "games": "gaming",
+  "hike": "hiking",
+  "hikes": "hiking",
+  "trek": "trekking",
+  "camp": "camping",
+  "run": "running",
+  "jog": "running",
+  "bike": "cycling",
+  "swim": "swimming",
+  "climb": "climbing",
+  "box": "boxing",
+  "lift": "gym",
+  "workout": "gym",
+  "paint": "painting",
+  "draw": "painting",
+  "sing": "singing",
+  "cook": "cooking",
+  "read": "reading",
+  "dance": "jam",
+  "ski": "skiing",
+  "surf": "surfing",
+  "travelling": "travel",
+  "traveling": "travel",
+  "trip": "travel",
+  "coffees": "coffee",
+  "drink": "drinks",
+  "party": "party",
+  "gym": "gym",
+  "codes": "coding",
+  "code": "coding",
+  "programme": "coding",
+  "ps5": "playstation",
+  "ps4": "playstation",
+  "weeb": "anime",
+  "btc": "bitcoin",
+  "eth": "ethereum",
+  "js": "javascript",
+  "infosec": "cybersecurity",
+  "garden": "gardening",
+  "gardens": "gardening",
+  "birding": "birdwatching",
+  "birdwatch": "birdwatching",
+  "kayak": "kayaking",
+  "meditate": "meditation",
+  "mindfulness": "meditation",
+  "dancing": "salsa",
+  "jiujitsu": "bjj",
+  "muay": "muaythai",
+  "bake": "baking",
+  "volunteer": "volunteering",
+  "llm": "ai",
+  "genai": "ai",
+  "machinelearning": "ai",
+  "productmanager": "pm"
+ }
+}
