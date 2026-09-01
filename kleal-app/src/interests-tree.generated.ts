@@ -17,7 +17,7 @@ const TOP = (key: string, ru: string, en: string, icon: string, kids: TreeNode[]
   ({ key, ru, en, icon, kids });
 
 export const TREE: TreeNode[] = [
-  TOP('sports', 'Спорт', 'Sport', 'sport', [
+  TOP('sports', 'Спорт', 'Sport', 'sports', [
     N('team', 'Командный', 'Team', [
       N('football', 'Футбол', 'Football'),
       N('basketball', 'Баскетбол', 'Basketball'),
@@ -82,7 +82,7 @@ export const TREE: TreeNode[] = [
       N('qigong', 'Цигун', 'qigong'),
     ]),
   ]),
-  TOP('social', 'Общение', 'Social', 'coffee', [
+  TOP('social', 'Общение', 'Social', 'social', [
     N('coffee', 'Кофе', 'Coffee', [
       N('tea', 'Чай', 'Tea'),
       N('brunch', 'Бранчи', 'Brunch'),
@@ -161,7 +161,7 @@ export const TREE: TreeNode[] = [
       N('mums', 'Мамы', 'mums'),
     ]),
   ]),
-  TOP('games', 'Игры', 'Games', 'gaming', [
+  TOP('games', 'Игры', 'Games', 'games', [
     N('esports', 'Киберспорт', 'Esports', [
       N('dota', 'Dota', 'Dota'),
       N('valorant', 'Valorant', 'Valorant'),
@@ -221,7 +221,7 @@ export const TREE: TreeNode[] = [
       N('mobilegaming', 'Мобильные', 'Mobile'),
     ]),
   ]),
-  TOP('culture', 'Культура', 'Culture', 'stage', [
+  TOP('culture', 'Культура', 'Culture', 'culture', [
     N('screen', 'Кино и сериалы', 'Films & series', [
       N('cinema', 'Кино', 'Films'),
       N('series', 'Сериалы', 'Series'),
@@ -270,6 +270,7 @@ export const TREE: TreeNode[] = [
       N('kdrama', 'К-дорамы', 'K-drama'),
       N('cosplay', 'Косплей', 'Cosplay'),
       N('kpop', 'K-pop', 'K-pop'),
+      N('cartoons', 'Мультфильмы', 'Cartoons'),
     ]),
     N('craft', 'Рукоделие', 'Craft', [
       N('pottery', 'Керамика', 'Pottery'),
@@ -291,7 +292,7 @@ export const TREE: TreeNode[] = [
       N('archaeology', 'Археология', 'Archaeology'),
     ]),
   ]),
-  TOP('tech', 'Дело', 'Work & tech', 'coding', [
+  TOP('tech', 'Дело', 'Work & tech', 'tech', [
     N('startups', 'Стартапы', 'Startups', [
       N('startup', 'Свой проект', 'Own project'),
       N('product', 'Продукт', 'Product'),

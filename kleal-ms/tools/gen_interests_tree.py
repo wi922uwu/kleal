@@ -26,7 +26,17 @@ icons = {m.group(2): m.group(8) for m in re.finditer(
 
 # ---- нынешние ключи и подписи, чтобы сравнить
 NODE = re.compile(r"\b(?:N|TOP)\(\s*(['\"])(.+?)\1\s*,\s*(['\"])(.+?)\3\s*,\s*(['\"])(.+?)\5")
-now = {m.group(2).lower(): (m.group(4), m.group(6)) for m in NODE.finditer(src)}
+# СРАВНИВАЕМ С ПРЕДЫДУЩИМ СГЕНЕРИРОВАННЫМ, А НЕ С ИСХОДНЫМ ФАЙЛОМ.
+#
+# Пока дерево лежало литералом в interests-wheel.ts, сравнение шло с ним. После переезда там
+# осталась одна строка реэкспорта, и проверка стала показывать «добавилось 441» на каждом запуске —
+# то есть перестала ловить что бы то ни было. А именно она поймала, что при первой генерации
+# пропадал coworking. Теперь опорой служит прошлый результат генерации, если он есть.
+try:
+    prev_src = io.open(OUT, encoding="utf-8").read()
+except Exception:
+    prev_src = src
+now = {m.group(2).lower(): (m.group(4), m.group(6)) for m in NODE.finditer(prev_src)}
 
 # ---- что схлопнуть: ключ, объявленный синонимом другого, который сам есть в дереве
 allk = set(tree) | {s for g in tree.values() for s in g} | {w for g in tree.values() for ws in g.values() for w in ws}
