@@ -28,6 +28,7 @@ import kleal_candidates as kct                  # §16 events/rooms/venues candi
 import intent_map_feed as imf                   # privacy-safe offline/online intent map read models
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
 from http_util import send_json, read_json
+from geo import haversine as _haversine   # одна формула на дерево, см. shared/geo.py
 import db                            # хранилище: postgres или файл — решает KLEAL_DB
 import kleal_auth                     # кто прислал запрос; пока ТОЛЬКО наблюдение, см. _watch_owner
 import mq                            # очередь заданий: rabbit или ничего — решает KLEAL_MQ
@@ -741,11 +742,6 @@ def _success_metrics():
             "note": "success = completed interaction + two-sided accept; expired_no_response is neutral, "
                     "only explicit 'declined' is negative"}
 
-def _haversine(a, b):
-    R = 6371.0088
-    la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
-    h = math.sin((la2-la1)/2)**2 + math.cos(la1)*math.cos(la2)*math.sin((lo2-lo1)/2)**2
-    return round(2 * R * math.asin(min(1.0, math.sqrt(h))), 2)
 def _offset(latlon, km, bearing_deg):
     br = math.radians(bearing_deg)
     dlat = (km * math.cos(br)) / 110.574

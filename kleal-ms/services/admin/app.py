@@ -94,12 +94,8 @@ def _as_phrases(v):
 # Kept byte-identical to onboarding's table (onboarding/app.py:1552) on purpose: the two services
 # write the same users.json, and a language spelled differently by each writer is a person who
 # silently stops matching when their row is touched by the other one.
-_LANG_CODES = {"english": "en", "spanish": "es", "german": "de", "french": "fr", "portuguese": "pt",
-               "italian": "it", "russian": "ru", "catalan": "ca", "ukrainian": "uk", "polish": "pl",
-               "английский": "en", "испанский": "es", "немецкий": "de", "французский": "fr",
-               "португальский": "pt", "итальянский": "it", "русский": "ru", "каталанский": "ca",
-               "serbian": "sr", "сербский": "sr", "swedish": "sv", "шведский": "sv",
-               "sp": "es"}   # legacy typo written by an older build; repair, do not drop
+# Таблица языков общая на всё дерево — см. shared/langs.py. Здесь лежала её дословная копия.
+from langs import LANG_CODES as _LANG_CODES
 # Valid codes are ISO 639-1, NOT the keys of the name table above. Deriving them from that table
 # was a bug caught only by counting the live store: 30 of the 31 codes in users.json are real
 # (hi, ar, da, ko, zh, nl, ja, he, cs, el, th, vi, id ...) and simply have no English/Russian NAME

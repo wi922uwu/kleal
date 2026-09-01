@@ -21,6 +21,7 @@
 # (env KLEAL_CORE_V2=0). This module is import-safe: stdlib only, no I/O besides load_config().
 
 import hashlib, math, time
+from geo import haversine as _haversine, latlon as _latlon   # см. shared/geo.py
 
 # ------------------------------------------------------------------ config: mini-YAML + validation
 # The canonical config uses a restricted YAML subset (nested maps, scalar lists, scalars). A tiny
@@ -176,22 +177,7 @@ LANG_WORDS = {"spanish": "es", "espanol": "es", "испан": "es", "english": "
               "french": "fr", "франц": "fr", "german": "de", "нем": "de", "russian": "ru",
               "русск": "ru", "catalan": "ca", "italian": "it", "италь": "it", "japanese": "ja"}
 
-def _haversine(a, b):
-    R = 6371.0088
-    la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
-    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
-    return round(2 * R * math.asin(min(1.0, math.sqrt(h))), 2)
 
-def _latlon(obj):
-    if not isinstance(obj, dict):
-        return None
-    for src in (obj.get("geo") if isinstance(obj.get("geo"), dict) else None, obj):
-        if not isinstance(src, dict):
-            continue
-        for la, lo in (("coarseLat", "coarseLon"), ("coarseLat", "coarseLng"), ("lat", "lon"), ("lat", "lng")):
-            if isinstance(src.get(la), (int, float)) and isinstance(src.get(lo), (int, float)):
-                return (float(src[la]), float(src[lo]))
-    return None
 
 def _lang_codes(seq):
     return {str(l)[:2].lower() for l in (seq or []) if str(l).strip()}

@@ -7,6 +7,7 @@ statement влияет на несколько subfeatures только при �
 known_match / known_mismatch / unknown / not_applicable (§9.1). unknown ≠ match.
 """
 import math
+from geo import haversine as _haversine, latlon as _latlon   # см. shared/geo.py
 from ..taxonomy import graph as TX
 
 K_MATCH, K_MISM, UNKNOWN, NA = "known_match", "known_mismatch", "unknown", "not_applicable"
@@ -22,21 +23,8 @@ VIBE_CLASH = {("chill", "party"), ("calm", "energetic"), ("introvert", "extrover
 ROLE_CONFLICT = {("play", "watch"), ("watch", "play"), ("practise", "watch")}
 
 
-def _haversine(a, b):
-    Rk = 6371.0088
-    la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
-    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
-    return round(2 * Rk * math.asin(min(1.0, math.sqrt(h))), 2)
 
 
-def _latlon(o):
-    if not isinstance(o, dict):
-        return None
-    for la, lo in (("coarseLat", "coarseLon"), ("coarse_lat", "coarse_lon"), ("lat", "lon")):
-        if isinstance(o.get(la), (int, float)) and isinstance(o.get(lo), (int, float)):
-            return (float(o[la]), float(o[lo]))
-    g = o.get("geo")
-    return _latlon(g) if isinstance(g, dict) else None
 
 
 def _langs(seq):

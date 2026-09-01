@@ -1061,12 +1061,8 @@ def _first(*vals):
 
 # 'Spanish'[:2] is 'sp' and 'German'[:2] is 'ge' — neither is a language code, and matching's
 # requiredLanguages gate compares codes, so a Spanish speaker written as 'sp' matched nobody.
-_LANG_CODES = {"english": "en", "spanish": "es", "german": "de", "french": "fr", "portuguese": "pt",
-               "italian": "it", "russian": "ru", "catalan": "ca", "ukrainian": "uk", "polish": "pl",
-               "английский": "en", "испанский": "es", "немецкий": "de", "французский": "fr",
-               "португальский": "pt", "итальянский": "it", "русский": "ru", "каталанский": "ca",
-               "serbian": "sr", "сербский": "sr", "swedish": "sv", "шведский": "sv",
-               "sp": "es"}   # legacy typo written by an older build; repair, do not drop
+# Таблица языков общая на всё дерево — см. shared/langs.py. Здесь лежала её дословная копия.
+from langs import LANG_CODES as _LANG_CODES
 
 
 # Valid codes are ISO 639-1, NOT the keys of the name table above. Deriving them from that table
