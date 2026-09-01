@@ -1810,6 +1810,518 @@
   "productivity": {
    "ru": "Продуктивность",
    "en": "Productivity"
+  },
+  "soccer": {
+   "ru": "Футбол",
+   "en": "soccer"
+  },
+  "cricket": {
+   "ru": "Крикет",
+   "en": "cricket"
+  },
+  "baseball": {
+   "ru": "Бейсбол",
+   "en": "baseball"
+  },
+  "ultimate": {
+   "ru": "Фрисби",
+   "en": "ultimate"
+  },
+  "waterpolo": {
+   "ru": "Водное поло",
+   "en": "waterpolo"
+  },
+  "tabletennis": {
+   "ru": "Настольный теннис",
+   "en": "tabletennis"
+  },
+  "racquetball": {
+   "ru": "Ракетбол",
+   "en": "racquetball"
+  },
+  "jogging": {
+   "ru": "Бег",
+   "en": "jogging"
+  },
+  "biking": {
+   "ru": "Велоспорт",
+   "en": "biking"
+  },
+  "spinning": {
+   "ru": "Велотренажер",
+   "en": "spinning"
+  },
+  "hyrox": {
+   "ru": "Hyrox",
+   "en": "hyrox"
+  },
+  "duathlon": {
+   "ru": "Дуатлон",
+   "en": "duathlon"
+  },
+  "fitness": {
+   "ru": "Фитнес",
+   "en": "fitness"
+  },
+  "workout": {
+   "ru": "Тренировка",
+   "en": "workout"
+  },
+  "weightlifting": {
+   "ru": "Тяжелая атлетика",
+   "en": "weightlifting"
+  },
+  "kettlebell": {
+   "ru": "Гири",
+   "en": "kettlebell"
+  },
+  "kickboxing": {
+   "ru": "Кикбоксинг",
+   "en": "kickboxing"
+  },
+  "judo": {
+   "ru": "Дзюдо",
+   "en": "judo"
+  },
+  "karate": {
+   "ru": "Карате",
+   "en": "karate"
+  },
+  "wrestling": {
+   "ru": "Борьба",
+   "en": "wrestling"
+  },
+  "muaythai": {
+   "ru": "Муай тай",
+   "en": "muaythai"
+  },
+  "fencing": {
+   "ru": "Фехтование",
+   "en": "fencing"
+  },
+  "qigong": {
+   "ru": "Цигун",
+   "en": "qigong"
+  },
+  "lunch": {
+   "ru": "Обед",
+   "en": "lunch"
+  },
+  "food": {
+   "ru": "Еда",
+   "en": "food"
+  },
+  "drinks": {
+   "ru": "Напитки",
+   "en": "drinks"
+  },
+  "pub": {
+   "ru": "Паб",
+   "en": "pub"
+  },
+  "clubbing": {
+   "ru": "Клуб",
+   "en": "clubbing"
+  },
+  "mezcal": {
+   "ru": "Мескаль",
+   "en": "mezcal"
+  },
+  "sake": {
+   "ru": "Саке",
+   "en": "sake"
+  },
+  "walking": {
+   "ru": "Ходьба",
+   "en": "walking"
+  },
+  "stroll": {
+   "ru": "Прогулка",
+   "en": "stroll"
+  },
+  "hang": {
+   "ru": "Встреча",
+   "en": "hang"
+  },
+  "chill": {
+   "ru": "Релакс",
+   "en": "chill"
+  },
+  "talk": {
+   "ru": "Разговор",
+   "en": "talk"
+  },
+  "chat": {
+   "ru": "Болтовня",
+   "en": "chat"
+  },
+  "foodie": {
+   "ru": "Гурман",
+   "en": "foodie"
+  },
+  "bbq": {
+   "ru": "Барбекю",
+   "en": "bbq"
+  },
+  "vegetarian": {
+   "ru": "Вегетарианство",
+   "en": "vegetarian"
+  },
+  "pizza": {
+   "ru": "Пицца",
+   "en": "pizza"
+  },
+  "pasta": {
+   "ru": "Паста",
+   "en": "pasta"
+  },
+  "dog": {
+   "ru": "Собака",
+   "en": "dog"
+  },
+  "mums": {
+   "ru": "Мамы",
+   "en": "mums"
+  },
+  "fortnite": {
+   "ru": "Фортнайт",
+   "en": "fortnite"
+  },
+  "gaming": {
+   "ru": "Игры",
+   "en": "gaming"
+  },
+  "r6": {
+   "ru": "Rainbow Six",
+   "en": "r6"
+  },
+  "rainbow6": {
+   "ru": "Рейнбоу",
+   "en": "rainbow6"
+  },
+  "starcraft": {
+   "ru": "Старкрафт",
+   "en": "starcraft"
+  },
+  "hearthstone": {
+   "ru": "Коллекционная карта",
+   "en": "hearthstone"
+  },
+  "tekken": {
+   "ru": "Tekken",
+   "en": "tekken"
+  },
+  "smash": {
+   "ru": "Smash Bros",
+   "en": "smash"
+  },
+  "cod": {
+   "ru": "Шутер",
+   "en": "cod"
+  },
+  "warzone": {
+   "ru": "Батл-рояль",
+   "en": "warzone"
+  },
+  "cards": {
+   "ru": "Карты",
+   "en": "cards"
+  },
+  "monopoly": {
+   "ru": "Монополия",
+   "en": "monopoly"
+  },
+  "risk": {
+   "ru": "Риск",
+   "en": "risk"
+  },
+  "mtg": {
+   "ru": "Мэджик",
+   "en": "mtg"
+  },
+  "ttrpg": {
+   "ru": "Ролевая игра",
+   "en": "ttrpg"
+  },
+  "quiz": {
+   "ru": "Викторина",
+   "en": "quiz"
+  },
+  "mahjong": {
+   "ru": "Маджонг",
+   "en": "mahjong"
+  },
+  "switch": {
+   "ru": "Нинтендо",
+   "en": "switch"
+  },
+  "ps5": {
+   "ru": "Плейстейшн",
+   "en": "ps5"
+  },
+  "roblox": {
+   "ru": "Роблокс",
+   "en": "roblox"
+  },
+  "mobile": {
+   "ru": "Мобильные игры",
+   "en": "mobile"
+  },
+  "movies": {
+   "ru": "Фильмы",
+   "en": "movies"
+  },
+  "film": {
+   "ru": "Кино",
+   "en": "film"
+  },
+  "netflix": {
+   "ru": "Нетфликс",
+   "en": "netflix"
+  },
+  "art": {
+   "ru": "Искусство",
+   "en": "art"
+  },
+  "illustration": {
+   "ru": "Иллюстрация",
+   "en": "illustration"
+  },
+  "graffiti": {
+   "ru": "Граффити",
+   "en": "graffiti"
+  },
+  "sculpture": {
+   "ru": "Скульптура",
+   "en": "sculpture"
+  },
+  "comedy": {
+   "ru": "Комедия",
+   "en": "comedy"
+  },
+  "circus": {
+   "ru": "Цирк",
+   "en": "circus"
+  },
+  "city": {
+   "ru": "Город",
+   "en": "city"
+  },
+  "ceramics": {
+   "ru": "Керамика",
+   "en": "ceramics"
+  },
+  "crochet": {
+   "ru": "Вязание крючком",
+   "en": "crochet"
+  },
+  "ml": {
+   "ru": "Машинное обучение",
+   "en": "ml"
+  },
+  "programming": {
+   "ru": "Программирование",
+   "en": "programming"
+  },
+  "software": {
+   "ru": "Программное обеспечение",
+   "en": "software"
+  },
+  "blockchain": {
+   "ru": "Блокчейн",
+   "en": "blockchain"
+  },
+  "cloud": {
+   "ru": "Облако",
+   "en": "cloud"
+  },
+  "security": {
+   "ru": "Безопасность",
+   "en": "security"
+  },
+  "golang": {
+   "ru": "Go",
+   "en": "golang"
+  },
+  "frontend": {
+   "ru": "Фронтенд",
+   "en": "frontend"
+  },
+  "backend": {
+   "ru": "Бэкенд",
+   "en": "backend"
+  },
+  "investor": {
+   "ru": "Инвестор",
+   "en": "investor"
+  },
+  "consulting": {
+   "ru": "Консалтинг",
+   "en": "consulting"
+  },
+  "vc": {
+   "ru": "Венчурный капитал",
+   "en": "vc"
+  },
+  "dataai": {
+   "ru": "Данные и ИИ",
+   "en": "dataai"
+  },
+  "datascience": {
+   "ru": "Data Science",
+   "en": "datascience"
+  },
+  "analytics": {
+   "ru": "Аналитика",
+   "en": "analytics"
+  },
+  "statistics": {
+   "ru": "Статистика",
+   "en": "statistics"
+  },
+  "bigdata": {
+   "ru": "Большие данные",
+   "en": "bigdata"
+  },
+  "solidity": {
+   "ru": "Solidity",
+   "en": "solidity"
+  },
+  "degen": {
+   "ru": "Degen",
+   "en": "degen"
+  },
+  "b2b": {
+   "ru": "B2B",
+   "en": "b2b"
+  },
+  "playlist": {
+   "ru": "Плейлист",
+   "en": "playlist"
+  },
+  "jam": {
+   "ru": "Джем",
+   "en": "jam"
+  },
+  "synth": {
+   "ru": "Синтезатор",
+   "en": "synth"
+  },
+  "ableton": {
+   "ru": "Ableton",
+   "en": "ableton"
+  },
+  "songwriting": {
+   "ru": "Песни",
+   "en": "songwriting"
+  },
+  "choir": {
+   "ru": "Хор",
+   "en": "choir"
+  },
+  "rap": {
+   "ru": "Рэп",
+   "en": "rap"
+  },
+  "pop": {
+   "ru": "Поп",
+   "en": "pop"
+  },
+  "punk": {
+   "ru": "Панк",
+   "en": "punk"
+  },
+  "reggae": {
+   "ru": "Регги",
+   "en": "reggae"
+  },
+  "disco": {
+   "ru": "Диско",
+   "en": "disco"
+  },
+  "nature": {
+   "ru": "Природа",
+   "en": "nature"
+  },
+  "outdoor": {
+   "ru": "На открытом воздухе",
+   "en": "outdoor"
+  },
+  "mountaineering": {
+   "ru": "Альпинизм",
+   "en": "mountaineering"
+  },
+  "paddleboard": {
+   "ru": "Пэдлборд",
+   "en": "paddleboard"
+  },
+  "windsurf": {
+   "ru": "Виндсерф",
+   "en": "windsurf"
+  },
+  "wakeboard": {
+   "ru": "Вейкборд",
+   "en": "wakeboard"
+  },
+  "freediving": {
+   "ru": "Фридайвинг",
+   "en": "freediving"
+  },
+  "botany": {
+   "ru": "Ботаника",
+   "en": "botany"
+  },
+  "russian": {
+   "ru": "Русский",
+   "en": "russian"
+  },
+  "languages": {
+   "ru": "Языки",
+   "en": "languages"
+  },
+  "practice": {
+   "ru": "Практика",
+   "en": "practice"
+  },
+  "study": {
+   "ru": "Изучение",
+   "en": "study"
+  },
+  "certification": {
+   "ru": "Сертификация",
+   "en": "certification"
+  },
+  "langs2": {
+   "ru": "Другие языки",
+   "en": "langs2"
+  },
+  "chinese": {
+   "ru": "Китайский",
+   "en": "chinese"
+  },
+  "dutch": {
+   "ru": "Нидерландский",
+   "en": "dutch"
+  },
+  "swedish": {
+   "ru": "Шведский",
+   "en": "swedish"
+  },
+  "hindi": {
+   "ru": "Хинди",
+   "en": "hindi"
+  },
+  "polish": {
+   "ru": "Польский",
+   "en": "polish"
+  },
+  "turkish": {
+   "ru": "Турецкий",
+   "en": "turkish"
+  },
+  "greek": {
+   "ru": "Греческий",
+   "en": "greek"
   }
  },
  "synonyms": {
@@ -1881,5 +2393,135 @@
   "genai": "ai",
   "machinelearning": "ai",
   "productmanager": "pm"
- }
+ },
+ "labels_auto": [
+  "soccer",
+  "cricket",
+  "baseball",
+  "ultimate",
+  "waterpolo",
+  "tabletennis",
+  "racquetball",
+  "jogging",
+  "biking",
+  "spinning",
+  "hyrox",
+  "duathlon",
+  "fitness",
+  "workout",
+  "weightlifting",
+  "kettlebell",
+  "kickboxing",
+  "judo",
+  "karate",
+  "wrestling",
+  "muaythai",
+  "fencing",
+  "qigong",
+  "lunch",
+  "food",
+  "drinks",
+  "pub",
+  "clubbing",
+  "mezcal",
+  "sake",
+  "walking",
+  "stroll",
+  "hang",
+  "chill",
+  "talk",
+  "chat",
+  "foodie",
+  "bbq",
+  "vegetarian",
+  "pizza",
+  "pasta",
+  "dog",
+  "mums",
+  "fortnite",
+  "gaming",
+  "r6",
+  "rainbow6",
+  "starcraft",
+  "hearthstone",
+  "tekken",
+  "smash",
+  "cod",
+  "warzone",
+  "cards",
+  "monopoly",
+  "risk",
+  "mtg",
+  "ttrpg",
+  "quiz",
+  "mahjong",
+  "switch",
+  "ps5",
+  "roblox",
+  "mobile",
+  "movies",
+  "film",
+  "netflix",
+  "art",
+  "illustration",
+  "graffiti",
+  "sculpture",
+  "comedy",
+  "circus",
+  "city",
+  "ceramics",
+  "crochet",
+  "ml",
+  "programming",
+  "software",
+  "blockchain",
+  "cloud",
+  "security",
+  "golang",
+  "frontend",
+  "backend",
+  "investor",
+  "consulting",
+  "vc",
+  "dataai",
+  "datascience",
+  "analytics",
+  "statistics",
+  "bigdata",
+  "solidity",
+  "degen",
+  "b2b",
+  "playlist",
+  "jam",
+  "synth",
+  "ableton",
+  "songwriting",
+  "choir",
+  "rap",
+  "pop",
+  "punk",
+  "reggae",
+  "disco",
+  "nature",
+  "outdoor",
+  "mountaineering",
+  "paddleboard",
+  "windsurf",
+  "wakeboard",
+  "freediving",
+  "botany",
+  "russian",
+  "languages",
+  "practice",
+  "study",
+  "certification",
+  "langs2",
+  "chinese",
+  "dutch",
+  "swedish",
+  "hindi",
+  "polish",
+  "turkish",
+  "greek"
+ ]
 }
