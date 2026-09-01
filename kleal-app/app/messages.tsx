@@ -108,7 +108,21 @@ export default function Messages() {
       past: [...one.past, ...many.past].sort(newestFirst),
     };
   }, [me, data, ru]);
-  const privateRows = useMemo(() => threadRows(data.threads, me, ru, sysLine), [data.threads, me, ru]);
+  /** С кем приглашение уже принято — только их переписки и существуют. */
+  const acceptedWith = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of [...(data.inbox || []), ...(data.outbox || [])]) {
+      if (r?.status !== 'accepted') continue;
+      const who = String(r.from || '').trim().toLowerCase() === String(me || '').trim().toLowerCase() ? r.to : r.from;
+      const key = String(who || '').trim().toLowerCase();
+      if (key) set.add(key);
+    }
+    return set;
+  }, [data.inbox, data.outbox, me]);
+  const privateRows = useMemo(
+    () => threadRows(data.threads, me, ru, sysLine, acceptedWith),
+    [data.threads, me, ru, acceptedWith]
+  );
 
   /**
    * Непрочитанное приклеивается в ОДНОМ месте — иначе одна и та же переписка показывает разную

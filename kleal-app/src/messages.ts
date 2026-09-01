@@ -215,8 +215,18 @@ export function planRows(me: string, plans: any[], history: any[], ru: boolean, 
  * Последней строкой вполне может оказаться СОБЫТИЕ плана («План подтверждён»), а у события пустой
  * текст — под именем зияла бы пустота. Поэтому превью собирается той же функцией, что и лента.
  */
-export function threadRows(threads: any[], me = '', ru = true, line?: (sys: any, me: string, ru: boolean) => string): Row[] {
-  return (threads || []).map((t: any) => ({
+/**
+ * Личные переписки. `accepted` — люди, с которыми приглашение УЖЕ принято.
+ *
+ * ПЕРЕПИСКИ БЕЗ СОГЛАСИЯ ЗДЕСЬ БЫТЬ НЕ ДОЛЖНО. Сервер отдаёт тред, как только приглашение
+ * отправлено, а список показывал всё подряд: человек отправлял заявку, уходил с поиска, находил
+ * собеседника в «Личных», писал — и получал отказ «приглашение не принято». Чата, которого нет,
+ * он и не должен был видеть. Отправленная заявка живёт во вкладке «Собирается» строкой
+ * `invite-out` — там ей и место, пока второй не ответил.
+ */
+export function threadRows(threads: any[], me = '', ru = true, line?: (sys: any, me: string, ru: boolean) => string,
+                           accepted?: Set<string>): Row[] {
+  return (threads || []).filter((t: any) => !accepted || accepted.has(norm(t.who))).map((t: any) => ({
     key: 'th:' + norm(t.who), kind: 'thread' as const, who: t.who,
     title: String(t.who || ''), sub: '',
     teaser: t.kind === 'voice'
