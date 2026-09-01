@@ -42,6 +42,28 @@ for m in NODE.finditer(src):
 allkeys = set(tree) | {s for g in tree.values() for s in g} | {w for g in tree.values() for ws in g.values() for w in ws}
 labels = {k: v for k, v in labels.items() if k in allkeys}
 
+# ПЕРЕСБОРКА НЕ СТИРАЕТ ДОПИСАННОЕ, И ЭТО НЕ МЕЛОЧЬ.
+#
+# Подписи приходят из двух мест: 319 из них написаны в дереве карты, остальные 128 дописаны
+# отдельно (tools/fill_interest_labels.py). Первая версия этой сборки собирала реестр с нуля и
+# при первом же запуске снесла все 128 — молча, потому что «источником» считала только дерево.
+# Теперь уже лежащий реестр читается первым, а из источников добавляется то, чего в нём нет.
+# Метка labels_auto переносится вместе с подписями: без неё не отличить машинный перевод от
+# человеческого, а переучивать человека машиной нельзя.
+prev_auto = []
+try:
+    with io.open(OUT, encoding="utf-8") as f:
+        prev = json.load(f)
+    kept = {k: v for k, v in (prev.get("labels") or {}).items() if k in allkeys}
+    prev_auto = [k for k in (prev.get("labels_auto") or []) if k in allkeys]
+    kept.update(labels)          # написанное в дереве карты сильнее: его правил человек
+    for k, v in (prev.get("labels") or {}).items():
+        if k in allkeys and k not in labels:
+            kept[k] = v
+    labels = kept
+except Exception:
+    pass
+
 reg = {
     "version": 1,
     "note": ("Единственный источник интересов. Ключ канонический английский. `tree` — структура, "
@@ -51,6 +73,7 @@ reg = {
     "tree": tree,
     "labels": labels,
     "synonyms": syn,
+    "labels_auto": prev_auto,
 }
 
 same_tax = tree == {low(b): {low(s): [low(w) for w in (ws or [])] for s, ws in (g or {}).items()} for b, g in TAX.items()}

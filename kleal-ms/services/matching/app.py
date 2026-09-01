@@ -73,7 +73,7 @@ TAXONOMY = {
               'history':['history','heritage','archaeology']},
   'tech':    {'startups':['startup','startups','product','founder','entrepreneur','business'],
               'engineering':['ai','ml','programming','coding','software','data','crypto','blockchain','devops','cloud','cybersecurity','security','python','javascript','rust','golang','opensource','frontend','backend'],
-              'career':['networking','investing','investor','career','mentorship','consulting','finance','vc','freelance','remote'],
+              'career':['networking','investing','investor','career','mentorship','consulting','finance','vc','freelance','remote','coworking'],
               'design':['design','ux','ui','figma','branding','typography','motion'],
               'dataai':['datascience','analytics','statistics','bigdata'],
               'web3':['web3','defi','nft','dao','ethereum','bitcoin','solidity','degen'],

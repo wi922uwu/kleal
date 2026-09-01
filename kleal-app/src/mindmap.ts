@@ -75,8 +75,8 @@ const EXTRA_ROOT: Record<string, string> = {
   breakfast: 'social',
   dancing: 'music',
   'food market': 'social',
-  languages: 'learning',
-  quiz: 'games',
+  // languages и quiz отсюда ушли: дерево выросло с 320 ключей до 448 и теперь даёт их само.
+  // Оставить их здесь значило бы показать на карте два одинаковых пузыря.
   run: 'sports',
 };
 

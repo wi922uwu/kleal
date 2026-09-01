@@ -337,7 +337,8 @@
     "finance",
     "vc",
     "freelance",
-    "remote"
+    "remote",
+    "coworking"
    ],
    "design": [
     "design",
@@ -1674,6 +1675,10 @@
   "remote": {
    "ru": "Удалёнка",
    "en": "Remote"
+  },
+  "coworking": {
+   "ru": "Коворкинг",
+   "en": "Coworking"
   },
   "growth": {
    "ru": "Маркетинг",
