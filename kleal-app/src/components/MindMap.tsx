@@ -101,7 +101,7 @@ const bellAt = (dx: number, dy: number) => near(dx) * near(dy);
  * под лупой и поднимается выше, и читается крупнее — ровно тогда, когда это нужно.
  */
 const PLATE_GAP = 5;
-const PLATE_H = 15;
+const PLATE_H = 16;
 
 /** Ступени затухания свечения — те же пять, что у карточки колоды; разбор там же. */
 const BLOOM: [string, number][] = [['0', 1], ['0.3', 0.88], ['0.55', 0.58], ['0.78', 0.24], ['1', 0]];
@@ -505,8 +505,8 @@ const s = StyleSheet.create({
   },
   plateText: {
     fontFamily: font.textMedium,
-    fontSize: 9,
-    lineHeight: 11,
+    fontSize: 10,
+    lineHeight: 12,
     color: color.onPrimary,
     textAlign: 'center',
   } as any,
