@@ -454,6 +454,12 @@ export default function Conversation() {
   });
 
   const toPlan = () => router.navigate({ pathname: '/plan', params: planParams() });
+  /** Открыть УЖЕ существующий план. Один переход на закреплённую карточку и лист действий. */
+  const openLivePlan = () => {
+    if (!livePlan) return;
+    router.navigate({ pathname: '/plan',
+      params: { id: livePlan.id, who: other, title: livePlan.title || intentTitle, photo } });
+  };
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -483,7 +489,7 @@ export default function Conversation() {
           <Pressable
             accessibilityRole="button"
             style={s.planCard}
-            onPress={() => router.navigate({ pathname: '/plan', params: { id: livePlan.id, who: other, title: livePlan.title || intentTitle, photo } })}
+            onPress={openLivePlan}
           >
             <View style={s.planIcon}><IconCalendar size={20} c={color.onPrimary} /></View>
             <View style={{ flex: 1 }}>
@@ -756,13 +762,22 @@ export default function Conversation() {
 
         <Sheet visible={actions} onClose={() => setActions(false)} title={CHAT.actionsTitle()}>
 
+            {/*
+              ПЛАН У ПАРЫ ОДИН. Пока он живой, эта кнопка ведёт К НЕМУ, а не заводит второй: иначе
+              оба видят «Создать план» после того, как встреча уже предложена, и второй человек
+              открывает форму, выбирает время и упирается в отказ сервера «с этим человеком уже
+              есть встреча». Подтверждают план на его собственном экране — там обе стороны.
+            */}
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ disabled: !canPlan }}
-              style={[s.actPri, !canPlan && { opacity: 0.45 }]}
-              onPress={() => startPending('plan')}
+              accessibilityState={{ disabled: !livePlan && !canPlan }}
+              style={[s.actPri, !livePlan && !canPlan && { opacity: 0.45 }]}
+              onPress={() => {
+                if (livePlan) { setActions(false); openLivePlan(); return; }
+                startPending('plan');
+              }}
             >
-              <Text style={s.actPriText}>{CHAT.createPlan()}</Text>
+              <Text style={s.actPriText}>{livePlan ? CHAT.openPlan() : CHAT.createPlan()}</Text>
             </Pressable>
 
             <Pressable accessibilityRole="button" style={s.actDark} onPress={() => startPending('end')}>
