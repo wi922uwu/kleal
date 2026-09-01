@@ -56,6 +56,7 @@ import kleal_lib as base                      # base._extract_json (keyless)
 import config                                  # the one topology table (ports/URLs/store paths)
 import mq                                      # очередь заданий: rabbit или ничего — решает KLEAL_MQ
 from llm_client import llm_complete, llm_stream
+import taxonomy
 import safety
 from http_util import send_json, read_json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -702,27 +703,17 @@ TOPIC_ALIASES = {
 }
 _ALIAS_KEYS = sorted(TOPIC_ALIASES, key=len, reverse=True)
 
-# MIRRORS matching-service's TAXONOMY (word -> broad category). Buddy needs it to keep only words the ranker
-# can resolve. KEEP IN SYNC with services/matching/app.py::TAXONOMY (a shared/taxonomy.py would be better —
-# see the note in the deploy summary).
-_TAX = {
-    "sports": "football soccer basketball volleyball handball tennis padel badminton squash pingpong running "
-              "jogging cycling biking swimming triathlon marathon gym fitness workout crossfit boxing mma "
-              "climbing bouldering yoga pilates stretching",
-    "social": "coffee tea brunch cafe dinner lunch food restaurant cooking bar drinks pub beer wine party club "
-              "clubbing walk walking stroll hang hangout chill talk chat",
-    "games": "dota valorant cs league apex fortnite fifa overwatch gaming chess boardgames poker cards dnd tabletop",
-    "culture": "cinema movies film series art museum gallery photography exhibition painting theatre opera ballet "
-               "standup books reading literature bookclub architecture urbanism city",
-    "tech": "startup startups product founder entrepreneur business ai ml programming coding software data crypto "
-            "blockchain networking investing investor career mentorship design ux ui",
-    "music": "concert gig festival music vinyl guitar piano drums dj jam producing singing karaoke band rave techno edm",
-    "outdoors": "hiking trekking nature camping mountains trail outdoor outdoors surfing kayaking skiing snowboard "
-                "travel roadtrip sightseeing fishing",
-    "learning": "spanish english french german italian portuguese russian language languages exchange practice "
-                "course workshop study",
-}
-BROAD_OF = {w: broad for broad, words in _TAX.items() for w in words.split()}
+# СЛОВАРЬ ТЕМ БЕРЁТСЯ ИЗ ОБЩЕГО МОДУЛЯ, А НЕ ПЕРЕПИСЫВАЕТСЯ СЮДА РУКАМИ.
+#
+# Здесь лежала своя копия — плоский список слов, набранный вручную, — и над ней стояло «KEEP IN SYNC
+# with services/matching/app.py::TAXONOMY (a shared/taxonomy.py would be better)». Синхронной она не
+# осталась: на 1 сентября 2026 в оригинале 441 слово, в копии 158. Двести восемьдесят три слова —
+# anime, baking, baseball, bachata, backend и так далее — buddy отбрасывал как «ранжировщик их не
+# поймёт», хотя тот понимает их все. Лишнего копия не выдумала и категории не перепутала: она просто
+# отстала и тихо резала воронку на треть с лишним.
+#
+# Теперь источник один и читается разбором исходника (shared/taxonomy.py) — расходиться нечему.
+BROAD_OF = taxonomy.broad_of()
 TYPE_OF_BROAD = {"sports": "sport", "games": "gaming", "tech": "networking", "learning": "language",
                  "music": "social", "culture": "social", "social": "social", "outdoors": "sport"}
 
