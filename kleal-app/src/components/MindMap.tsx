@@ -35,6 +35,15 @@ import { useLang } from '../i18n';
 const PEAK = 2;
 /** Радиус действия лупы. Заметно меньше половины поля — иначе растёт сразу всё. */
 const REACH = 78;
+/**
+ * НАСКОЛЬКО ПУЗЫРЬ ПОДТЯГИВАЕТСЯ К ПАЛЬЦУ — доля пути до него у самой сильной точки колокола.
+ *
+ * Одного увеличения мало: круги росли на месте, и поле оставалось неподвижной сеткой, по которой
+ * ездит лупа. Притяжение делает его живым — то, что рядом, стекается к пальцу и само подставляется
+ * под нажатие, а дальнее остаётся на месте. Треть пути — предел, за которым соседи слипаются в
+ * ком под пальцем и разобрать в нём уже нечего.
+ */
+const PULL = 0.28;
 /** Насколько палец может сползти, и это всё ещё тап, а не ведение. */
 const TAP_SLOP = 6;
 /**
@@ -58,8 +67,8 @@ function near(v: number): number {
   return a <= half ? 1 + (0.45 - 1) * (a / half) : 0.45 * (1 - (a - half) / half);
 }
 
-/** Во сколько раз вырос пузырь, центр которого отстоит от пальца на (dx, dy). */
-const scaleAt = (dx: number, dy: number) => 1 + near(dx) * near(dy) * (PEAK - 1);
+/** Доля близости пузыря, отстоящего от пальца на (dx, dy): 1 под пальцем, 0 за краем зоны. */
+const bellAt = (dx: number, dy: number) => near(dx) * near(dy);
 
 /**
  * ПЛАШКА С ИМЕНЕМ ВСТАЁТ НАД ПАЛЬЦЕМ, И ЭТО НЕ УКРАШЕНИЕ.
@@ -126,11 +135,24 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
     let best: string | null = null;
     let bestD = Infinity;
     for (const b of bubbles) {
-      const dx = x - b.x * width;
-      const dy = y - b.y * height;
+      const cx = b.x * width;
+      const cy = b.y * height;
+      // Расстояние до ПОКОЯ — им же считает колокол в нативном графе.
+      const rx = x - cx;
+      const ry = y - cy;
+      const bell = bellAt(rx, ry);
+      /*
+        Целимся туда, где пузырь ВИДЕН, а не где он лежит в покое: под пальцем он и вырос, и
+        подъехал. Считать по покою значило бы снова развести картинку с нажатием — ровно та
+        ошибка, из-за которой палец на одном кружке ловил соседний.
+      */
+      const dx = rx * (1 - bell * PULL);
+      const dy = ry * (1 - bell * PULL);
       const d = Math.sqrt(dx * dx + dy * dy);
-      // Радиус — от того размера, который у пузыря СЕЙЧАС, а не от «как если бы увеличены все».
-      if (d <= (b.size * scaleAt(dx, dy)) / 2 + TAP_SLACK && d < bestD) { bestD = d; best = b.key; }
+      if (d <= (b.size * (1 + bell * (PEAK - 1))) / 2 + TAP_SLACK && d < bestD) {
+        bestD = d;
+        best = b.key;
+      }
     }
     return best;
   };
@@ -151,7 +173,7 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
         moved.current = false;
         finger.setValue({ x, y });
         drag.current?.(true);
-        Animated.timing(live, { toValue: 1, duration: 90, useNativeDriver: false }).start();
+        Animated.timing(live, { toValue: 1, duration: 160, useNativeDriver: false }).start();
       },
       onPanResponderMove: (e) => {
         const { locationX: x, locationY: y } = e.nativeEvent;
@@ -176,11 +198,11 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
         const k = hit.current(e.nativeEvent.locationX, e.nativeEvent.locationY);
         if (k) toggle.current(k);
         drag.current?.(false);
-        Animated.timing(live, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+        Animated.timing(live, { toValue: 0, duration: 240, useNativeDriver: false }).start();
       },
       onPanResponderTerminate: () => {
         drag.current?.(false);
-        Animated.timing(live, { toValue: 0, duration: 200, useNativeDriver: false }).start();
+        Animated.timing(live, { toValue: 0, duration: 240, useNativeDriver: false }).start();
       },
     })
   ).current;
@@ -212,10 +234,21 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
       });
     const bell = Animated.multiply(near(finger.x as Animated.Value, cx),
                                    near(finger.y as Animated.Value, cy));
+    const grip = Animated.multiply(bell, live);
     const scale = Animated.add(
       new Animated.Value(1),
-      Animated.multiply(Animated.multiply(bell, live), new Animated.Value(PEAK - 1))
+      Animated.multiply(grip, new Animated.Value(PEAK - 1))
     );
+    /*
+      СДВИГ К ПАЛЬЦУ. Доля пути от покоя до пальца, взвешенная тем же колоколом: под пальцем —
+      почти треть, у края зоны — ноль. Смещение НЕ масштабируется вместе с кругом: в списке
+      преобразований сдвиг стоит раньше, и увеличение применяется уже к сдвинутому.
+    */
+    const pull = (v: Animated.Value, c: number) =>
+      Animated.multiply(Animated.subtract(v, new Animated.Value(c)),
+                        Animated.multiply(grip, new Animated.Value(PULL)));
+    const tx = pull(finger.x as Animated.Value, cx);
+    const ty = pull(finger.y as Animated.Value, cy);
     // Категория подписана всегда — по ней и ведут палец. Спутник проявляется вместе с увеличением:
     // полторы сотни подписей разом — каша, ради ухода от которой лупа и заведена.
     //
@@ -228,7 +261,7 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
       outputRange: [0, 0, 1],
       extrapolate: 'clamp',
     });
-    return { b, cx, cy, scale, labelOpacity };
+    return { b, cx, cy, scale, labelOpacity, tx, ty };
   }), [bubbles, width, height, finger, live]);
 
   return (
@@ -254,14 +287,15 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
 
 /** Подпись спутника: едет и растёт вместе со своим кругом, но живёт в верхнем слое. */
 function PlateView({ g }: { g: Graph }) {
-  const { b, cx, cy, scale, labelOpacity } = g;
+  const { b, cx, cy, scale, labelOpacity, tx, ty } = g;
   const d = b.size;
   return (
     <Animated.View
       pointerEvents="none"
       style={[
         s.plateSlot,
-        { left: cx - d / 2, top: cy - d / 2, width: d, height: d, transform: [{ scale }] },
+        { left: cx - d / 2, top: cy - d / 2, width: d, height: d,
+          transform: [{ translateX: tx }, { translateY: ty }, { scale }] },
       ]}
     >
       <Animated.View style={[s.plate, { bottom: d + PLATE_GAP, opacity: labelOpacity }]}>
@@ -276,10 +310,10 @@ function PlateView({ g }: { g: Graph }) {
  * (сложение, произведение и интерполяция — разные классы), поэтому здесь `any`: сузить его
  * можно только перечислением внутренних типов библиотеки, которых она не экспортирует.
  */
-type Graph = { b: Bubble; cx: number; cy: number; scale: any; labelOpacity: any };
+type Graph = { b: Bubble; cx: number; cy: number; scale: any; labelOpacity: any; tx: any; ty: any };
 
 function BubbleView({ g, on }: { g: Graph; on: boolean }) {
-  const { b, cx, cy, scale, labelOpacity } = g;
+  const { b, cx, cy, scale, labelOpacity, tx, ty } = g;
   const d = b.size;
   const root = b.kind === 'root';
   const t = deckTone[ROOT_TONE[b.root] || 'slate'];
@@ -303,7 +337,7 @@ function BubbleView({ g, on }: { g: Graph; on: boolean }) {
       style={[
         s.slot,
         { left: cx - d / 2, top: cy - d / 2, width: d, height: d,
-          zIndex: root ? 2 : 1, transform: [{ scale }] },
+          zIndex: root ? 2 : 1, transform: [{ translateX: tx }, { translateY: ty }, { scale }] },
         on ? { ...s.onShadow, shadowColor: color.primary }
            : { ...s.toneShadow, shadowColor: t.glow },
       ]}
