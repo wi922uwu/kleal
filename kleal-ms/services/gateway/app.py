@@ -27,7 +27,6 @@ import config                                  # the one topology table (ports/U
 # Upstreams come from shared/config.py, so the gateway no longer carries its own copy of the port
 # map. The old HUB_* variables still work — config.py reads them as aliases.
 ONB = config.ONBOARDING_URL
-PROF = config.PROFILE_URL
 MATCH = config.MATCH_URL
 BUDDY = config.BUDDY_URL
 FILTER = config.FILTER_URL
@@ -95,7 +94,9 @@ def route(path):
     if path.startswith("/api/onboarding/") or path.startswith("/api/v2/"):   # /api/v2/* = legacy alias
         return (ONB, path)
     # UI apps — prefix STRIPPED so each backend still believes it is served at "/".
-    for pfx, base in (("/profile", PROF), ("/onboarding", ONB)):
+    # /profile больше нет: сервис профиля был веб-страницей и целиком удалён (см. коммит).
+    # Остаётся один префикс, но цикл не разворачиваю — следующая поверхность встанет сюда же.
+    for pfx, base in (("/onboarding", ONB),):
         if path == pfx or path.startswith(pfx + "/") or path.startswith(pfx + "?"):
             rest = path[len(pfx):]
             if not rest.startswith("/"):
@@ -250,6 +251,6 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("Kleal gateway on http://%s:%d  (onb=%s prof=%s match=%s buddy=%s filter=%s)"
-          % (config.GATEWAY_BIND_HOST, PORT, ONB, PROF, MATCH, BUDDY, FILTER))
+    print("Kleal gateway on http://%s:%d  (onb=%s match=%s buddy=%s filter=%s)"
+          % (config.GATEWAY_BIND_HOST, PORT, ONB, MATCH, BUDDY, FILTER))
     ThreadingHTTPServer((config.GATEWAY_BIND_HOST, PORT), H).serve_forever()
