@@ -36,8 +36,19 @@ import { useLang } from '../i18n';
 
 /** Во сколько раз вырастает пузырь ровно под пальцем. */
 const PEAK = 2.6;
-/** Радиус действия лупы. Шире — значит в неё попадает больше соседей, и стекло читается стеклом. */
+/**
+ * ДВА РАДИУСА, И ЭТО РАЗНЫЕ ВЕЩИ.
+ *
+ * `REACH` — докуда поле РАССТУПАЕТСЯ. Он широкий: чем больше соседей чуть подвинулось, тем больше
+ * это похоже на стекло, а не на подмену одного кружка.
+ *
+ * `REACH_ZOOM` — докуда что-то РАСТЁТ. Он узкий, чуть больше самого пузыря, и падает квадратом.
+ * Раньше радиус был один на всё, и вместе с нужным разрастались двое-трое соседей: под пальцем
+ * оказывалось пятно вместо предмета, и непонятно было, что именно ты сейчас выберешь. Растёт то,
+ * на чём палец, — остальное только уступает дорогу.
+ */
 const REACH = 96;
+const REACH_ZOOM = 30;
 /** Какую долю пути до пальца проходит пузырь в самой сильной точке. */
 const PULL = 0.34;
 /**
@@ -60,7 +71,18 @@ const TAP_SLOP = 6;
 /** Запас при попадании — по видимому размеру. */
 const TAP_SLACK = 8;
 
-/** Доля близости: 1 под пальцем, 0 за краем зоны. Та же ломаная, что и была. */
+/**
+ * Доля увеличения. Считается по ЧЕСТНОМУ расстоянию, а не по осям: круг под пальцем должен быть
+ * кругом. Квадрат гасит хвост — на двадцати точках остаётся пять процентов, и сосед не растёт.
+ */
+function zoom(dx: number, dy: number): number {
+  const d2 = dx * dx + dy * dy;
+  if (d2 >= REACH_ZOOM * REACH_ZOOM) return 0;
+  const t = 1 - Math.sqrt(d2) / REACH_ZOOM;
+  return t * t;
+}
+
+/** Доля близости для РАССТУПАНИЯ: 1 под пальцем, 0 за краем зоны. Та же ломаная, что и была. */
 function near(v: number): number {
   const a = Math.min(Math.abs(v), REACH);
   const half = REACH / 2;
@@ -131,14 +153,16 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
     const f = finger.current;
     let moving = 0;
     let best: Node | null = null;
-    let bestBell = 0.55;                       // ниже этого имя не показываем: рано
+    let bestBell = 0.3;                        // ниже этого имя не показываем: палец ещё не на нём
     const t = (beat.current += 0.018);
     for (let i = 0; i < nodes.current.length; i++) {
       const n = nodes.current[i];
       let bell = 0;
+      let zm = 0;
       if (f.on) {
         bell = near(f.x - n.hx) * near(f.y - n.hy);
-        if (bell > bestBell) { bestBell = bell; best = n; }
+        zm = zoom(f.x - n.x, f.y - n.y);
+        if (zm > bestBell) { bestBell = zm; best = n; }
       }
       /*
         СМЕЩЕНИЕ ЛУПЫ — ДВА СЛАГАЕМЫХ, А НЕ ОДНО. Ближние тянутся к пальцу, средние по ободу чуть
@@ -151,7 +175,7 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
       const dx0 = Math.cos(t + n.ph) * DRIFT;
       const dy0 = Math.sin(t * 0.9 + n.ph * 1.3) * DRIFT;
       if (n.pop > 0.01) n.pop *= 0.82; else n.pop = 0;
-      const tr = n.hr * (1 + bell * (PEAK - 1) + n.pop * POP);
+      const tr = n.hr * (1 + zm * (PEAK - 1) + n.pop * POP);
       const tx = n.hx + dx0 + (f.on ? (f.x - n.hx) * k : 0);
       const ty = n.hy + dy0 + (f.on ? (f.y - n.hy) * k : 0);
       const dr = tr - n.r;
