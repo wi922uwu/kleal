@@ -33,9 +33,10 @@ import Svg, { Circle } from 'react-native-svg';
 import { buildMap, ROOT_TONE, type Bubble } from '../mindmap';
 import { color, deckTone, font } from '../theme';
 import { useLang } from '../i18n';
+import { hTap, hCommit } from '../haptics';
 
 /** Во сколько раз вырастает пузырь ровно под пальцем. */
-const PEAK = 2.6;
+const PEAK = 3.6;
 /**
  * ДВА РАДИУСА, И ЭТО РАЗНЫЕ ВЕЩИ.
  *
@@ -48,7 +49,7 @@ const PEAK = 2.6;
  * на чём палец, — остальное только уступает дорогу.
  */
 const REACH = 96;
-const REACH_ZOOM = 30;
+const REACH_ZOOM = 34;
 /** Какую долю пути до пальца проходит пузырь в самой сильной точке. */
 const PULL = 0.34;
 /**
@@ -79,7 +80,9 @@ function zoom(dx: number, dy: number): number {
   const d2 = dx * dx + dy * dy;
   if (d2 >= REACH_ZOOM * REACH_ZOOM) return 0;
   const t = 1 - Math.sqrt(d2) / REACH_ZOOM;
-  return t * t;
+  // Куб, а не квадрат: пик подняли до 3.6, и при квадрате вместе с ним подрастал бы сосед в
+  // двадцати точках — до полутора раз. Куб оставляет ему восемнадцать процентов, как и было.
+  return t * t * t;
 }
 
 /** Доля близости для РАССТУПАНИЯ: 1 под пальцем, 0 за краем зоны. Та же ломаная, что и была. */
@@ -149,6 +152,7 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
     Цикл САМ ОСТАНАВЛИВАЕТСЯ, когда двигаться стало некуда: поле в покое не тратит ни кадра.
   */
   const beat = useRef(0);
+  const lastBuzz = useRef(0);
   const tick = () => {
     const f = finger.current;
     let moving = 0;
@@ -189,7 +193,18 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
       circles.current[i]?.setNativeProps({ cx: n.x, cy: n.y, r: n.r });
     }
     const key = best ? best.b.key : '';
-    if (key !== hotKey.current) { hotKey.current = key; setHot(best); }
+    if (key !== hotKey.current) {
+      hotKey.current = key;
+      setHot(best);
+      /*
+        ЩЕЛЧОК НА КАЖДОМ НОВОМ ПУЗЫРЕ — то же, что у барабана выбора в iOS: палец ведут не глядя на
+        мелкие подписи, и отклик рукой говорит «ты перешёл на следующий» раньше, чем это прочитают
+        глазом. Порог по времени нужен: при быстром ведении через густое место смена может успеть
+        произойти дважды за кадр, и вместо щелчков вышла бы сплошная дрожь.
+      */
+      const now = Date.now();
+      if (key && now - lastBuzz.current > 45) { lastBuzz.current = now; hTap(); }
+    }
     // Поле дышит и без пальца, поэтому цикл не засыпает, пока карта на экране. `moving` остаётся:
     // по нему видно, что кадр не пустой, а `CALM` — порог, ниже которого шаг не делаем вовсе.
     frame.current = requestAnimationFrame(tick);
@@ -243,7 +258,8 @@ export function MindMap({ width, height, selected, onToggle, onDrag }: {
       },
       onPanResponderRelease: (e) => {
         const k = hit.current(e.nativeEvent.locationX, e.nativeEvent.locationY);
-        if (k) { popAt(k); toggle.current(k); }
+        // Выбор отзывается ЗАМЕТНЕЕ перехода: рука должна отличать «навёлся» от «записал».
+        if (k) { popAt(k); hCommit(); toggle.current(k); }
         finger.current = { x: -1, y: -1, on: false };
         drag.current?.(false);
         wake();
