@@ -29,7 +29,7 @@ import { Ambient, GLOW_SIGNIN } from '../src/components/Ambient';
 import { WHEEL } from '../src/wheel';
 import {
   IconBell, IconCalendar, IconClock, IconPin, IconBookmark, IconMic,
-  IconChat, IconGroups, IconImagePlaceholder,
+  IconChat, IconGroups, IconImagePlaceholder, IconChevronRight,
 } from '../src/components/icons';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
@@ -492,19 +492,43 @@ function GroupCard({ g, myArea }: { g: Group; myArea: string }) {
  */
 function NextMeetRow({ plan }: { plan: any }) {
   const router = useRouter();
-  const when = [String(plan.when || '').trim(),
-                plan.mode === 'online' ? HOME.onCall()
-                  : String(plan.venue || plan.district || '').trim()].filter(Boolean).join(' · ');
+  const ru = useLang() === 'ru';
+  /*
+    ДАТА СТОИТ ОТДЕЛЬНОЙ ПЛИТКОЙ, А ВРЕМЯ — В СТРОКЕ ПОД НАЗВАНИЕМ.
+
+    До этого всё съезжало в одну длинную подпись «Ср, 2 сент. · 12:30 · Barcelona», слева стояла
+    пустая плитка календаря в шестьдесят две точки, а «К плану» уезжала на собственную строку под
+    текстом. Карточка вырастала вдвое и переставала читаться с одного взгляда: самое главное —
+    КОГДА — тонуло в середине строки.
+
+    Число и месяц берём из `starts_at`, а не из готовой подписи: разбирать её обратно значило бы
+    зависеть от формата, который собирали не здесь. Нет отметки времени — показываем подпись как
+    есть, это честнее выдуманной даты.
+  */
+  const at = Number(plan.starts_at || 0);
+  const d = at ? new Date(at * 1000) : null;
+  const loc = ru ? 'ru-RU' : 'en-US';
+  const day = d ? String(d.getDate()) : '';
+  const mon = d ? d.toLocaleDateString(loc, { month: 'short' }).replace(/\.$/, '') : '';
+  const time = d ? d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: !ru }) : '';
+  const place = plan.mode === 'online' ? HOME.onCall() : String(plan.venue || plan.district || '').trim();
+  const when = [time || String(plan.when || '').trim(), place].filter(Boolean).join(' · ');
   return (
     <Pressable
       accessibilityRole="button"
       style={({ pressed }) => [s.nextRow, pressed && { opacity: 0.7 }]}
       onPress={() => router.navigate({ pathname: '/plan', params: { id: String(plan.id || '') } })}
     >
-      <View style={[s.meetAva, s.meetAvaEmpty]}>
-        <IconCalendar size={26} c={color.muted} />
-      </View>
-      <View style={{ flex: 1 }}>
+      {d ? (
+        <View style={s.dateTile}>
+          <IconCalendar size={18} />
+          <Text style={s.dateDay}>{day}</Text>
+          <Text style={s.dateMon}>{mon}</Text>
+        </View>
+      ) : (
+        <View style={s.dateTile}><IconCalendar size={22} /></View>
+      )}
+      <View style={s.nextText}>
         {/* Подпись над названием — иначе, потеряв заголовок секции, строка перестаёт называть себя. */}
         <Text style={s.stackCap}>{HOME.next()}</Text>
         <Text style={s.meetName} numberOfLines={1}>
@@ -516,7 +540,11 @@ function NextMeetRow({ plan }: { plan: any }) {
             <Text style={s.meta} numberOfLines={1}>{when}</Text>
           </View>
         ) : null}
-        <Text style={s.nextGo}>{HOME.goToPlan()}  ›</Text>
+      </View>
+      {/* Действие справа и в одну строку с названием: карточка остаётся одной строкой, а не тремя. */}
+      <View style={s.goWrap}>
+        <Text style={s.nextGo} numberOfLines={1}>{HOME.goToPlan()}</Text>
+        <View style={s.goBtn}><IconChevronRight size={20} c={color.onPrimary} /></View>
       </View>
     </Pressable>
   );
@@ -797,7 +825,17 @@ const s = StyleSheet.create({
     без растяжения она сжимается по содержимому, а колонка текста внутри получает нулевую ширину —
     на снимке от значка календаря остались только он сам да часики, весь текст исчез.
   */
-  nextRow: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
+  nextRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: space.md },
+  /** Дата плиткой: число крупно, месяц под ним. Узкая колонка, чтобы название получило ширину. */
+  dateTile: { width: 40, alignItems: 'center' },
+  dateDay: { fontSize: 22, lineHeight: 26, fontWeight: '800', color: color.fg, marginTop: 2 } as any,
+  dateMon: { ...type.caption, color: color.muted, marginTop: -2 } as any,
+  nextText: { flex: 1 },
+  goWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  goBtn: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
   /** Подпись над названием: карточка обязана называть себя, раз заголовка секции над ней нет. */
   stackCap: { ...type.labelSmall, color: color.muted, marginBottom: 2 } as any,
 
@@ -809,7 +847,7 @@ const s = StyleSheet.create({
   },
   nextTitle: { ...type.title, color: color.fg } as any,
   nextWhen: { ...type.bodySmall, color: color.muted } as any,
-  nextGo: { ...type.labelMedium, color: color.primary, marginTop: 4 } as any,
+  nextGo: { ...type.labelMedium, color: color.primary, fontWeight: '700' } as any,
 
   hist: {
     alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8,
