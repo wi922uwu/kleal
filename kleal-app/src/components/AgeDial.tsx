@@ -22,6 +22,12 @@
  * настоящей линейки: обычные деления серо-синие, каждое пятое выше и темнее, каждое десятое
  * подписано числом. Глазу есть за что зацепиться, и видно, куда едешь.
  *
+ * КРАЯ ТАЮТ МАСКОЙ, А НЕ ЗАКРАШИВАЮТСЯ. Сначала поверх делений лежали два прямоугольника цвета
+ * подложки — приём рабочий, пока подложка одноцветная. Под живым роликом он развалился: кремовая
+ * заливка поверх розового дала бежевую плашку поперёк экрана, и линейка читалась наклейкой. Теперь
+ * это настоящая прозрачность: деления нарисованы в SVG под маской с горизонтальным градиентом, и
+ * сквозь них видно ровно то, что за ними, чем бы оно ни было.
+ *
  * ЗВУК И ОТКЛИК на каждом новом значении — щелчок в палец и tick.wav в динамик. Порог по времени
  * обязателен: на быстром ведении значение меняется несколько раз за кадр, и без него вместо
  * щелчков выходит треск.
@@ -31,9 +37,11 @@
  */
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, PanResponder, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import Svg, { Defs, G, LinearGradient, Line, Mask, Rect, Stop, Text as SvgText } from 'react-native-svg';
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 import { color, font } from '../theme';
+
+const AG = Animated.createAnimatedComponent(G);
 import { hTap } from '../haptics';
 
 const MIN = 18;
@@ -44,8 +52,6 @@ const TICK_H = 26;
 const BIG_H = 36;
 const CENTER_H = 52;
 const BAND_H = 78;               // деления + подписи под ними
-/** Ширина растушёвки у края — с кадра (прямоугольник 132 поверх полосы). */
-const FADE = 120;
 /** Реже этого щёлкать нельзя: иначе на быстром ведении треск вместо щелчков. */
 const CLICK_MS = 45;
 /**
@@ -208,42 +214,59 @@ export function AgeDial({
       <Animated.Text style={[s.value, { transform: [{ scale }] }]}>{value}</Animated.Text>
 
       <View style={[s.band, { width }]} {...pan.panHandlers}>
-        <Animated.View
-          style={[s.rail, { left: half, transform: [{ translateX: dx }] }]}
-          pointerEvents="none"
-        >
-          {VALUES.map((v) => {
-            const big = v % 5 === 0;
-            const named = v % 10 === 0;
-            return (
-              <View key={v} style={[s.slot, { left: (v - MIN) * STEP - STEP / 2 }]}>
-                <View style={[s.tick, big && s.tickBig, { height: big ? BIG_H : TICK_H }]} />
-                {named ? <Text style={s.tickLabel}>{v}</Text> : null}
-              </View>
-            );
-          })}
-        </Animated.View>
-
-        {/* Центральное деление стоит НА МЕСТЕ, лента едет под ним — как у настоящей линейки. */}
-        <View style={[s.center, { left: half - 1.5 }]} pointerEvents="none" />
-
-        {/*
-          Растушёвка у краёв: на кадре деления не обрываются ножом, а тают. Рисуем SVG — линейного
-          градиента в стилях RN нет, а react-native-svg в проекте стоит.
-        */}
-        <Svg width={width} height={BAND_H} style={StyleSheet.absoluteFill} pointerEvents="none">
+        <Svg width={width} height={BAND_H}>
           <Defs>
-            <LinearGradient id="fadeL" x1="0" y1="0" x2="1" y2="0">
-              <Stop offset="0" stopColor={color.ambientBase} stopOpacity="1" />
-              <Stop offset="1" stopColor={color.ambientBase} stopOpacity="0" />
+            {/*
+              Маска: непрозрачная в середине, сходящая на нет к обоим краям. Белый здесь не цвет,
+              а плотность — в маске значение канала и есть непрозрачность.
+            */}
+            <LinearGradient id="edges" x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0" stopColor="#fff" stopOpacity="0" />
+              <Stop offset="0.26" stopColor="#fff" stopOpacity="1" />
+              <Stop offset="0.74" stopColor="#fff" stopOpacity="1" />
+              <Stop offset="1" stopColor="#fff" stopOpacity="0" />
             </LinearGradient>
-            <LinearGradient id="fadeR" x1="0" y1="0" x2="1" y2="0">
-              <Stop offset="0" stopColor={color.ambientBase} stopOpacity="0" />
-              <Stop offset="1" stopColor={color.ambientBase} stopOpacity="1" />
-            </LinearGradient>
+            <Mask id="fade">
+              <Rect x={0} y={0} width={width} height={BAND_H} fill="url(#edges)" />
+            </Mask>
           </Defs>
-          <Rect x={0} y={0} width={FADE} height={BAND_H} fill="url(#fadeL)" />
-          <Rect x={width - FADE} y={0} width={FADE} height={BAND_H} fill="url(#fadeR)" />
+
+          {/* Лента едет, маска стоит: поэтому сдвиг висит на группе, а маска — на её обёртке. */}
+          <G mask="url(#fade)">
+            <AG x={dx}>
+              {VALUES.map((v) => {
+                const big = v % 5 === 0;
+                const x = half + (v - MIN) * STEP;
+                return (
+                  <React.Fragment key={v}>
+                    <Line
+                      x1={x} y1={0} x2={x} y2={big ? BIG_H : TICK_H}
+                      stroke={big ? color.neutral400 : color.neutral300}
+                      strokeWidth={big ? 1.5 : 1}
+                      strokeLinecap="round"
+                    />
+                    {v % 10 === 0 ? (
+                      <SvgText
+                        x={x} y={BIG_H + 14}
+                        fill={color.muted}
+                        fontSize={11}
+                        fontFamily={font.text}
+                        textAnchor="middle"
+                      >
+                        {String(v)}
+                      </SvgText>
+                    ) : null}
+                  </React.Fragment>
+                );
+              })}
+            </AG>
+          </G>
+
+          {/* Метка стоит НА МЕСТЕ и вне маски: она не должна таять вместе с краями. */}
+          <Line
+            x1={half} y1={0} x2={half} y2={CENTER_H}
+            stroke={color.primary} strokeWidth={3} strokeLinecap="round"
+          />
         </Svg>
       </View>
     </View>
@@ -268,26 +291,5 @@ const s = StyleSheet.create({
     height: BAND_H,
     marginHorizontal: -20,
     alignSelf: 'center',
-    overflow: 'hidden',
-  },
-  rail: { position: 'absolute', top: 0, height: BAND_H },
-  slot: { position: 'absolute', top: 0, width: STEP, alignItems: 'center' },
-  tick: { width: 1, borderRadius: 1, backgroundColor: color.neutral300 },
-  /** Каждое пятое — выше и темнее: по ним и читают, где находишься. */
-  tickBig: { width: 1.5, backgroundColor: color.neutral400 },
-  tickLabel: {
-    marginTop: 4,
-    fontFamily: font.text,
-    fontSize: 10,
-    lineHeight: 12,
-    color: color.muted,
-  } as any,
-  center: {
-    position: 'absolute',
-    top: 0,
-    width: 3,
-    height: CENTER_H,
-    borderRadius: 1.5,
-    backgroundColor: color.primary,
   },
 });
