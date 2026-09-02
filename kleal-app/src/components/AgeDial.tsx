@@ -77,6 +77,8 @@ export function AgeDial({
   const from = useRef(offsetOf(value));
   const shown = useRef(value);
   const lastClick = useRef(0);
+  /** Идёт ли сейчас возврат от края. Без этого слушатель и stopAnimation зовут друг друга. */
+  const fixing = useRef(false);
   const change = useRef(onChange); change.current = onChange;
   const drag = useRef(onDragChange); drag.current = onDragChange;
 
@@ -101,11 +103,22 @@ export function AgeDial({
   useEffect(() => {
     const id = dx.addListener(({ value: cur }) => {
       const lim = offsetOf(MAX);
-      if (cur > STEP || cur < lim - STEP) {          // улетели за край — гасим и возвращаем
+      /*
+        ЗАЩЁЛКА ОТ ПОВТОРНОГО ВХОДА, И БЕЗ НЕЁ ЭКРАН ПАДАЛ. Слушатель, поймав выход за край, звал
+        stopAnimation; тот сам двигает значение и снова будит слушателя, который всё ещё видит
+        выход за край — и так до переполнения стека. Ловится это только на телефоне: «Maximum call
+        stack size exceeded», а стек — чередование addListener и stopAnimation.
+
+        Пока возврат идёт, второй раз его не запускаем. Значение при этом продолжает считаться:
+        число и щелчки не должны замирать на время отскока.
+      */
+      if (!fixing.current && (cur > STEP || cur < lim - STEP)) {
+        fixing.current = true;
+        const edge = cur > 0 ? MIN : MAX;
         dx.stopAnimation(() => {
-          const edge = cur > 0 ? MIN : MAX;
           tick(edge);
-          Animated.spring(dx, { toValue: offsetOf(edge), useNativeDriver: false, speed: 12, bounciness: 8 }).start();
+          Animated.spring(dx, { toValue: offsetOf(edge), useNativeDriver: false, speed: 12, bounciness: 8 })
+            .start(() => { fixing.current = false; });
         });
         return;
       }
@@ -162,6 +175,7 @@ export function AgeDial({
     // Лента чата попросит жест себе, как только палец поедет вертикально. Отказываем.
     onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: () => {
+      fixing.current = false;              // новый жест отменяет незаконченный отскок
       dx.stopAnimation((cur: number) => { from.current = cur; });
       drag.current?.(true);
     },
