@@ -615,6 +615,8 @@ export default function Chat() {
   return (
     <ChatShell
       ref={scroller}
+      /* Анкета — единственное место с живой подложкой: так она и на кадрах борда. */
+      ambientVideo
       title={HEADER_TITLE()}
       pct={pct}
       thread={thread}

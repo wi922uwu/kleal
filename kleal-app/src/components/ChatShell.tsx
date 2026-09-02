@@ -111,19 +111,23 @@ export const ChatShell = forwardRef<ScrollView, {
   scrollEnabled?: boolean;
   /** Подсказка в поле ввода, когда она зависит от шага. */
   composerPlaceholder?: string;
+  /** Поле ввода недоступно: на шаге, где ждут нажатия, писать пока нечего. */
+  composerDisabled?: boolean;
+  /** Живая подложка вместо нарисованной. Включена в анкете — там она и на кадрах борда. */
+  ambientVideo?: boolean;
   /** Поставить курсор в поле ввода — по кнопке «написать своё». */
   focusSignal?: number;
   onBack?: () => void;
   onSend?: (text: string) => void;
 }>(function ChatShell(
-  { title, pct, thread, typing, widget, headerExtra, brow, scrollEnabled = true, composerPlaceholder, focusSignal, onBack, onSend },
+  { title, pct, thread, typing, widget, headerExtra, brow, scrollEnabled = true, composerPlaceholder, composerDisabled, focusSignal, onBack, onSend, ambientVideo },
   scroller
 ) {
   const lang = useLang();
   const insets = useSafeAreaInsets();
   return (
     <View style={s.root}>
-      <Ambient glows={GLOW_FORM} />
+      <Ambient glows={GLOW_FORM} video={ambientVideo} />
       <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[s.wrap, { paddingTop: insets.top + 8 }]}>
           <View style={s.head}>
@@ -194,7 +198,8 @@ export const ChatShell = forwardRef<ScrollView, {
             {!typing ? widget : null}
           </ScrollView>
 
-          <Composer onBack={onBack} onSend={onSend} placeholder={composerPlaceholder} focusSignal={focusSignal} bottomInset={insets.bottom} />
+          <Composer onBack={onBack} onSend={onSend} placeholder={composerPlaceholder}
+                    disabled={composerDisabled} focusSignal={focusSignal} bottomInset={insets.bottom} />
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -231,6 +236,8 @@ export function BotHint({ children }: { children: React.ReactNode }) {
 export const chatStyles = StyleSheet.create({
   widget: { gap: space.md, marginTop: space.md, width: '100%' },
   hint: { ...type.caption, color: color.muted } as any,
+  /** Заголовок виджета: что человек сейчас делает. Стоит НАД подсказкой к жесту. */
+  mapTitle: { ...type.labelMedium, color: color.fg } as any,
   label: { ...type.bodySmall, color: color.muted } as any,
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   rowSplit: { flexDirection: 'row', gap: space.sm },

@@ -15,6 +15,7 @@
 import React from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import Svg, { Defs, Ellipse, RadialGradient, Rect, Stop, LinearGradient } from 'react-native-svg';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { color } from '../theme';
 
 /** Одно пятно: цвет, центр и радиусы в долях экрана, сила в центре. */
@@ -57,9 +58,20 @@ export function Ambient({
   glows = GLOW_WELCOME,
   /** Нижняя заливка фирменным красным — только на welcome, где рука выходит из цвета. */
   bleed = 0,
+  /**
+   * ЖИВАЯ ПОДЛОЖКА ВМЕСТО НАРИСОВАННОЙ. Ролик переливается сам, чего пятнами на SVG не сделать.
+   *
+   * Кладётся ПОВЕРХ нарисованной подложки, а не вместо неё, и это не лишняя работа: ролик десяти­
+   * битный, и на части Android он может не раскодироваться вовсе. Тогда под ним остаётся ровно тот
+   * фон, что был до сих пор, и экран выглядит как прежде, а не чёрным прямоугольником.
+   *
+   * Без звука и без органов управления: это фон, а не проигрыватель. Крутится по кругу.
+   */
+  video = false,
 }: {
   glows?: Glow[];
   bleed?: number;
+  video?: boolean;
 }) {
   const { width: w, height: h } = useWindowDimensions();
   return (
@@ -92,6 +104,28 @@ export function Ambient({
           <Rect x={0} y={h * (1 - bleed)} width={w} height={h * bleed} fill="url(#bleed)" />
         )}
       </Svg>
+      {video ? <AmbientVideo /> : null}
     </View>
+  );
+}
+
+/**
+ * Ролик заведён отдельным видом НАМЕРЕННО: `useVideoPlayer` — хук, и вызывать его в `Ambient`
+ * значило бы заводить проигрыватель на каждом экране с фоном, включая те, где ролика нет.
+ */
+function AmbientVideo() {
+  const player = useVideoPlayer(require('../../assets/video/ambient.mp4'), (p) => {
+    p.loop = true;
+    p.muted = true;
+    p.play();
+  });
+  return (
+    <VideoView
+      style={StyleSheet.absoluteFill}
+      player={player}
+      contentFit="cover"
+      nativeControls={false}
+      pointerEvents="none"
+    />
   );
 }
