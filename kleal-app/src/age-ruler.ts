@@ -64,7 +64,7 @@ export function ageRulerCopy(locale: ReplyLang, age: number) {
     return {
       label: 'Возраст',
       value: `${age} ${ruYears(age)}`,
-      hint: `Проведи по линейке. Свайп вверх увеличивает возраст, вниз — уменьшает. Диапазон от ${AGE_MIN} до ${AGE_MAX}.`,
+      hint: `Проведи по линейке. Свайп влево увеличивает возраст, вправо — уменьшает. Диапазон от ${AGE_MIN} до ${AGE_MAX}.`,
       increment: 'Увеличить возраст',
       decrement: 'Уменьшить возраст',
     };
@@ -73,7 +73,7 @@ export function ageRulerCopy(locale: ReplyLang, age: number) {
     return {
       label: 'Edad',
       value: `${age} años`,
-      hint: `Desliza la regla. Hacia arriba aumenta la edad y hacia abajo la reduce. De ${AGE_MIN} a ${AGE_MAX}.`,
+      hint: `Desliza la regla. Hacia la izquierda aumenta la edad y hacia la derecha la reduce. De ${AGE_MIN} a ${AGE_MAX}.`,
       increment: 'Aumentar la edad',
       decrement: 'Reducir la edad',
     };
@@ -81,7 +81,7 @@ export function ageRulerCopy(locale: ReplyLang, age: number) {
   return {
     label: 'Age',
     value: `${age} years`,
-    hint: `Swipe along the ruler. Swipe up to increase and down to decrease. Range ${AGE_MIN} to ${AGE_MAX}.`,
+    hint: `Swipe along the ruler. Swipe left to increase and right to decrease. Range ${AGE_MIN} to ${AGE_MAX}.`,
     increment: 'Increase age',
     decrement: 'Decrease age',
   };

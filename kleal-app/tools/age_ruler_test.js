@@ -70,6 +70,9 @@ for (const locale of ['ru', 'en', 'es']) {
 assert.equal(ruler.ageRulerCopy('ru', 21).value, '21 год');
 assert.equal(ruler.ageRulerCopy('ru', 22).value, '22 года');
 assert.equal(ruler.ageRulerCopy('ru', 25).value, '25 лет');
+assert.match(ruler.ageRulerCopy('ru', 28).hint, /влево.*увеличивает.*вправо.*уменьшает/);
+assert.match(ruler.ageRulerCopy('en', 28).hint, /left to increase.*right to decrease/);
+assert.match(ruler.ageRulerCopy('es', 28).hint, /izquierda aumenta.*derecha.*reduce/);
 assert(/accessibilityRole="adjustable"/.test(dial));
 assert(/accessibilityValue=\{\{ min: AGE_MIN, max: AGE_MAX, now: selected/.test(dial));
 assert(/onAccessibilityAction=\{onAccessibilityAction\}/.test(dial));
