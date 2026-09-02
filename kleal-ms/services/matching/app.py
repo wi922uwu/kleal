@@ -915,6 +915,51 @@ def _langs_of(prof):
     return [l for l in langs if l]
 
 
+# Тест характера -> настрой, которым оперирует ранжировщик.
+#
+# Признак social_context сверяет поле `vibe` двоих и знает пары-противоположности: introvert против
+# extrovert, chill против party. Поле при этом пустое у всех 833 строк, поэтому признак не влиял ни
+# на что — при том что вес у него в некоторых доменах второй по величине.
+#
+# Спрашивать заново нечего. Тест характера в профиле уже считает десять осей и кладёт их в
+# `persona.axes`; оси есть у 603 строк. Две из них ложатся на словарь ранжировщика без натяжки:
+#   energy — «люди заряжают или забирают силы», это и есть extrovert/introvert;
+#   group  — «один на один или большая компания», это chill/party.
+# Решает energy: это классическая ось, и она прямо названа в матрице конфликтов. Когда человек
+# ответил «зависит», решает размер компании — иначе половина ответивших осталась бы без настроя.
+_VIBE_BY_ENERGY = {"energised": "extrovert", "drained": "introvert"}
+_VIBE_BY_GROUP = {"crowd": "party", "small": "chill", "one": "chill"}
+
+
+def _vibe_from_persona(row):
+    """Настрой из осей теста. Пусто — если тест не пройден или обе оси молчат."""
+    p = row.get("persona")
+    axes = p.get("axes") if isinstance(p, dict) else None
+    if not isinstance(axes, dict):
+        return ""
+    v = _VIBE_BY_ENERGY.get(str(axes.get("energy") or "").strip().lower())
+    if v:
+        return v
+    return _VIBE_BY_GROUP.get(str(axes.get("group") or "").strip().lower(), "")
+
+
+def _fill_vibe(rows):
+    """Дописать `vibe` тем, у кого его нет, из пройденного теста. Строки копируются: пул кэшируется
+    и делится между запросами."""
+    out, filled = [], 0
+    for r in rows:
+        if isinstance(r, dict) and not str(r.get("vibe") or "").strip():
+            v = _vibe_from_persona(r)
+            if v:
+                out.append(dict(r, vibe=v))
+                filled += 1
+                continue
+        out.append(r)
+    if filled:
+        print("[pool] настрой выведен из теста характера: %d строк" % filled, flush=True)
+    return out
+
+
 def _modes_asked():
     """Кто какие форматы встречи уже выбирал — по его собственным интентам и заявкам.
 
@@ -999,7 +1044,7 @@ def load_candidates():
         # reply for exactly that. The fallback is kept one env var away for demos and for the
         # matching owner's own testing: KLEAL_DEMO_FALLBACK=1 restores the old behaviour.
         return CANDIDATES if DEMO_FALLBACK else []
-    store = _fill_formats(store)
+    store = _fill_vibe(_fill_formats(store))
     if not MERGE_DEMO:
         return store                               # opt-out: store authoritative (original behaviour)
     seen = {str(u.get("name", "")).strip().lower() for u in store}
