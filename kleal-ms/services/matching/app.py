@@ -2032,6 +2032,10 @@ def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
     if not CORE_V2:
         return _persona_order(match_candidates_legacy(intent, prof, ctx), intent)
     ctx = ctx or {}
+    # РЕЖИМ ЗАПОМИНАЕМ ДО НОРМАЛИЗАЦИИ. Она знает только offline и online и всё прочее сводит к
+    # offline (kleal_intent.MODE_ALLOWLIST) — а проверка на hybrid стоит на шестьдесят строк ниже
+    # и потому не могла стать истинной НИ РАЗУ: гибридный режим молча работал как офлайн.
+    _asked_mode = str((intent or {}).get("mode") or "").strip().lower()
     intent = ki.normalize_for_scoring(intent)              # §5: untrusted-output hardening (idempotent; PARITY)
     now = ctx.get('now') or time.time()
     if kc.is_expired(intent, now):                         # §4.3 Lifecycle: an expired intent never ranks
@@ -2096,7 +2100,7 @@ def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
         except (TypeError, ValueError):
             want_n = None
     over = None if n_final is not None else max(_PERSONA_OVERFETCH, (want_n or 0) + 8)
-    hybrid = str(intent.get('mode') or '') == 'hybrid' and over is not None
+    hybrid = _asked_mode == 'hybrid' and over is not None
     if hybrid:
         near, far, _meta = _hybrid_pair(intent, prof, ctx, eligible, budget, over)
         if not near and not far and eligible:
