@@ -32,6 +32,7 @@ import { useLang, T, getLang, replyLang, noticeWritten } from '../src/i18n';
 import { useOnb, set, get, patch, resetProfile, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding, agent, buddy as buddyApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
+import { clampAge } from '../src/age-ruler';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
 import { MindMap } from '../src/components/MindMap';
@@ -856,15 +857,16 @@ function StartW({ say, bot, asked, gone, onAsked, onGone }: any) {
   );
 }
 
-/** A.05 — кольцо возраста и пол. */
+/** A.05 — линейка возраста и пол. */
 function BasicsW({ say, goto, onDrag }: any) {
-  const [age, setAge] = useState(28);
+  const st = useOnb();
+  const [age, setAge] = useState(() => clampAge(st.profile.age));
   const [sex, setSex] = useState<string | null>(null);
   return (
     <View style={cs.widget}>
-      <Text style={cs.label}>{STEP_BASICS.ageLabel()}</Text>
-      <AgeDial value={age} onChange={setAge} onDragChange={onDrag} />
-      <Text style={cs.label}>{STEP_BASICS.sexLabel()}</Text>
+      <Text maxFontSizeMultiplier={1.6} style={[cs.label, s.basicsLabel]}>{STEP_BASICS.ageLabel()}</Text>
+      <AgeDial value={age} onChange={setAge} locale={replyLang()} onDragChange={onDrag} />
+      <Text maxFontSizeMultiplier={1.6} style={[cs.label, s.basicsLabel]}>{STEP_BASICS.sexLabel()}</Text>
       <View style={cs.row}>
         {SEXES.map(([k]) => (
           <Chip key={k} label={sexLabel(k)} on={sex === k} onPress={() => setSex(k)} />
@@ -1200,6 +1202,8 @@ function PhotoW({ say, onDone, name }: any) {
  * ровно один раз на оба чат-экрана, онбординг и создание интента.
  */
 const s = StyleSheet.create({
+  /** Fits the 1.6x Dynamic Type cap even though the shared label token has a fixed line height. */
+  basicsLabel: { lineHeight: 24 },
   /** Бровка «Это всё»: тонкая строка под шапкой. Тише ответов в ленте — это выход, а не ответ. */
   brow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,

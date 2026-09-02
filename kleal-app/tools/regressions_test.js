@@ -7,6 +7,7 @@
 // была невидимой — ни падения, ни красной строки, — и заметить возврат можно только так.
 const fs = require('fs');
 const path = require('path');
+require('./age_ruler_test');
 require('./interest_normalization_test');
 
 const ROOT = path.join(__dirname, '..');
