@@ -915,6 +915,54 @@ def _langs_of(prof):
     return [l for l in langs if l]
 
 
+def _modes_asked():
+    """Кто какие форматы встречи уже выбирал — по его собственным интентам и заявкам.
+
+    ЗАЧЕМ. Признак mode_format сверяет запрошенный режим с полем `formats` кандидата, и пустое поле
+    даёт «неизвестно». А «неизвестно» здесь не воздержание: оценка считается как среднее минус
+    штраф за непокрытие, поэтому каждый незаполненный признак ТЯНЕТ БАЛЛ ВНИЗ. На боевых данных
+    `formats` заполнен у двух живых людей из двадцати одного и у шестисот синтетических из шестисот
+    — то есть живые систематически проигрывали тестовым строкам по полю, которого у них нет.
+
+    Спрашивать заново нечего: формат человек выбирает руками на шаге после создания интента, и этот
+    выбор уже лежит в хранилище. Четырнадцать живых людей из двадцати одного успели его сделать —
+    кто-то семь раз офлайн, кто-то в основном онлайн. Берём то, что он делал, а не то, что о себе
+    заявил бы в анкете.
+    """
+    out = {}
+    for box in ("_intents", "_requests"):
+        for r in (SESSION.get(box) or []):
+            if not isinstance(r, dict):
+                continue
+            it = r.get("intent") if isinstance(r.get("intent"), dict) else r
+            m = str(it.get("mode") or "").strip().lower()
+            who = str(r.get("self") or r.get("from") or "").strip()
+            if who and m in ("offline", "online", "hybrid"):
+                out.setdefault(who, set()).add(m)
+    return out
+
+
+def _fill_formats(rows):
+    """Дописать `formats` тем, у кого его нет, из уже сделанного выбора. Строки КОПИРУЮТСЯ:
+    пул кэшируется и делится между запросами, а править общий список — значит отдать свою правку
+    следующему."""
+    seen = _modes_asked()
+    if not seen:
+        return rows
+    out, filled = [], 0
+    for r in rows:
+        if isinstance(r, dict) and not (r.get("formats") or []):
+            m = seen.get(str(r.get("name") or "").strip())
+            if m:
+                out.append(dict(r, formats=sorted(m)))
+                filled += 1
+                continue
+        out.append(r)
+    if filled:
+        print("[pool] формат выведен из выбранного: %d строк" % filled, flush=True)
+    return out
+
+
 def load_candidates():
     store = None
     if db.ENABLED:
@@ -951,6 +999,7 @@ def load_candidates():
         # reply for exactly that. The fallback is kept one env var away for demos and for the
         # matching owner's own testing: KLEAL_DEMO_FALLBACK=1 restores the old behaviour.
         return CANDIDATES if DEMO_FALLBACK else []
+    store = _fill_formats(store)
     if not MERGE_DEMO:
         return store                               # opt-out: store authoritative (original behaviour)
     seen = {str(u.get("name", "")).strip().lower() for u in store}
