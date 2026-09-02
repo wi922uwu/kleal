@@ -1282,7 +1282,12 @@ def _with_km(pool, prof, ctx=None):
     out = []
     for c in pool:
         there = _latlon(c)
-        out.append(dict(c, km=round(_haversine(me, there), 1)) if there else c)
+        # У КАНДИДАТА НЕТ КООРДИНАТ, А У ИЩУЩЕГО ЕСТЬ — ЭТО НЕ «РАССТОЯНИЕ НЕИЗВЕСТНО», А «МИМО».
+        # Раньше такая строка уезжала дальше без отметки km, и гейт радиуса её пропускал: он
+        # судит только тех, у кого расстояние посчитано. На боевых данных так проходили 203
+        # машинные фикстуры, и человек, просивший три километра, получал их в выдаче. У всех
+        # двадцати одного живого человека координаты есть, поэтому запрет никого из них не задел.
+        out.append(dict(c, km=round(_haversine(me, there), 1)) if there else dict(c, km_unknown=True))
     return out
 
 
@@ -1318,6 +1323,8 @@ def _hard_gates(intent, c, gate_ctx):
     reql = {str(l)[:2].lower() for l in (intent.get('requiredLanguages') or [])}
     if reql and not reql.issubset({str(l)[:2].lower() for l in (c.get('langs') or [])}):
         return False, 'missing a required language'
+    if intent.get('mode') == 'offline' and intent.get('radiusKm'):
+        if c.get('km_unknown'):                                  return False, 'distance unknown'
     if intent.get('mode') == 'offline' and intent.get('radiusKm') and c.get('km') is not None:
         try:
             if float(c['km']) > float(intent['radiusKm']):       return False, 'outside the radius'
