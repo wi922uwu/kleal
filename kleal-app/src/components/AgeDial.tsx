@@ -6,8 +6,17 @@
  *
  * ЛЕНТА ЕДЕТ ЗА ПАЛЬЦЕМ, А НЕ ПРЫГАЕТ ПО ДЕЛЕНИЯМ. Первая версия считала сдвиг от ОКРУГЛЁННОГО
  * значения, поэтому лента дёргалась шагами по восемнадцать точек и выглядела неподвижной. Теперь
- * сдвиг берётся прямо из жеста, а значение — из сдвига; на отпускании лента доезжает до ближайшего
- * деления пружиной и доносит набранную скорость, как настоящая рулетка.
+ * сдвиг берётся прямо из жеста, а значение — из сдвига.
+ *
+ * ВЫБЕГ НАСТОЯЩИЙ, А НЕ ПЕРЕНОС НА НЕСКОЛЬКО ДЕЛЕНИЙ. Сначала на отпускании лента просто прыгала
+ * пружиной на пять делений вперёд — это читалось как рывок, а не как раскрутка. Теперь бросок
+ * катится с трением (`Animated.decay`), по дороге щёлкая на каждом делении, сам замедляется и в
+ * конце мягко доезжает до ближайшего. Долетев до края диапазона, лента упирается и отскакивает
+ * обратно, а не застревает за пределом.
+ *
+ * ДРАЙВЕР У СДВИГА — JS, И ЭТО НАМЕРЕННО. Значение нужно знать НА КАЖДОМ КАДРЕ: по нему щёлкает
+ * звук и меняется число. Нативный драйвер отдаёт его в JS с задержкой и пачками, отчего щелчки
+ * отстают от картинки. Здесь это ничего не стоит: едет ОДИН вид, а не сотня.
  *
  * ДЕЛЕНИЯ ВИДНО. Были цветом волосяной линии на светлом фоне — то есть почти никак. Теперь как у
  * настоящей линейки: обычные деления серо-синие, каждое пятое выше и темнее, каждое десятое
@@ -39,6 +48,11 @@ const BAND_H = 78;               // деления + подписи под ни�
 const FADE = 120;
 /** Реже этого щёлкать нельзя: иначе на быстром ведении треск вместо щелчков. */
 const CLICK_MS = 45;
+/**
+ * Трение выбега. Меньше — короче катится. У RN по умолчанию 0.998, и с ним линейка едет секунды
+ * три: для выбора возраста это долго, человек ждёт, пока она успокоится.
+ */
+const FRICTION = 0.992;
 
 const VALUES = Array.from({ length: MAX - MIN + 1 }, (_, i) => MIN + i);
 const clamp = (v: number) => Math.max(MIN, Math.min(MAX, v));
@@ -80,6 +94,26 @@ export function AgeDial({
     return () => { try { player.current?.remove(); } catch {} };
   }, []);
 
+  /*
+    Значение считается ИЗ СДВИГА на каждом кадре — и во время ведения, и во время выбега. Поэтому
+    щелчки идут ровно тогда, когда деление проходит под меткой, а не когда JS об этом узнал.
+  */
+  useEffect(() => {
+    const id = dx.addListener(({ value: cur }) => {
+      const lim = offsetOf(MAX);
+      if (cur > STEP || cur < lim - STEP) {          // улетели за край — гасим и возвращаем
+        dx.stopAnimation(() => {
+          const edge = cur > 0 ? MIN : MAX;
+          tick(edge);
+          Animated.spring(dx, { toValue: offsetOf(edge), useNativeDriver: false, speed: 12, bounciness: 8 }).start();
+        });
+        return;
+      }
+      tick(clamp(Math.round(-cur / STEP) + MIN));
+    });
+    return () => dx.removeListener(id);
+  }, []);
+
   const tick = (v: number) => {
     if (v === shown.current) return;
     shown.current = v;
@@ -98,19 +132,28 @@ export function AgeDial({
     } catch {}
   };
 
-  /** Довести ленту до ближайшего деления и сообщить значение. */
-  const snap = (raw: number, vx = 0) => {
-    // Скорость доносит ленту дальше — как у настоящей рулетки. Больше пяти делений за бросок не
-    // отдаём: иначе одним движением улетаешь с восемнадцати на семьдесят и теряешь, где был.
-    const carry = Math.max(-5, Math.min(5, Math.round(-vx * 4)));
-    const v = clamp(Math.round(-raw / STEP) + MIN + carry);
-    tick(v);
-    Animated.spring(dx, {
-      toValue: offsetOf(v),
-      useNativeDriver: true,
-      speed: 14,
-      bounciness: 6,
-    }).start();
+  /** Доехать до ближайшего деления — тем, что осталось после выбега. */
+  const settle = () => {
+    dx.stopAnimation((cur: number) => {
+      const v = clamp(Math.round(-cur / STEP) + MIN);
+      tick(v);
+      Animated.spring(dx, {
+        toValue: offsetOf(v),
+        useNativeDriver: false,
+        speed: 16,
+        bounciness: 4,
+      }).start();
+    });
+  };
+
+  /**
+   * Отпустили — лента катится дальше сама и замедляется трением. Слабый жест не бросок: катить
+   * от него нечего, доводим сразу, иначе линейка ползёт после каждого касания.
+   */
+  const release = (vx: number) => {
+    if (Math.abs(vx) < 0.08) { settle(); return; }
+    Animated.decay(dx, { velocity: vx, deceleration: FRICTION, useNativeDriver: false })
+      .start(({ finished }) => { if (finished) settle(); });
   };
 
   const pan = useMemo(() => PanResponder.create({
@@ -124,18 +167,16 @@ export function AgeDial({
     },
     onPanResponderMove: (_e, g) => {
       // Влево — старше: лента идёт под пальцем один в один, без округления.
-      const raw = from.current + g.dx;
-      const lim = offsetOf(MAX) - STEP;    // за краями лента вязнет, а не улетает
-      dx.setValue(Math.max(lim, Math.min(STEP, raw)));
-      tick(clamp(Math.round(-raw / STEP) + MIN));
+      // Предел и пересчёт значения держит слушатель выше — здесь только сдвиг.
+      dx.setValue(from.current + g.dx);
     },
     onPanResponderRelease: (_e, g) => {
       drag.current?.(false);
-      dx.stopAnimation((cur: number) => snap(cur, g.vx));
+      release(g.vx);
     },
     onPanResponderTerminate: () => {
       drag.current?.(false);
-      dx.stopAnimation((cur: number) => snap(cur, 0));
+      settle();
     },
   }), []);
 
@@ -143,7 +184,7 @@ export function AgeDial({
   useEffect(() => {
     if (value === shown.current) return;
     shown.current = value;
-    Animated.spring(dx, { toValue: offsetOf(value), useNativeDriver: true, speed: 14, bounciness: 6 }).start();
+    Animated.spring(dx, { toValue: offsetOf(value), useNativeDriver: false, speed: 14, bounciness: 6 }).start();
   }, [value]);
 
   const scale = pop.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
