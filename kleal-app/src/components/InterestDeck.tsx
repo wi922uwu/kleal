@@ -421,12 +421,12 @@ const s = StyleSheet.create({
     elevation: 5,
   },
   sheen: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: '#FFFFFFA6',
     borderRadius: CARD_R,
   },
-  veil: { ...StyleSheet.absoluteFillObject, backgroundColor: color.card },
+  veil: { ...StyleSheet.absoluteFill, backgroundColor: color.card },
   label: {
     ...type.display,
     fontSize: 22,

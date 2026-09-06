@@ -163,7 +163,7 @@ export default function GroupInvite() {
                     <IconPerson size={18} />
                     {m.photo ? (
                       <Image source={{ uri: mediaUrl(String(m.photo)) }}
-                             style={[s.memberAv, StyleSheet.absoluteFillObject]} />
+                             style={[s.memberAv, StyleSheet.absoluteFill]} />
                     ) : null}
                   </View>
                   <Text style={s.memberName} numberOfLines={1}>{nm}</Text>

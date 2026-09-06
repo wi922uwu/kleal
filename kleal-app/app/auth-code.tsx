@@ -346,7 +346,7 @@ const s = StyleSheet.create({
   cellBad: { borderWidth: 1, borderColor: color.danger },
   cellText: { ...type.codeDigit, color: color.fg } as any,
   /** Поле лежит поверх ячеек и не видно: прозрачный текст, нулевая непрозрачность курсора. */
-  hidden: { ...StyleSheet.absoluteFillObject, opacity: 0, color: 'transparent' } as any,
+  hidden: { ...StyleSheet.absoluteFill, opacity: 0, color: 'transparent' } as any,
 
   /** Отладочная полоса: намеренно чужеродная в этом интерфейсе — её нельзя не заметить. */
   devBox: {

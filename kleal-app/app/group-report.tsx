@@ -6,6 +6,7 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
+import { appendUploadFile } from '../src/upload-file';
 import { group, newIdem, type GroupReportReason, type GroupReportResult,
   type ReportEvidence } from '../src/api';
 import { useOnb } from '../src/state';
@@ -67,11 +68,8 @@ export default function GroupReportScreen() {
     if (Platform.OS === 'web' && asset.file) {
       form.append('file', asset.file, asset.name);
     } else {
-      form.append('file', {
-        uri: asset.uri,
-        name: asset.name || `evidence-${Date.now()}`,
-        type: asset.mimeType || 'application/octet-stream',
-      } as any);
+      await appendUploadFile(form, asset.uri, asset.name || `evidence-${Date.now()}`,
+        asset.mimeType || 'application/octet-stream');
     }
     const uploaded = await group.uploadReportEvidence(form);
     if (!uploaded?.ok || !uploaded.id || !uploaded.url || !uploaded.name || !uploaded.mime_type) {

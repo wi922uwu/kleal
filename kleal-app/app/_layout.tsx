@@ -30,9 +30,28 @@ import { PostCallPrompt } from '../src/components/PostCallPrompt';
 const ART_FIRST = [
   require('../assets/art/logo-wordmark.png'),
   require('../assets/art/welcome-hand.png'),
-];
-const ART_REST = [
+  // Intro can be opened directly: its fixed photo must be ready before the first frame.
   require('../assets/art/usp-friends-v2.jpg'),
+];
+/**
+ * Графика ГЛАВНОЙ. Греется раньше всего остального фонового, и это не вкусовщина: вернувшийся
+ * человек попадает на главную сразу после заставки, а экранов входа больше не увидит никогда.
+ *
+ * Здесь же самые тяжёлые файлы приложения — шесть картинок на 2.6 МБ, до 693 КБ каждая. Пока они
+ * не грелись вовсе, и это было видно: на месте картинки стоял серый квадрат, который сменялся
+ * рисунком через заметную паузу. В заставку их класть нельзя — двумя с половиной мегабайтами
+ * запуск удлиняется для всех, включая тех, кто до главной ещё не дошёл.
+ */
+const ART_HOME = [
+  require('../assets/art/wheel/sneaker.png'),
+  require('../assets/art/wheel/padel.png'),
+  require('../assets/art/wheel/gamepad.png'),
+  require('../assets/art/wheel/cherries.png'),
+  require('../assets/art/wheel/laptop.png'),
+  require('../assets/art/wheel/disco.png'),
+];
+
+const ART_REST = [
   require('../assets/art/logo-mark.png'),
   require('../assets/art/icon-apple.png'),
   require('../assets/art/icon-google.png'),
@@ -73,8 +92,11 @@ export default function RootLayout() {
     const first = Asset.loadAsync(ART_FIRST).catch(() => {});
     Promise.all([initLang(), restore(), first]).finally(() => {
       setReady(true);
-      // Остальное греется уже под нарисованной заставкой и никого не ждёт.
-      Asset.loadAsync(ART_REST).catch(() => {});
+      // Остальное греется уже под нарисованной заставкой и никого не ждёт. Порядок важен:
+      // главная идёт первой, потому что до неё доходят все, а до экранов входа — только новые.
+      Asset.loadAsync(ART_HOME)
+        .catch(() => {})
+        .finally(() => { Asset.loadAsync(ART_REST).catch(() => {}); });
 
       // Сводка догоняет профиль сама, с какого бы экрана он ни изменился. Включается ПОСЛЕ
       // restore(): иначе первое же восстановление с диска выглядит как правка и зовёт модель.
@@ -150,6 +172,11 @@ export default function RootLayout() {
         <Stack.Screen name="activity" options={{ animation: 'none' }} />
         <Stack.Screen name="messages" options={{ animation: 'none' }} />
         <Stack.Screen name="profile/index" options={{ animation: 'none' }} />
+        {/*
+          История разговоров — модальным окном: заглянул и вернулся туда, откуда пришёл. Вкладка
+          заняла бы постоянное место в навигации под то, что открывают изредка.
+        */}
+        <Stack.Screen name="history" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
       </Stack>
       <PostCallPrompt />
     </SafeAreaProvider>

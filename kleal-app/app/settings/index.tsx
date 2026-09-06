@@ -3,17 +3,23 @@
  *
  * UX-каркас: вид натянется поверх, копия и правила в src/settings.ts.
  *
- * Строки, за которыми в продукте ничего нет (оплата, смена пароля, уведомления, тёмная тема),
- * показаны приглушёнными и не нажимаются. Это то же правило, что и на нижней панели: строка,
- * которая выглядит рабочей и молча ничего не делает, хуже честно выключенной — человек жмёт её
- * второй и третий раз, думая, что промахнулся.
+ * Приглушённых строк здесь больше нет ни одной. Прежде их было пять — оплата, смена пароля,
+ * уведомления, помощь, тёмная тема, — и они честно не нажимались, но всё равно занимали экран и
+ * обещали то, чего в продукте не будет: платежей нет, пушей нет (в package.json нет даже
+ * expo-notifications), тёмных токенов в теме нет, а пароля у человека не существует — вход по коду
+ * на почту. Строку, за которой ничего нет, правильнее убрать, чем аккуратно выключить: список
+ * читают сверху вниз, и каждая мёртвая строка — лишний шаг до живой.
+ *
+ * У каждой оставшейся строки есть подпись: список из одних заголовков заставляет открывать экран,
+ * чтобы понять, тот ли он.
  */
 import React from 'react';
-import { Text, StyleSheet, Pressable, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, Segments } from '../../src/components/ProfileShell';
 import { useLang, setLang, getLang } from '../../src/i18n';
 import { useOnb, reset } from '../../src/state';
+import { forgetOwner } from '../../src/history';
 import { SETTINGS, SETTING_ROWS, SettingRow } from '../../src/settings';
 import { auth, setSession } from '../../src/api';
 import { SIGNOUT } from '../../src/profile';
@@ -32,6 +38,10 @@ export default function Settings() {
       // продолжал бы существовать. Не ждём ответа — выход не должен зависеть от связи, — но
       // и не молчим: сервер гасит именно эту сессию, остальные устройства не трогая.
       auth.signOut().catch(() => {});
+      // ПОРЯДОК ВАЖЕН: историю стираем ДО того, как гасим сессию. Владелец записи определяется по
+      // логину или токену, и после `setSession('')` их может уже не быть — тогда стирать было бы
+      // нечего, а переписка осталась бы лежать на диске.
+      forgetOwner();
       setSession('');
       reset();
       router.replace('/');
@@ -70,7 +80,10 @@ function Row({ row, onGo }: { row: SettingRow; onGo: (to: string) => void }) {
   if (row.control === 'lang') {
     return (
       <Card style={s.row}>
-        <Text style={s.title}>{row.title()}</Text>
+        <View style={s.text}>
+          <Text style={s.title}>{row.title()}</Text>
+          <Text style={s.sub}>{row.sub()}</Text>
+        </View>
         <Segments
           options={[['ru', 'RU'], ['en', 'EN']]}
           value={getLang()}
@@ -80,27 +93,17 @@ function Row({ row, onGo }: { row: SettingRow; onGo: (to: string) => void }) {
     );
   }
 
-  // Тёмной темы в приложении нет — ни одного тёмного токена. Рисовать выключатель, который
-  // ничего не переключает, значит обещать то, чего не существует.
-  if (row.control === 'dark') {
-    return (
-      <Card style={[s.row, s.off]}>
-        <Text style={s.title}>{row.title()}</Text>
-        <Text style={s.soon}>{SETTINGS.soon()}</Text>
-      </Card>
-    );
-  }
-
-  const live = !!row.to;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ disabled: !live }}
-      onPress={live ? () => onGo(row.to!) : undefined}
-      style={({ pressed }) => [s.card, s.row, !live && s.off, pressed && live && { opacity: 0.9 }]}
+      onPress={() => onGo(row.to!)}
+      style={({ pressed }) => [s.card, s.row, pressed && { opacity: 0.9 }]}
     >
-      <Text style={s.title}>{row.title()}</Text>
-      {live ? <Text style={s.chev}>›</Text> : <Text style={s.soon}>{SETTINGS.soon()}</Text>}
+      <View style={s.text}>
+        <Text style={s.title}>{row.title()}</Text>
+        <Text style={s.sub}>{row.sub()}</Text>
+      </View>
+      <Text style={s.chev}>›</Text>
     </Pressable>
   );
 }
@@ -110,10 +113,10 @@ function Row({ row, onGo }: { row: SettingRow; onGo: (to: string) => void }) {
 const s = StyleSheet.create({
   card: { backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md },
-  off: { opacity: 0.45 },
-  title: { flex: 1, ...type.body, color: color.fg } as any,
+  text: { flex: 1 },
+  title: { ...type.body, color: color.fg } as any,
+  sub: { ...type.caption, color: color.muted, marginTop: 2 } as any,
   chev: { fontSize: 22, color: color.neutral400 },
-  soon: { ...type.caption, color: color.muted } as any,
   logout: { height: 54, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
   logoutText: { ...type.button, color: '#fff' } as any,
 });

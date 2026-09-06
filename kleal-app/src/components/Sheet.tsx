@@ -87,7 +87,7 @@ export function SheetItem({
 // ===== вид
 
 const s = StyleSheet.create({
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: color.scrim },
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: color.scrim },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     backgroundColor: color.card,

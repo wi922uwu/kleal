@@ -157,7 +157,7 @@ export function RadiusMap({
 
 const s = StyleSheet.create({
   pinWrap: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
   },

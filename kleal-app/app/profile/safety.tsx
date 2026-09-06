@@ -1,125 +1,77 @@
 /**
  * Профиль → «Безопасность и приватность».
  *
- * Шесть групп переключателей, и у каждой группы своя подпись про то, что означает «включено». Это
- * не многословие: в одной группе включённое = безопаснее, в другой = шире охват, и по виду тумблера
- * их не отличить. Человек должен понимать, в какую сторону он двигает ползунок.
+ * ЧТО ЗДЕСЬ БЫЛО. Пятнадцать переключателей в пяти группах: «не встречаться поздно вечером»,
+ * «избегать баров», «делиться планом с доверенным контактом», «никогда не делать выводов о
+ * чувствительном», «не сводить меня с теми, кого я могу знать» и так далее. Сверка с боевым кодом
+ * показала, что девять из них не читает НИКТО и НИГДЕ, ещё три пишет онбординг, но подбор их не
+ * смотрит. Даже «поставить Kleal на паузу» уходила в поле `safety.paused`, которого не читает ни
+ * одна служба, — а подбор смотрит на `receiving.status`. Человек двигал ползунок, и не менялось
+ * ничего.
  *
- * Записывается всё через SAFETY_PATH, потому что экранные флаги и поля профиля не один в один:
- * «учиться на моих оценках» и «делать выводы обо мне» оба живут в permissions.rememberPreferences,
- * а «подбирать по интересам и району» — в useProfileForMatching. Без этой таблицы переключатель
- * менял бы своё, а профиль — своё.
+ * Обещание безопасности, которое ничего не делает, хуже отсутствия обещания: на него полагаются.
+ *
+ * ЧТО ВМЕСТО. Осталось ровно то, что исполняется: список заблокированных (жёсткий фильтр подбора,
+ * в обе стороны) и два экрана настроек над политикой приёма, которую подбор читает по-настоящему.
+ * Экран стал коротким — потому что правды оказалось ровно на столько.
  */
-import React, { useMemo } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ProfileShell, Card, ToggleRow, Segments, Divider } from '../../src/components/ProfileShell';
-import { useLang } from '../../src/i18n';
-import { useOnb, set, profileForAttach } from '../../src/state';
-import { profile as profileApi } from '../../src/api';
-import { profileData, SAFETY_GROUPS, SAFETY_LEAD, SAFETY_PATH, SECTIONS } from '../../src/profile';
-import { BLOCKED } from '../../src/settings';
+import { ProfileShell, Card } from '../../src/components/ProfileShell';
+import { useLang, T } from '../../src/i18n';
+import { SECTIONS } from '../../src/profile';
+import { BLOCKED, VISIBILITY, AVAILABILITY } from '../../src/settings';
 import { color, radius as rad, space, type } from '../../src/theme';
 
 export default function Safety() {
-  const lang = useLang();
+  useLang();
   const router = useRouter();
-  const st = useOnb();
-  const flags = useMemo(() => profileData(st.profile).safety, [st.profile, lang]);
 
-  /** safety уезжает на сервер целиком: это одно из полей белого списка profile-update. */
-  const push = () => {
-    const name = st.profile.name;
-    if (name) profileApi.update(name, { safety: (profileForAttach() as any).safety || {} }).catch(() => {});
-  };
-
-  const setFlag = (flag: string, v: boolean) => {
-    const path = SAFETY_PATH[flag];
-    if (!path) return;
-    set(path, v);
-    push();
-  };
+  const rows: { title: string; sub: string; to: string }[] = [
+    { title: BLOCKED.title(), sub: BLOCKED.lead(), to: '/settings/blocked' },
+    { title: VISIBILITY.title(), sub: VISIBILITY.statusLead(), to: '/settings/visibility' },
+    { title: AVAILABILITY.title(), sub: AVAILABILITY.domainsLead(), to: '/settings/availability' },
+  ];
 
   return (
     <ProfileShell title={SECTIONS[2].title()} onBack={() => router.back()}>
       <Card>
-        <Text style={s.leadTitle}>{SAFETY_LEAD.title()}</Text>
-        <Text style={s.leadBody}>{SAFETY_LEAD.body()}</Text>
+        <Text style={s.leadTitle}>{T('Всё под твоим контролем', 'You’re in control')}</Text>
+        <Text style={s.leadBody}>
+          {T(
+            'Kleal показывает район города, а не точное место. Уйти из поиска можно одним тапом, и это подействует сразу: на паузе тебя не находит никто.',
+            'Kleal shares your city area, never your exact spot. You can leave search with one tap, and it takes effect at once: while paused, nobody can find you.',
+          )}
+        </Text>
       </Card>
 
-      {/* Кадр B.11: заблокированные — первая строка экрана, до всех переключателей. */}
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => router.navigate('/settings/blocked')}
-        style={({ pressed }: { pressed: boolean }) => [s.blocked, pressed && { opacity: 0.9 }]}
-      >
-        <View style={{ flex: 1 }}>
-          <Text style={s.blockedTitle}>{BLOCKED.title()}</Text>
-          <Text style={s.blockedSub}>{BLOCKED.lead()}</Text>
-        </View>
-        <Text style={s.blockedChev}>›</Text>
-      </Pressable>
-
-      {SAFETY_GROUPS.map((g, gi) => (
-        <View key={gi} style={{ gap: space.sm }}>
-          <Text style={s.groupTitle}>{g.t()}</Text>
-          <Text style={s.groupCap}>{g.c()}</Text>
-          <Card style={{ gap: 0 }}>
-            {g.items.map((it, ii) => {
-              const prev = g.items[ii - 1];
-              const rule = ii > 0 && it.k !== 'sub' && prev.k !== 'sub';
-              if (it.k === 'sub') {
-                return <Text key={ii} style={s.sub}>{it.label()}</Text>;
-              }
-              if (it.k === 'choice') {
-                return (
-                  <View key={ii}>
-                    {rule ? <Divider /> : null}
-                    <View style={s.choice}>
-                      <Text style={s.rowLabel}>{it.label()}</Text>
-                      <Text style={s.rowDesc}>{it.desc()}</Text>
-                      <Segments
-                        options={it.options.map((o, n) => [n === 1 ? 'auto' : 'ask', o()] as [string, string])}
-                        value={flags.autonomy}
-                        onChange={(v) => { set('safety.autonomy', v); push(); }}
-                      />
-                    </View>
-                  </View>
-                );
-              }
-              return (
-                <View key={ii}>
-                  {rule ? <Divider /> : null}
-                  <ToggleRow
-                    label={it.label()}
-                    desc={it.desc()}
-                    value={!!(flags as any)[it.flag]}
-                    onChange={(v) => setFlag(it.flag, v)}
-                  />
-                </View>
-              );
-            })}
-          </Card>
-        </View>
+      {rows.map((r) => (
+        <Pressable
+          key={r.to}
+          accessibilityRole="button"
+          onPress={() => router.navigate(r.to as any)}
+          style={({ pressed }) => [s.row, pressed && { opacity: 0.9 }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowTitle}>{r.title}</Text>
+            <Text style={s.rowSub}>{r.sub}</Text>
+          </View>
+          <Text style={s.chev}>›</Text>
+        </Pressable>
       ))}
     </ProfileShell>
   );
 }
 
 const s = StyleSheet.create({
-  blocked: {
-    flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.lg,
-    borderRadius: rad.xl, backgroundColor: color.card,
+  leadTitle: { ...type.title, color: color.fg } as any,
+  leadBody: { ...type.body, color: color.muted, marginTop: space.sm } as any,
+  row: {
+    flexDirection: 'row', alignItems: 'center', gap: space.md,
+    backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg,
   },
-  blockedTitle: { ...type.title, color: color.fg } as any,
-  blockedSub: { ...type.caption, color: color.muted, marginTop: 2 } as any,
-  blockedChev: { fontSize: 22, color: color.neutral400 },
-  leadTitle: { ...type.title, color: color.primary } as any,
-  leadBody: { ...type.bodySmall, color: color.muted } as any,
-  groupTitle: { ...type.title, color: color.fg, marginTop: space.sm, paddingHorizontal: 4 } as any,
-  groupCap: { ...type.bodySmall, color: color.muted, paddingHorizontal: 4 } as any,
-  sub: { ...type.labelMedium, color: color.muted, paddingTop: space.md, paddingBottom: 2 } as any,
-  choice: { paddingVertical: 10, gap: space.sm },
-  rowLabel: { ...type.body, color: color.fg, fontWeight: '500' } as any,
-  rowDesc: { ...type.bodySmall, color: color.muted, marginTop: 2 } as any,
+  rowTitle: { ...type.body, color: color.fg } as any,
+  rowSub: { ...type.caption, color: color.muted, marginTop: 2 } as any,
+  chev: { fontSize: 22, color: color.neutral400 },
 });

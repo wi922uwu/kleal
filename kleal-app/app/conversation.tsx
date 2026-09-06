@@ -281,6 +281,8 @@ export default function Conversation() {
   const send = () => {
     const text = draft.trim();
     if (!text || !me || !other) return;
+    // Не только кнопкой: по «отправить» с клавиатуры сюда приходят мимо неактивного поля.
+    if (!canWrite) return;
     setDraft('');
     atBottom.current = true;
     // `since` НЕ двигаем: пусть опрос принесёт серверную версию этой же реплики — merge её склеит
@@ -301,8 +303,22 @@ export default function Conversation() {
    * `text`. Поэтому и показывается оно сразу, как своя реплика, — опрос принесёт серверную
    * версию и склеит по id.
    */
+  /**
+   * ПИСАТЬ МОЖНО ТОЛЬКО ТОМУ, КТО СОГЛАСИЛСЯ — и знать это экран обязан ДО отправки.
+   *
+   * Сервер правило держит (`_mp_matched` -> NOT_MATCHED), плану оно уже объяснено выше (`canPlan`),
+   * а переписка оставалась открытой: человек писал, пузырь появлялся с галочкой, и только потом
+   * приходил отказ. Пузырь при этом оставался в ленте навсегда.
+   *
+   * Здесь правило МЯГЧЕ, чем у плана, и это намеренно. `canPlan` требует явного `accepted`; для
+   * письма достаточно, чтобы не было ИЗВЕСТНО обратное. Заявку экран берёт из входящих и исходящих,
+   * и если список не догрузился, `request` пуст — запереть на этом основании работающую переписку
+   * хуже, чем пропустить запрос, который сервер всё равно отобьёт.
+   */
+  const canWrite = !(request && request.status !== 'accepted');
+
   /** Кружок уходит тем же путём, что текст и голосовое: тот же ключ, то же состояние, тот же повтор. */
-  const canSend = !!me && !!other;
+  const canSend = !!me && !!other && canWrite;
   const sendCircle = (payload: VideoPayload) => {
     if (!canSend) return;
     const local: Msg = {
@@ -689,7 +705,8 @@ export default function Conversation() {
                 style={s.input}
                 value={draft}
                 onChangeText={setDraft}
-                placeholder={CHAT.placeholderTo(other)}
+                editable={canWrite}
+                placeholder={canWrite ? CHAT.placeholderTo(other) : CHAT.lockedTo(other)}
                 placeholderTextColor={color.neutral400}
                 onSubmitEditing={send}
                 returnKeyType="send"

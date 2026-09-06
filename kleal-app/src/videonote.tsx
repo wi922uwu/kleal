@@ -42,6 +42,7 @@ import * as Haptics from 'expo-haptics';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { setAudioModeAsync } from 'expo-audio';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { appendUploadFile } from './upload-file';
 import { mediaUrl, video as videoApi, VideoPayload } from './api';
 import { T } from './i18n';
 import { color } from './theme';
@@ -203,11 +204,8 @@ export function VideoNoteButton({
       const ext = (c.uri.split('?')[0].split('.').pop()
         || (Platform.OS === 'ios' ? 'mov' : 'mp4')).toLowerCase();
       const form = new FormData();
-      form.append('file', {
-        uri: c.uri,
-        name: `circle-${Date.now()}.${ext}`,
-        type: ext === 'mov' ? 'video/quicktime' : 'video/mp4',
-      } as any);
+      await appendUploadFile(form, c.uri, `circle-${Date.now()}.${ext}`,
+        ext === 'mov' ? 'video/quicktime' : 'video/mp4');
       const up: any = await videoApi.upload(form, c.ms);
       if (!up?.ok || !up?.id) throw new Error(String(up?.error || 'UPLOAD_FAILED'));
       if (gone.current) return;
@@ -568,7 +566,7 @@ const s = StyleSheet.create({
   },
   /** Красный ободок — единственный признак, что идёт запись, и он должен читаться с одного взгляда. */
   frameLive: { borderColor: color.primary },
-  blank: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  blank: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
 
   timer: { fontSize: 20, color: color.onPrimary, fontVariant: ['tabular-nums'], minHeight: 24 },
   say: { fontSize: 14, color: color.neutral300, textAlign: 'center', minHeight: 40 },
@@ -598,7 +596,7 @@ const s = StyleSheet.create({
     width: CIRCLE, height: CIRCLE, borderRadius: CIRCLE / 2,
     overflow: 'hidden', backgroundColor: 'transparent',
   },
-  veil: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000033' },
+  veil: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000033' },
   play: { fontSize: 34, color: color.onPrimary },
   length: {
     position: 'absolute', bottom: 8, alignSelf: 'center',

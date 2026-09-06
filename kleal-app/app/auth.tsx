@@ -1,10 +1,19 @@
 /**
  * A.03 · Sign in — вход. Порт кадра борда поверх прежнего «rAuth».
  *
- * Apple и Google здесь по-прежнему НЕ настоящие: они помечают `authMethod` и идут дальше, ровно
- * как в вебовой версии. Это подписано и в коде, и на экране, чтобы никто не принял их за рабочий
- * вход — настоящий OAuth требует собственного идентификатора приложения, которого у Expo Go нет,
- * и это отдельная задача. Почта — единственная дверь, которая работает по-настоящему.
+ * Apple и Google здесь НЕ настоящие: OAuth требует собственного идентификатора приложения,
+ * которого у Expo Go нет, и это отдельная задача. Почта — единственная дверь, которая работает
+ * по-настоящему.
+ *
+ * РАНЬШЕ ОНИ ВСЁ РАВНО ПУСКАЛИ ДАЛЬШЕ, и это был тихий капкан. `skipTo` помечал `authMethod`,
+ * звал `applyDefaults()` и уходил в анкету — а `login` и `session` оставались пустыми. Человек
+ * проходил весь онбординг, и профиль оказывался привязан ни к чему: узнавал он об этом только при
+ * выходе, где ему сообщали, что «вернуть его будет нечем — он сотрётся вместе со всем, что собрано
+ * на этом телефоне». В комментарии при этом было написано, что заглушка «подписана и на экране», —
+ * на экране её не было.
+ *
+ * Теперь на кнопках стоит «скоро», и они не нажимаются. Заглушку видно ДО того, как человек
+ * потратил на анкету десять минут, а не после.
  *
  * ЭМОДЗИ ЗА ЛОГОТИПОМ — не декор, а список занятий: пять строк, между ними стоит капля. В борде
  * строки шире экрана и обрезаются краями — это намеренно, поэтому здесь они НЕ переносятся и не
@@ -23,17 +32,22 @@ import { EmojiTicker } from '../src/components/EmojiTicker';
 import { LogoMark } from '../src/components/Logo';
 import { color, displayFamily, font, space, type } from '../src/theme';
 
+/** Кнопка провайдера с пометкой «скоро» в углу. Пометка — тот же приём, что у строк настроек. */
+function Soon({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={s.soonWrap}>
+      {children}
+      <Text style={s.soon} pointerEvents="none">{label}</Text>
+    </View>
+  );
+}
+
 export default function Auth() {
   const lang = useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const c = AUTH_COPY();
 
-  const skipTo = (method: string) => {
-    patch({ authMethod: method });
-    applyDefaults();
-    router.navigate('/chat');
-  };
 
   return (
     <View style={s.wrap}>
@@ -55,33 +69,38 @@ export default function Auth() {
         </View>
 
         <View style={s.btns}>
-          <GlassPill
-            tone="dark"
-            label={c.apple}
-            icon={
-              <Image
-                accessibilityIgnoresInvertColors
-                source={require('../assets/art/icon-apple.png')}
-                style={s.gIcon}
-                resizeMode="contain"
-              />
-            }
-            onPress={() => skipTo('apple')}
-          />
-          <GlassPill
-            label={c.google}
-            icon={
-              <Image
-                accessibilityIgnoresInvertColors
-                source={require('../assets/art/icon-google.png')}
-                style={s.gIcon}
-                resizeMode="contain"
-              />
-            }
-            onPress={() => skipTo('google')}
-          />
+          <Soon label={c.soon()}>
+            <GlassPill
+              tone="dark"
+              label={c.apple}
+              disabled
+              icon={
+                <Image
+                  accessibilityIgnoresInvertColors
+                  source={require('../assets/art/icon-apple.png')}
+                  style={s.gIcon}
+                  resizeMode="contain"
+                />
+              }
+            />
+          </Soon>
+          <Soon label={c.soon()}>
+            <GlassPill
+              label={c.google}
+              disabled
+              icon={
+                <Image
+                  accessibilityIgnoresInvertColors
+                  source={require('../assets/art/icon-google.png')}
+                  style={s.gIcon}
+                  resizeMode="contain"
+                />
+              }
+            />
+          </Soon>
           {/* Почта отделена промежутком — в борде она в своей области внизу, а не в ряду провайдеров. */}
           <GlassPill label={c.email} onPress={() => router.navigate('/auth-email')} style={s.email} />
+          <Text style={s.note}>{c.emailNote}</Text>
         </View>
 
         <Text style={s.terms}>{AUTH_TERMS()}</Text>
@@ -112,6 +131,16 @@ const s = StyleSheet.create({
   btns: { gap: space.md },
   email: { marginTop: 28 },
   gIcon: { width: 20, height: 20 },
+  /** Обёртка кнопки провайдера: пометка стоит поверх правого края, не сдвигая саму кнопку. */
+  soonWrap: { position: 'relative', justifyContent: 'center' },
+  soon: {
+    ...type.caption,
+    position: 'absolute',
+    right: space.lg,
+    color: color.muted,
+  } as any,
+  /** Объяснение под кнопкой почты: почему единственная рабочая дверь именно она. */
+  note: { ...type.caption, color: color.muted, textAlign: 'center', paddingHorizontal: space.md },
   terms: {
     fontFamily: font.text,
     fontSize: 12,

@@ -341,7 +341,7 @@ function otherParticipant(plan: any, me: string): string {
 
 const s = StyleSheet.create({
   layer: { flex: 1, justifyContent: 'flex-end' },
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: color.scrim },
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: color.scrim },
   card: {
     backgroundColor: color.card,
     borderTopLeftRadius: rad.xxl,

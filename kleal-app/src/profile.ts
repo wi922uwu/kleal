@@ -1000,154 +1000,21 @@ export const TEST = {
 };
 
 // ---------------------------------------------------------------- безопасность
-
-export type SafetyItem =
-  | { k: 'tog'; flag: keyof SafetyFlags; label: () => string; desc: () => string }
-  | { k: 'choice'; label: () => string; desc: () => string; options: (() => string)[] }
-  | { k: 'sub'; label: () => string };
-
-export type SafetyGroup = { t: () => string; c: () => string; items: SafetyItem[] };
-
-/**
- * Шесть групп — те же и в том же порядке, что в вебе. Подписи важны не меньше переключателей:
- * в каждой группе сказано, что означает «включено», потому что для одних тумблеров это «безопаснее»,
- * а для других — «шире охват», и по одному виду их не различить.
- */
-export const SAFETY_GROUPS: SafetyGroup[] = [
-  {
-    t: () => T('Как Kleal действует за тебя', 'How Kleal acts for you'),
-    c: () => T('Главные рычаги: насколько агент самостоятелен и пауза в один тап.',
-               'The big levers — your agent’s autonomy and a one-tap pause.'),
-    items: [
-      { k: 'choice', label: () => T('Когда Kleal кого-то находит', 'When Kleal finds someone'),
-        desc: () => T('Спрашивать перед тем, как написать, или пусть Kleal знакомит сам.',
-                      'Ask before reaching out, or let Kleal introduce you automatically.'),
-        options: [() => T('Сначала спросить', 'Ask me first'), () => T('Знакомить сам', 'Introduce automatically')] },
-      { k: 'tog', flag: 'confirmShare',
-        label: () => T('Спрашивать перед тем, как делиться моими данными', 'Confirm before sharing my details'),
-        desc: () => T('Спрашивать, прежде чем показать твоё имя, фото или контакты — даже когда Kleal сам договаривается о встрече.',
-                      'Ask before revealing your name, photo or contact — even when Kleal arranges plans for you.') },
-      { k: 'tog', flag: 'paused',
-        label: () => T('Поставить Kleal на паузу', 'Pause Kleal'),
-        desc: () => T('Остановить новые подборы и знакомства. Профиль и память сохранятся.',
-                      'Stop all new matching and outreach. Your profile and memory stay saved.') },
-    ],
-  },
-  {
-    t: () => T('Встречи вживую', 'Meeting in person'),
-    c: () => T('Как Kleal делает встречи безопаснее. Здесь везде: включено = безопаснее.',
-               'How Kleal keeps real-world plans safe. Every switch here: on = safer.'),
-    items: [
-      { k: 'tog', flag: 'publicFirst',
-        label: () => T('Первые встречи — только в людных местах', 'Keep first meetups public'),
-        desc: () => T('Первые встречи проходят в кафе, парках и других общественных местах.',
-                      'First meets stay in cafes, parks and other public spots.') },
-      { k: 'tog', flag: 'noLateNight',
-        label: () => T('Никаких встреч один на один поздно вечером', 'No solo late-night meets'),
-        desc: () => T('Kleal не будет предлагать встречи наедине поздним вечером.',
-                      'Kleal avoids one-on-one plans late at night.') },
-      { k: 'tog', flag: 'avoidAlcohol',
-        label: () => T('Избегать мест, где всё вокруг алкоголя', 'Avoid alcohol-focused venues'),
-        desc: () => T('Пропускать бары и подобные места для первых встреч.',
-                      'Skip bars and heavy-drinking spots for first meets.') },
-      { k: 'tog', flag: 'sharePlan',
-        label: () => T('Делиться планом с доверенным контактом', 'Share my plan with a trusted contact'),
-        desc: () => T('Автоматически отправлять близкому человеку, с кем, где и когда ты встречаешься.',
-                      'Auto-send who, where and when to someone you choose.') },
-    ],
-  },
-  {
-    t: () => T('Что Kleal может использовать и запоминать', 'What Kleal may use & remember'),
-    c: () => T('Твоё согласие на то, что Kleal читает и узнаёт. Включено = Kleal может это использовать.',
-               'Your consent for what Kleal reads and learns. On = Kleal may use it.'),
-    items: [
-      { k: 'tog', flag: 'useInterestsArea',
-        label: () => T('Подбирать по моим интересам и району', 'Match on my interests & area'),
-        desc: () => T('Использовать твои увлечения и район города — но никогда точное местоположение.',
-                      'Use what you like and your city area — never your exact location.') },
-      { k: 'tog', flag: 'useFeedback',
-        label: () => T('Учиться на моих оценках и действиях', 'Learn from my feedback & activity'),
-        desc: () => T('Использовать твои оценки и то, какие планы ты принимаешь или отклоняешь.',
-                      'Use your ratings and which plans you accept or decline.') },
-      { k: 'tog', flag: 'inferNew',
-        label: () => T('Разрешить Kleal делать выводы обо мне', 'Let Kleal infer new things about me'),
-        desc: () => T('Разрешить догадки сверх того, что ты сказал напрямую — например, о любимых местах.',
-                      'Allow guesses beyond what you stated, like preferred venues.') },
-      { k: 'sub', label: () => T('Ограничения', 'Guardrails') },
-      { k: 'tog', flag: 'noSensitive',
-        label: () => T('Никогда не делать выводов о чувствительном', 'Never infer sensitive traits'),
-        desc: () => T('Не хранить в памяти здоровье, религию, политику и ориентацию.',
-                      'Keep health, religion, politics and orientation out of memory.') },
-    ],
-  },
-  {
-    t: () => T('Как тебя находят люди', 'How people find you'),
-    c: () => T('Твой охват и видимость. Включено = больше охват, выключено = больше приватности.',
-               'Your reach and visibility. On = more reach, off = more private.'),
-    items: [
-      { k: 'tog', flag: 'suggestBeyond',
-        label: () => T('Предлагать людей за пределами привычного круга', 'Suggest people beyond my usual circles'),
-        desc: () => T('Иногда предлагать людей со смежными интересами и планы вне привычного.',
-                      'Occasionally propose friends-of-interests and plans outside your usuals.') },
-      { k: 'tog', flag: 'publicMap',
-        label: () => T('Показывать меня на карте', 'Show me on the discovery map'),
-        desc: () => T('Другие смогут наткнуться на тебя на общей карте.',
-                      'Let others come across you on the public map.') },
-      { k: 'tog', flag: 'datingMode',
-        label: () => T('Режим знакомств', 'Dating mode'),
-        desc: () => T('По умолчанию выключен. Включи, чтобы Kleal предлагал и романтические знакомства.',
-                      'Off by default. Turn on to let Kleal suggest dating intros too.') },
-    ],
-  },
-  {
-    t: () => T('Верификация и люди', 'Verification & people'),
-    c: () => T('С кем Kleal будет тебя знакомить. Включено = осторожнее.',
-               'Who Kleal will introduce you to. On = more protective.'),
-    items: [
-      { k: 'tog', flag: 'preferVerified',
-        label: () => T('Предпочитать подтверждённых людей', 'Prefer verified people'),
-        desc: () => T('Kleal будет отдавать предпочтение подтверждённым профилям.',
-                      'Kleal favours verified profiles when it matches you.') },
-      { k: 'tog', flag: 'excludeKnown',
-        label: () => T('Не сводить меня с теми, кого я могу знать', 'Don’t match me with people I may know'),
-        desc: () => T('Исключить коллег, бывших и контакты из телефона.',
-                      'Exclude coworkers, exes and phone contacts from suggestions.') },
-    ],
-  },
-];
-
-export const SAFETY_LEAD = {
-  title: () => T('Всё под твоим контролем', 'You’re in control'),
-  body: () =>
-    T(
-      'Kleal ничего не делает без твоего согласия. Он показывает район города, а не точное место, узнаёт только то, что ты разрешил, и всё здесь можно откатить в любой момент.',
-      'Kleal never acts without your say-so. It shares your city area, never your exact location, learns only what you allow, and everything here is reversible anytime.'
-    ),
-};
-
-/**
- * Обратное отображение флагов экрана в поля профиля.
- *
- * Нужно ровно потому, что profileData() их СВОДИТ: `useFeedback` и `inferNew` оба приходят из
- * одного `permissions.rememberPreferences`, а `useInterestsArea` — из `useProfileForMatching`.
- * Без этой таблицы переключатель на экране менял бы что-то своё, а профиль — своё.
- */
-export const SAFETY_PATH: Record<string, string> = {
-  confirmShare: 'safety.confirmShare',
-  paused: 'safety.paused',
-  publicFirst: 'safety.publicPlacesOnly',
-  noLateNight: 'safety.lateNight',
-  avoidAlcohol: 'safety.avoidAlcohol',
-  sharePlan: 'safety.sharePlan',
-  noSensitive: 'safety.noSensitive',
-  preferVerified: 'safety.verifiedOnly',
-  excludeKnown: 'safety.excludeKnown',
-  useInterestsArea: 'permissions.useProfileForMatching',
-  useFeedback: 'permissions.rememberPreferences',
-  inferNew: 'permissions.rememberPreferences',
-  suggestBeyond: 'permissions.allowAdjacentMatches',
-  publicMap: 'permissions.publicMap',
-  datingMode: 'permissions.datingMode',
-};
+//
+// ЗДЕСЬ БЫЛО 133 СТРОКИ ПЕРЕКЛЮЧАТЕЛЕЙ, И ОНИ НИЧЕГО НЕ ПЕРЕКЛЮЧАЛИ.
+//
+// Пятнадцать флагов в пяти группах: «не встречаться поздно вечером», «избегать баров», «делиться
+// планом с доверенным контактом», «никогда не делать выводов о чувствительном», «не сводить меня с
+// теми, кого я могу знать», «показывать меня на карте», «режим знакомств» и другие. Сверка с
+// боевым кодом (services/*/app.py, 4 сентября 2026): девять из пятнадцати не читает ни одна
+// служба ни в одном месте, ещё три пишет онбординг, но подбор их не смотрит.
+//
+// Хуже всего была «пауза»: она писалась в `safety.paused`, тогда как жёсткий фильтр подбора
+// смотрит на верхнее `paused`, а настоящий механизм паузы живёт в политике приёма
+// (`receiving.status`). Главный рычаг безопасности не делал ничего.
+//
+// Взамен — два экрана над политикой приёма, которую подбор действительно исполняет:
+// app/settings/visibility.tsx и app/settings/availability.tsx. Копия к ним в src/settings.ts.
+// Тип SafetyFlags и `profileData().safety` оставлены: строку профиля они по-прежнему описывают.
 
 export const langCode = () => getLang();

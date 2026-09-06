@@ -468,7 +468,7 @@ export default function GroupPlan() {
                       <IconPerson size={18} />
                       {m.photo ? (
                         <Image source={{ uri: mediaUrl(String(m.photo)) }}
-                               style={[s.av, StyleSheet.absoluteFillObject]} />
+                               style={[s.av, StyleSheet.absoluteFill]} />
                       ) : null}
                     </View>
                     <View style={{ flex: 1 }}>

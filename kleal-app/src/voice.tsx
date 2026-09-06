@@ -14,6 +14,7 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import { Asset } from 'expo-asset';
+import { appendUploadFile } from './upload-file';
 import { mediaUrl, speech, VoicePayload } from './api';
 import { T } from './i18n';
 import { color } from './theme';
@@ -87,7 +88,7 @@ const audioForm = async (uri: string) => {
     const blob = await (await fetch(uri)).blob();
     form.append('file', blob, `voice-${Date.now()}.webm`);
   } else {
-    form.append('file', { uri, name: `voice-${Date.now()}.m4a`, type: 'audio/mp4' } as any);
+    await appendUploadFile(form, uri, `voice-${Date.now()}.m4a`, 'audio/mp4');
   }
   return form;
 };
@@ -1030,7 +1031,7 @@ const s = StyleSheet.create({
   playRowGrow: { flex: 1 },
   playButton: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
   playInner: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
-  playIcon: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  playIcon: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   pause: { flexDirection: 'row', gap: 3 },
   pauseBar: { width: 3, height: 14, borderRadius: 1 },
   wave: { flex: 1, height: 24, justifyContent: 'center' },
@@ -1062,13 +1063,13 @@ const s = StyleSheet.create({
   micSlot: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   halo: { position: 'absolute', width: 34, height: 34, borderRadius: 17, backgroundColor: color.primary },
   micDisc: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  micFill: { ...StyleSheet.absoluteFillObject, borderRadius: 17, backgroundColor: color.primary },
-  micIcon: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  micFill: { ...StyleSheet.absoluteFill, borderRadius: 17, backgroundColor: color.primary },
+  micIcon: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   lockPill: {
     position: 'absolute', bottom: 44, width: 30, paddingVertical: 6, borderRadius: 15,
     alignItems: 'center', gap: 3, backgroundColor: color.card, borderWidth: 1, borderColor: color.border,
   },
-  lockFill: { ...StyleSheet.absoluteFillObject, borderRadius: 15, backgroundColor: color.neutral100 },
+  lockFill: { ...StyleSheet.absoluteFill, borderRadius: 15, backgroundColor: color.neutral100 },
 
   // --- полоса записи поверх композера
   barAction: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },

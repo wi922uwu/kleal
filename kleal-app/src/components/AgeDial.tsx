@@ -1,271 +1,354 @@
 /**
- * Возраст выбирают ЛИНЕЙКОЙ — кадр A.05 борда (4555:123063).
- *
- * ЗДЕСЬ БЫЛО КОЛЬЦО, И ЭТО БЫЛА ЧЕСТНО ПОМЕЧЕННАЯ ДОГАДКА: в прошлой версии стояла приписка, что
- * дугу из статичного кадра не вывести и место надо сверить с бордом. Сверили — там линейка.
- *
- * ЛЕНТА ЕДЕТ ЗА ПАЛЬЦЕМ, А НЕ ПРЫГАЕТ ПО ДЕЛЕНИЯМ. Первая версия считала сдвиг от ОКРУГЛЁННОГО
- * значения, поэтому лента дёргалась шагами по восемнадцать точек и выглядела неподвижной. Теперь
- * сдвиг берётся прямо из жеста, а значение — из сдвига.
- *
- * ВЫБЕГ НАСТОЯЩИЙ, А НЕ ПЕРЕНОС НА НЕСКОЛЬКО ДЕЛЕНИЙ. Сначала на отпускании лента просто прыгала
- * пружиной на пять делений вперёд — это читалось как рывок, а не как раскрутка. Теперь бросок
- * катится с трением (`Animated.decay`), по дороге щёлкая на каждом делении, сам замедляется и в
- * конце мягко доезжает до ближайшего. Долетев до края диапазона, лента упирается и отскакивает
- * обратно, а не застревает за пределом.
- *
- * ДРАЙВЕР У СДВИГА — JS, И ЭТО НАМЕРЕННО. Значение нужно знать НА КАЖДОМ КАДРЕ: по нему щёлкает
- * звук и меняется число. Нативный драйвер отдаёт его в JS с задержкой и пачками, отчего щелчки
- * отстают от картинки. Здесь это ничего не стоит: едет ОДИН вид, а не сотня.
- *
- * ДЕЛЕНИЯ ВИДНО. Были цветом волосяной линии на светлом фоне — то есть почти никак. Теперь как у
- * настоящей линейки: обычные деления серо-синие, каждое пятое выше и темнее, каждое десятое
- * подписано числом. Глазу есть за что зацепиться, и видно, куда едешь.
- *
- * КРАЯ ТАЮТ МАСКОЙ, А НЕ ЗАКРАШИВАЮТСЯ. Сначала поверх делений лежали два прямоугольника цвета
- * подложки — приём рабочий, пока подложка одноцветная. Под живым роликом он развалился: кремовая
- * заливка поверх розового дала бежевую плашку поперёк экрана, и линейка читалась наклейкой. Теперь
- * это настоящая прозрачность: деления нарисованы в SVG под маской с горизонтальным градиентом, и
- * сквозь них видно ровно то, что за ними, чем бы оно ни было.
- *
- * ЗВУК И ОТКЛИК на каждом новом значении — щелчок в палец и tick.wav в динамик. Порог по времени
- * обязателен: на быстром ведении значение меняется несколько раз за кадр, и без него вместо
- * щелчков выходит треск.
- *
- * ВСТРОЕННЫЙ Animated И PanResponder — как во всех живых жестах проекта; вторая система анимации
- * ради одного экрана значит держать обе.
+ * A.05 age ruler. The track moves continuously under one fixed coral selection line and settles
+ * only on whole years. User-driven integer changes emit feedback; hydration and prop sync do not.
  */
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Animated, PanResponder, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import Svg, { Defs, G, LinearGradient, Line, Mask, Rect, Stop, Text as SvgText } from 'react-native-svg';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import {
+  Animated,
+  AppState,
+  PanResponder,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+  type AccessibilityActionEvent,
+} from 'react-native';
+import Svg, { Defs, G, LinearGradient, Line, Mask, Rect, Stop } from 'react-native-svg';
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
+import {
+  AGE_FEEDBACK_INTERVAL_MS,
+  AGE_MAX,
+  AGE_MIN,
+  AGE_STEP_PX,
+  ageRulerCopy,
+  ageToOffset,
+  clampAge,
+  offsetToAge,
+  shouldEmitAgeFeedback,
+  snapAgeOffset,
+} from '../age-ruler';
+import { hTick } from '../haptics';
+import type { ReplyLang } from '../i18n';
 import { color, font } from '../theme';
 
-const AG = Animated.createAnimatedComponent(G);
-import { hTap } from '../haptics';
-
-const MIN = 18;
-const MAX = 80;
-/** Шаг между делениями: на кадре 25 делений укладываются в 440 точек ширины. */
-const STEP = 18;
-const TICK_H = 26;
-const BIG_H = 36;
-const CENTER_H = 52;
-const BAND_H = 78;               // деления + подписи под ними
-/** Реже этого щёлкать нельзя: иначе на быстром ведении треск вместо щелчков. */
-const CLICK_MS = 45;
-/**
- * Трение выбега. Меньше — короче катится. У RN по умолчанию 0.998, и с ним линейка едет секунды
- * три: для выбора возраста это долго, человек ждёт, пока она успокоится.
- */
+const AnimatedGroup = Animated.createAnimatedComponent(G);
+const VALUES = Array.from({ length: AGE_MAX - AGE_MIN + 1 }, (_, index) => AGE_MIN + index);
+const TICK_HEIGHT = 23;
+const LONG_TICK_HEIGHT = 34;
+const CENTER_HEIGHT = 48;
+const BAND_HEIGHT = 54;
 const FRICTION = 0.992;
 
-const VALUES = Array.from({ length: MAX - MIN + 1 }, (_, i) => MIN + i);
-const clamp = (v: number) => Math.max(MIN, Math.min(MAX, v));
-const offsetOf = (v: number) => -(v - MIN) * STEP;
+export type AgeDialProps = Readonly<{
+  value: number;
+  onChange: (value: number) => void;
+  locale?: ReplyLang;
+  /** While the ruler owns the gesture, the surrounding chat feed must stay still. */
+  onDragChange?: (dragging: boolean) => void;
+}>;
 
 export function AgeDial({
-  value, onChange, onDragChange,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  /** Пока ведут линейку, лента чата под ней должна стоять — иначе едут обе. */
-  onDragChange?: (dragging: boolean) => void;
-}) {
+  value,
+  onChange,
+  locale = 'en',
+  onDragChange,
+}: AgeDialProps) {
+  const selected = clampAge(value);
+  const copy = ageRulerCopy(locale, selected);
   const { width } = useWindowDimensions();
-  const half = width / 2;
+  const bandWidth = Math.max(280, width);
+  const half = bandWidth / 2;
 
-  /** Сдвиг ленты в точках. Непрерывный: идёт прямо из жеста. */
-  const dx = useRef(new Animated.Value(offsetOf(value))).current;
-  /** Пульс числа в момент смены — короткий, чтобы было видно, что значение поменялось. */
-  const pop = useRef(new Animated.Value(0)).current;
-
-  const from = useRef(offsetOf(value));
-  const shown = useRef(value);
-  const lastClick = useRef(0);
-  /** Идёт ли сейчас возврат от края. Без этого слушатель и stopAnimation зовут друг друга. */
-  const fixing = useRef(false);
-  const change = useRef(onChange); change.current = onChange;
-  const drag = useRef(onDragChange); drag.current = onDragChange;
-
-  /*
-    Игрок создаётся один раз и живёт со звуком внутри: пересоздавать его на каждый щелчок значит
-    заново открывать файл, и на быстром ведении это слышно.
-  */
+  const offset = useRef(new Animated.Value(ageToOffset(selected))).current;
+  const valuePulse = useRef(new Animated.Value(0)).current;
+  const gestureStart = useRef(ageToOffset(selected));
+  const shownAge = useRef(selected);
+  const lastFeedbackAt = useRef(0);
+  const fixingEdge = useRef(false);
+  const userMotion = useRef(false);
+  const motionToken = useRef(0);
+  const appActive = useRef(AppState.currentState === 'active');
+  const mounted = useRef(false);
+  const audioBusy = useRef(false);
+  const audioUnlock = useRef<ReturnType<typeof setTimeout> | null>(null);
   const player = useRef<AudioPlayer | null>(null);
+  const change = useRef(onChange);
+  const drag = useRef(onDragChange);
+  change.current = onChange;
+  drag.current = onDragChange;
+
   useEffect(() => {
+    mounted.current = true;
     try {
-      player.current = createAudioPlayer(require('../../assets/sounds/tick.wav'));
+      player.current = createAudioPlayer(require('../../assets/sounds/click.wav'));
     } catch {
-      player.current = null;               // без звука линейка обязана работать
+      player.current = null;
     }
-    return () => { try { player.current?.remove(); } catch {} };
+    return () => {
+      mounted.current = false;
+      if (audioUnlock.current) clearTimeout(audioUnlock.current);
+      try { player.current?.remove(); } catch {}
+      player.current = null;
+    };
   }, []);
 
-  /*
-    Значение считается ИЗ СДВИГА на каждом кадре — и во время ведения, и во время выбега. Поэтому
-    щелчки идут ровно тогда, когда деление проходит под меткой, а не когда JS об этом узнал.
-  */
-  useEffect(() => {
-    const id = dx.addListener(({ value: cur }) => {
-      const lim = offsetOf(MAX);
-      /*
-        ЗАЩЁЛКА ОТ ПОВТОРНОГО ВХОДА, И БЕЗ НЕЁ ЭКРАН ПАДАЛ. Слушатель, поймав выход за край, звал
-        stopAnimation; тот сам двигает значение и снова будит слушателя, который всё ещё видит
-        выход за край — и так до переполнения стека. Ловится это только на телефоне: «Maximum call
-        stack size exceeded», а стек — чередование addListener и stopAnimation.
-
-        Пока возврат идёт, второй раз его не запускаем. Значение при этом продолжает считаться:
-        число и щелчки не должны замирать на время отскока.
-      */
-      if (!fixing.current && (cur > STEP || cur < lim - STEP)) {
-        fixing.current = true;
-        const edge = cur > 0 ? MIN : MAX;
-        dx.stopAnimation(() => {
-          tick(edge);
-          Animated.spring(dx, { toValue: offsetOf(edge), useNativeDriver: false, speed: 12, bounciness: 8 })
-            .start(() => { fixing.current = false; });
-        });
-        return;
-      }
-      tick(clamp(Math.round(-cur / STEP) + MIN));
-    });
-    return () => dx.removeListener(id);
-  }, []);
-
-  const tick = (v: number) => {
-    if (v === shown.current) return;
-    shown.current = v;
-    change.current(v);
-    Animated.sequence([
-      Animated.timing(pop, { toValue: 1, duration: 70, useNativeDriver: true }),
-      Animated.timing(pop, { toValue: 0, duration: 130, useNativeDriver: true }),
-    ]).start();
-    const now = Date.now();
-    if (now - lastClick.current < CLICK_MS) return;
-    lastClick.current = now;
-    hTap();
+  const playClick = useCallback(() => {
+    const current = player.current;
+    if (!current || audioBusy.current || !appActive.current) return;
+    audioBusy.current = true;
     try {
-      const p = player.current;
-      if (p) { p.seekTo(0); p.play(); }
-    } catch {}
-  };
+      Promise.resolve(current.seekTo(0))
+        .then(() => {
+          if (mounted.current && appActive.current) current.play();
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (!mounted.current) return;
+          audioUnlock.current = setTimeout(() => {
+            audioBusy.current = false;
+            audioUnlock.current = null;
+          }, AGE_FEEDBACK_INTERVAL_MS);
+        });
+    } catch {
+      // A missing/invalid native audio resource must never block the ruler itself.
+      audioBusy.current = false;
+    }
+  }, []);
 
-  /** Доехать до ближайшего деления — тем, что осталось после выбега. */
-  const settle = () => {
-    dx.stopAnimation((cur: number) => {
-      const v = clamp(Math.round(-cur / STEP) + MIN);
-      tick(v);
-      Animated.spring(dx, {
-        toValue: offsetOf(v),
+  const emitUserAge = useCallback((nextValue: number) => {
+    const next = clampAge(nextValue);
+    const previous = shownAge.current;
+    if (next === previous) return;
+    shownAge.current = next;
+    change.current(next);
+
+    valuePulse.stopAnimation();
+    valuePulse.setValue(0);
+    Animated.sequence([
+      Animated.timing(valuePulse, { toValue: 1, duration: 70, useNativeDriver: true }),
+      Animated.timing(valuePulse, { toValue: 0, duration: 130, useNativeDriver: true }),
+    ]).start();
+
+    const now = Date.now();
+    if (!shouldEmitAgeFeedback({
+      previousAge: previous,
+      nextAge: next,
+      now,
+      lastFeedbackAt: lastFeedbackAt.current,
+      userInitiated: true,
+      appActive: appActive.current,
+    })) return;
+    lastFeedbackAt.current = now;
+    hTick();
+    playClick();
+  }, [playClick, valuePulse]);
+
+  const finishUserMotion = useCallback((token: number) => {
+    if (motionToken.current !== token) return;
+    userMotion.current = false;
+    fixingEdge.current = false;
+  }, []);
+
+  const settle = useCallback((token = motionToken.current) => {
+    offset.stopAnimation((currentOffset: number) => {
+      if (motionToken.current !== token) return;
+      const next = offsetToAge(currentOffset);
+      emitUserAge(next);
+      Animated.spring(offset, {
+        toValue: ageToOffset(next),
         useNativeDriver: false,
         speed: 16,
         bounciness: 4,
-      }).start();
+      }).start(() => finishUserMotion(token));
     });
-  };
+  }, [emitUserAge, finishUserMotion, offset]);
 
-  /**
-   * Отпустили — лента катится дальше сама и замедляется трением. Слабый жест не бросок: катить
-   * от него нечего, доводим сразу, иначе линейка ползёт после каждого касания.
-   */
-  const release = (vx: number) => {
-    if (Math.abs(vx) < 0.08) { settle(); return; }
-    Animated.decay(dx, { velocity: vx, deceleration: FRICTION, useNativeDriver: false })
-      .start(({ finished }) => { if (finished) settle(); });
-  };
+  useEffect(() => {
+    const listener = offset.addListener(({ value: currentOffset }) => {
+      if (!userMotion.current) return;
+      const minimumOffset = ageToOffset(AGE_MAX);
+      if (!fixingEdge.current && (currentOffset > AGE_STEP_PX || currentOffset < minimumOffset - AGE_STEP_PX)) {
+        fixingEdge.current = true;
+        const edge = currentOffset > 0 ? AGE_MIN : AGE_MAX;
+        const token = motionToken.current;
+        offset.stopAnimation(() => {
+          if (motionToken.current !== token) return;
+          emitUserAge(edge);
+          Animated.spring(offset, {
+            toValue: ageToOffset(edge),
+            useNativeDriver: false,
+            speed: 12,
+            bounciness: 8,
+          }).start(() => finishUserMotion(token));
+        });
+        return;
+      }
+      emitUserAge(offsetToAge(currentOffset));
+    });
+    return () => offset.removeListener(listener);
+  }, [emitUserAge, finishUserMotion, offset]);
+
+  const release = useCallback((velocity: number) => {
+    const token = motionToken.current;
+    if (Math.abs(velocity) < 0.08) {
+      settle(token);
+      return;
+    }
+    Animated.decay(offset, {
+      velocity,
+      deceleration: FRICTION,
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished && motionToken.current === token) settle(token);
+    });
+  }, [offset, settle]);
 
   const pan = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 2,
-    // Лента чата попросит жест себе, как только палец поедет вертикально. Отказываем.
+    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 2,
     onPanResponderTerminationRequest: () => false,
     onPanResponderGrant: () => {
-      fixing.current = false;              // новый жест отменяет незаконченный отскок
-      dx.stopAnimation((cur: number) => { from.current = cur; });
+      motionToken.current += 1;
+      userMotion.current = true;
+      fixingEdge.current = false;
+      offset.stopAnimation((currentOffset: number) => { gestureStart.current = currentOffset; });
       drag.current?.(true);
     },
-    onPanResponderMove: (_e, g) => {
-      // Влево — старше: лента идёт под пальцем один в один, без округления.
-      // Предел и пересчёт значения держит слушатель выше — здесь только сдвиг.
-      dx.setValue(from.current + g.dx);
+    onPanResponderMove: (_event, gesture) => {
+      offset.setValue(gestureStart.current + gesture.dx);
     },
-    onPanResponderRelease: (_e, g) => {
+    onPanResponderRelease: (_event, gesture) => {
       drag.current?.(false);
-      release(g.vx);
+      release(gesture.vx);
     },
     onPanResponderTerminate: () => {
       drag.current?.(false);
       settle();
     },
-  }), []);
+  }), [offset, release, settle]);
 
-  /** Значение поменяли снаружи — линейка обязана доехать сама. */
+  const adjust = useCallback((delta: number) => {
+    const next = clampAge(shownAge.current + delta);
+    if (next === shownAge.current) return;
+    motionToken.current += 1;
+    userMotion.current = false;
+    fixingEdge.current = false;
+    emitUserAge(next);
+    offset.stopAnimation();
+    Animated.spring(offset, {
+      toValue: ageToOffset(next),
+      useNativeDriver: false,
+      speed: 16,
+      bounciness: 4,
+    }).start();
+  }, [emitUserAge, offset]);
+
+  const onAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
+    if (event.nativeEvent.actionName === 'increment') adjust(1);
+    if (event.nativeEvent.actionName === 'decrement') adjust(-1);
+  }, [adjust]);
+
   useEffect(() => {
-    if (value === shown.current) return;
-    shown.current = value;
-    Animated.spring(dx, { toValue: offsetOf(value), useNativeDriver: false, speed: 14, bounciness: 6 }).start();
-  }, [value]);
+    const subscription = AppState.addEventListener('change', (state) => {
+      appActive.current = state === 'active';
+      if (appActive.current) return;
+      motionToken.current += 1;
+      userMotion.current = false;
+      fixingEdge.current = false;
+      drag.current?.(false);
+      offset.stopAnimation((currentOffset: number) => {
+        offset.setValue(snapAgeOffset(currentOffset));
+      });
+    });
+    return () => subscription.remove();
+  }, [offset]);
 
-  const scale = pop.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
+  /** External hydration or profile synchronization moves the ruler silently. */
+  useEffect(() => {
+    const next = clampAge(value);
+    if (next === shownAge.current) return;
+    motionToken.current += 1;
+    userMotion.current = false;
+    fixingEdge.current = false;
+    shownAge.current = next;
+    offset.stopAnimation();
+    Animated.spring(offset, {
+      toValue: ageToOffset(next),
+      useNativeDriver: false,
+      speed: 14,
+      bounciness: 6,
+    }).start();
+  }, [offset, value]);
+
+  const scale = valuePulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.1] });
 
   return (
-    <View style={s.wrap}>
-      <Animated.Text style={[s.value, { transform: [{ scale }] }]}>{value}</Animated.Text>
+    <View
+      accessible
+      accessibilityRole="adjustable"
+      accessibilityLabel={copy.label}
+      accessibilityValue={{ min: AGE_MIN, max: AGE_MAX, now: selected, text: copy.value }}
+      accessibilityHint={copy.hint}
+      accessibilityActions={[
+        { name: 'increment', label: copy.increment },
+        { name: 'decrement', label: copy.decrement },
+      ]}
+      onAccessibilityAction={onAccessibilityAction}
+      testID="age-ruler"
+      style={styles.root}
+      {...pan.panHandlers}
+    >
+      <Animated.Text
+        accessible={false}
+        allowFontScaling
+        maxFontSizeMultiplier={1.6}
+        style={[styles.value, { transform: [{ scale }] }]}
+      >
+        {selected}
+      </Animated.Text>
 
-      <View style={[s.band, { width }]} {...pan.panHandlers}>
-        <Svg width={width} height={BAND_H}>
+      <View accessible={false} style={[styles.band, { width: bandWidth }]}>
+        <Svg accessible={false} width={bandWidth} height={BAND_HEIGHT}>
           <Defs>
-            {/*
-              Маска: непрозрачная в середине, сходящая на нет к обоим краям. Белый здесь не цвет,
-              а плотность — в маске значение канала и есть непрозрачность.
-            */}
-            <LinearGradient id="edges" x1="0" y1="0" x2="1" y2="0">
-              <Stop offset="0" stopColor="#fff" stopOpacity="0" />
-              <Stop offset="0.26" stopColor="#fff" stopOpacity="1" />
-              <Stop offset="0.74" stopColor="#fff" stopOpacity="1" />
-              <Stop offset="1" stopColor="#fff" stopOpacity="0" />
+            <LinearGradient id="age-ruler-edges" x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0" stopColor={color.card} stopOpacity="0" />
+              <Stop offset="0.22" stopColor={color.card} stopOpacity="1" />
+              <Stop offset="0.78" stopColor={color.card} stopOpacity="1" />
+              <Stop offset="1" stopColor={color.card} stopOpacity="0" />
             </LinearGradient>
-            <Mask id="fade">
-              <Rect x={0} y={0} width={width} height={BAND_H} fill="url(#edges)" />
+            <Mask id="age-ruler-fade">
+              <Rect x={0} y={0} width={bandWidth} height={BAND_HEIGHT} fill="url(#age-ruler-edges)" />
             </Mask>
           </Defs>
 
-          {/* Лента едет, маска стоит: поэтому сдвиг висит на группе, а маска — на её обёртке. */}
-          <G mask="url(#fade)">
-            <AG x={dx}>
-              {VALUES.map((v) => {
-                const big = v % 5 === 0;
-                const x = half + (v - MIN) * STEP;
+          <G mask="url(#age-ruler-fade)">
+            <AnimatedGroup x={offset}>
+              {VALUES.map((age) => {
+                const long = age % 5 === 0;
+                const x = half + (age - AGE_MIN) * AGE_STEP_PX;
                 return (
-                  <React.Fragment key={v}>
-                    <Line
-                      x1={x} y1={0} x2={x} y2={big ? BIG_H : TICK_H}
-                      stroke={big ? color.neutral400 : color.neutral300}
-                      strokeWidth={big ? 1.5 : 1}
-                      strokeLinecap="round"
-                    />
-                    {v % 10 === 0 ? (
-                      <SvgText
-                        x={x} y={BIG_H + 14}
-                        fill={color.muted}
-                        fontSize={11}
-                        fontFamily={font.text}
-                        textAnchor="middle"
-                      >
-                        {String(v)}
-                      </SvgText>
-                    ) : null}
-                  </React.Fragment>
+                  <Line
+                    key={age}
+                    x1={x}
+                    y1={8}
+                    x2={x}
+                    y2={8 + (long ? LONG_TICK_HEIGHT : TICK_HEIGHT)}
+                    stroke={long ? color.neutral400 : color.neutral300}
+                    strokeWidth={long ? 1.5 : 1}
+                    strokeLinecap="round"
+                  />
                 );
               })}
-            </AG>
+            </AnimatedGroup>
           </G>
 
-          {/* Метка стоит НА МЕСТЕ и вне маски: она не должна таять вместе с краями. */}
           <Line
-            x1={half} y1={0} x2={half} y2={CENTER_H}
-            stroke={color.primary} strokeWidth={3} strokeLinecap="round"
+            x1={half}
+            y1={2}
+            x2={half}
+            y2={CENTER_HEIGHT}
+            stroke={color.primary}
+            strokeWidth={3}
+            strokeLinecap="round"
           />
         </Svg>
       </View>
@@ -273,22 +356,18 @@ export function AgeDial({
   );
 }
 
-const s = StyleSheet.create({
-  wrap: { alignItems: 'center' },
-  /** Число над центром — крупное, той же гарнитурой, что заголовки. */
+const styles = StyleSheet.create({
+  root: { alignItems: 'center', minHeight: 104 },
   value: {
     fontFamily: font.textSemibold,
     fontSize: 30,
-    lineHeight: 36,
+    /** Fixed metrics do not scale with fontSize on native, so reserve the full 1.6x cap. */
+    lineHeight: 52,
     color: color.fg,
-    marginBottom: 4,
+    marginBottom: 8,
   } as any,
-  /**
-   * Полоса уходит за края содержимого — так на кадре. Отрицательные поля вытаскивают её из колонки
-   * с отступами: иначе линейка обрывалась бы там, где кончается текст, и читалась коробкой.
-   */
   band: {
-    height: BAND_H,
+    height: BAND_HEIGHT,
     marginHorizontal: -20,
     alignSelf: 'center',
   },

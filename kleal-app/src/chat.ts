@@ -60,6 +60,17 @@ export const CHAT = {
   /** O.18 — сам чат. */
   /** Композер MSG.06 обращается по имени: «Message Jane». */
   placeholderTo: (name: string) => T(`Написать ${dat(name)}…`, `Message ${name}`),
+
+  /**
+   * Подпись поля, пока писать нельзя.
+   *
+   * Правило канала держит сервер (`NOT_MATCHED`), и держит верно. Врал экран: он звал писать,
+   * рисовал пузырь отправленным и подписывал его «Нажми, чтобы отправить ещё раз» — повтор, который
+   * не мог удаться никогда. Снято с телефона 4 сентября 2026. Ровно так же уже поступили с планом
+   * (`canPlan` в conversation.tsx): причину называем ДО действия, а не после.
+   */
+  lockedTo: (name: string) => T(`Написать ${dat(name)} можно после согласия`,
+                                `You can write to ${name} once they accept`),
   /**
    * Пустая переписка. Состояний ЧЕТЫРЕ, и текст обязан их различать.
    *
@@ -77,11 +88,11 @@ export const CHAT = {
         return T(`Ты принял(а) приглашение от ${gen(name)}. Напиши первым — это ваш общий разговор про интент.`,
                  `You accepted ${name}’s invite. Say hello — this chat belongs to your intent.`);
       case 'sent':
-        return T(`Приглашение отправлено — ${name} ещё не ответил(а). Написать можно и сейчас.`,
-                 `Your invite is sent — ${name} hasn’t answered yet. You can still write.`);
+        return T(`Приглашение отправлено — ${name} ещё не ответил(а). Написать можно будет, когда согласится.`,
+                 `Your invite is sent — ${name} hasn’t answered yet. You can write once they accept.`);
       case 'invited-me':
-        return T(`${name} зовёт тебя. Ответь на приглашение выше — или напиши и спроси.`,
-                 `${name} invited you. Answer the invite above — or just write and ask.`);
+        return T(`${name} зовёт тебя. Ответь на приглашение выше — переписка откроется после согласия.`,
+                 `${name} invited you. Answer the invite above — the chat opens once you accept.`);
       default:
         return T('Здесь пока пусто. Напиши первым.', 'Nothing here yet. Say hello.');
     }
