@@ -58,6 +58,7 @@ Evidence directory:
 | Re-enter intro after auth | PASS | first page, restored wave, responsive controls |
 | Reduce Motion | PASS | `welcome-reduce-motion.mp4`; system preference enabled on own Simulator |
 | Finger-tracking / cancelled physical drag | BLOCKED | CUA `drag` sent touch-start but no root touch-move; no native swipe PASS claimed |
+| iPhone 13 mini / Accessibility Large | BLOCKED | Expo Go57 installed and bundle loaded on own `6BCF63B5-FA5D-42EA-BF89-73C302A06C1B`, then Mac lock prevented manual UI verification |
 
 The gesture/cancellation/axis and stale-callback paths are covered by executable
 tests, but a real-phone drag check remains necessary. The unsuccessful gesture
@@ -68,3 +69,8 @@ were removed from application source before final gates.
 The app's language contract remains RU/EN. Spanish devices keep the existing
 EN fallback; no global Spanish UI translation is introduced by this change.
 No backend/API/schema or persisted account migration is needed.
+
+Independent fork review could not run: its task ended with system error
+`This request was blocked by our safety systems. Reason: Potentially unintended activity.`
+No independent QA pass is claimed. The local implementation and completed tests
+are available for review, but the two native limitations above remain open.
