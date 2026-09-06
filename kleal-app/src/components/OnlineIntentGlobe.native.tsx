@@ -97,7 +97,7 @@ export function OnlineIntentGlobe({
         showsCompass
         showsIndoors={false}
         showsMyLocationButton={false}
-        showsPointsOfInterest={false}
+        showsPointsOfInterests={false}
         showsScale={false}
         showsTraffic={false}
         showsUserLocation={false}

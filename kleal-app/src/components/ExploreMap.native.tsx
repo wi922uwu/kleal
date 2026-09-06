@@ -220,7 +220,7 @@ export function ExploreMap({
         showsBuildings
         showsUserLocation={showMe}
         showsMyLocationButton={false}
-        showsPointsOfInterest={false}
+        showsPointsOfInterests={false}
         toolbarEnabled={false}
       >
         {shown.map((p) => {
