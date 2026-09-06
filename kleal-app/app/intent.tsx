@@ -31,7 +31,7 @@ import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 // Свайп от края (iOS) и аппаратная «назад» (Android) снимают экран мимо любого обработчика
 // кнопки. Единственный способ вклиниться — usePreventRemove; expo-router его не реэкспортирует,
 // поэтому берём из навигатора, на котором он и построен.
-import { usePreventRemove } from '@react-navigation/native';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,

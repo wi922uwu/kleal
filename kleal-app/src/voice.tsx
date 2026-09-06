@@ -14,6 +14,7 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import { Asset } from 'expo-asset';
+import { appendUploadFile } from './upload-file';
 import { mediaUrl, speech, VoicePayload } from './api';
 import { T } from './i18n';
 import { color } from './theme';
@@ -87,7 +88,7 @@ const audioForm = async (uri: string) => {
     const blob = await (await fetch(uri)).blob();
     form.append('file', blob, `voice-${Date.now()}.webm`);
   } else {
-    form.append('file', { uri, name: `voice-${Date.now()}.m4a`, type: 'audio/mp4' } as any);
+    await appendUploadFile(form, uri, `voice-${Date.now()}.m4a`, 'audio/mp4');
   }
   return form;
 };

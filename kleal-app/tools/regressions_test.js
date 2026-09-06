@@ -854,8 +854,8 @@ console.log('\nнад сообщением можно что-то сделать
     'пропасть бесследно оно не может — второй его уже видел');
 
   check('текст можно скопировать',
-    /Clipboard\.setStringAsync/.test(c) && /"expo-clipboard": "~8\.0\.8"/.test(read('package.json')),
-    'версия обязана совпадать с той, что везёт SDK 54');
+    /Clipboard\.setStringAsync/.test(c) && /"expo-clipboard": "~57\.0\.1"/.test(read('package.json')),
+    'версия обязана совпадать с той, что везёт SDK 57');
 }
 
 // ------------------------------------------------- 15. свайп-ответ и живые ссылки
@@ -1191,9 +1191,9 @@ console.log('\nкружок: камера готова заранее, коне�
   check('кружок рисуется в общей ленте, а значит в обоих чатах',
     /<VideoBubble video=\{m\.video\}/.test(feed));
 
-  check('версии камеры и видео — из набора SDK 54',
-    /"expo-camera": "~17\.0\.10"/.test(read('package.json'))
-    && /"expo-video": "~3\.0\.16"/.test(read('package.json')),
+  check('версии камеры и видео — из набора SDK 57',
+    /"expo-camera": "~57\.0\.4"/.test(read('package.json'))
+    && /"expo-video": "~57\.0\.3"/.test(read('package.json')),
     'иначе Expo Go перестанет открывать приложение по QR');
 }
 
