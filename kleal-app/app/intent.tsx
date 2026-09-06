@@ -1783,7 +1783,7 @@ const s = StyleSheet.create({
   plusKeepText: { ...type.button, color: color.onPrimary } as any,
 
   veil: {
-    ...StyleSheet.absoluteFillObject, backgroundColor: color.bg, alignItems: 'center',
+    ...StyleSheet.absoluteFill, backgroundColor: color.bg, alignItems: 'center',
     justifyContent: 'center', gap: space.md, paddingHorizontal: 32,
   },
   veilAva: {

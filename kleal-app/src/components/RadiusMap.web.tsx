@@ -75,7 +75,7 @@ export function RadiusMap({
 }
 
 const s = StyleSheet.create({
-  wrap: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  wrap: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   circle: {
     backgroundColor: 'rgba(241,58,89,0.18)',
     borderWidth: 1,

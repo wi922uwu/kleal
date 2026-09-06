@@ -568,7 +568,7 @@ const s = StyleSheet.create({
   },
   /** Красный ободок — единственный признак, что идёт запись, и он должен читаться с одного взгляда. */
   frameLive: { borderColor: color.primary },
-  blank: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  blank: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
 
   timer: { fontSize: 20, color: color.onPrimary, fontVariant: ['tabular-nums'], minHeight: 24 },
   say: { fontSize: 14, color: color.neutral300, textAlign: 'center', minHeight: 40 },
@@ -598,7 +598,7 @@ const s = StyleSheet.create({
     width: CIRCLE, height: CIRCLE, borderRadius: CIRCLE / 2,
     overflow: 'hidden', backgroundColor: 'transparent',
   },
-  veil: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000033' },
+  veil: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000033' },
   play: { fontSize: 34, color: color.onPrimary },
   length: {
     position: 'absolute', bottom: 8, alignSelf: 'center',

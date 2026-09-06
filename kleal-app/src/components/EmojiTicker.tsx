@@ -142,7 +142,7 @@ export function EmojiTicker({ rows }: { rows: string[] }) {
 
 // ===== вид
 const s = StyleSheet.create({
-  wrap: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', gap: 10 },
+  wrap: { ...StyleSheet.absoluteFill, justifyContent: 'center', gap: 10 },
   row: { height: SIZE + 10, justifyContent: 'center', overflow: 'visible' },
   strip: { flexDirection: 'row', alignItems: 'center' },
   ch: { width: STEP, fontSize: SIZE, lineHeight: SIZE + 6, textAlign: 'center' },

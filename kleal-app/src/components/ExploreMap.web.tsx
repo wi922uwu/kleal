@@ -80,7 +80,7 @@ export function ExploreMap({
 }
 
 const s = StyleSheet.create({
-  wrap: { ...StyleSheet.absoluteFillObject, backgroundColor: color.neutral100 },
+  wrap: { ...StyleSheet.absoluteFill, backgroundColor: color.neutral100 },
   pin: {
     position: 'absolute', width: 44, height: 44, borderRadius: 22,
     backgroundColor: color.card, borderWidth: 2, borderColor: color.card,

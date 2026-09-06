@@ -98,7 +98,7 @@ const s = StyleSheet.create({
   page: { flex: 1, paddingHorizontal: 24 },
   mid: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   art: { width: HALO, height: HALO, alignItems: 'center', justifyContent: 'center' },
-  halo: { ...StyleSheet.absoluteFillObject },
+  halo: { ...StyleSheet.absoluteFill },
   pic: { width: PIC, height: PIC },
   h: { ...type.display, color: color.fg, textAlign: 'center', marginTop: space.sm } as any,
   note: {

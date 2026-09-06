@@ -677,7 +677,7 @@ function GroupInviteCard({ inv }: { inv: HomeInvite }) {
             <Text style={s.faceInit}>{(person.name || '?').slice(0, 1).toUpperCase()}</Text>
             {person.photo ? (
               <Image source={{ uri: mediaUrl(String(person.photo)) }}
-                     style={[s.faceAva, StyleSheet.absoluteFillObject]} />
+                     style={[s.faceAva, StyleSheet.absoluteFill]} />
             ) : null}
           </View>
         ))}
