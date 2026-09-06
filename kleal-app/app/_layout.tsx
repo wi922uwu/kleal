@@ -30,6 +30,8 @@ import { PostCallPrompt } from '../src/components/PostCallPrompt';
 const ART_FIRST = [
   require('../assets/art/logo-wordmark.png'),
   require('../assets/art/welcome-hand.png'),
+  // Intro can be opened directly: its fixed photo must be ready before the first frame.
+  require('../assets/art/usp-friends-v2.jpg'),
 ];
 /**
  * Графика ГЛАВНОЙ. Греется раньше всего остального фонового, и это не вкусовщина: вернувшийся
@@ -50,7 +52,6 @@ const ART_HOME = [
 ];
 
 const ART_REST = [
-  require('../assets/art/usp-friends-v2.jpg'),
   require('../assets/art/logo-mark.png'),
   require('../assets/art/icon-apple.png'),
   require('../assets/art/icon-google.png'),

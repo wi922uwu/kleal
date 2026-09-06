@@ -26,17 +26,13 @@ export type Slide = { title: string; sub: string; art: 'primary' | 'searching' |
  */
 export const INTRO_CTA = {
   start: () => T('Начать', "Let's Start"),
+  hint: () => T('Нажми дважды, чтобы продолжить к входу.', 'Double tap to continue to sign-in.'),
+  slide: (n: number, total: number) => T(`Слайд ${n} из ${total}`, `Slide ${n} of ${total}`),
+  next: () => T('Следующий слайд', 'Next slide'),
+  previous: () => T('Предыдущий слайд', 'Previous slide'),
 };
 
 export const SLIDES: () => Slide[] = () => [
-  {
-    title: T('Скажи Kleal,\nчем хочешь заняться', 'Tell Kleal\nwhat you want to do'),
-    sub: T(
-      'Кофе, футбол, языковая практика, игра,\nпрогулка — или просто что-нибудь спонтанное',
-      'Coffee, football, language practice, a game,\na walk, or just something spontaneous'
-    ),
-    art: 'primary',
-  },
   {
     title: T('Ищем людей под план,\nа не анкеты для листания', 'Find people for the plan,\nnot profiles to scroll'),
     sub: T(
@@ -44,6 +40,14 @@ export const SLIDES: () => Slide[] = () => [
       'Kleal looks for the right people, rooms, groups or events from your mood, time, place and interests.'
     ),
     art: 'searching',
+  },
+  {
+    title: T('Скажи Kleal,\nчем хочешь заняться', 'Tell Kleal\nwhat you want to do'),
+    sub: T(
+      'Кофе, футбол, языковая практика, игра, прогулка — или просто что-нибудь спонтанное',
+      'Coffee, football, language practice, a game, a walk, or just something spontaneous'
+    ),
+    art: 'primary',
   },
   {
     title: T('Меньше переписки.\nБольше живых встреч', 'Less social admin.\nMore real plans'),
