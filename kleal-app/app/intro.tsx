@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo, Image, PanResponder, Pressable, ScrollView,
-  StyleSheet, Text, View, useWindowDimensions,
+  StyleSheet, Text, View, useWindowDimensions, type GestureResponderEvent,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,7 +17,7 @@ import { getState } from '../src/state';
 import { color, displayFamily, font, radius, space, type } from '../src/theme';
 import { makePull } from '../src/haptics';
 import {
-  createWelcomeSession, WELCOME_LAST, WAVE_CURVE, welcomeAxis,
+  createWelcomeSession, WELCOME_LAST, WAVE_CURVE, WELCOME_WAVE_PATH, welcomeWaveContains, welcomeAxis,
   welcomeTarget, welcomePull, welcomePullComplete, type WelcomeAxis,
 } from '../src/welcome';
 
@@ -33,6 +33,9 @@ export default function Intro() {
   const [measurements, setMeasurements] = useState<Record<string, number>>({});
   const session = useRef(createWelcomeSession()).current;
   const axis = useRef<WelcomeAxis>(null);
+  const root = useRef<View>(null);
+  const rootPosition = useRef({ x: 0, y: 0 });
+  const touch = useRef<{ x: number; y: number; canPull: boolean; lift: number; distance: number } | null>(null);
   const pull = useRef(makePull()).current;
   const slides = SLIDES();
   const progress = useSharedValue(0);
@@ -41,13 +44,13 @@ export default function Intro() {
   const restH = Math.max(WAVE_CURVE, height * 0.24, insets.bottom + 100);
   const restY = height - restH;
   const travel = restY + WAVE_CURVE;
-  const baseBottom = space.xl + insets.bottom;
   const measurementKey = [lang, width, fontScale].join(':');
   const measuredHeight = Math.max(0, ...slides.map((_, n) => measurements[measurementKey + ':' + n] || 0));
   // All pages share the largest measured text viewport; oversized Dynamic Type can scroll.
   const maxTextHeight = Math.max(100, height - insets.top - 48 - 40 - 60 - restH);
   const textHeight = Math.min(measuredHeight || 180, maxTextHeight);
-  const baseHeight = 40 + textHeight + 60 + baseBottom;
+  // Reserve the final wave on every page; paging never moves the white panel's top.
+  const sheetHeight = 40 + textHeight + 60 + restH;
 
   useEffect(() => {
     const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReducedMotion);
@@ -62,6 +65,7 @@ export default function Intro() {
     progress.value = 0;
     lift.value = 0;
     axis.current = null;
+    touch.current = null;
     setIndex(0);
     setStarting(false);
     const account = getState();
@@ -74,6 +78,7 @@ export default function Intro() {
       cancelAnimation(progress);
       cancelAnimation(lift);
       axis.current = null;
+      touch.current = null;
     };
   }, [session, progress, lift]));
 
@@ -84,6 +89,7 @@ export default function Intro() {
     progress.value = session.index;
     lift.value = 0;
     axis.current = null;
+    touch.current = null;
     setStarting(false);
   }, [width, height, fontScale, lang, reducedMotion, session, progress, lift]);
 
@@ -124,51 +130,84 @@ export default function Intro() {
     lift.value = reducedMotion ? 0 : withSpring(0, { damping: 24, stiffness: 190, mass: 0.9 });
   };
 
-  const gestures = useMemo(() => PanResponder.create({
-    // A tap stays with the CTA; a move is claimed only after its axis is unambiguous.
-    onStartShouldSetPanResponder: () => false,
-    onMoveShouldSetPanResponderCapture: (_e, g) => {
-      if (!session.available) return false;
-      const direction = welcomeAxis(g.dx, g.dy, session.index === WELCOME_LAST && g.y0 >= restY);
-      if (!direction) return false;
-      axis.current = direction;
-      return true;
-    },
-    onPanResponderGrant: () => {
-      if (axis.current === 'vertical') {
-        cancelAnimation(lift);
-        pull.grab();
-      }
-    },
-    onPanResponderMove: (_e, g) => {
+  const gestures = useMemo(() => {
+    const sample = (e: GestureResponderEvent) => {
+      const origin = touch.current;
+      if (!origin) return null;
+      // PanResponder resets dx/dy on grant; native page coordinates preserve the full drag.
+      const dx = e.nativeEvent.pageX - origin.x, dy = e.nativeEvent.pageY - origin.y;
+      origin.distance = Math.max(origin.distance, Math.hypot(dx, dy));
+      axis.current ||= welcomeAxis(dx, dy, origin.canPull);
+      return { dx, dy, origin };
+    };
+    const move = (e: GestureResponderEvent) => {
+      const point = sample(e);
+      if (!point) return;
       if (axis.current === 'horizontal') {
-        const p = session.index - g.dx / width;
+        const p = session.index - point.dx / width;
         progress.value = reducedMotion ? session.index : Math.max(0, Math.min(WELCOME_LAST, p));
       } else if (axis.current === 'vertical') {
-        lift.value = reducedMotion ? 0 : welcomePull(g.dy, travel);
-        pull.move(Math.max(0, -g.dy), welcomePullComplete(g.dy));
+        const dy = point.dy - point.origin.lift;
+        lift.value = reducedMotion ? 0 : welcomePull(dy, travel);
+        pull.move(Math.max(0, -dy), welcomePullComplete(dy));
       }
-    },
-    onPanResponderRelease: (_e, g) => {
-      if (axis.current === 'horizontal') goSlide(welcomeTarget(session.index, g.dx, g.vx));
-      else if (axis.current === 'vertical') {
-        if (welcomePullComplete(g.dy)) {
-          pull.release(true);
-          start();
-        } else returnWave();
-      }
-      axis.current = null;
-    },
-    onPanResponderTerminate: () => {
+    };
+    const cancel = () => {
       if (axis.current === 'horizontal') goSlide(session.index);
-      else if (axis.current === 'vertical') returnWave();
+      if (touch.current?.canPull) returnWave();
+      touch.current = null;
       axis.current = null;
-    },
-  }), [width, restY, travel, reducedMotion, session, progress, lift, pull]);
+    };
+    return PanResponder.create({
+      // Own the entire black surface immediately, including curve/edges and the CTA text.
+      // y0 is still zero before grant; never use it to decide who receives a gesture.
+      onStartShouldSetPanResponderCapture: (e) => {
+        if (e.nativeEvent.touches.length !== 1) { cancel(); return false; }
+        touch.current = null;
+        axis.current = null;
+        if (!session.available) return false;
+        const { pageX: x, pageY: y } = e.nativeEvent;
+        const canPull = session.index === WELCOME_LAST && welcomeWaveContains(
+          x - rootPosition.current.x, y - rootPosition.current.y, width, restY, height, lift.value,
+        );
+        touch.current = { x, y, canPull, lift: lift.value, distance: 0 };
+        if (canPull) { cancelAnimation(lift); pull.grab(); }
+        return canPull;
+      },
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponderCapture: (e) => {
+        if (!session.available || e.nativeEvent.touches.length !== 1) return false;
+        return Boolean(sample(e) && axis.current);
+      },
+      onPanResponderGrant: move,
+      onPanResponderStart: (e) => {
+        if (e.nativeEvent.touches.length !== 1) cancel();
+      },
+      onPanResponderMove: (e) => {
+        if (e.nativeEvent.touches.length !== 1) cancel();
+        else move(e);
+      },
+      onPanResponderRelease: (e, g) => {
+        const point = sample(e);
+        if (!point) return;
+        touch.current = null;
+        if (axis.current === 'horizontal') {
+          if (point.origin.canPull) returnWave();
+          goSlide(welcomeTarget(session.index, point.dx, g.vx));
+        } else if (axis.current === 'vertical') {
+          if (welcomePullComplete(point.dy - point.origin.lift)) {
+            pull.release(true);
+            start();
+          } else returnWave();
+        } else if (point.origin.canPull && point.origin.distance < 8) { pull.release(true); start(); }
+        else if (point.origin.canPull) returnWave();
+        axis.current = null;
+      },
+      onPanResponderTerminationRequest: () => true,
+      onPanResponderTerminate: cancel,
+    });
+  }, [width, height, restY, travel, reducedMotion, session, progress, lift, pull]);
 
-  const sheetStyle = useAnimatedStyle(() => ({
-    height: baseHeight + Math.max(0, progress.value - 1) * (restH - baseBottom),
-  }));
   const pagesStyle = useAnimatedStyle(() => ({ transform: [{ translateX: -progress.value * width }] }));
   const indicatorStyle = useAnimatedStyle(() => ({ transform: [{ translateX: progress.value * 34 }] }));
   const waveStyle = useAnimatedStyle(() => ({
@@ -179,10 +218,11 @@ export default function Intro() {
   }));
 
   return (
-    <View style={s.wrap} {...gestures.panHandlers} testID="welcome-intro">
+    <View ref={root} style={s.wrap} {...gestures.panHandlers} testID="welcome-intro"
+      onLayout={() => root.current?.measureInWindow((x, y) => { rootPosition.current = { x, y }; })}>
       <Image accessible={false} accessibilityIgnoresInvertColors
         source={require('../assets/art/usp-friends-v2.jpg')} style={s.photo} resizeMode="cover" />
-      <Animated.View style={[s.sheet, sheetStyle]}>
+      <View style={[s.sheet, { height: sheetHeight }]} testID="welcome-sheet">
         <View style={{ height: textHeight, overflow: 'hidden' }}>
           <Animated.View style={[s.pages, { width: width * slides.length }, pagesStyle]}>
             {slides.map((slide, n) => (
@@ -217,10 +257,10 @@ export default function Intro() {
             <Animated.View pointerEvents="none" style={[s.bar, s.barOn, indicatorStyle]} />
           </View>
         </View>
-      </Animated.View>
+      </View>
       <Animated.View pointerEvents="none" style={[s.wave, { height: height + WAVE_CURVE }, waveStyle]}>
         <Svg width={width} height={WAVE_CURVE} viewBox="0 0 390 160" preserveAspectRatio="none">
-          <Path d="M0 132 C 78 132 120 20 195 20 C 270 20 312 132 390 132 L390 160 L0 160 Z" fill={color.ink} />
+          <Path d={WELCOME_WAVE_PATH} fill={color.ink} />
         </Svg>
         <View style={s.waveFill} />
       </Animated.View>

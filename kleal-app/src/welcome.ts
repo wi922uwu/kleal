@@ -2,6 +2,27 @@
 export const WELCOME_LAST = 2;
 export const WAVE_THRESHOLD = 70;
 export const WAVE_CURVE = 160;
+export const WELCOME_WAVE_PATH = 'M0 132 C 78 132 120 20 195 20 C 270 20 312 132 390 132 L390 160 L0 160 Z';
+
+/** Hit-test the visible SVG fill, not its transparent rectangular bounding box. */
+export function welcomeWaveContains(x: number, y: number, width: number, restY: number, height: number, lift = 0) {
+  if (![x, y, width, restY, height, lift].every(Number.isFinite)
+    || width <= 0 || x < 0 || x > width || y < 0 || y > height) return false;
+  const localY = y - restY + lift;
+  if (localY >= 132) return true;
+  if (localY < 20) return false;
+  // The path is symmetric. Invert the left cubic's monotone x to find its y.
+  const px = Math.min(x, width - x) * 390 / width;
+  let lo = 0, hi = 1;
+  for (let n = 0; n < 20; n++) {
+    const t = (lo + hi) / 2, u = 1 - t;
+    const curveX = 3 * u * u * t * 78 + 3 * u * t * t * 120 + t * t * t * 195;
+    if (curveX < px) lo = t; else hi = t;
+  }
+  const t = (lo + hi) / 2;
+  const curveY = 132 - 112 * (3 * t * t - 2 * t * t * t);
+  return localY >= curveY;
+}
 
 export type WelcomeAxis = 'horizontal' | 'vertical' | null;
 export function welcomeAxis(dx: number, dy: number, canPull: boolean): WelcomeAxis {
