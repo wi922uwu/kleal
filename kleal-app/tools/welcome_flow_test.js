@@ -286,4 +286,43 @@ check('white panel height is identical at all page positions, including accessib
   }
   assert.doesNotMatch(read('app/intro.tsx'), /height:.*progress\.value/);
 });
+function findNode(node, id) {
+  if (node?.props?.testID === id) return node;
+  return node?.children?.flat(Infinity).map(child => findNode(child, id)).find(Boolean);
+}
+check('wave stays visible at the same height through every fractional page transition', () => {
+  const h = renderIntro({ index: 0 });
+  const wave = findNode(h.tree, 'welcome-wave');
+  assert.equal(wave.props.pointerEvents, 'none');
+  assert.equal(wave.props.accessible, false);
+  for (const progress of [0, .5, 1, 1.5, 2]) {
+    h.progress.value = progress;
+    assert.equal(wave.props.style[2].evaluate().transform[0].translateY, h.restY);
+  }
+});
+for (const index of [0, 1]) {
+  check(`page ${index + 1} wave ignores taps and upward pulls without exposing Start`, () => {
+    for (const dy of [0, -150]) {
+      const h = renderIntro({ index }), c = h.config, x = h.width / 2, y = h.height - 50;
+      assert.equal(findNode(h.tree, 'welcome-start'), undefined);
+      assert.equal(c.onStartShouldSetPanResponderCapture(event(x, y), preGrant), false);
+      assert.equal(c.onMoveShouldSetPanResponderCapture(event(x, y + dy), preGrant), false);
+      c.onPanResponderRelease(event(x, y + dy, 0), preGrant);
+      assert.equal(h.lift.value, 0);
+      assert.deepEqual(h.calls, []);
+      assert.deepEqual(h.animations, []);
+    }
+  });
+  check(`page ${index + 1} still pages horizontally from inactive black surface`, () => {
+    const h = renderIntro({ index }), c = h.config, x = h.width / 2, y = h.height - 50;
+    assert.equal(c.onStartShouldSetPanResponderCapture(event(x, y), preGrant), false);
+    assert.equal(c.onMoveShouldSetPanResponderCapture(event(x - 80, y), preGrant), true);
+    c.onPanResponderGrant(event(x - 80, y), preGrant);
+    c.onPanResponderRelease(event(x - 80, y, 0), preGrant);
+    h.animations.at(-1).callback(true);
+    assert.equal(h.session.index, index + 1);
+    assert.equal(h.lift.value, 0);
+    assert.deepEqual(h.calls, []);
+  });
+}
 console.log(`All ${count} welcome checks passed`);

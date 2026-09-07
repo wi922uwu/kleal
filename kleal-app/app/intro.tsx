@@ -211,7 +211,8 @@ export default function Intro() {
   const pagesStyle = useAnimatedStyle(() => ({ transform: [{ translateX: -progress.value * width }] }));
   const indicatorStyle = useAnimatedStyle(() => ({ transform: [{ translateX: progress.value * 34 }] }));
   const waveStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: restY - lift.value + (1 - Math.max(0, progress.value - 1)) * restH }],
+    // Keep the same black silhouette on every page; only the last page can lift it.
+    transform: [{ translateY: restY - lift.value }],
   }));
   const ctaStyle = useAnimatedStyle(() => ({
     opacity: Math.max(0, progress.value - 1) * interpolate(lift.value, [0, 120], [1, 0], 'clamp'),
@@ -258,7 +259,7 @@ export default function Intro() {
           </View>
         </View>
       </View>
-      <Animated.View pointerEvents="none" style={[s.wave, { height: height + WAVE_CURVE }, waveStyle]}>
+      <Animated.View testID="welcome-wave" pointerEvents="none" accessible={false} style={[s.wave, { height: height + WAVE_CURVE }, waveStyle]}>
         <Svg width={width} height={WAVE_CURVE} viewBox="0 0 390 160" preserveAspectRatio="none">
           <Path d={WELCOME_WAVE_PATH} fill={color.ink} />
         </Svg>
