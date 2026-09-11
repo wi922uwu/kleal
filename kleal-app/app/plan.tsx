@@ -29,7 +29,7 @@ import {
   KeyboardAvoidingView, Platform, Linking, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import {
   CHAT, PLAN, RATINGS, planWhen, personStatus, planPhase, minutesToStart, linkOpensAt,
 } from '../src/chat';
@@ -40,6 +40,7 @@ import { normalizeTimePart } from '../src/timeInput';
 import { useLang, T, getLang, dateLocale, use12h } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { mediaUrl, agent } from '../src/api';
+import { planChatCopy, planChatPeer, preparePlanChat } from '../src/plan-chat';
 import {
   IconChevronLeft, IconCalendar, IconClock, IconPin, IconLink, IconPerson,
 } from '../src/components/icons';
@@ -65,7 +66,7 @@ export default function Plan() {
   * параметра `who` там нет. А на нём висит вся копия с именем — «Sofia тоже её увидит»,
   * «Ждём ответа: Sofia», «Скажи Sofia, что не сможешь». Без него в тексте оставалась дырка:
   * «откроется за 10 минут до начала —  тоже её увидит». Сервер отдаёт `other` в самом плане,
-  * поэтому берём оттуда, а параметр остаётся ведущим: он известен до первой загрузки.
+  * поэтому после загрузки собеседник определяется по плану; параметр нужен только до загрузки.
   */
   const otherParam = String(params.who || '').trim();
   const intentTitle = String(params.title || '').trim();
@@ -95,8 +96,19 @@ export default function Plan() {
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [openingChat, setOpeningChat] = useState(false);
+  const [chatError, setChatError] = useState('');
+  const chatRequest = useRef(false);
+  const chatContext = useRef<symbol | null>(null);
+  const chatCopy = planChatCopy(getLang());
   const [plan, setPlan] = useState<any>(null);
-  const other = otherParam || String((plan as any)?.other || '').trim();
+  const other = plan ? planChatPeer(plan, me) : otherParam;
+  const chatContextKey = `${me}\n${planId}\n${plan?.id || ''}`;
+  // A slow preflight must not navigate after Back/another tab, even if the user reopens this plan.
+  useFocusEffect(useCallback(() => {
+    chatContext.current = Symbol(chatContextKey);
+    return () => { chatContext.current = null; };
+  }, [chatContextKey]));
   const [peerTz, setPeerTz] = useState('');
   /** Часы идут — экран сам переходит из «подтверждено» в «через десять минут» и дальше. */
   const [tick, setTick] = useState(Date.now());
@@ -542,8 +554,22 @@ export default function Plan() {
     сверху; если чата в стопке нет, он встаёт НА МЕСТО плана. В обоих случаях «назад» из чата
     ведёт туда, откуда человек пришёл, а не обратно в план, из которого он только что вышел.
   */
-  const openChat = () =>
-    router.dismissTo({ pathname: '/conversation', params: { who: other, title: intentTitle, photo } });
+  const openChat = async () => {
+    if (chatRequest.current || !chatContext.current) return;
+    chatRequest.current = true;
+    const context = chatContext.current;
+    setOpeningChat(true);
+    setChatError('');
+    try {
+      const target = await preparePlanChat(plan, me, agent.thread);
+      if (context === chatContext.current) router.dismissTo(target);
+    } catch {
+      if (context === chatContext.current) setChatError(planChatCopy(getLang()).unavailable);
+    } finally {
+      chatRequest.current = false;
+      if (chatContext.current) setOpeningChat(false);
+    }
+  };
 
   /** Ссылка, как её отдал сервер: до подтверждения её просто нет в ответе. */
   const serverLink = String((plan as any)?.link ?? (mode === 'online' ? plan?.address : '') ?? '');
@@ -574,6 +600,7 @@ export default function Plan() {
           ) : (
             <>
               <Text style={s.title}>{headline(phase!, other, plan, me, ru)}</Text>
+              {chatError ? <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={s.err}>{chatError}</Text> : null}
               {subline(phase!, other, plan, ru, me) ? (
                 <Text style={s.note}>{subline(phase!, other, plan, ru, me)}</Text>
               ) : null}
@@ -648,6 +675,14 @@ export default function Plan() {
                 выглядеть как незаконченное дело — человек не понимал, надо ли ещё что-то нажать.
                 Плашка живёт только в «подтверждено»: у «скоро» и «сейчас» ниже своя, с маршрутом.
               */}
+              {needsWhere ? (
+                <Pressable accessibilityRole="button" accessibilityLabel={chatCopy.open}
+                  accessibilityState={{ disabled: openingChat, busy: openingChat }} disabled={openingChat}
+                  style={[s.ctaSoft, openingChat && { opacity: 0.5 }]} onPress={openChat}>
+                  <Text style={s.ctaSoftText}>{openingChat ? chatCopy.loading : chatCopy.open}</Text>
+                </Pressable>
+              ) : null}
+
               {allSet ? (
                 <View style={s.doneCard}>
                   <Text style={s.doneTitle}>{PLAN.allSetTitle()}</Text>

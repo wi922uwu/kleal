@@ -96,6 +96,8 @@ export const ChatShell = forwardRef<ScrollView, {
   typing?: boolean;
   /** Виджет текущего шага — живёт ВНУТРИ ленты, под последней репликой. */
   widget?: React.ReactNode;
+  /** Optional step actions outside the scrolling transcript, above the existing Composer. */
+  footer?: React.ReactNode;
   /** Правый угол шапки до процента: например «Начать заново». */
   headerExtra?: React.ReactNode;
   /**
@@ -120,7 +122,7 @@ export const ChatShell = forwardRef<ScrollView, {
   onBack?: () => void;
   onSend?: (text: string) => void;
 }>(function ChatShell(
-  { title, pct, thread, typing, widget, headerExtra, brow, scrollEnabled = true, composerPlaceholder, composerDisabled, focusSignal, onBack, onSend, ambientVideo },
+  { title, pct, thread, typing, widget, footer, headerExtra, brow, scrollEnabled = true, composerPlaceholder, composerDisabled, focusSignal, onBack, onSend, ambientVideo },
   scroller
 ) {
   const lang = useLang();
@@ -151,8 +153,10 @@ export const ChatShell = forwardRef<ScrollView, {
 
           <ScrollView
             ref={scroller as any}
+            style={footer ? s.boundedThread : undefined}
             contentContainerStyle={s.thread}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={footer ? 'on-drag' : undefined}
             scrollEnabled={scrollEnabled}
             showsVerticalScrollIndicator={false}
           >
@@ -198,6 +202,7 @@ export const ChatShell = forwardRef<ScrollView, {
             {!typing ? widget : null}
           </ScrollView>
 
+          {footer ? <View style={s.footer}>{footer}</View> : null}
           <Composer onBack={onBack} onSend={onSend} placeholder={composerPlaceholder}
                     disabled={composerDisabled} focusSignal={focusSignal} bottomInset={insets.bottom} />
         </View>
@@ -254,6 +259,8 @@ const s = StyleSheet.create({
   track: { height: 2, backgroundColor: color.card, marginHorizontal: space.lg, borderRadius: rad.full, overflow: 'hidden' },
   trackFill: { height: 2, backgroundColor: color.primary, borderRadius: rad.full },
   thread: { paddingHorizontal: space.lg, paddingTop: space.lg, paddingBottom: space.lg },
+  boundedThread: { flex: 1, minHeight: 0 },
+  footer: { flexShrink: 0, paddingHorizontal: space.lg, paddingTop: space.sm },
   rowBot: { alignItems: 'flex-start', marginTop: space.md },
   /** Вертушка встаёт там же, где начнётся пузырь, — чтобы появление реплики не сдвигало ленту. */
   typing: { paddingHorizontal: space.lg, paddingVertical: space.sm },

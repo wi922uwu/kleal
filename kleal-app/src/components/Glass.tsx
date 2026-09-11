@@ -30,6 +30,7 @@ export function GlassPill({
   style,
   disabled,
   busy,
+  labelLines = 1,
 }: {
   label: string;
   onPress?: () => void;
@@ -42,6 +43,8 @@ export function GlassPill({
   disabled?: boolean;
   /** Действие идёт: вместо подписи вертушка, повторное нажатие не проходит. */
   busy?: boolean;
+  /** Opt-in wrapping for step actions at large accessibility text sizes. */
+  labelLines?: number;
 }) {
   const dark = tone === 'dark';
   const brand = tone === 'brand';
@@ -108,8 +111,9 @@ export function GlassPill({
         */}
         {busy ? <ActivityIndicator size="small" color={dark || brand ? color.onPrimary : color.fg} /> : icon}
         <Text
-          style={[s.label, dark || brand ? s.labelDark : s.labelLight, disabled && s.labelOff]}
-          numberOfLines={1}
+          style={[s.label, dark || brand ? s.labelDark : s.labelLight, disabled && s.labelOff,
+            labelLines > 1 && { flexShrink: 1, textAlign: 'center', lineHeight: undefined }]}
+          numberOfLines={labelLines}
         >
           {label}
         </Text>
@@ -169,12 +173,15 @@ export function GlassChip({
   on,
   onPress,
   icon,
+  wrapLabel = false,
 }: {
   label: string;
   /** Выбран: заливается фирменным, подпись становится белой. */
   on?: boolean;
   onPress?: () => void;
   icon?: React.ReactNode;
+  /** Selected-interest lists must remain readable/removable with accessibility text sizes. */
+  wrapLabel?: boolean;
 }) {
   return (
     <Pressable
@@ -187,7 +194,7 @@ export function GlassChip({
           onPress();
         })
       }
-      style={({ pressed }) => [s.chip, on && s.chipOn, pressed && s.pressed]}
+      style={({ pressed }) => [s.chip, wrapLabel && s.chipWrap, on && s.chipOn, pressed && s.pressed]}
     >
       <BlurView intensity={glass.blur} tint={on ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
       <View
@@ -200,7 +207,8 @@ export function GlassChip({
         ]}
       />
       {icon}
-      <Text style={[s.chipText, on && s.chipTextOn]} numberOfLines={1}>
+      <Text style={[s.chipText, on && s.chipTextOn, wrapLabel && { flexShrink: 1, lineHeight: undefined }]}
+        numberOfLines={wrapLabel ? undefined : 1}>
         {label}
       </Text>
     </Pressable>
@@ -269,6 +277,7 @@ const s = StyleSheet.create({
       android: { elevation: 5 },
     }),
   },
+  chipWrap: { height: 'auto', minHeight: 44, maxWidth: '100%', paddingVertical: space.sm },
   chipText: { ...type.chatHint, color: color.fg } as any,
   chipTextOn: { color: color.onPrimary },
   toast: {

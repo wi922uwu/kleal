@@ -7,6 +7,7 @@
 // была невидимой — ни падения, ни красной строки, — и заметить возврат можно только так.
 const fs = require('fs');
 const path = require('path');
+require('./onboarding_android_layout_test');
 require('./age_ruler_test');
 require('./interest_normalization_test');
 
@@ -1767,23 +1768,13 @@ console.log('\nответ модели — документ, а не репли�
   // превращается реальный вывод модели.
   // Граница среза — по КОНЦУ разбора, а не по началу отрисовки: между ними появились помощники
   // с аннотациями типов, и срез до 'function Rich(' стал утаскивать их с собой.
-  const js = md.slice(from, md.indexOf('function Rich('))
-    .replace(/^type [\s\S]*?;$/m, '')
-    .replace(/type Block =[\s\S]*?\| \{ kind: 'hr' \};/, '')
-    .replace('export function parseBlocks(src: string): Block[] {', 'function parseBlocks(src){')
-    .replace('export function parseInline(src: string): Inline[] {', 'function parseInline(src){')
-    .replace('function cells(line: string): string[] {', 'function cells(line){')
-    .replace('const out: Block[] = [];', 'const out = [];')
-    .replace('let para: string[] = [];', 'let para = [];')
-    .replace('const body: string[] = [];', 'const body = [];')
-    .replace('const rows: string[][] = [];', 'const rows = [];')
-    .replace('const out: Inline[] = [];', 'const out = [];')
-    .replace('const RULES: [RegExp, Partial<Inline>][] = [', 'const RULES = [')
-    .replace('let bestM: RegExpMatchArray | null = null;', 'let bestM = null;')
-    .replace('let bestStyle: Partial<Inline> = {};', 'let bestStyle = {};')
-    .replace('const at = (k: number) =>', 'const at = (k) =>')
-    .replace(/ as 1 \| 2 \| 3/g, '').replace(/ as RegExpMatchArray/g, '');
-  const mk = new Function(js + '\nreturn { parseBlocks, parseInline };')();
+  // Compile the real parser with the installed TypeScript version, not type-erasure regexes.
+  const ts = require('typescript');
+  const js = ts.transpileModule(md.slice(from, md.indexOf('function Rich(')), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const mk = {};
+  new Function('exports', js)(mk);
 
   // То, что модель печатает НА САМОМ ДЕЛЕ — снято с живого ответа 14 августа.
   const REAL = '| Что | Падел | Теннис |\n| --- | --- | --- |\n| Ракетка | Короткая | Длинная |';

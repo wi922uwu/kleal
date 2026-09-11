@@ -12,7 +12,7 @@ import {
   useWindowDimensions,
   type AccessibilityActionEvent,
 } from 'react-native';
-import Svg, { Defs, G, LinearGradient, Line, Mask, Rect, Stop } from 'react-native-svg';
+import Svg, { Line } from 'react-native-svg';
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 import {
   AGE_FEEDBACK_INTERVAL_MS,
@@ -30,7 +30,6 @@ import { hTick } from '../haptics';
 import type { ReplyLang } from '../i18n';
 import { color, font } from '../theme';
 
-const AnimatedGroup = Animated.createAnimatedComponent(G);
 const VALUES = Array.from({ length: AGE_MAX - AGE_MIN + 1 }, (_, index) => AGE_MIN + index);
 const TICK_HEIGHT = 23;
 const LONG_TICK_HEIGHT = 34;
@@ -307,40 +306,36 @@ export function AgeDial({
       </Animated.Text>
 
       <View accessible={false} style={[styles.band, { width: bandWidth }]}>
-        <Svg accessible={false} width={bandWidth} height={BAND_HEIGHT}>
-          <Defs>
-            <LinearGradient id="age-ruler-edges" x1="0" y1="0" x2="1" y2="0">
-              <Stop offset="0" stopColor={color.card} stopOpacity="0" />
-              <Stop offset="0.22" stopColor={color.card} stopOpacity="1" />
-              <Stop offset="0.78" stopColor={color.card} stopOpacity="1" />
-              <Stop offset="1" stopColor={color.card} stopOpacity="0" />
-            </LinearGradient>
-            <Mask id="age-ruler-fade">
-              <Rect x={0} y={0} width={bandWidth} height={BAND_HEIGHT} fill="url(#age-ruler-edges)" />
-            </Mask>
-          </Defs>
-
-          <G mask="url(#age-ruler-fade)">
-            <AnimatedGroup x={offset}>
-              {VALUES.map((age) => {
-                const long = age % 5 === 0;
-                const x = half + (age - AGE_MIN) * AGE_STEP_PX;
-                return (
-                  <Line
-                    key={age}
-                    x1={x}
-                    y1={8}
-                    x2={x}
-                    y2={8 + (long ? LONG_TICK_HEIGHT : TICK_HEIGHT)}
-                    stroke={long ? color.neutral400 : color.neutral300}
-                    strokeWidth={long ? 1.5 : 1}
-                    strokeLinecap="round"
-                  />
-                );
-              })}
-            </AnimatedGroup>
-          </G>
-
+        {/* Native ticks avoid the Android SVG group/mask offscreen-compositing path. */}
+        <View style={StyleSheet.absoluteFill} pointerEvents="none" importantForAccessibility="no-hide-descendants">
+          {VALUES.map((age) => {
+            const long = age % 5 === 0;
+            const x = half + (age - AGE_MIN) * AGE_STEP_PX;
+            const thickness = long ? 2 : 1.5;
+            return (
+              <Animated.View
+                key={age}
+                testID={`age-ruler-tick-${age}`}
+                style={[
+                  styles.tick,
+                  {
+                    left: x - thickness / 2,
+                    width: thickness,
+                    height: long ? LONG_TICK_HEIGHT : TICK_HEIGHT,
+                    backgroundColor: long ? color.fg : color.muted,
+                    transform: [{ translateX: offset }],
+                    opacity: offset.interpolate({
+                      inputRange: [-x, bandWidth * 0.22 - x, bandWidth * 0.78 - x, bandWidth - x],
+                      outputRange: [0, 1, 1, 0],
+                      extrapolate: 'clamp',
+                    }),
+                  },
+                ]}
+              />
+            );
+          })}
+        </View>
+        <Svg accessible={false} pointerEvents="none" width={bandWidth} height={BAND_HEIGHT}>
           <Line
             x1={half}
             y1={2}
@@ -370,5 +365,7 @@ const styles = StyleSheet.create({
     height: BAND_HEIGHT,
     marginHorizontal: -20,
     alignSelf: 'center',
+    overflow: 'hidden',
   },
+  tick: { position: 'absolute', top: 8, borderRadius: 1 },
 });

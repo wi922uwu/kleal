@@ -36,6 +36,7 @@ import { clampAge } from '../src/age-ruler';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
 import { MindMap } from '../src/components/MindMap';
+import { InterestMapActions } from '../src/components/InterestMapActions';
 import { GlassChip, GlassPill } from '../src/components/Glass';
 import { IconCheckCircle } from '../src/components/icons';
 import { color, radius as rad, type } from '../src/theme';
@@ -642,6 +643,9 @@ export default function Chat() {
       onBack={() => router.back()}
       onSend={send}
       scrollEnabled={!dragging}
+      footer={step === 'hobbies' && mapOpen && !queue && !typing ? (
+        <InterestMapActions selected={mapPicked} onDone={onMapDone} />
+      ) : null}
       /*
         ПОКА АГЕНТ ТОЛЬКО ПРЕДСТАВИЛСЯ, ПИСАТЬ НЕЧЕГО. На первом шаге он здоровается и ждёт
         «Поехали!» — а поле ввода выглядело обычным, приглашало «Сообщение…» и молчало в ответ на
@@ -1000,7 +1004,6 @@ function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone,
    */
   if (mapOpen) {
     const picked: string[] = mapPicked || [];
-    const need = 3;
     return (
       <View style={cs.widget}>
         {/*
@@ -1017,19 +1020,10 @@ function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone,
         {picked.length ? (
           <View style={cs.row}>
             {picked.map((k: string) => (
-              <Chip key={k} label={interestLabel(k)} on onPress={() => onMapPick?.(k)} />
+              <GlassChip key={k} label={interestLabel(k)} on wrapLabel onPress={() => onMapPick?.(k)} />
             ))}
           </View>
         ) : null}
-        {/* Как на борде: под чипами «Добавить своё», под ним главная. Своё называют словами в разговоре. */}
-        <Cta kind="muted" label={STEP_HOBBIES.mapOwn()} onPress={() => onMapDone?.(picked, true)} />
-        <Cta
-          label={picked.length >= need
-            ? STEP_HOBBIES.mapCount(picked.length)
-            : STEP_HOBBIES.mapMin(need)}
-          disabled={picked.length < need}
-          onPress={() => onMapDone?.(picked)}
-        />
       </View>
     );
   }
