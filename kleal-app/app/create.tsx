@@ -23,7 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { hOk, hTick } from '../src/haptics';
 import { IconChevronLeft, IconMic, IconSpark } from '../src/components/icons';
-import { useLang, getLang, T , replyLang } from '../src/i18n';
+import { useLang, getLang, T, replyLang, dateLocale, use12h } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { buddy as buddyApi } from '../src/api';
@@ -37,8 +37,8 @@ type Msg = { who: 'bot' | 'me'; text: string; at: string ;
   /** Текст ещё пишется — под ним мигает курсор. */ live?: boolean };
 
 const now = () =>
-  new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: getLang() !== 'ru',
+  new Date().toLocaleTimeString(dateLocale(), {
+    hour: '2-digit', minute: '2-digit', hour12: use12h(),
   });
 
 export default function Create() {
@@ -237,7 +237,7 @@ export default function Create() {
         setTurns(hist);
         setRetry({ text, hist });
         say('bot', T('Связь пропала — я не дослушал. Попробуем ещё раз?',
-                     'I lost the connection mid-thought. Shall we try again?'));
+                     'I lost the connection mid-thought. Shall we try again?', 'Perdí la conexión a mitad de pensamiento. ¿Lo intentamos de nuevo?'));
       },
     });
   }, [say, settle, st.profile]);
@@ -381,7 +381,7 @@ export default function Create() {
                 style={s.hint}
                 onPress={() => { const r = retry; setRetry(null); ask(r.text, r.hist); }}
               >
-                <Text style={s.hintText}>{T('Попробовать снова', 'Try again')}</Text>
+                <Text style={s.hintText}>{T('Попробовать снова', 'Try again', 'Reintentar')}</Text>
               </Pressable>
             </View>
           ) : null}
@@ -413,7 +413,7 @@ export default function Create() {
               style={s.input}
               value={draft}
               onChangeText={setDraft}
-              placeholder={T('Сообщение…', 'Message…')}
+              placeholder={T('Сообщение…', 'Message…', 'Mensaje…')}
               placeholderTextColor={color.neutral400}
               onSubmitEditing={submit}
               returnKeyType="send"

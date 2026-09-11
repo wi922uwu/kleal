@@ -59,21 +59,26 @@ EXPO_PUBLIC_API=https://<адрес-стенда> npx expo start
 
 # Expo HAS CHANGED
 
-Read the exact versioned docs at https://docs.expo.dev/versions/v54.0.0/ before writing any code.
+Read the exact versioned docs at https://docs.expo.dev/versions/v57.0.0/ before writing any code.
 
-## Why SDK 54 and not the latest
+## SDK 57 migration (local branch, production requires separate approval)
 
-The project was scaffolded on SDK 57 (the current `latest`) and then deliberately moved **down** to
-SDK 54, because Expo Go holds exactly one SDK and the phone we test on runs 54. This is a temporary
-compromise for the ability to open the app by scanning a QR code, not a technical preference.
+The project was temporarily on SDK 54 to match the older phone's Expo Go. This branch migrates
+54 → 55 → 56 → 57 for Expo Go 57. The production frontend baseline is the deployed age-ruler
+commit `46b255e`, verified against the dirty server tree; do not assume production has been
+upgraded merely because this file changed. See `docs/expo-sdk-57-migration.md` for verification,
+known baseline failures, and the approval-gated deployment/rollback plan.
 
 Consequences to keep in mind:
 
-- **We are three SDKs behind on a project a few days old.** Upgrading back up is real work that has
-  to happen before release, and it gets harder the longer it waits. It is a line in ROADMAP.md.
-- **Expo Go ends the moment we add anything with custom native code** — maps, push notifications,
-  any module outside the bundled set. At that point the answer is a development build (`eas.json`
-  already has the profiles), and the reason for staying on 54 disappears with it.
+- Use `expo install --check` and `expo-doctor`, not guessed module versions. SDK 57 uses React
+  19.2.3 and React Native 0.86.3 in this lockfile. Do not bypass runtime compatibility checks.
+- Application navigation imports must use `expo-router` / `expo-router/react-navigation`, not
+  external `@react-navigation/*`. Native upload parts use `src/upload-file.native.ts`: SDK 56+
+  global fetch rejects the legacy `{uri, name, type}` FormData part.
+- **Expo Go ends the moment we add native code outside its bundled set.** The current
+  `react-native-maps` version is bundled; custom modules still need a development build (`eas.json`
+  already has the profiles). Verify the versioned module docs before choosing the client.
 - When bumping the SDK, check these two call sites first — both APIs moved recently and both are in
   use: `ImageManipulator.ImageManipulator.manipulate()` in `src/photo.ts`, and `mediaTypes:
   ['images']` in `app/chat.tsx` and `app/profile/index.tsx`. Verified present in both 54 and 57; do

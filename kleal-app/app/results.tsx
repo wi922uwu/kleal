@@ -28,9 +28,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRouter } from 'expo-router';
-import { usePreventRemove } from '@react-navigation/native';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import { RESULTS, EXPAND_LADDER, ExpandAxis, axisExplain } from '../src/intent';
-import { CANDS, PREFS, CAP, Cand, candSubtitle, candWhere, candSummary, isHidden } from '../src/candidates';
+import { CANDS, PREFS, CAP, Cand, candSubtitle, candWhere, candSummary, candReadiness, isHidden } from '../src/candidates';
 import { CHAT, ReqStatus, activeChatWith } from '../src/chat';
 import { useInvites, inviteTo, openInvites, sendInvite, withdrawInvite } from '../src/invites';
 import { isGroupIntent, groupTitleOf, GROUP } from '../src/groups';
@@ -198,7 +198,7 @@ export default function Results() {
       setHasMore(r?.has_more === true);
       if (found.length <= cands.length) setNote(RESULTS.allShown(cands.length));
     } catch {
-      setNote(T('Не получилось загрузить ещё. Попробуй ещё раз.', 'Could not load more. Try again.'));
+      setNote(T('Не получилось загрузить ещё. Попробуй ещё раз.', 'Could not load more. Try again.', 'No se pudieron cargar más. Inténtalo de nuevo.'));
     } finally {
       setBusy(false);
     }
@@ -236,7 +236,7 @@ export default function Results() {
         setNote(`${axisExplain(axis, km)} ${RESULTS.empty()}`);
       }
     } catch {
-      setNote(T('Не получилось расширить. Попробуй ещё раз.', 'Could not widen. Try again.'));
+      setNote(T('Не получилось расширить. Попробуй ещё раз.', 'Could not widen. Try again.', 'No se pudo ampliar. Inténtalo de nuevo.'));
     } finally {
       setBusy(false);
     }
@@ -318,7 +318,7 @@ export default function Results() {
       ].join(', ');
       setNote(`${PREFS.applied(conds)} ${found.length ? RESULTS.found(found.length) : RESULTS.empty()}`);
     } catch {
-      setNote(T('Не получилось поискать. Попробуй ещё раз.', 'The search failed. Try again.'));
+      setNote(T('Не получилось поискать. Попробуй ещё раз.', 'The search failed. Try again.', 'La búsqueda falló. Inténtalo de nuevo.'));
     } finally {
       setReSearching(false);
     }
@@ -403,19 +403,19 @@ export default function Results() {
     return (
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={leaveResults}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={leaveResults}>
             <Text style={s.backIcon}>‹</Text>
           </Pressable>
-          <Text style={s.headTitle}>{T('Выдача устарела', 'These results are gone')}</Text>
+          <Text style={s.headTitle}>{T('Выдача устарела', 'These results are gone', 'Estos resultados ya no están')}</Text>
         </View>
         <View style={s.scroll}>
           <Text style={s.lead}>
             {T('Результаты поиска живут до перезагрузки. Давай поищем заново.',
-               'Search results only live until the page reloads. Let’s search again.')}
+               'Search results only live until the page reloads. Let’s search again.', 'Los resultados de búsqueda solo duran hasta que se recarga la página. Busquemos de nuevo.')}
           </Text>
           {/* Новый поиск начинается там же, где и любой другой: с темы, а не с формата. */}
           <Pressable accessibilityRole="button" style={s.cta} onPress={() => { router.dismissTo('/home'); router.navigate('/create'); }}>
-            <Text style={s.ctaText}>{T('Новый поиск', 'New search')}</Text>
+            <Text style={s.ctaText}>{T('Новый поиск', 'New search', 'Nueva búsqueda')}</Text>
           </Pressable>
         </View>
       </View>
@@ -424,7 +424,7 @@ export default function Results() {
 
   const title = gmode ? (groupId() ? GROUP.invitesSent() : GROUP.header())
               : cands.length === 0 ? RESULTS.empty()
-              : onlyFallback ? T('Прямых совпадений нет', 'No direct matches')
+              : onlyFallback ? T('Прямых совпадений нет', 'No direct matches', 'No hay coincidencias directas')
               : RESULTS.best();
   /** Групповые строки под шапкой: регламент до первого приглашения (GR.14), счётчик после (GR.17). */
   const gc = groupCounters();
@@ -435,7 +435,7 @@ export default function Results() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={leaveResults}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={leaveResults}>
           <Text style={s.backIcon}>‹</Text>
         </Pressable>
         {/* Красная точка + заголовок — шапка кадра O.12. */}
@@ -449,7 +449,7 @@ export default function Results() {
           <View style={{ gap: space.sm }}>
             <Text style={s.lead}>
               {T('Никто не занимается ровно этим. Вот кто рядом и с кем это может получиться.',
-                 'Nobody is doing exactly that. Here are people nearby it could work with.')}
+                 'Nobody is doing exactly that. Here are people nearby it could work with.', 'Nadie está haciendo exactamente eso. Aquí hay personas cercanas con las que podría funcionar.')}
             </Text>
             <Pressable accessibilityRole="button" style={s.prefsBtn} onPress={openPrefs}>
               <Text style={s.prefsBtnText}>{PREFS.title()}</Text>
@@ -637,7 +637,7 @@ function CandCard({
   onOpenChat: () => void;
   onRemove: () => void;
 }) {
-  const readiness = (ru() ? c.readiness_ru : c.readiness_en) || '';
+  const readiness = candReadiness(c);
   const where = candWhere(c);
   const summary = candSummary(c, ru());
   /** Ссылка на фото есть, а файла нет: <Image> рисует пустоту — не кружок, а дыру в карточке. */
@@ -680,7 +680,8 @@ function CandCard({
         {summary ? (
           <View style={s.sumBox}>
             <Text style={s.sumLabel}>{CANDS.summaryLabel()}</Text>
-            <Text style={s.sumText}>{summary}</Text>
+            {/* В списке — абзац целиком не нужен: три строки, полностью он на карточке человека. */}
+            <Text style={s.sumText} numberOfLines={3}>{summary}</Text>
           </View>
         ) : null}
 
@@ -690,7 +691,7 @@ function CandCard({
           дойдёт ли сообщение прямо сейчас, — которые иначе читаются как противоречие.
         */}
         {readiness ? (
-          <Text style={s.readiness}>{T('Связаться: ', 'Reach out: ')}{readiness}</Text>
+          <Text style={s.readiness}>{T('Связаться: ', 'Reach out: ', 'Contacta: ')}{readiness}</Text>
         ) : null}
       </Pressable>
 

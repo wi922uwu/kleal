@@ -15,6 +15,8 @@
  * человека, чей он. Семь с кадра оставлены, чтобы онбординг и профиль выглядели одинаково.
  */
 
+import { getLang } from './i18n';
+
 /** [английское имя, код ISO 639-1, русское имя, флаг (если есть на борде)] */
 export type Lang = [string, string, string, string?];
 
@@ -121,18 +123,55 @@ const lookup = (key: string) => {
   return BY_NAME.get(k) || BY_CODE.get(k);
 };
 
+/**
+ * ИСПАНСКИЕ ИМЕНА — ОТДЕЛЬНОЙ КАРТОЙ ПО КОДУ ISO, а не четвёртым столбцом кортежа: кортеж читают и
+ * другие места, и расширять его ради подписи значит трогать их все.
+ */
+const LANG_ES: Record<string, string> = {
+  af: 'afrikáans', am: 'amárico', ar: 'árabe', az: 'azerí',
+  be: 'bielorruso', bg: 'búlgaro', bn: 'bengalí', bs: 'bosnio',
+  ca: 'catalán', cs: 'checo', cy: 'galés', da: 'danés',
+  de: 'alemán', el: 'griego', en: 'inglés', es: 'español',
+  et: 'estonio', eu: 'vasco', fa: 'persa', fi: 'finés',
+  fr: 'francés', ga: 'irlandés', gl: 'gallego', gu: 'gujarati',
+  ha: 'hausa', he: 'hebreo', hi: 'hindi', hr: 'croata',
+  hu: 'húngaro', hy: 'armenio', id: 'indonesio', is: 'islandés',
+  it: 'italiano', ja: 'japonés', jv: 'javanés', ka: 'georgiano',
+  kk: 'kazajo', km: 'jemer', kn: 'kannada', ko: 'coreano',
+  ku: 'kurdo', ky: 'kirguís', lo: 'lao', lt: 'lituano',
+  lv: 'letón', mk: 'macedonio', ml: 'malayalam', mn: 'mongol',
+  mr: 'maratí', ms: 'malayo', mt: 'maltés', my: 'birmano',
+  ne: 'nepalí', nl: 'neerlandés', no: 'noruego', pa: 'punjabi',
+  pl: 'polaco', ps: 'pastún', pt: 'portugués', ro: 'rumano',
+  ru: 'ruso', si: 'cingalés', sk: 'eslovaco', sl: 'esloveno',
+  so: 'somalí', sq: 'albanés', sr: 'serbio', sv: 'sueco',
+  sw: 'suajili', ta: 'tamil', te: 'telugu', tg: 'tayiko',
+  th: 'tailandés', tk: 'turcomano', tl: 'filipino', tr: 'turco',
+  uk: 'ucraniano', ur: 'urdu', uz: 'uzbeko', vi: 'vietnamita',
+  yi: 'yidis', yo: 'yoruba', zh: 'chino', zu: 'zulú',
+};
+
+/**
+ * Флаг `ru` достался от времён двух языков и значит ровно «русский». Испанский он назвать не может,
+ * поэтому спрашиваем язык интерфейса: нет испанского имени — остаётся английское, как и было.
+ */
+function plainName(l: Lang, ru: boolean): string {
+  if (ru) return l[2];
+  return (getLang() === 'es' && LANG_ES[l[1]]) || l[0];
+}
+
 /** Подпись языка на языке интерфейса, с флагом, если он у него есть. */
 export function langName(key: string, ru: boolean): string {
   const l = lookup(key);
   if (!l) return key;                       // язык, дописанный человеком, показывается как есть
-  const name = ru ? l[2] : l[0];
+  const name = plainName(l, ru);
   return l[3] ? `${name} ${l[3]}` : name;
 }
 
 /** То же имя без флага — для строки профиля, где на борде флагов нет. */
 export function langPlainName(key: string, ru: boolean): string {
   const l = lookup(key);
-  return l ? (ru ? l[2] : l[0]) : key;
+  return l ? plainName(l, ru) : key;
 }
 
 /**
@@ -156,5 +195,7 @@ export function searchLangs(q: string): Lang[] {
   if (!s) return ALL_LANGS;
   return ALL_LANGS.filter(
     (l) => l[0].toLowerCase().includes(s) || l[2].toLowerCase().includes(s) || l[1] === s
+      // и по испанскому имени: чип подписан «alemán», значит и искать по «alem» должно находить
+      || (LANG_ES[l[1]] || '').toLowerCase().includes(s)
   );
 }

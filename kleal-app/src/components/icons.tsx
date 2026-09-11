@@ -317,3 +317,61 @@ export const IconLayers = ({ size = 24, c = color.muted }: P) => (
     <Path d="M2.6 13.1 12 17.8l9.4-4.7" />
   </Svg>
 );
+
+/** Ползунки фильтра — правая кнопка на панели поиска (кадр «Search · Map»). */
+export const IconSliders = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round">
+    <Line x1={4} y1={7} x2={20} y2={7} />
+    <Line x1={4} y1={12} x2={20} y2={12} />
+    <Line x1={4} y1={17} x2={20} y2={17} />
+    <Circle cx={9} cy={7} r={2.2} fill={color.card} />
+    <Circle cx={15} cy={12} r={2.2} fill={color.card} />
+    <Circle cx={8} cy={17} r={2.2} fill={color.card} />
+  </Svg>
+);
+
+/** Стрелка «где я» — круглая кнопка над картой. */
+export const IconLocate = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinejoin="round">
+    <Path d="M21 3 3 10.2l7.5 3.3L13.8 21 21 3z" />
+  </Svg>
+);
+
+/** Сегмент «Карта». Развёрнутый лист, а не булавка: рядом стоит «Список», и пара читается. */
+export const IconMap = ({ size = 18, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinejoin="round">
+    <Path d="M9 4 3 6.4v13.2L9 17.2l6 2.4 6-2.4V4l-6 2.4L9 4z" />
+    <Line x1={9} y1={4} x2={9} y2={17.2} strokeLinecap="round" />
+    <Line x1={15} y1={6.4} x2={15} y2={19.6} strokeLinecap="round" />
+  </Svg>
+);
+
+/** Сегмент «Список». */
+export const IconList = ({ size = 18, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round">
+    <Line x1={9} y1={6.5} x2={20} y2={6.5} />
+    <Line x1={9} y1={12} x2={20} y2={12} />
+    <Line x1={9} y1={17.5} x2={20} y2={17.5} />
+    <Circle cx={4.6} cy={6.5} r={1.3} fill={c} stroke="none" />
+    <Circle cx={4.6} cy={12} r={1.3} fill={c} stroke="none" />
+    <Circle cx={4.6} cy={17.5} r={1.3} fill={c} stroke="none" />
+  </Svg>
+);
+
+/**
+ * Кости — «подобрать другое название». Квадрат со скруглением и пять точек: грань «пять».
+ *
+ * Пять, а не шесть и не одна: на шестёрке в двадцати пикселях точки сливаются в две полосы, а
+ * единица читается кнопкой записи. Пятёрка узнаётся костью даже мелко — по диагонали из трёх.
+ * Точки залиты, а не обведены: контурная точка в 1.6 пикселя на этом размере пропадает.
+ */
+export const IconDice = ({ size = 20, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinejoin="round">
+    <Rect x={3.5} y={3.5} width={17} height={17} rx={4} />
+    <Circle cx={8.5} cy={8.5} r={1.15} fill={c} stroke="none" />
+    <Circle cx={15.5} cy={8.5} r={1.15} fill={c} stroke="none" />
+    <Circle cx={12} cy={12} r={1.15} fill={c} stroke="none" />
+    <Circle cx={8.5} cy={15.5} r={1.15} fill={c} stroke="none" />
+    <Circle cx={15.5} cy={15.5} r={1.15} fill={c} stroke="none" />
+  </Svg>
+);

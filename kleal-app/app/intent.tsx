@@ -31,7 +31,7 @@ import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 // Свайп от края (iOS) и аппаратная «назад» (Android) снимают экран мимо любого обработчика
 // кнопки. Единственный способ вклиниться — usePreventRemove; expo-router его не реэкспортирует,
 // поэтому берём из навигатора, на котором он и построен.
-import { usePreventRemove } from '@react-navigation/native';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
@@ -41,6 +41,7 @@ import {
   DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl,
   SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
+  rollIntentName, intentNameOptions,
 } from '../src/intent';
 import { SEXES, sexLabel, COMPOSER_PLACEHOLDER } from '../src/onboarding';
 import { RangeDial } from '../src/components/Dials';
@@ -48,13 +49,14 @@ import { WhenPicker } from '../src/components/WhenPicker';
 import { RadiusMap } from '../src/components/RadiusMap';
 import {
   IconChevronLeft, IconMic, IconPin, IconVideo, IconPlusRound, IconPerson, IconGroups,
-  IconCalendar, IconClock, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar,
+  IconCalendar, IconClock, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar, IconDice,
 } from '../src/components/icons';
 import { EditSheet } from '../src/components/ProfileShell';
 import { Sheet } from '../src/components/Sheet';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { resetGroupSession } from '../src/ginvites';
 import { useLang, T } from '../src/i18n';
+import { AddressField } from '../src/components/AddressField';
 import { useOnb } from '../src/state';
 import { setResults, patchResults } from '../src/results-store';
 import { openResults } from '../src/results-navigation';
@@ -86,6 +88,17 @@ type Draft = {
   /** OF.09: центр поиска. Пусто — берётся из профиля; заполняется, когда булавку передвинули. */
   lat?: number;
   lon?: number;
+  /**
+   * Координаты пришли ОТ АДРЕСА, а не от перетаскивания булавки. Разница решает, можно ли ставить
+   * их на общую карту точно.
+   *
+   * Булавка на карте радиуса — это «ищи вокруг вон той точки», то есть место, где человек
+   * находится. Такое публиковать нельзя: контракт geo_privacy держит домашнюю точку огрублённой,
+   * и это правильно. Адрес же он называет сам и именно для того, чтобы туда пришли, — площадка не
+   * его дом, и прятать её незачем (`can_be_first_meeting_place` в том же контракте прямо отделяет
+   * место встречи от домашнего и рабочего).
+   */
+  venue?: boolean;
 };
 
 export default function Intent() {
@@ -121,7 +134,13 @@ export default function Intent() {
     .split(',')
     .map((t) => t.trim())
     .filter(Boolean);
-  const title = String(params.title || legacy || '').trim();
+  const paramTitle = String(params.title || legacy || '').trim();
+  /*
+    НАЗВАНИЕ ЖИВЁТ В СОСТОЯНИИ, А НЕ В ПАРАМЕТРЕ МАРШРУТА, потому что его теперь можно менять
+    костями на сводке. Параметр остаётся начальным значением: он пришёл из разговора создания и
+    правильно быть первым предложением.
+  */
+  const [title, setTitle] = useState(paramTitle);
 
   const [step, setStep] = useState<IntentStepId>('how');
   const legacySize = params.size ?? params.format;
@@ -254,7 +273,7 @@ export default function Intent() {
       toResults(r, {}, text);
     } catch (e) {
       setErr(isAbort(e) ? SEARCHING.cancelled()
-                        : T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?'));
+                        : T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?', 'Perdí la conexión. ¿Lo repites?'));
     } finally {
       abortRef.current = null;
       setBusy(false);
@@ -322,6 +341,24 @@ export default function Intent() {
       // OF.09: точное место ранжирование не читает — оно нужно ПОЗЖЕ, когда из мэтча собирается
       // план: форма плана подхватит его, чтобы не спрашивать дважды. В выдачу уходит только район.
       if (draft.address?.trim()) intent.address = draft.address.trim();
+      /*
+        КООРДИНАТЫ ЕДУТ В САМУ ЗАТЕЮ, а не только в профиль поиска.
+
+        В профиль они клались и раньше — оттуда считается расстояние до кандидатов. Но карта
+        рисует пины по координатам ЗАТЕИ, и без них она ставила встречу туда, где живёт автор:
+        назначил в Грасии, а на карте пин у дома в Побленоу.
+
+        На карту они уходят ОГРУБЛЁННЫМИ до зоны ~500 м — снапит сервер (`_zone_point` в
+        services/matching). Точный адрес остаётся в `address` и открывается только плану после
+        взаимного подтверждения, как и было.
+      */
+      // ТОЛЬКО КООРДИНАТЫ ПЛОЩАДКИ. Булавка карты радиуса сюда НЕ попадает: она означает «ищи
+      // вокруг вон той точки», то есть где человек находится, и уезжает в профиль поиска, где и
+      // нужна. На общую карту идёт только то, что человек назвал адресом встречи.
+      if (draft.venue && draft.lat != null && draft.lon != null) {
+        intent.lat = draft.lat;
+        intent.lon = draft.lon;
+      }
     }
     if (wantsLink) {
       // Иначе §5.3 требует город, которого у онлайн-встречи нет по определению. Гибриду это тоже
@@ -463,7 +500,7 @@ export default function Intent() {
         <View style={s.capacityControl}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={T('Уменьшить размер группы', 'Decrease group size')}
+            accessibilityLabel={T('Уменьшить размер группы', 'Decrease group size', 'Disminuir el tamaño del grupo')}
             accessibilityState={{ disabled: total <= GROUP_MIN_TOTAL }}
             disabled={total <= GROUP_MIN_TOTAL}
             style={[s.capacityButton, total <= GROUP_MIN_TOTAL && s.capacityButtonOff]}
@@ -477,7 +514,7 @@ export default function Intent() {
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={T('Увеличить размер группы', 'Increase group size')}
+            accessibilityLabel={T('Увеличить размер группы', 'Increase group size', 'Aumentar el tamaño del grupo')}
             accessibilityHint={total >= GROUP_FREE_MAX_TOTAL ? GROUP_SIZE.plusLimit() : undefined}
             style={s.capacityButton}
             onPress={() => change(Math.min(GROUP_PLUS_MAX_TOTAL, total + 1))}
@@ -629,7 +666,7 @@ export default function Intent() {
             lat={la}
             lon={lo}
             km={v.radiusKm}
-            onMove={(la, lo) => set((x) => ({ ...x, lat: la, lon: lo }))}
+            onMove={(la, lo) => set((x) => ({ ...x, lat: la, lon: lo, venue: false }))}
             onDragChange={setDragging}
           />
         </View>
@@ -639,7 +676,7 @@ export default function Intent() {
             <Pressable
               accessibilityRole="button"
               hitSlop={8}
-              onPress={() => set((x) => ({ ...x, lat: undefined, lon: undefined }))}
+              onPress={() => set((x) => ({ ...x, lat: undefined, lon: undefined, venue: false }))}
             >
               <Text style={s.mapReset}>{DETAILS.backHome()}</Text>
             </Pressable>
@@ -648,13 +685,13 @@ export default function Intent() {
 
         {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт
             только план после взаимного подтверждения (OF.C3). */}
-        <TextInput
+        <AddressField
           style={s.linkInput}
-          value={v.address || ''}
-          onChangeText={(t) => set((x) => ({ ...x, address: t }))}
           placeholder={DETAILS.exactAddress()}
-          placeholderTextColor={color.neutral400}
-          accessibilityLabel={DETAILS.exactAddress()}
+          value={v.address || ''}
+          onChange={(t) => set((x) => ({ ...x, address: t }))}
+          onPick={(hit) => set((x) => ({ ...x, address: hit.label,
+                                         lat: hit.lat, lon: hit.lon, venue: true }))}
         />
 
         <View style={s.radiusRow}>
@@ -880,7 +917,7 @@ export default function Intent() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={goBack}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={goBack}>
             <IconChevronLeft />
           </Pressable>
           <View style={{ flex: 1 }} />
@@ -1028,6 +1065,19 @@ export default function Intent() {
               {step === 'summary' ? (
                 <SummaryCard
                   topic={title}
+                  /*
+                    Костей НЕТ, если предлагать нечего: темы могут прийти такими, что словарь их
+                    не знает ни одной, и тогда любое нажатие ничего не изменит. Кнопка, которая
+                    заведомо не сработает, хуже её отсутствия.
+                  */
+                  onRollTopic={
+                    intentNameOptions(topics, { size: draft.size, minutes: draft.minutes }, title).length
+                      ? () => {
+                          const next = rollIntentName(topics, { size: draft.size, minutes: draft.minutes }, title);
+                          if (next) setTitle(next);
+                        }
+                      : undefined
+                  }
                   where={where}
                   nature={natureSummary}
                   draft={draft}
@@ -1056,7 +1106,7 @@ export default function Intent() {
               returnKeyType="send"
               editable={!busy}
             />
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={send}>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send', 'Enviar')} onPress={send}>
               <IconMic />
             </Pressable>
           </View>
@@ -1305,9 +1355,11 @@ function Cta({ label, onPress, disabled, busy }: {
  * рисовать фотографию, которой нет, не из чего.
  */
 function SummaryCard({
-  topic, draft, category, where, nature, busy, onStart, onEdit, onEditField,
+  topic, onRollTopic, draft, category, where, nature, busy, onStart, onEdit, onEditField,
 }: {
   topic: string;
+  /** Кости у названия: подобрать другое. Пусто — костей нет (нечего предлагать). */
+  onRollTopic?: () => void;
   draft: Draft;
   /** Отмеченные черты одной строкой. Собраны на экране — здесь только показываются. */
   nature: string;
@@ -1320,8 +1372,15 @@ function SummaryCard({
   onEditField: (target: IntentEditTarget) => void;
 }) {
   const facts: [string, string, IntentEditTarget?][] = [
-    [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—', 'mode'],
-    [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—', 'size'],
+    /*
+      ТИП И ФОРМАТ БЕЗ СТРЕЛКИ И БЕЗ НАЖАТИЯ. Это первые два решения всего создания, и от них
+      зависит остальное: у офлайна спрашивают место и радиус, у онлайна — ссылку; у группы есть
+      размер, у 1:1 его нет. Правка отсюда означала бы возврат в начало цепочки с уже собранными
+      ответами на вопросы, которых при другом выборе не задают. Менять их надо через «Поправить»,
+      проходя цепочку заново, — а стрелка обещала правку на месте.
+    */
+    [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—'],
+    [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—'],
     ...(draft.size === 'group'
       ? ([[GROUP_SIZE.row(), GROUP_SIZE.people(draft.groupSize || GROUP_MIN_TOTAL), 'groupSize']] as [string, string, IntentEditTarget][])
       : []),
@@ -1333,7 +1392,22 @@ function SummaryCard({
   return (
     <View style={s.card}>
       <View style={s.cover}><IconImagePlaceholder size={44} /></View>
-      {topic ? <Text style={s.sumTopic}>{topic}</Text> : null}
+      {topic ? (
+        <View style={s.sumTopicRow}>
+          <Text style={s.sumTopic} numberOfLines={2}>{topic}</Text>
+          {onRollTopic ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={SUMMARY_O10.roll()}
+              onPress={onRollTopic}
+              hitSlop={12}
+              style={({ pressed }) => [s.sumRoll, pressed && { opacity: 0.6 }]}
+            >
+              <IconDice size={20} c={color.muted} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
 
       <View style={s.sumMeta}>
         <Pressable
@@ -1603,7 +1677,15 @@ const s = StyleSheet.create({
     height: 128, borderRadius: rad.lg, backgroundColor: color.neutral100,
     alignItems: 'center', justifyContent: 'center',
   },
-  sumTopic: { fontSize: 19, fontWeight: '700', color: color.fg },
+  /*
+    Название и кости в одной строке. `flex: 1` у самого текста, а не у строки: длинное название
+    переносится на вторую строку и упирается в кости, а не уезжает под них. Кости прижаты к верху
+    (`alignItems: 'flex-start'`) — при двух строках значок, стоящий по центру, выглядит съехавшим.
+  */
+  sumTopicRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  sumTopic: { fontSize: 19, fontWeight: '700', color: color.fg, flex: 1 },
+  /** Отступ сверху равен разнице кегля и значка — так значок стоит на одной линии с первой строкой. */
+  sumRoll: { paddingTop: 2 },
   sumMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sumMetaAction: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   sumMetaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
@@ -1627,7 +1709,7 @@ const s = StyleSheet.create({
   plusKeepText: { ...type.button, color: color.onPrimary } as any,
 
   veil: {
-    ...StyleSheet.absoluteFillObject, backgroundColor: color.bg, alignItems: 'center',
+    ...StyleSheet.absoluteFill, backgroundColor: color.bg, alignItems: 'center',
     justifyContent: 'center', gap: space.md, paddingHorizontal: 32,
   },
   veilAva: {

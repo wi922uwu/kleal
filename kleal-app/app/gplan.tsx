@@ -38,6 +38,7 @@ import {
   IconDots,
 } from '../src/components/icons';
 import { Sheet } from '../src/components/Sheet';
+import { AddressField } from '../src/components/AddressField';
 import { color, radius as rad, space, type } from '../src/theme';
 
 /** Локальные режимы, которых у сервера нет: это формы, а не состояния плана. */
@@ -272,7 +273,9 @@ export default function GroupPlan() {
   const askHost = async () => {
     await gapi.post(gid, me, GPLAN.askHostMsg());
     setMode('view');
-    router.navigate({ pathname: '/group', params: { gid } });
+    // Группа и её план — соседи, как чат и план один на один: возвращаемся к группе, а не кладём
+    // её поверх плана, из которого пришли.
+    router.dismissTo({ pathname: '/group', params: { gid } });
   };
 
   const startVote = (kind: 'edit' | 'cancel') =>
@@ -404,9 +407,9 @@ export default function GroupPlan() {
                   из интента группы. */}
               <WhenPicker value={when} onChange={setWhen} onDragChange={setDragging} />
               {!online ? (
-                <TextInput
-                  style={s.input} value={place} onChangeText={setPlace}
-                  placeholder={GPLAN.placePh()} placeholderTextColor={color.neutral400}
+                <AddressField
+                  style={s.input} value={place} onChange={setPlace} onPick={(h) => setPlace(h.label)}
+                  placeholder={GPLAN.placePh()}
                 />
               ) : null}
               {hybrid ? (
@@ -422,8 +425,8 @@ export default function GroupPlan() {
           {mode === 'details' ? (
             <View style={s.form}>
               {plan?.needs_place ? (
-                <TextInput style={s.input} value={place} onChangeText={setPlace}
-                           placeholder={GPLAN.placePh()} placeholderTextColor={color.neutral400} />
+                <AddressField style={s.input} value={place} onChange={setPlace} onPick={(h) => setPlace(h.label)}
+                              placeholder={GPLAN.placePh()} />
               ) : null}
               {plan?.needs_link ? (
                 <TextInput style={s.input} value={link} onChangeText={setLink}
@@ -468,7 +471,7 @@ export default function GroupPlan() {
                       <IconPerson size={18} />
                       {m.photo ? (
                         <Image source={{ uri: mediaUrl(String(m.photo)) }}
-                               style={[s.av, StyleSheet.absoluteFillObject]} />
+                               style={[s.av, StyleSheet.absoluteFill]} />
                       ) : null}
                     </View>
                     <View style={{ flex: 1 }}>
@@ -537,7 +540,7 @@ export default function GroupPlan() {
             onSuggestOpen={() => { setWhen(whenFromStartsAt(plan?.starts_at, when.tz) || when); setPlace(String(plan?.place || '')); setLink(String(plan?.link || '')); setMode('suggest'); }}
             onSuggestSend={counter}
             onFix={fix}
-            onInviteMore={() => router.navigate({ pathname: '/group', params: { gid } })}
+            onInviteMore={() => router.dismissTo({ pathname: '/group', params: { gid } })}
             onCancelPlan={cancelPlan}
             canConvert={!!(g as any)?.can_convert}
             onSwitch1to1={() => setAsk1to1(true)}
@@ -548,7 +551,7 @@ export default function GroupPlan() {
             onMoreTime={() => {}}
             onStay={confirm}
             onLeave={leave}
-            onOpenChat={() => router.navigate({ pathname: '/group', params: { gid } })}
+            onOpenChat={() => router.dismissTo({ pathname: '/group', params: { gid } })}
             onAskVote={() => setAskVote(true)}
             onOpenVote={() => setVoteSheet(true)}
             onDecide={() => setDecideSheet(true)}
@@ -600,7 +603,7 @@ export default function GroupPlan() {
           </Pressable>
         </PlanSheet>
 
-        <Sheet visible={actions} onClose={() => setActions(false)} title={T('Действия', 'Actions')}>
+        <Sheet visible={actions} onClose={() => setActions(false)} title={T('Действия', 'Actions', 'Acciones')}>
           <Pressable accessibilityRole="button" style={s.secondary}
                      onPress={() => {
                        setActions(false);
@@ -608,10 +611,10 @@ export default function GroupPlan() {
                          pathname: '/group-report', params: { gid, title: String(g?.title || '') },
                        }), 250);
                      }}>
-            <Text style={s.reportText}>{T('Сообщить о проблеме', 'Report a problem')}</Text>
+            <Text style={s.reportText}>{T('Сообщить о проблеме', 'Report a problem', 'Reportar un problema')}</Text>
           </Pressable>
           <Pressable accessibilityRole="button" style={s.quiet} onPress={() => setActions(false)}>
-            <Text style={s.quietText}>{T('Отмена', 'Cancel')}</Text>
+            <Text style={s.quietText}>{T('Отмена', 'Cancel', 'Cancelar')}</Text>
           </Pressable>
         </Sheet>
 
@@ -771,7 +774,7 @@ function formNote(
   if (mode === 'suggest') {
     return GPLAN.suggestNote(Math.max(0, Number(p.max_rounds || 3) - Number(p.round || 1)));
   }
-  if (mode === 'update') return GPLAN.updateNote(String(p.when || ''), T('новое время', 'the new time'));
+  if (mode === 'update') return GPLAN.updateNote(String(p.when || ''), T('новое время', 'the new time', 'la nueva hora'));
   if (mode === 'link') return GPLAN.linkNote(String(p.when || ''));
   if (mode === 'details') return GPLAN.hybridMissingNote(!!p.needs_place);
   if (a.hybrid && p.details_ready === false) return GPLAN.hybridMissingNote(!!p.needs_place);
@@ -824,7 +827,7 @@ function Head({ title, onBack, onActions }: { title: string; onBack: () => void;
       </Pressable>
       <Text style={s.headTitle} numberOfLines={1}>{title}</Text>
       {onActions ? (
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Действия', 'Actions')}
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Действия', 'Actions', 'Acciones')}
                    style={s.back} onPress={onActions}>
           <IconDots />
         </Pressable>

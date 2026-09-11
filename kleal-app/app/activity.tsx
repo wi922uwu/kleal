@@ -15,7 +15,7 @@
  * общие, и вторая их сборка разошлась бы с первой на первой же правке. Разное — куда ведёт строка.
  * В «Сообщениях» она открывает РАЗГОВОР, здесь — САМУ ЗАТЕЮ: план, приглашение, интент.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, RefreshControl,
 } from 'react-native';
@@ -78,11 +78,21 @@ export default function Activity() {
    * Групповые ручки со своим `catch`: групповой слой новее остальных, и его неудача не должна
    * уносить список, который работает. Тот же приём, что в «Сообщениях».
    */
+  /** Номер чтения: пересчёт, догнавший экран после следующего чтения, не должен его перебить. */
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
+    const seq = ++loadSeq.current;
     try {
+      /*
+        СНАЧАЛА ПОКАЗАТЬ, ПОТОМ ДОСЧИТАТЬ. Список интентов с `live` ранжирует каждый заново — по две
+        секунды на штуку, и вкладка стояла за вертушкой 10 секунд при пяти затеях, при каждом
+        заходе (замерено). Остальные четыре ручки отвечают за десятки миллисекунд, но ждали его.
+        Теперь первым идёт мгновенный снимок последнего пересчёта (сервер помнит его), экран
+        рисуется сразу, а свежий пересчёт приезжает вторым запросом и подменяет строки.
+      */
       const [ints, out, pl, gpl, inv] = await Promise.all([
-        agent.intents(me, searchProfile(st.profile)),
+        agent.intents(me, searchProfile(st.profile), false),
         agent.outbox(me),
         agent.plans(me),
         gapi.plans(me).catch(() => null),
@@ -99,6 +109,13 @@ export default function Activity() {
         invites: (inv as any)?.invites || [],
       });
       setErr('');
+      setLoading(false);
+      // Второй проход — живой пересчёт. Строки подменяются только если это всё ещё то же чтение.
+      agent.intents(me, searchProfile(st.profile), true).then((live: any) => {
+        if (seq !== loadSeq.current) return;
+        const rows = (live?.intents || []) as IntentRow[];
+        if (rows.length) setData((d) => ({ ...d, intents: rows }));
+      }).catch(() => { /* снимок уже на экране — тихо */ });
     } catch {
       setErr(ACT.loadFailed());
     } finally {
@@ -192,7 +209,7 @@ export default function Activity() {
       <View style={[s.top, { paddingTop: insets.top + space.sm }]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={T('Назад', 'Back')}
+          accessibilityLabel={T('Назад', 'Back', 'Atrás')}
           style={s.back}
           onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}
         >

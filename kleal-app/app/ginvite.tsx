@@ -107,11 +107,11 @@ export default function GroupInvite() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={back}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={back}>
           <IconChevronLeft />
         </Pressable>
         <Text style={s.headTitle} numberOfLines={1}>
-          {g?.title || T('Приглашение', 'Invite')}
+          {g?.title || T('Приглашение', 'Invite', 'Invitar')}
         </Text>
       </View>
 
@@ -163,7 +163,7 @@ export default function GroupInvite() {
                     <IconPerson size={18} />
                     {m.photo ? (
                       <Image source={{ uri: mediaUrl(String(m.photo)) }}
-                             style={[s.memberAv, StyleSheet.absoluteFillObject]} />
+                             style={[s.memberAv, StyleSheet.absoluteFill]} />
                     ) : null}
                   </View>
                   <Text style={s.memberName} numberOfLines={1}>{nm}</Text>
@@ -192,7 +192,7 @@ export default function GroupInvite() {
       ) : !loading && outcome ? (
         <View style={[s.foot, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <Pressable accessibilityRole="button" style={s.cta} onPress={back}>
-            <Text style={s.ctaText}>{T('Понятно', 'Got it')}</Text>
+            <Text style={s.ctaText}>{T('Понятно', 'Got it', 'Entendido')}</Text>
           </Pressable>
         </View>
       ) : null}

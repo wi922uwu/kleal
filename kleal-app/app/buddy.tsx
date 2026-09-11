@@ -16,17 +16,19 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { IconChevronLeft, IconSend } from '../src/components/icons';
-import { useLang, getLang, T } from '../src/i18n';
+import { useLang, getLang, T, dateLocale, use12h } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { buddy as buddyApi, VoicePayload } from '../src/api';
-import { BUDDY, SHEET, looksLikeIntent, intentPhrase, sheetWhat, sheetKept, packHistory, Turn } from '../src/buddy';
+import { BUDDY, SHEET, looksLikeIntent, intentPhrase, intentTitle, intentDesc, sheetKept, packHistory, Turn } from '../src/buddy';
+import { safeCut } from '../src/reveal';
 import { Sheet } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import Markdown from '../src/components/Markdown';
 import { Thinking } from '../src/components/Thinking';
 import { makeReveal } from '../src/reveal';
+import { saveConversation } from '../src/history';
 
 /**
  * `hello` — первая реплика экрана. Это не ответ модели, а обращение к человеку, и выглядеть оно
@@ -38,8 +40,8 @@ type Msg = { who: 'bot' | 'me'; text: string; at: string; voice?: VoicePayload; 
   /** Текст ещё пишется — под ним мигает курсор. */ live?: boolean };
 
 const now = () =>
-  new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: getLang() !== 'ru',
+  new Date().toLocaleTimeString(dateLocale(), {
+    hour: '2-digit', minute: '2-digit', hour12: use12h(),
   });
 
 export default function Buddy() {
@@ -61,11 +63,35 @@ export default function Buddy() {
   /** Ответ ещё идёт: точки могли погаснуть, но история пока не дописана. */
   const [busy, setBusy] = useState(false);
   const [sheet, setSheet] = useState(false);
-  /** Что распознал Kleal — заголовок для окна и для реплики «а я думал…». */
+  /** Что распознал Kleal: фраза для реплики «а я думал…», заголовок и описание для окна. */
   const [what, setWhat] = useState('');
+  const [seen, setSeen] = useState<{ title: string; desc: string } | null>(null);
   /** Тема, с которой откроется создание интента, если человек его выберет. */
   const [topic, setTopic] = useState('');
   const started = useRef(false);
+
+  /*
+    РАЗГОВОР С KLEAL ПОПАДАЕТ В ИСТОРИЮ — тем же способом, что и разговор в анкете.
+
+    Сначала запись повесили только на онбординговый чат, и это была половина работы: человек
+    поговорил здесь, вышел — и в истории пусто, хотя кнопка на главной обещает «историю
+    разговоров», а разговор с Kleal живёт именно тут. Сообщено сразу после выкладки.
+
+    Лента лежит в ref, а не читается из замыкания: эффект размонтирования собирается один раз, и
+    `thread` в нём остался бы пустым. Ключ — момент открытия экрана; он же делает запись
+    заменяемой, если сохранение случится дважды.
+  */
+  const threadRef = useRef<Msg[]>([]);
+  threadRef.current = thread;
+  const convId = useRef(String(Date.now())).current;
+  useEffect(() => () => {
+    saveConversation({
+      id: convId,
+      startedAt: Number(convId),
+      topic: BUDDY.title(),
+      lines: threadRef.current.map((m) => ({ who: m.who, text: m.text, at: m.at })),
+    });
+  }, [convId]);
 
   const say = useCallback((who: 'bot' | 'me', text: string, hello = false) => {
     setThread((t) => [...t, { who, text, at: now(), hello }]);
@@ -98,40 +124,81 @@ export default function Buddy() {
    * был просто «да/нет», и снималась «последняя» запись ленты; последней же могла оказаться
    * реплика человека, отправленная посреди ответа.
    */
+  /**
+   * Заменить показанную потоком реплику на окончательную.
+   *
+   * ЗАЧЕМ. Поток печатает СЫРОЙ текст модели, а чистка живёт на сервере и срабатывает уже после:
+   * там разводят слипшиеся алфавиты, выбрасывают слова-гибриды и приводят в порядок пробелы и
+   * переносы. Клиент же готовый текст никуда не девал — он клал его только в историю, а на экране
+   * оставалась сырая версия. Ровно поэтому на живом экране осталось «могут бытьhourными часами»,
+   * хотя сторож этот гибрид на сервере уже вырезал.
+   *
+   * Меняем ТОЛЬКО если текст отличается: одинаковая замена — лишняя перерисовка ленты на каждый
+   * ответ, а он приходит на каждый ход.
+   */
+  const replaceShown = useCallback((at: number, text: string) => {
+    setThread((prev) => {
+      if (at < 0 || at >= prev.length || prev[at].text === text) return prev;
+      const out = [...prev];
+      out[at] = { ...out[at], text, live: false };
+      return out;
+    });
+  }, []);
+
   const finish = useCallback((r: any, reply: string, text: string, next: Turn[], shown: number) => {
     if (looksLikeIntent(r)) {
-      /**
-       * Распознан план — на экране реплики быть не должно, вместо неё окно выбора. Раньше человек
-       * получал и ответ агента, и окно поверх него: разговор продолжался и одновременно
-       * прерывался, и было непонятно, на что отвечать. С потоком добавилось второе: текст уже
-       * успел появиться, поэтому его надо снять, а не просто не печатать.
-       *
-       * В историю ответ всё же кладём: он был, модель на него опирается, и после «продолжим
-       * общаться» разговор не должен начинаться с пустоты.
-       */
-      // Снимаем СВОЮ запись по номеру: «последняя» могла оказаться репликой человека,
-      // отправленной посреди ответа.
-      if (shown >= 0) setThread((prev) => prev.filter((_, i) => i !== shown));
-      // Фраза, а не подпись карточки: «поговорить про Jesus», см. intentPhrase.
-      const label = intentPhrase(r, text);
+      /*
+        ОКНО НЕ ПЕРЕБИВАЕТ ВОПРОС АГЕНТА.
+
+        Здесь окно выезжало ВСЕГДА, как только план распознан, а показанную реплику снимали с
+        экрана. На потоке это выглядело так: агент на глазах пишет ответ, не дописывает — и вместо
+        него выезжает лист. Сообщено с телефона: «начал писать сообщение, которое не успел
+        дописать, потому что вылез попап».
+
+        Хуже, что снимали ровно то, чего человеку не хватило. На «дота» агент ответил «Ты давно
+        играешь? Хочешь обсудить последние обновления или стратегии?» — то есть уточнял, ЧТО
+        именно обсуждать. Вопрос стёрли, окно предложило создать интент про «доту» вообще, и
+        второй претензией пришло «он не уточнил, что именно я хочу обсудить».
+
+        Поэтому: реплика ОСТАЁТСЯ на экране всегда, а окно выезжает только если агент ничего не
+        спросил. Спросил — значит замысел ещё не собран, и перебивать уточнение окном рано:
+        человек отвечает, а окно придёт следующим ходом, когда спрашивать будет нечего.
+      */
+      const asks = /[?？]\s*$/.test(String(reply || '').trim());
+      if (asks) {
+        if (shown < 0 && reply) say('bot', reply);
+        else if (reply) replaceShown(shown, reply);
+        setTurns(reply ? [...next, { role: 'assistant', content: reply }] : next);
+        setTopic(text);
+        setWhat(intentPhrase(r));
+        setSeen({ title: intentTitle(r), desc: intentDesc(r) });
+        return;
+      }
+      /*
+        ЯВНАЯ ПРОСЬБА ПРИХОДИТ БЕЗ РЕПЛИКИ (см. buddy_chat на сервере): текста нет, окно — и есть
+        ответ. Мягкая зацепка приходит с текстом, и он остаётся на экране; окно в этом случае
+        выезжает после последней напечатанной буквы (см. `done`), а не поверх неё.
+      */
+      if (shown < 0 && reply) say('bot', reply);   // потоком не приходило — печатаем целиком
+      else if (reply) replaceShown(shown, reply);
       setTurns(reply ? [...next, { role: 'assistant', content: reply }] : next);
       setTopic(text);
-      setWhat(label);
+      setWhat(intentPhrase(r));
+      setSeen({ title: intentTitle(r), desc: intentDesc(r) });
       /*
-        ТОЧКИ ГОРЯТ, ПОКА ОКНО НЕ ВЫШЛО. Реплику мы только что сняли с экрана, а лист выезжает не
-        мгновенно — и между этими двумя моментами оставалась пустота: текст был и пропал, а взамен
-        пока ничего. Со стороны это читается как «приложение подвисло», хотя оно как раз работает.
-        Те же точки, что и на ожидании ответа: одно и то же ожидание — один и тот же знак.
+        ТОЧЕК ЗДЕСЬ БОЛЬШЕ НЕТ. Они горели, пока лист выезжает, потому что реплику в этот момент
+        снимали с экрана и оставалась пустота. Реплика теперь остаётся — заполнять нечего, а точки
+        поверх готового ответа означали бы, что придёт ещё один, и он не придёт.
       */
-      setTyping(true);
       setSheet(true);
       return;
     }
     if (reply) {
       if (shown < 0) say('bot', reply);    // потоком не приходило — печатаем целиком
+      else replaceShown(shown, reply);     // потоком пришло сырое — подменяем очищенным
       setTurns([...next, { role: 'assistant', content: reply }]);
     }
-  }, [say]);
+  }, [say, replaceShown]);
 
   /**
    * ОТВЕТ ПОЯВЛЯЕТСЯ ПО МЕРЕ НАПИСАНИЯ.
@@ -177,6 +244,10 @@ export default function Buddy() {
       если там по-прежнему стоит реплика агента.
     */
     let at = -1;
+    /** Что сейчас на экране — чтобы понять, допечатала ли машинка всё (см. `done`). */
+    let lastShown = '';
+    /** Окно ждёт последней буквы: зовётся из `show`, когда показано всё принятое. */
+    let afterTyped: null | (() => void) = null;
 
     /**
      * Показ развязан с приходом: буквы приезжают рывками (201 кусок на 656 символов, между ними
@@ -185,6 +256,8 @@ export default function Buddy() {
      */
     const show = (shown: string) => {
       setTyping(false);
+      lastShown = shown;
+      if (afterTyped && shown === safeCut(acc)) { const f = afterTyped; afterTyped = null; f(); }
       setThread((prev) => {
         if (!opened) {
           opened = true;
@@ -219,7 +292,8 @@ export default function Buddy() {
           const r: any = await buddyApi.chat(next, profile());
           setTyping(false);
           const reply = String(r?.reply || '');
-          if (reply) finish(r, reply, text, next, -1);
+          // Явная просьба приходит без текста, но с затеей — это ответ, а не обрыв связи.
+          if (reply || looksLikeIntent(r)) finish(r, reply, text, next, -1);
           else say('bot', BUDDY.offline());
         } catch {
           setTyping(false);
@@ -230,26 +304,54 @@ export default function Buddy() {
       },
       done: (r: any) => {
         setTyping(false);
-        rev.finish();
         const reply = String(r?.reply || acc);
-        // Итог разошёлся с показанным (вторая попытка, обрезка по границе, заготовка при отказе)
-        // — переписываем. Иначе над настоящим ответом висела бы оборванная половина.
-        if (opened) {
-          // Дописываем итог и гасим курсор. Ждать, пока машинка домотает сама, нельзя: она
-          // допечатывает уже принятый текст, а `done` может нести ДРУГОЙ (вторая попытка,
-          // обрезка по границе) — тогда курсор мигал бы под старым текстом.
-          rev.stop();
-          setThread((prev) => {
-            const out = prev.slice();
-            const cur = out[at];
-            if (cur?.who !== 'bot') return out;
-            out[at] = { ...cur, text: r?.replaced ? reply : cur.text, live: false };
-            return out;
-          });
+        const settle = () => {
+          // Итог разошёлся с показанным (вторая попытка, обрезка по границе, заготовка при
+          // отказе) — переписываем. Иначе над настоящим ответом висела бы оборванная половина.
+          if (opened) {
+            setThread((prev) => {
+              const out = prev.slice();
+              const cur = out[at];
+              if (cur?.who !== 'bot') return out;
+              out[at] = { ...cur, text: r?.replaced ? reply : cur.text, live: false };
+              return out;
+            });
+          }
+          finish(r, reply, text, next, opened ? at : -1);
+          setBusy(false);
+          resolve();
+        };
+        /*
+          ОКНО — ПОСЛЕ ПОСЛЕДНЕЙ БУКВЫ, А НЕ ПОВЕРХ НЕЁ. Раньше `done` останавливал машинку,
+          вбрасывал текст целиком и в тот же такт выдвигал окно: человек видел, как реплика ещё
+          печатается — и поверх неё выезжает лист. Явная просьба теперь приходит вовсе без текста
+          (сервер), а здесь — второй случай, мягкая зацепка с текстом: даём машинке допечатать
+          и открываем окно, когда показано всё принятое. Страховка по времени — если машинке
+          мешает что-то непредвиденное, окно всё равно выедет.
+        */
+        if (opened && looksLikeIntent(r) && !r?.replaced) {
+          let fired = false;
+          let guard: ReturnType<typeof setTimeout> | null = null;
+          const once = () => {
+            if (fired) return;
+            fired = true;
+            if (guard) clearTimeout(guard);
+            afterTyped = null;
+            rev.stop();
+            settle();
+          };
+          rev.finish();
+          if (lastShown === safeCut(acc)) { once(); return; }   // уже всё показано
+          afterTyped = once;
+          guard = setTimeout(once, 4000);
+          return;
         }
-        finish(r, reply, text, next, opened ? at : -1);
-        setBusy(false);
-        resolve();
+        rev.finish();
+        // Дописываем итог и гасим курсор. Ждать, пока машинка домотает сама, нельзя: она
+        // допечатывает уже принятый текст, а `done` может нести ДРУГОЙ (вторая попытка,
+        // обрезка по границе) — тогда курсор мигал бы под старым текстом.
+        if (opened) rev.stop();
+        settle();
       },
     });
   }), [say, finish, st.profile]);
@@ -337,7 +439,7 @@ export default function Buddy() {
           <Pressable
             accessibilityRole="button"
             style={s.createBtn}
-            onPress={() => { setTopic(''); setSheet(true); }}
+            onPress={() => { setTopic(''); setWhat(''); setSeen(null); setSheet(true); }}
           >
             <Text style={s.createPlus}>+</Text>
             <Text style={s.createText}>{BUDDY.create()}</Text>
@@ -418,7 +520,7 @@ export default function Buddy() {
               // сломанное приложение, а бледная кнопка — как «сейчас нельзя».
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={T('Отправить', 'Send')}
+                accessibilityLabel={T('Отправить', 'Send', 'Enviar')}
                 onPress={submit}
                 disabled={busy}
                 hitSlop={8}
@@ -433,7 +535,8 @@ export default function Buddy() {
 
         <GetStarted
           open={sheet}
-          what={what}
+          title={seen?.title}
+          what={seen?.desc}
           onCreate={toCreate}
           onKeep={keepChatting}
           bottomInset={insets.bottom}
@@ -448,10 +551,12 @@ export default function Buddy() {
  * обоих случаях один и тот же: создавать интент или продолжать разговор.
  */
 export function GetStarted({
-  open, what, onCreate, onKeep, bottomInset = 0,
+  open, title, what, onCreate, onKeep, bottomInset = 0,
 }: {
   open: boolean;
-  /** Что именно распознал Kleal. Человек соглашается на конкретную затею, а не на «интент». */
+  /** Заголовок затеи, как на карточке: «Поговорить про кофе», «Падел». */
+  title?: string;
+  /** Что именно Kleal предлагает сделать — одним предложением. Человек соглашается на затею, а не на «интент». */
   what?: string;
   onCreate: () => void;
   onKeep: () => void;
@@ -459,7 +564,10 @@ export function GetStarted({
 }) {
   return (
     <Sheet visible={open} onClose={onKeep} title={SHEET.title()} bottomInset={Math.max(bottomInset, 18)} grip>
-        {what ? <Text style={sh.what}>{sheetWhat(what)}</Text> : null}
+        {/* Заголовок и описание — как карточка затеи, а не «Похоже, ты хочешь …» с подставленной
+            подписью: в кавычки попадал то ярлык, то вся реплика человека целиком. */}
+        {title ? <Text style={sh.title}>{title}</Text> : null}
+        {what ? <Text style={sh.what}>{what}</Text> : null}
         <Pressable accessibilityRole="button" style={[sh.btn, sh.btnPri]} onPress={onCreate}>
           <Text style={sh.btnPriText}>{SHEET.create()}</Text>
         </Pressable>
@@ -513,8 +621,9 @@ const s = StyleSheet.create({
 });
 
 const sh = StyleSheet.create({
-  /** Строка «Похоже, ты хочешь …» — под заголовком окна, перед кнопками. */
-  what: { ...type.bodySmall, color: color.muted, marginBottom: 4 } as any,
+  /** Затея в окне: заголовок карточки и строка-описание под ним, перед кнопками. */
+  title: { ...type.title, color: color.fg } as any,
+  what: { ...type.bodySmall, color: color.muted, marginTop: -6, marginBottom: 4 } as any,
   btn: { height: 54, borderRadius: rad.full, alignItems: 'center', justifyContent: 'center' },
   btnPri: { backgroundColor: color.primary },
   btnPriText: { ...type.button, color: color.onPrimary } as any,

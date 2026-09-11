@@ -88,7 +88,7 @@ export function NotifyBubble({ invites, onPick }: {
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={T('Уведомления', 'Notifications')}
+        accessibilityLabel={T('Уведомления', 'Notifications', 'Notificaciones')}
         style={s.bell}
         onPress={() => {
           hTap();
@@ -181,7 +181,7 @@ const s = StyleSheet.create({
     position: 'absolute', top: 10, right: 11, width: 8, height: 8,
     borderRadius: 4, backgroundColor: color.primary,
   },
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: color.scrim },
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: color.scrim },
   bubble: {
     position: 'absolute',
     backgroundColor: color.card,

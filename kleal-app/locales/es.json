@@ -1,0 +1,6 @@
+{
+  "NSCameraUsageDescription": "Kleal usa la cámara para tu foto de perfil y notas de vídeo cortas.",
+  "NSMicrophoneUsageDescription": "Kleal usa el micrófono para grabar notas de voz y de vídeo.",
+  "NSLocationWhenInUseUsageDescription": "Kleal usa tu ubicación para sugerirte gente dentro del radio que elijas.",
+  "NSPhotoLibraryUsageDescription": "Kleal usa tus fotos para poner una foto de perfil por la que te reconozcan en las quedadas."
+}

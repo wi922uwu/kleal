@@ -26,12 +26,13 @@ import {
 import { interestLabel, registerInterestLabels } from '../src/interest-label';
 import { isKnownInterest } from '../src/interests-known';
 import { saveConversation } from '../src/history';
-import { addConfirmedInterest } from '../src/profile';
+import { addConfirmedInterest, pushInterests } from '../src/profile';
 import { profile as profileApi } from '../src/api';
-import { useLang, T, getLang, replyLang, noticeWritten } from '../src/i18n';
+import { useLang, T, getLang, replyLang, noticeWritten, dateLocale, use12h } from '../src/i18n';
 import { useOnb, set, get, patch, resetProfile, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding, agent, buddy as buddyApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
+import { clampAge } from '../src/age-ruler';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
 import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
 import { MindMap } from '../src/components/MindMap';
@@ -56,8 +57,8 @@ type Msg2 = { role: string; content: string };
 const ORDER: StepId[] = ['start', 'basics', 'area', 'languages', 'hobbies', 'photo'];
 
 const now = () =>
-  new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: getLang() !== 'ru',
+  new Date().toLocaleTimeString(dateLocale(), {
+    hour: '2-digit', minute: '2-digit', hour12: use12h(),
   });
 
 export default function Chat() {
@@ -336,10 +337,18 @@ export default function Chat() {
    * увёл бы за собой реплику агента из самого первого рендера — на этом уже обжигались с `onFork`
    * (тап уходил по ветке онбординга и до API не доходил).
    */
-  const onMapDone = ((keys: string[]) => {
+  const onMapDone = ((keys: string[], own?: boolean) => {
     const cur: string[] = get('interests.explicit') || [];
     const merged = [...cur, ...keys.filter((k) => !cur.includes(k))];
     set('interests.explicit', merged);
+    /*
+      НА СЕРВЕР — СРАЗУ, А НЕ ПРИ СЛЕДУЮЩЕМ ЗАХОДЕ НА ЭКРАН ИНТЕРЕСОВ. Матчинг читает строку в
+      базе, а не состояние телефона. Отправка жила только в фокусе app/profile/interests.tsx:
+      человек, добавивший интересы здесь и ушедший по нижней панели, оставался для поиска
+      прежним, пока когда-нибудь не откроет тот экран. Во время анкеты вызов пустой — там всё
+      уедет одним register(); после неё это тот же patchFor(['interests']), что и везде.
+    */
+    pushInterests();
     setJustAdded((p) => [...p, ...keys.filter((k) => !p.includes(k))]);
     setMapOpen(false);
     /*
@@ -354,6 +363,14 @@ export default function Chat() {
       Промпт разбирает список как список интересов («A LIST IS A LIST»), а `recorded` не даёт ему
       записать их заново. Дальше он ведёт расспрос сам: два вопроса на интерес, потом следующий.
     */
+    /*
+      «ДОБАВИТЬ СВОЁ» — второй выход с карты, в разговор. Выбранное уже записано выше; репликой его
+      не отправляем: ответ модели про выбранное занял бы ход, который человек хотел отдать своему
+      слову. Агент просит назвать занятие словами — ключ ему подберёт сервер (см. подтверждение
+      придуманного интереса ниже), в карте своих ключей быть не может: регистрация принимает только
+      известные таксономии.
+    */
+    if (own) { botAfter(STEP_HOBBIES.ownAsk()); return; }
     const labels = merged.map((k) => interestLabel(k)).filter(Boolean);
     if (labels.length) send(labels.join(', '));
     else botAfter(STEP_HOBBIES.afterMap());
@@ -533,7 +550,7 @@ export default function Chat() {
         // работы. Поймано на скриншоте живого экрана. Сервер почти всегда что-то отвечает —
         // значит сюда доехал сбой связи или чужой ответ, и об этом надо сказать вслух.
         const reply = String(r?.reply || '')
-          || T('Что-то я замолчал. Повтори, пожалуйста?', 'I went quiet there. Say that again?');
+          || T('Что-то я замолчал. Повтори, пожалуйста?', 'I went quiet there. Say that again?', 'Me quedé en silencio. ¿Lo repites?');
         say('bot', reply);
         hobbyThread.current = [...next, { role: 'assistant', content: reply }];
         setChips(Array.isArray((r as any)?.chips) ? (r as any).chips.map(String) : []);
@@ -556,6 +573,7 @@ export default function Chat() {
             }
           }
           set('interests.explicit', cur);
+          pushInterests();                       // см. onMapDone: строка в базе, а не память телефона
           if (ask.length) absorbNovel(ask);
           setJustAdded((p) => {
             const keys = added.map((a) => String(a.key || '').trim()).filter(Boolean);
@@ -572,7 +590,7 @@ export default function Chat() {
         }
       } catch {
         setTyping(false);
-        say('bot', T('Связь на секунду пропала. Повторишь?', 'I lost the connection for a second. Say that again?'));
+        say('bot', T('Связь на секунду пропала. Повторишь?', 'I lost the connection for a second. Say that again?', 'Perdí la conexión un momento. ¿Lo repites?'));
       }
       return;
     }
@@ -755,7 +773,7 @@ function StepWidget({
   mapOpen?: boolean;
   mapPicked?: string[];
   onMapPick?: (key: string) => void;
-  onMapDone?: (keys: string[]) => void;
+  onMapDone?: (keys: string[], own?: boolean) => void;
   /** Придуманные интересы, ждущие подтверждения. Живут в экране — см. там почему. */
   pending?: Novel[];
   onConfirmPending?: (item: Novel, opt?: NovelOption) => void;
@@ -856,15 +874,16 @@ function StartW({ say, bot, asked, gone, onAsked, onGone }: any) {
   );
 }
 
-/** A.05 — кольцо возраста и пол. */
+/** A.05 — линейка возраста и пол. */
 function BasicsW({ say, goto, onDrag }: any) {
-  const [age, setAge] = useState(28);
+  const st = useOnb();
+  const [age, setAge] = useState(() => clampAge(st.profile.age));
   const [sex, setSex] = useState<string | null>(null);
   return (
     <View style={cs.widget}>
-      <Text style={cs.label}>{STEP_BASICS.ageLabel()}</Text>
-      <AgeDial value={age} onChange={setAge} onDragChange={onDrag} />
-      <Text style={cs.label}>{STEP_BASICS.sexLabel()}</Text>
+      <Text maxFontSizeMultiplier={1.6} style={[cs.label, s.basicsLabel]}>{STEP_BASICS.ageLabel()}</Text>
+      <AgeDial value={age} onChange={setAge} locale={replyLang()} onDragChange={onDrag} />
+      <Text maxFontSizeMultiplier={1.6} style={[cs.label, s.basicsLabel]}>{STEP_BASICS.sexLabel()}</Text>
       <View style={cs.row}>
         {SEXES.map(([k]) => (
           <Chip key={k} label={sexLabel(k)} on={sex === k} onPress={() => setSex(k)} />
@@ -992,13 +1011,18 @@ function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone,
         */}
         <Text style={cs.mapTitle}>{STEP_HOBBIES.mapTitle()}</Text>
         <Text style={cs.hint}>{STEP_HOBBIES.mapHint()}</Text>
-        <MindMap width={330} height={430} selected={picked}
-                 onToggle={(k) => onMapPick?.(k)} onDrag={onDrag} />
-        <View style={cs.row}>
-          {picked.slice(-6).map((k: string) => (
-            <Chip key={k} label={interestLabel(k)} on onPress={() => onMapPick?.(k)} />
-          ))}
-        </View>
+        {/* Ширину карта берёт по экрану сама; высота — под поле из восьми тем с подписями. */}
+        <MindMap height={440} selected={picked} onToggle={(k) => onMapPick?.(k)} />
+        {/* Всё выбранное, а не последние шесть: чипы — это и есть корзина, нажатие снимает. */}
+        {picked.length ? (
+          <View style={cs.row}>
+            {picked.map((k: string) => (
+              <Chip key={k} label={interestLabel(k)} on onPress={() => onMapPick?.(k)} />
+            ))}
+          </View>
+        ) : null}
+        {/* Как на борде: под чипами «Добавить своё», под ним главная. Своё называют словами в разговоре. */}
+        <Cta kind="muted" label={STEP_HOBBIES.mapOwn()} onPress={() => onMapDone?.(picked, true)} />
         <Cta
           label={picked.length >= need
             ? STEP_HOBBIES.mapCount(picked.length)
@@ -1200,6 +1224,8 @@ function PhotoW({ say, onDone, name }: any) {
  * ровно один раз на оба чат-экрана, онбординг и создание интента.
  */
 const s = StyleSheet.create({
+  /** Fits the 1.6x Dynamic Type cap even though the shared label token has a fixed line height. */
+  basicsLabel: { lineHeight: 24 },
   /** Бровка «Это всё»: тонкая строка под шапкой. Тише ответов в ленте — это выход, а не ответ. */
   brow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,

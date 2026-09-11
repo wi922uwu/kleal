@@ -6,72 +6,72 @@
  * (/api/agent/threads). Пометки «без уведомлений / архив / покинул» — локальные (см. MsgPrefs
  * в state.ts): это отношение человека к списку, а не состояние разговора.
  */
-import { T, getLang } from './i18n';
+import { T, getLang, dateLocale, use12h } from './i18n';
 import type { MsgPrefs } from './state';
 
 export const MSG = {
-  title: () => T('Сообщения', 'Messages'),
-  tabIntents: () => T('Интенты', 'Intents'),
+  title: () => T('Сообщения', 'Messages', 'Mensajes'),
+  tabIntents: () => T('Интенты', 'Intents', 'Propuestas'),
   /** Договорились о времени и месте — пара уходит сюда, из «Интентов» она исчезает. */
-  tabPlans: () => T('Планы', 'Plans'),
-  tabPrivate: () => T('Личные', 'Private'),
+  tabPlans: () => T('Планы', 'Plans', 'Planes'),
+  tabPrivate: () => T('Личные', 'Private', 'Privado'),
 
   // MSG.01 — пустое состояние, дословно с кадра.
-  emptyTitle: () => T('Пока никаких разговоров', 'No conversations yet'),
+  emptyTitle: () => T('Пока никаких разговоров', 'No conversations yet', 'Todavía no hay conversaciones'),
   emptyNote: () =>
     T(
       'Чаты появляются здесь, как только кто-то принимает твой интент или ты присоединяешься к плану. Kleal в любом случае остаётся сверху.',
       'Chats appear here the moment someone accepts your intent, or you join a plan. Kleal stays at the top either way.'
-    ),
-  createIntent: () => T('Создать интент', 'Create intent'),
+    , 'Los chats aparecen aquí en cuanto alguien acepta tu propuesta o te unes a un plan. Kleal se queda arriba en cualquier caso.'),
+  createIntent: () => T('Создать интент', 'Create intent', 'Crear propuesta'),
 
   // Закреплённый ряд агента.
   kleal: () => 'Kleal',
-  klealSub: () => T('Твой агент · всегда на связи', 'Your agent · always on'),
-  klealTeaser: () => T('Скажи, чего хочется', 'Tell me what you feel like doing'),
-  voiceMessage: () => T('Голосовое сообщение', 'Voice message'),
+  klealSub: () => T('Твой агент · всегда на связи', 'Your agent · always on', 'Tu agente · siempre activo'),
+  klealTeaser: () => T('Скажи, чего хочется', 'Tell me what you feel like doing', 'Dime qué te apetece hacer'),
+  voiceMessage: () => T('Голосовое сообщение', 'Voice message', 'Mensaje de voz'),
 
   // Секции MSG.02/MSG.05.
-  upcoming: () => T('Предстоящее', 'Upcoming'),
-  forming: () => T('Собирается', 'Forming'),
-  past: () => T('Прошло', 'Past'),
-  muted: () => T('Без уведомлений', 'Muted'),
-  archived: () => T('Архив', 'Archived'),
+  upcoming: () => T('Предстоящее', 'Upcoming', 'Próximos'),
+  forming: () => T('Собирается', 'Forming', 'Formando'),
+  past: () => T('Прошло', 'Past', 'Pasado'),
+  muted: () => T('Без уведомлений', 'Muted', 'Silenciado'),
+  archived: () => T('Архив', 'Archived', 'Archivado'),
 
   // Подписи строк.
-  waitingAnswer: () => T('ждёт ответа', 'waiting for an answer'),
+  waitingAnswer: () => T('ждёт ответа', 'waiting for an answer', 'esperando una respuesta'),
   /** Приглашение принято, встречи ещё нет: пара договаривается в чате. */
-  agreeing: () => T('договариваетесь', 'agreeing on details'),
-  youWereInvited: (from: string) => T(`${from} зовёт`, `${from} invited you`),
-  hoursLeft: (h: number) => T(`осталось ${h} ч`, `${h} h left`),
-  ended: () => T('Закончилось', 'Ended'),
-  calledOffShort: () => T('Отменилось', 'Called off'),
-  rateTeaser: () => T('Как прошло? Нажми, чтобы оценить', 'How did it go? Tap to rate'),
-  readOnly: () => T('Только чтение', 'Read-only'),
+  agreeing: () => T('договариваетесь', 'agreeing on details', 'acordando detalles'),
+  youWereInvited: (from: string) => T(`${from} зовёт`, `${from} invited you`, `${from} te invitó`),
+  hoursLeft: (h: number) => T(`осталось ${h} ч`, `${h} h left`, `${h === 1 ? 'Queda' : 'Quedan'} ${h} h`),
+  ended: () => T('Закончилось', 'Ended', 'Finalizado'),
+  calledOffShort: () => T('Отменилось', 'Called off', 'Cancelada'),
+  rateTeaser: () => T('Как прошло? Нажми, чтобы оценить', 'How did it go? Tap to rate', '¿Cómo fue? Pulsa para calificar'),
+  readOnly: () => T('Только чтение', 'Read-only', 'Solo lectura'),
 
   // MSG.03 — поиск.
-  searchPlaceholder: () => T('Поиск', 'Search'),
-  chats: () => T('Чаты', 'Chats'),
-  messages: () => T('Сообщения', 'Messages'),
+  searchPlaceholder: () => T('Поиск', 'Search', 'Buscar'),
+  chats: () => T('Чаты', 'Chats', 'Chats'),
+  messages: () => T('Сообщения', 'Messages', 'Mensajes'),
   /** Ищем по тому, что уже на экране: названия и последние реплики. Глубокого поиска по всей
    *  переписке на сервере нет — врать «ничего не найдено» про непросмотренное нельзя. */
-  searchNote: () => T('Ищем по названиям и последним сообщениям.', 'Searches names and latest messages.'),
-  nothingFound: () => T('Ничего не нашлось', 'Nothing found'),
+  searchNote: () => T('Ищем по названиям и последним сообщениям.', 'Searches names and latest messages.', 'Busca nombres y mensajes recientes.'),
+  nothingFound: () => T('Ничего не нашлось', 'Nothing found', 'Nada encontrado'),
 
   // MSG.04 — меню по долгому нажатию, подписи с кадра.
-  muteAction: () => T('Без уведомлений', 'Mute notifications'),
-  muteNote: () => T('Ты остаёшься в чате, он просто перестаёт жужжать.', 'You stay in the chat, it just stops buzzing.'),
-  unmuteAction: () => T('Включить уведомления', 'Unmute'),
-  archiveAction: () => T('В архив', 'Archive chat'),
-  archiveNote: () => T('Уходит из списка, остаётся читаемым.', 'Moves out of the list, stays readable.'),
-  unarchiveAction: () => T('Вернуть из архива', 'Unarchive'),
-  leaveAction: () => T('Покинуть чат', 'Leave the chat'),
-  leaveNote: () => T('Сообщения отсюда больше не приходят.', 'You stop getting messages from this plan.'),
-  reportAction: () => T('Пожаловаться', 'Report this chat'),
-  reportNote: () => T('Уйдёт человеку, не боту.', 'Goes to a human, not to a bot.'),
-  reportSent: () => T('Жалоба отправлена', 'Report sent'),
-  withdrawAction: () => T('Отозвать приглашение', 'Withdraw the invite'),
-  withdrawNote: () => T('Человек больше не увидит его.', 'They will no longer see it.'),
+  muteAction: () => T('Без уведомлений', 'Mute notifications', 'Silenciar notificaciones'),
+  muteNote: () => T('Ты остаёшься в чате, он просто перестаёт жужжать.', 'You stay in the chat, it just stops buzzing.', 'Te quedas en la conversación, solo que deja de sonar.'),
+  unmuteAction: () => T('Включить уведомления', 'Unmute', 'Activar sonido'),
+  archiveAction: () => T('В архив', 'Archive chat', 'Archivar conversación'),
+  archiveNote: () => T('Уходит из списка, остаётся читаемым.', 'Moves out of the list, stays readable.', 'Sale de la lista, pero sigue legible.'),
+  unarchiveAction: () => T('Вернуть из архива', 'Unarchive', 'Desarchivar'),
+  leaveAction: () => T('Покинуть чат', 'Leave the chat', 'Abandonar el chat'),
+  leaveNote: () => T('Сообщения отсюда больше не приходят.', 'You stop getting messages from this plan.', 'Dejas de recibir mensajes de este plan.'),
+  reportAction: () => T('Пожаловаться', 'Report this chat', 'Reportar este chat'),
+  reportNote: () => T('Уйдёт человеку, не боту.', 'Goes to a human, not to a bot.', 'Va a un humano, no a un bot.'),
+  reportSent: () => T('Жалоба отправлена', 'Report sent', 'Reporte enviado'),
+  withdrawAction: () => T('Отозвать приглашение', 'Withdraw the invite', 'Retirar la invitación'),
+  withdrawNote: () => T('Человек больше не увидит его.', 'They will no longer see it.', 'Ya no lo verán.'),
 };
 
 /** Строка списка. kind решает, куда ведёт тап; key — стабильный ключ для пометок. */
@@ -243,6 +243,7 @@ export function threadRows(threads: any[], me = '', ru = true, line?: (sys: any,
  * людей больше. Собеседника у строки нет — открывается она по gid, поэтому `who` пустой, а
  * `open()` в экране разводит переход по kind.
  */
+/** `ru` здесь больше не читается — язык решает T(). Оставлен ради общей формы с соседями. */
 export function groupRows(groups: any[], invites: any[], ru: boolean): Row[] {
   const rows: Row[] = [];
   for (const g of groups || []) {
@@ -261,15 +262,17 @@ export function groupRows(groups: any[], invites: any[], ru: boolean): Row[] {
       gid: String(g.gid || ''),
       title: String(g.title || ''),
       sub: g.read_only
-        ? (ru ? 'Группа · Только чтение' : 'Group · Read-only')
-        : (ru ? `Группа · ${n} из ${min}` : `Group · ${n} of ${min}`),
+        ? T('Группа · Только чтение', 'Group · Read-only', 'Grupo · Solo lectura')
+        : T(`Группа · ${n} из ${min}`, `Group · ${n} of ${min}`, `Grupo · ${n} de ${min}`),
       // Подсказка говорит то, что человеку нужно решить прямо сейчас: добрать людей или уже
       // планировать. Пересказывать последнюю реплику здесь нечем — сервер её в списке не отдаёт.
       teaser: g.read_only
-        ? (ru ? 'Вы больше не состоите в этой группе' : 'You are no longer in this group')
+        ? T('Вы больше не состоите в этой группе', 'You are no longer in this group',
+           'Ya no estás en este grupo')
         : need
-        ? (ru ? `Нужен(ы) ещё ${need}` : `Need ${need} more`)
-        : (ru ? 'Людей достаточно — можно делать план' : 'Enough people — you can make a plan'),
+        ? T(`Нужен(ы) ещё ${need}`, `Need ${need} more`, `Faltan ${need}`)
+        : T('Людей достаточно — можно делать план', 'Enough people — you can make a plan',
+           'Ya sois suficientes — podéis hacer un plan'),
       t: Number(g.updated || g.created || 0),
     });
   }
@@ -280,7 +283,7 @@ export function groupRows(groups: any[], invites: any[], ru: boolean): Row[] {
       id: String(i.id || ''),
       gid: String(i.gid || ''),
       title: String(i.title || i.group_title || ''),
-      sub: ru ? 'Приглашение в группу' : 'Group invite',
+      sub: T('Приглашение в группу', 'Group invite', 'Invitación a un grupo'),
       teaser: String(i.from || i.owner || ''),
       t: Number(i.created || 0),
       unread: true,
@@ -315,7 +318,7 @@ export function gplanRows(plans: any[], history: any[], ru: boolean,
       id: String(p.id || ''),
       title: String(p.title || ''),
       // Число согласных — то, чем групповой план отличается от парного: он ещё может не собраться.
-      sub: `${ru ? 'Группа' : 'Group'} · ${when(p)}${n ? ` · ${n} ${ru ? 'идут' : 'going'}` : ''}`,
+      sub: `${T('Группа', 'Group', 'Grupo')} · ${when(p)}${n ? ` · ${n} ${T('идут', 'going', 'van')}` : ''}`,
       t: Number(p.updated || p.created || 0),
     };
   };
@@ -328,11 +331,11 @@ export function gplanRows(plans: any[], history: any[], ru: boolean,
       forming.push({
         ...row(p),
         teaser: need
-          ? (ru ? `Ждём ещё ${need}` : `Waiting for ${need} more`)
-          : (ru ? 'Ждём подтверждений' : 'Waiting for confirmations'),
+          ? T(`Ждём ещё ${need}`, `Waiting for ${need} more`, `Faltan ${need} por confirmar`)
+          : T('Ждём подтверждений', 'Waiting for confirmations', 'Esperando confirmaciones'),
       });
     } else if (p.state === 'below_quorum') {
-      forming.push({ ...row(p), teaser: ru ? 'Осталось меньше трёх' : 'Fewer than three left' });
+      forming.push({ ...row(p), teaser: T('Осталось меньше трёх', 'Fewer than three left', 'Quedáis menos de tres') });
     }
   }
   for (const p of history || []) {
@@ -404,8 +407,8 @@ export function rowTime(t?: number): string {
   const now = new Date();
   const ru = getLang() === 'ru';
   const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString(ru ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: !ru });
+  if (sameDay) return d.toLocaleTimeString(dateLocale(ru), { hour: '2-digit', minute: '2-digit', hour12: use12h(ru) });
   const days = (now.getTime() - d.getTime()) / 86400000;
-  if (days < 7) return d.toLocaleDateString(ru ? 'ru-RU' : 'en-US', { weekday: 'short' });
-  return d.toLocaleDateString(ru ? 'ru-RU' : 'en-US', { day: '2-digit', month: '2-digit' });
+  if (days < 7) return d.toLocaleDateString(dateLocale(ru), { weekday: 'short' });
+  return d.toLocaleDateString(dateLocale(ru), { day: '2-digit', month: '2-digit' });
 }

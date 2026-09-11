@@ -32,14 +32,14 @@ import {
   IconBell, IconCalendar, IconClock, IconPin, IconBookmark, IconMic,
   IconChat, IconGroups, IconImagePlaceholder,
 } from '../src/components/icons';
-import { useLang, T } from '../src/i18n';
+import { useLang, T, dateLocale, use12h } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { mediaUrl, warmPhotos, agent } from '../src/api';
 import {
   HOME, splitWhen, planWhere, joinableGroups, homeInvites,
   Group, HomeInvite,
 } from '../src/home';
-import { color, displayFamily, radius as rad, space, type } from '../src/theme';
+import { color, displayFamily, font, radius as rad, space, type } from '../src/theme';
 
 export default function Home() {
   const lang = useLang();
@@ -86,6 +86,8 @@ export default function Home() {
    * улетает выше клавиатуры. Пока клавиатура открыта, отступа нет.
    */
   const [kb, setKb] = useState(false);
+  /** Сколько раз заходили на главную: колесо по этому числу коротко качается — «меня можно листать». */
+  const [hint, setHint] = useState(0);
   useEffect(() => {
     const ios = Platform.OS === 'ios';
     const show = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', () => setKb(true));
@@ -137,7 +139,7 @@ export default function Home() {
     setLoading(false);
   }, [me]);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => { load(); setHint((n) => n + 1); }, [load]));
 
   const refresh = async () => {
     setRefreshing(true);
@@ -269,6 +271,7 @@ export default function Home() {
                     progress={wheelAt}
                     // Остаток: видимая часть ленты минус то, что стоит над колесом и под ним.
                     height={wheelH}
+                    hint={hint}
                     onPick={(it) => router.navigate({ pathname: '/create', params: { seed: it.query } })}
                   />
               </View>
@@ -358,7 +361,7 @@ export default function Home() {
                       onIndex={setInvIdx}
                       emptyHint={invites.length ? HOME.invitesAllSeen() : ''}
                       render={(it: any) => (
-                        it.kind === 'plan' ? <View style={s.meet}><NextMeetRow plan={it.plan} /></View>
+                        it.kind === 'plan' ? <NextMeetCard plan={it.plan} me={me} />
                         : it.kind === 'empty' ? <EmptyInviteCard />
                         : it.type === 'group' ? <GroupInviteCard inv={it} />
                         : <DirectInviteCard inv={it} />
@@ -373,7 +376,7 @@ export default function Home() {
                   заняться самому, а она отвечает на невысказанный вопрос «а мне-то кто-нибудь
                   написал».
                 */
-                <EmptyInviteCard />
+                <View style={s.alone}><EmptyInviteCard /></View>
               )}
               </View>
             </>
@@ -391,20 +394,30 @@ export default function Home() {
           С поднятой клавиатурой зазор снова маленький: там панели нет вовсе, а место дорого.
         */}
         <View style={[s.dock, { paddingBottom: kb ? 6 : navH + space.lg }]}>
-          <View style={s.askRow}>
-            <View style={s.askAvatar}>
-              <IconImagePlaceholder size={22} />
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={HOME.ask()}
-              style={({ pressed }) => [s.askField, pressed && { opacity: 0.85 }]}
-              onPress={toBuddy}
-            >
-              <Text style={s.askText}>{HOME.ask()}</Text>
-              <IconMic />
-            </Pressable>
-          </View>
+          {/*
+            ПОЛЕ ВВОДА ПО ВИДУ, КНОПКА ПО ДЕЙСТВИЮ — так решено продуктом: вопрос «Чем хочешь
+            заняться?» приглашает ответить, и строка читается как место для ответа. Печатать здесь
+            при этом негде (см. toBuddy): нажатие открывает чат, клавиатура поднимается уже там.
+
+            Вид прежний — белая строка с подсказкой и микрофоном. Отличий от первой версии два, и
+            оба по просьбе с телефона: аватарки слева нет (она отнимала ширину и изображала
+            собеседника у поля), строка выше и на всю ширину.
+
+            АКЦЕНТЫ — фирменным цветом, не формой: слева значок чата, справа микрофон в красном
+            круге (как круглые кнопки действий по всему приложению), под строкой розовое свечение.
+            Подсказка цветом `muted`, как в композере чата на борде, а не бледным `neutral400`:
+            строка должна читаться с первого взгляда, это главный вход в продукт.
+          */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={HOME.ask()}
+            style={({ pressed }) => [s.askField, pressed && { opacity: 0.85 }]}
+            onPress={toBuddy}
+          >
+            <IconChat size={20} c={color.primary} />
+            <Text style={s.askText} numberOfLines={1}>{HOME.ask()}</Text>
+            <View style={s.askMic}><IconMic size={18} c={color.onPrimary} /></View>
+          </Pressable>
           {/*
             Кнопка обещает историю РАЗГОВОРОВ — теперь она её и открывает.
 
@@ -484,14 +497,6 @@ function GroupCard({ g, myArea }: { g: Group; myArea: string }) {
 }
 
 /**
- * Ближайшая встреча СТРОКОЙ, в том же сложении, что и приглашение: круглый значок слева, справа
- * подпись, название, время с местом и переход.
- *
- * Раньше это была отдельная плашка с другим радиусом и другой вёрсткой, стоявшая прямо над
- * карточкой приглашений. Два разных оформления в двенадцати пикселях друг от друга читаются
- * как случайность, а не как замысел.
- */
-/**
  * Стрелка «дальше» в круглой кнопке. Своя, а не из общего набора: там сейчас чинят соседние
  * иконки, и лезть туда ради одной фигуры — верный способ разъехаться с чужой правкой.
  * Прямая стрелка, а не шеврон: на кадре она именно такая.
@@ -503,56 +508,73 @@ const ArrowRight = ({ size = 20, c = color.onPrimary }: { size?: number; c?: str
   </Svg>
 );
 
-function NextMeetRow({ plan }: { plan: any }) {
+/**
+ * Ближайшая встреча — ТА ЖЕ «Home Card», что у приглашения: слева плитка, справа название с
+ * бейджем, строка «с кем», строка «когда · где» и кнопка.
+ *
+ * Раньше это была строка другого сложения: плитка даты с волосяной линией, подпись над названием,
+ * «К плану» со стрелкой в одну линию с названием — и на шестьдесят пунктов ниже приглашения. В
+ * колоде это значило, что при каждом перелистывании карточка меняла рост (встреча ≈92, приглашение
+ * ≈152), и всё под колодой прыгало. Одно сложение на всех даёт один рост — и колоду, которая
+ * листается, а не дёргается. Кнопка теперь та же, что у приглашений: одно действие, одинаково
+ * нажимаемое, а не подпись со стрелкой, которую принимали за украшение.
+ *
+ * Число и месяц берём из `starts_at`, а не разбираем готовую подпись: она собрана не здесь, и
+ * зависеть от её формата значило бы ломаться при каждой его правке. Нет отметки времени — на плитке
+ * календарь, а подпись идёт как есть: это честнее выдуманной даты.
+ */
+function NextMeetCard({ plan, me }: { plan: any; me: string }) {
   const router = useRouter();
   const ru = useLang() === 'ru';
-  /*
-    КАРТОЧКА ЧИТАЕТСЯ ОДНИМ ВЗГЛЯДОМ, И ПОРЯДОК В НЕЙ НЕ СЛУЧАЕН: когда — что — куда нажать.
-
-    Дата стоит отдельной плиткой и отбита волосяной линией: число крупно, месяц под ним. Время
-    ушло в строку под названием, к часам; действие вернулось направо, в одну строку с названием.
-    Иначе всё съезжало в одну длинную подпись, слева стояла пустая плитка календаря, а «К плану»
-    занимала третью строку — карточка вырастала вдвое, и самое главное, КОГДА, тонуло в середине.
-
-    Число и месяц берём из `starts_at`, а не разбираем готовую подпись: она собрана не здесь, и
-    зависеть от её формата значило бы ломаться при каждой его правке. Нет отметки времени —
-    показываем подпись как есть: это честнее выдуманной даты.
-  */
   const at = Number(plan.starts_at || 0);
   const d = at ? new Date(at * 1000) : null;
-  const loc = ru ? 'ru-RU' : 'en-US';
+  const loc = dateLocale(ru);
   const mon = d ? d.toLocaleDateString(loc, { month: 'short' }).replace(/\.$/, '') : '';
-  const time = d ? d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: !ru }) : '';
+  const time = d ? d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: use12h(ru) }) : '';
   const place = plan.mode === 'online' ? HOME.onCall() : String(plan.venue || plan.district || '').trim();
   const when = [time || String(plan.when || '').trim(), place].filter(Boolean).join(' · ');
+  // С кем: второй в паре. Имена сравниваются без регистра — так их хранит матчинг.
+  const norm = (x: any) => String(x || '').trim().toLowerCase();
+  const other = String((norm(plan.host) === norm(me) ? plan.guest : plan.host) || '').trim();
+  const confirmed = plan.state === 'confirmed';
   return (
     <Pressable
       accessibilityRole="button"
-      style={({ pressed }) => [s.nextRow, pressed && { opacity: 0.7 }]}
+      style={({ pressed }) => [s.meet, pressed && { opacity: 0.9 }]}
       onPress={() => router.navigate({ pathname: '/plan', params: { id: String(plan.id || '') } })}
     >
+      {/* Дата плиткой на месте фото: число крупно, месяц под ним. */}
       <View style={s.dateTile}>
-        <IconCalendar size={20} c={color.fg} />
-        {d ? <Text style={s.dateDay}>{d.getDate()}</Text> : null}
-        {mon ? <Text style={s.dateMon}>{mon}</Text> : null}
+        {d ? (
+          <>
+            <Text style={s.dateDay}>{d.getDate()}</Text>
+            <Text style={s.dateMon}>{mon}</Text>
+          </>
+        ) : (
+          <IconCalendar size={24} c={color.fg} />
+        )}
       </View>
-      <View style={s.dateRule} />
-      <View style={s.nextText}>
-        {/* Подпись над названием — иначе, потеряв заголовок секции, строка перестаёт называть себя. */}
-        <Text style={s.stackCap}>{HOME.next()}</Text>
-        <Text style={s.meetName} numberOfLines={1}>
-          {String(plan.title || '').trim() || HOME.next()}
-        </Text>
-        {when ? (
-          <View style={s.meetMeta}>
-            <IconClock />
-            <Text style={s.meta} numberOfLines={1}>{when}</Text>
+      <View style={{ flex: 1 }}>
+        <View style={s.meetTop}>
+          <Text style={s.meetName} numberOfLines={1}>
+            {String(plan.title || '').trim() || HOME.next()}
+          </Text>
+          {/* Состояние — бейджем, там же, где у приглашения «Мэтч»: подтверждена или ещё ждёт. */}
+          <View style={[s.badge, !confirmed && s.badgeQuiet]}>
+            <Text style={[s.badgeText, !confirmed && s.badgeQuietText]}>
+              {confirmed ? HOME.planConfirmed() : HOME.planPending()}
+            </Text>
           </View>
-        ) : null}
-      </View>
-      <View style={s.goWrap}>
-        <Text style={s.nextGo} numberOfLines={1}>{HOME.goToPlan()}</Text>
-        <View style={s.goBtn}><ArrowRight /></View>
+        </View>
+        <Text style={s.meetIntent} numberOfLines={1}>{other ? HOME.withWho(other) : HOME.next()}</Text>
+        <View style={s.meetMeta}>
+          <IconClock />
+          <Text style={s.meta} numberOfLines={1}>{when || HOME.flexible()}</Text>
+        </View>
+        <View style={s.grow} />
+        <View style={s.meetBtn}>
+          <Text style={s.meetBtnText}>{HOME.goToPlan()}</Text>
+        </View>
       </View>
     </Pressable>
   );
@@ -568,10 +590,9 @@ function EmptyInviteCard({ onHeight }: { onHeight?: (h: number) => void }) {
       </View>
       <View style={{ flex: 1 }}>
         <Text style={s.meetName} numberOfLines={1}>{HOME.noInvites()}</Text>
-        <View style={s.meetMeta}>
-          <IconClock />
-          <Text style={s.meta} numberOfLines={1}>{HOME.noInvitesNote()}</Text>
-        </View>
+        {/* Строкой под названием, а не у часов: «они появятся здесь» — не время и не место. */}
+        <Text style={s.meetIntent} numberOfLines={2}>{HOME.noInvitesNote()}</Text>
+        <View style={s.grow} />
         {/*
           КНОПКА ЗАВОДИТ ИНТЕНТ, А НЕ ОТКРЫВАЕТ СПИСОК. Сначала она вела во вкладку интентов — но
           приглашений нет ровно потому, что человеку пока не с чем к кому-то прийти. Показать ему
@@ -628,6 +649,7 @@ function DirectInviteCard({ inv }: { inv: HomeInvite }) {
             <Text style={s.meta} numberOfLines={1}>{inv.note || HOME.wantsToMeet()}</Text>
           )}
         </View>
+        <View style={s.grow} />
         <View style={s.meetBtn}>
           <Text style={s.meetBtnText}>{HOME.review()}</Text>
         </View>
@@ -677,7 +699,7 @@ function GroupInviteCard({ inv }: { inv: HomeInvite }) {
             <Text style={s.faceInit}>{(person.name || '?').slice(0, 1).toUpperCase()}</Text>
             {person.photo ? (
               <Image source={{ uri: mediaUrl(String(person.photo)) }}
-                     style={[s.faceAva, StyleSheet.absoluteFillObject]} />
+                     style={[s.faceAva, StyleSheet.absoluteFill]} />
             ) : null}
           </View>
         ))}
@@ -722,6 +744,7 @@ function GroupInviteCard({ inv }: { inv: HomeInvite }) {
           </Text>
         </View>
 
+        <View style={s.grow} />
         <View style={s.meetBtn}>
           <Text style={s.meetBtnText}>{HOME.review()}</Text>
         </View>
@@ -774,8 +797,15 @@ const s = StyleSheet.create({
   foot: { marginTop: 4, paddingTop: 10, borderTopWidth: 1, borderTopColor: color.neutral100 },
   footText: { ...type.bodySmall, color: color.muted } as any,
 
+  /*
+    БЕЗ ПОЛЕЙ И ОДНОГО РОСТА. Поля (20) даёт колода — у неё же считаются слои под карточкой; пока
+    поля стояли и тут, и там, карточка была на 40 уже слоёв, и те выглядывали из-за неё белыми
+    полосками. Рост общий на все четыре карточки колоды: иначе при перелистывании колода меняла
+    высоту, и всё под ней прыгало. 156 — рост приглашения из четырёх строк и кнопки; у остальных
+    кнопку к низу прижимает `grow`.
+  */
   meet: {
-    flexDirection: 'row', gap: space.md, marginHorizontal: 20, padding: 14,
+    flexDirection: 'row', gap: space.md, padding: 14, minHeight: 156,
     borderRadius: rad.xl, backgroundColor: color.card,
     shadowColor: '#000', shadowOpacity: 0.09, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 3,
   },
@@ -788,9 +818,15 @@ const s = StyleSheet.create({
   badgeText: { ...type.labelSmall, color: color.successText, fontWeight: '600' } as any,
   meetIntent: { ...type.bodySmall, color: color.fg, marginTop: 2 } as any,
   meetMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' },
+  /** Карточка вне колоды стоит с теми же полями, что колода даёт своим. */
+  alone: { marginHorizontal: 20 },
+  /** Толкает кнопку к низу: на всех карточках колоды она на одной высоте. */
+  grow: { flex: 1, minHeight: 12 },
+  badgeQuiet: { backgroundColor: color.neutral100 },
+  badgeQuietText: { color: color.muted },
   meetBtn: {
     height: 44, borderRadius: rad.full, backgroundColor: color.primary,
-    alignItems: 'center', justifyContent: 'center', marginTop: 12,
+    alignItems: 'center', justifyContent: 'center',
     // Свечение фирменного цвета под кнопкой — как у всех главных кнопок приложения.
     shadowColor: color.primary, shadowOpacity: 0.3, shadowRadius: 14, shadowOffset: { width: 0, height: 6 },
     elevation: 6,
@@ -815,39 +851,27 @@ const s = StyleSheet.create({
     между частями одной; иначе граница пропадает, и глаз собирает их вместе.
   */
   dock: { paddingHorizontal: 16, gap: space.md, paddingTop: 20, paddingBottom: 6 },
-  askRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  askAvatar: {
-    width: 46, height: 46, borderRadius: 23, backgroundColor: color.onCoverSoft,
-    alignItems: 'center', justifyContent: 'center',
-  },
+  /** Строка к Бадди: прежний вид поля, выше (56) и без аватарки; акценты — цветом, см. разметку. */
   askField: {
-    flex: 1, height: 50, borderRadius: rad.full, backgroundColor: color.card,
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, gap: space.sm,
+    height: 56, borderRadius: rad.full, backgroundColor: color.card,
+    flexDirection: 'row', alignItems: 'center', paddingLeft: 18, paddingRight: 10, gap: 10,
+    shadowColor: color.primary, shadowOpacity: 0.14, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
   },
-  askText: { flex: 1, color: color.neutral400, fontSize: 15 },
-  navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  /** Карточка ближайшей встречи — кадр O.01, блок Activity. Только токены, как и всё на экране. */
-  /** Строка встречи внутри своей карточки: то же сложение, что у приглашения. */
-  /*
-    `flex: 1` ОБЯЗАТЕЛЕН. Карточка `meet` — строка, и эта нажимаемая строка её единственный ребёнок:
-    без растяжения она сжимается по содержимому, а колонка текста внутри получает нулевую ширину —
-    на снимке от значка календаря остались только он сам да часики, весь текст исчез.
-  */
-  nextRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  /** Дата плиткой: значок сверху, число крупно, месяц под ним. Узкая колонка — ширина у названия. */
-  dateTile: { width: 34, alignItems: 'center' },
-  dateDay: { fontSize: 20, lineHeight: 24, fontWeight: '800', color: color.fg, marginTop: 4 } as any,
-  dateMon: { fontSize: 12, lineHeight: 15, color: color.muted, marginTop: 1 } as any,
-  /** Волосяная отбивка: дата — это отдельный столбец, а не начало той же строки. */
-  dateRule: { width: 1, alignSelf: 'stretch', marginVertical: 2, backgroundColor: color.line },
-  nextText: { flex: 1 },
-  goWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  goBtn: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: color.primary,
+  /* Семейство явно: вес на подключённых шрифтах не работает (см. src/theme.ts). */
+  askText: { flex: 1, fontFamily: font.textMedium, fontSize: 16, lineHeight: 22, color: color.muted } as any,
+  askMic: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: color.primary,
     alignItems: 'center', justifyContent: 'center',
   },
-  /** Подпись над названием: карточка обязана называть себя, раз заголовка секции над ней нет. */
-  stackCap: { ...type.labelSmall, color: color.muted, marginBottom: 2 } as any,
+  navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  /** Дата плиткой на месте фото: та же сторона (62), что у лица на приглашении. */
+  dateTile: {
+    width: 62, height: 62, borderRadius: rad.lg, backgroundColor: color.infoBg,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  dateDay: { fontSize: 22, lineHeight: 26, fontWeight: '800', color: color.fg } as any,
+  dateMon: { fontSize: 12, lineHeight: 15, color: color.muted } as any,
 
   nextCard: {
     marginHorizontal: space.lg, marginBottom: space.md, padding: space.lg,
@@ -857,7 +881,6 @@ const s = StyleSheet.create({
   },
   nextTitle: { ...type.title, color: color.fg } as any,
   nextWhen: { ...type.bodySmall, color: color.muted } as any,
-  nextGo: { ...type.labelMedium, color: color.primary, fontWeight: '600' } as any,
 
   hist: {
     alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8,

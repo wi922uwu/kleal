@@ -204,7 +204,7 @@ export default function AuthCode() {
         <View style={[s.page, { paddingTop: insets.top + space.sm,
                                 paddingBottom: dockBottom(insets.bottom + space.lg, kb) }]}>
           <GlassBack
-            label={T('Назад', 'Back')}
+            label={T('Назад', 'Back', 'Atrás')}
             onPress={() => (router.canGoBack() ? router.back() : router.replace('/auth-email'))}
           />
 
@@ -346,7 +346,7 @@ const s = StyleSheet.create({
   cellBad: { borderWidth: 1, borderColor: color.danger },
   cellText: { ...type.codeDigit, color: color.fg } as any,
   /** Поле лежит поверх ячеек и не видно: прозрачный текст, нулевая непрозрачность курсора. */
-  hidden: { ...StyleSheet.absoluteFillObject, opacity: 0, color: 'transparent' } as any,
+  hidden: { ...StyleSheet.absoluteFill, opacity: 0, color: 'transparent' } as any,
 
   /** Отладочная полоса: намеренно чужеродная в этом интерфейсе — её нельзя не заметить. */
   devBox: {

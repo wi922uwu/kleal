@@ -20,11 +20,11 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
-  CHAT, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS, planWhen, planPinned, planPhase, sysLine,
+  CHAT, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS, planWhen, planPhase, sysLine,
 } from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
-import { useLang, T, getLang } from '../src/i18n';
+import { useLang, T, getLang, dateLocale } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
 import { mediaUrl, agent, newIdem, type VideoPayload } from '../src/api';
 import { usePolling } from '../src/polling';
@@ -34,9 +34,9 @@ import { MessageFeed } from '../src/components/MessageFeed';
 import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
 import { VideoNoteButton } from '../src/videonote';
 import {
-  IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
+  IconChevronLeft, IconSpark, IconPlusRound, IconPerson, IconCalendar, IconSend, IconCheckCircle,
 } from '../src/components/icons';
-import { color, radius as rad, space, type } from '../src/theme';
+import { color, font, radius as rad, space, type } from '../src/theme';
 
 export default function Conversation() {
   useLang();
@@ -281,6 +281,8 @@ export default function Conversation() {
   const send = () => {
     const text = draft.trim();
     if (!text || !me || !other) return;
+    // Не только кнопкой: по «отправить» с клавиатуры сюда приходят мимо неактивного поля.
+    if (!canWrite) return;
     setDraft('');
     atBottom.current = true;
     // `since` НЕ двигаем: пусть опрос принесёт серверную версию этой же реплики — merge её склеит
@@ -301,8 +303,22 @@ export default function Conversation() {
    * `text`. Поэтому и показывается оно сразу, как своя реплика, — опрос принесёт серверную
    * версию и склеит по id.
    */
+  /**
+   * ПИСАТЬ МОЖНО ТОЛЬКО ТОМУ, КТО СОГЛАСИЛСЯ — и знать это экран обязан ДО отправки.
+   *
+   * Сервер правило держит (`_mp_matched` -> NOT_MATCHED), плану оно уже объяснено выше (`canPlan`),
+   * а переписка оставалась открытой: человек писал, пузырь появлялся с галочкой, и только потом
+   * приходил отказ. Пузырь при этом оставался в ленте навсегда.
+   *
+   * Здесь правило МЯГЧЕ, чем у плана, и это намеренно. `canPlan` требует явного `accepted`; для
+   * письма достаточно, чтобы не было ИЗВЕСТНО обратное. Заявку экран берёт из входящих и исходящих,
+   * и если список не догрузился, `request` пуст — запереть на этом основании работающую переписку
+   * хуже, чем пропустить запрос, который сервер всё равно отобьёт.
+   */
+  const canWrite = !(request && request.status !== 'accepted');
+
   /** Кружок уходит тем же путём, что текст и голосовое: тот же ключ, то же состояние, тот же повтор. */
-  const canSend = !!me && !!other;
+  const canSend = !!me && !!other && canWrite;
   const sendCircle = (payload: VideoPayload) => {
     if (!canSend) return;
     const local: Msg = {
@@ -399,16 +415,20 @@ export default function Conversation() {
 
   /** Подзаголовок шапки — только из того, что есть на самом деле. Присутствия и «печатает…» нет. */
   const subtitle = useMemo(() => {
-    if (livePlan?.state === 'confirmed') return THREAD.planSet(planWhen(livePlan, ru));
-    if (livePlan?.state === 'proposed') {
-      return norm(livePlan.host) === norm(me) ? THREAD.proposalSent() : THREAD.planFromThem();
-    }
+    /*
+      ПОКА ПЛАН ЗАКРЕПЛЁН СВЕРХУ — ПОДПИСИ НЕТ.
+      Здесь она говорила «План: Ср, 9 сент. · 23:25», а ровно та же дата стояла строкой выше, в
+      закреплённой полосе. Две строки об одном на расстоянии сорока точек друг от друга — это не
+      забота, а шум; на борде под именем нет ничего.
+      Без плана подпись остаётся: «Общаетесь сегодня» и «совпали на …» ничего не повторяют.
+    */
+    if (livePlan) return '';
     if (msgs.length) {
       const first = new Date((msgs[0].t || 0) * 1000);
       // Разговор начался сегодня — «с субботы» про сегодняшний день читается как «давно уже».
       if (first.toDateString() === new Date().toDateString()) return THREAD.talkingToday();
       // Русскому нужен родительный: «с четверга». Английскому — просто имя дня.
-      const day = ru ? THREAD.weekdayGen(first.getDay()) : first.toLocaleDateString('en-US', { weekday: 'long' });
+      const day = ru ? THREAD.weekdayGen(first.getDay()) : first.toLocaleDateString(dateLocale(), { weekday: 'long' });
       return THREAD.talkingSince(day);
     }
     if (request?.status === 'accepted') {
@@ -464,58 +484,40 @@ export default function Conversation() {
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
-        {/* MSG.06: шапка одним рядом — назад, аватар, имя со статусом, многоточие. Отдельной
-            полосы интента больше нет: интент живёт в закреплённом плане и в листе за «•••». */}
-        <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
-            <IconChevronLeft />
-          </Pressable>
-          {photo ? (
-            <Image source={{ uri: mediaUrl(String(photo)) }} style={s.ava} />
-          ) : (
-            <View style={[s.ava, s.avaEmpty]}><IconPerson size={20} /></View>
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={s.name} numberOfLines={1}>{other}</Text>
-            {subtitle ? <Text style={s.sub} numberOfLines={1}>{subtitle}</Text> : null}
-          </View>
-          <Pressable accessibilityRole="button" accessibilityLabel={CHAT.actionsTitle()} style={s.dots} onPress={() => setActions(true)}>
-            <IconDots />
-          </Pressable>
-        </View>
+        {/*
+          ЗАКРЕПЛЁННОЕ — ПОЛОСА ВО ВСЮ ШИРИНУ (борд, node 3642-221266).
 
-        {/* MSG.07 — живой план закреплён над лентой; тап открывает его экран. */}
+          Была карточка с полями по бокам, тенью и цветной плиткой-значком. На борде иначе: белая
+          полоса от края до края, круглая миниатюра у левого края и шеврон в белом круге у правого.
+          Оба круга стоят на той же вертикали, что кнопка «назад» и аватар в шапке под ними, —
+          отсюда одинаковый отступ 18 у всех четырёх. Это и держит верх экрана в порядке: два ряда,
+          и по краям у них общая колонка.
+        */}
         {livePlan ? (
           <Pressable
             accessibilityRole="button"
-            style={s.planCard}
+            style={s.pinRow}
             onPress={openLivePlan}
           >
-            <View style={s.planIcon}><IconCalendar size={20} c={color.onPrimary} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.planTitle} numberOfLines={1}>{livePlan.title || intentTitle}</Text>
-              <Text style={s.planSub} numberOfLines={1}>
-                {planWhen(livePlan, ru)}{livePlan.district ? ` · ${livePlan.district}` : ''}
-              </Text>
-              {/* Состояние встречи — прямо на карточке. Раньше она молчала, и «подтверждено» или
-                  «ждёт тебя» узнавалось только после перехода на экран плана. */}
-              <Text style={[s.planState, planPinned(livePlan, me).warn && { color: color.primary }]} numberOfLines={1}>
-                {planPinned(livePlan, me).label}
-              </Text>
+            <View style={s.pinBarWhite} />
+            {photo ? (
+              <Image source={{ uri: mediaUrl(String(photo)) }} style={s.pinThumb} />
+            ) : (
+              <View style={[s.pinThumb, s.avaEmpty]}><IconCalendar size={18} c={color.primary} /></View>
+            )}
+            {/*
+              ОДНА СТРОКА, КАК НА БОРДЕ. Здесь стояли три: заголовок, «когда · где» и состояние
+              встречи. Вместе с подписью под именем ниже дата и время повторялись на одном экране
+              ТРИЖДЫ — снято с телефона: «Ср, 9 сент. · 23:25» в полосе, «Подтверждено обоими» под
+              ним и «План: Ср, 9 сент. · 23:25» под именем.
+              Полоса — это ВХОД в затею, а не её пересказ: и «когда», и «где», и состояние живут на
+              экране плана, куда ведёт шеврон справа. Повторять их поверх ленты значит забивать верх
+              экрана тем, что сказано на один тап дальше.
+            */}
+            <View style={s.pinMid}>
+              <Text style={s.pinTitle} numberOfLines={1}>{livePlan.title || intentTitle}</Text>
             </View>
-            {/* Пара участников, как на MSG.07: собеседник и я, внахлёст. */}
-            <View style={s.pairWrap}>
-              {photo ? (
-                <Image source={{ uri: mediaUrl(String(photo)) }} style={s.pairAva} />
-              ) : (
-                <View style={[s.pairAva, s.avaEmpty]}><IconPerson size={13} /></View>
-              )}
-              {st.profile.photo ? (
-                <Image source={{ uri: mediaUrl(String(st.profile.photo)) }} style={[s.pairAva, s.pairAvaOverlap]} />
-              ) : (
-                <View style={[s.pairAva, s.pairAvaOverlap, s.avaEmpty]}><IconPerson size={13} /></View>
-              )}
-            </View>
+            <View style={s.pinChev}><Text style={s.pinChevText}>›</Text></View>
           </Pressable>
         ) : requestTitle ? (
           /*
@@ -523,20 +525,59 @@ export default function Conversation() {
             этот разговор начался, и провалиться в него надо из чата, а не из меню за «•••»:
             «Сообщения» теперь ведут только сюда, и другого пути к карточке интента не остаётся.
           */
-          <Pressable accessibilityRole="button" style={s.planCard} onPress={() => setIntentOpen(true)}>
-            <View style={[s.planIcon, s.intentIcon]}><IconSpark size={20} c={color.primary} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.planTitle} numberOfLines={1}>{requestTitle}</Text>
-              <Text style={s.planSub} numberOfLines={1}>
-                {[request?.intent?.when || request?.intent?.time,
-                  request?.intent?.mode === 'offline' ? THREAD.offlineInPerson() : THREAD.onlineMode()]
-                  .filter(Boolean).join(' · ')}
-              </Text>
-              <Text style={s.planState} numberOfLines={1}>{THREAD.openIntent()}</Text>
+          <Pressable accessibilityRole="button" style={s.pinRow} onPress={() => setIntentOpen(true)}>
+            <View style={s.pinBarWhite} />
+            {photo ? (
+              <Image source={{ uri: mediaUrl(String(photo)) }} style={s.pinThumb} />
+            ) : (
+              <View style={[s.pinThumb, s.avaEmpty]}><IconSpark size={18} c={color.primary} /></View>
+            )}
+            <View style={s.pinMid}>
+              <Text style={s.pinTitle} numberOfLines={1}>{requestTitle}</Text>
+              {/*
+                Подписей под заголовком на макете нет, и это верно: карточка здесь — вход в затею,
+                а не её пересказ. Время и формат живут на самом экране интента, за шевроном справа,
+                и повторять их поверх ленты значит забивать шапку тем, что уже сказано ниже.
+                У ЖИВОГО ПЛАНА иначе — там подпись осталась: встреча уже назначена, и «когда» с
+                «подтверждено» человек обязан видеть, не открывая ничего.
+              */}
             </View>
-            <Text style={s.planChev}>›</Text>
+            <View style={s.pinChev}><Text style={s.pinChevText}>›</Text></View>
           </Pressable>
         ) : null}
+
+        {/*
+          ШАПКА ПО МАКЕТУ: назад · имя по центру · аватар справа.
+
+          Было иначе: аватар и имя стояли слева одной группой, а справа висело «•••». Три точки
+          отсюда убраны — тот же лист действий открывается кнопкой у поля ввода, где рука и так
+          лежит во время разговора, и два входа в одно меню на одном экране только делили внимание.
+
+          Аватар справа — вход в профиль. Он остался нажимаемым, просто переехал на своё место по
+          макету: имя посередине читается как заголовок экрана, а не как строка списка.
+        */}
+        <View style={s.head}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
+            <IconChevronLeft />
+          </Pressable>
+          <View style={s.headMid}>
+            <Text style={s.name} numberOfLines={1}>{other}</Text>
+            {subtitle ? <Text style={s.sub} numberOfLines={1}>{subtitle}</Text> : null}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={T('Профиль', 'Profile', 'Perfil')}
+            onPress={() => router.navigate({ pathname: '/person',
+                                             params: { who: other, photo: String(photo || '') } })}
+            style={({ pressed }) => pressed && { opacity: 0.85 }}
+          >
+            {photo ? (
+              <Image source={{ uri: mediaUrl(String(photo)) }} style={s.ava} />
+            ) : (
+              <View style={[s.ava, s.avaEmpty]}><IconPerson size={20} /></View>
+            )}
+          </Pressable>
+        </View>
 
         <ScrollView
           ref={scroller}
@@ -665,17 +706,43 @@ export default function Conversation() {
               <Text style={s.replyWho} numberOfLines={1}>{CHAT.replyTo(String(replyTo.from || ''))}</Text>
               <Text style={s.replyText} numberOfLines={1}>{replyTo.text || CHAT.deleted()}</Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Убрать', 'Remove')} onPress={() => setReplyTo(null)} hitSlop={10}>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Убрать', 'Remove', 'Eliminar')} onPress={() => setReplyTo(null)} hitSlop={10}>
               <Text style={s.replyX}>✕</Text>
             </Pressable>
           </View>
         ) : null}
 
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
-          {/* Искра слева — вход в действия разговора (O.19). На кадре в этом слоте скрепка,
-              но вложений в продукте нет — мёртвую кнопку не рисуем. */}
-          <Pressable accessibilityRole="button" accessibilityLabel={CHAT.actionsTitle()} style={s.sparkBtn} onPress={() => setActions(true)}>
-            <IconSpark size={20} c={color.primary} />
+          {/*
+            ВХОД В ДЕЙСТВИЯ РАЗГОВОРА (O.19). На кадре в этом слоте скрепка, но вложений в продукте
+            нет, и рисовать что-либо ПОХОЖЕЕ на вложение нельзя. Плюс у поля ввода во всех
+            мессенджерах означает «прикрепить файл» — он обещал бы то же самое. Три точки в этом
+            приложении уже означают ровно этот лист: ими открыт он же из шапки разговора.
+
+            ЧТО БЫЛО НЕ ТАК. Стояла искра, и у кнопки НЕ БЫЛО ПОВЕРХНОСТИ вовсе: розовый значок в
+            двадцать пунктов на фоне страницы, тогда как поле рядом налито серым, а отправка —
+            красный круг с тенью. Единственный элемент дока без фона читался как украшение, и
+            человек её попросту не видел. Сообщено с телефона.
+
+            И сам значок сбивал: искра в этом приложении — это САМ KLEAL, его аватар в
+            «Сообщениях» (messages.tsx). Рядом с полем ввода она обещала «спросить у агента», а за
+            ней открываются действия над встречей.
+
+            Поверхность взята у поля ввода — тот же `neutral100`: кнопка входит в ту же семью, а
+            не заводит третий вид элемента. Значок нейтральный, не красный: отправка здесь главная,
+            и два красных пятна по краям дока спорили бы за внимание.
+
+            ДА, ТОЧКИ ЕСТЬ И В ШАПКЕ, и это осознанное повторение, а не недосмотр: там они у имени
+            собеседника, здесь — у поля ввода, куда рука тянется во время разговора. Один и тот же
+            значок для одного и того же листа честнее двух разных.
+          */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={CHAT.actionsTitle()}
+            style={({ pressed }) => [s.actionsBtn, pressed && { opacity: 0.85 }]}
+            onPress={() => setActions(true)}
+          >
+            <IconPlusRound size={22} c={color.fg} />
           </Pressable>
           {/*
             Во время записи поля нет: полоса записи занимает его место целиком, как в мессенджерах.
@@ -689,8 +756,9 @@ export default function Conversation() {
                 style={s.input}
                 value={draft}
                 onChangeText={setDraft}
-                placeholder={CHAT.placeholderTo(other)}
-                placeholderTextColor={color.neutral400}
+                editable={canWrite}
+                placeholder={canWrite ? CHAT.placeholderTo(other) : CHAT.lockedTo(other)}
+                placeholderTextColor={color.muted}
                 onSubmitEditing={send}
                 returnKeyType="send"
               />
@@ -704,7 +772,7 @@ export default function Conversation() {
           {voice.phase === 'idle' && draft.trim() ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={T('Отправить', 'Send')}
+              accessibilityLabel={T('Отправить', 'Send', 'Enviar')}
               style={s.sendBtn}
               onPress={send}
             >
@@ -799,7 +867,7 @@ export default function Conversation() {
         <Sheet
           visible={intentOpen}
           onClose={() => setIntentOpen(false)}
-          title={requestTitle || intentTitle || T('Интент', 'Intent')}
+          title={requestTitle || intentTitle || T('Интент', 'Intent', 'Propuesta')}
         >
             {([
               [THREAD.intentMode(), request?.intent?.mode === 'offline' ? THREAD.offlineInPerson() : THREAD.onlineMode()],
@@ -840,36 +908,66 @@ const cardShadow = {
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.bg },
 
-  head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: space.sm },
+  /** Ряд 56 и поля 16 — как оба App Bar на борде; кнопки по краям 44×44. */
+  head: { flexDirection: 'row', alignItems: 'center', height: 56, paddingHorizontal: 16 },
+  headMid: { flex: 1, alignItems: 'center' },
+  /** Белый круг без обводки — на борде у кнопки только заливка #FFFFFF. */
   back: {
-    width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border,
+    width: 44, height: 44, borderRadius: 22,
     backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
   },
-  dots: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  name: { fontSize: 17, fontWeight: '700', color: color.fg } as any,
-  sub: { fontSize: 13, color: color.muted, marginTop: 1 } as any,
-  ava: { width: 40, height: 40, borderRadius: 20 },
+  /*
+    ИМЯ И НАЗВАНИЕ ЗАТЕИ — РАЗНЫЕ ПО РАЗМЕРУ И ПО НАЧЕРТАНИЮ.
+
+    Оба стояли 15/600 и оттого сливались в один блок: два ряда одинаковым текстом читаются как
+    сплошная шапка без верха и низа. На борде они действительно одного кегля, но там и рядов
+    ровно два, а у нас над ними ещё полоса состояния и под ними лента — иерархия нужнее.
+
+    Имя — заголовок ЭКРАНА: с кем говоришь. Оно крупнее и плотнее (Geist-600, 17).
+    Название затеи — закреплённая подсказка о том, ПРО ЧТО разговор: мельче и легче (Geist-500, 15).
+
+    И главное: семейство здесь указано явно. Раньше стоял только `fontWeight`, а в проекте вес на
+    подключённых шрифтах НЕ РАБОТАЕТ — каждое начертание отдельное семейство (см. шапку src/theme.ts).
+    Обе строки рисовались системным шрифтом вместо Geist, и это было заметно рядом с остальным
+    приложением.
+  */
+  name: { fontFamily: font.textSemibold, fontSize: 17, lineHeight: 24, color: color.fg, textAlign: 'center' } as any,
+  sub: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: color.muted, marginTop: 1, textAlign: 'center' } as any,
+  ava: { width: 44, height: 44, borderRadius: 22 },
   avaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
 
-  // MSG.07 — закреплённый план: карточка с тенью, красная плитка-иконка, пара участников справа.
-  planCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    marginHorizontal: 16, marginBottom: space.sm, paddingVertical: 12, paddingHorizontal: 14,
-    borderRadius: 18, backgroundColor: color.card, ...cardShadow,
+  /*
+    ЗАКРЕПЛЁННОЕ — ПО ЧИСЛАМ БОРДА (OF.C2, node 3642-221266), а не на глаз.
+
+    Устроено так: белый ПРЯМОУГОЛЬНИК лежит НЕ во всю ширину, а от x=38 до x=353 при экране 390,
+    и по его краям стоят два круга 44×44 — миниатюра на x=16 и шеврон на x=330. Круги перекрывают
+    концы прямоугольника, и вместе это читается пилюлей, хотя скруглений у самого прямоугольника
+    нет ни одного.
+
+    Отсюда числа: строка с полями 16 по краям, прямоугольник отступает внутри неё ещё на 22 слева
+    и 21 справа (38−16 и 374−353), круги прижаты к краям строки. Ровно те же 16 и те же 44 у
+    кнопок шапки под ней — потому оба ряда и стоят одной колонкой.
+
+    Прежняя моя версия была полосой во всю ширину с отступом 18 — это выглядело совсем иначе.
+  */
+  pinRow: {
+    flexDirection: 'row', alignItems: 'center',
+    marginHorizontal: 16, marginBottom: 6, minHeight: 44,
   },
-  planIcon: {
-    width: 44, height: 44, borderRadius: 14, backgroundColor: color.primary,
+  /** Прямоугольник ПОД кругами. Скруглений нет — их роль играют сами круги на концах. */
+  pinBarWhite: {
+    position: 'absolute', left: 22, right: 21, top: 0, bottom: 0,
+    backgroundColor: color.card,
+  },
+  pinThumb: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.neutral100 },
+  /** Отступы по 8 от кругов, чтобы длинный заголовок не залезал под них. */
+  pinMid: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
+  pinTitle: { fontFamily: font.textMedium, fontSize: 15, lineHeight: 20, color: color.fg, textAlign: 'center' } as any,
+  pinChev: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: color.card,
     alignItems: 'center', justifyContent: 'center',
   },
-  planTitle: { fontSize: 16, fontWeight: '700', color: color.fg } as any,
-  planSub: { fontSize: 13, color: color.muted, marginTop: 1 } as any,
-  planState: { fontSize: 12, color: color.muted, marginTop: 2, fontWeight: '600' } as any,
-  /** Интент — не встреча: плитка светлая, чтобы красный остался за назначенным временем. */
-  intentIcon: { backgroundColor: color.infoBg },
-  planChev: { fontSize: 22, color: color.neutral400, marginLeft: 2 },
-  pairWrap: { flexDirection: 'row', alignItems: 'center' },
-  pairAva: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: color.card },
-  pairAvaOverlap: { marginLeft: -10 },
+  pinChevText: { fontSize: 20, color: color.fg, marginTop: -2 } as any,
 
   // MSG.18–MSG.21 — карточка приглашения в ленте.
   invCard: {
@@ -969,16 +1067,27 @@ const s = StyleSheet.create({
   undoText: { flex: 1, ...type.labelMedium, color: color.onPrimary, fontWeight: '600' } as any,
   undoAction: { ...type.labelMedium, color: color.onPrimary, fontWeight: '700' } as any,
 
-  dock: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
-  sparkBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  field: {
-    flex: 1, height: 48, borderRadius: rad.full, backgroundColor: color.neutral100,
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18,
+  /** Ряд ввода по борду: поля 8, промежуток 8, всё ростом 40. */
+  dock: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingTop: space.sm, backgroundColor: color.bg },
+  /** Тот же налив, что у поля ввода: кнопка и поле — одна семья, отправка отдельно и красная. */
+  /*
+     Кнопка и поле на борде — БЕЛЫЕ С МЯГКОЙ ТЕНЬЮ, без единой обводки. Обводка, которую я
+     поставил раньше, читалась как рамка формы и делала ряд жёстче макета.
+   */
+  actionsBtn: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: color.card,
+    alignItems: 'center', justifyContent: 'center', ...cardShadow,
   },
-  input: { flex: 1, color: color.fg, fontSize: 15 },
+  field: {
+    flex: 1, height: 40, borderRadius: rad.full, backgroundColor: color.card,
+    flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 12,
+    ...cardShadow,
+  },
+  /** Подсказка на борде — 15 цветом #5A616E. Семейство явно: вес на этих шрифтах не работает. */
+  input: { flex: 1, color: color.fg, fontFamily: font.textMedium, fontSize: 15 } as any,
   /** MSG.06: отправка — красный круг с самолётиком. */
   sendBtn: {
-    width: 48, height: 48, borderRadius: 24, backgroundColor: color.primary,
+    width: 40, height: 40, borderRadius: 20, backgroundColor: color.primary,
     alignItems: 'center', justifyContent: 'center', ...cardShadow,
   },
 

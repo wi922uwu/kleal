@@ -24,7 +24,7 @@ import { CHAT, Msg, msgTime, msgDayLabel, sameSeries, linkParts } from '../chat'
 import { VoiceBubble } from '../voice';
 import { VideoBubble } from '../videonote';
 import { SwipeToReply } from './SwipeToReply';
-import { color, radius as rad, space } from '../theme';
+import { color, font, radius as rad, space } from '../theme';
 
 export function MessageFeed({
   msgs, me, ru, sysText, showAuthor = false, peerRead,
@@ -177,13 +177,35 @@ const s = StyleSheet.create({
   sys: { alignSelf: 'center', textAlign: 'center', fontSize: 12, color: color.muted, marginVertical: 6 },
   author: { fontSize: 12, color: color.muted, marginBottom: 2, marginLeft: 4 },
 
-  bub: { maxWidth: '80%', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 18 },
+  /*
+    ПО ЧИСЛАМ БОРДА (OF.C2, node 3642-221266). Отличий было четыре, и вместе они и делали ленту
+    сырой:
+      • чужой пузырь стоял СЕРЫМ (#EEF0F4) — на борде он белый. На светло-сером фоне страницы
+        серое на сером сливалось в кашу, белое отделяется;
+      • радиус 18 против 22 — пузыри выглядели угловатее макета;
+      • свой пузырь был плоской заливкой без тени, а на борде под ним лежит мягкое розовое
+        свечение, которое и приподнимает его над лентой;
+      • у белого пузыря на борде есть своя тень — без неё он растворяется в фоне.
+    Настоящего градиента у своего пузыря пока нет: expo-linear-gradient в зависимостях
+    отсутствует, а тащить его ради одного пузыря — отдельное решение. Свечение даёт бо́льшую часть
+    эффекта; если понадобится градиент, это отдельная правка.
+  */
+  bub: { maxWidth: '80%', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 22 },
   /** Хвостик — у ПОСЛЕДНЕГО пузыря серии: он и показывает, где реплики одного человека кончились. */
-  bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderBottomRightRadius: 6 },
-  bubThem: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderBottomLeftRadius: 6 },
-  bubMeMid: { borderBottomRightRadius: 18 },
-  bubThemMid: { borderBottomLeftRadius: 18 },
-  bubText: { fontSize: 15, lineHeight: 21, color: color.fg },
+  bubMe: {
+    alignSelf: 'flex-end', backgroundColor: color.primary, borderBottomRightRadius: 6,
+    shadowColor: color.primary, shadowOpacity: 0.3, shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 }, elevation: 4,
+  },
+  bubThem: {
+    alignSelf: 'flex-start', backgroundColor: color.card, borderBottomLeftRadius: 6,
+    shadowColor: '#0B1220', shadowOpacity: 0.06, shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 }, elevation: 2,
+  },
+  bubMeMid: { borderBottomRightRadius: 22 },
+  bubThemMid: { borderBottomLeftRadius: 22 },
+  /** Семейство явно: без него реплики рисовались системным шрифтом, а не Geist. */
+  bubText: { fontFamily: font.text, fontSize: 15, lineHeight: 21, color: color.fg },
   /** Не ушло — пузырь бледнее и нажимается. Цвет не меняем: это по-прежнему твои слова. */
   bubFailed: { opacity: 0.6 },
   /** Удалённое остаётся строкой: пропасть бесследно оно не может — второй его уже видел. */
@@ -207,7 +229,8 @@ const s = StyleSheet.create({
   reactionMine: { borderColor: color.primary, backgroundColor: color.card },
   reactionText: { fontSize: 13, color: color.fg } as any,
 
-  time: { fontSize: 11, color: color.neutral400, marginTop: 3, marginHorizontal: 4 },
+  /** Время: 11 средним начертанием цветом #5A616E — так на борде. */
+  time: { fontFamily: font.textMedium, fontSize: 11, color: color.muted, marginTop: 3, marginHorizontal: 4 },
   tick: { fontSize: 11, color: color.neutral400 } as any,
   tickRead: { fontSize: 11, color: color.primary, fontWeight: '700' } as any,
   tickFail: { fontSize: 11, color: color.primary, fontWeight: '600' } as any,

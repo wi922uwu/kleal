@@ -217,7 +217,7 @@ export default function Messages() {
       if (!res?.ok) throw new Error();
       setMenuNote(MSG.reportSent());
     } catch {
-      setMenuNote(T('Не получилось. Попробуй ещё раз.', 'Something went wrong. Try again.'));
+      setMenuNote(T('Не получилось. Попробуй ещё раз.', 'Something went wrong. Try again.', 'Algo salió mal. Inténtalo de nuevo.'));
     }
   };
 
@@ -227,7 +227,7 @@ export default function Messages() {
       setMenuRow(null);
       await load();
     } catch {
-      setMenuNote(T('Не получилось. Попробуй ещё раз.', 'Something went wrong. Try again.'));
+      setMenuNote(T('Не получилось. Попробуй ещё раз.', 'Something went wrong. Try again.', 'Algo salió mal. Inténtalo de nuevo.'));
     }
   };
 
@@ -278,7 +278,7 @@ export default function Messages() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
           <IconChevronLeft />
         </Pressable>
         <Text style={s.headTitle}>{MSG.title()}</Text>

@@ -6,10 +6,11 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
+import { appendUploadFile } from '../src/upload-file';
 import { group, newIdem, type GroupReportReason, type GroupReportResult,
   type ReportEvidence } from '../src/api';
 import { useOnb } from '../src/state';
-import { T, useLang } from '../src/i18n';
+import { T, useLang, dateLocale, use12h, getLang } from '../src/i18n';
 import { IconCheckCircle, IconChevronLeft, IconChevronRight, IconClip, IconTrash } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { color, radius as rad, space, type } from '../src/theme';
@@ -17,11 +18,11 @@ import { color, radius as rad, space, type } from '../src/theme';
 type PickedEvidence = DocumentPicker.DocumentPickerAsset;
 
 const REASONS: { key: GroupReportReason; label: () => string }[] = [
-  { key: 'inappropriate_behaviour', label: () => T('Неприемлемое поведение', 'Inappropriate behaviour') },
-  { key: 'insults_or_humiliation', label: () => T('Оскорбления или унижение', 'Insults or humiliation') },
-  { key: 'harassment_or_threats', label: () => T('Преследование или угрозы', 'Harassment or threats') },
-  { key: 'fake_profile', label: () => T('Поддельный профиль', 'Fake profile') },
-  { key: 'rule_violation', label: () => T('Нарушение правил', 'Rule violation') },
+  { key: 'inappropriate_behaviour', label: () => T('Неприемлемое поведение', 'Inappropriate behaviour', 'Comportamiento inapropiado') },
+  { key: 'insults_or_humiliation', label: () => T('Оскорбления или унижение', 'Insults or humiliation', 'Insultos o humillaciones') },
+  { key: 'harassment_or_threats', label: () => T('Преследование или угрозы', 'Harassment or threats', 'Acoso o amenazas') },
+  { key: 'fake_profile', label: () => T('Поддельный профиль', 'Fake profile', 'Perfil falso') },
+  { key: 'rule_violation', label: () => T('Нарушение правил', 'Rule violation', 'Violación de normas') },
 ];
 
 export default function GroupReportScreen() {
@@ -58,7 +59,7 @@ export default function GroupReportScreen() {
       });
       if (!result.canceled && result.assets[0]) setAttachment(result.assets[0]);
     } catch {
-      setError(T('Не удалось открыть файл.', 'Could not open the file.'));
+      setError(T('Не удалось открыть файл.', 'Could not open the file.', 'No se pudo abrir el archivo.'));
     }
   };
 
@@ -67,11 +68,8 @@ export default function GroupReportScreen() {
     if (Platform.OS === 'web' && asset.file) {
       form.append('file', asset.file, asset.name);
     } else {
-      form.append('file', {
-        uri: asset.uri,
-        name: asset.name || `evidence-${Date.now()}`,
-        type: asset.mimeType || 'application/octet-stream',
-      } as any);
+      await appendUploadFile(form, asset.uri, asset.name || `evidence-${Date.now()}`,
+        asset.mimeType || 'application/octet-stream');
     }
     const uploaded = await group.uploadReportEvidence(form);
     if (!uploaded?.ok || !uploaded.id || !uploaded.url || !uploaded.name || !uploaded.mime_type) {
@@ -92,8 +90,8 @@ export default function GroupReportScreen() {
     } catch (e) {
       const code = String((e as any)?.message || '');
       setError(code.includes('EVIDENCE_TOO_LARGE')
-        ? T('Файл должен быть меньше 12 МБ.', 'The file must be smaller than 12 MB.')
-        : T('Не удалось отправить жалобу. Попробуйте ещё раз.', 'Could not send the report. Try again.'));
+        ? T('Файл должен быть меньше 12 МБ.', 'The file must be smaller than 12 MB.', 'El archivo debe ser menor de 12 MB.')
+        : T('Не удалось отправить жалобу. Попробуйте ещё раз.', 'Could not send the report. Try again.', 'No se pudo enviar el informe. Inténtalo de nuevo.'));
     } finally {
       setBusy(false);
     }
@@ -105,42 +103,42 @@ export default function GroupReportScreen() {
         <Header title="" onBack={() => router.dismissTo('/home')} />
         <ScrollView contentContainerStyle={s.successBody}>
           <IconCheckCircle size={48} />
-          <Text style={s.successTitle}>{T('Мы получили вашу жалобу', 'We received your report')}</Text>
-          <Text style={s.successText}>{T('Спасибо, что сообщили нам', 'Thank you for letting us know')}</Text>
+          <Text style={s.successTitle}>{T('Мы получили вашу жалобу', 'We received your report', 'Hemos recibido tu denuncia')}</Text>
+          <Text style={s.successText}>{T('Спасибо, что сообщили нам', 'Thank you for letting us know', 'Gracias por informarnos')}</Text>
           <View style={s.caseBand}>
-            <Text style={s.caseLabel}>{T('Номер обращения', 'Case number')}</Text>
+            <Text style={s.caseLabel}>{T('Номер обращения', 'Case number', 'Número de caso')}</Text>
             <View style={s.caseRow}>
               <Text style={s.caseNumber}>{sent.case_no || sent.id || ''}</Text>
               <Text style={s.copyMark}>⧉</Text>
             </View>
           </View>
           <View style={s.statusHead}>
-            <Text style={s.sectionTitle}>{T('Статус', 'Status')}</Text>
-            <Text style={s.progressBadge}>{T('В работе', 'In progress')}</Text>
+            <Text style={s.sectionTitle}>{T('Статус', 'Status', 'Estado')}</Text>
+            <Text style={s.progressBadge}>{T('В работе', 'In progress', 'En progreso')}</Text>
           </View>
           <View style={s.panel}>
-            <Text style={s.panelTitle}>{T('Что дальше', "What's next")}</Text>
-            <StatusRow state="done" title={T('Жалоба получена', 'Report received')}
-                       note={reportReceivedAt(sent.at)} trailing={T('Готово', 'Done')} />
-            <StatusRow state="active" title={T('Проверка командой безопасности', 'Under review by the safety team')}
-                       note={T('1 ч', '1 h')} trailing={T('В работе', 'In progress')} />
-            <StatusRow title={T('Действия и решение', 'Actions and decision')} trailing={T('Скоро', 'Soon')} />
-            <StatusRow title={T('Ответ вам', 'Reply to you')} trailing={T('Скоро', 'Soon')} />
+            <Text style={s.panelTitle}>{T('Что дальше', "What's next", '¿Qué sigue?')}</Text>
+            <StatusRow state="done" title={T('Жалоба получена', 'Report received', 'Reporte recibido')}
+                       note={reportReceivedAt(sent.at)} trailing={T('Готово', 'Done', 'Hecho')} />
+            <StatusRow state="active" title={T('Проверка командой безопасности', 'Under review by the safety team', 'En revisión por parte del equipo de seguridad')}
+                       note={T('1 ч', '1 h', '1 h')} trailing={T('В работе', 'In progress', 'En progreso')} />
+            <StatusRow title={T('Действия и решение', 'Actions and decision', 'Acciones y decisiones')} trailing={T('Скоро', 'Soon', 'Pronto')} />
+            <StatusRow title={T('Ответ вам', 'Reply to you', 'Respuesta a ti')} trailing={T('Скоро', 'Soon', 'Pronto')} />
           </View>
           <View style={s.panel}>
-            <Text style={s.sectionTitle}>{T('Применённые меры защиты', 'Applied protective measures')}</Text>
-            <ProtectionRow text={T('Участники заблокированы', 'Members blocked')} />
-            <ProtectionRow text={T('Ваш профиль скрыт от них', 'Your profile is hidden from them')} />
-            <ProtectionRow text={T('Их сообщения заглушены', 'Their messages are muted')} />
+            <Text style={s.sectionTitle}>{T('Применённые меры защиты', 'Applied protective measures', 'Medidas protectoras aplicadas')}</Text>
+            <ProtectionRow text={T('Участники заблокированы', 'Members blocked', 'Miembros bloqueados')} />
+            <ProtectionRow text={T('Ваш профиль скрыт от них', 'Your profile is hidden from them', 'Tu perfil está oculto para ellos')} />
+            <ProtectionRow text={T('Их сообщения заглушены', 'Their messages are muted', 'Sus mensajes están silenciados')} />
           </View>
-          <Text style={[s.sectionTitle, s.helpTitle]}>{T('Нужна срочная помощь?', 'Need urgent help?')}</Text>
+          <Text style={[s.sectionTitle, s.helpTitle]}>{T('Нужна срочная помощь?', 'Need urgent help?', '¿Necesitas ayuda urgente?')}</Text>
           <View style={s.panel}>
-            <HelpRow title={T('Экстренная помощь', 'Emergency Assistance')}
-                     sub={T('Связаться с экстренными службами', 'Contact emergency services')}
+            <HelpRow title={T('Экстренная помощь', 'Emergency Assistance', 'Asistencia de emergencia')}
+                     sub={T('Связаться с экстренными службами', 'Contact emergency services', 'Contacta con los servicios de emergencia')}
                      onPress={() => Linking.openURL('tel:112')} />
             <View style={s.rule} />
-            <HelpRow title={T('Центр поддержки', 'Support Center')}
-                     sub={T('Связаться с нашей командой поддержки', 'Chat with our support team')}
+            <HelpRow title={T('Центр поддержки', 'Support Center', 'Centro de asistencia')}
+                     sub={T('Связаться с нашей командой поддержки', 'Chat with our support team', 'Charla con nuestro equipo de soporte')}
                      onPress={() => router.navigate('/profile/safety')} />
           </View>
         </ScrollView>
@@ -151,10 +149,10 @@ export default function GroupReportScreen() {
 
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
-      <Header title={T('Сообщить о проблеме', 'Report a problem')} onBack={() => router.back()} />
+      <Header title={T('Сообщить о проблеме', 'Report a problem', 'Reportar un problema')} onBack={() => router.back()} />
       <ScrollView contentContainerStyle={[s.body, { paddingBottom: kb }]} keyboardShouldPersistTaps="handled">
         {groupTitle ? <Text style={s.context} numberOfLines={2}>{groupTitle}</Text> : null}
-        <Text style={s.sectionTitle}>{T('Что произошло?', 'What happened?')}</Text>
+        <Text style={s.sectionTitle}>{T('Что произошло?', 'What happened?', '¿Qué pasó?')}</Text>
         <View style={s.reasons}>
           {REASONS.map((item) => {
             const selected = item.key === reason;
@@ -172,16 +170,16 @@ export default function GroupReportScreen() {
         </View>
 
         <View style={s.inputHead}>
-          <Text style={s.sectionTitle}>{T('Опишите ситуацию', 'Describe your situation')}</Text>
+          <Text style={s.sectionTitle}>{T('Опишите ситуацию', 'Describe your situation', 'Describe tu situación')}</Text>
           <Text style={s.counter}>{details.length}/500</Text>
         </View>
         <TextInput value={details} onChangeText={setDetails} maxLength={500} multiline
                    textAlignVertical="top"
                    placeholder={T('Расскажите, что произошло. Добавьте важные детали: время, место и сообщения.',
-                                  'Tell us what happened. Include important details such as time, location, and messages.')}
+                                  'Tell us what happened. Include important details such as time, location, and messages.', 'Dínos qué pasó. Incluye detalles importantes como la hora, el lugar y los mensajes.')}
                    placeholderTextColor={color.neutral400} style={s.input} />
 
-        <Text style={s.sectionTitle}>{T('Приложить доказательство (необязательно)', 'Attach evidence (optional)')}</Text>
+        <Text style={s.sectionTitle}>{T('Приложить доказательство (необязательно)', 'Attach evidence (optional)', 'Adjuntar prueba (opcional)')}</Text>
         {attachment ? (
           <View style={s.fileRow}>
             <IconClip />
@@ -189,7 +187,7 @@ export default function GroupReportScreen() {
               <Text style={s.fileName} numberOfLines={1}>{attachment.name}</Text>
               <Text style={s.fileMeta}>{formatBytes(attachment.size || 0)}</Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Удалить файл', 'Remove file')}
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Удалить файл', 'Remove file', 'Eliminar archivo')}
                        hitSlop={10} onPress={() => setAttachment(null)}>
               <IconTrash c={color.danger} />
             </Pressable>
@@ -197,26 +195,26 @@ export default function GroupReportScreen() {
         ) : (
           <Pressable accessibilityRole="button" style={s.attach} onPress={pickEvidence}>
             <IconClip c={color.fg} />
-            <Text style={s.attachText}>{T('Фото / Видео / Документы', 'Photo / Video / Docs')}</Text>
+            <Text style={s.attachText}>{T('Фото / Видео / Документы', 'Photo / Video / Docs', 'Foto / Vídeo / Documentos')}</Text>
           </Pressable>
         )}
 
         <View style={s.safetyBand}>
-          <Text style={s.sectionTitle}>{T('Немедленные меры безопасности', 'Immediate safety measures')}</Text>
+          <Text style={s.sectionTitle}>{T('Немедленные меры безопасности', 'Immediate safety measures', 'Medidas de seguridad inmediatas')}</Text>
           <Text style={s.safetyText}>
             {T('Эти меры будут применены сразу после отправки жалобы.',
-               'These protections will be applied immediately after you submit your report.')}
+               'These protections will be applied immediately after you submit your report.', 'Estas protecciones se aplicarán inmediatamente después de que presentes tu denuncia.')}
           </Text>
-          <ProtectionRow text={T('Контакт с участниками ограничен', 'Restricted contact from users')} />
-          <ProtectionRow text={T('Усиленная приватность профиля', 'Enhanced profile privacy')} />
-          <ProtectionRow text={T('Сообщения временно отключены', 'Messaging temporarily disabled')} />
+          <ProtectionRow text={T('Контакт с участниками ограничен', 'Restricted contact from users', 'Contacto restringido por usuarios')} />
+          <ProtectionRow text={T('Усиленная приватность профиля', 'Enhanced profile privacy', 'Privacidad mejorada del perfil')} />
+          <ProtectionRow text={T('Сообщения временно отключены', 'Messaging temporarily disabled', 'Mensajería temporalmente deshabilitada')} />
         </View>
         {error ? <Text accessibilityRole="alert" style={s.error}>{error}</Text> : null}
       </ScrollView>
       <Pressable accessibilityRole="button" disabled={!reason || busy}
                  style={[s.submit, (!reason || busy) && s.disabled]} onPress={submit}>
         {busy ? <ActivityIndicator color={color.onPrimary} />
-              : <Text style={s.submitText}>{T('Отправить жалобу', 'Send report')}</Text>}
+              : <Text style={s.submitText}>{T('Отправить жалобу', 'Send report', 'Enviar informe')}</Text>}
       </Pressable>
       <BottomNav />
     </View>
@@ -226,7 +224,7 @@ export default function GroupReportScreen() {
 function Header({ title, onBack }: { title: string; onBack: () => void }) {
   return (
     <View style={s.head}>
-      <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={onBack}>
+      <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={onBack}>
         <IconChevronLeft />
       </Pressable>
       <Text style={s.headTitle} numberOfLines={1}>{title}</Text>
@@ -276,14 +274,15 @@ function HelpRow({ title, sub, onPress }: { title: string; sub: string; onPress:
 
 function reportReceivedAt(at?: number) {
   const date = at ? new Date(at * 1000) : new Date();
-  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  return T(`сегодня · ${time}`, `today · ${time}`);
+  const time = date.toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit', hour12: use12h() });
+  return T(`сегодня · ${time}`, `today · ${time}`, `hoy · ${time}`);
 }
 
 function formatBytes(value: number) {
   if (!value) return '';
   if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
-  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  const mb = (value / 1024 / 1024).toFixed(1);
+  return `${getLang() === 'en' ? mb : mb.replace('.', ',')} MB`;
 }
 
 const s = StyleSheet.create({

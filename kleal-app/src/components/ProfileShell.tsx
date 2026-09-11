@@ -6,7 +6,7 @@
  * значило бы получить компонент с двумя несвязанными половинами.
  */
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Modal, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeyboardInset, dockBottom } from '../keyboard';
 import { T } from '../i18n';
@@ -36,7 +36,7 @@ export function ProfileShell({
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.bar}>
         {onBack ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={onBack}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={onBack}>
             <Text style={s.backIcon}>‹</Text>
           </Pressable>
         ) : <View style={{ width: 40 }} />}
@@ -186,6 +186,7 @@ const s = StyleSheet.create({
  */
 export function EditSheet({
   open, title, onClose, onAccept, acceptLabel, cancelLabel, children, scrollEnabled = true, maxHeight,
+  busy = false,
 }: {
   open: boolean;
   title: string;
@@ -214,6 +215,14 @@ export function EditSheet({
   /** Кадры O.07a/O.10a: под главной кнопкой стоит тёмная «Cancel». Профильные листы её не просят —
    *  поэтому кнопка появляется только там, где подпись передана. Делает то же, что крестик. */
   cancelLabel?: string;
+  /**
+   * Работа идёт — кнопка показывает вертушку и не нажимается.
+   *
+   * Нужен листу, который не закрывается по нажатию, а ЖДЁТ ответа модели (пересборка сводки).
+   * Без этого человек видит неизменную кнопку, жмёт её второй раз и получает второй запрос.
+   * Остальным десяти листам ждать нечего, поэтому по умолчанию `false` и ничего не меняется.
+   */
+  busy?: boolean;
   children: React.ReactNode;
 }) {
   const insets = useSafeAreaInsets();
@@ -225,8 +234,10 @@ export function EditSheet({
                     scrollEnabled={scrollEnabled}>
           {children}
         </ScrollView>
-        <Pressable accessibilityRole="button" style={e.accept} onPress={onAccept}>
-          <Text style={e.acceptText}>{acceptLabel}</Text>
+        <Pressable accessibilityRole="button" accessibilityState={{ busy, disabled: busy }}
+                   style={[e.accept, busy && e.acceptBusy]} onPress={busy ? undefined : onAccept}>
+          {busy ? <ActivityIndicator color={color.onPrimary} />
+                : <Text style={e.acceptText}>{acceptLabel}</Text>}
         </Pressable>
         {cancelLabel ? (
           <Pressable accessibilityRole="button" style={e.cancel} onPress={onClose}>
@@ -240,6 +251,8 @@ export function EditSheet({
 const e = StyleSheet.create({
   body: { paddingVertical: space.sm, gap: space.md },
   accept: { height: 56, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  // Приглушаем, а не прячем: кнопка остаётся на месте, и видно, что ждут именно её.
+  acceptBusy: { opacity: 0.7 },
   acceptText: { ...type.button, color: color.onPrimary } as any,
   cancel: { height: 56, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
   cancelText: { ...type.button, color: '#fff' } as any,

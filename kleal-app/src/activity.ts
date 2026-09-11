@@ -21,61 +21,61 @@ import { GROUP_MIN_TOTAL, GROUP_SIZE, intentSummaryText, normalizeIntentSize } f
 export const INTENT_ID_KEY = 'kleal_intent_id';
 
 export const ACT = {
-  title: () => T('Моя активность', 'My Activity'),
+  title: () => T('Моя активность', 'My Activity', 'Mi actividad'),
 
-  tabIntents: () => T('Интенты', 'Intents'),
-  tabPlans: () => T('Планы', 'Plans'),
-  tabInvites: () => T('Приглашения', 'Invites'),
-  tabHistory: () => T('История', 'History'),
+  tabIntents: () => T('Интенты', 'Intents', 'Propuestas'),
+  tabPlans: () => T('Планы', 'Plans', 'Planes'),
+  tabInvites: () => T('Приглашения', 'Invites', 'Invitaciones'),
+  tabHistory: () => T('История', 'History', 'Historial'),
 
   /** Чипы состояния поверх обложки. */
-  chipSearching: () => T('Ищем', 'Searching'),
+  chipSearching: () => T('Ищем', 'Searching', 'Buscando'),
   chipOptions: (n: number) =>
-    T(`${n} ${plural(n, 'вариант', 'варианта', 'вариантов')} готово`, `${n} option${n === 1 ? '' : 's'} ready`),
+    T(`${n} ${plural(n, 'вариант', 'варианта', 'вариантов')} готово`, `${n} option${n === 1 ? '' : 's'} ready`, `${n} ${n === 1 ? 'opción lista' : 'opciones listas'}`),
   chipWaiting: (n: number) =>
-    T(`Ждём ${n} ${plural(n, 'ответ', 'ответа', 'ответов')}`, `Waiting for ${n} repl${n === 1 ? 'y' : 'ies'}`),
+    T(`Ждём ${n} ${plural(n, 'ответ', 'ответа', 'ответов')}`, `Waiting for ${n} repl${n === 1 ? 'y' : 'ies'}`, `Esperando ${n} respuesta${n === 1 ? '' : 's'}`),
 
   /** Кнопка карточки. Её надпись — это и есть состояние, сказанное действием. */
-  ctaSearching: () => T('Открыть поиск', 'View search'),
-  ctaOptions: () => T('Посмотреть варианты', 'Review options'),
-  ctaWaiting: () => T('Посмотреть ответы', 'Review responses'),
+  ctaSearching: () => T('Открыть поиск', 'View search', 'Ver búsqueda'),
+  ctaOptions: () => T('Посмотреть варианты', 'Review options', 'Revisar opciones'),
+  ctaWaiting: () => T('Посмотреть ответы', 'Review responses', 'Revisar respuestas'),
 
   /** Строка под названием на странице интента — кадры «States of My Intent page». */
-  lineSearching: () => T('Kleal ищет людей рядом', 'Kleal is looking for people nearby'),
-  lineOptions: () => T('Выбери, кого позвать', 'Pick who to invite'),
-  lineWaiting: () => T('Ответы придут сюда', 'Replies will show up here'),
+  lineSearching: () => T('Kleal ищет людей рядом', 'Kleal is looking for people nearby', 'Kleal busca personas cerca de ti'),
+  lineOptions: () => T('Выбери, кого позвать', 'Pick who to invite', 'Elige a quién invitar'),
+  lineWaiting: () => T('Ответы придут сюда', 'Replies will show up here', 'Las respuestas aparecerán aquí'),
 
-  edit: () => T('Изменить', 'Edit'),
-  lookingNearby: () => T('Ищем людей рядом', 'Looking for nearby people'),
+  edit: () => T('Изменить', 'Edit', 'Editar'),
+  lookingNearby: () => T('Ищем людей рядом', 'Looking for nearby people', 'Buscando personas cercanas'),
 
-  emptyIntents: () => T('Затей пока нет', 'No intents yet'),
+  emptyIntents: () => T('Затей пока нет', 'No intents yet', 'Aún no hay propuestas'),
   emptyIntentsNote: () =>
     T(
       'Заведи затею — Kleal начнёт искать людей и покажет их здесь.',
       'Start something and Kleal will look for people, then show them here.'
-    ),
-  emptyPlans: () => T('Встреч пока нет', 'No plans yet'),
-  emptyInvites: () => T('Приглашений нет', 'No invites'),
-  emptyHistory: () => T('Здесь будет прошедшее', 'Past meetups will land here'),
-  create: () => T('Создать интент', 'Create intent'),
+    , 'Empieza algo y Kleal buscará a la gente y la mostrará aquí.'),
+  emptyPlans: () => T('Встреч пока нет', 'No plans yet', 'Todavía no hay planes'),
+  emptyInvites: () => T('Приглашений нет', 'No invites', 'Sin invitaciones'),
+  emptyHistory: () => T('Здесь будет прошедшее', 'Past meetups will land here', 'Las quedadas pasadas aparecerán aquí'),
+  create: () => T('Создать интент', 'Create intent', 'Crear propuesta'),
 
   /**
    * Удаление затеи. «Выйти» из своей затеи нельзя — она твоя; из неё можно только уйти совсем,
    * и тогда её не должно остаться нигде: ни в списке, ни в поиске. Поэтому слово прямое.
    */
-  removeTitle: () => T('Удалить затею?', 'Delete this intent?'),
+  removeTitle: () => T('Удалить затею?', 'Delete this intent?', '¿Borrar esta propuesta?'),
   removeNote: () => T(
     'Она исчезнет из списка, и Kleal перестанет искать по ней людей. Уже отправленные приглашения останутся у тех, кому ты их послал.',
     'It disappears from the list and Kleal stops looking for people. Invites you already sent stay with the people you sent them to.'
-  ),
-  remove: () => T('Удалить', 'Delete'),
-  keep: () => T('Оставить', 'Keep it'),
-  removeFailed: () => T('Не удалось удалить. Попробуй ещё раз.', 'Could not delete. Try again.'),
+  , 'Deja de aparecer en la lista y Kleal deja de buscar personas. Las invitaciones que ya enviaste siguen con las personas a las que se las enviaste.'),
+  remove: () => T('Удалить', 'Delete', 'Borrar'),
+  keep: () => T('Оставить', 'Keep it', 'Manténlo'),
+  removeFailed: () => T('Не удалось удалить. Попробуй ещё раз.', 'Could not delete. Try again.', 'No se pudo borrar. Inténtalo de nuevo.'),
 
-  loadFailed: () => T('Не удалось загрузить.', 'Could not load.'),
-  retry: () => T('Повторить', 'Retry'),
+  loadFailed: () => T('Не удалось загрузить.', 'Could not load.', 'No se pudo cargar.'),
+  retry: () => T('Повторить', 'Retry', 'Reintentar'),
   /** Пересчёт одного интента упал: карточку не прячем — интент существует, просто без кандидатов. */
-  rankFailed: () => T('Поиск по этой затее сейчас не отвечает', 'Search for this one is not responding'),
+  rankFailed: () => T('Поиск по этой затее сейчас не отвечает', 'Search for this one is not responding', 'La búsqueda para esto no responde'),
 };
 
 export type IntentState = 'searching' | 'options' | 'waiting';
@@ -162,7 +162,7 @@ export function intentTitle(row: IntentRow): string {
   if (t) return t;
   const topics = row.intent?.topics;
   if (Array.isArray(topics) && topics.length) return topics.join(', ');
-  return T('Без названия', 'Untitled');
+  return T('Без названия', 'Untitled', 'Sin título');
 }
 
 /** Две строки под названием: когда и где. Разбор общий с главной — там же и правило про километры. */
@@ -185,27 +185,27 @@ export function intentFacts(row: IntentRow): { label: string; value: string }[] 
     const v = Array.isArray(value) ? value.join(', ') : String(value || '').trim();
     if (v) out.push({ label, value: v });
   };
-  push(T('Формат', 'Mode'), i.mode === 'online' ? T('Онлайн', 'Online')
-    : i.mode === 'hybrid' ? T('Гибрид', 'Hybrid')
-    : i.mode === 'offline' ? T('Вживую', 'Offline') : '');
+  push(T('Формат', 'Mode', 'Modo'), i.mode === 'online' ? T('Онлайн', 'Online', 'Online')
+    : i.mode === 'hybrid' ? T('Гибрид', 'Hybrid', 'Híbrido')
+    : i.mode === 'offline' ? T('Вживую', 'Offline', 'Presencial') : '');
   const normalizedSize = normalizeIntentSize(i.format || i.size, i.groupSize);
-  push(T('Состав', 'Format'), normalizedSize === 'group' ? T('Группа', 'Group')
-    : normalizedSize === '1:1' ? T('Один на один', '1:1') : '');
+  push(T('Состав', 'Format', 'Formato'), normalizedSize === 'group' ? T('Группа', 'Group', 'Grupo')
+    : normalizedSize === '1:1' ? T('Один на один', '1:1', '1:1') : '');
   if (normalizedSize === 'group') {
     push(GROUP_SIZE.row(), GROUP_SIZE.people(Number(i.groupSize) || GROUP_MIN_TOTAL));
   }
-  push(T('Тема', 'Category'), i.topics);
+  push(T('Тема', 'Category', 'Categoría'), i.topics);
   /**
    * Пол и возраст читаются ТЕМИ ЖЕ ключами, какими их пишет мастер: `sex` из SEXES («Male» /
    * «Female» / «Any», с большой буквы) и `minAge` / `maxAge`. Сравнение в нижнем регистре и
    * `min_age` через подчёркивание — ровно то, на чём паспорт затеи показывал «Аудитория: Любой»
    * при сохранённых «Female, 22–34»: поля были на месте, а прочитать их было нечем.
    */
-  const sex = i.sex === 'Female' ? T('Женщины', 'Female')
-    : i.sex === 'Male' ? T('Мужчины', 'Male')
-    : T('Любой', 'Any is fine');
+  const sex = i.sex === 'Female' ? T('Женщины', 'Female', 'Mujer')
+    : i.sex === 'Male' ? T('Мужчины', 'Male', 'Hombre')
+    : T('Любой', 'Any is fine', 'Cualquiera vale');
   const age = i.minAge && i.maxAge ? `${i.minAge}–${i.maxAge}` : '';
-  push(T('Аудитория', 'Audience'), [sex, age].filter(Boolean).join(ru ? ', ' : ', '));
+  push(T('Аудитория', 'Audience', 'Público'), [sex, age].filter(Boolean).join(ru ? ', ' : ', '));
   return out;
 }
 
@@ -258,13 +258,13 @@ export type PlanCard = {
 };
 
 export const PLAN_STATE = {
-  proposed: () => T('Согласовывают', 'Being agreed'),
-  confirmed: () => T('Подтверждён', 'Confirmed'),
-  locked: () => T('Закреплён', 'Locked'),
-  below: () => T('На паузе', 'On hold'),
-  done: () => T('Прошло', 'Ended'),
-  cancelled: () => T('Отменён', 'Called off'),
-  open: () => T('Открыть план', 'Open the plan'),
+  proposed: () => T('Согласовывают', 'Being agreed', 'En acuerdo'),
+  confirmed: () => T('Подтверждён', 'Confirmed', 'Confirmado'),
+  locked: () => T('Закреплён', 'Locked', 'Bloqueado'),
+  below: () => T('На паузе', 'On hold', 'En espera'),
+  done: () => T('Прошло', 'Ended', 'Finalizado'),
+  cancelled: () => T('Отменён', 'Called off', 'Cancelada'),
+  open: () => T('Открыть план', 'Open the plan', 'Abre el plan'),
 };
 
 /** Один разбор на парные и групповые планы: для человека это одна и та же встреча. */
@@ -286,7 +286,7 @@ export function planCard(p: any, me = ''): PlanCard {
   const when = splitWhen(String(p?.when || ''));
   return {
     key: (p?.gid ? 'gp:' : 'mp:') + String(p?.id || p?.gid || ''),
-    title: String(p?.title || who[0] || T('Встреча', 'Meetup')).trim(),
+    title: String(p?.title || who[0] || T('Встреча', 'Meetup', 'Quedada')).trim(),
     date: when.date,
     time: when.time,
     where: planWhere(String(p?.venue || p?.district || p?.place || '').trim(), '', ''),

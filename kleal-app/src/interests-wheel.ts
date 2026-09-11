@@ -41,14 +41,17 @@ export type WheelNode = {
   key: string;
   ru: string;
   en: string;
+  /** Испанская подпись. Приходит из того же реестра, что русская и английская. */
+  es: string;
   /** Только у первого уровня — имя контурной иконки из components/category-icons. */
   icon?: string;
   kids?: WheelNode[];
 };
 
-const N = (key: string, ru: string, en: string, kids?: WheelNode[]): WheelNode => ({ key, ru, en, kids });
-const TOP = (key: string, ru: string, en: string, icon: string, kids: WheelNode[]): WheelNode =>
-  ({ key, ru, en, icon, kids });
+const N = (key: string, ru: string, en: string, es: string, kids?: WheelNode[]): WheelNode =>
+  ({ key, ru, en, es, kids });
+const TOP = (key: string, ru: string, en: string, es: string, icon: string, kids: WheelNode[]): WheelNode =>
+  ({ key, ru, en, es, icon, kids });
 
 /*
   ДЕРЕВО БОЛЬШЕ НЕ ЖИВЁТ ЗДЕСЬ. Оно генерируется из общего с сервером реестра —
@@ -66,7 +69,7 @@ import { TREE } from './interests-tree.generated';
 
 export const WHEEL_TREE: WheelNode[] = TREE;
 
-export const nodeLabel = (n: WheelNode) => T(n.ru, n.en);
+export const nodeLabel = (n: WheelNode) => T(n.ru, n.en, n.es);
 
 /** Подпись по ключу — для чипов собранного. Не нашли в дереве — значит слово человека, как есть. */
 export function labelOf(key: string): string {
@@ -103,19 +106,19 @@ export function funnelWorthy(keys: string[]): string[] {
 export const CHIPS_COPY = {
   hint: () =>
     T('Выбери, чем занимаешься. Категорию можно раскрыть, а можно взять целиком.',
-      'Pick what you’re into. Open a category, or take it whole.'),
+      'Pick what you’re into. Open a category, or take it whole.', 'Elige lo que te gusta. Abre una categoría o cógela entera.'),
   /** «Взять уровень целиком»: у колеса это называлось «остановиться на любом уровне». */
-  whole: (label: string) => T(`Всё: ${label}`, `All of ${label}`),
-  back: () => T('Назад', 'Back'),
+  whole: (label: string) => T(`Всё: ${label}`, `All of ${label}`, `Todo ${label}`),
+  back: () => T('Назад', 'Back', 'Atrás'),
 };
 
 export const WHEEL_COPY = {
   hint: () =>
     T('Крути кольцо — что под стрелкой, то и выбрано. Нажми в середину, чтобы раскрыть подробнее; остановиться можно на любом уровне.',
-      'Spin the ring — the pointer picks. Tap the middle to open it up; you can stop at any level.'),
-  add: () => T('Добавить', 'Add it'),
+      'Spin the ring — the pointer picks. Tap the middle to open it up; you can stop at any level.', 'Gira el anillo — el puntero elige. Toca el centro para abrilo; puedes detenerte en cualquier nivel.'),
+  add: () => T('Добавить', 'Add it', 'Añádelo'),
   /** «Уточнить» — раскрыть выбранное следующим кольцом. Тот же шаг делает и нажатие на середину. */
-  refine: () => T('Уточнить', 'Refine'),
+  refine: () => T('Уточнить', 'Refine', 'Refinar'),
   /** Подпись до первого касания: колесо ещё ничего не выбрало ЗА человека. */
-  empty: () => T('Крутани колесо', 'Give it a spin'),
+  empty: () => T('Крутани колесо', 'Give it a spin', 'Gíralo'),
 };

@@ -36,7 +36,8 @@ import {
 import { DETAILS, dateChips, hhmm, peerLocalTime, looksLikeUrl } from '../src/intent';
 import { TimeDial } from '../src/components/Dials';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
-import { useLang, T, getLang } from '../src/i18n';
+import { normalizeTimePart } from '../src/timeInput';
+import { useLang, T, getLang, dateLocale, use12h } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { mediaUrl, agent } from '../src/api';
 import {
@@ -44,6 +45,7 @@ import {
 } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { Sheet } from '../src/components/Sheet';
+import { AddressField } from '../src/components/AddressField';
 import { color, radius as rad, space, type } from '../src/theme';
 
 export default function Plan() {
@@ -101,9 +103,8 @@ export default function Plan() {
   /** Ответы O.24/O.25, пока не отправлены. */
   const [rating, setRating] = useState('');
   const [thanks, setThanks] = useState('');
-  /** O.20a: ссылка, которую доносят в уже согласованный план, и флаг «уже попросил(а) хостить». */
+  /** O.20a: ссылка, которую доносят в уже согласованный план. */
   const [linkDraft, setLinkDraft] = useState('');
-  const [hostAsked, setHostAsked] = useState(false);
   /** O.21b/OF.21a: лист встречного времени. НЕ новая встреча — план живёт, изменение ложится рядом. */
   const [countering, setCountering] = useState(false);
   /** OF.21a: выбранный сдвиг (минуты от текущего начала) или своё время часами-минутами. */
@@ -235,6 +236,21 @@ export default function Plan() {
   /** OF.20a/HY.20b: согласовано, а точного места нет — у встречи вживую и у гибрида. */
   const needsPlace = !!plan && settling && wantsPlace && !placeSet;
   /**
+   * КТО КОГО ПОПРОСИЛ — С СЕРВЕРА. Флаг «уже попросил(а)» жил здесь в useState: сбрасывался при
+   * каждом открытии экрана (и просьбу слали снова), не различал место и ссылку (одна кнопка гасила
+   * обе) и второму не показывался вовсе — тот видел то же поле с теми же двумя кнопками и мог
+   * попросить в ответ. Теперь просьба — факт плана (`place_asked_by` / `link_asked_by`).
+   */
+  const norm = (x: any) => String(x || '').trim().toLowerCase();
+  const placeAskedBy = norm((plan as any)?.place_asked_by);
+  const linkAskedBy = norm((plan as any)?.link_asked_by);
+  const askedThemPlace = !!placeAskedBy && placeAskedBy === norm(me);
+  const askedMePlace = !!placeAskedBy && placeAskedBy !== norm(me);
+  const askedThemLink = !!linkAskedBy && linkAskedBy === norm(me);
+  const askedMeLink = !!linkAskedBy && linkAskedBy !== norm(me);
+  /** Внутри замка сервер не принимает ни место, ни ссылку — поля не рисуем, а говорим почему. */
+  const whereLocked = locked && (needsPlace || needsLink);
+  /**
    * HY.22 — сторона встречи. Есть только у гибрида: у звонка приходить некуда, у встречи вживую
    * уходить некуда. По умолчанию человек считается идущим живьём — так стоит на кадре HY.21,
    * где оба «Confirmed · in person», пока никто ничего не менял.
@@ -286,7 +302,7 @@ export default function Plan() {
       const d = dayStart(date);
       d.setMinutes(minutes);
       const r: any = await agent.planPropose(me, other, {
-        title: intentTitle || T('Встреча', 'Meetup'),
+        title: intentTitle || T('Встреча', 'Meetup', 'Quedada'),
         // Режим — из интента, а не «есть ли ссылка в поле». См. modeFromIntent выше.
         mode,
         starts_at: Math.floor(d.getTime() / 1000),
@@ -322,11 +338,15 @@ export default function Plan() {
       const r: any = await agent.planRespond(plan.id, me, action, { version: plan.version, ...extra });
       if (!r?.ok) {
         if (r?.error === 'IN_THE_PAST') throw new Error(CHAT.inThePast());
+        // Ответили на устаревшую версию (второй успел принять перенос): перечитать и сказать,
+        // что случилось, — а не «не удалось» поверх экрана, который врёт на 15 секунд опроса.
+        if (r?.error === 'VERSION_CONFLICT') { await load(); throw new Error(PLAN.changedMeanwhile()); }
         throw new Error(r?.error || 'failed');
       }
       await load();
     } catch (e: any) {
-      setErr(e?.message === CHAT.inThePast() ? CHAT.inThePast() : CHAT.planFailed());
+      const m = String(e?.message || '');
+      setErr(m === CHAT.inThePast() || m === PLAN.changedMeanwhile() ? m : CHAT.planFailed());
     }
   };
 
@@ -343,6 +363,9 @@ export default function Plan() {
       // Пустые поля — это «человек начал набирать и передумал», а не «полночь»: раньше
       // незаполненные часы давали 00:00, и сервер честно отвечал «время уже прошло».
       if (!sugH.trim() && !sugM.trim()) { setErr(CHAT.inThePast()); return; }
+      // Зажимаем и здесь — на случай отправки без ухода из поля (клавиатура закрыта кнопкой).
+      // Поле к этому моменту уже нормализовано, так что зажим ничего не меняет; он остаётся
+      // последней защитой, а не тихой правкой за спиной.
       const h = Math.max(0, Math.min(23, parseInt(sugH || '0', 10) || 0));
       const m = Math.max(0, Math.min(59, parseInt(sugM || '0', 10) || 0));
       const d = new Date(plan.starts_at * 1000);
@@ -351,8 +374,10 @@ export default function Plan() {
       if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
       ts = Math.floor(d.getTime() / 1000);
     }
-    const label = new Date(ts * 1000).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', { hour: '2-digit', minute: '2-digit', hour12: !ru });
-    await respond('counter', { starts_at: ts, when: `${planWhen(plan, ru).split(' · ')[0]} · ${label}` });
+    // Подпись — от НОВОГО момента целиком. Раньше бралась дата текущего плана плюс новый час: если
+    // названный час уже прошёл и время ушло на завтра, подпись показывала вчерашнюю дату с
+    // завтрашним часом.
+    await respond('counter', { starts_at: ts, when: planWhen({ starts_at: ts }, ru) });
     setCountering(false);
   };
 
@@ -371,14 +396,14 @@ export default function Plan() {
     }
   };
 
-  /** OF.20a: «пусть выберет он(а)» — настоящее сообщение в чат. */
+  /** OF.20a: «пусть выберет он(а)» — просьба записывается в план (и строкой в ленту) для обоих. */
   const askPlace = async () => {
-    if (!plan?.id || hostAsked) return;
+    if (!plan?.id || askedThemPlace) return;
     setErr('');
     try {
-      const r: any = await agent.message(me, other, PLAN.askChooseMsg());
-      if (!r?.ok) throw new Error('failed');
-      setHostAsked(true);
+      const r: any = await agent.planAsk(plan.id, me, 'place');
+      if (!r?.ok) throw new Error(r?.error || 'failed');
+      if (r.plan) setPlan(r.plan); else await load();
     } catch {
       setErr(CHAT.planFailed());
     }
@@ -452,14 +477,14 @@ export default function Plan() {
     }
   };
 
-  /** O.20a: «пусть хостит он(а)» — настоящее сообщение в чат, а не нажатая в пустоту кнопка. */
+  /** O.20a: «пусть хостит он(а)» — та же просьба, про ссылку. */
   const askHost = async () => {
-    if (!plan?.id || hostAsked) return;
+    if (!plan?.id || askedThemLink) return;
     setErr('');
     try {
-      const r: any = await agent.message(me, other, PLAN.askHostMsg());
-      if (!r?.ok) throw new Error('failed');
-      setHostAsked(true);
+      const r: any = await agent.planAsk(plan.id, me, 'link');
+      if (!r?.ok) throw new Error(r?.error || 'failed');
+      if (r.plan) setPlan(r.plan); else await load();
     } catch {
       setErr(CHAT.planFailed());
     }
@@ -511,8 +536,14 @@ export default function Plan() {
     }
   };
 
+  /*
+    ЧАТ И ПЛАН — СОСЕДИ, А НЕ ЭТАЖИ. Отсюда `dismissTo`, а не `navigate`: если чат уже открыт
+    ниже (а чаще всего так и есть — план открывают из чата), возвращаемся к нему и снимаем план
+    сверху; если чата в стопке нет, он встаёт НА МЕСТО плана. В обоих случаях «назад» из чата
+    ведёт туда, откуда человек пришёл, а не обратно в план, из которого он только что вышел.
+  */
   const openChat = () =>
-    router.navigate({ pathname: '/conversation', params: { who: other, title: intentTitle, photo } });
+    router.dismissTo({ pathname: '/conversation', params: { who: other, title: intentTitle, photo } });
 
   /** Ссылка, как её отдал сервер: до подтверждения её просто нет в ответе. */
   const serverLink = String((plan as any)?.link ?? (mode === 'online' ? plan?.address : '') ?? '');
@@ -522,10 +553,10 @@ export default function Plan() {
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <IconChevronLeft />
           </Pressable>
-          <Text style={s.headTitle} numberOfLines={1}>{intentTitle || T('Встреча', 'Meetup')}</Text>
+          <Text style={s.headTitle} numberOfLines={1}>{intentTitle || T('Встреча', 'Meetup', 'Quedada')}</Text>
           <View style={{ width: 40 }} />
         </View>
 
@@ -620,10 +651,22 @@ export default function Plan() {
               {allSet ? (
                 <View style={s.doneCard}>
                   <Text style={s.doneTitle}>{PLAN.allSetTitle()}</Text>
-                  <Text style={s.doneSub}>
-                    {PLAN.allSetNote(planWhen(plan, ru), mode, other,
-                      wantsPlace ? placeLabel : '')}
-                  </Text>
+                  {/*
+                    Время и место — ОТДЕЛЬНЫМИ СТРОКАМИ, как и всюду выше по экрану: та же
+                    `metaRow`, те же иконки. Ради этого плашку и открывают, а прежде они лежали
+                    в середине фразы тринадцатым кеглем и ничем не отличались от слов вокруг.
+                  */}
+                  <View style={s.doneRow}>
+                    <IconCalendar size={16} c={color.successText} />
+                    <Text style={s.doneFact}>{planWhen(plan, ru)}</Text>
+                  </View>
+                  {wantsPlace && placeLabel ? (
+                    <View style={s.doneRow}>
+                      <IconPin size={16} c={color.successText} />
+                      <Text style={s.doneFact} numberOfLines={2}>{placeLabel}</Text>
+                    </View>
+                  ) : null}
+                  <Text style={s.doneSub}>{PLAN.allSetTail(mode, other)}</Text>
                 </View>
               ) : null}
 
@@ -676,7 +719,7 @@ export default function Plan() {
                 <View style={s.pillRow}>
                   <View style={s.pill}>
                     <Text style={s.pillText} numberOfLines={2}>
-                      {(plan.mode === 'online' ? PLAN.modeOnline() : (plan.district || T('Встреча', 'Meetup')))}
+                      {(plan.mode === 'online' ? PLAN.modeOnline() : (plan.district || T('Встреча', 'Meetup', 'Quedada')))}
                       {' · '}{planWhen(plan, ru)}
                       {' · '}{cancelledByMe ? PLAN.calledOffByYou() : PLAN.calledOffBy(other)}
                     </Text>
@@ -828,15 +871,24 @@ export default function Plan() {
                   первым, потому что от него зависит, кому вообще есть смысл идти живьём;
                   ссылку можно донести и позже. Раньше блоки стояли наоборот, и у гибрида,
                   где не задано ни одного входа, первым спрашивалась ссылка. */}
-              {needsPlace && !pendingChange && !countering ? (
+              {/* Замок: поля места и ссылки сервер уже не примет — вместо серого «не удалось» одна
+                  честная строка. Человек в это время едет, и договариваться ему в чате. */}
+              {whereLocked ? (
+                <View style={s.infoBox}><Text style={s.infoText}>{PLAN.whereLockedNote()}</Text></View>
+              ) : null}
+              {needsPlace && !pendingChange && !countering && !locked ? (
                 <>
-                  <TextInput
+                  {/* Второй передал выбор мне — экран говорит это первым, поле идёт следом. */}
+                  {askedMePlace ? (
+                    <View style={s.infoBox}><Text style={s.infoText}>{PLAN.askedMePlace(other)}</Text></View>
+                  ) : null}
+                  {/* Место — с подсказками и «где я», как везде: см. src/components/AddressField. */}
+                  <AddressField
                     style={s.input}
                     value={placeDraft}
-                    onChangeText={setPlaceDraft}
+                    onChange={setPlaceDraft}
+                    onPick={(h) => setPlaceDraft(h.label)}
                     placeholder={PLAN.placePlaceholder()}
-                    placeholderTextColor={color.neutral400}
-                    accessibilityLabel={PLAN.placePlaceholder()}
                   />
                   <Pressable
                     accessibilityRole="button"
@@ -847,19 +899,25 @@ export default function Plan() {
                   >
                     <Text style={s.ctaText}>{PLAN.savePlace()}</Text>
                   </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={hostAsked}
-                    accessibilityState={{ disabled: hostAsked }}
-                    style={[s.ctaDark, hostAsked && { opacity: 0.45 }]}
-                    onPress={askPlace}
-                  >
-                    <Text style={s.ctaDarkText}>{hostAsked ? PLAN.hostAskedNote() : PLAN.askChoose(other)}</Text>
-                  </Pressable>
+                  {/* Меня уже попросили — просить в ответ нечего: кнопки нет. Попросил я — ждём. */}
+                  {askedMePlace ? null : (
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={askedThemPlace}
+                      accessibilityState={{ disabled: askedThemPlace }}
+                      style={[s.ctaDark, askedThemPlace && { opacity: 0.45 }]}
+                      onPress={askPlace}
+                    >
+                      <Text style={s.ctaDarkText}>{askedThemPlace ? PLAN.askedThemPlace(other) : PLAN.askChoose(other)}</Text>
+                    </Pressable>
+                  )}
                 </>
               ) : null}
-              {needsLink && !pendingChange && !countering ? (
+              {needsLink && !pendingChange && !countering && !locked ? (
                 <>
+                  {askedMeLink ? (
+                    <View style={s.infoBox}><Text style={s.infoText}>{PLAN.askedMeLink(other)}</Text></View>
+                  ) : null}
                   <TextInput
                     style={s.input}
                     value={linkDraft}
@@ -880,15 +938,17 @@ export default function Plan() {
                   >
                     <Text style={s.ctaText}>{PLAN.saveLink()}</Text>
                   </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={hostAsked}
-                    accessibilityState={{ disabled: hostAsked }}
-                    style={[s.ctaDark, hostAsked && { opacity: 0.45 }]}
-                    onPress={askHost}
-                  >
-                    <Text style={s.ctaDarkText}>{hostAsked ? PLAN.hostAskedNote() : PLAN.askHost(other)}</Text>
-                  </Pressable>
+                  {askedMeLink ? null : (
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={askedThemLink}
+                      accessibilityState={{ disabled: askedThemLink }}
+                      style={[s.ctaDark, askedThemLink && { opacity: 0.45 }]}
+                      onPress={askHost}
+                    >
+                      <Text style={s.ctaDarkText}>{askedThemLink ? PLAN.askedThemLink(other) : PLAN.askHost(other)}</Text>
+                    </Pressable>
+                  )}
                 </>
               ) : null}
 
@@ -938,9 +998,10 @@ export default function Plan() {
                 промах пальцем не должен необратимо гасить вечер. Поэтому же — подтверждение
                 листом: отменённая встреча на сервере терминальна, вернуть её нельзя.
               */}
-              {(phase === 'waiting' || phase === 'confirmed') && !pendingChange && !countering ? (
+              {(phase === 'waiting' || phase === 'confirmed') && !pendingChange && !countering
+                && myLive !== 'cant_make_it' ? (
                 <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => setDropping(true)}>
-                  <Text style={s.ctaSoftText}>{PLAN.callOff()}</Text>
+                  <Text style={s.ctaSoftText}>{locked ? PLAN.cantMakeIt() : PLAN.callOff()}</Text>
                 </Pressable>
               ) : null}
 
@@ -1058,13 +1119,13 @@ export default function Plan() {
                       столику и не мог ни предупредить об опоздании, ни отметиться на месте. А без
                       «на месте» недостижим и весь кадр HY.23c, который на этом и держится.
                       Показываем тому, кто идёт живьём: ушедшему в звонок отмечаться негде. */}
-                  {comingInPerson && myLive !== 'late' && myLive !== 'here' ? (
+                  {comingInPerson && myLive !== 'late' && myLive !== 'here' && myLive !== 'cant_make_it' ? (
                     <Pressable accessibilityRole="button" style={s.ctaDark} onPress={() => sendLive('late')}>
                       <Text style={s.ctaDarkText}>{PLAN.imLate()}</Text>
                     </Pressable>
                   ) : null}
 
-                  {comingInPerson && myLive !== 'here' ? (
+                  {comingInPerson && myLive !== 'here' && myLive !== 'cant_make_it' ? (
                     <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => sendLive('here')}>
                       <Text style={s.ctaSoftText}>{PLAN.imHere()}</Text>
                     </Pressable>
@@ -1077,15 +1138,17 @@ export default function Plan() {
                     вечер необратимо. Сам лист был написан (кадр O.23b), но открывался только из
                     других фаз — сюда его просто не подключили.
                   */}
-                  <Pressable
-                    accessibilityRole="button"
-                    style={offline ? s.ctaSoft : s.ctaDark}
-                    onPress={() => setDropping(true)}
-                  >
-                    <Text style={offline ? s.ctaSoftText : s.ctaDarkText}>
-                      {theirComingInPerson && theirLive === 'late' ? PLAN.cantWait() : PLAN.cantMakeIt()}
-                    </Text>
-                  </Pressable>
+                  {myLive === 'cant_make_it' ? null : (
+                    <Pressable
+                      accessibilityRole="button"
+                      style={offline ? s.ctaSoft : s.ctaDark}
+                      onPress={() => setDropping(true)}
+                    >
+                      <Text style={offline ? s.ctaSoftText : s.ctaDarkText}>
+                        {theirComingInPerson && theirLive === 'late' ? PLAN.cantWait() : PLAN.cantMakeIt()}
+                      </Text>
+                    </Pressable>
+                  )}
                 </>
               ) : null}
 
@@ -1156,24 +1219,36 @@ export default function Plan() {
             </View>
             <Text style={s.note}>{PLAN.orSetYour()}</Text>
             <View style={s.hmRow}>
+              {/*
+                ПОЛЕ ОБЯЗАНО ПОКАЗЫВАТЬ ТО, ЧТО УЙДЁТ. Здесь стояла только чистка от нецифр и обрез
+                до двух знаков, а диапазон не проверялся вовсе — «68» спокойно вводилось и
+                оставалось на экране. При отправке `sendCounter` тихо зажимал его в 23
+                (`Math.min(23, …)`), и человек отправлял 23:02, глядя на 68:02. Снято с телефона
+                7 сентября 2026.
+                Молчаливая правка хуже отказа: о ней не узнают. Нормализуем при уходе из поля тем
+                же `normalizeTimePart`, которым живёт WhenPicker, и ПЕРЕПИСЫВАЕМ текст — на экране
+                сразу видно принятое значение.
+              */}
               <TextInput
                 style={s.hmBox}
                 value={sugH}
                 onChangeText={(t) => { setSugH(t.replace(/\D/g, '').slice(0, 2)); setSugDelta(null); }}
+                onBlur={() => setSugH((t) => (t.trim() ? normalizeTimePart(t, 'hours', 0).text : t))}
                 placeholder="19"
                 placeholderTextColor={color.neutral400}
                 keyboardType="number-pad"
-                accessibilityLabel={T('Часы', 'Hours')}
+                accessibilityLabel={T('Часы', 'Hours', 'Horas')}
               />
               <Text style={s.hmColon}>:</Text>
               <TextInput
                 style={s.hmBox}
                 value={sugM}
                 onChangeText={(t) => { setSugM(t.replace(/\D/g, '').slice(0, 2)); setSugDelta(null); }}
+                onBlur={() => setSugM((t) => (t.trim() ? normalizeTimePart(t, 'minutes', 0).text : t))}
                 placeholder="45"
                 placeholderTextColor={color.neutral400}
                 keyboardType="number-pad"
-                accessibilityLabel={T('Минуты', 'Minutes')}
+                accessibilityLabel={T('Минуты', 'Minutes', 'Minutos')}
               />
             </View>
             <Text style={s.note}>{PLAN.suggestSheetNote(other)}</Text>
@@ -1187,17 +1262,27 @@ export default function Plan() {
 
         {/* Подтверждение отмены. Называет последствие словами: встреча гаснет для обоих и
             восстановить её нельзя — только назначить новую. */}
-        <Sheet visible={dropping} onClose={() => setDropping(false)} title={PLAN.callOffAsk(other)}>
+        {/*
+          ДВА РАЗНЫХ ЛИСТА НА ОДНУ КНОПКУ, потому что сервер делает два разных дела. До замка
+          «не смогу» — отмена: план гаснет для обоих, вернуть нельзя. Внутри двух часов до встречи
+          сервер встречу НЕ отменяет (спека OF: «остаётся только „I can't make it“ — оно встречу
+          не отменяет») и лишь ставит живой статус «не придёт». Лист при этом обещал отмену и
+          «вернуть нельзя» — то есть врал ровно тому, кто уже едет.
+        */}
+        <Sheet visible={dropping} onClose={() => setDropping(false)}
+               title={locked ? PLAN.cantMakeAsk(other) : PLAN.callOffAsk(other)}>
           {/* HY.23b: у гибрида рядом стоит «уйду в звонок», и «не смогу» легко прочесть как
               смену стороны. Кадр требует сказать разницу вслух — иначе человек отменяет встречу,
               думая, что просто меняет вход. */}
-          <Text style={s.note}>{hybrid ? PLAN.callOffNoteHybrid(other) : PLAN.callOffNote(other)}</Text>
+          <Text style={s.note}>
+            {locked ? PLAN.cantMakeNote(other) : hybrid ? PLAN.callOffNoteHybrid(other) : PLAN.callOffNote(other)}
+          </Text>
           <Pressable
             accessibilityRole="button"
             style={s.ctaDark}
             onPress={() => { setDropping(false); respond('decline'); }}
           >
-            <Text style={s.ctaDarkText}>{PLAN.callOffYes()}</Text>
+            <Text style={s.ctaDarkText}>{locked ? PLAN.cantMakeYes() : PLAN.callOffYes()}</Text>
           </Pressable>
           <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={() => setDropping(false)}>
             <Text style={s.ctaSoftText}>{PLAN.callOffNo()}</Text>
@@ -1305,6 +1390,9 @@ function headline(phase: string, other: string, plan: any, me: string, ru: boole
   // OF.22a/OF.C4: опоздание перекрывает счётчик — оно и есть новость этого экрана. Но только
   // когда встреча на носу: за восемь часов до неё «опаздывает» ничего не значит.
   if (phase === 'soon' || phase === 'now') {
+    // «Не смогу» внутри замка — живой статус, не отмена: план стоит, и это главная новость экрана.
+    if (String(plan?.my_live?.status || '') === 'cant_make_it') return PLAN.youToldCantMake(other);
+    if (String(plan?.their_live?.status || '') === 'cant_make_it') return PLAN.theyCantMake(other);
     if (String(plan?.my_live?.status || '') === 'late') return PLAN.lateKnows(other);
     if (String(plan?.their_live?.status || '') === 'late') return PLAN.theyLate(other);
   }
@@ -1327,7 +1415,7 @@ function headline(phase: string, other: string, plan: any, me: string, ru: boole
     // остаются с безличной строкой — выдумывать автора не из чего.
     case 'cancelled': {
       const by = String(plan?.cancelled_by || '').trim().toLowerCase();
-      if (!by) return T('Встреча отменена', 'The meetup is off');
+      if (!by) return T('Встреча отменена', 'The meetup is off', 'La quedada está cancelada');
       return by === String(me).trim().toLowerCase()
         ? PLAN.youToldCantMake(other)
         : PLAN.theyCantMake(other);
@@ -1393,7 +1481,7 @@ function subline(phase: string, other: string, plan: any, ru: boolean, me: strin
       if (by && by === String(me).trim().toLowerCase()) return '';
       // O.C4: отменили мне — объяснение стоит прямо под заголовком, как на кадре.
       if (by) return plan?.mode === 'offline' ? PLAN.toldYouNoteOffline(other) : PLAN.toldYouNote(other);
-      return T('Время освободилось. Можно предложить другое.', 'The slot is free. You can suggest another time.');
+      return T('Время освободилось. Можно предложить другое.', 'The slot is free. You can suggest another time.', 'El hueco está libre. Puedes sugerir otra hora.');
     }
     default: return '';
   }
@@ -1422,6 +1510,7 @@ function statusFor(p: any, plan: any, phase: string, pendingChange: any, ru: boo
     if (live === 'late') return p?.is_me ? PLAN.liveLateMine() : PLAN.liveLate();
     if (live === 'otw') return PLAN.liveOtw();
     if (live === 'here') return PLAN.liveHere();
+    if (live === 'cant_make_it') return p?.is_me ? PLAN.cantMakeMine() : PLAN.cantMakeStatus();
   }
   if (phase === 'cancelled') {
     const by = String(plan?.cancelled_by || '').trim().toLowerCase();
@@ -1456,8 +1545,8 @@ function dayStart(dateKey: string): Date {
 /** Час встречи в поясе устройства: «20:00». Для заголовка O.C5 и кнопок «Подтвердить/Оставить». */
 function tOf(sa: any, ru: boolean): string {
   if (typeof sa !== 'number' || !isFinite(sa)) return '';
-  return new Date(sa * 1000).toLocaleTimeString(ru ? 'ru-RU' : 'en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: !ru,
+  return new Date(sa * 1000).toLocaleTimeString(dateLocale(ru), {
+    hour: '2-digit', minute: '2-digit', hour12: use12h(ru),
   });
 }
 
@@ -1541,12 +1630,13 @@ function PlanForm({
             <IconPin size={18} c={color.fg} />
             <Text style={s.label}>{DETAILS.district()}</Text>
           </View>
-          <TextInput
+          <AddressField
+            mode="district"
             style={s.input}
             value={district}
-            onChangeText={setDistrict}
+            onChange={setDistrict}
+            onPick={(h) => setDistrict(h.label)}
             placeholder="Gràcia"
-            placeholderTextColor={color.neutral400}
             accessibilityLabel={DETAILS.district()}
           />
           {/* OF.20: точное место — опционально; собеседник увидит его только после «да» (OF.C3). */}
@@ -1554,12 +1644,12 @@ function PlanForm({
             <IconPin size={18} c={color.fg} />
             <Text style={s.label}>{DETAILS.exactAddress()}</Text>
           </View>
-          <TextInput
+          <AddressField
             style={s.input}
             value={address}
-            onChangeText={setAddress}
+            onChange={setAddress}
+            onPick={(h) => setAddress(h.label)}
             placeholder={PLAN.placePlaceholder()}
-            placeholderTextColor={color.neutral400}
             accessibilityLabel={DETAILS.exactAddress()}
           />
           <Text style={s.note}>{DETAILS.exactAddressNote()}</Text>
@@ -1592,7 +1682,7 @@ function PlanForm({
 /** Человеческая подпись времени для поля `when` — сервер хранит её как есть и показывает обоим. */
 function planWhenLabel(dateKey: string, minutes: number, ru: boolean): string {
   const d = new Date(dateKey + 'T12:00:00');
-  const day = d.toLocaleDateString(ru ? 'ru-RU' : 'en-US', { weekday: 'short', day: 'numeric', month: 'short' });
+  const day = d.toLocaleDateString(dateLocale(ru), { weekday: 'short', day: 'numeric', month: 'short' });
   return `${day} · ${hhmm(minutes)}`;
 }
 
@@ -1629,11 +1719,18 @@ const s = StyleSheet.create({
     backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.md,
   },
   // «Всё готово»: та же зелёная семья, но без кнопки — это не действие, а точка в переговорах.
-  doneCard: { backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.md, gap: 4 },
-  doneTitle: { ...type.labelMedium, color: color.successText, fontWeight: '700' } as any,
+  //
+  // РАЗМЕРЫ ЗДЕСЬ И ЕСТЬ ЧИТАЕМОСТЬ. Было так: заголовок и текст одним кеглем — 13, самым мелким
+  // в приложении, — и всё одним зелёным. Иерархии не возникало вовсе, и плашка читалась сплошным
+  // пятном. Теперь заголовок — `title` (17), факты — `body` (15) с весом, проза — `bodySmall` (13)
+  // приглушённее: три ступени вместо одной. Цвета прежние, зелёная семья не тронута.
+  doneCard: { backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.lg, gap: space.sm },
+  doneTitle: { ...type.title, color: color.successText, fontWeight: '700' } as any,
+  doneRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  doneFact: { ...type.body, color: color.successText, fontWeight: '600', flexShrink: 1 } as any,
   // «Не состоялась» — тоже итог, но не удача: зелёная семья здесь читалась бы как поздравление.
   closedTitle: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
-  doneSub: { ...type.bodySmall, color: color.successText } as any,
+  doneSub: { ...type.bodySmall, color: color.successText, opacity: 0.85 } as any,
   linkTitle: { ...type.labelMedium, color: color.successText, fontWeight: '700' } as any,
   linkSub: { ...type.caption, color: color.successText } as any,
   linkBtn: { height: 40, paddingHorizontal: 18, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },

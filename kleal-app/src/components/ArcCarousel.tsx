@@ -79,8 +79,14 @@ const BOX_MAX = 320;
  * на неё, а не выглядывали из-за края.
  */
 const SIDE = 0.45;
-/** Насколько соседняя съезжает вниз по дуге. Растёт вместе с картинкой: ей надо разойтись с ней. */
-const LIFT = 70;
+/**
+ * Насколько соседняя съезжает вниз по дуге — ДОЛЯ от стороны картинки, а не число.
+ *
+ * Предмет теперь стоит по центру ячейки и уменьшается вокруг своего центра, поэтому весь спуск
+ * соседней даёт только этот сдвиг (раньше половину давало само уменьшение вокруг центра ячейки,
+ * лежавшего ниже картинки). Долей — чтобы на маленьком колесе соседние не уезжали за низ полосы.
+ */
+const LIFT_K = 0.3;
 /** Наклон соседней — градусы. Дуга выпуклая вверх, поэтому правая клонится вправо. */
 const TILT = 24;
 /** Сколько копий набора выложено подряд. Три — минимум, при котором края не видно. */
@@ -95,13 +101,31 @@ const COPIES = 3;
 export const ARC_PITCH = PITCH;
 /** Сколько копий набора в ленте — фону нужно знать, через сколько шагов предмет возвращается. */
 export const ARC_COPIES = COPIES;
+/**
+ * Подпись — ДВЕ СТРОКИ, а не одна с многоточием. «Сыграем в настолки?» и «Прогуляемся по
+ * набережной?» не влезали в 245 пунктов и обрывались на полуслове (с телефона). Место под вторую
+ * строку заложено в высоту заранее, иначе она уехала бы за низ полосы.
+ */
+const LINE = Number((type as any).wheelLabel?.lineHeight) || 26;
 /** Высота подписи под картинкой вместе с отступом над ней. */
-const CAP = 48;
-/** Что полоса добавляет к самой картинке: подпись, место под съезд соседних и запас под наклон. */
-const EXTRA = CAP + LIFT + 24;
+const CAP = space.md + LINE * 2;
+/**
+ * Что полоса добавляет к самой картинке: подпись и запас под наклон соседних. Раньше сюда входил
+ * ещё и целый LIFT (70) — оттого картинка была на треть мельче, чем могла. Соседние теперь
+ * уменьшены вокруг центра, и им хватает запаса в 40.
+ */
+const EXTRA = CAP + 40;
+/** На сколько колесо качнётся при входе на главную — чтобы было видно, что оно листается. */
+const PEEK = 44;
 
-export function ArcCarousel({ items, onPick, progress, height }: {
+export function ArcCarousel({ items, onPick, progress, height, hint }: {
   items: ArcItem[];
+  /**
+   * Счётчик заходов на главную. При каждом изменении колесо коротко качается вправо и назад:
+   * соседние предметы показываются из-за краёв, и понятно, что их можно листать. Одна картинка
+   * посреди экрана сама по себе этого не говорит — с телефона: «не понятно, что можно листать».
+   */
+  hint?: number;
   /**
    * Сколько места колесу отвели. Из него считается размер картинки, а не наоборот.
    *
@@ -125,6 +149,7 @@ export function ArcCarousel({ items, onPick, progress, height }: {
   const n = items.length;
   const BAND = height ?? BOX_FALLBACK + EXTRA;
   const BOX = Math.max(BOX_MIN, Math.min(BOX_MAX, BAND - EXTRA));
+  const LIFT = Math.round(BOX * LIFT_K);
   /**
    * СДВИГ НАЧИНАЕТСЯ СО СТАРТОВОГО, А НЕ С НУЛЯ.
    *
@@ -143,6 +168,25 @@ export function ArcCarousel({ items, onPick, progress, height }: {
   }, [x, start]);
   const list = useRef<ScrollView>(null);
   const [at, setAt] = useState(n);
+  /** Где лента сейчас — для покачивания: качаемся от текущего места и возвращаемся на него же. */
+  const lastX = useRef(start);
+
+  useEffect(() => {
+    if (!hint) return;
+    /*
+      Качание — два программных прокрута: вправо на PEEK и обратно. Через ScrollView, а не своим
+      Animated: тогда двигается всё, что и при пальце, — дуга, фон, подписи, — и выглядит это как
+      начало настоящего листания. Небольшая пауза до старта: экран ещё выезжает, и качание в этот
+      момент сливается с переходом.
+    */
+    let from = 0;
+    const t1 = setTimeout(() => {
+      from = lastX.current;
+      list.current?.scrollTo({ x: from + PEEK, animated: true });
+    }, 450);
+    const t2 = setTimeout(() => list.current?.scrollTo({ x: from, animated: true }), 450 + 360);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [hint]);
 
   /** Лента: набор, повторённый трижды. Ключи разные — иначе React сочтёт копии одним элементом. */
   const strip = useMemo(
@@ -163,6 +207,7 @@ export function ArcCarousel({ items, onPick, progress, height }: {
       прокрутки; с ним чувствуется, что оно защёлкивается по одной.
     */
     listener: (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      lastX.current = e.nativeEvent.contentOffset.x;
       const i = Math.round(e.nativeEvent.contentOffset.x / PITCH);
       if (i !== at) {
         setAt(i);
@@ -260,7 +305,7 @@ export function ArcCarousel({ items, onPick, progress, height }: {
                   Отдельной строкой под лентой она стояла бы на месте, пока предмет уезжает, и
                   на середине жеста подписывала бы уже не то, что видно.
                 */}
-                <Text style={[s.cap, { fontFamily: displayFamily(lang) }]} numberOfLines={1}>
+                <Text style={[s.cap, { fontFamily: displayFamily(lang) }]} numberOfLines={2}>
                   {it.label}
                 </Text>
               </Pressable>
@@ -285,9 +330,18 @@ const s = StyleSheet.create({
     не работает.
   */
   wrap: { justifyContent: 'center' },
-  /** Ячейка ровно в шаг ленты: от этого зависит, что центр ячейки совпадает с центром экрана. */
-  slot: { width: PITCH, alignItems: 'center', justifyContent: 'flex-start' },
-  cap: { ...type.wheelLabel, color: color.fg, textAlign: 'center', marginTop: space.md } as any,
+  /*
+    Ячейка ровно в шаг ленты: от этого зависит, что центр ячейки совпадает с центром экрана.
+    ПРЕДМЕТ ПО ЦЕНТРУ ЯЧЕЙКИ, а не у её верха: раньше картинка стояла вверху, а под ней лежал пустой
+    запас под съезд соседних — колесо сидело на 40–50 пунктов выше середины отведённой полосы, и
+    тем заметнее, чем больше полоса. Теперь центр предмета — центр полосы при любой её высоте, а
+    уменьшение и наклон соседних идут вокруг самого предмета, не вокруг пустоты под ним.
+  */
+  slot: { width: PITCH, alignItems: 'center', justifyContent: 'center' },
+  cap: {
+    ...type.wheelLabel, lineHeight: LINE, color: color.fg, textAlign: 'center',
+    marginTop: space.md, maxWidth: PITCH - 16,
+  } as any,
   /*
     ТЕНИ У КАРТИНКИ НЕТ, И ЭТО НЕ ЗАБЫЛИ. Она тут была — мягкая, чтобы предмет не висел плоской
     наклейкой. Но iOS рисует тень по ПРЯМОУГОЛЬНИКУ вида, а не по прозрачности картинки внутри

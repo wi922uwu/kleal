@@ -11,6 +11,7 @@ import React, { useRef, useState } from 'react';
 import { View, Text, StyleSheet, PanResponder } from 'react-native';
 import { color, type } from '../theme';
 
+import { T } from '../i18n';
 /** Метры в градусе: широта почти постоянна, долгота сжимается к полюсам. */
 const KM_PER_DEG_LAT = 110.57;
 const kmPerDegLon = (lat: number) => 111.32 * Math.max(0.05, Math.cos((lat * Math.PI) / 180));
@@ -69,13 +70,15 @@ export function RadiusMap({
       </View>
       {/* Честно про расхождение: здесь тащат точку, на устройстве — карту под неподвижной
           булавкой (перетаскиваемая метка у MapKit требует долгого нажатия, см. .native). */}
-      <Text style={s.note}>{onMove ? 'схема · на устройстве двигается карта' : 'карта — только на устройстве'}</Text>
+      <Text style={s.note}>{onMove
+        ? T('схема · на устройстве двигается карта', 'sketch · on the device the map itself moves', 'esquema · en el móvil se mueve el mapa')
+        : T('карта — только на устройстве', 'the map is on the device only', 'el mapa solo en el móvil')}</Text>
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  wrap: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  wrap: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   circle: {
     backgroundColor: 'rgba(241,58,89,0.18)',
     borderWidth: 1,

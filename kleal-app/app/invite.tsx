@@ -99,10 +99,10 @@ export default function Invite() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
           <IconChevronLeft />
         </Pressable>
-        <Text style={s.headTitle} numberOfLines={1}>{titleOf(row) || T('Приглашение', 'Invite')}</Text>
+        <Text style={s.headTitle} numberOfLines={1}>{titleOf(row) || T('Приглашение', 'Invite', 'Invitar')}</Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -145,7 +145,7 @@ export default function Invite() {
             <View style={s.person}>
               <View style={[s.personAva, s.personAvaEmpty]}><IconPerson size={18} /></View>
               <View style={{ flex: 1 }}>
-                <Text style={s.personName}>{T('Ты', 'You')}</Text>
+                <Text style={s.personName}>{T('Ты', 'You', 'Tú')}</Text>
                 {/*
                   Истёкшее и отозванное разбираются ОТДЕЛЬНО. Раньше обе ветки проваливались в
                   «Подтвердил(а)»: экран говорил ровно противоположное правде — приглашение
@@ -197,7 +197,9 @@ export default function Invite() {
               <Pressable
                 accessibilityRole="button"
                 style={s.cta}
-                onPress={() => router.navigate({ pathname: '/conversation', params: { who: from, title: titleOf(row), photo: row.photo || '' } })}
+                /* Тот же случай, что в карточке кандидата: приглашение разобрано, чат встаёт на
+                   его место. Соседний путь (принять прямо здесь) уже делает `replace`. */
+                onPress={() => router.dismissTo({ pathname: '/conversation', params: { who: from, title: titleOf(row), photo: row.photo || '' } })}
               >
                 <Text style={s.ctaText}>{CHAT.openChat()}</Text>
               </Pressable>

@@ -5,7 +5,7 @@
  * сервера: группы из /api/agent/groups и адресованные пользователю приглашения из
  * /api/agent/home-invites. Потенциальные совпадения без явного приглашения сюда не попадают.
  */
-import { T, getLang } from './i18n';
+import { T, getLang, plural } from './i18n';
 
 export const HOME = {
   /*
@@ -15,30 +15,37 @@ export const HOME = {
     Имя из шапки ушло: у большинства оно не заполнено, и «Привет, друг» звучало как обращение к
     незнакомому — ровно наоборот тому, чего от приветствия ждут.
   */
-  hello: () => T('Что сегодня?', 'What’s today?'),
-  groups: () => T('Групповые мероприятия', 'Group events'),
-  invites: () => T('Приглашения', 'Invitations'),
+  hello: () => T('Что сегодня?', 'What’s today?', '¿Qué hay hoy?'),
+  groups: () => T('Групповые мероприятия', 'Group events', 'Eventos en grupo'),
+  invites: () => T('Приглашения', 'Invitations', 'Invitaciones'),
   /**
    * Кадр O.01, блок Activity: ближайшая встреча стоит на главной первой строкой. Её не было —
    * рисовались только группы и приглашения, а дойти до собственной встречи можно было лишь через
    * вкладку. Главная обязана отвечать на вопрос «что у меня сегодня» без переходов.
    */
-  next: () => T('Ближайшая встреча', 'Next meetup'),
-  goToPlan: () => T('К плану', 'Go to plan'),
-  onCall: () => T('созвон', 'on a call'),
+  next: () => T('Ближайшая встреча', 'Next meetup', 'Próxima quedada'),
+  goToPlan: () => T('К плану', 'Go to plan', 'Ir al plan'),
+  /**
+   * Карточка встречи в колоде сложена как приглашение: где у того «Мэтч» и «хочет встретиться»,
+   * у встречи — состояние и «с кем». Бейдж короткий: он в одной строке с названием.
+   */
+  withWho: (who: string) => T(`с ${who}`, `with ${who}`, `con ${who}`),
+  planConfirmed: () => T('Подтверждено', 'Confirmed', 'Confirmada'),
+  planPending: () => T('Ждёт ответа', 'Pending', 'Pendiente'),
+  onCall: () => T('созвон', 'on a call', 'en una llamada'),
   /** Стопка приглашений разобрана. Их немного — это норма, а не поломка. */
-  invitesAllSeen: () => T('Это все приглашения.', 'That’s every invite.'),
+  invitesAllSeen: () => T('Это все приглашения.', 'That’s every invite.', 'Esa es cada invitación.'),
   /* Карточка «пока пусто» на главной — кадр «Home Card · Empty». Заголовок говорит, ЧЕГО нет, а
      строка под ним — что это не поломка, а ожидание: приглашения приходят, а не ищутся руками. */
-  noInvites: () => T('Приглашений пока нет', 'No invites yet'),
+  noInvites: () => T('Приглашений пока нет', 'No invites yet', 'Aún no hay invitaciones'),
   /* Пустой пузырь уведомлений. Говорит про УВЕДОМЛЕНИЯ, а не про приглашения: приглашение —
      частный случай, а окно открывается по колокольчику и отвечает за всё, что может прийти. */
-  bellQuiet: () => T('Уведомлений пока не было', 'No notifications yet'),
+  bellQuiet: () => T('Уведомлений пока не было', 'No notifications yet', 'Todavía no hay notificaciones'),
   bellQuietNote: () =>
     T('Здесь появится всё, на что стоит ответить: приглашения, отклики, напоминания.',
-      'Anything worth answering shows up here: invites, replies, reminders.'),
-  noInvitesNote: () => T('Они появятся здесь.', 'Invitations will appear here.'),
-  discover: () => T('Найти людей', 'Search & Discover'),
+      'Anything worth answering shows up here: invites, replies, reminders.', 'Si hay algo digno de respuesta aparecerá aquí: invitaciones, respuestas, recordatorios.'),
+  noInvitesNote: () => T('Они появятся здесь.', 'Invitations will appear here.', 'Las invitaciones aparecerán aquí.'),
+  discover: () => T('Найти людей', 'Search & Discover', 'Buscar y descubrir'),
   /**
    * Сколько ещё в стопке. С существительным: голое «Ещё 1» по-русски обрывок — ещё один чего?
    * Согласование то же, что у HOME.peopleCount, и живёт здесь, а не в компоненте: копия в src/*.ts.
@@ -48,10 +55,10 @@ export const HOME = {
     const word = ten === 1 && hundred !== 11 ? 'приглашение'
       : ten >= 2 && ten <= 4 && (hundred < 10 || hundred >= 20) ? 'приглашения'
       : 'приглашений';
-    return T(`Ещё ${n} ${word}`, `${n} more invite${n === 1 ? '' : 's'}`);
+    return T(`Ещё ${n} ${word}`, `${n} more invite${n === 1 ? '' : 's'}`, `${n} invitación${n === 1 ? '' : 'es'} más`);
   },
-  invitesNext: () => T('Дальше', 'Next'),
-  inviteStatus: () => T('Приглашение', 'Invitation'),
+  invitesNext: () => T('Дальше', 'Next', 'Siguiente'),
+  inviteStatus: () => T('Приглашение', 'Invitation', 'Invitación'),
   /**
    * Бейдж на карточке приглашения. На кадре GR.01 он короткий — «Match», 53 пункта, — потому что
    * стоит В ОДНОЙ СТРОКЕ с названием и отнимает у него место. Слово «Приглашение» длиннее вдвое, и
@@ -59,16 +66,16 @@ export const HOME = {
    * которым карточка и лежит. Здесь полезно другое: что зовут в ГРУППУ, а не один на один — в
    * стопке лежат и те и другие.
    */
-  inviteKindGroup: () => T('Группа', 'Group'),
-  inviteLoadFailed: () => T('Не удалось загрузить приглашения.', 'Invitations could not be loaded.'),
-  retry: () => T('Повторить', 'Retry'),
-  ask: () => T('Чем хочешь заняться?', 'What do you feel like doing?'),
-  history: () => T('Открыть историю разговоров', 'Open conversation history'),
-  match: () => T('Мэтч', 'Match'),
-  fits: () => T('Подходит', 'Match'),
-  review: () => T('Посмотреть приглашение', 'Review invite'),
-  wantsToMeet: () => T('хочет встретиться', 'wants to meet'),
-  hosting: (who: string) => T(`${who} организует`, `${who} is hosting`),
+  inviteKindGroup: () => T('Группа', 'Group', 'Grupo'),
+  inviteLoadFailed: () => T('Не удалось загрузить приглашения.', 'Invitations could not be loaded.', 'No se pudieron cargar las invitaciones.'),
+  retry: () => T('Повторить', 'Retry', 'Reintentar'),
+  ask: () => T('Чем хочешь заняться?', 'What do you feel like doing?', '¿Qué te apetece hacer?'),
+  history: () => T('Открыть историю разговоров', 'Open conversation history', 'Abrir historial de conversaciones'),
+  match: () => T('Мэтч', 'Match', 'Coincidencia'),
+  fits: () => T('Подходит', 'Match', 'Coincidencia'),
+  review: () => T('Посмотреть приглашение', 'Review invite', 'Revisar invitación'),
+  wantsToMeet: () => T('хочет встретиться', 'wants to meet', 'quiere reunirse'),
+  hosting: (who: string) => T(`${who} организует`, `${who} is hosting`, `${who} está organizando`),
   /**
    * «Идут» согласуется с числом. Русский требует трёх форм, и «1 идут» на карточке читается как
    * недоделка — а это первое, что видно на главном экране.
@@ -76,14 +83,14 @@ export const HOME = {
   going: (n: number) => {
     const t = n % 10, h = n % 100;
     const ru = t === 1 && h !== 11 ? 'идёт' : 'идут';
-    return T(`${n} ${ru}`, `${n} going`);
+    return T(`${n} ${ru}`, `${n} going`, `${n} ${n === 1 ? 'va' : 'van'}`);
   },
   peopleCount: (n: number, max?: number) => {
     const total = max && max > n ? `${n}/${max}` : String(n);
-    return T(`${total} участников`, `${total} participants`);
+    return T(`${total} участников`, `${total} participants`, `${total} ${total === '1' ? 'participante' : 'participantes'}`);
   },
-  flexible: () => T('Гибко', 'Flexible'),
-  noArea: () => T('место не указано', 'area not set'),
+  flexible: () => T('Гибко', 'Flexible', 'Flexible'),
+  noArea: () => T('место не указано', 'area not set', 'zona no establecida'),
 };
 
 /**
@@ -209,3 +216,32 @@ export function homeInvites(rows: any[]): HomeInvite[] {
       } : undefined,
     }));
 }
+
+/**
+ * Экран истории разговоров. Копия отдельным блоком: раньше кнопка на главной обещала историю, а
+ * открывала сегмент прошедших затей во вкладке «Интенты» — это не разговоры, и в коде это было
+ * прямо признано. Теперь у неё есть куда вести.
+ */
+export const HISTORY = {
+  title: () => T('История разговоров', 'Conversation history', 'Historial de conversación'),
+  close: () => T('Закрыть', 'Close', 'Cerrar'),
+  empty: () => T('Разговоров пока нет', 'No conversations yet', 'Todavía no hay conversaciones'),
+  emptyHint: () =>
+    T('Здесь будут все твои разговоры с Kleal — можно перечитать, о чём договорились.',
+      'Every conversation with Kleal shows up here — you can read back what you agreed on.', 'Toda conversación con Kleal aparece aquí — puedes repasar lo que acordaste.'),
+  /** Честная оговорка: история живёт на устройстве. Разбор — в src/history.ts. */
+  local: () =>
+    T('История хранится на этом телефоне и пропадёт при переустановке.',
+      'History is kept on this phone and is lost if you reinstall.', 'El historial se guarda en este teléfono y se pierde si lo reinstalas.'),
+  /**
+   * Согласование берётся из `plural()`, а не пишется здесь заново. Первая редакция этой строки
+   * выкладывала ту же арифметику руками — ровно то, ради чего помощник и заведён: одиннадцать
+   * ведёт себя не как один, а сто двадцать один — как один, и ошибиться легко.
+   */
+  lines: (n: number) =>
+    T(n + ' ' + plural(n, 'реплика', 'реплики', 'реплик'),
+      n + (n === 1 ? ' message' : ' messages'),
+      n + (n === 1 ? ' mensaje' : ' mensajes')),
+  clear: () => T('Очистить историю', 'Clear history', 'Borrar historial'),
+  clearAsk: () => T('Удалить все сохранённые разговоры?', 'Delete every saved conversation?', '¿Borrar todas las conversaciones guardadas?'),
+};

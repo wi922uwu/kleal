@@ -69,7 +69,7 @@ export default function Interests() {
       set('interests.unused', (get('interests.unused') || []).filter((x: string) => x !== nm));
       push();
     };
-    const ask = T(`Убрать «${label}» из профиля?`, `Remove “${label}” from your profile?`);
+    const ask = T(`Убрать «${label}» из профиля?`, `Remove “${label}” from your profile?`, `¿Eliminar «${label}» de tu perfil?`);
     if (Platform.OS === 'web') {
       // Alert.alert на вебе рисуется без кнопок — там это window.confirm.
       // eslint-disable-next-line no-alert
@@ -77,7 +77,7 @@ export default function Interests() {
       return;
     }
     Alert.alert(ask, undefined, [
-      { text: T('Отмена', 'Cancel'), style: 'cancel' },
+      { text: T('Отмена', 'Cancel', 'Cancelar'), style: 'cancel' },
       { text: C.remove(), style: 'destructive', onPress: wipe },
     ]);
   };
@@ -111,7 +111,7 @@ export default function Interests() {
                 <Text style={[s.name, { flex: 1 }]}>{it.label}</Text>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={T(`Удалить «${it.label}»`, `Remove “${it.label}”`)}
+                  accessibilityLabel={T(`Удалить «${it.label}»`, `Remove “${it.label}”`, `Eliminar «${it.label}»`)}
                   hitSlop={10}
                   style={s.del}
                   onPress={() => remove(it.name, it.label)}
@@ -121,7 +121,7 @@ export default function Interests() {
                 <Switch
                   value={it.used}
                   onValueChange={(v) => toggleUsed(it.name, v)}
-                  accessibilityLabel={T(`Учитывать «${it.label}» при подборе`, `Use “${it.label}” for matching`)}
+                  accessibilityLabel={T(`Учитывать «${it.label}» при подборе`, `Use “${it.label}” for matching`, `Usa “${it.label}” para coincidir`)}
                   trackColor={{ false: color.neutral300, true: color.primary }}
                   thumbColor={color.card}
                   ios_backgroundColor={color.neutral300}

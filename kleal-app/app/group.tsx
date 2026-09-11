@@ -411,7 +411,7 @@ export default function GroupRoom() {
     return (
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back}
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back}
                      onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <IconChevronLeft />
           </Pressable>
@@ -450,7 +450,7 @@ export default function GroupRoom() {
         ) : null}
 
         <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back}
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back}
                      onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <IconChevronLeft />
           </Pressable>
@@ -484,8 +484,8 @@ export default function GroupRoom() {
               <Text style={s.removedNoticeText}>
                 {g?.read_only_reason === 'group_closed'
                   ? ROOM.closedNotice(String(g?.closure_notice?.owner || g?.owner || ''),
-                                      String(g?.closure_notice?.title || g?.title || 'this group'))
-                  : ROOM.removedNotice(String(g?.removal_notice?.title || g?.title || 'this group'))}
+                                      String(g?.closure_notice?.title || g?.title || T('эта группа', 'this group', 'este grupo')))
+                  : ROOM.removedNotice(String(g?.removal_notice?.title || g?.title || T('эта группа', 'this group', 'este grupo')))}
               </Text>
               <Text style={s.removedNoticeSub}>{ROOM.readOnlyHistory()}</Text>
             </View>
@@ -573,7 +573,7 @@ export default function GroupRoom() {
               <Text style={s.replyWho} numberOfLines={1}>{CHAT.replyTo(String(replyTo.from || ''))}</Text>
               <Text style={s.replyText} numberOfLines={1}>{replyTo.text || CHAT.deleted()}</Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Убрать', 'Remove')} onPress={() => setReplyTo(null)} hitSlop={10}>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Убрать', 'Remove', 'Eliminar')} onPress={() => setReplyTo(null)} hitSlop={10}>
               <Text style={s.replyX}>✕</Text>
             </Pressable>
           </View>
@@ -603,7 +603,7 @@ export default function GroupRoom() {
               />
             ) : null}
             {voice.phase === 'idle' && draft.trim() ? (
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={send}>
+              <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send', 'Enviar')} onPress={send}>
                 <IconSend />
               </Pressable>
             ) : (
@@ -680,11 +680,11 @@ export default function GroupRoom() {
                   <IconPerson size={18} />
                   {m.photo ? (
                     <Image source={{ uri: mediaUrl(String(m.photo)) }}
-                           style={[s.memberAv, StyleSheet.absoluteFillObject]} />
+                           style={[s.memberAv, StyleSheet.absoluteFill]} />
                   ) : null}
                 </View>
                 <Text style={s.memberName} numberOfLines={1}>
-                  {nm === me ? T('Ты', 'You') : nm}
+                  {nm === me ? T('Ты', 'You', 'Tú') : nm}
                 </Text>
                 <Text style={s.memberRole}>
                   {owner ? ROOM.roleOrganiser() : ROOM.roleMember()}
@@ -728,7 +728,7 @@ export default function GroupRoom() {
                            params: { gid, title: String(g?.title || '') },
                          }), 250);
                        }}>
-              <Text style={s.sheetReportText}>{T('Сообщить о проблеме', 'Report a problem')}</Text>
+              <Text style={s.sheetReportText}>{T('Сообщить о проблеме', 'Report a problem', 'Reportar un problema')}</Text>
             </Pressable>
           ) : null}
 

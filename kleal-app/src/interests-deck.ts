@@ -32,9 +32,24 @@ export type DeckCard = {
   tone: DeckTone;
 };
 
+/** Испанские подписи карточек — по тому же ключу, что уходит в интересы. */
+const DECK_ES: Record<string, string> = {
+  run: 'Correr', coffee: 'Café', boardgames: 'Juegos de mesa', hiking: 'Senderismo',
+  cinema: 'Cine', swimming: 'Natación', cooking: 'Cocinar', books: 'Libros',
+  gym: 'El gimnasio', concert: 'Música en directo', languages: 'Idiomas', cycling: 'Ciclismo',
+  wine: 'Vino', museum: 'Museos', yoga: 'Yoga', breakfast: 'Desayunos',
+  console: 'Videoconsola', sea: 'El mar', photography: 'Fotografía', tennis: 'Tenis',
+  theatre: 'Teatro', 'food market': 'Mercados de comida', coding: 'Programar', dancing: 'Bailar',
+  mountains: 'Montaña', quiz: 'Quizzes', football: 'Fútbol', podcasts: 'Podcasts',
+  streetfood: 'Comida callejera', exhibition: 'Exposiciones', climbing: 'Escalada',
+  karaoke: 'Karaoke', walk: 'Paseos por la ciudad', chess: 'Ajedrez', picnic: 'Picnics',
+  series: 'Series', billiards: 'Billar', spa: 'Spa', camping: 'Camping', course: 'Cursos',
+  bowling: 'Bolos', vinyl: 'Vinilos', dogwalk: 'Pasear al perro', meditation: 'Meditación',
+};
+
 const card = (key: string, ru: string, en: string, tone: DeckTone): DeckCard => ({
   key,
-  label: T(ru, en),
+  label: T(ru, en, DECK_ES[key]),
   tone,
 });
 
@@ -55,19 +70,19 @@ export const DECK = (): DeckCard[] => [
   card('cooking', 'Готовка', 'Cooking', 'amber'),
   card('books', 'Книги', 'Books', 'sand'),
   card('gym', 'Тренажёрный зал', 'The gym', 'slate'),
-  card('concerts', 'Концерты', 'Live music', 'rose'),
+  card('concert', 'Концерты', 'Live music', 'rose'),
   card('languages', 'Языки', 'Languages', 'indigo'),
   card('cycling', 'Велосипед', 'Cycling', 'lime'),
   card('wine', 'Вино', 'Wine', 'rose'),
-  card('museums', 'Музеи', 'Museums', 'slate'),
+  card('museum', 'Музеи', 'Museums', 'slate'),
   card('yoga', 'Йога', 'Yoga', 'violet'),
   card('breakfast', 'Завтраки', 'Breakfasts', 'amber'),
   card('console', 'Приставка', 'Console games', 'indigo'),
   card('sea', 'Море', 'The sea', 'teal'),
-  card('photo', 'Фотография', 'Photography', 'sand'),
+  card('photography', 'Фотография', 'Photography', 'sand'),
   card('tennis', 'Теннис', 'Tennis', 'lime'),
   card('theatre', 'Театр', 'Theatre', 'violet'),
-  card('markets', 'Рынки', 'Food markets', 'amber'),
+  card('food market', 'Рынки', 'Food markets', 'amber'),
   card('coding', 'Программирование', 'Coding', 'indigo'),
   card('dancing', 'Танцы', 'Dancing', 'rose'),
   card('mountains', 'Горы', 'Mountains', 'teal'),
@@ -75,20 +90,20 @@ export const DECK = (): DeckCard[] => [
   card('football', 'Футбол', 'Football', 'lime'),
   card('podcasts', 'Подкасты', 'Podcasts', 'indigo'),
   card('streetfood', 'Стритфуд', 'Street food', 'amber'),
-  card('exhibitions', 'Выставки', 'Exhibitions', 'slate'),
+  card('exhibition', 'Выставки', 'Exhibitions', 'slate'),
   card('climbing', 'Скалолазание', 'Climbing', 'lime'),
   card('karaoke', 'Караоке', 'Karaoke', 'rose'),
-  card('citywalks', 'Прогулки по городу', 'City walks', 'sand'),
+  card('walk', 'Прогулки по городу', 'City walks', 'sand'),
   card('chess', 'Шахматы', 'Chess', 'slate'),
   card('picnic', 'Пикник', 'Picnics', 'lime'),
   card('series', 'Сериалы', 'Series', 'indigo'),
   card('billiards', 'Бильярд', 'Pool', 'violet'),
   card('spa', 'Спа', 'Spa', 'rose'),
   card('camping', 'Кемпинг', 'Camping', 'teal'),
-  card('courses', 'Курсы', 'Courses', 'indigo'),
+  card('course', 'Курсы', 'Courses', 'indigo'),
   card('bowling', 'Боулинг', 'Bowling', 'violet'),
   card('vinyl', 'Винил', 'Vinyl', 'sand'),
-  card('dogwalks', 'Прогулки с собакой', 'Dog walks', 'lime'),
+  card('dogwalk', 'Прогулки с собакой', 'Dog walks', 'lime'),
   card('meditation', 'Медитация', 'Meditation', 'slate'),
 ];
 

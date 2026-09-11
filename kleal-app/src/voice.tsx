@@ -14,6 +14,7 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import { Asset } from 'expo-asset';
+import { appendUploadFile } from './upload-file';
 import { mediaUrl, speech, VoicePayload } from './api';
 import { T } from './i18n';
 import { color } from './theme';
@@ -87,7 +88,7 @@ const audioForm = async (uri: string) => {
     const blob = await (await fetch(uri)).blob();
     form.append('file', blob, `voice-${Date.now()}.webm`);
   } else {
-    form.append('file', { uri, name: `voice-${Date.now()}.m4a`, type: 'audio/mp4' } as any);
+    await appendUploadFile(form, uri, `voice-${Date.now()}.m4a`, 'audio/mp4');
   }
   return form;
 };
@@ -159,7 +160,7 @@ export function useVoiceInput(onTranscript: (text: string) => void, disabled = f
 
   const fail = useCallback((message: string) => {
     setPhase('idle');
-    Alert.alert(T('Не удалось распознать речь', 'Could not transcribe speech'), message);
+    Alert.alert(T('Не удалось распознать речь', 'Could not transcribe speech', 'No se pudo transcribir la voz'), message);
   }, []);
 
   const stop = useCallback(async () => {
@@ -178,8 +179,8 @@ export function useVoiceInput(onTranscript: (text: string) => void, disabled = f
     } catch (error) {
       const code = String((error as any)?.body?.error || (error as any)?.message || '');
       fail(code === 'NO_SPEECH'
-        ? T('Речь не обнаружена. Попробуйте ещё раз.', 'No speech was detected. Try again.')
-        : T('Проверьте соединение и повторите запись.', 'Check your connection and record again.'));
+        ? T('Речь не обнаружена. Попробуйте ещё раз.', 'No speech was detected. Try again.', 'No se detectó ninguna voz. Inténtalo de nuevo.')
+        : T('Проверьте соединение и повторите запись.', 'Check your connection and record again.', 'Comprueba tu conexión y vuelve a grabar.'));
     } finally {
       stopping.current = false;
     }
@@ -190,14 +191,14 @@ export function useVoiceInput(onTranscript: (text: string) => void, disabled = f
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        return fail(T('Разрешите доступ к микрофону в настройках устройства.', 'Allow microphone access in device settings.'));
+        return fail(T('Разрешите доступ к микрофону в настройках устройства.', 'Allow microphone access in device settings.', 'Permite el acceso al micrófono en los ajustes del dispositivo.'));
       }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();
       recorder.record();
       setPhase('recording');
     } catch {
-      fail(T('Не удалось начать запись.', 'Could not start recording.'));
+      fail(T('Не удалось начать запись.', 'Could not start recording.', 'No se pudo iniciar la grabación.'));
     }
   }, [disabled, fail, phase, recorder]);
 
@@ -221,7 +222,7 @@ export function VoiceControl({ voice }: { voice: VoiceInput }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={recording ? T('Остановить запись', 'Stop recording') : T('Голосовой ввод', 'Voice input')}
+      accessibilityLabel={recording ? T('Остановить запись', 'Stop recording', 'Detener grabación') : T('Голосовой ввод', 'Voice input', 'Entrada por voz')}
       accessibilityState={{ disabled: voice.disabled, busy: voice.phase === 'transcribing' }}
       disabled={voice.disabled}
       onPress={voice.toggle}
@@ -279,7 +280,7 @@ export function useVoiceMessage(onSend: (voice: VoicePayload) => void | Promise<
       setPeaks(barsFrom(samples.current));
       setPhase('preview');
     } catch {
-      fail(T('Запись не сохранена', 'Recording was not saved'), T('Попробуйте записать ещё раз.', 'Try recording again.'));
+      fail(T('Запись не сохранена', 'Recording was not saved', 'La grabación no se guardó'), T('Попробуйте записать ещё раз.', 'Try recording again.', 'Inténtalo de nuevo.'));
     } finally {
       stopping.current = false;
     }
@@ -290,9 +291,9 @@ export function useVoiceMessage(onSend: (voice: VoicePayload) => void | Promise<
     try {
       const permission = await AudioModule.requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        return Alert.alert(T('Нет доступа к микрофону', 'Microphone access is disabled'), T(
+        return Alert.alert(T('Нет доступа к микрофону', 'Microphone access is disabled', 'El acceso al micrófono está deshabilitado'), T(
           'Разрешите доступ к микрофону в настройках устройства.', 'Allow microphone access in device settings.'
-        ));
+        , 'Permite el acceso al micrófono en los ajustes del dispositivo.'));
       }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await recorder.prepareToRecordAsync();
@@ -300,7 +301,7 @@ export function useVoiceMessage(onSend: (voice: VoicePayload) => void | Promise<
       recorder.record();
       setPhase('recording');
     } catch {
-      fail(T('Не удалось начать запись', 'Could not start recording'), T('Попробуйте ещё раз.', 'Try again.'));
+      fail(T('Не удалось начать запись', 'Could not start recording', 'No se pudo iniciar la grabación'), T('Попробуйте ещё раз.', 'Try again.', 'Inténtalo de nuevo.'));
     }
   }, [disabled, fail, phase, recorder]);
 
@@ -342,10 +343,10 @@ export function useVoiceMessage(onSend: (voice: VoicePayload) => void | Promise<
       setPhase('preview');
       const code = String((error as any)?.body?.error || (error as any)?.message || '');
       Alert.alert(
-        T('Не удалось отправить голосовое', 'Could not send voice message'),
+        T('Не удалось отправить голосовое', 'Could not send voice message', 'No se pudo enviar el mensaje de voz'),
         code === 'NO_SPEECH'
-          ? T('Речь не обнаружена. Запишите сообщение ещё раз.', 'No speech was detected. Record the message again.')
-          : T('Проверьте соединение и повторите отправку.', 'Check your connection and try sending again.')
+          ? T('Речь не обнаружена. Запишите сообщение ещё раз.', 'No speech was detected. Record the message again.', 'No se detectó ninguna voz. Vuelve a grabar el mensaje.')
+          : T('Проверьте соединение и повторите отправку.', 'Check your connection and try sending again.', 'Comprueba tu conexión y vuelve a enviar.')
       );
     }
   }, [durationMillis, onSend, peaks, reset, uri]);
@@ -372,8 +373,8 @@ export function useVoiceMessage(onSend: (voice: VoicePayload) => void | Promise<
       if (ms < MIN_DURATION_MS) { buzzLost(); reset(); return; }
       await upload({ uri: src, ms, peaks: bars });
     } catch {
-      fail(T('Запись не сохранена', 'Recording was not saved'),
-           T('Попробуйте записать ещё раз.', 'Try recording again.'));
+      fail(T('Запись не сохранена', 'Recording was not saved', 'La grabación no se guardó'),
+           T('Попробуйте записать ещё раз.', 'Try recording again.', 'Inténtalo de nuevo.'));
     } finally {
       stopping.current = false;
     }
@@ -620,7 +621,7 @@ function AudioPlay({
     <View style={[s.playRow, grow && s.playRowGrow]}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={status.playing ? T('Пауза', 'Pause') : T('Воспроизвести', 'Play')}
+        accessibilityLabel={status.playing ? T('Пауза', 'Pause', 'Pausa') : T('Воспроизвести', 'Play', 'Reproducir')}
         onPress={toggle}
         onPressIn={() => Animated.spring(press, { toValue: 0.86, friction: 7, tension: 220, useNativeDriver: true }).start()}
         onPressOut={() => Animated.spring(press, { toValue: 1, friction: 5, tension: 200, useNativeDriver: true }).start()}
@@ -650,20 +651,20 @@ function AudioPlay({
 
       {/* До запуска — сколько сообщение длится, после — сколько уже прошло. */}
       <Text style={[s.duration, stuck && s.durationStuck, mine && { color: color.onPrimary }]} numberOfLines={1}>
-        {stuck ? T('не загрузилось', 'failed') : formatDuration(started ? current : total || durationMs)}
+        {stuck ? T('не загрузилось', 'failed', 'fallido') : formatDuration(started ? current : total || durationMs)}
       </Text>
 
       {started ? (
         <Animated.View style={{ opacity: rateIn, transform: [{ scale: rateIn }] }}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={T('Скорость воспроизведения', 'Playback speed')}
+            accessibilityLabel={T('Скорость воспроизведения', 'Playback speed', 'Velocidad de reproducción')}
             onPress={cycleRate}
             style={[s.rate, mine && s.rateMine]}
             hitSlop={6}
           >
             <Text style={[s.rateText, mine && { color: color.onPrimary }]}>
-              {rate === 1 ? T('1×', '1×') : rate === 1.5 ? T('1,5×', '1.5×') : T('2×', '2×')}
+              {rate === 1 ? T('1×', '1×', '1×') : rate === 1.5 ? T('1,5×', '1.5×', '1,5×') : T('2×', '2×', '2×')}
             </Text>
           </Pressable>
         </Animated.View>
@@ -878,7 +879,7 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
         <Animated.View style={[s.barLeft, { opacity: enter, transform: [{ translateY: barSlide }] }]}>
           {ready ? (
             <>
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Удалить запись', 'Delete recording')}
+              <Pressable accessibilityRole="button" accessibilityLabel={T('Удалить запись', 'Delete recording', 'Borrar grabación')}
                          onPress={dropIt} disabled={voice.disabled} style={s.barAction} hitSlop={6}>
                 <IconTrash size={19} c={color.muted} />
               </Pressable>
@@ -886,7 +887,7 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
             </>
           ) : locked ? (
             <>
-              <Pressable accessibilityRole="button" accessibilityLabel={T('Отменить запись', 'Cancel recording')}
+              <Pressable accessibilityRole="button" accessibilityLabel={T('Отменить запись', 'Cancel recording', 'Cancela la grabación')}
                          onPress={dropIt} style={s.barAction} hitSlop={6}>
                 <IconTrash size={19} c={color.muted} />
               </Pressable>
@@ -902,8 +903,8 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
                 {cancelling ? <IconTrash size={15} c={color.primary} /> : <Text style={s.hintArrow}>◀</Text>}
                 <Text style={[s.hint, cancelling && s.hintCancel]} numberOfLines={1}>
                   {cancelling
-                    ? T('Отпусти — отмена', 'Release to cancel')
-                    : T('Отмена', 'Slide to cancel')}
+                    ? T('Отпусти — отмена', 'Release to cancel', 'Suelta para cancelar')
+                    : T('Отмена', 'Slide to cancel', 'Desliza para cancelar')}
                 </Text>
               </Animated.View>
             </>
@@ -913,7 +914,7 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
 
       <View style={s.micSlot}>
         {locked || ready ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')}
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send', 'Enviar')}
                      onPress={locked ? sendNow : voice.send} disabled={voice.disabled}
                      style={[s.send, voice.disabled && { opacity: 0.55 }]}>
             {voice.phase === 'uploading' ? <ActivityIndicator size="small" color={color.onPrimary} /> : <IconSend size={17} />}
@@ -926,7 +927,7 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
             <Animated.View style={[s.halo, { opacity: ringOpacity, transform: [{ translateX: dx }, { scale: ringScale }] }]} pointerEvents="none" />
             <Animated.View
               accessibilityRole="button"
-              accessibilityLabel={T('Удерживай, чтобы записать голосовое', 'Hold to record a voice message')}
+              accessibilityLabel={T('Удерживай, чтобы записать голосовое', 'Hold to record a voice message', 'Pulsa y sostén para grabar un mensaje de voz')}
               style={[s.micDisc, {
                 // К порогу отмены кнопка гаснет: видно, что отпускать уже нечего.
                 opacity: dx.interpolate({ inputRange: [CANCEL_AT, CANCEL_AT / 2], outputRange: [0.25, 1], extrapolate: 'clamp' }),
@@ -989,7 +990,7 @@ export function VoiceBubble({ voice, mine = false }: { voice: VoicePayload; mine
       <AudioPlay source={mediaUrl(voice.url)} durationMs={voice.duration_ms} peaks={peaks} mine={mine} />
       <Pressable accessibilityRole="button" onPress={() => setShowTranscript((v) => !v)} hitSlop={4}>
         <Text style={[s.transcriptLink, mine && { color: color.onPrimary }]}>
-          {showTranscript ? T('Скрыть текст', 'Hide transcript') : T('Показать текст', 'Show transcript')}
+          {showTranscript ? T('Скрыть текст', 'Hide transcript', 'Ocultar transcripción') : T('Показать текст', 'Show transcript', 'Mostrar transcripción')}
         </Text>
       </Pressable>
       {showTranscript ? <Transcript text={voice.transcript} mine={mine} /> : null}
@@ -1030,7 +1031,7 @@ const s = StyleSheet.create({
   playRowGrow: { flex: 1 },
   playButton: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
   playInner: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
-  playIcon: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  playIcon: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   pause: { flexDirection: 'row', gap: 3 },
   pauseBar: { width: 3, height: 14, borderRadius: 1 },
   wave: { flex: 1, height: 24, justifyContent: 'center' },
@@ -1062,13 +1063,13 @@ const s = StyleSheet.create({
   micSlot: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   halo: { position: 'absolute', width: 34, height: 34, borderRadius: 17, backgroundColor: color.primary },
   micDisc: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  micFill: { ...StyleSheet.absoluteFillObject, borderRadius: 17, backgroundColor: color.primary },
-  micIcon: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  micFill: { ...StyleSheet.absoluteFill, borderRadius: 17, backgroundColor: color.primary },
+  micIcon: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   lockPill: {
     position: 'absolute', bottom: 44, width: 30, paddingVertical: 6, borderRadius: 15,
     alignItems: 'center', gap: 3, backgroundColor: color.card, borderWidth: 1, borderColor: color.border,
   },
-  lockFill: { ...StyleSheet.absoluteFillObject, borderRadius: 15, backgroundColor: color.neutral100 },
+  lockFill: { ...StyleSheet.absoluteFill, borderRadius: 15, backgroundColor: color.neutral100 },
 
   // --- полоса записи поверх композера
   barAction: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },

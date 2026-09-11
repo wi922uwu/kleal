@@ -24,7 +24,8 @@
 
 // У api.ts до сих пор не было импортов — он самодостаточный слой над fetch. Эти два
 // нужны подписям интересов: язык интерфейса и реестр, куда сгружаются словари с сервера.
-import { getLang } from './i18n';
+import { Image as RNImage } from 'react-native';
+import { getLang, replyLang } from './i18n';
 import { registerInterestLabels } from './interest-label';
 
 const DEFAULT_BASE = 'https://aiopenware.com';
@@ -89,6 +90,31 @@ export type VoicePayload = {
  */
 export const mediaUrl = (url: string) =>
   !url || /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : API_BASE + url;
+
+/**
+ * Согреть чужие фотографии до того, как их покажут.
+ *
+ * Лица людей приходят с сервера файлами и раньше не грелись никем: карточка рисовалась пустой, и
+ * лицо проявлялось через паузу — на приглашении, в выдаче, в ленте сообщений. `Image.prefetch`
+ * кладёт файл в тот же кэш, из которого потом читает `<Image>`, поэтому показ становится
+ * мгновенным без единой правки в разметке.
+ *
+ * ОШИБКИ ГЛОТАЮТСЯ НАМЕРЕННО, и по той же причине, что у предзагрузки картинок при запуске: без
+ * фотографии экран некрасив, без экрана его нет вовсе. Недоступное лицо не должно ронять список.
+ *
+ * Уже согретое просить повторно дёшево — кэш отвечает сразу, — но одинаковые адреса всё же
+ * отсеиваются: в выдаче один человек попадается в нескольких списках.
+ */
+const warmed = new Set<string>();
+
+export function warmPhotos(urls: Array<string | undefined | null>): void {
+  for (const raw of urls || []) {
+    const u = mediaUrl(String(raw || '').trim());
+    if (!u || warmed.has(u)) continue;
+    warmed.add(u);
+    RNImage.prefetch(u).catch(() => {});
+  }
+}
 
 export class ApiError extends Error {
   status: number;
@@ -179,7 +205,7 @@ const LLM_TIMEOUT_MS = 120000;
  * человеческого терпения.
  */
 const RANK_TIMEOUT_MS = 25000;
-const LLM_PATHS = /\/api\/(buddy|onboarding\/chat|agent\/plan)/;
+const LLM_PATHS = /\/api\/(buddy|onboarding\/(?:chat|interest-normalize)|agent\/plan)/;
 const RANK_PATHS = /\/api\/agent\/(match|expand)/;
 
 const timeoutFor = (path: string) =>
@@ -327,6 +353,18 @@ export const auth = {
                profile?: Json | null; hasProfile?: boolean }>('/api/auth/session', {}),
 
   signOut: () => api.post<{ ok?: boolean }>('/api/auth/signout', {}),
+
+  /**
+   * Удалить аккаунт насовсем.
+   *
+   * Тела у запроса нет намеренно: цель определяет сессия, подставить чужое имя нечем. Ответ
+   * говорит, что именно исчезло — строка человека и сам аккаунт, — чтобы экран не сообщал об
+   * удалении, которого не было.
+   */
+  deleteAccount: () =>
+    api.post<{ ok?: boolean; error?: string; profile?: boolean; account?: boolean }>(
+      '/api/onboarding/delete-account', {}
+    ),
 };
 
 export const onboarding = {
@@ -386,6 +424,23 @@ export const profile = {
   update: (name: string, patch: Json) =>
     api.post<{ ok?: boolean; error?: string }>('/api/onboarding/profile-update', { name, patch }),
 
+  /** Free text is a proposal until the person confirms one canonical formulation. */
+  normalizeInterest: (text: string, existing: string[], lang: string) =>
+    api.post<{
+      ok?: boolean;
+      status?: 'ready' | 'clarify' | 'duplicate' | 'invalid' | 'unavailable';
+      canonical?: string;
+      question?: string;
+      error?: string;
+      options?: { canonical: string; label: string; token: string }[];
+    }>('/api/onboarding/interest-normalize', { text, existing, lang }),
+
+  /** This second request is the explicit-confirmation boundary and the only novel-interest writer. */
+  confirmInterest: (name: string, token: string) =>
+    api.post<{ ok?: boolean; error?: string; canonical?: string; label?: string; token?: string; persisted?: boolean }>(
+      '/api/onboarding/interest-confirm', { name, token }
+    ),
+
   /** Доступность (§4.4 receiving policy). Без `receiving` — просто чтение текущего статуса. */
   receiving: (name: string, receiving: Json = {}) =>
     api.post<{ ok?: boolean; status?: string; error?: string }>('/api/onboarding/receiving', { name, receiving }),
@@ -421,8 +476,10 @@ export const buddy = {
       '/api/buddy/interests-chat', { messages, profile: prof, lang, recorded }
     ),
 
-  resummary: (prof: Json, current: string, personality = '', lang = 'ru') =>
-    api.post<{ summary?: string }>('/api/buddy/resummary', { profile: prof, current, personality, lang }),
+  /** `extra` — то, что человек дописал своими словами в листе правки сводки; пусто у сторожа. */
+  resummary: (prof: Json, current: string, personality = '', lang = 'ru', extra = '') =>
+    api.post<{ summary?: string }>('/api/buddy/resummary',
+      { profile: prof, current, personality, lang, extra }),
 
   /** Итог теста личности: один вызов на все восемь ответов. */
   persona: (payload: Json) => api.post<Json>('/api/buddy/persona', payload),
@@ -444,11 +501,11 @@ export const buddy = {
   chatStream: (messages: Json[], prof: Json,
                on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void },
                signals: Json = {}) =>
-    sse('/api/buddy/chat', { messages, profile: prof, signals, stream: true }, on),
+    sse('/api/buddy/chat', { messages, profile: prof, signals, stream: true, lang: replyLang() }, on),
 
   chat: (messages: Json[], prof: Json, signals: Json = {}) =>
     api.post<{ reply?: string; intent?: Json | null; signals?: Json; lang?: string }>(
-      '/api/buddy/chat', { messages, profile: prof, signals }
+      '/api/buddy/chat', { messages, profile: prof, signals, lang: replyLang() }
     ),
 
   /**
@@ -465,11 +522,11 @@ export const buddy = {
    */
   intentBuildStream: (messages: Json[], prof: Json,
                       on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void }) =>
-    sse('/api/buddy/intent-build', { messages, profile: prof, stream: true }, on),
+    sse('/api/buddy/intent-build', { messages, profile: prof, stream: true, lang: replyLang() }, on),
 
   intentBuild: (messages: Json[], prof: Json) =>
     api.post<{ reply?: string; valid?: boolean; ready?: boolean; intent?: Json | null; hints?: string[] }>(
-      '/api/buddy/intent-build', { messages, profile: prof }
+      '/api/buddy/intent-build', { messages, profile: prof, lang: replyLang() }
     ),
 
   /** Три варианта из профиля для пустого экрана создания. `seed` меняет выборку для «Ещё варианты». */
@@ -527,8 +584,9 @@ export const agent = {
    * `live` не передаём: по умолчанию сервер пересчитывает кандидатов на каждый запрос, и «3
    * варианта готовы» на карточке означает состояние СЕЙЧАС, а не слепок на момент создания.
    */
-  intents: (self: string, prof: Json) =>
-    api.post<{ intents?: Json[] }>('/api/agent/intents', { self, profile: prof }),
+  /** `live=false` — мгновенный снимок последнего пересчёта; `true` — пересчёт по живому пулу. */
+  intents: (self: string, prof: Json, live = true) =>
+    api.post<{ intents?: Json[] }>('/api/agent/intents', { self, profile: prof, live }),
 
   /**
    * Сохранить или обновить. Без `id` сервер сам склеит повтор по теме и роли — одна и та же
@@ -555,6 +613,12 @@ export const agent = {
   explore: (self: string, limit = 60) =>
     api.get<{ plans?: Json[] }>(
       `/api/agent/explore?limit=${limit}&self=${encodeURIComponent(self)}`
+    ),
+
+  /** Privacy-safe intent-address feed for the Map/List search screen. */
+  mapFeed: (self: string, view: 'offline' | 'online' = 'offline', limit = 60) =>
+    api.get<{ items?: Json[]; partial?: boolean; unavailableCount?: number }>(
+      `/api/agent/map-feed?view=${view}&limit=${limit}&self=${encodeURIComponent(self)}`
     ),
 
   /**
@@ -616,6 +680,16 @@ export const agent = {
    */
   block: (self: string, name: string, on: boolean) =>
     api.post<{ ok?: boolean; blocked?: string[] }>('/api/agent/block', { self, name, on }),
+
+  /**
+   * Карточка собеседника — открывается из шапки разговора.
+   *
+   * Сервер отдаёт её ТОЛЬКО тому, кто уже согласился (`_mp_matched` — тот же замок, что у
+   * сообщений и планов), и без расстояния и координат. Отказ приходит кодом `NOT_MATCHED`; это не
+   * поломка, а состояние, и на экране он превращается в «профиль откроется, когда примет».
+   */
+  person: (self: string, name: string) =>
+    api.post<{ ok?: boolean; error?: string; person?: Json }>('/api/agent/person', { self, name }),
 
   /** Исходящие приглашения — по ним карточка выдачи знает, приняли её или отклонили. */
   outbox: (self: string) =>
@@ -709,6 +783,11 @@ export const agent = {
                 idem = newIdem('mp-address')) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       '/api/agent/mplan-address', { id, self, address, venue, link, idem }
+    ),
+  /** «Пусть выберет он(а)» / «пусть хостит»: просьба записывается в план и видна обоим. */
+  planAsk: (id: string, self: string, what: 'place' | 'link', idem = newIdem('mp-ask')) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/mplan-ask', { id, self, what, idem }
     ),
 
   /**
@@ -1114,4 +1193,3 @@ export const group = {
       `/api/agent/gplans?self=${encodeURIComponent(self)}`
     ),
 };
-

@@ -24,39 +24,48 @@ import { interestLabel, interestLabels } from './interest-label';
 
 export type SectionId = 'interests' | 'personality' | 'safety';
 
-export const PROFILE_TITLE = () => T('Мой профиль Kleal', 'My Kleal Profile');
+export const PROFILE_TITLE = () => T('Мой профиль Kleal', 'My Kleal Profile', 'Mi perfil de Kleal');
 
 export const SECTIONS: { id: SectionId; title: () => string; sub: () => string }[] = [
   {
     id: 'interests',
-    title: () => T('Интересы', 'Interests'),
-    sub: () => T('Чем ты любишь заниматься с людьми', 'What you like doing with people'),
+    title: () => T('Интересы', 'Interests', 'Intereses'),
+    sub: () => T('Чем ты любишь заниматься с людьми', 'What you like doing with people', 'Lo que te gusta hacer con otras personas'),
   },
   {
     id: 'personality',
-    title: () => T('Твоя личность', 'Your personality'),
-    sub: () => T('Как ты воспринимаешься', 'How you come across'),
+    title: () => T('Твоя личность', 'Your personality', 'Tu personalidad'),
+    sub: () => T('Как ты воспринимаешься', 'How you come across', 'Cómo te presentas'),
   },
   {
     id: 'safety',
-    title: () => T('Безопасность и приватность', 'Safety & Privacy'),
-    sub: () => T('Что Kleal может использовать и твои границы', 'What Kleal can use, and your limits'),
+    title: () => T('Безопасность и приватность', 'Safety & Privacy', 'Seguridad y privacidad'),
+    sub: () => T('Что Kleal может использовать и твои границы', 'What Kleal can use, and your limits', 'Lo que Kleal puede usar y tus límites'),
   },
 ];
 
 export const HUB = {
-  confidence: () => T('Наполненность профиля', 'Profile confidence'),
-  summaryLabel: () => T('Сводка Kleal', "Kleal's summary"),
-  edit: () => T('Изменить', 'Edit'),
-  rewrite: () => T('Пересобрать', 'Rewrite'),
-  save: () => T('Сохранить', 'Save'),
-  cancel: () => T('Отмена', 'Cancel'),
-  createIntent: () => T('Создать интент', 'Create intent'),
-  lang: () => T('Язык интерфейса', 'Interface language'),
-  avail: () => T('Доступность', 'Availability'),
-  writing: () => T('Kleal составляет описание…', 'Kleal is writing your summary…'),
+  confidence: () => T('Наполненность профиля', 'Profile confidence', 'Confianza en el perfil'),
+  summaryLabel: () => T('Сводка Kleal', "Kleal's summary", 'Resumen de Kleal'),
+  edit: () => T('Изменить', 'Edit', 'Editar'),
+  rewrite: () => T('Пересобрать', 'Rewrite', 'Reescribir'),
+  save: () => T('Сохранить', 'Save', 'Guardar'),
+  cancel: () => T('Отмена', 'Cancel', 'Cancelar'),
+  createIntent: () => T('Создать интент', 'Create intent', 'Crear propuesta'),
+  lang: () => T('Язык интерфейса', 'Interface language', 'Idioma de la interfaz'),
+  avail: () => T('Доступность', 'Availability', 'Disponibilidad'),
+  writing: () => T('Kleal составляет описание…', 'Kleal is writing your summary…', 'Kleal escribe tu resumen…'),
+  /** Лист правки сводки: что сейчас, что дописать, и чем это кончилось. */
+  sumNow: () => T('Сейчас', 'Now', 'Ahora'),
+  sumAdd: () => T('Что добавить', 'What to add', 'Qué añadir'),
+  sumAddHint: () => T('Например: ещё я вожу мотоцикл и по субботам играю в падел',
+                      'For example: I also ride a motorbike and play padel on Saturdays',
+                      'Por ejemplo: también conduzco moto y juego al pádel los sábados'),
+  sumFailed: () => T('Не получилось пересобрать. Попробуй ещё раз.',
+                     'Could not rewrite it. Try again.',
+                     'No se pudo reescribir. Inténtalo de nuevo.'),
   empty: () =>
-    T('Kleal опишет тебя здесь по мере знакомства.', 'Kleal will summarise you here as it learns more.'),
+    T('Kleal опишет тебя здесь по мере знакомства.', 'Kleal will summarise you here as it learns more.', 'Aquí Kleal te resumirá a medida que aprenda más.'),
 };
 
 /**
@@ -158,7 +167,11 @@ export async function syncInterestLabels(): Promise<boolean> {
   }
 }
 
-export async function adaptSummary(): Promise<boolean> {
+/**
+ * @param extra Слова человека, которые он дописал сам в листе правки. Пусто — обычная
+ *              пересборка под изменившийся профиль, как её зовёт сторож.
+ */
+export async function adaptSummary(extra = ''): Promise<boolean> {
   if (_resumBusy) return false;
   setBusy(true);
   try {
@@ -169,7 +182,7 @@ export async function adaptSummary(): Promise<boolean> {
     const sigNow = summarySignature(st.profile);
     const cur = String((st.profile as any).summary || '');
     const personality = String((st.profile as any).personality || '');
-    const r: any = await buddy.resummary(profileForAttach(), cur, personality, replyLang());
+    const r: any = await buddy.resummary(profileForAttach(), cur, personality, replyLang(), extra);
     _builtSig = sigNow;           // модель ответила — этот профиль считается разобранным
     const woven = String(r?.summary || '').trim();
     const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -357,41 +370,41 @@ export function addConfirmedInterest(canonical: string, label: string, token: st
 export const HUB_ROWS: HubRow[] = [
   {
     id: 'interests', kind: 'screen',
-    title: () => T('Интересы', 'Interests'),
+    title: () => T('Интересы', 'Interests', 'Intereses'),
     sub: (p) => {
       const list = interestLabels(explicitInterests(p));
-      return list.length ? list.join(' · ') : T('Пока не заполнено', 'Not set yet');
+      return list.length ? list.join(' · ') : T('Пока не заполнено', 'Not set yet', 'Aún sin rellenar');
     },
   },
   {
     id: 'personality', kind: 'screen',
-    title: () => T('Твоя личность', 'Your personality'),
+    title: () => T('Твоя личность', 'Your personality', 'Tu personalidad'),
     sub: (p) =>
       String(p?.personality || '').trim()
         ? String(p.personality).trim()
-        : T('Пройди тест — Kleal опишет, как ты воспринимаешься', 'Take the test and Kleal will describe how you come across'),
+        : T('Пройди тест — Kleal опишет, как ты воспринимаешься', 'Take the test and Kleal will describe how you come across', 'Haz la prueba y Kleal describirá cómo te perciben'),
   },
   {
     id: 'safety', kind: 'screen',
-    title: () => T('Безопасность и приватность', 'Safety & Privacy'),
-    sub: () => T('Что Kleal может использовать и твои границы', 'What Kleal can use, and your limits'),
+    title: () => T('Безопасность и приватность', 'Safety & Privacy', 'Seguridad y privacidad'),
+    sub: () => T('Что Kleal может использовать и твои границы', 'What Kleal can use, and your limits', 'Lo que Kleal puede usar y tus límites'),
   },
   {
     id: 'languages', kind: 'sheet',
-    title: () => T('Языки', 'Languages'),
+    title: () => T('Языки', 'Languages', 'Idiomas'),
     sub: (p) => {
       const list = (p?.languages?.comfortable || []).map((k: string) => langPlainName(k, getLang() === 'ru'));
-      return list.length ? list.join(' · ') : T('Пока не заполнено', 'Not set yet');
+      return list.length ? list.join(' · ') : T('Пока не заполнено', 'Not set yet', 'Aún sin rellenar');
     },
   },
   {
     id: 'location', kind: 'sheet',
-    title: () => T('Локация', 'Location'),
+    title: () => T('Локация', 'Location', 'Ubicación'),
     sub: (p) => {
       const city = String(p?.city || '').trim();
       const km = p?.geo?.maxDistanceKm;
-      const bits = [city, km ? T(`до ${km} км`, `up to ${km} km`) : ''].filter(Boolean);
-      return bits.length ? bits.join(' · ') : T('Пока не заполнено', 'Not set yet');
+      const bits = [city, km ? T(`до ${km} км`, `up to ${km} km`, `hasta ${km} km`) : ''].filter(Boolean);
+      return bits.length ? bits.join(' · ') : T('Пока не заполнено', 'Not set yet', 'Aún sin rellenar');
     },
   },
 ];
@@ -407,8 +420,8 @@ export const HUB_ROWS: HubRow[] = [
  * человека в поиске.
  */
 export const WHOAMI = {
-  title: () => T('Кто ты', 'About you'),
-  name: () => T('Имя', 'Name'),
+  title: () => T('Кто ты', 'About you', 'Sobre ti'),
+  name: () => T('Имя', 'Name', 'Nombre'),
   /**
    * Имя стоит в шапке чужой переписки и в карточке кандидата, поэтому адрес почты здесь —
    * не опечатка, а утечка. Живой случай был ровно такой: человек ходил по приложению под
@@ -416,62 +429,65 @@ export const WHOAMI = {
    */
   nameBad: () =>
     T('Так тебя увидят другие. Адрес почты, ссылка или номер именем не будут.',
-      'This is what other people see. An email, link or number can’t be a name.'),
-  surname: () => T('Фамилия', 'Surname'),
+      'This is what other people see. An email, link or number can’t be a name.', 'Esto es lo que ven otras personas. Un correo, enlace o número no puede ser un nombre.'),
+  surname: () => T('Фамилия', 'Surname', 'Apellido'),
   /** Фамилия не обязательна: людям, которые не хотят её называть, нельзя закрывать регистрацию. */
   surnameNote: () =>
     T('Не обязательно. Помогает не спутать двух тёзок в группе.',
-      'Optional. Helps tell two people with the same first name apart.'),
-  age: () => T('Возраст', 'Age'),
-  photo: () => T('Фото', 'Photo'),
-  changePhoto: () => T('Сменить фото', 'Change photo'),
-  removePhoto: () => T('Убрать фото', 'Remove photo'),
+      'Optional. Helps tell two people with the same first name apart.', 'Opcional. Ayuda a diferenciar a dos personas con el mismo nombre.'),
+  age: () => T('Возраст', 'Age', 'Edad'),
+  photo: () => T('Фото', 'Photo', 'Foto'),
+  changePhoto: () => T('Сменить фото', 'Change photo', 'Cambia la foto'),
+  removePhoto: () => T('Убрать фото', 'Remove photo', 'Eliminar foto'),
   /** Снимок выбран, а подготовить его не вышло. Молчать тут нельзя — человек ждёт фото на экране. */
   photoFailed: () =>
     T('Не получилось подготовить снимок. Попробуй другой.',
-      'Could not prepare that photo. Try another one.'),
+      'Could not prepare that photo. Try another one.', 'No se pudo preparar esa foto. Prueba con otra.'),
   nameNote: () =>
     T(
       'Имя видно людям в поиске и в приглашениях.',
       'Your name is what people see in search and invitations.'
-    ),
+    , 'Tu nombre es lo que ven las personas en la búsqueda y en las invitaciones.'),
 };
 
 /** Листы правки поверх профиля — кадры со «Accept changes». */
 export const SHEETS = {
-  languages: () => T('Языки', 'Languages'),
-  location: () => T('Локация', 'Location'),
-  accept: () => T('Принять изменения', 'Accept changes'),
-  search: () => T('Найти язык', 'Find a language'),
-  nothing: () => T('Ничего не нашлось', 'Nothing found'),
-  chosen: () => T('Выбрано', 'Selected'),
-  close: () => T('Закрыть', 'Close'),
+  languages: () => T('Языки', 'Languages', 'Idiomas'),
+  location: () => T('Локация', 'Location', 'Ubicación'),
+  accept: () => T('Принять изменения', 'Accept changes', 'Aceptar cambios'),
+  search: () => T('Найти язык', 'Find a language', 'Buscar un idioma'),
+  nothing: () => T('Ничего не нашлось', 'Nothing found', 'Nada encontrado'),
+  /** Языков восемьдесят четыре. Показываем ходовые, остальное — поиском. */
+  moreLangs: (n: number) =>
+    T(`Ещё ${n} языков — найди поиском`, `${n} more languages — use the search`, `${n} idiomas más: usa la búsqueda`),
+  chosen: () => T('Выбрано', 'Selected', 'Seleccionado'),
+  close: () => T('Закрыть', 'Close', 'Cerrar'),
 };
 
 export const SIGNOUT = {
   label: (hasLogin: boolean) =>
-    hasLogin ? T('Выйти из аккаунта', 'Sign out') : T('Выйти и начать заново', 'Sign out and start over'),
+    hasLogin ? T('Выйти из аккаунта', 'Sign out', 'Cerrar sesión') : T('Выйти и начать заново', 'Sign out and start over', 'Cerrar sesión y empezar de nuevo'),
   ask: (hasLogin: boolean) =>
     hasLogin
       ? T(
           'Выйти из аккаунта? Профиль останется на сервере и вернётся при следующем входе.',
           'Sign out? Your profile stays on the server and comes back when you sign in.'
-        )
+        , '¿Cerrar sesión? Tu perfil permanece en el servidor y vuelve cuando inicies sesión.')
       : T(
           'У этого профиля нет логина, поэтому вернуть его будет нечем — он сотрётся вместе со всем, что собрано на этом телефоне. Выйти?',
           'This profile has no login, so there is nothing to restore it with — it will be erased along with everything collected on this phone. Sign out?'
-        ),
-  yes: () => T('Выйти', 'Sign out'),
-  no: () => T('Отмена', 'Cancel'),
+        , 'Este perfil no tiene inicio de sesión, así que no hay nada con lo que restaurarlo — se eliminará junto con todo lo recopilado en este teléfono. ¿Cerrar sesión?'),
+  yes: () => T('Выйти', 'Sign out', 'Cerrar sesión'),
+  no: () => T('Отмена', 'Cancel', 'Cancelar'),
   who: (login: string | null) =>
-    login ? T(`Вход выполнен как ${login}`, `Signed in as ${login}`)
-          : T('Аккаунт не подключён', 'No account connected'),
+    login ? T(`Вход выполнен как ${login}`, `Signed in as ${login}`, `Iniciado como ${login}`)
+          : T('Аккаунт не подключён', 'No account connected', 'No hay cuenta conectada'),
 };
 
 export const AVAIL: [string, () => string][] = [
-  ['active', () => T('Открыт', 'Open')],
-  ['busy', () => T('Занят', 'Busy')],
-  ['paused', () => T('Пауза', 'Pause')],
+  ['active', () => T('Открыт', 'Open', 'Abrir')],
+  ['busy', () => T('Занят', 'Busy', 'Ocupado')],
+  ['paused', () => T('Пауза', 'Pause', 'Pausa')],
 ];
 
 /**
@@ -482,13 +498,14 @@ export const AVAIL: [string, () => string][] = [
 export function fmtUpdated(ts?: number | null): string {
   if (!ts) return '';
   const d = Math.floor((Date.now() - ts) / 864e5);
-  if (d <= 0) return T('Обновлено сегодня', 'Updated today');
-  if (d === 1) return T('Обновлено вчера', 'Updated yesterday');
-  if (d < 7) return T(`Обновлено ${d} дн. назад`, `Updated ${d} days ago`);
+  if (d <= 0) return T('Обновлено сегодня', 'Updated today', 'Actualizado hoy');
+  if (d === 1) return T('Обновлено вчера', 'Updated yesterday', 'Actualizado ayer');
+  if (d < 7) return T(`Обновлено ${d} дн. назад`, `Updated ${d} days ago`, `Actualizado hace ${d} días`);
   const dt = new Date(ts);
   return T(
     'Обновлено ' + dt.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }),
-    'Updated ' + dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    'Updated ' + dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+    'Actualizado el ' + dt.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
   );
 }
 
@@ -606,28 +623,28 @@ export function profileData(op: Profile | any): ProfileData {
     const n = lc(name);
     const r = roleOf(rolesRaw, name, ints);
     const e = pickBy(exp, name);
-    if (r) kv.push([T('Роль', 'Role'), arr(r).map(cap).join(' / ')]);
-    if (e) kv.push([T('Опыт', 'Experience'), String(e)]);
+    if (r) kv.push([T('Роль', 'Role', 'Rol'), arr(r).map(cap).join(' / ')]);
+    if (e) kv.push([T('Опыт', 'Experience', 'Experiencia'), String(e)]);
     if (inList(games.gamesList, name) || /dota|valorant|league|\bcs\b|apex|game/.test(n)) {
       const p = pickBy(games.platformsByGame, name);
-      if (p) kv.push([T('Платформа', 'Platform'), String(p)]);
+      if (p) kv.push([T('Платформа', 'Platform', 'Plataforma'), String(p)]);
       const rk = pickBy(games.rankByGame, name);
-      if (rk) kv.push([T('Ранг / уровень', 'Rank / level'), String(rk)]);
+      if (rk) kv.push([T('Ранг / уровень', 'Rank / level', 'Ranking / nivel'), String(rk)]);
     }
     if (inList(sport.sportsList, name)) {
       const lv = pickBy(sport.skillLevelBySport, name);
-      if (lv) kv.push([T('Уровень', 'Skill level'), cap(String(lv))]);
+      if (lv) kv.push([T('Уровень', 'Skill level', 'Nivel de habilidad'), cap(String(lv))]);
       const tm = pickBy(sport.favoriteTeams, name) ||
         (Array.isArray(sport.favoriteTeams) ? sport.favoriteTeams.join(', ') : null);
-      if (tm) kv.push([T('Команда', 'Team'), String(tm)]);
+      if (tm) kv.push([T('Команда', 'Team', 'Equipo'), String(tm)]);
     }
     if (/language|spanish|english|french|german|italian|practice/.test(n)) {
-      if (langd.targetLanguage) kv.push([T('Язык', 'Language'), String(langd.targetLanguage)]);
-      if (langd.targetLevel) kv.push([T('Уровень', 'Level'), String(langd.targetLevel)]);
+      if (langd.targetLanguage) kv.push([T('Язык', 'Language', 'Idioma'), String(langd.targetLanguage)]);
+      if (langd.targetLevel) kv.push([T('Уровень', 'Level', 'Nivel'), String(langd.targetLevel)]);
     }
     if (/network|startup|business|career|founder/.test(n)) {
-      if (net.industry) kv.push([T('Отрасль', 'Industry'), String(net.industry)]);
-      if (net.goal) kv.push([T('Цель', 'Goal'), String(net.goal)]);
+      if (net.industry) kv.push([T('Отрасль', 'Industry', 'Industria'), String(net.industry)]);
+      if (net.goal) kv.push([T('Цель', 'Goal', 'Objetivo'), String(net.goal)]);
     }
     // Уверенность как в вебе: первые два интереса человек назвал сам и осознанно, дальше — по тому,
     // рассказал ли он о них хоть что-то сверх названия.
@@ -641,17 +658,17 @@ export function profileData(op: Profile | any): ProfileData {
     // Пол показываем подписью, а не хранимым ключом. В вебе здесь просто `cap(gender)`, и на
     // русском экране это «Male» — то есть значение из базы, показанное человеку как есть.
     basics.push({
-      title: T('Основное', 'Basics'),
+      title: T('Основное', 'Basics', 'Datos básicos'),
       value: [op.gender ? sexLabel(String(op.gender)) : '', op.age].filter(Boolean).join(' · ') || '—',
     });
   }
   if (areas.length || city) {
     basics.push({
-      title: T('Локация', 'Location'),
-      value: [areas.join(', ') || city, km ? T(`до ${km} км`, `Max ${km} km`) : null].filter(Boolean).join(' · '),
+      title: T('Локация', 'Location', 'Ubicación'),
+      value: [areas.join(', ') || city, km ? T(`до ${km} км`, `Max ${km} km`, `Máx. ${km} km`) : null].filter(Boolean).join(' · '),
     });
   }
-  if (langs.length) basics.push({ title: T('Языки', 'Languages'), value: langs.join(' · ') });
+  if (langs.length) basics.push({ title: T('Языки', 'Languages', 'Idiomas'), value: langs.join(' · ') });
 
   // Наполненность — доля из шести признаков, ровно как в вебе. Не «красивое число»: полоса,
   // которая всегда 74 %, не сообщает ничего.
@@ -680,7 +697,7 @@ export function profileData(op: Profile | any): ProfileData {
     excludeKnown: sf.excludeKnown !== false,
   };
 
-  return { name: op.name || T('Ты', 'You'), verified: !!(op as any).verified, confidence, basics, interests, safety };
+  return { name: op.name || T('Ты', 'You', 'Tú'), verified: !!(op as any).verified, confidence, basics, interests, safety };
 }
 
 // ---------------------------------------------------------------- интересы
@@ -690,70 +707,70 @@ export const INTERESTS_SCREEN = {
     T(
       'Если переключатель включён, Kleal учитывает этот интерес при подборе.',
       'When a toggle is on, Kleal uses that interest for matching.'
-    ),
+    , 'Cuando un interruptor está encendido, Kleal usa ese interés para hacer coincidencias.'),
   summary: (name: string) =>
-    T(`Kleal ещё разбирается, что для тебя значит ${name}.`, `Kleal is still learning about your ${name}.`),
-  emptyTitle: () => T('Пока нет интересов', 'No interests yet'),
+    T(`Kleal ещё разбирается, что для тебя значит ${name}.`, `Kleal is still learning about your ${name}.`, `Kleal aún está aprendiendo sobre tu ${name}.`),
+  emptyTitle: () => T('Пока нет интересов', 'No interests yet', 'Todavía no hay intereses'),
   emptySub: () =>
     T(
       'Расскажи Kleal, чем увлекаешься — и они появятся здесь.',
       "Tell Kleal what you're into and they'll show up here."
-    ),
-  add: () => T('Добавить интересы', 'Add interests'),
-  remove: () => T('Удалить', 'Remove'),
+    , 'Dile a Kleal lo que te interesa y aparecerán aquí.'),
+  add: () => T('Добавить интересы', 'Add interests', 'Añade intereses'),
+  remove: () => T('Удалить', 'Remove', 'Eliminar'),
   confLabel: (c: string) =>
-    c === 'High' ? T('высокая', 'high') : c === 'Medium' ? T('средняя', 'medium') : T('низкая', 'low'),
+    c === 'High' ? T('высокая', 'high', 'alto') : c === 'Medium' ? T('средняя', 'medium', 'medio') : T('низкая', 'low', 'bajo'),
 };
 
 // ---------------------------------------------------------------- личность
 
 export const PERSONALITY = {
-  title: () => T('Твоя личность', 'Your personality'),
-  takeTest: () => T('Пройти тест от Kleal', 'Take your personality test'),
+  title: () => T('Твоя личность', 'Your personality', 'Tu personalidad'),
+  takeTest: () => T('Пройти тест от Kleal', 'Take your personality test', 'Haz la prueba de personalidad'),
   empty: () =>
     T(
       'Пройди тест — и Kleal расскажет, как ты воспринимаешься со стороны и с кем тебе легко.',
       'Take the test and Kleal will describe how you come across and who you click with.'
-    ),
-  editWith: () => T('Изменить с Kleal', 'Edit with Kleal'),
+    , 'Haz la prueba y Kleal describirá cómo te perciben y con quién te llevas bien.'),
+  editWith: () => T('Изменить с Kleal', 'Edit with Kleal', 'Edita con Kleal'),
   /** Оси теста на самом экране личности: они лежат в профиле, и прятать их от того, про кого они,
    *  незачем. Заодно видно, что тест засчитан, даже когда абзац не собрался. */
-  axesTitle: () => T('Ответы теста', 'Your test answers'),
-  retake: () => T('Пройти тест заново', 'Take the test again'),
+  axesTitle: () => T('Ответы теста', 'Your test answers', 'Tus respuestas de prueba'),
+  retake: () => T('Пройти тест заново', 'Take the test again', 'Vuelve a hacer la prueba'),
   /** Предложение интересов из истории — GR/профиль. Подтверждает человек, а не приложение. */
-  fromStoryTitle: () => T('Из твоей истории', 'From your story'),
+  fromStoryTitle: () => T('Из твоей истории', 'From your story', 'Desde tu historia'),
   fromStoryNote: () => T(
     'Матчинг ищет по интересам, а не по тексту. Отметь, что добавить — остальное останется просто историей.',
     'Search runs on interests, not prose. Tap what to add — the rest stays just a story.'
-  ),
+  , 'La búsqueda se basa en intereses, no en prosa. Toca para añadir — el resto es solo una historia.'),
   fromStoryAdd: (n: number) =>
-    n === 1 ? T('Добавить 1 интерес', 'Add 1 interest') : T(`Добавить ${n}`, `Add ${n}`),
-  fromStoryAdded: () => T('Добавлено в интересы', 'Added to your interests'),
+    n === 1 ? T('Добавить 1 интерес', 'Add 1 interest', 'Añade 1 interés') : T(`Добавить ${n}`, `Add ${n}`, `Añadir ${n}`),
+  fromStoryAdded: () => T('Добавлено в интересы', 'Added to your interests', 'Añadido a tus intereses'),
   fromStoryNone: () => T('В истории пока не видно занятий — напиши, что ты делаешь и любишь.',
-                         'No activities visible in the story yet — write what you do and enjoy.'),
+                         'No activities visible in the story yet — write what you do and enjoy.', 'Todavía no hay actividades visibles en la historia — escribe lo que haces y diviértete.'),
 
   storyCap: () =>
     T(
       'Расскажи историю своей жизни в свободном формате (детство, обучение, интересы, профессия)',
       'Tell your life story in your own words — childhood, studies, interests, work'
-    ),
+    , 'Cuéntanos tu vida con tus propias palabras — infancia, estudios, intereses, trabajo'),
   storyPlaceholder: () =>
-    T('Пиши как получится — Kleal сам разберётся.', "Write it however it comes out — Kleal will make sense of it."),
-  confirm: () => T('Сохранить и закрыть', 'Confirm & Close'),
-  saved: () => T('Сохранено', 'Saved'),
+    T('Пиши как получится — Kleal сам разберётся.', "Write it however it comes out — Kleal will make sense of it.", 'Escríbelo como te salga — Kleal lo entenderá.'),
+  confirm: () => T('Сохранить и закрыть', 'Confirm & Close', 'Confirmar y cerrar'),
+  saved: () => T('Сохранено', 'Saved', 'Guardado'),
 
   /** Явные кнопки под полем истории: применить написанное и увидеть, что из этого вышло. */
-  apply: () => T('Сохранить историю', 'Save your story'),
-  applied: () => T('История сохранена', 'Story saved'),
-  rebuild: () => T('Пересобрать сводку Kleal', 'Rebuild Kleal’s summary'),
+  apply: () => T('Сохранить историю', 'Save your story', 'Guarda tu historia'),
+  applied: () => T('История сохранена', 'Story saved', 'Historia guardada'),
+  rebuild: () => T('Пересобрать сводку Kleal', 'Rebuild Kleal’s summary', 'Vuelve a crear el resumen de Kleal'),
   rebuildNote: () =>
     T(
       'Kleal перечитает профиль вместе с твоей историей и перепишет сводку — ту, что стоит на главной профиля.',
       'Kleal re-reads your profile together with your story and rewrites the summary — the one on your profile home.'
-    ),
-  rebuiltLabel: () => T('Новая сводка Kleal', 'Your new Kleal summary'),
+    , 'Kleal vuelve a leer tu perfil junto con tu historia y reescribe el resumen — el que aparece en tu página principal.'),
+  rebuiltLabel: () => T('Новая сводка Kleal', 'Your new Kleal summary', 'Tu nuevo resumen de Kleal'),
   rebuildFailed: () =>
-    T('Не получилось пересобрать. Попробуй ещё раз.', 'Couldn’t rebuild it. Try again.'),
+    T('Не получилось пересобрать. Попробуй ещё раз.', 'Couldn’t rebuild it. Try again.', 'No se pudo reconstruirlo. Inténtalo de nuevo.'),
 };
 
 /** Предел из update_user: STORY_MAX. Обрезаем здесь же, чтобы не отправлять заведомо лишнее. */
@@ -798,111 +815,111 @@ export type TestQ = {
 export const TEST_Q: TestQ[] = [
   {
     k: 'energy',
-    scene: () => T('Суббота, ты весь день был среди людей.', 'Saturday, you have been around people all day.'),
-    q: () => T('Наступает вечер. Что с тобой происходит?', 'Evening comes. What happens to you?'),
+    scene: () => T('Суббота, ты весь день был среди людей.', 'Saturday, you have been around people all day.', 'Sábado, has estado rodeado de personas todo el día.'),
+    q: () => T('Наступает вечер. Что с тобой происходит?', 'Evening comes. What happens to you?', 'Llega la noche. ¿Qué haces tú?'),
     o: [
-      () => T('Ещё не наигрался — ищешь, куда поехать дальше', 'Still going — you look for where to head next'),
-      () => T('Отключаешь телефон и никого не хочешь', 'You switch the phone off and want nobody'),
-      () => T('Хватает сил ровно на одного человека', 'You have exactly one person left in you'),
+      () => T('Ещё не наигрался — ищешь, куда поехать дальше', 'Still going — you look for where to head next', 'Aún con ganas — buscas dónde seguir'),
+      () => T('Отключаешь телефон и никого не хочешь', 'You switch the phone off and want nobody', 'Apagas el teléfono y no quieres que nadie te moleste'),
+      () => T('Хватает сил ровно на одного человека', 'You have exactly one person left in you', 'Tienes exactamente a una persona más en ti'),
     ],
     m: ['energised', 'drained', 'depends'],
   },
   {
     k: 'group',
     q: () => T('Вспомни последний разговор, из которого ты вышел довольным. Сколько вас было?',
-               'Think of the last conversation you walked away happy from. How many of you were there?'),
+               'Think of the last conversation you walked away happy from. How many of you were there?', 'Piensa en la última conversación de la que te fuiste feliz. ¿Cuántos de vosotros estabais ahí?'),
     o: [
-      () => T('Двое', 'Two'),
-      () => T('Стол на четверых-пятерых', 'A table of four or five'),
-      () => T('Много, и ты был в гуще', 'A lot of people, and you were in the middle of it'),
+      () => T('Двое', 'Two', 'Dos'),
+      () => T('Стол на четверых-пятерых', 'A table of four or five', 'Una mesa de cuatro o cinco personas'),
+      () => T('Много, и ты был в гуще', 'A lot of people, and you were in the middle of it', 'Mucha gente, y tú estabas en el centro de todo'),
     ],
     m: ['one', 'small', 'crowd'],
   },
   {
     k: 'depth',
-    scene: () => T('Полчаса как познакомились, разговор пошёл.', 'Half an hour in, the conversation has caught.'),
-    q: () => T('О чём вы говорите, когда становится интересно?', 'What are you talking about when it gets good?'),
+    scene: () => T('Полчаса как познакомились, разговор пошёл.', 'Half an hour in, the conversation has caught.', 'Media hora después, la conversación ha cogido ritmo.'),
+    q: () => T('О чём вы говорите, когда становится интересно?', 'What are you talking about when it gets good?', '¿De qué habláis cuando os lleváis bien?'),
     o: [
-      () => T('О том, о чём обычно не говорят с незнакомыми', 'About things you normally do not say to strangers'),
-      () => T('О ерунде, но так, что оба смеётесь', 'About nothing much, but you are both laughing'),
-      () => T('О деле: кто что делает и как это устроено', 'About the work: who does what and how it is put together'),
+      () => T('О том, о чём обычно не говорят с незнакомыми', 'About things you normally do not say to strangers', 'Sobre cosas que normalmente no dices a desconocidos'),
+      () => T('О ерунде, но так, что оба смеётесь', 'About nothing much, but you are both laughing', 'Sobre nada en concreto, pero los dos estáis riéndote'),
+      () => T('О деле: кто что делает и как это устроено', 'About the work: who does what and how it is put together', 'Sobre el trabajo: quién hace qué y cómo se organiza'),
     ],
     m: ['deep', 'light', 'practical'],
   },
   {
     k: 'firstMeet',
     q: () => T('Первая встреча удалась. По чему ты это понял?',
-               'A first meet went well. How do you know?'),
+               'A first meet went well. How do you know?', 'Una primera quedada fue bien. ¿Cómo lo sabes?'),
     o: [
-      () => T('Просидели дольше, чем собирались', 'You stayed longer than you meant to'),
-      () => T('Что-то сделали вместе, а не просто поговорили', 'You did something together, not just talked'),
-      () => T('Вокруг что-то происходило, и вы это обсуждали', 'Something was going on around you and you had it to talk about'),
+      () => T('Просидели дольше, чем собирались', 'You stayed longer than you meant to', 'Te quedaste más tiempo del que querías'),
+      () => T('Что-то сделали вместе, а не просто поговорили', 'You did something together, not just talked', 'Hiciste algo juntos, no solo hablasteis'),
+      () => T('Вокруг что-то происходило, и вы это обсуждали', 'Something was going on around you and you had it to talk about', 'Pasaba algo a tu alrededor y tenías de qué hablar'),
     ],
     m: ['talk', 'doing', 'event'],
   },
   {
     k: 'pace',
     q: () => T('Когда новый человек узнаёт про тебя что-то настоящее?',
-               'When does a new person learn something real about you?'),
+               'When does a new person learn something real about you?', '¿Cuándo una persona nueva aprende algo real sobre ti?'),
     o: [
-      () => T('Почти сразу — ты не умеешь иначе', 'Almost straight away — you do not know another way'),
-      () => T('Когда решишь, что ему можно', 'Once you have decided they can be trusted with it'),
-      () => T('Когда он расскажет первым', 'Once they have gone first'),
+      () => T('Почти сразу — ты не умеешь иначе', 'Almost straight away — you do not know another way', 'Casi de inmediato — no conoces otra manera'),
+      () => T('Когда решишь, что ему можно', 'Once you have decided they can be trusted with it', 'Una vez que hayas decidido que pueden confiar en ello'),
+      () => T('Когда он расскажет первым', 'Once they have gone first', 'Una vez que ellos hayan ido primero'),
     ],
     m: ['fast', 'slow', 'mirror'],
   },
   {
     k: 'planning',
-    scene: () => T('Пятница, шесть вечера, планов нет.', 'Friday, six in the evening, nothing planned.'),
-    q: () => T('Как так вышло?', 'How did that happen?'),
+    scene: () => T('Пятница, шесть вечера, планов нет.', 'Friday, six in the evening, nothing planned.', 'Viernes, seis de la tarde, nada planeado.'),
+    q: () => T('Как так вышло?', 'How did that happen?', '¿Cómo ocurrió?'),
     o: [
-      () => T('Не вышло — ты договорился ещё в среду', 'It did not — you sorted this out on Wednesday'),
-      () => T('Сейчас напишешь троим и куда-нибудь поедешь', 'You are about to message three people and go somewhere'),
-      () => T('И хорошо: вечер дома тебя устраивает', 'And that is fine — an evening at home suits you'),
+      () => T('Не вышло — ты договорился ещё в среду', 'It did not — you sorted this out on Wednesday', 'No lo hizo — lo resolviste el miércoles'),
+      () => T('Сейчас напишешь троим и куда-нибудь поедешь', 'You are about to message three people and go somewhere', 'Estás a punto de enviar un mensaje a tres personas y reunirte con ellas'),
+      () => T('И хорошо: вечер дома тебя устраивает', 'And that is fine — an evening at home suits you', 'Y está bien — una noche en casa te va bien'),
     ],
     m: ['advance', 'spontaneous', 'flexible'],
   },
   {
     k: 'friction',
-    scene: () => T('За час до встречи человек пишет: не смогу.', 'An hour before you meet, they message: I cannot make it.'),
-    q: () => T('Что ты делаешь?', 'What do you do?'),
+    scene: () => T('За час до встречи человек пишет: не смогу.', 'An hour before you meet, they message: I cannot make it.', 'Una hora antes de la quedada, te envían un mensaje: No puedo venir.'),
+    q: () => T('Что ты делаешь?', 'What do you do?', '¿Qué haces?'),
     o: [
-      () => T('Сразу предлагаешь другой день', 'You offer another day right away'),
-      () => T('Отвечаешь «ок» и ждёшь, что предложит он', 'You reply “sure” and wait for them to offer one'),
-      () => T('Ничего. Значит, не сложилось', 'Nothing. It was not meant to happen'),
+      () => T('Сразу предлагаешь другой день', 'You offer another day right away', 'Ofreces otro día de inmediato'),
+      () => T('Отвечаешь «ок» и ждёшь, что предложит он', 'You reply “sure” and wait for them to offer one', 'Tú respondes “seguro” y esperas a que ellos ofrezcan uno'),
+      () => T('Ничего. Значит, не сложилось', 'Nothing. It was not meant to happen', 'Nada. No estaba destinado a suceder'),
     ],
     m: ['reschedule', 'wait', 'letgo'],
   },
   {
     k: 'lull',
-    scene: () => T('Разговор идёт хорошо, и вдруг оба замолчали.', 'The conversation is going well, and suddenly you both go quiet.'),
-    q: () => T('Что происходит внутри?', 'What is going on inside?'),
+    scene: () => T('Разговор идёт хорошо, и вдруг оба замолчали.', 'The conversation is going well, and suddenly you both go quiet.', 'La conversación va bien, y de repente ambos se quedan en silencio.'),
+    q: () => T('Что происходит внутри?', 'What is going on inside?', '¿Qué está pasando dentro de ti?'),
     o: [
-      () => T('Ты уже придумываешь, чем её заполнить', 'You are already thinking of something to fill it with'),
-      () => T('Ничего. Пауза — тоже часть разговора', 'Nothing. A pause is part of the conversation too'),
-      () => T('Становится неловко и хочется закруглиться', 'It gets awkward and you want to wrap up'),
+      () => T('Ты уже придумываешь, чем её заполнить', 'You are already thinking of something to fill it with', 'Ya estás pensando en algo con lo que rellenarlo'),
+      () => T('Ничего. Пауза — тоже часть разговора', 'Nothing. A pause is part of the conversation too', 'Nada. Una pausa también forma parte de la conversación'),
+      () => T('Становится неловко и хочется закруглиться', 'It gets awkward and you want to wrap up', 'Se pone incómodo y quieres terminar'),
     ],
     m: ['fill', 'allow', 'uneasy'],
   },
   {
     k: 'give',
     q: () => T('За что тебя держат те, кто с тобой давно?',
-               'What do the people who have stayed keep you around for?'),
+               'What do the people who have stayed keep you around for?', '¿Qué es lo que mantiene a la gente que se queda a tu alrededor?'),
     o: [
-      () => T('Ты слушаешь и помнишь', 'You listen, and you remember'),
-      () => T('С тобой смешно', 'You make it funny'),
-      () => T('На тебя можно рассчитывать', 'You can be counted on'),
-      () => T('Ты вытаскиваешь их из дома', 'You get them out of the house'),
+      () => T('Ты слушаешь и помнишь', 'You listen, and you remember', 'Escuchas, y te acuerdas'),
+      () => T('С тобой смешно', 'You make it funny', 'Haces que sea divertido'),
+      () => T('На тебя можно рассчитывать', 'You can be counted on', 'Se puede contar contigo'),
+      () => T('Ты вытаскиваешь их из дома', 'You get them out of the house', 'Tú los sacas de casa'),
     ],
     m: ['listen', 'fun', 'reliable', 'instigate'],
   },
   {
     k: 'seek',
-    q: () => T('Чего тебе сейчас не хватает?', 'What are you short of right now?'),
+    q: () => T('Чего тебе сейчас не хватает?', 'What are you short of right now?', '¿Qué te falta ahora mismo?'),
     o: [
-      () => T('Двух-трёх своих людей', 'Two or three people of your own'),
-      () => T('Компании под конкретное занятие', 'Company for one specific thing'),
-      () => T('Просто больше жизни вокруг', 'Simply more life around you'),
+      () => T('Двух-трёх своих людей', 'Two or three people of your own', 'Dos o tres personas tuyas'),
+      () => T('Компании под конкретное занятие', 'Company for one specific thing', 'Compañía para algo concreto'),
+      () => T('Просто больше жизни вокруг', 'Simply more life around you', 'Sólo más vida a tu alrededor'),
     ],
     m: ['long', 'interest', 'wider'],
   },
@@ -912,8 +929,8 @@ export const TEST_Q: TestQ[] = [
     // случаем, а модели именно конкретное и нужно.
     k: 'own',
     q: () => T('Последнее. Допиши фразу — как есть, без причёсывания.',
-               'Last one. Finish the sentence — as it comes, unpolished.'),
-    stem: () => T('Со мной легко, если…', 'I am easy to be around if…'),
+               'Last one. Finish the sentence — as it comes, unpolished.', 'Última. Acaba la frase — como venga, sin pulir.'),
+    stem: () => T('Со мной легко, если…', 'I am easy to be around if…', 'Estoy fácil de trato si…'),
     o: [], m: [], free: true,
   },
 ];
@@ -924,50 +941,50 @@ export const TEST_Q: TestQ[] = [
  * узнал и не сказал что, — гадание, а не тест.
  */
 export const AXIS_LABEL: Record<string, () => string> = {
-  energy: () => T('Люди', 'People'),
-  group: () => T('Формат', 'Format'),
-  depth: () => T('Разговор', 'Conversation'),
-  firstMeet: () => T('Первая встреча', 'A first meet'),
-  pace: () => T('Открытость', 'Opening up'),
-  planning: () => T('Планы', 'Plans'),
-  friction: () => T('Когда отменяют', 'When plans fall through'),
-  lull: () => T('Пауза', 'Silence'),
-  give: () => T('Что приносишь', 'What you bring'),
-  seek: () => T('Ищешь', 'Looking for'),
+  energy: () => T('Люди', 'People', 'Personas'),
+  group: () => T('Формат', 'Format', 'Formato'),
+  depth: () => T('Разговор', 'Conversation', 'Conversación'),
+  firstMeet: () => T('Первая встреча', 'A first meet', 'Una primera quedada'),
+  pace: () => T('Открытость', 'Opening up', 'Abriéndose'),
+  planning: () => T('Планы', 'Plans', 'Planes'),
+  friction: () => T('Когда отменяют', 'When plans fall through', 'Cuando los planes se caen'),
+  lull: () => T('Пауза', 'Silence', 'Silencio'),
+  give: () => T('Что приносишь', 'What you bring', 'Lo que aportas tú'),
+  seek: () => T('Ищешь', 'Looking for', 'Buscando'),
 };
 
 export const AXIS_VALUE: Record<string, () => string> = {
-  energised: () => T('заряжают', 'charge you up'),
-  drained: () => T('забирают силы', 'take it out of you'),
-  depends: () => T('по одному — да, толпой — нет', 'one at a time, not in a crowd'),
-  one: () => T('один на один', 'one to one'),
-  small: () => T('небольшой стол', 'a small table'),
-  crowd: () => T('большая компания', 'a big crowd'),
-  deep: () => T('вглубь', 'goes deep'),
-  light: () => T('легко и смешно', 'light and funny'),
-  practical: () => T('по делу', 'to the point'),
-  talk: () => T('просидеть дольше, чем собирались', 'staying longer than planned'),
-  doing: () => T('делать что-то вместе', 'doing something together'),
-  event: () => T('там, где что-то происходит', 'somewhere things are happening'),
-  fast: () => T('сразу настоящий', 'real from the start'),
-  slow: () => T('когда решишь, что можно', 'once you decide they can be trusted'),
-  mirror: () => T('в ответ на откровенность', 'in answer to theirs'),
-  advance: () => T('заранее', 'agreed in advance'),
-  spontaneous: () => T('спонтанно', 'on the spur'),
-  flexible: () => T('вечер дома тоже вариант', 'an evening in is fine too'),
-  reschedule: () => T('предлагаешь другой день', 'you offer another day'),
-  wait: () => T('ждёшь встречного шага', 'you wait for their move'),
-  letgo: () => T('отпускаешь', 'you let it go'),
-  fill: () => T('заполняешь', 'you fill it'),
-  allow: () => T('даёшь ей побыть', 'you let it sit'),
-  uneasy: () => T('становится неловко', 'it makes you uneasy'),
-  listen: () => T('слушаешь и помнишь', 'you listen and remember'),
-  fun: () => T('с тобой смешно', 'you make it funny'),
-  reliable: () => T('на тебя можно рассчитывать', 'you can be counted on'),
-  instigate: () => T('вытаскиваешь из дома', 'you get people out'),
-  long: () => T('своих людей надолго', 'people of your own, long term'),
-  interest: () => T('компанию под занятие', 'company for one thing'),
-  wider: () => T('больше жизни вокруг', 'more life around you'),
+  energised: () => T('заряжают', 'charge you up', 'te recargan'),
+  drained: () => T('забирают силы', 'take it out of you', 'te agotan'),
+  depends: () => T('по одному — да, толпой — нет', 'one at a time, not in a crowd', 'uno a la vez, no en grupo'),
+  one: () => T('один на один', 'one to one', 'uno a uno'),
+  small: () => T('небольшой стол', 'a small table', 'una mesa pequeña'),
+  crowd: () => T('большая компания', 'a big crowd', 'un grupo numeroso'),
+  deep: () => T('вглубь', 'goes deep', 'a fondo'),
+  light: () => T('легко и смешно', 'light and funny', 'ligero y divertido'),
+  practical: () => T('по делу', 'to the point', 'al punto'),
+  talk: () => T('просидеть дольше, чем собирались', 'staying longer than planned', 'quedarse más tiempo del planeado'),
+  doing: () => T('делать что-то вместе', 'doing something together', 'hacer algo juntos'),
+  event: () => T('там, где что-то происходит', 'somewhere things are happening', 'algún lugar donde ocurren cosas'),
+  fast: () => T('сразу настоящий', 'real from the start', 'real desde el principio'),
+  slow: () => T('когда решишь, что можно', 'once you decide they can be trusted', 'una vez que decides que pueden ser de confianza'),
+  mirror: () => T('в ответ на откровенность', 'in answer to theirs', 'en respuesta a la suya'),
+  advance: () => T('заранее', 'agreed in advance', 'acordado con antelación'),
+  spontaneous: () => T('спонтанно', 'on the spur', 'espontáneo'),
+  flexible: () => T('вечер дома тоже вариант', 'an evening in is fine too', 'también está bien una noche en casa'),
+  reschedule: () => T('предлагаешь другой день', 'you offer another day', 'tú propones otro día'),
+  wait: () => T('ждёшь встречного шага', 'you wait for their move', 'tú esperas a que se muevan'),
+  letgo: () => T('отпускаешь', 'you let it go', 'lo dejas ir'),
+  fill: () => T('заполняешь', 'you fill it', 'lo llenas tú'),
+  allow: () => T('даёшь ей побыть', 'you let it sit', 'lo dejas ahí'),
+  uneasy: () => T('становится неловко', 'it makes you uneasy', 'te hace sentir incómodo'),
+  listen: () => T('слушаешь и помнишь', 'you listen and remember', 'escuchas y recuerdas'),
+  fun: () => T('с тобой смешно', 'you make it funny', 'tú lo haces divertido'),
+  reliable: () => T('на тебя можно рассчитывать', 'you can be counted on', 'se puede contar contigo'),
+  instigate: () => T('вытаскиваешь из дома', 'you get people out', 'sacas a la gente'),
+  long: () => T('своих людей надолго', 'people of your own, long term', 'gente propia, a largo plazo'),
+  interest: () => T('компанию под занятие', 'company for one thing', 'compañía para una cosa'),
+  wider: () => T('больше жизни вокруг', 'more life around you', 'más vida a tu alrededor'),
 };
 
 /** Порядок строк на экране результата — от «как с людьми» к «что делаешь, когда трудно». */
@@ -976,178 +993,45 @@ export const AXIS_ORDER = [
 ];
 
 export const TEST = {
-  title: () => T('Тест от Kleal', 'Your Kleal test'),
-  of: (i: number, n: number) => T(`Вопрос ${i} из ${n}`, `Question ${i} of ${n}`),
-  skip: () => T('Пропустить', 'Skip'),
-  placeholder: () => T('Дальше своими словами…', 'Carry on in your own words…'),
-  finish: () => T('Готово', 'Done'),
-  working: () => T('Kleal обдумывает ответы…', 'Kleal is thinking it over…'),
+  title: () => T('Тест от Kleal', 'Your Kleal test', 'Tu prueba en Kleal'),
+  of: (i: number, n: number) => T(`Вопрос ${i} из ${n}`, `Question ${i} of ${n}`, `Pregunta ${i} de ${n}`),
+  skip: () => T('Пропустить', 'Skip', 'Saltar'),
+  placeholder: () => T('Дальше своими словами…', 'Carry on in your own words…', 'Continúa con tus propias palabras...'),
+  finish: () => T('Готово', 'Done', 'Hecho'),
+  working: () => T('Kleal обдумывает ответы…', 'Kleal is thinking it over…', 'Kleal está pensándolo…'),
   failed: () =>
     T('Не получилось собрать результат. Ответы сохранены — попробуй ещё раз.',
-      'Could not put the result together. Your answers are saved — try again.'),
+      'Could not put the result together. Your answers are saved — try again.', 'No se pudo crear el resultado. Tus respuestas están guardadas — inténtalo de nuevo.'),
 
   /** Экран результата. Раньше тест просто закрывался, и человек не видел, что из него вышло. */
-  resultTitle: () => T('Вот что получилось', 'Here is what came out'),
-  axesTitle: () => T('Что Kleal записал', 'What Kleal wrote down'),
+  resultTitle: () => T('Вот что получилось', 'Here is what came out', 'Esto es lo que ha salido'),
+  axesTitle: () => T('Что Kleal записал', 'What Kleal wrote down', 'Lo que Kleal ha anotado'),
   axesNote: () => T('Это остаётся в профиле и видно только тебе.',
-                    'This stays in your profile and only you see it.'),
-  skipped: () => T('Пропущено', 'Skipped'),
-  keep: () => T('Сохранить', 'Keep it'),
-  again: () => T('Пройти заново', 'Take it again'),
+                    'This stays in your profile and only you see it.', 'Esto permanece en tu perfil y solo tú lo ves.'),
+  skipped: () => T('Пропущено', 'Skipped', 'Saltado'),
+  keep: () => T('Сохранить', 'Keep it', 'Manténlo'),
+  again: () => T('Пройти заново', 'Take it again', 'Vuelve a hacerlo'),
   /** Честная строка, когда абзац не собрался, а ответы записались. */
   axesOnly: () =>
-    T('Ответы сохранены — абзац Kleal напишет позже.', 'Your answers are saved — Kleal will write the paragraph later.'),
+    T('Ответы сохранены — абзац Kleal напишет позже.', 'Your answers are saved — Kleal will write the paragraph later.', 'Tus respuestas se han guardado — Kleal escribirá el párrafo más tarde.'),
 };
 
 // ---------------------------------------------------------------- безопасность
-
-export type SafetyItem =
-  | { k: 'tog'; flag: keyof SafetyFlags; label: () => string; desc: () => string }
-  | { k: 'choice'; label: () => string; desc: () => string; options: (() => string)[] }
-  | { k: 'sub'; label: () => string };
-
-export type SafetyGroup = { t: () => string; c: () => string; items: SafetyItem[] };
-
-/**
- * Шесть групп — те же и в том же порядке, что в вебе. Подписи важны не меньше переключателей:
- * в каждой группе сказано, что означает «включено», потому что для одних тумблеров это «безопаснее»,
- * а для других — «шире охват», и по одному виду их не различить.
- */
-export const SAFETY_GROUPS: SafetyGroup[] = [
-  {
-    t: () => T('Как Kleal действует за тебя', 'How Kleal acts for you'),
-    c: () => T('Главные рычаги: насколько агент самостоятелен и пауза в один тап.',
-               'The big levers — your agent’s autonomy and a one-tap pause.'),
-    items: [
-      { k: 'choice', label: () => T('Когда Kleal кого-то находит', 'When Kleal finds someone'),
-        desc: () => T('Спрашивать перед тем, как написать, или пусть Kleal знакомит сам.',
-                      'Ask before reaching out, or let Kleal introduce you automatically.'),
-        options: [() => T('Сначала спросить', 'Ask me first'), () => T('Знакомить сам', 'Introduce automatically')] },
-      { k: 'tog', flag: 'confirmShare',
-        label: () => T('Спрашивать перед тем, как делиться моими данными', 'Confirm before sharing my details'),
-        desc: () => T('Спрашивать, прежде чем показать твоё имя, фото или контакты — даже когда Kleal сам договаривается о встрече.',
-                      'Ask before revealing your name, photo or contact — even when Kleal arranges plans for you.') },
-      { k: 'tog', flag: 'paused',
-        label: () => T('Поставить Kleal на паузу', 'Pause Kleal'),
-        desc: () => T('Остановить новые подборы и знакомства. Профиль и память сохранятся.',
-                      'Stop all new matching and outreach. Your profile and memory stay saved.') },
-    ],
-  },
-  {
-    t: () => T('Встречи вживую', 'Meeting in person'),
-    c: () => T('Как Kleal делает встречи безопаснее. Здесь везде: включено = безопаснее.',
-               'How Kleal keeps real-world plans safe. Every switch here: on = safer.'),
-    items: [
-      { k: 'tog', flag: 'publicFirst',
-        label: () => T('Первые встречи — только в людных местах', 'Keep first meetups public'),
-        desc: () => T('Первые встречи проходят в кафе, парках и других общественных местах.',
-                      'First meets stay in cafes, parks and other public spots.') },
-      { k: 'tog', flag: 'noLateNight',
-        label: () => T('Никаких встреч один на один поздно вечером', 'No solo late-night meets'),
-        desc: () => T('Kleal не будет предлагать встречи наедине поздним вечером.',
-                      'Kleal avoids one-on-one plans late at night.') },
-      { k: 'tog', flag: 'avoidAlcohol',
-        label: () => T('Избегать мест, где всё вокруг алкоголя', 'Avoid alcohol-focused venues'),
-        desc: () => T('Пропускать бары и подобные места для первых встреч.',
-                      'Skip bars and heavy-drinking spots for first meets.') },
-      { k: 'tog', flag: 'sharePlan',
-        label: () => T('Делиться планом с доверенным контактом', 'Share my plan with a trusted contact'),
-        desc: () => T('Автоматически отправлять близкому человеку, с кем, где и когда ты встречаешься.',
-                      'Auto-send who, where and when to someone you choose.') },
-    ],
-  },
-  {
-    t: () => T('Что Kleal может использовать и запоминать', 'What Kleal may use & remember'),
-    c: () => T('Твоё согласие на то, что Kleal читает и узнаёт. Включено = Kleal может это использовать.',
-               'Your consent for what Kleal reads and learns. On = Kleal may use it.'),
-    items: [
-      { k: 'tog', flag: 'useInterestsArea',
-        label: () => T('Подбирать по моим интересам и району', 'Match on my interests & area'),
-        desc: () => T('Использовать твои увлечения и район города — но никогда точное местоположение.',
-                      'Use what you like and your city area — never your exact location.') },
-      { k: 'tog', flag: 'useFeedback',
-        label: () => T('Учиться на моих оценках и действиях', 'Learn from my feedback & activity'),
-        desc: () => T('Использовать твои оценки и то, какие планы ты принимаешь или отклоняешь.',
-                      'Use your ratings and which plans you accept or decline.') },
-      { k: 'tog', flag: 'inferNew',
-        label: () => T('Разрешить Kleal делать выводы обо мне', 'Let Kleal infer new things about me'),
-        desc: () => T('Разрешить догадки сверх того, что ты сказал напрямую — например, о любимых местах.',
-                      'Allow guesses beyond what you stated, like preferred venues.') },
-      { k: 'sub', label: () => T('Ограничения', 'Guardrails') },
-      { k: 'tog', flag: 'noSensitive',
-        label: () => T('Никогда не делать выводов о чувствительном', 'Never infer sensitive traits'),
-        desc: () => T('Не хранить в памяти здоровье, религию, политику и ориентацию.',
-                      'Keep health, religion, politics and orientation out of memory.') },
-    ],
-  },
-  {
-    t: () => T('Как тебя находят люди', 'How people find you'),
-    c: () => T('Твой охват и видимость. Включено = больше охват, выключено = больше приватности.',
-               'Your reach and visibility. On = more reach, off = more private.'),
-    items: [
-      { k: 'tog', flag: 'suggestBeyond',
-        label: () => T('Предлагать людей за пределами привычного круга', 'Suggest people beyond my usual circles'),
-        desc: () => T('Иногда предлагать людей со смежными интересами и планы вне привычного.',
-                      'Occasionally propose friends-of-interests and plans outside your usuals.') },
-      { k: 'tog', flag: 'publicMap',
-        label: () => T('Показывать меня на карте', 'Show me on the discovery map'),
-        desc: () => T('Другие смогут наткнуться на тебя на общей карте.',
-                      'Let others come across you on the public map.') },
-      { k: 'tog', flag: 'datingMode',
-        label: () => T('Режим знакомств', 'Dating mode'),
-        desc: () => T('По умолчанию выключен. Включи, чтобы Kleal предлагал и романтические знакомства.',
-                      'Off by default. Turn on to let Kleal suggest dating intros too.') },
-    ],
-  },
-  {
-    t: () => T('Верификация и люди', 'Verification & people'),
-    c: () => T('С кем Kleal будет тебя знакомить. Включено = осторожнее.',
-               'Who Kleal will introduce you to. On = more protective.'),
-    items: [
-      { k: 'tog', flag: 'preferVerified',
-        label: () => T('Предпочитать подтверждённых людей', 'Prefer verified people'),
-        desc: () => T('Kleal будет отдавать предпочтение подтверждённым профилям.',
-                      'Kleal favours verified profiles when it matches you.') },
-      { k: 'tog', flag: 'excludeKnown',
-        label: () => T('Не сводить меня с теми, кого я могу знать', 'Don’t match me with people I may know'),
-        desc: () => T('Исключить коллег, бывших и контакты из телефона.',
-                      'Exclude coworkers, exes and phone contacts from suggestions.') },
-    ],
-  },
-];
-
-export const SAFETY_LEAD = {
-  title: () => T('Всё под твоим контролем', 'You’re in control'),
-  body: () =>
-    T(
-      'Kleal ничего не делает без твоего согласия. Он показывает район города, а не точное место, узнаёт только то, что ты разрешил, и всё здесь можно откатить в любой момент.',
-      'Kleal never acts without your say-so. It shares your city area, never your exact location, learns only what you allow, and everything here is reversible anytime.'
-    ),
-};
-
-/**
- * Обратное отображение флагов экрана в поля профиля.
- *
- * Нужно ровно потому, что profileData() их СВОДИТ: `useFeedback` и `inferNew` оба приходят из
- * одного `permissions.rememberPreferences`, а `useInterestsArea` — из `useProfileForMatching`.
- * Без этой таблицы переключатель на экране менял бы что-то своё, а профиль — своё.
- */
-export const SAFETY_PATH: Record<string, string> = {
-  confirmShare: 'safety.confirmShare',
-  paused: 'safety.paused',
-  publicFirst: 'safety.publicPlacesOnly',
-  noLateNight: 'safety.lateNight',
-  avoidAlcohol: 'safety.avoidAlcohol',
-  sharePlan: 'safety.sharePlan',
-  noSensitive: 'safety.noSensitive',
-  preferVerified: 'safety.verifiedOnly',
-  excludeKnown: 'safety.excludeKnown',
-  useInterestsArea: 'permissions.useProfileForMatching',
-  useFeedback: 'permissions.rememberPreferences',
-  inferNew: 'permissions.rememberPreferences',
-  suggestBeyond: 'permissions.allowAdjacentMatches',
-  publicMap: 'permissions.publicMap',
-  datingMode: 'permissions.datingMode',
-};
+//
+// ЗДЕСЬ БЫЛО 133 СТРОКИ ПЕРЕКЛЮЧАТЕЛЕЙ, И ОНИ НИЧЕГО НЕ ПЕРЕКЛЮЧАЛИ.
+//
+// Пятнадцать флагов в пяти группах: «не встречаться поздно вечером», «избегать баров», «делиться
+// планом с доверенным контактом», «никогда не делать выводов о чувствительном», «не сводить меня с
+// теми, кого я могу знать», «показывать меня на карте», «режим знакомств» и другие. Сверка с
+// боевым кодом (services/*/app.py, 4 сентября 2026): девять из пятнадцати не читает ни одна
+// служба ни в одном месте, ещё три пишет онбординг, но подбор их не смотрит.
+//
+// Хуже всего была «пауза»: она писалась в `safety.paused`, тогда как жёсткий фильтр подбора
+// смотрит на верхнее `paused`, а настоящий механизм паузы живёт в политике приёма
+// (`receiving.status`). Главный рычаг безопасности не делал ничего.
+//
+// Взамен — два экрана над политикой приёма, которую подбор действительно исполняет:
+// app/settings/visibility.tsx и app/settings/availability.tsx. Копия к ним в src/settings.ts.
+// Тип SafetyFlags и `profileData().safety` оставлены: строку профиля они по-прежнему описывают.
 
 export const langCode = () => getLang();

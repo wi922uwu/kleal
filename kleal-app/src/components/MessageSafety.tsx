@@ -14,14 +14,14 @@ export type ReportTarget = {
 };
 
 const REASONS = [
-  ['harassment', () => T('Домогательства или оскорбления', 'Harassment or abuse'),
-    () => T('Угрозы, оскорбления, нежелательные предложения', 'Threats, insults, unwanted advances')],
-  ['spam', () => T('Спам или мошенничество', 'Spam or a scam'),
-    () => T('Продажи, ссылки, просьбы о деньгах', 'Selling, links, asking for money')],
-  ['fake', () => T('Поддельный профиль', 'Fake profile'),
-    () => T('Это не тот человек, что на фотографиях', 'Not the person in the photos')],
-  ['other', () => T('Другое', 'Something else'),
-    () => T('Расскажите своими словами', 'Tell us in your own words')],
+  ['harassment', () => T('Домогательства или оскорбления', 'Harassment or abuse', 'Acoso o abuso'),
+    () => T('Угрозы, оскорбления, нежелательные предложения', 'Threats, insults, unwanted advances', 'Amenazas, insultos, acoso no deseado')],
+  ['spam', () => T('Спам или мошенничество', 'Spam or a scam', 'Spam o estafa'),
+    () => T('Продажи, ссылки, просьбы о деньгах', 'Selling, links, asking for money', 'Venta, enlaces, pidiendo dinero')],
+  ['fake', () => T('Поддельный профиль', 'Fake profile', 'Perfil falso'),
+    () => T('Это не тот человек, что на фотографиях', 'Not the person in the photos', 'No es la persona de las fotos')],
+  ['other', () => T('Другое', 'Something else', 'Otra cosa'),
+    () => T('Расскажите своими словами', 'Tell us in your own words', 'Dínoslo con tus propias palabras')],
 ] as const;
 
 export function ReportMessageSheet({
@@ -59,14 +59,14 @@ export function ReportMessageSheet({
       onClose();
       onSent();
     } catch {
-      setError(T('Не удалось отправить жалобу. Попробуйте ещё раз.', 'Could not send the report. Try again.'));
+      setError(T('Не удалось отправить жалобу. Попробуйте ещё раз.', 'Could not send the report. Try again.', 'No se pudo enviar el informe. Inténtalo de nuevo.'));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Sheet visible={visible} onClose={busy ? () => {} : onClose} title={T('Пожаловаться на сообщение', 'Report this message')}>
+    <Sheet visible={visible} onClose={busy ? () => {} : onClose} title={T('Пожаловаться на сообщение', 'Report this message', 'Denuncia este mensaje')}>
       {REASONS.map(([key, label, note]) => (
         <Pressable
           key={key}
@@ -89,7 +89,7 @@ export function ReportMessageSheet({
         <TextInput
           value={details}
           onChangeText={setDetails}
-          placeholder={T('Что произошло?', 'What happened?')}
+          placeholder={T('Что произошло?', 'What happened?', '¿Qué pasó?')}
           placeholderTextColor={color.neutral400}
           multiline
           maxLength={1000}
@@ -105,7 +105,7 @@ export function ReportMessageSheet({
         onPress={submit}
       >
         {busy ? <ActivityIndicator color={color.onPrimary} />
-              : <Text style={s.submitText}>{T('Отправить жалобу', 'Send report')}</Text>}
+              : <Text style={s.submitText}>{T('Отправить жалобу', 'Send report', 'Enviar informe')}</Text>}
       </Pressable>
     </Sheet>
   );
@@ -114,14 +114,14 @@ export function ReportMessageSheet({
 export function ReportSentBanner({ about }: { about: string }) {
   return (
     <View style={s.notice} accessibilityRole="alert">
-      <Text style={s.noticeTitle}>{T('Жалоба отправлена', 'Report sent')}</Text>
+      <Text style={s.noticeTitle}>{T('Жалоба отправлена', 'Report sent', 'Reporte enviado')}</Text>
       <Text style={s.noticeText}>
         {T('Её проверит человек в течение 24 часов. Пользователь не узнает, кто пожаловался.',
-           'A person reads it within 24 hours. The person is not told who reported them.')}
+           'A person reads it within 24 hours. The person is not told who reported them.', 'Una persona lo lee en 24 horas. A la persona no se le dice quién lo reportó.')}
       </Text>
       <Text style={s.noticeHint}>
         {T(`Вы можете продолжить общение или отдельно заблокировать ${about}. Жалоба сама этого не делает.`,
-           `You can keep chatting or block ${about} separately. Reporting does not do that on its own.`)}
+           `You can keep chatting or block ${about} separately. Reporting does not do that on its own.`, `Puedes seguir charlando o bloquear a ${about} por separado. Denunciar no lo hace automáticamente.`)}
       </Text>
     </View>
   );
@@ -137,7 +137,7 @@ export function BlockConfirmSheet({
   onConfirm: () => void;
 }) {
   return (
-    <Sheet visible={visible} onClose={busy ? () => {} : onClose} title={T(`Заблокировать ${name}?`, `Block ${name}?`)}>
+    <Sheet visible={visible} onClose={busy ? () => {} : onClose} title={T(`Заблокировать ${name}?`, `Block ${name}?`, `¿Bloquear a ${name}?`)}>
       <Text style={s.blockNote}>
         {T(
           'Этот человек не сможет писать вам и видеть ваши интенты, а вы исчезнете из его выдачи. Общий план будет отменён для вас обоих.',
@@ -145,11 +145,11 @@ export function BlockConfirmSheet({
         )}
       </Text>
       <Pressable accessibilityRole="button" style={s.notNow} onPress={onClose} disabled={busy}>
-        <Text style={s.notNowText}>{T('Не сейчас', 'Not now')}</Text>
+        <Text style={s.notNowText}>{T('Не сейчас', 'Not now', 'No ahora')}</Text>
       </Pressable>
       <Pressable accessibilityRole="button" style={s.block} onPress={onConfirm} disabled={busy}>
         {busy ? <ActivityIndicator color={color.primary} />
-              : <Text style={s.blockText}>{T(`Заблокировать ${name}`, `Block ${name}`)}</Text>}
+              : <Text style={s.blockText}>{T(`Заблокировать ${name}`, `Block ${name}`, `Bloquear a ${name}`)}</Text>}
       </Pressable>
     </Sheet>
   );

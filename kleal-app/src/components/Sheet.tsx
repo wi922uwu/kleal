@@ -42,7 +42,7 @@ export function Sheet({
   const pad = bottomInset ?? Math.max(insets.bottom, 18);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={s.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close')} />
+      <Pressable style={s.scrim} onPress={onClose} accessibilityLabel={T('Закрыть', 'Close', 'Cerrar')} />
       <View style={[s.sheet, { paddingBottom: pad }]}>
         {grip ? <View style={s.grip} /> : null}
         {title ? (
@@ -50,7 +50,7 @@ export function Sheet({
             <Text style={s.title} numberOfLines={1}>{title}</Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={T('Закрыть', 'Close')}
+              accessibilityLabel={T('Закрыть', 'Close', 'Cerrar')}
               onPress={onClose}
               hitSlop={10}
             >
@@ -87,7 +87,7 @@ export function SheetItem({
 // ===== вид
 
 const s = StyleSheet.create({
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: color.scrim },
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: color.scrim },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     backgroundColor: color.card,

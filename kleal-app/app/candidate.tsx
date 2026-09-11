@@ -22,12 +22,13 @@ import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { CANDS, CAP, OPTIONS, REPORT_REASONS, Cand, candSubtitle, candWhere, candSummary, hideCandidate } from '../src/candidates';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { CANDS, CAP, OPTIONS, REPORT_REASONS, REPORT_REASON_ES, Cand, candSubtitle, candWhere, candSummary, candReadiness, hideCandidate } from '../src/candidates';
 import { CHAT } from '../src/chat';
 import { useInvites, inviteTo, sendInvite, withdrawInvite } from '../src/invites';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, takeCandidate } from '../src/results-store';
+import { useOnb } from '../src/state';
 import { mediaUrl, agent } from '../src/api';
 import { IconPerson, IconPin, IconUserLock } from '../src/components/icons';
 import { langPlainName } from '../src/languages';
@@ -44,7 +45,25 @@ export default function Candidate() {
   const insets = useSafeAreaInsets();
   const c: Cand | null = useMemo(() => takeCandidate(), []);
   const handoff = useMemo(() => takeResults(), []);
-  const self = String(handoff?.profile?.name || '');
+  const st = useOnb();
+  /*
+    КТО Я — ЭТО НЕ СВОЙСТВО ПЕРЕХОДА. Имя бралось только из передачи выдачи, и экран, открытый не
+    из поиска (из разговора — «профиль собеседника»), получал пустое `self`. Тогда `useInvites('')`
+    не находил ничего, и уже согласившемуся человеку показывалась кнопка «Пригласить» — второе
+    приглашение тому, с кем уже переписываешься.
+    Передача остаётся первой: в ней профиль в том виде, в каком он ушёл в поиск, и расширение
+    обязано идти с тем же самым. Своё имя из анкеты — запасной путь, а не замена.
+  */
+  const self = String(handoff?.profile?.name || st.profile?.name || '');
+  /*
+    ОТКРЫТА ИЗ РАЗГОВОРА — ПРИГЛАШАТЬ НЕКОГО.
+    Состояние приглашения читается из ИСХОДЯЩИХ (`useInvites` -> `inviteTo`), и это верно для
+    выдачи, откуда экран и родился. Но в разговор можно попасть и по ВХОДЯЩЕМУ приглашению: тогда
+    в исходящих пусто, `invite` пуст, и человеку, с которым он уже переписывается, показывалась
+    кнопка «Пригласить». Признак перехода отвечает на это прямо и не зависит от того, кто кого
+    позвал первым.
+  */
+  const fromChat = String(useLocalSearchParams<{ from?: string }>().from || '') === 'chat';
   const name = String(c?.name || '');
   /**
    * Приглашение — общее состояние со списком выдачи (src/invites.ts). Своего у карточки больше
@@ -71,10 +90,10 @@ export default function Candidate() {
       <View style={[s.wrap, s.center, { paddingTop: insets.top }]}>
         <Text style={s.lead}>
           {T('Карточка живёт один переход из выдачи. Поищем заново?',
-             'This card lives one hop from the results. Search again?')}
+             'This card lives one hop from the results. Search again?', 'Esta tarjeta está a un paso de los resultados. ¿Buscar de nuevo?')}
         </Text>
         <Pressable accessibilityRole="button" style={s.cta} onPress={() => { router.dismissTo('/home'); router.navigate('/create'); }}>
-          <Text style={s.ctaText}>{T('Новый поиск', 'New search')}</Text>
+          <Text style={s.ctaText}>{T('Новый поиск', 'New search', 'Nueva búsqueda')}</Text>
         </Pressable>
       </View>
     );
@@ -82,7 +101,7 @@ export default function Candidate() {
 
   const where = candWhere(c);
   const summary = candSummary(c, ru());
-  const readiness = (ru() ? c.readiness_ru : c.readiness_en) || '';
+  const readiness = candReadiness(c);
 
   const send = async () => {
     if (sending) return;
@@ -172,7 +191,7 @@ export default function Candidate() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
           <Text style={s.backIcon}>‹</Text>
         </Pressable>
         <View style={{ flex: 1 }} />
@@ -224,7 +243,7 @@ export default function Candidate() {
           </Text>
         ) : null}
         {readiness ? (
-          <Text style={s.meta}>{T('Связаться: ', 'Reach out: ')}{readiness}</Text>
+          <Text style={s.meta}>{T('Связаться: ', 'Reach out: ', 'Contacta: ')}{readiness}</Text>
         ) : null}
 
         {summary ? (
@@ -243,8 +262,10 @@ export default function Candidate() {
         {err ? <Text style={s.err}>{err}</Text> : null}
 
         {/* Те же четыре состояния, что и на карточке в списке (O.15/O.16/O.17) — они читаются из
-            общего стора, поэтому «Пригласить» здесь не может появиться у уже приглашённого. */}
-        {invite?.status === 'declined' ? (
+            общего стора, поэтому «Пригласить» здесь не может появиться у уже приглашённого.
+            Из разговора не рисуем ничего: там уже идёт переписка, и любая из четырёх пилюль
+            предлагала бы начать то, что давно началось. */}
+        {fromChat ? null : invite?.status === 'declined' ? (
           <View style={s.invitedRow}>
             <View style={[s.invite, s.invitedPill]}>
               <Text style={[s.inviteText, { color: color.muted }]}>⊘  {CHAT.declined()}</Text>
@@ -255,7 +276,9 @@ export default function Candidate() {
             <Pressable
               accessibilityRole="button"
               style={[s.invite, { flex: 1 }]}
-              onPress={() => router.navigate({ pathname: '/conversation', params: { who: name, photo: c.photo || '' } })}
+              /* Приглашение уже принято — карточка сделала своё дело и уступает место чату
+                 (`dismissTo`), а не ложится под него: возвращаться к ней больше незачем. */
+              onPress={() => router.dismissTo({ pathname: '/conversation', params: { who: name, photo: c.photo || '' } })}
             >
               <Text style={s.inviteText}>{CHAT.openChat()}</Text>
             </Pressable>
@@ -326,7 +349,7 @@ export default function Candidate() {
           <>
             {REPORT_REASONS.map(([k, ruL, enL]) => (
               <Pressable key={k} accessibilityRole="button" style={s.reasonBtn} onPress={() => sendReport(k)}>
-                <Text style={s.reasonText}>{T(ruL, enL)}</Text>
+                <Text style={s.reasonText}>{T(ruL, enL, REPORT_REASON_ES[k])}</Text>
               </Pressable>
             ))}
             <Pressable accessibilityRole="button" style={s.optCancel} onPress={() => setReporting(false)}>

@@ -98,9 +98,9 @@ export default function Summary() {
     const h = interestLabels(p.interests?.explicit);
     const l = (p.languages?.comfortable || []).map(langPlain);
     const bits = [
-      h.length ? T('Интересы: ' + h.join(', '), 'Into ' + h.join(', ')) : '',
-      l.length ? T('Языки: ' + l.join(', '), 'speaks ' + l.join(', ')) : '',
-      p.city ? T('Обычно бывает: ' + p.city, 'usually around ' + p.city) : '',
+      h.length ? T('Интересы: ' + h.join(', '), 'Into ' + h.join(', '), 'Le gusta ' + h.join(', ')) : '',
+      l.length ? T('Языки: ' + l.join(', '), 'speaks ' + l.join(', '), 'habla ' + l.join(', ')) : '',
+      p.city ? T('Обычно бывает: ' + p.city, 'usually around ' + p.city, 'suele estar por ' + p.city) : '',
     ].filter(Boolean);
     return bits.join('. ') + (bits.length ? '.' : '');
   }, [p]);
@@ -218,7 +218,7 @@ export default function Summary() {
     if (await register()) { router.dismissAll(); router.navigate('/home'); router.navigate('/profile'); return; }
     // Причина уже разобрана в register() и лежит в err — Alert обязан говорить то же самое,
     // иначе на одном экране два разных объяснения одной неудачи.
-    Alert.alert(T('Профиль не сохранился', 'Your profile didn’t save'), err || SUMMARY.saveOffline());
+    Alert.alert(T('Профиль не сохранился', 'Your profile didn’t save', 'Tu perfil no se guardó'), err || SUMMARY.saveOffline());
   };
 
   return (

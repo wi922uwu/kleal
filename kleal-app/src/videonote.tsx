@@ -42,6 +42,7 @@ import * as Haptics from 'expo-haptics';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { setAudioModeAsync } from 'expo-audio';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { appendUploadFile } from './upload-file';
 import { mediaUrl, video as videoApi, VideoPayload } from './api';
 import { T } from './i18n';
 import { color } from './theme';
@@ -183,7 +184,7 @@ export function VideoNoteButton({
   useEffect(() => {
     if (stage !== 'warming') return;
     const id = setTimeout(() => {
-      setErr(T('камера не отозвалась', 'the camera did not respond'));
+      setErr(T('камера не отозвалась', 'the camera did not respond', 'la cámara no respondió'));
       setStage('failed');
     }, WARM_MS);
     return () => clearTimeout(id);
@@ -203,11 +204,8 @@ export function VideoNoteButton({
       const ext = (c.uri.split('?')[0].split('.').pop()
         || (Platform.OS === 'ios' ? 'mov' : 'mp4')).toLowerCase();
       const form = new FormData();
-      form.append('file', {
-        uri: c.uri,
-        name: `circle-${Date.now()}.${ext}`,
-        type: ext === 'mov' ? 'video/quicktime' : 'video/mp4',
-      } as any);
+      await appendUploadFile(form, c.uri, `circle-${Date.now()}.${ext}`,
+        ext === 'mov' ? 'video/quicktime' : 'video/mp4');
       const up: any = await videoApi.upload(form, c.ms);
       if (!up?.ok || !up?.id) throw new Error(String(up?.error || 'UPLOAD_FAILED'));
       if (gone.current) return;
@@ -266,11 +264,11 @@ export function VideoNoteButton({
       // Второй раз система не спросит — она спрашивает один раз за установку. Поэтому не «сходи
       // куда-нибудь и разреши», а кнопка, которая открывает ровно ту страницу настроек.
       return Alert.alert(
-        T('Нужен доступ к камере и микрофону', 'Camera and microphone access needed'),
-        T('Без звука кружок был бы немым.', 'Without sound the circle would be mute.'),
+        T('Нужен доступ к камере и микрофону', 'Camera and microphone access needed', 'Se necesita acceso a la cámara y al micrófono'),
+        T('Без звука кружок был бы немым.', 'Without sound the circle would be mute.', 'Sin sonido el círculo estaría en silencio.'),
         [
-          { text: T('Не сейчас', 'Not now'), style: 'cancel' },
-          { text: T('Настройки', 'Settings'), onPress: () => { Linking.openSettings().catch(() => {}); } },
+          { text: T('Не сейчас', 'Not now', 'No ahora'), style: 'cancel' },
+          { text: T('Настройки', 'Settings', 'Ajustes'), onPress: () => { Linking.openSettings().catch(() => {}); } },
         ]
       );
     }
@@ -353,7 +351,7 @@ export function VideoNoteButton({
       {hidden && !on ? null : (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={T('Записать кружок', 'Record a circle')}
+          accessibilityLabel={T('Записать кружок', 'Record a circle', 'Graba un círculo')}
           accessibilityState={{ disabled }}
           disabled={disabled}
           onPress={() => { open().catch(() => {}); }}
@@ -407,15 +405,15 @@ export function VideoNoteButton({
           </Text>
 
           <Text style={s.say} numberOfLines={3}>
-            {stage === 'warming' ? T('Камера просыпается…', 'Waking the camera…')
-              : stage === 'ready' ? T('Нажми, чтобы записать. До минуты.', 'Tap to record. Up to a minute.')
-              : stage === 'recording' ? T('Нажми «готово», когда закончишь', 'Tap “done” when you’re finished')
-              : stage === 'saving' ? T('Сохраняю…', 'Saving…')
-              : stage === 'review' ? T('Так и уйдёт. Отправляем?', 'This is what will be sent. Send it?')
-              : stage === 'sending' ? T('Отправляю кружок…', 'Sending the circle…')
+            {stage === 'warming' ? T('Камера просыпается…', 'Waking the camera…', 'Despertando la cámara…')
+              : stage === 'ready' ? T('Нажми, чтобы записать. До минуты.', 'Tap to record. Up to a minute.', 'Pulsa para grabar. Hasta un minuto.')
+              : stage === 'recording' ? T('Нажми «готово», когда закончишь', 'Tap “done” when you’re finished', 'Pulsa en «hecho» cuando termines')
+              : stage === 'saving' ? T('Сохраняю…', 'Saving…', 'Guardando…')
+              : stage === 'review' ? T('Так и уйдёт. Отправляем?', 'This is what will be sent. Send it?', 'Esto es lo que se enviará. ¿Lo envías?')
+              : stage === 'sending' ? T('Отправляю кружок…', 'Sending the circle…', 'Enviando el círculo…')
               : err
-                ? `${T('Не получилось', 'It didn’t work')}: ${err}`
-                : T('Кружок не ушёл', 'The circle didn’t send')}
+                ? `${T('Не получилось', 'It didn’t work', 'No funcionó')}: ${err}`
+                : T('Кружок не ушёл', 'The circle didn’t send', 'El círculo no se envió')}
           </Text>
 
           {/* Ряд действий. Все они внутри окна, а значит внутри своих границ, — и нажимаются. */}
@@ -430,17 +428,17 @@ export function VideoNoteButton({
               <>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={clip.current ? T('Удалить', 'Discard') : T('Закрыть', 'Close')}
+                  accessibilityLabel={clip.current ? T('Удалить', 'Discard', 'Descartar') : T('Закрыть', 'Close', 'Cerrar')}
                   onPress={close}
                   style={s.side}
                 >
                   <Text style={s.sideText}>
-                    {clip.current ? T('Удалить', 'Discard') : T('Закрыть', 'Close')}
+                    {clip.current ? T('Удалить', 'Discard', 'Descartar') : T('Закрыть', 'Close', 'Cerrar')}
                   </Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={clip.current ? T('Отправить ещё раз', 'Send again') : T('Ещё раз', 'Try again')}
+                  accessibilityLabel={clip.current ? T('Отправить ещё раз', 'Send again', 'Enviar de nuevo') : T('Ещё раз', 'Try again', 'Reintentar')}
                   onPress={clip.current ? () => { send().catch(() => {}); } : again}
                   style={[s.big, s.bigSend]}
                 >
@@ -451,12 +449,12 @@ export function VideoNoteButton({
               <>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={stage === 'review' ? T('Переснять', 'Retake') : T('Закрыть', 'Close')}
+                  accessibilityLabel={stage === 'review' ? T('Переснять', 'Retake', 'Repetir') : T('Закрыть', 'Close', 'Cerrar')}
                   onPress={stage === 'review' ? again : close}
                   style={s.side}
                 >
                   <Text style={s.sideText}>
-                    {stage === 'review' ? T('Переснять', 'Retake') : T('Закрыть', 'Close')}
+                    {stage === 'review' ? T('Переснять', 'Retake', 'Repetir') : T('Закрыть', 'Close', 'Cerrar')}
                   </Text>
                 </Pressable>
 
@@ -466,7 +464,7 @@ export function VideoNoteButton({
                      своего момента (см. `stopAt`). */
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={T('Готово', 'Done')}
+                    accessibilityLabel={T('Готово', 'Done', 'Hecho')}
                     onPress={finish}
                     style={[s.big, s.bigStop]}
                   >
@@ -475,7 +473,7 @@ export function VideoNoteButton({
                 ) : stage === 'review' ? (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={T('Отправить', 'Send')}
+                    accessibilityLabel={T('Отправить', 'Send', 'Enviar')}
                     onPress={() => { send().catch(() => {}); }}
                     style={[s.big, s.bigSend]}
                   >
@@ -488,7 +486,7 @@ export function VideoNoteButton({
                 ) : (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={T('Записать', 'Record')}
+                    accessibilityLabel={T('Записать', 'Record', 'Graba')}
                     accessibilityState={{ disabled: stage !== 'ready' }}
                     disabled={stage !== 'ready'}
                     onPress={() => { record().catch(() => {}); }}
@@ -538,7 +536,7 @@ export function VideoBubble({ video }: { video: VideoPayload }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={playing ? T('Пауза', 'Pause') : T('Смотреть кружок', 'Play the circle')}
+      accessibilityLabel={playing ? T('Пауза', 'Pause', 'Pausa') : T('Смотреть кружок', 'Play the circle', 'Reproducir el círculo')}
       onPress={toggle}
       style={s.bubble}
     >
@@ -568,7 +566,7 @@ const s = StyleSheet.create({
   },
   /** Красный ободок — единственный признак, что идёт запись, и он должен читаться с одного взгляда. */
   frameLive: { borderColor: color.primary },
-  blank: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  blank: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
 
   timer: { fontSize: 20, color: color.onPrimary, fontVariant: ['tabular-nums'], minHeight: 24 },
   say: { fontSize: 14, color: color.neutral300, textAlign: 'center', minHeight: 40 },
@@ -598,7 +596,7 @@ const s = StyleSheet.create({
     width: CIRCLE, height: CIRCLE, borderRadius: CIRCLE / 2,
     overflow: 'hidden', backgroundColor: 'transparent',
   },
-  veil: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000033' },
+  veil: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', backgroundColor: '#00000033' },
   play: { fontSize: 34, color: color.onPrimary },
   length: {
     position: 'absolute', bottom: 8, alignSelf: 'center',

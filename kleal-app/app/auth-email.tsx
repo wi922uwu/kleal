@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useNavigation, useRouter } from 'expo-router';
 import { auth } from '../src/api';
-import { AUTH, looksLikeEmail } from '../src/auth';
+import { AUTH, looksLikeEmail, latinLocalPart } from '../src/auth';
 import { AUTH_TERMS } from '../src/onboarding';
 import { useLang, T, replyLang } from '../src/i18n';
 import { Ambient, GLOW_FORM } from '../src/components/Ambient';
@@ -81,6 +81,8 @@ export default function AuthEmail() {
     // Кадр A.03.1b: кнопка выключена, пока адрес не похож на адрес, но по нажатию на выключенную
     // ничего не происходит — поэтому ошибку показываем и здесь, если человек всё-таки дожал.
     if (!ok) { hFail(); setErr({ title: AUTH.badEmailTitle(), note: AUTH.badEmailNote() }); return; }
+    // Кириллица до «@» отсеивается здесь же, без похода на сервер: ответ известен заранее.
+    if (!latinLocalPart(email)) { hFail(); setErr({ title: AUTH.latinEmailTitle(), note: AUTH.latinEmailNote() }); return; }
     setBusy(true);
     setErr(null);
     try {
@@ -96,6 +98,7 @@ export default function AuthEmail() {
       }
       hFail();
       if (r?.error === 'bad email') setErr({ title: AUTH.badEmailTitle(), note: AUTH.badEmailNote() });
+      else if (r?.error === 'latin email') setErr({ title: AUTH.latinEmailTitle(), note: AUTH.latinEmailNote() });
       else if (r?.error === 'too many') setErr({ title: AUTH.tooManyTitle(), note: AUTH.tooManyNote() });
       // Повтор здесь не поможет никогда — и говорить «через минуту» значит гонять по кругу.
       else if (r?.error === 'not allowed') setErr({ title: AUTH.notAllowedTitle(), note: AUTH.notAllowedNote() });
@@ -119,7 +122,7 @@ export default function AuthEmail() {
         <View style={[s.page, { paddingTop: insets.top + space.sm,
                                 paddingBottom: dockBottom(insets.bottom + space.lg, kb) }]}>
           <GlassBack
-            label={T('Назад', 'Back')}
+            label={T('Назад', 'Back', 'Atrás')}
             onPress={() => (router.canGoBack() ? router.back() : router.replace('/auth'))}
           />
 

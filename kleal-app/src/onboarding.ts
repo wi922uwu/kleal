@@ -25,32 +25,39 @@ export type Slide = { title: string; sub: string; art: 'primary' | 'searching' |
  * на последнем и означает ровно одно.
  */
 export const INTRO_CTA = {
-  start: () => T('Начать', "Let's Start"),
+  start: () => T('Начать', "Let's Start", '¡Vamos a empezar!'),
+  hint: () => T('Нажми дважды, чтобы продолжить к входу.', 'Double tap to continue to sign-in.', 'Doble toque para continuar con el inicio de sesión.'),
+  slide: (n: number, total: number) => T(`Слайд ${n} из ${total}`, `Slide ${n} of ${total}`, `Diapositiva ${n} de ${total}`),
+  next: () => T('Следующий слайд', 'Next slide', 'Siguiente diapositiva'),
+  previous: () => T('Предыдущий слайд', 'Previous slide', 'Diapositiva anterior'),
 };
 
 export const SLIDES: () => Slide[] = () => [
   {
-    title: T('Скажи Kleal,\nчем хочешь заняться', 'Tell Kleal\nwhat you want to do'),
-    sub: T(
-      'Кофе, футбол, языковая практика, игра,\nпрогулка — или просто что-нибудь спонтанное',
-      'Coffee, football, language practice, a game,\na walk, or just something spontaneous'
-    ),
-    art: 'primary',
-  },
-  {
-    title: T('Ищем людей под план,\nа не анкеты для листания', 'Find people for the plan,\nnot profiles to scroll'),
+    title: T('Ищем людей под план,\nа не анкеты для листания', 'Find people for the plan,\nnot profiles to scroll', `Encuentra personas para el plan,
+no perfiles para desplazar`),
     sub: T(
       'Kleal подбирает людей, комнаты, группы и события по настроению, времени, месту и интересам.',
       'Kleal looks for the right people, rooms, groups or events from your mood, time, place and interests.'
-    ),
+    , 'Kleal busca a las personas, habitaciones, grupos o eventos adecuados según tu estado de ánimo, hora, lugar e intereses.'),
     art: 'searching',
   },
   {
-    title: T('Меньше переписки.\nБольше живых встреч', 'Less social admin.\nMore real plans'),
+    title: T('Скажи Kleal,\nчем хочешь заняться', 'Tell Kleal\nwhat you want to do', `Dile a Kleal
+qué quieres hacer`),
+    sub: T(
+      'Кофе, футбол, языковая практика, игра, прогулка — или просто что-нибудь спонтанное',
+      'Coffee, football, language practice, a game, a walk, or just something spontaneous'
+    , 'Café, fútbol, práctica de idiomas, un juego, un paseo o algo espontáneo'),
+    art: 'primary',
+  },
+  {
+    title: T('Меньше переписки.\nБольше живых встреч', 'Less social admin.\nMore real plans', `Menos administración social.
+Más planes reales`),
     sub: T(
       'Kleal находит, кому это интересно, проверяет совпадение и приносит варианты. Каждый шаг подтверждаешь ты.',
       'Kleal finds who is interested, checks the fit, and brings you options. You confirm every step.'
-    ),
+    , 'Kleal busca a quienes estén interesados, comprueba la compatibilidad y te ofrece opciones. Confirmarás cada paso.'),
     art: 'match',
   },
 ];
@@ -60,20 +67,20 @@ export const SLIDES: () => Slide[] = () => [
  * над логотипом, и это первое, что человек читает про Kleal.
  */
 export const AUTH_COPY = () => ({
-  title: T('Никаких свайпов.\nТолько живые планы', 'No swipes.\nJust real plans'),
-  apple: T('Продолжить с Apple', 'Continue with Apple'),
-  google: T('Продолжить с Google', 'Continue with Google'),
-  email: T('Продолжить по почте', 'Continue with Email'),
+  title: T('Никаких свайпов.\nТолько живые планы', 'No swipes.\nJust real plans', 'Sin deslizamientos.\nSolo planes reales'),
+  apple: T('Продолжить с Apple', 'Continue with Apple', 'Continuar con Apple'),
+  google: T('Продолжить с Google', 'Continue with Google', 'Continuar con Google'),
+  email: T('Продолжить по почте', 'Continue with Email', 'Continuar con Email'),
   /**
    * Пометка на кнопках провайдеров. Настоящего OAuth у нас нет — он требует собственного
    * идентификатора приложения, которого у Expo Go не бывает, — и до сих пор эти кнопки молча
    * заводили профиль БЕЗ логина. Человек узнавал об этом только на выходе, где ему сообщали, что
    * «вернуть профиль будет нечем». Обещание входа, за которым нет входа, — худший вид молчания.
    */
-  soon: () => T('скоро', 'soon'),
+  soon: () => T('скоро', 'soon', 'pronto'),
   /** Почему почта, а не кнопка провайдера: сказано прямо, чтобы выбор не выглядел случайным. */
   emailNote: T('Вход по почте — чтобы профиль можно было вернуть на другом телефоне.',
-               'Email sign-in keeps your profile recoverable on another phone.'),
+               'Email sign-in keeps your profile recoverable on another phone.', 'Iniciar sesión con correo electrónico mantiene tu perfil recuperable en otro teléfono.'),
 });
 
 /**
@@ -91,13 +98,13 @@ export const AUTH_EMOJI_ROWS = [
 ];
 
 /** Подпись под логотипом на первом кадре — только для читающих экраном, на глаз её нет. */
-export const WELCOME_A11Y = () => T('Kleal', 'Kleal');
+export const WELCOME_A11Y = () => T('Kleal', 'Kleal', 'Kleal');
 
 export const AUTH_TERMS = () =>
   T(
     'Продолжая, ты соглашаешься с Условиями и Политикой конфиденциальности.',
     'By continuing you agree to our Terms and Privacy Policy.'
-  );
+  , 'Al continuar, aceptas nuestros Términos y Política de privacidad.');
 
 // ---------------------------------------------------------------- шаги профиля
 
@@ -123,8 +130,8 @@ export const STEP_PROGRESS: Record<StepId, number> = {
   photo: 80,
 };
 
-export const HEADER_TITLE = () => T('Профиль', 'Creating Profile');
-export const SUMMARY_TITLE = () => T('Что Kleal знает о тебе', 'What Kleal knows about you');
+export const HEADER_TITLE = () => T('Профиль', 'Creating Profile', 'Creando perfil');
+export const SUMMARY_TITLE = () => T('Что Kleal знает о тебе', 'What Kleal knows about you', 'Lo que Kleal sabe sobre ti');
 
 // A.04. «We've go!» и «HMay I know your name?» — опечатки НА БОРДЕ. Здесь исправлены: копировать
 // опечатку в продукт нельзя, а править молча борд тоже нельзя — поэтому написано тут.
@@ -139,26 +146,26 @@ export const STEP_START = {
     T(
       'Привет! Я Kleal — твой агент. Ты говоришь, чем хочешь заняться: сходить за кофе, погонять мяч, потренировать испанский, — а я ищу человека, которому хочется того же, и знакомлю вас, когда совпало у обоих.',
       'Hi! I’m Kleal — your agent. You tell me what you feel like doing: grabbing a coffee, kicking a ball around, practising Spanish — and I find someone who wants the same, then introduce you once you both agree.'
-    ),
+    , '¡Hola! Soy Kleal — tu agente. Tú me dices lo que te apetece hacer: tomar un café, patear un balón, practicar español — y yo encuentro a alguien que quiera lo mismo, y luego te presento una vez que los dos estéis de acuerdo.'),
   /** Вторая реплика: почему сейчас будут вопросы. */
   ask: () => T('Расскажешь пару деталей о себе? Так я пойму, кого искать.',
-                'Tell me a couple of things about yourself? That’s how I know who to look for.'),
-  hint: () => T('Выбери вариант или напиши своё', 'Pick some or write your own'),
-  why: () => T('Зачем это нужно?', 'Why do you need this?'),
-  go: () => T('Поехали!', "Let's go!"),
+                'Tell me a couple of things about yourself? That’s how I know who to look for.', 'Dime un par de cosas sobre ti. Así sé a quién buscar.'),
+  hint: () => T('Выбери вариант или напиши своё', 'Pick some or write your own', 'Elige algunos o escribe la tuya'),
+  why: () => T('Зачем это нужно?', 'Why do you need this?', '¿Por qué necesitas esto?'),
+  go: () => T('Поехали!', "Let's go!", '¡Vamos!'),
   whyAnswer: () =>
     T(
       'Чтобы искать не всех подряд, а тех, с кем тебе правда будет о чём поговорить. Чем больше я знаю, тем точнее подбираю.',
       'So I look for people you would actually have something to talk about with, not just anyone. The more I know, the better I match.'
-    ),
-  askName: () => T('Как тебя зовут?', 'What should I call you?'),
+    , 'Así busco a personas con las que realmente tengas algo de qué hablar, no a cualquiera. Cuanto más sepa, mejor será la coincidencia.'),
+  askName: () => T('Как тебя зовут?', 'What should I call you?', '¿Cómo quieres que te llame?'),
   /**
    * Ответ, который именем быть не может: адрес, ссылка, номер. Раньше такой ответ ПРОХОДИЛ — и
    * человек ходил по приложению под своим адресом почты. Называем причину и говорим, чем это
    * важно: имя тут не для нас, его читают те, кого Kleal приведёт.
    */
   notAName: () => T('Это не похоже на имя, а его увидят те, с кем ты встретишься. Как тебя зовут?',
-                    'That doesn’t look like a name — and the people you meet will see it. What should I call you?'),
+                    'That doesn’t look like a name — and the people you meet will see it. What should I call you?', 'Eso no parece un nombre — y la gente que conoces lo verá. ¿Cómo te llamo?'),
 };
 
 /**
@@ -264,10 +271,10 @@ export function parseName(raw: string): { name: string; surname: string } {
   */
 export const STEP_BASICS = {
   bot: () => T('Сколько тебе лет и какого ты пола? По ним я отсекаю тех, кто тебе не подойдёт.',
-                'How old are you, and what’s your gender? I use both to rule out who won’t fit.'),
-  ageLabel: () => T('Твой возраст', 'Your age'),
-  sexLabel: () => T('Пол', 'Sex'),
-  cta: () => T('Продолжаем', 'Keep going'),
+                'How old are you, and what’s your gender? I use both to rule out who won’t fit.', '¿Cuántos años tienes y cuál es tu género? Los uso para descartar a quienes no se ajusten.'),
+  ageLabel: () => T('Твой возраст', 'Your age', 'Tu edad'),
+  sexLabel: () => T('Пол', 'Sex', 'Sexo'),
+  cta: () => T('Продолжаем', 'Keep going', 'Sigue adelante'),
 };
 
 /** «Any is fine» — это НЕ «другое»: человек говорит, что пол ему не важен. */
@@ -276,41 +283,47 @@ export const SEXES: [string, string, string][] = [
   ['Female', 'Female', 'Женский'],
   ['Any', 'Any is fine', 'Не важно'],
 ];
+/** Испанские подписи отдельной картой по ключу — см. заголовок правки. */
+const SEX_ES: Record<string, string> = {
+  Male: 'Hombre', Female: 'Mujer', Any: 'Cualquiera vale',
+};
 export const sexLabel = (k: string) => {
   const s = SEXES.find((x) => x[0] === k);
-  return s ? T(s[2], s[1]) : k;
+  return s ? T(s[2], s[1], SEX_ES[s[0]]) : k;
 };
 
 export const STEP_AREA = {
   bot: () => T('Где ты бываешь? Дальше выбранного радиуса я никого предлагать не буду.',
-                'Where do you spend your time? I won’t suggest anyone beyond the radius you set.'),
+                'Where do you spend your time? I won’t suggest anyone beyond the radius you set.', '¿Dónde pasas tu tiempo? No sugeriré a nadie más allá del radio que tú establezcas.'),
   /** Страна и город — две строки, а не одна: в профиль и в поиск уезжает ГОРОД. */
-  country: () => T('Страна', 'Country'),
-  city: () => T('Город', 'City'),
+  country: () => T('Страна', 'Country', 'País'),
+  city: () => T('Город', 'City', 'Ciudad'),
   /** Та же строка после того, как карту подвинули: там уже не город из списка, а место с карты. */
-  address: () => T('Адрес', 'Address'),
-  naming: () => T('Определяем адрес…', 'Finding the address…'),
-  radiusLabel: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?'),
-  detect: () => T('Определить моё местоположение', 'Detect my location'),
+  address: () => T('Адрес', 'Address', 'Dirección'),
+  naming: () => T('Определяем адрес…', 'Finding the address…', 'Buscando la dirección…'),
+  radiusLabel: () => T('Как далеко готов(а) ехать?', 'How far are you happy to go?', '¿A qué distancia estás dispuesto a ir?'),
+  detect: () => T('Определить моё местоположение', 'Detect my location', 'Detectar mi ubicación'),
+  /** Поиск строкой — для тех, чьего города в коротком списке нет. */
+  search: () => T('Найти город или адрес', 'Find a city or address', 'Buscar ciudad o dirección'),
   /**
    * Карта — единственный способ назвать место, которого нет в коротком списке городов.
    * Формулировка про КАРТУ, а не про булавку: булавка приколота к центру экрана и не двигается,
    * двигают карту под ней (см. RadiusMap.native — перетаскиваемая метка требует долгого нажатия).
    */
   pinHint: () => T('Нет своего города в списке? Подвинь карту — точка встанет под булавку.',
-                   'Your town isn’t on the list? Move the map — the pin marks the spot.'),
-  pinMoved: () => T('Ищем вокруг этой точки.', 'We’ll search around this spot.'),
-  pinReset: (city: string) => T(`Вернуть к ${city}`, `Back to ${city}`),
-  cta: () => T('Почти закончили', 'We’re almost done'),
+                   'Your town isn’t on the list? Move the map — the pin marks the spot.', '¿Tu ciudad no está en la lista? Mueve el mapa — el pin marca el lugar.'),
+  pinMoved: () => T('Ищем вокруг этой точки.', 'We’ll search around this spot.', 'Buscaremos alrededor de este lugar.'),
+  pinReset: (city: string) => T(`Вернуть к ${city}`, `Back to ${city}`, `Volver a ${city}`),
+  cta: () => T('Почти закончили', 'We’re almost done', 'Casi terminamos'),
 };
 
 export const STEP_LANGUAGES = {
   bot: () =>
     T('На каких языках тебе комфортно? Без общего языка встречи не выйдет — это жёсткий фильтр.',
-      'Which languages are you comfortable in? Without a shared one a meetup can’t happen — it’s a hard filter.'),
-  hint: () => T('Выбери варианты или напиши свой', 'Pick some or write your own'),
-  own: () => T('Свой вариант', 'Your option'),
-  cta: () => T('Дальше', 'Next'),
+      'Which languages are you comfortable in? Without a shared one a meetup can’t happen — it’s a hard filter.', '¿En qué idiomas te sientes cómodo/a? Sin uno compartido, no puede haber una quedada — es un filtro obligatorio.'),
+  hint: () => T('Выбери варианты или напиши свой', 'Pick some or write your own', 'Elige algunos o escribe la tuya'),
+  own: () => T('Свой вариант', 'Your option', 'Tu opción'),
+  cta: () => T('Дальше', 'Next', 'Siguiente'),
 };
 
 /** Порядок и флаги — с кадра A.07. */
@@ -323,43 +336,47 @@ export const LANGS: [string, string, string][] = [
   ['Portuguese', '🇵🇹', 'Португальский'],
   ['Russian', '🇷🇺', 'Русский'],
 ];
+const LANG_ES: Record<string, string> = {
+  English: 'Inglés', Spanish: 'Español', German: 'Alemán', French: 'Francés',
+  Italian: 'Italiano', Portuguese: 'Portugués', Russian: 'Ruso',
+};
 export const langLabel = (k: string) => {
   const l = LANGS.find((x) => x[0] === k);
-  return l ? `${T(l[2], l[0])} ${l[1]}` : k;
+  return l ? `${T(l[2], l[0], LANG_ES[l[0]])} ${l[1]}` : k;
 };
 export const langPlain = (k: string) => {
   const l = LANGS.find((x) => x[0] === k);
-  return l ? T(l[2], l[0]) : k;
+  return l ? T(l[2], l[0], LANG_ES[l[0]]) : k;
 };
 
 /** Поле «своё увлечение» прямо в виджете — см. HobbyW в app/chat.tsx. */
 export const OWN_INPUT = {
-  hobbyPlaceholder: () => T('Своё увлечение', 'Your own hobby'),
-  langPlaceholder: () => T('Свой язык', 'Your own language'),
-  add: () => T('Добавить', 'Add'),
+  hobbyPlaceholder: () => T('Своё увлечение', 'Your own hobby', 'Tu propio hobby'),
+  langPlaceholder: () => T('Свой язык', 'Your own language', 'Tu propio idioma'),
+  add: () => T('Добавить', 'Add', 'Añadir'),
 };
 
 export const STEP_HOBBIES = {
   bot: () => T('Чем любишь заниматься? Расскажи своими словами — я запишу.',
-                'What do you like doing? Tell me in your own words — I’ll write it down.'),
+                'What do you like doing? Tell me in your own words — I’ll write it down.', '¿Qué te gusta hacer? Dímelo con tus propias palabras — lo apuntaré.'),
   hint: () =>
     T('Пиши как есть: «рыбачу на море по выходным»',
-      'Just say it: “I fish at sea on weekends”'),
+      'Just say it: “I fish at sea on weekends”', 'Solo dilo: “Pescó en el mar los fines de semana”'),
   /** Подпись над записанным. Появляется только когда есть что показать. */
-  saved: () => T('Записал', 'Noted'),
+  saved: () => T('Записал', 'Noted', 'Notado'),
   /** Пусто и человек молчит — подсказка вместо пустоты, а не ещё один вопрос. */
   empty: () => T('Пока ничего не записал — расскажи, чем занимаешься',
-                 'Nothing noted yet — tell me what you’re into'),
-  cta: () => T('Готово', 'Done'),
+                 'Nothing noted yet — tell me what you’re into', 'Todavía no hay nada notado — cuéntame qué te gusta'),
+  cta: () => T('Готово', 'Done', 'Hecho'),
   /*
     КОЛОДА. Подписи на метках — глаголы, а не «да/нет»: карта задаёт вопрос про занятие, и ответ
     на него это действие, а не согласие. Подсказка под стопкой нужна ровно один раз, но убрать её
     после первой карты нельзя — человек может вернуться на шаг через день и не помнить, куда что
     тянуть.
   */
-  deckAdd: () => T('Добавить', 'Add'),
-  deckSkip: () => T('Пропустить', 'Skip'),
-  deckHint: () => T('Влево — добавить, вправо — пропустить', 'Left to add, right to skip'),
+  deckAdd: () => T('Добавить', 'Add', 'Añadir'),
+  deckSkip: () => T('Пропустить', 'Skip', 'Saltar'),
+  deckHint: () => T('Влево — добавить, вправо — пропустить', 'Left to add, right to skip', 'Izquierda para añadir, derecha para saltar'),
   /**
    * ЗАХОД ЗАКАНЧИВАЕТ ЧЕЛОВЕК, А НЕ КАРТОЧКА. Раньше каждый свайп влево уходил репликой, и агент
    * отвечал вопросом на каждую — колода превращалась в допрос: карта, вопрос, карта, вопрос.
@@ -370,30 +387,41 @@ export const STEP_HOBBIES = {
    * читались как одна и та же, случайно продублированная. Здесь действие другое: не «я закончил»,
    * а «возьми вот эти» — тем же словом, каким шаг отвечает на записанное («Записал»).
    */
-  deckSave: (n: number) => T(`Записать · ${n}`, `Save · ${n}`),
+  deckSave: (n: number) => T(`Записать · ${n}`, `Save · ${n}`, `Guardar · ${n}`),
   /**
    * ВОЗВРАТ КОЛОДЫ — ПО ПРОСЬБЕ, А НЕ САМ СОБОЙ. После захода агент отвечает вопросом, и колода,
    * встающая обратно поверх этого вопроса, съедала его: человек нажимал «Записать», а на экране
    * снова оказывались карточки — будто нажатие не сработало. Теперь карточки возвращает он сам,
    * когда дочитал и захотел ещё.
    */
-  deckMore: () => T('Ещё карточки', 'More cards'),
+  deckMore: () => T('Ещё карточки', 'More cards', 'Más tarjetas'),
   /**
    * РАЗВИЛКА ПЕРВЫМ ХОДОМ. Человек, нажавший «Добавить интерес», делится на двоих: один знает,
    * чего хочет, второму нужен вопрос. Второй ветке кнопка обязательна — пустой композер сам себя
    * вариантом не объявляет, и человек просто не узнает, что помощь существует.
    */
   forkBot: () => T('Расскажи, чем любишь заниматься. Или давай разберёмся вместе — задам несколько вопросов.',
-                   'Tell me what you like doing. Or let us work it out together — I will ask a few questions.'),
-  forkKnow: () => T('Знаю, чем', 'I know'),
-  forkHelp: () => T('Помоги разобраться', 'Help me figure it out'),
+                   'Tell me what you like doing. Or let us work it out together — I will ask a few questions.', 'Dime qué te gusta hacer. O podemos pensarlo juntos — haré algunas preguntas.'),
+  forkKnow: () => T('Знаю, чем', 'I know', 'Lo sé'),
+  forkHelp: () => T('Помоги разобраться', 'Help me figure it out', 'Ayúdame a aclararlo'),
   /** Копия карты интересов — с борда (кадр «Pick what feels like you»). */
-  mapTitle: () => T('Выбери, что про тебя', 'Pick what feels like you'),
-  mapHint: () => T('Веди пальцем — то, что под ним, приблизится.',
-                   'Drag your finger — whatever is under it comes closer.'),
-  mapMin: (n: number) => T(`Выбери хотя бы ${n}`, `Choose at least ${n}`),
-  mapCount: (n: number) => T(`Выбрано ${n}`, `${n} selected`),
-  mapCta: () => T('Дальше', 'Continue'),
+  mapTitle: () => T('Выбери, что про тебя', 'Pick what feels like you', 'Elige lo que te define'),
+  /* Подсказка про нажатие, а не про жест: лупы и перетаскивания у карты больше нет. */
+  mapHint: () => T('Нажми на тему — внутри занятия. Отметь хотя бы три.',
+                   'Tap a topic to see what is inside. Pick at least three.',
+                   'Toca un tema para ver qué hay dentro. Elige al menos tres.'),
+  mapMin: (n: number) => T(`Выбери хотя бы ${n}`, `Choose at least ${n}`, `Elige al menos ${n}`),
+  mapCount: (n: number) => T(`Выбрано ${n}`, `${n} selected`, `${n} seleccionados`),
+  mapCta: () => T('Дальше', 'Continue', 'Continuar'),
+  /** Второй выход с карты — в разговор: своё занятие называют словами, ключ ему подберёт агент. */
+  mapOwn: () => T('Добавить своё', 'Add your own', 'Añadir lo tuyo'),
+  ownAsk: () => T('Напиши своими словами, чем ещё увлекаешься, — подберу и запишу.',
+                  'Tell me in your own words what else you are into — I will find it and add it.',
+                  'Dime con tus palabras qué más te gusta: lo busco y lo anoto.'),
+  /** Строка над картой. */
+  mapAll: () => T('Все темы', 'All topics', 'Todos los temas'),
+  mapTopics: (n: number) => T(`${n} тем`, `${n} topics`, `${n} temas`),
+  mapPickedShort: (n: number) => T(`выбрано ${n}`, `${n} picked`, `${n} elegidos`),
   /** Первая реплика агента ПОСЛЕ карты: он видит выбранное и идёт от него, а не спрашивает заново. */
   /**
    * Закрывающая реплика по «Готово». Раньше шаг обрывался молча: человек нажимал кнопку и просто
@@ -404,16 +432,18 @@ export const STEP_HOBBIES = {
     T('Записал ' + n + ' ' + plural(n, 'интерес', 'интереса', 'интересов') +
       '. Дальше искать буду по ним — дополнить или убрать всегда можно в профиле.',
       'Saved ' + n + (n === 1 ? ' interest' : ' interests') +
-      '. That is what I will search by — you can add or remove them in your profile anytime.'),
+      '. That is what I will search by — you can add or remove them in your profile anytime.',
+      'Apuntado: ' + n + (n === 1 ? ' interés' : ' intereses') +
+      '. Buscaré por ellos — puedes añadir o quitar los que quieras en tu perfil.'),
   afterMap: () => T('Отметил. Расскажи про что-нибудь из этого подробнее — или добавь своё.',
-                    'Noted. Tell me more about one of these — or add your own.'),
+                    'Noted. Tell me more about one of these — or add your own.', 'Notado. Cuéntame más sobre uno de ellos — o añade el tuyo propio.'),
   /**
    * ЧТО УХОДИТ РЕПЛИКОЙ, а не что написано на кнопке. «Помоги разобраться» модели ничего не
    * говорит: на живом прогоне она дважды ответила дежурным «а чем ещё занимаешься?», потому что
    * зацепиться было не за что. Реплика должна звучать как то, что человек сказал бы сам.
    */
   forkHelpSaid: () => T('Не знаю, с чего начать — спрашивай',
-                        'I do not know where to start — ask me'),
+                        'I do not know where to start — ask me', 'No sé por dónde empezar — pregúntame'),
 };
 
 /** Порядок и эмодзи — с кадра A.08. Ключи те же, что понимает матчинг. */
@@ -433,13 +463,17 @@ const HOBBY_EN: Record<string, string> = {
   coding: 'Coding', hiking: 'Hiking', gaming: 'Video games', yoga: 'Yoga', cooking: 'Cooking',
   music: 'Music', coffee: 'Coffee', photography: 'Photography', travel: 'Travel', football: 'Football',
 };
+const HOBBY_ES: Record<string, string> = {
+  coding: 'Programar', hiking: 'Senderismo', gaming: 'Videojuegos', yoga: 'Yoga', cooking: 'Cocinar',
+  music: 'Música', coffee: 'Café', photography: 'Fotografía', travel: 'Viajar', football: 'Fútbol',
+};
 export const hobbyLabel = (k: string) => {
   const h = HOBBIES.find((x) => x[0] === k);
-  return h ? `${T(h[2], HOBBY_EN[k])} ${h[1]}` : k;   // своё написанное показывается как есть
+  return h ? `${T(h[2], HOBBY_EN[k], HOBBY_ES[k])} ${h[1]}` : k;   // своё написанное показывается как есть
 };
 export const hobbyPlain = (k: string) => {
   const h = HOBBIES.find((x) => x[0] === k);
-  return h ? T(h[2], HOBBY_EN[k]) : k;
+  return h ? T(h[2], HOBBY_EN[k], HOBBY_ES[k]) : k;
 };
 
 /**
@@ -458,8 +492,8 @@ export const FUNNEL = {
   seedUser: (picks: string[]) => "I'm into " + picks.join(', '),
   /** Предохранитель: два вопроса на интерес плюс запас на уточнения. */
   cap: (n: number) => n * 2 + 4,
-  compose: () => T('Расскажи Kleal больше…', 'Tell Kleal more…'),
-  done: () => T('Это всё', "That's enough"),
+  compose: () => T('Расскажи Kleal больше…', 'Tell Kleal more…', 'Dile a Kleal más…'),
+  done: () => T('Это всё', "That's enough", 'Eso es suficiente'),
   /**
    * «Это всё» заканчивает разговор про увлечения — а это единственный шаг, который наполняет
    * профиль по-настоящему. Раньше чип срабатывал мгновенно, наравне с обычными вариантами ответа,
@@ -469,14 +503,14 @@ export const FUNNEL = {
     T(
       'Если закончим — про увлечения я больше не расспрашиваю, дальше только фото и всё. Чем больше расскажешь сейчас, тем точнее я ищу; добавить что-то потом можно будет в профиле.',
       'If we stop here I won’t ask about your interests again — after this it’s just the photo. The more you tell me now, the sharper I search; you can always add more later in your profile.'
-    ),
-  endYes: () => T('Да, закончить', 'Yes, finish'),
-  endNo: () => T('Расскажу ещё', 'I’ll add more'),
-  cont: () => T('Продолжить', 'Continue'),
+    , 'Si paramos aquí, no volveré a preguntar sobre tus intereses — después de esto solo quedará la foto. Cuanto más me digas ahora, más precisa será mi búsqueda; siempre puedes añadir más información después en tu perfil.'),
+  endYes: () => T('Да, закончить', 'Yes, finish', 'Sí, terminar'),
+  endNo: () => T('Расскажу ещё', 'I’ll add more', 'Añadiré más'),
+  cont: () => T('Продолжить', 'Continue', 'Continuar'),
   /** Разговор про интерес окончен: либо назад к чипам за следующим, либо дальше по анкете. */
-  more: () => T('Добавить ещё', 'Add another'),
-  finish: () => T('Завершить', 'Finish'),
-  back: () => T('Что ещё тебе нравится?', 'What else are you into?'),
+  more: () => T('Добавить ещё', 'Add another', 'Añade otro'),
+  finish: () => T('Завершить', 'Finish', 'Finalizar'),
+  back: () => T('Что ещё тебе нравится?', 'What else are you into?', '¿Qué más te interesa?'),
 };
 
 /**
@@ -505,39 +539,41 @@ export const FUNNEL_MORE_RE =
  * «Профиль не сохранился». Человек не мог закончить анкету и не понимал почему.
  */
 export const CONFIRM_INTEREST = {
-  ask: () => T('Записать как интерес?', 'Save as an interest?'),
+  ask: () => T('Записать как интерес?', 'Save as an interest?', '¿Guardar como interés?'),
   /** Подпись приходит с сервера — это слово человека, приведённое к именительному падежу. */
-  yes: (label: string) => T('Да, «' + label + '»', 'Yes, “' + label + '”'),
-  no: () => T('Не надо', 'Skip'),
+  yes: (label: string) => T('Да, «' + label + '»', 'Yes, “' + label + '”', 'Sí, «' + label + '»'),
+  no: () => T('Не надо', 'Skip', 'Saltar'),
   /** Модель не смогла понять сказанное как интерес. Молчать нельзя: человек ждёт, что записали. */
   unclear: () => T('Это я не смог записать интересом — скажи иначе?',
-                   'I could not turn that into an interest — say it another way?'),
+                   'I could not turn that into an interest — say it another way?', 'No pude convertir eso en un interés — ¿lo expresas de otra manera?'),
 };
 
 export const STEP_PHOTO = {
-  greet: (name: string) => T('Рад знакомству, ' + name + '!', 'Nice to meet you, ' + name + '!'),
+  greet: (name: string) => T('Рад знакомству, ' + name + '!', 'Nice to meet you, ' + name + '!',
+                             'Encantado de conocerte, ' + name + '.'),
   ask: () =>
     T(
       'Давай добавим фото профиля, чтобы тебя узнавали на встречах.',
       'Let’s add a profile photo so people recognize you at meetups.'
-    ),
-  hint: () => T('Добавь фото', 'Add a photo'),
-  take: () => T('Сделать фото', 'Take photo'),
-  upload: () => T('Загрузить фото', 'Upload photo'),
-  skip: () => T('Пропустить', 'Skip'),
-  selfieTitle: () => T('Сделай селфи', 'Take a selfie'),
-  cancel: () => T('Отмена', 'Cancel'),
+    , 'Añadamos una foto de perfil para que la gente te reconozca en las quedadas.'),
+  hint: () => T('Добавь фото', 'Add a photo', 'Añade una foto'),
+  take: () => T('Сделать фото', 'Take photo', 'Tomar foto'),
+  upload: () => T('Загрузить фото', 'Upload photo', 'Subir foto'),
+  skip: () => T('Пропустить', 'Skip', 'Saltar'),
+  selfieTitle: () => T('Сделай селфи', 'Take a selfie', 'Hazte una selfie'),
+  cancel: () => T('Отмена', 'Cancel', 'Cancelar'),
   /** Хвалить лицо человека агент не должен — говорим о том, что с фото делать дальше. */
   praise: () => T('Годится. Его увидят те, кому ты отправишь приглашение.',
-                  'That works. The people you invite will see it.'),
-  pickHint: () => T('Выбери, нажав на вариант', 'Select an option by tap'),
-  use: () => T('Оставить', 'Use it'),
-  retake: () => T('Переснять', 'Retake'),
-  confirmed: () => T('Отлично — теперь это твоё фото профиля.', 'Love it — that’s your profile photo now.'),
-  cardTitle: () => T('Фото профиля установлено', 'Profile photo set'),
-  cardSub: (name: string) => T('Выглядишь отлично, ' + name, 'Looking sharp, ' + name),
-  next: () => T('Теперь найдём твоих людей.\nКогда будешь готов(а).', 'Now let’s find your people.\nReady when you are.'),
-  cta: () => T('Поехали', 'Let’s go'),
+                  'That works. The people you invite will see it.', 'Perfecto. La gente que invites lo verá.'),
+  pickHint: () => T('Выбери, нажав на вариант', 'Select an option by tap', 'Selecciona una opción tocándola'),
+  use: () => T('Оставить', 'Use it', 'Usarla'),
+  retake: () => T('Переснять', 'Retake', 'Repetir'),
+  confirmed: () => T('Отлично — теперь это твоё фото профиля.', 'Love it — that’s your profile photo now.', 'Genial — ya es tu foto de perfil.'),
+  cardTitle: () => T('Фото профиля установлено', 'Profile photo set', 'Foto de perfil establecida'),
+  cardSub: (name: string) => T('Выглядишь отлично, ' + name, 'Looking sharp, ' + name,
+                               'Te queda genial, ' + name),
+  next: () => T('Теперь найдём твоих людей.\nКогда будешь готов(а).', 'Now let’s find your people.\nReady when you are.', 'Ahora busquemos a tus personas.\nListo cuando tú lo estés.'),
+  cta: () => T('Поехали', 'Let’s go', 'Vamos'),
 };
 
 export const SUMMARY = {
@@ -556,7 +592,9 @@ export const SUMMARY = {
     T('Профиль не сохранился: Kleal пока не знает такие интересы — ' + list +
       '. Убери их или назови привычнее.',
       'Your profile didn’t save: Kleal doesn’t know these interests yet — ' + list +
-      '. Remove them or name them differently.'),
+      '. Remove them or name them differently.',
+      'Tu perfil no se guardó: Kleal todavía no conoce estos intereses — ' + list +
+      '. Quítalos o llámalos de otra manera.'),
   /** Сервер отказал по другой причине и назвал её. Показываем как есть, не пряча. */
   /**
    * Нет сессии. Отдельный случай, и он не про ошибку: профиль теперь записывается только своему
@@ -565,34 +603,35 @@ export const SUMMARY = {
    */
   saveNeedsSignIn: () =>
     T('Чтобы сохранить профиль, нужно войти — так он не потеряется при смене телефона.',
-      'Sign in to save your profile — that way it survives a change of phone.'),
-  saveGoSignIn: () => T('Войти', 'Sign in'),
+      'Sign in to save your profile — that way it survives a change of phone.', 'Inicia sesión para guardar tu perfil, así se mantendrá aunque cambies de teléfono.'),
+  saveGoSignIn: () => T('Войти', 'Sign in', 'Iniciar sesión'),
   /** Сервер не принял имя. Единственный отказ, который чинится прямо в анкете. */
   saveBadName: () =>
     T('Профиль не сохранился: в имени стоит адрес почты. Kleal спросит имя заново — его увидят другие люди.',
-      'Your profile didn’t save: the name field holds an email address. Kleal will ask for your name again — other people see it.'),
-  saveFixName: () => T('Вписать имя', 'Enter my name'),
+      'Your profile didn’t save: the name field holds an email address. Kleal will ask for your name again — other people see it.', 'Tu perfil no se guardó: el campo de nombre contiene una dirección de correo. Kleal te pedirá tu nombre de nuevo — los demás lo ven.'),
+  saveFixName: () => T('Вписать имя', 'Enter my name', 'Escribe mi nombre'),
   saveRejected: (why: string) =>
-    T('Профиль не сохранился: ' + why, 'Your profile didn’t save: ' + why),
+    T('Профиль не сохранился: ' + why, 'Your profile didn’t save: ' + why,
+      'Tu perfil no se guardó: ' + why),
   /** Настоящий обрыв: запрос не дошёл или ответ не разобрался. */
   saveOffline: () =>
     T('Профиль не сохранился. Проверь связь и попробуй ещё раз.',
-      'Your profile didn’t save. Check your connection and try again.'),
+      'Your profile didn’t save. Check your connection and try again.', 'Tu perfil no se guardó. Comprueba tu conexión e inténtalo de nuevo.'),
   /** Пока модель составляет описание. НЕ запасной перечень: тот только на случай отказа. */
-  composing: () => T('Kleal составляет описание…', 'Kleal is writing your description…'),
+  composing: () => T('Kleal составляет описание…', 'Kleal is writing your description…', 'Kleal escribe tu descripción…'),
   /** Выход из тупика: убрать названные интересы и сохранить. Разбор — в app/summary.tsx. */
-  dropRejected: () => T('Убрать их и сохранить', 'Remove them and save'),
-  confidence: () => T('Точность профиля', 'Profile confidence'),
-  klealSummary: () => T('Что понял Kleal', 'Kleal’s summary'),
-  updatedToday: () => T('Обновлено сегодня', 'Updated today'),
-  viewAll: () => T('Все настройки профиля', 'View all profile settings'),
-  planTitle: () => T('План обновлён', 'Plan updated'),
+  dropRejected: () => T('Убрать их и сохранить', 'Remove them and save', 'Elimínalos y guarda'),
+  confidence: () => T('Точность профиля', 'Profile confidence', 'Confianza en el perfil'),
+  klealSummary: () => T('Что понял Kleal', 'Kleal’s summary', 'Resumen de Kleal'),
+  updatedToday: () => T('Обновлено сегодня', 'Updated today', 'Actualizado hoy'),
+  viewAll: () => T('Все настройки профиля', 'View all profile settings', 'Ver todos los ajustes del perfil'),
+  planTitle: () => T('План обновлён', 'Plan updated', 'Plan actualizado'),
   planBody: () =>
     T(
       'Чем больше Kleal о тебе знает, тем лучше понимает твои намерения и точнее сводит с нужными людьми.',
       'The more Kleal knows about you, the better it can understand your intentions and connect you with the right people.'
-    ),
-  done: () => T('Готово', 'Done'),
+    , 'Cuanto más conozca Kleal sobre ti, mejor podrá entender tus intenciones y conectarte con las personas adecuadas.'),
+  done: () => T('Готово', 'Done', 'Hecho'),
 };
 
 /**
@@ -602,17 +641,17 @@ export const SUMMARY = {
  * при каждом запуске живёт на главном экране, у него своё (src/home.ts).
  */
 export const DONE_SCREEN = {
-  title: () => T('Поздравляем!\nТы в игре!', 'Congratulations!\nYou are on the board!'),
-  cta: () => T('Создать интент', 'Create Intent'),
+  title: () => T('Поздравляем!\nТы в игре!', 'Congratulations!\nYou are on the board!', '¡Enhorabuena!\nEstás en el tablón'),
+  cta: () => T('Создать интент', 'Create Intent', 'Crear propuesta'),
 };
 
-export const COMPOSER_PLACEHOLDER = () => T('Сообщение…', 'Message…');
+export const COMPOSER_PLACEHOLDER = () => T('Сообщение…', 'Message…', 'Mensaje…');
 
 export const NAV = () => [
-  T('Интенты', 'My Intents'),
-  T('Поиск', 'Search'),
-  T('Сообщения', 'Messages'),
-  T('Профиль', 'Profile'),
+  T('Интенты', 'My Intents', 'Mis propuestas'),
+  T('Поиск', 'Search', 'Buscar'),
+  T('Сообщения', 'Messages', 'Mensajes'),
+  T('Профиль', 'Profile', 'Perfil'),
 ];
 
 /**
@@ -667,11 +706,13 @@ export function hasProgress(p: any): boolean {
 }
 
 export const RESUME = {
-  line: (name: string) => T('С возвращением, ' + name + '! Продолжим с того места.', 'Welcome back, ' + name + '! Let’s pick up where we left off.'),
-  restart: () => T('Начать заново', 'Start over'),
+  line: (name: string) => T('С возвращением, ' + name + '! Продолжим с того места.',
+                            'Welcome back, ' + name + '! Let’s pick up where we left off.',
+                            '¡Bienvenido de nuevo, ' + name + '! Seguimos donde lo dejamos.'),
+  restart: () => T('Начать заново', 'Start over', 'Volver a empezar'),
   /** Про вход сказано отдельно: раньше кнопка молча разлогинивала, и об этом не предупреждали. */
   restartAsk: () => T('Начать анкету заново? Всё, что ты рассказал, сотрётся. Вход останется — заново заходить не придётся.',
-                      'Start the questionnaire over? Everything you told me will be erased. You stay signed in.'),
-  restartYes: () => T('Да, заново', 'Yes, start over'),
-  restartNo: () => T('Отмена', 'Cancel'),
+                      'Start the questionnaire over? Everything you told me will be erased. You stay signed in.', '¿Quieres volver a hacer la encuesta? Todo lo que me dijiste se borrará. Te quedas conectado.'),
+  restartYes: () => T('Да, заново', 'Yes, start over', 'Sí, empezar de nuevo'),
+  restartNo: () => T('Отмена', 'Cancel', 'Cancelar'),
 };

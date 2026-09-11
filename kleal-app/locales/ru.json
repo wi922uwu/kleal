@@ -1,0 +1,6 @@
+{
+  "NSCameraUsageDescription": "Камера нужна для фото профиля и коротких видеозаметок.",
+  "NSMicrophoneUsageDescription": "Микрофон нужен для голосовых и видеозаметок.",
+  "NSLocationWhenInUseUsageDescription": "Геопозиция нужна, чтобы предлагать людей в выбранном тобой радиусе.",
+  "NSPhotoLibraryUsageDescription": "Kleal берёт фото из галереи, чтобы поставить фото профиля, по которому тебя узнают на встречах."
+}

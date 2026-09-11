@@ -1,23 +1,36 @@
 /**
  * Профиль → «Твоя личность».
  *
- * Три вещи, и ни одна из них не зависит от того, успел ли Kleal что-то про тебя понять: фото, тест
- * и история своими словами. Поэтому экран осмыслен и у совсем нового профиля.
+ * Две вещи, и ни одна не зависит от того, успел ли Kleal что-то про тебя понять: тест и история
+ * своими словами. Поэтому экран осмыслен и у совсем нового профиля.
+ *
+ * ЧТО ЗДЕСЬ БЫЛО И ПОЧЕМУ ПЕРЕЛОЖЕНО (10 сентября 2026, с телефона: «неразбериха, много лишнего»).
+ * Сверху стояло фото на 132 пункта — то же, что на хабе профиля, и к личности не относящееся.
+ * Под ним красная «Пройти тест», ниже поле истории, под ним кнопка «Сохранить историю», под ней
+ * тёмная «Пересобрать», затем карточка с ЕЩЁ ОДНОЙ тёмной кнопкой на тот же тест и ссылка «Пройти
+ * заново», а внизу вторая красная «Сохранить и закрыть». Три входа в один тест, две красные
+ * кнопки, два сохранения — экран, у которого нет главного.
+ *
+ * ТЕПЕРЬ. Порядок — по смыслу заголовка: сначала сама личность (ради неё экран и назван), потом
+ * история своими словами, потом что из неё годится в интересы, потом сводка. У теста один вход —
+ * внутри карточки личности: у новичка это единственная красная кнопка на экране, у прошедшего —
+ * тихая ссылка «пройти заново». История сохраняется сама, по уходу с поля и по «назад», и говорит
+ * об этом строкой «Сохранено» прямо под полем — отдельные кнопки сохранения убраны как повтор.
+ * Фото убрано: ему место на хабе, а здесь оно занимало самое дорогое место на экране.
  *
  * `personality` и `summary` — ДВА разных текста с двумя владельцами. Первый пишет тест, второй —
  * сводка на хабе. Сливать их нельзя: в вебе это уже пробовали, и тест молча съедал сводку.
  */
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ProfileShell, Card } from '../../src/components/ProfileShell';
-import { IconPerson } from '../../src/components/icons';
+import { ProfileShell, Card, Divider } from '../../src/components/ProfileShell';
 import { useLang, replyLang } from '../../src/i18n';
 import { useOnb, set, getState } from '../../src/state';
-import { mediaUrl, profile as profileApi, buddy } from '../../src/api';
+import { profile as profileApi, buddy } from '../../src/api';
 import {
   PERSONALITY as C, STORY_MAX, fmtUpdated, adaptSummary,
-  AXIS_LABEL, AXIS_VALUE, AXIS_ORDER, addInterests, explicitInterests,
+  AXIS_LABEL, AXIS_VALUE, AXIS_ORDER, addConfirmedInterest, explicitInterests,
 } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
@@ -43,7 +56,7 @@ export default function Personality() {
    * Само ничего не добавляется. Интересы, проставленные за человека, это ярлыки, которых он не
    * выбирал, и найдут его по ним не те люди.
    */
-  const [suggest, setSuggest] = useState<{ key: string; label: string; why: string }[]>([]);
+  const [suggest, setSuggest] = useState<{ key: string; label: string; why: string; token: string }[]>([]);
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [addedNote, setAddedNote] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -54,7 +67,17 @@ export default function Personality() {
     setAddedNote(false);
     try {
       const r: any = await buddy.storyInterests(text, explicitInterests(p), replyLang());
-      const list = (r?.interests || []) as { key: string; label: string; why: string }[];
+      const raw = (r?.interests || []) as { key: string; label: string; why: string }[];
+      // Story extraction remains a proposal. Each key crosses the same schema-validated
+      // normalization boundary as the free-text popup before it can be shown for confirmation.
+      const list = (await Promise.all(raw.map(async (item) => {
+        try {
+          const nr = await profileApi.normalizeInterest(item.key, explicitInterests(p), replyLang());
+          const option = nr.status === 'ready' && nr.options?.length === 1 ? nr.options[0] : null;
+          return option ? { key: option.canonical, label: option.label || item.label,
+                            why: item.why, token: option.token } : null;
+        } catch { return null; }
+      }))).filter(Boolean) as { key: string; label: string; why: string; token: string }[];
       setSuggest(list);
       // Отмечено всё сразу: человек уже написал это про себя, и заставлять его отмечать заново
       // — лишний шаг. Снять галочку с лишнего дешевле, чем проставить четыре.
@@ -67,9 +90,16 @@ export default function Personality() {
   };
 
   const applyPicked = async () => {
-    const keys = suggest.filter((x) => picked[x.key]).map((x) => x.key);
-    if (!keys.length) return;
-    await addInterests(keys);
+    const chosen = suggest.filter((x) => picked[x.key]);
+    if (!chosen.length) return;
+    for (const item of chosen) {
+      try {
+        const r = await profileApi.confirmInterest(String(p.name || ''), item.token);
+        if (r.ok && r.canonical && r.token && (!getState().done || r.persisted === true)) {
+          addConfirmedInterest(r.canonical, r.label || item.label, r.token);
+        }
+      } catch { /* an expired proposal is not written locally or remotely */ }
+    }
     setSuggest([]);
     setPicked({});
     setAddedNote(true);
@@ -127,177 +157,157 @@ export default function Personality() {
   const persona: Record<string, string> = (p.persona && p.persona.axes) || p.persona || {};
   const answered = AXIS_ORDER.filter((k) => persona[k] && AXIS_VALUE[persona[k]]);
 
+  const hasTest = !!text || answered.length > 0;
+
   return (
-    <ProfileShell
-      title={C.title()}
-      onBack={() => { saveStory(); router.back(); }}
-      footer={
-        <Pressable
-          accessibilityRole="button"
-          style={s.cta}
-          onPress={async () => { await saveStory(); router.back(); }}
-        >
-          <Text style={s.ctaText}>{C.confirm()}</Text>
-        </Pressable>
-      }
-    >
-      <View style={s.photoWrap}>
-        {p.photo ? (
-          <Image source={{ uri: mediaUrl(String(p.photo)) }} style={s.photo} />
+    <ProfileShell title={C.title()} onBack={() => { saveStory(); router.back(); }}>
+      {/*
+        1. ЛИЧНОСТЬ — ПЕРВОЙ. Экран так и называется, и человек открывает его за этим.
+        У новичка карточка — приглашение с единственной красной кнопкой на экране. У прошедшего —
+        абзац Kleal, дата и ответы по осям компактной таблицей; тест здесь можно только пройти
+        заново, и это ссылка, а не кнопка: повтор — не то действие, ради которого сюда приходят.
+      */}
+      <Card>
+        {hasTest ? (
+          <>
+            <View style={s.head}>
+              <Text style={s.label}>{C.title()}</Text>
+              {updated ? <Text style={s.updated}>{updated}</Text> : null}
+            </View>
+            {text ? <Text style={s.body}>{text}</Text> : null}
+            {answered.length ? (
+              <>
+                <Divider />
+                <Text style={s.axesTitle}>{C.axesTitle()}</Text>
+                {answered.map((k) => (
+                  <View key={k} style={s.axisRow}>
+                    <Text style={s.axisKey}>{AXIS_LABEL[k]()}</Text>
+                    <Text style={s.axisVal}>{AXIS_VALUE[persona[k]]()}</Text>
+                  </View>
+                ))}
+              </>
+            ) : null}
+            <Pressable accessibilityRole="button" onPress={() => router.navigate('/profile/test')} style={s.retakeWrap}>
+              <Text style={s.retake}>{C.retake()}</Text>
+            </Pressable>
+          </>
         ) : (
-          <View style={[s.photo, s.photoEmpty]}><IconPerson /></View>
+          <>
+            <Text style={s.label}>{C.title()}</Text>
+            <Text style={s.body}>{C.empty()}</Text>
+            <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/profile/test')}>
+              <Text style={s.ctaText}>{C.takeTest()}</Text>
+            </Pressable>
+          </>
         )}
-      </View>
-
-      <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/profile/test')}>
-        <Text style={s.ctaText}>{C.takeTest()}</Text>
-      </Pressable>
-
-      {/* Свои слова — ВЫШЕ сводки: человек сначала пишет о себе, а абзац Kleal — уже следствие.
-          Обратный порядок читался как «вот наш вердикт, а теперь можешь дополнить». */}
-      <Text style={s.cap}>{C.storyCap()}</Text>
-      <TextInput
-        style={s.story}
-        value={story}
-        onChangeText={(v) => setStory(v.slice(0, STORY_MAX))}
-        onBlur={saveStory}
-        multiline
-        textAlignVertical="top"
-        maxLength={STORY_MAX}
-        placeholder={C.storyPlaceholder()}
-        placeholderTextColor={color.neutral400}
-        accessibilityLabel={C.storyCap()}
-      />
-      <View style={s.storyFoot}>
-        <Text style={s.count}>{story.length} / {STORY_MAX}</Text>
-        {saved ? <Text style={s.savedNote}>{C.saved()}</Text> : null}
-      </View>
+      </Card>
 
       {/*
-        Две кнопки прямо под полем. Раньше история сохранялась молча — по уходу с поля и по
-        кнопке в самом низу экрана, за 180 пикселями текстового поля: человек писал абзац о себе
-        и не видел ни подтверждения, ни последствия. Теперь «Сохранить» говорит, что применилось,
-        а «Пересобрать» показывает, что из этого вышло.
+        2. СВОИМИ СЛОВАМИ. Сохраняется само — по уходу с поля и по «назад» — и говорит об этом
+        строкой под полем. Раньше под ним стояли две кнопки сохранения и третья внизу экрана: три
+        способа сделать одно и то же, ни один из которых не был нужен.
       */}
-      {/* Что из истории годится для поиска. Показывается ПОСЛЕ сохранения — предлагать по
-          недописанному тексту значит предлагать по половине фразы. */}
+      <Card>
+        <Text style={s.label}>{C.storyCap()}</Text>
+        <TextInput
+          style={s.story}
+          value={story}
+          onChangeText={(v) => setStory(v.slice(0, STORY_MAX))}
+          onBlur={saveStory}
+          multiline
+          textAlignVertical="top"
+          maxLength={STORY_MAX}
+          placeholder={C.storyPlaceholder()}
+          placeholderTextColor={color.neutral400}
+          accessibilityLabel={C.storyCap()}
+        />
+        <View style={s.storyFoot}>
+          <Text style={s.count}>{story.length} / {STORY_MAX}</Text>
+          {saved ? <Text style={s.savedNote}>{C.saved()}</Text> : dirty ? <Text style={s.count}>…</Text> : null}
+        </View>
+      </Card>
+
+      {/* 3. ЧТО ИЗ ИСТОРИИ ГОДИТСЯ В ПОИСК. Появляется после сохранения — по недописанному тексту
+          предлагать нечего. Подтверждает человек, а не приложение. */}
       {asking ? <ActivityIndicator style={{ marginVertical: space.sm }} color={color.primary} /> : null}
       {suggest.length ? (
-        <View style={s.fromStory}>
-          <Text style={s.fromStoryTitle}>{C.fromStoryTitle()}</Text>
-          <Text style={s.fromStoryNote}>{C.fromStoryNote()}</Text>
+        <Card>
+          <Text style={s.label}>{C.fromStoryTitle()}</Text>
+          <Text style={s.note}>{C.fromStoryNote()}</Text>
           {suggest.map((x) => (
             <Pressable key={x.key} accessibilityRole="checkbox"
                        accessibilityState={{ checked: !!picked[x.key] }}
                        style={[s.pick, picked[x.key] && s.pickOn]}
                        onPress={() => setPicked((v) => ({ ...v, [x.key]: !v[x.key] }))}>
               <Text style={[s.pickLabel, picked[x.key] && { color: color.onPrimary }]}>{x.label}</Text>
-              {/* Цитата из истории — чтобы предложение можно было проверить, а не принять на веру. */}
               <Text style={[s.pickWhy, picked[x.key] && { color: color.onPrimary }]} numberOfLines={2}>
                 «{x.why}»
               </Text>
             </Pressable>
           ))}
-          <Pressable accessibilityRole="button" style={s.applyBtn} onPress={applyPicked}>
-            <Text style={s.applyText}>
-              {C.fromStoryAdd(suggest.filter((x) => picked[x.key]).length)}
-            </Text>
-          </Pressable>
-        </View>
-      ) : null}
-      {addedNote ? <Text style={s.savedNote}>{C.fromStoryAdded()}</Text> : null}
-
-      <Pressable
-        accessibilityRole="button"
-        disabled={!dirty}
-        accessibilityState={{ disabled: !dirty }}
-        style={[s.applyBtn, !dirty && { opacity: 0.45 }]}
-        onPress={saveStory}
-      >
-        {/* «История сохранена» — только когда она правда есть. У пустого поля это была бы
-            неправда про несуществующий текст. */}
-        <Text style={s.applyText}>{!dirty && p.story ? C.applied() : C.apply()}</Text>
-      </Pressable>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ busy: rebuilding }}
-        style={[s.dark, rebuilding && { opacity: 0.7 }]}
-        onPress={rebuilding ? undefined : rebuild}
-      >
-        {rebuilding
-          ? <ActivityIndicator color="#fff" />
-          : <Text style={s.darkText}>{C.rebuild()}</Text>}
-      </Pressable>
-      <Text style={s.cap}>{C.rebuildNote()}</Text>
-
-      {rebuildErr ? <Text style={s.errNote}>{rebuildErr}</Text> : null}
-      {rebuilt ? (
-        <View style={s.rebuiltBox}>
-          <Text style={s.rebuiltLabel}>{C.rebuiltLabel()}</Text>
-          <Text style={s.rebuiltText}>{rebuilt}</Text>
-        </View>
-      ) : null}
-
-      <Card>
-        <View style={s.head}>
-          <Text style={s.label}>{C.title()}</Text>
-          {updated ? <Text style={s.updated}>{updated}</Text> : null}
-        </View>
-        <Text style={s.body}>{text || C.empty()}</Text>
-        <Pressable accessibilityRole="button" style={s.dark} onPress={() => router.navigate('/profile/test')}>
-          <Text style={s.darkText}>{C.editWith()}</Text>
-        </Pressable>
-      </Card>
-
-      {answered.length ? (
-        <Card>
-          <Text style={s.label}>{C.axesTitle()}</Text>
-          {answered.map((k) => (
-            <View key={k} style={s.axisRow}>
-              <Text style={s.axisKey}>{AXIS_LABEL[k]()}</Text>
-              <Text style={s.axisVal}>{AXIS_VALUE[persona[k]]()}</Text>
-            </View>
-          ))}
-          <Pressable accessibilityRole="button" onPress={() => router.navigate('/profile/test')}>
-            <Text style={s.retake}>{C.retake()}</Text>
+          <Pressable accessibilityRole="button" style={s.soft} onPress={applyPicked}>
+            <Text style={s.softText}>{C.fromStoryAdd(suggest.filter((x) => picked[x.key]).length)}</Text>
           </Pressable>
         </Card>
       ) : null}
+      {addedNote ? <Text style={s.savedNoteOut}>{C.fromStoryAdded()}</Text> : null}
 
+      {/*
+        4. СВОДКА KLEAL. Она живёт на хабе, но собирается из этой истории — поэтому её кнопка здесь,
+        последней: сначала пишешь, потом смотришь, что из этого вышло. Кнопка мягкая, а не тёмная:
+        главное действие экрана — тест, второго тёмного пятна ему не нужно. Результат показывается
+        тут же — кнопка, тихо меняющая текст на другом экране, это то же «ничего не произошло».
+      */}
+      <Card>
+        <Text style={s.label}>{C.rebuiltLabel()}</Text>
+        <Text style={s.note}>{C.rebuildNote()}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ busy: rebuilding }}
+          style={[s.soft, rebuilding && { opacity: 0.7 }]}
+          onPress={rebuilding ? undefined : rebuild}
+        >
+          {rebuilding ? <ActivityIndicator color={color.primary} /> : <Text style={s.softText}>{C.rebuild()}</Text>}
+        </Pressable>
+        {rebuildErr ? <Text style={s.errNote}>{rebuildErr}</Text> : null}
+        {rebuilt ? (
+          <View style={s.rebuiltBox}>
+            <Text style={s.rebuiltText}>{rebuilt}</Text>
+          </View>
+        ) : null}
+      </Card>
     </ProfileShell>
   );
 }
 
-const s = StyleSheet.create({
-  photoWrap: { alignItems: 'center', marginTop: space.sm },
-  photo: { width: 132, height: 132, borderRadius: rad.full },
-  photoEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
+// ===== вид
 
-  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  label: { fontSize: 17, fontWeight: '700', color: color.fg },
+const s = StyleSheet.create({
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: space.sm },
+  label: { ...type.title, color: color.fg } as any,
   updated: { ...type.caption, color: color.muted } as any,
   body: { ...type.body, color: color.fg } as any,
+  note: { ...type.bodySmall, color: color.muted } as any,
+
+  axesTitle: { ...type.labelMedium, color: color.muted, marginTop: space.xs } as any,
   axisRow: {
     flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
-    gap: space.md, paddingVertical: 7,
+    gap: space.md, paddingVertical: 6,
   },
   axisKey: { ...type.bodySmall, color: color.muted, flexShrink: 0 } as any,
   axisVal: { ...type.bodySmall, color: color.fg, fontWeight: '600', flex: 1, textAlign: 'right' } as any,
-  retake: { ...type.labelMedium, color: color.primary, fontWeight: '600', paddingTop: space.sm } as any,
+  retakeWrap: { paddingTop: space.xs, alignSelf: 'flex-start' },
+  retake: { ...type.labelMedium, color: color.primary, fontWeight: '600' } as any,
 
-  cap: { ...type.bodySmall, color: color.muted, paddingHorizontal: 4 } as any,
   story: {
-    minHeight: 180, borderRadius: rad.md, backgroundColor: color.card,
-    borderWidth: 1, borderColor: color.border,
+    minHeight: 132, borderRadius: rad.md, backgroundColor: color.bg,
     padding: 14, color: color.fg, fontSize: 15, lineHeight: 22,
   },
   storyFoot: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
+  count: { ...type.caption, color: color.neutral400 } as any,
+  savedNote: { ...type.caption, color: color.successText, fontWeight: '600' } as any,
+  savedNoteOut: { ...type.caption, color: color.successText, paddingHorizontal: 4 } as any,
 
-  // Предложение из истории. Токены, своих чисел и цветов нет.
-  fromStory: { gap: space.xs, marginTop: space.sm },
-  fromStoryTitle: { ...type.body, color: color.fg, fontWeight: '700' } as any,
-  fromStoryNote: { ...type.bodySmall, color: color.muted, marginBottom: space.xs } as any,
   pick: {
     borderRadius: rad.lg, borderWidth: 1, borderColor: color.border,
     backgroundColor: color.card, paddingHorizontal: 14, paddingVertical: 10, gap: 2,
@@ -305,23 +315,15 @@ const s = StyleSheet.create({
   pickOn: { backgroundColor: color.primary, borderColor: color.primary },
   pickLabel: { ...type.body, color: color.fg, fontWeight: '700' } as any,
   pickWhy: { ...type.bodySmall, color: color.muted } as any,
-  count: { ...type.caption, color: color.neutral400 } as any,
-  savedNote: { ...type.caption, color: color.successText } as any,
 
-  cta: { height: 48, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  /** Единственная красная кнопка экрана — и только у того, кто тест ещё не проходил. */
+  cta: { height: 48, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', marginTop: space.xs },
   ctaText: { ...type.button, color: color.onPrimary } as any,
-  dark: { height: 44, borderRadius: rad.full, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center', marginTop: space.sm },
-  darkText: { ...type.button, color: color.onPrimary } as any,
+  /** Мягкая кнопка второстепенных действий: добавить интересы, обновить сводку. */
+  soft: { height: 44, borderRadius: rad.full, backgroundColor: color.infoBg, alignItems: 'center', justifyContent: 'center', marginTop: space.xs },
+  softText: { ...type.button, color: color.primary } as any,
 
-  // «Сохранить историю» — не главное действие экрана (главное внизу, «Сохранить и закрыть»),
-  // поэтому мягкая кнопка, а не красная: две красные подряд спорят друг с другом.
-  applyBtn: {
-    height: 44, borderRadius: rad.full, backgroundColor: color.infoBg,
-    alignItems: 'center', justifyContent: 'center', marginTop: space.sm,
-  },
-  applyText: { ...type.button, color: color.primary } as any,
-  errNote: { ...type.bodySmall, color: color.primary, paddingHorizontal: 4 } as any,
-  rebuiltBox: { backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.md, gap: 4 },
-  rebuiltLabel: { ...type.labelSmall, color: color.successText, fontWeight: '700' } as any,
+  errNote: { ...type.bodySmall, color: color.primary } as any,
+  rebuiltBox: { backgroundColor: color.successBg, borderRadius: rad.lg, padding: space.md },
   rebuiltText: { ...type.bodySmall, color: color.successText } as any,
 });

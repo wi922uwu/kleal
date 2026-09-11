@@ -30,13 +30,63 @@ import { PostCallPrompt } from '../src/components/PostCallPrompt';
 const ART_FIRST = [
   require('../assets/art/logo-wordmark.png'),
   require('../assets/art/welcome-hand.png'),
-];
-const ART_REST = [
+  // Intro can be opened directly: its fixed photo must be ready before the first frame.
   require('../assets/art/usp-friends-v2.jpg'),
+];
+/**
+ * Графика ГЛАВНОЙ. Греется раньше всего остального фонового, и это не вкусовщина: вернувшийся
+ * человек попадает на главную сразу после заставки, а экранов входа больше не увидит никогда.
+ *
+ * Здесь же самые тяжёлые файлы приложения — шесть картинок на 2.6 МБ, до 693 КБ каждая. Пока они
+ * не грелись вовсе, и это было видно: на месте картинки стоял серый квадрат, который сменялся
+ * рисунком через заметную паузу. В заставку их класть нельзя — двумя с половиной мегабайтами
+ * запуск удлиняется для всех, включая тех, кто до главной ещё не дошёл.
+ */
+const ART_HOME = [
+  require('../assets/art/wheel/sneaker.png'),
+  require('../assets/art/wheel/padel.png'),
+  require('../assets/art/wheel/gamepad.png'),
+  require('../assets/art/wheel/cherries.png'),
+  require('../assets/art/wheel/laptop.png'),
+  require('../assets/art/wheel/disco.png'),
+];
+
+const ART_REST = [
   require('../assets/art/logo-mark.png'),
   require('../assets/art/icon-apple.png'),
   require('../assets/art/icon-google.png'),
   require('../assets/art/auth-keyhole.png'),
+];
+
+/**
+ * ВСЕ ЭКРАНЫ ПРИЛОЖЕНИЯ И ИХ ПЕРЕХОДЫ.
+ *
+ * Раньше здесь перечислялись только особенные — те, у кого своя анимация. Теперь список полный,
+ * потому что каждому нужен `dangerouslySingular` (см. разметку ниже): экран, забытый в этом
+ * списке, снова начнёт копиться в стопке.
+ *
+ * Пусто вместо настроек — переход по умолчанию, `ios_from_right` из `screenOptions`.
+ */
+/** Вкладки нижней панели: смена раздела, а не шаг вглубь, — жёсткая смена кадра без сдвига. */
+const TAB = { animation: 'none' } as const;
+/**
+ * Входные кадры не едут, а проявляются: заставка передаёт эстафету (`replace`), вход происходит
+ * под чёрным занавесом, а «готово» — исход, а не шаг вглубь. Сдвиг вправо-влево врал бы трижды.
+ */
+const FADE = { animation: 'fade' } as const;
+
+const SCREENS: [string, object?][] = [
+  ['intro', FADE], ['auth', FADE], ['auth-done', FADE],
+  ['home', TAB], ['activity', TAB], ['messages', TAB], ['profile/index', TAB],
+  // История разговоров — модальным окном: заглянул и вернулся туда, откуда пришёл.
+  ['history', { presentation: 'modal', animation: 'slide_from_bottom' }],
+  ['auth-code'], ['auth-email'], ['login'], ['summary'], ['done'], ['chat'],
+  ['buddy'], ['create'], ['intent'], ['results'], ['candidate'], ['person'],
+  ['invite'], ['ginvite'], ['group-invite'], ['conversation'], ['plan'],
+  ['group'], ['gplan'], ['group-report'], ['myintent'], ['map'], ['map-intent'],
+  ['profile/interests'], ['profile/personality'], ['profile/safety'], ['profile/test'],
+  ['settings/index'], ['settings/account'], ['settings/availability'],
+  ['settings/blocked'], ['settings/privacy'], ['settings/visibility'],
 ];
 
 export default function RootLayout() {
@@ -73,8 +123,11 @@ export default function RootLayout() {
     const first = Asset.loadAsync(ART_FIRST).catch(() => {});
     Promise.all([initLang(), restore(), first]).finally(() => {
       setReady(true);
-      // Остальное греется уже под нарисованной заставкой и никого не ждёт.
-      Asset.loadAsync(ART_REST).catch(() => {});
+      // Остальное греется уже под нарисованной заставкой и никого не ждёт. Порядок важен:
+      // главная идёт первой, потому что до неё доходят все, а до экранов входа — только новые.
+      Asset.loadAsync(ART_HOME)
+        .catch(() => {})
+        .finally(() => { Asset.loadAsync(ART_REST).catch(() => {}); });
 
       // Сводка догоняет профиль сама, с какого бы экрана он ни изменился. Включается ПОСЛЕ
       // restore(): иначе первое же восстановление с диска выглядит как правка и зовёт модель.
@@ -114,42 +167,27 @@ export default function RootLayout() {
         }}
       >
         {/*
-          ВКЛАДКИ НИЖНЕЙ ПАНЕЛИ ПЕРЕКЛЮЧАЮТСЯ БЕЗ АНИМАЦИИ.
+          НИ ОДИН ЭКРАН НЕ ЛЕЖИТ В СТОПКЕ ДВАЖДЫ.
 
-          Переход по панели — это два действия подряд: свернуть стопку до главной и открыть
-          вкладку (см. BottomNav — иначе чередование вкладок наращивает стопку). Со `slide_from_right`
-          оба видны по очереди: экран уезжает, показывается главная, поверх неё наезжает вкладка.
-          Со стороны это читается не как переход, а как перерисовка внахлёст.
+          Это и есть ответ на «смахиваю — попадаю в миллиард экранов». Стопка росла на ровном
+          месте: план открывает чат, из чата снова план, из плана снова чат — и каждый раз это
+          НОВЫЙ экран, потому что `navigate` считает разными два вызова одного маршрута с разными
+          параметрами. Десять минут переписки — и «назад» надо было нажать восемь раз, проходя те
+          же два экрана по кругу.
 
-          Вкладка — не «шаг вглубь», а смена раздела, и ей уместнее жёсткая смена кадра.
-          Проваливание вглубь (карточка, план, разговор) анимацию сохраняет: там движение
-          вправо-влево говорит человеку, куда он идёт и как вернуться.
+          `dangerouslySingular` даёт маршруту постоянный опознаватель (имя маршрута), и переход на
+          уже открытый экран ВОЗВРАЩАЕТ к нему, обновляя параметры, вместо того чтобы класть копию.
+          Название пугающее, но опасность у него одна и здесь неприменимая: если бы продукту нужны
+          были два разных экземпляра одного экрана рядом в стопке (два чата подряд, две карточки),
+          они бы схлопнулись в один. У нас таких мест нет — чат один, план один, карточка одна, и
+          параметры в них меняются, а не размножаются.
+
+          Перечислены ВСЕ экраны, а не только те, у которых свои настройки: пропущенный остался бы
+          с прежним поведением, и стопка снова росла бы — но уже в одном незаметном месте.
         */}
-        {/*
-          ТРИ КАДРА ВХОДА НЕ ЕДУТ, А ПРОЯВЛЯЮТСЯ.
-
-          Сдвиг вправо-влево говорит «ты пошёл вглубь, назад тем же путём». Здесь это неправда
-          трижды, и каждый раз по-своему:
-
-          `intro` — заставка не «уровень выше» экрана пользы, она ему передаёт эстафету и уходит
-          из истории (`replace`). Сдвигать её некуда.
-
-          `auth` — переход происходит ПОД чёрным занавесом, который к этому моменту закрыл экран
-          целиком. Со сдвигом занавес уезжает влево чёрной плитой, и вместо мягкой передачи видно
-          именно её. С проявлением он растворяется в экране входа — движение остаётся одно.
-
-          `auth-done` — это не шаг вглубь, а исход: код погашен, сессия выдана, возвращаться
-          некуда. Ему идёт проявление, и оно же даёт ореолу под иллюстрацией разгореться, а не
-          въехать сбоку готовым.
-        */}
-        <Stack.Screen name="intro" options={{ animation: 'fade' }} />
-        <Stack.Screen name="auth" options={{ animation: 'fade' }} />
-        <Stack.Screen name="auth-done" options={{ animation: 'fade' }} />
-
-        <Stack.Screen name="home" options={{ animation: 'none' }} />
-        <Stack.Screen name="activity" options={{ animation: 'none' }} />
-        <Stack.Screen name="messages" options={{ animation: 'none' }} />
-        <Stack.Screen name="profile/index" options={{ animation: 'none' }} />
+        {SCREENS.map(([name, options]) => (
+          <Stack.Screen key={name} name={name} dangerouslySingular options={options as any} />
+        ))}
       </Stack>
       <PostCallPrompt />
     </SafeAreaProvider>

@@ -70,7 +70,7 @@ export default function Blocked() {
       {loading ? (
         <ActivityIndicator style={{ marginTop: space.lg }} color={color.primary} />
       ) : err ? (
-        <Text style={s.empty}>{T('Не удалось получить список.', 'Could not load the list.')}</Text>
+        <Text style={s.empty}>{T('Не удалось получить список.', 'Could not load the list.', 'No se pudo cargar la lista.')}</Text>
       ) : list.length === 0 ? (
         <Text style={s.empty}>{BLOCKED.empty()}</Text>
       ) : (

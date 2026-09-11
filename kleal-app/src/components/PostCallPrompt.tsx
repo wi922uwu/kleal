@@ -153,7 +153,7 @@ export function PostCallPrompt() {
       <View style={s.layer}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={T('Ответить позже', 'Answer later')}
+          accessibilityLabel={T('Ответить позже', 'Answer later', 'Contesta más tarde')}
           style={s.scrim}
           onPress={close}
         />
@@ -161,7 +161,7 @@ export function PostCallPrompt() {
           <View style={s.handle} />
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={T('Ответить позже', 'Answer later')}
+            accessibilityLabel={T('Ответить позже', 'Answer later', 'Contesta más tarde')}
             hitSlop={12}
             style={s.close}
             onPress={close}
@@ -169,7 +169,7 @@ export function PostCallPrompt() {
             <Text style={s.closeText}>x</Text>
           </Pressable>
 
-          <Text style={s.eyebrow}>{T('После звонка', 'After the call')}</Text>
+          <Text style={s.eyebrow}>{T('После звонка', 'After the call', 'Después de la llamada')}</Text>
           <Text style={s.title}>
             {stage === 'happened' ? PLAN.didItHappen()
               : stage === 'rating' ? PLAN.howWasIt()
@@ -184,7 +184,7 @@ export function PostCallPrompt() {
               <Text style={s.note}>
                 {plan.feedback_kind === 'group'
                   ? T('Этот вопрос получат все участники. Ответы не записываются, пока каждый не ответит.',
-                      'Everyone gets this question. Nothing is recorded until people answer.')
+                      'Everyone gets this question. Nothing is recorded until people answer.', 'A todos se les hace esta pregunta. Nada se registra hasta que la gente responda.')
                   : PLAN.didItNote(other)}
               </Text>
               <Pressable accessibilityRole="button" disabled={busy} style={s.primary} onPress={answerYes}>
@@ -227,7 +227,7 @@ export function PostCallPrompt() {
               </Pressable>
               {plan.feedback_kind === 'group' ? (
                 <Pressable accessibilityRole="button" disabled={busy} style={s.secondary} onPress={reportGroupProblem}>
-                  <Text style={s.secondaryText}>{T('Сообщить о проблеме', 'Report a problem')}</Text>
+                  <Text style={s.secondaryText}>{T('Сообщить о проблеме', 'Report a problem', 'Reportar un problema')}</Text>
                 </Pressable>
               ) : null}
             </>
@@ -238,7 +238,7 @@ export function PostCallPrompt() {
               <Text style={s.note}>
                 {plan.feedback_kind === 'group'
                   ? T('Причина останется приватной и не будет показана другим участникам.',
-                      'Your reason stays private and is not shown to other participants.')
+                      'Your reason stays private and is not shown to other participants.', 'Tu motivo permanece privado y no se muestra a otros participantes.')
                   : PLAN.whatHappenedNote()}
               </Text>
               {(plan.feedback_kind === 'group' ? groupReasons(String(plan.mode || '')) : [
@@ -295,28 +295,28 @@ export function feedbackStage(plan: any, nowMs = Date.now()): Stage | null {
 export function groupReasons(mode: string): [string, string][] {
   if (mode === 'hybrid') {
     return [
-      ['nobody_came_or_joined', T('Никто не пришёл и не подключился', 'Nobody came or joined')],
-      ['couldnt_make', T('Я не смог прийти или подключиться', 'I couldn’t make it')],
-      ['others_didnt_come_or_join', T('Другие не пришли или не подключились', 'Others didn’t come or join')],
-      ['place_closed', T('Место было закрыто', 'The place was closed')],
-      ['other', T('Другое', 'Something else')],
+      ['nobody_came_or_joined', T('Никто не пришёл и не подключился', 'Nobody came or joined', 'Nadie vino ni se unió')],
+      ['couldnt_make', T('Я не смог прийти или подключиться', 'I couldn’t make it', 'No pude ir')],
+      ['others_didnt_come_or_join', T('Другие не пришли или не подключились', 'Others didn’t come or join', 'Los demás no vinieron o no se unieron')],
+      ['place_closed', T('Место было закрыто', 'The place was closed', 'El lugar estaba cerrado')],
+      ['other', T('Другое', 'Something else', 'Otra cosa')],
     ];
   }
   if (mode === 'offline') {
     return [
-      ['nobody_came', T('Никто не пришёл', 'Nobody came')],
-      ['couldnt_make', T('Я не смог прийти', 'I couldn’t make it')],
-      ['others_didnt_come', T('Другие не пришли', 'Others didn’t come')],
-      ['place_closed', T('Место было закрыто', 'The place was closed')],
-      ['other', T('Другое', 'Something else')],
+      ['nobody_came', T('Никто не пришёл', 'Nobody came', 'Nadie vino')],
+      ['couldnt_make', T('Я не смог прийти', 'I couldn’t make it', 'No pude ir')],
+      ['others_didnt_come', T('Другие не пришли', 'Others didn’t come', 'Los demás no vinieron')],
+      ['place_closed', T('Место было закрыто', 'The place was closed', 'El lugar estaba cerrado')],
+      ['other', T('Другое', 'Something else', 'Otra cosa')],
     ];
   }
   return [
-    ['nobody_joined', T('Никто не подключился', 'Nobody joined')],
-    ['couldnt_make', T('Я не смог подключиться', 'I couldn’t make it')],
-    ['others_didnt_join', T('Другие не подключились', 'Others didn’t join')],
-    ['link_failed', T('Ссылка не работала', 'The link didn’t work')],
-    ['other', T('Другое', 'Something else')],
+    ['nobody_joined', T('Никто не подключился', 'Nobody joined', 'Nadie se unió')],
+    ['couldnt_make', T('Я не смог подключиться', 'I couldn’t make it', 'No pude ir')],
+    ['others_didnt_join', T('Другие не подключились', 'Others didn’t join', 'Los demás no se unieron')],
+    ['link_failed', T('Ссылка не работала', 'The link didn’t work', 'El enlace no funcionó')],
+    ['other', T('Другое', 'Something else', 'Otra cosa')],
   ];
 }
 
@@ -326,9 +326,9 @@ function groupRatingNote(plan: any): string {
     return T(
       `${Number(outcome.yes || 0)} из ${Number(outcome.of || 0)} участников подтвердили звонок. Оценка необязательна.`,
       `${Number(outcome.yes || 0)} of ${Number(outcome.of || 0)} said it happened, so it counts as held. Rating is optional.`
-    );
+    , `${Number(outcome.yes || 0)} de ${Number(outcome.of || 0)} dijeron que ocurrió, así que se cuenta como celebrado. La valoración es opcional.`);
   }
-  return T('Оценка необязательна и видна только Kleal.', 'Rating is optional and is only visible to Kleal.');
+  return T('Оценка необязательна и видна только Kleal.', 'Rating is optional and is only visible to Kleal.', 'La valoración es opcional y solo es visible para Kleal.');
 }
 
 function otherParticipant(plan: any, me: string): string {
@@ -341,7 +341,7 @@ function otherParticipant(plan: any, me: string): string {
 
 const s = StyleSheet.create({
   layer: { flex: 1, justifyContent: 'flex-end' },
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: color.scrim },
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: color.scrim },
   card: {
     backgroundColor: color.card,
     borderTopLeftRadius: rad.xxl,

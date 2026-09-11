@@ -214,7 +214,7 @@ export default function MyIntent() {
       <View style={[s.top, { paddingTop: insets.top + space.sm }]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={T('Назад', 'Back')}
+          accessibilityLabel={T('Назад', 'Back', 'Atrás')}
           style={s.back}
           onPress={() => (router.canGoBack() ? router.back() : router.replace('/activity'))}
         >
@@ -404,7 +404,7 @@ export default function MyIntent() {
       >
         <View style={s.chips}>
           {/* Значения — как в SEXES (src/onboarding.ts): их читает и матчинг, и паспорт затеи. */}
-          {([['Any', T('Любой', 'Any is fine')], ['Female', T('Женщины', 'Female')], ['Male', T('Мужчины', 'Male')]] as const)
+          {([['Any', T('Любой', 'Any is fine', 'Cualquiera vale')], ['Female', T('Женщины', 'Female', 'Mujer')], ['Male', T('Мужчины', 'Male', 'Hombre')]] as const)
             .map(([k, label]) => (
               <Pressable
                 key={k}

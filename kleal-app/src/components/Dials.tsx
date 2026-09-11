@@ -197,6 +197,6 @@ export function RangeDial({
 
 const s = StyleSheet.create({
   wrap: { alignItems: 'center' },
-  center: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  center: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   value: { fontSize: 40, fontWeight: '700', color: color.fg, letterSpacing: -1 },
 });

@@ -34,6 +34,7 @@ export type Tab = 'intents' | 'search' | 'messages' | 'profile';
 /** Что уже есть в приложении. Остальное — приглушено. */
 const ROUTE: Partial<Record<Tab, string>> = {
   profile: '/profile', messages: '/messages', intents: '/activity',
+  search: '/map',        // поиск на карте — app/map.tsx
 };
 
 /** Пятая цель — капля посередине. Она не вкладка, поэтому у неё свой ключ. */
@@ -361,7 +362,7 @@ export function BottomNav({ active }: { active?: Tab }) {
  * («Чем хочешь заняться?») или карточкой, а самая крупная кнопка панели нужна, чтобы одним
  * движением вернуться из любого места приложения.
  */
-const NAV_FAB = () => T('Главная', 'Home');
+const NAV_FAB = () => T('Главная', 'Home', 'Inicio');
 
 // ===== вид
 /** Размеры пилюли из борда: 310×48 при ширине экрана 390, то есть по 40 с каждой стороны. */
