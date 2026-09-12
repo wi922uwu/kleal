@@ -573,6 +573,8 @@ def _apply_own_subject(intent, asked, lang):
     if not kind:
         return intent
     if kind == "noun":
+        localized = _display_topic(own, lang)
+        own = localized.lower() if localized else own
         # ours=True лишь для строчного написания: заглавную человек ставил сам («Кафку»), и она
         # остаётся; «фьючерсы» со строчной так и идут в середину фразы.
         intent["title"] = _phrase_title(own, intent.get("role") or "discuss", lang, ours=(own == own.lower()))
@@ -1360,6 +1362,17 @@ def _phrase_title(word, role, lang, ours=False):
     return w[:1].upper() + w[1:]
 
 
+def _display_topic(word, lang):
+    """Resolve display aliases only; never rewrite the matching payload or unknown names."""
+    key = str(word or "").strip().lower()
+    canonical = _EN_SYN.get(key, key)
+    if lang == "ru":
+        return _TOPIC_RU.get(canonical) or taxonomy.label(canonical, lang)
+    if lang == "es":
+        return taxonomy.label(canonical, lang)
+    return ""
+
+
 def _title_for(topics, tags, typ, lang, role="meet"):
     """Заголовок карточки И отдельно предмет: возвращает (title, subject).
 
@@ -1394,6 +1407,10 @@ def _title_for(topics, tags, typ, lang, role="meet"):
     if not cands:
         return {"discuss": _L(lang, "Разговор", "A chat", "Charla")}.get(
             str(role or "").lower(), _L(lang, "Встреча", "Meet someone", "Quedada")), ""
+    if lang in ("ru", "es"):
+        word = _display_topic(cands[0], lang)
+        if word:
+            return _phrase_title(word, role, lang, ours=True), word
     if lang == "ru":
         # `topics` is ordered and canonical, so position 0 IS the subject — translate it, or show it
         # as it is. Scanning past it for a word that merely happens to be translatable turned
@@ -1403,7 +1420,7 @@ def _title_for(topics, tags, typ, lang, role="meet"):
                 and str(t).strip().lower() not in _NO_ACTIVITY]
         if prim:
             first = prim[0]
-            word = _TOPIC_RU.get(first.strip().lower())
+            word = _display_topic(first, lang)
             if word:
                 return _phrase_title(word, role, lang, ours=True), word
             if any('а' <= ch <= 'я' for ch in first.lower()):
@@ -1422,7 +1439,7 @@ def _title_for(topics, tags, typ, lang, role="meet"):
         # No engine topics — we are in the tag bag, whose order IS arbitrary («хочу поиграть в
         # футбол» came back tagged ['soccer','football',...]), so there a scan is the right move.
         for c in cands:
-            word = _TOPIC_RU.get(c.strip().lower())
+            word = _display_topic(c, lang)
             if word:
                 return _phrase_title(word, role, lang, ours=True), word
         for c in cands:
@@ -2034,6 +2051,10 @@ def buddy_chat(messages, profile, signals, uid=None, on_text=None, lang=None):
                 lang, BROKEN_REPLY["en"]))
 
         if isinstance(obj, dict) and obj.get("reply"):
+            if obj.get("refused") or _reply_refuses(obj["reply"]):
+                return {"reply": _clip(str(obj["reply"])), "signals": sig, "lang": lang,
+                        "match": False, "intent": None, "matches": [], "tool_call": None,
+                        "category": None, "refused": _domain or "model"}
             reply = _clip(str(obj.get("reply")))
             # Предложение поискать собеседника — не в каждый ответ. Правило в промпте модель не
             # соблюдает: снято с телефона, как оно пришло и на «что делать, если у бабушки давление»,
@@ -4049,6 +4070,18 @@ def intent_suggest(profile, lang="en", seed=""):
     return {"suggestions": [], "lang": lang}
 
 
+def _reply_refuses(reply):
+    """A refusal cannot simultaneously authorize a suggested intent. Not a topic blacklist."""
+    text = str(reply or "").strip()
+    if any(text.startswith(value.split("\n", 1)[0][:50]) for value in REFUSE_REPLY.values()):
+        return True
+    return bool(re.search(
+        r"(?:я\s+не\s+(?:могу|буду)\s+(?:помогать|помочь|объяснять|давать\s+инструкции)|"
+        r"i\s+(?:cannot|can't|won't)\s+(?:help\s+with|provide\s+instructions|explain\s+that)|"
+        r"no\s+(?:puedo|voy\s+a)\s+(?:ayudar\s+con|dar\s+instrucciones|explicar\s+eso))",
+        text, re.I))
+
+
 def intent_build(messages, profile, on_text=None, lang=None):
     last_user = next((str(m.get("content", "")) for m in reversed(messages or []) if m.get("role") == "user"), "")
     # The whole thread is the conversation's memory; the builder normally sees only the plan-relevant
@@ -4073,6 +4106,12 @@ def intent_build(messages, profile, on_text=None, lang=None):
     if harmful_use_of_a_person(messages):
         return {"reply": HARM_REPLY.get(lang, HARM_REPLY["en"]), "valid": False, "ready": False,
                 "rankable": False, "intent": None, "hints": []}
+    verdict, domain = safety.check_conversation(messages)
+    if verdict in ("block", "selfharm"):
+        copy = SELFHARM_REPLY if verdict == "selfharm" else REFUSE_REPLY
+        return {"reply": copy.get(lang, copy["en"]), "valid": False, "ready": False,
+                "rankable": False, "intent": None, "lang": lang, "hints": [],
+                "conversational": True, "refused": domain or verdict}
     convo = "\n".join((("User: " + str(m.get("content", ""))) if m.get("role") == "user"
                        else ("Kleal: " + str(m.get("content", "")))) for m in bmsgs[-12:])
     convo = _profile_line(profile) + convo
@@ -4140,6 +4179,10 @@ def intent_build(messages, profile, on_text=None, lang=None):
                                   else "What would you like to set up? Tell me what and with whom."),
                 "valid": False, "ready": False, "intent": None, "lang": lang,
                 "conversational": bool(chat), "hints": []}
+    if obj.get("refused") or _reply_refuses(obj.get("reply")):
+        return {"reply": str(obj["reply"]), "valid": False, "ready": False,
+                "rankable": False, "intent": None, "lang": lang, "hints": [],
+                "conversational": True, "refused": domain or "model"}
     reply = base.polish_reply(str(obj.get("reply")))[:400]
     valid = bool(obj.get("valid", True))
     ready = bool(obj.get("ready")) and valid

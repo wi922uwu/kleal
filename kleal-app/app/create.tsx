@@ -27,7 +27,7 @@ import { useLang, getLang, T, replyLang, dateLocale, use12h } from '../src/i18n'
 import { useOnb } from '../src/state';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { buddy as buddyApi } from '../src/api';
-import { CREATE, topicsOf, titleOf, unpackHistory, Turn } from '../src/buddy';
+import { CREATE, topicsOf, titleOf, unpackHistory, looksLikeIntent, Turn } from '../src/buddy';
 import { color, radius as rad, space, type } from '../src/theme';
 import Markdown from '../src/components/Markdown';
 import { Thinking } from '../src/components/Thinking';
@@ -140,12 +140,16 @@ export default function Create() {
    * `shown` — показался ли текст потоком: от него зависит, печатать ли реплику ещё раз.
    */
   const settle = useCallback((r: any, reply: string, text: string, next: Turn[], shown: boolean) => {
+    if (r?.refused || r?.valid === false) {
+      setReady(null);
+      setSumOpen(false);
+    }
     if (reply) {
       if (!shown) say('bot', reply);
       setTurns([...next, { role: 'assistant', content: reply }]);
     }
       setHints(Array.isArray(r?.hints) ? r.hints.map(String).slice(0, 3) : []);
-      if (r?.ready) {
+      if (r?.ready && looksLikeIntent(r)) {
         const topics = topicsOf(r);
         // Ключей нет — построитель ничего не извлёк. Отправлять в поиск сказанное человеком
         // как «тему» нельзя: русская фраза не совпадёт ни с кем. Пусть уточнит.

@@ -189,8 +189,10 @@ export const CREATE = {
  * окно выскакивало бы посреди обычного разговора.
  */
 export function looksLikeIntent(res: any): boolean {
+  if (res?.refused || res?.valid === false || res?.rankable === false) return false;
   const i = res && res.intent;
   if (!i || typeof i !== 'object') return false;
+  if (i.rankable === false) return false;
   const topics = Array.isArray(i.topics) ? i.topics.filter(Boolean) : [];
   return topics.length > 0 || !!i.activity || !!i.title;
 }

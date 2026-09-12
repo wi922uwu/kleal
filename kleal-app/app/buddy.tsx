@@ -146,6 +146,12 @@ export default function Buddy() {
   }, []);
 
   const finish = useCallback((r: any, reply: string, text: string, next: Turn[], shown: number) => {
+    if (r?.refused) {
+      setSheet(false);
+      setTopic('');
+      setWhat('');
+      setSeen(null);
+    }
     if (looksLikeIntent(r)) {
       /*
         ОКНО НЕ ПЕРЕБИВАЕТ ВОПРОС АГЕНТА.

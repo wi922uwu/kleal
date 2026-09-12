@@ -255,7 +255,7 @@ check("all-generic topics are named once, not twice",
       B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss")[0] == "Разговор",
       B._title_for(["conversation"], ["разговоры"], "social", "ru", "discuss")[0])
 check("dating is untouched", B._title_for([], [], "dating", "ru", "meet")[0] == "Свидание")
-check("es discuss", B._title_for(["padel"], [], "sport", "es", "discuss")[0] == "Hablar de padel",
+check("es discuss", B._title_for(["padel"], [], "sport", "es", "discuss")[0] == "Hablar de pádel",
       B._title_for(["padel"], [], "sport", "es", "discuss")[0])
 check("en discuss", B._title_for(["padel"], [], "sport", "en", "discuss")[0] == "Talk about padel",
       B._title_for(["padel"], [], "sport", "en", "discuss")[0])
