@@ -539,1799 +539,2248 @@
  "labels": {
   "sports": {
    "ru": "Спорт",
-   "en": "Sport"
+   "en": "Sport",
+   "es": "Deporte"
   },
   "team": {
    "ru": "Командный",
-   "en": "Team"
+   "en": "Team",
+   "es": "De equipo"
   },
   "football": {
    "ru": "Футбол",
-   "en": "Football"
+   "en": "Football",
+   "es": "Fútbol"
   },
   "basketball": {
    "ru": "Баскетбол",
-   "en": "Basketball"
+   "en": "Basketball",
+   "es": "Baloncesto"
   },
   "volleyball": {
    "ru": "Волейбол",
-   "en": "Volleyball"
+   "en": "Volleyball",
+   "es": "Voleibol"
   },
   "futsal": {
    "ru": "Мини-футбол",
-   "en": "Futsal"
+   "en": "Futsal",
+   "es": "Fútbol sala"
   },
   "handball": {
    "ru": "Гандбол",
-   "en": "Handball"
+   "en": "Handball",
+   "es": "Balonmano"
   },
   "rugby": {
    "ru": "Регби",
-   "en": "Rugby"
+   "en": "Rugby",
+   "es": "Rugby"
   },
   "hockey": {
    "ru": "Хоккей",
-   "en": "Hockey"
+   "en": "Hockey",
+   "es": "Hockey"
   },
   "racket": {
    "ru": "Ракетки",
-   "en": "Racquets"
+   "en": "Racquets",
+   "es": "De raqueta"
   },
   "padel": {
    "ru": "Падел",
-   "en": "Padel"
+   "en": "Padel",
+   "es": "Pádel"
   },
   "tennis": {
    "ru": "Теннис",
-   "en": "Tennis"
+   "en": "Tennis",
+   "es": "Tenis"
   },
   "badminton": {
    "ru": "Бадминтон",
-   "en": "Badminton"
+   "en": "Badminton",
+   "es": "Bádminton"
   },
   "squash": {
    "ru": "Сквош",
-   "en": "Squash"
+   "en": "Squash",
+   "es": "Squash"
   },
   "pingpong": {
    "ru": "Настольный теннис",
-   "en": "Ping-pong"
+   "en": "Ping-pong",
+   "es": "Ping-pong"
   },
   "pickleball": {
    "ru": "Пиклбол",
-   "en": "Pickleball"
+   "en": "Pickleball",
+   "es": "Pickleball"
   },
   "endurance": {
    "ru": "Выносливость",
-   "en": "Endurance"
+   "en": "Endurance",
+   "es": "Resistencia"
   },
   "running": {
    "ru": "Бег",
-   "en": "Running"
+   "en": "Running",
+   "es": "Correr"
   },
   "cycling": {
    "ru": "Вело",
-   "en": "Cycling"
+   "en": "Cycling",
+   "es": "Ciclismo"
   },
   "swimming": {
    "ru": "Плавание",
-   "en": "Swimming"
+   "en": "Swimming",
+   "es": "Natación"
   },
   "triathlon": {
    "ru": "Триатлон",
-   "en": "Triathlon"
+   "en": "Triathlon",
+   "es": "Triatlón"
   },
   "marathon": {
    "ru": "Марафон",
-   "en": "Marathon"
+   "en": "Marathon",
+   "es": "Maratón"
   },
   "rowing": {
    "ru": "Гребля",
-   "en": "Rowing"
+   "en": "Rowing",
+   "es": "Remo"
   },
   "strength": {
    "ru": "Зал и сила",
-   "en": "Gym & strength"
+   "en": "Gym & strength",
+   "es": "Gimnasio y fuerza"
   },
   "gym": {
    "ru": "Зал",
-   "en": "Gym"
+   "en": "Gym",
+   "es": "Gimnasio"
   },
   "crossfit": {
    "ru": "Кроссфит",
-   "en": "CrossFit"
+   "en": "CrossFit",
+   "es": "CrossFit"
   },
   "calisthenics": {
    "ru": "Турники",
-   "en": "Calisthenics"
+   "en": "Calisthenics",
+   "es": "Calistenia"
   },
   "powerlifting": {
    "ru": "Пауэрлифтинг",
-   "en": "Powerlifting"
+   "en": "Powerlifting",
+   "es": "Powerlifting"
   },
   "boxing": {
    "ru": "Бокс",
-   "en": "Boxing"
+   "en": "Boxing",
+   "es": "Boxeo"
   },
   "mma": {
    "ru": "ММА",
-   "en": "MMA"
+   "en": "MMA",
+   "es": "MMA"
   },
   "bjj": {
    "ru": "Джиу-джитсу",
-   "en": "BJJ"
+   "en": "BJJ",
+   "es": "BJJ"
   },
   "climbing": {
    "ru": "Скалолазание",
-   "en": "Climbing"
+   "en": "Climbing",
+   "es": "Escalada"
   },
   "bouldering": {
    "ru": "Боулдеринг",
-   "en": "Bouldering"
+   "en": "Bouldering",
+   "es": "Boulder"
   },
   "mindbody": {
    "ru": "Тело и практики",
-   "en": "Body & practice"
+   "en": "Body & practice",
+   "es": "Cuerpo y práctica"
   },
   "yoga": {
    "ru": "Йога",
-   "en": "Yoga"
+   "en": "Yoga",
+   "es": "Yoga"
   },
   "pilates": {
    "ru": "Пилатес",
-   "en": "Pilates"
+   "en": "Pilates",
+   "es": "Pilates"
   },
   "meditation": {
    "ru": "Медитация",
-   "en": "Meditation"
+   "en": "Meditation",
+   "es": "Meditación"
   },
   "breathwork": {
    "ru": "Дыхание",
-   "en": "Breathwork"
+   "en": "Breathwork",
+   "es": "Técnicas de respiración"
   },
   "stretching": {
    "ru": "Растяжка",
-   "en": "Stretching"
+   "en": "Stretching",
+   "es": "Estiramientos"
   },
   "taichi": {
    "ru": "Тайцзи",
-   "en": "Tai chi"
+   "en": "Tai chi",
+   "es": "Tai Chi"
   },
   "social": {
    "ru": "Общение",
-   "en": "Social"
+   "en": "Social",
+   "es": "Social"
   },
   "coffee": {
    "ru": "Кофе",
-   "en": "Coffee"
+   "en": "Coffee",
+   "es": "Café"
   },
   "cafe": {
    "ru": "По кофейням",
-   "en": "Cafe hopping"
+   "en": "Cafe hopping",
+   "es": "Cafeterías"
   },
   "espresso": {
    "ru": "Эспрессо",
-   "en": "Espresso"
+   "en": "Espresso",
+   "es": "Café expreso"
   },
   "matcha": {
    "ru": "Матча",
-   "en": "Matcha"
+   "en": "Matcha",
+   "es": "Matcha"
   },
   "tea": {
    "ru": "Чай",
-   "en": "Tea"
+   "en": "Tea",
+   "es": "Té"
   },
   "brunch": {
    "ru": "Бранчи",
-   "en": "Brunch"
+   "en": "Brunch",
+   "es": "Brunch"
   },
   "dining": {
    "ru": "Поесть",
-   "en": "Eating out"
+   "en": "Eating out",
+   "es": "Comer fuera"
   },
   "dinner": {
    "ru": "Ужины",
-   "en": "Dinners"
+   "en": "Dinners",
+   "es": "Cenas"
   },
   "restaurant": {
    "ru": "Рестораны",
-   "en": "Restaurants"
+   "en": "Restaurants",
+   "es": "Restaurantes"
   },
   "cooking": {
    "ru": "Готовка",
-   "en": "Cooking"
+   "en": "Cooking",
+   "es": "Cocina"
   },
   "baking": {
    "ru": "Выпечка",
-   "en": "Baking"
+   "en": "Baking",
+   "es": "Panadería"
   },
   "tapas": {
    "ru": "Тапас",
-   "en": "Tapas"
+   "en": "Tapas",
+   "es": "Tapas"
   },
   "sushi": {
    "ru": "Суши",
-   "en": "Sushi"
+   "en": "Sushi",
+   "es": "Sushi"
   },
   "ramen": {
    "ru": "Рамен",
-   "en": "Ramen"
+   "en": "Ramen",
+   "es": "Ramen"
   },
   "vegan": {
    "ru": "Веган",
-   "en": "Vegan"
+   "en": "Vegan",
+   "es": "Vegano"
   },
   "streetfood": {
    "ru": "Стритфуд",
-   "en": "Street food"
+   "en": "Street food",
+   "es": "Comida callejera"
   },
   "nightlife": {
    "ru": "Ночная жизнь",
-   "en": "Nightlife"
+   "en": "Nightlife",
+   "es": "Vida nocturna"
   },
   "bar": {
    "ru": "Бары",
-   "en": "Bars"
+   "en": "Bars",
+   "es": "Bares"
   },
   "wine": {
    "ru": "Вино",
-   "en": "Wine"
+   "en": "Wine",
+   "es": "Vino"
   },
   "beer": {
    "ru": "Пиво",
-   "en": "Beer"
+   "en": "Beer",
+   "es": "Cerveza"
   },
   "cocktails": {
    "ru": "Коктейли",
-   "en": "Cocktails"
+   "en": "Cocktails",
+   "es": "Cócteles"
   },
   "club": {
    "ru": "Клубы",
-   "en": "Clubs"
+   "en": "Clubs",
+   "es": "Discotecas"
   },
   "party": {
    "ru": "Вечеринки",
-   "en": "Parties"
+   "en": "Parties",
+   "es": "Fiestas"
   },
   "casual": {
    "ru": "Просто погулять",
-   "en": "Just hang out"
+   "en": "Just hang out",
+   "es": "Pasear"
   },
   "walk": {
    "ru": "Прогулки",
-   "en": "Walks"
+   "en": "Walks",
+   "es": "Paseos"
   },
   "park": {
    "ru": "Парки",
-   "en": "Parks"
+   "en": "Parks",
+   "es": "Parques"
   },
   "terrace": {
    "ru": "Террасы",
-   "en": "Terraces"
+   "en": "Terraces",
+   "es": "Terrazas"
   },
   "picnic": {
    "ru": "Пикники",
-   "en": "Picnics"
+   "en": "Picnics",
+   "es": "Pícnic"
   },
   "hangout": {
    "ru": "Поболтать",
-   "en": "Hang out"
+   "en": "Hang out",
+   "es": "Charlar"
   },
   "wellness": {
    "ru": "Спа и забота",
-   "en": "Spa & self-care"
+   "en": "Spa & self-care",
+   "es": "Spa y autocuidado"
   },
   "spa": {
    "ru": "Спа",
-   "en": "Spa"
+   "en": "Spa",
+   "es": "Spa"
   },
   "sauna": {
    "ru": "Сауна",
-   "en": "Sauna"
+   "en": "Sauna",
+   "es": "Sauna"
   },
   "massage": {
    "ru": "Массаж",
-   "en": "Massage"
+   "en": "Massage",
+   "es": "Masaje"
   },
   "selfcare": {
    "ru": "Забота о себе",
-   "en": "Self-care"
+   "en": "Self-care",
+   "es": "Autocuidado"
   },
   "community": {
    "ru": "Волонтёрство",
-   "en": "Volunteering"
+   "en": "Volunteering",
+   "es": "Voluntariado"
   },
   "volunteering": {
    "ru": "Помогать",
-   "en": "Volunteering"
+   "en": "Volunteering",
+   "es": "Ayudar"
   },
   "charity": {
    "ru": "Благотворительность",
-   "en": "Charity"
+   "en": "Charity",
+   "es": "Beneficencia"
   },
   "sustainability": {
    "ru": "Экология",
-   "en": "Sustainability"
+   "en": "Sustainability",
+   "es": "Sostenibilidad"
   },
   "activism": {
    "ru": "Активизм",
-   "en": "Activism"
+   "en": "Activism",
+   "es": "Activismo"
   },
   "meetup": {
    "ru": "Митапы",
-   "en": "Meetups"
+   "en": "Meetups",
+   "es": "Encuentros"
   },
   "pets": {
    "ru": "Питомцы",
-   "en": "Pets"
+   "en": "Pets",
+   "es": "Mascotas"
   },
   "dogs": {
    "ru": "Собаки",
-   "en": "Dogs"
+   "en": "Dogs",
+   "es": "Perros"
   },
   "dogwalk": {
    "ru": "Выгул вместе",
-   "en": "Dog walks"
+   "en": "Dog walks",
+   "es": "Paseos con perros"
   },
   "cats": {
    "ru": "Кошки",
-   "en": "Cats"
+   "en": "Cats",
+   "es": "Gatos"
   },
   "family": {
    "ru": "Семья и дети",
-   "en": "Family & kids"
+   "en": "Family & kids",
+   "es": "Familia y niños"
   },
   "parenting": {
    "ru": "Родительство",
-   "en": "Parenting"
+   "en": "Parenting",
+   "es": "Parentalidad"
   },
   "kids": {
    "ru": "С детьми",
-   "en": "With kids"
+   "en": "With kids",
+   "es": "Con niños"
   },
   "playdate": {
    "ru": "Плейдейты",
-   "en": "Playdates"
+   "en": "Playdates",
+   "es": "Juegos en grupo"
   },
   "games": {
    "ru": "Игры",
-   "en": "Games"
+   "en": "Games",
+   "es": "Juegos"
   },
   "tabletop": {
    "ru": "Настолки",
-   "en": "Board games"
+   "en": "Board games",
+   "es": "Juegos de mesa"
   },
   "boardgames": {
    "ru": "Настольные",
-   "en": "Board games"
+   "en": "Board games",
+   "es": "Juegos de mesa"
   },
   "chess": {
    "ru": "Шахматы",
-   "en": "Chess"
+   "en": "Chess",
+   "es": "Ajedrez"
   },
   "poker": {
    "ru": "Покер",
-   "en": "Poker"
+   "en": "Poker",
+   "es": "Póker"
   },
   "dnd": {
    "ru": "Ролевые",
-   "en": "Tabletop RPG"
+   "en": "Tabletop RPG",
+   "es": "RPG de mesa"
   },
   "catan": {
    "ru": "Катан",
-   "en": "Catan"
+   "en": "Catan",
+   "es": "Catan"
   },
   "magic": {
    "ru": "Magic",
-   "en": "Magic"
+   "en": "Magic",
+   "es": "Magic"
   },
   "warhammer": {
    "ru": "Warhammer",
-   "en": "Warhammer"
+   "en": "Warhammer",
+   "es": "Warhammer"
   },
   "backgammon": {
    "ru": "Нарды",
-   "en": "Backgammon"
+   "en": "Backgammon",
+   "es": "Backgammon"
   },
   "trivia": {
    "ru": "Квизы",
-   "en": "Trivia"
+   "en": "Trivia",
+   "es": "Cuestionario"
   },
   "escaperoom": {
    "ru": "Квесты",
-   "en": "Escape rooms"
+   "en": "Escape rooms",
+   "es": "Escape room"
   },
   "esports": {
    "ru": "Киберспорт",
-   "en": "Esports"
+   "en": "Esports",
+   "es": "E-sports"
   },
   "dota": {
    "ru": "Dota",
-   "en": "Dota"
+   "en": "Dota",
+   "es": "Dota"
   },
   "cs": {
    "ru": "CS",
-   "en": "CS"
+   "en": "CS",
+   "es": "CS"
   },
   "valorant": {
    "ru": "Valorant",
-   "en": "Valorant"
+   "en": "Valorant",
+   "es": "Valorant"
   },
   "league": {
    "ru": "League of Legends",
-   "en": "League of Legends"
+   "en": "League of Legends",
+   "es": "League of Legends"
   },
   "apex": {
    "ru": "Apex",
-   "en": "Apex"
+   "en": "Apex",
+   "es": "Apex"
   },
   "overwatch": {
    "ru": "Overwatch",
-   "en": "Overwatch"
+   "en": "Overwatch",
+   "es": "Overwatch"
   },
   "rocketleague": {
    "ru": "Rocket League",
-   "en": "Rocket League"
+   "en": "Rocket League",
+   "es": "Rocket League"
   },
   "fifa": {
    "ru": "FIFA",
-   "en": "FIFA"
+   "en": "FIFA",
+   "es": "FIFA"
   },
   "console": {
    "ru": "Консоли",
-   "en": "Console"
+   "en": "Console",
+   "es": "Consola"
   },
   "playstation": {
    "ru": "PlayStation",
-   "en": "PlayStation"
+   "en": "PlayStation",
+   "es": "PlayStation"
   },
   "xbox": {
    "ru": "Xbox",
-   "en": "Xbox"
+   "en": "Xbox",
+   "es": "Xbox"
   },
   "nintendo": {
    "ru": "Nintendo",
-   "en": "Nintendo"
+   "en": "Nintendo",
+   "es": "Nintendo"
   },
   "pc": {
    "ru": "PC",
-   "en": "PC"
+   "en": "PC",
+   "es": "PC"
   },
   "minecraft": {
    "ru": "Minecraft",
-   "en": "Minecraft"
+   "en": "Minecraft",
+   "es": "Minecraft"
   },
   "stardew": {
    "ru": "Stardew Valley",
-   "en": "Stardew Valley"
+   "en": "Stardew Valley",
+   "es": "Stardew Valley"
   },
   "valheim": {
    "ru": "Valheim",
-   "en": "Valheim"
+   "en": "Valheim",
+   "es": "Valheim"
   },
   "terraria": {
    "ru": "Terraria",
-   "en": "Terraria"
+   "en": "Terraria",
+   "es": "Terraria"
   },
   "mobilegaming": {
    "ru": "Мобильные",
-   "en": "Mobile"
+   "en": "Mobile",
+   "es": "Móvil"
   },
   "pubg": {
    "ru": "PUBG",
-   "en": "PUBG"
+   "en": "PUBG",
+   "es": "PUBG"
   },
   "genshin": {
    "ru": "Genshin",
-   "en": "Genshin"
+   "en": "Genshin",
+   "es": "Genshin"
   },
   "clashroyale": {
    "ru": "Clash Royale",
-   "en": "Clash Royale"
+   "en": "Clash Royale",
+   "es": "Clash Royale"
   },
   "culture": {
    "ru": "Культура",
-   "en": "Culture"
+   "en": "Culture",
+   "es": "Cultura"
   },
   "screen": {
    "ru": "Кино и сериалы",
-   "en": "Films & series"
+   "en": "Films & series",
+   "es": "Películas y series"
   },
   "cinema": {
    "ru": "Кино",
-   "en": "Films"
+   "en": "Films",
+   "es": "Películas"
   },
   "series": {
    "ru": "Сериалы",
-   "en": "Series"
+   "en": "Series",
+   "es": "Series"
   },
   "documentary": {
    "ru": "Документальное",
-   "en": "Documentary"
+   "en": "Documentary",
+   "es": "Documentales"
   },
   "sitcom": {
    "ru": "Ситкомы",
-   "en": "Sitcoms"
+   "en": "Sitcoms",
+   "es": "Sitcoms"
   },
   "marvel": {
    "ru": "Marvel",
-   "en": "Marvel"
+   "en": "Marvel",
+   "es": "Marvel"
   },
   "anime": {
    "ru": "Аниме и Азия",
-   "en": "Anime & Asia"
+   "en": "Anime & Asia",
+   "es": "Anime y Asia"
   },
   "manga": {
    "ru": "Манга",
-   "en": "Manga"
+   "en": "Manga",
+   "es": "Manga"
   },
   "kdrama": {
    "ru": "К-дорамы",
-   "en": "K-drama"
+   "en": "K-drama",
+   "es": "K-drama"
   },
   "kpop": {
    "ru": "K-pop",
-   "en": "K-pop"
+   "en": "K-pop",
+   "es": "K-pop"
   },
   "cosplay": {
    "ru": "Косплей",
-   "en": "Cosplay"
+   "en": "Cosplay",
+   "es": "Cosplay"
   },
   "visual": {
    "ru": "Искусство",
-   "en": "Art"
+   "en": "Art",
+   "es": "Arte"
   },
   "museum": {
    "ru": "Музеи",
-   "en": "Museums"
+   "en": "Museums",
+   "es": "Museos"
   },
   "gallery": {
    "ru": "Галереи",
-   "en": "Galleries"
+   "en": "Galleries",
+   "es": "Galerías"
   },
   "exhibition": {
    "ru": "Выставки",
-   "en": "Exhibitions"
+   "en": "Exhibitions",
+   "es": "Exposiciones"
   },
   "photography": {
    "ru": "Фотография",
-   "en": "Photography"
+   "en": "Photography",
+   "es": "Fotografía"
   },
   "painting": {
    "ru": "Живопись",
-   "en": "Painting"
+   "en": "Painting",
+   "es": "Pintura"
   },
   "sketching": {
    "ru": "Скетчинг",
-   "en": "Sketching"
+   "en": "Sketching",
+   "es": "Dibujo"
   },
   "streetart": {
    "ru": "Стритарт",
-   "en": "Street art"
+   "en": "Street art",
+   "es": "Arte urbano"
   },
   "stage": {
    "ru": "Сцена",
-   "en": "Stage"
+   "en": "Stage",
+   "es": "Escena"
   },
   "standup": {
    "ru": "Стендап",
-   "en": "Stand-up"
+   "en": "Stand-up",
+   "es": "Stand-up"
   },
   "improv": {
    "ru": "Импров",
-   "en": "Improv"
+   "en": "Improv",
+   "es": "Improvisación"
   },
   "theatre": {
    "ru": "Театр",
-   "en": "Theatre"
+   "en": "Theatre",
+   "es": "Teatro"
   },
   "opera": {
    "ru": "Опера",
-   "en": "Opera"
+   "en": "Opera",
+   "es": "Ópera"
   },
   "ballet": {
    "ru": "Балет",
-   "en": "Ballet"
+   "en": "Ballet",
+   "es": "Ballet"
   },
   "musical": {
    "ru": "Мюзиклы",
-   "en": "Musicals"
+   "en": "Musicals",
+   "es": "Musicales"
   },
   "reading": {
    "ru": "Книги",
-   "en": "Books"
+   "en": "Books",
+   "es": "Libros"
   },
   "books": {
    "ru": "Читать",
-   "en": "Reading"
+   "en": "Reading",
+   "es": "Lectura"
   },
   "bookclub": {
    "ru": "Книжный клуб",
-   "en": "Book club"
+   "en": "Book club",
+   "es": "Club de lectura"
   },
   "scifi": {
    "ru": "Фантастика",
-   "en": "Sci-fi"
+   "en": "Sci-fi",
+   "es": "Ciencia ficción"
   },
   "fantasy": {
    "ru": "Фэнтези",
-   "en": "Fantasy"
+   "en": "Fantasy",
+   "es": "Fantasía"
   },
   "nonfiction": {
    "ru": "Нон-фикшн",
-   "en": "Non-fiction"
+   "en": "Non-fiction",
+   "es": "No ficción"
   },
   "literature": {
    "ru": "Классика",
-   "en": "Literature"
+   "en": "Literature",
+   "es": "Literatura"
   },
   "craft": {
    "ru": "Рукоделие",
-   "en": "Craft"
+   "en": "Craft",
+   "es": "Artesanía"
   },
   "pottery": {
    "ru": "Керамика",
-   "en": "Pottery"
+   "en": "Pottery",
+   "es": "Cerámica"
   },
   "knitting": {
    "ru": "Вязание",
-   "en": "Knitting"
+   "en": "Knitting",
+   "es": "Tejido"
   },
   "sewing": {
    "ru": "Шитьё",
-   "en": "Sewing"
+   "en": "Sewing",
+   "es": "Costura"
   },
   "woodworking": {
    "ru": "Дерево",
-   "en": "Woodworking"
+   "en": "Woodworking",
+   "es": "Trabajo en madera"
   },
   "calligraphy": {
    "ru": "Каллиграфия",
-   "en": "Calligraphy"
+   "en": "Calligraphy",
+   "es": "Caligrafía"
   },
   "diy": {
    "ru": "Своими руками",
-   "en": "DIY"
+   "en": "DIY",
+   "es": "Manualidades"
   },
   "writing": {
    "ru": "Тексты",
-   "en": "Writing"
+   "en": "Writing",
+   "es": "Escritura"
   },
   "poetry": {
    "ru": "Поэзия",
-   "en": "Poetry"
+   "en": "Poetry",
+   "es": "Poesía"
   },
   "journaling": {
    "ru": "Дневник",
-   "en": "Journaling"
+   "en": "Journaling",
+   "es": "Diario"
   },
   "blogging": {
    "ru": "Блог",
-   "en": "Blogging"
+   "en": "Blogging",
+   "es": "Blog"
   },
   "history": {
    "ru": "История и город",
-   "en": "History & city"
+   "en": "History & city",
+   "es": "Historia y ciudad"
   },
   "heritage": {
    "ru": "Наследие",
-   "en": "Heritage"
+   "en": "Heritage",
+   "es": "Patrimonio"
   },
   "archaeology": {
    "ru": "Археология",
-   "en": "Archaeology"
+   "en": "Archaeology",
+   "es": "Arqueología"
   },
   "architecture": {
    "ru": "Архитектура",
-   "en": "Architecture"
+   "en": "Architecture",
+   "es": "Arquitectura"
   },
   "urbanism": {
    "ru": "Урбанистика",
-   "en": "Urbanism"
+   "en": "Urbanism",
+   "es": "Urbanismo"
   },
   "music": {
    "ru": "Музыка",
-   "en": "Music"
+   "en": "Music",
+   "es": "Música"
   },
   "listening": {
    "ru": "Концерты",
-   "en": "Live music"
+   "en": "Live music",
+   "es": "Música en vivo"
   },
   "concert": {
    "ru": "Концерты",
-   "en": "Concerts"
+   "en": "Concerts",
+   "es": "Conciertos"
   },
   "festival": {
    "ru": "Фестивали",
-   "en": "Festivals"
+   "en": "Festivals",
+   "es": "Festivales"
   },
   "gig": {
    "ru": "Небольшие площадки",
-   "en": "Small gigs"
+   "en": "Small gigs",
+   "es": "Pequeños conciertos"
   },
   "vinyl": {
    "ru": "Винил",
-   "en": "Vinyl"
+   "en": "Vinyl",
+   "es": "Vinilo"
   },
   "livemusic": {
    "ru": "Живая музыка",
-   "en": "Live music"
+   "en": "Live music",
+   "es": "Música en vivo"
   },
   "making": {
    "ru": "Играю сам",
-   "en": "I play"
+   "en": "I play",
+   "es": "Yo toco"
   },
   "guitar": {
    "ru": "Гитара",
-   "en": "Guitar"
+   "en": "Guitar",
+   "es": "Guitarra"
   },
   "piano": {
    "ru": "Пианино",
-   "en": "Piano"
+   "en": "Piano",
+   "es": "Piano"
   },
   "drums": {
    "ru": "Барабаны",
-   "en": "Drums"
+   "en": "Drums",
+   "es": "Batería"
   },
   "bass": {
    "ru": "Бас",
-   "en": "Bass"
+   "en": "Bass",
+   "es": "Bajo"
   },
   "singing": {
    "ru": "Вокал",
-   "en": "Singing"
+   "en": "Singing",
+   "es": "Canto"
   },
   "dj": {
    "ru": "Диджеинг",
-   "en": "DJing"
+   "en": "DJing",
+   "es": "Dj"
   },
   "producing": {
    "ru": "Продакшн",
-   "en": "Producing"
+   "en": "Producing",
+   "es": "Producción"
   },
   "band": {
    "ru": "Группа",
-   "en": "Band"
+   "en": "Band",
+   "es": "Banda"
   },
   "karaoke": {
    "ru": "Караоке",
-   "en": "Karaoke"
+   "en": "Karaoke",
+   "es": "Karaoke"
   },
   "genres": {
    "ru": "Жанры",
-   "en": "Genres"
+   "en": "Genres",
+   "es": "Géneros"
   },
   "indie": {
    "ru": "Инди",
-   "en": "Indie"
+   "en": "Indie",
+   "es": "Indie"
   },
   "rock": {
    "ru": "Рок",
-   "en": "Rock"
+   "en": "Rock",
+   "es": "Rock"
   },
   "jazz": {
    "ru": "Джаз",
-   "en": "Jazz"
+   "en": "Jazz",
+   "es": "Jazz"
   },
   "hiphop": {
    "ru": "Хип-хоп",
-   "en": "Hip-hop"
+   "en": "Hip-hop",
+   "es": "Hip-hop"
   },
   "classical": {
    "ru": "Классика",
-   "en": "Classical"
+   "en": "Classical",
+   "es": "Clásica"
   },
   "metal": {
    "ru": "Метал",
-   "en": "Metal"
+   "en": "Metal",
+   "es": "Metal"
   },
   "funk": {
    "ru": "Фанк",
-   "en": "Funk"
+   "en": "Funk",
+   "es": "Funk"
   },
   "soul": {
    "ru": "Соул",
-   "en": "Soul"
+   "en": "Soul",
+   "es": "Soul"
   },
   "electronic": {
    "ru": "Электроника",
-   "en": "Electronic"
+   "en": "Electronic",
+   "es": "Electrónica"
   },
   "techno": {
    "ru": "Техно",
-   "en": "Techno"
+   "en": "Techno",
+   "es": "Techno"
   },
   "house": {
    "ru": "Хаус",
-   "en": "House"
+   "en": "House",
+   "es": "House"
   },
   "rave": {
    "ru": "Рейвы",
-   "en": "Raves"
+   "en": "Raves",
+   "es": "Raves"
   },
   "edm": {
    "ru": "EDM",
-   "en": "EDM"
+   "en": "EDM",
+   "es": "EDM"
   },
   "dance": {
    "ru": "Танцы",
-   "en": "Dance"
+   "en": "Dance",
+   "es": "Danza"
   },
   "salsa": {
    "ru": "Сальса",
-   "en": "Salsa"
+   "en": "Salsa",
+   "es": "Salsa"
   },
   "bachata": {
    "ru": "Бачата",
-   "en": "Bachata"
+   "en": "Bachata",
+   "es": "Bachata"
   },
   "tango": {
    "ru": "Танго",
-   "en": "Tango"
+   "en": "Tango",
+   "es": "Tango"
   },
   "swing": {
    "ru": "Свинг",
-   "en": "Swing"
+   "en": "Swing",
+   "es": "Swing"
   },
   "ballroom": {
    "ru": "Бальные",
-   "en": "Ballroom"
+   "en": "Ballroom",
+   "es": "Bailables"
   },
   "zumba": {
    "ru": "Зумба",
-   "en": "Zumba"
+   "en": "Zumba",
+   "es": "Zumba"
   },
   "outdoors": {
    "ru": "Природа",
-   "en": "Outdoors"
+   "en": "Outdoors",
+   "es": "Naturaleza"
   },
   "hiking": {
    "ru": "Походы",
-   "en": "Hiking"
+   "en": "Hiking",
+   "es": "Senderismo"
   },
   "trekking": {
    "ru": "Треккинг",
-   "en": "Trekking"
+   "en": "Trekking",
+   "es": "Trekking"
   },
   "mountains": {
    "ru": "Горы",
-   "en": "Mountains"
+   "en": "Mountains",
+   "es": "Montañas"
   },
   "trail": {
    "ru": "Тропы",
-   "en": "Trails"
+   "en": "Trails",
+   "es": "Senderos"
   },
   "camping": {
    "ru": "Кемпинг",
-   "en": "Camping"
+   "en": "Camping",
+   "es": "Camping"
   },
   "backpacking": {
    "ru": "С рюкзаком",
-   "en": "Backpacking"
+   "en": "Backpacking",
+   "es": "Rutas con mochila"
   },
   "trailrunning": {
    "ru": "Трейлраннинг",
-   "en": "Trail running"
+   "en": "Trail running",
+   "es": "Trail running"
   },
   "watersnow": {
    "ru": "Вода и снег",
-   "en": "Water & snow"
+   "en": "Water & snow",
+   "es": "Agua y nieve"
   },
   "surfing": {
    "ru": "Сёрфинг",
-   "en": "Surfing"
+   "en": "Surfing",
+   "es": "Surf"
   },
   "kayaking": {
    "ru": "Каяк",
-   "en": "Kayaking"
+   "en": "Kayaking",
+   "es": "Kayak"
   },
   "sup": {
    "ru": "Сапборд",
-   "en": "Paddleboard"
+   "en": "Paddleboard",
+   "es": "Paddleboard"
   },
   "kitesurf": {
    "ru": "Кайт",
-   "en": "Kitesurf"
+   "en": "Kitesurf",
+   "es": "Kitesurf"
   },
   "scuba": {
    "ru": "Дайвинг",
-   "en": "Scuba"
+   "en": "Scuba",
+   "es": "Buceo"
   },
   "snorkeling": {
    "ru": "Снорклинг",
-   "en": "Snorkeling"
+   "en": "Snorkeling",
+   "es": "Snorkel"
   },
   "skiing": {
    "ru": "Лыжи",
-   "en": "Skiing"
+   "en": "Skiing",
+   "es": "Esquí"
   },
   "snowboard": {
    "ru": "Сноуборд",
-   "en": "Snowboard"
+   "en": "Snowboard",
+   "es": "Snowboard"
   },
   "travel": {
    "ru": "Путешествия",
-   "en": "Travel"
+   "en": "Travel",
+   "es": "Viajar"
   },
   "roadtrip": {
    "ru": "Роудтрипы",
-   "en": "Road trips"
+   "en": "Road trips",
+   "es": "Road trips"
   },
   "sightseeing": {
    "ru": "По городу",
-   "en": "Sightseeing"
+   "en": "Sightseeing",
+   "es": "Turismo"
   },
   "cityhop": {
    "ru": "Города на выходные",
-   "en": "City breaks"
+   "en": "City breaks",
+   "es": "Escapadas urbanas"
   },
   "vanlife": {
    "ru": "Ванлайф",
-   "en": "Van life"
+   "en": "Van life",
+   "es": "Van life"
   },
   "digitalnomad": {
    "ru": "Номадство",
-   "en": "Digital nomad"
+   "en": "Digital nomad",
+   "es": "Digital nomad"
   },
   "hostels": {
    "ru": "Хостелы",
-   "en": "Hostels"
+   "en": "Hostels",
+   "es": "Albergues"
   },
   "naturelife": {
    "ru": "Сад и звёзды",
-   "en": "Garden & stars"
+   "en": "Garden & stars",
+   "es": "Jardín y estrellas"
   },
   "gardening": {
    "ru": "Сад",
-   "en": "Gardening"
+   "en": "Gardening",
+   "es": "Jardinería"
   },
   "plants": {
    "ru": "Растения",
-   "en": "Plants"
+   "en": "Plants",
+   "es": "Plantas"
   },
   "birdwatching": {
    "ru": "Птицы",
-   "en": "Birdwatching"
+   "en": "Birdwatching",
+   "es": "Observación de aves"
   },
   "stargazing": {
    "ru": "Звёзды",
-   "en": "Stargazing"
+   "en": "Stargazing",
+   "es": "Astronomía"
   },
   "foraging": {
    "ru": "Травы и грибы",
-   "en": "Foraging"
+   "en": "Foraging",
+   "es": "Recolección"
   },
   "fishing": {
    "ru": "Рыбалка",
-   "en": "Fishing"
+   "en": "Fishing",
+   "es": "Pesca"
   },
   "adventure": {
    "ru": "Адреналин",
-   "en": "Adrenaline"
+   "en": "Adrenaline",
+   "es": "Aventura"
   },
   "paragliding": {
    "ru": "Параплан",
-   "en": "Paragliding"
+   "en": "Paragliding",
+   "es": "Parapente"
   },
   "skydiving": {
    "ru": "Парашют",
-   "en": "Skydiving"
+   "en": "Skydiving",
+   "es": "Paracaidismo"
   },
   "canyoning": {
    "ru": "Каньонинг",
-   "en": "Canyoning"
+   "en": "Canyoning",
+   "es": "Barranquismo"
   },
   "caving": {
    "ru": "Спелео",
-   "en": "Caving"
+   "en": "Caving",
+   "es": "Espeleología"
   },
   "tech": {
    "ru": "Дело",
-   "en": "Work & tech"
+   "en": "Work & tech",
+   "es": "Trabajo y tecnología"
   },
   "engineering": {
    "ru": "Код и ИИ",
-   "en": "Code & AI"
+   "en": "Code & AI",
+   "es": "Código e IA"
   },
   "coding": {
    "ru": "Программирование",
-   "en": "Coding"
+   "en": "Coding",
+   "es": "Programación"
   },
   "ai": {
    "ru": "ИИ",
-   "en": "AI"
+   "en": "AI",
+   "es": "IA"
   },
   "python": {
    "ru": "Python",
-   "en": "Python"
+   "en": "Python",
+   "es": "Python"
   },
   "javascript": {
    "ru": "JavaScript",
-   "en": "JavaScript"
+   "en": "JavaScript",
+   "es": "JavaScript"
   },
   "rust": {
    "ru": "Rust",
-   "en": "Rust"
+   "en": "Rust",
+   "es": "Rust"
   },
   "data": {
    "ru": "Данные",
-   "en": "Data"
+   "en": "Data",
+   "es": "Datos"
   },
   "cybersecurity": {
    "ru": "Безопасность",
-   "en": "Security"
+   "en": "Security",
+   "es": "Seguridad"
   },
   "opensource": {
    "ru": "Опенсорс",
-   "en": "Open source"
+   "en": "Open source",
+   "es": "Código abierto"
   },
   "devops": {
    "ru": "DevOps",
-   "en": "DevOps"
+   "en": "DevOps",
+   "es": "DevOps"
   },
   "startups": {
    "ru": "Стартапы",
-   "en": "Startups"
+   "en": "Startups",
+   "es": "Startups"
   },
   "startup": {
    "ru": "Свой проект",
-   "en": "Own project"
+   "en": "Own project",
+   "es": "Mi proyecto"
   },
   "founder": {
    "ru": "Основателям",
-   "en": "Founders"
+   "en": "Founders",
+   "es": "Fundadores"
   },
   "product": {
    "ru": "Продукт",
-   "en": "Product"
+   "en": "Product",
+   "es": "Producto"
   },
   "entrepreneur": {
    "ru": "Предпринимательство",
-   "en": "Entrepreneurship"
+   "en": "Entrepreneurship",
+   "es": "Emprendimiento"
   },
   "business": {
    "ru": "Бизнес",
-   "en": "Business"
+   "en": "Business",
+   "es": "Negocio"
   },
   "design": {
    "ru": "Дизайн",
-   "en": "Design"
+   "en": "Design",
+   "es": "Diseño"
   },
   "ux": {
    "ru": "UX",
-   "en": "UX"
+   "en": "UX",
+   "es": "UX"
   },
   "ui": {
    "ru": "UI",
-   "en": "UI"
+   "en": "UI",
+   "es": "UI"
   },
   "figma": {
    "ru": "Figma",
-   "en": "Figma"
+   "en": "Figma",
+   "es": "Figma"
   },
   "branding": {
    "ru": "Бренд",
-   "en": "Branding"
+   "en": "Branding",
+   "es": "Branding"
   },
   "typography": {
    "ru": "Типографика",
-   "en": "Typography"
+   "en": "Typography",
+   "es": "Tipografía"
   },
   "motion": {
    "ru": "Моушн",
-   "en": "Motion"
+   "en": "Motion",
+   "es": "Motion"
   },
   "web3": {
    "ru": "Крипта",
-   "en": "Crypto"
+   "en": "Crypto",
+   "es": "Cripto"
   },
   "crypto": {
    "ru": "Криптовалюты",
-   "en": "Crypto"
+   "en": "Crypto",
+   "es": "Criptomonedas"
   },
   "bitcoin": {
    "ru": "Биткоин",
-   "en": "Bitcoin"
+   "en": "Bitcoin",
+   "es": "Bitcoin"
   },
   "ethereum": {
    "ru": "Эфир",
-   "en": "Ethereum"
+   "en": "Ethereum",
+   "es": "Ethereum"
   },
   "defi": {
    "ru": "DeFi",
-   "en": "DeFi"
+   "en": "DeFi",
+   "es": "DeFi"
   },
   "nft": {
    "ru": "NFT",
-   "en": "NFT"
+   "en": "NFT",
+   "es": "NFT"
   },
   "dao": {
    "ru": "DAO",
-   "en": "DAO"
+   "en": "DAO",
+   "es": "DAO"
   },
   "career": {
    "ru": "Карьера и связи",
-   "en": "Career & network"
+   "en": "Career & network",
+   "es": "Carrera y red"
   },
   "networking": {
    "ru": "Нетворкинг",
-   "en": "Networking"
+   "en": "Networking",
+   "es": "Networking"
   },
   "investing": {
    "ru": "Инвестиции",
-   "en": "Investing"
+   "en": "Investing",
+   "es": "Inversión"
   },
   "finance": {
    "ru": "Финансы",
-   "en": "Finance"
+   "en": "Finance",
+   "es": "Finanzas"
   },
   "mentorship": {
    "ru": "Менторство",
-   "en": "Mentorship"
+   "en": "Mentorship",
+   "es": "Mentoría"
   },
   "freelance": {
    "ru": "Фриланс",
-   "en": "Freelance"
+   "en": "Freelance",
+   "es": "Freelance"
   },
   "remote": {
    "ru": "Удалёнка",
-   "en": "Remote"
+   "en": "Remote",
+   "es": "Remoto"
   },
   "coworking": {
    "ru": "Коворкинг",
-   "en": "Coworking"
+   "en": "Coworking",
+   "es": "Coworking"
   },
   "growth": {
    "ru": "Маркетинг",
-   "en": "Marketing"
+   "en": "Marketing",
+   "es": "Marketing"
   },
   "marketing": {
    "ru": "Маркетинг",
-   "en": "Marketing"
+   "en": "Marketing",
+   "es": "Marketing"
   },
   "sales": {
    "ru": "Продажи",
-   "en": "Sales"
+   "en": "Sales",
+   "es": "Ventas"
   },
   "saas": {
    "ru": "SaaS",
-   "en": "SaaS"
+   "en": "SaaS",
+   "es": "SaaS"
   },
   "pm": {
    "ru": "Продакт-менеджмент",
-   "en": "Product management"
+   "en": "Product management",
+   "es": "Gestión de producto"
   },
   "learning": {
    "ru": "Учёба",
-   "en": "Learning"
+   "en": "Learning",
+   "es": "Aprendizaje"
   },
   "language": {
    "ru": "Языки",
-   "en": "Languages"
+   "en": "Languages",
+   "es": "Idiomas"
   },
   "exchange": {
    "ru": "Языковой обмен",
-   "en": "Language exchange"
+   "en": "Language exchange",
+   "es": "Intercambio de idiomas"
   },
   "spanish": {
    "ru": "Испанский",
-   "en": "Spanish"
+   "en": "Spanish",
+   "es": "Español"
   },
   "english": {
    "ru": "Английский",
-   "en": "English"
+   "en": "English",
+   "es": "Inglés"
   },
   "french": {
    "ru": "Французский",
-   "en": "French"
+   "en": "French",
+   "es": "Francés"
   },
   "german": {
    "ru": "Немецкий",
-   "en": "German"
+   "en": "German",
+   "es": "Alemán"
   },
   "italian": {
    "ru": "Итальянский",
-   "en": "Italian"
+   "en": "Italian",
+   "es": "Italiano"
   },
   "portuguese": {
    "ru": "Португальский",
-   "en": "Portuguese"
+   "en": "Portuguese",
+   "es": "Portugués"
   },
   "catalan": {
    "ru": "Каталанский",
-   "en": "Catalan"
+   "en": "Catalan",
+   "es": "Catalán"
   },
   "japanese": {
    "ru": "Японский",
-   "en": "Japanese"
+   "en": "Japanese",
+   "es": "Japonés"
   },
   "korean": {
    "ru": "Корейский",
-   "en": "Korean"
+   "en": "Korean",
+   "es": "Coreano"
   },
   "mandarin": {
    "ru": "Китайский",
-   "en": "Mandarin"
+   "en": "Mandarin",
+   "es": "Mandarín"
   },
   "arabic": {
    "ru": "Арабский",
-   "en": "Arabic"
+   "en": "Arabic",
+   "es": "Árabe"
   },
   "skills": {
    "ru": "Курсы и практика",
-   "en": "Courses & practice"
+   "en": "Courses & practice",
+   "es": "Cursos y práctica"
   },
   "course": {
    "ru": "Курсы",
-   "en": "Courses"
+   "en": "Courses",
+   "es": "Cursos"
   },
   "workshop": {
    "ru": "Воркшопы",
-   "en": "Workshops"
+   "en": "Workshops",
+   "es": "Talleres"
   },
   "studygroup": {
    "ru": "Учебная группа",
-   "en": "Study group"
+   "en": "Study group",
+   "es": "Grupo de estudio"
   },
   "bootcamp": {
    "ru": "Буткемпы",
-   "en": "Bootcamps"
+   "en": "Bootcamps",
+   "es": "Bootcamps"
   },
   "tutoring": {
    "ru": "Репетиторство",
-   "en": "Tutoring"
+   "en": "Tutoring",
+   "es": "Tutoría"
   },
   "academic": {
    "ru": "Наука",
-   "en": "Science"
+   "en": "Science",
+   "es": "Ciencia"
   },
   "psychology": {
    "ru": "Психология",
-   "en": "Psychology"
+   "en": "Psychology",
+   "es": "Psicología"
   },
   "neuroscience": {
    "ru": "Нейронаука",
-   "en": "Neuroscience"
+   "en": "Neuroscience",
+   "es": "Neurociencia"
   },
   "economics": {
    "ru": "Экономика",
-   "en": "Economics"
+   "en": "Economics",
+   "es": "Economía"
   },
   "science": {
    "ru": "Наука вообще",
-   "en": "Science"
+   "en": "Science",
+   "es": "Ciencia"
   },
   "personal": {
    "ru": "Навыки",
-   "en": "Personal skills"
+   "en": "Personal skills",
+   "es": "Habilidades personales"
   },
   "publicspeaking": {
    "ru": "Публичные выступления",
-   "en": "Public speaking"
+   "en": "Public speaking",
+   "es": "Oratoria"
   },
   "debate": {
    "ru": "Дебаты",
-   "en": "Debate"
+   "en": "Debate",
+   "es": "Debate"
   },
   "productivity": {
    "ru": "Продуктивность",
-   "en": "Productivity"
+   "en": "Productivity",
+   "es": "Productividad"
   },
   "soccer": {
    "ru": "Футбол",
-   "en": "soccer"
+   "en": "soccer",
+   "es": "Fútbol"
   },
   "cricket": {
    "ru": "Крикет",
-   "en": "cricket"
+   "en": "cricket",
+   "es": "Críquet"
   },
   "baseball": {
    "ru": "Бейсбол",
-   "en": "baseball"
+   "en": "baseball",
+   "es": "Béisbol"
   },
   "ultimate": {
    "ru": "Фрисби",
-   "en": "ultimate"
+   "en": "ultimate",
+   "es": "Ultimate"
   },
   "waterpolo": {
    "ru": "Водное поло",
-   "en": "waterpolo"
+   "en": "waterpolo",
+   "es": "Waterpolo"
   },
   "tabletennis": {
    "ru": "Настольный теннис",
-   "en": "tabletennis"
+   "en": "tabletennis",
+   "es": "Tenis de mesa"
   },
   "racquetball": {
    "ru": "Ракетбол",
-   "en": "racquetball"
+   "en": "racquetball",
+   "es": "Racquetball"
   },
   "jogging": {
    "ru": "Бег",
-   "en": "jogging"
+   "en": "jogging",
+   "es": "Carrera"
   },
   "biking": {
    "ru": "Велоспорт",
-   "en": "biking"
+   "en": "biking",
+   "es": "Ciclismo"
   },
   "spinning": {
    "ru": "Велотренажер",
-   "en": "spinning"
+   "en": "spinning",
+   "es": "Spinning"
   },
   "hyrox": {
    "ru": "Hyrox",
-   "en": "hyrox"
+   "en": "hyrox",
+   "es": "Hyrox"
   },
   "duathlon": {
    "ru": "Дуатлон",
-   "en": "duathlon"
+   "en": "duathlon",
+   "es": "Duatlon"
   },
   "fitness": {
    "ru": "Фитнес",
-   "en": "fitness"
+   "en": "fitness",
+   "es": "Fitness"
   },
   "workout": {
    "ru": "Тренировка",
-   "en": "workout"
+   "en": "workout",
+   "es": "Entrenamiento"
   },
   "weightlifting": {
    "ru": "Тяжелая атлетика",
-   "en": "weightlifting"
+   "en": "weightlifting",
+   "es": "Halterofilia"
   },
   "kettlebell": {
    "ru": "Гири",
-   "en": "kettlebell"
+   "en": "kettlebell",
+   "es": "Kettlebell"
   },
   "kickboxing": {
    "ru": "Кикбоксинг",
-   "en": "kickboxing"
+   "en": "kickboxing",
+   "es": "Kickboxing"
   },
   "judo": {
    "ru": "Дзюдо",
-   "en": "judo"
+   "en": "judo",
+   "es": "Jujitsu"
   },
   "karate": {
    "ru": "Карате",
-   "en": "karate"
+   "en": "karate",
+   "es": "Kárate"
   },
   "wrestling": {
    "ru": "Борьба",
-   "en": "wrestling"
+   "en": "wrestling",
+   "es": "Lucha libre"
   },
   "muaythai": {
    "ru": "Муай тай",
-   "en": "muaythai"
+   "en": "muaythai",
+   "es": "Muay thai"
   },
   "fencing": {
    "ru": "Фехтование",
-   "en": "fencing"
+   "en": "fencing",
+   "es": "Esgrima"
   },
   "qigong": {
    "ru": "Цигун",
-   "en": "qigong"
+   "en": "qigong",
+   "es": "Qigong"
   },
   "lunch": {
    "ru": "Обед",
-   "en": "lunch"
+   "en": "lunch",
+   "es": "Almuerzo"
   },
   "food": {
    "ru": "Еда",
-   "en": "food"
+   "en": "food",
+   "es": "Comida"
   },
   "drinks": {
    "ru": "Напитки",
-   "en": "drinks"
+   "en": "drinks",
+   "es": "Bebidas"
   },
   "pub": {
    "ru": "Паб",
-   "en": "pub"
+   "en": "pub",
+   "es": "Pub"
   },
   "clubbing": {
    "ru": "Клуб",
-   "en": "clubbing"
+   "en": "clubbing",
+   "es": "Clubbing"
   },
   "mezcal": {
    "ru": "Мескаль",
-   "en": "mezcal"
+   "en": "mezcal",
+   "es": "Mezcal"
   },
   "sake": {
    "ru": "Саке",
-   "en": "sake"
+   "en": "sake",
+   "es": "Sake"
   },
   "walking": {
    "ru": "Ходьба",
-   "en": "walking"
+   "en": "walking",
+   "es": "Caminata"
   },
   "stroll": {
    "ru": "Прогулка",
-   "en": "stroll"
+   "en": "stroll",
+   "es": "Paseo"
   },
   "hang": {
    "ru": "Встреча",
-   "en": "hang"
+   "en": "hang",
+   "es": "Reunión"
   },
   "chill": {
    "ru": "Релакс",
-   "en": "chill"
+   "en": "chill",
+   "es": "Relax"
   },
   "talk": {
    "ru": "Разговор",
-   "en": "talk"
+   "en": "talk",
+   "es": "Charla"
   },
   "chat": {
    "ru": "Болтовня",
-   "en": "chat"
+   "en": "chat",
+   "es": "Charla"
   },
   "foodie": {
    "ru": "Гурман",
-   "en": "foodie"
+   "en": "foodie",
+   "es": "Gourmet"
   },
   "bbq": {
    "ru": "Барбекю",
-   "en": "bbq"
+   "en": "bbq",
+   "es": "Barbacoa"
   },
   "vegetarian": {
    "ru": "Вегетарианство",
-   "en": "vegetarian"
+   "en": "vegetarian",
+   "es": "Vegetarianismo"
   },
   "pizza": {
    "ru": "Пицца",
-   "en": "pizza"
+   "en": "pizza",
+   "es": "Pizza"
   },
   "pasta": {
    "ru": "Паста",
-   "en": "pasta"
+   "en": "pasta",
+   "es": "Pasta"
   },
   "dog": {
    "ru": "Собака",
-   "en": "dog"
+   "en": "dog",
+   "es": "Perro"
   },
   "mums": {
    "ru": "Мамы",
-   "en": "mums"
+   "en": "mums",
+   "es": "Mamás"
   },
   "fortnite": {
    "ru": "Фортнайт",
-   "en": "fortnite"
+   "en": "fortnite",
+   "es": "Fortnite"
   },
   "gaming": {
    "ru": "Игры",
-   "en": "gaming"
+   "en": "gaming",
+   "es": "Juegos"
   },
   "r6": {
    "ru": "Rainbow Six",
-   "en": "r6"
+   "en": "r6",
+   "es": "Rainbow six"
   },
   "rainbow6": {
    "ru": "Рейнбоу",
-   "en": "rainbow6"
+   "en": "rainbow6",
+   "es": "Rainbow six"
   },
   "starcraft": {
    "ru": "Старкрафт",
-   "en": "starcraft"
+   "en": "starcraft",
+   "es": "Starcraft"
   },
   "hearthstone": {
    "ru": "Коллекционная карта",
-   "en": "hearthstone"
+   "en": "hearthstone",
+   "es": "Hearthstone"
   },
   "tekken": {
    "ru": "Tekken",
-   "en": "tekken"
+   "en": "tekken",
+   "es": "Tekken"
   },
   "smash": {
    "ru": "Smash Bros",
-   "en": "smash"
+   "en": "smash",
+   "es": "Smash"
   },
   "cod": {
    "ru": "Шутер",
-   "en": "cod"
+   "en": "cod",
+   "es": "Call of duty"
   },
   "warzone": {
    "ru": "Батл-рояль",
-   "en": "warzone"
+   "en": "warzone",
+   "es": "Warzone"
   },
   "cards": {
    "ru": "Карты",
-   "en": "cards"
+   "en": "cards",
+   "es": "Baraja"
   },
   "monopoly": {
    "ru": "Монополия",
-   "en": "monopoly"
+   "en": "monopoly",
+   "es": "Monopolio"
   },
   "risk": {
    "ru": "Риск",
-   "en": "risk"
+   "en": "risk",
+   "es": "Risk"
   },
   "mtg": {
    "ru": "Мэджик",
-   "en": "mtg"
+   "en": "mtg",
+   "es": "Magic"
   },
   "ttrpg": {
    "ru": "Ролевая игра",
-   "en": "ttrpg"
+   "en": "ttrpg",
+   "es": "Rol"
   },
   "quiz": {
    "ru": "Викторина",
-   "en": "quiz"
+   "en": "quiz",
+   "es": "Cuestionario"
   },
   "mahjong": {
    "ru": "Маджонг",
-   "en": "mahjong"
+   "en": "mahjong",
+   "es": "Mahjong"
   },
   "switch": {
    "ru": "Нинтендо",
-   "en": "switch"
+   "en": "switch",
+   "es": "Switch"
   },
   "ps5": {
    "ru": "Плейстейшн",
-   "en": "ps5"
+   "en": "ps5",
+   "es": "Ps5"
   },
   "roblox": {
    "ru": "Роблокс",
-   "en": "roblox"
+   "en": "roblox",
+   "es": "Roblox"
   },
   "mobile": {
    "ru": "Мобильные игры",
-   "en": "mobile"
+   "en": "mobile",
+   "es": "Móvil"
   },
   "movies": {
    "ru": "Фильмы",
-   "en": "movies"
+   "en": "movies",
+   "es": "Películas"
   },
   "film": {
    "ru": "Кино",
-   "en": "film"
+   "en": "film",
+   "es": "Cine"
   },
   "netflix": {
    "ru": "Нетфликс",
-   "en": "netflix"
+   "en": "netflix",
+   "es": "Netflix"
   },
   "art": {
    "ru": "Искусство",
-   "en": "art"
+   "en": "art",
+   "es": "Arte"
   },
   "illustration": {
    "ru": "Иллюстрация",
-   "en": "illustration"
+   "en": "illustration",
+   "es": "Ilustración"
   },
   "graffiti": {
    "ru": "Граффити",
-   "en": "graffiti"
+   "en": "graffiti",
+   "es": "Grafiti"
   },
   "sculpture": {
    "ru": "Скульптура",
-   "en": "sculpture"
+   "en": "sculpture",
+   "es": "Escultura"
   },
   "comedy": {
    "ru": "Комедия",
-   "en": "comedy"
+   "en": "comedy",
+   "es": "Comedia"
   },
   "circus": {
    "ru": "Цирк",
-   "en": "circus"
+   "en": "circus",
+   "es": "Circo"
   },
   "city": {
    "ru": "Город",
-   "en": "city"
+   "en": "city",
+   "es": "Ciudad"
   },
   "ceramics": {
    "ru": "Керамика",
-   "en": "ceramics"
+   "en": "ceramics",
+   "es": "Cerámica"
   },
   "crochet": {
    "ru": "Вязание крючком",
-   "en": "crochet"
+   "en": "crochet",
+   "es": "Ganchillo"
   },
   "ml": {
    "ru": "Машинное обучение",
-   "en": "ml"
+   "en": "ml",
+   "es": "Aprendizaje automático"
   },
   "programming": {
    "ru": "Программирование",
-   "en": "programming"
+   "en": "programming",
+   "es": "Programación"
   },
   "software": {
    "ru": "Программное обеспечение",
-   "en": "software"
+   "en": "software",
+   "es": "Software"
   },
   "blockchain": {
    "ru": "Блокчейн",
-   "en": "blockchain"
+   "en": "blockchain",
+   "es": "Blockchain"
   },
   "cloud": {
    "ru": "Облако",
-   "en": "cloud"
+   "en": "cloud",
+   "es": "Nube"
   },
   "security": {
    "ru": "Безопасность",
-   "en": "security"
+   "en": "security",
+   "es": "Seguridad"
   },
   "golang": {
    "ru": "Go",
-   "en": "golang"
+   "en": "golang",
+   "es": "Go"
   },
   "frontend": {
    "ru": "Фронтенд",
-   "en": "frontend"
+   "en": "frontend",
+   "es": "Frontend"
   },
   "backend": {
    "ru": "Бэкенд",
-   "en": "backend"
+   "en": "backend",
+   "es": "Backend"
   },
   "investor": {
    "ru": "Инвестор",
-   "en": "investor"
+   "en": "investor",
+   "es": "Inversor"
   },
   "consulting": {
    "ru": "Консалтинг",
-   "en": "consulting"
+   "en": "consulting",
+   "es": "Consultoría"
   },
   "vc": {
    "ru": "Венчурный капитал",
-   "en": "vc"
+   "en": "vc",
+   "es": "Capital de riesgo"
   },
   "dataai": {
    "ru": "Данные и ИИ",
-   "en": "dataai"
+   "en": "dataai",
+   "es": "Datos e IA"
   },
   "datascience": {
    "ru": "Data Science",
-   "en": "datascience"
+   "en": "datascience",
+   "es": "Ciencia de datos"
   },
   "analytics": {
    "ru": "Аналитика",
-   "en": "analytics"
+   "en": "analytics",
+   "es": "Análisis"
   },
   "statistics": {
    "ru": "Статистика",
-   "en": "statistics"
+   "en": "statistics",
+   "es": "Estadística"
   },
   "bigdata": {
    "ru": "Большие данные",
-   "en": "bigdata"
+   "en": "bigdata",
+   "es": "Big data"
   },
   "solidity": {
    "ru": "Solidity",
-   "en": "solidity"
+   "en": "solidity",
+   "es": "Solidity"
   },
   "degen": {
    "ru": "Degen",
-   "en": "degen"
+   "en": "degen",
+   "es": "Degen"
   },
   "b2b": {
    "ru": "B2B",
-   "en": "b2b"
+   "en": "b2b",
+   "es": "B2B"
   },
   "playlist": {
    "ru": "Плейлист",
-   "en": "playlist"
+   "en": "playlist",
+   "es": "Playlist"
   },
   "jam": {
    "ru": "Джем",
-   "en": "jam"
+   "en": "jam",
+   "es": "Jam"
   },
   "synth": {
    "ru": "Синтезатор",
-   "en": "synth"
+   "en": "synth",
+   "es": "Sintetizador"
   },
   "ableton": {
    "ru": "Ableton",
-   "en": "ableton"
+   "en": "ableton",
+   "es": "Ableton"
   },
   "songwriting": {
    "ru": "Песни",
-   "en": "songwriting"
+   "en": "songwriting",
+   "es": "Escritura de canciones"
   },
   "choir": {
    "ru": "Хор",
-   "en": "choir"
+   "en": "choir",
+   "es": "Coro"
   },
   "rap": {
    "ru": "Рэп",
-   "en": "rap"
+   "en": "rap",
+   "es": "Rap"
   },
   "pop": {
    "ru": "Поп",
-   "en": "pop"
+   "en": "pop",
+   "es": "Pop"
   },
   "punk": {
    "ru": "Панк",
-   "en": "punk"
+   "en": "punk",
+   "es": "Punk"
   },
   "reggae": {
    "ru": "Регги",
-   "en": "reggae"
+   "en": "reggae",
+   "es": "Reggae"
   },
   "disco": {
    "ru": "Диско",
-   "en": "disco"
+   "en": "disco",
+   "es": "Disco"
   },
   "nature": {
    "ru": "Природа",
-   "en": "nature"
+   "en": "nature",
+   "es": "Naturaleza"
   },
   "outdoor": {
    "ru": "На открытом воздухе",
-   "en": "outdoor"
+   "en": "outdoor",
+   "es": "Al aire libre"
   },
   "mountaineering": {
    "ru": "Альпинизм",
-   "en": "mountaineering"
+   "en": "mountaineering",
+   "es": "Alpinismo"
   },
   "paddleboard": {
    "ru": "Пэдлборд",
-   "en": "paddleboard"
+   "en": "paddleboard",
+   "es": "Paddleboard"
   },
   "windsurf": {
    "ru": "Виндсерф",
-   "en": "windsurf"
+   "en": "windsurf",
+   "es": "Windsurf"
   },
   "wakeboard": {
    "ru": "Вейкборд",
-   "en": "wakeboard"
+   "en": "wakeboard",
+   "es": "Wakeboard"
   },
   "freediving": {
    "ru": "Фридайвинг",
-   "en": "freediving"
+   "en": "freediving",
+   "es": "Freediving"
   },
   "botany": {
    "ru": "Ботаника",
-   "en": "botany"
+   "en": "botany",
+   "es": "Botánica"
   },
   "russian": {
    "ru": "Русский",
-   "en": "russian"
+   "en": "russian",
+   "es": "Ruso"
   },
   "languages": {
    "ru": "Языки",
-   "en": "languages"
+   "en": "languages",
+   "es": "Lenguas"
   },
   "practice": {
    "ru": "Практика",
-   "en": "practice"
+   "en": "practice",
+   "es": "Práctica"
   },
   "study": {
    "ru": "Изучение",
-   "en": "study"
+   "en": "study",
+   "es": "Estudio"
   },
   "certification": {
    "ru": "Сертификация",
-   "en": "certification"
+   "en": "certification",
+   "es": "Certificación"
   },
   "langs2": {
    "ru": "Другие языки",
-   "en": "langs2"
+   "en": "langs2",
+   "es": "Otras lenguas"
   },
   "chinese": {
    "ru": "Китайский",
-   "en": "chinese"
+   "en": "chinese",
+   "es": "Chino"
   },
   "dutch": {
    "ru": "Нидерландский",
-   "en": "dutch"
+   "en": "dutch",
+   "es": "Neerlandés"
   },
   "swedish": {
    "ru": "Шведский",
-   "en": "swedish"
+   "en": "swedish",
+   "es": "Sueco"
   },
   "hindi": {
    "ru": "Хинди",
-   "en": "hindi"
+   "en": "hindi",
+   "es": "Hindi"
   },
   "polish": {
    "ru": "Польский",
-   "en": "polish"
+   "en": "polish",
+   "es": "Polaco"
   },
   "turkish": {
    "ru": "Турецкий",
-   "en": "turkish"
+   "en": "turkish",
+   "es": "Turco"
   },
   "greek": {
    "ru": "Греческий",
-   "en": "greek"
+   "en": "greek",
+   "es": "Griego"
   },
   "cartoons": {
    "ru": "Мультфильмы",
-   "en": "Cartoons"
+   "en": "Cartoons",
+   "es": "Dibujos animados"
   }
  },
  "synonyms": {

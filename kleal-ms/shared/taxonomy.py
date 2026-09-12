@@ -51,7 +51,13 @@ def label(key, lang="ru"):
     """Подпись ключа на языке экрана. Пусто — подписи нет, и выдумывать её здесь нечем."""
     _source()
     row = _CACHE["lab"].get(str(key or "").strip().lower()) or {}
-    return row.get("ru" if str(lang).startswith("ru") else "en", "")
+    tag = str(lang or "").lower()
+    if tag.startswith("ru"):
+        return row.get("ru", "")
+    # Испанская подпись есть не у всякого ключа: нет — остаётся английская, а не пустота.
+    if tag.startswith("es"):
+        return row.get("es") or row.get("en", "")
+    return row.get("en", "")
 
 
 def broad_of():
