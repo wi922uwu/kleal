@@ -1,0 +1,936 @@
+diff --git a/kleal-ms/shared/monetization.py b/kleal-ms/shared/monetization.py
+new file mode 100644
+index 0000000..841c691
+--- /dev/null
++++ b/kleal-ms/shared/monetization.py
+@@ -0,0 +1,106 @@
++"""Phase 1: server-owned, opt-in Preview. No payment processing or product gates.
++
++Never infer paid access from a client field, a redirect, or an unverified receipt.
++Store billing and product quota enforcement will be added after product approval.
++"""
++import os
++import sqlite3
++import time
++from pathlib import Path
++
++PREVIEW_SECONDS = 14 * 24 * 60 * 60
++PRODUCTS = (
++    {"id": "plus_monthly", "period": "month", "referencePriceCents": 1199, "currency": "EUR"},
++    {"id": "plus_annual", "period": "year", "referencePriceCents": 8999, "currency": "EUR"},
++)
++
++
++class MonetizationError(Exception):
++    def __init__(self, code, status=400):
++        super().__init__(code)
++        self.code, self.status = code, status
++
++
++def preview_enabled():
++    return os.environ.get("KLEAL_MONETIZATION_PREVIEW_ENABLED") == "1"
++
++
++def database_path():
++    value = os.environ.get("KLEAL_MONETIZATION_DB", "")
++    if not value or not Path(value).is_absolute():
++        raise MonetizationError("monetization_not_configured", 503)
++    return value
++
++
++class PreviewStore:
++    def __init__(self, path, clock=time.time):
++        self.path, self.clock = str(path), clock
++
++    def connect(self):
++        # Parent directory is provisioned explicitly; never create a shared directory silently.
++        conn = sqlite3.connect(self.path, timeout=10, isolation_level=None)
++        conn.row_factory = sqlite3.Row
++        conn.execute("CREATE TABLE IF NOT EXISTS monetization_preview ("
++                     "person_id TEXT PRIMARY KEY, started_at INTEGER NOT NULL, "
++                     "expires_at INTEGER NOT NULL)")
++        return conn
++
++    def read(self, person_id):
++        conn = self.connect()
++        try:
++            row = conn.execute("SELECT started_at, expires_at FROM monetization_preview "
++                               "WHERE person_id = ?", (person_id,)).fetchone()
++            return dict(row) if row else None
++        finally:
++            conn.close()
++
++    def start(self, person_id):
++        if not isinstance(person_id, str) or not person_id.strip():
++            raise MonetizationError("sign_in_required", 401)
++        now = int(self.clock())
++        conn = self.connect()
++        try:
++            conn.execute("BEGIN IMMEDIATE")
++            # Unique owner + transaction: retries, reinstalls and simultaneous devices never extend it.
++            conn.execute("INSERT OR IGNORE INTO monetization_preview VALUES (?, ?, ?)",
++                         (person_id, now, now + PREVIEW_SECONDS))
++            row = conn.execute("SELECT started_at, expires_at FROM monetization_preview "
++                               "WHERE person_id = ?", (person_id,)).fetchone()
++            conn.commit()
++            return dict(row)
++        except Exception:
++            conn.rollback()
++            raise
++        finally:
++            conn.close()
++
++
++def describe(row=None, *, enabled=False, now=None):
++    now = int(time.time() if now is None else now)
++    active = bool(enabled and row and row["expires_at"] > now)
++    state = "preview" if active else ("expired" if row else "free")
++    return {
++        "ok": True, "state": state, "plan": "plus" if active else "free",
++        "source": "preview" if row else "none", "serverTime": now,
++        "previewStartedAt": row["started_at"] if row else None,
++        "expiresAt": row["expires_at"] if row else None,
++        "canStartPreview": bool(enabled and not row), "previewEnabled": enabled,
++        "previewDays": 14, "purchaseAvailable": False, "restoreAvailable": False,
++        "enforcementEnabled": False, "phase": "foundation",
++        # Reference prices are NOT live store prices or an offer to charge the customer.
++        "products": [dict(p) for p in PRODUCTS],
++    }
++
++
++def status(person_id):
++    if not preview_enabled():
++        return describe()
++    store = PreviewStore(database_path())
++    return describe(store.read(person_id), enabled=True)
++
++
++def start_preview(person_id):
++    if not preview_enabled():
++        raise MonetizationError("preview_unavailable", 409)
++    store = PreviewStore(database_path())
++    return describe(store.start(person_id), enabled=True)
+diff --git a/kleal-ms/shared/monetization_http.py b/kleal-ms/shared/monetization_http.py
+new file mode 100644
+index 0000000..a34be07
+--- /dev/null
++++ b/kleal-ms/shared/monetization_http.py
+@@ -0,0 +1,70 @@
++"""Authenticated adapter on the existing onboarding prefix; no new gateway route."""
++import json
++import sqlite3
++from urllib.parse import urlsplit
++import kleal_auth
++import monetization as billing
++
++PREFIX = "/api/onboarding/monetization"
++
++
++def respond(handler, status, data):
++    raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
++    handler.send_response(status)
++    handler.send_header("Content-Type", "application/json; charset=utf-8")
++    handler.send_header("Cache-Control", "no-store")
++    handler.send_header("X-Content-Type-Options", "nosniff")
++    handler.send_header("Content-Length", str(len(raw)))
++    handler.end_headers()
++    handler.wfile.write(raw)
++
++
++def handle(handler):
++    path = urlsplit(handler.path).path
++    if path != PREFIX and not path.startswith(PREFIX + "/"):
++        return False
++    # Failed auth/invalid bodies must not leave unread bytes on a reusable connection.
++    handler.close_connection = True
++    try:
++        method = handler.command
++        if (method, path) not in {
++            ("GET", PREFIX + "/status"), ("POST", PREFIX + "/preview"),
++            ("POST", PREFIX + "/purchase"), ("POST", PREFIX + "/restore"),
++        }:
++            raise billing.MonetizationError("not_found", 404)
++        person = kleal_auth.caller_person(handler, strict_storage=True)
++        person_id = str((person or {}).get("id") or "")
++        if not person_id:
++            raise billing.MonetizationError("sign_in_required", 401)
++        if method == "POST":
++            if handler.headers.get("Transfer-Encoding"):
++                raise billing.MonetizationError("invalid_request")
++            try:
++                length = int(handler.headers.get("Content-Length", "0"))
++            except ValueError:
++                raise billing.MonetizationError("invalid_request") from None
++            if not 0 < length <= 256:
++                raise billing.MonetizationError("invalid_request")
++            raw = handler.rfile.read(length)
++            if len(raw) != length:
++                raise billing.MonetizationError("invalid_request")
++            body = json.loads(raw)
++            if path.endswith("/preview"):
++                # No client-supplied user, duration, status or price is accepted.
++                if not isinstance(body, dict) or set(body) != {"consent"} or body["consent"] is not True:
++                    raise billing.MonetizationError("invalid_request")
++                result = billing.start_preview(person_id)
++            else:
++                if body != {}:
++                    raise billing.MonetizationError("invalid_request")
++                raise billing.MonetizationError("store_not_configured", 409)
++        else:
++            result = billing.status(person_id)
++        respond(handler, 200, result)
++    except billing.MonetizationError as error:
++        respond(handler, error.status, {"ok": False, "error": error.code})
++    except (ValueError, UnicodeError):
++        respond(handler, 400, {"ok": False, "error": "invalid_request"})
++    except (sqlite3.Error, OSError, kleal_auth.IdentityStorageUnavailable):
++        respond(handler, 503, {"ok": False, "error": "monetization_unavailable"})
++    return True
+diff --git a/kleal-ms/services/onboarding/app.py b/kleal-ms/services/onboarding/app.py
+index 08a2d45..388bc9e 100644
+--- a/kleal-ms/services/onboarding/app.py
++++ b/kleal-ms/services/onboarding/app.py
+@@ -2145,6 +2145,9 @@ def _client_ip(handler):
+ 
+ class H(BaseHTTPRequestHandler):
+     def do_GET(self):
++        import monetization_http
++        if monetization_http.handle(self):
++            return
+         if self.path.split("?")[0] == "/health":
+             return send_json(self, 200, {"service": "onboarding", "ok": True,
+                                          "storage": db.MODE})
+@@ -2269,6 +2272,9 @@ class H(BaseHTTPRequestHandler):
+             return send_json(self, 503, {"ok": False, "error": "storage unavailable"})
+ 
+     def _do_POST(self):
++        import monetization_http
++        if monetization_http.handle(self):
++            return
+         if self.path.split("?")[0] == "/api/auth/apple/callback":
+             return self._apple_callback()
+         body = read_json(self)
+diff --git a/kleal-ms/tests/test_monetization.py b/kleal-ms/tests/test_monetization.py
+new file mode 100644
+index 0000000..c563669
+--- /dev/null
++++ b/kleal-ms/tests/test_monetization.py
+@@ -0,0 +1,193 @@
++"""Offline billing-foundation checks. All state is temporary; no provider calls."""
++import hashlib
++import http.client
++import importlib.util
++import json
++import os
++from pathlib import Path
++import sys
++import tempfile
++import threading
++import time
++import unittest
++from concurrent.futures import ThreadPoolExecutor
++from unittest.mock import patch
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT / "shared"))
++import monetization as M
++import monetization_http as H
++import kleal_auth
++from serving import KlealServer
++
++sys.path.insert(0, str(ROOT / "services" / "onboarding"))
++spec = importlib.util.spec_from_file_location("monetization_onboarding_under_test", ROOT / "services" / "onboarding" / "app.py")
++ONB = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(ONB)
++
++
++class StoreTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.path = str(Path(self.tmp.name) / "preview.sqlite3")
++        self.now = 1000
++        self.store = M.PreviewStore(self.path, lambda: self.now)
++
++    def test_exact_expiry_and_no_restart(self):
++        first = self.store.start("one")
++        self.assertEqual(first, {"started_at": 1000, "expires_at": 1000 + 14 * 86400})
++        self.now = first["expires_at"]
++        self.assertEqual(M.describe(first, enabled=True, now=self.now - 1)["state"], "preview")
++        expired = M.describe(first, enabled=True, now=self.now)
++        self.assertEqual((expired["state"], expired["plan"], expired["canStartPreview"]), ("expired", "free", False))
++        self.assertEqual(self.store.start("one"), first)
++        self.assertEqual(M.PreviewStore(self.path).read("one"), first)
++
++    def test_simultaneous_devices_create_one_period(self):
++        with ThreadPoolExecutor(max_workers=8) as pool:
++            rows = list(pool.map(lambda n: M.PreviewStore(self.path, lambda: 1000 + n).start("one"), range(16)))
++        self.assertTrue(all(row == rows[0] for row in rows))
++        self.assertEqual(self.store.read("one"), rows[0])
++
++    def test_users_are_isolated_and_sql_is_parameterized(self):
++        self.store.start("one")
++        self.now += 60
++        two = self.store.start("two' OR 1=1;--")
++        self.assertEqual(two["started_at"], 1060)
++        self.assertEqual(self.store.read("one")["started_at"], 1000)
++        self.assertIsNone(self.store.read("missing"))
++
++    def test_flag_off_does_not_touch_storage(self):
++        with patch.dict(os.environ, {"KLEAL_MONETIZATION_PREVIEW_ENABLED": "0", "KLEAL_MONETIZATION_DB": self.path}):
++            result = M.status("one")
++            self.assertEqual((result["state"], result["canStartPreview"]), ("free", False))
++            with self.assertRaisesRegex(M.MonetizationError, "preview_unavailable"):
++                M.start_preview("one")
++        self.assertFalse(Path(self.path).exists())
++
++    def test_configuration_must_be_explicit_and_absolute(self):
++        for value in ("", "relative.sqlite3"):
++            with patch.dict(os.environ, {"KLEAL_MONETIZATION_DB": value}):
++                with self.assertRaisesRegex(M.MonetizationError, "monetization_not_configured"):
++                    M.database_path()
++
++    def test_no_paid_access_or_enforcement(self):
++        for row in (None, self.store.start("one")):
++            result = M.describe(row, enabled=True, now=1001)
++            for key in ("purchaseAvailable", "restoreAvailable", "enforcementEnabled"):
++                self.assertIs(result[key], False)
++            self.assertEqual([p["referencePriceCents"] for p in result["products"]], [1199, 8999])
++            result["products"][0]["referencePriceCents"] = 1
++            self.assertEqual(M.PRODUCTS[0]["referencePriceCents"], 1199)
++
++    def test_owner_required(self):
++        for person in (None, "", " ", 123):
++            with self.assertRaises(M.MonetizationError):
++                self.store.start(person)
++
++
++class Handler(ONB.H):
++    # Real onboarding GET/POST dispatch and the production server wrapper, quiet local logs.
++    def log_message(self, *_args):
++        pass
++
++
++class HttpTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.tmp.cleanup)
++        self.path = str(Path(self.tmp.name) / "preview.sqlite3")
++        env = patch.dict(os.environ, {"KLEAL_MONETIZATION_DB": self.path, "KLEAL_MONETIZATION_PREVIEW_ENABLED": "1"})
++        env.start()
++        self.addCleanup(env.stop)
++        accounts = {}
++        for token, expiry in (("alice", time.time() + 3600), ("bob", time.time() + 3600), ("expired", 1)):
++            accounts[token] = {"person_id": "id_" + token, "sessions": {hashlib.sha256(token.encode()).hexdigest(): {"exp": expiry}}}
++        # The real bearer -> hashed session -> stable user resolver runs against synthetic stores.
++        for mock in (patch.object(kleal_auth, "_accounts", return_value=accounts),
++                     patch.object(kleal_auth, "_population", return_value=[
++                         {"id": "id_" + token, "owner": token, "name": "Same name"} for token in accounts])):
++            mock.start()
++            self.addCleanup(mock.stop)
++        self.server = KlealServer(("127.0.0.1", 0), Handler)
++        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
++        self.thread.start()
++        self.addCleanup(self.stop_server)
++
++    def stop_server(self):
++        self.server.shutdown()
++        self.server.server_close()
++        self.thread.join(timeout=2)
++
++    def request(self, method="GET", path="/status", body=None, token="alice", headers=None):
++        hdr = {"Content-Type": "application/json"}
++        if token:
++            hdr["Authorization"] = "Bearer " + token
++        hdr.update(headers or {})
++        conn = http.client.HTTPConnection(*self.server.server_address, timeout=3)
++        try:
++            conn.request(method, H.PREFIX + path, body, hdr)
++            reply = conn.getresponse()
++            return reply.status, json.loads(reply.read()), dict(reply.getheaders())
++        finally:
++            conn.close()
++
++    def test_complete_lifecycle_without_payments(self):
++        status, data, headers = self.request()
++        self.assertEqual(status, 200)
++        self.assertEqual((data["state"], data["canStartPreview"]), ("free", True))
++        self.assertEqual(headers["Cache-Control"], "no-store")
++        status, first, _ = self.request("POST", "/preview", '{"consent":true}')
++        self.assertEqual((status, first["state"]), (200, "preview"))
++        _, again, _ = self.request("POST", "/preview", '{"consent":true}')
++        self.assertEqual(first["expiresAt"], again["expiresAt"])
++        self.assertEqual(self.request()[1]["state"], "preview")
++        self.assertEqual(self.request(token="bob")[1]["state"], "free")
++
++    def test_missing_bad_and_expired_auth(self):
++        for token in (None, "unknown", "expired"):
++            for method, path, body in (("GET", "/status", None), ("POST", "/preview", '{"consent":true}')):
++                with self.subTest(token=token, method=method):
++                    self.assertEqual(self.request(method, path, body, token)[0], 401)
++        self.assertFalse(Path(self.path).exists())
++
++    def test_cannot_forge_identity_or_duration(self):
++        for body in ('{"consent":true,"person_id":"id_bob"}', '{"consent":true,"days":999}',
++                     '{"consent":true,"plan":"plus"}', '{"consent":false}', '{"consent":1}',
++                     '{}', '[]', 'null', 'not json', '', '{"consent":"true"}', 'x' * 257):
++            with self.subTest(body=body):
++                self.assertEqual(self.request("POST", "/preview", body)[0], 400)
++        self.assertFalse(Path(self.path).exists())
++
++    def test_fake_receipts_cannot_grant_paid_access(self):
++        for path in ("/purchase", "/restore"):
++            self.assertEqual(self.request("POST", path, '{}')[:2], (409, {"ok": False, "error": "store_not_configured"}))
++            self.assertEqual(self.request("POST", path, '{"receipt":"fake"}')[0], 400)
++        self.assertFalse(Path(self.path).exists())
++
++    def test_query_cannot_change_owner(self):
++        self.request("POST", "/preview?person_id=id_bob", '{"consent":true}')
++        self.assertEqual(self.request(token="alice")[1]["state"], "preview")
++        self.assertEqual(self.request(token="bob")[1]["state"], "free")
++
++    def test_unknown_paths_and_methods(self):
++        self.assertEqual(self.request("GET", "/preview")[0], 404)
++        self.assertEqual(self.request("POST", "/status", '{}')[0], 404)
++        self.assertEqual(self.request("GET", "/fake")[0], 404)
++
++    def test_storage_failure_is_sanitized(self):
++        with patch.object(M, "database_path", return_value="/nonexistent-mon-test/preview.sqlite3"):
++            self.assertEqual(self.request()[:2], (503, {"ok": False, "error": "monetization_unavailable"}))
++        with patch.object(kleal_auth, "_population", side_effect=kleal_auth.IdentityStorageUnavailable()):
++            self.assertEqual(self.request()[0], 503)
++
++    def test_flag_off_status_available_but_start_disabled(self):
++        with patch.dict(os.environ, {"KLEAL_MONETIZATION_PREVIEW_ENABLED": "0"}):
++            self.assertEqual(self.request()[1]["canStartPreview"], False)
++            self.assertEqual(self.request("POST", "/preview", '{"consent":true}')[0], 409)
++        self.assertFalse(Path(self.path).exists())
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/kleal-app/src/monetization.ts b/kleal-app/src/monetization.ts
+new file mode 100644
+index 0000000..7667600
+--- /dev/null
++++ b/kleal-app/src/monetization.ts
+@@ -0,0 +1,81 @@
++import { T, dateLocale } from './i18n';
++
++export type Product = { id: 'plus_monthly' | 'plus_annual'; period: 'month' | 'year'; referencePriceCents: number; currency: string };
++export type Membership = {
++  ok: true; state: 'free' | 'preview' | 'expired'; plan: 'free' | 'plus'; source: 'preview' | 'none';
++  serverTime: number; previewStartedAt: number | null; expiresAt: number | null;
++  canStartPreview: boolean; previewEnabled: boolean; previewDays: number;
++  purchaseAvailable: false; restoreAvailable: false; enforcementEnabled: false; phase: 'foundation'; products: Product[];
++};
++
++/** In phase 1 a malformed/future response must never look like a successful payment. */
++export function isMembership(value: unknown): value is Membership {
++  const v = value as Membership | null;
++  return !!v && v.ok === true && ['free', 'preview', 'expired'].includes(v.state)
++    && v.plan === (v.state === 'preview' ? 'plus' : 'free')
++    && v.source === (v.state === 'free' ? 'none' : 'preview')
++    && Number.isFinite(v.serverTime) && v.phase === 'foundation'
++    && v.purchaseAvailable === false && v.restoreAvailable === false && v.enforcementEnabled === false
++    && typeof v.canStartPreview === 'boolean' && typeof v.previewEnabled === 'boolean'
++    && v.previewDays === 14
++    && (!v.canStartPreview || (v.previewEnabled && v.state === 'free'))
++    && (v.state === 'free' ? v.expiresAt === null && v.previewStartedAt === null
++      : Number.isFinite(v.expiresAt) && Number.isFinite(v.previewStartedAt)
++        && Number(v.expiresAt) > Number(v.previewStartedAt)
++        && (v.state !== 'preview' || (v.previewEnabled && Number(v.expiresAt) > v.serverTime)))
++    && Array.isArray(v.products) && v.products.length === 2
++    && v.products.every((p, i) => !!p && p.id === ['plus_monthly', 'plus_annual'][i]
++      && p.period === ['month', 'year'][i] && p.currency === 'EUR'
++      && Number.isInteger(p.referencePriceCents) && p.referencePriceCents > 0);
++}
++
++export function referencePrice(product: Product): string {
++  return new Intl.NumberFormat(dateLocale(), { style: 'currency', currency: product.currency })
++    .format(product.referencePriceCents / 100);
++}
++
++export function expiresLabel(seconds: number): string {
++  return new Date(seconds * 1000).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'long', year: 'numeric' });
++}
++
++export const PLUS = {
++  title: () => 'Kleal Plus',
++  setting: () => T('Тариф и Plus Preview', 'Plan and Plus Preview', 'Plan y Plus Preview'),
++  lead: () => T('Больше возможностей для твоих планов', 'More possibilities for your plans', 'Más posibilidades para tus planes'),
++  stage: () => T('Тестовый этап · без списаний', 'Test phase · no charges', 'Fase de prueba · sin cargos'),
++  stageNote: () => T('Сейчас проверяем тарифный flow. Preview меняет тестовый статус аккаунта; новые лимиты и платные инструменты ещё не включены.',
++    'We are testing the membership flow. Preview changes your test membership status; new limits and paid tools are not enabled yet.',
++    'Estamos probando el flujo de planes. Preview cambia el estado de prueba; los nuevos límites y herramientas de pago aún no están habilitados.'),
++  free: () => T('Сейчас Free', 'Currently Free', 'Actualmente Free'),
++  preview: () => T('Plus Preview активен', 'Plus Preview is active', 'Plus Preview está activo'),
++  expired: () => T('Preview завершён · Free', 'Preview ended · Free', 'Preview finalizado · Free'),
++  until: (date: string) => T(`До ${date}`, `Until ${date}`, `Hasta el ${date}`),
++  preserved: () => T('Встречи, переписки и безопасность остаются доступными. Автоматического списания нет.',
++    'Meetups, chats and safety remain available. There is no automatic charge.',
++    'Las quedadas, los chats y la seguridad siguen disponibles. No hay cobro automático.'),
++  compare: () => T('Планируемые тарифы', 'Proposed plans', 'Planes propuestos'),
++  monthly: () => T('Месяц', 'Monthly', 'Mensual'),
++  annual: () => T('Год', 'Annual', 'Anual'),
++  period: (p: Product['period']) => p === 'month' ? T('за месяц', 'per month', 'al mes') : T('за год целиком', 'for the full year', 'por el año completo'),
++  priceNote: () => T('Ориентиры из предложения. Это не предложение оплаты: окончательная цена будет показана магазином перед покупкой.',
++    'Reference prices from the proposal, not a checkout offer. The store will show the final price before purchase.',
++    'Precios de referencia de la propuesta, no una oferta de pago. La tienda mostrará el precio final antes de comprar.'),
++  features: () => T('В планах Plus: параллельные интенты и личные диалоги. Качество подбора и безопасность одинаковы для всех.',
++    'Planned for Plus: parallel intents and personal chats. Matching quality and safety are the same for everyone.',
++    'Previsto para Plus: propuestas y chats personales simultáneos. La calidad de las coincidencias y la seguridad son iguales para todos.'),
++  start: () => T('Попробовать Preview · 14 дней', 'Try Preview · 14 days', 'Probar Preview · 14 días'),
++  consent: () => T('Начать 14 дней сейчас?', 'Start your 14 days now?', '¿Empezar los 14 días ahora?'),
++  consentNote: () => T('Карта не нужна. Срок считается сервером с этого момента, повторный запуск не продлевает его. После Preview вернётся Free без списания.',
++    'No card required. The server starts the clock now; restarting will not extend it. You return to Free afterwards, with no charge.',
++    'No necesitas tarjeta. El servidor cuenta desde ahora; reiniciarlo no amplía el plazo. Después volverás a Free sin cargos.'),
++  confirm: () => T('Начать без оплаты', 'Start without payment', 'Empezar sin pagar'),
++  cancel: () => T('Не сейчас', 'Not now', 'Ahora no'),
++  purchase: () => T('Покупка пока недоступна', 'Purchases are not available yet', 'Compras aún no disponibles'),
++  restore: () => T('Восстановление покупок появится после подключения магазина', 'Purchase restoration will be available when a store is connected', 'La restauración de compras estará disponible al conectar una tienda'),
++  unavailable: () => T('Preview ещё не включён на этом сервере.', 'Preview is not enabled on this server yet.', 'Preview aún no está habilitado en este servidor.'),
++  loading: () => T('Проверяем тариф…', 'Checking your plan…', 'Comprobando tu plan…'),
++  retry: () => T('Обновить статус', 'Refresh status', 'Actualizar estado'),
++  error: () => T('Не удалось проверить тариф. Повтори запрос — повторного списания не будет.', 'Could not check your plan. Retry safely; you will not be charged.', 'No se pudo comprobar tu plan. Puedes reintentar sin cargos.'),
++  login: () => T('Войди в аккаунт, чтобы проверить тариф.', 'Sign in to check your plan.', 'Inicia sesión para comprobar tu plan.'),
++  back: () => T('Вернуться', 'Go back', 'Volver'),
++};
+diff --git a/kleal-app/src/membership-client.ts b/kleal-app/src/membership-client.ts
+new file mode 100644
+index 0000000..e7edba4
+--- /dev/null
++++ b/kleal-app/src/membership-client.ts
+@@ -0,0 +1,43 @@
++import { api, getSession } from './api';
++import { isMembership, Membership } from './monetization';
++
++const PREFIX = '/api/onboarding/monetization';
++export type MembershipView = { session: string; data: Membership | null; busy: boolean; error: 'network' | 'sign_in' | null };
++type Transport = { get(): Promise<unknown>; start(): Promise<unknown> };
++
++/** Per-screen controller: no persisted entitlement cache and no optimistic grant. */
++export class MembershipClient {
++  view: MembershipView = { session: '', data: null, busy: false, error: null };
++  private generation = 0;
++  private listeners = new Set<(v: MembershipView) => void>();
++  constructor(private session = getSession, private transport: Transport = {
++    get: () => api.get(PREFIX + '/status'),
++    start: () => api.post(PREFIX + '/preview', { consent: true }),
++  }) {}
++  subscribe(fn: (v: MembershipView) => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
++  private publish(v: MembershipView) { this.view = v; this.listeners.forEach((fn) => fn(v)); }
++  dispose() {
++    this.generation++;
++    this.listeners.clear();
++    // React StrictMode can mount effects again on the same controller instance.
++    this.view = { session: '', data: null, busy: false, error: null };
++  }
++  async load() { return this.run(false); }
++  async start() { return this.run(true); }
++  private async run(start: boolean) {
++    const session = this.session();
++    if (this.view.busy && this.view.session === session) return;
++    const generation = ++this.generation;
++    this.publish({ session, data: null, busy: !!session, error: session ? null : 'sign_in' });
++    if (!session) return;
++    try {
++      const value = await (start ? this.transport.start() : this.transport.get());
++      if (!isMembership(value)) throw new Error('invalid membership response');
++      if (generation === this.generation && session === this.session())
++        this.publish({ session, data: value, busy: false, error: null });
++    } catch (error) {
++      if (generation === this.generation && session === this.session())
++        this.publish({ session, data: null, busy: false, error: (error as { status?: number })?.status === 401 ? 'sign_in' : 'network' });
++    }
++  }
++}
+diff --git a/kleal-app/app/plus.tsx b/kleal-app/app/plus.tsx
+new file mode 100644
+index 0000000..bd01bab
+--- /dev/null
++++ b/kleal-app/app/plus.tsx
+@@ -0,0 +1,96 @@
++import React, { useEffect, useMemo, useState } from 'react';
++import { AppState, View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
++import { useRouter } from 'expo-router';
++import { ProfileShell, Card } from '../src/components/ProfileShell';
++import { useLang } from '../src/i18n';
++import { useOnb } from '../src/state';
++import { getSession } from '../src/api';
++import { MembershipClient, MembershipView } from '../src/membership-client';
++import { PLUS, expiresLabel, referencePrice, Product } from '../src/monetization';
++import { color, radius, space, type } from '../src/theme';
++
++export default function Plus() {
++  useLang();
++  const router = useRouter();
++  const session = useOnb().session || '';
++  const client = useMemo(() => new MembershipClient(), []);
++  const [view, setView] = useState<MembershipView>(client.view);
++  const [selected, select] = useState<Product['id']>('plus_monthly');
++  const [confirm, setConfirm] = useState(false);
++  useEffect(() => {
++    const unsubscribe = client.subscribe(setView);
++    return () => { unsubscribe(); client.dispose(); };
++  }, [client]);
++  useEffect(() => { setConfirm(false); void client.load(); }, [client, session]);
++  useEffect(() => {
++    const listener = AppState.addEventListener('change', (state) => { if (state === 'active') void client.load(); });
++    const timer = setInterval(() => { if (AppState.currentState === 'active') void client.load(); }, 60000);
++    return () => { listener.remove(); clearInterval(timer); };
++  }, [client]);
++  // Even before React's account-change effect, never paint the previous owner's membership.
++  const current = view.session === getSession();
++  const data = current ? view.data : null;
++  const busy = !current || view.busy;
++  const error = current ? view.error : null;
++  return (
++    <ProfileShell title={PLUS.title()} onBack={() => router.canGoBack() ? router.back() : router.replace('/settings')}>
++      <Text style={s.hero}>{PLUS.lead()}</Text>
++      <Card>
++        <Text style={s.label}>{PLUS.stage()}</Text>
++        <Text style={s.body}>{PLUS.stageNote()}</Text>
++      </Card>
++      {busy ? <View style={s.loading} accessibilityLiveRegion="polite"><ActivityIndicator color={color.primary} /><Text style={s.body}>{PLUS.loading()}</Text></View> : null}
++      {error ? <Card><Text accessibilityRole="alert" style={s.error}>{error === 'sign_in' ? PLUS.login() : PLUS.error()}</Text><Button label={PLUS.retry()} onPress={() => { void client.load(); }} /></Card> : null}
++      {data ? <>
++        <Card>
++          <Text accessibilityLiveRegion="polite" style={s.title}>{data.state === 'preview' ? PLUS.preview() : data.state === 'expired' ? PLUS.expired() : PLUS.free()}</Text>
++          {data.state === 'preview' && data.expiresAt ? <Text style={s.label}>{PLUS.until(expiresLabel(data.expiresAt))}</Text> : null}
++          <Text style={s.body}>{PLUS.preserved()}</Text>
++        </Card>
++        <Text style={s.title}>{PLUS.compare()}</Text>
++        {data.products.map((product) => <Pressable key={product.id} accessibilityRole="radio" accessibilityState={{ checked: selected === product.id }}
++          onPress={() => select(product.id)} style={[s.option, selected === product.id && s.selected]}>
++          <Text style={s.title}>{product.period === 'month' ? PLUS.monthly() : PLUS.annual()}</Text>
++          <Text style={s.price}>{referencePrice(product)}</Text>
++          <Text style={s.body}>{PLUS.period(product.period)}</Text>
++        </Pressable>)}
++        <Text style={s.note}>{PLUS.priceNote()}</Text>
++        <Card><Text style={s.body}>{PLUS.features()}</Text></Card>
++        {data.canStartPreview && !confirm ? <Button label={PLUS.start()} onPress={() => setConfirm(true)} /> : null}
++        {data.canStartPreview && confirm ? <Card>
++          <Text style={s.title}>{PLUS.consent()}</Text><Text style={s.body}>{PLUS.consentNote()}</Text>
++          <Button label={PLUS.confirm()} onPress={() => { setConfirm(false); void client.start(); }} />
++          <Button secondary label={PLUS.cancel()} onPress={() => setConfirm(false)} />
++        </Card> : null}
++        {!data.previewEnabled ? <Text style={s.note}>{PLUS.unavailable()}</Text> : null}
++        <Button disabled label={PLUS.purchase()} onPress={() => {}} />
++        <Text style={s.note}>{PLUS.restore()}</Text>
++        <Button secondary label={PLUS.retry()} onPress={() => { void client.load(); }} />
++      </> : null}
++    </ProfileShell>
++  );
++}
++
++function Button({ label, onPress, disabled = false, secondary = false }: { label: string; onPress: () => void; disabled?: boolean; secondary?: boolean }) {
++  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={onPress}
++    style={[s.button, secondary && s.secondary, disabled && s.disabled]}><Text style={[s.buttonText, secondary && s.secondaryText]}>{label}</Text></Pressable>;
++}
++
++// ===== вид — existing Kleal tokens; scrollable actions and flexible text for both mobile platforms.
++const s = StyleSheet.create({
++  hero: { ...type.h2, color: color.fg, marginBottom: space.lg },
++  title: { ...type.title, color: color.fg, marginBottom: space.sm },
++  label: { ...type.labelMedium, color: color.primary, marginBottom: space.sm },
++  body: { ...type.body, color: color.muted },
++  note: { ...type.caption, color: color.muted, marginVertical: space.md },
++  error: { ...type.body, color: color.danger },
++  price: { ...type.h2, color: color.fg },
++  option: { borderWidth: 2, borderColor: color.border, backgroundColor: color.card, borderRadius: radius.xl, padding: space.lg, marginBottom: space.sm },
++  selected: { borderColor: color.primary },
++  button: { minHeight: 48, borderRadius: radius.full, backgroundColor: color.primary, justifyContent: 'center', alignItems: 'center', padding: space.md, marginTop: space.sm },
++  buttonText: { ...type.button, color: color.onPrimary, textAlign: 'center' },
++  secondary: { backgroundColor: color.neutral100 },
++  secondaryText: { color: color.fg },
++  disabled: { opacity: 0.5 },
++  loading: { paddingVertical: space.lg, gap: space.sm, alignItems: 'center' },
++});
+diff --git a/kleal-app/src/settings.ts b/kleal-app/src/settings.ts
+index 7f6640a..3309d70 100644
+--- a/kleal-app/src/settings.ts
++++ b/kleal-app/src/settings.ts
+@@ -21,6 +21,7 @@
+  * мест. Экрана к ней не было ни одного.
+  */
+ import { T } from './i18n';
++import { PLUS } from './monetization';
+ 
+ export const SETTINGS = {
+   title: () => T('Настройки', 'Settings', 'Ajustes'),
+@@ -29,7 +30,7 @@ export const SETTINGS = {
+ 
+ export type SettingId =
+   | 'personal' | 'visibility' | 'availability' | 'blocked'
+-  | 'language' | 'privacy' | 'account';
++  | 'language' | 'privacy' | 'account' | 'plus';
+ 
+ export type SettingRow = {
+   id: SettingId;
+@@ -41,6 +42,7 @@ export type SettingRow = {
+ };
+ 
+ export const SETTING_ROWS: SettingRow[] = [
++  { id: 'plus', to: '/plus', title: PLUS.title, sub: PLUS.setting },
+   { id: 'personal', to: '/profile',
+     title: () => T('Профиль', 'Profile', 'Perfil'),
+     sub: () => T('Имя, интересы, языки, район', 'Name, interests, languages, area', 'Nombre, intereses, idiomas, zona') },
+diff --git a/kleal-app/app/_layout.tsx b/kleal-app/app/_layout.tsx
+index 13dc47a..8b85da8 100644
+--- a/kleal-app/app/_layout.tsx
++++ b/kleal-app/app/_layout.tsx
+@@ -88,7 +88,7 @@ const SCREENS: [string, object?][] = [
+   ['invite'], ['ginvite'], ['group-invite'], ['conversation'], ['plan'],
+   ['group'], ['gmembers'], ['grole'], ['gplan'], ['group-report'], ['myintent'], ['map'], ['map-intent'],
+   ['profile/interests'], ['profile/personality'], ['profile/safety'], ['profile/test'],
+-  ['settings/index'], ['settings/account'], ['settings/availability'],
++  ['plus'], ['settings/index'], ['settings/account'], ['settings/availability'],
+   ['settings/blocked'], ['settings/privacy'], ['settings/visibility'],
+ ];
+ 
+diff --git a/kleal-app/tools/monetization_test.js b/kleal-app/tools/monetization_test.js
+new file mode 100644
+index 0000000..2e2abf9
+--- /dev/null
++++ b/kleal-app/tools/monetization_test.js
+@@ -0,0 +1,124 @@
++// Offline behavioral tests for the foundation controller and response contract.
++const assert = require('node:assert/strict');
++const fs = require('node:fs'), path = require('node:path'), Module = require('node:module');
++const APP = path.resolve(__dirname, '..'), SRC = path.join(APP, 'src');
++const ts = require(path.join(APP, 'node_modules/typescript'));
++let language = 0, session = 'alice', sent = [];
++const free = () => ({ ok: true, state: 'free', plan: 'free', source: 'none', serverTime: 1000,
++  previewStartedAt: null, expiresAt: null, canStartPreview: true, previewEnabled: true, previewDays: 14,
++  purchaseAvailable: false, restoreAvailable: false, enforcementEnabled: false, phase: 'foundation',
++  products: [{ id: 'plus_monthly', period: 'month', referencePriceCents: 1199, currency: 'EUR' },
++    { id: 'plus_annual', period: 'year', referencePriceCents: 8999, currency: 'EUR' }] });
++const preview = () => ({ ...free(), state: 'preview', plan: 'plus', source: 'preview',
++  canStartPreview: false, previewStartedAt: 1000, expiresAt: 1210600 });
++const stubs = {
++  './i18n': { T: (...values) => values[language], dateLocale: () => ['ru-RU', 'en-GB', 'es-ES'][language] },
++  './api': { getSession: () => session, api: {
++    get: async (url) => { sent.push({ url }); return free(); },
++    post: async (url, body) => { sent.push({ url, body }); return preview(); },
++  } },
++};
++function load(name) {
++  const file = path.join(SRC, name + '.ts');
++  const m = new Module(file, module);
++  m.filename = file;
++  m.require = (request) => stubs[request] || (request === './monetization' ? monetization : require(request));
++  m._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
++    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
++  }).outputText, file);
++  return m.exports;
++}
++const monetization = load('monetization');
++const { MembershipClient } = load('membership-client');
++let count = 0;
++async function test(name, fn) { await fn(); count++; console.log('PASS ' + name); }
++const defer = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
++
++(async () => {
++  await test('accepts only consistent foundation states', () => {
++    assert.equal(monetization.isMembership(free()), true);
++    assert.equal(monetization.isMembership(preview()), true);
++    assert.equal(monetization.isMembership({ ...preview(), state: 'expired', plan: 'free', serverTime: 1210600 }), true);
++    for (const value of [null, {}, { ...free(), purchaseAvailable: true }, { ...free(), plan: 'plus' },
++      { ...preview(), previewEnabled: false }, { ...preview(), canStartPreview: true },
++      { ...preview(), expiresAt: 0 }, { ...preview(), state: 'paid' }, { ...free(), products: [] },
++      { ...free(), serverTime: NaN }, { ...free(), products: [null, null] }]) {
++      assert.equal(monetization.isMembership(value), false, JSON.stringify(value));
++    }
++  });
++  await test('prices and copy exist in RU, EN and ES', () => {
++    for (language = 0; language < 3; language++) {
++      assert.match(monetization.referencePrice(free().products[0]), /11[,.]99/);
++      assert.match(monetization.referencePrice(free().products[1]), /89[,.]99/);
++      assert.ok(monetization.expiresLabel(1791331200));
++      for (const [key, value] of Object.entries(monetization.PLUS)) {
++        assert.equal(typeof value, 'function', key);
++        assert.ok(value(key === 'period' ? 'month' : 'date'), key);
++      }
++    }
++    language = 0;
++  });
++  await test('uses authenticated API without client identity or duration', async () => {
++    sent = []; const client = new MembershipClient();
++    await client.load(); await client.start();
++    assert.deepEqual(sent, [{ url: '/api/onboarding/monetization/status' },
++      { url: '/api/onboarding/monetization/preview', body: { consent: true } }]);
++    assert.equal(client.view.data.state, 'preview');
++  });
++  await test('does not grant optimistically and deduplicates double taps', async () => {
++    const pending = defer(); let calls = 0;
++    const client = new MembershipClient(() => session, { get: async () => free(), start: () => { calls++; return pending.promise; } });
++    await client.load(); const result = client.start();
++    assert.equal(client.view.data, null); assert.equal(client.view.busy, true);
++    await client.start(); assert.equal(calls, 1);
++    pending.resolve(preview()); await result;
++    assert.equal(client.view.data.state, 'preview');
++  });
++  await test('late result from previous account never overwrites current account', async () => {
++    const first = defer(); let owner = 'alice', calls = 0;
++    const client = new MembershipClient(() => owner, { get: () => ++calls === 1 ? first.promise : Promise.resolve(free()), start: async () => preview() });
++    const old = client.load(); owner = 'bob'; await client.load();
++    first.resolve(preview()); await old;
++    assert.equal(client.view.session, 'bob'); assert.equal(client.view.data.state, 'free');
++  });
++  await test('logout clears membership and sends no request', async () => {
++    let owner = 'alice', calls = 0;
++    const client = new MembershipClient(() => owner, { get: async () => { calls++; return preview(); }, start: async () => preview() });
++    await client.load(); owner = ''; await client.load();
++    assert.equal(calls, 1); assert.equal(client.view.data, null); assert.equal(client.view.error, 'sign_in');
++  });
++  await test('server expiry overrides previously active Preview', async () => {
++    let response = preview();
++    const client = new MembershipClient(() => 'alice', { get: async () => response, start: async () => response });
++    await client.load(); response = { ...response, state: 'expired', plan: 'free', serverTime: 1210600 };
++    await client.load(); assert.equal(client.view.data.plan, 'free'); assert.equal(client.view.data.canStartPreview, false);
++  });
++  await test('network, auth and malformed responses never retain active access', async () => {
++    let response = preview(), error;
++    const client = new MembershipClient(() => 'alice', { get: async () => { if (error) throw error; return response; }, start: async () => response });
++    await client.load(); error = { status: 401 }; await client.load();
++    assert.equal(client.view.error, 'sign_in'); assert.equal(client.view.data, null);
++    error = new Error('offline'); await client.load(); assert.equal(client.view.error, 'network');
++    error = null; response = { ...preview(), purchaseAvailable: true }; await client.load();
++    assert.equal(client.view.error, 'network'); assert.equal(client.view.data, null);
++    response = free(); await client.load(); assert.equal(client.view.error, null);
++  });
++  await test('dispose and React StrictMode resubscribe can load again', async () => {
++    const first = defer(); let calls = 0;
++    const client = new MembershipClient(() => 'alice', { get: () => ++calls === 1 ? first.promise : Promise.resolve(free()), start: async () => preview() });
++    const old = client.load(); client.dispose();
++    let notifications = 0; client.subscribe(() => { notifications++; });
++    await client.load(); first.resolve(preview()); await old;
++    assert.equal(client.view.data.state, 'free'); assert.equal(client.view.busy, false);
++    assert.equal(notifications, 2);
++  });
++  await test('additive navigation and no purchase command in screen', () => {
++    const screen = fs.readFileSync(path.join(APP, 'app/plus.tsx'), 'utf8');
++    assert.match(fs.readFileSync(path.join(SRC, 'settings.ts'), 'utf8'), /to: '\/plus'/);
++    assert.match(fs.readFileSync(path.join(APP, 'app/_layout.tsx'), 'utf8'), /\['plus'\]/);
++    assert.match(screen, /<ProfileShell/);
++    assert.match(screen, /<Button disabled label=\{PLUS.purchase\(\)\}/);
++    assert.doesNotMatch(screen, /router.push|AsyncStorage|\/purchase|\/restore/);
++  });
++  console.log(`\n${count} monetization tests PASS`);
++})().catch((error) => { console.error(error); process.exitCode = 1; });
+diff --git a/kleal-ms/docs/MONETIZATION_PHASE1.md b/kleal-ms/docs/MONETIZATION_PHASE1.md
+new file mode 100644
+index 0000000..79fa5ea
+--- /dev/null
++++ b/kleal-ms/docs/MONETIZATION_PHASE1.md
+@@ -0,0 +1,109 @@
++# Монетизация — этап 1 (локально, 7 октября 2026)
++
++## Границы реализации
++
++Это основа тарифного flow, **не готовый платёжный релиз**. Реальные списания,
++магазины приложений и новые ограничения продукта не включены. Production не менялся.
++Использован свежий read-only снимок `/opt/kleal`: HEAD
++`84a751c0a54477619593f623add962691557f983` плюс фактические серверные изменения.
++Исходный снимок и SHA-256 находятся в `.codex/baseline` и `.codex/baseline-manifest.json`.
++
++Экран: **Настройки → Kleal Plus**. Локализация RU / EN / ES.
++
++1. Загрузка статуса с сервера; при ошибке — понятная ошибка и повтор запроса.
++2. Free, Preview либо завершённый Preview. При выключенном серверном флаге запуск недоступен.
++3. Выбор месячного/годового варианта: ориентиры из PDF — €11,99 и €89,99.
++   Это не цена из магазина и не предложение совершить оплату.
++4. Явное согласие на тестовый Preview → сервер начинает 14 суток.
++5. Срок сохраняется между входами/устройствами и не продлевается повторами.
++6. После истечения сервер возвращает Free. Покупка отключена; восстановления покупок пока нет.
++
++Preview здесь меняет **только тестовый статус**, а не разрешения продуктовых действий.
++Автоматический старт при первом значимом действии из PDF пока не реализован:
++нужно согласовать, какое событие его запускает и как учитывать существующих пользователей.
++Старые Plus-плашки и клиентский лимит диалогов пока не мигрированы на новый экран.
++
++## API
++
++Все ручки используют существующий gateway-prefix `/api/onboarding/monetization`.
++Доступ — по Bearer-сессии через общий `kleal_auth.caller_person(strict_storage=True)`.
++Владение — стабильный `users.id`; имя, ID из тела и параметры URL не выбирают владельца.
++
++| Метод | Путь | Тело | Результат |
++|---|---|---|---|
++| GET | `/status` | — | Текущий статус + каталог ориентиров |
++| POST | `/preview` | `{"consent":true}` | Одноразовый Preview или тот же существующий срок |
++| POST | `/purchase` | `{}` | 409 `store_not_configured`, ничего не начисляется |
++| POST | `/restore` | `{}` | 409 `store_not_configured`, ничего не начисляется |
++
++Неизвестные поля / неверный тип согласия — 400, нет сессии — 401,
++выключенный Preview — 409, недоступное хранилище — 503. Ответы `Cache-Control: no-store`.
++Ни редирект, ни локальный флаг, ни поддельная квитанция не дают платный статус.
++
++## Хранение и локальное включение
++
++По умолчанию Preview **OFF**: GET не создаёт БД, POST не пишет данные.
++Для отдельного тестового экземпляра onboarding нужно явно задать:
++
++```sh
++KLEAL_MONETIZATION_PREVIEW_ENABLED=1
++KLEAL_MONETIZATION_DB=/absolute/path/to/isolated-preview.sqlite3
++```
++
++Родительский каталог должен существовать; сервис не создаёт его самостоятельно.
++SQLite хранит только `person_id`, `started_at`, `expires_at` в UTC Unix seconds.
++Первичный ключ + транзакция защищают от двойного запуска с нескольких устройств.
++Истечение вычисляется на сервере, фоновой задачи для перехода в Free не нужно.
++Повторное включение флага не обнуляет ранее использованный срок.
++
++Это временное хранилище для одного тестового сервиса, **не итоговый биллинг-контур**.
++До массового включения нужны согласованные миграции/резервное копирование,
++очистка при удалении аккаунта и политика хранения истории использованного Preview.
++Отключение флага не удаляет записи, не меняет встречи/переписки и не отключает KYC.
++
++## Проверки
++
++```sh
++KLEAL_DB=json python3 -m unittest discover -s kleal-ms/tests -p 'test_monetization*.py' -v
++node kleal-app/tools/monetization_test.js
++node kleal-app/tools/identity_test.js
++cd kleal-app
++node node_modules/typescript/bin/tsc --noEmit
++CI=1 EXPO_OFFLINE=1 node node_modules/expo/bin/cli export --platform ios --output-dir ../.codex/export-ios
++CI=1 EXPO_OFFLINE=1 node node_modules/expo/bin/cli export --platform android --output-dir ../.codex/export-android
++```
++
++Серверные тесты запускают реальные обработчики onboarding и `KlealServer` на loopback,
++синтетические аккаунты и временную БД. Нет обращений к платёжным провайдерам.
++Клиентские тесты выполняют контроллер и валидатор, но не подменяют native QA.
++
++Локальный результат: 15/15 новых серверных и 10/10 клиентских тестов прошли;
++identity 25/25, session 6/6, account-switch 6/6, Google/Apple/OAuth — PASS.
++TypeScript — PASS. Expo iOS: 1913 модулей; Android: 1994 модуля, оба экспорта PASS.
++Точечный diff относительно снимка — 11 файлов; из существующих изменены только
++`app/_layout.tsx`, `src/settings.ts` и `services/onboarding/app.py`.
++Патч: `.codex/monetization-phase1.patch`; команды и логи: `.codex/qa/`.
++
++Известные исходные ошибки до этой правки:
++
++- `tools/regressions_test.js`: три проверки нормализации интересов, выполнение далее прерывается.
++- `services/onboarding/test_interest_normalization.py`: две проверки интересов.
++- Общий `git diff --check` относительно старого Git HEAD: whitespace в `app/create.tsx`
++  и `services/buddy/app.py`, уже присутствующий в серверном снимке.
++
++Эти проверки не отключались и не ослаблялись. Полный проект нельзя объявлять зелёным.
++Экспорт JS-бандлов не равнозначен тесту на физическом iOS/Android устройстве.
++
++## Следующий этап до платёжного релиза
++
++- Утвердить первый объём: подписка, лимиты интентов/диалогов, момент старта Preview.
++- Описать downgrade: сверхлимитные интенты и диалоги не удалять и не обрывать встречи.
++- Выбрать и настроить магазин/платёжную интеграцию и реальные product IDs.
++- Проверять покупки на сервере, учитывать продление, отмену, refund, grace period,
++  восстановление на другом устройстве и привязку магазинной покупки к аккаунту Kleal.
++- Сделать серверные лимиты атомарными; сейчас они намеренно не включены.
++- Реализовать согласованные дополнительные Plus-возможности, а не только рекламировать их.
++- Обновить все старые Plus-входы и тексты, провести native/sandbox QA и отдельное ревью.
++- Перед выкладкой снова сравнить файлы с production и получить разрешение на deploy.
++
++Платное ранжирование, ограничения безопасности и обход 18+ не входят в монетизацию.

@@ -1,0 +1,138 @@
+{
+  "release": "monetization-phase1-20261008-6048e742",
+  "runtimeBase": "84a751c0a54477619593f623add962691557f983 plus dirty deployed source",
+  "files": [
+    {
+      "name": "kleal-ms/shared/monetization.py",
+      "before": null,
+      "after": "300f3a5b5e8e38a87f92a35a03a90f9c1aaacfb827cc34f9ff30f223042b5562"
+    },
+    {
+      "name": "kleal-ms/shared/monetization_http.py",
+      "before": null,
+      "after": "9278a67dc87e6270c9e9d7e67ffc9af895f9fe1d77c6714278ab8de74cb59c58"
+    },
+    {
+      "name": "kleal-ms/services/onboarding/app.py",
+      "before": "07e23933fed334acdcb65222796e8660761e4af7146be5b56001258a67fd06b7",
+      "after": "ba71c7fd4311c0a38a79589fff742f6b7fa9f035af6eb2fc134959959650a1a4"
+    },
+    {
+      "name": "kleal-ms/tests/test_monetization.py",
+      "before": null,
+      "after": "4e2fa31a3fd05e425d5598dc74fb4709fbfe198c3509262c8a80837beb955ce5"
+    },
+    {
+      "name": "kleal-app/src/monetization.ts",
+      "before": null,
+      "after": "fe6003679c1f987a7dced2fde87cb590bb588553f6b00c6403ec8306af174a47"
+    },
+    {
+      "name": "kleal-app/src/membership-client.ts",
+      "before": null,
+      "after": "619e2782833f54a38a75098cf9eba4f9f7aa3359e5d9ceb4d91a4959165cf4c6"
+    },
+    {
+      "name": "kleal-app/app/plus.tsx",
+      "before": null,
+      "after": "4d1856106280390e5240b4e9914225bcc0d1357694a2cbf09b08a94aca4efafb"
+    },
+    {
+      "name": "kleal-app/src/settings.ts",
+      "before": "d8552d8666094f6e7dc9643dc3157321e709854ed85517b1fe4705ab80082237",
+      "after": "2a52923e5a71d893c01a833776dfa635b18f79ce71b9b27e0148edea9bedb3b5"
+    },
+    {
+      "name": "kleal-app/app/_layout.tsx",
+      "before": "1477a6097237b3406d812899bdf5d7e8aa40c34ee50e532188a04dbe6dec17e5",
+      "after": "e0f13ec1e5ac3193e6e81677ff325b94df1f384892d2a3e660f09b0e4b1c3157"
+    },
+    {
+      "name": "kleal-app/tools/monetization_test.js",
+      "before": null,
+      "after": "9353dca08c394c97018e6a0e06ebe0ea17dac94128262d777d0052ee371f3c4a"
+    },
+    {
+      "name": "kleal-ms/docs/MONETIZATION_PHASE1.md",
+      "before": null,
+      "after": "a4bbb0cbc6d852d9ed440e12fead400e052719f1b06c77213705d8c874cfa998"
+    }
+  ],
+  "patchSha256": "6443fb570ebf95faefd754b8ea8a234652951f74be6f3a0705a318c96da3931b",
+  "verification": {
+    "release": "monetization-phase1-20261008-6048e742",
+    "remote": {
+      "fileHashes": {
+        "kleal-ms/shared/monetization.py": true,
+        "kleal-ms/shared/monetization_http.py": true,
+        "kleal-ms/services/onboarding/app.py": true,
+        "kleal-ms/tests/test_monetization.py": true,
+        "kleal-app/src/monetization.ts": true,
+        "kleal-app/src/membership-client.ts": true,
+        "kleal-app/app/plus.tsx": true,
+        "kleal-app/src/settings.ts": true,
+        "kleal-app/app/_layout.tsx": true,
+        "kleal-app/tools/monetization_test.js": true,
+        "kleal-ms/docs/MONETIZATION_PHASE1.md": true
+      },
+      "services": {
+        "llm": "active",
+        "filtration": "active",
+        "matching": "active",
+        "buddy": "active",
+        "onboarding": "active",
+        "admin": "active",
+        "gateway": "active",
+        "expo": "active"
+      },
+      "runtimeConfig": {
+        "KLEAL_MONETIZATION_PREVIEW_ENABLED": "1",
+        "KLEAL_MONETIZATION_DB": "/var/lib/kleal/monetization-preview-test/preview.sqlite3"
+      },
+      "databaseColumns": [
+        "person_id",
+        "started_at",
+        "expires_at"
+      ]
+    },
+    "checks": [
+      {
+        "name": "public_GET",
+        "status": 401,
+        "error": "sign_in_required",
+        "noStore": null
+      },
+      {
+        "name": "public_POST",
+        "status": 401,
+        "error": "sign_in_required",
+        "noStore": null
+      },
+      {
+        "name": "ios_bundle",
+        "http": 200,
+        "runtime": "exposdk:57.0.0",
+        "host": "aiopenware.com",
+        "bytes": 6245975,
+        "hasPlus": true,
+        "hasMembershipApi": true,
+        "sha256": "ae4ea16cd58312ecd9fe4ddf190e2f6ff0e05844563002606859bc1f5f28ace8"
+      },
+      {
+        "name": "android_bundle",
+        "http": 200,
+        "runtime": "exposdk:57.0.0",
+        "host": "aiopenware.com",
+        "bytes": 6409139,
+        "hasPlus": true,
+        "hasMembershipApi": true,
+        "sha256": "669d5bf5bb07ba0faece6c58d42236629c6e7f54168412a8c8768479a0059d9f"
+      }
+    ],
+    "realDeviceQA": false
+  },
+  "backup": "/var/backups/kleal/monetization-phase1-20261008-6048e742",
+  "preview": "test status only; 14 days; explicit user consent",
+  "realPayments": false,
+  "quotaEnforcement": false
+}
