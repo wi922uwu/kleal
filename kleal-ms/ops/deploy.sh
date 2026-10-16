@@ -11,12 +11,16 @@
 # step so a bad upload never takes a service down.
 set -u
 # Override for another box: KLEAL_SSH="ssh ... root@host" ops/deploy.sh
-SSH="${KLEAL_SSH:-ssh -o ConnectTimeout=25 -o BatchMode=yes -i $HOME/.ssh/id_ed25519 -p 24309 root@195.26.233.30}"
+# ПО УМОЛЧАНИЮ — БОЕВОЙ БОКС. Здесь стоял под RunPod (195.26.233.30:24309): когда-то там жило
+# всё, сейчас — только модель. Выкладка «по умолчанию» уезжала на машину, которая ничего из
+# этого не обслуживает, и прод оставался со старым кодом, не сказав ни слова.
+# Под остаётся одной переменной: KLEAL_SSH="ssh -p 24309 root@195.26.233.30" ops/deploy.sh
+SSH="${KLEAL_SSH:-ssh -o ConnectTimeout=25 -o BatchMode=yes root@157.230.52.87}"
 LOCAL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Куда кладём. По умолчанию прод-дерево; стенд — KLEAL_REMOTE_ROOT=/root/kleal-dev, и это
 # единственный способ доставить правку на стенд: dev-stack.sh sync копирует ПРОД-дерево пода,
 # то есть затирает стендом всё, что не доехало до прода.
-REMOTE_ROOT="${KLEAL_REMOTE_ROOT:-/root/kleal-ms}"
+REMOTE_ROOT="${KLEAL_REMOTE_ROOT:-/opt/kleal/kleal-ms}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 
 # One path per line, no comments and no blanks — the loop below word-splits this string, so anything
@@ -25,12 +29,34 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 # The kleal_* modules ARE the matching service; app.py is a dispatcher over them. They were absent
 # from this list, so editing kleal_intent.py uploaded nothing and prod ran a new app.py against the
 # old engine, with no error anywhere to say so.
+#
+# Тот же капкан повторился на ОБЩИХ модулях: db, mq, kleal_auth, geo, safety, taxonomy, langs,
+# interest_i18n, mailer, interests.json и два сервисных (intent_map_feed,
+# interest_normalization) импортируются на уровне модуля теми сервисами, что здесь уже есть, —
+# но в списке их не было. Правка в любом из них уезжала в никуда, а перезапущенный сервис мог
+# умереть на импорте с пустым логом. Добавлены поимённо: `git ls-files` сюда нельзя, иначе
+# выкладка начнёт возить тесты и затирать чужое дерево целиком (см. предупреждение ниже).
+#
+# services/admin/* НЕ ДОБАВЛЯЕТСЯ сверх уже перечисленного: в админке сейчас работает второй
+# человек, и лишний файл в этом списке означает затёртую чужую правку.
 FILES="
 shared/config.py
 shared/contracts.md
 shared/llm_client.py
 shared/http_util.py
 shared/kleal_lib.py
+shared/db.py
+shared/mq.py
+shared/kleal_auth.py
+shared/geo.py
+shared/safety.py
+shared/taxonomy.py
+shared/interests.json
+shared/langs.py
+shared/interest_i18n.py
+shared/mailer.py
+services/matching/intent_map_feed.py
+services/onboarding/interest_normalization.py
 config/Kleal_Matching_Core_Config_v2.yaml
 matching_core/config/validator.py
 matching_core/group_formation/constraints.py
@@ -40,7 +66,6 @@ services/matching/core_v2.py
 services/matching/matching_core_engine.py
 services/matching/kleal_candidates.py
 services/matching/kleal_completion.py
-services/matching/kleal_contract_registry.py
 services/matching/kleal_contracts.py
 services/matching/kleal_groups.py
 services/matching/kleal_intent.py
@@ -55,7 +80,6 @@ services/onboarding/app.py
 services/buddy/app.py
 services/filtration/app.py
 services/admin/app.py
-services/profile/app.py
 services/admin/test_admin.py
 services/buddy/test_buddy.py
 services/filtration/test_filtration.py
@@ -84,8 +108,7 @@ ops/run.sh
 ops/dev-stack.sh
 "
 
-# Named files win over the whole list:  ops/deploy.sh services/profile/app.py
-#
+# Named files win over the whole list:  ops/deploy.sh #
 # Deploying everything is the right move when this repo is the only thing writing to the pod, and the
 # wrong one when it is not. A second agent has twice pushed its own tree here, and a full upload from
 # either side silently reverts the other's work — so when someone else is working, push only what you

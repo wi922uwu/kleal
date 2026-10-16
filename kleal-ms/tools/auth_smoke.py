@@ -183,7 +183,10 @@ def remote(base):
           {"email": mail, "code": "000000"}).get("error") == "wrong")
     check("счётчик попыток приходит", isinstance(post("/api/auth/code/verify",
           {"email": mail, "code": "000001"}).get("attempts_left"), int))
-    check("чужая сессия не проходит", post("/api/auth/session", {}, "мусор").get("ok") is False)
+    # Токен едет В ЗАГОЛОВКЕ, а заголовок HTTP умеет только латиницу: кириллическое «мусор» роняло
+    # не сервер, а сам смоук (UnicodeEncodeError в http.client), и живые проверки после него не
+    # выполнялись вовсе. Мусор оставляем мусором, но пишем латиницей.
+    check("чужая сессия не проходит", post("/api/auth/session", {}, "not-a-real-token").get("ok") is False)
 
 
 if __name__ == "__main__":

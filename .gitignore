@@ -56,6 +56,9 @@ admin_token.txt
 # graphify knowledge-graph output (generated; rebuild with /graphify)
 graphify-out/
 
+# Local production inventories and development runtime; never publish.
+.codex/
+
 # runtime state written next to the services
 kleal-ms/users.json
 kleal-ms/users.json.tmp

@@ -4,9 +4,10 @@
  * Раньше жила прямо в финале онбординга и была картинкой: четыре подписи, ни одна никуда не ведёт.
  * Здесь она общая и настоящая.
  *
- * ВИД: не полоса во всю ширину, а белая пилюля 310×48, приподнятая над краем экрана, с каплей Kleal
- * посередине. Четыре знака стоят парами по бокам от неё — по борду, с промежутком в 72 точки, куда
- * капля и садится.
+ * ВИД: не полоса во всю ширину, а стеклянная пилюля 350×48 (по 20 от краёв при ширине 390),
+ * приподнятая над краем экрана. Внутри — пять равных ячеек по 66 точек, как в кадре GR.01 борда
+ * «Test 260930»: два знака, капля Kleal, два знака. Капля занимает среднюю ячейку наравне со
+ * знаками, поэтому стоит ровно посередине без отдельного расчёта.
  *
  * ПОДПИСЕЙ ПОД ЗНАКАМИ НЕТ, и это не упрощение: в кадре их нет вовсе. На пилюле высотой 48 подпись
  * физически не помещается рядом со знаком 24×24, а прежние 9,5 пункта были на грани читаемости. Имя
@@ -18,22 +19,28 @@
  * ничего не делает, хуже честно выключенной — человек нажимает её второй и третий раз, думая, что
  * не попал. Осталась одна такая: «Поиск».
  */
-import React, { useMemo, useRef, useState } from 'react';
-import { Animated, PanResponder, Pressable, StyleSheet, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AccessibilityInfo, Animated, Dimensions, Easing, PanResponder, Pressable, StyleSheet, View } from 'react-native';
+import Svg, { Defs, Ellipse, RadialGradient, Stop } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import { IconLayers, IconSearch, IconMessages, IconProfile } from './icons';
-import { LogoMark } from './Logo';
 import { NAV } from '../onboarding';
 import { T } from '../i18n';
 import { hCommit, hTick } from '../haptics';
 import { color, space } from '../theme';
+import { GlassSurface } from './LiquidGlass';
+import { navMin, isNavMinimized, setNavMinimized } from '../navScroll';
+import { KlealAgent, Sparkle, type KlealAgentHandle } from './KlealAgent';
+import { isThinking, onThinking, getNews, onNews, onAnnounce, markSeen, watchNews, type NewsTab } from '../agentState';
+import { useOnb } from '../state';
 
 export type Tab = 'intents' | 'search' | 'messages' | 'profile';
 
 /** Что уже есть в приложении. Остальное — приглушено. */
 const ROUTE: Partial<Record<Tab, string>> = {
   profile: '/profile', messages: '/messages', intents: '/activity',
+  search: '/map',        // поиск на карте — app/map.tsx
 };
 
 /** Пятая цель — капля посередине. Она не вкладка, поэтому у неё свой ключ. */
@@ -42,15 +49,25 @@ type Target = Tab | 'home';
 /**
  * Насколько далеко от центра знака касание ещё считается «по нему».
  *
- * Знаки стоят в 56 точках друг от друга, поэтому 26 — это чуть меньше половины промежутка: зоны
- * не смыкаются, и между ними остаётся полоска, где ничего не выбирается. Так и задумано: панель
- * отвечает на касание по знаку, а не на любое касание внизу экрана.
+ * Знаки стоят в 66 точках друг от друга (ряд 334 делится на пять ячеек), поэтому 30 — это чуть
+ * меньше половины промежутка: зоны не смыкаются, и между ними остаётся полоска, где ничего не
+ * выбирается. Так и задумано: панель отвечает на касание по знаку, а не на любое касание внизу
+ * экрана. На узком экране ячейки сжимаются, зоны сходятся встык — но выбор всё равно достаётся
+ * ближайшему, так что двух целей под одним пальцем не бывает.
  */
-const REACH = 26;
+const REACH = 30;
 
-export function BottomNav({ active }: { active?: Tab }) {
+/**
+ * `dark` — вариант для тёмных экранов (планета во вкладке «Онлайн»): та же пилюля, но из
+ * тёмного стекла темы, знаки светлые, выбранный — фирменный. Геометрия и жест не меняются.
+ */
+export function BottomNav({ active, dark = false }: { active?: Tab; dark?: boolean }) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  /** Где стоим — через ref: жесты панели собраны один раз (useMemo) и иначе видели бы старый путь. */
+  const pathname = usePathname();
+  const pathRef = useRef(pathname);
+  pathRef.current = pathname;
   const nav = NAV();
 
   /**
@@ -68,14 +85,14 @@ export function BottomNav({ active }: { active?: Tab }) {
    * ЖЕСТ ЖИВЁТ НА ВСЕЙ ПАНЕЛИ, А НЕ НА КАЖДОМ ЗНАКЕ. Пять отдельных обработчиков не дали бы вести:
    * палец, начавший на одном, до другого бы не дошёл — тот бы его не получил.
    *
-   * КООРДИНАТЫ ЦЕЛЕЙ ЗАМЕРЯЮТСЯ, А НЕ СЧИТАЮТСЯ. Разметка гибкая (промежуток под каплю тянется),
-   * ширина экрана разная, и любое вычисленное «где должен быть третий знак» разошлось бы с
+   * КООРДИНАТЫ ЦЕЛЕЙ ЗАМЕРЯЮТСЯ, А НЕ СЧИТАЮТСЯ. Разметка гибкая (ячейки делят ширину пилюли, а
+   * она — ширину экрана), и любое вычисленное «где должен быть третий знак» разошлось бы с
    * действительностью на первом же нестандартном экране. `measureInWindow` даёт настоящие центры в
    * тех же координатах, в которых приходит палец.
    */
   const [spots, setSpots] = useState<Record<string, number>>({});
   /** Вертикальные границы пилюли: за ними жест не наш. Замеряются вместе с центрами знаков. */
-  const band = useRef<{ top: number; bottom: number } | null>(null);
+  const band = useRef<{ top: number; bottom: number; left: number } | null>(null);
   /** Что сейчас подсвечено. Состояние, а не ссылка: от него зависит цвет знака. */
   const [lit, setLit] = useState<Target | null>(null);
   /**
@@ -98,9 +115,96 @@ export function BottomNav({ active }: { active?: Tab }) {
   const hot = useRef<Target | null>(null);
 
   const ORDER: Target[] = ['intents', 'search', 'home', 'messages', 'profile'];
+  /** Новый экран открывается с развёрнутой панелью — как NAV.S1 «top». */
+  useEffect(() => { setNavMinimized(false); }, []);
+
+  /*
+    «ПАРИТ» — состояние покоя агента (артефакт «Kleal Agent States», 09.10): Kleal медленно
+    поднимается и опускается над своей «землёй», тень при подъёме чуть сжимается и бледнеет.
+    Замер с демо: размах ~3 точки, полный цикл ~3,6 с, синус без пауз. Нативный драйвер — цикл
+    идёт мимо JS и не мешает прокрутке. «Уменьшить движение» в системе — стоит на месте.
+  */
+  const float = useRef(new Animated.Value(0)).current;
+  const [still, setStill] = useState(false);
+  useEffect(() => {
+    let loop: Animated.CompositeAnimation | null = null;
+    let alive = true;
+    const start = (reduce: boolean) => {
+      setStill(reduce);
+      loop?.stop();
+      float.setValue(0);
+      if (reduce || !alive) return;
+      const half = (to: number) => Animated.timing(float, {
+        toValue: to, duration: FLOAT_MS / 2, easing: Easing.inOut(Easing.sin), useNativeDriver: true,
+      });
+      loop = Animated.loop(Animated.sequence([half(1), half(0)]));
+      loop.start();
+    };
+    AccessibilityInfo.isReduceMotionEnabled().then(start).catch(() => start(false));
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', start);
+    return () => { alive = false; loop?.stop(); sub.remove(); };
+  }, [float]);
+  const floatY = float.interpolate({ inputRange: [0, 1], outputRange: [0, -FLOAT_RISE] });
+
+  /*
+    ДУМАЕТ и НОВОЕ (артефакт «Kleal Agent States»). Думает — пока идёт поиск (src/agentState.ts).
+    Новое — непрочитанное в Messages и приглашения в Intents: Kleal поворачивается к вкладке и
+    подпрыгивает, звёздочка летит к иконке, иконка вздрагивает, в её контуре открывается вырез с
+    зелёной точкой (как у колокольчика на главной). Точка гаснет, когда раздел открыли.
+  */
+  const onb = useOnb();
+  const meName = String(onb.profile?.name || '').trim();
+  const [thinking, setThinking] = useState(isThinking());
+  const [news, setNews] = useState(getNews());
+  /** Точка ставится, когда звёздочка долетела; без движения — сразу. */
+  const [dots, setDots] = useState<Record<NewsTab, boolean>>({ messages: getNews().messages, intents: getNews().intents });
+  const agentRef = useRef<KlealAgentHandle>(null);
+  const shake = useRef({ messages: new Animated.Value(0), intents: new Animated.Value(0) }).current;
+  const fly = useRef(new Animated.Value(0)).current;
+  const [flight, setFlight] = useState<NewsTab | null>(null);
+  const stillRef = useRef(still);
+  stillRef.current = still;
+  const spotsRef = useRef(spots);
+  spotsRef.current = spots;
+
+  useEffect(() => onThinking(setThinking), []);
+  useEffect(() => { if (meName) watchNews(meName); }, [meName]);
+  useEffect(() => onNews((n) => {
+    setNews(n);
+    // Погасло — гасим сразу; загорелось — ждём звёздочку (см. onAnnounce).
+    setDots((d) => ({ messages: n.messages && d.messages, intents: n.intents && d.intents }));
+  }), []);
+  useEffect(() => onAnnounce(async (tab) => {
+    if (stillRef.current || spotsRef.current[tab] == null || spotsRef.current.home == null) {
+      setDots((d) => ({ ...d, [tab]: true }));
+      return;
+    }
+    await agentRef.current?.announce(tab === 'messages' ? 1 : -1);
+    setFlight(tab);
+    fly.setValue(0);
+    Animated.timing(fly, { toValue: 1, duration: 560, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }).start(() => {
+      setFlight(null);
+      setDots((d) => ({ ...d, [tab]: true }));
+      const v = shake[tab];
+      v.setValue(0);
+      Animated.sequence([
+        Animated.timing(v, { toValue: 1, duration: 70, useNativeDriver: true }),
+        Animated.timing(v, { toValue: -1, duration: 110, useNativeDriver: true }),
+        Animated.timing(v, { toValue: 0.6, duration: 100, useNativeDriver: true }),
+        Animated.timing(v, { toValue: 0, duration: 120, useNativeDriver: true }),
+      ]).start();
+    });
+  }), [fly, shake]);
+  // Открыли раздел — увидели, что в нём.
+  useEffect(() => {
+    if (active === 'messages') markSeen('messages');
+    if (active === 'intents') markSeen('intents');
+  }, [active, news.messages, news.intents]);
+  const groundScale = float.interpolate({ inputRange: [0, 1], outputRange: [1, 0.88] });
+  const groundFade = float.interpolate({ inputRange: [0, 1], outputRange: [1, 0.75] });
   const canPick = (t: Target) => (t === 'home' ? true : !!ROUTE[t as Tab] && active !== t);
 
-  /** Притянуть подсветку к цели. Расстояние всегда небольшое — соседние знаки в 56 точках друг от друга. */
+  /** Притянуть подсветку к цели. Расстояние всегда небольшое — соседние знаки в 66 точках друг от друга. */
   const pull = (t: Target | null) => {
     const c = t ? spots[t] : null;
     if (c == null) return;
@@ -125,20 +229,48 @@ export function BottomNav({ active }: { active?: Tab }) {
    * касания там тоже не наши.
    */
   const nearest = (x: number, y?: number): Target | null => {
+    /*
+      СВЁРНУТАЯ ПАНЕЛЬ (NAV.S2) — та же разметка, уменьшенная к нижнему центру. Центры знаков
+      замерены у развёрнутой, поэтому здесь их сдвигаем к середине экрана тем же множителем, а
+      верх полосы опускаем на 8: иначе палец попадал бы туда, где знака уже нет.
+    */
+    const k = isNavMinimized() ? MIN_SCALE : 1;
+    const mid = Dimensions.get('window').width / 2;
     const b = band.current;
-    if (y != null && b && (y < b.top - 8 || y > b.bottom + 8)) return null;
+    const top = b ? b.top + (k < 1 ? NAV_BAR_H * (1 - k) : 0) : 0;
+    if (y != null && b && (y < top - 8 || y > b.bottom + 8)) return null;
     let best: Target | null = null;
     let bestD = Infinity;
     for (const t of ORDER) {
-      const c = spots[t];
-      if (c == null || !canPick(t)) continue;
+      const c0 = spots[t];
+      if (c0 == null || !canPick(t)) continue;
+      const c = mid + (c0 - mid) * k;
       const d = Math.abs(x - c);
-      if (d <= REACH && d < bestD) { bestD = d; best = t; }
+      if (d <= REACH * k && d < bestD) { bestD = d; best = t; }
     }
     return best;
   };
 
+  /** «Вихрь» на Kleal, потом переход — пока он доворачивается, экран уже меняется. */
   const go = (t: Target) => {
+    if (t === 'home' && !stillRef.current && agentRef.current) {
+      agentRef.current.whirl();
+      setTimeout(() => goNow(t), 320);
+      return;
+    }
+    goNow(t);
+  };
+
+  const goNow = (t: Target) => {
+    /*
+      GR.01 «Home · Kleal prompt»: «Вход в создание: поле … или маскот в таб-баре → GR.02». На главной
+      капле возвращаться некуда — она открывает разговор с Kleal. С любого другого экрана капля
+      по-прежнему ведёт домой: путь «домой» в панели один, и отнимать его нельзя.
+    */
+    if (t === 'home' && pathRef.current === '/home') {
+      router.navigate('/buddy');
+      return;
+    }
     if (t === 'home') {
       /*
         Не `replace`. Тот подменял ВЕРХНИЙ экран главной, оставляя всё, что под ним: из
@@ -273,11 +405,7 @@ export function BottomNav({ active }: { active?: Tab }) {
         key={tab}
         ref={spot(tab) as any}
         collapsable={false}
-        style={[
-          s.item,
-          !to && s.off,
-
-        ]}
+        style={[s.slot, !to && s.off]}
       >
         {/*
           Кружок под знаком — тот самый «пузырь». Появляется вместе с подъёмом и гаснет вместе с
@@ -287,7 +415,7 @@ export function BottomNav({ active }: { active?: Tab }) {
         {live ? (
           <Animated.View
             pointerEvents="none"
-            style={[s.bubble, { opacity: magnify(cx, [1, 0, 0]) as any }]}
+            style={[s.bubble, dark && s.bubbleDark, { opacity: magnify(cx, [1, 0, 0]) as any }]}
           />
         ) : null}
         {/*
@@ -300,58 +428,118 @@ export function BottomNav({ active }: { active?: Tab }) {
           accessibilityLabel={label}
           onPress={live ? () => go(tab) : undefined}
         >
-          <Icon size={24} c={on || lit === tab ? color.primary : color.muted} />
+          <Animated.View style={(tab === 'messages' || tab === 'intents') ? {
+            transform: [{ rotate: shake[tab].interpolate({ inputRange: [-1, 1], outputRange: ['-14deg', '14deg'] }) }],
+          } : undefined}>
+            <Icon size={24} c={on || lit === tab ? color.primary : (dark ? 'rgba(255,255,255,0.62)' : color.muted)} />
+            {(tab === 'messages' || tab === 'intents') && dots[tab] && !on ? (
+              /* Вырез в линии иконки — кольцо цвета капсулы вокруг зелёной точки. */
+              <View pointerEvents="none" style={[s.newDot, dark && s.newDotDark]} />
+            ) : null}
+          </Animated.View>
         </Pressable>
       </Animated.View>
     );
   };
 
+  /*
+    СВОРАЧИВАНИЕ (NAV.S2) — масштаб 0,833 к нижнему центру: на борде свёрнутая панель — ровно
+    развёрнутая в этом масштабе (капсулы 135→112, высота 48→40, Kleal 56→46), низ остаётся на
+    месте. Масштаб и сдвиг на нативном драйвере, разметка не пересчитывается.
+  */
+  const scale = navMin.interpolate({ inputRange: [0, 1], outputRange: [1, MIN_SCALE] });
+  const lift = navMin.interpolate({ inputRange: [0, 1], outputRange: [0, (NAV_BAR_H * (1 - MIN_SCALE)) / 2] });
+
   return (
     <View style={[s.wrap, { paddingBottom: Math.max(insets.bottom, space.md) }]} {...pan.panHandlers}>
-      <View
-        style={s.bar}
-        // Границы пилюли по вертикали — чтобы касание ниже неё, в отступе под домашнюю черту, не
+      <Animated.View
+        style={[s.row, { transform: [{ translateY: lift }, { scale }] }]}
+        // Границы панели по вертикали — чтобы касание ниже неё, в отступе под домашнюю черту, не
         // считалось нажатием по панели.
         ref={(r: any) => {
           if (!r || band.current) return;
           r.measureInWindow?.((_x: number, y: number, _w: number, h: number) => {
-            band.current = { top: y, bottom: y + h };
+            band.current = { top: y, bottom: y + h, left: _x };
           });
         }}
         collapsable={false}
       >
-        <View style={s.side}>
+        {/*
+          NAVIGATION V2 (борд «Navigation V2 · Scroll», 7145:124875): две стеклянные капсулы по два
+          знака, между ними Kleal на своей тени. Стекло — подложкой под рядом, а не обёрткой ряда
+          (почему — в комментарии к `pill`). `pointerEvents="none"`: касания достаются жесту панели.
+        */}
+        <View style={s.pill} collapsable={false}>
+          <GlassSurface tone={dark ? 'dark' : 'light'} radius={999} pointerEvents="none" style={StyleSheet.absoluteFill} />
           {item('intents', nav[0], IconLayers)}
           {item('search', nav[1], IconSearch)}
         </View>
-        {/* Место под каплю. Она лежит ОТДЕЛЬНО и поверх — иначе её тень обрезалась бы пилюлей. */}
-        <View style={s.gap} />
-        <View style={s.side}>
+
+        {/*
+          KLEAL — НЕ В КАПСУЛЕ, А МЕЖДУ НИМИ, стоит на «земле»: три размытых эллипса под ним
+          (свет кораллом, полутень, контактная тень) — как на борде. Персонаж выше ячейки и поровну
+          выходит вверх; ячейка 56×48 с отступом 8 снизу, как слой «kleal».
+        */}
+        <View ref={spot('home') as any} collapsable={false} style={s.kleal}>
+          <Animated.View pointerEvents="none" style={[s.ground, { opacity: groundFade, transform: [{ scale: groundScale }] }]}>
+          <Svg width={GROUND_W + 12} height={GROUND_H + 12}>
+            <Defs>
+              <RadialGradient id="gl" cx="50%" cy="50%" rx="50%" ry="50%">
+                <Stop offset="0" stopColor="#FF385C" stopOpacity={0.26} />
+                <Stop offset="0.6" stopColor="#FF385C" stopOpacity={0.1} />
+                <Stop offset="1" stopColor="#FF385C" stopOpacity={0} />
+              </RadialGradient>
+              <RadialGradient id="gp" cx="50%" cy="50%" rx="50%" ry="50%">
+                <Stop offset="0" stopColor="#702E5C" stopOpacity={0.15} />
+                <Stop offset="1" stopColor="#702E5C" stopOpacity={0} />
+              </RadialGradient>
+              <RadialGradient id="gc" cx="50%" cy="50%" rx="50%" ry="50%">
+                <Stop offset="0" stopColor="#5C223E" stopOpacity={0.34} />
+                <Stop offset="1" stopColor="#5C223E" stopOpacity={0} />
+              </RadialGradient>
+            </Defs>
+            {/* Размытие слоёв на борде (6/5/4) — здесь шире самих эллипсов с мягким краем градиента. */}
+            <Ellipse cx={(GROUND_W + 12) / 2} cy={(GROUND_H + 12) / 2} rx={GROUND_W / 2 + 6} ry={GROUND_H / 2 + 6}
+                     fill="url(#gl)" opacity={0.4 * 0.73} />
+            <Ellipse cx={(GROUND_W + 12) / 2} cy={(GROUND_H + 12) / 2} rx={20 + 5} ry={5 + 5} fill="url(#gp)" opacity={0.73} />
+            <Ellipse cx={(GROUND_W + 12) / 2} cy={(GROUND_H + 12) / 2 + 0.5} rx={9 + 4} ry={2 + 3} fill="url(#gc)" opacity={0.73} />
+          </Svg>
+          </Animated.View>
+          <Animated.View
+            pointerEvents="none"
+            style={[s.dropLit, dark && s.bubbleDark, { opacity: magnify(spots.home, [1, 0, 0]) as any }]}
+          />
+          <Animated.View style={{ transform: [{ translateY: floatY }] }}>
+            <Pressable accessibilityRole="button" accessibilityLabel={NAV_FAB()} onPress={() => go('home')}>
+              <KlealAgent ref={agentRef} width={DROP} thinking={thinking} still={still} />
+            </Pressable>
+          </Animated.View>
+        </View>
+
+        <View style={s.pill} collapsable={false}>
+          <GlassSurface tone={dark ? 'dark' : 'light'} radius={999} pointerEvents="none" style={StyleSheet.absoluteFill} />
           {item('messages', nav[2], IconMessages)}
           {item('profile', nav[3], IconProfile)}
         </View>
-      </View>
 
-      {/*
-        КАПЛЯ ПОВЕРХ ПИЛЮЛИ, А НЕ ВНУТРИ НЕЁ: у пилюли скруглённый край, и ребёнком её каплю
-        срезало бы по кромке.
-
-        РОВНО ПО ЦЕНТРУ ПИЛЮЛИ. Первая версия поднимала её на две точки ВВЕРХ — я прочитал в кадре
-        «выходит за кромку», а там ровно наоборот: слой капли начинается на две точки НИЖЕ верха
-        панели и при высоте 44 в панели 48 стоит по центру. Сверка кадра с нашим снимком в одном
-        масштабе показала сдвиг на десять точек.
-
-        Капля — такая же цель, как знаки: палец доводят до неё и отпускают, и она всплывает так же.
-      */}
-      <View ref={spot('home') as any} collapsable={false} style={s.drop}>
-        <Animated.View
-          pointerEvents="none"
-          style={[s.dropLit, { opacity: magnify(spots.home, [1, 0, 0]) as any }]}
-        />
-        <Pressable accessibilityRole="button" accessibilityLabel={NAV_FAB()} onPress={() => go('home')}>
-          <LogoMark width={DROP} />
-        </Pressable>
-      </View>
+        {/* Звёздочка летит от Kleal к иконке, где появилось новое. Дугой, сверху. */}
+        {flight && band.current && spots.home != null && spots[flight] != null ? (() => {
+          const x0 = spots.home - band.current.left - 4.5;
+          const x1 = (spots[flight] as number) - band.current.left + 6;
+          return (
+            <Animated.View pointerEvents="none" style={[s.flyer, {
+              opacity: fly.interpolate({ inputRange: [0, 0.12, 0.85, 1], outputRange: [0, 1, 1, 0] }),
+              transform: [
+                { translateX: fly.interpolate({ inputRange: [0, 1], outputRange: [x0, x1] }) },
+                { translateY: fly.interpolate({ inputRange: [0, 0.5, 1], outputRange: [-2, -20, 6] }) },
+                { scale: fly.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.8, 1.25, 0.7] }) },
+              ],
+            }]}>
+              <Sparkle size={10} c={color.primary} />
+            </Animated.View>
+          );
+        })() : null}
+      </Animated.View>
     </View>
   );
 }
@@ -361,11 +549,25 @@ export function BottomNav({ active }: { active?: Tab }) {
  * («Чем хочешь заняться?») или карточкой, а самая крупная кнопка панели нужна, чтобы одним
  * движением вернуться из любого места приложения.
  */
-const NAV_FAB = () => T('Главная', 'Home');
+const NAV_FAB = () => T('Главная', 'Home', 'Inicio');
 
 // ===== вид
-/** Размеры пилюли из борда: 310×48 при ширине экрана 390, то есть по 40 с каждой стороны. */
-const BAR_H = 48;
+/**
+ * Размеры пилюли из борда (кадр GR.01 «Test 260930», слой «Navigation Bar»): 350×48 при ширине
+ * экрана 390, то есть по 20 с каждой стороны. Наружу отданы для экранов, которые ставят что-то над
+ * панелью: высота всей панели = `NAV_BAR_H` + max(нижняя безопасная зона, 12).
+ */
+export const NAV_BAR_H = 48;
+/** NAV.S1: по 16 от краёв, 16 между капсулами и Kleal (390 = 16+135+16+56+16+135+16). */
+export const NAV_SIDE = space.lg;
+/** NAV.S2 «Minimized» ÷ NAV.S1 «Expanded»: 112/135, 40/48, 46/56. */
+const MIN_SCALE = 40 / 48;
+/** «Парит»: полный цикл подъёма и спуска и высота подъёма (замер с демо артефакта). */
+const FLOAT_MS = 3600;
+const FLOAT_RISE = 3;
+/** «Земля» под Kleal — слой «ground · light» 44×14. */
+const GROUND_W = 44;
+const GROUND_H = 14;
 /**
  * Ширина капли.
  *
@@ -377,41 +579,48 @@ const BAR_H = 48;
 const DROP = 48;
 
 const s = StyleSheet.create({
-  wrap: { paddingHorizontal: 40, alignItems: 'center' },
-  /*
-    ПИЛЮЛЯ БЕЛАЯ, А НЕ ПОЛУПРОЗРАЧНАЯ, И ЭТО ИСПРАВЛЕНИЕ ПО КАДРУ.
-
-    Сначала я взял из борда верхний слой — белое на 72% с размытием подложки — и получил панель,
-    которая красит собой то, что под ней: на голубой главной она голубела, а мягкое свечение по
-    краю капли переставало сливаться с фоном и читалось как обводка вокруг неё.
-
-    В кадре под этим слоем лежит ВТОРОЙ, сплошной белый на 100%. То есть 72% наложены на белое, и
-    вместе они дают просто белое; размытие под непрозрачной заливкой не видно вовсе. Поэтому здесь
-    одна белая заливка без размытия: результат тот же, слоёв на два меньше, и на панели, которая
-    висит на десяти экранах, это ещё и дешевле по отрисовке.
-
-    ТЕНИ У ПИЛЮЛИ НЕТ. Она была — мягкая, из кадра, — но белая панель и так отделяется от фона
-    собственным цветом, а тень добавляла ей веса и опускала на экран, вместо того чтобы оставить
-    парящей. Убрана целиком, а не ослаблена: еле заметная тень читается как грязь по краю, а не
-    как объём.
-
-    `overflow` НЕ скрыт намеренно: знаки под пальцем поднимаются выше кромки, и обрезать их значило
-    бы убить весь эффект.
-  */
-  bar: {
-    width: '100%',
-    height: BAR_H,
-    borderRadius: 40,
-    backgroundColor: color.card,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: space.sm,
+  wrap: { paddingHorizontal: NAV_SIDE, alignItems: 'center' },
+  row: { width: '100%', height: NAV_BAR_H, flexDirection: 'row', alignItems: 'center', gap: 16 },
+  flyer: { position: 'absolute', left: 0, top: 0 },
+  /** «Новое» на иконке: зелёная точка #1FAE5E (как у колокольчика на главной) в вырезе цвета капсулы. */
+  newDot: {
+    position: 'absolute', top: -1, right: -2, width: 9, height: 9, borderRadius: 5,
+    backgroundColor: '#1FAE5E', borderWidth: 2, borderColor: '#FBF8F5',
   },
-  /** Пара знаков с зазором 16 — как в кадре. */
-  side: { flexDirection: 'row', alignItems: 'center', gap: space.lg },
-  /** Промежуток под каплю: 72 точки из борда. */
-  gap: { flex: 1, minWidth: 72 },
-  item: { width: 40, height: 32, alignItems: 'center', justifyContent: 'center' },
+  newDotDark: { borderColor: '#2A2C33' },
+  /** Капсула 135×48: отступ 8, два знака по 59,5 (ячейка 12/4/12). Плёнка 49% — в GlassSurface. */
+  pill: { flex: 1, height: NAV_BAR_H, flexDirection: 'row', alignItems: 'center', padding: space.sm },
+  /** Ячейка Kleal 56×48, отступ 8 снизу — персонаж стоит над «землёй». */
+  kleal: { width: 56, height: NAV_BAR_H, paddingBottom: 8, alignItems: 'center', justifyContent: 'center' },
+  ground: { position: 'absolute', left: (56 - GROUND_W - 12) / 2, top: 40 - 6 },
+  /*
+    КАПСУЛЫ — СТЕКЛО, А НЕ БЕЛАЯ КАРТОЧКА (было про одну пилюлю, в V2 их две — правила те же).
+
+    Сплошная белая заливка здесь была по старому кадру A.15: там под белым на 72% лежал второй,
+    сплошной белый слой, и вместе они давали просто белое. Оба борда, по которым панель собирается
+    теперь, — «GR · Offline — new layout» и GR.01 в «Test 260930», — рисуют её иначе: один слой
+    стекла (эффект GLASS) с белой плёнкой на 49%, 350 в ширину, без сплошной подложки. Сквозь неё
+    проступает тёплый фон экрана, и панель читается частью сцены, а не наклейкой поверх неё.
+
+    Отсюда `GlassSurface tone="light"`: его оттенок — белое на 46%, на глаз не отличить от 49% борда,
+    а светлая кромка у системного стекла своя. На Android и iOS до 26 тот же компонент сам собирает
+    запасной путь — размытие подложки, плёнку и волосяную кромку; панели знать об этом не нужно.
+    Тёмный вариант — то же стекло тоном `dark`.
+
+    СТЕКЛО — ОТДЕЛЬНЫЙ СЛОЙ ПОД РЯДОМ, А НЕ ЕГО ОБЁРТКА. У стекла `overflow: hidden` (иначе
+    скругление не режет эффект), и всё, что лежало бы внутри, срезалось бы по кромке — а подложка
+    под каплей (56) выше самой пилюли (48). Ряд лежит над стеклом соседом, и у него `overflow` не
+    скрыт намеренно.
+
+    НЕПРОЗРАЧНОСТЬ У ПАНЕЛИ И ЕЁ ПРЕДКОВ НЕ ТРОГАТЬ: системное стекло не рисуется вовсе, если у
+    него или у любого предка opacity < 1 (см. LiquidGlass.tsx). Гаснут и загораются только подложки
+    под знаками и приглушённые ячейки — стеклу они соседи, а не предки.
+
+    ТЕНИ У ПИЛЮЛИ НЕТ: в обоих кадрах у панели один эффект стекла. На Android `elevation` к тому
+    же просвечивает сквозь полупрозрачную плёнку и делает стекло грязно-серым (см. Glass.tsx).
+  */
+  /** Ячейка знака: капсула делится на два равных места (59,5 в NAV.S1), доли, а не число. */
+  slot: { flex: 1, height: 32, alignItems: 'center', justifyContent: 'center' },
   off: { opacity: 0.38 },
   /*
     Подложка под знаком — единственный признак того, что палец здесь. Цвет нейтральный, а не
@@ -424,26 +633,20 @@ const s = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: color.neutral100,
   },
-  /** То же под каплей, только круглое и чуть шире её: капля сама по себе не меняет вида. */
+  bubbleDark: { backgroundColor: 'rgba(255,255,255,0.10)' },
+  /*
+    То же под каплей, только круглое и чуть шире её: капля сама по себе не меняет вида.
+
+    СВОЕЙ ТЕНИ У КАПЛИ НЕТ, И ЭТО ИСПРАВЛЕНИЕ. Была фирменная: `shadowColor` красный, радиус 12.
+    Под прозрачной картинкой iOS считает тень по её альфе, и на мягком крае капли это давало две
+    вещи, которых в кадре нет вовсе, — чёткую светлую обводку по контуру и розовое свечение,
+    вытекающее из-под панели вниз. Мягкая тень у капли уже нарисована в самой картинке.
+  */
   dropLit: {
     position: 'absolute',
     width: DROP + 8,
     height: DROP + 8,
     borderRadius: (DROP + 8) / 2,
     backgroundColor: color.neutral100,
-  },
-  /*
-    СВОЕЙ ТЕНИ У КАПЛИ НЕТ, И ЭТО ИСПРАВЛЕНИЕ. Была фирменная: `shadowColor` красный, радиус 12.
-    Под прозрачной картинкой iOS считает тень по её альфе, и на мягком крае капли это давало две
-    вещи, которых в кадре нет вовсе, — чёткую светлую обводку по контуру и розовое свечение,
-    вытекающее из-под панели вниз. Мягкая тень у капли уже нарисована в самой картинке.
-  */
-  drop: {
-    position: 'absolute',
-    alignSelf: 'center',
-    top: (BAR_H - DROP * (501 / 558)) / 2,
-    width: DROP,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

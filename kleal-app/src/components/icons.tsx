@@ -133,6 +133,54 @@ export const IconBell = ({ size = 22, c = color.fg }: P) => (
   </Svg>
 );
 
+/** Колокольчик перечёркнутый — чат без уведомлений (MSG.03/MSG.04). */
+export const IconBellOff = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M8.7 3.7A6 6 0 0 1 18 8.5c0 2.6.5 4.3 1.1 5.3" />
+    <Path d="M17 17H4s2-1.5 2-6.5c0-.8.1-1.5.4-2.2" />
+    <Path d="M13.7 19a2 2 0 0 1-3.4 0" />
+    <Line x1={3} y1={3} x2={21} y2={21} />
+  </Svg>
+);
+
+/** Коробка архива — строка «Archive · N chats» и пункт листа (MSG.03/MSG.04). */
+export const IconArchive = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Rect x={3} y={4} width={18} height={5} rx={1} />
+    <Path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9" />
+    <Path d="M10 13h4" />
+  </Svg>
+);
+
+/** Флажок жалобы (MSG.03). */
+export const IconFlag = ({ size = 22, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M4 21V4" />
+    <Path d="M4 4h12l-2 4 2 4H4" />
+  </Svg>
+);
+
+/*
+  Колокольчик шапки главной — «Bell Dot» борда GR.01: контур в 1 точку, точка 6×6 на правом плече.
+  ОТДЕЛЬНО ОТ IconBell, потому что точка на борде стоит не поверх контура, а в его РАЗРЫВЕ: плечо
+  обрывается перед ней и продолжается ниже. Точка поверх целой линии читается как пятно на ней.
+  Без точки рисуется тот же силуэт целиком — иначе, прочитав приглашения, человек увидел бы, что
+  колокольчик сменил форму, а не просто погас.
+*/
+export const IconBellDot = ({ size = 24, c = color.fg, dot }: P & { dot?: string }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
+    {dot ? (
+      <>
+        <Path d="M19.4 14.9C20.2 16.4 21 17 21 17H3s3-2 3-9c0-3.3 2.7-6 6-6 .7 0 1.3.1 1.9.3" />
+        <Circle cx={18} cy={8} r={3} fill={dot} stroke="none" />
+      </>
+    ) : (
+      <Path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+    )}
+    <Path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+  </Svg>
+);
+
 export const IconCalendar = ({ size = 16, c = color.muted }: P) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round">
     <Rect x={3.5} y={5} width={17} height={16} rx={3} />
@@ -146,6 +194,22 @@ export const IconClock = ({ size = 16, c = color.muted }: P) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
     <Circle cx={12} cy={12} r={8.6} />
     <Path d="M12 7.4V12l3.1 1.9" />
+  </Svg>
+);
+
+// Таймер — «не сможет прийти» в день встречи (борд GR.46 / GR.46a, хвост строки).
+export const IconTimer = ({ size = 18, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 18 18" fill="none" stroke={c} strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M7.5 1.5h3M9 10.5l2.25-2.25" />
+    <Circle cx={9} cy={10.5} r={6} />
+  </Svg>
+);
+
+// Молчит: луна со звездой — борд GR.42, хвост строки молчащего организатора.
+export const IconMoon = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M19.6 14.2A7.8 7.8 0 1 1 10 4.5a6.2 6.2 0 0 0 9.6 9.7z" />
+    <Path d="M18 3.6v3.2M16.4 5.2h3.2" />
   </Svg>
 );
 
@@ -280,6 +344,22 @@ export const IconSend = ({ size = 20, c = '#fff' }: P) => (
   </Svg>
 );
 
+/** Камера — «Take photo» в кадре A.09. */
+export const IconCamera = ({ size = 20, c = '#fff' }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.6l1.4-2h5l1.4 2h1.6A2.5 2.5 0 0 1 20 8.5v8A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z" />
+    <Circle cx={12} cy={12.5} r={3.4} />
+  </Svg>
+);
+
+/** Загрузка — «Upload photo» в кадре A.09: стрелка вверх в круге. */
+export const IconUpload = ({ size = 20, c = '#fff' }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx={12} cy={12} r={9} />
+    <Path d="M12 16.5v-9M8.5 11 12 7.5 15.5 11" />
+  </Svg>
+);
+
 /** Скрепка — слот вложений в композере MSG.06. */
 export const IconClip = ({ size = 20, c = color.muted }: P) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
@@ -293,6 +373,26 @@ export const IconDots = ({ size = 20, c = color.fg }: P) => (
     <Circle cx={5} cy={12} r={1.7} />
     <Circle cx={12} cy={12} r={1.7} />
     <Circle cx={19} cy={12} r={1.7} />
+  </Svg>
+);
+
+/**
+ * Вертикальное многоточие — кнопка меню у поля ввода, компонент «Chat/Composer» (💣 UI, 6164:19536).
+ * В макете три КОЛЕЧКА в коробке 30, а не залитые точки: так значок легче поля рядом.
+ */
+export const IconEllipsisV = ({ size = 30, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 30 30" fill="none" stroke={c} strokeWidth={1.2}>
+    <Circle cx={15} cy={6.5} r={1.2} />
+    <Circle cx={15} cy={15} r={1.2} />
+    <Circle cx={15} cy={23.5} r={1.2} />
+  </Svg>
+);
+
+/** Стрелка вверх — отправка в «Chat/Composer»: коралловый штрих 2 в коробке 30. */
+export const IconArrowUp = ({ size = 30, c = '#FF385C' }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 30 30" fill="none" stroke={c} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M6 15l9-9 9 9" />
+    <Path d="M15 6v18" />
   </Svg>
 );
 
@@ -315,5 +415,344 @@ export const IconLayers = ({ size = 24, c = color.muted }: P) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
     <Path d="M12 2.7 2.6 7.4 12 12.1l9.4-4.7L12 2.7z" />
     <Path d="M2.6 13.1 12 17.8l9.4-4.7" />
+  </Svg>
+);
+
+/** Ползунки фильтра — правая кнопка на панели поиска (кадр «Search · Map»). */
+export const IconSliders = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round">
+    <Line x1={4} y1={7} x2={20} y2={7} />
+    <Line x1={4} y1={12} x2={20} y2={12} />
+    <Line x1={4} y1={17} x2={20} y2={17} />
+    <Circle cx={9} cy={7} r={2.2} fill={color.card} />
+    <Circle cx={15} cy={12} r={2.2} fill={color.card} />
+    <Circle cx={8} cy={17} r={2.2} fill={color.card} />
+  </Svg>
+);
+
+/** Стрелка «где я» — круглая кнопка над картой. */
+export const IconLocate = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinejoin="round">
+    <Path d="M21 3 3 10.2l7.5 3.3L13.8 21 21 3z" />
+  </Svg>
+);
+
+/** Сегмент «Карта». Развёрнутый лист, а не булавка: рядом стоит «Список», и пара читается. */
+export const IconMap = ({ size = 18, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinejoin="round">
+    <Path d="M9 4 3 6.4v13.2L9 17.2l6 2.4 6-2.4V4l-6 2.4L9 4z" />
+    <Line x1={9} y1={4} x2={9} y2={17.2} strokeLinecap="round" />
+    <Line x1={15} y1={6.4} x2={15} y2={19.6} strokeLinecap="round" />
+  </Svg>
+);
+
+/** Сегмент «Список». */
+export const IconList = ({ size = 18, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round">
+    <Line x1={9} y1={6.5} x2={20} y2={6.5} />
+    <Line x1={9} y1={12} x2={20} y2={12} />
+    <Line x1={9} y1={17.5} x2={20} y2={17.5} />
+    <Circle cx={4.6} cy={6.5} r={1.3} fill={c} stroke="none" />
+    <Circle cx={4.6} cy={12} r={1.3} fill={c} stroke="none" />
+    <Circle cx={4.6} cy={17.5} r={1.3} fill={c} stroke="none" />
+  </Svg>
+);
+
+/**
+ * Кости — «подобрать другое название». Квадрат со скруглением и пять точек: грань «пять».
+ *
+ * Пять, а не шесть и не одна: на шестёрке в двадцати пикселях точки сливаются в две полосы, а
+ * единица читается кнопкой записи. Пятёрка узнаётся костью даже мелко — по диагонали из трёх.
+ * Точки залиты, а не обведены: контурная точка в 1.6 пикселя на этом размере пропадает.
+ */
+export const IconDice = ({ size = 20, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinejoin="round">
+    <Rect x={3.5} y={3.5} width={17} height={17} rx={4} />
+    <Circle cx={8.5} cy={8.5} r={1.15} fill={c} stroke="none" />
+    <Circle cx={15.5} cy={8.5} r={1.15} fill={c} stroke="none" />
+    <Circle cx={12} cy={12} r={1.15} fill={c} stroke="none" />
+    <Circle cx={8.5} cy={15.5} r={1.15} fill={c} stroke="none" />
+    <Circle cx={15.5} cy={15.5} r={1.15} fill={c} stroke="none" />
+  </Svg>
+);
+
+/** Крестик — закрыть лист (кадры GR.18a–GR.53: «X» в стеклянном круге). */
+export const IconClose = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.7} strokeLinecap="round">
+    <Line x1={6} y1={6} x2={18} y2={18} />
+    <Line x1={18} y1={6} x2={6} y2={18} />
+  </Svg>
+);
+
+/** Дверь со стрелкой — «вышел(а) из плана», строка состава GR.39/GR.40. */
+export const IconExit = ({ size = 18, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    {/* Борд (GR.40 «Left», меню «Leave the group»): скобка слева, стрелка уходит вправо — «вышел». */}
+    <Path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h3" />
+    <Path d="M16 8l4 4-4 4" />
+    <Line x1={9} y1={12} x2={20} y2={12} />
+  </Svg>
+);
+
+/** Календарь с крестиком — «не ответил(а)» на закрытом с паузы плане (GR.40b / 40e). */
+export const IconCalendarX = ({ size = 18, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Rect x={3.5} y={5} width={17} height={16} rx={3} />
+    <Line x1={3.5} y1={10} x2={20.5} y2={10} />
+    <Line x1={8} y1={3} x2={8} y2={6} />
+    <Line x1={16} y1={3} x2={16} y2={6} />
+    <Path d="M10 13.5l4 4M14 13.5l-4 4" />
+  </Svg>
+);
+
+/** Календарь с галочкой — «подтвердил(а)» в строке состава (Calendar Check в борде). */
+export const IconCalendarCheck = ({ size = 18, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+    <Rect x={3.5} y={5} width={17} height={16} rx={3} />
+    <Line x1={3.5} y1={10} x2={20.5} y2={10} />
+    <Line x1={8} y1={3} x2={8} y2={6} />
+    <Line x1={16} y1={3} x2={16} y2={6} />
+    <Path d="M9 15.2l2 2 4-4" />
+  </Svg>
+);
+
+/** Две стрелки по кругу — «показать другие» на знаке темы в карте интересов. */
+export const IconRefresh = ({ size = 14, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M20 11a8 8 0 0 0-14.3-4.9L4 8" />
+    <Path d="M4 3.5V8h4.5" />
+    <Path d="M4 13a8 8 0 0 0 14.3 4.9L20 16" />
+    <Path d="M20 20.5V16h-4.5" />
+  </Svg>
+);
+
+// ---------------------------------------------------------------- меню группы (GR.18a / GR.21a)
+// Значки пунктов «Group options»: 20 кораллом, у «End the group» — красным. Контуры Lucide, как
+// во всей библиотеке борда (🎨 Icons · Library).
+
+/** Круг с «i» — «Group info». */
+export const IconInfo = ({ size = 20, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx={12} cy={12} r={10} />
+    <Path d="M12 16v-4" />
+    <Path d="M12 8h.01" />
+  </Svg>
+);
+
+/** Человек с плюсом — «Invite more people». */
+export const IconUserPlus = ({ size = 20, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <Circle cx={9} cy={7} r={4} />
+    <Line x1={19} y1={8} x2={19} y2={14} />
+    <Line x1={22} y1={11} x2={16} y2={11} />
+  </Svg>
+);
+
+/** Человек с галочкой — «Confirmed» в строке участника плана (OF.21). */
+export const IconUserCheck = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <Circle cx={9} cy={7} r={4} />
+    <Path d="M16 11l2 2 4-4" />
+  </Svg>
+);
+
+/** Человек с крестиком — «Remove someone». */
+export const IconUserX = ({ size = 20, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <Circle cx={9} cy={7} r={4} />
+    <Line x1={17} y1={8} x2={22} y2={13} />
+    <Line x1={22} y1={8} x2={17} y2={13} />
+  </Svg>
+);
+
+/** Корона — «Hand the role over». */
+export const IconCrown = ({ size = 20, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M11.56 3.27a.5.5 0 0 1 .88 0l2.95 5.6a1 1 0 0 0 1.52.3l4.27-3.67a.5.5 0 0 1 .8.52l-2.83 10.25a1 1 0 0 1-.96.73H5.81a1 1 0 0 1-.96-.73L2.02 6.02a.5.5 0 0 1 .8-.52l4.27 3.67a1 1 0 0 0 1.52-.3z" />
+    <Path d="M5 21h14" />
+  </Svg>
+);
+
+/** Перечёркнутый круг — «End the group». */
+export const IconBan = ({ size = 20, c = color.danger }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx={12} cy={12} r={10} />
+    <Path d="M4.93 4.93l14.14 14.14" />
+  </Svg>
+);
+
+/** Галочка — выбранная строка в листах выбора (GR.24a, GR.51, GR.30a). */
+export const IconCheck = ({ size = 20, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M20 6L9 17l-5-5" />
+  </Svg>
+);
+
+/** Щит с галочкой — «Exact spot after everyone confirms» на карточке приглашения (GR.56). */
+export const IconShieldCheck = ({ size = 18, c = '#238C62' }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+    <Path d="M9 12l2 2 4-4" />
+  </Svg>
+);
+
+/** Пустой щит — мера защиты до отправки жалобы (борд GR.55 «When you send this»). */
+export const IconShield = ({ size = 16, c = color.infoText }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+  </Svg>
+);
+
+/** Файл с плюсом — «Attach evidence» (борд GR.55). */
+export const IconFilePlus = ({ size = 24, c = color.muted }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z" />
+    <Path d="M14 2v4a2 2 0 0 0 2 2h4M9 15h6M12 18v-6" />
+  </Svg>
+);
+
+/** Картотека — «We received your report» (борд GR.55a, круг 104). Рисована в координатах круга. */
+export const IconCaseTray = ({ size = 104, c = '#1FAE5E' }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 104 104" fill="none" stroke={c} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M36.25 35.75 29 56.25M67.5 35.75 75 56.25" />
+    <Path d="M29 56.25h17.25a5.9 5.9 0 0 0 11.5 0H75V72H29z" />
+    <Path d="M43 35v-3.25h17.75V35M41 43v-4h21.75v4M38.5 52.75v-6h27v6" />
+  </Svg>
+);
+
+/** Спиннер-лучи — «Under review» (борд GR.55a). */
+export const IconLoader = ({ size = 16, c = '#FC8F00' }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M12 2v4M16.2 7.8l2.9-2.9M18 12h4M16.2 16.2l2.9 2.9M12 18v4M4.9 19.1l2.9-2.9M2 12h4M4.9 4.9l2.9 2.9" />
+  </Svg>
+);
+
+/** Два листа — скопировать номер обращения (борд GR.55a). */
+export const IconCopy = ({ size = 24, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M15 2a2 2 0 0 1 1.41.59l4 4A2 2 0 0 1 21 8v7a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" />
+    <Path d="M15 2v4a2 2 0 0 0 2 2h4M5 7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h8a2 2 0 0 0 1.73-1" />
+  </Svg>
+);
+
+/** Трубка — «Emergency · Call 112» (борд GR.55a). */
+export const IconPhone = ({ size = 24, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M13.83 16.57a1 1 0 0 0 1.21-.3l.36-.47A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.47.35a1 1 0 0 0-.29 1.23 14 14 0 0 0 6.39 6.38" />
+  </Svg>
+);
+
+/** Гарнитура — «Contact support» (борд GR.55a). */
+export const IconHeadset = ({ size = 24, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm0 0a9 9 0 1 1 18 0m0 0v5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2z" />
+    <Path d="M21 16v2a4 4 0 0 1-4 4h-5" />
+  </Svg>
+);
+
+/** Спасательный круг — «Safety tips» (борд GR.55a). */
+export const IconLifeBuoy = ({ size = 24, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx={12} cy={12} r={10} />
+    <Circle cx={12} cy={12} r={4} />
+    <Path d="m4.93 4.93 4.24 4.24M14.83 9.17l4.24-4.24M14.83 14.83l4.24 4.24M9.17 14.83l-4.24 4.24" />
+  </Svg>
+);
+
+/** Облачко с восклицанием — «Harassment or threats» (борд GR.55). */
+export const IconChatWarning = ({ size = 18, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M2.99 16.34a2 2 0 0 1 .1 1.17l-1.07 3.29a1 1 0 0 0 1.24 1.17l3.41-1a2 2 0 0 1 1.1.08A10 10 0 1 0 2.99 16.34" />
+    <Path d="M12 8v4M12 16h.01" />
+  </Svg>
+);
+
+/** Щит с восклицанием — «Unsafe behaviour at the meetup» (борд GR.55). */
+export const IconShieldAlert = ({ size = 18, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+    <Path d="M12 8v4M12 16h.01" />
+  </Svg>
+);
+
+// ---------------------------------------------------------------- мастер «Creating intent»
+// Знаки борда «0 · Create the intent» (Figma 6864:119674) — Lucide, линия 1 коралловым на кадрах.
+
+/** «Map Pin Plus» — Hybrid на GR.05: место и звонок разом. */
+export const IconPinPlus = ({ size = 22, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M19.9 12.4C19 16.1 12 22 12 22s-8-6.6-8-12a8 8 0 0 1 14.1-5.2" />
+    <Circle cx={12} cy={10} r={3} />
+    <Line x1={19} y1={3} x2={19} y2={9} />
+    <Line x1={16} y1={6} x2={22} y2={6} />
+  </Svg>
+);
+
+/** «Users» — 1:1 на GR.07: двое. */
+export const IconUsers = ({ size = 22, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <Circle cx={9} cy={7} r={4} />
+    <Path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+  </Svg>
+);
+
+/** «Wand Sparkles» — Regenerate на GR.04. */
+export const IconWand = ({ size = 16, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M21.6 2.4 2.4 21.6M14 5l5 5" />
+    <Path d="M18 2v3M19.5 3.5h-3M6 5v2M7 6H5M18 17v2M19 18h-2" />
+  </Svg>
+);
+
+/** «Maximize 2» — развернуть карту на GR.11. */
+export const IconMaximize = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+  </Svg>
+);
+
+/** «Minimize 2» — свернуть карту на GR.11a. */
+export const IconMinimize = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+  </Svg>
+);
+
+/** «Chevron Down» — выпадающий выбор (город, пояс). */
+export const IconChevronDown = ({ size = 20, c = color.fg }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Path d="M6 9l6 6 6-6" />
+  </Svg>
+);
+
+/** Сплошная булавка листа GR.11a: острие — точка, которая уйдёт в интент. */
+export const IconPinSolid = ({ size = 52, c = color.primary }: P) => (
+  <Svg width={size} height={size * 56 / 48} viewBox="0 0 48 56">
+    <Path d="M24 56C24 56 4 37.5 4 22.5 4 10.1 13 0 24 0s20 10.1 20 22.5C44 37.5 24 56 24 56z" fill={c} />
+  </Svg>
+);
+
+/** «Locate» — прицел, «найти меня» на карте GR.11a. */
+export const IconCrosshair = ({ size = 20, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round">
+    <Circle cx={12} cy={12} r={7} />
+    <Circle cx={12} cy={12} r={2.5} />
+    <Line x1={12} y1={2} x2={12} y2={5} />
+    <Line x1={12} y1={19} x2={12} y2={22} />
+    <Line x1={2} y1={12} x2={5} y2={12} />
+    <Line x1={19} y1={12} x2={22} y2={12} />
+  </Svg>
+);
+
+/** «Circle Question Mark» — строка «How you meet» в листе правки GR.12b. */
+export const IconHelp = ({ size = 20, c = color.primary }: P) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+    <Circle cx={12} cy={12} r={9.5} />
+    <Path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" />
+    <Line x1={12} y1={17} x2={12.01} y2={17} />
   </Svg>
 );

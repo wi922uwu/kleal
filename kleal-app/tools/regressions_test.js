@@ -7,6 +7,9 @@
 // была невидимой — ни падения, ни красной строки, — и заметить возврат можно только так.
 const fs = require('fs');
 const path = require('path');
+require('./onboarding_android_layout_test');
+require('./age_ruler_test');
+require('./interest_normalization_test');
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -852,8 +855,8 @@ console.log('\nнад сообщением можно что-то сделать
     'пропасть бесследно оно не может — второй его уже видел');
 
   check('текст можно скопировать',
-    /Clipboard\.setStringAsync/.test(c) && /"expo-clipboard": "~8\.0\.8"/.test(read('package.json')),
-    'версия обязана совпадать с той, что везёт SDK 54');
+    /Clipboard\.setStringAsync/.test(c) && /"expo-clipboard": "~57\.0\.1"/.test(read('package.json')),
+    'версия обязана совпадать с той, что везёт SDK 57');
 }
 
 // ------------------------------------------------- 15. свайп-ответ и живые ссылки
@@ -1189,9 +1192,9 @@ console.log('\nкружок: камера готова заранее, коне�
   check('кружок рисуется в общей ленте, а значит в обоих чатах',
     /<VideoBubble video=\{m\.video\}/.test(feed));
 
-  check('версии камеры и видео — из набора SDK 54',
-    /"expo-camera": "~17\.0\.10"/.test(read('package.json'))
-    && /"expo-video": "~3\.0\.16"/.test(read('package.json')),
+  check('версии камеры и видео — из набора SDK 57',
+    /"expo-camera": "~57\.0\.4"/.test(read('package.json'))
+    && /"expo-video": "~57\.0\.3"/.test(read('package.json')),
     'иначе Expo Go перестанет открывать приложение по QR');
 }
 
@@ -1288,11 +1291,17 @@ console.log('\nкнопки ведут туда, что обещают');
   const home = code('app/home.tsx');
   const act = code('app/activity.tsx');
 
-  check('«Все интенты» ведёт к интентам, а не на главную',
-    /allIntents\(\)/.test(intent) && !/allBtn[\s\S]{0,120}replace\('\/home'\)/.test(intent),
+  // Красной «All intents» в шапке мастера больше нет (борд «0 · Create the intent», GR.04–GR.12):
+  // шапка — «Creating intent» с процентами. Правило осталось прежним: кнопка шапки не уводит на ленту.
+  check('«назад» мастера отступает на шаг, а не уводит на ленту',
+    /<CreatingHeader pct=\{pct\} onBack=\{goBack\}/.test(intent)
+    && !/replace\('\/home'\)/.test(intent.slice(intent.indexOf('const goBack'), intent.indexOf('usePreventRemove'))),
     'кнопка называлась «Все интенты» и уводила на ленту');
-  check('«Открыть историю» ведёт в историю, а не в чат с Бадди',
-    /activity\?seg=history/.test(home),
+  // Вход в историю переехал с главной в шапку разговора с Kleal: кадр главной GR.01 (секция
+  // «Test 260930») кнопки под строкой не рисует. Проверяем, что вход есть и ведёт в историю.
+  const buddy = code('app/buddy.tsx');
+  check('«История разговоров» ведёт в историю, а не в чат с Бадди',
+    /router\.navigate\('\/history'\)/.test(buddy) && /HOME\.history\(\)/.test(buddy),
     'история разговоров и разговор с Бадди — разные вещи');
   check('экран активности умеет открыть нужный сегмент',
     /useLocalSearchParams/.test(act) && /params\.seg/.test(act),
@@ -1535,7 +1544,9 @@ console.log('\nближайшая встреча стоит на главной'
   check('берётся ближайшая ЖИВАЯ встреча',
     /state === 'confirmed' \|\| p\.state === 'proposed'/.test(h) && /a\.starts_at \|\| 0\) - \(b\.starts_at/.test(h),
     'отменённые и прошедшие на главной не нужны — это архив, а не «сегодня»');
-  check('карточка ведёт в план', /pathname: '\/plan'/.test(h) && /HOME\.goToPlan\(\)/.test(h));
+  // Сама карточка встречи с кадра GR.01 живёт в src/components/HomeCards.tsx, экран её только ставит в колоду.
+  const cards = code('src/components/HomeCards.tsx');
+  check('карточка ведёт в план', /PlanCard/.test(h) && /pathname: '\/plan'/.test(cards) && /HOME\.goToPlan\(\)/.test(cards));
 }
 
 // ------------------------------------------------- 22. пояс показывается только при расхождении
@@ -1765,23 +1776,13 @@ console.log('\nответ модели — документ, а не репли�
   // превращается реальный вывод модели.
   // Граница среза — по КОНЦУ разбора, а не по началу отрисовки: между ними появились помощники
   // с аннотациями типов, и срез до 'function Rich(' стал утаскивать их с собой.
-  const js = md.slice(from, md.indexOf('function Rich('))
-    .replace(/^type [\s\S]*?;$/m, '')
-    .replace(/type Block =[\s\S]*?\| \{ kind: 'hr' \};/, '')
-    .replace('export function parseBlocks(src: string): Block[] {', 'function parseBlocks(src){')
-    .replace('export function parseInline(src: string): Inline[] {', 'function parseInline(src){')
-    .replace('function cells(line: string): string[] {', 'function cells(line){')
-    .replace('const out: Block[] = [];', 'const out = [];')
-    .replace('let para: string[] = [];', 'let para = [];')
-    .replace('const body: string[] = [];', 'const body = [];')
-    .replace('const rows: string[][] = [];', 'const rows = [];')
-    .replace('const out: Inline[] = [];', 'const out = [];')
-    .replace('const RULES: [RegExp, Partial<Inline>][] = [', 'const RULES = [')
-    .replace('let bestM: RegExpMatchArray | null = null;', 'let bestM = null;')
-    .replace('let bestStyle: Partial<Inline> = {};', 'let bestStyle = {};')
-    .replace('const at = (k: number) =>', 'const at = (k) =>')
-    .replace(/ as 1 \| 2 \| 3/g, '').replace(/ as RegExpMatchArray/g, '');
-  const mk = new Function(js + '\nreturn { parseBlocks, parseInline };')();
+  // Compile the real parser with the installed TypeScript version, not type-erasure regexes.
+  const ts = require('typescript');
+  const js = ts.transpileModule(md.slice(from, md.indexOf('function Rich(')), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const mk = {};
+  new Function('exports', js)(mk);
 
   // То, что модель печатает НА САМОМ ДЕЛЕ — снято с живого ответа 14 августа.
   const REAL = '| Что | Падел | Теннис |\n| --- | --- | --- |\n| Ракетка | Короткая | Длинная |';
@@ -1831,7 +1832,9 @@ console.log('\nответ модели — документ, а не репли�
   // Проверка держалась за точный тег и упала, когда добавился курсор, — ничего не изменив по сути.
   check('ответ модели рисуется документом', /<Markdown text=\{m\.text\}/.test(bd));
   check('а реплика человека осталась пузырём', /\[s\.bub, s\.bubMe\]/.test(bd));
-  check('у ответа нет подложки и он во всю ширину', /answer: \{ alignSelf: 'stretch'/.test(bd));
+  // Борд «0 · Create the intent» (GR.02, 03.10.2026): разговор с Kleal — обычная переписка, ответ —
+  // пузырь светлого стекла 20/20/20/4 до 260 из 358, разметка рисуется внутри пузыря.
+  check('ответ Kleal — пузырь светлого стекла', /<GlassSurface tone="light" radius=\{20\} style=\{\[s\.bub, s\.bubThem\]\}>/.test(bd));
 
   // Без разрешения на многострочность модель схлопывает разбор в один абзац, чтобы не
   // экранировать переводы строк в JSON, — и вся вёрстка остаётся невидимой.
@@ -1907,15 +1910,24 @@ console.log('\nответ модели — документ, а не репли�
   // Одно правило на всё приложение: реплика человека — пузырь, написанное моделью — страница.
   // Пока экраны рисовали по-разному, один и тот же ответ выглядел то так, то этак — это читается
   // как сбой, а не как замысел.
-  for (const f of ['src/components/ChatShell.tsx', 'app/create.tsx']) {
+  for (const f of ['src/components/ChatShell.tsx']) {
     const c = code(f);
     check(`${f}: текст модели идёт документом`, /<Markdown text=\{m\.text\}/.test(c));
     check(`${f}: реплика человека осталась пузырём`, /\[s\.bub, s\.bubMe\]/.test(c));
   }
+  // Создание интента (GR.04): обе стороны — пузыри общих деталей мастера; разметка — внутри пузыря.
+  {
+    const cr = code('app/create.tsx');
+    const cf = code('src/components/CreateFlow.tsx');
+    check('app/create.tsx: ответ Kleal пузырём с разметкой', /<AgentLine key=\{i\} text=\{m\.text\}[^>]*markdown/.test(cr)
+      && /<Markdown text=\{text\} \/>/.test(cf));
+    check('app/create.tsx: реплика человека пузырём', /<MyLine key=\{i\} text=\{m\.text\}/.test(cr));
+  }
 
   // Приветствие — ступень заголовка: разговор им ОТКРЫВАЕТСЯ. Признак отдельным полем, а не «# »
   // в тексте: тот же текст уходит модели в историю, и решётка попала бы ей в контекст.
-  check('приветствие — заголовок страницы', /hello: \{ \.\.\.type\.mdH1/.test(bd));
+  // С 03.10.2026 приветствие — первый пузырь Kleal (GR.02), а не заголовок страницы.
+  check('приветствие — первый пузырь Kleal', /m\.hello \? <Text style=\{s\.bubText\}>/.test(bd));
   check('и помечено флагом, а не решёткой в тексте',
     /say\('bot', hello, true\)/.test(bd) && /hello\?: boolean/.test(bd));
 
@@ -2066,8 +2078,13 @@ console.log('\nцензура ловит просьбу о способе, но 
   const ap2 = code('src/api.ts');
   check('обрыв потока пробует обычный запрос',
     /const r: any = await buddyApi\.chat\(next, profile\(\)\)/.test(bd2));
+  // `catch (e)` — с 04.10 блок ещё и отличает отказ по входу (401) от обрыва: тогда не «связь
+  // пропала», а «войди снова». Извинение за связь по-прежнему только после второй неудачи.
   check('и извиняется только если и он не прошёл',
-    /catch \{[\s\S]{0,120}say\('bot', BUDDY\.offline\(\)\)/.test(bd2));
+    /catch(?: \(e\))? \{[\s\S]{0,220}say\('bot', BUDDY\.offline\(\)\)/.test(bd2));
+  check('отказ по входу — не «связь пропала»',
+    /needsSignIn\(e\)\) \{ setSignIn\(true\); say\('bot', BUDDY\.signIn\(\)\)/.test(bd2)
+    && /setRequestHeader\('Authorization'/.test(ap2));
   check('в создании интента то же', /await buddyApi\.intentBuild\(next, profile\(\)\)/.test(code('app/create.tsx')));
   // Без Accept посредники охотно буферизуют ответ целиком, и поток перестаёт быть потоком.
   check('поток просит себя явно', /setRequestHeader\('Accept', 'text\/event-stream'\)/.test(ap2));
@@ -2162,7 +2179,8 @@ console.log('\nкарта держит приближение, а не возв�
   check('тап по карте тоже', /animateToRegion\(regionAt\(c\.latitude, c\.longitude\)/.test(mp));
   // Экраны, где это важно: онбординг (через AreaPicker) и создание интента.
   check('в онбординге карта интерактивна', /onChange=\{setArea\}/.test(code('app/chat.tsx')));
-  check('в поиске тоже', /onMove=\{\(la, lo\) =>/.test(code('app/intent.tsx')));
+  // В мастере карта шага — превью, двигают её в листе «Pick the exact spot» (GR.11a).
+  check('в поиске тоже', /<RadiusMap lat=\{value\.lat\} lon=\{value\.lon\} km=\{0\} onMove=\{moved\}/.test(code('app/intent.tsx')));
 }
 
 // ------------------------------------------------- 28. карта держит масштаб и получает жест
@@ -2677,82 +2695,81 @@ console.log('\n«назад» в мастере интента отступае�
 // Правка одной даты стоила четырёх экранов, а возврат на сводку заново дёргал agent.categorize.
 console.log('\nправка интента со сводки происходит в самом листе');
 {
+  // С 03.10.2026 лист — аккордеон борда «0 · Create the intent» (GR.12b–GR.12i): строки What · How
+  // you meet · How many · When · Time zone · Who · Where, открыта одна, внутри — контрол шага.
   const wiz = code('app/intent.tsx');
-  const at = wiz.indexOf('title={EDIT_SHEET.title()}');
-  const sheet = at < 0 ? '' : wiz.slice(at, wiz.indexOf('</EditSheet>', at));
+  const at = wiz.indexOf('visible={editOpen}');
+  const sheet = at < 0 ? '' : wiz.slice(at, wiz.indexOf('</Sheet>', at));
   check('лист правки нашёлся', sheet.length > 0);
 
   check('лист больше не отправляет на шаги мастера',
     !/setStep\(/.test(sheet),
     'уйдя на шаг, человек снова идёт по цепочке «Дальше», а сводка заново зовёт agent.categorize');
 
-  check('правка применяется целиком и по кнопке',
-    /setDraft\(edraft\)/.test(sheet),
-    'без этого лист остаётся указателем, а не редактором');
-
   // «Отмена» обязана отменять: контролы шагов пишут в состояние немедленно, и прямая запись в
   // draft превратила бы её в кнопку «закрыть, оставив всё как наделал».
+  const ap = wiz.slice(wiz.indexOf('const applyEdit'), wiz.indexOf('const editValue'));
+  check('правка применяется целиком и только по Apply',
+    /setDraft\(\{ \.\.\.v, mode: draft\.mode, size: draft\.size \}\)/.test(ap) && /onPress=\{applyEdit\}/.test(sheet),
+    'без этого лист остаётся указателем, а не редактором');
   check('правки идут в черновик листа, а не прямо в интент',
-    !/setDraft\(\(x\)/.test(sheet) && /setEdraft\(/.test(wiz),
+    !/setDraft\(/.test(sheet) && /setEdraft\(\(x\) => \(x \? fn\(x\) : x\)\)/.test(wiz),
     'иначе «Отмена» закрывает лист, а изменения остаются — прямое нарушение правила листа');
   check('черновик пересевается при каждом открытии',
-    /onEdit=\{\(\)[\s\S]{0,140}setEdraft\(draft\)/.test(wiz),
+    /const openEdit[\s\S]{0,120}setEdraft\(beginIntentEdit\(draft\)\)/.test(wiz),
     'второй заход в лист показал бы прошлый, уже отменённый черновик');
+  check('Apply неактивна, пока ничего не изменено (GR.12b)',
+    /disabled=\{!editChanges\(edraft\)\.length/.test(sheet));
+  check('«How you meet» под замком: другой формат — другой интент',
+    /const locked = k === 'how'/.test(sheet) && /disabled=\{locked\}/.test(sheet));
 
   // Ключевая беда проекта — разъехавшиеся копии. Поле обязано быть построено ОДИН раз и
   // подставляться и на шаг мастера, и в лист правки.
   const once = [
-    ['<RadiusMap', 'карта района'],
+    ['<RadiusMap lat={la} lon={lo} km={v.radiusKm}', 'карта района'],
     ['DETAILS.linkNote()', 'блок ссылки'],
-    ['NATURE_TRAITS.map(', 'чипы характера'],
-    ['SEXES.map(', 'чипы аудитории'],
-    ['<RangeDial', 'кольцо возраста'],
+    ['label={WIZ.sexChip(k)}', 'чипы аудитории'],
+    ['AGE_PRESETS.map(', 'чипы возраста'],
+    ['items={days}', 'ряд дней'],
+    ['TIME_SLOTS.map(', 'ряд времени'],
   ];
   for (const [needle, name] of once) {
     const n = wiz.split(needle).length - 1;
     check(`${name} построен один раз`, n === 1,
       `встречается ${n} раз — копии разойдутся на первой правке`);
   }
-  check('дата и время берутся из общего WhenPicker, а не пишутся заново',
-    /<WhenPicker/.test(wiz) && !/TimeDial/.test(wiz),
-    'своя копия этого кадра в мастере уже была и разошлась бы с групповым планом');
-
-  // Убранные строки: под тему шага в мастере нет вовсе, а режим решает, какие поля в листе есть.
-  check('строки «тема» и «режим» из листа убраны',
-    !/EDIT_SHEET\.theme/.test(wiz) && !/EDIT_SHEET\.mode\b/.test(wiz),
-    'по теме лист умел только выйти из мастера — это был не «поправить», а «уйти»');
 
   // Битую ссылку не пускает «Дальше» на шаге; правка не имеет права быть обходом этой проверки.
   check('битая ссылка не проезжает через правку',
     /linkBroken\(edraft\)/.test(sheet) && /DETAILS\.linkBad\(\)/.test(sheet),
     'и человек обязан прочесть, почему кнопка не сработала');
 
-  // Лист построен на RN Modal: второй модал поверх открытого — известная беда iOS.
+  // Лист построен на RN Modal: второй модал поверх открытого на iOS не показывается вовсе
+  // (проверено 03.10.2026 на симуляторе iOS 27 — карта из листа правки не открывалась).
   check('пояс разворачивается внутри листа, а не вторым модалом',
-    !/setTzOpen\(true\)/.test(sheet) && /tzInline/.test(wiz),
-    'два RN-модала одновременно на iOS открываются не всегда');
+    !/setTzOpen\(true\)/.test(sheet) && /tzChoices\(\)\.map/.test(sheet.length ? wiz.slice(wiz.indexOf('const editPanel')) : ''));
+  check('карта и Plus из листа правки встают внутрь него, а не вторым модалом',
+    /\{spotOpen \? \(\s*<SpotPanel/.test(sheet) && /open=\{spotOpen && !spotInEdit\.current\}/.test(wiz)
+    && /visible=\{groupSizeOpen && !editOpen\}/.test(wiz));
 
-  // Карта и циферблат живут внутри прокрутки листа — жест у них общий.
+  // Карта и поля живут внутри прокрутки листа — жест у них общий.
   check('жест отдан содержимому листа', /scrollEnabled=\{!dragging\}/.test(sheet),
-    'иначе карту внутри листа не подвинуть, а циферблат дёргается на месте');
+    'иначе ползунок радиуса внутри листа дерётся с прокруткой');
 
-  // Своей высоты у листа нет: он растёт вверх по содержимому и не прокручивается.
+  // Своей высоты у листа нет: он растёт вверх по содержимому.
   check('у листа с раскрытым полем есть потолок высоты',
-    /maxHeight=\{/.test(sheet) && /maxHeight\?: number/.test(code('src/components/ProfileShell.tsx')),
-    'без потолка «Применить» уезжает за верх экрана и нажать её нечем');
+    /style=\{\{ maxHeight: /.test(sheet),
+    'без потолка «Apply» уезжает за верх экрана и нажать её нечем');
 
-  check('раскрыто ровно одно поле',
-    /editPick === k \? '' : k/.test(sheet),
-    'карта плюс циферблат разом не влезают ни в один потолок');
+  check('раскрыто ровно одно поле', /setEditPick\(open \? '' :/.test(sheet),
+    'карта плюс ряды чипов разом не влезают ни в один потолок');
 
   // Каждая строка обязана уметь раскрыться: строка без контрола выглядит как мёртвая.
-  const fAt = wiz.indexOf('const editField = (');
-  const field = fAt < 0 ? '' : wiz.slice(fAt, wiz.indexOf('\n  };', fAt));
-  const rAt = wiz.indexOf('const editRows = (');
-  const rows = rAt < 0 ? '' : wiz.slice(rAt, wiz.indexOf('\n  ]);', rAt));
+  const rows = wiz.slice(wiz.indexOf('const EDIT_ROWS'), wiz.indexOf('];', wiz.indexOf('const EDIT_ROWS')));
+  const panel = wiz.slice(wiz.indexOf('const editPanel'), wiz.indexOf('const EDIT_ROWS'));
   const keys = (rows.match(/\['[a-z]+'/g) || []).map((x) => x.slice(2, -1));
-  const dead = keys.filter((k) => k !== 'when' && !field.includes(`'${k}'`));
-  check('у каждой строки листа есть свой контрол', keys.length >= 6 && dead.length === 0,
+  const dead = keys.filter((k) => k !== 'how' && !panel.includes(`k === '${k}'`));
+  check('у каждой строки листа есть свой контрол', keys.length === 7 && dead.length === 0,
     'строка без поля: ' + dead.join(', '));
 }
 

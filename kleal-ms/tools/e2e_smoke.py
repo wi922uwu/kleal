@@ -49,14 +49,23 @@ def check(name, cond, detail=""):
     print(("  ok   " if cond else "  FAIL ") + name + (("   " + str(detail)[:110]) if detail else ""))
 
 
+def skip(name, why):
+    """Проверка, которую в этой среде провести НЕЧЕМ. Считать её падением нельзя: красный смоук,
+    падающий всегда, перестают читать — и он молчит уже по-настоящему, когда ломается продукт."""
+    R["skip"] = R.get("skip", 0) + 1
+    print("  --   " + name + "   (пропуск: " + why + ")")
+
+
 def section(t):
     print("\n" + "=" * 76 + "\n" + t + "\n" + "=" * 76)
 
 
 # ─────────────────────────────────────────────── 1. the pages a user opens
 section("1. SCREENS — every page a user can land on")
+# «/profile» здесь больше нет: сервис профиля был веб-страницей и удалён целиком, а проверка
+# продолжала требовать от шлюза страницу, которой не существует.
 for path, label in (("/", "gateway root -> onboarding"), ("/menu", "landing menu"),
-                    ("/onboarding", "onboarding app"), ("/profile", "profile app")):
+                    ("/onboarding", "onboarding app")):
     st, body = call(path)
     check("%s serves HTML" % label, st == 200 and isinstance(body, str) and "<" in body,
           "status=%s" % st)
@@ -65,14 +74,11 @@ st, body = call("/assets/logo.svg")
 check("onboarding assets route answers", st in (200, 404), "status=%s" % st)
 
 # ─────────────────────────────────────────────── 2. accounts
-section("2. ACCOUNTS — signup / signin")
-login = "e2e_%d" % int(time.time())
-st, r = call("/api/onboarding/signup", {"login": login, "password": "pw123456", "name": "E2E Tester"})
-check("signup accepted", st == 200 and isinstance(r, dict) and r.get("ok") is not False, r)
-st, r = call("/api/onboarding/signin", {"login": login, "password": "pw123456"})
-check("signin with the right password", st == 200 and isinstance(r, dict) and r.get("ok"), r)
-st, r = call("/api/onboarding/signin", {"login": login, "password": "WRONG"})
-check("signin rejects the wrong password", st == 200 and isinstance(r, dict) and not r.get("ok"), r)
+section("2. ACCOUNTS — password sign-in is closed")
+# С 27.09.2026 вход по паролю закрыт: смоук заводил в проде по учётке на каждый прогон.
+for _p in ("/api/onboarding/signup", "/api/onboarding/signin"):
+    st, r = call(_p, {"login": "e2e", "password": "pw123456"})
+    check("%s is closed (410)" % _p, st == 410, (st, r))
 
 # ─────────────────────────────────────────────── 3. onboarding funnel
 section("3. ONBOARDING FUNNEL — the gate, the agent, the summary")
@@ -103,16 +109,27 @@ check("summary generated", st == 200 and isinstance(summ, dict) and bool(summ.ge
       (summ or {}).get("summary", "")[:80] if isinstance(summ, dict) else summ)
 
 st, reg = call("/api/onboarding/register", {"profile": PROF})
-check("registration writes into the shared store",
-      st == 200 and isinstance(reg, dict) and reg.get("ok") and (reg.get("user") or {}).get("name"), reg)
+# ВХОД ОБЯЗАТЕЛЕН С ТЕХ ПОР, КАК ПОЯВИЛИСЬ КОДЫ. Смоук сессию получить не может: код живёт в
+# памяти сервиса хэшем, а KLEAL_SHOW_CODE в проде выключен — и выключен правильно. Поэтому три
+# проверки анкеты помечаются пропуском, а не падением: иначе смоук горит красным всегда.
+NEED_AUTH = isinstance(reg, dict) and str(reg.get("error") or "") == "sign in required"
+if NEED_AUTH:
+    skip("registration writes into the shared store", "нужен вход по коду")
+else:
+    check("registration writes into the shared store",
+          st == 200 and isinstance(reg, dict) and reg.get("ok") and (reg.get("user") or {}).get("name"), reg)
 me = ((reg or {}).get("user") or {}).get("name") or "E2E Tester"
 
-st, got = call("/api/onboarding/profile", {"name": me})
-check("the registered person reads back", st == 200 and isinstance(got, dict) and (got.get("user") or {}).get("name") == me,
-      (got or {}).get("user", {}).get("name") if isinstance(got, dict) else got)
+if NEED_AUTH:
+    skip("the registered person reads back", "нужен вход по коду")
+    skip("profile-update applies a whitelisted field", "нужен вход по коду")
+else:
+    st, got = call("/api/onboarding/profile", {"name": me})
+    check("the registered person reads back", st == 200 and isinstance(got, dict) and (got.get("user") or {}).get("name") == me,
+          (got or {}).get("user", {}).get("name") if isinstance(got, dict) else got)
 
-st, upd = call("/api/onboarding/profile-update", {"name": me, "patch": {"vibe": "chill"}})
-check("profile-update applies a whitelisted field", st == 200 and isinstance(upd, dict) and upd.get("ok") is not False, upd)
+    st, upd = call("/api/onboarding/profile-update", {"name": me, "patch": {"vibe": "chill"}})
+    check("profile-update applies a whitelisted field", st == 200 and isinstance(upd, dict) and upd.get("ok") is not False, upd)
 
 st, rec = call("/api/onboarding/receiving", {"name": me})
 check("receiving policy reads", st == 200 and isinstance(rec, dict), rec)
@@ -141,11 +158,26 @@ if isinstance(intent, dict):
     check("intent carries topics", bool(intent.get("topics")), intent.get("topics"))
     check("intent has a title for the card", bool(intent.get("title")), intent.get("title"))
 
+# ПУСТОЙ reply ПРИ РАСПОЗНАННОЙ ЗАТЕЕ — ЭТО ДОГОВОР, А НЕ МОЛЧАНИЕ. Экран (app/buddy.tsx,
+# `looksLikeIntent`) вместо реплики открывает окно выбора: раньше человек получал и ответ, и окно
+# поверх него, и было непонятно, на что отвечать. Проверка требовала именно reply — и краснела на
+# каждой фразе, из которой затея выходит сразу, независимо от языка (ru/en/es одинаково). Спрашиваем
+# то, что и хотели спросить: испанский разобран и ход куда-то ведёт — репликой ИЛИ затеей.
 st, bc = call("/api/buddy/chat",
               {"messages": [{"role": "user", "content": "hola, quiero conocer gente para tomar un café"}],
                "profile": PROF})
-check("buddy answers Spanish", st == 200 and isinstance(bc, dict) and bool(bc.get("reply")),
-      (bc or {}).get("reply", "")[:80] if isinstance(bc, dict) else bc)
+check("buddy handles Spanish (a reply or an intent, never silence)",
+      st == 200 and isinstance(bc, dict) and (bool(bc.get("reply")) or bool(bc.get("intent"))),
+      bc if not isinstance(bc, dict) else {"reply": (bc.get("reply") or "")[:40], "intent": bool(bc.get("intent")),
+                                           "lang": bc.get("lang")})
+check("and answers IN Spanish", isinstance(bc, dict) and str(bc.get("lang") or "") == "es",
+      (bc or {}).get("lang"))
+
+# Отдельно — сама испанская РЕПЛИКА, на болтовне, где затеи нет и окно не открывается.
+st, bs = call("/api/buddy/chat",
+              {"messages": [{"role": "user", "content": "hola, ¿cómo estás?"}], "profile": PROF})
+check("buddy answers Spanish small talk", st == 200 and isinstance(bs, dict) and bool(bs.get("reply")),
+      (bs or {}).get("reply", "")[:80] if isinstance(bs, dict) else bs)
 
 # ─────────────────────────────────────────────── 6. matching
 section("6. MATCHING — a real search over the 600-person pool")
@@ -201,7 +233,7 @@ for path, screen in (("/api/agent/intents", "My Intents"), ("/api/agent/intent-s
           "GET=%s POST=%s" % (st, st2))
 
 print("\n" + "=" * 76)
-print("E2E RESULT: %d ok, %d failed" % (R["ok"], R["fail"]))
+print("E2E RESULT: %d ok, %d failed, %d skipped" % (R["ok"], R["fail"], R.get("skip", 0)))
 if FAILED:
     print("\nfailed checks:")
     for f in FAILED:

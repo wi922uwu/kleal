@@ -16,19 +16,41 @@ so the battery survives regeneration.
 
 Usage:
   python3 tools/eval_matching.py --pool P.json --index I.json [--battery extra.json] [--json out.json]
+                                 [--once] [--snapshot before.json] [--compare before.json]
+
+Before/after: run once with --snapshot before.json on the old code, then on the new code with
+--compare before.json; the DRIFT line names every scenario whose ranking view changed. Determinism
+across processes is the same command run twice: a clean --compare is the proof.
 
 Per-scenario checks: include_any / exclude / top1 / order / forbid_outreach / nonempty / tier caps.
 Global invariants on EVERY result: no minors, no paused, no blockers, no self, determinism,
 outreach only at open_now + T0/T1 (or T2+consent), score==lcb*100, band fields present.
 Exit 0 only when every scenario and invariant passes.
 """
-import argparse, json, os, sys, time
+import argparse, json, os, shutil, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, os.path.join(ROOT, "shared"))
 sys.path.insert(0, os.path.join(ROOT, "services", "matching"))
-os.environ.setdefault("KLEAL_STORE", os.path.join("/tmp", "eval_kleal_store.json"))
+
+# EVERY RUN OWNS ITS STATE. The store used to default to one shared /tmp file that survived between
+# runs, so run N started with whatever run N-1 had left in it (exposure, outcomes, write-dedup keys)
+# and "the same code" never saw the same input twice. A fresh directory per process closes that; an
+# explicit KLEAL_STORE still wins for anyone who wants to replay against a captured store.
+# The phrase fixture is COPIED for the same reason: the engine rewrites its phrase file atomically
+# (learn_phrases) and must never be able to touch the committed seed.
+_RUN_DIR = tempfile.mkdtemp(prefix="eval_matching_")
+# THE DB MODE IS PART OF THE STATE. With the production environment loaded (KLEAL_DB=postgres) the
+# temp store above is ignored and the engine reads the LIVE user table — the slate fills with real
+# people the tag index has never heard of, and 98 of 108 scenarios fail on MISS. Measured
+# 2026-09-14. A harness ranks its own pool, so the json store is forced, not defaulted.
+os.environ["KLEAL_DB"] = "json"
+os.environ.setdefault("KLEAL_STORE", os.path.join(_RUN_DIR, "store.json"))
+_SEED = os.environ["KLEAL_PHRASE_TOPICS"]
+if os.path.exists(_SEED):
+    shutil.copy(_SEED, os.path.join(_RUN_DIR, "phrase_topics.json"))
+    os.environ["KLEAL_PHRASE_TOPICS"] = os.path.join(_RUN_DIR, "phrase_topics.json")
 
 import app        # noqa: E402  (matching service; safe to import — server starts only under __main__)
 import core_v2    # noqa: E402
@@ -150,6 +172,45 @@ def run_match(intent, prof, now):
     out = app.match_candidates(intent, prof, {"self": prof.get("name", ""), "now": now})
     return out, (time.perf_counter() - t0) * 1000.0
 
+def explain_slate(cx, sc, prof, now, top=8):
+    """The per-feature breakdown behind a slate — the same explain_match the admin diagnostic uses.
+
+    An ORDER or TOP1 failure names WHO is out of place, not WHY. Reading the engine by hand for
+    that is slow and error-prone (and was, twice); this prints, per person, what each feature group
+    contributed and what evidence it saw, next to the pool tags the expectation was written in."""
+    ex = app.explain_match(sc["intent"], prof, {"self": prof.get("name", ""), "now": now})
+    if ex.get("self_gate"):
+        print("      explain: searcher gated — %s" % ex["self_gate"]); return
+    rows = ex.get("matched") or []
+    # explain_match sorts by (band, readiness, -reciprocal, -lcb, -coverage, name); the real slate adds
+    # decision class and rotation on top, so the ORDER here is close to but not identical to the slate.
+    print("      explain %s [%s]: %d matched, %d considered, %d excluded" %
+          (sc["id"], ex.get("domain"), len(rows), len(ex.get("considered") or []), len(ex.get("excluded") or [])))
+    for m in rows[:top]:
+        t = ",".join(sorted(tags(cx, m["name"])))[:40]
+        ab, ba = m.get("a_to_b") or {}, m.get("b_to_a") or {}
+        print("      %-18s %-3s %-18s A->B lcb=%.3f mean=%.3f cov=%.2f | B->A lcb=%.3f cov=%.2f | recip=%.3f  [%s]" %
+              (m["name"], m.get("tier"), m.get("band"),
+               float(ab.get("lcb") or 0), float(ab.get("mean") or 0), float(ab.get("coverage") or 0),
+               float(ba.get("lcb") or 0), float(ba.get("coverage") or 0), float(m.get("reciprocal") or 0), t))
+        for r in (ab.get("features") or []):
+            if r["state"] == "not_applicable":
+                continue
+            print("         %-22s %-13s v=%-6s w=%-5s +%-7s %s" %
+                  (r["group"], r["state"], r["value"], r["weight"], r["contribution"], str(r.get("detail") or "")[:44]))
+
+
+# THE RANKING VIEW IS THE CONTRACT — not the whole card. Every check below reads exactly these
+# fields, and the engine documents that other card fields may legitimately differ between two
+# identical calls (allocation_trace: "exposure_count/fatigue_state legitimately VARY ... any
+# full-card / replay diff MUST exclude it"). Comparing full cards is how a wall-clock stamp in one
+# evidence field once marked 100 of 108 scenarios NON-DETERMINISTIC while names, tiers and scores
+# were byte-identical. Determinism and before/after drift are judged on this view only.
+RANK_KEYS = ("name", "tier", "band", "score", "can_outreach", "readiness")
+
+def rank_view(res):
+    return [[c.get(k) for k in RANK_KEYS] for c in res]
+
 # ---------------------------------------------------------------- checks
 class Ctx:
     def __init__(self, users, index):
@@ -262,6 +323,15 @@ def main():
                     help="extra battery JSON files (list of scenario dicts)")
     ap.add_argument("--json", default=None, help="write machine-readable results here")
     ap.add_argument("--only", default=None, help="comma-separated scenario ids")
+    ap.add_argument("--once", action="store_true",
+                    help="call the engine once per scenario (skips the in-process determinism check)")
+    ap.add_argument("--snapshot", default=None,
+                    help="write the ranking view of every scenario here (the 'before' of a before/after)")
+    ap.add_argument("--compare", default=None,
+                    help="a previous --snapshot; scenarios whose ranking view changed are listed as DRIFT")
+    ap.add_argument("--explain", default=None,
+                    help="comma-separated scenario ids: print the top-8 with per-feature contributions "
+                         "(explain_match, the same engine) — the 'why' behind an ORDER/TOP1 failure")
     a = ap.parse_args()
     users = load_pool(a.pool)
     with open(a.index, encoding="utf-8") as f:
@@ -275,13 +345,17 @@ def main():
         keep = set(a.only.split(","))
         battery = [s for s in battery if s["id"] in keep]
     results, failures, lat = [], [], []
+    snapshot, total_cards = {}, 0
     for sc in battery:
         prof = sc.get("profile") or TESTER
         now = sc.get("now") or NOW_OPEN
         try:
             res, ms = run_match(sc["intent"], prof, now)
-            res2, _ = run_match(sc["intent"], prof, now)
-            det = (json.dumps(res, sort_keys=True) == json.dumps(res2, sort_keys=True))
+            if a.once:
+                det = True
+            else:
+                res2, _ = run_match(sc["intent"], prof, now)
+                det = rank_view(res) == rank_view(res2)
         except Exception as ex:
             failures.append((sc["id"], ["CRASH: %r" % ex]))
             results.append(dict(id=sc["id"], crash=repr(ex)))
@@ -296,6 +370,10 @@ def main():
         results.append(dict(id=sc["id"], ok=not F, failures=F, ms=round(ms, 1),
                             slate=[(c["name"], c.get("tier"), c.get("band"), c.get("readiness"),
                                     c.get("can_outreach")) for c in res[:8]]))
+        snapshot[sc["id"]] = rank_view(res)
+        total_cards += len(res)
+        if a.explain and sc["id"] in set(a.explain.split(",")):
+            explain_slate(cx, sc, prof, now)
         if F:
             failures.append((sc["id"], F))
     # --- ranking granularity guard -------------------------------------------------------------
@@ -329,6 +407,26 @@ def main():
     else:
         results.append(dict(id="ranking_granularity", ok=True, granularity=round(gran, 1)))
 
+    # A HARNESS MUST FAIL, NOT SWALLOW. A run whose every slate came back empty measured nothing —
+    # once that happened silently: a wrong `now` type made every call raise inside a try/except,
+    # and "ranking unchanged" was really "the same error text twice".
+    if battery and total_cards == 0:
+        failures.append(("snapshot_empty", ["SNAPSHOT EMPTY: every slate empty — measuring nothing"]))
+        results.append(dict(id="snapshot_empty", ok=False, failures=["SNAPSHOT EMPTY"]))
+    print("cards in snapshot: %d" % total_cards)
+    if a.snapshot:
+        with open(a.snapshot, "w", encoding="utf-8") as f:
+            json.dump(dict(keys=list(RANK_KEYS), cards=total_cards, scenarios=snapshot), f,
+                      ensure_ascii=False, indent=1)
+    if a.compare:
+        with open(a.compare, encoding="utf-8") as f:
+            prev = json.load(f).get("scenarios") or {}
+        drift = [sid for sid, view in snapshot.items() if sid in prev and prev[sid] != view]
+        missing = [sid for sid in prev if sid not in snapshot]
+        print("\nDRIFT vs %s: %d scenario(s) ranked differently%s"
+              % (a.compare, len(drift), (" — " + ", ".join(drift[:12])) if drift else ""))
+        if missing:
+            print("  (%d scenario(s) in the previous snapshot are absent now: %s)" % (len(missing), ", ".join(missing[:8])))
     n_ok = sum(1 for r in results if r.get("ok"))
     hard = sum(1 for _id, fs in failures for f in fs
                if f.startswith(("GATE", "SELF", "OUTREACH", "DATING", "SCORE", "CRASH", "NON-DET")))

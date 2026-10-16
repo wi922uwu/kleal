@@ -12,7 +12,7 @@
  * Каждый экран задаёт СВОЮ силу пятен: на welcome снизу горит красный, на входе — розовый с
  * янтарём. Цвета при этом общие, из токенов.
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import Svg, { Defs, Ellipse, RadialGradient, Rect, Stop, LinearGradient } from 'react-native-svg';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -30,10 +30,11 @@ export const GLOW_WELCOME: Glow[] = [
 
 /** Пятна экрана A.03 · Sign in: розовое поле с янтарным углом. */
 export const GLOW_SIGNIN: Glow[] = [
-  { c: color.ambientPink, x: 0.42, y: 0.42, rx: 1.05, ry: 0.62, a: 0.5 },
-  { c: color.ambientAmber, x: 0.92, y: 0.12, rx: 0.62, ry: 0.34, a: 0.45 },
-  { c: color.ambientViolet, x: 0.08, y: 0.28, rx: 0.55, ry: 0.3, a: 0.16 },
-];
+  // Макет «First run» (A.03): сиреневый верх, розовое поле в центре и ниже, тёплый край справа.
+  { c: color.ambientPink, x: 0.5, y: 0.62, rx: 1.15, ry: 0.62, a: 0.62 },
+  { c: color.ambientViolet, x: 0.2, y: 0.12, rx: 0.9, ry: 0.36, a: 0.24 },
+  { c: color.ambientAmber, x: 0.95, y: 0.2, rx: 0.5, ry: 0.28, a: 0.22 },
+]
 
 /**
  * Пятна экранов входа по коду (A.03.1–A.03.3).
@@ -119,9 +120,22 @@ function AmbientVideo() {
     p.muted = true;
     p.play();
   });
+  /*
+    ВИДНО ТОЛЬКО ТО, ЧТО ИГРАЕТ. Пока ролик не пошёл — или не пошёл совсем (не докачался по
+    мобильной сети, не раскодировался) — iOS рисует на месте видео перечёркнутый «плей» прямо
+    посреди анкеты. Поэтому вид прозрачен до первого настоящего кадра и снова гаснет при ошибке:
+    под ним остаётся нарисованная подложка, и экран выглядит как задумано. Прозрачность здесь
+    безопасна для жидкого стекла: ролик — сосед стеклянных поверхностей, а не их предок.
+  */
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    const on = player.addListener('playingChange', ({ isPlaying }) => { if (isPlaying) setLive(true); });
+    const off = player.addListener('statusChange', ({ status }) => { if (status === 'error') setLive(false); });
+    return () => { on.remove(); off.remove(); };
+  }, [player]);
   return (
     <VideoView
-      style={StyleSheet.absoluteFill}
+      style={[StyleSheet.absoluteFill, { opacity: live ? 1 : 0 }]}
       player={player}
       contentFit="cover"
       nativeControls={false}

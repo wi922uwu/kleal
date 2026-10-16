@@ -15,16 +15,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useNavigation, useRouter } from 'expo-router';
 import { auth } from '../src/api';
-import { AUTH, looksLikeEmail } from '../src/auth';
+import { AUTH, looksLikeEmail, latinLocalPart } from '../src/auth';
 import { AUTH_TERMS } from '../src/onboarding';
 import { useLang, T, replyLang } from '../src/i18n';
 import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { GlassBack, GlassInput } from '../src/components/GlassField';
 import { GlassPill, GlassToast } from '../src/components/Glass';
-import { color, displayFamily, space, type } from '../src/theme';
+import { riseIn } from '../src/components/LiquidGlass';
+import { color, heading, space, type } from '../src/theme';
 import { hFail } from '../src/haptics';
 
 export default function AuthEmail() {
@@ -35,6 +37,8 @@ export default function AuthEmail() {
   const kb = useKeyboardInset();
   const nav = useNavigation();
   const input = useRef<TextInput>(null);
+  const reduced = useReducedMotion();
+  const up = (n: number) => (reduced ? undefined : FadeIn.delay(40 + n * 60).duration(360));
   const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<{ title: string; note: string } | null>(null);
@@ -81,6 +85,8 @@ export default function AuthEmail() {
     // Кадр A.03.1b: кнопка выключена, пока адрес не похож на адрес, но по нажатию на выключенную
     // ничего не происходит — поэтому ошибку показываем и здесь, если человек всё-таки дожал.
     if (!ok) { hFail(); setErr({ title: AUTH.badEmailTitle(), note: AUTH.badEmailNote() }); return; }
+    // Кириллица до «@» отсеивается здесь же, без похода на сервер: ответ известен заранее.
+    if (!latinLocalPart(email)) { hFail(); setErr({ title: AUTH.latinEmailTitle(), note: AUTH.latinEmailNote() }); return; }
     setBusy(true);
     setErr(null);
     try {
@@ -96,6 +102,7 @@ export default function AuthEmail() {
       }
       hFail();
       if (r?.error === 'bad email') setErr({ title: AUTH.badEmailTitle(), note: AUTH.badEmailNote() });
+      else if (r?.error === 'latin email') setErr({ title: AUTH.latinEmailTitle(), note: AUTH.latinEmailNote() });
       else if (r?.error === 'too many') setErr({ title: AUTH.tooManyTitle(), note: AUTH.tooManyNote() });
       // Повтор здесь не поможет никогда — и говорить «через минуту» значит гонять по кругу.
       else if (r?.error === 'not allowed') setErr({ title: AUTH.notAllowedTitle(), note: AUTH.notAllowedNote() });
@@ -119,14 +126,15 @@ export default function AuthEmail() {
         <View style={[s.page, { paddingTop: insets.top + space.sm,
                                 paddingBottom: dockBottom(insets.bottom + space.lg, kb) }]}>
           <GlassBack
-            label={T('Назад', 'Back')}
+            label={T('Назад', 'Back', 'Atrás')}
             onPress={() => (router.canGoBack() ? router.back() : router.replace('/auth'))}
           />
 
-          {/* Гарнитура заголовка зависит от языка — см. displayFamily: в шрифте борда нет кириллицы. */}
-          <Text style={[s.h, { fontFamily: displayFamily(lang) }]}>{AUTH.emailTitle()}</Text>
-          <Text style={s.note}>{AUTH.emailNote()}</Text>
+          {/* Гарнитура и кегль заголовка зависят от языка — см. heading(): в TASA нет кириллицы. */}
+          <Animated.Text entering={up(0)} style={[s.h, heading(lang, type.heading)]}>{AUTH.emailTitle()}</Animated.Text>
+          <Animated.Text entering={up(1)} style={s.note}>{AUTH.emailNote()}</Animated.Text>
 
+          <Animated.View entering={reduced ? undefined : riseIn(120, 6)}>
           <GlassInput
             ref={input}
             style={s.field}
@@ -145,21 +153,23 @@ export default function AuthEmail() {
             onSubmitEditing={go}
             accessibilityLabel={AUTH.emailLabel()}
           />
+          </Animated.View>
 
           {/* Та же плашка, что на экране кода: ошибка входа выглядит одинаково на обоих шагах. */}
           {err ? <GlassToast title={err.title} note={err.note} style={s.toast} /> : null}
 
-          <View style={s.fill} />
-
-          <GlassPill
-            tone="brand"
-            label={AUTH.continue()}
-            disabled={!ok}
-            busy={busy}
-            onPress={go}
-            style={s.cta}
-          />
-          <Text style={s.terms}>{AUTH_TERMS()}</Text>
+          {/* Кнопка сразу под полем, как в кадре A.03.1: с поднятой клавиатурой она всё равно видна. */}
+          <Animated.View entering={reduced ? undefined : riseIn(120, 6)}>
+            <GlassPill
+              tone="brand"
+              label={AUTH.continue()}
+              disabled={!ok}
+              busy={busy}
+              onPress={go}
+              style={s.cta}
+            />
+            <Text style={s.terms}>{AUTH_TERMS()}</Text>
+          </Animated.View>
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -171,11 +181,11 @@ const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ambientBase },
   fill: { flex: 1 },
   page: { flex: 1, paddingHorizontal: 24 },
-  h: { ...type.display, color: color.fg, marginTop: 28 } as any,
-  note: { ...type.displaySub, color: color.muted, marginTop: space.sm } as any,
-  field: { marginTop: 32 },
+  h: { color: color.fg, marginTop: 24 } as any,
+  note: { ...type.displaySub, color: color.muted, marginTop: space.lg } as any,
+  field: { marginTop: 24 },
   toast: { marginTop: space.md },
   // Кнопка входа выше стеклянных: у неё в борде своя высота, 56 против 52.
-  cta: { height: 56 },
-  terms: { ...type.fine, color: color.muted, textAlign: 'center', marginTop: space.md } as any,
+  cta: { marginTop: space.lg },
+  terms: { ...type.fine, color: color.muted, textAlign: 'center', marginTop: space.lg } as any,
 });

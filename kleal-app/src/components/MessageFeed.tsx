@@ -19,23 +19,51 @@
  * Всё остальное — общее, и переставать быть общим не должно: разъехавшиеся ленты мы уже видели.
  */
 import React from 'react';
-import { Pressable, StyleSheet, Text, View, Linking } from 'react-native';
-import { CHAT, Msg, msgTime, msgDayLabel, sameSeries, linkParts } from '../chat';
+import { Image, Pressable, StyleSheet, Text, View, Linking } from 'react-native';
+import { CHAT, Msg, msgTime, msgDayLabel, sameSeries, linkParts, klealText } from '../chat';
+import { isMe, mediaUrl } from '../api';
 import { VoiceBubble } from '../voice';
 import { VideoBubble } from '../videonote';
 import { SwipeToReply } from './SwipeToReply';
-import { color, radius as rad, space } from '../theme';
+import { GlassSurface } from './LiquidGlass';
+import { IconClock, IconPerson } from './icons';
+import { color, font, radius as rad, space } from '../theme';
+
+/** Кнопка под событием: подпись, что делать и насколько она главная. */
+export type SysAct = { key: string; label: string; onPress: () => void; soft?: boolean };
+
+/** Кто стоит за репликой: цвет имени и лицо. Решает экран — только он знает состав. */
+export type Author = { color?: string; photo?: string };
+
+/**
+ * Имена, которые в системной строке выделяются начертанием 500 (борд GR.18: «Jane joined the
+ * group», «You created BBQ by the beach meetup»): участник — своим цветом автора, «ты» — серым.
+ */
+export type SysName = { name: string; color: string };
+
 
 export function MessageFeed({
-  msgs, me, ru, sysText, showAuthor = false, peerRead,
+  msgs, me, ru, sysText, sysAction, showAuthor = false, peerRead, authorOf, sysNames,
   onReply, onReact, onPick, onRetry,
 }: {
   msgs: Msg[];
   me: string;
   ru: boolean;
   sysText: (m: Msg) => string;
+  /**
+   * Что можно СДЕЛАТЬ прямо из события — кнопкой под строкой.
+   *
+   * Решает вызывающий, а не сервер: только у экрана есть живое состояние плана, и только он
+   * знает, устарело ли событие. Строка «план предложен» живёт в ленте вечно, а подтверждать его
+   * можно ровно пока он не подтверждён, не отменён и не перенесён ещё раз.
+   */
+  sysAction?: (m: Msg) => SysAct[] | null;
   showAuthor?: boolean;
   peerRead?: number;
+  /** Цвет и лицо автора над чужой серией (комната группы). Без него — имя цветом по хешу. */
+  authorOf?: (m: Msg) => Author | null;
+  /** Имена для выделения в системных строках. */
+  sysNames?: SysName[];
   onReply: (m: Msg) => void;
   onReact: (m: Msg, emoji: string) => void;
   onPick: (m: Msg) => void;
@@ -54,7 +82,9 @@ export function MessageFeed({
   return (
     <>
       {shown.map((m, i) => {
-        const mine = norm(m.from) === mineName;
+        // Своя ли реплика — по `from_id`; по подписи только у строки без id (своя, ещё не
+        // отправленная, или старый ответ). По подписи переписка двух тёзок была вся «моя».
+        const mine = isMe(m.from, (m as any).from_id, me);
         const prev = shown[i - 1];
         const next = shown[i + 1];
         const newDay = !!m.t && (!prev
@@ -63,12 +93,58 @@ export function MessageFeed({
         /* События — не реплика: они не чьи-то слова, а факт, случившийся со встречей или с
            составом. Поэтому строкой по центру, без пузыря, автора и галочек. */
         if (m.sys) {
+          const acts = sysAction ? sysAction(m) : null;
           return (
             <React.Fragment key={m.id || m.cid || i}>
               {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
-              <Text style={s.sys}>
-                {sysText(m)}{m.t ? ` · ${msgTime(m.t, ru)}` : ''}
-              </Text>
+              {/* Строка события по борду (GR.18): имена начертанием 500, остальное — 400, дальше
+                  часики 10 и время. Одной строкой по центру, переносится целиком. */}
+              <View style={s.sysRow}>
+                <Text style={s.sys}>{sysSpans(sysText(m), sysNames)}</Text>
+                {m.t ? (
+                  <View style={s.sysTime}>
+                    <IconClock size={10} c={SYS_INK} />
+                    <Text style={s.sys}>{msgTime(m.t, ru)}</Text>
+                  </View>
+                ) : null}
+              </View>
+              {acts && acts.length ? (
+                <View style={s.sysActs}>
+                  {acts.map((a) => (
+                    <Pressable
+                      key={a.key}
+                      accessibilityRole="button"
+                      accessibilityLabel={a.label}
+                      style={[s.sysBtn, a.soft && s.sysBtnSoft]}
+                      onPress={a.onPress}
+                      hitSlop={6}
+                    >
+                      <Text style={[s.sysBtnText, a.soft && s.sysBtnTextSoft]}>{a.label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+            </React.Fragment>
+          );
+        }
+
+        /* MSG.09 / MSG.14b: удалённая или скрытая реплика — не пузырь, а строка по центру, как
+           событие: «You deleted a message», «Pau’s message is hidden». */
+        if (m.deleted || m.hidden) {
+          const who = String(m.from || '');
+          return (
+            <React.Fragment key={m.id || m.cid || i}>
+              {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
+              <View style={s.sysRow}>
+                <Text style={s.sys}>{sysSpans(m.hidden ? CHAT.hiddenFrom(who) : CHAT.deletedBy(who, mine),
+                  [...(sysNames || []), ...(who && !mine ? [{ name: who, color: authorOf?.(m)?.color || authorColor(who) }] : [])])}</Text>
+                {m.t ? (
+                  <View style={s.sysTime}>
+                    <IconClock size={10} c={SYS_INK} />
+                    <Text style={s.sys}>{msgTime(m.t, ru)}</Text>
+                  </View>
+                ) : null}
+              </View>
             </React.Fragment>
           );
         }
@@ -85,7 +161,30 @@ export function MessageFeed({
               <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', marginTop: head ? 8 : 2 }}>
                 {/* Имя автора — только у чужих и только в начале серии: повторять его над каждой
                     репликой одного человека значит кричать его четыре раза подряд. */}
-                {showAuthor && !mine && head ? <Text style={s.author}>{m.from}</Text> : null}
+                {showAuthor && !mine && head ? (
+                  /* Автор серии — лицо 32 и имя его цветом (борд GR.21: «Chat Message → author»).
+                     Лицо нужно, чтобы в группе реплику узнавали раньше, чем прочтут имя. */
+                  <View style={s.authorRow}>
+                    {authorOf ? (
+                      <View style={s.authorAv}>
+                        <IconPerson size={16} />
+                        {authorOf(m)?.photo ? (
+                          <Image source={{ uri: mediaUrl(String(authorOf(m)?.photo)) }}
+                                 style={[s.authorAv, StyleSheet.absoluteFill]} />
+                        ) : null}
+                      </View>
+                    ) : null}
+                    <Text style={[s.author, { color: authorOf?.(m)?.color || authorColor(String(m.from || '')) }]}
+                          numberOfLines={1}>{m.from}</Text>
+                  </View>
+                ) : null}
+                {/* Ответ модерации. Подписан прямо над репликой, потому что иначе это просто
+                    сообщение от кого-то по имени Kleal — а человек должен видеть, что ему
+                    ответил продукт, а не собеседник. Старый клиент лишнего поля не знает и
+                    покажет обычную реплику: хуже не станет. */}
+                {(m as any).admin && !mine && head ? (
+                  <Text style={s.official}>{CHAT.fromKleal()}</Text>
+                ) : null}
 
                 {m.video && !m.deleted ? (
                   /* Кружок — не пузырь: у него нет ни фона, ни хвостика, он сам себе форма. */
@@ -99,9 +198,20 @@ export function MessageFeed({
                     onPress={failed ? () => onRetry(m) : undefined}
                     onLongPress={m.deleted || !m.id ? undefined : () => onPick(m)}
                     delayLongPress={350}
-                    style={[s.bub, mine ? s.bubMe : s.bubThem,
-                            !tail && (mine ? s.bubMeMid : s.bubThemMid), failed && s.bubFailed]}
+                    style={[s.bubBox, mine ? s.bubMe : s.bubThem]}
                   >
+                    {/*
+                      ПУЗЫРЬ — ЖИДКОЕ СТЕКЛО (борд «GR · Offline — new layout», GR.18): свой —
+                      коралловое, чужой — светлое, скругление 20 и хвостик 4 у последнего в серии.
+                      Стекло само по себе не ловит касаний, долгое нажатие и ссылки внутри текста
+                      продолжают работать через Pressable и Text.
+                    */}
+                    <GlassSurface
+                      tone={mine ? 'brand' : 'light'}
+                      radius={20}
+                      style={[s.bub, mine ? (tail ? s.bubMeTail : s.bubMeMid) : (tail ? s.bubThemTail : s.bubThemMid),
+                              (m as any).admin && !mine && s.bubOfficial]}
+                    >
                     {/* Цитата внутри пузыря, а не рядом: ответ и то, на что отвечают, — одно целое. */}
                     {m.rt ? (
                       <View style={[s.quote, mine && s.quoteMine]}>
@@ -113,8 +223,8 @@ export function MessageFeed({
                         </Text>
                       </View>
                     ) : null}
-                    <Text style={[s.bubText, mine && { color: color.onPrimary }, m.deleted && s.bubGone]}>
-                      {m.deleted ? CHAT.deleted() : linkParts(String(m.text || '')).map((part, k) => (
+                    <Text style={[s.bubText, mine && { color: color.onPrimary }, m.deleted && s.bubGone, failed && s.bubFailed]}>
+                      {m.deleted ? CHAT.deleted() : linkParts(String((m as any).admin && klealText(m as any) || m.text || '')).map((part, k) => (
                         part.href ? (
                           /* Адрес показан ровно так, как его прислали: подменять его красивой
                              подписью нельзя — по нему и решают, идти ли. */
@@ -128,6 +238,7 @@ export function MessageFeed({
                         ) : <Text key={k}>{part.text}</Text>
                       ))}
                     </Text>
+                    </GlassSurface>
                   </Pressable>
                 )}
 
@@ -170,21 +281,124 @@ export function MessageFeed({
   );
 }
 
+/**
+ * Цвет имени автора. Постоянный для человека: считается от имени, а не от порядка в ленте —
+ * иначе Jane была бы фиолетовой вчера и оранжевой сегодня.
+ */
+const AUTHOR_COLORS = ['#5F31DB', '#E0671B', '#0F7340', '#1F58BE', '#C2185B', '#8A5A00'];
+
+/** Серый системных строк — muted-foreground палитры борда. */
+const SYS_INK = '#5A616E';
+
+/**
+ * Разложить строку события на куски: имена из `names` — начертанием 500 (участник своим цветом,
+ * «ты» — серым), остальное — обычным. Ищется целое слово, самое длинное имя первым: иначе «Jan»
+ * съело бы начало «Jane».
+ */
+function sysSpans(text: string, names?: SysName[]): React.ReactNode {
+  const list = (names || []).filter((n) => n.name.trim()).sort((a, b) => b.name.length - a.name.length);
+  if (!list.length || !text) return text;
+  const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Граница слова — явным классом букв, а не \\p{L}: свойства Юникода в регулярках Hermes знает не везде.
+  const L = 'A-Za-zÀ-ÿĀ-žА-Яа-яЁё';
+  const re = new RegExp('(^|[^' + L + '])(' + list.map((n) => esc(n.name)).join('|') + ')(?=$|[^' + L + '])', 'g');
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let k = 0;
+  for (const mm of text.matchAll(re)) {
+    const at = (mm.index || 0) + mm[1].length;
+    if (at > last) out.push(text.slice(last, at));
+    const hit = list.find((n) => n.name === mm[2]);
+    out.push(<Text key={k++} style={[s.sysName, { color: hit?.color || SYS_INK }]}>{mm[2]}</Text>);
+    last = at + mm[2].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function authorColor(name: string): string {
+  let h = 0;
+  for (const ch of name.trim().toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AUTHOR_COLORS[h % AUTHOR_COLORS.length];
+}
+
 // ===== вид
 
 const s = StyleSheet.create({
   day: { alignSelf: 'center', fontSize: 12, color: color.neutral400, marginVertical: space.sm },
-  sys: { alignSelf: 'center', textAlign: 'center', fontSize: 12, color: color.muted, marginVertical: 6 },
-  author: { fontSize: 12, color: color.muted, marginBottom: 2, marginLeft: 4 },
+  /** Событие — Geist 11 серым по центру, как строки «joined the group» на GR.18. */
+  sys: { textAlign: 'center', fontFamily: font.text, fontSize: 11, lineHeight: 16, color: SYS_INK },
+  /** Строка события: имя, текст, часики и время в один ряд, поля 3/11 как у «Frame 545» борда. */
+  sysRow: { alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center',
+            columnGap: 3, paddingVertical: 3, paddingHorizontal: 11, marginVertical: 2, maxWidth: '100%' },
+  sysTime: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  sysName: { fontFamily: font.textMedium },
+  /* Кнопка события. Главная — фирменным цветом: человек должен видеть, что от него ждут ответа,
+     не вчитываясь в серую строку над ней. Второстепенная — обведённая, чтобы «оставить как было»
+     не спорило глазом с «подтвердить». */
+  sysActs: { flexDirection: 'row', flexWrap: 'wrap', alignSelf: 'center', justifyContent: 'center',
+             gap: space.xs, marginTop: -2, marginBottom: 10 },
+  sysBtn: { height: 36, paddingHorizontal: 16, borderRadius: rad.full, backgroundColor: color.primary,
+            alignItems: 'center', justifyContent: 'center' },
+  sysBtnSoft: { backgroundColor: color.card, borderWidth: 1, borderColor: color.border },
+  sysBtnText: { fontSize: 13, fontWeight: '700', color: color.onPrimary } as any,
+  sysBtnTextSoft: { color: color.fg } as any,
+  /** Имя автора цветом человека (GR.18: Jane — фиолетовым, Marc — оранжевым). */
+  author: { fontFamily: font.textSemibold, fontSize: 15, lineHeight: 20, flexShrink: 1 } as any,
+  /** Лицо 32 и имя через 8 — «author» борда; до пузыря 4. */
+  authorRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4, maxWidth: '80%' },
+  authorAv: {
+    width: 32, height: 32, borderRadius: 16, overflow: 'hidden', backgroundColor: color.neutral100,
+    alignItems: 'center', justifyContent: 'center',
+  },
 
-  bub: { maxWidth: '80%', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 18 },
+  /*
+    ПО ЧИСЛАМ БОРДА (OF.C2, node 3642-221266). Отличий было четыре, и вместе они и делали ленту
+    сырой:
+      • чужой пузырь стоял СЕРЫМ (#EEF0F4) — на борде он белый. На светло-сером фоне страницы
+        серое на сером сливалось в кашу, белое отделяется;
+      • радиус 18 против 22 — пузыри выглядели угловатее макета;
+      • свой пузырь был плоской заливкой без тени, а на борде под ним лежит мягкое розовое
+        свечение, которое и приподнимает его над лентой;
+      • у белого пузыря на борде есть своя тень — без неё он растворяется в фоне.
+    Настоящего градиента у своего пузыря пока нет: expo-linear-gradient в зависимостях
+    отсутствует, а тащить его ради одного пузыря — отдельное решение. Свечение даёт бо́льшую часть
+    эффекта; если понадобится градиент, это отдельная правка.
+  */
+  /** Обёртка держит ширину и тень; сам пузырь — стекло внутри неё. */
+  /** 260 из 350 на борде (Chat/Message) — 74% ширины ленты. */
+  bubBox: { maxWidth: '74%' },
+  bub: { paddingVertical: 12, paddingHorizontal: 16 },
+  /**
+   * Тени из борда: под своим — коралловое свечение (#FF385C · 30%, 16, y 6), под чужим — мягкая
+   * тёмная (#0A0A14 · 12%). Лежат на обёртке без заливки: iOS строит тень по форме стекла.
+   */
+  bubMe: {
+    alignSelf: 'flex-end',
+    shadowColor: color.primary, shadowOpacity: 0.3, shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 }, elevation: 4,
+  },
+  bubThem: {
+    alignSelf: 'flex-start',
+    // Только контактная тень 0/1 · 2, #0A0A14 · 6% — «Glass/Bubble» борда. Прежняя 16/6 · 12%
+    // поднимала чужой пузырь выше своего, а на борде он лежит почти на подложке.
+    shadowColor: '#0A0A14', shadowOpacity: 0.06, shadowRadius: 2,
+    // Без elevation: на Android тень просвечивает сквозь светлое стекло и красит пузырь в серый.
+    shadowOffset: { width: 0, height: 1 },
+  },
+  official: { fontSize: 11, fontWeight: '700', color: color.primary, marginBottom: 3, letterSpacing: 0.3 },
+  bubOfficial: { borderWidth: 1, borderColor: color.primary },
   /** Хвостик — у ПОСЛЕДНЕГО пузыря серии: он и показывает, где реплики одного человека кончились. */
-  bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderBottomRightRadius: 6 },
-  bubThem: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderBottomLeftRadius: 6 },
-  bubMeMid: { borderBottomRightRadius: 18 },
-  bubThemMid: { borderBottomLeftRadius: 18 },
-  bubText: { fontSize: 15, lineHeight: 21, color: color.fg },
-  /** Не ушло — пузырь бледнее и нажимается. Цвет не меняем: это по-прежнему твои слова. */
+  bubMeTail: { borderBottomRightRadius: 4 },
+  bubThemTail: { borderBottomLeftRadius: 4 },
+  bubMeMid: { borderBottomRightRadius: 20 },
+  bubThemMid: { borderBottomLeftRadius: 20 },
+  /** Семейство явно: без него реплики рисовались системным шрифтом, а не Geist. */
+  bubText: { fontFamily: font.text, fontSize: 15, lineHeight: 22, color: color.fg },
+  /**
+   * Не ушло — бледнее ТЕКСТ, а не пузырь: полупрозрачный предок гасит системное стекло целиком,
+   * и вместо бледного пузыря осталась бы одна строка. Цвет не меняем: это по-прежнему твои слова.
+   */
   bubFailed: { opacity: 0.6 },
   /** Удалённое остаётся строкой: пропасть бесследно оно не может — второй его уже видел. */
   bubGone: { fontStyle: 'italic', opacity: 0.7 },
@@ -207,7 +421,8 @@ const s = StyleSheet.create({
   reactionMine: { borderColor: color.primary, backgroundColor: color.card },
   reactionText: { fontSize: 13, color: color.fg } as any,
 
-  time: { fontSize: 11, color: color.neutral400, marginTop: 3, marginHorizontal: 4 },
+  /** Время: 11 средним начертанием цветом #5A616E — так на борде. */
+  time: { fontFamily: font.text, fontSize: 11, lineHeight: 22, color: '#8A8E96', marginHorizontal: 4 },
   tick: { fontSize: 11, color: color.neutral400 } as any,
   tickRead: { fontSize: 11, color: color.primary, fontWeight: '700' } as any,
   tickFail: { fontSize: 11, color: color.primary, fontWeight: '600' } as any,

@@ -476,6 +476,195 @@
    "ru": "менторство",
    "en": "mentoring",
    "es": "mentoría profesional"
+  },
+  {
+   "id": "I_ice_skating",
+   "parent": "F_adventure_sports",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "катание на коньках",
+   "en": "ice skating",
+   "es": "patinaje sobre hielo"
+  },
+  {
+   "id": "I_roller_skating",
+   "parent": "F_adventure_sports",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "катание на роликах",
+   "en": "roller skating",
+   "es": "patinaje sobre ruedas"
+  },
+  {
+   "id": "F_social_games_out",
+   "parent": "M_nightlife",
+   "type": "family",
+   "domain": "social_meet",
+   "ru": "боулинг, бильярд и дартс",
+   "en": "bowling, billiards and darts",
+   "es": "bolos, billar y dardos"
+  },
+  {
+   "id": "I_bowling",
+   "parent": "F_social_games_out",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "боулинг",
+   "en": "bowling",
+   "es": "bolos"
+  },
+  {
+   "id": "I_billiards",
+   "parent": "F_social_games_out",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "бильярд",
+   "en": "billiards",
+   "es": "billar"
+  },
+  {
+   "id": "I_darts",
+   "parent": "F_social_games_out",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "дартс",
+   "en": "darts",
+   "es": "dardos"
+  },
+  {
+   "id": "F_target_sports",
+   "parent": "M_sport",
+   "type": "family",
+   "domain": "sport_activity",
+   "ru": "гольф и прицельные виды спорта",
+   "en": "golf and target sports",
+   "es": "golf y deportes de precisión"
+  },
+  {
+   "id": "I_golf",
+   "parent": "F_target_sports",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "гольф",
+   "en": "golf",
+   "es": "golf"
+  },
+  {
+   "id": "I_mafia_game",
+   "parent": "F_tabletop",
+   "type": "activity",
+   "domain": "games",
+   "ru": "мафия",
+   "en": "mafia game",
+   "es": "juego de la mafia"
+  },
+  {
+   "id": "I_escape_room",
+   "parent": "F_tabletop",
+   "type": "activity",
+   "domain": "games",
+   "ru": "квест-комната",
+   "en": "escape room",
+   "es": "sala de escape"
+  },
+  {
+   "id": "I_jigsaw_puzzles",
+   "parent": "F_tabletop",
+   "type": "activity",
+   "domain": "games",
+   "ru": "пазлы",
+   "en": "jigsaw puzzles",
+   "es": "rompecabezas"
+  },
+  {
+   "id": "I_pizza",
+   "parent": "F_food_out",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "пицца",
+   "en": "pizza",
+   "es": "pizza"
+  },
+  {
+   "id": "I_astronomy",
+   "parent": "F_ideas_discussion",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "астрономия и космос",
+   "en": "astronomy and space",
+   "es": "astronomía y espacio"
+  },
+  {
+   "id": "I_waterpark",
+   "parent": "F_water_sports",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "аквапарк",
+   "en": "water park",
+   "es": "parque acuático"
+  },
+  {
+   "id": "I_ielts_prep",
+   "parent": "F_practice_formats",
+   "type": "activity",
+   "domain": "language_exchange",
+   "ru": "подготовка к ielts",
+   "en": "ielts preparation",
+   "es": "preparación del ielts"
+  },
+  {
+   "id": "I_bachata",
+   "parent": "F_nightlife_formats",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "бачата",
+   "en": "bachata",
+   "es": "bachata"
+  },
+  {
+   "id": "I_zumba",
+   "parent": "F_fitness_training",
+   "type": "activity",
+   "domain": "sport_activity",
+   "ru": "зумба",
+   "en": "zumba",
+   "es": "zumba"
+  },
+  {
+   "id": "I_pub",
+   "parent": "F_drinks",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "паб",
+   "en": "pub",
+   "es": "pub"
+  },
+  {
+   "id": "I_moms_meetup",
+   "parent": "F_parenting",
+   "type": "activity",
+   "domain": "social_meet",
+   "ru": "встречи мам",
+   "en": "mums meetup",
+   "es": "quedadas de mamás"
+  },
+  {
+   "id": "I_live_concert",
+   "parent": "F_live_music",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "концерт",
+   "en": "concert",
+   "es": "concierto"
+  },
+  {
+   "id": "I_art_exhibition",
+   "parent": "F_visual_arts",
+   "type": "activity",
+   "domain": "culture_event",
+   "ru": "выставка",
+   "en": "art exhibition",
+   "es": "exposición de arte"
   }
  ],
  "aliases": [
@@ -2018,6 +2207,678 @@
   {
    "alias": "шью на заказ дома",
    "node": "I_sewing"
+  },
+  {
+   "alias": "coffee",
+   "node": "I_coffee_chat"
+  },
+  {
+   "alias": "кофе",
+   "node": "I_coffee_chat"
+  },
+  {
+   "alias": "кофейни",
+   "node": "I_coffee_chat"
+  },
+  {
+   "alias": "кофейня",
+   "node": "I_coffee_chat"
+  },
+  {
+   "alias": "cafe",
+   "node": "I_coffee_chat"
+  },
+  {
+   "alias": "кафе",
+   "node": "I_coffee_chat"
+  },
+  {
+   "alias": "café",
+   "node": "I_coffee_chat"
+  },
+  {
+   "alias": "coffee chat",
+   "node": "I_coffee_chat"
+  },
+  {
+   "alias": "running",
+   "node": "F_running_walking"
+  },
+  {
+   "alias": "run",
+   "node": "F_running_walking"
+  },
+  {
+   "alias": "бег",
+   "node": "F_running_walking"
+  },
+  {
+   "alias": "бегать",
+   "node": "F_running_walking"
+  },
+  {
+   "alias": "пробежка",
+   "node": "F_running_walking"
+  },
+  {
+   "alias": "books",
+   "node": "F_books_writing"
+  },
+  {
+   "alias": "book",
+   "node": "F_books_writing"
+  },
+  {
+   "alias": "книги",
+   "node": "F_books_writing"
+  },
+  {
+   "alias": "чтение",
+   "node": "F_books_writing"
+  },
+  {
+   "alias": "reading",
+   "node": "F_books_writing"
+  },
+  {
+   "alias": "фото",
+   "node": "I_photography"
+  },
+  {
+   "alias": "food",
+   "node": "F_food_out"
+  },
+  {
+   "alias": "еда",
+   "node": "F_food_out"
+  },
+  {
+   "alias": "games",
+   "node": "M_games"
+  },
+  {
+   "alias": "игры",
+   "node": "M_games"
+  },
+  {
+   "alias": "пиво",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "sup",
+   "node": "I_paddle_board"
+  },
+  {
+   "alias": "сап",
+   "node": "I_paddle_board"
+  },
+  {
+   "alias": "сапы",
+   "node": "I_paddle_board"
+  },
+  {
+   "alias": "сап-борд",
+   "node": "I_paddle_board"
+  },
+  {
+   "alias": "sup board",
+   "node": "I_paddle_board"
+  },
+  {
+   "alias": "paddleboard",
+   "node": "I_paddle_board"
+  },
+  {
+   "alias": "paddleboarding",
+   "node": "I_paddle_board"
+  },
+  {
+   "alias": "stand up paddle",
+   "node": "I_paddle_board"
+  },
+  {
+   "alias": "stand-up paddle",
+   "node": "I_paddle_board"
+  },
+  {
+   "alias": "баня",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "бани",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "баню",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "бане",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "сауна",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "сауну",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "сауны",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "сауне",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "banya",
+   "node": "I_sauna"
+  },
+  {
+   "alias": "hackathon",
+   "node": "I_hackathon_team"
+  },
+  {
+   "alias": "hackathons",
+   "node": "I_hackathon_team"
+  },
+  {
+   "alias": "хакатон",
+   "node": "I_hackathon_team"
+  },
+  {
+   "alias": "хакатоны",
+   "node": "I_hackathon_team"
+  },
+  {
+   "alias": "hackatón",
+   "node": "I_hackathon_team"
+  },
+  {
+   "alias": "hackaton",
+   "node": "I_hackathon_team"
+  },
+  {
+   "alias": "counter strike",
+   "node": "I_counter_strike_2"
+  },
+  {
+   "alias": "csgo",
+   "node": "I_counter_strike_2"
+  },
+  {
+   "alias": "cs:go",
+   "node": "I_counter_strike_2"
+  },
+  {
+   "alias": "скейт",
+   "node": "I_skateboarding"
+  },
+  {
+   "alias": "скейтборд",
+   "node": "I_skateboarding"
+  },
+  {
+   "alias": "skateboard",
+   "node": "I_skateboarding"
+  },
+  {
+   "alias": "birra",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "birras",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "chela",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "chelas",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "cerveza",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "cervezas",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "cervesa",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "beers",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "пивко",
+   "node": "I_craft_beer"
+  },
+  {
+   "alias": "quiz",
+   "node": "I_trivia_quiz"
+  },
+  {
+   "alias": "quizzes",
+   "node": "I_trivia_quiz"
+  },
+  {
+   "alias": "квиз",
+   "node": "I_trivia_quiz"
+  },
+  {
+   "alias": "квизы",
+   "node": "I_trivia_quiz"
+  },
+  {
+   "alias": "pub quiz",
+   "node": "I_trivia_quiz"
+  },
+  {
+   "alias": "quiz night",
+   "node": "I_trivia_quiz"
+  },
+  {
+   "alias": "trivia night",
+   "node": "I_trivia_quiz"
+  },
+  {
+   "alias": "lecture",
+   "node": "I_public_lectures"
+  },
+  {
+   "alias": "lectures",
+   "node": "I_public_lectures"
+  },
+  {
+   "alias": "лекция",
+   "node": "I_public_lectures"
+  },
+  {
+   "alias": "лекции",
+   "node": "I_public_lectures"
+  },
+  {
+   "alias": "лекцию",
+   "node": "I_public_lectures"
+  },
+  {
+   "alias": "лекций",
+   "node": "I_public_lectures"
+  },
+  {
+   "alias": "stand-up",
+   "node": "I_standup"
+  },
+  {
+   "alias": "каток",
+   "node": "I_ice_skating"
+  },
+  {
+   "alias": "катке",
+   "node": "I_ice_skating"
+  },
+  {
+   "alias": "коньки",
+   "node": "I_ice_skating"
+  },
+  {
+   "alias": "коньках",
+   "node": "I_ice_skating"
+  },
+  {
+   "alias": "ice rink",
+   "node": "I_ice_skating"
+  },
+  {
+   "alias": "skating rink",
+   "node": "I_ice_skating"
+  },
+  {
+   "alias": "pista de hielo",
+   "node": "I_ice_skating"
+  },
+  {
+   "alias": "ролики",
+   "node": "I_roller_skating"
+  },
+  {
+   "alias": "роликах",
+   "node": "I_roller_skating"
+  },
+  {
+   "alias": "роликовые коньки",
+   "node": "I_roller_skating"
+  },
+  {
+   "alias": "rollerblading",
+   "node": "I_roller_skating"
+  },
+  {
+   "alias": "rollerblade",
+   "node": "I_roller_skating"
+  },
+  {
+   "alias": "inline skating",
+   "node": "I_roller_skating"
+  },
+  {
+   "alias": "patines en línea",
+   "node": "I_roller_skating"
+  },
+  {
+   "alias": "bowling alley",
+   "node": "I_bowling"
+  },
+  {
+   "alias": "bolera",
+   "node": "I_bowling"
+  },
+  {
+   "alias": "snooker",
+   "node": "I_billiards"
+  },
+  {
+   "alias": "бильярда",
+   "node": "I_billiards"
+  },
+  {
+   "alias": "pool billiards",
+   "node": "I_billiards"
+  },
+  {
+   "alias": "golfing",
+   "node": "I_golf"
+  },
+  {
+   "alias": "мафию",
+   "node": "I_mafia_game"
+  },
+  {
+   "alias": "мафии",
+   "node": "I_mafia_game"
+  },
+  {
+   "alias": "игра мафия",
+   "node": "I_mafia_game"
+  },
+  {
+   "alias": "mafia",
+   "node": "I_mafia_game"
+  },
+  {
+   "alias": "werewolf",
+   "node": "I_mafia_game"
+  },
+  {
+   "alias": "werewolf game",
+   "node": "I_mafia_game"
+  },
+  {
+   "alias": "квест",
+   "node": "I_escape_room"
+  },
+  {
+   "alias": "квесты",
+   "node": "I_escape_room"
+  },
+  {
+   "alias": "квест-комнаты",
+   "node": "I_escape_room"
+  },
+  {
+   "alias": "escape rooms",
+   "node": "I_escape_room"
+  },
+  {
+   "alias": "escape game",
+   "node": "I_escape_room"
+  },
+  {
+   "alias": "scape room",
+   "node": "I_escape_room"
+  },
+  {
+   "alias": "пазл",
+   "node": "I_jigsaw_puzzles"
+  },
+  {
+   "alias": "пазлов",
+   "node": "I_jigsaw_puzzles"
+  },
+  {
+   "alias": "jigsaw",
+   "node": "I_jigsaw_puzzles"
+  },
+  {
+   "alias": "jigsaw puzzle",
+   "node": "I_jigsaw_puzzles"
+  },
+  {
+   "alias": "puzzle",
+   "node": "I_jigsaw_puzzles"
+  },
+  {
+   "alias": "puzzles",
+   "node": "I_jigsaw_puzzles"
+  },
+  {
+   "alias": "puzle",
+   "node": "I_jigsaw_puzzles"
+  },
+  {
+   "alias": "puzles",
+   "node": "I_jigsaw_puzzles"
+  },
+  {
+   "alias": "пиццу",
+   "node": "I_pizza"
+  },
+  {
+   "alias": "пиццы",
+   "node": "I_pizza"
+  },
+  {
+   "alias": "пиццерия",
+   "node": "I_pizza"
+  },
+  {
+   "alias": "pizzeria",
+   "node": "I_pizza"
+  },
+  {
+   "alias": "pizzería",
+   "node": "I_pizza"
+  },
+  {
+   "alias": "pizzas",
+   "node": "I_pizza"
+  },
+  {
+   "alias": "космос",
+   "node": "I_astronomy"
+  },
+  {
+   "alias": "космоса",
+   "node": "I_astronomy"
+  },
+  {
+   "alias": "космосе",
+   "node": "I_astronomy"
+  },
+  {
+   "alias": "астрономия",
+   "node": "I_astronomy"
+  },
+  {
+   "alias": "astronomy",
+   "node": "I_astronomy"
+  },
+  {
+   "alias": "astronomía",
+   "node": "I_astronomy"
+  },
+  {
+   "alias": "cosmos",
+   "node": "I_astronomy"
+  },
+  {
+   "alias": "space exploration",
+   "node": "I_astronomy"
+  },
+  {
+   "alias": "exploración espacial",
+   "node": "I_astronomy"
+  },
+  {
+   "alias": "аквапарка",
+   "node": "I_waterpark"
+  },
+  {
+   "alias": "parc aquàtic",
+   "node": "I_waterpark"
+  },
+  {
+   "alias": "ielts",
+   "node": "I_ielts_prep"
+  },
+  {
+   "alias": "ielts exam",
+   "node": "I_ielts_prep"
+  },
+  {
+   "alias": "examen ielts",
+   "node": "I_ielts_prep"
+  },
+  {
+   "alias": "bachata night",
+   "node": "I_bachata"
+  },
+  {
+   "alias": "noche de bachata",
+   "node": "I_bachata"
+  },
+  {
+   "alias": "zumba class",
+   "node": "I_zumba"
+  },
+  {
+   "alias": "clase de zumba",
+   "node": "I_zumba"
+  },
+  {
+   "alias": "pubs",
+   "node": "I_pub"
+  },
+  {
+   "alias": "пабы",
+   "node": "I_pub"
+  },
+  {
+   "alias": "пабе",
+   "node": "I_pub"
+  },
+  {
+   "alias": "irish pub",
+   "node": "I_pub"
+  },
+  {
+   "alias": "pub irlandés",
+   "node": "I_pub"
+  },
+  {
+   "alias": "mums",
+   "node": "I_moms_meetup"
+  },
+  {
+   "alias": "moms",
+   "node": "I_moms_meetup"
+  },
+  {
+   "alias": "mum friends",
+   "node": "I_moms_meetup"
+  },
+  {
+   "alias": "mom friends",
+   "node": "I_moms_meetup"
+  },
+  {
+   "alias": "мамы",
+   "node": "I_moms_meetup"
+  },
+  {
+   "alias": "мамочки",
+   "node": "I_moms_meetup"
+  },
+  {
+   "alias": "mamás",
+   "node": "I_moms_meetup"
+  },
+  {
+   "alias": "motherhood",
+   "node": "I_moms_meetup"
+  },
+  {
+   "alias": "concerts",
+   "node": "I_live_concert"
+  },
+  {
+   "alias": "gig",
+   "node": "I_live_concert"
+  },
+  {
+   "alias": "gigs",
+   "node": "I_live_concert"
+  },
+  {
+   "alias": "концерты",
+   "node": "I_live_concert"
+  },
+  {
+   "alias": "концерта",
+   "node": "I_live_concert"
+  },
+  {
+   "alias": "conciertos",
+   "node": "I_live_concert"
+  },
+  {
+   "alias": "live concert",
+   "node": "I_live_concert"
+  },
+  {
+   "alias": "выставку",
+   "node": "I_art_exhibition"
+  },
+  {
+   "alias": "выставки",
+   "node": "I_art_exhibition"
+  },
+  {
+   "alias": "exhibition",
+   "node": "I_art_exhibition"
+  },
+  {
+   "alias": "exhibitions",
+   "node": "I_art_exhibition"
+  },
+  {
+   "alias": "art exhibitions",
+   "node": "I_art_exhibition"
+  },
+  {
+   "alias": "exposición",
+   "node": "I_art_exhibition"
+  },
+  {
+   "alias": "exposicion",
+   "node": "I_art_exhibition"
   }
  ]
 }

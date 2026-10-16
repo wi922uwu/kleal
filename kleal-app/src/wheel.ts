@@ -1,8 +1,8 @@
 /**
- * Набор картинок для колеса на пустой главной.
+ * Набор карточек для карусели настроений на главной (борд «GR.01 · Home · Kleal prompt»).
  *
  * ПОЧЕМУ СПИСОК ЖИВЁТ ОТДЕЛЬНО ОТ ЭКРАНА. Правило проекта: содержимое — в `src/*.ts`, экраны
- * только рисуют (см. AGENTS.md). Колесо про то, чем вообще можно заняться, и этот список будет
+ * только рисуют (см. AGENTS.md). Карусель про то, чем вообще можно заняться, и этот список будет
  * расти и меняться вместе с продуктом — менять его в разметке экрана значит однажды искать
  * кроссовок среди `<View>`.
  *
@@ -11,40 +11,56 @@
  * ленту анкет, а Kleal не про это.
  *
  * КАРТИНКИ ПОДГОТОВЛЕНЫ, А НЕ ПОЛОЖЕНЫ КАК ЕСТЬ. У каждой обрезаны прозрачные поля — иначе предмет
- * занимает произвольную часть рамки, и в колесе соседние выглядывают из-за края кто на тридцать
- * точек, кто вообще ни на сколько. Длинная сторона приведена к 1300 пикселей: ровно столько видно
- * при рамке 340 точек на трёхкратной плотности, дальше растёт вес, а не чёткость. Цвет сведён к
- * палитре на 255 — вес падает в два с половиной раза, а на размере отрисовки разницы не видно
- * (сверял на зеркальном шаре и джойстике, самых градиентных из шести). Всего 2,6 МБ на шесть
- * предметов вместо 6,6.
+ * занимает произвольную часть рамки, и в соседних карточках он стоит кто выше, кто ниже. Длинная
+ * сторона приведена к 1300 пикселей: ровно столько видно при рамке 340 точек на трёхкратной
+ * плотности, дальше растёт вес, а не чёткость. Цвет сведён к палитре на 255 — вес падает в два с
+ * половиной раза, а на размере отрисовки разницы не видно (сверял на зеркальном шаре и джойстике,
+ * самых градиентных из шести). Всего 2,6 МБ на шесть предметов вместо 6,6.
+ *
+ * ПОДЛОЖКИ У ПРЕДМЕТА БОЛЬШЕ НЕТ. Раньше за колесом перетекали пятна фирменных цветов, у каждого
+ * предмета свой набор (`glows`). В новом борде фон главной — одна неподвижная фотография, и
+ * менять её вместе с карточкой нечему: карточки стеклянные, и смену видно по тому, что сквозь
+ * них просвечивает, а не по цвету экрана.
  */
-import type { ArcItem } from './components/ArcCarousel';
-import type { Glow } from './components/Ambient';
-import { color } from './theme';
+import type { ImageSourcePropType } from 'react-native';
 import { T } from './i18n';
 
 /**
- * ПОДЛОЖКА У КАЖДОГО ПРЕДМЕТА СВОЯ, И РАЗНИЦА НАРОЧНО МАЛЕНЬКАЯ.
+ * Предмет, летающий вокруг карточки (смайлик, наушники, бокал, нота у зеркального шара).
  *
- * Фон не «меняется на другой», а чуть поворачивается: те же три пятна фирменных цветов, только
- * ведущий цвет и его место разные. Если сделать палитры контрастными, листание превратится в
- * мигание — а задача обратная: заметить смену можно, только если специально следить.
+ * КООРДИНАТЫ — В ТОЧКАХ КАРТОЧКИ, а не экрана: начало в её левом верхнем углу, ширина карточки
+ * взята эталонной, 299 (как в борде). Карусель сама умножает их на свой масштаб, поэтому на узком
+ * телефоне предметы ужимаются вместе с карточкой и не разъезжаются с ней.
  *
- * ЦВЕТА ТОЛЬКО ИЗ ТОКЕНОВ. Соблазн подобрать оттенок под сам предмет (дерево — коричневый, вишня —
- * бордовый) велик, но тогда фирменный слой перестаёт быть фирменным и превращается в фон под
- * картинку. Поэтому набор один и тот же, меняется только кто в нём главный.
+ * `w × h` — ровно размер видимого предмета: файлы обрезаны по контуру, рамки вокруг нет.
  */
-const mood = (lead: string, second: string, third: string): Glow[] => [
-  { c: lead, x: 0.42, y: 0.42, rx: 1.05, ry: 0.62, a: 0.5 },
-  { c: second, x: 0.92, y: 0.12, rx: 0.62, ry: 0.34, a: 0.45 },
-  { c: third, x: 0.08, y: 0.3, rx: 0.6, ry: 0.32, a: 0.2 },
-];
+export type Decor = {
+  source: ImageSourcePropType;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Поверх всех карточек. По умолчанию предмет лежит ПОД ними и виден сквозь стекло размытым. */
+  front?: boolean;
+};
+
+export type MoodItem = {
+  key: string;
+  /** Предмет в карточке — вырезанный по контуру, без фона. */
+  source: ImageSourcePropType;
+  /** Заголовок карточки: оклик («Побегаем?»), а не название предмета — см. ниже. */
+  label: string;
+  /** Что уйдёт в разговор, если по карточке нажать: «Хочу побегать». */
+  query: string;
+  /** Предметы вокруг карточки. Есть только там, где их нарисовал борд. */
+  decor?: Decor[];
+};
 
 /**
  * ПОДПИСЬ — ЭТО ПРЕДЛОЖЕНИЕ, А НЕ НАЗВАНИЕ ПРЕДМЕТА. Под кроссовком стоит «Побегаем?», а не
- * «Кроссовки»: колесо отвечает на вопрос «чем заняться», который тут же задан в строке ввода, и
+ * «Кроссовки»: карусель отвечает на вопрос «чем заняться», который тут же задан в строке ввода, и
  * подпись должна звучать как чужая реплика, на которую хочется ответить. Название предмета
- * превратило бы колесо в витрину.
+ * превратило бы карусель в витрину.
  *
  * ЗАПРОС — НЕ ТА ЖЕ СТРОКА, ЧТО ПОДПИСЬ. Подпись это оклик («Побегаем?»), а в разговор уходит
  * ответ на него от первого лица («Хочу побегать»). Отправить в чат вопрос значило бы начать
@@ -53,29 +69,36 @@ const mood = (lead: string, second: string, third: string): Glow[] => [
  * ФУНКЦИЯ, А НЕ КОНСТАНТА: строки двуязычные, и `T()` обязан вызываться на каждой отрисовке —
  * иначе смена языка не доходит до уже собранного списка.
  */
-export const WHEEL = (): ArcItem[] => [
-  { key: 'sneaker', label: T('Побегаем?', 'Go for a run?'),
-    query: T('Хочу побегать', 'I want to go for a run'),
-    glows: mood(color.ambientPink, color.ambientAmber, color.ambientViolet),
+export const WHEEL = (): MoodItem[] => [
+  /*
+    ЗАГОЛОВОК ИЗ БОРДА, а не оклик по образцу соседей: «Set Fire to the Night» стоит на кадре GR.01
+    дословно. Запрос прежний — в разговор по-прежнему уходит «хочу пойти танцевать».
+    Предметы вокруг сняты с того же кадра (слои image 16/17/18/20): три лежат под карточками и
+    видны сквозь стекло размытыми, нота — поверх всего, она одна резкая.
+    Первым в списке — потому что на кадре карусель открывается именно этой карточкой.
+  */
+  { key: 'disco', label: T('Зажжём эту ночь', 'Set Fire to the Night', 'Enciende la noche'),
+    query: T('Хочу пойти танцевать', 'I want to go dancing', 'Quiero ir a bailar'),
+    source: require('../assets/art/wheel/disco.png'),
+    decor: [
+      { source: require('../assets/art/home/decor-smiley.png'), x: 19, y: 10, w: 57, h: 59 },
+      { source: require('../assets/art/home/decor-headphones.png'), x: -54, y: 161, w: 101, h: 104 },
+      { source: require('../assets/art/home/decor-martini.png'), x: 179, y: -65, w: 81, h: 105 },
+      { source: require('../assets/art/home/decor-note.png'), x: 256, y: 150, w: 70, h: 100, front: true },
+    ] },
+  { key: 'sneaker', label: T('Побегаем?', 'Go for a run?', '¿Vamos a correr?'),
+    query: T('Хочу побегать', 'I want to go for a run', 'Quiero salir a correr'),
     source: require('../assets/art/wheel/sneaker.png') },
-  { key: 'padel', label: T('Партию в падел?', 'A game of padel?'),
-    query: T('Хочу сыграть в падел', 'I want to play padel'),
-    glows: mood(color.ambientAmber, color.ambientPink, color.ambientViolet),
+  { key: 'padel', label: T('Партию в падел?', 'A game of padel?', '¿Una partida de pádel?'),
+    query: T('Хочу сыграть в падел', 'I want to play padel', 'Quiero jugar a pádel'),
     source: require('../assets/art/wheel/padel.png') },
-  { key: 'gamepad', label: T('Поиграем?', 'Play something?'),
-    query: T('Хочу поиграть в приставку', 'I want to play console games'),
-    glows: mood(color.ambientViolet, color.ambientPink, color.ambientAmber),
+  { key: 'gamepad', label: T('Поиграем?', 'Play something?', '¿Jugar algo?'),
+    query: T('Хочу поиграть в приставку', 'I want to play console games', 'Quiero jugar a videojuegos'),
     source: require('../assets/art/wheel/gamepad.png') },
-  { key: 'cherries', label: T('Поедим фруктов?', 'Grab some fruit?'),
-    query: T('Хочу сходить на рынок за фруктами', 'I want to hit the market for fruit'),
-    glows: mood(color.primary, color.ambientAmber, color.ambientPink),
+  { key: 'cherries', label: T('Поедим фруктов?', 'Grab some fruit?', '¿Quieres coger algo de fruta?'),
+    query: T('Хочу сходить на рынок за фруктами', 'I want to hit the market for fruit', 'Quiero ir al mercado a por fruta'),
     source: require('../assets/art/wheel/cherries.png') },
-  { key: 'laptop', label: T('Поработаем рядом?', 'Work side by side?'),
-    query: T('Хочу поработать в кофейне за компанию', 'I want to work from a cafe with someone'),
-    glows: mood(color.ambientPink, color.ambientViolet, color.ambientAmber),
+  { key: 'laptop', label: T('Поработаем рядом?', 'Work side by side?', '¿Trabajar juntos?'),
+    query: T('Хочу поработать в кофейне за компанию', 'I want to work from a cafe with someone', 'Quiero trabajar desde una cafetería con alguien'),
     source: require('../assets/art/wheel/laptop.png') },
-  { key: 'disco', label: T('Потанцуем?', 'Go dancing?'),
-    query: T('Хочу пойти танцевать', 'I want to go dancing'),
-    glows: mood(color.brandMagenta, color.ambientViolet, color.ambientPink),
-    source: require('../assets/art/wheel/disco.png') },
 ];

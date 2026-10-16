@@ -45,6 +45,8 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { TimeDial, RangeDial } from '../src/components/Dials';
 import { IconChevronLeft, IconCalendar, IconClock, IconPin, IconPencil, IconImagePlaceholder } from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
+import { Ambient, GLOW_FORM } from '../src/components/Ambient';
+import { Cover } from '../src/components/Cover';
 
 type Sheet = 'none' | 'when' | 'who' | 'summary';
 
@@ -211,10 +213,12 @@ export default function MyIntent() {
 
   return (
     <View style={s.wrap}>
+      {/* Фирменный фон «Ambient · glass pilot» — тот же слой, что на входных экранах. */}
+      <Ambient glows={GLOW_FORM} />
       <View style={[s.top, { paddingTop: insets.top + space.sm }]}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={T('Назад', 'Back')}
+          accessibilityLabel={T('Назад', 'Back', 'Atrás')}
           style={s.back}
           onPress={() => (router.canGoBack() ? router.back() : router.replace('/activity'))}
         >
@@ -238,7 +242,7 @@ export default function MyIntent() {
         <>
           {/* Двухкнопочный док выше однокнопочного — запас считаем от него, иначе сводка уезжает под него. */}
           <ScrollView contentContainerStyle={[s.body, { paddingBottom: insets.bottom + 200 }]}>
-            <View style={s.cover}><IconImagePlaceholder size={56} /></View>
+            <Cover intent={row?.intent || row} style={s.cover} />
 
             <Text style={s.title}>{intentTitle(row)}</Text>
             <Text style={s.stateLine}>{stateLine(state)}</Text>
@@ -404,7 +408,7 @@ export default function MyIntent() {
       >
         <View style={s.chips}>
           {/* Значения — как в SEXES (src/onboarding.ts): их читает и матчинг, и паспорт затеи. */}
-          {([['Any', T('Любой', 'Any is fine')], ['Female', T('Женщины', 'Female')], ['Male', T('Мужчины', 'Male')]] as const)
+          {([['Any', T('Любой', 'Any is fine', 'Cualquiera vale')], ['Female', T('Женщины', 'Female', 'Mujer')], ['Male', T('Мужчины', 'Male', 'Hombre')]] as const)
             .map(([k, label]) => (
               <Pressable
                 key={k}
@@ -453,7 +457,7 @@ export default function MyIntent() {
 // ===== вид
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
   top: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingBottom: space.xs },
   back: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
 
@@ -477,7 +481,7 @@ const s = StyleSheet.create({
 
   err: { marginTop: space.md, ...type.bodySmall, color: color.warnText } as any,
 
-  dock: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: space.lg, paddingTop: space.sm, backgroundColor: color.bg },
+  dock: { position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: space.lg, paddingTop: space.sm, backgroundColor: color.ambientBase },
   dockRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   fab: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
   cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },

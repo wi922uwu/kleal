@@ -10,12 +10,42 @@ import os
 import json
 import urllib.request
 
-LLM_URL = os.environ.get("LLM_URL", "http://127.0.0.1:7071").rstrip("/")
+try:
+    import settings                                  # живые настройки; без них всё как в коде
+except Exception:
+    settings = None
+
+# АДРЕС — ИЗ ТАБЛИЦЫ, А НЕ РУКАМИ. Порт был вписан числом, поэтому LLM_PORT не двигал ничего:
+# поднять модель на другом порту можно было, а достучаться до неё — нет. `config.url` уважает
+# и LLM_URL, и LLM_PORT; прежнее умолчание (127.0.0.1:7071) он и возвращает.
+try:
+    import config as _cfg
+    LLM_URL = os.environ.get("LLM_URL") or _cfg.url("llm")
+except Exception:
+    LLM_URL = os.environ.get("LLM_URL", "http://127.0.0.1:7071")
+LLM_URL = LLM_URL.rstrip("/")
 
 
-def llm_complete(model, messages, temperature=0.7):
+def _temp(tag, temperature):
+    """Температура, поправленная панелью.
+
+    ЕДИНСТВЕННОЕ место, где это можно сделать честно: через него проходит каждый вызов модели в
+    продукте. Значение из кода приезжает сюда аргументом и остаётся правдой, пока в панели ничего
+    не трогали, — «теплота» это поправка, а не подмена. `tag` называет место вызова, чтобы
+    настраивать не всё сразу: у разговора, у разбора фразы и у придумывания идей разные задачи.
+    """
+    if settings is None:
+        return temperature
+    try:
+        return settings.temperature(tag, temperature)
+    except Exception:
+        return temperature
+
+
+def llm_complete(model, messages, temperature=0.7, tag=""):
     """POST /llm/complete -> assistant text ('' if the model returned nothing). Raises on transport error."""
-    body = json.dumps({"model": model, "messages": messages, "temperature": temperature}).encode("utf-8")
+    body = json.dumps({"model": model, "messages": messages,
+                       "temperature": _temp(tag, temperature)}).encode("utf-8")
     req = urllib.request.Request(LLM_URL + "/llm/complete", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=195) as r:
@@ -31,11 +61,11 @@ def llm_models():
         return []
 
 
-def llm_stream(model, messages, temperature, field, on_text, gate=None):
+def llm_stream(model, messages, temperature, field, on_text, gate=None, tag=""):
     """POST /llm/stream -> consumes SSE, calls on_text(str) per new piece of `field`.
     Returns the FULL raw model output so the caller still parses the complete JSON envelope.
     Raises on transport error, exactly like llm_complete, so existing fallbacks fire."""
-    body = json.dumps({"model": model, "messages": messages, "temperature": temperature,
+    body = json.dumps({"model": model, "messages": messages, "temperature": _temp(tag, temperature),
                        "field": field, "gate": list(gate) if gate else None}).encode("utf-8")
     req = urllib.request.Request(LLM_URL + "/llm/stream", data=body,
                                  headers={"Content-Type": "application/json"}, method="POST")

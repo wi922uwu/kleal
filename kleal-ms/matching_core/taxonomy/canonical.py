@@ -7,8 +7,10 @@
 (`role_complementarity`/`language_pair`/`team_role`/… → C#16), adjacency (§6/§12), и доменные слоты с
 hard/soft + unknown_behavior + compare_operator (§5/§8.1). Аддитивно к seed-графу (не заменяет similarity).
 """
+import functools
 import os
 import json
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _JSON = os.path.join(_HERE, "canonical_taxonomy.json")
@@ -92,6 +94,7 @@ def _load():
         pa, pb = FAMILY_PURPOSE.get(_bare(_family_id(a))), FAMILY_PURPOSE.get(_bare(_family_id(b)))
         if pa and pb and pa != pb:
             PURPOSE_BLOCKS.add((pa, pb)); PURPOSE_BLOCKS.add((pb, pa))
+    _resolve.cache_clear()          # таблица пересобрана — прежние ответы недействительны
     AVAILABLE = True
 
 
@@ -152,6 +155,15 @@ def _family_id(nid):
 
 
 # --------------------------------------------------------------- публичный API
+# ПАМЯТЬ НА ОТВЕТЫ. Промах по алиасу стоит полного прохода по словарю (1749 записей, и на каждой
+# по три len() и два startswith), а зовут эту функцию тысячи раз за один поиск: профиль живого
+# запроса 15.09.2026 — 20 294 вызова, 10,4 с из 20, и 22 миллиона вызовов len() на всё про всё.
+# Разных СЛОВ при этом десятки: интересы и темы повторяются у сотен людей.
+#
+# Кешировать безопасно: ALIAS собирается один раз при импорте (`_load`, единственный вызов внизу
+# файла) и больше не меняется — governance правит СИНОНИМЫ движка, а не эту таблицу. На случай
+# повторной сборки память сбрасывается там же, где таблица собирается.
+@functools.lru_cache(maxsize=100000)
 def _resolve(text):
     """node_id И КАК он получен: точным алиасом или догадкой по префиксу.
 
@@ -196,6 +208,107 @@ def _resolve(text):
 def resolve_node(text):
     """Строка интереса/темы -> node_id. Как резолвилось — см. `_resolve`."""
     return _resolve(text)[0]
+
+
+# ---- КАРТА ДОГАДОК (canonical_guess.json) ----------------------------------------------------------
+# Слово вне канона, поставленное к узлу моделью один раз, при появлении (tools/concept_guess.py, таймер
+# kleal-guess.timer раз в минуту; файл вне дерева кода — его пишет машина, а не выкладка). Поиск
+# только читает файл — в сеть не ходит; перечитывает не чаще раза в 30 с, если файл изменился. Догадка
+# ставит слово только в СЕМЬЮ канона и даёт не больше 2: та же семья — 2, та же ветка — 1 (ярус тот же, что у
+# 3, — второй; четвёрка остаётся за точным). Пары, которые канон решает сам,
+# сюда не приходят (graph.similarity_detail), так что прежние уровни не меняются.
+_GUESS = {"t": -1e9, "m": None, "words": {}, "memo": {}}
+_GUESS_FILE = os.environ.get("KLEAL_GUESS_FILE") or "/var/lib/kleal/canonical_guess.json"   # данные, не код
+
+
+def _guess_words():
+    now = time.monotonic()
+    if now - _GUESS["t"] >= 30:
+        _GUESS["t"] = now
+        try:
+            m = os.path.getmtime(_GUESS_FILE)
+            if m != _GUESS["m"]:
+                with open(_GUESS_FILE, encoding="utf-8") as f:
+                    d = json.load(f)
+                _GUESS["words"] = {k: v.get("node") for k, v in (d.get("words") or {}).items()
+                                   if isinstance(v, dict) and v.get("node") in NODES
+                                   and NODES[v["node"]].get("macro") != "M_dating"}   # свидание — тип, не интерес
+                _GUESS["memo"] = {}
+                _GUESS["m"] = m
+        except Exception:
+            pass
+    return _GUESS["words"]
+
+
+def guess_node(text):
+    """Узел по карте догадок или None. Зовут на каждой паре поиска — ответ на текст помнится до смены карты."""
+    words = _guess_words()
+    if not words:
+        return None
+    memo = _GUESS["memo"]
+    if text not in memo:
+        if len(memo) > 200000:
+            memo.clear()
+        memo[text] = words.get(_norm(text))
+    return memo[text]
+
+
+def similarity_guess(a_text, b_text):
+    """Уровень пары, где хотя бы одна сторона известна канону только по догадке: 0, 1 или 2."""
+    if not _guess_words():
+        return 0
+    ca, cb = _resolve(a_text)[0], _resolve(b_text)[0]
+    if ca and cb:
+        return 0                                  # обе в каноне — решает similarity_nodes
+    na, nb = ca or guess_node(a_text), cb or guess_node(b_text)
+    if not na or not nb:
+        return 0
+    fa = na if na.startswith("F_") else NODES[na].get("family")
+    fb = nb if nb.startswith("F_") else NODES[nb].get("family")
+    if fa and fa == fb:
+        return 2
+    ma, mb = NODES[na].get("macro"), NODES[nb].get("macro")
+    if ma and ma == mb:
+        return 1
+    return 0
+
+
+# ---- БЛИЗКИЕ ПО СМЫСЛУ (meaning_near.json, 02.10.2026) ------------------------------------------------
+# Последняя ступень лестницы для слов, которых не знают ни канон, ни карта догадок: tools/meaning_near.py заранее
+# сравнил слово по смыслу со всеми интересами людей (bge-m3) и дал модели выбрать из 25 ближайших тех, с кем правда
+# стоит встретиться ("ok"). Поиск только читает файл, раз в 30 с по mtime, в сеть не ходит. Уровень — 1 (третий
+# ярус, ниже семьи и раздела), ставит graph.similarity_detail и только там, где больше ничего не совпало.
+# "near" (сырой порядок векторов) нужен последней ступени выдачи app._expand_fallback — «похожие люди».
+_NEAR = {"t": -1e9, "m": None, "ok": {}, "near": {}}
+_NEAR_FILE = os.environ.get("KLEAL_NEAR_FILE") or "/var/lib/kleal/meaning_near.json"   # данные, не код
+
+
+def _near_data():
+    now = time.monotonic()
+    if now - _NEAR["t"] >= 30:
+        _NEAR["t"] = now
+        try:
+            m = os.path.getmtime(_NEAR_FILE)
+            if m != _NEAR["m"]:
+                with open(_NEAR_FILE, encoding="utf-8") as f:
+                    d = json.load(f)
+                _NEAR["ok"] = {k: frozenset(v) for k, v in (d.get("ok") or {}).items() if v}
+                _NEAR["near"] = {k: dict((x, s) for x, s in v) for k, v in (d.get("near") or {}).items()}
+                _NEAR["m"] = m
+        except Exception:
+            pass
+    return _NEAR
+
+
+def meaning_near(a_text, b_text):
+    """Интерес b близок по смыслу к незнакомому слову a (отобран моделью)."""
+    ok = _near_data()["ok"]
+    return bool(ok) and _norm(b_text) in ok.get(_norm(a_text), ())
+
+
+def meaning_score(a_text, b_text):
+    """Сходство векторов слова a и интереса b (0, если его нет среди 40 ближайших)."""
+    return float(_near_data()["near"].get(_norm(a_text), {}).get(_norm(b_text), 0.0))
 
 
 def similarity_nodes(a_text, b_text):

@@ -1,44 +1,60 @@
 /**
- * Создание интента — кадр O.04.
+ * Создание интента, шаг «что делаем» — кадр GR.04 борда «0 · Create the intent» (Figma 6864:119674).
  *
- * UX-КАРКАС: вид натянется поверх. Оформление — одним блоком внизу файла, на токенах темы; копия —
- * в src/buddy.ts. Логика выше не зависит ни от одного размера.
+ * Вид из src/components/CreateFlow.tsx: шапка «Creating intent» с процентами (здесь 10%), вопрос
+ * пузырём Kleal, варианты строками с галочкой, Regenerate стеклом, поле ввода снизу. Дальше мастер
+ * идёт на app/intent.tsx той же шапкой — на борде это один экран, и переход сделан проявлением,
+ * а не сдвигом (app/_layout.tsx).
  *
- * Отдельный разговор, не тот, что с Бадди. Начинается с вариантов, собранных ПО ПРОФИЛЮ
- * (/api/buddy/intent-suggest): человеку, который открыл пустой экран, проще выбрать, чем
- * придумывать. «Ещё варианты» перевыбирает их заново.
+ * ПОРЯДОК ШАГА: Kleal спрашивает «What do you want to do?» (GR.04) и предлагает варианты по профилю,
+ * человек выбирает или пишет своё — это уходит построителю, и он отвечает в ленте как есть.
  *
- * Дальше агент уточняет ТОЛЬКО тему — два-три вопроса про суть затеи. Про время, место, пол и
- * размер компании он не спрашивает намеренно: это ставится руками на следующем экране, и
- * переспрашивать значило бы заставить отвечать дважды. Правило живёт в системном промпте сервера
- * (INTENT_BUILD_PROMPT), а не здесь, — иначе клиент и сервер разошлись бы.
+ * ЗАТЕЯ СОБРАНА — ПОД ШАПКОЙ ЗАКРЕПЛЁННАЯ КАРТОЧКА С КНОПКОЙ (PinnedSummary), а не автопереход.
+ * Решение владельца 04.10.2026: «если Бади создаёт интент, то сверху появляется мини-окошко и кнопка
+ * „Нажми“, как это было раньше». В волне 1 борда (03.10) здесь стояло «Great — … it is!» и мастер
+ * уезжал сам через 0,9 с: человек не успевал увидеть, что собрано, и не мог уточнить. Разговор здесь
+ * уточняющий — карточка пересобирается на каждый ответ и показывает, что изменилось.
+ *
+ * ПРИШЁЛ ИЗ ЧАТА С KLEAL (`seed`, попап «Создать») — фраза идёт построителю видимой репликой вместе
+ * с хвостом разговора, как раньше: ровно этот путь меряет мерка нейросети (чат → попап → сборщик →
+ * карточка). Вариантов по профилю тогда нет — человек уже сказал, чего хочет.
+ *
+ * Построитель уточняет ТОЛЬКО тему. Про время, место, пол и размер компании он не спрашивает: это
+ * ставится на следующих шагах (правило живёт в промпте сервера, INTENT_BUILD_PROMPT).
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Animated, Easing,
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput,
-  ActivityIndicator, KeyboardAvoidingView, Platform,
+  View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { hOk, hTick } from '../src/haptics';
-import { IconChevronLeft, IconMic, IconSpark } from '../src/components/icons';
-import { useLang, getLang, T , replyLang } from '../src/i18n';
+import { IconWand, IconChevronDown, IconChevronUp } from '../src/components/icons';
+import { interestLabel } from '../src/interest-label';
+import Animated, { Easing as REasing, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
+import { useLang, T, replyLang, dateLocale, use12h } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { buddy as buddyApi } from '../src/api';
-import { CREATE, topicsOf, titleOf, unpackHistory, Turn } from '../src/buddy';
-import { color, radius as rad, space, type } from '../src/theme';
-import Markdown from '../src/components/Markdown';
+import { BUDDY, CREATE, topicsOf, titleOf, datingOf, unpackHistory, looksLikeIntent, needsSignIn, Turn } from '../src/buddy';
+import { color, font } from '../src/theme';
+import { GlassSurface, riseIn } from '../src/components/LiquidGlass';
 import { Thinking } from '../src/components/Thinking';
 import { makeReveal } from '../src/reveal';
+import { GlassPill } from '../src/components/Glass';
+import {
+  CreatingHeader, StepAsk, AgentLine, MyLine, Caption, ChoiceRow, GlassChip, CreateComposer,
+} from '../src/components/CreateFlow';
 
 type Msg = { who: 'bot' | 'me'; text: string; at: string ;
   /** Текст ещё пишется — под ним мигает курсор. */ live?: boolean };
 
+/** Затея, собранная построителем: ключи для поиска и подпись для человека — см. topicsOf/titleOf. */
+type Ready = { topics: string[]; title: string; dating?: boolean };
+
 const now = () =>
-  new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: getLang() !== 'ru',
+  new Date().toLocaleTimeString(dateLocale(), {
+    hour: '2-digit', minute: '2-digit', hour12: use12h(),
   });
 
 export default function Create() {
@@ -51,11 +67,11 @@ export default function Create() {
   const scroller = useRef<ScrollView>(null);
 
   /**
-   * Что пришло из разговора с Бадди: тема и сам разговор.
+   * Что пришло из разговора с Kleal: фраза и сам разговор.
    *
-   * История не показывается в ленте — экран начинается с того, ради чего сюда пришли, — но уходит
-   * СЕРВЕРУ. Иначе фраза вроде «поговорить с кем-то об этом» приезжает без «этого», и построитель
-   * переспрашивает то, что человек уже рассказал в предыдущем чате.
+   * История не показывается в ленте — экран начинается с вопроса шага, — но уходит СЕРВЕРУ. Иначе
+   * фраза вроде «поговорить с кем-то об этом» приезжает без «этого», и построитель переспрашивает
+   * то, что человек уже рассказал в предыдущем чате.
    */
   const params = useLocalSearchParams<{ seed?: string; history?: string }>();
   const seed = String(params.seed || '').trim();
@@ -66,7 +82,7 @@ export default function Create() {
   const [draft, setDraft] = useState('');
   const [typing, setTyping] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [loadingSug, setLoadingSug] = useState(!seed);
+  const [loadingSug, setLoadingSug] = useState(true);
   const [hints, setHints] = useState<string[]>([]);
   /**
    * Что повторить, если запрос сорвался. Раньше разговор на этом просто заканчивался: агент
@@ -78,29 +94,28 @@ export default function Create() {
    * Тема собрана. Хранится ДВУМЯ полями: ключи для поиска и подпись для человека — см. topicsOf
    * и titleOf. Одной строкой это уже было, и поиск уходил с заголовком вместо ключей.
    */
-  const [ready, setReady] = useState<{ topics: string[]; title: string } | null>(null);
+  const [ready, setReady] = useState<Ready | null>(null);
   /**
-   * ВСЕ версии собранного интента, по порядку. Нужны не для истории ради истории: разговор
-   * уточняющий, и после каждого ответа сводка пересобирается — человек должен видеть, ЧТО именно
-   * от его слов изменилось, а не гадать, стало лучше или хуже. Последняя версия и есть `ready`.
+   * ВСЕ версии собранного интента, по порядку. Разговор уточняющий, и после каждого ответа сводка
+   * пересобирается — человек должен видеть, ЧТО именно от его слов изменилось. Последняя — `ready`.
    */
-  const [versions, setVersions] = useState<{ topics: string[]; title: string }[]>([]);
+  const [versions, setVersions] = useState<Ready[]>([]);
   /** Закреплённая сводка развёрнута. Свёрнута по умолчанию — она не должна съедать половину чата. */
   const [sumOpen, setSumOpen] = useState(false);
   /**
-   * ПЕРВОЕ ПОЯВЛЕНИЕ СВОДКИ РАСКРЫВАЕТ ЕЁ САМО.
-   *
-   * Свёрнутой она была задумана нарочно: одна строка не закрывает разговор. Но именно в момент,
-   * когда она появляется впервые, показывать одну строку неправильно — это единственный кадр, ради
-   * которого весь разговор и шёл, а он проскакивал незамеченным. Дальше человек сворачивает её
-   * сам, и его выбор больше не трогаем: раскрытие однократное.
+   * ПЕРВОЕ ПОЯВЛЕНИЕ СВОДКИ РАСКРЫВАЕТ ЕЁ САМО: это единственный кадр, ради которого шёл весь
+   * разговор. Дальше человек сворачивает её сам, и его выбор больше не трогаем.
    */
-  const shown = useRef(false);
+  const firstShown = useRef(false);
   useEffect(() => {
-    if (!ready || shown.current) return;
-    shown.current = true;
+    if (!ready || firstShown.current) return;
+    firstShown.current = true;
     setSumOpen(true);
   }, [ready]);
+  /** Сервер ответил 401 — под репликой кнопка входа (см. BUDDY.signIn). */
+  const [signIn, setSignIn] = useState(false);
+  /** Выбранный вариант — у него галочка. */
+  const [picked, setPicked] = useState('');
   const started = useRef(false);
   const rolls = useRef(0);
 
@@ -134,41 +149,44 @@ export default function Create() {
   }, [st.profile]);
 
   /**
-   * Что сделать с готовым ответом построителя. Вынесено отдельно, потому что теперь срабатывает
-   * в `done`, а не сразу после запроса.
+   * Что сделать с готовым ответом построителя.
    *
    * `shown` — показался ли текст потоком: от него зависит, печатать ли реплику ещё раз.
+   *
+   * ОТВЕТ ПОСТРОИТЕЛЯ ПОКАЗЫВАЕТСЯ КАК ЕСТЬ, и при собранной затее тоже: в нём похвала затее и
+   * «Понял — …», которые меряет нейросеть. Подменять его своей строкой значит прятать её работу.
    */
   const settle = useCallback((r: any, reply: string, text: string, next: Turn[], shown: boolean) => {
+    if (r?.refused || r?.valid === false) {
+      setReady(null);
+      setSumOpen(false);
+    }
     if (reply) {
       if (!shown) say('bot', reply);
       setTurns([...next, { role: 'assistant', content: reply }]);
     }
-      setHints(Array.isArray(r?.hints) ? r.hints.map(String).slice(0, 3) : []);
-      if (r?.ready) {
-        const topics = topicsOf(r);
-        // Ключей нет — построитель ничего не извлёк. Отправлять в поиск сказанное человеком
-        // как «тему» нельзя: русская фраза не совпадёт ни с кем. Пусть уточнит.
-        const v = { topics, title: titleOf(r, text) };
-        setReady(v);
-        // Пишем в историю только НАСТОЯЩЕЕ изменение: тот же самый интент второй раз подряд —
-        // это не правка, и строка «что изменилось» о нём молчит.
-        setVersions((all) => {
-          const last = all[all.length - 1];
-          const same = last && last.title === v.title && last.topics.join('|') === v.topics.join('|');
-          return same ? all : [...all, v];
-        });
-      }
+    setHints(Array.isArray(r?.hints) ? r.hints.map(String).slice(0, 3) : []);
+    if (r?.ready && looksLikeIntent(r)) {
+      const topics = topicsOf(r);
+      // Свидание — тип затеи: без него поиск идёт как обычный, мимо ворот `datingOk`.
+      const v: Ready = { topics, title: titleOf(r, text), dating: datingOf(r) };
+      setReady(v);
+      // В историю — только НАСТОЯЩЕЕ изменение: та же затея второй раз подряд — не правка.
+      setVersions((all) => {
+        const last = all[all.length - 1];
+        const same = last && last.title === v.title && last.topics.join('|') === v.topics.join('|')
+          && !!last.dating === !!v.dating;
+        return same ? all : [...all, v];
+      });
+    }
   }, [say]);
 
   /**
-   * ОТВЕТ ПОЯВЛЯЕТСЯ ПО МЕРЕ НАПИСАНИЯ — то же, что на экране Бадди.
+   * ОТВЕТ ПОЯВЛЯЕТСЯ ПО МЕРЕ НАПИСАНИЯ — то же, что на экране Kleal.
    *
-   * Измерено на живом сервере: обычный путь 5,2 с. Это дольше разговора с Бадди, потому что
+   * Измерено на живом сервере: обычный путь 5,2 с. Это дольше разговора с Kleal, потому что
    * построитель не только отвечает, но и разбирает сказанное в тему и заголовок. Генерацию не
    * ускорить, но ждать её конца незачем: первые слова приходят почти сразу.
-   *
-   * Серверная ручка это умела с самого начала — просто никто не просил.
    */
   const ask = useCallback((text: string, hist: Turn[]) => {
     const next: Turn[] = [...hist, { role: 'user', content: text }];
@@ -179,24 +197,19 @@ export default function Create() {
 
     let acc = '';
     let opened = false;
-    // Ровный показ — тот же, что на экране Бадди. См. src/reveal.ts.
+    // Ровный показ — тот же, что на экране Kleal. См. src/reveal.ts.
+    /*
+      ФЛАГ «РЕПЛИКА ОТКРЫТА» СТАВИТСЯ СРАЗУ, А НЕ ВНУТРИ setThread. Функция обновления состояния
+      выполняется позже, на отрисовке, — и `done`, пришедший в тот же такт, видел `opened === false`
+      и печатал реплику второй раз (два одинаковых пузыря на быстром ответе, стенд 04.10).
+    */
     const rev = makeReveal((shown: string) => {
-      /*
-        ОЖИДАНИЕ ГАСНЕТ В `done`, А НЕ ЗДЕСЬ, И ЭТО ИСПРАВЛЕНИЕ.
-
-        Раньше точки убирались на первой же показанной букве — казалось логичным: раз пошёл текст,
-        ждать больше нечего. Но на этом экране ответ — только половина работы: после реплики
-        построитель ещё разбирает сказанное в тему и ключи, и приходит это в `done`, через две-три
-        секунды после того, как текст дочитан. Всё это время экран стоял пустой: реплика есть,
-        сводки нет, признаков работы никаких. Ровно на этой паузе и возникает ощущение, что
-        приложение зависло.
-
-        Теперь точки живут до `done` — то есть до момента, когда падает карточка. Пока текст
-        приезжает, они стоят под ним и не мешают: подпись к этому времени как раз меняется на
-        «Собираю затею», и это правда.
-      */
+      if (!opened) {
+        opened = true;
+        setThread((prev) => [...prev, { who: 'bot', text: shown, at: now(), live: true }]);
+        return;
+      }
       setThread((prev) => {
-        if (!opened) { opened = true; return [...prev, { who: 'bot', text: shown, at: now(), live: true }]; }
         const out = prev.slice();
         out[out.length - 1] = { ...out[out.length - 1], text: shown, live: true };
         return out;
@@ -208,36 +221,48 @@ export default function Create() {
       delta: grow,
       done: (r: any) => {
         setTyping(false);
-        rev.finish();
         const reply = String(r?.reply || acc);
+        /*
+          МАШИНКА ОСТАНАВЛИВАЕТСЯ ВСЕГДА, А РЕПЛИКА ВСТАЁТ ЦЕЛИКОМ. Было две гонки (видны на быстром
+          ответе, 04.10): (1) конверт пришёл раньше первого кадра печати — реплику печатал `settle`,
+          а через такт машинка открывала вторую такую же; (2) конверт пришёл посреди печати —
+          машинку останавливали и оставляли показанную половину. Теперь: печать гасится, а в ленте
+          оказывается итоговый текст сервера (он же чищеный).
+        */
+        rev.stop();
         if (opened) {
-          rev.stop();
           setThread((prev) => {
             const out = prev.slice();
             const cur = out[out.length - 1];
-            out[out.length - 1] = { ...cur, text: r?.replaced ? reply : cur.text, live: false };
+            out[out.length - 1] = { ...cur, text: reply || cur.text, live: false };
             return out;
           });
         }
         settle(r, reply, text, next, opened);
       },
-      error: async () => {
-        // Как и в чате Бадди: поток — способ доставки, а не ответ. Сначала вторая попытка обычным
+      error: async (why: string) => {
+        // Как и в чате Kleal: поток — способ доставки, а не ответ. Сначала вторая попытка обычным
         // запросом, и только если и она не прошла — «попробуем ещё раз».
         if (opened) { rev.stop(); setThread((prev) => prev.slice(0, -1)); }
-        try {
-          const r: any = await buddyApi.intentBuild(next, profile());
-          setTyping(false);
-          const reply = String(r?.reply || '');
-          if (reply) { settle(r, reply, text, next, false); return; }
-        } catch {
-          /* и обычный запрос не прошёл — значит связи правда нет */
+        let locked = needsSignIn(why);
+        if (!locked) {
+          try {
+            const r: any = await buddyApi.intentBuild(next, profile());
+            setTyping(false);
+            const reply = String(r?.reply || '');
+            if (reply) { settle(r, reply, text, next, false); return; }
+          } catch (e) {
+            /* и обычный запрос не прошёл — значит связи правда нет, или нет входа */
+            locked = needsSignIn(e);
+          }
         }
         setTyping(false);
         setTurns(hist);
+        // Нет входа — «попробуем ещё раз» не поможет: реплика человека ждёт, а под ней кнопка входа.
+        if (locked) { setRetry({ text, hist }); setSignIn(true); say('bot', BUDDY.signIn()); return; }
         setRetry({ text, hist });
         say('bot', T('Связь пропала — я не дослушал. Попробуем ещё раз?',
-                     'I lost the connection mid-thought. Shall we try again?'));
+                     'I lost the connection mid-thought. Shall we try again?', 'Perdí la conexión a mitad de pensamiento. ¿Lo intentamos de nuevo?'));
       },
     });
   }, [say, settle, st.profile]);
@@ -253,8 +278,12 @@ export default function Create() {
     }
   }, []);
 
+  /** Варианты по профилю, всего три (кадр GR.04). */
+  const options = suggestions.slice(0, 3);
+
   const pick = (text: string) => {
-    setSuggestions([]);
+    if (typing) return;
+    setPicked(text);
     say('me', text);
     ask(text, turns);
   };
@@ -276,31 +305,23 @@ export default function Create() {
       // Ключи едут списком через запятую — их читает поиск; заголовок отдельно, он только для глаз.
       topics: (ready?.topics || []).join(','),
       title: ready?.title || '',
+      // Тип едет отдельно от ключей: свидание — не тема, а контур поиска со своими воротами.
+      ...(ready?.dating ? { type: 'dating' } : {}),
     },
   });
 
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
-        <View style={s.head}>
-          {/*
-            У «НАЗАД» ОБЯЗАН БЫТЬ ЗАПАСНОЙ ПУТЬ. Голый `router.back()` молча ничего не делает, когда
-            возвращаться некуда, — навигатор отвечает «GO_BACK was not handled», и кнопка выглядит
-            сломанной. А некуда бывает чаще, чем кажется: экран открыт по ссылке снаружи, или он
-            оказался первым после холодного старта. Поймано ровно здесь, на создании интента,
-            открытом по ссылке.
-            `replace` на корень — единственная законная его форма (см. правило в наборе проверок):
-            он подменяет ТЕКУЩИЙ экран, а не кладёт вторую главную поверх первой.
-          */}
-          <Pressable accessibilityRole="button" style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
-            <IconChevronLeft />
-          </Pressable>
-          <View style={{ flex: 1 }} />
-          <Pressable accessibilityRole="button" style={s.allBtn} onPress={() => router.dismissTo('/home')}>
-            <Text style={s.allText}>{CREATE.title()}</Text>
-          </Pressable>
-        </View>
+      <View style={[s.wrap, { paddingTop: insets.top }]}>
+        {/*
+          У «НАЗАД» ОБЯЗАН БЫТЬ ЗАПАСНОЙ ПУТЬ. Голый `router.back()` молча ничего не делает, когда
+          возвращаться некуда (экран открыт по ссылке или первым после холодного старта) — поэтому
+          `replace` на корень: он подменяет ТЕКУЩИЙ экран, а не кладёт вторую главную поверх первой.
+        */}
+        <CreatingHeader pct={10} onBack={() => (router.canGoBack() ? router.back() : router.replace('/home'))} />
 
+        {/* Затея собрана — карточка закреплена под шапкой, а не уезжает с лентой (см. PinnedSummary). */}
         {ready ? (
           <PinnedSummary
             cur={ready}
@@ -312,77 +333,59 @@ export default function Create() {
         ) : null}
 
         <ScrollView ref={scroller} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
-          {/* Заголовок показывается, пока разговор не начался: потом его место занимает лента. */}
-          {thread.length === 0 ? (
+          <StepAsk text={CREATE.ask()} caption={CREATE.sub()} />
+
+          {/* Варианты по профилю — когда пришли без фразы. Пришли из чата — человек уже сказал своё. */}
+          {!seed ? (
             <>
-              <View style={s.askRow}>
-                <View style={s.dot} />
-                <Text style={s.ask}>{CREATE.ask()}</Text>
-              </View>
-              <Text style={s.sub}>{CREATE.sub()}</Text>
-            </>
-          ) : null}
-
-          {/* То же правило, что на Бадди и в онбординге: человек говорит пузырём, модель пишет
-              страницей. См. src/components/Markdown.tsx. */}
-          {thread.map((m, i) => (
-            <View key={i} style={m.who === 'me' ? { alignItems: 'flex-end' } : s.answer}>
-              {m.who === 'me' ? (
-                <View style={[s.bub, s.bubMe]}>
-                  <Text style={[s.bubText, { color: color.onPrimary }]}>{m.text}</Text>
-                </View>
-              ) : (
-                <Markdown text={m.text} />
-              )}
-              <Text style={[s.time, m.who !== 'me' && s.timeAnswer]}>{m.at}</Text>
-            </View>
-          ))}
-
-          {/* Ожидание — не вертушка, а живая строка: см. src/components/Thinking.tsx. */}
-          {typing ? <Thinking /> : null}
-
-          {/* Варианты по профилю — только на пустом экране, до первого ответа. */}
-          {thread.length === 0 ? (
-            <View style={s.sugBlock}>
-              <View style={s.sugHead}>
-                <Text style={s.sugHeadText}>{CREATE.suggestions()}</Text>
-              </View>
-              <Text style={s.choose}>{CREATE.choose()}</Text>
-              {loadingSug ? (
-                <ActivityIndicator style={{ marginVertical: space.lg }} color={color.primary} />
-              ) : suggestions.length ? (
-                <View style={s.sugList}>
-                  {suggestions.map((sg) => (
-                    <Pressable key={sg} accessibilityRole="button" style={s.sug} onPress={() => pick(sg)}>
-                      <Text style={s.sugText}>{sg}</Text>
-                    </Pressable>
+              <Caption text={CREATE.choose()} />
+              {loadingSug && !options.length ? (
+                <ActivityIndicator style={{ marginVertical: 12 }} color={color.primary} />
+              ) : options.length ? (
+                <View style={s.list}>
+                  {options.map((o) => (
+                    <ChoiceRow key={o} label={o} on={picked === o} disabled={typing} onPress={() => pick(o)} />
                   ))}
                 </View>
               ) : (
-                <Text style={s.empty}>{CREATE.empty()}</Text>
+                <Caption text={CREATE.empty()} />
               )}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ busy: loadingSug }}
+              <GlassPill
+                tone="light"
+                small
+                icon={<IconWand size={16} c={color.fg} />}
+                label={CREATE.regenerate()}
+                busy={loadingSug}
+                onPress={loadSuggestions}
                 style={s.regen}
-                onPress={loadingSug ? undefined : loadSuggestions}
-              >
-                <IconSpark size={18} />
-                <Text style={s.regenText}>{CREATE.regenerate()}</Text>
-              </Pressable>
+              />
+            </>
+          ) : null}
+
+          {/* Человек говорит пузырём, Kleal отвечает пузырём — как на кадре GR.04. */}
+          {thread.map((m, i) => (
+            m.who === 'me'
+              ? <MyLine key={i} text={m.text} at={m.at} />
+              : <AgentLine key={i} text={m.text} at={m.live ? undefined : m.at} markdown />
+          ))}
+
+          {/* Ожидание — не вертушка, а живая строка: см. src/components/Thinking.tsx. */}
+          {typing && thread.length ? <Thinking /> : null}
+
+          {signIn ? (
+            <View style={{ alignItems: 'flex-start' }}>
+              <GlassPill tone="dark" small style={s.regen} label={BUDDY.signInBtn()} onPress={() => router.navigate('/auth')} />
             </View>
           ) : null}
 
           {/* Сорвавшийся запрос — не конец разговора: одна кнопка возвращает последнюю реплику. */}
-          {retry ? (
+          {retry && !signIn ? (
             <View style={s.hints}>
-              <Pressable
-                accessibilityRole="button"
-                style={s.hint}
+              <GlassChip
+                label={T('Попробовать снова', 'Try again', 'Reintentar')}
+                on={false}
                 onPress={() => { const r = retry; setRetry(null); ask(r.text, r.hist); }}
-              >
-                <Text style={s.hintText}>{T('Попробовать снова', 'Try again')}</Text>
-              </Pressable>
+              />
             </View>
           ) : null}
 
@@ -390,281 +393,160 @@ export default function Create() {
           {hints.length && !ready ? (
             <View style={s.hints}>
               {hints.map((h) => (
-                <Pressable key={h} accessibilityRole="button" style={s.hint} onPress={() => pick(h)}>
-                  <Text style={s.hintText}>{h}</Text>
-                </Pressable>
+                <GlassChip key={h} label={h} on={false} onPress={() => pick(h)} />
               ))}
             </View>
           ) : null}
-
-          {/*
-            Круг замыкается там же, где начался: сводка по затее и кнопка под ней — та
-            самая, что была в окне Бадди. Кнопки «Дальше» здесь нет намеренно: она обещала
-            следующий шаг, а человек уже ответил на всё, что у него спрашивали. Уточнил ещё раз —
-            сводка пересобирается, и кнопка снова та же.
-          */}
-          {/* Сводка больше не живёт в ленте — она закреплена под шапкой (см. PinnedSummary):
-              разговор уточняющий, и карточка уезжала вверх ровно тогда, когда её и надо смотреть. */}
         </ScrollView>
 
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
-          <View style={s.field}>
-            <TextInput
-              style={s.input}
-              value={draft}
-              onChangeText={setDraft}
-              placeholder={T('Сообщение…', 'Message…')}
-              placeholderTextColor={color.neutral400}
-              onSubmitEditing={submit}
-              returnKeyType="send"
-            />
-            <Pressable accessibilityRole="button" onPress={submit}>
-              <IconMic />
-            </Pressable>
-          </View>
+          <CreateComposer
+            value={draft}
+            onChange={setDraft}
+            onSubmit={submit}
+            placeholder={T('Сообщение…', 'Message…', 'Mensaje…')}
+            editable={!typing}
+          />
         </View>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
-
 /**
- * Закреплённая сводка интента — полоса под шапкой, а не карточка в ленте.
+ * Закреплённая сводка затеи — «мини-окошко» над разговором с кнопкой «Нажми» (CREATE.ready).
  *
  * Разговор здесь уточняющий: человек отвечает, сводка пересобирается, отвечает снова. Пока она
- * стояла в ленте, её уносило вверх ровно тогда, когда на неё и надо смотреть, а кнопку под ней
- * приходилось искать прокруткой.
+ * стояла в ленте, её уносило вверх ровно тогда, когда на неё и надо смотреть, а кнопку приходилось
+ * искать прокруткой. Свёрнута — одна строка с названием; развёрнута — темы поиска и, главное, ЧТО
+ * ИЗМЕНИЛОСЬ от последнего ответа: «не бег, а плавание» без обратной связи — уточнение вслепую.
  *
- * Свёрнута по умолчанию: одна строка с темой. Развёрнутая показывает ключи поиска и — главное —
- * ЧТО ИЗМЕНИЛОСЬ от последнего ответа. Без этого уточнение вслепую: человек говорит «не бег, а
- * плавание» и не видит, услышали его или нет.
+ * Вид — стекло нового борда (как пузыри и строки мастера). Появление и пересборка — сдвигом и
+ * масштабом, без прозрачности: полупрозрачный предок гасит системное стекло целиком.
  */
 function PinnedSummary({
   cur, versions, open, onToggle, onCreate,
 }: {
-  cur: { topics: string[]; title: string };
-  versions: { topics: string[]; title: string }[];
+  cur: Ready;
+  versions: Ready[];
   open: boolean;
   onToggle: () => void;
   onCreate: () => void;
 }) {
-  /**
-   * СВОДКА ОБЪЯВЛЯЕТ О СЕБЕ, А НЕ ПРОСТО ВОЗНИКАЕТ.
-   *
-   * Она появляется под шапкой мгновенно и без единого признака движения — глазу не за что
-   * зацепиться, и самый важный кадр разговора человек попросту не замечает. Здесь два разных
-   * события и два разных отклика на них:
-   *
-   *   ПОЯВИЛАСЬ ВПЕРВЫЕ — съезжает сверху и проявляется, с системным «получилось». Это итог
-   *     разговора, и отклик тут тот же, что у принятого кода: не «нажал», а «вышло».
-   *   ПЕРЕСОБРАЛАСЬ ПОСЛЕ ОТВЕТА — короткий толчок и щелчок. Полное появление на каждом уточнении
-   *     читалось бы как «сводка пропала и пришла новая», а она та же самая, просто другая внутри.
-   *
-   * Обе анимации на нативном драйвере: сдвиг, прозрачность и масштаб. Ни одна не трогает разметку,
-   * поэтому лента под сводкой не дёргается.
-   */
-  const drop = useRef(new Animated.Value(0)).current;
-  const squash = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(0)).current;
+  /*
+    СВОДКА ОБЪЯВЛЯЕТ О СЕБЕ. Появилась впервые — съезжает сверху с системным «получилось» (итог
+    разговора). Пересобралась после ответа — короткий вдох и щелчок: полное появление на каждом
+    уточнении читалось бы как «сводка пропала и пришла новая».
+  */
+  const pulse = useSharedValue(1);
   const seen = useRef(versions.length);
-
-  /**
-   * ПОЯВЛЕНИЕ СОБРАНО ИЗ ТРЁХ ДВИЖЕНИЙ, А НЕ ИЗ ОДНОГО.
-   *
-   * Обычная пружина «сверху вниз» даёт въезд, а не падение: карточка приезжает и замирает. Каплю
-   * узнают по другому — по тому, что она РАСПЛЮЩИВАЕТСЯ при ударе и потом отыгрывает обратно.
-   * Поэтому здесь:
-   *   падение   — ускоряющееся (`Easing.in`), а не ровное: ровное читается как «переместили»;
-   *   удар      — короткое сжатие по высоте и растяжение по ширине, 90 мс, на пределе заметности;
-   *   отдача    — пружина с малым затуханием, та самая «бамбл»: пара затухающих колебаний.
-   *
-   * Объём сохраняется: насколько сжали по высоте, настолько растянули по ширине. Без этого
-   * карточка не расплющивается, а просто дёргается в размере — глаз читает это как сбой.
-   *
-   * Всё на нативном драйвере: сдвиг и масштаб. Разметку не трогает ни одно из трёх, поэтому лента
-   * под сводкой стоит на месте.
-   */
-  useEffect(() => {
-    hOk();
-    Animated.sequence([
-      Animated.timing(drop, {
-        toValue: 1,
-        duration: 240,
-        easing: Easing.in(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(squash, {
-        toValue: 1,
-        duration: 90,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.spring(squash, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 9,
-        stiffness: 260,
-        mass: 0.7,
-      }),
-    ]).start();
-  }, [drop, squash]);
-
+  useEffect(() => { hOk(); }, []);
   useEffect(() => {
     if (versions.length === seen.current) return;
     seen.current = versions.length;
     hTick();
-    Animated.sequence([
-      Animated.timing(pulse, { toValue: 1, duration: 130, useNativeDriver: true }),
-      Animated.spring(pulse, { toValue: 0, useNativeDriver: true, damping: 11, stiffness: 240 }),
-    ]).start();
-  }, [pulse, versions.length]);
+    pulse.value = withSequence(
+      withTiming(1.015, { duration: 120, easing: REasing.out(REasing.quad) }),
+      withTiming(1, { duration: 220, easing: REasing.out(REasing.cubic) }),
+    );
+  }, [versions.length]);
+  const pulseStyle = useAnimatedStyle(() => ({ transform: [{ scale: pulse.value }] }));
 
   const prev = versions.length > 1 ? versions[versions.length - 2] : null;
-  const added = prev ? cur.topics.filter((t) => !prev.topics.includes(t)) : [];
-  const gone = prev ? prev.topics.filter((t) => !cur.topics.includes(t)) : [];
+  const added = prev ? cur.topics.filter((x) => !prev.topics.includes(x)) : [];
+  const gone = prev ? prev.topics.filter((x) => !cur.topics.includes(x)) : [];
   const renamed = prev && prev.title !== cur.title ? prev.title : '';
-  const changed = added.length || gone.length || renamed;
+  const changed = !!(added.length || gone.length || renamed);
 
   return (
-    <Animated.View
-      style={[
-        s.pin,
-        {
-          opacity: drop,
-          transform: [
-            { translateY: drop.interpolate({ inputRange: [0, 1], outputRange: [-34, 0] }) },
-            // Удар: шире и ниже. Отдача возвращает обе стороны к единице с парой колебаний.
-            { scaleX: squash.interpolate({ inputRange: [0, 1], outputRange: [1, 1.07] }) },
-            { scaleY: squash.interpolate({ inputRange: [0, 1], outputRange: [1, 0.91] }) },
-            { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.03] }) },
-          ],
-        },
-      ]}
-    >
-      <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} style={s.pinHead} onPress={onToggle}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.pinLabel}>{CREATE.summaryLabel()}</Text>
-          <Text style={s.pinTitle} numberOfLines={1}>{cur.title}</Text>
-        </View>
-        {/* Точка у свёрнутой строки — единственный намёк, что после ответа что-то поменялось. */}
-        {!open && changed ? <View style={s.pinDot} /> : null}
-        <Text style={s.pinChev}>{open ? '⌃' : '⌄'}</Text>
-      </Pressable>
+    <Animated.View entering={riseIn(0, 8)} style={[s.pinWrap, pulseStyle]}>
+      <GlassSurface tone="light" radius={20} style={s.pin}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open }}
+          style={s.pinHead}
+          onPress={onToggle}
+          hitSlop={6}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={s.pinLabel}>{CREATE.summaryLabel()}</Text>
+            <Text style={s.pinTitle} numberOfLines={open ? 2 : 1}>{cur.title}</Text>
+          </View>
+          {/* Точка у свёрнутой строки — единственный намёк, что после ответа что-то поменялось. */}
+          {!open && changed ? <View style={s.pinDot} /> : null}
+          {open ? <IconChevronUp size={20} c={color.fg} /> : <IconChevronDown size={20} c={color.fg} />}
+        </Pressable>
 
-      {open ? (
-        <>
-          {cur.topics.length ? (
-            <View style={s.sumChips}>
-              {cur.topics.map((t) => (
-                <View key={t} style={[s.sumChip, added.includes(t) && s.sumChipNew]}>
-                  <Text style={[s.sumChipText, added.includes(t) && { color: color.onPrimary }]}>{t}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
+        {open ? (
+          <View style={s.pinBody}>
+            {cur.topics.length ? (
+              <View style={s.pinChips}>
+                {cur.topics.map((x) => (
+                  <View key={x} style={[s.pinChip, added.includes(x) && s.pinChipNew]}>
+                    <Text style={[s.pinChipText, added.includes(x) && { color: color.onPrimary }]}>{interestLabel(x)}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
 
-          {changed ? (
-            <View style={s.diff}>
-              <Text style={s.diffLabel}>{CREATE.changed()}</Text>
-              {renamed ? <Text style={s.diffLine}>{CREATE.wasCalled(renamed)}</Text> : null}
-              {added.length ? <Text style={s.diffLine}>{CREATE.added(added.join(', '))}</Text> : null}
-              {gone.length ? <Text style={s.diffLine}>{CREATE.dropped(gone.join(', '))}</Text> : null}
-            </View>
-          ) : (
-            <Text style={s.readyNote}>{CREATE.readyNote()}</Text>
-          )}
+            {changed ? (
+              <View style={s.diff}>
+                <Text style={s.diffLabel}>{CREATE.changed()}</Text>
+                {renamed ? <Text style={s.diffLine}>{CREATE.wasCalled(renamed)}</Text> : null}
+                {added.length ? <Text style={s.diffLine}>{CREATE.added(added.map(interestLabel).join(', '))}</Text> : null}
+                {gone.length ? <Text style={s.diffLine}>{CREATE.dropped(gone.map(interestLabel).join(', '))}</Text> : null}
+              </View>
+            ) : (
+              <Text style={s.pinNote}>{CREATE.readyNote()}</Text>
+            )}
 
-          <Pressable accessibilityRole="button" style={s.readyBtn} onPress={onCreate}>
-            <Text style={s.readyBtnText}>{CREATE.ready()}</Text>
-          </Pressable>
-        </>
-      ) : null}
+            <GlassPill tone="brand" style={s.pinBtn} label={CREATE.ready()} onPress={onCreate} />
+          </View>
+        ) : null}
+      </GlassSurface>
     </Animated.View>
   );
 }
 
 // ============================================================ вид
-// Оформление UX-каркаса. Все значения — из токенов темы; при натягивании UI меняется этот блок.
+// Числа — с кадра GR.04 («Step Content»: поля 12/16/24/16, между блоками вопроса 16).
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
-  head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: space.sm },
-  back: {
-    width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border,
-    backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
+  /** Подложка кадра — ровный «Ambient · glass pilot» #F5F1EC, без цветных пятен. */
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  body: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24, gap: 16 },
+  /** «Suggestions»: строки через 4. */
+  list: { gap: 4 },
+  regen: { height: 40 },
+  hints: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  dock: { paddingHorizontal: 16, paddingTop: 8, backgroundColor: color.ambientBase },
+
+  /** Сводка под шапкой: те же поля 16, что у ленты, стекло со скруглением 20, как у карточек мастера. */
+  pinWrap: {
+    marginHorizontal: 16, marginTop: 8, marginBottom: 4, borderRadius: 20,
+    ...Platform.select({
+      ios: { shadowColor: '#0A0A14', shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
+      default: {},
+    }),
   },
-  allBtn: { height: 40, paddingHorizontal: 16, borderRadius: rad.full, backgroundColor: color.primary, justifyContent: 'center' },
-  allText: { ...type.labelMedium, color: color.onPrimary } as any,
-
-  body: { paddingHorizontal: 20, paddingBottom: space.lg, gap: 4 },
-  askRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: space.sm },
-  dot: { width: 26, height: 26, borderRadius: 13, backgroundColor: color.primary },
-  ask: { flex: 1, fontSize: 21, fontWeight: '700', color: color.fg },
-  sub: { ...type.bodySmall, color: color.muted, marginTop: 6 } as any,
-
-  bub: { maxWidth: '86%', paddingVertical: 12, paddingHorizontal: 14, marginTop: space.sm },
-  bubBot: { alignSelf: 'flex-start', backgroundColor: color.neutral100, borderRadius: 16 },
-  bubMe: { alignSelf: 'flex-end', backgroundColor: color.primary, borderRadius: 16 },
-  bubText: { ...type.body, color: color.fg } as any,
-  answer: { alignSelf: 'stretch', marginTop: space.lg, marginBottom: space.xs },
-  timeAnswer: { color: color.neutral300, marginTop: space.xs } as any,
-  time: { ...type.caption, color: color.neutral400, marginTop: 3 } as any,
-
-  sugBlock: { marginTop: space.lg, gap: space.sm },
-  sugHead: { height: 44, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
-  sugHeadText: { ...type.button, color: color.onPrimary } as any,
-  choose: { ...type.caption, color: color.muted, marginTop: 4 } as any,
-  sugList: { borderRadius: rad.lg, backgroundColor: color.card, borderWidth: 1, borderColor: color.border, overflow: 'hidden' },
-  sug: { minHeight: 52, paddingHorizontal: 16, paddingVertical: 12, justifyContent: 'center', borderTopWidth: 1, borderTopColor: color.neutral100 },
-  sugText: { ...type.body, color: color.fg, textAlign: 'center' } as any,
-  empty: { ...type.bodySmall, color: color.muted } as any,
-  regen: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    height: 46, borderRadius: rad.full, backgroundColor: color.primary, marginTop: space.sm,
-  },
-  regenText: { ...type.button, color: color.onPrimary } as any,
-
-  hints: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
-  hint: {
-    height: 38, paddingHorizontal: 14, borderRadius: rad.full, borderWidth: 1,
-    borderColor: color.border, backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
-  },
-  hintText: { ...type.labelMedium, color: color.fg } as any,
-
-  // Закреплённая сводка: живёт под шапкой, поэтому со своими полями и тенью, а не в ленте.
-  pin: {
-    marginHorizontal: 20, marginBottom: space.sm, padding: space.md, gap: space.sm,
-    borderRadius: rad.lg, backgroundColor: color.card,
-    shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 }, elevation: 2,
-  },
-  pinHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  pinLabel: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
-  pinTitle: { ...type.title, color: color.fg } as any,
+  pin: { paddingHorizontal: 16, paddingVertical: 12 },
+  pinHead: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40 },
+  pinLabel: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: '#5A616E' } as any,
+  pinTitle: { fontFamily: font.textSemibold, fontSize: 15, lineHeight: 22, color: color.fg } as any,
   pinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.primary },
-  pinChev: { fontSize: 18, color: color.muted },
-  diff: { backgroundColor: color.infoBg, borderRadius: rad.md, padding: space.md, gap: 3 },
-  diffLabel: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
-  diffLine: { ...type.bodySmall, color: color.infoText } as any,
-  sumChipNew: { backgroundColor: color.primary },
-
-  readyBlock: { marginTop: space.lg, gap: space.sm },
-  /** Сводка по затее перед созданием — та же карточка, что человек увидит на экране интента. */
-  sumCard: { backgroundColor: color.card, borderRadius: rad.lg, padding: space.md, gap: 8 },
-  sumLabel: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
-  sumTitle: { fontSize: 17, fontWeight: '700', color: color.fg } as any,
-  sumChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  sumChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: rad.full, backgroundColor: color.neutral100 },
-  sumChipText: { ...type.caption, color: color.fg } as any,
-  readyNote: { ...type.bodySmall, color: color.muted } as any,
-  readyBtn: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
-  readyBtnText: { ...type.button, color: color.onPrimary } as any,
-
-  dock: { paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
-  field: {
-    height: 48, borderRadius: rad.full, backgroundColor: color.neutral100,
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, gap: space.sm,
+  pinBody: { gap: 12, paddingTop: 10 },
+  pinChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  pinChip: {
+    height: 28, paddingHorizontal: 12, borderRadius: 14, justifyContent: 'center',
+    // На белом стекле белый чип пропадал (снимок стенда 04.10) — лёгкая тёмная плёнка.
+    backgroundColor: 'rgba(24,27,34,0.06)',
   },
-  input: { flex: 1, color: color.fg, fontSize: 15 },
+  pinChipNew: { backgroundColor: color.primary },
+  pinChipText: { fontFamily: font.textMedium, fontSize: 12, lineHeight: 16, color: color.fg } as any,
+  diff: { gap: 2 },
+  diffLabel: { fontFamily: font.textSemibold, fontSize: 13, lineHeight: 20, color: color.primary } as any,
+  diffLine: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: color.fg } as any,
+  pinNote: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: '#5A616E' } as any,
+  pinBtn: { height: 48 },
 });
+

@@ -8,7 +8,8 @@
  * Полоса, которая всегда одна и та же, ничего не сообщает.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator, Alert, Platform,
+         useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, Segments, EditSheet } from '../../src/components/ProfileShell';
 import * as ImagePicker from 'expo-image-picker';
@@ -38,30 +39,22 @@ export default function ProfileHub() {
   const p = st.profile;
   const d = useMemo(() => profileData(p), [p, lang]);
 
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
+  const { height: winH } = useWindowDimensions();
   /** Пересборка идёт — своя или чужая. Сводку теперь обновляет сторож (startSummaryWatch), и
    *  «Kleal составляет описание…» должно загораться и тогда, когда правку сделали на другом
    *  экране, а сюда человек вернулся посреди запроса. */
   const [busy, setBusy] = useState(false);
   useEffect(() => onSummaryBusy(setBusy), []);
   /** Какой лист правки открыт. Пусто — ни один. */
-  const [sheet, setSheet] = useState<'languages' | 'location' | 'whoami' | null>(null);
-
-  const saveSummary = async (text: string) => {
-    set('summary', text);
-    set('summaryUpdated', Date.now());
-    setEditing(false);
-    if (p.name) await profileApi.update(p.name, { summary: text }).catch(() => {});
-  };
+  const [sheet, setSheet] = useState<'languages' | 'location' | 'whoami' | 'summary' | null>(null);
 
   /**
    * Пересобрать сводку. Одна и та же дверь и для кнопки «Пересобрать», и для правок профиля —
    * защиты от затирания живут внутри adaptSummary, и обходить их отдельным путём нельзя.
    */
-  const rewrite = async () => {
+  const rewrite = async (extra = '') => {
     setBusy(true);
-    try { await adaptSummary(); } finally { setBusy(false); }
+    try { return await adaptSummary(extra); } finally { setBusy(false); }
   };
 
   /**
@@ -101,6 +94,13 @@ export default function ProfileHub() {
     // location.area ложится в profile.city — значит это ГОРОД. Раньше сюда приезжало название
     // страны, и человек из Барселоны хранился как живущий в «Spain».
     writeFact('location.area', a.city);
+    /*
+      СТРАНА ТОЖЕ СОХРАНЯЕТСЯ. Лист давал её выбрать, показывал выбранной — и терял: факта
+      «location.country» в реестре не было вовсе, а экран не имеет права писать имя поля строкой.
+      Поэтому у человека из Лондона страна каждый раз возвращалась к «Испании» — не потому что
+      экран так решил, а потому что сохранять её было нечем. Теперь факт заведён (shared/fields.json).
+    */
+    writeFact('location.country', a.country);
     writeFact('location.lat', a.lat);
     writeFact('location.lon', a.lon);
     writeFact('location.radiusKm', a.km);
@@ -108,7 +108,7 @@ export default function ProfileHub() {
     if (p.name) {
       await profileApi.update(
         p.name,
-        patchFor(['location.area', 'location.lat', 'location.lon', 'location.radiusKm'])
+        patchFor(['location.area', 'location.country', 'location.lat', 'location.lon', 'location.radiusKm'])
       ).catch(() => {});
     }
     rewrite();                    // «живёт в Барселоне» после переезда в Италию — неправда
@@ -229,40 +229,21 @@ export default function ProfileHub() {
           {updated ? <Text style={s.updated}>{updated}</Text> : null}
         </View>
 
-        {editing ? (
-          <>
-            <TextInput
-              style={s.sumInput}
-              value={draft}
-              onChangeText={setDraft}
-              multiline
-              textAlignVertical="top"
-              accessibilityLabel={HUB.summaryLabel()}
-            />
-            <View style={s.linkRow}>
-              <Pressable accessibilityRole="button" onPress={() => saveSummary(draft.trim())}>
-                <Text style={s.link}>{HUB.save()}</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" onPress={() => setEditing(false)}>
-                <Text style={s.linkMuted}>{HUB.cancel()}</Text>
-              </Pressable>
-            </View>
-          </>
-        ) : (
-          <>
-            <Text style={s.sumText}>
-              {summary || (busy ? HUB.writing() : HUB.empty())}
-            </Text>
-            <View style={s.linkRow}>
-              <Pressable accessibilityRole="button" onPress={() => { setDraft(summary); setEditing(true); }}>
-                <Text style={s.link}>{HUB.edit()}</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" accessibilityState={{ busy }} onPress={busy ? undefined : rewrite}>
-                {busy ? <ActivityIndicator size="small" color={color.primary} /> : <Text style={s.link}>{HUB.rewrite()}</Text>}
-              </Pressable>
-            </View>
-          </>
-        )}
+        {/*
+          ОДНА ДВЕРЬ. Раньше здесь стояли две ссылки: «Изменить» открывала поле правки прямо в
+          карточке, «Пересобрать» молча звала модель — и что именно она сделает, по кнопке было
+          не понять. Теперь дверь одна, а выбор — внутри листа, рядом с текстом, который меняют.
+        */}
+        <Text style={s.sumText}>
+          {summary || (busy ? HUB.writing() : HUB.empty())}
+        </Text>
+        <View style={s.linkRow}>
+          <Pressable accessibilityRole="button" accessibilityState={{ busy }}
+                     onPress={busy ? undefined : () => setSheet('summary')}>
+            {busy ? <ActivityIndicator size="small" color={color.primary} />
+                  : <Text style={s.link}>{HUB.edit()}</Text>}
+          </Pressable>
+        </View>
 
         {/*
           Ведёт в разговор создания интента, а не в мастер: мастер начинается с формата и времени,
@@ -295,7 +276,7 @@ export default function ProfileHub() {
       <Card>
         <Text style={s.basicTitle}>{HUB.lang()}</Text>
         <Segments
-          options={[['ru', 'RU'], ['en', 'EN']]}
+          options={[['ru', 'RU'], ['en', 'EN'], ['es', 'ES']]}
           value={lang}
           onChange={(v) => setLang(v as any)}
         />
@@ -306,6 +287,14 @@ export default function ProfileHub() {
         бы показать его следующему, кто возьмёт этот телефон. Карточка показывается всегда: см.
         SIGNOUT — привязка к логину прятала кнопку от тех, у кого логина нет.
       */}
+      <SummarySheet
+        open={sheet === 'summary'}
+        summary={summary}
+        maxHeight={Math.round(winH * 0.42)}
+        onClose={() => setSheet(null)}
+        onRebuild={rewrite}
+      />
+
       <WhoAmISheet
         open={sheet === 'whoami'}
         p={p}
@@ -354,13 +343,8 @@ const s = StyleSheet.create({
   sumLabel: { fontSize: 17, fontWeight: '700', color: color.fg },
   updated: { ...type.caption, color: color.muted } as any,
   sumText: { ...type.body, color: color.fg } as any,
-  sumInput: {
-    minHeight: 120, borderRadius: rad.md, backgroundColor: color.neutral100,
-    padding: 12, color: color.fg, fontSize: 15, lineHeight: 22,
-  },
   linkRow: { flexDirection: 'row', gap: space.lg, marginTop: 2 },
   link: { ...type.labelMedium, color: color.primary } as any,
-  linkMuted: { ...type.labelMedium, color: color.muted } as any,
 
   gear: {
     width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border,
@@ -399,6 +383,19 @@ const s = StyleSheet.create({
     paddingHorizontal: 14, color: color.fg, fontSize: 16,
   },
   whoNote: { ...type.caption, color: color.muted } as any,
+
+  /** Лист правки сводки. Нынешний текст — плашкой: его читают, а не правят. */
+  sumSheetNow: {
+    borderRadius: rad.md, backgroundColor: color.neutral100, padding: 14,
+  },
+  sumSheetNowText: { ...type.body, color: color.fg } as any,
+  sumSheetInput: {
+    minHeight: 92, borderRadius: rad.md, backgroundColor: color.neutral100,
+    padding: 12, color: color.fg, fontSize: 16, lineHeight: 22,
+  },
+  sumSheetWait: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  sumSheetWaitText: { ...type.bodySmall, color: color.muted, flex: 1 } as any,
+  sumSheetErr: { ...type.caption, color: color.danger } as any,
   search: {
     height: 46, borderRadius: rad.full, backgroundColor: color.neutral100,
     paddingHorizontal: 18, color: color.fg, fontSize: 15,
@@ -460,6 +457,85 @@ const ROW_ICON: Record<string, (p: any) => React.ReactElement> = {
  * Фото берётся из галереи и сжимается перед сохранением: в состоянии оно лежит data-URL'ом, и
  * несжатый снимок с телефона — это мегабайты в AsyncStorage на каждой записи профиля.
  */
+/**
+ * Лист правки сводки: нынешний текст, поле «что добавить», коралловая «Пересобрать».
+ *
+ * ТЕКСТ СВЕРХУ НЕ ПРАВИТСЯ РУКАМИ, и это осознанно: сводку пишет модель, а человек говорит ей,
+ * что учесть. Иначе получались два хозяина у одного абзаца — человек правил слово, сторож
+ * пересобирал абзац, и правка исчезала без следа. Так уже было.
+ *
+ * ЛИСТ НЕ ЗАКРЫВАЕТСЯ ПО НАЖАТИЮ. Он ждёт модель и показывает это; закроется сам, когда
+ * абзац перепишется. Не получилось — остаётся открытым вместе с набранным текстом: терять
+ * написанное человеком из-за отвалившейся сети нельзя.
+ */
+function SummarySheet({
+  open, summary, maxHeight, onClose, onRebuild,
+}: {
+  open: boolean;
+  summary: string;
+  maxHeight: number;
+  onClose: () => void;
+  onRebuild: (extra: string) => Promise<boolean>;
+}) {
+  const [extra, setExtra] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setExtra('');
+    setBusy(false);
+    setFailed(false);
+  }, [open]);
+
+  const go = async () => {
+    setBusy(true);
+    setFailed(false);
+    const ok = await onRebuild(extra.trim());
+    setBusy(false);
+    if (ok) onClose();
+    else setFailed(true);
+  };
+
+  return (
+    <EditSheet
+      open={open}
+      title={HUB.summaryLabel()}
+      onClose={busy ? () => {} : onClose}
+      onAccept={go}
+      acceptLabel={HUB.rewrite()}
+      busy={busy}
+      maxHeight={maxHeight}
+    >
+      <Text style={s.basicTitle}>{HUB.sumNow()}</Text>
+      <View style={s.sumSheetNow}>
+        <Text style={s.sumSheetNowText}>{summary || HUB.empty()}</Text>
+      </View>
+
+      <Text style={s.basicTitle}>{HUB.sumAdd()}</Text>
+      <TextInput
+        style={s.sumSheetInput}
+        value={extra}
+        onChangeText={setExtra}
+        editable={!busy}
+        multiline
+        textAlignVertical="top"
+        placeholder={HUB.sumAddHint()}
+        placeholderTextColor={color.neutral400}
+        accessibilityLabel={HUB.sumAdd()}
+      />
+
+      {busy ? (
+        <View style={s.sumSheetWait}>
+          <ActivityIndicator size="small" color={color.primary} />
+          <Text style={s.sumSheetWaitText}>{HUB.writing()}</Text>
+        </View>
+      ) : null}
+      {failed ? <Text style={s.sumSheetErr}>{HUB.sumFailed()}</Text> : null}
+    </EditSheet>
+  );
+}
+
 function WhoAmISheet({
   open, p, onClose, onAccept,
 }: {
@@ -609,7 +685,18 @@ function LanguagesSheet({
   useEffect(() => { if (open) { setSel(value); setQ(''); } }, [open]);
 
   const toggle = (k: string) => setSel((x) => (x.includes(k) ? x.filter((y) => y !== k) : [...x, k]));
-  const found = searchLangs(q).filter((l) => !sel.includes(l[0]));
+  /*
+    ВОСЕМЬДЕСЯТ ЧЕТЫРЕ ЧИПА СРАЗУ — ЭТО НЕ ВЫБОР, А СТЕНА.
+
+    `searchLangs('')` отдаёт ВЕСЬ список, и лист открывался простынёй на десяток экранов прокрутки:
+    свои языки терялись сверху, найти нужный глазами быстрее, чем напечатать, было нельзя.
+    Показываем первые двенадцать — список курирован, и в начале стоят самые ходовые, — а под ними
+    честно говорим, сколько осталось и как их достать. Начал печатать — ищется по всему списку.
+  */
+  const all = searchLangs(q).filter((l) => !sel.includes(l[0]));
+  const short = !q.trim();
+  const found = short ? all.slice(0, 12) : all;
+  const hidden = short ? all.length - found.length : 0;
 
   return (
     <EditSheet
@@ -662,6 +749,8 @@ function LanguagesSheet({
       ) : (
         <Text style={s.basicValue}>{SHEETS.nothing()}</Text>
       )}
+
+      {hidden > 0 ? <Text style={s.basicValue}>{SHEETS.moreLangs(hidden)}</Text> : null}
     </EditSheet>
   );
 }
@@ -676,22 +765,42 @@ function LocationSheet({
   onAccept: (a: Area) => void;
 }) {
   /**
-   * Профиль хранит город и координаты, но не помнит, из какого списка их взяли. Страну
-   * восстанавливаем по городу; не нашли — значит точку ставили булавкой, и это честно помечено
-   * `moved`: подпись «Вернуть к <город>» тогда не врёт, а строка города остаётся своей.
+   * ЛИСТ ОТКРЫВАЕТСЯ НА СВОЁМ МЕСТЕ, А НЕ В БАРСЕЛОНЕ.
+   *
+   * Было три подстановки по умолчанию, и каждая врала своему человеку. Страна бралась ТОЛЬКО из
+   * короткого списка городов (сорок штук на пять стран), поэтому у живущего в Лондоне, Бадалоне
+   * или Матаро — а это две сотни людей в базе — открывалась «Испания» и якорь «Вернуть к
+   * Barcelona». Координаты при их отсутствии (двести с лишним профилей) ставились барселонскими:
+   * строка города говорила «London», а карта показывала Испанию.
+   *
+   * Теперь порядок такой: страна — та, что сохранена в профиле, и только если её там нет,
+   * выводится по городу; точка — своя, а без неё берётся точка своего города из списка, и лишь
+   * в последнюю очередь — первый город страны. Якорь «Вернуть к …» называет свой город, если он
+   * в списке, иначе первый город своей страны — но никогда чужую Барселону.
    */
   const current = (): Area => {
-    const city = String(p.city || DEFAULT_AREA.city);
+    const city = String(p.city || '').trim() || DEFAULT_AREA.city;
     const home = PLACES.find((x) => x.cities.some((c) => c[0] === city));
+    // Страна своя, даже если её нет в коротком списке: AreaPicker добавит её первой строкой
+    // (см. placesFor). Подменять «Россию» «Испанией» только потому, что список короткий, нельзя.
+    const saved = String(p.country || '').trim();
+    const country = saved || home?.country || DEFAULT_AREA.country;
+    const list = PLACES.find((x) => x.country === country);
+    const row = list?.cities.find((c) => c[0] === city) || list?.cities[0];
+    const lat = Number(p.geo?.coarseLat);
+    const lon = Number(p.geo?.coarseLon);
+    // Ноль на обеих осях сервер и сам считает отсутствием координат, а не точкой в Атлантике.
+    const mine = Number.isFinite(lat) && Number.isFinite(lon) && !(lat === 0 && lon === 0);
     return {
-      country: home?.country || DEFAULT_AREA.country,
+      country,
       city,
-      // Якорь «Вернуть к …»: если город из списка — он сам, иначе первый город страны.
-      pinCity: home ? city : DEFAULT_AREA.city,
-      lat: p.geo?.coarseLat ?? DEFAULT_AREA.lat,
-      lon: p.geo?.coarseLon ?? DEFAULT_AREA.lon,
+      // Якорь «Вернуть к …»: свой город, если он в списке; страна не из списка — тоже свой город.
+      pinCity: home || !list ? city : row![0],
+      lat: mine ? lat : (row?.[1] ?? DEFAULT_AREA.lat),
+      lon: mine ? lon : (row?.[2] ?? DEFAULT_AREA.lon),
       km: p.geo?.maxDistanceKm ?? 15,
-      moved: !home,
+      // Точка «своя», когда города нет в списке: подпись тогда показывает адрес, а не город.
+      moved: !home && mine,
     };
   };
   const [area, setArea] = useState<Area>(current);

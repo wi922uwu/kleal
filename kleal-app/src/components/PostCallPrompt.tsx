@@ -2,10 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator, AppState, Modal, Pressable, StyleSheet, Text, View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { agent, group, newIdem } from '../api';
 import { CHAT, PLAN, RATINGS, planPhase } from '../chat';
+import { GPLAN } from '../gplan';
 import { T, useLang } from '../i18n';
 import { useOnb } from '../state';
 import { color, radius as rad, space, type } from '../theme';
@@ -22,12 +23,19 @@ export function PostCallPrompt() {
   useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const path = usePathname();
+  const here = useGlobalSearchParams<{ gid?: string; id?: string }>();
   const state = useOnb();
   const me = String(state.profile.name || '').trim();
   const loadingRef = useRef(false);
 
   const [plan, setPlan] = useState<any>(null);
-  const [dismissedId, setDismissedId] = useState('');
+  /**
+   * Отклонённые — МНОЖЕСТВО, а не одна запись. Здесь хранился один идентификатор, и при двух
+   * встречах без отзыва попап зацикливался: закрыл A — открылся B, закрыл B — A больше не
+   * исключён и открылся снова. Выйти из этого было нельзя, не ответив на обе.
+   */
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [stage, setStage] = useState<Stage>('happened');
   const [rating, setRating] = useState('');
   const [reason, setReason] = useState('');
@@ -47,7 +55,7 @@ export function PostCallPrompt() {
         ...(groups?.history || []).map((item: any) => ({ ...item, feedback_kind: 'group' })),
       ] as any[];
       const pending = all
-        .filter((item) => feedbackStage(item) !== null && String(item.id || '') !== dismissedId)
+        .filter((item) => feedbackStage(item) !== null && !dismissed.has(String(item.id || '')))
         .sort((a, b) => Number(b.starts_at || b.updated || 0) - Number(a.starts_at || a.updated || 0))[0];
 
       if (!pending) {
@@ -64,7 +72,7 @@ export function PostCallPrompt() {
     } finally {
       loadingRef.current = false;
     }
-  }, [dismissedId, me]);
+  }, [dismissed, me]);
 
   useEffect(() => {
     if (!me) {
@@ -85,7 +93,7 @@ export function PostCallPrompt() {
   const other = useMemo(() => otherParticipant(plan, me), [me, plan]);
 
   const close = () => {
-    setDismissedId(String(plan?.id || ''));
+    setDismissed((s) => { const id = String(plan?.id || ''); return id ? new Set(s).add(id) : s; });
     setPlan(null);
   };
 
@@ -147,13 +155,21 @@ export function PostCallPrompt() {
   };
 
   if (!plan) return null;
+  const isGroup = plan.feedback_kind === 'group';
+  // Человек уже на странице этого плана — там и есть вопрос (GR.47); второй поверх неё не нужен.
+  // И на жалобе по этой же группе: человек пишет о том, что случилось, — вопрос поверх мешает.
+  if (isGroup && (path === '/gplan' || path === '/group-report') && String(here.gid || '') === String(plan.gid || '')) return null;
+  // То же у плана один на один: с разделом E бордов 1:1 вопрос задаёт сама страница плана (OF.24 / O.24).
+  if (!isGroup && path === '/plan' && String(here.id || '') === String(plan.id || '')) return null;
+  // Групповая встреча вживую — не звонок: «After the meetup», «Yes, we met» (борд GR.47).
+  const offlineGroup = isGroup && String(plan.mode || 'offline') === 'offline';
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={close} statusBarTranslucent>
       <View style={s.layer}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={T('Ответить позже', 'Answer later')}
+          accessibilityLabel={T('Ответить позже', 'Answer later', 'Contesta más tarde')}
           style={s.scrim}
           onPress={close}
         />
@@ -161,7 +177,7 @@ export function PostCallPrompt() {
           <View style={s.handle} />
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={T('Ответить позже', 'Answer later')}
+            accessibilityLabel={T('Ответить позже', 'Answer later', 'Contesta más tarde')}
             hitSlop={12}
             style={s.close}
             onPress={close}
@@ -169,7 +185,8 @@ export function PostCallPrompt() {
             <Text style={s.closeText}>x</Text>
           </Pressable>
 
-          <Text style={s.eyebrow}>{T('После звонка', 'After the call')}</Text>
+          <Text style={s.eyebrow}>{offlineGroup ? T('После встречи', 'After the meetup', 'Después de la quedada')
+            : T('После звонка', 'After the call', 'Después de la llamada')}</Text>
           <Text style={s.title}>
             {stage === 'happened' ? PLAN.didItHappen()
               : stage === 'rating' ? PLAN.howWasIt()
@@ -184,11 +201,11 @@ export function PostCallPrompt() {
               <Text style={s.note}>
                 {plan.feedback_kind === 'group'
                   ? T('Этот вопрос получат все участники. Ответы не записываются, пока каждый не ответит.',
-                      'Everyone gets this question. Nothing is recorded until people answer.')
+                      'Everyone gets this question. Nothing is recorded until people answer.', 'A todos se les hace esta pregunta. Nada se registra hasta que la gente responda.')
                   : PLAN.didItNote(other)}
               </Text>
               <Pressable accessibilityRole="button" disabled={busy} style={s.primary} onPress={answerYes}>
-                {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.primaryText}>{PLAN.yesWeTalked()}</Text>}
+                {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.primaryText}>{offlineGroup ? GPLAN.yesMet() : PLAN.yesWeTalked()}</Text>}
               </Pressable>
               <Pressable accessibilityRole="button" disabled={busy} style={s.secondary} onPress={answerNo}>
                 <Text style={s.secondaryText}>{PLAN.noItDidnt()}</Text>
@@ -227,7 +244,7 @@ export function PostCallPrompt() {
               </Pressable>
               {plan.feedback_kind === 'group' ? (
                 <Pressable accessibilityRole="button" disabled={busy} style={s.secondary} onPress={reportGroupProblem}>
-                  <Text style={s.secondaryText}>{T('Сообщить о проблеме', 'Report a problem')}</Text>
+                  <Text style={s.secondaryText}>{T('Сообщить о проблеме', 'Report a problem', 'Reportar un problema')}</Text>
                 </Pressable>
               ) : null}
             </>
@@ -238,7 +255,7 @@ export function PostCallPrompt() {
               <Text style={s.note}>
                 {plan.feedback_kind === 'group'
                   ? T('Причина останется приватной и не будет показана другим участникам.',
-                      'Your reason stays private and is not shown to other participants.')
+                      'Your reason stays private and is not shown to other participants.', 'Tu motivo permanece privado y no se muestra a otros participantes.')
                   : PLAN.whatHappenedNote()}
               </Text>
               {(plan.feedback_kind === 'group' ? groupReasons(String(plan.mode || '')) : [
@@ -295,28 +312,28 @@ export function feedbackStage(plan: any, nowMs = Date.now()): Stage | null {
 export function groupReasons(mode: string): [string, string][] {
   if (mode === 'hybrid') {
     return [
-      ['nobody_came_or_joined', T('Никто не пришёл и не подключился', 'Nobody came or joined')],
-      ['couldnt_make', T('Я не смог прийти или подключиться', 'I couldn’t make it')],
-      ['others_didnt_come_or_join', T('Другие не пришли или не подключились', 'Others didn’t come or join')],
-      ['place_closed', T('Место было закрыто', 'The place was closed')],
-      ['other', T('Другое', 'Something else')],
+      ['nobody_came_or_joined', T('Никто не пришёл и не подключился', 'Nobody came or joined', 'Nadie vino ni se unió')],
+      ['couldnt_make', T('Я не смог прийти или подключиться', 'I couldn’t make it', 'No pude ir')],
+      ['others_didnt_come_or_join', T('Другие не пришли или не подключились', 'Others didn’t come or join', 'Los demás no vinieron o no se unieron')],
+      ['place_closed', T('Место было закрыто', 'The place was closed', 'El lugar estaba cerrado')],
+      ['other', T('Другое', 'Something else', 'Otra cosa')],
     ];
   }
   if (mode === 'offline') {
     return [
-      ['nobody_came', T('Никто не пришёл', 'Nobody came')],
-      ['couldnt_make', T('Я не смог прийти', 'I couldn’t make it')],
-      ['others_didnt_come', T('Другие не пришли', 'Others didn’t come')],
-      ['place_closed', T('Место было закрыто', 'The place was closed')],
-      ['other', T('Другое', 'Something else')],
+      ['nobody_came', T('Никто не пришёл', 'Nobody came', 'Nadie vino')],
+      ['couldnt_make', T('Я не смог прийти', 'I couldn’t make it', 'No pude ir')],
+      ['others_didnt_come', T('Другие не пришли', 'Others didn’t come', 'Los demás no vinieron')],
+      ['place_closed', T('Место было закрыто', 'The place was closed', 'El lugar estaba cerrado')],
+      ['other', T('Другое', 'Something else', 'Otra cosa')],
     ];
   }
   return [
-    ['nobody_joined', T('Никто не подключился', 'Nobody joined')],
-    ['couldnt_make', T('Я не смог подключиться', 'I couldn’t make it')],
-    ['others_didnt_join', T('Другие не подключились', 'Others didn’t join')],
-    ['link_failed', T('Ссылка не работала', 'The link didn’t work')],
-    ['other', T('Другое', 'Something else')],
+    ['nobody_joined', T('Никто не подключился', 'Nobody joined', 'Nadie se unió')],
+    ['couldnt_make', T('Я не смог подключиться', 'I couldn’t make it', 'No pude ir')],
+    ['others_didnt_join', T('Другие не подключились', 'Others didn’t join', 'Los demás no se unieron')],
+    ['link_failed', T('Ссылка не работала', 'The link didn’t work', 'El enlace no funcionó')],
+    ['other', T('Другое', 'Something else', 'Otra cosa')],
   ];
 }
 
@@ -326,9 +343,9 @@ function groupRatingNote(plan: any): string {
     return T(
       `${Number(outcome.yes || 0)} из ${Number(outcome.of || 0)} участников подтвердили звонок. Оценка необязательна.`,
       `${Number(outcome.yes || 0)} of ${Number(outcome.of || 0)} said it happened, so it counts as held. Rating is optional.`
-    );
+    , `${Number(outcome.yes || 0)} de ${Number(outcome.of || 0)} dijeron que ocurrió, así que se cuenta como celebrado. La valoración es opcional.`);
   }
-  return T('Оценка необязательна и видна только Kleal.', 'Rating is optional and is only visible to Kleal.');
+  return T('Оценка необязательна и видна только Kleal.', 'Rating is optional and is only visible to Kleal.', 'La valoración es opcional y solo es visible para Kleal.');
 }
 
 function otherParticipant(plan: any, me: string): string {
@@ -341,7 +358,7 @@ function otherParticipant(plan: any, me: string): string {
 
 const s = StyleSheet.create({
   layer: { flex: 1, justifyContent: 'flex-end' },
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: color.scrim },
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: color.scrim },
   card: {
     backgroundColor: color.card,
     borderTopLeftRadius: rad.xxl,

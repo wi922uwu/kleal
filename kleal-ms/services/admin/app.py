@@ -8,6 +8,7 @@
 import os, hashlib, hmac
 import sys
 import json
+import time
 import uuid
 import threading
 import re                                      # лаборатория: запасной разбор фразы на слова
@@ -21,12 +22,15 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
         sys.path.insert(0, _p)
 import config                                  # the one topology table (ports/URLs/store paths)
 from http_util import send, send_json, read_json
-import ops                                     # операционный слой: база, очередь, мост тем
+import ops
+import settings                               # живые настройки: промпты, температура, модель
+import llm_client                             # список моделей и живая проба                                     # операционный слой: база, очередь, мост тем
 try:
     import db                                  # хранилище людей: то же, что у матчинга
 except Exception:
     db = None
 from ui import PAGE                            # страница — отдельным файлом, см. её шапку
+import battery_tree                            # склад ветвей батареи: копится, не режется
 
 PORT = config.PORTS["admin"]
 MATCH_URL = config.MATCH_URL
@@ -67,6 +71,19 @@ def _admin_token():
 
 
 ADMIN_TOKEN = _admin_token()
+
+# ВРЕМЕННЫЙ ПАРОЛЬ ВМЕСТО ТОКЕНА — до выхода в прод.
+#
+# Токен длинный, лежит в файле на боксе и каждый раз его надо откуда-то доставать; пока панелью
+# пользуются двое своих, это трение без выгоды. Пароль принимается НАРЯДУ с токеном, а не вместо
+# него: всё, что ходит с токеном (сама панель из другого места, скрипты), продолжает работать.
+#
+# ЧЕМ ЭТО ПЛОХО, ЧТОБЫ НЕ ЗАБЫТЬ. Панель открыта из интернета на /admin, и восьмизначный пароль
+# держит только случайного прохожего: перебор такого — минуты. Это осознанная временная мера на
+# время разработки, и снимать её надо ДО первых живых людей.
+#
+# Убрать: `KLEAL_ADMIN_PASSWORD=` (пусто) в окружении службы — останется только токен.
+ADMIN_PASSWORD = os.environ.get("KLEAL_ADMIN_PASSWORD", "15271987").strip()
 
 VIBES = ["calm", "energetic", "intellectual", "creative", "competitive", "chill", "social", "introvert", "extrovert"]
 ROLES = ["play", "watch", "discuss", "practise", "attend", "meet"]
@@ -297,7 +314,31 @@ def update_user(uid, patch):
 VERBS = ("pause", "unpause", "unverify", "verify")
 
 
-def apply_verb(name, verb):
+def _row_for(users, uid="", name=""):
+    """Строка человека для действия модератора: (строка, отказ).
+
+    ПО ID (kleal-ms/docs/IDENTITY.md). По имени — только если такой человек один: тёзки — норма,
+    и прежний поиск «первая строка с этим именем» банил, ставил на паузу и верифицировал не того
+    из двух «Иванов». Для тёзок — отказ со списком, чтобы модератор выбрал сам."""
+    uid = str(uid or "").strip()
+    if uid:
+        hit = next((u for u in users if str(u.get("id") or "") == uid), None)
+        return (hit, None) if hit else (None, {"ok": False, "error": "NOT_FOUND"})
+    want = str(name or "").strip().lower()
+    if not want:
+        return None, {"ok": False, "error": "NAME_REQUIRED"}
+    same = [u for u in users if str(u.get("name", "")).strip().lower() == want]
+    if len(same) == 1:
+        return same[0], None
+    if not same:
+        return None, {"ok": False, "error": "NOT_FOUND"}
+    return None, {"ok": False, "error": "AMBIGUOUS_PERSON",
+                  "candidates": [{"id": u.get("id"), "name": u.get("name"), "age": u.get("age"),
+                                  "area": u.get("area") or u.get("city"), "owned": bool(u.get("owner"))}
+                                 for u in same[:10]]}
+
+
+def apply_verb(name, verb, uid=""):
     """The three narrow verbs that replaced the edit form.
 
     They patch ONE key on the raw row and deliberately do NOT go through `_norm_user`, which
@@ -308,11 +349,13 @@ def apply_verb(name, verb):
     """
     if verb not in VERBS:
         return {"ok": False, "error": "unknown verb"}
-    want = str(name or "").strip().lower()
     with _LOCK:
         users = _read()
+        hit, no = _row_for(users, uid, name)
+        if no:
+            return no
         for i, u in enumerate(users):
-            if str(u.get("name", "")).strip().lower() != want:
+            if u is not hit:
                 continue
             row = dict(u)
             if verb in ("pause", "unpause"):
@@ -332,7 +375,7 @@ def apply_verb(name, verb):
                 row["verified"] = True
             users[i] = row
             _write(users, touched=row)
-            return {"ok": True, "name": row.get("name"), "verb": verb,
+            return {"ok": True, "name": row.get("name"), "id": row.get("id"), "verb": verb,
                     "verified": bool(row.get("verified")),
                     "receiving": row.get("receiving"), "paused": bool(row.get("paused"))}
     return {"ok": False, "error": "no such person"}
@@ -349,7 +392,8 @@ def delete_user(uid):
             # без этого человек исчезал бы из файла и оставался в поиске.
             if db is not None and db.ENABLED and gone is not None:
                 try:
-                    db.delete_user(gone.get("name"))
+                    # По id: удаление по имени стирало бы заодно всех тёзок (docs/IDENTITY.md).
+                    db.delete_user(uid=gone.get("id"))
                 except Exception as e:
                     print("[admin] не смог удалить из postgres: %s" % str(e)[:120])
             _write(users)
@@ -366,6 +410,22 @@ def _match_post(path, payload, timeout=30):
             return json.loads(r.read().decode("utf-8"))
     except Exception as e:
         return {"error": "%s: %s" % (type(e).__name__, str(e)[:160])}
+
+
+def _onb_post(path, payload, timeout=30):
+    """Позвать онбординг. Через него идут ВСЕ действия с учётками: он единственный, кто пишет
+    accounts.json, и делает это под своим замком. Если бы панель писала файл сама, обычный трафик
+    (онбординг обновляет отметку «последний вход») мог бы перезаписать её правку целиком — и
+    отозванная сессия молча вернулась бы."""
+    req = urllib.request.Request(config.ONBOARDING_URL + path,
+                                 data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Content-Type": "application/json",
+                                          "X-Admin-Token": ADMIN_TOKEN})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:160])}
 
 
 def _match_get(path, timeout=20):
@@ -466,8 +526,10 @@ def _searcher_profile(body):
     Shaped the way the matching engine reads it (name/vibe/geo/langs/interests)."""
     who = str(body.get("self") or "").strip().lower()
     if who:
-        for u in _read():
-            if str(u.get("name", "")).strip().lower() == who or str(u.get("id", "")) == who:
+        rows = _read()
+        # Сперва точный id: по имени нашёлся бы первый из тёзок (kleal-ms/docs/IDENTITY.md).
+        by_id = [u for u in rows if str(u.get("id", "")).lower() == who]
+        for u in by_id or [u for u in rows if str(u.get("name", "")).strip().lower() == who]:
                 # age and formats were missing. `_hard_gates` refuses any dating intent when the
                 # SEARCHER's age is unknown, so the lab returned a confident zero for a whole class of
                 # searches and looked like an engine result.
@@ -495,16 +557,237 @@ def _qs(handler, key, default=""):
     return default
 
 
+
+# ──────────────────────────────────────────────────────────────────────────────── пульт
+# Раньше ни промпта, ни температуры, ни модели в панели не было вовсе: промпт правился на боксе
+# и перезапуском сервиса, температура была россыпью чисел в коде, модель — переменной окружения.
+# Здесь они собраны в одно место, и это главное, ради чего панель переделывалась.
+
+# ──────────────────────────────────────────────────────────────────── жалобы и учётки
+# ПОЧЕМУ РЕШЕНИЕ МОДЕРАТОРА ЛЕЖИТ ОТДЕЛЬНО, А НЕ В САМОЙ ЖАЛОБЕ. Список жалоб живёт в памяти
+# матчинга и пишется оттуда целым ключом. Допиши панель статус прямо в строку — и следующая
+# жалоба, поданная кем угодно, стёрла бы все пометки разом, потому что матчинг записал бы ключ
+# своей копией из памяти. Поэтому у панели свой ключ, которого матчинг не касается вовсе.
+REPORT_ACTIONS_KEY = "_reports_actions"
+
+
+def _report_actions():
+    try:
+        return db.kv_get(REPORT_ACTIONS_KEY) or {}
+    except Exception:
+        return {}
+
+
+def _report_action_save(rid, patch):
+    cur = _report_actions()
+    if not isinstance(cur, dict):
+        cur = {}
+    row = dict(cur.get(rid) or {})
+    row.update(patch)
+    row["at"] = time.time()
+    cur[rid] = row
+    db.kv_set(REPORT_ACTIONS_KEY, cur)
+    return row
+
+
+def _reports_view(qs):
+    """Очередь жалоб + то, что модератор с ними уже сделал."""
+    rep = _match_get("/api/agent/admin/reports" + (qs or ""), timeout=25)
+    acts = _report_actions()
+    for r in (rep.get("reports") or []):
+        r["action"] = acts.get(r.get("id")) or None
+    rep["handled"] = sum(1 for r in (rep.get("reports") or []) if r.get("action"))
+    return rep
+
+
+def _ban(name, on=True, uid=""):
+    """Запрет на продукт — двумя полями строки человека, потому что гейтов в движке два.
+
+    `accountStatus` закрывает выдачу поиска, но НЕ закрывает групповые пути: приглашение в группу
+    и согласие там проверяются другим гейтом, который про этот статус не знает. Он знает поле
+    `blocksMe`. Поэтому ставятся оба — иначе «забаненный» продолжал бы попадать в группы, и это
+    выглядело бы как дыра в модерации, а было бы просто разными воротами.
+
+    Пауза — не то же самое: она добровольная, человек ставит её себе сам и снимает когда хочет.
+    """
+    with _LOCK:
+        users = _read()
+        hit, no = _row_for(users, uid, name)
+        if no:
+            return no
+        idx = users.index(hit)
+        if on:
+            hit["accountStatus"] = "banned"
+            hit["blocksMe"] = True
+            hit["banned_at"] = time.time()
+        else:
+            hit.pop("accountStatus", None)
+            hit.pop("banned_at", None)
+            hit["blocksMe"] = False
+        users[idx] = hit
+        # Той же записью, что и глаголы: одна строка, без нормализации — она дописывала людям
+        # интересы и языки, которых те не называли.
+        _write(users, touched=hit)
+    # Открытое закрывает сам матчинг: приглашения и встречи живут в его памяти.
+    swept = _match_post("/api/agent/admin/ban-sweep", {"id": hit.get("id"), "name": hit.get("name")}) \
+        if on else {"ok": True}
+    return {"ok": True, "banned": bool(on), "name": hit.get("name"), "id": hit.get("id"),
+            "swept": swept.get("closed")}
+
+
+def _settings_view():
+    """Что настроено + что умеет код + история правок."""
+    cat = settings.catalog()
+    cur = settings.all()
+    prompts = []
+    for name in sorted(cat.keys()):
+        row = cat.get(name) or {}
+        over = ((cur.get("prompts") or {}).get(name))
+        prompts.append({
+            "name": name,
+            "service": row.get("service") or name.split(".")[0],
+            "chars": row.get("chars") or 0,
+            "overridden": isinstance(over, str) and len(over.strip()) >= 20,
+            "default": row.get("default") or "",
+            "value": over if isinstance(over, str) else "",
+        })
+    try:
+        updated = db.kv_updated(settings.KEY)
+    except Exception:
+        updated = 0
+    return {"ok": True, "prompts": prompts, "model": cur.get("model") or {},
+            "history": list(reversed((cur.get("_history") or [])[-30:])), "updated": updated,
+            "catalog_empty": not cat,
+            # Температуры, которые стоят в коде: без них ползунок «на всё» выглядит как
+            # единственная правда, а лестница разговора 0.35→0.2→0.1 существует не случайно.
+            "code_temps": [
+                {"tag": "buddy.chat", "value": 0.35, "note": "разговор с Буди; на повторах 0.2 и 0.1"},
+                {"tag": "buddy.intent_build", "value": 0.35, "note": "сборка интента из разговора"},
+                {"tag": "onboarding.funnel", "value": 0.45, "note": "вопросы онбординга"},
+                {"tag": "matching.intro", "value": 0.6, "note": "знакомство агентов"},
+            ]}
+
+
+def _model_view():
+    """Модель: что выбрано, что доступно, и чем это подтверждается."""
+    cur = (settings.all().get("model") or {})
+    try:
+        models = llm_client.llm_models()
+    except Exception:
+        models = []
+    return {"ok": True, "models": models, "current": cur,
+            "code_default": os.environ.get("V2_MODEL", "llama_self")}
+
+
+def _model_probe(body):
+    """Спросить модель и засечь время. Ничего не пишет."""
+    t0 = time.time()
+    try:
+        txt = llm_client.llm_complete(
+            (body.get("model") or settings.model_id(os.environ.get("V2_MODEL", "llama_self"))),
+            [{"role": "system", "content": "Answer with one short sentence."},
+             {"role": "user", "content": body.get("text") or "Скажи одно короткое предложение по-русски."}],
+            float(body.get("temperature") or 0.3))
+        return {"ok": True, "ms": int((time.time() - t0) * 1000), "text": str(txt)[:400]}
+    except Exception as e:
+        return {"ok": False, "ms": int((time.time() - t0) * 1000),
+                "error": "%s: %s" % (type(e).__name__, str(e)[:200])}
+
+
+# `_accounts_view` убрана: панель больше не читает accounts.json сама. Файл принадлежит
+# онбордингу — он один его пишет под своим замком, — и два читателя разного возраста
+# рано или поздно расходятся в том, сколько у человека живых входов.
+
 def _path(handler):
     return handler.path.split("?", 1)[0]
+
+
+# ─────────────────────────────────────────────────────────────────── батарея сценариев
+#
+# Батарея гоняется службой `kleal-battery` и пишет три файла: кольцо событий (каждая реплика
+# человека, каждый ответ Kleal, каждая собранная затея и каждая беда), таблицу кругов и пул
+# сценариев. Админка их только ЧИТАЕТ — управлять прогоном отсюда нельзя намеренно: кнопка
+# «перезапустить» в панели означала бы, что измерение зависит от того, кто на него смотрит.
+BATTERY_LIVE = "/root/kleal-archive/battery-live.jsonl"
+BATTERY_HIST = "/root/kleal-archive/battery-history.tsv"
+BATTERY_POOL = "/root/kleal-archive/scenarios.jsonl"
+BATTERY_ROUNDS = "/root/kleal-archive/battery-rounds.jsonl"
+
+
+# Склад ветвей: один на процесс, складка в фоне. Заводится при импорте, чтобы ручка отвечала и в
+# тестах, где `__main__` не запускается; поток стартует только из `__main__`.
+TREE = battery_tree.Store()
+
+
+def battery_state(since=0.0, limit=1500):
+    """События после `since`, последние круги и размер пула. Всё дешёвое: хвосты файлов."""
+    events = []
+    try:
+        with open(BATTERY_LIVE, encoding="utf-8") as f:
+            # Хвост, а не весь файл: кольцо подрезает сама батарея, но между подрезками оно растёт,
+            # и панель не должна за это платить.
+            for line in f.readlines()[-7200:]:
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if float(row.get("t") or 0) > since:
+                    events.append(row)
+    except FileNotFoundError:
+        pass
+    hist = []
+    try:
+        rows = [l.rstrip("\n").split("\t") for l in open(BATTERY_HIST, encoding="utf-8")]
+        hist = [r for r in rows[1:] if len(r) >= 11][-12:]
+    except FileNotFoundError:
+        pass
+    pool = 0
+    try:
+        with open(BATTERY_POOL, encoding="utf-8") as f:
+            pool = sum(1 for _ in f)
+    except FileNotFoundError:
+        pass
+    # «Жива» — по свежести событий, а не по systemctl: панели довольно следа работы, спрашивать
+    # систему ей незачем. Две минуты с запасом: круг из шестидесяти идёт около минуты.
+    fresh = False
+    try:
+        fresh = (time.time() - os.path.getmtime(BATTERY_LIVE)) < 120
+    except OSError:
+        pass
+    # Подробности кругов — то, из чего панель строит диаграммы: виды бед, языки, сложность.
+    rounds = []
+    try:
+        for line in open(BATTERY_ROUNDS, encoding="utf-8").readlines()[-80:]:
+            try:
+                rounds.append(json.loads(line))
+            except Exception:
+                continue
+    except FileNotFoundError:
+        pass
+    # СКОЛЬКО ПРОГОНОВ ПРОШЛО ВСЕГО — для сердца круга. В `rounds` едут последние восемьдесят
+    # (из них рисуются графики), а прошло их может быть и тысяча: строка на прогон, файл крошечный.
+    total = 0
+    try:
+        with open(BATTERY_ROUNDS, "rb") as f:
+            total = sum(1 for _ in f)
+    except FileNotFoundError:
+        pass
+    return {"events": events[-limit:], "history": hist, "pool": pool, "rounds": rounds,
+            "rounds_total": total, "talks": getattr(TREE, "count", 0),
+            "alive": fresh, "now": time.time()}
 
 
 class H(BaseHTTPRequestHandler):
     def _authed(self):
         """The page itself is served without the token — it has to be, so a browser can ask for one.
-        Every API call needs it. Constant-time compare, so the check is not a guessing oracle."""
-        got = self.headers.get("X-Admin-Token") or ""
-        if not hmac.compare_digest(str(got), ADMIN_TOKEN):
+        Every API call needs it. Constant-time compare, so the check is not a guessing oracle.
+
+        Пароль проверяется ТАК ЖЕ, как токен, и обе проверки идут ВСЕГДА — без раннего выхода:
+        иначе время ответа само рассказывает, что именно совпало."""
+        got = str(self.headers.get("X-Admin-Token") or "")
+        ok_token = hmac.compare_digest(got, ADMIN_TOKEN)
+        ok_pass = bool(ADMIN_PASSWORD) and hmac.compare_digest(got, ADMIN_PASSWORD)
+        if not (ok_token or ok_pass):
             send_json(self, 401, {"ok": False, "error": "unauthorized"})
             return False
         return True
@@ -512,11 +795,9 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         p = _path(self)
         if p == "/admin" or p == "/admin/" or p == "/":
-            # Новая страница. Прежняя осталась в файле и доступна по ?legacy=1 — не из
-            # сентиментальности: у неё пять разделов, отлаженных на живых данных, и если новая
-            # где-то соврёт, откат должен быть длиной в один параметр, а не в выкладку.
-            if "legacy=1" in (self.path.split("?", 1)[1] if "?" in self.path else ""):
-                return send(self, 200, HTML, "text/html")
+            # Одна страница, один адрес. Токен для неё не нужен — браузеру надо на чём-то его
+            # спросить; всё, что за ней, без токена не отвечает.
+            return send(self, 200, PAGE, "text/html")
             return send(self, 200, PAGE, "text/html")
         if not self._authed():
             return
@@ -526,6 +807,38 @@ class H(BaseHTTPRequestHandler):
             st = ops.storage()
             q = ops.queue()
             send_json(self, 200, {"ok": True, "storage": st.get("mode"), "queue": q.get("mode")})
+        elif p == "/api/admin/card":
+            # ВТОРАЯ МОДЕЛЬ: обучение и живая работа. Ручка сводит три источника — сводку обучения
+            # (её пишет обучающий прогон), опрос самой модели и журнал её ответов, который ведёт
+            # сборщик. Ничего не считает: панель должна показывать то, что есть, а не своё мнение.
+            import json as _j, urllib.request as _u
+            _sum = {}
+            try:
+                _sum = _j.load(open("/root/kleal-archive/ft-summary.json", encoding="utf-8"))
+            except Exception as _e:
+                _sum = {"__нет": str(_e)[:80]}
+            _alive, _why = False, ""
+            try:
+                _alive = bool(_j.loads(_u.urlopen("http://127.0.0.1:17073/", timeout=4)
+                                       .read().decode()).get("ok"))
+            except Exception as _e:
+                _why = str(_e)[:80]
+            _calls = []
+            try:
+                with open("/root/kleal-archive/card-model.jsonl", encoding="utf-8") as _f:
+                    _lines = _f.readlines()[-60:]
+                for _l in reversed(_lines):
+                    try:
+                        _calls.append(_j.loads(_l))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            _ms = sorted(int(c.get("ms") or 0) for c in _calls if c.get("ms"))
+            send_json(self, 200, {"alive": _alive, "why": _why, "summary": _sum,
+                                  "calls": _calls,
+                                  "median_ms": (_ms[len(_ms) // 2] if _ms else None),
+                                  "total": len(_calls)})
         elif p == "/api/admin/ops":
             send_json(self, 200, ops.overview())
         elif p == "/api/admin/dead":
@@ -545,22 +858,100 @@ class H(BaseHTTPRequestHandler):
                                   "fromStore": (pl or {}).get("fromStore"),
                                   "bySource": (pl or {}).get("bySource"), "store": (pl or {}).get("store"),
                                   "adminStore": os.path.abspath(STORE), "error": err})
+        elif p == "/api/admin/battery":
+            # Довод `since` — отметка времени последнего показанного события: панель просит только
+            # новое, а не перечитывает кольцо целиком каждые полторы секунды.
+            _q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
+                if "?" in self.path else {}
+            try:
+                _since = float(_q.get("since") or 0)
+            except (TypeError, ValueError):
+                _since = 0.0
+            send_json(self, 200, battery_state(_since))
+        elif p == "/api/admin/battery/tree":
+            # ДАННЫЕ КОПЯТСЯ, А НЕ ПЕРЕЗАПИСЫВАЮТСЯ (владелец, 17.09.2026). Кольцо событий батарея
+            # подрезает сама, и прошлые круги в панели исчезали. Склад `battery_tree` дописывает
+            # каждую законченную ветвь и не режет; панель рисует из него кольца прошлых кругов.
+            _q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
+                if "?" in self.path else {}
+            try:
+                _since = float(_q.get("since") or 0)
+                _limit = max(1, min(20000, int(_q.get("limit") or 6000)))
+            except (TypeError, ValueError):
+                _since, _limit = 0.0, 6000
+            _scen = str(_q.get("scen") or "").strip()
+            if _scen:
+                # РАЗГОВОР ОДНОЙ ВЕТКИ, С РЕПЛИКАМИ. В кольца слова не едут (там нужна форма), но
+                # когда человек щёлкнул по ветке, он хочет прочитать сам диалог. Кольцо событий для
+                # этого коротко: у ветки из прошлого круга в панели оставалась одна строка вместо
+                # разговора (снято владельцем 17.09.2026).
+                try:
+                    _t0 = float(_q.get("t0")) if _q.get("t0") else None
+                except (TypeError, ValueError):
+                    _t0 = None
+                return send_json(self, 200, {"branch": TREE.find(_scen, _t0), "now": time.time()})
+            if _q.get("rounds"):
+                # ХОЛОДНЫЙ СТАРТ: панель просит столько ПРОГОНОВ, сколько рисует дугами. Считать
+                # их строками нельзя — прогон бывает и в 60 сценариев, и в 480, и после обновления
+                # страницы часть дуг просто не приезжала: картинка выглядела сброшенной.
+                try:
+                    _n = max(1, min(60, int(_q.get("rounds"))))
+                except (TypeError, ValueError):
+                    _n = 16
+                return send_json(self, 200, {"branches": TREE.rounds_tail(_n), "now": time.time()})
+            send_json(self, 200, {"branches": TREE.tail(_since, _limit), "now": time.time()})
         elif p == "/api/admin/person":
             from urllib.parse import unquote
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
                 if "?" in self.path else {}
             nm = unquote(q.get("name", "").replace("+", " "))
-            rep = _match_get("/api/agent/admin/person?name=" + quote(nm))
-            # The row id, so the verbs have something to target — the engine's report is keyed by name.
-            for u in _read():
-                if str(u.get("name", "")).strip().lower() == nm.strip().lower():
-                    rep["id"] = u.get("id")
-                    break
+            uid = unquote(q.get("id", "").replace("+", " "))
+            # Человек — по id; имя — только однозначное. Для тёзок и матчинг, и мы отвечаем
+            # AMBIGUOUS_PERSON со списком, и страница даёт выбрать (kleal-ms/docs/IDENTITY.md).
+            hit, no = _row_for(_read(), uid, nm)
+            if no and no.get("error") == "AMBIGUOUS_PERSON":
+                return send_json(self, 200, no)
+            rep = _match_get("/api/agent/admin/person?name=" + quote(nm)
+                             + ("&id=" + quote(str(hit.get("id") or "")) if hit else ""))
+            if hit:
+                rep["id"] = hit.get("id")      # цель для глаголов, бана и удаления
             send_json(self, 200, rep)
         elif p == "/api/admin/cohorts":
             send_json(self, 200, _match_get("/api/agent/admin/cohorts", timeout=40))
         elif p == "/api/admin/proposals":
             send_json(self, 200, _match_get("/api/agent/admin/proposals"))
+        elif p == "/api/admin/settings":
+            # Весь пульт одним ответом: что настроено, что умеет код и когда это трогали.
+            # Одним, а не тремя: страница рисует раздел целиком, и три запроса дали бы три
+            # разных момента времени — «сохранил, а не изменилось» ровно отсюда и берётся.
+            send_json(self, 200, _settings_view())
+        elif p == "/api/admin/model":
+            send_json(self, 200, _model_view())
+        elif p == "/api/admin/accounts":
+            # Учётки спрашиваем у онбординга: файл принадлежит ему, и только он видит его целиком.
+            send_json(self, 200, _onb_post("/api/auth/admin/accounts", {"q": _qs(self, "q", "")}))
+        elif p == "/api/admin/reports":
+            send_json(self, 200, _reports_view("?" + (self.path.split("?", 1)[1] if "?" in self.path else "")))
+        elif p.startswith("/api/admin/evidence/"):
+            # Файл к жалобе на группу. Матчинг хранит его в закрытой папке и отдаёт только по
+            # внутреннему адресу; сюда — по токену панели (проверен выше, в _authed).
+            eid = p.rsplit("/", 1)[-1]
+            if not re.match(r"^[0-9a-f]{32}$", eid):
+                return send_json(self, 404, {})
+            try:
+                req = urllib.request.Request(MATCH_URL.rstrip("/") + "/api/agent/admin/evidence/" + eid,
+                                             headers={"X-Admin-Token": ADMIN_TOKEN})
+                with urllib.request.urlopen(req, timeout=60) as r:
+                    data, ctype = r.read(), r.headers.get("Content-Type") or "application/octet-stream"
+            except Exception:
+                return send_json(self, 404, {"ok": False, "error": "NO_SUCH_FILE"})
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", "attachment")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
         else:
             send_json(self, 404, {})
 
@@ -577,6 +968,63 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, ops.dead_retry(int((body or {}).get("limit") or 50)))
         elif p == "/api/admin/bridge/teach":
             send_json(self, 200, ops.bridge_teach((body or {}).get("phrase")))
+        elif p == "/api/admin/settings":
+            # Пишем ПОПРАВКУ, а не весь слепок: две вкладки, открытые рядом, иначе затирали бы
+            # правки друг друга целиком. None у поля означает «вернуть как в коде».
+            try:
+                send_json(self, 200, {"ok": True, "settings": settings.save(body or {})})
+            except Exception as e:
+                send_json(self, 400, {"ok": False, "error": "%s: %s" % (type(e).__name__, e)})
+        elif p == "/api/admin/ban":
+            send_json(self, 200, _ban((body or {}).get("name"), bool((body or {}).get("on", True)),
+                                      (body or {}).get("id") or ""))
+        elif p == "/api/admin/notify":
+            # Ответ модератора человеку. Пишет его матчинг: переписки живут в его памяти.
+            send_json(self, 200, _match_post("/api/agent/admin/notify",
+                                             {"to": (body or {}).get("to"),
+                                              "to_id": (body or {}).get("to_id") or "",
+                                              "text": (body or {}).get("text"),
+                                              "ref": (body or {}).get("ref") or ""}))
+        elif p == "/api/admin/report/action":
+            # Решение по жалобе + необязательный ответ тому, кто пожаловался.
+            b = body or {}
+            rid = str(b.get("id") or "")
+            if not rid:
+                return send_json(self, 400, {"ok": False, "error": "ID_REQUIRED"})
+            sent = None
+            if b.get("answer") and b.get("to"):
+                sent = _match_post("/api/agent/admin/notify",
+                                   {"to": b.get("to"), "to_id": b.get("to_id") or "",
+                                    "text": b.get("answer"), "ref": rid})
+            row = _report_action_save(rid, {"status": str(b.get("status") or "handled"),
+                                            "note": str(b.get("note") or "")[:600],
+                                            "answered": bool(sent and sent.get("ok"))})
+            send_json(self, 200, {"ok": True, "action": row, "sent": sent})
+        elif p == "/api/admin/account/resolve":
+            send_json(self, 200, _onb_post("/api/auth/admin/resolve", {"account": (body or {}).get("account")}))
+        elif p == "/api/admin/account/revoke":
+            send_json(self, 200, _onb_post("/api/auth/admin/revoke",
+                                           {"account": (body or {}).get("account"),
+                                            "session": (body or {}).get("session")}))
+        elif p == "/api/admin/account/delete":
+            # Удаление учётки — три шага, и порядок важен. Сперва спрашиваем, КОГО удаляем:
+            # без однозначной связи «учётка → строка» удалять нельзя, тёзки неразличимы.
+            b = body or {}
+            who = _onb_post("/api/auth/admin/resolve", {"account": b.get("account")})
+            if not who.get("ok"):
+                return send_json(self, 400, who)
+            revoked = _onb_post("/api/auth/admin/revoke", {"account": b.get("account")})
+            # Стираем по id строки, которую онбординг связал с учёткой: по имени стёрлись бы записи тёзки.
+            purged = _match_post("/api/agent/admin/purge", {"id": who.get("id") or "", "name": who.get("name")}) \
+                if (who.get("id") or who.get("name")) else {"ok": True, "purged": {}}
+            gone = _onb_post("/api/auth/admin/delete", {"account": b.get("account")})
+            send_json(self, 200, {"ok": bool(gone.get("ok")), "resolved": who,
+                                  "revoked": revoked, "purged": purged, "deleted": gone})
+        elif p == "/api/admin/model/probe":
+            # Живая проба: спросить у модели одно короткое предложение и засечь время. Это
+            # единственный честный ответ на «модель вообще отвечает» — /health у сервиса
+            # возвращает константу и врёт, когда канал к поду лежит.
+            send_json(self, 200, _model_probe(body or {}))
         elif p == "/api/admin/users":
             send_json(self, 200, {"ok": True, "user": add_user(body)})
         elif p.startswith("/api/admin/user/") and p.endswith("/delete"):
@@ -683,7 +1131,7 @@ class H(BaseHTTPRequestHandler):
             r["searcherKnown"] = bool(rec)
             send_json(self, 200, r)
         elif p == "/api/admin/person/verb":
-            send_json(self, 200, apply_verb(body.get("name"), str(body.get("verb") or "")))
+            send_json(self, 200, apply_verb(body.get("name"), str(body.get("verb") or ""), body.get("id") or ""))
         elif p == "/api/admin/person/fatigue-reset":
             send_json(self, 200, _match_post("/api/agent/admin/fatigue-reset",
                                              {"name": body.get("name")}))
@@ -708,882 +1156,20 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
-HTML = r'''<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Kleal Admin</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;background:#f6f7f9;color:#181b22}
-.top{background:#fff;border-bottom:1px solid #e7e8ec;padding:14px 22px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:5}
-.logo{font-weight:800;color:#f5455c;font-size:20px;letter-spacing:-.02em}
-.pill{font-size:12px;color:#6b7180;background:#f1f2f5;border-radius:20px;padding:3px 10px}
-.wrap{max-width:1180px;margin:22px auto;padding:0 22px}
-.card{background:#fff;border:1px solid #e7e8ec;border-radius:14px;padding:18px;margin-bottom:18px;box-shadow:0 1px 2px rgba(20,20,40,.04)}
-h2{font-size:15px;margin-bottom:12px}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
-label{display:block;font-size:12px;color:#6b7180;margin-bottom:4px}
-input,select{border:1px solid #dfe1e7;border-radius:9px;padding:8px 10px;font:inherit;background:#fff;min-width:120px}
-input:focus,select:focus{outline:none;border-color:#f5455c}
-button{border:none;border-radius:9px;padding:9px 14px;font:inherit;font-weight:600;cursor:pointer;background:#f5455c;color:#fff}
-button.ghost{background:#f1f2f5;color:#181b22}
-button.mini{padding:4px 9px;font-size:12px;font-weight:600}
-button.danger{background:#fdecee;color:#e5384f}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:9px 8px;border-bottom:1px solid #eef0f3;white-space:nowrap}
-th{color:#8a909c;font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em}
-td.wrap2{white-space:normal;max-width:220px}
-.flag{display:inline-block;width:22px;height:22px;border-radius:6px;text-align:center;line-height:22px;cursor:pointer;font-size:12px;user-select:none;background:#f1f2f5;color:#b7bcc6}
-.flag.on{background:#e9f9f0;color:#1f9d57}
-.flag.warn.on{background:#fff2e8;color:#d9700f}
-.tag{display:inline-block;background:#fde7eb;color:#c32b40;border-radius:6px;padding:1px 7px;margin:1px 3px 1px 0;font-size:11.5px}
-.muted{color:#8a909c}
-.bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap}
-.search{min-width:220px}
-.gate{max-width:360px;margin:12vh auto;text-align:center}
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#181b22;color:#fff;padding:9px 16px;border-radius:10px;opacity:0;transition:.2s;pointer-events:none;font-size:13px}
-.toast.show{opacity:1}
-.tabler{overflow-x:auto}
-.sec{font-size:11px;color:#8a909c;text-transform:uppercase;letter-spacing:.04em;margin:16px 0 6px;font-weight:700}
-.chk{display:flex;align-items:center;gap:6px;margin:0;font-size:13px}
-.chk input{min-width:auto}
-.adv{border-top:1px dashed #e7e8ec;margin-top:14px;padding-top:6px}
-.advtog{cursor:pointer;color:#f5455c;font-size:12px;font-weight:600;user-select:none}
-/* --- Matching lab --- */
-.tabs{display:flex;gap:6px;margin-left:8px}
-.hbar{padding:7px 14px;background:#fff;border-bottom:1px solid #e8e8ee;font-size:12.5px;display:flex;
-  align-items:center;gap:6px;flex-wrap:wrap}
-.hbar .sep{color:#c9ccd6}
-.funnel{margin-top:14px;border-top:1px solid #eee;padding-top:8px}
-.frow{display:flex;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px dashed #f0f0f4}
-.frow.sub{padding-left:16px;border-bottom:0;color:#7a7f8c;font-size:13px}
-.frow .fl{flex:1;min-width:0}
-.frow .fn{width:64px;text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
-.frow.sub .fn{font-weight:500}
-.frow .fnote{width:210px;font-size:12px}
-.tab{padding:6px 13px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:#6b7180;border:1px solid transparent}
-.tab.on{background:#fde7eb;color:#c32b40;border-color:#f7c9d2}
-.band{display:inline-block;border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:700;white-space:nowrap}
-.band.especially_close{background:#e9f9f0;color:#12854a}
-.band.strong_option{background:#eaf3ff;color:#1c62c4}
-.band.broader_option{background:#fff5e6;color:#a86400}
-.band.needs_clarification{background:#f1f2f5;color:#6b7180}
-.tierb{display:inline-block;border-radius:5px;padding:1px 6px;font-size:11px;font-weight:700;background:#f1f2f5;color:#5b6170}
-.tierb.T0,.tierb.T1{background:#e9f9f0;color:#1f9d57}
-.rdy{font-size:11.5px;color:#6b7180}
-.rdy.open_now{color:#1f9d57;font-weight:600}
-.rdy.paused,.rdy.busy{color:#c32b40}
-.yes{color:#1f9d57;font-weight:700}.no{color:#b7bcc6}
-.preset{background:#f1f2f5;color:#3a3f4b;font-weight:600;font-size:12px;padding:5px 10px;border-radius:8px;cursor:pointer;border:none}
-.preset:hover{background:#e7e8ec}
-.trace{background:#fbfbfc;border:1px solid #e7e8ec;border-radius:12px;padding:14px;margin-top:12px}
-.stepr{display:flex;gap:8px;align-items:baseline;font-size:12.5px;padding:3px 0;border-bottom:1px dashed #eef0f3}
-.stepr b{min-width:190px;display:inline-block}
-.ok{color:#1f9d57;font-weight:700}.bad{color:#e5384f;font-weight:700}
-.fstate{font-size:11px;border-radius:5px;padding:1px 6px;font-weight:600}
-.fstate.known_match{background:#e9f9f0;color:#1f9d57}
-.fstate.known_mismatch{background:#fdecee;color:#e5384f}
-.fstate.unknown{background:#fff5e6;color:#a86400}
-.fstate.not_applicable{background:#f1f2f5;color:#8a909c}
-.metric{display:inline-block;margin-right:14px;font-size:12px;color:#6b7180}
-.metric b{color:#181b22;font-size:13px}
-.drop{background:#fdecee;color:#a3243a;border-radius:9px;padding:10px 12px;font-size:13px;font-weight:600}
-.hint{font-size:11.5px;color:#8a909c;margin-top:3px}
-</style></head><body>
-<div id="app"></div>
-<div class="toast" id="toast"></div>
-<script>
-let TOK=sessionStorage.getItem('kleal_admin_tok')||'', USERS=[], Q='', editing=null;
-let HEALTH=null, FUN=null, FUNBUSY=false;
-let TAB='users', LAB={running:false,res:null,err:null,trace:null,traceFor:'',lastIntent:null,searcher:null};
-const $=s=>document.querySelector(s), esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1800);}
-async function api(path,opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json','X-Admin-Token':TOK},opts.headers||{});const r=await fetch(path,opts);if(r.status===401){TOK='';sessionStorage.removeItem('kleal_admin_tok');gate();throw new Error('unauthorized');}return r.json();}
-// ---- «Почему никого нет»: the shape of a search instead of its result ----
-async function runFunnel(){
-  const who=(gv('#f_who')||'').trim(), topics=(gv('#f_topics')||'').trim();
-  if(!topics){ toast('Укажи темы'); return; }
-  FUNBUSY=true; render();
-  const intent={topics:topics.split(',').map(t=>t.trim()).filter(Boolean),
-                role:gv('#f_role')||'meet', mode:gv('#f_mode')||'offline', time:gv('#f_time')||'tomorrow'};
-  try{ FUN=await api('/api/admin/funnel',{method:'POST',body:JSON.stringify({self:who,intent})}); }
-  catch(e){ FUN={ok:false,error:String(e&&e.message||e)}; }
-  FUNBUSY=false; render();
-}
-function funnelView(){
-  const f=(FUN&&FUN.funnel)||null, sc=(f&&f.scored)||{}, g=(f&&f.gates)||{};
-  const row=(label,n,note)=>`<div class="frow"><div class="fl">${label}</div>
-      <div class="fn">${n==null?'—':n}</div><div class="fnote muted">${note||''}</div></div>`;
-  const drops=(obj)=>Object.keys(obj||{}).filter(k=>k!=='_in').sort((a,b)=>obj[b]-obj[a])
-      .map(k=>`<div class="frow sub"><div class="fl">− ${k}</div><div class="fn">${obj[k]}</div><div></div></div>`).join('');
-  const meta=(f&&f.meta)||{};
-  return `<div class="card">
-    <h3>Почему никого нет</h3>
-    <div class="muted" style="margin-bottom:10px">Тот же путь, что и в реальном поиске. Ничего не пишет и никому ничего не отправляет.</div>
-    <div class="grid2">
-      <label>Искатель (имя из базы)<input id="f_who" value="${(LFF.who||'').replace(/"/g,'&quot;')}" placeholder="оставь пустым — гость без профиля"></label>
-      <label>Темы через запятую<input id="f_topics" value="${(LFF.topics||'').replace(/"/g,'&quot;')}" placeholder="padel, coffee"></label>
-      <label>Роль<select id="f_role">${['meet','play','watch','discuss','practise','attend'].map(r=>`<option ${LFF.role===r?'selected':''}>${r}</option>`).join('')}</select></label>
-      <label>Режим<select id="f_mode">${['offline','online','hybrid'].map(r=>`<option ${LFF.mode===r?'selected':''}>${r}</option>`).join('')}</select></label>
-    </div>
-    <button class="primary" onclick="runFunnel()" ${FUNBUSY?'disabled':''}>${FUNBUSY?'Считаю…':'Построить воронку'}</button>
-    ${FUN&&FUN.error?`<div class="err">${FUN.error}</div>`:''}
-    ${f?`<div class="funnel">
-      ${row('В пуле', f.pool, 'loadtest-строки уже исключены')}
-      ${row('Минус сам искатель', f.self!=null?-f.self:0, '')}
-      ${row('Прошли жёсткие гейты', f.eligible, Object.keys(g).length?'':'никого не отсеяли')}
-      ${drops(g)}
-      ${row('Дошли до оценки', sc._in, '')}
-      ${drops(sc)}
-      ${row('В выдаче', f.slate, 'слейт ограничен восемью')}
-      <div class="muted" style="margin-top:10px">домен <b>${meta.domain||'?'}</b> · ${meta.core||'?'} · ${meta.config_version||''} · ${meta.config_sha||''}
-      ${FUN.searcherKnown===false?' · <b style="color:#c0392b">искатель не найден в базе — считалось от гостя</b>':''}</div>
-    </div>`:''}
-  </div>`;
-}
-let LFF={who:'',topics:'',role:'meet',mode:'offline'};
-let DIV=null, DIVBUSY=false, STAB=null, STABBUSY=false;
-const DIV_DEFAULT='padel, coffee, football, dota, yoga, books, photography, cooking, music, hiking, chess, wine';
-
-// «Одни и те же люди» is a claim about a SET of searches, so no single search can settle it.
-async function runDiversity(){
-  const who=(gv('#f_who')||'').trim();
-  const list=((gv('#d_topics')||DIV_DEFAULT).split(',').map(t=>t.trim()).filter(Boolean)).slice(0,24);
-  if(!list.length){ toast('Укажи темы'); return; }
-  DIVBUSY=true; render();
-  try{ DIV=await api('/api/admin/diversity',{method:'POST',body:JSON.stringify({self:who,topics:list,
-        intent:{role:gv('#f_role')||'meet',mode:gv('#f_mode')||'offline',time:'tomorrow'}})}); }
-  catch(e){ DIV={ok:false,error:String(e&&e.message||e)}; }
-  DIVBUSY=false; render();
-}
-// Same search N times. Our tie-break is a name hash, so any drift is time-dependent — and drift is
-// indistinguishable, from the outside, from "random people".
-async function runStability(){
-  const who=(gv('#f_who')||'').trim(), topics=(gv('#f_topics')||'').trim();
-  if(!topics){ toast('Заполни темы в блоке выше'); return; }
-  STABBUSY=true; render();
-  try{ STAB=await api('/api/admin/stability',{method:'POST',body:JSON.stringify({self:who,runs:4,
-        intent:{topics:topics.split(',').map(t=>t.trim()).filter(Boolean),
-                role:gv('#f_role')||'meet',mode:gv('#f_mode')||'offline',time:'tomorrow'}})}); }
-  catch(e){ STAB={ok:false,error:String(e&&e.message||e)}; }
-  STABBUSY=false; render();
-}
-function diagCards(){
-  const d=DIV, st=STAB;
-  const verdict=(good,txt)=>`<b style="color:${good?'#2f9e6b':'#c0392b'}">${txt}</b>`;
-  return `<div class="card">
-    <h3>Разнообразие выдачи</h3>
-    <div class="muted" style="margin-bottom:8px">Гоняет список тем от лица искателя и считает, сколько РАЗНЫХ людей вернулось. Отвечает на «мне попадаются одни и те же».</div>
-    <label>Темы через запятую<input id="d_topics" value="${((DIVT!=null?DIVT:DIV_DEFAULT)).replace(/"/g,'&quot;')}"></label>
-    <button class="primary" onclick="runDiversity()" ${DIVBUSY?'disabled':''}>${DIVBUSY?'Гоняю…':'Проверить разнообразие'}</button>
-    ${d&&d.error?`<div class="err">${d.error}</div>`:''}
-    ${d&&d.ok?`<div class="funnel">
-      ${['Запросов|'+d.queries,'С выдачей|'+d.withResults,'Разных людей|'+d.distinctPeople,
-         'Показан больше раза|'+d.shownMoreThanOnce].map(x=>{const[a,b]=x.split('|');
-         return `<div class="frow"><div class="fl">${a}</div><div class="fn">${b}</div><div></div></div>`;}).join('')}
-      <div class="frow"><div class="fl">Вердикт</div><div class="fn"></div><div class="fnote">${
-        d.distinctPeople >= d.withResults*4 ? verdict(true,'разнообразно') : verdict(false,'подозрительно однообразно')}</div></div>
-      ${(d.emptyTopics&&d.emptyTopics.length)?`<div class="frow sub"><div class="fl">пустые темы: ${d.emptyTopics.join(', ')}</div><div class="fn">${d.emptyTopics.length}</div><div></div></div>`:''}
-      ${(d.topRepeats||[]).slice(0,6).map(r=>`<div class="frow sub"><div class="fl">повтор: ${r.name}</div><div class="fn">${r.times}</div><div></div></div>`).join('')}
-    </div>`:''}
-  </div>
-  <div class="card">
-    <h3>Стабильность ×4</h3>
-    <div class="muted" style="margin-bottom:8px">Один и тот же запрос четыре раза подряд. Дрейф выдачи снаружи выглядит как «случайные люди».</div>
-    <button class="primary" onclick="runStability()" ${STABBUSY?'disabled':''}>${STABBUSY?'Гоняю…':'Проверить стабильность'}</button>
-    ${st&&st.error?`<div class="err">${st.error}</div>`:''}
-    ${st&&st.ok?`<div class="funnel">
-      <div class="frow"><div class="fl">Кандидатов в выдаче</div><div class="fn">${st.n}</div><div></div></div>
-      <div class="frow"><div class="fl">Состав не менялся</div><div class="fn"></div><div class="fnote">${verdict(st.stableSet,st.stableSet?'да':'НЕТ')}</div></div>
-      <div class="frow"><div class="fl">Порядок не менялся</div><div class="fn"></div><div class="fnote">${verdict(st.stableOrder,st.stableOrder?'да':'НЕТ')}</div></div>
-      ${(st.drift&&st.drift.length)?`<div class="frow sub"><div class="fl">появлялись/исчезали: ${st.drift.join(', ')}</div><div class="fn">${st.drift.length}</div><div></div></div>`:''}
-    </div>`:''}
-  </div>`+e2eCard()+compareCard();
-}
-// The Core v2 fallback is silent: a config whose sha does not match drops the whole system onto the
-// legacy scorer with no error anywhere, and the only symptom is that different people appear.
-let CMP=null, CMPBUSY=false;
-async function runCompare(){
-  const who=($('#f_who')&&$('#f_who').value.trim())||'';
-  const topics=(($('#f_topics')&&$('#f_topics').value)||'кофе').split(',').map(s=>s.trim()).filter(Boolean);
-  CMPBUSY=true; render();
-  try{ CMP=await api('/api/admin/compare',{method:'POST',body:JSON.stringify({self:who,
-        intent:{topics:topics, role:'meet', mode:'offline', time:'tomorrow'}})}); }
-  catch(e){ CMP={ok:false,error:String(e&&e.message||e)}; }
-  CMPBUSY=false; render();
-}
-function compareCard(){
-  const c=CMP;
-  return `<div class="card"><h3>Core v2 против легаси-скорера</h3>
-    <div class="muted" style="margin-bottom:8px">Один запрос, два движка. Откат на легаси происходит МОЛЧА — при несовпадении sha конфига — и снаружи выглядит просто как «стали попадаться другие люди». Берёт тему из формы воронки выше.</div>
-    <button class="primary" onclick="runCompare()" ${CMPBUSY?'disabled':''}>${CMPBUSY?'Считаю…':'Сравнить движки'}</button>
-    ${c&&(c.error||c._error)?`<div class="err">${c.error||c._error}</div>`:''}
-    ${c&&c.ok?`<div class="funnel">
-      ${_kv('Core v2 включён', c.core.enabled?('да · '+(c.core.config_version||'')+' · '+(c.core.config_sha||'')):'<b style="color:#c0392b">НЕТ — сейчас работает легаси</b>')}
-      ${_kv('в выдаче: v2 / легаси', c.new.n+' / '+c.old.n)}
-      ${_kv('совпадение составов', Math.round(c.jaccard*100)+'%')}
-      ${_kv('первый в списке сменился', c.topChanged?'<b style="color:#b7791f">да</b>':'нет')}
-      ${c.onlyNew.length?`<div class="frow"><div class="fl">только в v2</div><div class="fn">${c.onlyNew.length}</div><div class="fnote">${c.onlyNew.join(', ')}</div></div>`:''}
-      ${c.onlyOld.length?`<div class="frow"><div class="fl">только в легаси</div><div class="fn">${c.onlyOld.length}</div><div class="fnote">${c.onlyOld.join(', ')}</div></div>`:''}
-      ${(c.moved||[]).map(m=>`<div class="frow sub"><div class="fl">${m.name}</div><div class="fn">${m.old}→${m.new}</div><div class="fnote">${m.delta>0?'выше на '+m.delta:'ниже на '+(-m.delta)}</div></div>`).join('')}
-      ${Object.keys(c.errors||{}).length?`<div class="frow"><div class="fl" style="color:#c0392b">ошибки движков</div><div class="fn"></div><div class="fnote">${JSON.stringify(c.errors)}</div></div>`:''}
-    </div>`:''}
-  </div>`;
-}
-// Everything above enters at the ranker with a hand-built intent, so it can only ever exonerate
-// the ranker. This one types the phrase the user types.
-let E2E=null, E2EBUSY=false, E2ET=null;
-const E2E_DEFAULT='хочу выпить кофе, хочу поиграть в падл, хочу обсудить стартапы, хочу сходить на выставку, ищу с кем побегать утром, хочу поиграть в доту';
-async function runE2E(){
-  const who=($('#f_who')&&$('#f_who').value.trim())||'';
-  const list=(($('#e_ph')&&$('#e_ph').value)||E2E_DEFAULT).split(',').map(s=>s.trim()).filter(Boolean);
-  E2EBUSY=true; render();
-  try{ E2E=await api('/api/admin/e2e',{method:'POST',body:JSON.stringify({self:who,phrases:list})}); }
-  catch(e){ E2E={ok:false,error:String(e&&e.message||e)}; }
-  E2EBUSY=false; render();
-}
-function e2eCard(){
-  const e=E2E;
-  return `<div class="card">
-    <h3>Сквозная проверка: текст → бадди → выдача</h3>
-    <div class="muted" style="margin-bottom:8px">Остальные проверки начинаются с готового интента и поэтому могут только оправдать ранжирование. Эта пишет ту же фразу, что пишет человек — и ловит две причины «одних и тех же людей», которые лежат ДО ранжирования: тема не разрезолвилась и интент вернулся неранжируемым.</div>
-    <label>Фразы через запятую<input id="e_ph" value="${((E2ET!=null?E2ET:E2E_DEFAULT)).replace(/"/g,'&quot;')}"></label>
-    <button class="primary" onclick="runE2E()" ${E2EBUSY?'disabled':''}>${E2EBUSY?'Гоняю (это долго — на каждую фразу зовётся модель)…':'Прогнать сквозь бадди'}</button>
-    ${e&&e.error?`<div class="err">${e.error}</div>`:''}
-    ${e&&e.ok?`<div class="funnel">
-      ${_kv('фраз',e.phrases)}${_kv('с выдачей',e.withResults)}${_kv('разных людей',e.distinctPeople)}
-      ${e.unrankable.length?`<div class="frow"><div class="fl" style="color:#c0392b">интент неранжируем</div><div class="fn">${e.unrankable.length}</div><div class="fnote">${e.unrankable.join(' · ')}</div></div>`:''}
-      ${e.noTopics.length?`<div class="frow"><div class="fl" style="color:#c0392b">тема не разрезолвилась</div><div class="fn">${e.noTopics.length}</div><div class="fnote">${e.noTopics.join(' · ')}</div></div>`:''}
-      ${e.errors.length?`<div class="frow"><div class="fl" style="color:#c0392b">ошибки</div><div class="fn">${e.errors.length}</div><div class="fnote">${e.errors.map(x=>x.phrase+': '+x.error).join(' · ')}</div></div>`:''}
-      ${e.worstPair?`<div class="frow"><div class="fl">самая похожая пара выдач</div><div class="fn">${Math.round(e.worstPair.overlap*100)}%</div><div class="fnote">«${e.worstPair.a}» и «${e.worstPair.b}»${e.worstPair.shared.length?' · общие: '+e.worstPair.shared.join(', '):''}</div></div>`:''}
-      ${(e.topRepeats||[]).map(r=>`<div class="frow sub"><div class="fl">повтор: <span onclick="openPerson('${String(r.name).replace(/'/g,"\\'")}')" style="text-decoration:underline;cursor:pointer">${r.name}</span></div><div class="fn">${r.times}</div><div></div></div>`).join('')}
-    </div>
-    <div class="sec">По фразам</div><div class="funnel">
-      ${e.rows.map(r=>`<div class="frow"><div class="fl">«${r.phrase}»</div><div class="fn">${r.error?'—':r.n}</div>
-        <div class="fnote">${r.error?('<span style="color:#c0392b">'+r.error+'</span>'):
-          ((r.topics&&r.topics.length?'темы: '+r.topics.join(', '):'<span style="color:#c0392b">без темы</span>')
-           +(r.rankable===false?' · <span style="color:#c0392b">неранжируем</span>':'')
-           +(r.asked?(' · бадди переспросил, ходов: '+r.turns):''))}</div></div>
-        ${(r.names&&r.names.length)?`<div class="frow sub"><div class="fl muted">${r.names.join(', ')}</div><div class="fn"></div><div></div></div>`:''}`).join('')}
-    </div>`:''}
-  </div>`;
-}
-let DIVT=null;
-
-// ---------------------------------------------------------------- person card + cohorts (stage 2)
-// The 3038-row table could show every field and still not answer the only two questions worth
-// asking about a person: can anyone find them, and can they find anyone. Both are computed by the
-// engine itself (/api/agent/admin/person) so the panel can never disagree with what search does.
-let PERSON=null, PBUSY=false, PNAME='', COH=null, COHBUSY=false;
-async function openPerson(name){
-  PNAME=String(name||'').trim(); if(!PNAME) return;
-  TAB='person'; PBUSY=true; PERSON=null; render();
-  try{ PERSON=await api('/api/admin/person?name='+encodeURIComponent(PNAME)); }
-  catch(e){ PERSON={ok:false,error:String(e&&e.message||e)}; }
-  PBUSY=false; render();
-}
-async function loadCohorts(){
-  COHBUSY=true; render();
-  try{ COH=await api('/api/admin/cohorts'); }catch(e){ COH={ok:false,error:String(e&&e.message||e)}; }
-  COHBUSY=false; render();
-}
-async function personVerb(verb){
-  if(!PERSON||!PERSON.name) return;
-  const label={pause:'поставить на паузу',unpause:'снять с паузы',unverify:'снять верификацию',
-               verify:'верифицировать','fatigue':'сбросить счётчик предложений'}[verb]||verb;
-  if(!confirm(label+': '+PERSON.name+'?')) return;
-  const url=(verb==='fatigue')?'/api/admin/person/fatigue-reset':'/api/admin/person/verb';
-  const body=(verb==='fatigue')?{name:PERSON.name}:{name:PERSON.name,verb:verb};
-  const r=await api(url,{method:'POST',body:JSON.stringify(body)});
-  if(r&&r.ok===false){ toast(r.error||'не вышло'); return; }
-  toast('готово');
-  await openPerson(PERSON.name);          // re-read from the engine: never trust the local echo
-  load();
-}
-// The actual daily workflow: someone says «мне никогда не попадается X». Open X, name the person
-// who is searching and what they asked for, and read which step dropped X — instead of guessing
-// from a slate that simply doesn't contain them.
-let PPAIR=null, PPAIRBUSY=false, PMINE=null, PMINEBUSY=false;
-async function personPair(){
-  if(!PERSON||!PERSON.name) return;
-  const who=($('#pp_self')&&$('#pp_self').value.trim())||'', topic=($('#pp_topic')&&$('#pp_topic').value.trim())||'';
-  if(!who){ toast('чей это поиск?'); return; }
-  PPAIRBUSY=true; PPAIR=null; render();
-  const intent={topics:topic?topic.split(',').map(s=>s.trim()).filter(Boolean):[],
-                role:'meet', mode:'offline', time:'tomorrow'};
-  try{ PPAIR=await api('/api/admin/explain',{method:'POST',
-        body:JSON.stringify({self:who, intent:intent, candidate:PERSON.name})}); }
-  catch(e){ PPAIR={ok:false,error:String(e&&e.message||e)}; }
-  PPAIRBUSY=false; render();
-}
-async function personMine(){
-  if(!PERSON||!PERSON.name) return;
-  const topic=($('#pp_topic')&&$('#pp_topic').value.trim())||'';
-  PMINEBUSY=true; PMINE=null; render();
-  const intent={topics:topic?topic.split(',').map(s=>s.trim()).filter(Boolean):[],
-                role:'meet', mode:'offline', time:'tomorrow'};
-  try{ PMINE=await api('/api/admin/funnel',{method:'POST',
-        body:JSON.stringify({self:PERSON.name, intent:intent})}); }
-  catch(e){ PMINE={ok:false,error:String(e&&e.message||e)}; }
-  PMINEBUSY=false; render();
-}
-function pairView(){
-  const nm=PERSON&&PERSON.name||'';
-  let out=`<div class="card"><h3>Проверить в конкретном запросе</h3>
-    <div class="muted" style="margin-bottom:8px">«Мне никогда не попадается ${nm}» — вот на каком шаге ${nm} выпадает из этого поиска. И наоборот: кого находит сам ${nm}.</div>
-    <label>Кто ищет<input id="pp_self" value="${(PPSELF||'').replace(/"/g,'&quot;')}" placeholder="Ivan"></label>
-    <label>Тема<input id="pp_topic" value="${(PPTOPIC||'кофе').replace(/"/g,'&quot;')}" placeholder="кофе"></label>
-    <button class="primary" onclick="personPair()" ${PPAIRBUSY?'disabled':''}>${PPAIRBUSY?'Считаю…':'Почему не показался'}</button>
-    <button onclick="personMine()" ${PMINEBUSY?'disabled':''}>${PMINEBUSY?'Считаю…':'Кого находит сам'}</button>`;
-  if(PPAIR&&(PPAIR.error||PPAIR.ok===false)) out+=`<div class="err">${PPAIR.error||'не вышло'}</div>`;
-  const t=PPAIR&&PPAIR.trace;
-  if(t){
-    out+=`<div class="sec">${t.name}: ${t.shown?'<b style="color:#2f9e6b">показался бы</b>':'<b style="color:#c0392b">не показался</b>'}</div>
-      <div class="funnel">
-      ${(t.steps||[]).map(s=>`<div class="frow"><div class="fl">${s.step}</div>
-        <div class="fn">${s.ok?'<span style="color:#2f9e6b">✓</span>':'<span style="color:#c0392b">✗</span>'}</div>
-        <div class="fnote">${(s.detail!=null?String(s.detail):'')}</div></div>`).join('')}
-      ${t.drop_reason?`<div class="frow"><div class="fl"><b>выпал</b></div><div class="fn"></div><div class="fnote" style="color:#c0392b">${t.drop_reason}</div></div>`:''}
-      </div>`;
-  }
-  const f=PMINE&&PMINE.funnel;
-  if(PMINE&&PMINE.error) out+=`<div class="err">${PMINE.error}</div>`;
-  if(f){
-    const gates=Object.keys(f.gates||{});
-    out+=`<div class="sec">Что видит сам ${nm}</div><div class="funnel">
-      ${_kv('в базе', f.pool)}${_kv('дошло до скоринга', f.eligible)}${_kv('в выдаче', f.slate)}
-      ${gates.map(g=>`<div class="frow sub"><div class="fl">отсеяно: ${g}</div><div class="fn">${f.gates[g]}</div><div></div></div>`).join('')}
-      ${PMINE.searcherKnown===false?`<div class="frow sub"><div class="fl" style="color:#b7791f">этого искателя нет в базе — искали с пустым профилем</div><div class="fn"></div><div></div></div>`:''}
-      </div>`;
-  }
-  return out+'</div>';
-}
-let PPSELF='', PPTOPIC='кофе';
-function _kv(k,v){return `<div class="frow"><div class="fl">${k}</div><div class="fn">${
-  (v===null||v===undefined||v==='')?'<span class="muted">не собрано</span>':v}</div><div></div></div>`;}
-function personView(){
-  const p=PERSON;
-  const search=`<div class="card"><h3>Карточка человека</h3>
-    <div class="muted" style="margin-bottom:8px">Почему этого человека никто не находит — и почему он сам никого не находит. Это разные вопросы с разными ответами.</div>
-    <label>Имя<input id="p_name" value="${String(PNAME||'').replace(/"/g,'&quot;')}" placeholder="Nadia"></label>
-    <button class="primary" onclick="openPerson($('#p_name').value)" ${PBUSY?'disabled':''}>${PBUSY?'Смотрю…':'Открыть'}</button>
-  </div>`;
-  if(!p) return search+cohortsView();
-  if(p.ok===false) return search+`<div class="card"><div class="err">${p.error||'не найден'}</div></div>`+cohortsView();
-  const id=p.identity||{}, pol=p.policy||{}, qh=pol.quietHours||{};
-  const badge=(p.blocks&&p.blocks.length)?'<b style="color:#c0392b">невидим</b>'
-             :(p.inPool?'<b style="color:#2f9e6b">виден в поиске</b>':'<b style="color:#b7791f">не в пуле</b>');
-  const list=(arr,cls)=>(arr&&arr.length)?arr.map(b=>`<div class="frow sub"><div class="fl" style="color:${cls}">${b.ru}</div><div class="fn"></div><div></div></div>`).join(''):
-    '<div class="frow sub"><div class="fl muted">ничего</div><div class="fn"></div><div></div></div>';
-  const rd=p.readiness||{};
-  const rdRows=Object.keys(rd).map(k=>`<div class="frow sub"><div class="fl">${k}</div><div class="fn">${rd[k]}</div><div></div></div>`).join('');
-  return search+`<div class="card">
-    <h3>${p.name} — ${badge}</h3>
-    <div class="funnel">
-      ${_kv('источник строки', id.source)}
-      ${_kv('город', id.area)}
-      ${_kv('возраст', id.age===null||id.age===undefined?null:Math.round(id.age))}
-      ${_kv('координаты', (id.lat===null||id.lon===null)?null:(id.lat.toFixed(3)+', '+id.lon.toFixed(3)))}
-      ${_kv('радиус, км', id.radiusKm)}
-      ${_kv('языки', (id.langs||[]).join(', '))}
-      ${_kv('интересы', (id.interests||[]).join(', '))}
-      ${_kv('верифицирован', id.verified?'да':'нет')}
-      ${_kv('согласие на dating', id.datingOk?'да':'нет')}
-      ${_kv('своих интентов', id.ownIntents)}
-    </div>
-    <div class="sec">Жёстко блокирует показ</div><div class="funnel">${list(p.blocks,'#c0392b')}</div>
-    <div class="sec">Сужает — выпадает из части запросов</div><div class="funnel">${list(p.warnings,'#b7791f')}</div>
-    <div class="sec">Его собственный поиск</div><div class="funnel">${list(p.outbound,'#b7791f')}</div>
-    <div class="sec">Политика приёма</div>
-    <div class="funnel">
-      ${_kv('политика задана', pol.hasPolicy?'да':'нет — читается как «доступность не настроена»')}
-      ${_kv('статус', pol.status)}
-      ${_kv('разрешённые домены', (pol.allowedDomains===null||pol.allowedDomains===undefined)?null:(pol.allowedDomains.length?pol.allowedDomains.join(', '):'пусто — ни одного предложения'))}
-      ${_kv('пассивные предложения', pol.passiveOutreach===false?'выключены':(pol.passiveOutreach===true?'разрешены':null))}
-      ${_kv('лимит предложений / сутки', pol.budgetPer24h+(pol.budgetExplicit?' (задан явно)':' (по умолчанию)'))}
-      ${_kv('получено за 24 ч', pol.received24h)}
-      ${_kv('тихие часы', qh.start+'–'+qh.end+' (местное сейчас '+qh.localTime+(qh.inQuietNow?', СЕЙЧАС тихий час':'')+')')}
-    </div>
-    <div class="sec">Готовность по доменам</div><div class="funnel">${rdRows}</div>
-    <div class="sec">Действия</div>
-    <div class="muted" style="margin-bottom:8px">Три узких глагола вместо формы редактирования: форма пересохраняла всю строку и по дороге дописывала человеку интересы, язык и «сцену», которых он не указывал.</div>
-    <button onclick="personVerb('pause')">На паузу</button>
-    <button onclick="personVerb('unpause')">Снять с паузы</button>
-    <button onclick="personVerb(${id.verified?"'unverify'":"'verify'"})">${id.verified?'Снять верификацию':'Верифицировать'}</button>
-    <button onclick="personVerb('fatigue')">Сбросить счётчик предложений</button>
-  </div>`+pairView()+cohortsView();
-}
-function cohortsView(){
-  return `<div class="card"><h3>Когорты</h3>
-    <div class="muted" style="margin-bottom:8px">Сохранённые запросы к базе. На эти вопросы таблица из 3000 строк не отвечает.</div>
-    <button class="primary" onclick="loadCohorts()" ${COHBUSY?'disabled':''}>${COHBUSY?'Считаю…':'Пересчитать'}</button>
-    ${COH&&COH.error?`<div class="err">${COH.error||COH._error}</div>`:''}
-    ${COH&&COH.ok?`<div class="funnel">${COH.cohorts.map(c=>`
-      <div class="frow"><div class="fl">${c.label}</div><div class="fn">${c.count}</div>
-        <div class="fnote">${c.total?Math.round(c.count*100/c.total):0}%</div></div>
-      ${c.sample.length?`<div class="frow sub"><div class="fl muted" style="cursor:pointer">${
-        c.sample.slice(0,12).map(n=>`<span onclick="openPerson('${String(n).replace(/'/g,"\\'")}')" style="text-decoration:underline">${n}</span>`).join(', ')}${c.count>12?' …':''}</div><div class="fn"></div><div></div></div>`:''}
-    `).join('')}</div>`:''}
-  </div>`;
-}
-
-// ---------------------------------------------------------------- proposals registry (stage 3)
-// Four different failures look identical from outside — отклонили, истекло без ответа, отозвано
-// политикой на приёме, и вообще не создалось. Only the trace tells them apart.
-let PROPS=null, PROPBUSY=false, PROPVIEW='all';
-async function loadProposals(){
-  PROPBUSY=true; render();
-  try{ PROPS=await api('/api/admin/proposals'); }catch(e){ PROPS={ok:false,error:String(e&&e.message||e)}; }
-  PROPBUSY=false; render();
-}
-function setPropView(v){PROPVIEW=v;render();}
-function proposalsView(){
-  const p=PROPS;
-  const head=`<div class="card"><h3>Реестр предложений</h3>
-    <div class="muted" style="margin-bottom:8px">Кто кому предложил встречу и что с этим стало. Только чтение — этот файл пишется без tmp+replace, читатель, который пишет, обрежет запрос на лету.</div>
-    <button class="primary" onclick="loadProposals()" ${PROPBUSY?'disabled':''}>${PROPBUSY?'Читаю…':'Обновить'}</button>
-    ${p&&(p.error||p._error)?`<div class="err">${p.error||p._error}</div>`:''}
-    ${p&&p.ok?`<div class="funnel">
-      ${_kv('всего', p.total)}
-      ${_kv('истекает меньше чем через 12 ч', p.expiringSoon)}
-      ${_kv('истекло без ответа', p.expiredUnanswered)}
-      ${_kv('отозвано политикой', p.policyRevoked)}
-      ${Object.keys(p.byStatus||{}).map(k=>`<div class="frow sub"><div class="fl">${k}</div><div class="fn">${p.byStatus[k]}</div><div></div></div>`).join('')}
-    </div>
-    <div style="margin-top:10px">
-      ${['all|все','soon|истекает <12ч','revoked|отозвано политикой','expired|истекло без ответа']
-        .map(x=>{const[k,l]=x.split('|');return `<button class="${PROPVIEW===k?'primary':''}" onclick="setPropView('${k}')">${l}</button>`;}).join('')}
-    </div>`:''}
-  </div>`;
-  if(!p||!p.ok) return head;
-  let rows=p.requests||[];
-  if(PROPVIEW==='soon') rows=rows.filter(r=>r.expiresInHours!==null&&r.expiresInHours>0&&r.expiresInHours<12&&(r.status==='pending'||r.status==='sent'));
-  if(PROPVIEW==='revoked') rows=rows.filter(r=>r.policyRevoked);
-  if(PROPVIEW==='expired') rows=rows.filter(r=>r.expired);
-  if(!rows.length) return head+`<div class="card"><div class="muted">Ни одного предложения в этой выборке.</div></div>`;
-  return head+`<div class="card"><h3>${rows.length} предложени${rows.length===1?'е':'й'}</h3>
-    <div class="funnel">${rows.slice(0,120).map(r=>`
-      <div class="frow"><div class="fl"><span onclick="openPerson('${String(r.from||'').replace(/'/g,"\\'")}')" style="text-decoration:underline;cursor:pointer">${r.from||'?'}</span> → <span onclick="openPerson('${String(r.to||'').replace(/'/g,"\\'")}')" style="text-decoration:underline;cursor:pointer">${r.to||'?'}</span></div>
-        <div class="fn">${r.status}</div>
-        <div class="fnote">${r.ageHours!==null?r.ageHours+' ч назад':''}${r.expiresInHours!==null?' · истекает через '+r.expiresInHours+' ч':''}${r.expired?' · <b style="color:#c0392b">истекло</b>':''}</div></div>
-      ${r.note?`<div class="frow sub"><div class="fl muted">«${r.note}»</div><div class="fn"></div><div></div></div>`:''}
-      ${r.trace.length?`<div class="frow sub"><div class="fl muted">след: ${r.trace.join(' → ')}</div><div class="fn"></div><div></div></div>`:''}
-      ${r.configVersion?`<div class="frow sub"><div class="fl muted">конфиг: ${r.configVersion}</div><div class="fn"></div><div></div></div>`:''}
-    `).join('')}</div>
-    ${rows.length>120?`<div class="muted">показаны первые 120 из ${rows.length}</div>`:''}
-  </div>`;
-}
-const VIBES=["calm","energetic","intellectual","creative","competitive","chill","social","introvert","extrovert"];
-const ROLES=["play","watch","discuss","practise","attend","meet"];
-
-async function load(){const r=await api('/api/admin/users');USERS=r.users||[];render();loadHealth();}
-// What system am I looking at. Everything here already existed behind /api/agent/weights and
-// /api/agent/pool — the panel had simply never asked.
-async function loadHealth(){ try{ HEALTH=await api('/api/admin/health'); }catch(e){ HEALTH={error:String(e&&e.message||e)}; } render(); }
-function healthBar(){
-  if(!HEALTH) return '<div class="hbar muted">проверяю движок…</div>';
-  const c=HEALTH.core||{}, st=HEALTH.store||{}, src=HEALTH.bySource||{};
-  const bad=v=>`<b style="color:#c0392b">${v}</b>`, good=v=>`<b>${v}</b>`;
-  // Unreachable is not the same as disabled. Painting a red «ВЫКЛЮЧЕН» because the request failed is
-  // the false alarm that teaches an operator to ignore this bar.
-  const engine = (HEALTH.ok===false || !HEALTH.core)
-      ? `<b style="color:#b7791f">движок не отвечает${HEALTH.error?' · '+HEALTH.error:''}</b>`
-      : (c.enabled ? good('Core v2 '+(c.config_version||'')+' · '+(c.config_sha||''))
-                   : bad('Core v2 ВЫКЛЮЧЕН — легаси-скорер'+(c.error?(' · '+c.error):'')));
-  const parts=Object.keys(src).sort((a,b)=>src[b]-src[a]).map(k=>k+' '+src[k]).join(' · ');
-  // The admin's own default store path differs from onboarding's; a restart without KLEAL_USERS
-  // would split the store in two and nothing would say so. So it says so.
-  const split = (st.path && HEALTH.adminStore && st.path!==HEALTH.adminStore);
-  const age = st.mtime ? Math.round((Date.now()/1000-st.mtime)/60) : null;
-  return `<div class="hbar">${engine}
-    <span class="sep">·</span>ищет по <b>${HEALTH.count!=null?HEALTH.count:'?'}</b>${parts?` <span class="muted">(${parts})</span>`:''}${
-      (HEALTH.count!=null&&USERS.length>HEALTH.count)?` <span class="muted">— ещё ${USERS.length-HEALTH.count} loadtest исключены из поиска</span>`:''}
-    <span class="sep">·</span><span class="muted" title="${st.path||''}">хранилище ${st.path?st.path.split('/').slice(-2).join('/'):'?'}${age!=null?', изменено '+age+' мин назад':''}</span>
-    ${split?`<span class="sep">·</span>${bad('РАСХОЖДЕНИЕ ПУТЕЙ: движок и панель читают разные файлы')}`:''}
-    ${HEALTH.error?`<span class="sep">·</span>${bad(HEALTH.error)}`:''}</div>`;
-}
-const gv=id=>{const e=$(id);return e?e.value:'';}, gc=id=>{const e=$(id);return e?e.checked:false;};
-async function saveUser(){
-  const u={name:gv('#f_name'),age:+gv('#f_age')||28,area:gv('#f_area'),interests:gv('#f_int'),vibe:gv('#f_vibe'),
-    langs:gv('#f_lang'),km:+gv('#f_km')||2,role:gv('#f_role'),
-    dealBreakers:gv('#f_deal'),entities:gv('#f_ent'),
-    ownIntentType:gv('#f_oit'),ownIntentTopics:gv('#f_oitop'),ownIntentRole:gv('#f_oirole'),
-    open:gc('#f_open'),verified:gc('#f_ver'),datingOk:gc('#f_dat'),paused:gc('#f_pau'),blocksMe:gc('#f_blk'),
-    pending:+gv('#f_pend')||0,lastActiveDays:+gv('#f_last')||0,declinedOwnerDaysAgo:gv('#f_cool')};
-  if(!u.name.trim()){toast('Name required');return;}
-  if(editing){await api('/api/admin/user/'+editing,{method:'POST',body:JSON.stringify(u)});toast('Updated');}
-  else{await api('/api/admin/users',{method:'POST',body:JSON.stringify(u)});toast('User added');}
-  editing=null;await load();
-}
-function editRow(id){const u=USERS.find(x=>x.id===id);if(!u)return;editing=id;render();setTimeout(()=>{
-  const sv=(id,val)=>{const e=$(id);if(e)e.value=(val==null?'':val);}, sc=(id,val)=>{const e=$(id);if(e)e.checked=!!val;};
-  sv('#f_name',u.name);sv('#f_age',u.age);sv('#f_area',u.area);sv('#f_int',(u.interests||[]).join(', '));
-  sv('#f_vibe',u.vibe);sv('#f_lang',(u.langs||[]).join(', '));sv('#f_km',u.km);sv('#f_role',u.role);
-  sv('#f_deal',(u.dealBreakers||[]).join(', '));sv('#f_ent',(u.entities||[]).join(', '));
-  const oi=(u.intents||[])[0]||{};sv('#f_oit',oi.type||'social');sv('#f_oitop',(oi.topics||[]).join(', '));sv('#f_oirole',oi.role||'meet');
-  sc('#f_open',u.open);sc('#f_ver',u.verified);sc('#f_dat',u.datingOk);sc('#f_pau',u.paused);sc('#f_blk',u.blocksMe);
-  sv('#f_pend',u.pending);sv('#f_last',u.lastActiveDays);sv('#f_cool',u.declinedOwnerDaysAgo);
-  window.scrollTo(0,0);},0);}
-function toggleAdv(){const a=$('#advbox');if(a)a.style.display=(a.style.display==='none'?'block':'none');}
-async function delRow(id){const u=USERS.find(x=>x.id===id);if(!confirm('Delete '+(u?u.name:'user')+'?'))return;await api('/api/admin/user/'+id+'/delete',{method:'POST'});toast('Deleted');await load();}
-async function toggle(id,field){const u=USERS.find(x=>x.id===id);if(!u)return;await api('/api/admin/user/'+id,{method:'POST',body:JSON.stringify({[field]:!u[field]})});await load();}
-
-function gate(){
-  $('#app').innerHTML=`<div class="top"><span class="logo">kleal</span><span class="pill">admin · test mode</span></div>
-    <div class="gate card"><h2>Admin sign-in</h2><p class="muted" style="margin-bottom:12px">Enter the admin token.</p>
-    <input id="tok" type="password" placeholder="Admin token" style="width:100%;margin-bottom:10px"><br>
-    <button onclick="tryLogin()">Enter</button></div>`;
-  setTimeout(()=>{const i=$('#tok');i.focus();i.onkeydown=e=>{if(e.key==='Enter')tryLogin();};},0);
-}
-async function tryLogin(){TOK=$('#tok').value.trim();const r=await fetch('/api/admin/ping',{headers:{'X-Admin-Token':TOK}}).then(x=>x.json()).catch(()=>({}));
-  if(r&&r.ok){sessionStorage.setItem('kleal_admin_tok',TOK);load();}else{toast('Wrong token');}}
-
-// ============================ Matching lab ============================
-// Runs REAL searches through the matching service (same engine the app uses) and shows the
-// per-feature decision trace, so a tester can see exactly why someone did or didn't match.
-const PRESETS=[
-  ['Кофе (RU)',{topics:'кофе',type:'social',role:'meet',time:'Today evening'}],
-  ['Coffee (EN)',{topics:'coffee',type:'social',role:'meet',time:'Today evening'}],
-  ['Дота вечером',{topics:'дота, dota 2',type:'gaming',role:'play',time:'tonight'}],
-  ['Падель завтра',{topics:'падель, padel',type:'sport',role:'play',time:'Tomorrow 19:00'}],
-  ['Прогулка',{topics:'прогулка, погулять',type:'social',role:'meet',time:'Today evening'}],
-  ['Испанский',{topics:'испанский, практика языка',type:'language',role:'practise',time:'Flexible'}],
-  ['Стартапы + AI',{topics:'стартапы, ai, кофе',type:'networking',role:'discuss',time:'This week'}],
-  ['Смотреть Барсу',{topics:'смотреть футбол, барса',type:'social',role:'watch',time:'tonight'}],
-  ['Книги',{topics:'книги, кофе',type:'social',role:'discuss',time:'This weekend'}],
-  ['Свидание',{topics:'прогулки, кино',type:'dating',role:'meet',time:'This weekend'}],
-];
-// Was a hardcoded epoch (a fixed moment in July 2025), so "quiet hours" tested a date in the past
-// rather than the rule. Pin 23:00 of TODAY instead — still deterministic within a session, still
-// inside the 22:00-09:00 window, but it moves with the calendar.
-function nowQuiet(){ const d=new Date(); d.setHours(23,0,0,0); return Math.floor(d.getTime()/1000); }
-function labIntent(){
-  const topics=gv('#l_topics').split(',').map(s=>s.trim()).filter(Boolean);
-  const it={topics:topics,type:gv('#l_type'),role:gv('#l_role'),mode:gv('#l_mode'),time:gv('#l_time')||'Flexible'};
-  const rk=+gv('#l_radius'); if(rk>0) it.radiusKm=rk;
-  const rl=gv('#l_langs').split(',').map(s=>s.trim()).filter(Boolean); if(rl.length) it.requiredLanguages=rl;
-  const mn=+gv('#l_minage'), mx=+gv('#l_maxage'); if(mn>0) it.minAge=mn; if(mx>0) it.maxAge=mx;
-  if(gc('#l_ver')) it.verifiedOnly=true;
-  if(gc('#l_consent')) it.broadConsent=true;
-  if(gc('#l_exact')) it.exactMatchRequired=true;
-  if(!gc('#l_adj')) it.adjacentAllowed=false;
-  return it;
-}
-function labBody(extra){
-  const b={self:gv('#l_self'),intent:labIntent()};
-  if(gc('#l_quiet')) b.now=nowQuiet();
-  return Object.assign(b,extra||{});
-}
-function applyPreset(i){const p=PRESETS[i][1];
-  const s=(id,v)=>{const e=$(id);if(e)e.value=v;};
-  s('#l_topics',p.topics);s('#l_type',p.type);s('#l_role',p.role);s('#l_time',p.time);
-  runLab();
-}
-// Signature of the form as it was when the search ran. Without it a stale result silently looks
-// like the answer to whatever is typed now (type "Рыбалка" over a coffee run -> coffee people).
-function labSig(){const b=labBody();return JSON.stringify([b.self,b.intent,b.now||0]);}
-async function runLab(){
-  // READ THE FORM FIRST. render() rebuilds the DOM and restores field values asynchronously
-  // (setTimeout 0), so reading after it returned the freshly-rendered default — every search
-  // silently ran on "кофе" no matter what was typed.
-  const sig=labSig(), shown=gv('#l_topics'), body=labBody();
-  LAB.running=true;LAB.err=null;LAB.trace=null;render();
-  try{
-    const r=await api('/api/admin/match-test',{method:'POST',body:JSON.stringify(body)});
-    LAB.res=r.candidates||[];LAB.err=r.error||null;LAB.lastIntent=r.intent||null;
-    LAB.searcher=r.searcher||null;LAB.searcherKnown=!!r.searcherKnown;
-    LAB.sig=sig;LAB.ranTopics=shown;LAB.ranWhen=(r.intent&&r.intent.time)||'';
-  }catch(e){
-    // the banner must never be left spinning: say what went wrong and keep the old table visible
-    LAB.err='Матчинг-сервис не ответил ('+String(e&&e.message||e)+'). Нажми «Запустить матчинг».';
-  }
-  // whatever happened, this run is over — stale is recomputed from the CURRENT form
-  LAB.stale=(!!LAB.sig&&labSig()!==LAB.sig);
-  LAB.running=false;render();
-}
-async function explain(name){
-  LAB.traceFor=name;LAB.trace='loading';render();
-  try{
-    const r=await api('/api/admin/explain',{method:'POST',body:JSON.stringify(labBody({candidate:name}))});
-    LAB.trace=r.ok?(r.trace||null):{error:r.error||'failed'};
-  }catch(e){LAB.trace={error:String(e)};}
-  render();
-}
-function explainTyped(){const n=gv('#l_who').trim();if(!n){toast('Впиши имя человека');return;}explain(n);}
-function traceView(t){
-  if(t==='loading') return '<div class="trace muted">Считаю трейс…</div>';
-  if(!t) return '';
-  if(t.error) return `<div class="trace"><div class="drop">${esc(t.error)}</div></div>`;
-  const steps=(t.steps||[]).map(s=>`<div class="stepr"><span class="${s.ok?'ok':'bad'}">${s.ok?'✓':'✗'}</span>
-      <b>${esc(s.step)}</b><span class="muted">${esc(s.detail||'')}</span></div>`).join('');
-  const feats=(t.features||[]).map(f=>`<tr>
-      <td>${esc(f.label_ru)}</td>
-      <td><span class="fstate ${f.state}">${f.state}</span></td>
-      <td>${f.value==null?'<span class="muted">prior '+f.prior+'</span>':f.value}</td>
-      <td class="muted">${f.weight.toFixed(2)}</td>
-      <td class="muted wrap2">${esc(f.detail||'')}</td></tr>`).join('');
-  const ab=t.a_to_b||{}, ba=t.b_to_a||{};
-  return `<div class="trace">
-    <div class="bar"><h2 style="margin:0">Трейс: ${esc(t.name)}</h2>
-      <span class="muted" style="font-size:12px">домен ${esc(t.domain||'—')} · ${esc(t.config_version||'')}</span></div>
-    ${t.drop_reason?`<div class="drop">Не показан: ${esc(t.drop_reason)}</div>`:
-      `<div><span class="metric">Уровень <b>${esc(t.band_ru||t.band||'')}</b></span>
-        <span class="metric">Tier <b>${esc(t.tier||'')}</b></span>
-        <span class="metric">Готовность <b>${esc(t.readiness_ru||t.readiness||'')}</b></span>
-        <span class="metric">Можно писать <b class="${t.can_outreach?'yes':'no'}">${t.can_outreach?'да':'нет'}</b></span></div>`}
-    <div class="sec">Шаги решения</div>${steps}
-    ${feats?`<div class="sec">Признаки (7 групп, спека §6.1)</div><div class="tabler"><table>
-      <thead><tr><th>Группа</th><th>Состояние</th><th>Значение</th><th>Вес</th><th>Детали</th></tr></thead>
-      <tbody>${feats}</tbody></table></div>`:''}
-    ${ab.mean!=null?`<div class="sec">Итог</div>
-      <span class="metric">A→B mean <b>${ab.mean}</b></span>
-      <span class="metric">coverage <b>${ab.coverage}</b></span>
-      <span class="metric">lcb <b>${ab.lcb}</b></span>
-      <span class="metric">B→A lcb <b>${ba.lcb!=null?ba.lcb:'—'}</b></span>
-      <span class="metric">взаимность <b>${t.reciprocal!=null?t.reciprocal:'—'}</b></span>
-      ${(ab.unknowns||[]).length?`<div class="hint">Не хватает данных: ${ab.unknowns.map(esc).join(', ')}</div>`:''}
-      ${t.gap_ru?`<div class="hint">Компромисс: ${esc(t.gap_ru)}</div>`:''}`:''}
-  </div>`;
-}
-function labView(){
-  const opts=USERS.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)))
-    .map(u=>`<option value="${esc(u.name)}">${esc(u.name)}${(u.intents||[]).length?' ↔':''}</option>`).join('');
-  const rows=(LAB.res||[]).map((c,i)=>`<tr>
-      <td class="muted">${i+1}</td>
-      <td><b>${esc(c.name)}</b></td>
-      <td><span class="tierb ${esc(c.tier)}">${esc(c.tier)}</span></td>
-      <td><span class="band ${esc(c.band||'')}">${esc(c.band_ru||c.band||'')}</span></td>
-      <td><span class="rdy ${esc(c.readiness||'')}">${esc(c.readiness_ru||c.readiness||'')}</span></td>
-      <td class="${c.can_outreach?'yes':'no'}">${c.can_outreach?'да':'нет'}</td>
-      <td>${c.score}</td>
-      <td class="muted">${c.coverage!=null?c.coverage:'—'}</td>
-      <td class="wrap2">${(c.reasons_ru||c.reasons||[]).slice(0,3).map(esc).join(' · ')}
-        ${c.gap_ru?`<div class="hint">${esc(c.gap_ru)}</div>`:''}</td>
-      <td class="wrap2 muted">${(c.interests||[]).slice(0,4).map(i=>`<span class="tag">${esc(i)}</span>`).join('')}</td>
-      <td style="text-align:right"><button class="ghost mini" onclick="explain('${esc(c.name).replace(/'/g,"\\'")}')">Трейс</button></td>
-    </tr>`).join('');
-  return `<div class="wrap">
-    <div class="card"><h2>Кто ищет</h2>
-      <div class="row">
-        <div style="flex:1;min-width:240px"><label>Искатель (профиль берётся из базы)</label>
-          <select id="l_self" style="width:100%">${opts}</select>
-          <div class="hint">Интересы, гео, вайб и языки берутся из его карточки. Сам себя он никогда не найдёт.</div></div>
-        <label class="chk" style="align-self:end;padding-bottom:8px"><input id="l_quiet" type="checkbox"> ночь (тихие часы 23:00)</label>
-      </div>
-      <div class="sec">Запрос</div>
-      <div class="row">
-        <div style="flex:1;min-width:260px"><label>Темы (через запятую)</label><input id="l_topics" style="width:100%" placeholder="кофе, книги" value="кофе"></div>
-        <div><label>Тип</label><select id="l_type">${['social','gaming','sport','language','networking','dating','dinner','other'].map(v=>`<option>${v}</option>`).join('')}</select></div>
-        <div><label>Роль</label><select id="l_role">${ROLES.map(v=>`<option${v==='meet'?' selected':''}>${v}</option>`).join('')}</select></div>
-        <div><label>Режим</label><select id="l_mode"><option>offline</option><option>online</option></select></div>
-        <div><label>Время</label><input id="l_time" style="min-width:130px" value="Today evening"></div>
-      </div>
-      <div class="adv"><span class="advtog" onclick="toggleAdv2()">▸ Границы поиска (гейты и согласия)</span>
-        <div id="advbox2" style="display:none;margin-top:10px"><div class="row">
-          <div><label>Радиус, км</label><input id="l_radius" type="number" style="min-width:100px" placeholder="—"></div>
-          <div><label>Обязательные языки</label><input id="l_langs" style="min-width:130px" placeholder="es"></div>
-          <div><label>Возраст от</label><input id="l_minage" type="number" style="min-width:100px" placeholder="—"></div>
-          <div><label>до</label><input id="l_maxage" type="number" style="min-width:80px" placeholder="—"></div>
-        </div><div class="row" style="margin-top:8px">
-          <label class="chk"><input id="l_ver" type="checkbox"> только верифицированные</label>
-          <label class="chk"><input id="l_consent" type="checkbox"> согласие на широкий поиск (T2 outreach)</label>
-          <label class="chk"><input id="l_exact" type="checkbox"> только точные совпадения</label>
-          <label class="chk"><input id="l_adj" type="checkbox" checked> разрешить смежные (T3)</label>
-        </div></div>
-      </div>
-      <div class="row" style="margin-top:12px">
-        ${PRESETS.map((p,i)=>`<button class="preset" onclick="applyPreset(${i})">${esc(p[0])}</button>`).join('')}
-      </div>
-      <div class="row" style="margin-top:12px;justify-content:space-between">
-        <div style="display:flex;gap:8px;align-items:end">
-          <div><label>Проверить конкретного человека</label><input id="l_who" placeholder="имя из базы" style="min-width:200px"></div>
-          <button class="ghost" onclick="explainTyped()">Почему не нашёлся?</button>
-        </div>
-        <button onclick="runLab()">${LAB.running?'Ищу…':'Запустить матчинг'}</button>
-      </div>
-    </div>
-    ${LAB.err?`<div class="card"><div class="drop">Ошибка: ${esc(LAB.err)}</div></div>`:''}
-    ${LAB.res?`<div class="card" ${LAB.stale?'style="opacity:.55"':''}>
-      ${(LAB.stale||LAB.running)?`<div class="drop" style="margin-bottom:12px">${LAB.running?'Обновляю результат…':'Форма изменена — обновлю через секунду'} (показан прошлый — «${esc(LAB.ranTopics||'')}»)</div>`:''}
-      <div class="bar"><h2 style="margin:0">Результат по запросу «${esc(LAB.ranTopics||'')}» — ${LAB.res.length} кандидат(ов)</h2>
-        <span class="muted" style="font-size:12px">${LAB.searcher?('от лица '+esc(LAB.searcher.name)):''}
-          ${LAB.ranWhen?(' · '+esc(LAB.ranWhen)):''}${LAB.searcherKnown===false?' · профиль не из базы':''}</span></div>
-      ${LAB.res.length?`<div class="tabler"><table>
-        <thead><tr><th>#</th><th>Имя</th><th>Tier</th><th>Уровень</th><th>Готовность</th><th>Писать</th>
-          <th>Score</th><th>Cov</th><th>Почему</th><th>Интересы</th><th></th></tr></thead>
-        <tbody>${rows}</tbody></table></div>`
-        :`<p class="muted" style="padding:14px 2px">Никто не подошёл. Это честный ответ движка: значит, у людей в базе нет реального пересечения с запросом (или их срезали гейты). Впиши имя ниже и нажми «Почему не нашёлся?», чтобы увидеть причину по конкретному человеку.</p>`}
-    </div>`:''}
-    ${traceView(LAB.trace)}
-    <p class="muted" style="font-size:12px">Лаборатория гоняет тот же движок, что и приложение (Matching Core v2). Ничего не пишется в базу и никому не отправляются предложения.</p>
-  </div>`;
-}
-function toggleAdv2(){const a=$('#advbox2');if(a)a.style.display=(a.style.display==='none'?'block':'none');}
-function setTab(t){TAB=t;render();}
-// Editing any field re-runs the search automatically (debounced). Marking the old result "stale"
-// and waiting for a click was still a trap: you type "рыбалка" and the coffee table just sits there.
-let LAB_T=null;
-function labTouched(){
-  if(!LAB.sig&&!LAB.res)return;
-  const st=(labSig()!==LAB.sig);
-  if(st!==LAB.stale){LAB.stale=st;render();}
-  clearTimeout(LAB_T);
-  LAB_T=setTimeout(()=>{if(labSig()!==LAB.sig)runLab();},600);
-}
-function wireLab(){
-  ['l_self','l_topics','l_type','l_role','l_mode','l_time','l_radius','l_langs','l_minage','l_maxage']
-    .forEach(id=>{const e=$('#'+id);if(!e)return;e.oninput=labTouched;e.onchange=labTouched;});
-  ['l_quiet','l_ver','l_consent','l_exact','l_adj'].forEach(id=>{const e=$('#'+id);if(e)e.onchange=labTouched;});
-  const t=$('#l_topics');if(t)t.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();runLab();}};
-  const w=$('#l_who');if(w)w.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();explainTyped();}};
-}
-
-function render(){
-  if(!TOK) return gate();          // no token -> the sign-in card, not a console that cannot load
-  const q=Q.toLowerCase();
-  const rows=USERS.filter(u=>!q||(u.name+' '+(u.interests||[]).join(' ')+' '+u.vibe).toLowerCase().includes(q));
-  const flag=(u,f,label,warn)=>`<span class="flag ${warn?'warn':''} ${u[f]?'on':''}" title="${label}" onclick="toggle('${u.id}','${f}')">${u[f]?(warn?'❚':'✓'):'·'}</span>`;
-  // keep the lab form's current values across re-renders (render() rebuilds the whole DOM)
-  const LF={};
-  if(TAB==='lab'){['l_self','l_topics','l_type','l_role','l_mode','l_time','l_radius','l_langs',
-    'l_minage','l_maxage','l_who'].forEach(id=>{const e=$('#'+id);if(e)LF[id]=e.value;});
-    ['l_quiet','l_ver','l_consent','l_exact','l_adj'].forEach(id=>{const e=$('#'+id);if(e)LF[id]=e.checked;});}
-  const head=`<div class="top"><span class="logo">kleal</span><span class="pill">admin · test mode</span>
-    <div class="tabs">
-      <button class="tab ${TAB==='users'?'on':''}" onclick="setTab('users')">Люди</button>
-      <button class="tab ${TAB==='lab'?'on':''}" onclick="setTab('lab')">Матчинг-лаборатория</button>
-      <button class="tab ${TAB==='funnel'?'on':''}" onclick="setTab('funnel')">Диагностика</button>
-      <button class="tab ${TAB==='person'?'on':''}" onclick="setTab('person')">Карточка</button>
-      <button class="tab ${TAB==='props'?'on':''}" onclick="setTab('props')">Предложения</button>
-    </div>
-    <span class="muted" style="margin-left:auto" title="строк в файле; движок ищет не по всем — см. полосу ниже">${USERS.length} строк в файле</span>
-    </div>${healthBar()}`;
-  if(TAB==='person'){
-    // render() rebuilds the DOM, so the three inputs have to survive their own re-render —
-    // otherwise typing a searcher's name and clicking would search for an empty string.
-    const pv=$('#p_name'); const keep=pv?pv.value:null;
-    const s1=$('#pp_self'); if(s1) PPSELF=s1.value;
-    const s2=$('#pp_topic'); if(s2) PPTOPIC=s2.value;
-    const ae=document.activeElement, aid=(ae&&ae.id)||'';
-    $('#app').innerHTML=head+'<div class="wrap">'+personView()+'</div>';
-    setTimeout(()=>{const e=$('#p_name'); if(e&&keep!=null&&!e.value)e.value=keep;
-      if(e)e.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();openPerson(e.value);}};
-      const a=$('#pp_self'); if(a){ if(PPSELF)a.value=PPSELF; a.oninput=()=>{PPSELF=a.value;};
-        a.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();personPair();}}; }
-      const b=$('#pp_topic'); if(b){ if(PPTOPIC)b.value=PPTOPIC; b.oninput=()=>{PPTOPIC=b.value;};
-        b.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();personPair();}}; }
-      if(aid){const f=$('#'+aid); if(f)f.focus();}
-      if(!COH&&!COHBUSY)loadCohorts();},0);
-    return;
-  }
-  if(TAB==='props'){
-    $('#app').innerHTML=head+'<div class="wrap">'+proposalsView()+'</div>';
-    setTimeout(()=>{if(!PROPS&&!PROPBUSY)loadProposals();},0);
-    return;
-  }
-  if(TAB==='funnel'){
-    // same caret discipline as the lab: render() rebuilds everything
-    ['who','topics','role','mode'].forEach(k=>{const e=$('#f_'+k); if(e) LFF[k]=e.value;});
-    const ae2=document.activeElement, aid2=(ae2&&ae2.id)||'';
-    const de=$('#d_topics'); if(de) DIVT=de.value;
-    const ee=$('#e_ph'); if(ee) E2ET=ee.value;
-    $('#app').innerHTML=head+'<div class="wrap">'+funnelView()+diagCards()+'</div>';
-    setTimeout(()=>{ ['who','topics','role','mode'].forEach(k=>{const e=$('#f_'+k); if(e&&LFF[k]!=null) e.value=LFF[k];});
-      const de2=$('#d_topics'); if(de2&&DIVT!=null) de2.value=DIVT;
-      const ee2=$('#e_ph'); if(ee2&&E2ET!=null) ee2.value=E2ET;
-      if(aid2){const f=$('#'+aid2); if(f) f.focus();} },0);
-    return;
-  }
-  if(TAB==='lab'){
-    // render() rebuilds the DOM, so remember where the caret was — otherwise auto-refresh would
-    // yank the cursor out of the field mid-word.
-    const ae=document.activeElement, aid=(ae&&ae.id)||'', asel=(ae&&ae.selectionStart!=null)?[ae.selectionStart,ae.selectionEnd]:null;
-    $('#app').innerHTML=head+labView();
-    setTimeout(()=>{Object.keys(LF).forEach(id=>{const e=$('#'+id);if(!e)return;
-      if(typeof LF[id]==='boolean')e.checked=LF[id];else e.value=LF[id];});
-      if(aid){const f=$('#'+aid);if(f){f.focus();if(asel&&f.setSelectionRange){try{f.setSelectionRange(asel[0],asel[1]);}catch(_e){}}}}
-      const adv=$('#advbox2');
-      if(adv&&(LF.l_radius||LF.l_langs||LF.l_minage||LF.l_maxage||LF.l_ver||LF.l_consent||LF.l_exact||LF.l_adj===false))adv.style.display='block';
-      const t=$('#l_topics'); if(t&&!t.value)t.value='кофе';
-      wireLab();},0);
-    return;
-  }
-  $('#app').innerHTML=head+`
-  <div class="wrap">
-    <div class="card"><h2>${editing?'Edit user':'Add user'}</h2>
-
-      <div class="sec">Basics &amp; location</div>
-      <div class="row">
-        <div><label>Name</label><input id="f_name"></div>
-        <div><label>Age</label><input id="f_age" type="number" style="min-width:74px" value="28"></div>
-        <div><label>Area / city</label><input id="f_area" style="min-width:130px" placeholder="Barcelona"></div>
-        <div><label>Distance km</label><input id="f_km" type="number" step="0.1" style="min-width:90px" value="2"></div>
-        <div><label>Languages</label><input id="f_lang" style="min-width:110px" placeholder="en, es" value="en"></div>
-      </div>
-
-      <div class="sec">Interests &amp; personality</div>
-      <div class="row">
-        <div style="flex:1;min-width:220px"><label>Interests (comma)</label><input id="f_int" style="width:100%" placeholder="chess, coffee"></div>
-        <div><label>Preferred role</label><select id="f_role">${ROLES.map(v=>`<option>${v}</option>`).join('')}</select></div>
-        <div><label>Vibe</label><select id="f_vibe">${VIBES.map(v=>`<option>${v}</option>`).join('')}</select></div>
-        <div style="flex:1;min-width:200px"><label>Communities (comma)</label><input id="f_ent" style="width:100%" placeholder="Casa del Chess club"></div>
-      </div>
-
-      <div class="sec">Active intent — makes them a reciprocal (T0) match</div>
-      <div class="row">
-        <div><label>Intent type</label><select id="f_oit"><option value="">— none —</option>${['sport','gaming','networking','language','dating','social','other'].map(v=>`<option>${v}</option>`).join('')}</select></div>
-        <div style="flex:1;min-width:220px"><label>Intent topics (comma)</label><input id="f_oitop" style="width:100%" placeholder="chess (leave blank for no active intent)"></div>
-        <div><label>Intent role</label><select id="f_oirole">${ROLES.map(v=>`<option>${v}</option>`).join('')}</select></div>
-      </div>
-
-      <div class="sec">Safety &amp; matching flags</div>
-      <div class="row">
-        <label class="chk"><input id="f_open" type="checkbox" checked> open to meet</label>
-        <label class="chk"><input id="f_ver" type="checkbox" checked> verified</label>
-        <label class="chk"><input id="f_dat" type="checkbox"> dating opt-in</label>
-        <label class="chk"><input id="f_pau" type="checkbox"> paused</label>
-        <div style="flex:1;min-width:200px"><label>Deal-breakers (comma)</label><input id="f_deal" style="width:100%" placeholder="no smokers, no late nights"></div>
-      </div>
-
-      <div class="adv"><span class="advtog" onclick="toggleAdv()">▸ Advanced state (anti-spam / activity)</span>
-        <div id="advbox" style="display:none;margin-top:10px"><div class="row">
-          <div><label>Open invites (pending)</label><input id="f_pend" type="number" style="min-width:120px" value="0" title="≥6 = overloaded, gated out"></div>
-          <div><label>Last active (days ago)</label><input id="f_last" type="number" style="min-width:130px" value="0" title="≤3 = 'recently active' bonus"></div>
-          <div><label>Declined me (days ago)</label><input id="f_cool" type="number" style="min-width:150px" placeholder="blank = no" title="<7 = cooldown, gated out"></div>
-          <label class="chk" style="align-self:end;padding-bottom:8px"><input id="f_blk" type="checkbox"> blocks me</label>
-        </div></div>
-      </div>
-
-      <div class="row" style="margin-top:14px;justify-content:flex-end">
-        ${editing?`<button class="ghost" onclick="editing=null;render()">Cancel</button>`:''}
-        <button onclick="saveUser()">${editing?'Save changes':'Add user'}</button>
-      </div>
-    </div>
-    <div class="card">
-      <div class="bar"><h2 style="margin:0">Users</h2>
-        <input class="search" placeholder="Search name / interest / vibe…" value="${esc(Q)}" oninput="Q=this.value;render()"></div>
-      <div class="tabler"><table>
-        <thead><tr><th>Name</th><th>Age</th><th>Area</th><th>Interests</th><th>Vibe</th><th>Langs</th><th>km</th><th>Role</th>
-          <th title="open">Op</th><th title="verified">Vf</th><th title="dating">Dt</th><th title="paused">Pa</th><th></th></tr></thead>
-        <tbody>${rows.map(u=>`<tr>
-          <td><b>${esc(u.name)}</b>${(u.intents||[]).length?'<span class="tag" title="has an active intent — reciprocal match" style="background:#e9f9f0;color:#1f9d57">↔</span>':''}</td><td>${u.age}</td>
-          <td class="muted">${esc(u.area||'—')}</td>
-          <td class="wrap2">${(u.interests||[]).map(i=>`<span class="tag">${esc(i)}</span>`).join('')}</td>
-          <td>${esc(u.vibe)}</td><td class="muted">${(u.langs||[]).join(', ')}</td><td>${u.km}</td><td class="muted">${esc(u.role)}</td>
-          <td>${flag(u,'open','open to meet')}</td><td>${flag(u,'verified','verified')}</td>
-          <td>${flag(u,'datingOk','dating opt-in')}</td><td>${flag(u,'paused','paused',true)}</td>
-          <td style="text-align:right"><button class="ghost mini" onclick="openPerson('${String(u.name||'').replace(/'/g,"\\'")}')" title="почему его не находят">Карточка</button>
-            <button class="ghost mini" onclick="editRow('${u.id}')">Edit</button>
-            <button class="danger mini" onclick="delRow('${u.id}')">Delete</button></td></tr>`).join('')
-          ||`<tr><td colspan="13" class="muted" style="padding:22px;text-align:center">No users. Add one above or reset to the demo pool.</td></tr>`}
-        </tbody></table></div>
-    </div>
-    <p class="muted" style="font-size:12px">Changes take effect for the matching agent within a few seconds (shared user store). Test mode.</p>
-  </div>`;
-}
-if(TOK) load().catch(()=>toast('Load failed — is the server up?')); else gate();
-</script></body></html>'''
+# ВТОРАЯ ПАНЕЛЬ УДАЛЕНА ОТСЮДА. Здесь лежали 873 строки разметки — целая ещё одна админка,
+# отдававшаяся по адресу `/admin?legacy=1`. Её держали как «откат длиной в один параметр», но
+# цена оказалась другой: ВСЁ управление людьми — пауза, верификация, правка, удаление — жило
+# только на ней, о её существовании надо было знать, а основная панель умела лишь смотреть.
+# Две панели с разными возможностями — это не запасной вариант, а одна, разрезанная пополам.
+# Управление переехало в ui.py, к спискам и карточкам, там, где людей и находят.
 
 
 if __name__ == "__main__":
     print("Kleal admin-service on http://127.0.0.1:%d  (store=%s, seed from %s)" % (PORT, STORE, MATCH_URL))
+    battery_tree.start_folding(TREE)
     print("ADMIN TOKEN: %s   (from %s — set KLEAL_ADMIN_TOKEN to override)" % (ADMIN_TOKEN, _TOKEN_FILE))
-    ThreadingHTTPServer((config.BIND_HOST, PORT), H).serve_forever()
+    if ADMIN_PASSWORD:
+        # Сам пароль в журнал не пишем: журнал читают и пересылают. Пишем только то, что он включён.
+        print("ADMIN PASSWORD: включён (временно, до прода; убрать — KLEAL_ADMIN_PASSWORD=)")
+    import serving  # очередь подключений на 128, а не на 5 — см. shared/serving.py
+    serving.KlealServer((config.BIND_HOST, PORT), H).serve_forever()

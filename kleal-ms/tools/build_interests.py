@@ -51,14 +51,21 @@ labels = {k: v for k, v in labels.items() if k in allkeys}
 # Метка labels_auto переносится вместе с подписями: без неё не отличить машинный перевод от
 # человеческого, а переучивать человека машиной нельзя.
 prev_auto = []
+# Расширенный словарь (раздел `extended`) в литерале матчинга не живёт — его ведут руками в реестре.
+# Пересборка обязана его СОХРАНИТЬ вместе с подписями, иначе первый же запуск молча снесёт 1200
+# занятий карты (так уже однажды пропадали 128 дописанных подписей — см. выше).
+prev_ext = {}
+ext_keys = set()
 try:
     with io.open(OUT, encoding="utf-8") as f:
         prev = json.load(f)
-    kept = {k: v for k, v in (prev.get("labels") or {}).items() if k in allkeys}
-    prev_auto = [k for k in (prev.get("labels_auto") or []) if k in allkeys]
+    prev_ext = prev.get("extended") or {}
+    ext_keys = {s for g in prev_ext.values() for s in g} | {w for g in prev_ext.values() for ws in g.values() for w in ws}
+    kept = {k: v for k, v in (prev.get("labels") or {}).items() if k in allkeys or k in ext_keys}
+    prev_auto = [k for k in (prev.get("labels_auto") or []) if k in allkeys or k in ext_keys]
     kept.update(labels)          # написанное в дереве карты сильнее: его правил человек
     for k, v in (prev.get("labels") or {}).items():
-        if k in allkeys and k not in labels:
+        if (k in allkeys or k in ext_keys) and k not in labels:
             kept[k] = v
     labels = kept
 except Exception:
@@ -75,6 +82,12 @@ reg = {
     "synonyms": syn,
     "labels_auto": prev_auto,
 }
+if prev_ext:
+    reg["extended"] = prev_ext
+    try:
+        reg["extended_note"] = prev.get("extended_note") or ""
+    except Exception:
+        pass
 
 same_tax = tree == {low(b): {low(s): [low(w) for w in (ws or [])] for s, ws in (g or {}).items()} for b, g in TAX.items()}
 same_syn = syn == {low(a): low(c) for a, c in (SYN or {}).items()}

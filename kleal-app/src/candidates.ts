@@ -9,45 +9,45 @@
  * — вайб или первый интерес, вместо города — километры. Выдумывать профессию человеку нельзя —
  * это карточка живого человека, а не макет.
  */
-import { T } from './i18n';
+import { T, getLang } from './i18n';
 import { acc, dat, gen, ins } from './names';
 import { interestLabels } from './interest-label';
 
 export const CANDS = {
-  bestBadge: () => T('Лучший мэтч', 'Best match'),
-  matchBadge: () => T('Мэтч', 'Match'),
-  summaryLabel: () => T('Сводка Kleal:', 'Kleal summary:'),
+  bestBadge: () => T('Лучший мэтч', 'Best match', 'Mejor coincidencia'),
+  matchBadge: () => T('Мэтч', 'Match', 'Coincidencia'),
+  summaryLabel: () => T('Сводка Kleal:', 'Kleal summary:', 'Resumen de Kleal:'),
   /**
    * O.13 — языки на карточке. Их не было ни строкой, ни значком, хотя приложение спрашивает про
    * языки в онбординге и хранит их. Человек решал, писать ли незнакомому, не зная, поймут ли его.
    */
-  speaksLabel: () => T('Говорит: ', 'Speaks: '),
-  invite: () => T('Пригласить', 'Invite'),
-  invited: () => T('Приглашение отправлено', 'Invite sent'),
+  speaksLabel: () => T('Говорит: ', 'Speaks: ', 'Habla: '),
+  invite: () => T('Пригласить', 'Invite', 'Invitar'),
+  invited: () => T('Приглашение отправлено', 'Invite sent', 'Invitación enviada'),
   /** O.15: состояние карточки после отправки — две кнопки. */
-  invitedShort: () => T('Отправлено', 'Invited'),
-  cancel: () => T('Отменить', 'Cancel'),
-  cancelFailed: () => T('Не получилось отменить. Попробуй ещё раз.', 'Couldn’t cancel. Try again.'),
+  invitedShort: () => T('Отправлено', 'Invited', 'Invitado'),
+  cancel: () => T('Отменить', 'Cancel', 'Cancelar'),
+  cancelFailed: () => T('Не получилось отменить. Попробуй ещё раз.', 'Couldn’t cancel. Try again.', 'No se pudo cancelar. Inténtalo de nuevo.'),
   /** Отзывать нечего: ответили раньше, чем нажали. Это не сбой, и говорить о нём как о сбое нельзя. */
-  cancelTooLate: () => T('Уже ответили — отзывать нечего.', 'They already answered — nothing to withdraw.'),
-  inviteFailed: () => T('Не отправилось. Попробуй ещё раз.', 'It didn’t send. Try again.'),
+  cancelTooLate: () => T('Уже ответили — отзывать нечего.', 'They already answered — nothing to withdraw.', 'Ya respondieron — no hay nada que retirar.'),
+  inviteFailed: () => T('Не отправилось. Попробуй ещё раз.', 'It didn’t send. Try again.', 'No se envió. Inténtalo de nuevo.'),
 
   /** Приписка приватности с кадра O.13, дословно. */
   privacyNote: () =>
     T(
       'Твой профиль видят только люди, которых предложил твой агент. Ты этим управляешь.',
       'Only people your agent recommended can see your profile. You’re in control.'
-    ),
+    , 'Solo las personas que te recomiende tu agente podrán ver tu perfil. Tú estás al mando.'),
 
   /** Окно O.14. Текст с кадра; по-английски нейтральное they вместо she — имя бывает любым. */
-  sheetTitle: (name: string) => T(`Пригласить ${acc(name)}?`, `Invite ${name}?`),
+  sheetTitle: (name: string) => T(`Пригласить ${acc(name)}?`, `Invite ${name}?`, `¿Invitar a ${name}?`),
   sheetBody: (name: string) =>
     T(
       `${name} увидит твой интент и твой профиль. Если согласится — откроется чат; на бесплатном тарифе это единственный чат для этого интента.`,
       'They see your intent and your profile. If they join, a chat opens — on the free plan that is the one chat you get for this intent.'
-    ),
-  send: () => T('Отправить приглашение', 'Send the invite'),
-  notYet: () => T('Пока нет', 'Not yet'),
+    , 'Ven tu propuesta y tu perfil. Si se unen, se abre un chat — en el plan gratuito es el único chat que tienes para esta propuesta.'),
+  send: () => T('Отправить приглашение', 'Send the invite', 'Enviar la invitación'),
+  notYet: () => T('Пока нет', 'Not yet', 'Todavía no'),
 };
 
 /** Поля карточки, которые реально приходят из /api/agent/match. Всё остальное — не наше. */
@@ -74,6 +74,8 @@ export const isHidden = (name: string) =>
   hidden.has(String(name || '').trim().toLowerCase());
 
 export type Cand = {
+  /** id человека на сервере. По нему, а не по имени, человека зовут и узнают: тёзки — норма. */
+  id?: string;
   name?: string;
   age?: number;
   km?: number | null;
@@ -83,6 +85,7 @@ export type Cand = {
   band?: string;
   band_ru?: string;
   band_en?: string;
+  band_es?: string;
   note?: string;
   why?: string;
   interests?: string[];
@@ -91,12 +94,26 @@ export type Cand = {
   reasons?: string[];
   reasons_ru?: string[];
   reasons_en?: string[];
+  reasons_es?: string[];
   readiness_ru?: string;
   readiness_en?: string;
+  readiness_es?: string;
+  /** Сводка Kleal о человеке — тот же абзац, что он видит у себя в профиле. */
+  summary?: string;
   profile_view?: any;
 };
 
 /** Подзаголовок карточки: вайб, а без него — первые интересы. Занятия в данных нет (см. шапку). */
+/**
+ * Подпись с сервера на языке интерфейса. Ранжирование пишет её на трёх языках (`*_ru`, `*_en`,
+ * `*_es`); у старых ответов испанского поля нет — тогда английское, как и было.
+ * Флаг `ru` в подписях ниже остаётся ради общей формы вызовов: язык теперь решает getLang().
+ */
+function pickLang<V>(ru: V | undefined, en: V | undefined, es: V | undefined): V | undefined {
+  const l = getLang();
+  return l === 'ru' ? ru : l === 'es' ? (es ?? en) : en;
+}
+
 export function candSubtitle(c: Cand, ru: boolean): string {
   const vibe = String(c.vibe || '').trim();
   if (vibe) return vibe;
@@ -104,7 +121,7 @@ export function candSubtitle(c: Cand, ru: boolean): string {
   // после перевода — иначе она поднималась бы у английского ключа, который человек не увидит.
   const ints = interestLabels(c.interests).slice(0, 2);
   if (ints.length) return ints.map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(' · ');
-  return String((ru ? c.band_ru : c.band_en) || '');
+  return String(pickLang(c.band_ru, c.band_en, c.band_es) || '');
 }
 
 /**
@@ -114,7 +131,15 @@ export function candSubtitle(c: Cand, ru: boolean): string {
  * «рядом (0.0 km)» в сводке причин: ранжирование округляет само, а шаблон печатал число как есть.
  */
 export function candWhere(c: Cand): string {
-  return typeof c.km === 'number' && isFinite(c.km) ? `${c.km.toFixed(1)} km` : '';
+  if (typeof c.km !== 'number' || !isFinite(c.km)) return '';
+  const km = c.km.toFixed(1);
+  // Десятичная запятая: по-русски и по-испански «0,4», точка — только в английском.
+  return `${getLang() === 'en' ? km : km.replace('.', ',')} km`;
+}
+
+/** Доступность человека сейчас — строка ранжирования на языке интерфейса. */
+export function candReadiness(c: Cand): string {
+  return String(pickLang(c.readiness_ru, c.readiness_en, c.readiness_es) || '');
 }
 
 /**
@@ -127,7 +152,16 @@ export function candWhere(c: Cand): string {
  * выдумывать написание нельзя.
  */
 export function candSummary(c: Cand, ru: boolean): string {
-  const reasons = (ru ? c.reasons_ru : c.reasons_en) || c.reasons || [];
+  /*
+    ЧЕЛОВЕЧЕСКИЙ ТЕКСТ, А НЕ РАЗБОР СОВПАДЕНИЯ. Под заголовком «Сводка Kleal» стояли причины
+    ранжирования — «общее: coffee, совпадает формат» — то есть то, что человек и так видит по чипам
+    и по тому, что карточка вообще выдана. Снято с телефона: «хотелось бы видеть человеческий текст,
+    как у себя в профиле в сводке». Теперь здесь тот же абзац, который Kleal собрал о человеке для
+    его профиля; причины остаются запасным путём для карточек без сводки.
+  */
+  const own = String(c.summary || '').trim();
+  if (own) return own;
+  const reasons: string[] = pickLang(c.reasons_ru, c.reasons_en, c.reasons_es) || c.reasons || [];
   const glue = (s: string) => s.toLowerCase().replace(/\s+/g, '');
   const say = new Map((c.interests || []).map((i) => [glue(String(i)), String(i)]));
   // Подменяем только те слова, для которых у кандидата ЕСТЬ пара с пробелами: say собран из его
@@ -156,24 +190,30 @@ export function candSummary(c: Cand, ru: boolean): string {
  * ползунок, который ничего не менял; вместо него расстояние, которое читается (гейт радиуса).
  */
 export const PREFS = {
-  noMatches: () => T('Точных совпадений пока нет', 'No exact matches yet'),
-  title: () => T('Изменить условия поиска', 'Change search preferences'),
+  noMatches: () => T('Точных совпадений пока нет', 'No exact matches yet', 'Todavía no hay coincidencias exactas'),
+  title: () => T('Изменить условия поиска', 'Change search preferences', 'Cambia tus preferencias de búsqueda'),
+  /** Заголовок самого листа — кадр OF.11a. Кнопка под пустой выдачей остаётся «Change search preferences». */
+  sheetTitle: () => T('Условия поиска', 'Search preferences', 'Preferencias de búsqueda'),
+  who: () => T('С кем хочешь встретиться', 'Who you’d like to meet', 'A quién te gustaría conocer'),
+  noFitNote: () => T('Пока никто не подходит. Расширь поиск — Kleal продолжит искать.',
+                     'Nobody fits yet. Widen the search and Kleal keeps looking.',
+                     'Aún no encaja nadie. Amplía la búsqueda y Kleal sigue buscando.'),
   lead: () => T('Чем меньше условий, тем больше людей. Сними то, что не принципиально.',
-                'The fewer the conditions, the more people. Drop whatever is not essential.'),
-  sex: () => T('Пол', 'Sex'),
-  age: () => T('Возраст', 'Age'),
-  anyAge: () => T('Любой', 'Any'),
-  ageFrom: () => T('Не моложе', 'From'),
-  ageTo: () => T('Не старше', 'To'),
-  dist: () => T('Расстояние', 'Distance'),
-  distVal: (km: number) => T(`до ${km} км`, `within ${km} km`),
-  start: () => T('Начать поиск', 'Start search'),
-  cancel: () => T('Отмена', 'Cancel'),
+                'The fewer the conditions, the more people. Drop whatever is not essential.', 'Mientras menos condiciones, más gente. Elimina lo que no sea esencial.'),
+  sex: () => T('Пол', 'Sex', 'Sexo'),
+  age: () => T('Возраст', 'Age', 'Edad'),
+  anyAge: () => T('Любой', 'Any', 'Cualquiera'),
+  ageFrom: () => T('Не моложе', 'From', 'Desde'),
+  ageTo: () => T('Не старше', 'To', 'A'),
+  dist: () => T('Расстояние', 'Distance', 'Distancia'),
+  distVal: (km: number) => T(`до ${km} км`, `within ${km} km`, `dentro de ${km} km`),
+  start: () => T('Начать поиск', 'Start search', 'Iniciar búsqueda'),
+  cancel: () => T('Отмена', 'Cancel', 'Cancelar'),
   /** Что в итоге ушло в поиск. Ступень лестницы §12 называет себя вслух — этот лист молчал. */
-  applied: (conds: string) => T(`Ищу по условиям: ${conds}.`, `Searching with: ${conds}.`),
-  anySex: () => T('любой пол', 'any sex'),
-  ageAny: () => T('любой возраст', 'any age'),
-  ageBand: (lo: number, hi: number) => T(`возраст ${lo}–${hi}`, `age ${lo}–${hi}`),
+  applied: (conds: string) => T(`Ищу по условиям: ${conds}.`, `Searching with: ${conds}.`, `Buscando con: ${conds}.`),
+  anySex: () => T('любой пол', 'any sex', 'cualquier sexo'),
+  ageAny: () => T('любой возраст', 'any age', 'cualquier edad'),
+  ageBand: (lo: number, hi: number) => T(`возраст ${lo}–${hi}`, `age ${lo}–${hi}`, `edad ${lo}–${hi}`),
 };
 
 /**
@@ -184,16 +224,20 @@ export const PREFS = {
  * должно быть обратимым, пока не поздно.
  */
 export const OPTIONS = {
-  title: () => T('Действия с профилем', 'Profile options'),
-  notInterested: () => T('Не интересно', 'Not interested'),
-  report: () => T('Пожаловаться на профиль', 'Report profile'),
-  block: (name: string) => T(`Заблокировать ${acc(name)}`, `Block ${name}`),
-  cancel: () => T('Отмена', 'Cancel'),
+  title: () => T('Действия с профилем', 'Profile options', 'Opciones del perfil'),
+  notInterested: () => T('Не интересно', 'Not interested', 'No interesado'),
+  report: () => T('Пожаловаться на профиль', 'Report profile', 'Reportar perfil'),
+  block: (name: string) => T(`Заблокировать ${acc(name)}`, `Block ${name}`, `Bloquear a ${name}`),
+  /** Пояснения под пунктами — кадр OF.13b борда «1:1 · Offline — new layout». */
+  notInterestedNote: (name: string) => T(`Kleal больше не предложит ${acc(name)}`, `Kleal won’t suggest ${name} again`, `Kleal no volverá a sugerir a ${name}`),
+  reportNote: () => T('Что-то не так — мы проверим', 'Something looks wrong — we check it', 'Algo no cuadra — lo revisamos'),
+  blockNote: () => T('Не увидит твои затеи и не сможет позвать', 'They can’t see your intents or invite you', 'No puede ver tus propuestas ni invitarte'),
+  cancel: () => T('Отмена', 'Cancel', 'Cancelar'),
   /** Строка отсчёта: действие названо, секунды идут, отмена в одно касание. */
-  pending: (what: string, n: number) => T(`${what} через ${n}…`, `${what} in ${n}…`),
-  undo: () => T('Отменить', 'Undo'),
-  reportSent: () => T('Жалоба отправлена. Спасибо — её посмотрят.', 'Report sent. Thank you — it will be reviewed.'),
-  failed: () => T('Не получилось. Попробуй ещё раз.', 'That didn’t work. Try again.'),
+  pending: (what: string, n: number) => T(`${what} через ${n}…`, `${what} in ${n}…`, `${what} en ${n}…`),
+  undo: () => T('Отменить', 'Undo', 'Deshacer'),
+  reportSent: () => T('Жалоба отправлена. Спасибо — её посмотрят.', 'Report sent. Thank you — it will be reviewed.', 'Reporte enviado. Gracias — será revisado.'),
+  failed: () => T('Не получилось. Попробуй ещё раз.', 'That didn’t work. Try again.', 'Eso no funcionó. Inténtalo de nuevo.'),
 };
 
 /** Причины жалобы — словарь сервера (REPORT_REASONS). Подписи локальные, ключи его. */
@@ -203,16 +247,31 @@ export const OPTIONS = {
  */
 export const CAP = {
   limit: 3,
-  title: (n: number) => T(`Уже ${n} открытых приглашения`, `${n} open invites already`),
+  title: (n: number) => T(`Уже ${n} открытых приглашения`, `${n} open invites already`, `${n} invitaciones abiertas ya`),
   note: () =>
     T(
       'Kleal держит не больше трёх разом, чтобы никто не получал веер заявок. Отмени одно или дождись ответа — Plus поднимает потолок до пяти.',
       'Kleal holds them at three so nobody gets a fan-out of requests. Cancel one, or wait for an answer — Plus raises it to five.'
-    ),
-  cancelOne: () => T('Отменить одно', 'Cancel one instead'),
-  withdraw: () => T('Отозвать', 'Withdraw'),
+    , 'Kleal las mantiene en tres para que nadie reciba una avalancha de solicitudes. Cancela una, o espera una respuesta — Plus la eleva a cinco.'),
+  /** OF.17 — лист «Kleal Plus» у приглашений один на один. */
+  plusLead: (n: number) => T(`У тебя ${n} открытых приглашения`, `You have ${n} open invites`, `Tienes ${n} invitaciones abiertas`),
+  plusNote: (cap: number) => T(
+    `На Free по одной затее открыто не больше ${cap} приглашений. С Kleal Plus зови сколько хочешь — €6,99 в месяц, отмена в любой момент.`,
+    `On Free you can keep ${cap} invites open for one intent. With Kleal Plus you invite as many people as you like — €6.99 a month, cancel any time.`,
+    `En Free puedes tener ${cap} invitaciones abiertas por propuesta. Con Kleal Plus invitas a tantas personas como quieras — €6,99 al mes, cancela cuando quieras.`),
+  cancelOne: () => T('Отменить одно', 'Cancel one instead', 'Cancela una en su lugar'),
+  withdraw: () => T('Отозвать', 'Withdraw', 'Retirar'),
 };
 
+/** Испанские подписи причин — картой по ключу; кортеж и его читатели остаются как были. */
+export const REPORT_REASON_ES: Record<string, string> = {
+  fake: 'Perfil falso',
+  harassment: 'Acoso',
+  spam: 'Spam',
+  unsafe: 'Comportamiento peligroso',
+  underage: 'Parece menor de edad',
+  other: 'Otro',
+};
 export const REPORT_REASONS: [string, string, string][] = [
   ['fake', 'Фейковый профиль', 'Fake profile'],
   ['harassment', 'Оскорбления или преследование', 'Harassment'],
@@ -221,3 +280,64 @@ export const REPORT_REASONS: [string, string, string][] = [
   ['underage', 'Похоже, несовершеннолетний', 'Looks underage'],
   ['other', 'Другое', 'Other'],
 ];
+
+/**
+ * Значок интереса на чипе карточки — GR.14: «🏖️ Beach», «🍖 Grill», «📸 Photography».
+ *
+ * Своего значка у ключа интереса в данных нет, поэтому он подбирается по слову подписи — на всех
+ * трёх языках интерфейса. Не нашлось — чип без значка: лучше голое слово, чем чужая картинка.
+ */
+const INTEREST_EMOJI: [RegExp, string][] = [
+  [/bbq|barbec|grill|гриль|шашлык|барбекю|parrilla|asado/i, '🍖'],
+  [/beach|пляж|playa/i, '🏖️'],
+  [/sunset|закат|atardecer/i, '🌅'],
+  [/paddle ?surf|sup\b|сап/i, '🏄'],
+  [/surf|серф/i, '🏄'],
+  [/padel|падел|tennis|теннис|tenis/i, '🎾'],
+  [/volley|волейб|voleib/i, '🏐'],
+  [/football|soccer|футбол|fútbol|futbol/i, '⚽️'],
+  [/basket|баскет|baloncesto/i, '🏀'],
+  [/\brun(ning)?\b|^бег|correr/i, '🏃'],
+  [/cycl|bike|велос|bici/i, '🚴'],
+  [/\bhik(e|ing)|trek|поход|senderis/i, '🥾'],
+  [/climb|скалол|escalad/i, '🧗'],
+  [/swim|плаван|nataci/i, '🏊'],
+  [/\bski(ing)?\b|лыж|esquí/i, '⛷️'],
+  [/yoga|йог/i, '🧘'],
+  [/gym|fitness|фитнес|спортзал|gimnas/i, '💪'],
+  [/danc|танц|bail/i, '💃'],
+  [/guitar|гитар|guitarra/i, '🎸'],
+  [/karaoke|караоке/i, '🎤'],
+  [/music|музык|música/i, '🎶'],
+  [/photo|фото|fotograf/i, '📸'],
+  [/film|movie|cinema|кино|cine/i, '🎬'],
+  [/theat|театр|teatro/i, '🎭'],
+  [/museum|музе|museo/i, '🏛️'],
+  [/\barts?\b|paint|draw|искусств|рисов|живопис|\barte\b|pintura/i, '🎨'],
+  [/book|read|книг|чтени|libro|lectura/i, '📚'],
+  [/board ?game|настол|juegos de mesa/i, '🎲'],
+  [/video ?game|gaming|consol|консол|videojuego/i, '🎮'],
+  [/game|игр|juego/i, '🎲'],
+  [/chess|шахмат|ajedrez/i, '♟️'],
+  [/seafood|морепрод|marisco/i, '🦐'],
+  [/sushi|суши/i, '🍣'],
+  [/cook|кулинар|готов|cocina/i, '🍳'],
+  [/coffee|кофе|café/i, '☕️'],
+  [/wine|вино|vino/i, '🍷'],
+  [/beer|пиво|cerveza/i, '🍺'],
+  [/cocktail|коктейл|cóctel/i, '🍹'],
+  [/picnic|пикник/i, '🧺'],
+  [/market|shop|рынок|шопинг|mercado|compras/i, '🛍️'],
+  [/food|еда|comida|ramen|noodle/i, '🍜'],
+  [/travel|путешеств|viaj/i, '✈️'],
+  [/camp|кемпинг|acampad/i, '🏕️'],
+  [/dog|собак|perro/i, '🐕'],
+  [/tech|code|program|программ|tecnolog/i, '💻'],
+  [/language|язык|idioma/i, '🗣️'],
+];
+
+export function interestEmoji(label: string): string {
+  const t = String(label || '');
+  for (const [re, e] of INTEREST_EMOJI) if (re.test(t)) return e;
+  return '';
+}

@@ -11,6 +11,7 @@ the profile frontend keep working unchanged. Behaviour = matching_core (spec-fai
 notably critical-unknown blocking outreach).
 """
 import os
+from core_v2 import gender_label, card_summary   # род в подписях; сводка для чужой карточки
 import sys
 import time
 
@@ -205,6 +206,9 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
                  else "Agent: fit too weak"))
         band_ru, band_en = BAND_LABELS[band]
         rdy_ru, rdy_en = READINESS_LABELS[readiness]
+        # Род человека известен — «открыт(а)» становится «открыта»/«открыт»; и в причинах тоже.
+        rdy_ru = gender_label(rdy_ru, c.get("gender"), "ru")
+        rs_ru = [gender_label(x, c.get("gender"), "ru") for x in (rs_ru or [])]
         out.append({
             # ---- legacy card contract (buddy/_card + profile UI keep rendering) ----
             "name": c.get("name"), "score": round(d_ab["lcb"] * 100, 1), "tier": tier,
@@ -218,6 +222,8 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
             "reasons_ru": rs_ru, "reasons_en": rs_en, "gap_ru": gap_ru, "gap_en": gap_en,
             "coverage": d_ab["coverage"], "lcb": d_ab["lcb"], "reciprocal": rec,
             "unknowns": d_ab["unknowns"], "can_outreach": can_outreach,
+            # Сводка о человеке — на карточку вместо разбора совпадения (candSummary на клиенте).
+            "summary": card_summary(c.get("summary_public") or c.get("summary"), c.get("name"), c.get("gender"))[:600],
             "readiness": readiness, "readiness_ru": rdy_ru, "readiness_en": rdy_en,
             "trace": {"tier": tier, "policy": "ALLOW", "domain": domain,
                       "a_to_b": d_ab, "b_to_a": d_ba, "reciprocal": rec, "band": band,

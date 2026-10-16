@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { setSession } from './api';
+import { setSession, auth, ApiError } from './api';
 
 export type Profile = {
   name?: string;
@@ -26,6 +26,9 @@ export type Profile = {
     comfortableAreas?: string[];
     maxDistanceKm?: number;
   };
+  /** Настрой одним словом из закрытого словаря (см. VIBE_ORDER). Единственное, что тест
+   *  характера отдаёт подбору; выводится сервером из осей теста, правится человеком. */
+  vibe?: string;
   languages?: { comfortable?: string[] };
   interests?: { explicit?: string[] };
   safety?: { publicPlacesOnly?: boolean; hideExactLocation?: boolean; verifiedOnly?: boolean };
@@ -62,6 +65,12 @@ export type OnbState = {
    */
   session?: string | null;
   authMethod: string | null;
+  /**
+   * ЧЕЙ ЭТО ЧЕРНОВИК: логин аккаунта, с которым начали анкету (в нижнем регистре). Переживает
+   * протухание сессии — `checkSession` стирает `login`, но не его. При входе черновик сверяется с
+   * аккаунтом (`signedIn`): другой аккаунт получает чистую анкету, а не чужую.
+   */
+  owner?: string | null;
   msg?: MsgPrefs;
   /**
    * Онбординг пройден и профиль записан на сервере.
@@ -137,8 +146,100 @@ export async function restore(): Promise<void> {
   emit();
 }
 
+/**
+ * ЖИВА ЛИ СЕССИЯ (аудит 27.09.2026).
+ *
+ * Токен восстанавливается с диска вслепую, а живёт он 90 дней, и его гасят выход на другом
+ * устройстве и модератор. Сервер на мёртвый токен отвечает не ошибкой, а ПУСТЫМИ списками — и
+ * человек видел пустое приложение («нет переписок, нет планов»), не зная, что надо просто войти
+ * заново. Теперь при запуске спрашиваем `/api/auth/session`:
+ *   — «сессии нет» → выход из аккаунта: `login`/`session` стираются, анкета и `done` остаются —
+ *     после входа кодом человек попадает прямо на главную со своим профилем;
+ *   — сбой сети → не трогаем ничего: без связи выходить из аккаунта нельзя.
+ * Возвращает true, если сессия потеряна, — корневой макет уводит на вход.
+ */
+export async function checkSession(): Promise<boolean> {
+  const tok = state.session;
+  if (!tok) return false;
+  const expire = (): boolean => {
+    if (state.session !== tok) return false;
+    state = { ...state, login: null, session: null, authMethod: null };
+    setSession('');
+    emit();
+    return true;
+  };
+  try {
+    const r: any = await auth.session();
+    if (state.session !== tok) return false;        // пока шёл запрос, человек уже вошёл заново
+    if (r && r.ok === false && r.error === 'no session') {
+      return expire();
+    }
+  } catch (error) {
+    // Both legacy JSON expiry and an HTTP authentication refusal revoke this
+    // token. A late response for a previous login cannot clear the next account.
+    if (error instanceof ApiError && error.status === 401) return expire();
+    /* нет сети или сервер недоступен — остаёмся как есть */
+  }
+  return false;
+}
+
+/** Логин для сравнения «тот же ли это человек»: без регистра и пробелов по краям. */
+const who = (s: unknown) => String(s || '').trim().toLowerCase();
+
+/**
+ * ВХОД В АККАУНТ — единственная дверь, через которую телефон узнаёт, чей он сейчас.
+ *
+ * ЧТО БЫЛО НЕ ТАК (владелец, 27.09): «перезагрузил приложение посреди анкеты, вошёл с новой почтой —
+ * и меня кинуло на тот же этап, на котором я был на другой почте». Вход записывал новые логин и
+ * токен ПОВЕРХ старого состояния, а черновик анкеты, отметка «пройдено» и пометки переписок
+ * оставались от прошлого человека. Сервер у нового аккаунта профиля не присылает — стирать
+ * черновик было нечему. Отсюда три беды сразу: новый аккаунт продолжал чужую анкету, мог отправить
+ * на сервер чужие имя, возраст и город, а если прошлый человек анкету закончил — новый пропускал
+ * её целиком и попадал на главную без профиля.
+ *
+ * ТЕПЕРЬ черновик принадлежит аккаунту (`owner`). Тот же аккаунт — анкета продолжается с того же
+ * места; другой или неизвестный — телефон начинает с чистого листа. Вернувшемуся (`isNew` нет)
+ * профиль приходит с сервера, как и раньше.
+ */
+export function signedIn(p: {
+  login: string; session: string; authMethod: string; profile?: Profile | null; isNew: boolean;
+}) {
+  const next = who(p.login);
+  const mine = !!next && who(state.owner || state.login) === next;
+  const base = mine ? state : empty();
+  state = {
+    ...base,
+    owner: next || null,
+    login: p.login,
+    session: p.session,
+    authMethod: p.authMethod,
+    ...(p.profile ? { profile: p.profile } : {}),
+    ...(p.isNew ? {} : { done: true }),
+  };
+  emit();
+}
+
 export function reset() {
   state = empty();
+  emit();
+}
+
+/**
+ * Начать АНКЕТУ заново, не выходя из аккаунта.
+ *
+ * Отличие от `reset()` — ровно в этом, и оно было настоящей ошибкой. «Начать заново» в шапке
+ * онбординга звало `reset()`, то есть стирало состояние ЦЕЛИКОМ: вместе с профилем уходили
+ * `login`, `session` и `authMethod`. Человек, вошедший по почте, молча оказывался разлогинен и
+ * должен был снова запрашивать код — при том что кнопка обещала ему только «всё, что уже введено,
+ * сотрётся». Про вход не было сказано ни слова.
+ *
+ * Личность и вход — не «введённое». Их человек не заполнял в анкете, и стирать их по кнопке,
+ * которая про анкету, нельзя. `reset()` остаётся там, где он и уместен: при настоящем выходе из
+ * аккаунта.
+ */
+export function resetProfile() {
+  const { login, session, authMethod } = state;
+  state = { ...empty(), login, session, authMethod };
   emit();
 }
 

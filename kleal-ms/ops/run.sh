@@ -23,7 +23,9 @@ PY="${PYTHON:-python3}"
 
 # Dependency order: llm first (everyone reaches models through it), gateway last (it is the public
 # door and should not be open before what it proxies to is up).
-ALL="llm filtration matching buddy onboarding profile admin gateway"
+# `profile` убран: сервис профиля был веб-страницей и удалён целиком. Он оставался в списке и
+# на каждом `run.sh all` печатал «no such service», а `run.sh status` спрашивал порт мертвеца.
+ALL="llm filtration matching buddy onboarding admin gateway"
 
 # §15 group formation. Off by default in the spec (post-pilot); set KLEAL_GROUPS=0 to switch the
 # whole feature back off in one place — matching then still ranks people for a group request, it

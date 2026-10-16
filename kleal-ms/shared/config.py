@@ -44,7 +44,6 @@ def _env(names, default):
 PORTS = {
     "llm":         int(_env(["LLM_PORT"], 7071)),
     "onboarding":  int(_env(["ONBOARDING_PORT"], 7072)),
-    "profile":     int(_env(["PROFILE_PORT"], 7073)),
     "matching":    int(_env(["MATCHING_PORT"], 7074)),
     "buddy":       int(_env(["BUDDY_PORT"], 7075)),
     "filtration":  int(_env(["FILTER_PORT"], 7076)),
@@ -57,7 +56,6 @@ PORTS = {
 _URL_ENV = {
     "llm":        ["LLM_URL"],
     "onboarding": ["ONBOARDING_URL", "HUB_ONB"],
-    "profile":    ["PROFILE_SVC_URL", "HUB_PROF"],
     "matching":   ["MATCH_URL", "HUB_MATCH"],
     "buddy":      ["BUDDY_URL", "HUB_BUDDY"],
     "filtration": ["FILTER_URL", "HUB_FILTER"],
@@ -73,7 +71,6 @@ def url(service):
 
 LLM_URL = url("llm")
 ONBOARDING_URL = url("onboarding")
-PROFILE_URL = url("profile")
 MATCH_URL = url("matching")
 BUDDY_URL = url("buddy")
 FILTER_URL = url("filtration")

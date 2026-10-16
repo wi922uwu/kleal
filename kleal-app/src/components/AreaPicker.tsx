@@ -18,14 +18,18 @@
  * условный require ломал веб-сборку целиком.
  */
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import Slider from '@react-native-community/slider';
 import * as Location from 'expo-location';
 import { RadiusMap } from './RadiusMap';
+import { AddressField } from './AddressField';
 import { STEP_AREA } from '../onboarding';
 import { reverseGeocode } from '../geocode';
 import { T, getLang } from '../i18n';
-import { color, radius as rad, space, type } from '../theme';
+import { color, font, radius as rad, space, type } from '../theme';
+import { GlassPill } from './Glass';
+import { GlassSurface } from './LiquidGlass';
+import { IconPin } from './icons';
 
 export type Area = {
   /** Страна — как её называет список. Уходит в профиль отдельным полем. */
@@ -56,6 +60,19 @@ export type Area = {
  * Страны и города. Список короткий намеренно — см. шапку: чего в нём нет, человек ставит булавкой.
  * Координаты — центры городов, огрублять их не нужно: это не местоположение человека, а якорь карты.
  */
+/**
+ * Подпись страны на языке интерфейса. КЛЮЧ остаётся английским: по нему ищет сервер и он лежит
+ * в профиле; 'Spain' показывалось человеку как есть — и русскому, и испанцу.
+ */
+const COUNTRY_LABEL: Record<string, [string, string]> = {
+  Spain: ['Испания', 'España'], Portugal: ['Португалия', 'Portugal'], Italy: ['Италия', 'Italia'],
+  Germany: ['Германия', 'Alemania'], France: ['Франция', 'Francia'],
+};
+export const countryLabel = (k: string): string => {
+  const r = COUNTRY_LABEL[k];
+  return r ? T(r[0], k, r[1]) : k;
+};
+
 export const PLACES: { country: string; cities: [string, number, number][] }[] = [
   { country: 'Spain', cities: [
     ['Barcelona', 41.3874, 2.1686], ['Madrid', 40.4168, -3.7038], ['Valencia', 39.4699, -0.3763],
@@ -83,8 +100,29 @@ export const PLACES: { country: string; cities: [string, number, number][] }[] =
   ] },
 ];
 
-const citiesOf = (country: string) =>
-  (PLACES.find((p) => p.country === country) || PLACES[0]).cities;
+/**
+ * СПИСОК СТРАН ВМЕСТЕ СО СВОЕЙ.
+ *
+ * `PLACES` — сорок городов на пять стран, и это правильно: запуск идёт по Испании, а справочник
+ * мира здесь не нужен (см. шапку). Но человек, чьей страны в списке нет, видел ЧУЖУЮ: строка
+ * страны говорила «Испания» москвичу и лондонцу, а «Вернуть к …» звало в Барселону. В базе таких
+ * сто сорок четыре профиля из восьмисот.
+ *
+ * Поэтому страна из профиля, если её в списке нет, добавляется первой строкой — со своим
+ * единственным городом и своей точкой. Ничего не выдумывается: и страна, и город, и координаты
+ * взяты у самого человека.
+ */
+function placesFor(a: { country?: string; city?: string; lat?: number; lon?: number }) {
+  const own = String(a?.country || '').trim();
+  if (!own || PLACES.some((p) => p.country === own)) return PLACES;
+  const city = String(a?.city || '').trim() || own;
+  const lat = Number.isFinite(Number(a?.lat)) ? Number(a?.lat) : DEFAULT_AREA.lat;
+  const lon = Number.isFinite(Number(a?.lon)) ? Number(a?.lon) : DEFAULT_AREA.lon;
+  return [{ country: own, cities: [[city, lat, lon] as [string, number, number]] }, ...PLACES];
+}
+
+const citiesOf = (country: string, list = PLACES) =>
+  (list.find((p) => p.country === country) || list[0]).cities;
 
 /** Значение по умолчанию — первая строка списка. Одно место, чтобы экран и компонент не разошлись. */
 export const DEFAULT_AREA: Area = {
@@ -109,6 +147,8 @@ export function AreaPicker({
   const [locating, setLocating] = useState(false);
   /** Идёт запрос адреса по координатам. Строка не должна молча показывать старое место. */
   const [naming, setNaming] = useState(false);
+  /** Строка поиска места — для тех, чьего города в списке нет. */
+  const [query, setQuery] = useState('');
 
   /**
    * Подвинули точку — спрашиваем, что там на самом деле, и подменяем строку города адресом.
@@ -155,7 +195,7 @@ export function AreaPicker({
   };
 
   const pickCountry = (country: string) => {
-    const [city, lat, lon] = citiesOf(country)[0];
+    const [city, lat, lon] = citiesOf(country, places)[0];
     onChange({ ...value, country, city, pinCity: city, lat, lon, moved: false, address: undefined });
     setOpen('');
   };
@@ -165,20 +205,23 @@ export function AreaPicker({
     setOpen('');
   };
 
+  /** Страны, среди которых выбирают: короткий список плюс своя, если её там нет. */
+  const places = placesFor(value);
+
   return (
     <View style={{ gap: space.md }}>
       {/* Роль обязательна: без неё Pressable на вебе остаётся <div> — не кнопка ни для скринридера,
           ни для клавиатуры. Здесь это ещё и единственный способ сменить страну. */}
       <Row
         label={STEP_AREA.country()}
-        value={value.country}
+        value={countryLabel(value.country)}
         open={open === 'country'}
         onPress={() => setOpen((o) => (o === 'country' ? '' : 'country'))}
       />
       {open === 'country' ? (
         <Options>
-          {PLACES.map((p) => (
-            <Option key={p.country} label={p.country} on={p.country === value.country} onPress={() => pickCountry(p.country)} />
+          {places.map((p) => (
+            <Option key={p.country} label={countryLabel(p.country)} on={p.country === value.country} onPress={() => pickCountry(p.country)} />
           ))}
         </Options>
       ) : null}
@@ -193,39 +236,29 @@ export function AreaPicker({
       />
       {open === 'city' ? (
         <Options>
-          {citiesOf(value.country).map((c) => (
+          {citiesOf(value.country, places).map((c) => (
             <Option key={c[0]} label={c[0]} on={c[0] === value.city && !value.moved} onPress={() => pickCity(c)} />
           ))}
         </Options>
       ) : null}
 
-      <View style={s.radiusRow}>
-        <Text style={s.radiusLabel}>{STEP_AREA.radiusLabel()}</Text>
-        <Text style={s.radiusValue}>{value.km} km</Text>
-      </View>
-      <Slider
-        minimumValue={1}
-        maximumValue={50}
-        step={1}
-        value={value.km}
-        onValueChange={(km) => onChange({ ...value, km: Math.round(km) })}
-        minimumTrackTintColor={color.primary}
-        maximumTrackTintColor={color.neutral100}
-        thumbTintColor={color.primary}
+      {/*
+        НЕТ ГОРОДА В СПИСКЕ — НАЙДИ. Список короткий намеренно (см. шапку), а двигать карту до
+        Жироны из Барселоны долго. Поле то же, что везде, где спрашивают место: подсказки смещены к
+        выбранному городу, булавка справа ставит точку туда, где человек стоит. Выбор ведёт себя как
+        сдвиг карты: точка встаёт на место, город берётся из ответа геокодера.
+      */}
+      <AddressField
+        style={s.search}
+        value={query}
+        onChange={setQuery}
+        placeholder={STEP_AREA.search()}
+        near={{ lat: value.lat, lon: value.lon }}
+        onPick={(h) => {
+          setQuery(h.label);
+          onChange({ ...value, lat: h.lat, lon: h.lon, moved: true, city: h.city || value.city, address: h.label });
+        }}
       />
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ busy: locating }}
-        style={s.detect}
-        onPress={detect}
-      >
-        {locating ? (
-          <ActivityIndicator color={color.onPrimary} />
-        ) : (
-          <Text style={s.detectText}>◎  {STEP_AREA.detect()}</Text>
-        )}
-      </Pressable>
 
       {/* Значка «19 km» посреди карты больше нет: то же число стоит строкой выше, а в центре
           теперь живая булавка — два кружка друг на друге читались как одно и не двигались. */}
@@ -246,7 +279,7 @@ export function AreaPicker({
             hitSlop={8}
             onPress={() => {
               const anchor = value.pinCity || DEFAULT_AREA.city;
-              const c = citiesOf(value.country).find((x) => x[0] === anchor) || citiesOf(value.country)[0];
+              const c = citiesOf(value.country, places).find((x) => x[0] === anchor) || citiesOf(value.country, places)[0];
               onChange({ ...value, city: c[0], pinCity: c[0], lat: c[1], lon: c[2], moved: false, address: undefined });
             }}
           >
@@ -254,6 +287,30 @@ export function AreaPicker({
           </Pressable>
         ) : null}
       </View>
+
+      <View style={s.radiusRow}>
+        <Text style={s.radiusLabel}>{STEP_AREA.radiusLabel()}</Text>
+        <Text style={s.radiusValue}>{value.km} KM</Text>
+      </View>
+      <Slider
+        minimumValue={1}
+        maximumValue={50}
+        step={1}
+        value={value.km}
+        onValueChange={(km) => onChange({ ...value, km: Math.round(km) })}
+        minimumTrackTintColor={color.primary}
+        maximumTrackTintColor={color.neutral100}
+        thumbTintColor={color.primary}
+      />
+
+      {/* «Detect my location» — светлое стекло с булавкой, как в кадре A.06. */}
+      <GlassPill
+        label={STEP_AREA.detect()}
+        busy={locating}
+        onPress={detect}
+        icon={<IconPin size={18} c={color.fg} />}
+      />
+
     </View>
   );
 }
@@ -265,19 +322,25 @@ function Row({ label, value, open, onPress }: { label: string; value: string; op
       accessibilityRole="button"
       accessibilityLabel={`${label}: ${value}`}
       accessibilityState={{ expanded: open }}
-      style={s.select}
+      style={s.selectShadow}
       onPress={onPress}
     >
-      <Text style={s.selectLabel}>{label}</Text>
-      <Text style={s.selectText}>{value}</Text>
-      <Text style={s.chev}>{open ? '⌃' : '⌄'}</Text>
+      <GlassSurface tone="light" radius={16} style={s.select}>
+        <Text style={s.selectLabel}>{label}</Text>
+        <Text style={s.selectText} numberOfLines={1}>{value}</Text>
+        <Text style={s.chev}>{open ? '⌃' : '⌄'}</Text>
+      </GlassSurface>
     </Pressable>
   );
 }
 
 function Options({ children }: { children: React.ReactNode }) {
   // Городов до восьми — список прокручивается, а не растягивает шаг анкеты на два экрана.
-  return <ScrollView style={s.options} nestedScrollEnabled>{children}</ScrollView>;
+  return (
+    <GlassSurface tone="light" radius={16} style={s.options}>
+      <ScrollView nestedScrollEnabled>{children}</ScrollView>
+    </GlassSurface>
+  );
 }
 
 function Option({ label, on, onPress }: { label: string; on?: boolean; onPress: () => void }) {
@@ -295,38 +358,37 @@ function Option({ label, on, onPress }: { label: string; on?: boolean; onPress: 
 }
 
 const s = StyleSheet.create({
+  selectShadow: {
+    borderRadius: 16,
+    shadowColor: '#0A0A14', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+  },
   select: {
-    height: 52,
-    borderRadius: rad.md,
-    backgroundColor: color.neutral100,
+    height: 48,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
   },
-  selectLabel: { ...type.bodySmall, color: color.muted } as any,
-  selectText: { flex: 1, ...type.body, color: color.fg, textAlign: 'right' } as any,
+  selectLabel: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: color.muted } as any,
+  selectText: { flex: 1, fontFamily: font.text, fontSize: 15, lineHeight: 22, color: color.fg, textAlign: 'right' } as any,
   chev: { fontSize: 18, color: color.muted },
-  options: {
-    maxHeight: 216, backgroundColor: color.card, borderRadius: rad.md,
-    borderWidth: 1, borderColor: color.border,
-  },
+  options: { maxHeight: 216 },
   option: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16 },
   optionText: { flex: 1, ...type.body, color: color.fg } as any,
   tick: { fontSize: 16, color: color.primary, fontWeight: '700' },
-  radiusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  radiusLabel: { ...type.body, color: color.fg } as any,
-  radiusValue: { ...type.body, color: color.primary, fontWeight: '600' } as any,
-  detect: {
-    height: 52,
-    borderRadius: rad.md,
-    backgroundColor: color.ink,
-    alignItems: 'center',
-    justifyContent: 'center',
+  /** Поле поиска — того же роста, что строки страны и города над ним. */
+  search: {
+    height: 48, borderRadius: 16, paddingHorizontal: 16, color: color.fg, fontFamily: font.text, fontSize: 15,
+    backgroundColor: 'rgba(255,255,255,0.6)', borderWidth: StyleSheet.hairlineWidth, borderColor: '#FFFFFF',
   },
-  detectText: { ...type.button, color: color.onPrimary } as any,
-  map: { height: 250, borderRadius: rad.md, overflow: 'hidden', backgroundColor: color.neutral100 },
-  hintRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: -space.sm },
-  hint: { flex: 1, ...type.caption, color: color.muted } as any,
-  hintAction: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
+  radiusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: space.xs },
+  radiusLabel: { fontFamily: font.text, fontSize: 15, lineHeight: 22, color: color.fg } as any,
+  /** «19 KM» — цифрами шапки (TASA, моноширинные), как проценты и возраст. */
+  radiusValue: { ...type.num, color: color.muted } as any,
+  map: {
+    height: 240, borderRadius: 24, overflow: 'hidden', backgroundColor: color.neutral100,
+  },
+  hintRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: -space.xs },
+  hint: { flex: 1, fontFamily: font.text, fontSize: 12, lineHeight: 16, color: color.muted } as any,
+  hintAction: { fontFamily: font.textSemibold, fontSize: 12, lineHeight: 16, color: color.primary } as any,
 });

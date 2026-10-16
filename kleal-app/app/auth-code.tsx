@@ -22,22 +22,24 @@ import {
   View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
 import { auth, setSession } from '../src/api';
 import { AUTH, CODE_LEN, DEV_CODE } from '../src/auth';
-import { patch, applyDefaults } from '../src/state';
+import { signedIn, applyDefaults } from '../src/state';
 import { useLang, T, replyLang } from '../src/i18n';
 import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { GlassBack, GlassPane } from '../src/components/GlassField';
 import { GlassPill, GlassToast } from '../src/components/Glass';
-import { color, displayFamily, radius as rad, space, type } from '../src/theme';
+import { color, font, heading, radius as rad, space, type } from '../src/theme';
 import { hFail, hOk, hTick } from '../src/haptics';
 
 const TTL_MIN = 10;          // столько же, сколько CODE_TTL на сервере
 const RESEND = 30;           // «Resend code in 0:30»
 
 export default function AuthCode() {
+  const reduced = useReducedMotion();
   const lang = useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -122,12 +124,13 @@ export default function AuthCode() {
         hOk();
         setSession(r.token);
         // Личность и профиль приходят с сервера: у вернувшегося он уже есть, у нового — нет.
-        patch({
+        // `signedIn`, а не `patch`: черновик анкеты сверяется с аккаунтом (см. state.ts).
+        signedIn({
           login: r.login || email,
           authMethod: 'code',
           session: r.token,
-          ...(r.profile ? { profile: r.profile } : {}),
-          ...(r.isNew ? {} : { done: true }),
+          profile: r.profile || null,
+          isNew: !!r.isNew,
         });
         if (r.isNew) {
           applyDefaults();
@@ -204,13 +207,15 @@ export default function AuthCode() {
         <View style={[s.page, { paddingTop: insets.top + space.sm,
                                 paddingBottom: dockBottom(insets.bottom + space.lg, kb) }]}>
           <GlassBack
-            label={T('Назад', 'Back')}
+            label={T('Назад', 'Back', 'Atrás')}
             onPress={() => (router.canGoBack() ? router.back() : router.replace('/auth-email'))}
           />
 
-          {/* Гарнитура заголовка зависит от языка — см. displayFamily. */}
-          <Text style={[s.h, { fontFamily: displayFamily(lang) }]}>{AUTH.codeTitle()}</Text>
-          <Text style={s.note}>{AUTH.codeNote(email, TTL_MIN)}</Text>
+          {/* Гарнитура и кегль заголовка зависят от языка — см. heading(). */}
+          <Animated.Text entering={reduced ? undefined : FadeIn.delay(40).duration(360)}
+            style={[s.h, heading(lang, type.heading)]}>{AUTH.codeTitle()}</Animated.Text>
+          <Animated.Text entering={reduced ? undefined : FadeIn.delay(100).duration(360)}
+            style={s.note}>{AUTH.codeNote(email, TTL_MIN)}</Animated.Text>
 
           {/*
             Полоса отладки. Нарочно не в стиле приложения — жёлтая, с пунктиром и словом «отладка»:
@@ -244,8 +249,10 @@ export default function AuthCode() {
             onPress={() => input.current?.focus()}
           >
             {cells.map((ch, i) => (
+              <React.Fragment key={i}>
+              {/* Черта между тройками — как в макете: шесть цифр читаются как «123–456», а не сплошняком. */}
+              {i === CODE_LEN / 2 ? <View style={s.dash} /> : null}
               <View
-                key={i}
                 style={[
                   s.cell,
                   // Кромка ячейки — единственное, что различает состояния: заливка у всех одна.
@@ -255,8 +262,13 @@ export default function AuthCode() {
                 ]}
               >
                 <GlassPane radius={rad.lg} />
-                <Text style={s.cellText}>{ch}</Text>
+                {/* Цифра коротко проявляется в ячейке — видно, что символ принят; без «вскакивания». */}
+                {ch ? (
+                  <Animated.Text key={ch + i} entering={reduced ? undefined : FadeIn.duration(140)}
+                    style={s.cellText}>{ch}</Animated.Text>
+                ) : null}
               </View>
+              </React.Fragment>
             ))}
             {/* Настоящее поле — прозрачное и поверх ячеек: автозаполнение из письма приходит в него. */}
             <TextInput
@@ -299,8 +311,7 @@ export default function AuthCode() {
 
           {err ? <GlassToast title={err.title} note={err.note} style={s.toast} /> : null}
 
-          <View style={s.fill} />
-
+          {/* Кнопки сразу под кодом, как в кадре A.03.2: с цифровой клавиатурой они остаются видны. */}
           <GlassPill
             tone="brand"
             label={dead ? AUTH.sendNew() : AUTH.verify()}
@@ -327,26 +338,37 @@ const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ambientBase },
   fill: { flex: 1 },
   page: { flex: 1, paddingHorizontal: 24 },
-  h: { ...type.display, color: color.fg, marginTop: 28 } as any,
-  note: { ...type.displaySub, color: color.muted, marginTop: space.sm } as any,
+  h: { color: color.fg, marginTop: 24 } as any,
+  note: { ...type.displaySub, color: color.muted, marginTop: space.lg } as any,
 
-  cells: { flexDirection: 'row', gap: space.sm, marginTop: 32 },
+  cells: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 24 },
+  dash: { width: 7, height: 1, backgroundColor: '#B4ABA0', marginHorizontal: 2 },
   cell: {
     flex: 1,
     height: 56,
     borderRadius: rad.lg,
-    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#FFFFFF55',
+    borderColor: 'transparent',
+    ...Platform.select({
+      ios: { shadowColor: '#0A0A14', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 5 } },
+      default: {},
+    }),
   },
-  cellFilled: { borderColor: color.neutral300 },
-  cellActive: { borderWidth: 1, borderColor: color.primary },
+  cellFilled: { borderColor: '#FFFFFF' },
+  cellActive: {
+    borderWidth: 1,
+    borderColor: '#FF385C',
+    ...Platform.select({
+      ios: { shadowColor: '#FF385C', shadowOpacity: 0.25, shadowRadius: 14, shadowOffset: { width: 0, height: 4 } },
+      android: {},
+    }),
+  },
   cellBad: { borderWidth: 1, borderColor: color.danger },
-  cellText: { ...type.codeDigit, color: color.fg } as any,
+  cellText: { fontFamily: font.display, fontSize: 24, lineHeight: 28, letterSpacing: -0.24, color: color.fg } as any,
   /** Поле лежит поверх ячеек и не видно: прозрачный текст, нулевая непрозрачность курсора. */
-  hidden: { ...StyleSheet.absoluteFillObject, opacity: 0, color: 'transparent' } as any,
+  hidden: { ...StyleSheet.absoluteFill, opacity: 0, color: 'transparent' } as any,
 
   /** Отладочная полоса: намеренно чужеродная в этом интерфейсе — её нельзя не заметить. */
   devBox: {
@@ -362,7 +384,7 @@ const s = StyleSheet.create({
   devCode: { ...type.codeDigit, color: color.warnText, letterSpacing: 6 } as any,
   devNote: { ...type.fine, color: color.warnText } as any,
 
-  resendRow: { marginTop: space.lg, alignItems: 'center' },
+  resendRow: { marginTop: space.lg, marginBottom: space.xl, alignItems: 'center' },
   resend: { ...type.fine, color: color.muted } as any,
   resendOn: { ...type.fieldLabel, color: color.primary } as any,
 

@@ -15,7 +15,12 @@ export const color = {
   neutral100: '#EEF0F4',    // --secondary / --neutral-100
   neutral300: '#CDD2DC',
   neutral400: '#A9B0BE',
-  primary: '#F13A59',       // --primary-solid
+  /**
+   * Коралл — как в борде: переменная primary в Figma `#FF385C` (палитра 5853:3, секции «GR · Offline»
+   * и «Test 260930»). Было `#F13A59` — чуть темнее и глуше; по решению владельца 30.09.2026 взят цвет
+   * борда. Белый текст на нём держит 3,5 : 1 — это кнопки 14–15 полужирным, для крупного текста хватает.
+   */
+  primary: '#FF385C',       // --primary-solid
   onPrimary: '#FFFFFF',     // --neutral-0
   successText: '#0F7340',
   successBg: '#E8F7EE',
@@ -66,8 +71,22 @@ export const color = {
    * борда: тёмная 78% непрозрачности, светлая 42%. Держим их тут, потому что «стеклянная
    * кнопка» встречается на трёх экранах и однажды встретится на четвёртом.
    */
+  /**
+   * СТЕКЛЯННАЯ КАРТОЧКА — белая поверхность, сквозь которую чуть виден фирменный фон.
+   *
+   * Не `BlurView`: размытие на списках дорого на Android, а здесь оно и не нужно — под
+   * карточкой лежит мягкий градиент без деталей, и одной прозрачности хватает, чтобы бумага
+   * взяла его тепло. Плотность выбрана по кадру борда: текст на ней читается как на белой.
+   */
+  glassCard: 'rgba(255,255,255,0.78)',
   glassDark: '#1A1C21',
   glassLight: '#FFFFFF',
+  /**
+   * Светлая волосяная кромка стекла — то, чем на борде нарисована внутренняя тень панели.
+   * Литерал '#FFFFFF55' стоял в шести местах трёх файлов, включая экран входа: поправить
+   * прозрачность стекла значило найти и не забыть все шесть.
+   */
+  glassEdge: '#FFFFFF55',
 } as const;
 
 /** Непрозрачность стеклянных поверхностей — отдельно от цвета, их задают вместе. */
@@ -153,7 +172,21 @@ export const space = {
  * указывается семейство целиком, а не вес.
  */
 export const font = {
-  display: 'SpecialGothicExpandedOne',
+  /**
+   * TASA Orbiter — заголовочный борда «First run» (секция 5736:101224, сентябрь 2026). Сменил Special
+   * Gothic Expanded: в новом макете все заголовки, имя в сводке и шапка разговора набраны им.
+   * Кириллицы в нём нет (0 из 64 букв) — русский по-прежнему идёт на Unbounded, см. displayFamily.
+   */
+  display: 'TASAOrbiter-700',
+  /** Полужирный TASA — подписи виджетов в разговоре («Your age», «Gender»). */
+  displaySemi: 'TASAOrbiter-600',
+  /**
+   * ЦИФРЫ — проценты шапки, возраст, километры. В макете они были точечные («LED Dot-Matrix», у нас
+   * Doto), и на телефоне это не читалось: «точки очень плохие, дотинг нечитаемый» (тестировщик,
+   * 26.09). Теперь цифры набраны тем же TASA Orbiter, что заголовки, — в нём есть цифры, знак % и
+   * моноширинные цифры (tnum), так что число не дёргается по ширине, пока его крутят.
+   */
+  num: 'TASAOrbiter-600',
   /** Широкий дисплейный для кириллицы — Unbounded. Зачем он нужен, см. `displayFamily` ниже. */
   displayRu: 'Unbounded-700',
   text: 'Geist-400',
@@ -251,7 +284,37 @@ export const type = {
    * Разрядка добавлена ради русского: она даёт ту же широту, которой у Geist самого по себе нет.
    */
   wheelLabel: { fontSize: 24, lineHeight: 32 },
+
+  /**
+   * НОВАЯ ШКАЛА ЗАГОЛОВКОВ «First run». Три ступени, все на TASA Orbiter: 32 — герой экрана
+   * («No swipes. Just real plans», «You’re in»), 24 — заголовок шага («What’s your email?»),
+   * 20 — шапка разговора и имя в сводке. Русский набирается Unbounded, который втрое шире, —
+   * поэтому размер для него ужимается в `heading()`, а не здесь.
+   */
+  hero: { fontSize: 32, lineHeight: 36, letterSpacing: -0.32 },
+  heading: { fontSize: 24, lineHeight: 28, letterSpacing: -0.24 },
+  headingSm: { fontSize: 20, lineHeight: 24, letterSpacing: -0.2 },
+  /** Цифры шапки и подписей: TASA 600, моноширинные — проценты, километры. */
+  num: { fontFamily: 'TASAOrbiter-600', fontSize: 14, lineHeight: 18, letterSpacing: 0.2, fontVariant: ['tabular-nums'] },
 } as const;
+
+/**
+ * Заголовок по языку: гарнитура из `displayFamily`, размер — из ступени. Unbounded (русский) шире
+ * TASA примерно на четверть, и тот же кегль переносил бы заголовок на лишнюю строку.
+ */
+/** Семейство мелких подписей виджетов («Your age», «Gender»): TASA 600, русский — Geist 600. */
+export const labelFamily = (lang: string) => (lang === 'ru' ? font.textSemibold : font.displaySemi);
+
+export function heading(lang: string, step: { fontSize: number; lineHeight: number; letterSpacing: number }) {
+  const ru = lang === 'ru';
+  const k = ru ? 0.78 : 1;
+  return {
+    fontFamily: displayFamily(lang),
+    fontSize: Math.round(step.fontSize * k),
+    lineHeight: Math.round(step.lineHeight * k) + (ru ? 4 : 0),
+    letterSpacing: ru ? 0 : step.letterSpacing,
+  };
+}
 
 export const shadow = {
   card: {
@@ -262,7 +325,7 @@ export const shadow = {
     elevation: 4,
   },
   fab: {
-    shadowColor: '#F5455C',
+    shadowColor: '#FF385C',
     shadowOpacity: 0.45,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },

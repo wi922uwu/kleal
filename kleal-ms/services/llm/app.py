@@ -77,10 +77,16 @@ class FieldStreamer:
 
     def __init__(self, field, gate=None):
         self.key = '"%s"' % field if field else None
-        # gate = (key, expected) — hold the field back until another key in the SAME object is seen
-        # with the expected value. The caller puts that key BEFORE the field in the prompt, so the
-        # verdict arrives before the text does and text that would be thrown away is never shown.
-        self.gate = gate
+        # gate — hold the field back until other keys in the SAME object are seen with allowed values.
+        # The caller puts those keys BEFORE the field in the prompt, so the verdict arrives before
+        # the text does and text that would be thrown away is never shown.
+        #   ("valid", True)                                  — one key, one value (the original form)
+        #   [("valid", True), ("asks", ["activity", "none"])] — several keys; a value may be a set
+        # Two forms because the intent builder now names the SUBJECT of its own question ("asks")
+        # before writing it: a question about time or place is discarded by the buddy service, and
+        # with this gate its text never reaches the screen — the same protection valid:false has.
+        self.gates = self._norm_gates(gate)
+        self.gate = self.gates[0] if self.gates else None   # kept for callers that read .gate
         self.blocked = False
         self.buf = ""          # raw text seen so far (also the full body for the final parse)
         self.started = False   # we are inside the value
@@ -89,6 +95,29 @@ class FieldStreamer:
         self._scan = 0         # how much of buf we have already emitted from
 
     _ESCAPES = {'n': '\n', 't': '\t', 'r': '\r', '"': '"', '\\': '\\', '/': '/', 'b': '', 'f': ''}
+
+    @staticmethod
+    def _norm_gates(gate):
+        """-> [(key, {allowed lowercase strings}), ...]; [] when there is no gate."""
+        if not gate:
+            return []
+        pairs = list(gate) if gate and not isinstance(gate[0], str) else [gate]
+        out = []
+        for pair in pairs:
+            if not pair or len(pair) != 2:
+                continue
+            key, allowed = str(pair[0]), pair[1]
+            # "?key" — an OPTIONAL gate: if the streamed field arrives before this key was ever
+            # seen, the key is simply absent from this reply and the gate is dropped, not held.
+            # A strict gate ("valid") holds forever without its key — the prompt mandates it and
+            # a reply without a verdict is malformed anyway. The builder's "asks" is optional:
+            # a model that skips the label must still stream; the buddy guard decides later.
+            optional = key.startswith("?")
+            key = key.lstrip("?")
+            allowed = ({str(v).lower() for v in allowed} if isinstance(allowed, (list, tuple, set))
+                       else {str(allowed).lower()})
+            out.append((key, allowed, optional))
+        return out
 
     def _looks_like_envelope(self):
         """Есть ли вообще конверт. None — ещё рано судить.
@@ -129,6 +158,7 @@ class FieldStreamer:
         if self.key and not self.started and self._looks_like_envelope() is False:
             self.key = None
             self.gate = None
+            self.gates = []
             self.plain = True
         if not self.key:
             # Замолчали — значит навсегда: дальше идёт конверт, и каждый следующий кусок его же
@@ -160,20 +190,29 @@ class FieldStreamer:
             return out
         if self.done or self.blocked:
             return ""
-        if self.gate and not self.started:
-            gk, gv = self.gate
+        while self.gates and not self.started:
+            gk, allowed, optional = self.gates[0]
             i = self.buf.find('"%s"' % gk)
             if i < 0:
+                if optional and self.key and self.buf.find(self.key) >= 0:
+                    self.gates.pop(0)           # the field is already here without this key — no verdict, no hold
+                    continue
                 return ""                       # verdict not in yet — emit nothing
-            seg = self.buf[i + len(gk) + 2: i + len(gk) + 24].lstrip(": \t")
-            if seg.startswith(("true", "false", '"')):
-                got = seg.split(",")[0].split("}")[0].strip().strip('"')
-                if got != str(gv).lower():
-                    self.blocked = True         # this reply is destined to be discarded
-                    return ""
-                self.gate = None                # verdict matches — stream from here on
-            else:
+            seg = self.buf[i + len(gk) + 2: i + len(gk) + 40].lstrip(": \t")
+            # A string value is complete only once its CLOSING quote is in: judged one character
+            # early, "activity" reads as "act" and a good reply is blocked. Booleans are safe by
+            # construction — startswith needs the whole word.
+            if seg.startswith('"'):
+                if seg.find('"', 1) < 0:
+                    return ""                   # string value still streaming
+            elif not seg.startswith(("true", "false")):
                 return ""                       # value not complete yet
+            got = seg.split(",")[0].split("}")[0].strip().strip('"').lower()
+            if got not in allowed:
+                self.blocked = True             # this reply is destined to be discarded
+                return ""
+            self.gates.pop(0)                   # this verdict matches — check the next, if any
+        self.gate = None
         if not self.started:
             i = self.buf.find(self.key)
             if i < 0:
@@ -327,10 +366,12 @@ class H(BaseHTTPRequestHandler):
                 alive[0] = False
 
         try:
+            # gate: either ["valid", true] or [["valid", true], ["asks", ["activity", "none"]]] —
+            # FieldStreamer normalises both; anything else means no gate.
             g = body.get("gate")
             raw = stream_llm(cfg, body.get("messages") or [], body.get("temperature", 0.7),
                              body.get("field") or None, on_text,
-                             (g[0], g[1]) if isinstance(g, list) and len(g) == 2 else None)
+                             g if isinstance(g, list) and g else None)
             if alive[0]:
                 self._sse("done", {"content": raw})
         except Exception as e:
@@ -344,4 +385,5 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print("Kleal llm-service on http://127.0.0.1:%d  (%d models, keys %s)" % (
         PORT, len(MODELS), "set" if AITUNNEL_KEY or SELF_KEY != "x" else "from env"))
-    ThreadingHTTPServer((config.BIND_HOST, PORT), H).serve_forever()
+    import serving  # очередь подключений на 128, а не на 5 — см. shared/serving.py
+    serving.KlealServer((config.BIND_HOST, PORT), H).serve_forever()

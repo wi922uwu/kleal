@@ -73,6 +73,12 @@ def threads(me):
     return (call("/api/agent/threads?self=%s" % me) or {}).get("threads") or []
 
 
+# Писать можно только тому, кто принял приглашение (NOT_MATCHED иначе) — сперва знакомим пару.
+# Без этого смоук с сентября падал на первом же сообщении и ничего не проверял (аудит 27.09.2026).
+_pr = call("/api/agent/propose", {"from": A, "to": B, "intent": {"topics": ["coffee"]}})
+_ac = call("/api/agent/respond", {"id": _pr.get("id"), "self": B, "decision": "accept"})
+check("пара знакома (приглашение принято)", _ac.get("ok") is True, (_pr, _ac))
+
 print("=" * 76)
 print("1. У КАЖДОГО СООБЩЕНИЯ СВОЙ id")
 print("=" * 76)

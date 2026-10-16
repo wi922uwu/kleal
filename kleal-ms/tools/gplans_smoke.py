@@ -408,27 +408,18 @@ check("новых людей больше не зовут", inv_late.get("error"
 
 print()
 print("=" * 76)
-print("7. ПОСЛЕ ВСТРЕЧИ — ОБРАТНАЯ СВЯЗЬ И ИСТОРИЯ")
+print("7. ОБРАТНАЯ СВЯЗЬ — ТОЛЬКО ПОСЛЕ ВСТРЕЧИ")
 print("=" * 76)
+# Через HTTP план в прошлом не завести (IN_THE_PAST), а отзыв сервер принимает только после
+# встречи — поэтому здесь проверяется отказ ДО неё, а сама обратная связь и уход плана в историю —
+# в tools/gplan_feedback_unit.py, на плане, чьё время уже прошло (аудит 27.09.2026).
 conf = [x for x in (call("/api/agent/gplans?self=%s" % OWN).get("plans") or []) if x.get("id") == PID]
 parts = (conf[0].get("confirmed") if conf else []) or []
 check("в плане четверо", len(parts) == 4, parts)
-f1 = call("/api/agent/gplan-feedback", {"id": PID, "self": parts[0], "happened": True,
-                                        "text": "хорошо посидели", "idem": "f1%d" % S})
-check("первый ответил", f1.get("ok") is True, f1)
-check("план ещё не в истории", (f1.get("answered"), f1.get("of")) == (1, 4),
-      [f1.get("answered"), f1.get("of")])
+early = call("/api/agent/gplan-feedback", {"id": PID, "self": parts[0] if parts else OWN, "happened": True})
+check("до встречи отзыв не принимается", early.get("error") == "NOT_YET", early)
 nope = call("/api/agent/gplan-feedback", {"id": PID, "self": M[4], "happened": True})
-check("не участник фидбэк не оставляет", nope.get("error") == "NOT_A_PARTICIPANT", nope)
-for n in parts[1:]:
-    last = call("/api/agent/gplan-feedback", {"id": PID, "self": n, "happened": False,
-                                              "reason": "дождь"})
-check("когда ответили все — план закрыт", ((last.get("plan") or {}).get("state")) == "done",
-      (last.get("plan") or {}).get("state"))
-hist = call("/api/agent/gplans?self=%s" % parts[0].replace(" ", "+"))
-check("и уехал в историю", any(x.get("id") == PID for x in (hist.get("history") or [])),
-      [x.get("id") for x in (hist.get("history") or [])])
-check("из активных пропал", not any(x.get("id") == PID for x in (hist.get("plans") or [])))
+check("не участник отзыв не оставляет", nope.get("ok") is not True, nope)
 
 print()
 print("=" * 76)

@@ -73,6 +73,13 @@ for a, b in (("coffee", "кофе-свидание"), ("coffee", "cita de café"
              ("walking", "walking date")):
     check("свидание не бытовое: %s ~ %s" % (a, b), X.similarity(a, b), 0)
 
+# Сапборд — не стендап: «stand up» стоит внутри названия доски, и без _BLOCKED_WHEN запрос про сап
+# приводил комиков точным совпадением. Сам стендап при этом остаётся собой.
+for a, b in (("stand-up paddleboarding", "stand-up comedy"), ("stand up paddle", "стендап"),
+             ("stand-up paddle board", "comedy")):
+    check("сапборд не стендап: %s ~ %s" % (a, b), X.similarity(a, b), 0)
+check("стендап остаётся стендапом", X.similarity("stand-up comedy", "стендап"), 4)
+
 # ...но само понятие должно связывать свои формы на трёх языках
 for a, b in (("coffee", "cata de café"), ("coffee", "кофе"), ("coffee", "café para charlar"),
              ("paseo", "прогулка"), ("reading", "книги"), ("movie", "кино")):

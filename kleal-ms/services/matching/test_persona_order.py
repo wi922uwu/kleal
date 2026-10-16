@@ -19,7 +19,9 @@ with open(_SRC, encoding="utf-8") as f:
     _src = f.read()
 for _node in ast.parse(_src).body:
     if isinstance(_node, ast.Assign) and getattr(_node.targets[0], "id", "") in (
-            "_NATURE_SAY", "_PERSONA_OVERFETCH"):
+            # _TIER_ORDER обязателен: _persona_order читает его на каждом кандидате, и без него
+            # разбор исходника собирает функцию, падающую NameError на первой же сортировке.
+            "_NATURE_SAY", "_PERSONA_OVERFETCH", "_TIER_ORDER"):
         exec(ast.get_source_segment(_src, _node), _ns)
     if isinstance(_node, ast.FunctionDef) and _node.name in (
             "_axes_of", "_persona_by_name", "_persona_order"):
@@ -76,8 +78,15 @@ check("обёрнутая {v,axes} читается как оси",
 
 # ---- 5. совпадение названо на карточке: молчаливая перестановка человеку ничего не объясняет ----
 out = persona_order([C("B", "strong", {"energy": "drained"})], {"wantPersona": {"energy": "drained"}})
-check("причина дописана по-русски",
-      any("как ты просил" in r for r in out[0].get("reasons_ru") or []), out[0].get("reasons_ru"))
+# Пришпиливать точную фразу оказалось нельзя: русский текст переписали с «как ты просил(а)» на
+# «как ты и хочешь» — правка хорошая, она уходит от неуклюжей скобки с родом, но тест от неё
+# краснел, будто сломалась сортировка. Держим то, ради чего проверка и написана: на карточке
+# НАЗВАНА черта («спокойный») и сказано, что она из пожелания человека. Слова пусть меняются.
+_want_ru = ("как ты", "как просил", "ты хочешь", "твоё пожелание", "твое пожелание")
+_r_ru = out[0].get("reasons_ru") or []
+check("черта названа по-русски", any("спокойный" in r for r in _r_ru), _r_ru)
+check("и сказано, что это из пожелания",
+      any(any(w in r for w in _want_ru) for r in _r_ru), _r_ru)
 check("и по-английски",
       any("as you asked" in r for r in out[0].get("reasons_en") or []), out[0].get("reasons_en"))
 

@@ -17,10 +17,16 @@
  * ПРУЖИНА С ЛЁГКИМ ПЕРЕЛЁТОМ. Затухание нарочно небольшое: окно чуть проскакивает размер и
  * возвращается — на этом и держится ощущение «выпрыгнуло», а не «появилось». Закрывается без
  * пружины: возврат с колебанием читается как «передумало закрываться».
+ *
+ * КНОПКА — СТЕКЛО ИЗ ШАПКИ GR.01. Круг 40 (не 42: в борде «Button/Icon Button» ровно 40) из того
+ * же светлого стекла, что и прочие кнопки-знаки, вместо плоского белого кружка. Точка «есть новое»
+ * — как «Bell Dot» борда: зелёная, 6×6 и в разрыве контура, а не коралловое пятно поверх него
+ * (см. IconBellDot).
  */
 import React, { useEffect, useRef } from 'react';
 import {
   Animated,
+  Easing,
   Image,
   Modal,
   Pressable,
@@ -30,12 +36,14 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import Reanimated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { mediaUrl } from '../api';
 import { HOME, HomeInvite } from '../home';
 import { T } from '../i18n';
 import { hCommit, hTap } from '../haptics';
-import { IconBell } from './icons';
+import { IconBellDot } from './icons';
+import { GlassSurface, usePress } from './LiquidGlass';
 import { color, radius as rad, space, type } from '../theme';
 
 /** Отступ пузыря от краёв экрана — тот же, что у карточек главной. */
@@ -52,6 +60,23 @@ const MAX_H = 420;
  */
 const MIN_H = 236;
 
+/** Кнопка колокольчика — круг 40 из шапки GR.01 («Button/Icon Button»). */
+export const BELL_SIZE = 40;
+/**
+ * Верхнее поле шапки над кнопкой — pad 8 у «Greeting Header» в GR.01. Пузырь открывается под
+ * колокольчиком, а колокольчик стоит на этом поле, поэтому шапка главной обязана держать тот же
+ * отступ: разойдутся — пузырь либо наедет на кнопку, либо повиснет в воздухе под ней.
+ */
+export const BELL_HEAD_PAD = 8;
+/** Зазор между низом колокольчика и верхом пузыря. */
+const BUBBLE_GAP = 6;
+/**
+ * Точка «есть новое» — зелёная «Bell Dot» из GR.01. Своего токена у этого зелёного нет:
+ * `successText` — цвет ТЕКСТА, он заметно темнее и на светлом стекле был бы тёмным пятном, а не
+ * огоньком.
+ */
+const UNREAD = '#1FAE5E';
+
 export function NotifyBubble({ invites, onPick }: {
   invites: HomeInvite[];
   onPick: (inv: HomeInvite) => void;
@@ -60,18 +85,19 @@ export function NotifyBubble({ invites, onPick }: {
   const { width } = useWindowDimensions();
   const [open, setOpen] = React.useState(false);
   const grow = useRef(new Animated.Value(0)).current;
+  const press = usePress();
 
   const W = width - EDGE * 2;
   const H = Math.max(MIN_H, Math.min(MAX_H, 92 + invites.length * 64));
 
   useEffect(() => {
     if (open) {
-      Animated.spring(grow, {
+      // Раскрытие — плавное замедление без отскока: пузырь не «выпрыгивает», а разворачивается.
+      Animated.timing(grow, {
         toValue: 1,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
-        damping: 13,
-        stiffness: 220,
-        mass: 0.8,
       }).start();
     } else {
       grow.setValue(0);
@@ -86,18 +112,29 @@ export function NotifyBubble({ invites, onPick }: {
 
   return (
     <>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={T('Уведомления', 'Notifications')}
-        style={s.bell}
-        onPress={() => {
-          hTap();
-          setOpen(true);
-        }}
-      >
-        <IconBell />
-        {invites.length ? <View style={s.dot} /> : null}
-      </Pressable>
+      {/*
+        Отклик — масштабом на обёртке, а не прозрачностью: системное стекло не рисуется, если у
+        него или у любого предка непрозрачность меньше 1. Стекло внутри Pressable — с
+        pointerEvents="none": живое стекло забирает касание себе, и кнопка перестаёт нажиматься.
+        Касание шире круга (hitSlop): 40 меньше пальцевых 44, а рисовать круг больше борда нельзя.
+      */}
+      <Reanimated.View style={[s.bell, press.style]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={T('Уведомления', 'Notifications', 'Notificaciones')}
+          hitSlop={8}
+          onPressIn={press.onPressIn}
+          onPressOut={press.onPressOut}
+          onPress={() => {
+            hTap();
+            setOpen(true);
+          }}
+        >
+          <GlassSurface tone="light" radius={BELL_SIZE / 2} pointerEvents="none" style={s.bellGlass}>
+            <IconBellDot size={24} c={color.fg} dot={invites.length ? UNREAD : undefined} />
+          </GlassSurface>
+        </Pressable>
+      </Reanimated.View>
 
       <Modal visible={open} transparent animationType="none" onRequestClose={shut}>
         {/*
@@ -109,7 +146,7 @@ export function NotifyBubble({ invites, onPick }: {
           style={[
             s.bubble,
             {
-              top: insets.top + 54,
+              top: insets.top + BELL_HEAD_PAD + BELL_SIZE + BUBBLE_GAP,
               right: EDGE,
               width: W,
               // ВЫСОТА, А НЕ ПОТОЛОК. С `maxHeight` окно сжималось по содержимому, и пустое
@@ -173,15 +210,13 @@ export function NotifyBubble({ invites, onPick }: {
 
 // ===== вид
 const s = StyleSheet.create({
-  bell: {
-    width: 42, height: 42, borderRadius: 21, backgroundColor: color.onCoverSoft,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  dot: {
-    position: 'absolute', top: 10, right: 11, width: 8, height: 8,
-    borderRadius: 4, backgroundColor: color.primary,
-  },
-  scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: color.scrim },
+  /*
+    ОБЁРТКА РОВНО 40×40. Без размера строка шапки растягивала бы её, и масштаб отклика считался бы от
+    чужого центра. Тени нет: у кнопки в GR.01 из эффектов только стекло.
+  */
+  bell: { width: BELL_SIZE, height: BELL_SIZE, borderRadius: BELL_SIZE / 2 },
+  bellGlass: { width: BELL_SIZE, height: BELL_SIZE, alignItems: 'center', justifyContent: 'center' },
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: color.scrim },
   bubble: {
     position: 'absolute',
     backgroundColor: color.card,

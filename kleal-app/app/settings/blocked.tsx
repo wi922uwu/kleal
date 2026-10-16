@@ -28,6 +28,8 @@ export default function Blocked() {
   const me = st.profile.name || '';
 
   const [list, setList] = useState<string[]>([]);
+  /** id заблокированных по тем же местам, что и подписи: снимается блок с человека, а не с имени. */
+  const [ids, setIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState(false);
@@ -37,6 +39,7 @@ export default function Blocked() {
     try {
       const r: any = await agent.safety(me);
       setList(Array.isArray(r?.blocked) ? r.blocked.map(String) : []);
+      setIds(Array.isArray(r?.blocked_ids) ? r.blocked_ids.map(String) : []);
       setErr(false);
     } catch {
       setErr(true);
@@ -48,12 +51,14 @@ export default function Blocked() {
   useEffect(() => { load(); }, [me]);
 
   /** Снятие идёт на сервере, и список берётся из ЕГО ответа, а не правится на месте. */
-  const unblock = async (name: string) => {
+  const unblock = async (name: string, i: number) => {
     setBusy(name);
     try {
-      const r: any = await agent.block(me, name, false);
-      if (Array.isArray(r?.blocked)) setList(r.blocked.map(String));
-      else await load();
+      const r: any = await agent.block(me, { name, id: ids[i] || '' }, false);
+      if (Array.isArray(r?.blocked)) {
+        setList(r.blocked.map(String));
+        setIds(Array.isArray(r?.blocked_ids) ? r.blocked_ids.map(String) : []);
+      } else await load();
     } catch {
       setErr(true);
     } finally {
@@ -70,19 +75,19 @@ export default function Blocked() {
       {loading ? (
         <ActivityIndicator style={{ marginTop: space.lg }} color={color.primary} />
       ) : err ? (
-        <Text style={s.empty}>{T('Не удалось получить список.', 'Could not load the list.')}</Text>
+        <Text style={s.empty}>{T('Не удалось получить список.', 'Could not load the list.', 'No se pudo cargar la lista.')}</Text>
       ) : list.length === 0 ? (
         <Text style={s.empty}>{BLOCKED.empty()}</Text>
       ) : (
-        list.map((name) => (
-          <Card key={name} style={s.row}>
+        list.map((name, i) => (
+          <Card key={ids[i] || name} style={s.row}>
             <View style={s.ava}><IconPerson size={22} /></View>
             <Text style={s.name} numberOfLines={1}>{name}</Text>
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ busy: busy === name }}
               style={s.btn}
-              onPress={busy ? undefined : () => unblock(name)}
+              onPress={busy ? undefined : () => unblock(name, i)}
             >
               {busy === name
                 ? <ActivityIndicator size="small" color={color.fg} />

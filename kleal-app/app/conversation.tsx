@@ -15,28 +15,34 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
-  ActivityIndicator, KeyboardAvoidingView, Platform,
+  ActivityIndicator, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
-  CHAT, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS, planWhen, planPinned, planPhase, sysLine,
-} from '../src/chat';
+  CHAT, CHATMENU, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS, SYS_ACT, planWhen, planPhase, sysLine, msgTime,
+  KLEAL_SENDER } from '../src/chat';
 import { inviteHoursLeft } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
-import { useLang, T, getLang } from '../src/i18n';
+import { useLang, T, getLang, dateLocale, use12h } from '../src/i18n';
 import { useOnb, markSeen, setMsgPrefs } from '../src/state';
-import { mediaUrl, agent, newIdem, type VideoPayload } from '../src/api';
+import { mediaUrl, agent, newIdem, ensureMe, isMe, pidOf, type VideoPayload } from '../src/api';
 import { usePolling } from '../src/polling';
 import { Sheet, SheetItem } from '../src/components/Sheet';
 import * as Clipboard from 'expo-clipboard';
-import { MessageFeed } from '../src/components/MessageFeed';
+import { MessageFeed, type SysAct } from '../src/components/MessageFeed';
 import { useVoiceMessage, VoiceMessageControl } from '../src/voice';
 import { VideoNoteButton } from '../src/videonote';
 import {
-  IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconSend, IconDots, IconCheckCircle,
+  IconChevronLeft, IconSpark, IconPerson, IconCalendar, IconCheckCircle, IconEllipsisV,
+  IconClock, IconPin, IconInfo, IconBan,
 } from '../src/components/icons';
-import { color, radius as rad, space, type } from '../src/theme';
+import { Cover } from '../src/components/Cover';
+import { GlassIconButton, GlassSurface } from '../src/components/LiquidGlass';
+import { SendArrow } from '../src/components/SendArrow';
+import { color, font, radius as rad, space, type } from '../src/theme';
+import { Ambient, GLOW_FORM } from '../src/components/Ambient';
+import { withScheme } from '../src/intent';
 
 export default function Conversation() {
   useLang();
@@ -47,12 +53,29 @@ export default function Conversation() {
   const kb = useKeyboardInset();
   const scroller = useRef<ScrollView>(null);
 
-  const params = useLocalSearchParams<{ who?: string; title?: string; photo?: string }>();
+  const params = useLocalSearchParams<{ who?: string; who_id?: string; title?: string; photo?: string }>();
   const other = String(params.who || '').trim();
   const intentTitle = String(params.title || '').trim();
   const photo = String(params.photo || '');
 
   const me = String(st.profile.name || '');
+  /*
+   * СОБЕСЕДНИК — ПОДПИСЬ И ID (kleal-ms/docs/IDENTITY.md). `who_id` едет параметром перехода; если
+   * экран открыли без него (место вызова, куда id ещё не проведён), id берётся из первого ответа
+   * сервера — тот кладёт `from_id`/`to_id` к каждой реплике. По одной подписи у тёзок сливались
+   * переписки, а «моими» считались все сообщения переписки двух «Иванов».
+   */
+  const [learnedId, setLearnedId] = useState('');
+  const otherId = String(params.who_id || '') || learnedId;
+  const peer = useMemo(() => ({ name: other, id: otherId }), [other, otherId]);
+  const isOther = useCallback((name: unknown, id: unknown) => {
+    const i = String(id || '');
+    if (otherId && i) return i === otherId;
+    return String(name || '').trim().toLowerCase() === other.toLowerCase();
+  }, [other, otherId]);
+  // Свой id — чтобы «моё» решалось по нему. Пришёл — перерисовать то, что уже решено по имени.
+  const [, setMeKnown] = useState('');
+  useEffect(() => { ensureMe().then(setMeKnown); }, []);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
@@ -63,7 +86,9 @@ export default function Conversation() {
    * полоса Undo · 4…0, и только по нулю действие случается. Отменить — просто снять pending,
    * никуда ничего не уходит. Рецепт тот же, что у «Не интересно» на O.13b.
    */
-  const [pending, setPending] = useState<{ kind: 'plan' | 'end'; n: number } | null>(null);
+  const [pending, setPending] = useState<{ kind: 'plan' | 'end' | 'send'; n: number } | null>(null);
+  /** OF.19d: лист «Send the plan?» — план из самой затеи (день, час, место), отправка через OF.19a. */
+  const [sendOpen, setSendOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   /** Время последнего известного сообщения — по нему сервер отдаёт только новые. */
   const since = useRef(0);
@@ -79,6 +104,17 @@ export default function Conversation() {
    */
   const [pastPlan, setPastPlan] = useState<any>(null);
   const [request, setRequest] = useState<any>(null);
+  /**
+   * СОГЛАСИЕ — ОТДЕЛЬНО ОТ СВЕЖЕЙ ЗАЯВКИ, и это не мелочь.
+   *
+   * `request` — самая свежая заявка пары: она решает, ЧЬЮ затею показывать в карточке. А право
+   * писать и назначать встречу даёт не она, а САМО ЗНАКОМСТВО — любая принятая заявка между вами.
+   * Пока и то и другое читалось из одной `request`, вторая затея к тому, с кем уже переписываешься,
+   * запирала работающий чат: новая заявка приходит `pending`, и поле ввода становилось
+   * нередактируемым с подписью «написать можно после согласия», а «Создать план» гасла — у двоих,
+   * которые уже виделись и переписываются.
+   */
+  const [accepted, setAccepted] = useState<any>(null);
   const [peerRead, setPeerRead] = useState(0);
   const [intentOpen, setIntentOpen] = useState(false);
   /** Реплика, по которой держали палец: под неё открыт лист действий. */
@@ -130,8 +166,14 @@ export default function Conversation() {
   const load = useCallback(async () => {
     if (!me || !other) { setLoading(false); return; }
     try {
-      const r: any = await agent.thread(me, other, since.current);
+      const r: any = await agent.thread(me, peer, since.current);
       merge((r?.messages || []) as Msg[]);
+      if (!params.who_id) {
+        for (const x of (r?.messages || []) as any[]) {
+          const id = String((isMe(x.from, x.from_id, me) ? x.to_id : x.from_id) || '');
+          if (id) { setLearnedId(id); break; }
+        }
+      }
       if (typeof r?.peer_read_at === 'number') setPeerRead(r.peer_read_at);
       // Ошибку отправки здесь НЕ гасим: опрос и отправка — разные события, и удачный опрос ничего
       // не говорит об уехавшей реплике. Раньше «Сообщение не ушло» стиралось через четыре
@@ -141,7 +183,7 @@ export default function Conversation() {
     } finally {
       setLoading(false);
     }
-  }, [me, other, merge]);
+  }, [me, peer, merge]);
 
   /** План и заявка между нами — для шапки, закреплённой карточки и карточек приглашения. */
   const loadSide = useCallback(async () => {
@@ -151,7 +193,7 @@ export default function Conversation() {
       const norm = (v: any) => String(v || '').trim().toLowerCase();
       const all = [...((pl as any)?.plans || [])];
       setLivePlan(all.find((p: any) =>
-        (p.participants || []).some((x: any) => norm(x.name) === norm(other))
+        (p.participants || []).some((x: any) => isOther(x.name, pidOf(x, 'name')))
         && (p.state === 'proposed' || p.state === 'confirmed')) || null);
       // История нужна ОДНОЙ подсказке и берётся отдельной выборкой. Слить её в `all` нельзя:
       // сервер меняет корзину, а не state, — протухший `confirmed` тут же вернулся бы в шапку и
@@ -160,7 +202,7 @@ export default function Conversation() {
       // loadSide проглотил бы падение вместе с заявкой.
       const seen = [...((pl as any)?.plans || []), ...((pl as any)?.history || [])]
         .filter((p: any) =>
-          (p.participants || []).some((x: any) => norm(x.name) === norm(other))
+          (p.participants || []).some((x: any) => isOther(x.name, pidOf(x, 'name')))
           && planPhase(p) === 'after')
         .sort((a: any, b: any) => (b.starts_at || 0) - (a.starts_at || 0));
       // 'cancelled' сюда не попадает намеренно: отменённая встреча — как раз повод предложить новую.
@@ -168,13 +210,16 @@ export default function Conversation() {
       const rows = [
         ...(Array.isArray(inb) ? inb : (inb as any)?.requests || []),
         ...(Array.isArray(out) ? out : (out as any)?.requests || []),
-      ].filter((x: any) => norm(x.from) === norm(other) || norm(x.to) === norm(other));
+      ].filter((x: any) => isOther(x.from, x.from_id) || isOther(x.to, x.to_id));
       rows.sort((a: any, b: any) => (b.updated || 0) - (a.updated || 0));
       setRequest(rows[0] || null);
+      // Знакомство — это ЛЮБАЯ принятая заявка пары, не обязательно самая свежая: вторая затея
+      // приходит неотвеченной и права писать не отменяет.
+      setAccepted(rows.find((x: any) => x.status === 'accepted') || null);
     } catch {
       /* тихо */
     }
-  }, [me, other]);
+  }, [me, other, isOther]);
 
   useEffect(() => { load(); loadSide(); markSeen(other); }, [me, other]);
   // План и заявка меняются редко — свой ритм, но спит так же, как и лента.
@@ -187,11 +232,11 @@ export default function Conversation() {
 
   // «Прочитано» отправляется, когда на экране появились новые ЧУЖИЕ сообщения, а не на каждый опрос.
   useEffect(() => {
-    const theirs = talk.filter((m) => String(m.from || '').toLowerCase() !== me.toLowerCase()).length;
+    const theirs = talk.filter((m) => !isMe(m.from, (m as any).from_id, me)).length;
     if (theirs > readStamped.current) {
       readStamped.current = theirs;
       markSeen(other);
-      agent.threadRead(me, other).catch(() => {});
+      agent.threadRead(me, peer).catch(() => {});
     }
   }, [msgs.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -226,7 +271,7 @@ export default function Conversation() {
   const deliver = useCallback(async (m: Msg) => {
     setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'sending' } : x)));
     try {
-      const r: any = await agent.message(me, other, String(m.text || ''), m.voice, m.cid,
+      const r: any = await agent.message(me, peer, String(m.text || ''), m.voice, m.cid,
                                          m.rt?.id, m.video);
       if (!r?.ok) throw new Error(String(r?.error || 'SEND_FAILED'));
       setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: undefined, id: r.id, t: r.t || x.t } : x)));
@@ -240,7 +285,7 @@ export default function Conversation() {
              : code === 'NOT_MATCHED' ? CHAT.writeNotMatched()
              : CHAT.offline());
     }
-  }, [me, other]);
+  }, [me, peer]);
 
   /**
    * Реакция ставится СРАЗУ на экране и только потом уходит на сервер: ждать ответа, чтобы увидеть
@@ -281,6 +326,8 @@ export default function Conversation() {
   const send = () => {
     const text = draft.trim();
     if (!text || !me || !other) return;
+    // Не только кнопкой: по «отправить» с клавиатуры сюда приходят мимо неактивного поля.
+    if (!canWrite) return;
     setDraft('');
     atBottom.current = true;
     // `since` НЕ двигаем: пусть опрос принесёт серверную версию этой же реплики — merge её склеит
@@ -301,8 +348,28 @@ export default function Conversation() {
    * `text`. Поэтому и показывается оно сразу, как своя реплика, — опрос принесёт серверную
    * версию и склеит по id.
    */
+  /**
+   * ПИСАТЬ МОЖНО ТОЛЬКО ТОМУ, КТО СОГЛАСИЛСЯ — и знать это экран обязан ДО отправки.
+   *
+   * Сервер правило держит (`_mp_matched` -> NOT_MATCHED), плану оно уже объяснено выше (`canPlan`),
+   * а переписка оставалась открытой: человек писал, пузырь появлялся с галочкой, и только потом
+   * приходил отказ. Пузырь при этом оставался в ленте навсегда.
+   *
+   * Здесь правило МЯГЧЕ, чем у плана, и это намеренно. `canPlan` требует явного `accepted`; для
+   * письма достаточно, чтобы не было ИЗВЕСТНО обратное. Заявку экран берёт из входящих и исходящих,
+   * и если список не догрузился, `request` пуст — запереть на этом основании работающую переписку
+   * хуже, чем пропустить запрос, который сервер всё равно отобьёт.
+   */
+  /* Переписка с Kleal — односторонняя. Строка сюда уходила бы в ошибку «вы не знакомы»:
+     отправка требует принятой заявки, а её с продуктом не бывает. Честнее сказать это словами,
+     чем дать написать и показать сбой. */
+  // Сравнение своей строкой, а не общим `norm`: он объявлен ниже по файлу, и до него здесь
+  // ещё нельзя дотянуться.
+  const isKleal = String(other || '').trim().toLowerCase() === KLEAL_SENDER.toLowerCase();
+  const canWrite = !isKleal && !(request && !accepted);
+
   /** Кружок уходит тем же путём, что текст и голосовое: тот же ключ, то же состояние, тот же повтор. */
-  const canSend = !!me && !!other;
+  const canSend = !!me && !!other && canWrite;
   const sendCircle = (payload: VideoPayload) => {
     if (!canSend) return;
     const local: Msg = {
@@ -323,7 +390,8 @@ export default function Conversation() {
     };
     setMsgs((prev) => [...prev, local]);
     deliver(local);
-  }, !me || !other);
+  // Между людьми голосовое уходит и без расшифровки: сообщение — это звук, текст лишь подсказка.
+  }, !me || !other, { requireTranscript: false });
 
   /**
    * План — тому, кто уже принял приглашение, и никому больше.
@@ -333,7 +401,7 @@ export default function Conversation() {
    * человек заполнял форму, выбирал время и получал отказ уже на отправке. Поймано на живом
    * телефоне. Причину называем ДО формы, а не после заполненной.
    */
-  const canPlan = request?.status === 'accepted';
+  const canPlan = !!accepted;
 
   const startPending = (kind: 'plan' | 'end') => {
     if (pending) return;
@@ -354,7 +422,9 @@ export default function Conversation() {
         return;
       }
       setPending(null);
-      if (pending.kind === 'plan') {
+      if (pending.kind === 'send') {
+        sendDraftPlan();
+      } else if (pending.kind === 'plan') {
         router.navigate({ pathname: '/plan', params: planParams() });
       } else {
         // КОНЕЦ РАЗГОВОРА ЗАПИСЫВАЕТСЯ, а не только уводит с экрана.
@@ -374,7 +444,7 @@ export default function Conversation() {
         // переписки, и для строки интента с тем же человеком.
         // Сначала СЕРВЕРУ: разговор закрывают для двоих, а не только у себя в телефоне.
         // Локальная отметка ниже — про свой список, она не заменяет сообщения второму.
-        agent.threadEnd(me, other).catch(() => {});
+        agent.threadEnd(me, peer).catch(() => {});
         const key = other.trim().toLowerCase();
         if (key) {
           setMsgPrefs((m) => {
@@ -399,20 +469,26 @@ export default function Conversation() {
 
   /** Подзаголовок шапки — только из того, что есть на самом деле. Присутствия и «печатает…» нет. */
   const subtitle = useMemo(() => {
-    if (livePlan?.state === 'confirmed') return THREAD.planSet(planWhen(livePlan, ru));
-    if (livePlan?.state === 'proposed') {
-      return norm(livePlan.host) === norm(me) ? THREAD.proposalSent() : THREAD.planFromThem();
-    }
+    /*
+      ПОКА ПЛАН ЗАКРЕПЛЁН СВЕРХУ — ПОДПИСИ НЕТ.
+      Здесь она говорила «План: Ср, 9 сент. · 23:25», а ровно та же дата стояла строкой выше, в
+      закреплённой полосе. Две строки об одном на расстоянии сорока точек друг от друга — это не
+      забота, а шум; на борде под именем нет ничего.
+      Без плана подпись остаётся: «Общаетесь сегодня» и «совпали на …» ничего не повторяют.
+    */
+    if (livePlan) return '';
     if (msgs.length) {
       const first = new Date((msgs[0].t || 0) * 1000);
       // Разговор начался сегодня — «с субботы» про сегодняшний день читается как «давно уже».
       if (first.toDateString() === new Date().toDateString()) return THREAD.talkingToday();
       // Русскому нужен родительный: «с четверга». Английскому — просто имя дня.
-      const day = ru ? THREAD.weekdayGen(first.getDay()) : first.toLocaleDateString('en-US', { weekday: 'long' });
+      const day = ru ? THREAD.weekdayGen(first.getDay()) : first.toLocaleDateString(dateLocale(), { weekday: 'long' });
       return THREAD.talkingSince(day);
     }
-    if (request?.status === 'accepted') {
-      const title = String(request?.intent?.title || (request?.intent?.topics || []).join(', ') || '');
+    if (accepted) {
+      // Подпись называет затею, НА КОТОРОЙ ВЫ СОВПАЛИ, — то есть принятую. Свежая неотвеченная
+      // заявка её не переписывает: совпадения по ней ещё нет.
+      const title = String(accepted?.intent?.title || (accepted?.intent?.topics || []).join(', ') || '');
       if (title) return THREAD.matchedOn(title);
     }
     return '';
@@ -420,13 +496,13 @@ export default function Conversation() {
 
   /** В каком состоянии знакомство, когда сказать ещё нечего. См. CHAT.empty. */
   const emptyState: 'they-accepted' | 'i-accepted' | 'sent' | 'invited-me' | 'none' =
-    !request ? 'none'
-    : request.status === 'accepted' ? (norm(request.to) === norm(other) ? 'they-accepted' : 'i-accepted')
-    : request.status === 'pending' ? (norm(request.to) === norm(other) ? 'sent' : 'invited-me')
+    accepted ? (isOther(accepted.to, accepted.to_id) ? 'they-accepted' : 'i-accepted')
+    : !request ? 'none'
+    : request.status === 'pending' ? (isOther(request.to, request.to_id) ? 'sent' : 'invited-me')
     : 'none';
 
   /** MSG.18–MSG.21: входящая заявка от этого человека, если её не скрывали. */
-  const inviteIn = request && norm(request.from) === norm(other) ? request : null;
+  const inviteIn = request && isOther(request.from, request.from_id) ? request : null;
   const inviteHidden = (st.msg?.hiddenInvites || []).includes(String(inviteIn?.id || ''));
   const noNudge = (st.msg?.noNudge || []).includes(norm(other));
   const requestTitle = String(request?.intent?.title || (request?.intent?.topics || []).join(', ') || '');
@@ -446,6 +522,7 @@ export default function Conversation() {
    */
   const planParams = () => ({
     who: other,
+    who_id: otherId,
     title: requestTitle || intentTitle,
     photo,
     mode: String(request?.intent?.mode || ''),
@@ -453,69 +530,221 @@ export default function Conversation() {
     link: String(request?.intent?.link || ''),
   });
 
+
   const toPlan = () => router.navigate({ pathname: '/plan', params: planParams() });
+
+  /**
+   * OF.19d: план, собранный из ЗАТЕИ — её день, час и место. Только встреча вживую и только если в
+   * затее есть день и час в будущем; иначе «Make the plan» ведёт в форму плана, как раньше.
+   */
+  const draftPlan = useMemo(() => {
+    const it: any = request?.intent || {};
+    if (String(it.mode || 'offline') !== 'offline') return null;
+    const key = String(it.dateKey || it.date_key || '');
+    const mins = Number(it.minutes);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key) || !Number.isFinite(mins)) return null;
+    const d = new Date(key + 'T00:00:00');
+    d.setMinutes(mins);
+    const at = Math.floor(d.getTime() / 1000);
+    if (!(at * 1000 > Date.now() + 15 * 60 * 1000)) return null;
+    return {
+      starts_at: at,
+      when: String(it.when || ''),
+      district: String(it.district || it.place || ''),
+      address: String(it.address || ''),
+    };
+  }, [request]);
+
+  const sendDraftPlan = async () => {
+    if (!draftPlan) return;
+    try {
+      const r: any = await agent.planPropose(me, peer, {
+        title: requestTitle || intentTitle || T('Встреча', 'Meetup', 'Quedada'),
+        mode: 'offline', ...draftPlan,
+      });
+      if (!r?.ok) {
+        setErr(r?.error === 'NOT_MATCHED' ? CHAT.notMatched()
+          : r?.error === 'IN_THE_PAST' ? CHAT.inThePast()
+          : r?.error === 'PLAN_EXISTS' ? CHAT.planExists()
+          : CHAT.planFailed());
+        return;
+      }
+      if (r.plan) setLivePlan(r.plan);
+      loadSide();
+      load();
+    } catch {
+      setErr(CHAT.planFailed());
+    }
+  };
+
+  const makePlan = () => {
+    setActions(false);
+    if (!canPlan) { setErr(CHAT.notMatched()); return; }
+    if (draftPlan) setSendOpen(true); else toPlan();
+  };
   /** Открыть УЖЕ существующий план. Один переход на закреплённую карточку и лист действий. */
   const openLivePlan = () => {
     if (!livePlan) return;
     router.navigate({ pathname: '/plan',
-      params: { id: livePlan.id, who: other, title: livePlan.title || intentTitle, photo } });
+      params: { id: livePlan.id, who: other, who_id: otherId, title: livePlan.title || intentTitle, photo } });
   };
+
+  /**
+   * Ответ на план прямо из переписки — тот же запрос, что и с экрана плана.
+   *
+   * `version` обязателен: он и есть защита от гонки. Двое могут нажать одновременно — один
+   * «подтвердить», другой «перенести», — и сервер отвергнет тот ответ, который отвечал на
+   * устаревшее состояние. Кнопка в ленте живёт дольше экрана плана, так что без версии она
+   * однажды подтвердила бы не то, что человек прочитал.
+   */
+  const respondPlan = useCallback(async (action: string) => {
+    if (!livePlan?.id) return;
+    try {
+      const r: any = await agent.planRespond(livePlan.id, me, action, { version: livePlan.version });
+      if (r?.plan) setLivePlan(r.plan);
+      else await loadSide();
+      since.current = 0;
+      await load();
+    } catch {
+      /* Молчим намеренно: строка события останется с кнопкой, и человек нажмёт ещё раз.
+         Сообщать об ошибке в ленте некуда — она не его реплика. */
+    }
+  }, [livePlan, me, load, loadSide]);
+
+  /**
+   * ЧТО МОЖНО СДЕЛАТЬ ПРЯМО ИЗ СОБЫТИЯ.
+   *
+   * Решает экран, а не сервер, и это главное в устройстве. Строка «план предложен» остаётся в
+   * ленте навсегда, а подтверждать план можно ровно пока он не подтверждён, не отменён и не
+   * перенесён ещё раз. Сервер, записав кнопку в строку один раз, соврал бы уже через минуту;
+   * экран же смотрит на ЖИВОЙ план при каждой отрисовке, и кнопка исчезает сама.
+   *
+   * Второе правило: кнопку видит только тот, от кого ждут ответа. Своё же событие («ты предложил
+   * план») кнопки не получает — подтверждать самому себе нечего.
+   *
+   * Третье: кнопка живёт только на ПОСЛЕДНЕМ событии своего вида. Иначе три переноса подряд дают
+   * три «подтвердить», и человек нажимает не тот.
+   */
+  const lastSysOf = useCallback((code: string) => {
+    for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].sys?.code === code) return msgs[i].id;
+    return '';
+  }, [msgs]);
+
+  const sysAction = useCallback((m: Msg): SysAct[] | null => {
+    const sys = m.sys;
+    if (!sys?.code) return null;
+    /*
+     * НОВАЯ ЗАТЕЯ — ЕДИНСТВЕННОЕ СОБЫТИЕ, КОТОРОМУ ПЛАН НЕ НУЖЕН. Все остальные события здесь про
+     * встречу, и без живого плана у них нет ни смысла, ни кнопки. Это — наоборот: оно про то, что
+     * встречи по новой затее ЕЩЁ НЕТ. И нужнее всего оно ровно тогда, когда полоса сверху занята
+     * планом по прежней затее: другого входа в карточку новой с этого экрана не существует.
+     * Кнопка живёт только на ПОСЛЕДНЕМ таком событии — по тому же правилу, что и у событий плана:
+     * три строки подряд с тремя кнопками ведут в одну и ту же карточку, и человек жмёт не ту.
+     */
+    if (sys.code === 'intent_new') {
+      return m.id === lastSysOf('intent_new')
+        ? [{ key: 'intent', label: SYS_ACT.openIntent(), onPress: () => setIntentOpen(true) }]
+        : null;
+    }
+    if (!livePlan) return null;
+    /*
+     * СТРОКА ОТ ПРОШЛОГО ПЛАНА КНОПКИ НЕ ПОЛУЧАЕТ. План отменили и завели новый — просьба
+     * «выбери место» от первого так и осталась в ленте, а `place_set` у второго пуст, и под
+     * недельной строкой рисовалась живая кнопка, ведущая в другой план. Событий, которые новый
+     * план не переиздаёт (plan_ask, moved_to_call), это касается в первую очередь.
+     */
+    if (livePlan.created && (m.t || 0) < livePlan.created) return null;
+    const mine = isMe(sys.by, (sys as any).by_id, me);
+    /*
+     * ЧТО МОЖНО — ГОВОРИТ СЕРВЕР. Раньше кнопка выводилась здесь из восьми полей проекции
+     * (`locked`, `pending`, `waiting_on`, `state`, …) — второй правдой о тех же правилах, и она
+     * расходилась с первой: в заморозке за два часа лента прятала всё, хотя сервер и спека
+     * подтверждение разрешают («в заморозке живут только ответы»). Теперь `actions` считается той
+     * же таблицей, по которой ручки отказывают (mplan_rules): что в списке — то и кнопка.
+     */
+    const acts: string[] | null = Array.isArray(livePlan.actions) ? livePlan.actions : null;
+    // Ответ без `actions` не значит «ничего нельзя»: до правки лента пряталась по `locked`, так и
+    // ведём себя, пока сервер не сказал иначе.
+    const serverOffers = (a: string) => (acts ? acts.includes(a) : !livePlan.locked);
+    const act = (key: string, label: string, onPress: () => void, soft = false): SysAct =>
+      ({ key, label, onPress, soft });
+
+    if (sys.code === 'plan_proposed' && m.id === lastSysOf('plan_proposed')) {
+      // Отвечает тот, кому предложили, и только пока план ещё ждёт ответа.
+      // Пока висит предложенный перенос, подтверждать старые условия нельзя — сервер отвечает
+      // на такое PENDING_CHANGE. Отвечать надо на перенос, и кнопки для этого ниже.
+      if (mine || !serverOffers('confirm')) return null;
+      return [act('confirm', SYS_ACT.confirmPlan(), () => respondPlan('confirm'))];
+    }
+    if (sys.code === 'plan_counter' && m.id === lastSysOf('plan_counter')) {
+      const pend = livePlan.pending;
+      if (!pend || pend.mine || !serverOffers('accept_change')) return null;      // своё же предложение подтверждать нечего
+      const newHour = msgTime(pend.starts_at, ru);
+      const oldHour = msgTime(livePlan.starts_at, ru);
+      return [
+        act('yes', SYS_ACT.acceptTime(newHour), () => respondPlan('accept_change')),
+        act('no', SYS_ACT.keepTime(oldHour), () => respondPlan('reject_change'), true),
+      ];
+    }
+    if (sys.code === 'plan_ask' && m.id === lastSysOf('plan_ask')) {
+      // Просьба адресована ВТОРОМУ, и снимается она, когда он её выполнил.
+      if (mine) return null;
+      // Те же признаки, что и на экране плана (plan.tsx:264): у гибрида вход два, и каждый
+      // закрывается своим. Запасной `address_set` — для старых планов, где поля были одним.
+      if (sys.kind === 'link') {
+        const has = livePlan.link_set ?? !!livePlan.address_set;
+        return has || !serverOffers('address') ? null : [act('link', SYS_ACT.addLink(), openLivePlan)];
+      }
+      const hasPlace = livePlan.place_set ?? !!livePlan.address_set;
+      return hasPlace || !serverOffers('address') ? null : [act('place', SYS_ACT.pickPlace(), openLivePlan)];
+    }
+    if (sys.code === 'moved_to_call' && m.id === lastSysOf('moved_to_call')) {
+      const link = String(livePlan.link || '').trim();
+      if (!link) return null;
+      return [act('call', SYS_ACT.openCall(), () => { Linking.openURL(withScheme(link)).catch(() => {}); })];
+    }
+    return null;
+  }, [livePlan, me, msgs, ru, lastSysOf, openLivePlan, respondPlan]);
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
-        {/* MSG.06: шапка одним рядом — назад, аватар, имя со статусом, многоточие. Отдельной
-            полосы интента больше нет: интент живёт в закреплённом плане и в листе за «•••». */}
-        <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
-            <IconChevronLeft />
-          </Pressable>
-          {photo ? (
-            <Image source={{ uri: mediaUrl(String(photo)) }} style={s.ava} />
-          ) : (
-            <View style={[s.ava, s.avaEmpty]}><IconPerson size={20} /></View>
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={s.name} numberOfLines={1}>{other}</Text>
-            {subtitle ? <Text style={s.sub} numberOfLines={1}>{subtitle}</Text> : null}
-          </View>
-          <Pressable accessibilityRole="button" accessibilityLabel={CHAT.actionsTitle()} style={s.dots} onPress={() => setActions(true)}>
-            <IconDots />
-          </Pressable>
-        </View>
+        {/* Фирменный фон — тот же бледный слой, что у разговора с Бадди (ChatShell). */}
+        <Ambient glows={GLOW_FORM} />
+        {/*
+          ЗАКРЕПЛЁННОЕ — ПОЛОСА ВО ВСЮ ШИРИНУ (борд, node 3642-221266).
 
-        {/* MSG.07 — живой план закреплён над лентой; тап открывает его экран. */}
+          Была карточка с полями по бокам, тенью и цветной плиткой-значком. На борде иначе: белая
+          полоса от края до края, круглая миниатюра у левого края и шеврон в белом круге у правого.
+          Оба круга стоят на той же вертикали, что кнопка «назад» и аватар в шапке под ними, —
+          отсюда одинаковый отступ 18 у всех четырёх. Это и держит верх экрана в порядке: два ряда,
+          и по краям у них общая колонка.
+        */}
         {livePlan ? (
           <Pressable
             accessibilityRole="button"
-            style={s.planCard}
+            style={s.pinRow}
             onPress={openLivePlan}
           >
-            <View style={s.planIcon}><IconCalendar size={20} c={color.onPrimary} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.planTitle} numberOfLines={1}>{livePlan.title || intentTitle}</Text>
-              <Text style={s.planSub} numberOfLines={1}>
-                {planWhen(livePlan, ru)}{livePlan.district ? ` · ${livePlan.district}` : ''}
-              </Text>
-              {/* Состояние встречи — прямо на карточке. Раньше она молчала, и «подтверждено» или
-                  «ждёт тебя» узнавалось только после перехода на экран плана. */}
-              <Text style={[s.planState, planPinned(livePlan, me).warn && { color: color.primary }]} numberOfLines={1}>
-                {planPinned(livePlan, me).label}
-              </Text>
+            <View style={s.pinBarWhite} />
+            {photo ? (
+              <Image source={{ uri: mediaUrl(String(photo)) }} style={s.pinThumb} />
+            ) : (
+              <View style={[s.pinThumb, s.avaEmpty]}><IconCalendar size={18} c={color.primary} /></View>
+            )}
+            {/*
+              ОДНА СТРОКА, КАК НА БОРДЕ. Здесь стояли три: заголовок, «когда · где» и состояние
+              встречи. Вместе с подписью под именем ниже дата и время повторялись на одном экране
+              ТРИЖДЫ — снято с телефона: «Ср, 9 сент. · 23:25» в полосе, «Подтверждено обоими» под
+              ним и «План: Ср, 9 сент. · 23:25» под именем.
+              Полоса — это ВХОД в затею, а не её пересказ: и «когда», и «где», и состояние живут на
+              экране плана, куда ведёт шеврон справа. Повторять их поверх ленты значит забивать верх
+              экрана тем, что сказано на один тап дальше.
+            */}
+            <View style={s.pinMid}>
+              <Text style={s.pinTitle} numberOfLines={1}>{livePlan.title || intentTitle}</Text>
             </View>
-            {/* Пара участников, как на MSG.07: собеседник и я, внахлёст. */}
-            <View style={s.pairWrap}>
-              {photo ? (
-                <Image source={{ uri: mediaUrl(String(photo)) }} style={s.pairAva} />
-              ) : (
-                <View style={[s.pairAva, s.avaEmpty]}><IconPerson size={13} /></View>
-              )}
-              {st.profile.photo ? (
-                <Image source={{ uri: mediaUrl(String(st.profile.photo)) }} style={[s.pairAva, s.pairAvaOverlap]} />
-              ) : (
-                <View style={[s.pairAva, s.pairAvaOverlap, s.avaEmpty]}><IconPerson size={13} /></View>
-              )}
-            </View>
+            <View style={s.pinChev}><Text style={s.pinChevText}>›</Text></View>
           </Pressable>
         ) : requestTitle ? (
           /*
@@ -523,20 +752,59 @@ export default function Conversation() {
             этот разговор начался, и провалиться в него надо из чата, а не из меню за «•••»:
             «Сообщения» теперь ведут только сюда, и другого пути к карточке интента не остаётся.
           */
-          <Pressable accessibilityRole="button" style={s.planCard} onPress={() => setIntentOpen(true)}>
-            <View style={[s.planIcon, s.intentIcon]}><IconSpark size={20} c={color.primary} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.planTitle} numberOfLines={1}>{requestTitle}</Text>
-              <Text style={s.planSub} numberOfLines={1}>
-                {[request?.intent?.when || request?.intent?.time,
-                  request?.intent?.mode === 'offline' ? THREAD.offlineInPerson() : THREAD.onlineMode()]
-                  .filter(Boolean).join(' · ')}
-              </Text>
-              <Text style={s.planState} numberOfLines={1}>{THREAD.openIntent()}</Text>
+          <Pressable accessibilityRole="button" style={s.pinRow} onPress={() => setIntentOpen(true)}>
+            <View style={s.pinBarWhite} />
+            {photo ? (
+              <Image source={{ uri: mediaUrl(String(photo)) }} style={s.pinThumb} />
+            ) : (
+              <View style={[s.pinThumb, s.avaEmpty]}><IconSpark size={18} c={color.primary} /></View>
+            )}
+            <View style={s.pinMid}>
+              <Text style={s.pinTitle} numberOfLines={1}>{requestTitle}</Text>
+              {/*
+                Подписей под заголовком на макете нет, и это верно: карточка здесь — вход в затею,
+                а не её пересказ. Время и формат живут на самом экране интента, за шевроном справа,
+                и повторять их поверх ленты значит забивать шапку тем, что уже сказано ниже.
+                У ЖИВОГО ПЛАНА иначе — там подпись осталась: встреча уже назначена, и «когда» с
+                «подтверждено» человек обязан видеть, не открывая ничего.
+              */}
             </View>
-            <Text style={s.planChev}>›</Text>
+            <View style={s.pinChev}><Text style={s.pinChevText}>›</Text></View>
           </Pressable>
         ) : null}
+
+        {/*
+          ШАПКА ПО МАКЕТУ: назад · имя по центру · аватар справа.
+
+          Было иначе: аватар и имя стояли слева одной группой, а справа висело «•••». Три точки
+          отсюда убраны — тот же лист действий открывается кнопкой у поля ввода, где рука и так
+          лежит во время разговора, и два входа в одно меню на одном экране только делили внимание.
+
+          Аватар справа — вход в профиль. Он остался нажимаемым, просто переехал на своё место по
+          макету: имя посередине читается как заголовок экрана, а не как строка списка.
+        */}
+        <View style={s.head}>
+          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
+            <IconChevronLeft />
+          </Pressable>
+          <View style={s.headMid}>
+            <Text style={s.name} numberOfLines={1}>{other}</Text>
+            {subtitle ? <Text style={s.sub} numberOfLines={1}>{subtitle}</Text> : null}
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={T('Профиль', 'Profile', 'Perfil')}
+            onPress={() => router.navigate({ pathname: '/person',
+                                             params: { who: other, who_id: otherId, photo: String(photo || '') } })}
+            style={({ pressed }) => pressed && { opacity: 0.85 }}
+          >
+            {photo ? (
+              <Image source={{ uri: mediaUrl(String(photo)) }} style={s.ava} />
+            ) : (
+              <View style={[s.ava, s.avaEmpty]}><IconPerson size={20} /></View>
+            )}
+          </Pressable>
+        </View>
 
         <ScrollView
           ref={scroller}
@@ -603,6 +871,7 @@ export default function Conversation() {
             me={me}
             ru={ru}
             sysText={(m) => sysLine(m.sys, me, ru)}
+            sysAction={sysAction}
             peerRead={peerRead}
             onReply={setReplyTo}
             onReact={react}
@@ -611,7 +880,7 @@ export default function Conversation() {
           />
 
           {/* MSG.09 — предложение ушло; ничего не забронировано до «да». */}
-          {livePlan?.state === 'proposed' && norm(livePlan.host) === norm(me) ? (
+          {livePlan?.state === 'proposed' && isMe(livePlan.host, livePlan.host_id, me) ? (
             <View style={s.sysNote}>
               <View style={{ flex: 1 }}>
                 <Text style={s.sysTitle}>{THREAD.sentAsProposal(other)}</Text>
@@ -649,7 +918,7 @@ export default function Conversation() {
         {pending ? (
           <View style={[s.undoBar, pending.kind === 'end' && s.undoBarDark]}>
             <Text style={s.undoText} numberOfLines={1}>
-              {pending.kind === 'plan' ? UNDO_BAR.creating(other) : UNDO_BAR.ending()}
+              {pending.kind === 'send' ? UNDO_BAR.sending() : pending.kind === 'plan' ? UNDO_BAR.creating(other) : UNDO_BAR.ending()}
             </Text>
             <Pressable accessibilityRole="button" onPress={undoPending} hitSlop={8}>
               <Text style={s.undoAction}>{UNDO_BAR.undo(pending.n)}</Text>
@@ -665,59 +934,82 @@ export default function Conversation() {
               <Text style={s.replyWho} numberOfLines={1}>{CHAT.replyTo(String(replyTo.from || ''))}</Text>
               <Text style={s.replyText} numberOfLines={1}>{replyTo.text || CHAT.deleted()}</Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Убрать', 'Remove')} onPress={() => setReplyTo(null)} hitSlop={10}>
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Убрать', 'Remove', 'Eliminar')} onPress={() => setReplyTo(null)} hitSlop={10}>
               <Text style={s.replyX}>✕</Text>
             </Pressable>
           </View>
         ) : null}
 
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
-          {/* Искра слева — вход в действия разговора (O.19). На кадре в этом слоте скрепка,
-              но вложений в продукте нет — мёртвую кнопку не рисуем. */}
-          <Pressable accessibilityRole="button" accessibilityLabel={CHAT.actionsTitle()} style={s.sparkBtn} onPress={() => setActions(true)}>
-            <IconSpark size={20} c={color.primary} />
-          </Pressable>
           {/*
-            Во время записи поля нет: полоса записи занимает его место целиком, как в мессенджерах.
-            Именно `null`, а не другая разметка — соседняя кнопка обязана остаться на СВОЁМ месте
-            в дереве, иначе React пересоберёт её заново ровно в тот миг, когда запись начинается,
-            и жест удержания оборвётся на старте.
+            ВХОД В ДЕЙСТВИЯ РАЗГОВОРА (O.19). На кадре в этом слоте скрепка, но вложений в продукте
+            нет, и рисовать что-либо ПОХОЖЕЕ на вложение нельзя. Плюс у поля ввода во всех
+            мессенджерах означает «прикрепить файл» — он обещал бы то же самое. Три точки в этом
+            приложении уже означают ровно этот лист: ими открыт он же из шапки разговора.
+
+            ЧТО БЫЛО НЕ ТАК. Стояла искра, и у кнопки НЕ БЫЛО ПОВЕРХНОСТИ вовсе: розовый значок в
+            двадцать пунктов на фоне страницы, тогда как поле рядом налито серым, а отправка —
+            красный круг с тенью. Единственный элемент дока без фона читался как украшение, и
+            человек её попросту не видел. Сообщено с телефона.
+
+            И сам значок сбивал: искра в этом приложении — это САМ KLEAL, его аватар в
+            «Сообщениях» (messages.tsx). Рядом с полем ввода она обещала «спросить у агента», а за
+            ней открываются действия над встречей.
+
+            Поверхность взята у поля ввода — тот же `neutral100`: кнопка входит в ту же семью, а
+            не заводит третий вид элемента. Значок нейтральный, не красный: отправка здесь главная,
+            и два красных пятна по краям дока спорили бы за внимание.
+
+            ДА, ТОЧКИ ЕСТЬ И В ШАПКЕ, и это осознанное повторение, а не недосмотр: там они у имени
+            собеседника, здесь — у поля ввода, куда рука тянется во время разговора. Один и тот же
+            значок для одного и того же листа честнее двух разных.
           */}
-          {voice.phase === 'idle' ? (
-            <View style={s.field}>
-              <TextInput
-                style={s.input}
-                value={draft}
-                onChangeText={setDraft}
-                placeholder={CHAT.placeholderTo(other)}
-                placeholderTextColor={color.neutral400}
-                onSubmitEditing={send}
-                returnKeyType="send"
-              />
-            </View>
-          ) : null}
           {/*
-            Одна кнопка на два действия, как в мессенджерах: пусто в поле — микрофон (удержание
-            записывает голосовое), есть текст — самолётик. Держать обе рядом значит отдать место
-            кнопке, которая в этот момент заведомо не нужна.
+            Вид — компонент «Chat/Composer» (💣 UI, 6164:19536): «⋮» в стеклянном круге 48, рядом
+            стеклянное поле 48. Значок теперь совпадает с тем, что обещает этот комментарий: точки,
+            а не плюс (плюс у поля ввода везде значит «прикрепить файл»).
           */}
-          {voice.phase === 'idle' && draft.trim() ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={T('Отправить', 'Send')}
-              style={s.sendBtn}
-              onPress={send}
-            >
-              <IconSend size={18} />
-            </Pressable>
-          ) : (
-            <>
-              {/* Кружок отдельной кнопкой, а не переключателем на микрофоне: у микрофона свой
-                  жест удержания, и делить его на два смысла значит ломать оба. */}
-              <VideoNoteButton onSend={sendCircle} disabled={!canSend} hidden={voice.phase !== 'idle'} />
-              <VoiceMessageControl voice={voice} />
-            </>
-          )}
+          <GlassIconButton size={48} label={CHAT.actionsTitle()} onPress={() => setActions(true)}>
+            <IconEllipsisV size={30} />
+          </GlassIconButton>
+          {/*
+            Поле — стекло 48, и отправка, голосовое и кружок стоят ВНУТРИ него, как на GR.18 и в
+            «Chat/Composer». Само поле остаётся в дереве всегда; во время записи внутри него нет
+            только ввода — полоса записи занимает его место. Кнопки записи не переезжают по дереву в
+            миг старта, иначе React пересоберёт их и жест удержания оборвётся.
+          */}
+          <View style={s.fieldBox}>
+            <GlassSurface tone="light" radius={999}
+              style={[s.field, voice.phase === 'idle' && draft.trim() ? s.fieldSending : null]}>
+              {voice.phase === 'idle' ? (
+                <TextInput
+                  style={s.input}
+                  value={draft}
+                  onChangeText={setDraft}
+                  editable={canWrite}
+                  placeholder={canWrite ? CHAT.placeholderTo(other)
+                               : isKleal ? CHAT.klealNoReply() : CHAT.lockedTo(other)}
+                  placeholderTextColor={color.muted}
+                  onSubmitEditing={send}
+                  returnKeyType="send"
+                />
+              ) : null}
+              {/*
+                Одна кнопка на два действия, как в мессенджерах: пусто в поле — микрофон (удержание
+                записывает голосовое), есть текст — стрелка отправки.
+              */}
+              {voice.phase === 'idle' && draft.trim() ? (
+                <SendArrow onPress={send} />
+              ) : (
+                <>
+                  {/* Кружок отдельной кнопкой, а не переключателем на микрофоне: у микрофона свой
+                      жест удержания, и делить его на два смысла значит ломать оба. */}
+                  <VideoNoteButton onSend={sendCircle} disabled={!canSend} hidden={voice.phase !== 'idle'} />
+                  <VoiceMessageControl voice={voice} />
+                </>
+              )}
+            </GlassSurface>
+          </View>
         </View>
 
         {/* Лист O.19. */}
@@ -750,7 +1042,7 @@ export default function Conversation() {
             />
           ) : null}
           <SheetItem label={CHAT.reply()} onPress={() => { setReplyTo(picked); setPicked(null); }} />
-          {picked && String(picked.from || '').trim().toLowerCase() === me.trim().toLowerCase() ? (
+          {picked && isMe(picked.from, (picked as any).from_id, me) ? (
             <SheetItem
               label={CHAT.deleteMsg()}
               note={CHAT.deleteNote()}
@@ -760,38 +1052,53 @@ export default function Conversation() {
           ) : null}
         </Sheet>
 
-        <Sheet visible={actions} onClose={() => setActions(false)} title={CHAT.actionsTitle()}>
+        {/* OF.19 «Chat options»: пункты меню с пояснениями, как у меню группы. План у пары один —
+            пока он живой, первый пункт ведёт к нему, а не заводит второй. */}
+        <Sheet visible={actions} onClose={() => setActions(false)} title={CHATMENU.title()}>
+          {livePlan ? (
+            <SheetItem icon={<IconCalendar size={20} c={color.primary} />} label={CHATMENU.openPlan()}
+              note={CHATMENU.openPlanNote(other)} onPress={() => { setActions(false); openLivePlan(); }} />
+          ) : (
+            <SheetItem icon={<IconCalendar size={20} c={color.primary} />} label={CHATMENU.makePlan()}
+              note={CHATMENU.makePlanNote(other)} disabled={!canPlan} onPress={makePlan} />
+          )}
+          <SheetItem icon={<IconInfo size={20} c={color.primary} />} label={CHATMENU.intentInfo()}
+            note={CHATMENU.intentInfoNote()} onPress={() => { setActions(false); setIntentOpen(true); }} />
+          <SheetItem icon={<IconBan size={20} c={color.danger} />} label={CHATMENU.endChat()} danger
+            note={CHATMENU.endChatNote()} onPress={() => startPending('end')} />
+        </Sheet>
 
-            {/*
-              ПЛАН У ПАРЫ ОДИН. Пока он живой, эта кнопка ведёт К НЕМУ, а не заводит второй: иначе
-              оба видят «Создать план» после того, как встреча уже предложена, и второй человек
-              открывает форму, выбирает время и упирается в отказ сервера «с этим человеком уже
-              есть встреча». Подтверждают план на его собственном экране — там обе стороны.
-            */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !livePlan && !canPlan }}
-              style={[s.actPri, !livePlan && !canPlan && { opacity: 0.45 }]}
-              onPress={() => {
-                if (livePlan) { setActions(false); openLivePlan(); return; }
-                startPending('plan');
-              }}
-            >
-              <Text style={s.actPriText}>{livePlan ? CHAT.openPlan() : CHAT.createPlan()}</Text>
-            </Pressable>
-
-            <Pressable accessibilityRole="button" style={s.actDark} onPress={() => startPending('end')}>
-              <Text style={s.actDarkText}>{CHAT.endConversation()}</Text>
-            </Pressable>
-
-            {/* MSG.10: интент показывается листом фактов, а не уводит в мастер создания. */}
-            <Pressable accessibilityRole="button" style={s.actSoft} onPress={() => { setActions(false); setIntentOpen(true); }}>
-              <Text style={s.actSoftText}>{CHAT.viewIntent()}</Text>
-            </Pressable>
-
-            <Pressable accessibilityRole="button" style={s.actPlain} onPress={() => setActions(false)}>
-              <Text style={s.actPlainText}>{CHAT.keepChatting()}</Text>
-            </Pressable>
+        {/* OF.19d «Send the plan?»: план из затеи — день, час, место. «Change» ведёт в форму плана. */}
+        <Sheet visible={sendOpen} onClose={() => setSendOpen(false)} title={CHATMENU.sendTitle()}>
+          {draftPlan ? (
+            <>
+              <View style={s.sendCard}>
+                <Cover intent={{ title: requestTitle || intentTitle, topics: request?.intent?.topics, mode: 'offline' }} style={s.sendCover} />
+                <View style={s.sendBody}>
+                  <View style={s.sendRow}>
+                    <IconCalendar size={18} c={color.primary} />
+                    <Text style={s.sendText}>{dayLabel(draftPlan.starts_at)}</Text>
+                    <IconClock size={18} c={color.primary} />
+                    <Text style={s.sendText}>{new Date(draftPlan.starts_at * 1000).toLocaleTimeString(dateLocale(), { hour: '2-digit', minute: '2-digit', hour12: use12h(ru) })}</Text>
+                  </View>
+                  {draftPlan.address || draftPlan.district ? (
+                    <View style={s.sendRow}>
+                      <IconPin size={18} c={color.primary} />
+                      <Text style={s.sendText} numberOfLines={1}>{draftPlan.address || draftPlan.district}</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+              <Text style={s.sendNote}>{CHATMENU.sendNote(other)}</Text>
+              <Pressable accessibilityRole="button" style={s.sendCta}
+                onPress={() => { setSendOpen(false); if (!pending) setPending({ kind: 'send', n: 4 }); }}>
+                <Text style={s.sendCtaText}>{CHATMENU.sendTo(other)}</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" style={s.sendInk} onPress={() => { setSendOpen(false); toPlan(); }}>
+                <Text style={s.sendInkText}>{CHATMENU.change()}</Text>
+              </Pressable>
+            </>
+          ) : null}
         </Sheet>
 
         {/* MSG.10 — интент как лист фактов. Только то, что заявка знает на самом деле: где именно
@@ -799,7 +1106,7 @@ export default function Conversation() {
         <Sheet
           visible={intentOpen}
           onClose={() => setIntentOpen(false)}
-          title={requestTitle || intentTitle || T('Интент', 'Intent')}
+          title={requestTitle || intentTitle || T('Интент', 'Intent', 'Propuesta')}
         >
             {([
               [THREAD.intentMode(), request?.intent?.mode === 'offline' ? THREAD.offlineInPerson() : THREAD.onlineMode()],
@@ -837,43 +1144,93 @@ const cardShadow = {
   shadowOffset: { width: 0, height: 4 }, elevation: 2,
 } as const;
 
-const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
+/** «Thu 23 July» — день плана для листа OF.19d, тем же видом, что на карточке плана. */
+function dayLabel(sa: number): string {
+  const d = new Date(sa * 1000);
+  const wd = d.toLocaleDateString(dateLocale(), { weekday: 'short' }).replace(/\.$/, '');
+  return `${wd.charAt(0).toUpperCase() + wd.slice(1)} ${d.getDate()} ${d.toLocaleDateString(dateLocale(), { month: 'long' })}`;
+}
 
-  head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: space.sm },
+const s = StyleSheet.create({
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  sendCard: { borderRadius: 20, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.6)' },
+  sendCover: { height: 128, width: '100%' },
+  sendBody: { padding: 16, gap: 12 },
+  sendRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sendText: { fontFamily: font.text, fontSize: 15, lineHeight: 22, color: color.fg, marginRight: 8, flexShrink: 1 } as any,
+  sendNote: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: color.fg } as any,
+  sendCta: {
+    height: 48, borderRadius: 99, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center',
+    shadowColor: color.primary, shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+  },
+  sendCtaText: { fontFamily: font.textSemibold, fontSize: 15, lineHeight: 20, color: '#fff' } as any,
+  sendInk: { height: 48, borderRadius: 99, backgroundColor: color.fg, alignItems: 'center', justifyContent: 'center' },
+  sendInkText: { fontFamily: font.textSemibold, fontSize: 15, lineHeight: 20, color: '#fff' } as any,
+
+  /** Ряд 56 и поля 16 — как оба App Bar на борде; кнопки по краям 44×44. */
+  head: { flexDirection: 'row', alignItems: 'center', height: 56, paddingHorizontal: 16 },
+  headMid: { flex: 1, alignItems: 'center' },
+  /** Белый круг без обводки — на борде у кнопки только заливка #FFFFFF. */
   back: {
-    width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border,
+    width: 44, height: 44, borderRadius: 22,
     backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
   },
-  dots: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  name: { fontSize: 17, fontWeight: '700', color: color.fg } as any,
-  sub: { fontSize: 13, color: color.muted, marginTop: 1 } as any,
-  ava: { width: 40, height: 40, borderRadius: 20 },
+  /*
+    ИМЯ И НАЗВАНИЕ ЗАТЕИ — РАЗНЫЕ ПО РАЗМЕРУ И ПО НАЧЕРТАНИЮ.
+
+    Оба стояли 15/600 и оттого сливались в один блок: два ряда одинаковым текстом читаются как
+    сплошная шапка без верха и низа. На борде они действительно одного кегля, но там и рядов
+    ровно два, а у нас над ними ещё полоса состояния и под ними лента — иерархия нужнее.
+
+    Имя — заголовок ЭКРАНА: с кем говоришь. Оно крупнее и плотнее (Geist-600, 17).
+    Название затеи — закреплённая подсказка о том, ПРО ЧТО разговор: мельче и легче (Geist-500, 15).
+
+    И главное: семейство здесь указано явно. Раньше стоял только `fontWeight`, а в проекте вес на
+    подключённых шрифтах НЕ РАБОТАЕТ — каждое начертание отдельное семейство (см. шапку src/theme.ts).
+    Обе строки рисовались системным шрифтом вместо Geist, и это было заметно рядом с остальным
+    приложением.
+  */
+  name: { fontFamily: font.textSemibold, fontSize: 17, lineHeight: 24, color: color.fg, textAlign: 'center' } as any,
+  sub: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: color.muted, marginTop: 1, textAlign: 'center' } as any,
+  ava: { width: 44, height: 44, borderRadius: 22 },
   avaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
 
-  // MSG.07 — закреплённый план: карточка с тенью, красная плитка-иконка, пара участников справа.
-  planCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    marginHorizontal: 16, marginBottom: space.sm, paddingVertical: 12, paddingHorizontal: 14,
-    borderRadius: 18, backgroundColor: color.card, ...cardShadow,
+  /*
+    ЗАКРЕПЛЁННОЕ — ПО ЧИСЛАМ БОРДА (OF.C2, node 3642-221266), а не на глаз.
+
+    Устроено так: белый ПРЯМОУГОЛЬНИК лежит НЕ во всю ширину, а от x=38 до x=353 при экране 390,
+    и по его краям стоят два круга 44×44 — миниатюра на x=16 и шеврон на x=330. Круги перекрывают
+    концы прямоугольника, и вместе это читается пилюлей, хотя скруглений у самого прямоугольника
+    нет ни одного.
+
+    Отсюда числа: строка с полями 16 по краям, прямоугольник отступает внутри неё ещё на 22 слева
+    и 21 справа (38−16 и 374−353), круги прижаты к краям строки. Ровно те же 16 и те же 44 у
+    кнопок шапки под ней — потому оба ряда и стоят одной колонкой.
+
+    Прежняя моя версия была полосой во всю ширину с отступом 18 — это выглядело совсем иначе.
+  */
+  pinRow: {
+    flexDirection: 'row', alignItems: 'center',
+    marginHorizontal: 16, marginBottom: 6, minHeight: 44,
   },
-  planIcon: {
-    width: 44, height: 44, borderRadius: 14, backgroundColor: color.primary,
+  /** Прямоугольник ПОД кругами. Скруглений нет — их роль играют сами круги на концах. */
+  pinBarWhite: {
+    position: 'absolute', left: 22, right: 21, top: 0, bottom: 0,
+    backgroundColor: color.card,
+  },
+  pinThumb: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.neutral100 },
+  /** Отступы по 8 от кругов, чтобы длинный заголовок не залезал под них. */
+  pinMid: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
+  pinTitle: { fontFamily: font.textMedium, fontSize: 15, lineHeight: 20, color: color.fg, textAlign: 'center' } as any,
+  pinChev: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: color.card,
     alignItems: 'center', justifyContent: 'center',
   },
-  planTitle: { fontSize: 16, fontWeight: '700', color: color.fg } as any,
-  planSub: { fontSize: 13, color: color.muted, marginTop: 1 } as any,
-  planState: { fontSize: 12, color: color.muted, marginTop: 2, fontWeight: '600' } as any,
-  /** Интент — не встреча: плитка светлая, чтобы красный остался за назначенным временем. */
-  intentIcon: { backgroundColor: color.infoBg },
-  planChev: { fontSize: 22, color: color.neutral400, marginLeft: 2 },
-  pairWrap: { flexDirection: 'row', alignItems: 'center' },
-  pairAva: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: color.card },
-  pairAvaOverlap: { marginLeft: -10 },
+  pinChevText: { fontSize: 20, color: color.fg, marginTop: -2 } as any,
 
   // MSG.18–MSG.21 — карточка приглашения в ленте.
   invCard: {
-    backgroundColor: color.card, borderRadius: rad.lg, padding: space.md,
+    backgroundColor: color.glassCard, borderRadius: rad.lg, padding: space.md,
     gap: 6, marginTop: space.sm, borderWidth: 1, borderColor: color.border,
   },
   invTitle: { ...type.labelMedium, color: color.fg, fontWeight: '700' } as any,
@@ -969,18 +1326,15 @@ const s = StyleSheet.create({
   undoText: { flex: 1, ...type.labelMedium, color: color.onPrimary, fontWeight: '600' } as any,
   undoAction: { ...type.labelMedium, color: color.onPrimary, fontWeight: '700' } as any,
 
-  dock: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
-  sparkBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  field: {
-    flex: 1, height: 48, borderRadius: rad.full, backgroundColor: color.neutral100,
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18,
-  },
-  input: { flex: 1, color: color.fg, fontSize: 15 },
-  /** MSG.06: отправка — красный круг с самолётиком. */
-  sendBtn: {
-    width: 48, height: 48, borderRadius: 24, backgroundColor: color.primary,
-    alignItems: 'center', justifyContent: 'center', ...cardShadow,
-  },
+  /** Ряд ввода «Chat/Composer»: поля 20, промежуток 8, всё ростом 48. */
+  dock: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingTop: space.sm, backgroundColor: color.ambientBase },
+  fieldBox: { flex: 1 },
+  /** Поле — стекло 48 (белое 56% в макете); внутри ввод, голосовое и кружок либо отправка. */
+  field: { height: 48, flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingRight: 12, gap: space.sm },
+  /** С текстом справа 2: круг отправки 44 стоит почти у края поля. */
+  fieldSending: { paddingRight: 2 },
+  /** Набор — Geist 400 15/20, как в «Chat/Composer». Семейство явно: вес на этих шрифтах не работает. */
+  input: { flex: 1, color: color.fg, fontFamily: font.text, fontSize: 15, paddingVertical: 0 } as any,
 
   actPri: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   actPriText: { ...type.button, color: color.onPrimary } as any,

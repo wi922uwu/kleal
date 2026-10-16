@@ -386,3 +386,40 @@ function settle(bubbles: Bubble[], FIELD_W: number, FIELD_H: number): Bubble[] {
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+// ---------------------------------------------------------------- подборки для карты-облака
+
+/**
+ * ТЕМЫ И ВСЕ ИХ ЗАНЯТИЯ — для карты с подборками (components/MindMap.tsx): без раскладки и без
+ * потолка `LEAF_CAP`. Потолок держал плотность прежнего поля, где все пузыри лежали разом; теперь
+ * тема показывает по десятку за раз, и ограничивать широту выбора больше нечем.
+ *
+ * ПОРЯДОК ПЕРЕМЕШАН ПО ПОДКАТЕГОРИЯМ: первое занятие каждой подкатегории, потом второе каждой и
+ * так далее. Подборка — это кусок этой очереди, и без чередования каждая была бы «однотипной»:
+ * сначала десять командных видов спорта, потом десять ракеточных.
+ */
+export function mapPools(): {
+  roots: Array<{ key: string; label: string }>;
+  leaves: Record<string, Array<{ key: string; label: string }>>;
+} {
+  const roots = ROOTS();
+  const extra = new Map<string, Array<{ key: string; label: string }>>();
+  for (const c of DECK()) {
+    if (!(c.key in EXTRA_ROOT)) continue;
+    const r = EXTRA_ROOT[c.key];
+    extra.set(r, [...(extra.get(r) || []), { key: c.key, label: c.label }]);
+  }
+  const leaves: Record<string, Array<{ key: string; label: string }>> = {};
+  for (const r of roots) {
+    const groups = (r.kids || []).map((kid) => {
+      const acc: Array<{ key: string; label: string }> = [];
+      treeLeaves(kid, acc);
+      return acc;
+    });
+    const mixed: Array<{ key: string; label: string }> = [];
+    const longest = Math.max(0, ...groups.map((g) => g.length));
+    for (let i = 0; i < longest; i++) for (const g of groups) if (g[i]) mixed.push(g[i]);
+    leaves[r.key] = [...mixed, ...(extra.get(r.key) || [])];
+  }
+  return { roots: roots.map((r) => ({ key: r.key, label: nodeLabel(r) })), leaves };
+}

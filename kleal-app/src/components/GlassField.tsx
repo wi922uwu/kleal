@@ -9,10 +9,9 @@
  * держит фокус, курсор и клавиатуру. Общий у них только вид, и общее вынесено в токены (`glass`
  * в theme.ts), а не в один компонент с полудюжиной взаимоисключающих свойств.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Platform,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -20,74 +19,41 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
-import { color, glass, space, type } from '../theme';
-import { hTap } from '../haptics';
+import { color, space, type } from '../theme';
+import { GlassSurface } from './LiquidGlass';
 
 /**
- * Стеклянная подложка: размытие того, что под ней, плюс белая плёнка.
- *
- * Экспортируется, потому что ячейки кода на A.03.2 — то же самое стекло другой формы, и рисовать
- * их своей парой слоёв значило бы завести второе стекло в приложении.
+ * Стеклянная подложка под любым содержимым: жидкое стекло на iOS 26+, размытие на остальных.
+ * Кладётся первым ребёнком и растягивается на весь контейнер.
  */
 export function GlassPane({ radius: r }: { radius: number }) {
-  return (
-    <>
-      <BlurView intensity={glass.blur} tint="light" style={[StyleSheet.absoluteFill, { borderRadius: r }]} />
-      <View
-        style={[
-          StyleSheet.absoluteFill,
-          { backgroundColor: color.glassLight, opacity: glass.lightAlpha, borderRadius: r },
-        ]}
-      />
-    </>
-  );
+  return <GlassSurface tone="light" radius={r} style={StyleSheet.absoluteFill} pointerEvents="none" />;
 }
 
-/** Круглая кнопка «назад» в левом верхнем углу. */
-export function GlassBack({ onPress, label }: { onPress: () => void; label: string }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      onPress={() => {
-        hTap();
-        onPress();
-      }}
-      hitSlop={10}
-      style={({ pressed }) => [s.back, pressed && s.pressed]}
-    >
-      <GlassPane radius={22} />
-      {/*
-        Шеврон — символ, а не картинка: это не фирменный знак, а стандартная стрелка «назад»,
-        и рисовать её файлом значило бы держать ассет ради одного глифа.
-      */}
-      <Text style={s.chevron}>‹</Text>
-    </Pressable>
-  );
-}
+/** Круглая «назад» — одна на всё приложение, живёт рядом со стеклом. */
+export { GlassBack } from './LiquidGlass';
 
-/**
- * Поле ввода с подписью над ним.
- *
- * ССЫЛКА ПРОБРАСЫВАЕТСЯ НАРУЖУ, и это не «на всякий случай»: экран обязан уметь поставить фокус
- * сам, в выбранный им момент. Клавиатура, поднимающаяся во время перехода, спорит с ним за главный
- * поток — подробности в комментарии к фокусу в app/auth-email.tsx.
- */
 export const GlassInput = React.forwardRef<TextInput, TextInputProps & {
   label?: string;
   style?: ViewStyle;
   /** Введено не то: кромка становится красной. Сам текст ошибки живёт под полем, в экране. */
   bad?: boolean;
-}>(function GlassInput({ label, style, bad, ...input }, ref) {
+}>(function GlassInput({ label, style, bad, onFocus, onBlur, ...input }, ref) {
+  /*
+    ФОКУС ВИДЕН. В макете активная ячейка кода обведена фирменным (#FF385C, 0.5): так человек
+    понимает, куда пойдёт следующий символ. Поле почты держит то же правило.
+  */
+  const [focus, setFocus] = useState(false);
   return (
     <View style={style}>
       {!!label && <Text style={s.label}>{label}</Text>}
-      <View style={[s.field, bad && s.fieldBad]}>
-        <GlassPane radius={20} />
+      <View style={[s.field, focus && s.fieldFocus, bad && s.fieldBad]}>
+        <GlassPane radius={16} />
         <TextInput
           {...input}
           ref={ref}
+          onFocus={(e) => { setFocus(true); onFocus?.(e); }}
+          onBlur={(e) => { setFocus(false); onBlur?.(e); }}
           style={s.input}
           placeholderTextColor={color.muted}
           selectionColor={color.primary}
@@ -97,49 +63,39 @@ export const GlassInput = React.forwardRef<TextInput, TextInputProps & {
   );
 });
 
-// ===== вид
 const PANE = Platform.select({
   ios: {
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
+    shadowColor: '#0A0A14',
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
   },
-  android: { elevation: 5 },
+  default: {},
 });
 
+// ===== вид
 const s = StyleSheet.create({
-  back: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#FFFFFF55',
-    ...PANE,
-  },
-  pressed: { opacity: 0.85 },
-  // Шеврон крупнее кегля и поднят: у символа «‹» большая нижняя пазуха, по центру он висит низко.
-  chevron: { fontSize: 30, lineHeight: 32, color: color.fg, marginTop: -3, marginLeft: -2 },
-  label: { ...type.fieldLabel, color: color.muted, marginBottom: space.sm } as any,
+  label: { fontFamily: 'Geist-400', fontSize: 12, lineHeight: 16, color: '#797979', marginBottom: space.sm } as any,
   field: {
-    height: 56,
-    borderRadius: 20,
-    overflow: 'hidden',
+    height: 48,
+    borderRadius: 16,
     justifyContent: 'center',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#FFFFFF55',
+    borderColor: 'transparent',
     ...PANE,
   },
-  // Кромка ошибки заметно плотнее светлой: полупрозрачную красную на кремовом фоне не видно.
+  fieldFocus: {
+    borderColor: '#FF385C',
+    ...Platform.select({
+      ios: { shadowColor: '#FF385C', shadowOpacity: 0.18, shadowRadius: 14, shadowOffset: { width: 0, height: 4 } },
+      android: {},
+    }),
+  },
   fieldBad: { borderWidth: 1, borderColor: color.danger },
   input: {
     ...type.displaySub,
     color: color.fg,
     paddingHorizontal: space.lg,
-    // Высота задана контейнером; своя убирает вертикальное дрожание курсора на Android.
     height: '100%',
   } as any,
 });

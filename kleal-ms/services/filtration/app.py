@@ -32,6 +32,7 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 import kleal_lib as base                      # base._extract_json (keyless)
+import settings                            # живые настройки: промпты и температура из панели
 import config                                  # the one topology table (ports/URLs)
 from llm_client import llm_complete
 from http_util import send_json, read_json
@@ -86,6 +87,12 @@ CAT_TO_DOMAIN = {
     # coffee / food_drink / nightlife / wellness / fashion / pets / travel / social / other
 }
 
+# ЗАПРЕТ НА ПУСТЫЕ ТЕМЫ В ПРОМПТЕ. Замер 22.09.2026 по 24 973 ответам фильтрации: в 2358 (0,094)
+# приезжало не-занятие, и мусор был системным — `meet` 284 раза, `fun` 259, `friends` 158, `home`
+# 116, `relaxing` 113, `activities` 110, `conversation` 95, `weather` 71, `together` 67, `weekend`
+# 55. Это настроение, компания и время, а не дело. Причина была прямо в промпте: он просил «1-4
+# ключевых слова», и модель добирала до четырёх тем, что подойдёт кому угодно. Двое, сведённые по
+# «fun», не имеют общего ничего.
 FILTER_PROMPT = '''You are Kleal's "Filtration" agent (Barcelona; users write in ENGLISH or SPANISH). Turn a user's free-text request or interest into a structured, CATEGORISED intent by MAGNETISING it to ONE of our existing categories. Use world knowledge for novel items — e.g. "labubu" -> toys_collectibles, "matcha" -> food_drink, "wordle" -> games, "padel" -> sports, "vinted" -> fashion.
 
 Read English AND Spanish naturally; do NOT force an English reading of a Spanish word: "pan" = bread -> food_drink, "quedar para un café" -> coffee, "fútbol" -> sports, "senderismo" -> outdoors, "intercambio de idiomas" -> languages, "cita" -> dating, "quedada" -> social, "salir de fiesta" -> nightlife.
@@ -99,6 +106,14 @@ Return ONLY compact JSON, no prose:
  "role":"play|watch|discuss|practise|attend|meet",
  "isNew":<true only if nothing in the list really fits>,
  "note":"<=8 words, what this is"}
+TOPICS NAME THE THING OR THE ACTIVITY — never the mood, the company, the time or the place.
+NEVER output as a topic: meet, meetup, friends, together, group, people, socializing, socialize,
+company, fun, relaxing, chill, activity, activities, conversation, talk, weekend, evening, night,
+morning, weather, home, outside. They fit every request and so tell the ranker nothing — two people
+matched on "fun" have nothing in common.
+If the person named no real activity ("feeling down", "what should we do?", "hoy quiero divertirme"),
+return the ONE real thing they hinted at, or an EMPTY topics list — never pad to four with mood words.
+Better one honest topic than four that fit anyone.
 Infer role from the verb (play/jugar, watch/ver, discuss/hablar, practise/practicar, attend/asistir); default "meet". Output topics in ENGLISH, lowercase (canonical), even when the request is Spanish. Only pick "dating" when the request is clearly romantic, not for a bare ambiguous word like "date".'''
 
 # ------------------------------------------------------------------ keyword fallback (LLM down)
@@ -363,13 +378,21 @@ def _classify_fallback(text):
 
 
 # ------------------------------------------------------------------ LLM path (time-boxed)
-_EXEC = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="filt-llm")
+# ПОЧЕМУ НЕ ЧЕТЫРЕ. `fut.result(timeout)` умеет бросить ОЖИДАНИЕ, но не умеет отменить уже
+# начавшийся вызов: брошенный запрос продолжает занимать работника всё своё время. При четырёх
+# работниках и батарее в 24 потока очередь съедала весь срок раньше, чем модель успевала ответить
+# хоть кому-то, — и сервис уходил в запасной режим не потому, что модель медленная, а потому что до
+# неё не доходила очередь. Замер 18.09.2026: 20 новых фраз из 20 упирались ровно в 5,0 с.
+# Шестнадцать — по числу одновременных разговоров, которые мы считаем рабочей нагрузкой; сама
+# модель их держит (замер: 16 запросов/с при 32 потоках).
+_EXEC = concurrent.futures.ThreadPoolExecutor(
+    max_workers=int(os.environ.get("FILTER_LLM_WORKERS", "16")), thread_name_prefix="filt-llm")
 
 
 def _classify_llm(text):
     """Call the model with a hard timeout. Returns the parsed dict, or None on timeout/error/garbage."""
     fut = _EXEC.submit(llm_complete, MODEL_ID,
-                       [{"role": "system", "content": FILTER_PROMPT},
+                       [{"role": "system", "content": settings.prompt("filtration.categorise", FILTER_PROMPT)},
                         {"role": "user", "content": text}], 0.1)
     try:
         raw = fut.result(timeout=LLM_TIMEOUT_S)
@@ -555,7 +578,19 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+# Панели нужен список ВСЕХ инструкций сервиса, а не только тех, что успели
+# прочитаться. Объявляем их при старте: ни одного обращения к модели это не стоит,
+# зато промпт виден в панели сразу после перезапуска, а не после первого разговора.
+try:
+    settings.announce([
+        ("filtration.categorise", FILTER_PROMPT),
+    ])
+except Exception:
+    pass
+
+
 if __name__ == "__main__":
     print("Kleal filtration-service on http://127.0.0.1:%d  (%d categories, LLM<=%.1fs via llm-service)"
           % (PORT, len(CATEGORIES), LLM_TIMEOUT_S))
-    ThreadingHTTPServer((config.BIND_HOST, PORT), H).serve_forever()
+    import serving  # очередь подключений на 128, а не на 5 — см. shared/serving.py
+    serving.KlealServer((config.BIND_HOST, PORT), H).serve_forever()

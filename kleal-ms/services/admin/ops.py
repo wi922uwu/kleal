@@ -68,7 +68,10 @@ def _svc(name, timeout=1.5):
 
 
 def services():
-    return {n: _svc(n) for n in ("llm", "onboarding", "profile", "matching",
+    # `profile` убран из опроса: такого сервиса нет с тех пор, как его разобрали по другим, а
+    # панель продолжала стучаться на его порт и первым делом показывать «сервис profile не
+    # отвечает». Постоянная ложная тревога учит не читать тревоги вообще.
+    return {n: _svc(n) for n in ("llm", "onboarding", "matching",
                                  "buddy", "filtration", "gateway")}
 
 

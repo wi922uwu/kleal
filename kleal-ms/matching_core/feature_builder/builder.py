@@ -31,6 +31,13 @@ def _langs(seq):
     return {str(l)[:2].lower() for l in (seq or []) if str(l).strip()}
 
 
+# Название языка в теме запроса -> код. Близнец LANG_WORDS из core_v2 (запасной движок): обе копии
+# отвечают на один вопрос «какой язык человек назвал», и расходиться им нельзя.
+LANG_WORDS = {"spanish": "es", "espanol": "es", "испан": "es", "english": "en", "англ": "en",
+              "french": "fr", "франц": "fr", "german": "de", "нем": "de", "russian": "ru",
+              "русск": "ru", "catalan": "ca", "italian": "it", "италь": "it", "japanese": "ja"}
+
+
 # ШИРИНА СОВПАДЕНИЯ ВНУТРИ УРОВНЯ. Уровень отвечает на «про то ли это» и определяет ярус; сам по
 # себе он груб — значений всего четыре, поэтому у всех восьми человек в выдаче получался один и тот
 # же балл, и порядок между ними был произвольным. Замерено на живых выдачах: 250 кандидатов по 32
@@ -63,6 +70,33 @@ def _sem_value(best, info, n_topics):
         cover = 1.0
     return round(base * (_BREADTH_FLOOR + (1.0 - _BREADTH_FLOOR) * max(0.0, min(1.0, cover))), 4)
 
+
+
+def geo_value(km):
+    """Близость числом по тем же якорям GEO_BANDS — но БЕЗ СТУПЕНЕК.
+
+    Ступенька уравнивала 1,6 км и 3,4 км (обоим 0.85), 3,6 км и 6,9 км (обоим 0.65) — разницу
+    вдвое движок не видел вовсе. Значений у признака было ровно пять, и на восьмерых одной выдачи
+    приходилось три-четыре разных балла: порядок внутри полосы решала сортировка, а не близость
+    (проверка `granularity` в батарее: 49 % при пороге 70 %).
+
+    Якоря сохранены ТОЧНО: 1,5 км → 1.0; 3,5 → 0.85; 7 → 0.65; 15 → 0.45; дальше — прежние 0.15.
+    Между якорями — прямая. Ближе 1,5 км значение остаётся 1.0 у всех: «в шаговой доступности»
+    — это про то, дойдёшь ли ты, а не про сто метров разницы, и выдумывать здесь точность нечестно.
+
+    Двойник: одна и та же функция живёт в ЖИВОМ движке (matching_core/feature_builder/builder.py)
+    и в запасном (services/matching/core_v2.py). Правишь одну — правь обе: на языковой паре копии
+    уже разошлись, и полгода носитель языка был неотличим от ученика.
+    """
+    prev_lim, prev_val = 0.0, GEO_BANDS[0][1]
+    for lim, val in GEO_BANDS:
+        if km <= lim:
+            if lim <= prev_lim:
+                return val
+            t = (km - prev_lim) / (lim - prev_lim)
+            return round(prev_val + (val - prev_val) * t, 4)
+        prev_lim, prev_val = lim, val
+    return 0.15
 
 def build_features(intent, prof, cand, domain):
     """A->B evidence по 7 группам -> {group: (state, value, detail)}. Один matched-набор на semantic_activity
@@ -102,10 +136,7 @@ def build_features(intent, prof, cand, domain):
         if km is None:
             F["location_feasibility"] = (UNKNOWN, None, "")
         else:
-            v = 0.15
-            for lim, val in GEO_BANDS:
-                if km <= lim:
-                    v = val; break
+            v = geo_value(km)
             F["location_feasibility"] = ((K_MATCH if v >= 0.45 else K_MISM), v, "%.1f km" % km)
 
     # 4. mode_format — не заявлено -> unknown (не предполагаем совместимость)
@@ -146,7 +177,23 @@ def build_features(intent, prof, cand, domain):
     reql = _langs(intent.get("requiredLanguages"))
     clangs = _langs(cand.get("langs"))
     if domain == "language_exchange":
-        F["domain_constraints"] = (K_MATCH, 1.0, "lang-pair") if (clangs & reql or clangs) else (UNKNOWN, None, "")
+        # КАКОЙ ИМЕННО ЯЗЫК, А НЕ «ГОВОРИТ ХОТЬ НА ЧЁМ-ТО». Условие `or clangs` давало полный балл
+        # каждому, у кого в профиле есть хоть один язык, — то есть носителю испанского и тому, кто
+        # испанский только учит, одинаковый 1.0 на обязательном поле домена. Из-за этого в выдаче
+        # «хочу практиковать испанский» носитель и ученик неразличимы: замер 15.09.2026 (батарея,
+        # 983 человека) — четыре сценария подряд, l1/xl1/xl4/xl5, с ORDER и TOP1 навыворот.
+        # Язык берём из тем запроса; ровно так же это считает запасной core_v2.build_features.
+        want = {code for w, code in LANG_WORDS.items() for t in topics if w in t}
+        if want:
+            hit = want & clangs
+            F["domain_constraints"] = (K_MATCH, 1.0, ",".join(sorted(hit))) if hit else (K_MISM, 0.1, "")
+        elif reql:
+            F["domain_constraints"] = (K_MATCH, 1.0, ",".join(sorted(reql)))   # язык назван условием, не темой
+        else:
+            # Язык в теме не назван («языковой обмен» без уточнения) — знания нет, и это честнее
+            # выдуманного балла: ниже комплементарное ребро таксономии (learner/native) ещё может
+            # превратить UNKNOWN в осмысленный domain-fit.
+            F["domain_constraints"] = (UNKNOWN, None, "")
     elif reql:
         F["domain_constraints"] = (K_MATCH, 1.0, ",".join(sorted(reql)))   # hard-gate уже отсёк несовпадения
     elif domain in ("games", "sport_activity"):

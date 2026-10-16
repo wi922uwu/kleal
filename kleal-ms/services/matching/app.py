@@ -3,7 +3,7 @@
 # Carved from the pre-split monolith kleal_v2.py (matching half, lines 304-831). Serves /api/agent/*.
 # Talks to llm-service over HTTP for parse/intro/negotiate; holds NO model keys. Owner: Dev B.
 # Endpoint names are FROZEN — the profile-service frontend hard-codes them (see ../../shared/contracts.md).
-import os, sys, json, re, threading, concurrent.futures, math, hashlib, time, copy, contextlib, traceback
+import os, sys, json, re, threading, concurrent.futures, math, hashlib, time, copy, contextlib, traceback, secrets
 import urllib.request                        # мост тем: один вопрос фильтрации на НОВОЕ слово запроса
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
@@ -16,6 +16,7 @@ for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "share
 # config-pin check failed against a config it was never meant to read. A local module must win.
 sys.path.insert(0, _HERE)
 import kleal_lib as base                      # keyless shared helpers (uses base._extract_json)
+import settings                            # живые настройки: промпты и температура из панели
 import kleal_contracts as kc                  # §4 canonical data contracts (builders/validators; keyless)
 import kleal_intent as ki                     # §5 intent compiler + clarification policy (keyless, LLM-free)
 import kleal_taxonomy as kt                   # §6 governed taxonomy layer (read-only narrator; keyless, no FS at import)
@@ -23,12 +24,14 @@ import kleal_completion as kcf                # §10.2 completion factors (trans
 import kleal_ml_boundary as kmlb              # §10.3 ML-migration boundary manifest (declarative; keyless)
 import kleal_protocol as kp                   # §13 typed agent protocol (actions/envelope/waves/guards; LLM-free)
 import kleal_states as ks                      # §14 transaction state machines + race protection (keyless, LLM-free)
+import mplan_rules as mpr                      # правила сделки 1:1: одна таблица на все ручки mp_*
 import kleal_groups as kg                       # §15 group formation core (PILOT-DISABLED scaffolding; keyless, LLM-free)
 import kleal_candidates as kct                  # §16 events/rooms/venues candidate types (PILOT-DISABLED; keyless, LLM-free)
 import intent_map_feed as imf                   # privacy-safe offline/online intent map read models
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
-from http_util import send_json, read_json
+from http_util import send_json as _send_json_raw, read_json
 from geo import haversine as _haversine   # одна формула на дерево, см. shared/geo.py
+import vibe as kvibe                      # настрой из теста характера: одно правило на все службы
 import db                            # хранилище: postgres или файл — решает KLEAL_DB
 import kleal_auth                     # кто прислал запрос; пока ТОЛЬКО наблюдение, см. _watch_owner
 import mq                            # очередь заданий: rabbit или ничего — решает KLEAL_MQ
@@ -42,145 +45,37 @@ MODEL_ID = os.environ.get("V2_MODEL", "llama_self")
 # The core loop from the TZ: free-text query -> structured intent -> ranked candidates ->
 # agent-to-agent negotiation -> curated result. Uses the LLM to parse, deterministic scoring to rank.
 # Hierarchical interest taxonomy: BROAD category -> SUB-category -> interest words.
-TAXONOMY = {
-  'sports':  {'team':['football','soccer','basketball','volleyball','handball','rugby','cricket','hockey','baseball','futsal','ultimate','waterpolo'],
-              'racket':['tennis','padel','badminton','squash','pingpong','tabletennis','pickleball','racquetball'],
-              'endurance':['running','jogging','cycling','biking','swimming','triathlon','marathon','rowing','spinning','hyrox','duathlon'],
-              'strength':['gym','fitness','workout','crossfit','boxing','mma','climbing','bouldering','calisthenics','powerlifting','weightlifting','kettlebell','kickboxing','judo','karate','bjj','wrestling','muaythai','fencing'],
-              'mindbody':['yoga','pilates','stretching','meditation','breathwork','taichi','qigong']},
-  'social':  {'coffee':['coffee','tea','brunch','cafe','matcha','espresso'],
-              'dining':['dinner','lunch','food','restaurant','cooking'],
-              'nightlife':['bar','drinks','pub','beer','wine','party','club','clubbing','cocktails','mezcal','sake'],
-              'casual':['walk','walking','stroll','hang','hangout','chill','talk','chat','park','terrace'],
-              'foodie':['baking','bbq','streetfood','vegan','vegetarian','tapas','sushi','foodie','picnic','ramen','pizza','pasta'],
-              'wellness':['spa','sauna','wellness','selfcare','massage'],
-              'community':['volunteering','charity','meetup','community','activism','sustainability'],
-              'pets':['dogs','dog','cats','pets','dogwalk'],
-              'family':['parenting','kids','playdate','family','mums']},
-  'games':   {'esports':['dota','valorant','cs','league','apex','fortnite','fifa','overwatch','gaming','rocketleague','r6','rainbow6','starcraft','hearthstone','tekken','smash','cod','warzone'],
-              'tabletop':['chess','boardgames','poker','cards','dnd','tabletop','catan','monopoly','risk','magic','mtg','warhammer','ttrpg','trivia','quiz','mahjong','backgammon','escaperoom'],
-              'console':['playstation','xbox','nintendo','switch','console','ps5'],
-              'pc':['minecraft','roblox','valheim','terraria','stardew'],
-              'mobile':['mobile','clashroyale','pubg','genshin','mobilegaming']},
-  'culture': {'screen':['cinema','movies','film','series','documentary','netflix','marvel','sitcom'],
-              'visual':['art','museum','gallery','photography','exhibition','painting','sketching','illustration','streetart','graffiti','sculpture'],
-              'stage':['theatre','opera','ballet','standup','comedy','improv','musical','circus'],
-              'reading':['books','reading','literature','bookclub','scifi','fantasy','nonfiction'],
-              'urbanism':['architecture','urbanism','city'],
-              'anime':['anime','manga','kdrama','cosplay','kpop','cartoons'],
-              'craft':['pottery','ceramics','knitting','crochet','sewing','woodworking','calligraphy','diy'],
-              'writing':['writing','poetry','journaling','blogging'],
-              'history':['history','heritage','archaeology']},
-  'tech':    {'startups':['startup','startups','product','founder','entrepreneur','business'],
-              'engineering':['ai','ml','programming','coding','software','data','crypto','blockchain','devops','cloud','cybersecurity','security','python','javascript','rust','golang','opensource','frontend','backend'],
-              'career':['networking','investing','investor','career','mentorship','consulting','finance','vc','freelance','remote','coworking'],
-              'design':['design','ux','ui','figma','branding','typography','motion'],
-              'dataai':['datascience','analytics','statistics','bigdata'],
-              'web3':['web3','defi','nft','dao','ethereum','bitcoin','solidity','degen'],
-              'growth':['marketing','sales','saas','growth','b2b','pm']},
-  'music':   {'listening':['concert','gig','festival','music','vinyl','livemusic','playlist'],
-              'making':['guitar','piano','drums','dj','jam','producing','singing','karaoke','band','bass','synth','ableton','songwriting','choir'],
-              'electronic':['rave','techno','edm'],
-              'genres':['jazz','rock','hiphop','rap','classical','indie','pop','metal','punk','reggae','funk','soul','house','disco'],
-              'dance':['salsa','bachata','tango','swing','ballroom','zumba']},
-  'outdoors':{'hiking':['hiking','trekking','nature','camping','mountains','trail','outdoor','outdoors','backpacking','trailrunning','mountaineering'],
-              'watersnow':['surfing','kayaking','skiing','snowboard','paddleboard','sup','windsurf','kitesurf','wakeboard','snorkeling','freediving','scuba'],
-              'travel':['travel','roadtrip','sightseeing','vanlife','digitalnomad','hostels','cityhop'],
-              'fishing':['fishing'],
-              'naturelife':['birdwatching','foraging','gardening','plants','stargazing','botany'],
-              'adventure':['paragliding','skydiving','caving','canyoning']},
-  'learning':{'language':['spanish','english','french','german','italian','portuguese','russian','language','languages','exchange','practice'],
-              'skills':['course','workshop','study','bootcamp','certification','tutoring','studygroup'],
-              'langs2':['japanese','korean','mandarin','chinese','arabic','catalan','dutch','swedish','hindi','polish','turkish','greek'],
-              'academic':['psychology','economics','science','neuroscience'],
-              'personal':['publicspeaking','debate','productivity']},
-}
-SYNONYMS = {'artexhibitions':'exhibition',
-             'bake':'baking',
-             'bike':'cycling',
-             'biking':'cycling',
-             'birding':'birdwatching',
-             'birdwatch':'birdwatching',
-             'board':'boardgames',
-             'boardgames':'boardgames',
-             'box':'boxing',
-             'btc':'bitcoin',
-             'camp':'camping',
-             'classicaltheater':'theatre',
-             'climb':'climbing',
-             'code':'coding',
-             'codes':'coding',
-             'coffees':'coffee',
-             'concerts':'concert',
-             'cook':'cooking',
-             'cookingpelmeni':'cooking',
-             'cryptorapping':'rap',
-             'cs2':'cs',
-             'csgo':'cs',
-             'dance':'jam',
-             'dancing':'salsa',
-             'decentralizedfinance':'defi',
-             'digitaldesign':'design',
-             'draw':'painting',
-             'drink':'drinks',
-             'eth':'ethereum',
-             'film':'cinema',
-             'game':'gaming',
-             'games':'gaming',
-             'garden':'gardening',
-             'gardens':'gardening',
-             'genai':'ai',
-             'gym':'gym',
-             'hike':'hiking',
-             'hikes':'hiking',
-             'infosec':'cybersecurity',
-             'jiujitsu':'bjj',
-             'jog':'running',
-             'jogging':'running',
-             'js':'javascript',
-             'kayak':'kayaking',
-             'lift':'gym',
-             'llm':'ai',
-             'lol':'league',
-             'machinelearning':'ai',
-             'meditate':'meditation',
-             'mindfulness':'meditation',
-             'ml':'ai',
-             'motherhood':'parenting',
-             'movie':'cinema',
-             'movies':'cinema',
-             'muay':'muaythai',
-             'nasdaq':'investing',
-             'paint':'painting',
-             'party':'party',
-             'productmanager':'pm',
-             'programme':'coding',
-             'ps4':'playstation',
-             'ps5':'playstation',
-             'read':'reading',
-             'run':'running',
-             'seafishing':'fishing',
-             'seafishingfromaboat':'fishing',
-             'sing':'singing',
-             'ski':'skiing',
-             'smartcontracts':'blockchain',
-             'smarttech':'tech',
-             'soccer':'football',
-             'surf':'surfing',
-             'swim':'swimming',
-             'theater':'theatre',
-             'timati':'rap',
-             'trading':'investing',
-             'tradingforex':'investing',
-             'traveling':'travel',
-             'travelling':'travel',
-             'trek':'trekking',
-             'trip':'travel',
-             'turn-basedgames':'games',
-             'volunteer':'volunteering',
-             'weeb':'anime',
-             'workout':'gym',
-             'аудиты':'blockchain'}
+import io
+import json
+# ТАКСОНОМИЯ ЧИТАЕТСЯ ИЗ ОБЩЕГО РЕЕСТРА, А НЕ ЛЕЖИТ ЗДЕСЬ ВТОРОЙ КОПИЕЙ.
+#
+# Копий было две: Бади читал `shared/interests.json`, ранжировщик держал свой литерал на 139 строк.
+# Сверка 18.09.2026 показала, что они совпадают ТОЧНО (8 широких, 415 слов, 86 синонимов, ноль
+# расхождений) — вторая копия не давала ничего, кроме обязанности не разойтись. А цена расхождения
+# молчалива и высока: тема, известная Бади и неизвестная ранжировщику, не просто не находит пары —
+# она обнуляет выдачу целиком, потому что `_base_tier` вернёт none по ВСЕМ кандидатам.
+#
+# Теперь источник один, и новый ключ дописывается в одном месте.
+#
+# ПАДАЕМ ГРОМКО. Урезанная таксономия страшнее отсутствующей: сервис поднимется и будет молча
+# отдавать ноль кандидатов на любой запрос, а снаружи это неотличимо от «никто не подошёл».
+# Поэтому при недочитанном реестре — исключение при импорте.
+def _load_taxonomy():
+    _path = os.path.join(_HERE, "..", "..", "shared", "interests.json")
+    with io.open(_path, encoding="utf-8") as _f:
+        _reg = json.load(_f)
+    _tree = _reg.get("tree") or {}
+    _syn = _reg.get("synonyms") or {}
+    _words = sum(len(_ws or []) for _subs in _tree.values() for _ws in (_subs or {}).values())
+    if len(_tree) < 5 or _words < 300 or len(_syn) < 40:
+        raise RuntimeError(
+            "shared/interests.json недочитан: %d широких, %d слов, %d синонимов. "
+            "С такой таксономией ранжировщик молча вернёт ноль по любому запросу." % (
+                len(_tree), _words, len(_syn)))
+    return _tree, _syn
+
+
+TAXONOMY, SYNONYMS = _load_taxonomy()
 # curated adjacency between BROAD categories (a mild "related" bonus)
 # Adjacency is deliberately conservative — over-broad links made a coffee search surface a Dota player
 # ("social" ~ "games"). Keep only genuinely related neighbours.
@@ -197,15 +92,40 @@ def _norm(w):
     w = str(w).strip().lower().replace(' ', '')
     return SYNONYMS.get(w, w)
 
+# ПАМЯТЬ НА ОТВЕТЫ. Слово, которого нет в словаре точным попаданием, стоит полного прохода по
+# `_IDX` — а зовут `cat_of` тысячи раз за один поиск: профиль живого запроса 15.09.2026 дал
+# 16 577 вызовов и 5,7 с из 20. Разных слов при этом десятки: интересы повторяются у сотен людей.
+#
+# Отпечаток словарей в ключе, а не просто слово: `_IDX` и `SYNONYMS` (через `_norm`) правит
+# `graph_txn` — тестовый канал правок графа. Сменился размер — память сбрасывается; сам `graph_txn`
+# вдобавок чистит её явно, потому что правка может заменить значение, не меняя размера.
+_CAT_CACHE = {}
+_CAT_SIG = None
+
+
 def cat_of(word):
     """(broad, sub) for an interest/topic, matched against the KNOWN vocabulary (exact, then prefix>=5).
     Never a raw substring — so no 'art' in 'party', and >=5 stops short words like 'over'->overwatch, 'star'->startups.
     Short real forms (hike, swim, climb...) are handled by SYNONYMS, not by the prefix rule."""
+    global _CAT_SIG
+    sig = (len(_IDX), len(SYNONYMS))
+    if sig != _CAT_SIG:
+        _CAT_CACHE.clear()
+        _CAT_SIG = sig
     w = _norm(word)
-    if w in _IDX: return _IDX[w]
-    for k, bs in _IDX.items():
-        if len(w) >= 5 and (k.startswith(w) or w.startswith(k)): return bs
-    return (None, None)
+    got = _CAT_CACHE.get(w)
+    if got is not None:
+        return got
+    res = _IDX.get(w)
+    if res is None:
+        res = (None, None)
+        if len(w) >= 5:
+            for k, bs in _IDX.items():
+                if k.startswith(w) or w.startswith(k):
+                    res = bs
+                    break
+    _CAT_CACHE[w] = res
+    return res
 
 def same_topic(t, x):
     t, x = _norm(t), _norm(x)
@@ -521,12 +441,14 @@ def graph_txn(edits):
                     _IDX[wn] = (b, s)
             for b, neigh in (edits.get("adjacency") or {}).items():
                 ADJACENCY[b] = list(neigh)
+            _CAT_CACHE.clear()            # словарь под правкой — прежние ответы недействительны
             yield
         finally:
             SYNONYMS.clear(); SYNONYMS.update(saved_syn)
             ADJACENCY.clear(); ADJACENCY.update(saved_adj)
             TAXONOMY.clear(); TAXONOMY.update(saved_tax)
             _IDX.clear(); _IDX.update(saved_idx)
+            _CAT_CACHE.clear()            # и после отката тоже
 
 kt.bind_engine(topical=topical, norm=_norm, cat_of=cat_of, same_topic=same_topic,
                TAXONOMY=TAXONOMY, SYNONYMS=SYNONYMS, ADJACENCY=ADJACENCY, graph_txn=graph_txn)
@@ -606,7 +528,12 @@ def _save_store():
     """
     if db.ENABLED:
         try:
-            db.save_store(SESSION)
+            # ПОД ТЕМ ЖЕ ЗАМКОМ, под которым состояние меняют. Без него сериализация шла, пока
+            # соседний запрос добавлял ключ, — «dictionary changed size during iteration», и запись
+            # молча уходила в файл, которого при базе никто не читает (26.09.2026: так потерялась
+            # привязка 126 интентов к id). Замок — RLock: вызов изнутри `with _STORE_LOCK` безопасен.
+            with _STORE_LOCK:
+                db.save_store(SESSION)
             if not db.MIRROR_JSON:
                 return
         except Exception as e:
@@ -617,6 +544,12 @@ def _save_store():
     except Exception:
         pass
 def _me_or_claimed(handler, claimed):
+    """УСТАРЕЛО с 26.09.2026: личность запроса — `handler._pid` (см. H._whoami). Оставлено для
+    совместимости вызовов: возвращает id по сессии, а без неё — пусто, имя из тела не принимается."""
+    return getattr(handler, "_pid", "") or ""
+
+
+def _me_or_claimed_legacy(handler, claimed):
     """Имя своей строки, если сессия его называет; иначе — заявленное в запросе.
 
     ЗАПРЕТА ЗДЕСЬ НЕТ, И ЭТО НАМЕРЕННО. Опросные ручки (планы, переписки, входящие) принимают за
@@ -648,7 +581,576 @@ def _own_uid(handler):
     как станет ясно, чей это трафик без токена: у приложения токен есть всегда, когда человек вошёл
     (kleal-app/src/api.ts).
     """
-    return kleal_auth.caller_name(handler)
+    # Ключ личных записей — id человека (сессия), а не подпись: у тёзок разные чёрные списки.
+    return getattr(handler, "_pid", "") or ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# ЛИЧНОСТЬ — ЭТО ID ЧЕЛОВЕКА, А НЕ ИМЯ (docs/IDENTITY.md, 26.09.2026)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# Человек = строка популяции с постоянным `id`. Имя — подпись: у двух людей она совпадает, и это
+# нормально. Всё, что принадлежит человеку (интенты, заявки, переписка, планы, группы), хранит его
+# id рядом с подписью — `owner_id`, `from_id`, `to_id`… — и «чьё это» решается ТОЛЬКО по id.
+#
+# КАК УЗНАТЬ, КТО ПРИСЛАЛ ЗАПРОС: сессия (Bearer → аккаунт → его строка → id). Имя из тела
+# запроса личностью не является никогда. Единственное исключение — запрос БЕЗ сессии (бот-эмулятор
+# `kleal-life`, смоук-тесты): ему разрешено назваться только тем, кто не принадлежит ни одному
+# аккаунту, а если под этим именем нет ни одной строки — он получает временную личность
+# `anon:<имя>`, которая с настоящим человеком не склеится никогда.
+#
+# Почему так, а не «имя уникально»: анкета хранит одно имя без фамилии, и совпадения — норма
+# («Иван», «Анна»). 26.09.2026 четыре аккаунта «Иван» видели интенты друг друга, а регистрация
+# каждого нового затирала анкету прежнего.
+ANON = "anon:"
+# НЕ `_IDX`: это имя занято словарём категорий интересов наверху файла (его читают `cat_of` и
+# `cat_of_fixed`). 26.09.2026 индекс людей назывался так же, при импорте затёр словарь, и подбор
+# несколько часов не узнавал ни одного интереса — (None, None) на любое слово.
+_PEOPLE = {"src": None, "built": False, "checked": 0.0, "forced": 0.0, "by_id": {}, "by_name": {}}
+_PEOPLE_TTL = 1.0
+
+
+def _people_index(force=False):
+    """{id: строка} и {имя: [строки]} по текущему пулу. Пересчитывается, только когда пул сменился.
+
+    Строится по СЫРОМУ пулу (`_load_pool_rows`), а не по `load_candidates()`: та на каждый вызов отдаёт
+    НОВЫЙ список с дописанными полями, сравнение «тот же ли объект» не срабатывало никогда, и индекс
+    пересобирался на каждый `_person` — десятки раз за запрос, с записью в журнал каждый раз.
+    Версию пула спрашиваем у базы не чаще раза в `_PEOPLE_TTL`: ответ на один запрос зовёт `_person`
+    на каждое поле с человеком. Свежую регистрацию `_person` добирает принудительной проверкой."""
+    now = time.time()
+    if _PEOPLE["built"] and not force and now - _PEOPLE["checked"] < _PEOPLE_TTL:
+        return _PEOPLE
+    store = _load_pool_rows()
+    _PEOPLE["checked"] = now
+    if not _PEOPLE["built"] or _PEOPLE["src"] is not store:
+        rows = [r for r in (store or []) if isinstance(r, dict)]
+        if MERGE_DEMO or (not rows and DEMO_FALLBACK):
+            seen = {str(u.get("name", "")).strip().lower() for u in rows}
+            rows += [c for c in CANDIDATES if str(c.get("name", "")).strip().lower() not in seen]
+        by_id, by_name = {}, {}
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            rid = str(r.get("id") or "").strip()
+            if rid:
+                by_id[rid] = r
+                by_id.setdefault(rid.lower(), r)
+            nm = _norm_name(r.get("name"))
+            if nm:
+                by_name.setdefault(nm, []).append(r)
+        _PEOPLE.update(src=store, built=True, by_id=by_id, by_name=by_name)
+    return _PEOPLE
+
+
+def _person(pid):
+    """Строка человека по id или None. Регистр не важен: словари хранилища держат ключи
+    нормализованными (`_norm_name`), и id оттуда приходит в нижнем регистре."""
+    s = str(pid or "").strip()
+    if not s:
+        return None
+    idx = _people_index()["by_id"]
+    got = idx.get(s) or idx.get(s.lower())
+    if got is None and not s.lower().startswith(ANON) and time.time() - _PEOPLE["forced"] > 0.5:
+        _PEOPLE["forced"] = time.time()
+        idx = _people_index(force=True)["by_id"]
+        got = idx.get(s) or idx.get(s.lower())
+    return got
+
+
+def _names():
+    """Подписи тех, кого нет в пуле: временные личности `anon:` и удалённые люди. Запоминаются,
+    когда личность впервые появляется, чтобы при выдаче было что показать вместо id."""
+    return SESSION.setdefault("_names", {})
+
+
+def _remember(pid, display):
+    if pid and display:
+        k = _norm_name(pid)
+        if _names().get(k) != display:
+            _names()[k] = str(display)[:80]
+
+
+def _display(pid, fallback=""):
+    """Подпись человека для показа: из его строки, иначе из реестра подписей, иначе запасная."""
+    p = _person(pid)
+    if p and p.get("name"):
+        return str(p.get("name"))
+    s = str(pid or "")
+    known = _names().get(_norm_name(s))
+    if known:
+        return known
+    return fallback or (s[len(ANON):] if s.lower().startswith(ANON) else "")
+
+
+def _is_pid(s):
+    """Это id человека (из пула или временный `anon:`)? Имена с id не совпадают — проверено на
+    живом пуле 26.09: 871 id, все в нижнем регистре, без пробелов, ни один не равен чьему-то имени."""
+    if not isinstance(s, str) or not s:
+        return False
+    if s.lower().startswith(ANON):
+        return True
+    return _person(s) is not None
+
+
+def _canon_pid(s):
+    """Канонический id: у человека из пула — ровно как в его строке, у временной личности — `anon:`."""
+    s = str(s or "").strip()
+    if not s:
+        return ""
+    if s.lower().startswith(ANON):
+        return ANON + _norm_name(s[len(ANON):])        # временная личность — всегда в нижнем регистре
+    p = _person(s)
+    return str(p.get("id")) if p else ""
+
+
+def _photo_of(pid):
+    """Фото человека по id — не по имени: у тёзок разные лица."""
+    return (_person(pid) or {}).get("photo") or None
+
+
+def _tz_of(pid):
+    """Часовой пояс человека по id."""
+    return str((_person(pid) or {}).get("tz") or "")
+
+
+def _counterparts(me, gid=""):
+    """С кем у `me` уже есть связь. Нужна ТОЛЬКО чтобы развести тёзок, когда клиент прислал подпись
+    без id: из двух «Иванов» берётся тот, с кем человек уже имеет дело, — если такой ровно один.
+    В группе (`gid`) круг — её организатор, участники и приглашённые; иначе — заявки, переписка и
+    планы 1:1. Это не угадывание: среди СВОИХ собеседников имя однозначно."""
+    me = str(me or "").strip().lower()
+    out = set()
+    if not me:
+        return out
+    if gid:
+        g = _gi_find(gid) or {}
+        out.add(str(g.get("owner") or "").lower())
+        out.update(str(m.get("name") or "").lower() for m in g.get("members") or [] if isinstance(m, dict))
+        for i in _ginvites():
+            if isinstance(i, dict) and i.get("gid") == gid:
+                out.update((str(i.get("to") or "").lower(), str(i.get("frm") or "").lower()))
+    else:
+        for box, a, b in (("_requests", "from", "to"), ("_messages", "from", "to"),
+                          ("_mplans", "host", "guest")):
+            for r in SESSION.get(box) or []:
+                if isinstance(r, dict):
+                    x, y = str(r.get(a) or "").lower(), str(r.get(b) or "").lower()
+                    if x == me:
+                        out.add(y)
+                    elif y == me:
+                        out.add(x)
+    out.discard(me)
+    out.discard("")
+    return out
+
+
+def _peer(pid_hint="", name="", me="", gid=""):
+    """id СОБЕСЕДНИКА из запроса. Приложение присылает id (`to_id`, `with_id`…); подпись принимается,
+    только если по ней однозначно находится один человек — во всём пуле или среди тех, с кем `me`
+    уже связан (`_counterparts`). Иначе тёзки без id — пусто: угадывать, кому из двух «Иванов» ушло
+    сообщение, нельзя. Подпись без строки в пуле — временная личность `anon:` (тесты, эмулятор),
+    с настоящим человеком она не совпадёт никогда."""
+    c = _canon_pid(pid_hint)
+    if c:
+        return c
+    nm = str(name or "").strip()
+    if not nm:
+        return ""
+    # Kleal — не человек из пула, а отправитель ответов модерации и уведомлений (admin_notify,
+    # GR.52). Его реплики лежат под именем «Kleal»; временная личность `anon:kleal` уводила
+    # переписку в пустую пару — в «Сообщениях» строка была, а открытый тред показывал «пусто».
+    if _norm_name(nm) == _norm_name(SAFETY_SENDER):
+        return SAFETY_SENDER
+    c = _canon_pid(nm)                    # в поле подписи уже пришёл id — принимаем
+    if c:
+        return c
+    rows = _people_index()["by_name"].get(_norm_name(nm)) or []
+    if len(rows) == 1:
+        return str(rows[0].get("id") or "")
+    if not rows:
+        pid = ANON + _norm_name(nm)
+        _remember(pid, nm)
+        return pid
+    if me:
+        mine = _counterparts(me, gid)
+        hit = [r for r in rows if str(r.get("id") or "").lower() in mine]
+        if len(hit) == 1:
+            return str(hit[0].get("id") or "")
+    return ""
+
+
+def _unowned_pid(name):
+    """Личность для запроса БЕЗ сессии, названного `name`.
+
+    Строка без владельца (бот, посев), и ровно одна → её id. Ни одной строки → `anon:<имя>`.
+    Имя принадлежит аккаунту или неоднозначно → пусто: назваться чужим человеком без сессии нельзя.
+    """
+    nm = _norm_name(name)
+    if not nm:
+        return ""
+    rows = _people_index()["by_name"].get(nm) or []
+    if not rows:
+        pid = ANON + nm
+        _remember(pid, str(name).strip())
+        return pid
+    free = [r for r in rows if not r.get("owner")]
+    if len(free) == 1 and len(rows) == 1:
+        return str(free[0].get("id") or "")
+    return ""
+
+
+def _identify(handler, claimed=""):
+    """(id, подпись) того, кто прислал запрос. Сессия сильнее всего, что написано в теле."""
+    try:
+        p = kleal_auth.caller_person(handler, users=load_candidates())
+    except Exception:
+        p = None
+    if p and p.get("id"):
+        return str(p.get("id")), str(p.get("name") or "")
+    try:
+        if kleal_auth.bearer(handler):
+            # Токен есть, а строки у аккаунта нет (анкета не пройдена). Это не аноним — это
+            # человек без личности; за чужое имя из тела он спрятаться не может.
+            return "", ""
+    except Exception:
+        pass
+    pid = _unowned_pid(claimed)
+    return pid, (_display(pid, str(claimed or "").strip()) if pid else "")
+
+
+# ---- выдача: id человека → подпись (и id рядом) -------------------------------------------------
+# В хранилище все ссылки на людей — id (`from`, `to`, `owner`, `host`, `members[].name`, ключи
+# `responses/live/sides/feedback/votes`…). Приложению нужны подписи. Переводчик стоит на КАЖДОМ
+# ответе сервиса (send_json ниже), поэтому ни одна выдача не может «забыть» перевести, а новые
+# поля с людьми достаточно добавить в _PERSON_KEYS. Рядом с подписью уезжает id (`from_id`, …):
+# приложение сравнивает людей по нему, а подпись только рисует. id и подписи не пересекаются
+# (см. _is_pid), так что перевод однозначен.
+_PERSON_KEYS = frozenset((
+    "from", "to", "frm", "who", "by", "owner", "host", "guest", "other", "heir", "with",
+    "address_by", "link_by", "cancelled_by", "fixed_by", "proposed_by", "taken_by", "about",
+    "name", "to_user", "place_asked_by", "link_asked_by", "organiser", "asked", "removed_by",
+    "candidate", "former"))
+
+
+_NORMALIZED_LISTS = frozenset(("blocked",))
+
+
+def _humanize(v, _d=0):
+    if _d > 40:
+        return v
+    if isinstance(v, dict):
+        keys = list(v.keys())
+        pid_keys = bool(keys) and all(isinstance(k, str) and _is_pid(k) for k in keys)
+        out = {}
+        for k, x in v.items():
+            if pid_keys:
+                # Словарь «человек → что-то» (live, sides, votes…): ключ — подпись в том же виде,
+                # в каком приложение его ищет (нормализованная), а при совпадении подписей тёзок —
+                # id, чтобы один не затёр другого.
+                nk = _norm_name(_display(k)) or k
+                out[k if nk in out else nk] = _humanize(x, _d + 1)
+                continue
+            if k == "r" and isinstance(x, dict):
+                # Реакции: {эмодзи: [кто]} — приложение сверяет с нормализованной подписью.
+                out[k] = {e: [_norm_name(_display(n)) if _is_pid(n) else n for n in (lst or [])]
+                          for e, lst in x.items()}
+                out["r_ids"] = {e: list(lst or []) for e, lst in x.items()}
+                continue
+            if isinstance(x, str) and k in _PERSON_KEYS and _is_pid(x):
+                out[k] = _display(x)
+                idk = "id" if (k == "name" and "id" not in v) else k + "_id"
+                if idk not in v:
+                    out[idk] = _canon_pid(x) or x
+                continue
+            if (isinstance(x, list) and x and all(isinstance(e, str) for e in x)
+                    and all(_is_pid(e) for e in x)):
+                # Чёрный список приложение всегда получало нормализованным — так и оставляем.
+                out[k] = ([_norm_name(_display(e)) for e in x] if k in _NORMALIZED_LISTS
+                          else [_display(e) for e in x])
+                if k + "_ids" not in v:
+                    out[k + "_ids"] = [_canon_pid(e) or e for e in x]
+                continue
+            out[k] = _humanize(x, _d + 1)
+        return out
+    if isinstance(v, list):
+        return [_humanize(x, _d + 1) for x in v]
+    return v
+
+
+def send_json(handler, status, obj):
+    """Отправка ответа сервиса — всегда через перевод id → подпись (см. _humanize)."""
+    try:
+        obj = _humanize(obj)
+    except Exception as e:                  # перевод не имеет права ронять ответ
+        print("[identity] перевод ответа не удался: %s" % str(e)[:120], flush=True)
+    return _send_json_raw(handler, status, obj)
+
+
+# ---- разовый перевод хранилища с имён на id (identity v2) ------------------------------------
+# До 26.09.2026 все ссылки на людей в хранилище матчинга были ИМЕНАМИ. Перевод идёт один раз при
+# старте службы (до приёма запросов), под замком, с копией каждого хранилища в `_premig_v2` — откат
+# это восстановление копии и прежний код (tools/identity_repair.py rollback-v2). Правило для каждой
+# старой ссылки — `_legacy_pid`; если тёзок несколько и все могли сделать запись — берётся тот, чья
+# сессия началась ближе всего ДО записи (кто в тот момент был в приложении). Каждое такое решение и
+# каждая неразрешённая ссылка — в журнал и в отчёт `_identity.report`.
+IDENTITY_V = 2
+
+
+def _session_near(owner_key, at):
+    """Момент последнего входа аккаунта не позже `at` (или 0)."""
+    try:
+        ss = (((kleal_auth._accounts() or {}).get(owner_key) or {}).get("sessions") or {}).values()
+        starts = [float(s.get("created") or 0) for s in ss if float(s.get("created") or 0) <= float(at) + 60]
+        return max(starts) if starts else 0.0
+    except Exception:
+        return 0.0
+
+
+def _migrate_identity_v2(apply=True):
+    import collections as _co
+    state = SESSION.get("_identity") or {}
+    if int(state.get("v") or 0) >= IDENTITY_V:
+        return {"skipped": True, "v": state.get("v")}
+    rep = _co.Counter()
+    unresolved = _co.Counter()
+    guessed = []
+
+    def pid_of(name, at=None):
+        s = str(name or "").strip()
+        if not s:
+            return s
+        if _is_pid(s):
+            return _canon_pid(s)
+        pid = _legacy_pid(s, at)
+        if pid:
+            rep["resolved"] += 1
+            return pid
+        rows = _people_index()["by_name"].get(_norm_name(s)) or []
+        alive = [r for r in rows if not r.get("owner") or not at
+                 or not _account_created(r.get("owner")) or float(at) + 60 >= _account_created(r.get("owner"))]
+        if len(alive) > 1 and at:
+            scored = sorted(((_session_near(r.get("owner"), at), r) for r in alive if r.get("owner")),
+                            key=lambda x: -x[0])
+            if scored and scored[0][0] > 0 and (len(scored) == 1 or scored[0][0] != scored[1][0]):
+                pick = str(scored[0][1].get("id"))
+                guessed.append({"name": s, "at": at, "pid": pick})
+                rep["guessed"] += 1
+                return pick
+        unresolved[_norm_name(s)] += 1
+        return s                              # остаётся именем: запись не увидит никто, но и не чужой
+
+    def conv_list(lst, at):
+        return [pid_of(x, at) for x in (lst or [])]
+
+    def conv_keys(d, at):
+        out = {}
+        for k, v in (d or {}).items():
+            nk = _norm_name(pid_of(k, at))
+            if nk in out and isinstance(out[nk], dict) and isinstance(v, dict):
+                continue                      # два тёзки в одном плане слились в одного — первый остаётся
+            out[nk] = v
+        return out
+
+    def pair_of(a, b):
+        return _pair_key(a, b) if a and b else ""
+
+    with _STORE_LOCK:
+        keys = ("_requests", "_messages", "_thread_reads", "_mplans", "_blocks", "_reports",
+                "_gintents", "_ginvites", "_gmsgs", "_gplans", "_gvotes", "_gremovals", "_groups")
+        backup = {k: copy.deepcopy(SESSION.get(k)) for k in keys if SESSION.get(k) is not None}
+        for r in SESSION.get("_requests") or []:
+            at = r.get("created")
+            r["from"], r["to"] = pid_of(r.get("from"), at), pid_of(r.get("to"), at)
+            tr = r.get("trace") or {}
+            for f in ("by", "taken_by"):
+                if tr.get(f):
+                    tr[f] = pid_of(tr[f], at)
+        for m in SESSION.get("_messages") or []:
+            at = m.get("t")
+            m["from"], m["to"] = pid_of(m.get("from"), at), pid_of(m.get("to"), at)
+            if m.get("from") and m.get("to"):
+                m["pair"] = pair_of(m["from"], m["to"])
+            if isinstance(m.get("r"), dict):
+                m["r"] = {e: [_norm_name(pid_of(n, at)) for n in (lst or [])] for e, lst in m["r"].items()}
+            sy = m.get("sys") if isinstance(m.get("sys"), dict) else None
+            for f in ("by", "who", "taken_by"):
+                if sy and isinstance(sy.get(f), str) and sy.get(f):
+                    sy[f] = pid_of(sy[f], at)
+            if isinstance(m.get("rt"), dict) and m["rt"].get("from"):
+                m["rt"]["from"] = pid_of(m["rt"]["from"], at)
+        reads = SESSION.get("_thread_reads") or {}
+        new_reads = {}
+        for pk, who in reads.items():
+            parts = [pid_of(x) for x in str(pk).split("|")]
+            nk = pair_of(*parts) if len(parts) == 2 else pk
+            dst = new_reads.setdefault(nk, {})
+            for w, ts in (who or {}).items():
+                dst[_norm_name(pid_of(w))] = max(float(ts or 0), float(dst.get(_norm_name(pid_of(w))) or 0))
+        if reads:
+            SESSION["_thread_reads"] = new_reads
+        for pl in SESSION.get("_mplans") or []:
+            at = pl.get("created")
+            pl["host"], pl["guest"] = pid_of(pl.get("host"), at), pid_of(pl.get("guest"), at)
+            if pl.get("host") and pl.get("guest"):
+                pl["pair"] = pair_of(pl["host"], pl["guest"])
+            for f in ("responses", "sides", "live", "feedback"):
+                if isinstance(pl.get(f), dict):
+                    pl[f] = conv_keys(pl[f], at)
+            for sd in (pl.get("sides") or {}).values():
+                if isinstance(sd, dict) and sd.get("by"):
+                    sd["by"] = pid_of(sd["by"], at)
+            for f in ("address_by", "link_by", "cancelled_by"):
+                if pl.get(f):
+                    pl[f] = pid_of(pl[f], at)
+            for f in ("pending", "last_change", "moved_to_call"):
+                if isinstance(pl.get(f), dict) and pl[f].get("by"):
+                    pl[f]["by"] = pid_of(pl[f]["by"], at)
+            for ask in (pl.get("asks") or {}).values():
+                if isinstance(ask, dict) and ask.get("by"):
+                    ask["by"] = pid_of(ask["by"], at)
+        bl = SESSION.get("_blocks") or {}
+        if bl:
+            nb = {}
+            for k, lst in bl.items():
+                dst = nb.setdefault(_norm_name(pid_of(k)), [])
+                for x in lst or []:
+                    v = _norm_name(pid_of(x))
+                    if v not in dst:
+                        dst.append(v)
+            SESSION["_blocks"] = nb
+        for r in SESSION.get("_reports") or []:
+            r["by"], r["about"] = pid_of(r.get("by"), r.get("at")), pid_of(r.get("about"), r.get("at"))
+        for g in SESSION.get("_gintents") or []:
+            at = g.get("created")
+            g["owner"] = pid_of(g.get("owner"), at)
+            for mb in g.get("members") or []:
+                mb["name"] = pid_of(mb.get("name"), at)
+                if mb.get("removed_by"):
+                    mb["removed_by"] = pid_of(mb["removed_by"], at)
+            if isinstance(g.get("pending_1to1"), dict):
+                for f in ("by", "to"):
+                    if g["pending_1to1"].get(f):
+                        g["pending_1to1"][f] = pid_of(g["pending_1to1"][f], at)
+        for i in SESSION.get("_ginvites") or []:
+            at = i.get("created")
+            i["frm"], i["to"] = pid_of(i.get("frm"), at), pid_of(i.get("to"), at)
+        for m in SESSION.get("_gmsgs") or []:
+            at = m.get("t")
+            if m.get("frm"):
+                m["frm"] = pid_of(m["frm"], at)
+            if isinstance(m.get("r"), dict):
+                m["r"] = {e: [_norm_name(pid_of(n, at)) for n in (lst or [])] for e, lst in m["r"].items()}
+            sy = m.get("sys") if isinstance(m.get("sys"), dict) else None
+            for f in ("who", "owner", "by", "heir"):
+                if sy and isinstance(sy.get(f), str) and sy.get(f):
+                    sy[f] = pid_of(sy[f], at)
+            if isinstance(m.get("rt"), dict) and m["rt"].get("from"):
+                m["rt"]["from"] = pid_of(m["rt"]["from"], at)
+        for gp in SESSION.get("_gplans") or []:
+            at = gp.get("created")
+            for f in ("owner", "proposed_by", "cancelled_by", "fixed_by"):
+                if gp.get(f):
+                    gp[f] = pid_of(gp[f], at)
+            if gp.get("feedback_members"):
+                gp["feedback_members"] = conv_list(gp["feedback_members"], at)
+            for f in ("responses", "live", "sides", "feedback"):
+                if isinstance(gp.get(f), dict):
+                    gp[f] = conv_keys(gp[f], at)
+            if isinstance(gp.get("update"), dict) and gp["update"].get("by"):
+                gp["update"]["by"] = pid_of(gp["update"]["by"], at)
+        for v in SESSION.get("_gvotes") or []:
+            at = v.get("opened") or v.get("created")
+            if v.get("by"):
+                v["by"] = pid_of(v["by"], at)
+            if isinstance(v.get("votes"), dict):
+                v["votes"] = {pid_of(k, at): x for k, x in v["votes"].items()}
+        for r in SESSION.get("_gremovals") or []:
+            r["who"], r["by"] = pid_of(r.get("who"), r.get("t")), pid_of(r.get("by"), r.get("t"))
+        for g in SESSION.get("_groups") or []:
+            at = g.get("created")
+            if g.get("host"):
+                g["host"] = pid_of(g["host"], at)
+            if isinstance(g.get("members"), list):
+                g["members"] = conv_list(g["members"], at)
+        # Личные сессии (оценки, чёрные списки, сохранённые поиски) — ключ верхнего уровня был именем.
+        for k in [k for k in list(SESSION.keys()) if not str(k).startswith("_") and k != "me"]:
+            if _is_pid(k):
+                continue
+            pid = pid_of(k)
+            if not _is_pid(pid):
+                continue
+            src = SESSION.pop(k)
+            dst = SESSION.setdefault(pid, {})
+            for f, v in (src or {}).items():
+                if f == "blocked":
+                    dst.setdefault("blocked", [])
+                    for x in v or []:
+                        x2 = pid_of(x)
+                        if x2 not in dst["blocked"]:
+                            dst["blocked"].append(x2)
+                elif f not in dst:
+                    dst[f] = v
+            backup.setdefault("_sessions", {})[k] = src
+        report = {"resolved": rep["resolved"], "guessed": rep["guessed"],
+                  "unresolved": dict(unresolved.most_common(50)), "guesses": guessed[:200]}
+        if not apply:
+            for k, v in backup.items():
+                if k == "_sessions":
+                    for sk, sv in v.items():
+                        SESSION[sk] = sv
+                else:
+                    SESSION[k] = v
+            return dict(report, applied=False)
+        SESSION["_premig_v2"] = backup
+        SESSION["_identity"] = {"v": IDENTITY_V, "at": time.time(), "report": report}
+    _save_store()
+    print("[identity] хранилище переведено на id: %s" % json.dumps(
+        {k: report[k] for k in ("resolved", "guessed")}, ensure_ascii=False), flush=True)
+    if report["unresolved"]:
+        print("[identity] не разрешено (остались именами): %s"
+              % json.dumps(report["unresolved"], ensure_ascii=False)[:600], flush=True)
+    for gsz in guessed[:50]:
+        print("[identity] тёзки, выбран по ближайшему входу: %s" % json.dumps(gsz, ensure_ascii=False),
+              flush=True)
+    return dict(report, applied=True)
+
+
+def _account_created(owner_key):
+    try:
+        return float(((kleal_auth._accounts() or {}).get(owner_key) or {}).get("created") or 0)
+    except Exception:
+        return 0.0
+
+
+def _legacy_pid(name, at=None):
+    """Чей это СТАРЫЙ ключ-имя — для разовой привязки записей, сделанных до id.
+
+    Правило одно на все хранилища: среди строк с этим именем берём тех, кто мог сделать запись, —
+    строки без владельца (боты) и аккаунты, существовавшие к моменту записи (аккаунт не может
+    владеть тем, что сделано до его рождения — ровно так новый «Иван» получил интенты прежних).
+    Ровно один такой — запись его. Иначе — пусто:
+    запись остаётся без хозяина (её не видит никто), а не уходит не тому. Такие случаи разбирает
+    tools/identity_repair.py.
+    """
+    nm = _norm_name(name)
+    if not nm:
+        return ""
+    if nm.startswith(ANON):
+        return nm
+    rows = _people_index()["by_name"].get(nm) or []
+    if not rows:
+        _remember(ANON + nm, str(name).strip())
+        return ANON + nm            # человека нет в пуле: тест или удалённый — запись не чья-то чужая
+
+    def existed(r):
+        key = str(r.get("owner") or "")
+        if not key or not at:
+            return True
+        born = _account_created(key)
+        return not (born and float(at) + 60 < born)
+
+    alive = [r for r in rows if existed(r)]
+    return str(alive[0].get("id") or "") if len(alive) == 1 else ""
 
 
 def _session(uid="me"):
@@ -915,41 +1417,16 @@ def _langs_of(prof):
     return [l for l in langs if l]
 
 
-# Тест характера -> настрой, которым оперирует ранжировщик.
-#
-# Признак social_context сверяет поле `vibe` двоих и знает пары-противоположности: introvert против
-# extrovert, chill против party. Поле при этом пустое у всех 833 строк, поэтому признак не влиял ни
-# на что — при том что вес у него в некоторых доменах второй по величине.
-#
-# Спрашивать заново нечего. Тест характера в профиле уже считает десять осей и кладёт их в
-# `persona.axes`; оси есть у 603 строк. Две из них ложатся на словарь ранжировщика без натяжки:
-#   energy — «люди заряжают или забирают силы», это и есть extrovert/introvert;
-#   group  — «один на один или большая компания», это chill/party.
-# Решает energy: это классическая ось, и она прямо названа в матрице конфликтов. Когда человек
-# ответил «зависит», решает размер компании — иначе половина ответивших осталась бы без настроя.
-_VIBE_BY_ENERGY = {"energised": "extrovert", "drained": "introvert"}
-_VIBE_BY_GROUP = {"crowd": "party", "small": "chill", "one": "chill"}
-
-
-def _vibe_from_persona(row):
-    """Настрой из осей теста. Пусто — если тест не пройден или обе оси молчат."""
-    p = row.get("persona")
-    axes = p.get("axes") if isinstance(p, dict) else None
-    if not isinstance(axes, dict):
-        return ""
-    v = _VIBE_BY_ENERGY.get(str(axes.get("energy") or "").strip().lower())
-    if v:
-        return v
-    return _VIBE_BY_GROUP.get(str(axes.get("group") or "").strip().lower(), "")
-
-
+# Тест характера -> настрой, которым оперирует ранжировщик. ПРАВИЛО ЖИВЁТ В shared/vibe.py:
+# его читает и онбординг, чтобы экран «Твоя личность» показывал человеку тот же настрой, каким
+# его видит подбор, и чтобы правку можно было принять обратно. Здесь остаётся только дописывание.
 def _fill_vibe(rows):
     """Дописать `vibe` тем, у кого его нет, из пройденного теста. Строки копируются: пул кэшируется
     и делится между запросами."""
     out, filled = [], 0
     for r in rows:
         if isinstance(r, dict) and not str(r.get("vibe") or "").strip():
-            v = _vibe_from_persona(r)
+            v = kvibe.from_persona(r)
             if v:
                 out.append(dict(r, vibe=v))
                 filled += 1
@@ -981,10 +1458,15 @@ def _modes_asked():
                 continue
             it = r.get("intent") if isinstance(r.get("intent"), dict) else r
             m = str(it.get("mode") or "").strip().lower()
-            who = str(r.get("self") or r.get("from") or "").strip()
+            # Кто выбирал — по ID (docs/IDENTITY.md): у интента это `owner_id`, у заявки `from`
+            # (после перевода 26.09 там id). По имени тёзки делили бы выбор друг друга.
+            who = str((r.get("owner_id") if box == "_intents" else r.get("from")) or "").strip().lower()
             if who and m in ("offline", "online", "hybrid"):
                 out.setdefault(who, set()).add(m)
     return out
+
+
+_FMT_SAID = {"n": None}
 
 
 def _fill_formats(rows):
@@ -997,18 +1479,20 @@ def _fill_formats(rows):
     out, filled = [], 0
     for r in rows:
         if isinstance(r, dict) and not (r.get("formats") or []):
-            m = seen.get(str(r.get("name") or "").strip())
+            m = seen.get(str(r.get("id") or "").strip().lower())
             if m:
                 out.append(dict(r, formats=sorted(m)))
                 filled += 1
                 continue
         out.append(r)
-    if filled:
+    if filled and filled != _FMT_SAID.get("n"):
         print("[pool] формат выведен из выбранного: %d строк" % filled, flush=True)
+    _FMT_SAID["n"] = filled
     return out
 
 
-def load_candidates():
+def _load_pool_rows():
+    """Сырой пул из базы (или файла): ОДИН и тот же список, пока пул не сменился; None, если пусто."""
     store = None
     if db.ENABLED:
         # Из базы. Отпечаток вместо mtime файла: перечитываем пул, только если кто-то
@@ -1036,6 +1520,14 @@ def load_candidates():
             store = _users_cache["list"]
         except Exception:
             store = None
+    return store or None
+
+
+_VIBE_MEMO = {"src": None, "out": None}
+
+
+def load_candidates():
+    store = _load_pool_rows()
     if not store:
         # No real people in the store. The demo pool used to stand in here so a fresh system would
         # not look dead — but the stand-ins ARE what a user reads as "mock users", and after the
@@ -1044,7 +1536,15 @@ def load_candidates():
         # reply for exactly that. The fallback is kept one env var away for demos and for the
         # matching owner's own testing: KLEAL_DEMO_FALLBACK=1 restores the old behaviour.
         return CANDIDATES if DEMO_FALLBACK else []
-    store = _fill_vibe(_fill_formats(store))
+    # Настрой зависит только от строк — выводим его раз на версию пула, а не на каждый вызов
+    # (было: 600 строк заново и строка в журнал на каждый поиск). Формат зависит от свежих
+    # интентов и заявок — его по-прежнему дописываем каждый раз.
+    if _VIBE_MEMO["src"] is not store:
+        _VIBE_MEMO.update(src=store, out=_fill_vibe(store))
+    store = _fill_formats(_VIBE_MEMO["out"])
+    # Only the explicitly enrolled KYC canary is filtered; preserve other rows.
+    import age_rollout
+    store = age_rollout.filter_candidates(store)
     if not MERGE_DEMO:
         return store                               # opt-out: store authoritative (original behaviour)
     seen = {str(u.get("name", "")).strip().lower() for u in store}
@@ -1292,7 +1792,7 @@ def parse_intent(q):
     if not q: return ki.validate_and_normalize(_fallback_parse(''))[0]
     try:
         cfg = MODEL_ID
-        raw = llm_complete(cfg, [{"role": "system", "content": PARSE_PROMPT},
+        raw = llm_complete(cfg, [{"role": "system", "content": settings.prompt("matching.parse_intent", PARSE_PROMPT)},
                                   {"role": "user", "content": q}], 0.2)
         obj = base._extract_json(raw)
         if isinstance(obj, dict) and obj.get('topics'):
@@ -1385,22 +1885,77 @@ def _with_km(pool, prof, ctx=None):
     return out
 
 
+# Поля, которые движок читает у ИЩУЩЕГО — прямой ход (`build_features`) и обратный
+# (`matching_core/orchestrator/pipeline.py:_reverse_features`, где профиль подставляется вместо
+# карточки). Приложение шлёт в поиск только семь: имя, возраст, пол, город, широту, долготу, языки.
+_PROF_OWN_FIELDS = ("vibe", "interests", "langs", "formats", "age", "role", "summary")
+
+
+def _is_self(c, self_id="", self_name=""):
+    """Эта карточка — сам ищущий? По id, если он известен (docs/IDENTITY.md); по подписи — только
+    для старого пути без личности. По подписи тёзки исключали друг друга из выдачи навсегда."""
+    if self_id:
+        return str((c or {}).get("id") or "") == str(self_id)
+    return bool(self_name) and str((c or {}).get("name", "")).strip().lower() == self_name
+
+
+def _prof_with_own_row(prof, self_name, self_id=""):
+    """Дополнить профиль ищущего его СОБСТВЕННОЙ карточкой из стора — только пустые поля.
+
+    НАСТРОЯ В ЗАПРОСЕ НЕТ НИКОГДА. `vibe` у человека не хранится вовсе: сервер выводит его из
+    теста характера, когда собирает карточки (`[pool] настрой выведен из теста характера`), и
+    приложению взять его неоткуда. А признак «социальный контекст» (вес 0.15, самый различающий
+    по замеру `tools/weights_probe.py`) сравнивает настрой ищущего с настроем кандидата — и без
+    первого всегда отвечает unknown. Замер 15.09.2026 на боевом сторе, запрос «кофе»: без настроя
+    восемь карточек с ОДНИМ баллом 84.3 на всех; с настроем — 97.4, 97.4, 97.1, 95.4, 83.5. То же
+    с интересами: обратный ход подставляет профиль вместо карточки и видел пустого человека.
+
+    Присланное клиентом ВСЕГДА сильнее: человек мог сменить район, язык или настрой прямо в
+    мастере, и его слово важнее записи в базе. Поэтому заполняем только пустое."""
+    if self_id:
+        row = _person(self_id)             # своя карточка — по id; по имени нашёлся бы тёзка
+    elif not self_name:
+        return prof
+    else:
+        key = _norm_name(self_name)
+        row = next((u for u in load_candidates() if _norm_name(u.get("name")) == key), None)
+    if not row:
+        return prof                      # ищущего нет в сторе (тестовый профиль, гость) — не выдумываем
+    out = dict(prof or {})
+    for k in _PROF_OWN_FIELDS:
+        if not out.get(k) and row.get(k):
+            out[k] = row[k]
+    if not out.get("langs"):             # обратный ход читает `langs`, приложение шлёт `languages.comfortable`
+        comf = (out.get("languages") or {}).get("comfortable") if isinstance(out.get("languages"), dict) else None
+        if comf:
+            out["langs"] = list(comf)
+    return out
+
+
 def _hard_gates(intent, c, gate_ctx):
     """Cheap, deterministic exclusions applied BEFORE scoring. Returns (ok, reason_if_blocked)."""
     if c.get('paused'):                                            return False, 'on a break'
     # `blocked_norm` holds BOTH directions and is case-insensitive: the exact-string check alone
     # missed «marta» vs «Marta», and the one-way check let the blocked person keep seeing you.
+    _bn = gate_ctx.get('blocked_norm') or ()
     if (c['name'] in gate_ctx['blocked'] or c.get('blocksMe')
-            or str(c.get('name', '')).strip().lower() in (gate_ctx.get('blocked_norm') or ())):
+            or str(c.get('name', '')).strip().lower() in _bn
+            or str(c.get('id', '')).strip().lower() in _bn):     # блокировки хранятся по id
         return False, 'blocked'
     d = c.get('declinedOwnerDaysAgo')
     if d is not None and d < COOLDOWN_DAYS:                        return False, 'recently declined (cooldown)'
     if (c.get('pending') or 0) >= MAX_PENDING:                     return False, 'too many open invites'
-    age = c.get('age')
+    # ЧИСЛО, А НЕ ТО, ЧТО ЛЕЖИТ В СТРОКЕ. Анкета принимает `age` любого вида, и одной строки «30»
+    # хватало, чтобы сравнение ниже бросило TypeError внутри ворот. Ошибку ловил общий except
+    # обработчика и отвечал `200 {candidates: []}` — то есть ОДНА кривая строка превращала поиск в
+    # «никого не нашли» для ВСЕХ пользователей разом. `_num` для этого и написан (см. его строку
+    # документации), просто здесь его забыли. Границы диапазона приходят прямо из тела запроса и
+    # падали на том же месте — поэтому приводятся тоже.
+    age = _num(c.get('age'))
     if age is not None and age < MIN_AGE:                          return False, 'under 18'
     if intent.get('type') == 'dating' and not c.get('datingOk'):  return False, 'not open to dating'
     if intent.get('verifiedOnly') and not c.get('verified'):      return False, 'not verified'
-    mn, mx = intent.get('minAge'), intent.get('maxAge')
+    mn, mx = _num(intent.get('minAge')), _num(intent.get('maxAge'))
     if mn or mx:
         if age is None:                                           return False, 'age unknown'
         if mn and age < mn:                                       return False, 'below age range'
@@ -1629,9 +2184,10 @@ def match_candidates_legacy(intent, prof, ctx=None):
     broadOk  = intent.get('broadAllowed', True)
     # the searcher must never match themselves — identify them by name (or uid) and skip that candidate
     self_name = str(ctx.get('self') or prof.get('name') or ctx.get('uid') or '').strip().lower()
+    self_id = str(ctx.get('self_id') or '')
     out = []
     for c in _with_km(load_candidates(), prof, ctx):        # same radius fix as the Core v2 path
-        if self_name and str(c.get('name', '')).strip().lower() == self_name:
+        if _is_self(c, self_id, self_name):
             continue
         # ── 1. HARD GATES ──
         ok, _why = _hard_gates(intent, c, gate_ctx)
@@ -1706,6 +2262,9 @@ def match_candidates_legacy(intent, prof, ctx=None):
                     # никогда не выезжали наружу. `_langs_of` берёт обе формы хранения.
                     "interests": c['interests'], "role": c.get('role'), "dealBreakers": c.get('dealBreakers'),
                     "langs": _langs_of(c) or c.get('langs') or [],
+                    # Сводка о человеке — на карточку вместо разбора совпадения: «общее: coffee,
+                    # совпадает формат» человек и так видит по чипам, а хочет прочитать, кто перед ним.
+                    "summary": str(c.get('summary') or '')[:600],
                     "reasons": reasons, "agree": agree, "note": note, "bucket": bcat})
     out.sort(key=lambda x: (-x['score'], x['name']))
     return _diversify(out)
@@ -1730,17 +2289,22 @@ def _gate_ctx_and_self(ctx, prof=None):
     """Owner session -> (hard-gate context, self-name), shared by match_candidates / _negotiate_precheck /
     explain_match so the eligibility inputs never drift between the real slate and the diagnostic."""
     ctx = ctx or {}
-    sess = _session(ctx.get('uid', 'me'))
+    self_id = str(ctx.get('self_id') or '')
+    # Личные записи ищущего (оценки, чёрный список) — по его id, если он известен.
+    sess = _session(self_id or ctx.get('uid', 'me'))
     self_name = str(ctx.get('self') or (prof or {}).get('name') or ctx.get('uid') or '').strip().lower()
     # _hard_gates compares c['name'] against this set, so it has to hold names as WRITTEN, not
     # normalised — and the reverse direction is stamped onto the candidates as `blocksMe`.
-    blocked = set(sess.get('blocked') or []) | set(ctx.get('blocked') or []) | _blocked_by(self_name)
+    blocked = (set(sess.get('blocked') or []) | set(ctx.get('blocked') or [])
+               | _blocked_by(self_id or self_name))
     # The other direction, resolved ONCE per search rather than per candidate: everyone who has
     # blocked me. Without it the gate depends on a `blocksMe` flag that only the demo pool carries.
-    blocked_me = {k for k, v in _blocks().items() if self_name and self_name in set(v or [])} \
-        if self_name else set()
+    _me_key = _norm_name(self_id) if self_id else self_name
+    blocked_me = {k for k, v in _blocks().items() if _me_key and _me_key in set(v or [])} \
+        if _me_key else set()
     gate_ctx = {'feedback': dict(sess.get('feedback') or {}), 'blocked': blocked,
-                'blocked_norm': {_norm_name(b) for b in blocked} | blocked_me, 'self': self_name}
+                'blocked_norm': {_norm_name(b) for b in blocked} | blocked_me, 'self': self_name,
+                'self_id': str(ctx.get('self_id') or '')}
     return gate_ctx, self_name
 
 
@@ -1854,10 +2418,15 @@ def _stamp_allocation_trace(slate, ctx, cfg):
 
 
 # ---- §7 candidate retrieval: staged budgets + source order (read-only over the sealed scorer) ------------
-# Pilot budgets. Defaults are >> the ~100-user store, so the structured-retrieval cut NEVER bites at pilot
-# scale — the mechanism is present (and would trim a huge pool) but is a no-op today. When it DOES bite it
-# only drops the no-overlap (T5) tail the engine already discards, so the surfaced slate stays byte-identical.
-RETRIEVAL_BUDGET = {"prefilter": 500, "structured": 500}
+# ОТСЕЧКА ДО СКОРИНГА ОБЯЗАНА БЫТЬ ВЫШЕ ПУЛА. Порядок отбора считает `topical()` по реестру интересов
+# (shared/interests.json), а ярус человеку ставит движок по СВОЕМУ канону (matching_core/taxonomy).
+# Словари разные: кого реестр ставит в хвост, того канон может считать T1–T3. При бюджете 500 из ~880
+# допущенных срезалось ДО скоринга: кофе — 1 T1 + 40 T2 + 6 T3, падел — 23 T2 + 8 T3, прогулка —
+# 2 T1 + 98 T3 (замер 30.09.2026), а пополнение канона теряло бы 43–47% новых совпадений. Прежний
+# комментарий обещал, что срез «никогда не кусает» и режет лишь T5: пул перерос бюджет, и обещание
+# стало неправдой. Пока отбор не ранжирует тем же каноном, что и движок, бюджет держится ВЫШЕ
+# допущенного пула (1000 при ~880); вырастет пул — поднять и перемерить задержку.
+RETRIEVAL_BUDGET = {"prefilter": 500, "structured": 1000}
 # §7.2 the seven-stage retrieval pipeline (documented; the deterministic in-memory prefilter is the stdlib
 # stand-in for SQL/PostGIS/H3, and ANN/pgvector recall is infra out of scope — both marked accordingly).
 RETRIEVAL_STAGES = [
@@ -1903,9 +2472,11 @@ _SOURCE_RANK = {1: 0, 2: 1, 5: 2, 0: 3}   # retrieval priority: reciprocal -> di
 def _retrieve(intent, eligible, budget):
     """§7.2 structured-retrieval stage. Labels each eligible candidate with its §7.1 source, orders by
     retrieval priority (reciprocal -> direct interest -> parent/adjacent -> no-overlap tail), and caps at the
-    budget. The ORDER is invisible to the surfaced slate (core_v2.search re-sorts totally); the CAP only ever
-    drops the no-overlap tail that the engine already discards (T5), so the slate is byte-identical for any
-    eligible pool <= budget. Returns (retrieved_pool, source_by_name, stats)."""
+    budget. The ORDER is invisible to the surfaced slate (the engine re-sorts totally). The CAP is NOT
+    tier-safe: the order comes from the registry-based `topical()`, while the engine assigns tiers from its
+    own canon, so a cut below the eligible pool can drop people the engine would score T1-T3 (measured
+    30.09.2026, see RETRIEVAL_BUDGET). The slate is byte-identical only while the eligible pool <= budget.
+    Returns (retrieved_pool, source_by_name, stats)."""
     topics = [str(t).lower() for t in (intent.get("topics") or [])]
     # МОСТ ТЕМ: сторона запроса разбирается ЗДЕСЬ, на входе в отбор, и только для новых слов.
     # Интересы популяции разобраны заранее, а слово запроса может быть таким, какого нет ни у кого
@@ -2031,14 +2602,23 @@ def _stamp_photo(cards):
 
     The value is a short URL, never image bytes: users.json is re-read and held in memory to rank
     with, and a slate carrying base64 avatars would put the photo album on every search response."""
-    by_name = _photo_by_name()
-    if not by_name:
-        return cards
+    by_name = None
     for c in cards or []:
         if isinstance(c, dict) and not c.get("photo"):
-            ph = by_name.get(str(c.get("name", "")).strip().lower())
+            # По id карточки: у тёзок разные лица. По подписи — только карточка без id (демо).
+            ph = _photo_of(c.get("id")) if c.get("id") else None
+            if not ph and not c.get("id"):
+                by_name = by_name if by_name is not None else _photo_by_name()
+                ph = by_name.get(str(c.get("name", "")).strip().lower())
             if ph:
                 c["photo"] = ph
+        # Пояс — рядом с лицом и по той же причине «в одном месте» (борд 1:1 · Online, 11.10.2026):
+        # «19:30 Barcelona · 18:30 London» нужно ДО плана, в выдаче. Нового не раскрывает: город
+        # человека в карточке уже есть.
+        if isinstance(c, dict) and c.get("id") and not c.get("tz"):
+            tz = _tz_of(c.get("id"))
+            if tz:
+                c["tz"] = tz
     return cards
 
 
@@ -2133,16 +2713,14 @@ def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
     if not CORE_V2:
         return _persona_order(match_candidates_legacy(intent, prof, ctx), intent)
     ctx = ctx or {}
-    # РЕЖИМ ЗАПОМИНАЕМ ДО НОРМАЛИЗАЦИИ. Она знает только offline и online и всё прочее сводит к
-    # offline (kleal_intent.MODE_ALLOWLIST) — а проверка на hybrid стоит на шестьдесят строк ниже
-    # и потому не могла стать истинной НИ РАЗУ: гибридный режим молча работал как офлайн.
-    _asked_mode = str((intent or {}).get("mode") or "").strip().lower()
     intent = ki.normalize_for_scoring(intent)              # §5: untrusted-output hardening (idempotent; PARITY)
     now = ctx.get('now') or time.time()
     if kc.is_expired(intent, now):                         # §4.3 Lifecycle: an expired intent never ranks
         return []
     intent = kc.compile_intent(intent, _intent_identity(intent), ctx, now)  # §4.3 canonical blocks + TTL
     gate_ctx, self_name = _gate_ctx_and_self(ctx, prof)
+    self_id = gate_ctx.get('self_id') or ''
+    prof = _prof_with_own_row(prof, self_name, self_id)     # настрой и интересы — из карточки ищущего
     eligible, policy_by = [], {}                            # ALLOW + REVIEW are both discoverable (§8/§0)
     _pool = _with_km(load_candidates(), prof, ctx)          # distance must exist before the radius gate
     if diag is not None:
@@ -2151,7 +2729,7 @@ def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
         diag['self'] = 0
         diag['review'] = 0
     for c in _pool:
-        if self_name and str(c.get('name', '')).strip().lower() == self_name:
+        if _is_self(c, self_id, self_name):
             if diag is not None:
                 diag['self'] += 1
             continue                                       # the searcher never matches themselves
@@ -2201,7 +2779,7 @@ def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
         except (TypeError, ValueError):
             want_n = None
     over = None if n_final is not None else max(_PERSONA_OVERFETCH, (want_n or 0) + 8)
-    hybrid = _asked_mode == 'hybrid' and over is not None
+    hybrid = str(intent.get('mode') or '') == 'hybrid' and over is not None
     if hybrid:
         near, far, _meta = _hybrid_pair(intent, prof, ctx, eligible, budget, over)
         if not near and not far and eligible:
@@ -2213,8 +2791,12 @@ def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
     else:
         slate, _meta = _core.search(intent, prof or {}, ctx, retrieved, _H, _CORE_CFG,
                                     top_n=(over if over is not None else n_final))
-        if not slate and eligible:                         # never dead-end while anyone is eligible (§12) —
-            slate = _expand_fallback(intent, prof or {}, ctx, eligible)  # over the FULL pool, never budget-starved
+        if len(slate) < _MIN_FOUND and eligible:          # never dead-end while anyone is eligible (§12) —
+            # Не только пусто: меньше трёх человек — тоже тупик для того, кто пришёл найти людей (02.10.2026).
+            # Найденные остаются первыми, запасные ступени дописываются после них.
+            have = {_card_key(c) for c in slate}
+            slate = slate + [c for c in _expand_fallback(intent, prof or {}, ctx, eligible)  # FULL pool
+                             if _card_key(c) not in have]
         slate = _persona_order(slate, intent)
         if over is not None:
             slate = slate[:(want_n or _core.TOP_N)]        # без `want` — ровно та же восьмёрка
@@ -2297,16 +2879,16 @@ def _hybrid_merge(near, far, n_final, lang_note=True):
 _PERSONA_OVERFETCH = 24
 
 _NATURE_SAY = {
-    ("energy", "energised"):   ("заводной", "high-energy"),
-    ("energy", "drained"):     ("спокойный", "low-key"),
-    ("depth", "deep"):         ("говорит по душам", "goes deep"),
-    ("depth", "light"):        ("лёгкий, с юмором", "light and funny"),
-    ("pace", "fast"):          ("открывается сразу", "opens up fast"),
-    ("pace", "slow"):          ("сначала присматривается", "takes their time"),
-    ("planning", "advance"):   ("договаривается заранее", "plans ahead"),
-    ("planning", "spontaneous"): ("спонтанный", "spontaneous"),
-    ("give", "listen"):        ("умеет слушать", "a good listener"),
-    ("give", "instigate"):     ("вытащит из дома", "gets you out"),
+    ("energy", "energised"):   ("заводной", "high-energy", "con energía"),
+    ("energy", "drained"):     ("спокойный", "low-key", "tranquilo"),
+    ("depth", "deep"):         ("говорит по душам", "goes deep", "habla a fondo"),
+    ("depth", "light"):        ("лёгкий, с юмором", "light and funny", "ligero, con humor"),
+    ("pace", "fast"):          ("открывается сразу", "opens up fast", "se abre enseguida"),
+    ("pace", "slow"):          ("сначала присматривается", "takes their time", "se lo toma con calma"),
+    ("planning", "advance"):   ("договаривается заранее", "plans ahead", "queda con antelación"),
+    ("planning", "spontaneous"): ("спонтанный", "spontaneous", "espontáneo"),
+    ("give", "listen"):        ("умеет слушать", "a good listener", "sabe escuchar"),
+    ("give", "instigate"):     ("вытащит из дома", "gets you out", "te saca de casa"),
 }
 
 
@@ -2380,6 +2962,7 @@ def _persona_order(slate, intent):
                 continue
             c.setdefault("reasons_ru", []).append("%s — как ты и хочешь" % say[0])
             c.setdefault("reasons_en", []).append("%s — as you asked" % say[1])
+            c.setdefault("reasons_es", []).append("%s — como pediste" % say[2])
         tier = _TIER_ORDER.get(str(c.get("tier") or ""), 9)
         keyed.append((tier, bands[band], -len(hits), 0 if filled else 1, i, c))
     keyed.sort(key=lambda t: t[:5])
@@ -2558,6 +3141,31 @@ def _tag_ladder(cards):
             c.setdefault("ladder_relaxes", row.get("relaxes"))
     return cards
 
+_MIN_FOUND = 3          # меньше — запасные ступени лестницы (§12): шире, близкие по смыслу, похожие люди
+# Темы, по которым «похожих людей» не подставляем никогда: выдача пустая честно (свидания идут своим типом).
+_NO_SUBSTITUTE = re.compile(r"наркот|травк|марихуан|кокаин|закладк|\bdrugs?\b|\bweed\b|cannabis|cocaine|"
+                            r"\bdrogas?\b|\bporros?\b|секс|интим|\bsex\b|nudes|porn", re.I)
+
+
+def _card_key(c):
+    return str(c.get("name") or c.get("id") or "").strip().lower()
+
+
+def _meaning_of(topics, c):
+    """(сходство, интерес) — ближайший по смыслу интерес человека к словам запроса (файл meaning_near)."""
+    from matching_core.taxonomy import canonical as _canon
+    best = (0.0, "")
+    for t in topics or []:
+        for x in c.get("interests") or []:
+            try:
+                s = _canon.meaning_score(t, x)
+            except Exception:
+                s = 0.0
+            if s > best[0]:
+                best = (s, str(x))
+    return best
+
+
 def _expand_fallback(intent, prof, ctx, eligible):
     """§12 controlled expansion — a search must never dead-end. Over the SAME hard-gate-eligible pool
     (eligibility/safety gates are NEVER relaxed): (1) re-score with adjacent tiers allowed and the
@@ -2574,9 +3182,17 @@ def _expand_fallback(intent, prof, ctx, eligible):
             c["note"] = "Broader match — a wider or adjacent category"
         return _tag_ladder(slate)                          # §12.2 tag with the ladder step (2 adjacent / 3 parent)
     # (2) no topical overlap anywhere -> nearest available eligible people, marked as a different category
+    topics = [str(t) for t in (intent.get("topics") or [])]
+    if any(_NO_SUBSTITUTE.search(t) for t in topics + [str(intent.get("title") or "")]):
+        return []                                          # запрещённая тема: людей «вместо» не подставляем
     now_ts = (ctx or {}).get("now") or time.time()
+    # Сначала — у кого интересы ближе к запросу по смыслу (сходство ≥0.55, ступенями по 0.05), потом открытые и
+    # ближние. Раньше первым был ближайший: анкеты с координатами «центр города» стояли в 0 км от любого ищущего
+    # и выходили первыми на любой запрос (02.10.2026).
+    sem = {id(c): _meaning_of(topics, c) for c in eligible}
     avail = sorted((c for c in eligible if not _core.is_paused(c, now_ts)),
-                   key=lambda c: (0 if c.get("open") else 1,
+                   key=lambda c: (-(int(sem[id(c)][0] * 20) if sem[id(c)][0] >= 0.55 else 0),
+                                  0 if c.get("open") else 1,
                                   float(c["km"]) if isinstance(c.get("km"), (int, float)) else 99.0,
                                   str(c.get("name") or "")))
     domain = _core.infer_domain(intent, cat_of)
@@ -2588,18 +3204,32 @@ def _expand_fallback(intent, prof, ctx, eligible):
             "km": c.get("km"), "vibe": c.get("vibe"), "open": c.get("open"),
             "verified": c.get("verified"), "age": c.get("age"), "interests": ints,
             "langs": _langs_of(c) or c.get("langs") or [],
+            "summary": str(c.get("summary") or "")[:600],
             "role": c.get("role"), "dealBreakers": c.get("dealBreakers"),
             "reasons": ["different interests — a broader suggestion"], "agree": False,
             "note": "Broader suggestion — a different category (no direct match right now)",
             "bucket": (cat_of(ints[0])[0] if ints else "other"),
             "band": "needs_clarification", "band_ru": "Нужно уточнение", "band_en": "Needs clarification",
+            "band_es": "Necesita aclaración",
             "reasons_ru": ["другие интересы — более широкий вариант"],
             "reasons_en": ["different interests — a broader suggestion"], "gap_ru": None, "gap_en": None,
+            "reasons_es": ["otros intereses — una opción más amplia"], "gap_es": None,
             "coverage": 0.0, "lcb": 0.0, "reciprocal": 0.0, "unknowns": [], "can_outreach": False,
             "readiness": "unknown", "readiness_ru": "доступность не настроена",
-            "readiness_en": "availability not set", "fallback": "alternative",
+            "readiness_en": "availability not set", "readiness_es": "disponibilidad sin configurar",
+            "fallback": "alternative",
             "trace": {"tier": "T4", "policy": "ALLOW", "domain": domain, "fallback": "alternative"},
         })
+    # Честная подпись: у кого есть интерес, близкий по смыслу, — какой именно; у остальных «другие интересы».
+    by = {str(c.get("name")): sem[id(c)] for c in avail[:_core.TOP_N]}
+    for o in out:
+        sc, x = by.get(str(o.get("name")), (0.0, ""))
+        if sc >= 0.55 and x:
+            o["reasons_ru"] = ["ближе всего к запросу: %s" % x]
+            o["reasons_en"] = o["reasons"] = ["closest to your request: %s" % x]
+            o["reasons_es"] = ["lo más cercano a tu búsqueda: %s" % x]
+            o["fallback"] = "similar"
+            o["note"] = "Similar interests — nobody named this exact activity yet"
     return _tag_ladder(out)                                 # §12.2 tag the alternative cards with the ladder step
 
 def _expand_stepwise(intent, prof, ctx, eligible, min_cards=1):
@@ -2679,7 +3309,7 @@ def agent_intro(intent, cand):
         intent.get('title', 'a meetup'), topics, ', '.join(cand.get('interests') or []), cand.get('vibe', ''))
     try:
         cfg = MODEL_ID
-        raw = llm_complete(cfg, [{"role": "system", "content": INTRO_PROMPT}, {"role": "user", "content": ctx}], 0.6)
+        raw = llm_complete(cfg, [{"role": "system", "content": settings.prompt("matching.intro", INTRO_PROMPT)}, {"role": "user", "content": ctx}], 0.6)
         obj = base._extract_json(raw)
         if isinstance(obj, dict) and obj.get('opener'):
             return {"reply": str(obj.get('reply', ''))[:200], "opener": str(obj.get('opener', ''))[:200]}
@@ -2710,7 +3340,7 @@ def negotiate_one(intent, cand):
             ', '.join(cand.get('interests') or []) or 'unknown', cand.get('vibe', ''),
             ', '.join(cand.get('dealBreakers') or []) or 'none')
         try:
-            o = base._extract_json(llm_complete(MODEL_ID, [{"role": "system", "content": NEGOTIATE_PROMPT},
+            o = base._extract_json(llm_complete(MODEL_ID, [{"role": "system", "content": settings.prompt("matching.negotiate", NEGOTIATE_PROMPT)},
                                                             {"role": "user", "content": a + "\n" + b}], 0.4))
             if isinstance(o, dict) and o.get('reply'):
                 reply = str(o.get('reply'))[:200]   # phrasing ONLY — never flips the deterministic verdict
@@ -3235,7 +3865,7 @@ def _public_intents(candidate):
 
 
 def _saved_public_intents():
-    """Yield persisted intents with their owner, preserving only stored facts."""
+    """Yield persisted intents with their owner (подпись, id), preserving only stored facts."""
     for row in list(SESSION.get("_intents") or []):
         if not isinstance(row, dict):
             continue
@@ -3251,7 +3881,7 @@ def _saved_public_intents():
         if row.get("status"):
             intent.setdefault("status", row.get("status"))
         for public_intent, topics in _public_intents({"intents": [intent]}):
-            yield owner, public_intent, topics
+            yield owner, str(row.get("owner_id") or ""), public_intent, topics
 
 
 def _viewer_candidate(profile):
@@ -3293,9 +3923,9 @@ def _potential_fit(intent, topics, viewer):
     return True
 
 
-def explore_plans(limit=12, self_name="", viewer_profile=None):
+def explore_plans(limit=12, self_name="", viewer_profile=None, self_id=""):
     sn = str(self_name or "").strip().lower()
-    users = [c for c in load_candidates() if not (sn and str(c.get("name", "")).strip().lower() == sn)]
+    users = [c for c in load_candidates() if not _is_self(c, self_id, sn)]
     # Seed users exist only to keep matching non-empty. They are never public content.
     ordered = [c for c in users if c.get("source") == "onboarding"]
     owners = {
@@ -3315,6 +3945,9 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
         intent_id = intent.get("id") or intent.get("intent_id")
         if intent_id and intent_id in seen:
             return
+        # Свидание в открытую витрину не попадает — то же правило, что у ленты карты (imf.is_dating).
+        if imf.is_dating(intent):
+            return
         if _core.is_paused(c) or c.get("open") is False:
             return
         if viewer is not None and not _potential_fit(intent, topics, viewer):
@@ -3324,6 +3957,8 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
             "intentId": intent_id,
             "title": intent.get("title") or ENTITY_MAP.get(topics[0]) or (topics[0].capitalize() + " meetup"),
             "who": c.get("name") or "Someone",
+            # id автора: отклик на затею зовёт его по id — у тёзок подписи равны (docs/IDENTITY.md)
+            "who_id": str(c.get("id") or ""),
             "age": c.get("age"),
             "topics": topics,
             "role": intent.get("role") or "meet",
@@ -3331,7 +3966,8 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
             "area": intent.get("area") or intent.get("place") or c.get("city") or "",
             "verified": bool(c.get("verified")),
         }
-        photo = c.get("photo") or photos.get(str(c.get("name") or "").strip().lower())
+        photo = c.get("photo") or (_photo_of(c.get("id")) if c.get("id") else
+                                   photos.get(str(c.get("name") or "").strip().lower()))
         if photo:
             plan["photo"] = photo
         if km is not None:
@@ -3367,11 +4003,15 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
         for intent, topics in _public_intents(c):
             append_plan(c, intent, topics)
 
-    for owner, intent, topics in _saved_public_intents():
+    by_id = {str(c.get("id")): c for c in ordered if c.get("id")}
+    for owner, owner_id, intent, topics in _saved_public_intents():
         owner_key = owner.lower()
-        if sn and owner_key == sn:
+        if self_id and owner_id:
+            if owner_id == self_id:
+                continue
+        elif sn and owner_key == sn:
             continue
-        candidate = owners.get(owner_key) or {
+        candidate = (by_id.get(owner_id) if owner_id else owners.get(owner_key)) or {
             "name": owner,
             "source": "saved_intent",
             "open": True,
@@ -3387,11 +4027,16 @@ def explore_plans(limit=12, self_name="", viewer_profile=None):
 
 
 # ---------------------------------------------------------------- Map feed: two privacy-distinct intent projections
-def map_feed_payload(view="offline", self_name="", limit=60):
+def map_feed_payload(view="offline", self_name="", limit=60, self_id=""):
     users = load_candidates()
+    _ensure_intent_owner_ids()
+    # У группы `owner` — id организатора; ленте нужна подпись и id отдельно.
+    gis = [dict(g, owner=_display(g.get("owner"), str(g.get("owner") or "")),
+                owner_id=_canon_pid(g.get("owner")))
+           for g in (SESSION.get("_gintents") or []) if isinstance(g, dict)]
     return imf.build_feed(
-        imf.collect_sources(users, SESSION.get("_intents") or [], SESSION.get("_gintents") or [],
-                            self_name=self_name),
+        imf.collect_sources(users, SESSION.get("_intents") or [], gis,
+                            self_name=self_name, self_id=self_id),
         view=view,
         limit=limit,
         geocoder=_MAP_GEOCODER,
@@ -3399,8 +4044,8 @@ def map_feed_payload(view="offline", self_name="", limit=60):
     )
 
 
-def _prepare_map_intent(owner, intent):
-    profile = imf.owner_profile_for(load_candidates(), owner)
+def _prepare_map_intent(owner, intent, owner_id=""):
+    profile = imf.owner_profile_for(load_candidates(), owner, owner_id)
     return imf.prepare_persisted_intent(intent, profile, _MAP_GEOCODER)
 
 
@@ -3428,6 +4073,7 @@ def _explain_match_engine(intent, prof, ctx=None):
     snap_id = _intent_identity(intent)["intent_id"]      # scope for per-feature Evidence (§4.1)
     received24 = ctx.get("received24") or _proposals_received_24h()
     gate_ctx, self_name = _gate_ctx_and_self(ctx, prof)
+    prof = _prof_with_own_row(prof, self_name, gate_ctx.get('self_id') or '')  # разбор = выдача
 
     def _feats(F):
         tw = sum(float(W.get(k, 0) or 0) for k in _core.FEATURE_KEYS if F.get(k, (None,))[0] != _core.NA)
@@ -3445,8 +4091,11 @@ def _explain_match_engine(intent, prof, ctx=None):
     pool = load_candidates()
     for c in pool:
         nm = c.get("name")
+        # Ключ счётчика приглашений за сутки — тот же, что у боевого подбора (`received24` строится
+        # по нормализованной подписи). Без этой строки разбор выдачи падал NameError на первом же
+        # кандидате, прошедшем фильтры (аудит 27.09.2026).
         nm_key = str(nm or "").strip().lower()
-        if self_name and nm_key == self_name:
+        if _is_self(c, gate_ctx.get("self_id") or "", self_name):
             excluded.append({"name": nm, "gate": "self", "reason": "the searcher (you)"}); continue
         decision, why = _policy_decision(intent, c, gate_ctx)     # BLOCK / REVIEW / ALLOW (§0 output table)
         if decision == "BLOCK":
@@ -3606,6 +4255,24 @@ def _invite_ttl(intent, now=None):
 def _requests():
     return SESSION.setdefault("_requests", [])
 
+
+# ВЫБОР ИЗ ОТВЕТИВШИХ — борд «1:1 · Offline — new layout», раздел A (OF.12d–16, C1a, N1, N2),
+# решение владельца 11.10.2026. «Да» приглашённого больше не открывает чат и не гасит соседей:
+# заявка становится `answered` («ответил, ждёт выбора»), организатор выбирает одного
+# (`pick_request`), тот получает обычное `accepted`, остальным по этой затее — `not_picked`
+# («не в этот раз»). Открытая заявка — та, по которой ещё может что-то произойти.
+REQ_OPEN = ("pending", "answered")
+
+
+def _req_same_intent(a, b):
+    """Две заявки одного отправителя — про одну затею? По `iid`, а где его нет хотя бы у одной —
+    по названию (так же сверяет клиент, src/invites.ts sameIntent, и mp_alternatives)."""
+    ia, ib = str(a.get("iid") or "").strip(), str(b.get("iid") or "").strip()
+    if ia and ib:
+        return ia == ib
+    ta = _norm_name((a.get("intent") or {}).get("title"))
+    return bool(ta) and ta == _norm_name((b.get("intent") or {}).get("title"))
+
 def _expire_due(now=None):
     """Mark overdue proposals EXPIRED. Called on every read and before every write, so an expired
     proposal can never be accepted (acceptance test #9)."""
@@ -3616,6 +4283,15 @@ def _expire_due(now=None):
             r["status"] = "expired"
             r["updated"] = now
             r["version"] = int(r.get("version") or 1) + 1
+            changed = True
+        # Организатор не выбрал до срока (`pick_by`): заявка ответившего закрывается БЕЗ последствий
+        # для обоих — то же правило молчания, что у плана (06.10.2026). Причина отличима от «не
+        # ответил приглашённый»: trace.reason = host_silent.
+        elif r.get("status") == "answered" and (r.get("pick_by") or 0) and now > r["pick_by"]:
+            r["status"] = "expired"
+            r["updated"] = now
+            r["version"] = int(r.get("version") or 1) + 1
+            r["trace"] = {"decision": "expired", "at": now, "reason": "host_silent"}
             changed = True
     return changed
 
@@ -3655,6 +4331,22 @@ def _blocked_pair(a, b):
     bl = SESSION.get("_blocks") or {}
     return nb in set(bl.get(na) or []) or na in set(bl.get(nb) or [])
 
+def _chat_exists(a, b):
+    """Есть ли у этих двоих переписка: принятая заявка или хоть одна реплика в их ленте.
+
+    Нужно, чтобы отличить ПЕРВОЕ приглашение от второго. У первого вся переписка и есть затея —
+    событие о ней было бы пересказом самой ленты, в которой пока ничего нет. У второго иначе: чат
+    уже живёт своей жизнью, и новая затея, не оставив следа, исчезает бесследно.
+    """
+    na, nb = _norm_name(a), _norm_name(b)
+    for r in _requests():
+        if (r.get("status") == "accepted"
+                and {_norm_name(r.get("from")), _norm_name(r.get("to"))} == {na, nb}):
+            return True
+    key = _pair_key(a, b)
+    return any(m.get("pair") == key for m in _messages())
+
+
 def propose(frm, to, intent, note, idem=None):
     frm, to = str(frm or "").strip(), str(to or "").strip()
     if not frm or not to or _norm_name(frm) == _norm_name(to):
@@ -3668,6 +4360,14 @@ def propose(frm, to, intent, note, idem=None):
     with _STORE_LOCK:
         _expire_due(now)
         rs = _requests()
+        # Человек уже сказал «да» на эту затею и ждёт выбора — повторная отправка ничего не меняет:
+        # сбросить его ответ молча было бы хуже, чем честно вернуть то, что есть.
+        probe = {"iid": str((intent or {}).get("id") or "")[:64], "intent": intent or {}}
+        for r in rs:
+            if (r.get("status") == "answered" and _norm_name(r.get("from")) == _norm_name(frm)
+                    and _norm_name(r.get("to")) == _norm_name(to) and _req_same_intent(r, probe)):
+                return _idem_put(idem, {"ok": True, "id": r["id"], "status": "answered",
+                                        "version": r.get("version"), "pick_by": r.get("pick_by")})
         # one open proposal per pair per direction — re-sending updates it rather than stacking
         for r in rs:
             if (_norm_name(r.get("from")) == _norm_name(frm) and _norm_name(r.get("to")) == _norm_name(to)
@@ -3693,6 +4393,18 @@ def propose(frm, to, intent, note, idem=None):
                    "note": str(note or "")[:400], "status": "pending", "created": now, "updated": now,
                    "version": 1, "expires_at": now + _invite_ttl(intent, now),
                    "config_version": (_CORE_CFG or {}).get("config_version")})   # immutable trace stamp
+        # НОВАЯ ЗАТЕЯ К ТОМУ, С КЕМ УЖЕ ГОВОРИМ, ОБЯЗАНА ОСТАВИТЬ СЛЕД В ЛЕНТЕ.
+        #
+        # Снято живым опытом на этом же сервере: у пары встреча по первой затее, приходит вторая —
+        # и в переписке не меняется НИЧЕГО. Закреплённая полоса сверху занята планом (так и надо:
+        # встреча важнее), а другого входа в карточку затеи с этого экрана нет вовсе — полоса либо
+        # план, либо затея, третьего не бывает. Человек ищет новую затею и не находит её нигде.
+        #
+        # Событие несёт КОД и заголовок, а не готовую фразу: двое могут читать приложение на разных
+        # языках, и русская строка, собранная здесь, приедет на английский экран (см. _sys_msg).
+        if _chat_exists(frm, to):
+            _sys_msg(frm, to, "intent_new",
+                     title=str((intent or {}).get("title") or "")[:80], rid=rid)
     _save_store()
     _log_proposal(to)                       # feeds the receiving-policy budget, spec 4.4
     # Срок берём ИЗ ЗАПИСИ, а не считаем второй раз. Здесь стоял свой литерал `now +
@@ -3705,13 +4417,15 @@ def propose(frm, to, intent, note, idem=None):
 def _with_photos(rows, name_key):
     """Attach the photo of the person named under `name_key` — an invitation and a message thread are
     both a PERSON, and a row that knows only their name renders a blank circle beside it."""
-    by = _photo_by_name()
-    if by:
-        for r in rows or []:
-            if isinstance(r, dict) and not r.get("photo"):
-                ph = by.get(str(r.get(name_key) or "").strip().lower())
-                if ph:
-                    r["photo"] = ph
+    for r in rows or []:
+        if isinstance(r, dict) and not r.get("photo"):
+            ph = _photo_of(r.get(name_key))          # в поле лежит id человека — фото по нему
+            if ph:
+                r["photo"] = ph
+        if isinstance(r, dict) and not r.get("tz"):
+            tz = _tz_of(r.get(name_key))             # пояс того же человека — для времени на приглашении
+            if tz:
+                r["tz"] = tz
     return rows
 
 
@@ -3787,10 +4501,8 @@ def _policy_ok_now(frm, to, blocked=None):
     """Re-resolve BOTH sides against the live store and re-run the hard gates. Returns (ok, reason).
     Safe to call while _STORE_LOCK is held: load_candidates() and plain SESSION reads never take it
     (_session() does — calling that here would deadlock on the non-reentrant lock)."""
-    by = {}
-    for c in load_candidates():
-        by[_norm_name(c.get("name"))] = c
-    a, b = by.get(_norm_name(frm)), by.get(_norm_name(to))
+    # Обе стороны — по id: по имени нашёлся бы тёзка, и проверка допуска считалась бы не для того.
+    a, b = _person(frm), _person(to)
     if not a or not b:
         return True, ""                                  # unknown to the store: nothing to revoke on
     if b.get("open") is False or b.get("paused"):
@@ -3809,7 +4521,7 @@ def _policy_ok_now(frm, to, blocked=None):
             return False, "%s under %d" % (tag, MIN_AGE)
     return True, ""
 
-def respond(rid, decision, who, idem=None, version=None):
+def respond(rid, decision, who, idem=None, version=None, flow=None):
     """Accept/decline INSIDE one transaction that re-checks expiry, version and LIVE policy (§14.2).
     Before this, policy was validated only when SENDING: if the recipient paused, blocked the sender
     or closed the domain between SENT and ACCEPT, the accept still went through."""
@@ -3823,12 +4535,26 @@ def respond(rid, decision, who, idem=None, version=None):
         for r in _requests():
             if r.get("id") != rid:
                 continue
-            if who and _norm_name(who) != _norm_name(r.get("to")):
+            # Без имени — отказ. Раньше отсутствие имени означало «проверять нечего».
+            if not who or _norm_name(who) != _norm_name(r.get("to")):
                 return {"ok": False, "error": "only the recipient can answer this request"}
             st = r.get("status")
             if st == "expired":
                 _save_store()
                 return _idem_put(idem, {"ok": False, "error": "EXPIRED", "id": rid, "status": "expired"})
+            if st == "answered":
+                # C1a: ответивший «да» ждёт выбора и до выбора может передумать. Повторное «да» —
+                # тот же ответ, а не ошибка.
+                if dec == "accepted":
+                    return _idem_put(idem, {"ok": True, "id": rid, "status": "answered",
+                                            "version": r.get("version"), "pick_by": r.get("pick_by")})
+                r["status"] = "declined"
+                r["updated"] = now
+                r["version"] = int(r.get("version") or 1) + 1
+                r["trace"] = {"decision": "declined", "at": now, "by": who, "reason": "changed_mind"}
+                _save_store()
+                return _idem_put(idem, {"ok": True, "id": rid, "status": "declined",
+                                        "version": r["version"], "withdrawn": []})
             if st != "pending":
                 # already settled: report the settled state, never flip it (concurrent-accept, §14.3)
                 return _idem_put(idem, {"ok": False, "error": "ALREADY_RESOLVED", "id": rid,
@@ -3849,6 +4575,22 @@ def respond(rid, decision, who, idem=None, version=None):
                     _save_store()
                     return _idem_put(idem, {"ok": False, "error": "POLICY_CHANGED", "id": rid,
                                             "status": "policy_revoked", "reason": why})
+            if dec == "accepted" and str(flow or "").strip().lower() == "pick":
+                # «ДА» = «ОТВЕТИЛ, ЖДЁТ ВЫБОРА». Чат не открывается (он держится на `accepted`),
+                # соседи не гасятся — выбирает организатор. Включается признаком `flow: "pick"` от
+                # нового клиента: старый клиент без признака идёт прежним путём «первое да», иначе
+                # между выкладками сервера и приложения согласие вело бы в никуда.
+                r["status"] = "answered"
+                r["updated"] = now
+                r["answered_at"] = now
+                r["pick_by"] = now + _invite_ttl(r.get("intent"), now)
+                r["version"] = int(r.get("version") or 1) + 1
+                r["trace"] = {"decision": "answered", "at": now, "by": who,
+                              "config_version": r.get("config_version")}
+                _save_store()
+                return _idem_put(idem, {"ok": True, "id": rid, "status": "answered",
+                                        "version": r["version"], "pick_by": r["pick_by"],
+                                        "withdrawn": []})
             r["status"] = dec
             r["updated"] = now
             r["version"] = int(r.get("version") or 1) + 1
@@ -3865,10 +4607,23 @@ def respond(rid, decision, who, idem=None, version=None):
             # считаются иначе, там несколько «да» — норма.
             withdrawn = []
             if dec == "accepted":
+                # ...НО ТОЛЬКО ПО ТОЙ ЖЕ ЗАТЕЕ. «Место занято» имеет смысл лишь для одного и того
+                # же вечера. Цикл сравнивал одного отправителя — и всё: Иван зовёт Аню на кофе во
+                # вторник и Борю на пробежку в субботу, Аня говорит «да» — и приглашение Бори
+                # исчезает с пометкой «место занято», хотя это другая затея и другой день. Никто
+                # из троих об этом не узнаёт: у Бори строка пропадает из ленты, у Ивана — из его
+                # интентов. Воспроизведено в памяти 7 сентября 2026 (/tmp/test_withdraw.py).
+                #
+                # `iid` пишется в заявку ровно для этого (см. propose). У старых заявок его нет —
+                # их НЕ гасим: не доказано, что это то же место, а отнять приглашение молча хуже,
+                # чем оставить гонку двух «да», которую видно хотя бы в чате.
+                mine = str(r.get("iid") or "")
                 for other in _requests():
-                    if other is r or other.get("status") != "pending":
+                    if other is r or other.get("status") not in REQ_OPEN:
                         continue
                     if _norm_name(other.get("from")) != _norm_name(r.get("from")):
+                        continue
+                    if not mine or str(other.get("iid") or "") != mine:
                         continue
                     other["status"] = "withdrawn"
                     other["updated"] = now
@@ -3882,6 +4637,67 @@ def respond(rid, decision, who, idem=None, version=None):
                                     "withdrawn": withdrawn})
     return {"ok": False, "error": "not found"}
 
+def pick_request(rid, who, idem=None):
+    """Организатор выбирает ОДНОГО из ответивших «да» (OF.14a–16). Только отправитель заявки.
+
+    Выбранный получает обычное `accepted` — дальше всё как после согласия: чат, план. Остальные
+    открытые заявки этого отправителя по ТОЙ ЖЕ затее (и ответившие, и ещё молчащие) закрываются
+    как `not_picked` с причиной `picked_other` — «не в этот раз» (N2). Это не `withdrawn`:
+    отозванное приглашение получателю не показывается вовсе, а здесь он обязан увидеть исход."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    with _STORE_LOCK:
+        now = time.time()
+        _expire_due(now)
+        for r in _requests():
+            if r.get("id") != rid:
+                continue
+            if not who or _norm_name(who) != _norm_name(r.get("from")):
+                return {"ok": False, "error": "only the sender can pick"}
+            st = r.get("status")
+            if st == "pending":
+                return _idem_put(idem, {"ok": False, "error": "NOT_ANSWERED", "id": rid, "status": st})
+            if st != "answered":
+                if st == "expired":
+                    _save_store()
+                return _idem_put(idem, {"ok": False, "error": "ALREADY_RESOLVED", "id": rid,
+                                        "status": st, "version": r.get("version")})
+            # Согласие дано раньше — допуск перепроверяем сейчас, как при обычном accept (§14.2).
+            ok, why = _policy_ok_now(r.get("from"), r.get("to"), ())
+            if not ok or _blocked_pair(r.get("from"), r.get("to")):
+                r["status"] = "policy_revoked"
+                r["updated"] = now
+                r["version"] = int(r.get("version") or 1) + 1
+                r["trace"] = {"decision": "policy_revoked", "at": now, "reason": why or "blocked"}
+                _save_store()
+                return _idem_put(idem, {"ok": False, "error": "POLICY_CHANGED", "id": rid,
+                                        "status": "policy_revoked", "reason": why or "blocked"})
+            r["status"] = "accepted"
+            r["updated"] = now
+            r["picked_at"] = now
+            r["version"] = int(r.get("version") or 1) + 1
+            r["trace"] = {"decision": "accepted", "at": now, "by": r.get("to"), "picked_by": who,
+                          "config_version": r.get("config_version")}
+            closed = []
+            for other in _requests():
+                if other is r or other.get("status") not in REQ_OPEN:
+                    continue
+                if _norm_name(other.get("from")) != _norm_name(r.get("from")):
+                    continue
+                if not _req_same_intent(other, r):
+                    continue
+                other["status"] = "not_picked"
+                other["updated"] = now
+                other["version"] = int(other.get("version") or 1) + 1
+                other["trace"] = {"decision": "not_picked", "at": now, "reason": "picked_other"}
+                closed.append(other.get("id"))
+            _save_store()
+            return _idem_put(idem, {"ok": True, "id": rid, "status": "accepted",
+                                    "version": r["version"], "closed": closed})
+    return {"ok": False, "error": "not found"}
+
+
 def withdraw_request(rid, who, idem=None):
     """The SENDER pulls a proposal back before it is answered (§14.1 WITHDRAWN)."""
     cached = _idem_get(idem)
@@ -3892,9 +4708,10 @@ def withdraw_request(rid, who, idem=None):
         for r in _requests():
             if r.get("id") != rid:
                 continue
-            if who and _norm_name(who) != _norm_name(r.get("from")):
+            if not who or _norm_name(who) != _norm_name(r.get("from")):
                 return {"ok": False, "error": "only the sender can withdraw"}
-            if r.get("status") != "pending":
+            # Отозвать можно и у ответившего «да», пока его не выбрали: организатор передумал звать.
+            if r.get("status") not in REQ_OPEN:
                 return _idem_put(idem, {"ok": False, "error": "ALREADY_RESOLVED",
                                         "id": rid, "status": r.get("status")})
             r["status"] = "withdrawn"
@@ -4037,7 +4854,7 @@ def video_store(filename, media_type, blob, duration_ms):
     if "quicktime" in low or low.endswith(".mov") or ".mov" in low:
         ext = "mov"
     os.makedirs(VIDEO_DIR, exist_ok=True)
-    vid = hashlib.sha1(("%s%s" % (time.time(), len(blob))).encode()).hexdigest()[:32]
+    vid = secrets.token_hex(16)            # случайное имя: см. голосовые ниже
     name = "%s.%s" % (vid, ext)
     with open(os.path.join(VIDEO_DIR, name), "wb") as f:
         f.write(blob)
@@ -4073,6 +4890,75 @@ def _video_message(video):
 # постороннего — это уже не реакция, а сообщение в обход всех проверок. Шесть штук покрывают то,
 # ради чего реакция и нужна: согласиться, обрадоваться, удивиться, посочувствовать.
 REACTIONS = ("❤️", "👍", "😂", "🔥", "😮", "😢")
+
+
+# ---- ГОЛОСОВЫЕ: приём, хранение, раздача кусками, расшифровка -----------------------------------
+#
+# Повторяет кружки один в один (см. блок выше) и добавляет расшифровку через под. Отдельный
+# каталог и отдельный предел: минута речи в m4a — сотни килобайт, не мегабайты, и 4 МБ хватает
+# с запасом на любой кодек телефона (Android отдаёт m4a/3gp, iOS — m4a, браузер — webm).
+VOICE_DIR = os.environ.get(
+    "KLEAL_VOICE_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "voice"))
+MAX_VOICE_BYTES = 4 * 1024 * 1024
+MAX_VOICE_MS = 60_000
+MIN_VOICE_MS = 500
+VOICE_NAME_RE = re.compile(r"^[0-9a-f]{32}\.(m4a|mp4|aac|3gp|webm|ogg|wav|caf)$")
+VOICE_MIME = {"m4a": "audio/mp4", "mp4": "audio/mp4", "aac": "audio/aac", "3gp": "audio/3gpp",
+              "webm": "audio/webm", "ogg": "audio/ogg", "wav": "audio/wav", "caf": "audio/x-caf"}
+# Столько ждём расшифровку. Дольше — голосовое уходит без текста, а не висит у человека на экране.
+TRANSCRIBE_TIMEOUT_S = 25
+
+
+def _voice_ext(filename, media_type):
+    low = "%s %s" % (str(filename or "").lower(), str(media_type or "").lower())
+    for ext in ("webm", "ogg", "wav", "caf", "3gp", "aac"):
+        if low.endswith("." + ext) or ("." + ext + " ") in low or ("/" + ext) in low:
+            return ext
+    if "3gpp" in low:
+        return "3gp"
+    return "m4a"
+
+
+def voice_store(filename, media_type, blob, duration_ms):
+    if not blob:
+        return {"ok": False, "error": "VOICE_REQUIRED"}
+    if len(blob) > MAX_VOICE_BYTES:
+        return {"ok": False, "error": "VOICE_TOO_LARGE"}
+    if not (MIN_VOICE_MS <= int(duration_ms or 0) <= MAX_VOICE_MS):
+        return {"ok": False, "error": "INVALID_VOICE_DURATION"}
+    ext = _voice_ext(filename, media_type)
+    os.makedirs(VOICE_DIR, exist_ok=True)
+    # Имя файла — случайное (аудит 27.09.2026): хэш от времени, длины и имени угадывается
+    # перебором вокруг момента отправки, а ссылка на файл и есть доступ к нему.
+    vid = secrets.token_hex(16)
+    name = "%s.%s" % (vid, ext)
+    with open(os.path.join(VOICE_DIR, name), "wb") as f:
+        f.write(blob)
+    return {"ok": True, "id": vid, "url": "/api/agent/voice/%s" % name,
+            "duration_ms": int(duration_ms), "mime_type": VOICE_MIME.get(ext, "audio/mp4")}
+
+
+def transcribe_remote(blob, filename, media_type):
+    """Речь -> текст через под (/llm/transcribe). Любая беда -> ("", "") и голосовое уходит без текста."""
+    boundary = "kleal%s" % hashlib.md5(str(time.time()).encode()).hexdigest()[:16]
+    head = ("--%s\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+            "Content-Type: %s\r\n\r\n" % (boundary, (filename or "voice.m4a").replace('"', ""),
+                                          media_type or "audio/mp4")).encode("utf-8")
+    body = head + blob + ("\r\n--%s--\r\n" % boundary).encode("utf-8")
+    # Адрес пода — из окружения службы (LLM_URL в unit), как у всех, кто ходит к модели.
+    llm_url = os.environ.get("LLM_URL") or "http://127.0.0.1:17071"
+    req = urllib.request.Request(llm_url.rstrip("/") + "/llm/transcribe", data=body, headers={
+        "Content-Type": "multipart/form-data; boundary=%s" % boundary,
+        "Content-Length": str(len(body))})
+    try:
+        with urllib.request.urlopen(req, timeout=TRANSCRIBE_TIMEOUT_S) as r:
+            out = json.loads(r.read().decode("utf-8") or "{}")
+        return str(out.get("text") or "").strip(), str(out.get("language") or "")
+    except Exception as e:
+        print("[voice] расшифровка не удалась: %s" % str(e)[:120])
+        return "", ""
+
 
 
 def _quote_of(m):
@@ -4287,6 +5173,10 @@ def threads_for(self_name):
             last[okey] = {"who": other, "last": m.get("text"), "t": m.get("t"),
                           "kind": m.get("kind"), "voice": m.get("voice"),
                           "sys": m.get("sys"),
+                          # Строка Kleal с кодом (GR.52 «removed you from…») — чтобы превью в
+                          # «Сообщениях» было на языке приложения, а не английским текстом сервера.
+                          **({"code": m.get("code"), "by": m.get("by"), "title": m.get("title")}
+                             if m.get("admin") and m.get("code") else {}),
                           "mine": _norm_name(m.get("from")) == me}
         # Непрочитанное считается ЗДЕСЬ, потому что этот проход по сообщениям всё равно делается.
         # Клиент ради того же числа слал отдельный запрос на каждую переписку — до десяти штук
@@ -4327,22 +5217,49 @@ def thread_mark_read(self_name, other):
 def _intents():
     return SESSION.setdefault("_intents", [])
 
-def save_intent(owner, intent, title, iid=None, launched=None):
-    owner = str(owner or "").strip()
-    if not owner or not isinstance(intent, dict):
-        return {"ok": False, "error": "owner and intent required"}
+
+def _ensure_intent_owner_ids():
+    """Разовая привязка интентов, сделанных до id (`owner` = имя, `owner_id` нет).
+
+    Идёт по правилу `_legacy_pid`: однозначное имя и аккаунт, существовавший к моменту записи.
+    Неоднозначные остаются без хозяина — их не видит никто, пока их не разберёт
+    tools/identity_repair.py. Это лучше, чем отдать чужому: ровно так и случилась беда 26.09.
+    Дёшево: после первого прохода новых строк без id не бывает.
+    """
+    changed = 0
+    with _STORE_LOCK:
+        for r in _intents():
+            if isinstance(r, dict) and "owner_id" not in r and r.get("owner"):
+                pid = _legacy_pid(r.get("owner"), r.get("created"))
+                if pid:
+                    r["owner_id"] = pid
+                    changed += 1
+    if changed:
+        print("[identity] интентов привязано к id: %d" % changed, flush=True)
+        _save_store()
+    return changed
+
+
+def save_intent(owner, intent, title, iid=None, launched=None, owner_id=""):
+    owner_id = str(owner_id or "").strip()
+    if not owner_id or not isinstance(intent, dict):
+        # Без личности интент не сохраняется: хозяина у него определить нечем, а по имени — нельзя.
+        return {"ok": False, "error": "sign in required" if not owner_id else "intent required"}
+    owner = _display(owner_id, str(owner or "").strip())
+    _ensure_intent_owner_ids()
+    intent = _prepare_map_intent(owner, intent, owner_id)
     # Snapshot confirmed country and resolve an explicitly supplied meeting address when possible.
     # Failure is intentionally non-fatal: the intent is still saved and map-feed reports partial data.
-    intent = _prepare_map_intent(owner, intent)
+    # (Подготовка — выше, сразу после определения личности: страна берётся из СВОЕЙ строки по id.)
     now = time.time()
     key = imf.persistence_key(intent)
     with _STORE_LOCK:
         rows = _intents()
         if iid:
             for r in rows:
-                if r.get("id") == iid and _norm_name(r.get("owner")) == _norm_name(owner):
+                if r.get("id") == iid and r.get("owner_id") == owner_id:
                     r.update({"intent": intent, "title": title or r.get("title"), "updated": now,
-                              "key": key})
+                              "key": key, "owner": owner})
                     # once a search has actually run this never flips back to "not started"
                     if launched:
                         r["launched"] = now
@@ -4351,7 +5268,7 @@ def save_intent(owner, intent, title, iid=None, launched=None):
         # The same request twice updates one row, but a different mode/date/address is a different
         # intent even when topics and role match. The previous topics|role key collapsed those plans.
         for r in rows:
-            same_owner = _norm_name(r.get("owner")) == _norm_name(owner)
+            same_owner = r.get("owner_id") == owner_id
             same_intent = r.get("key") == key or imf.persistence_key(r.get("intent") or {}) == key
             if same_owner and same_intent:
                 r.update({"intent": intent, "title": title or r.get("title"), "updated": now,
@@ -4365,17 +5282,20 @@ def save_intent(owner, intent, title, iid=None, launched=None):
         nid, suffix = base_id, 1
         while nid in taken:
             nid, suffix = "%s_%d" % (base_id, suffix), suffix + 1
-        rows.append({"id": nid, "owner": owner, "title": title or "", "intent": intent,
+        rows.append({"id": nid, "owner": owner, "owner_id": owner_id, "title": title or "", "intent": intent,
                      "key": key, "created": now, "updated": now,
                      "launched": now if launched else None})
     _save_store()
     return {"ok": True, "id": nid}
 
-def delete_intent(owner, iid):
+def delete_intent(owner, iid, owner_id=""):
+    owner_id = str(owner_id or "").strip()
+    if not owner_id:
+        return {"ok": False, "error": "sign in required"}
     with _STORE_LOCK:
         rows = _intents()
         keep = [r for r in rows
-                if not (r.get("id") == iid and _norm_name(r.get("owner")) == _norm_name(owner))]
+                if not (r.get("id") == iid and r.get("owner_id") == owner_id)]
         removed = len(rows) - len(keep)
         rows[:] = keep
     _save_store()
@@ -4404,23 +5324,55 @@ def _normalize_intent(raw):
                 break
     return it
 
-def list_intents(owner, profile=None, live=True):
-    """Every intent this user owns. With live=True each one is re-ranked now, so the count and the
-    top band reflect the current pool rather than a snapshot taken when the card was made."""
-    me = _norm_name(owner)
-    if not me:
+# ПАМЯТЬ ПЕРЕСЧЁТА ВКЛАДКИ «МОЯ АКТИВНОСТЬ».
+#
+# `list_intents(live=True)` ранжирует КАЖДЫЙ интент человека заново — около двух секунд на штуку
+# по пулу в восемьсот строк. У человека с пятью затеями вкладка открывалась 10,3 секунды, и так
+# при каждом заходе (замерено 11 сентября 2026: 10,31 с против 0,00 с без пересчёта). Пул при
+# этом меняется редко, а вкладку открывают часто — то есть считалось одно и то же.
+#
+# Здесь пересчёт помнится пять минут по ключу «интент + его updated + профиль искателя»: правка
+# интента ключ сбивает, и пересчёт идёт сразу. Второй заход в вкладку — мгновенный.
+# Быстрый проход (live=False) отдаёт ПОСЛЕДНИЙ известный снимок с пометкой stale, а не пустоту:
+# экран рисует лица и счётчик сразу, а свежий пересчёт догоняет вторым запросом.
+_RANK_MEMO = {}                 # intent id -> (ключ, момент, кандидаты)
+RANK_MEMO_TTL = 300
+
+
+def list_intents(owner, profile=None, live=True, owner_id=""):
+    """Every intent this user owns. With live=True each one is re-ranked now (memoised for five
+    minutes, see _RANK_MEMO), so the count and the top band reflect the current pool rather than a
+    snapshot taken when the card was made. live=False returns the last known snapshot instantly."""
+    # ТОЛЬКО ПО ID. По имени здесь отдавались интенты всех тёзок сразу: 26.09.2026 новый аккаунт
+    # «Иван» увидел в «Моей активности» интенты трёх других «Иванов».
+    owner_id = str(owner_id or "").strip()
+    if not owner_id:
         return []
+    _ensure_intent_owner_ids()
+    sig = json.dumps(profile or {}, sort_keys=True, ensure_ascii=False, default=str)[:2000]
+    now = time.time()
     out = []
-    for r in [x for x in _intents() if _norm_name(x.get("owner")) == me]:
+    for r in [x for x in _intents() if x.get("owner_id") == owner_id]:
         row = {"id": r["id"], "title": r.get("title"), "intent": r.get("intent") or {},
                "created": r.get("created"), "updated": r.get("updated"),
                "launched": r.get("launched"), "candidates": []}
+        memo = _RANK_MEMO.get(r["id"])
+        key = (r.get("updated"), sig)
         if live:
-            try:
-                row["candidates"] = match_candidates(_normalize_intent(r.get("intent") or {}),
-                                                     profile or {}, {"self": owner}) or []
-            except Exception as e:
-                row["error"] = str(e)[:120]        # a failed re-rank must not hide the intent
+            if memo and memo[0] == key and now - memo[1] < RANK_MEMO_TTL:
+                row["candidates"] = memo[2]
+            else:
+                try:
+                    row["candidates"] = match_candidates(_normalize_intent(r.get("intent") or {}),
+                                                         profile or {},
+                                                         {"self": _display(owner_id, owner),
+                                                          "self_id": owner_id}) or []
+                    _RANK_MEMO[r["id"]] = (key, now, row["candidates"])
+                except Exception as e:
+                    row["error"] = str(e)[:120]        # a failed re-rank must not hide the intent
+        elif memo:
+            row["candidates"] = memo[2]
+            row["stale"] = True                        # снимок: свежий пересчёт придёт вторым проходом
         out.append(row)
     out.sort(key=lambda x: -(x.get("updated") or 0))
     return out
@@ -4455,7 +5407,13 @@ GI_MAX_TOTAL = 5
 # невозможным независимо от формы вызова. Отменить открытое приглашение можно (gi_invite_cancel):
 # GR.17 даёт Cancel на каждой строке, и GR.15 прямо предлагает «Cancel one» как выход из капа.
 GI_OPEN_INVITE_CAP = 3
-GI_INVITE_TTL = 72 * 3600  # an invite nobody answers stops being a held seat
+# 12 часов — борд «0 · Create the intent» («Ends in 12h»), решение владельца 04.10.2026 (было 72 ч).
+# Уже отправленные приглашения держат свой прежний expires_at: срок пишется в строку при отправке.
+GI_INVITE_TTL = 12 * 3600  # an invite nobody answers stops being a held seat
+# Исход закрытого приглашения в словаре клиента: «declined» → «Can't make it», прочее → «Invite closed».
+_GI_INVITE_OUTCOME = {"declined": "declined", "expired": "expired", "withdrawn": "withdrawn",
+                      "group_full": "closed", "group_closed": "closed", "policy_revoked": "closed",
+                      "declined_by_organizer": "closed"}
 # The phases where an accepted invite still drops straight into the chat. After that the roster is
 # what a plan is being confirmed against, so a newcomer is approved by the organiser, not admitted
 # automatically — «он уже не автоматически попадает в чат, а создатель должен сделать аппрув».
@@ -4509,7 +5467,66 @@ def _gi_expire(now=None):
     return changed
 
 
+# Что видит приглашённый из плана: когда, в каком виде, сколько согласились. Место, ссылка на
+# звонок, заметка и живые статусы участников — только тем, кто внутри (как адрес в 1:1 открывает
+# лишь взаимное «да»).
+_GP_INVITEE_KEYS = ("id", "gid", "version", "when", "starts_at", "state", "mode",
+                    "confirmed_count", "needs", "round", "max_rounds")
+# Витрина для постороннего: сама затея и места, без людей и без плана.
+_GI_TEASER_KEYS = ("gid", "title", "topics", "when", "area", "mode", "state", "min_total",
+                   "max_total", "joined_count", "seats_left", "full", "need_more", "planning_allowed")
+
+
+# Группа, где уже ничего не происходит: закрыта организатором, распущена, истекла, стала 1:1.
+_GI_ENDED = ("closed_by_owner", "cancelled", "expired", "converted_1to1", "done")
+
+
+def _gi_role(g, me):
+    """Кем смотрящий приходится группе: owner | member | invitee | stranger. По id (docs/IDENTITY.md)."""
+    mine = _norm_name(me)
+    if not mine or not g:
+        return "stranger"
+    if mine == _norm_name(g.get("owner")):
+        return "owner"
+    if any(_norm_name(m.get("name")) == mine for m in _gi_active(g)):
+        return "member"
+    if any(i.get("gid") == g.get("id") and _norm_name(i.get("to")) == mine
+           and i.get("state") in ("sent", "viewed", "awaiting_approval") for i in _ginvites()):
+        return "invitee"
+    if any(_norm_name(m.get("name")) == mine and m.get("safety_exit") for m in g.get("members") or []):
+        return "former"                    # ушёл по жалобе (S11): своя история только для чтения
+    return "stranger"
+
+
 def _gi_public(g, me=""):
+    """Группа глазами того, кто спрашивает, — по его месту в ней.
+
+    Организатор и участники получают всё. Приглашённый — состав и места (экран приглашения обещает
+    показать «кто уже внутри»), а из плана только время и вид встречи. Все остальные — витрину.
+
+    ЗАЧЕМ. До 27.09.2026 группа уходила целиком любому: `/api/agent/gintent?gid=` не спрашивал даже
+    входа, а id групп лежат в открытой ленте карты. Посторонний видел, кто, когда и ГДЕ
+    встречается, и ссылку на звонок."""
+    role = _gi_role(g, me)
+    full = _gi_full(g, me)
+    if role in ("owner", "member"):
+        return full
+    if role == "former":
+        return dict({k: full.get(k) for k in _GI_TEASER_KEYS}, i_am_owner=False, i_am_member=False,
+                    read_only=True, read_only_reason="left",
+                    removal_notice={"title": g.get("title") or ""})
+    if role == "invitee":
+        plan = full.get("plan")
+        if isinstance(plan, dict):
+            full["plan"] = {k: plan.get(k) for k in _GP_INVITEE_KEYS if k in plan}
+        # Внутренние дела группы (кто молчит, кто за кого голосует) приглашённому не показываем.
+        for k in ("takeover", "role_offer", "role_from", "organiser_silent_h", "can_take_over", "can_hand_over"):
+            full.pop(k, None)
+        return full
+    return dict({k: full.get(k) for k in _GI_TEASER_KEYS}, i_am_owner=False, i_am_member=False)
+
+
+def _gi_full(g, me=""):
     """What a client may see. The roster is names and states — never contact details, and never a
     per-member action, because there is no per-member action to offer."""
     act = _gi_active(g)
@@ -4519,24 +5536,61 @@ def _gi_public(g, me=""):
     # Открытые приглашения — ТОЛЬКО организатору: это его экран «Invites sent» (GR.17), со
     # строкой и Cancel на каждого. Участникам список не показывается — GR.16 обещает приглашённому
     # «who is already in», а не «кого ещё позвали».
-    invites = [{"id": i.get("id"), "to": i.get("to"), "state": i.get("state")}
+    # Время отправки и срок едут вместе со строкой: полоса «Ends in …» и «Invite sent ⏱» (GR.14–17).
+    invites = [{"id": i.get("id"), "to": i.get("to"), "state": i.get("state"),
+                "at": i.get("created"), "expires_at": i.get("expires_at")}
                for i in _ginvites()
                if i.get("gid") == g.get("id") and i.get("state") in ("sent", "viewed",
                                                                      "awaiting_approval")] \
         if is_owner else None
+    # ЗАКРЫТЫЕ ПРИГЛАШЕНИЯ — ОТДЕЛЬНЫМ ПОЛЕМ, и тоже только организатору (03.10.2026, борд GR.14d/14e):
+    # карточка «Can't make it» / «Invite closed» раньше угадывалась клиентом по пропаже строки и
+    # жила до перезапуска. В `invites` их класть нельзя: его длину читают как «открытых» (gmembers,
+    # group, смоуки). Состояние переведено в словарь клиента (src/ginvites.ts CLOSED_STATES), сырое —
+    # в `reason`. Принятые не отдаются: человек в `members`.
+    closed = None
+    if is_owner:
+        rows = sorted((i for i in _ginvites() if i.get("gid") == g.get("id")
+                       and i.get("state") in _GI_INVITE_OUTCOME), key=lambda i: i.get("updated") or 0)
+        # «withdrawn» ставят ТРИ пути: отмена организатором (gi_invite_cancel), ответ в уже
+        # закончившуюся группу (gi_respond) и переход в 1:1 (там же note_out). Клиент читает
+        # withdrawn как «организатор отменил, место свободно» (GR.14b) — значит, отдаём его только
+        # пока группа жива и без note_out; иначе это закрытие.
+        ended = g.get("state") in _GI_ENDED
+
+        def outcome(i):
+            st = i.get("state")
+            if st == "withdrawn" and (ended or i.get("note_out")):
+                return "closed"
+            return _GI_INVITE_OUTCOME[st]
+
+        closed = [{"id": i.get("id"), "to": i.get("to"), "state": outcome(i),
+                   "reason": i.get("state"), "at": i.get("created"), "expires_at": i.get("expires_at"),
+                   "closed_at": i.get("updated")} for i in rows[-50:]]
     return {
         "gid": g.get("id"), "title": g.get("title"), "topics": g.get("topics") or [],
         "when": g.get("when") or "", "area": g.get("area") or "", "mode": g.get("mode") or "offline",
         "owner": g.get("owner"), "state": g.get("state"),
         "min_total": g.get("min_total"), "max_total": g.get("max_total"),
+        # Время входа и возраст — строка участника на борде «GR · Offline — new layout»: «Jane, 28»
+        # и «In the group since ⏱ 14:28» (GR.24, GR.24a). Время создания — первая строка ленты
+        # «You created BBQ by the beach meetup ⏱ 14:24» (GR.18) и «Created the group» у организатора.
         "members": [{"name": m.get("name"), "state": m.get("state"),
-                     "photo": _photo_by_name().get(_norm_name(m.get("name")))} for m in act],
+                     "photo": _photo_of(m.get("name")), "joined": m.get("joined"),
+                     "joined_at": m.get("joined"),                  # имя, которое читает src/ginvites.ts
+                     "age": (_person(m.get("name")) or {}).get("age")} for m in act],
+        "created": g.get("created"),
+        # Дата и время затеи как их выбрали в мастере: лист «Send the plan?» (GR.25) предлагает
+        # план ровно на них одним нажатием, без повторного выбора.
+        "date_key": (g.get("intent") or {}).get("dateKey") or "",
+        "minutes": (g.get("intent") or {}).get("minutes"),
         # ВЫБЫВШИЕ отдаются отдельно и со временем ухода. Кадр GR.39 — «Jane left the plan» —
         # построить без этого нечем: состав наружу шёл только активный, вышедший исчезал бесследно,
         # и объяснить, почему людей стало меньше, экрану было нечем. В самой строке участника
         # время ухода лежало всё это время (`left`), просто наружу не выходило.
         "departed": [{"name": m.get("name"), "state": m.get("state"), "left": m.get("left"),
-                      "photo": _photo_by_name().get(_norm_name(m.get("name")))}
+                      "joined": m.get("joined"), "photo": _photo_of(m.get("name")),
+                      "age": (_person(m.get("name")) or {}).get("age")}
                      for m in (g.get("members") or [])
                      if m.get("state") in ("left", "removed", "safety_removed") and m.get("left")],
         "joined_count": n,
@@ -4548,6 +5602,15 @@ def _gi_public(g, me=""):
         "seats_left": max(0, int(g.get("max_total") or GI_MAX_TOTAL) - n),
         "invite_cap": GI_OPEN_INVITE_CAP,
         **({"invites": invites} if invites is not None else {}),
+        **({"invites_closed": closed} if closed is not None else {}),
+        # ТОЧНЫЙ АДРЕС ВСТРЕЧИ — ТОЛЬКО ОРГАНИЗАТОРУ (борд «GR · Offline — new layout», GR.44/44h, 04.10.2026):
+        # он сам его назвал в мастере (intent.address). Остальные до общего согласия видят район —
+        # «Exact spot after everyone confirms»; адрес им открывает план после подтверждения.
+        # …и БЫВШЕМУ организатору, пока он в комнате (GR.44f/44l, 06.10.2026): он назвал это место сам,
+        # роль передал — адрес не забыл. Ушёл из группы — адреса больше нет.
+        **({"address": str((g.get("intent") or {}).get("address") or "")[:200]}
+           if (is_owner or (bool(mine) and mine == _norm_name((g.get("role_from") or {}).get("who"))
+                            and any(_norm_name(m.get("name")) == mine for m in act))) else {}),
         "i_am_owner": is_owner,
         "i_am_member": any(_norm_name(m.get("name")) == mine for m in act),
         # §6.6/§6.7: the ONE thing the screen keys off. Below the floor the chat is a coordination
@@ -4560,11 +5623,21 @@ def _gi_public(g, me=""):
                        and not _gp_blocks_convert(g.get("id"))
                        and not g.get("pending_1to1"),
         "pending_1to1": g.get("pending_1to1"),
+        # S10: «Завершить группу» — организатору и только пока плана нет совсем.
+        "can_end": is_owner and not _gp_of(g.get("id")) and g.get("state") not in _GI_ENDED,
+        **({"read_only": True, "read_only_reason": "group_closed",
+            "closure_notice": {"owner": g.get("closed_by") or g.get("owner"), "title": g.get("title") or ""}}
+           if g.get("state") == "closed_by_owner" else {}),
         "planning_allowed": n >= int(g.get("min_total") or GI_MIN_TOTAL)
-                            and g.get("state") not in ("cancelled", "expired", "converted_1to1"),
+                            and g.get("state") not in _GI_ENDED,
         "need_more": max(0, int(g.get("min_total") or GI_MIN_TOTAL) - n),
         "full": n >= int(g.get("max_total") or GI_MAX_TOTAL),
         "plan": _gp_public(_gp_of(g.get("id")), me),
+        # GR.40b / 40e: план, закрытый с паузы, ещё сутки виден на своей странице — отдельным полем,
+        # чтобы чат и карточка затеи не приняли отменённое за живой план.
+        "closed_plan": (None if _gp_of(g.get("id")) else _gp_public(_gp_hold_closed_recent(g.get("id")), me)),
+        # GR.42–44: молчание организатора, голосование за перехват, предложение роли.
+        **_gi_role_public(g, me),
     }
 
 
@@ -4585,6 +5658,17 @@ def _gi_say(g, text, kind="system", code=None, **fields):
     `text` stays the first positional argument on purpose: every existing call keeps working
     untouched, and a call without a code degrades to exactly the old behaviour.
     """
+    # В строке и в полях участники — id (docs/IDENTITY.md). Текст — для людей, поэтому id в нём
+    # заменяются подписями СЕЙЧАС (строка — снимок момента); поля остаются id и переводятся при выдаче.
+    cands = {str(m.get("name") or "") for m in (g.get("members") or [])} | {str(g.get("owner") or "")}
+    for v in fields.values():
+        if isinstance(v, str):
+            cands.update(x.strip() for x in v.split(","))
+    for pid in sorted((x for x in cands if x and _is_pid(x)), key=len, reverse=True):
+        text = text.replace(pid, _display(pid))
+    if isinstance(fields.get("names"), str):
+        fields = dict(fields, names=", ".join(_display(x.strip(), x.strip())
+                                              for x in fields["names"].split(",") if x.strip()))
     row = {"id": "gm_%d_%s" % (int(time.time() * 1000), hashlib.sha1(text.encode("utf-8")).hexdigest()[:4]),
            "gid": g.get("id"), "frm": "", "text": text, "t": time.time(), "kind": kind}
     if code:
@@ -4601,7 +5685,8 @@ def gi_create(owner, intent, title="", min_total=None, max_total=None, idem=None
     cached = _idem_get(idem)
     if cached is not None:
         return cached
-    intent = _prepare_map_intent(owner, intent if isinstance(intent, dict) else {})
+    intent = _prepare_map_intent(_display(owner, owner), intent if isinstance(intent, dict) else {},
+                                 owner_id=_canon_pid(owner))
     try:
         mn = int(min_total or GI_MIN_TOTAL)
     except (TypeError, ValueError):
@@ -4645,6 +5730,10 @@ def gi_invite_many(gid, frm, names, note="", idem=None):
         return {"ok": False, "error": "no candidates"}
     sent, refused = [], []
     for n in names:
+        if str(n).startswith("?"):
+            # Не опознан: такого нет или это тёзки без id — звать наугад нельзя.
+            refused.append({"to": str(n)[1:], "error": "UNKNOWN_OR_AMBIGUOUS_PERSON"})
+            continue
         r = gi_invite(gid, frm, n, note, None)
         if r.get("ok"):
             sent.append({"to": n, "id": (r.get("invite") or {}).get("id")})
@@ -4838,6 +5927,561 @@ def gi_invite_cancel(inv_id, frm, idem=None):
                                 "group": _gi_public(g, frm)})
 
 
+def gi_close(gid, who, idem=None):
+    """S10 / GR.53-55: организатор закрывает группу, ПОКА ПЛАНА НЕТ.
+
+    Договор — tools/s10_group_close_unit.py (с 18.08.2026). Серверной половины не было вовсе
+    (аудит 27.09.2026): «Завершить группу» в приложении всегда отвечала ошибкой.
+
+    Любой план — даже только предложенный — это уже общее дело, и закрыть группу поверх него
+    нельзя: PLAN_EXISTS (кнопку экран прячет по `can_end`). Группа становится `closed_by_owner`:
+    участники сохраняют историю только для чтения, а писать, реагировать, удалять и начинать план
+    больше нельзя (CLOSED). Открытые приглашения гаснут нейтрально — `group_closed` с запиской
+    «Nothing you did», и приглашённому в переписку с организатором уходит событие
+    `group_closed_invite`: иначе он принял бы приглашение в группу, которой уже нет."""
+    who = str(who or "").strip()
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if g.get("state") in _GI_ENDED:
+            return _idem_put(idem, {"ok": False, "error": "ALREADY_CLOSED", "group": _gi_public(g, who)})
+        if _gp_of(gid):
+            return _idem_put(idem, {"ok": False, "error": "PLAN_EXISTS",
+                                    "note": "a plan exists — it is changed or cancelled by a vote"})
+        title = g.get("title") or ""
+        for inv in _ginvites():
+            if inv.get("gid") == gid and inv.get("state") in ("sent", "viewed", "awaiting_approval"):
+                inv["state"] = "group_closed"
+                inv["updated"] = now
+                inv["note_out"] = ("The organiser closed %s before a plan was set, so this invite is "
+                                   "gone. Nothing you did." % (title or "the group"))
+                if inv.get("to"):
+                    _sys_msg(who, inv.get("to"), "group_closed_invite", by=who, title=title)
+        g["state"] = "closed_by_owner"
+        g["closed"] = now
+        g["closed_by"] = who
+        g["updated"] = now
+        g["version"] = int(g.get("version") or 1) + 1
+        _gi_say(g, "%s closed the group." % who, code="group_closed", who=who, title=title)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, who)})
+
+
+# Причины жалобы на группу — ровно те, что предлагает экран (app/group-report.tsx).
+# Плюс две причины борда «GR · Offline — new layout» (GR.55): «Unsafe behaviour at the meetup» и
+# «Something else». Старые коды остаются: их шлют прежние сборки.
+GROUP_REPORT_REASONS = ("inappropriate_behaviour", "insults_or_humiliation", "harassment_or_threats",
+                        "fake_profile", "rule_violation", "unsafe_behaviour", "something_else")
+# Файлы к жалобам. Папка НЕ раздаётся наружу: читает её только админ-ручка, а её шлюз снаружи
+# закрывает. Имя файла — случайное (secrets), не от содержимого и не от времени.
+EVIDENCE_DIR = (os.environ.get("KLEAL_REPORT_EVIDENCE_DIR") or os.environ.get("KLEAL_EVIDENCE_DIR")
+                or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "evidence"))
+MAX_EVIDENCE_BYTES = 12 * 1024 * 1024            # столько обещает экран: «меньше 12 МБ»
+EVIDENCE_PER_HOUR = 10
+_EVIDENCE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic",
+                   "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mov",
+                   "application/pdf": "pdf", "text/plain": "txt", "application/msword": "doc",
+                   "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx"}
+_EVIDENCE_URL = re.compile(r"^/api/agent/report-evidence/([0-9a-f]{32})\.([a-z0-9]{2,5})$")
+
+
+def _evidence():
+    return SESSION.setdefault("_evidence", {})
+
+
+def report_evidence_store(filename, media_type, blob, who=""):
+    """Принять файл к будущей жалобе (S11). Договор — tools/s11_group_report_unit.py.
+
+    Кто загрузил — запоминается: чужой файл к своей жалобе не приложить, а стирание учётки уносит
+    и эти файлы. URL — только опознаватель: по нему файл наружу НЕ отдаётся (см. админ-ручку)."""
+    if not blob:
+        return {"ok": False, "error": "EVIDENCE_REQUIRED"}
+    if len(blob) > MAX_EVIDENCE_BYTES:
+        return {"ok": False, "error": "EVIDENCE_TOO_LARGE"}
+    mt = str(media_type or "").split(";")[0].strip().lower()
+    ext = _EVIDENCE_TYPES.get(mt)
+    if not ext:
+        return {"ok": False, "error": "UNSUPPORTED_EVIDENCE_TYPE"}
+    now = time.time()
+    with _STORE_LOCK:
+        if who:
+            mine = [e for e in _evidence().values() if e.get("by") == who and now - (e.get("at") or 0) < 3600]
+            if len(mine) >= EVIDENCE_PER_HOUR:
+                return {"ok": False, "error": "TOO_MANY"}
+        eid = secrets.token_hex(16)
+        fname = "%s.%s" % (eid, ext)
+        os.makedirs(EVIDENCE_DIR, exist_ok=True)
+        with open(os.path.join(EVIDENCE_DIR, fname), "wb") as f:
+            f.write(blob)
+        rec = {"id": eid, "by": who, "name": str(filename or "file")[:120], "mime_type": mt,
+               "size": len(blob), "file": fname, "at": now}
+        _evidence()[eid] = rec
+        _save_store()
+    return {"ok": True, "id": eid, "url": "/api/agent/report-evidence/%s" % fname,
+            "name": rec["name"], "mime_type": mt, "size": rec["size"]}
+
+
+def _gi_safety_exit(g, who, now):
+    """Выход по жалобе (S11): для комнаты — обычное нейтральное «вышел», без слова о жалобе.
+    Роль организатора переходит к первому из оставшихся, кворум пересчитывается. Сам ушедший
+    сохраняет историю только для чтения — замороженную на моменте выхода (`gi_thread`)."""
+    m = next((x for x in (g.get("members") or [])
+              if _norm_name(x.get("name")) == _norm_name(who) and x.get("state") in ("joined", "active")), None)
+    if not m:
+        return False
+    m["state"] = "left"
+    m["left"] = now
+    m["safety_exit"] = True
+    rest = _gi_active(g)
+    if _norm_name(who) == _norm_name(g.get("owner")) and rest:
+        g["owner"] = sorted(rest, key=lambda x: x.get("joined") or 0)[0].get("name")
+    _gi_say(g, "%s left the group." % who, code="left", who=who)
+    if len(rest) < int(g.get("min_total") or GI_MIN_TOTAL) and g.get("state") in ("ready_to_plan", "planning"):
+        g["state"] = "below_quorum"
+    g["updated"] = now
+    g["version"] = int(g.get("version") or 1) + 1
+    _gp_recount(g.get("id"), now)
+    return True
+
+
+def gi_report(gid, who, reason, text="", evidence=None, idem=None, about=""):
+    """S11: жалоба на группу и безопасный выход из неё. Договор — tools/s11_group_report_unit.py.
+
+    Серверной половины не было (аудит 27.09.2026): экран жалобы всегда отвечал «не удалось
+    отправить». Жалоба ложится в общую очередь модератора (`_reports`, `source: group_s11`);
+    подробности в комнату не попадают. Жалующийся тут же выходит из группы (`_gi_safety_exit`).
+    Приложить можно только файлы, загруженные к нам (`/api/agent/report-evidence/…`), и не чужие."""
+    who = str(who or "").strip()
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    rs = str(reason or "").strip().lower()
+    if rs not in GROUP_REPORT_REASONS:
+        return {"ok": False, "error": "INVALID_REASON", "reasons": list(GROUP_REPORT_REASONS)}
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        me = _norm_name(who)
+        in_room = any(_norm_name(m.get("name")) == me for m in _gi_active(g))
+        was_in = in_room or any(_norm_name(m.get("name")) == me for m in g.get("members") or [])
+        if not me or not was_in:
+            return {"ok": False, "error": "NOT_A_MEMBER"}
+        ev = []
+        for x in evidence or []:
+            if not isinstance(x, dict):
+                continue
+            mt = _EVIDENCE_URL.match(str(x.get("url") or ""))
+            if not mt:
+                continue                           # чужой адрес — не наш файл, отбрасываем
+            rec = _evidence().get(mt.group(1))
+            if rec and rec.get("by") and _norm_name(rec.get("by")) != me:
+                continue                           # чужой загруженный файл к своей жалобе не приложить
+            ev.append({"id": mt.group(1), "url": str(x.get("url")),
+                       "name": str((rec or {}).get("name") or x.get("name") or "file")[:120],
+                       "mime_type": str((rec or {}).get("mime_type") or x.get("mime_type") or ""),
+                       "size": int((rec or {}).get("size") or _num(x.get("size")) or 0)})
+        rid = "rg_%d_%s" % (int(now * 1000), secrets.token_hex(3))
+        case_no = "KLEAL-%s" % rid[-6:].upper()
+        rows = _reports()
+        # ЖАЛОБА НА ЧЕЛОВЕКА (GR.55 «Who is this about?»). Он должен быть или быть в этой группе:
+        # жаловаться через группу на постороннего нельзя. Защита тогда — не выход жалующегося из
+        # группы, а стена между двумя (GR.55a «Marc can't message you · can't see your profile ·
+        # won't be matched again»): это блокировка, и включается она сразу, до решения модерации.
+        about = str(about or "").strip()
+        if about:
+            known = {_norm_name(m.get("name")) for m in g.get("members") or []}
+            if _norm_name(about) not in known or _norm_name(about) == me:
+                return {"ok": False, "error": "NOT_IN_GROUP"}
+        rows.append({"id": rid, "kind": "group", "source": "group_s11", "gid": gid,
+                     "group_title": g.get("title") or "", "by": who, "about": about, "reason": rs,
+                     "text": str(text or "")[:2000], "evidence": ev, "case_no": case_no,
+                     "at": now, "state": "received"})
+        del rows[:-2000]
+        exited = _gi_safety_exit(g, who, now) if in_room and not about else False
+        _save_store()
+    measures = ["left_group"] if exited else []
+    if about:
+        # Вне замка хранилища: block_user берёт его сам, а замок не повторный.
+        block_user(who, about, True)
+        measures = ["no_messages", "profile_hidden", "no_match"]
+    return _idem_put(idem, {"ok": True, "id": rid, "case_no": case_no, "status": "received", "at": now,
+                            "protective_measures": measures, "about": about,
+                            "group": _gi_public(g, who)})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# СМЕНА ОРГАНИЗАТОРА — борд «GR · Offline — new layout», кадры GR.42–GR.44 (29.09.2026)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# Два пути, и оба — ДО плана: организатор делает план, и пока плана нет, группа может остаться
+# без того, кто его сделает.
+#
+#  1) ПЕРЕХВАТ ПО ГОЛОСОВАНИЮ (GR.42–43). Группа собрана, плана нет, организатор молчит 12 часов
+#     («Silent for 12h»). Любой участник может предложить себя. Голосуют остальные, кроме
+#     организатора и самого кандидата; окно — 6 часов; решают ОТВЕТИВШИЕ (молчание не «за» и не
+#     «против»), ничья и «никто не ответил» — не прошло. В отличие от голосования по плану, это
+#     решает само: совещаться не с кем, организатор молчит. Организатор может вернуться до конца —
+#     оставить роль (голосование остановлено) или сразу отдать её кандидату. Одно предложение за раз.
+#  2) ПЕРЕДАЧА РОЛИ (GR.44). Организатор сам предлагает роль одному участнику; тот берёт или
+#     отказывается; 24 часа без ответа — роль остаётся. Пока не взяли, ничего не меняется.
+#
+# Бывший организатор остаётся в группе (и может выйти сам). Роль переходит полем `owner`: все
+# права экрана и сервера уже читаются из него, второго признака «кто главный» не заводим.
+GI_SILENT_AFTER = 12 * 3600
+GI_TAKEOVER_WINDOW = 6 * 3600
+GI_ROLE_OFFER_WINDOW = 24 * 3600
+
+
+def _gi_ready_at(g):
+    """Когда группа собралась (минимум людей) — от этого момента считается молчание организатора."""
+    act = sorted(float(m.get("joined") or 0) for m in _gi_active(g))
+    mn = int(g.get("min_total") or GI_MIN_TOTAL)
+    return act[mn - 1] if len(act) >= mn else 0.0
+
+
+def _gi_owner_active_at(g):
+    """Последнее действие организатора в группе: реплика в чате или любая его ручка группы."""
+    owner = _norm_name(g.get("owner"))
+    t = max(float(g.get("owner_active") or 0), float(g.get("owner_since") or 0))
+    for m in reversed(_gmsgs()):
+        if m.get("gid") == g.get("id") and _norm_name(m.get("frm")) == owner:
+            t = max(t, float(m.get("t") or 0))
+            break
+    return t
+
+
+def _gi_silent_for(g, now=None):
+    """Сколько секунд организатор молчит в собранной группе без плана; 0 — не тот случай."""
+    now = now or time.time()
+    if not g or g.get("state") in _GI_ENDED or _gp_of(g.get("id")):
+        return 0.0
+    ready = _gi_ready_at(g)
+    if not ready:
+        return 0.0
+    return max(0.0, now - max(ready, _gi_owner_active_at(g)))
+
+
+def _gi_touch_owner(g, who, now=None):
+    """Организатор что-то сделал в группе — он не молчит."""
+    if g and _norm_name(who) == _norm_name(g.get("owner")):
+        g["owner_active"] = now or time.time()
+
+
+def _gi_takeover_voters(g, t):
+    # Организатор — тот, кого переизбирали (t["owner"]), а не нынешний: после перехвата роль уже у
+    # кандидата, и счёт «1 из 1» не должен превращаться в «1 из 2» с бывшим организатором в ждущих.
+    owner, cand = _norm_name(t.get("owner") or g.get("owner")), _norm_name(t.get("by"))
+    return [m.get("name") for m in _gi_active(g) if _norm_name(m.get("name")) not in (owner, cand)]
+
+
+def _gi_transfer(g, new_owner, now, how):
+    prev = g.get("owner")
+    g["owner"] = new_owner
+    g["role_from"] = {"who": prev, "how": how, "at": now}
+    g["owner_since"] = now
+    g["owner_active"] = now
+    g["updated"] = now
+    g["version"] = int(g.get("version") or 1) + 1
+    offer = g.get("role_offer")
+    if offer and offer.get("state") == "open":
+        offer.update(state="closed", closed=now, why="role_changed")
+
+
+def _gi_roles_due(now=None):
+    """Провести то, что наступает само: конец голосования за перехват, истёкшее предложение роли и
+    строку «X hasn't made the plan for 12h» в чате. Зовётся на КАЖДОМ чтении групп (_gp_sweep)."""
+    now = now or time.time()
+    changed = False
+    for g in _gintents():
+        if g.get("state") in _GI_ENDED:
+            continue
+        t = g.get("takeover")
+        if t and t.get("state") == "open":
+            votes = t.get("votes") or {}
+            voters = _gi_takeover_voters(g, t)
+            # Закрывается ТОЛЬКО по сроку, даже если все уже ответили (борд GR.43k: «счётчик 1/1,
+            # таймер идёт»): все шесть часов у организатора есть право вернуться. Исключение —
+            # голосовать некому: тогда ждать нечего.
+            if now >= float(t.get("closes") or 0) or not voters:
+                yes = sum(1 for v in votes.values() if v)
+                no = len(votes) - yes
+                t["result"] = {"yes": yes, "no": no, "silent": max(0, len(voters) - len(votes))}
+                t["resolved"] = now
+                prev = g.get("owner")
+                if yes > no and any(_norm_name(m.get("name")) == _norm_name(t.get("by")) for m in _gi_active(g)):
+                    t["state"] = "passed"
+                    _gi_transfer(g, t.get("by"), now, "vote")
+                    _gi_say(g, "%s is the organiser now." % t.get("by"), code="takeover_passed",
+                            who=t.get("by"), former=prev, yes=yes, no=no)
+                else:
+                    t["state"] = "failed"
+                    _gi_say(g, "%s stays the organiser." % prev, code="takeover_failed",
+                            who=t.get("by"), owner=prev, yes=yes, no=no)
+                changed = True
+        o = g.get("role_offer")
+        if o and o.get("state") == "open" and now >= float(o.get("expires") or 0):
+            o.update(state="expired", closed=now)
+            changed = True
+        silent = _gi_silent_for(g, now)
+        mark = round(max(_gi_ready_at(g), _gi_owner_active_at(g)), 3)
+        if silent >= GI_SILENT_AFTER and g.get("silent_said") != mark and not (t and t.get("state") == "open"):
+            g["silent_said"] = mark
+            _gi_say(g, "%s hasn't made the plan for 12h." % g.get("owner"), code="organiser_silent",
+                    who=g.get("owner"), hours=int(silent // 3600))
+            changed = True
+    return changed
+
+
+def _gi_role_public(g, me, now=None):
+    """Смена организатора глазами смотрящего: что сейчас идёт и что ему можно сделать."""
+    now = now or time.time()
+    mine = _norm_name(me)
+    owner = _norm_name(g.get("owner"))
+    active = [m.get("name") for m in _gi_active(g)]
+    in_room = any(_norm_name(n) == mine for n in active)
+    silent = _gi_silent_for(g, now)
+    out = {"organiser_silent_h": int(silent // 3600) if silent >= GI_SILENT_AFTER else 0}
+    t = g.get("takeover")
+    if t:
+        votes = t.get("votes") or {}
+        voters = _gi_takeover_voters(g, t)
+        out["takeover"] = {
+            "id": t.get("id"), "by": t.get("by"), "state": t.get("state"),
+            "started": t.get("at"), "closes_at": t.get("closes"), "resolved": t.get("resolved"),
+            "voters": len(voters), "voted": len([v for v in voters if v in votes]),
+            "waiting": [v for v in voters if v not in votes],
+            "my_vote": votes.get(next((v for v in votes if _norm_name(v) == mine), ""), None),
+            "i_vote": any(_norm_name(v) == mine for v in voters),
+            "result": t.get("result"), "why": t.get("why"),
+            "silent_h": int(max(0.0, now - float(t.get("silent_since") or now)) // 3600),
+        }
+    o = g.get("role_offer")
+    if o:
+        out["role_offer"] = {"to": o.get("to"), "by": o.get("by"), "state": o.get("state"),
+                             "at": o.get("at"), "expires_at": o.get("expires"), "why": o.get("why"),
+                             # Когда закрылось — итог («Nobody took the role») показывается сутки от
+                             # закрытия, а не от предложения: истёкшее старше суток с самого начала.
+                             "closed_at": o.get("closed"),
+                             "declined": o.get("declined") or []}
+    if g.get("role_from"):
+        out["role_from"] = dict(g["role_from"])
+    open_t = bool(t and t.get("state") == "open")
+    open_o = bool(o and o.get("state") == "open")
+    no_plan = not _gp_of(g.get("id")) and g.get("state") not in _GI_ENDED
+    out["can_take_over"] = (no_plan and in_room and mine != owner and not open_t and not open_o
+                            and silent >= GI_SILENT_AFTER)
+    out["can_hand_over"] = no_plan and mine == owner and not open_t and not open_o and len(active) >= 2
+    return out
+
+
+def _gi_role_guard(g, who):
+    if not g:
+        return {"ok": False, "error": "NO_SUCH_GROUP"}
+    if g.get("state") in _GI_ENDED:
+        return {"ok": False, "error": "GROUP_ENDED"}
+    if _gp_of(g.get("id")):
+        return {"ok": False, "error": "PLAN_EXISTS"}
+    if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
+        return {"ok": False, "error": "NOT_A_MEMBER"}
+    return None
+
+
+def gi_takeover(gid, who, idem=None):
+    """GR.42b «Put me forward»: участник предлагает себя вместо молчащего организатора."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        _gi_roles_due(now)
+        g = _gi_find(gid)
+        bad = _gi_role_guard(g, who)
+        if bad:
+            return bad
+        if _norm_name(who) == _norm_name(g.get("owner")):
+            return {"ok": False, "error": "ALREADY_ORGANISER"}
+        t = g.get("takeover")
+        if t and t.get("state") == "open":
+            # GR.44a: одно предложение за раз — кто-то успел раньше.
+            return _idem_put(idem, {"ok": False, "error": "OFFER_EXISTS", "by": t.get("by"),
+                                    "group": _gi_public(g, who)})
+        o = g.get("role_offer")
+        if o and o.get("state") == "open":
+            return _idem_put(idem, {"ok": False, "error": "ROLE_OFFER_OPEN", "group": _gi_public(g, who)})
+        silent = _gi_silent_for(g, now)
+        if silent < GI_SILENT_AFTER:
+            return _idem_put(idem, {"ok": False, "error": "NOT_SILENT", "silent_h": int(silent // 3600)})
+        g["takeover"] = {"id": "gt_%d_%s" % (int(now * 1000), secrets.token_hex(3)), "by": who, "at": now,
+                         "closes": now + GI_TAKEOVER_WINDOW, "votes": {}, "state": "open",
+                         "silent_since": now - silent, "owner": g.get("owner")}
+        _gi_say(g, "%s offered to take over as organiser." % who, code="takeover_offered", who=who,
+                owner=g.get("owner"))
+        # Голосовать некому (в группе только кандидат и организатор) — решается сразу правилом «никто
+        # не ответил»: роль не переходит. Отдельного кадра нет; строка в чате скажет, что вышло.
+        _gi_roles_due(now)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _gi_public(g, who)})
+
+
+def gi_takeover_vote(gid, who, yes, idem=None):
+    """GR.43e: голос за кандидата. Решают ответившие; итог наступает, когда ответили все или вышло время."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        _gi_roles_due(now)
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        t = g.get("takeover")
+        if not t or t.get("state") != "open":
+            return _idem_put(idem, {"ok": False, "error": "NO_OPEN_VOTE", "group": _gi_public(g, who)})
+        voter = next((v for v in _gi_takeover_voters(g, t) if _norm_name(v) == _norm_name(who)), None)
+        if not voter:
+            return {"ok": False, "error": "NOT_A_VOTER"}
+        t.setdefault("votes", {})[voter] = bool(yes)
+        _gi_roles_due(now)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _gi_public(g, who)})
+
+
+def gi_takeover_withdraw(gid, who, idem=None):
+    """GR.43a «Withdraw»: кандидат снимает предложение — голосование закрывается сразу."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        t = g.get("takeover")
+        if not t or t.get("state") != "open" or _norm_name(t.get("by")) != _norm_name(who):
+            return _idem_put(idem, {"ok": False, "error": "NO_OPEN_OFFER"})
+        t.update(state="withdrawn", resolved=now, why="withdrawn")
+        _gi_say(g, "%s withdrew the offer to take over." % who, code="takeover_withdrawn", who=who)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _gi_public(g, who)})
+
+
+def gi_takeover_back(gid, who, hand=False, idem=None):
+    """GR.42a: организатор вернулся посреди голосования — оставить роль или отдать кандидату сразу."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        t = g.get("takeover")
+        if not t or t.get("state") != "open":
+            return _idem_put(idem, {"ok": False, "error": "NO_OPEN_VOTE", "group": _gi_public(g, who)})
+        _gi_touch_owner(g, who, now)
+        if hand:
+            t.update(state="handed", resolved=now, why="owner_handed")
+            _gi_transfer(g, t.get("by"), now, "handed")
+            _gi_say(g, "%s handed the organiser role to %s." % (who, t.get("by")), code="role_taken",
+                    who=t.get("by"), former=who)
+        else:
+            t.update(state="stopped", resolved=now, why="owner_back")
+            _gi_say(g, "%s is back and kept the role." % who, code="takeover_stopped", who=who,
+                    candidate=t.get("by"))
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _gi_public(g, who)})
+
+
+def gi_role_offer(gid, who, to, idem=None):
+    """GR.44b «Offer it to Jane»: организатор предлагает роль одному участнику. 24 часа на ответ."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        _gi_roles_due(now)
+        g = _gi_find(gid)
+        bad = _gi_role_guard(g, who)
+        if bad:
+            return bad
+        if _norm_name(who) != _norm_name(g.get("owner")):
+            return {"ok": False, "error": "NOT_ORGANIZER"}
+        if not any(_norm_name(m.get("name")) == _norm_name(to) for m in _gi_active(g)) \
+                or _norm_name(to) == _norm_name(who):
+            return {"ok": False, "error": "NOT_A_MEMBER"}
+        if (g.get("takeover") or {}).get("state") == "open":
+            return _idem_put(idem, {"ok": False, "error": "VOTE_IN_PROGRESS"})
+        o = g.get("role_offer")
+        if o and o.get("state") == "open":
+            return _idem_put(idem, {"ok": False, "error": "OFFER_EXISTS", "group": _gi_public(g, who)})
+        declined = list((o or {}).get("declined") or []) if o and o.get("state") in ("declined", "expired", "withdrawn") else []
+        g["role_offer"] = {"to": to, "by": who, "at": now, "expires": now + GI_ROLE_OFFER_WINDOW,
+                           "state": "open", "declined": declined}
+        _gi_touch_owner(g, who, now)
+        _gi_say(g, "%s offered %s the organiser role." % (who, to), code="role_offered", who=who, to=to)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _gi_public(g, who)})
+
+
+def gi_role_respond(gid, who, accept, idem=None):
+    """GR.44c «Take the role» / GR.44i «Keep it with Mateo»."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        _gi_roles_due(now)
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        o = g.get("role_offer")
+        if not o or o.get("state") != "open" or _norm_name(o.get("to")) != _norm_name(who):
+            return _idem_put(idem, {"ok": False, "error": "NO_OPEN_OFFER", "group": _gi_public(g, who)})
+        if accept:
+            if _gp_of(g.get("id")):
+                return {"ok": False, "error": "PLAN_EXISTS"}
+            o.update(state="accepted", closed=now)
+            prev = g.get("owner")
+            _gi_transfer(g, who, now, "offer")
+            _gi_say(g, "%s is the organiser now." % who, code="role_taken", who=who, former=prev)
+        else:
+            o.update(state="declined", closed=now)
+            o.setdefault("declined", []).append(who)
+            _gi_say(g, "%s kept the organiser role with %s." % (who, o.get("by")), code="role_declined",
+                    who=who, owner=o.get("by"))
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _gi_public(g, who)})
+
+
+def gi_role_withdraw(gid, who, idem=None):
+    """GR.44d «Withdraw the offer»: организатор передумал — роль остаётся, предложение закрыто."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    now = time.time()
+    with _STORE_LOCK:
+        g = _gi_find(gid)
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        o = g.get("role_offer")
+        if not o or o.get("state") != "open" or _norm_name(o.get("by")) != _norm_name(who):
+            return _idem_put(idem, {"ok": False, "error": "NO_OPEN_OFFER"})
+        o.update(state="withdrawn", closed=now)
+        _gi_touch_owner(g, who, now)
+        _save_store()
+        return _idem_put(idem, {"ok": True, "group": _gi_public(g, who)})
+
+
 def gi_approve(gid, frm, who, accept=True, idem=None):
     """Approve (or refuse) somebody who accepted after planning began.
 
@@ -4925,6 +6569,17 @@ def gi_remove(gid, frm, who, reason="", idem=None):
         g["version"] = int(g.get("version") or 1) + 1
         # Neutral in the room: the group is told somebody left, never why or by whom.
         _gi_say(g, "%s is no longer in the group." % who, code="removed", who=who)
+        # GR.52: а самому удалённому говорит Kleal — кто удалил и что причину не назовёт. Раньше
+        # человек узнавал об этом только по исчезнувшей группе. Та же переписка с Kleal, что у
+        # ответов модерации (admin_notify); `code` — чтобы приложение сказало это на своём языке.
+        _messages().append({
+            "id": _mid("a_"), "pair": _pair_key(SAFETY_SENDER, who),
+            "from": SAFETY_SENDER, "to": who, "t": now, "u": now, "admin": True,
+            "code": "group_removed", "by": g.get("owner"), "title": str(g.get("title") or "")[:200],
+            "text": ("%s removed you from %s. I can’t share the reason. Your other intents aren’t "
+                     "affected — I’m still looking for something close."
+                     % (_display(g.get("owner"), str(g.get("owner") or "")), g.get("title") or "the group")),
+            "ref": gid})
         _gp_recount(gid, now)
         _save_store()
         return _idem_put(idem, {"ok": True, "gid": gid, "group": _gi_public(g, frm)})
@@ -5116,6 +6771,8 @@ def gmsg_react(gid, who, mid, emoji):
         g = _gi_find(gid)
         if not g:
             return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if g.get("state") == "closed_by_owner":
+            return {"ok": False, "error": "CLOSED"}    # S10: закрытая комната — только для чтения
         if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
             return {"ok": False, "error": "NOT_A_MEMBER"}
         m = next((x for x in _gmsgs() if x.get("id") == str(mid) and x.get("gid") == gid), None)
@@ -5131,6 +6788,8 @@ def gmsg_delete(gid, who, mid):
         g = _gi_find(gid)
         if not g:
             return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if g.get("state") == "closed_by_owner":
+            return {"ok": False, "error": "CLOSED"}    # S10: закрытая комната — только для чтения
         m = next((x for x in _gmsgs() if x.get("id") == str(mid) and x.get("gid") == gid), None)
         if not m:
             return {"ok": False, "error": "NO_SUCH_MESSAGE"}
@@ -5154,7 +6813,15 @@ def gi_thread(gid, who, since=0.0):
     if not g:
         return {"ok": False, "error": "NO_SUCH_GROUP"}
     if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
-        return {"ok": False, "error": "NOT_A_MEMBER"}
+        # S11: ушедший по жалобе сохраняет историю только для чтения — замороженную на выходе.
+        gone = next((m for m in g.get("members") or []
+                     if _norm_name(m.get("name")) == _norm_name(who) and m.get("safety_exit")), None)
+        if not gone:
+            return {"ok": False, "error": "NOT_A_MEMBER"}
+        upto = float(gone.get("left") or 0)
+        msgs = [m for m in _gmsgs() if m.get("gid") == gid and (m.get("t") or 0) < upto]
+        msgs.sort(key=lambda m: m.get("t") or 0)
+        return {"ok": True, "group": _gi_public(g, who), "messages": msgs[-200:]}
     try:
         since = float(since or 0)
     except (TypeError, ValueError):
@@ -5185,6 +6852,8 @@ def gi_post(gid, who, text, idem=None, voice=None, client_id=None, reply_to=None
         g = _gi_find(gid)
         if not g:
             return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if g.get("state") == "closed_by_owner":
+            return {"ok": False, "error": "CLOSED"}    # S10: закрытая комната — только для чтения
         if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
             return {"ok": False, "error": "NOT_A_MEMBER"}
         if g.get("state") in ("cancelled", "expired"):
@@ -5240,19 +6909,23 @@ def _person_card(name):
     Отдельно от `_photo_by_name`, потому что приглашение подписывается «Марк, 31»: без возраста
     строка обрывается на имени, а лезть за ним в общий профиль ради одной цифры — лишний повод
     вынести наружу то, чего в приглашении быть не должно."""
-    key = _norm_name(name)
-    for u in load_candidates():
-        if _norm_name(u.get("name")) == key:
+    u = _person(name)                        # `name` — id человека (docs/IDENTITY.md)
+    if u is not None:
+        if True:
             age = u.get("age")
             try:
                 age = int(age) if age is not None else None
             except (TypeError, ValueError):
                 age = None
-            return {"name": str(u.get("name") or name), "age": age, "photo": u.get("photo") or ""}
-    return {"name": str(name or ""), "age": None, "photo": ""}
+            return {"name": str(u.get("name") or _display(name)), "id": str(u.get("id") or ""),
+                    "age": age, "photo": u.get("photo") or "", "tz": str(u.get("tz") or "")}
+    return {"name": _display(name, str(name or "")), "id": _canon_pid(name), "age": None, "photo": ""}
 
 
-def home_invites(who):
+HOME_NOT_PICKED_KEEP = 24 * 3600        # исход «не в этот раз» стоит на главной сутки, потом — история
+
+
+def home_invites(who, with_answered=False):
     """Единая лента входящих приглашений для главной — 1:1 и групповые в ОДНОМ списке.
 
     Почему отдельная ручка, а не два запроса и склейка на клиенте: на борде (GR.01, «Invite Stack»)
@@ -5265,20 +6938,41 @@ def home_invites(who):
 
     Форма строки списана с клиента (`homeInvites` в kleal-app/src/home.ts), а не придумана:
     он отбрасывает всё, у чего нет `id` и знакомого `type`, так что расхождение здесь означает
-    не ошибку на экране, а пустую ленту без единого слова о причине."""
+    не ошибку на экране, а пустую ленту без единого слова о причине.
+
+    ВЫБОР ИЗ ОТВЕТИВШИХ (11.10.2026). С `with_answered` (запрос `?pick=1`, новый клиент) в ленту
+    идут ещё заявки 1:1, где человек сказал «да» и ждёт выбора (`status: answered` — вернуться к
+    «You said yes / Take back my yes», C1a), и свежий исход «не в этот раз» (`not_picked`, сутки).
+    Только по признаку: клиент без него рисует любую строку как новое приглашение — ровно то, от
+    чего предостерегает абзац выше. У каждой строки теперь есть `status`."""
     _expire_due()
     _gi_expire()
     me = _norm_name(who)
     if not me:
         return {"ok": True, "invites": []}
     rows = []
+    now = time.time()
 
     for r in _requests():
-        if _norm_name(r.get("to")) != me or r.get("status") != "pending":
+        if _norm_name(r.get("to")) != me:
             continue
+        st = r.get("status")
+        if st != "pending":
+            if not with_answered:
+                continue
+            if st == "not_picked":
+                if now - float(r.get("updated") or 0) > HOME_NOT_PICKED_KEEP:
+                    continue
+            elif st != "answered":
+                continue
         it = r.get("intent") if isinstance(r.get("intent"), dict) else {}
         rows.append({
-            "id": r.get("id"), "type": "one_to_one",
+            "id": r.get("id"), "type": "one_to_one", "status": st,
+            # Срок ответа («Reply by») у pending; срок выбора организатором у answered.
+            "expires_at": r.get("expires_at"), "answered_at": r.get("answered_at"),
+            "pick_by": r.get("pick_by") if st == "answered" else None,
+            "closed_at": r.get("updated") if st == "not_picked" else None,
+            "reason": (r.get("trace") or {}).get("reason") if st == "not_picked" else "",
             "created_at": _iso(r.get("created") or r.get("updated")),
             "_t": float(r.get("created") or r.get("updated") or 0),
             "from": _person_card(r.get("from")),
@@ -5352,24 +7046,39 @@ def gi_for(who):
     return {"ok": True, "groups": mine, "invites": invited}
 
 
+# Почему приглашение закрылось — экран GR.56a называет причину: «turned into a one-on-one»,
+# «filled up before you answered», «closed it before a plan was set». Отказ и принятие сюда не
+# входят: их человек сделал сам и видит итог сразу.
+_GI_INVITE_CLOSED = {"group_full": "full", "withdrawn": "withdrawn", "group_closed": "closed",
+                     "expired": "expired", "policy_revoked": "withdrawn"}
+
+
 def gi_invite_detail(inv_id, who):
-    """Return one live group invitation only to its recipient."""
+    """Return one group invitation only to its recipient — live, or closed with the reason (GR.56a)."""
     _gi_expire()
     me = _norm_name(who)
     inv = next((i for i in _ginvites()
                 if i.get("id") == inv_id and _norm_name(i.get("to")) == me
-                and i.get("state") in ("sent", "viewed")), None)
+                and (i.get("state") in ("sent", "viewed") or i.get("state") in _GI_INVITE_CLOSED)), None)
     if not inv:
         return {"ok": False, "error": "NO_SUCH_INVITE"}
     g = _gi_find(inv.get("gid"))
     if not g:
         return {"ok": False, "error": "NO_SUCH_GROUP"}
+    closed = _GI_INVITE_CLOSED.get(inv.get("state"))
+    if closed == "withdrawn" and g.get("state") == "converted_1to1":
+        closed = "converted"
     return {
         "ok": True,
         "invite": {
             "id": inv.get("id"), "gid": inv.get("gid"), "from": inv.get("frm"),
             "note": inv.get("note"), "state": inv.get("state"),
             "expires_at": inv.get("expires_at"),
+            **({"closed": closed} if closed else {}),
+            # Кто позвал — лицо и возраст для строки «Mateo, 34 · Invited you» (GR.56/56a). Состав
+            # закрытой группы постороннему не отдаётся, а пригласивший ему и так известен.
+            "from_photo": _photo_of(inv.get("frm")),
+            "from_age": (_person(inv.get("frm")) or {}).get("age"),
         },
         "group": _gi_public(g, who),
     }
@@ -5490,6 +7199,7 @@ def _gp_recount(gid, now=None):
         if roster >= GP_MIN_CONFIRMS:
             p["state"] = "proposed"
             p["updated"] = now
+            p.pop("hold", None)          # пауза кончилась: третий пришёл (GR.40f)
             if g:
                 g["state"] = "planning"
                 _gi_say(g, "Three again — the plan is back on. Everyone confirms once more.", code="quorum_back")
@@ -5508,11 +7218,172 @@ def _gp_recount(gid, now=None):
     if below:
         p["state"] = "below_quorum"
         p["updated"] = now
+        p["hold"] = {"since": now}       # отсюда считаются 12 часов паузы (GR.40)
         if g:
             g["state"] = "below_quorum"
             # Борд GR.40: план НА ПАУЗЕ, а не отменён, и решение за организатором. Прежняя строка
             # («This is no longer a group plan») закрывала вопрос, который борд как раз открывает.
             _gi_say(g, "A group plan needs three. Nothing happens until you choose.", code="below_quorum")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# ПАУЗА «ВАС ДВОЕ» — борд «GR · Offline — new layout», кадры GR.40–GR.40f (29.09.2026)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════
+# План встал на паузу (below_quorum): группе нужно трое. Раньше пауза не кончалась никогда — план
+# висел до и после встречи. По борду:
+#   — 12 часов паузы («On hold 2 of 3 · Ends in 11h 40m»): организатор зовёт третьего, переводит
+#     в один на один или отменяет; пришёл третий — пауза снята (_gp_recount).
+#   — 12 часов прошли без решения — Kleal спрашивает ОБОИХ («Twelve hours passed»): Switch to
+#     one-on-one / Let the plan go. Ответ — до двух часов до встречи («Reply by 18:30»).
+#     Оба за один на один — группа переходит в него (gi_convert_respond); кто-то отпустил план
+#     или срок вышел — план отменён, группа остаётся и снова ищет людей (GR.40b / GR.40e).
+GP_HOLD_WINDOW = 12 * 3600
+GP_HOLD_CHOICES = ("one_on_one", "let_go")
+
+
+def _gp_hold_deadline(p, since):
+    """До когда можно ответить: за два часа до встречи; без времени встречи — ещё 12 часов."""
+    sa = float(p.get("starts_at") or 0)
+    return sa - GP_LOCK_BEFORE if sa else since + 2 * GP_HOLD_WINDOW
+
+
+def _gp_hold_close(p, g, now, why, who=""):
+    """Отменить план с паузы: группа остаётся, место снова ищется (борд: «Your intent goes back
+    to searching»)."""
+    h = p.setdefault("hold", {"since": now})
+    h.update(closed=now, why=why)
+    p["state"] = "cancelled"
+    p["updated"] = now
+    p["version"] = int(p.get("version") or 1) + 1
+    p["cancel_reason"] = "hold_" + why
+    if g:
+        g["state"] = "chat_open"
+        g["updated"] = now
+        g["version"] = int(g.get("version") or 1) + 1
+        if why == "let_go":
+            _gi_say(g, "%s let the plan go. The group is still here." % who, code="hold_let_go", who=who)
+        else:
+            _gi_say(g, "The plan is cancelled — nobody agreed to a one-on-one. The group is still here.",
+                    code="hold_expired")
+
+
+def _gp_hold_due(now=None):
+    """Провести то, что наступает само: конец 12 часов паузы (вопрос обоим) и конец срока ответа
+    (отмена). Зовётся на каждом чтении (_gp_sweep)."""
+    now = now or time.time()
+    changed = False
+    for p in _gplans():
+        if p.get("state") != "below_quorum":
+            continue
+        g = _gi_find(p.get("gid"))
+        h = p.get("hold")
+        if not h:
+            # План встал на паузу до того, как пауза стала считаться: часы идут с этой минуты.
+            # Встреча, время которой уже прошло, — не наша забота: не трогаем.
+            sa = float(p.get("starts_at") or 0)
+            if sa and sa <= now:
+                continue
+            p["hold"] = h = {"since": now}
+            changed = True
+        since = float(h.get("since") or now)
+        deadline = _gp_hold_deadline(p, since)
+        if not h.get("ask_at") and now >= min(since + GP_HOLD_WINDOW, deadline):
+            h["ask_at"] = now
+            h["until"] = deadline
+            h.setdefault("answers", {})
+            changed = True
+            if now < deadline and g:
+                _gi_say(g, "Twelve hours passed. Switch to one-on-one if you both agree, or let the plan go.",
+                        code="hold_ask")
+        if h.get("ask_at") and now >= float(h.get("until") or 0):
+            _gp_hold_close(p, g, now, "expired")
+            changed = True
+    return changed
+
+
+def _gp_hold_closed_recent(gid, now=None):
+    """Последний план группы, закрытый с паузы за сутки, — для кадра «The plan is cancelled»."""
+    now = now or time.time()
+    best = None
+    for p in _gplans():
+        h = p.get("hold") or {}
+        if p.get("gid") == gid and p.get("state") == "cancelled" and h.get("closed") \
+                and now - float(h["closed"]) < 24 * 3600:
+            if not best or float(h["closed"]) > float(best["hold"]["closed"]):
+                best = p
+    return best
+
+
+def _gp_hold_public(p, me, act):
+    h = p.get("hold")
+    if not h:
+        return None
+    since = float(h.get("since") or 0)
+    answers = h.get("answers") or {}
+    mine = next((v for k, v in answers.items() if _norm_name(k) == _norm_name(me)), None)
+    return {"since": since,
+            "ends_at": min(since + GP_HOLD_WINDOW, _gp_hold_deadline(p, since)),
+            "ask": bool(h.get("ask_at")), "ask_at": h.get("ask_at"), "until": h.get("until"),
+            "answered": len([n for n in act if any(_norm_name(k) == _norm_name(n) for k in answers)]),
+            "of": len(act), "my_answer": mine,
+            # Кто ответил и кто за один на один — списками людей: ключи словаря ответов на боевом —
+            # id строк, и в подписи их переводит только _humanize, который ходит по спискам.
+            "answered_by": [k for k in answers],
+            "one_on_one_by": [k for k, v in answers.items() if v == "one_on_one"],
+            "let_go_by": [k for k, v in answers.items() if v == "let_go"],
+            "closed": h.get("closed"), "why": h.get("why")}
+
+
+def gp_hold_answer(pid, who, choice, idem=None):
+    """GR.40a / GR.40d: ответ на «Twelve hours passed» — one_on_one или let_go."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(who or "").strip()
+    choice = str(choice or "").strip()
+    if choice not in GP_HOLD_CHOICES:
+        return {"ok": False, "error": "INVALID_CHOICE"}
+    now = time.time()
+    convert_to = ""
+    with _STORE_LOCK:
+        _gp_hold_due(now)
+        p = _gp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        g = _gi_find(p.get("gid"))
+        if not g:
+            return {"ok": False, "error": "NO_SUCH_GROUP"}
+        act = [m.get("name") for m in _gi_active(g)]
+        if not any(_norm_name(n) == _norm_name(who) for n in act):
+            return _idem_put(idem, {"ok": False, "error": "NOT_A_MEMBER"})
+        h = p.get("hold") or {}
+        if p.get("state") != "below_quorum" or not h.get("ask_at"):
+            return _idem_put(idem, {"ok": False, "error": "NOT_ASKING", "plan": _gp_public(p, who)})
+        h.setdefault("answers", {})[who] = choice
+        p["updated"] = now
+        p["version"] = int(p.get("version") or 1) + 1
+        if choice == "let_go":
+            # Один на один нужен обоим — отпустил один, ждать второго незачем.
+            _gp_hold_close(p, g, now, "let_go", who)
+        else:
+            both = len(act) == 2 and all(
+                any(_norm_name(k) == _norm_name(n) and v == "one_on_one" for k, v in h["answers"].items())
+                for n in act)
+            if both:
+                owner = g.get("owner")
+                other = next((n for n in act if _norm_name(n) != _norm_name(owner)), "")
+                if other:
+                    g["pending_1to1"] = {"by": owner, "to": other, "at": now}
+                    convert_to = other
+            else:
+                _gi_say(g, "%s wants to switch to one-on-one." % who, code="hold_one_on_one", who=who)
+        _save_store()
+    if convert_to:
+        # Оба сказали «да» — тот же переход, что GR.19 → GR.19b: план с паузы закрывается вместе
+        # с группой, заявка один на один создаётся сразу принятой.
+        gi_convert_respond(p.get("gid"), convert_to, True)
+    with _STORE_LOCK:
+        return _idem_put(idem, {"ok": True, "plan": _gp_public(_gp_find(pid), who)})
 
 
 def _gp_lock_due(now=None):
@@ -5700,8 +7571,18 @@ def _gp_public(p, me=""):
         "can_fix": bool(g) and _norm_name(me) == _norm_name(g.get("owner"))
                    and p.get("state") == "proposed"
                    and _gp_round(p) >= GP_MAX_ROUNDS
-                   and len(conf) >= GP_FIX_MIN_CONFIRMS,
+                   # Закрепляющий организатор согласен с тем, что закрепляет (gp_fix) — его голос
+                   # считается, даже если отдельного «Confirm» он не нажимал (кадр GR.29).
+                   and len({_norm_name(n) for n in conf} | {_norm_name(g.get("owner"))}) >= GP_FIX_MIN_CONFIRMS,
         "fixed_by": p.get("fixed_by"),
+        # Начало окна «Staying» — полоса GR.30/31 показывает прошедшее время до замка.
+        "fixed_at": p.get("fixed_at"),
+        # Версии по раундам — лист «Pick the final version» (GR.29a).
+        "rounds_log": [{"round": r.get("round"), "by": r.get("by"), "when": r.get("when"),
+                        "place": r.get("place"), "starts_at": r.get("starts_at")}
+                       for r in (p.get("rounds_log") or [])],
+        # Пауза «вас двое» (GR.40–40f): срок паузы, вопрос обоим и ответы.
+        "hold": _gp_hold_public(p, me, act),
         # «Ты не подтверждал этот план, но прийти можешь» — экран GR.31 у тех, кого зафиксировали
         # молчащими. Флаг личный: остальным этого выбора не показывают.
         "stay_or_leave": bool(p.get("fixed_by")) and str(me or "") in act and str(me or "") not in conf,
@@ -5716,12 +7597,37 @@ def _gp_public(p, me=""):
         # GRO.47-50: only the viewer's answer is returned. The aggregate contains counts, never
         # names or somebody else's private reason/rating.
         "my_feedback": dict(my_feedback) if my_feedback else None,
+        # Отменённый план встречей не был — «Did you meet?» по нему не спрашиваем (закрытая пауза
+        # GR.40b висит на странице сутки, и через час после несостоявшегося начала спросила бы).
         "feedback_due": bool(feedback_times["due"] and now >= feedback_times["due"]
-                             and now < feedback_times["expires"]),
+                             and now < feedback_times["expires"] and p.get("state") != "cancelled"),
         "feedback_expires_at": feedback_times["expires"] or None,
         "feedback_reminder": bool(p.get("feedback_reminded")),
         "feedback_outcome": feedback_outcome,
+        # Кто уже ответил на «Did you meet?» — только ФАКТ ответа, без ответа и причины: борд
+        # GR.47/GR.50 показывает у каждого «Answered» / «Hasn't answered», и больше ничего.
+        "feedback_answered": [n for n in _gp_feedback_members(p)
+                              if (_gp_feedback_record(p, n) or {}).get("happened") is not None]
+                             if feedback_times["due"] else [],
     }
+
+
+def _gp_log_round(p, by, now):
+    """Записать версию плана этого раунда — из них организатор выбирает финальную (борд GR.29a
+    «Pick the final version»: «Marc’s suggestion · round 3», «Jane’s suggestion · round 2»,
+    «Your plan · round 1»). Кто подтвердил версию, пока она была текущей, — там же."""
+    log = p.setdefault("rounds_log", [])
+    log.append({"round": _gp_round(p), "by": by, "at": now,
+                "when": p.get("when"), "place": p.get("place"), "link": p.get("link"),
+                "starts_at": p.get("starts_at"),
+                "confirmed": [n for n, r in (p.get("responses") or {}).items()
+                              if (r or {}).get("state") == "confirmed"]})
+
+
+def _gp_log_confirm(p, who):
+    log = p.get("rounds_log") or []
+    if log and log[-1].get("round") == _gp_round(p) and who not in log[-1].setdefault("confirmed", []):
+        log[-1]["confirmed"].append(who)
 
 
 def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None, link=""):
@@ -5735,6 +7641,8 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None, li
         g = _gi_find(gid)
         if not g:
             return {"ok": False, "error": "NO_SUCH_GROUP"}
+        if g.get("state") == "closed_by_owner":
+            return {"ok": False, "error": "CLOSED"}    # S10: закрытая комната — только для чтения
         if _norm_name(who) != _norm_name(g.get("owner")):
             return {"ok": False, "error": "NOT_ORGANIZER"}
         if len(_gi_active(g)) < GP_MIN_CONFIRMS:
@@ -5780,6 +7688,7 @@ def gp_begin(gid, who, when="", place="", note="", starts_at=None, idem=None, li
         # would be theatre, and it would make three people impossible with a group of exactly three.
         if mode != "hybrid" or (str(p.get("place") or "").strip() and initial_link.strip()):
             p["responses"][g.get("owner")] = {"state": "confirmed", "t": now, "version": 1}
+        _gp_log_round(p, g.get("owner"), now)
         _gplans().append(p)
         g["state"] = "planning"
         g["updated"] = now
@@ -5865,6 +7774,7 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
                               if complete else {})
             p["state"] = "proposed"
             p["updated"] = now
+            _gp_log_round(p, who, now)
             _gi_say(g, "%s suggested a change: %s%s. Everyone confirms again."
                     % (who, p.get("when") or "", (", " + p.get("place")) if p.get("place") else ""),
                                code="plan_countered", who=who, when=p.get("when"), place=p.get("place"))
@@ -5886,6 +7796,7 @@ def gp_respond(pid, who, action, when="", place="", note="", starts_at=None, ide
                                     "plan": _gp_public(p, who)})
         p["responses"][who] = {"state": "confirmed", "t": now, "version": v}
         p["updated"] = now
+        _gp_log_confirm(p, who)
         conf = _gp_confirms(p)
         # ПОДТВЕРЖДАЮТ ВСЕ. Борд GR.26 говорит это заголовком — «Waiting for everyone» — и текстом:
         # «The plan starts when all three confirm». Раньше здесь хватало трёх, и четвёртый человек
@@ -5946,7 +7857,7 @@ def gp_cancel(pid, who, idem=None):
     return _idem_put(idem, {"ok": True, "plan": _gp_public(p, who)})
 
 
-def gp_fix(pid, who, idem=None):
+def gp_fix(pid, who, idem=None, round_no=None):
     """GR.30 «Fix the plan» — организатор закрывает согласование, когда раунды кончились.
 
     Зачем отдельное действие, а не автоматика по счётчику раундов: борд даёт организатору ВЫБОР —
@@ -5981,7 +7892,31 @@ def gp_fix(pid, who, idem=None):
             return _idem_put(idem, {"ok": False, "error": "ROUNDS_LEFT",
                                     "rounds": int(p.get("version") or 1),
                                     "max_rounds": GP_MAX_ROUNDS})
-        conf = _gp_confirms(p)
+        # GR.29a «Pick the final version»: организатор может закрепить не последнюю версию, а одну
+        # из прежних. Согласие тогда считается по ЭТОЙ версии — кто подтверждал её, пока она была
+        # текущей (плюс сам организатор, раз он её выбирает). Правило «один организатор — это указ»
+        # действует и здесь: своя версия, которую никто не подтверждал, не закрепляется.
+        pick = None
+        try:
+            rn = int(round_no) if round_no not in (None, "") else None
+        except (TypeError, ValueError):
+            rn = None
+        if rn is not None and rn != _gp_round(p):
+            pick = next((r for r in (p.get("rounds_log") or []) if int(r.get("round") or 0) == rn), None)
+            if not pick:
+                return _idem_put(idem, {"ok": False, "error": "NO_SUCH_ROUND", "plan": _gp_public(p, who)})
+        if pick:
+            act_n = {_norm_name(m.get("name")) for m in _gi_active(g)}
+            conf = [n for n in (pick.get("confirmed") or []) if _norm_name(n) in act_n]
+            if not any(_norm_name(n) == _norm_name(who) for n in conf):
+                conf.append(who)
+        else:
+            # Закрепить — и есть согласиться: организатор, нажавший «Fix this plan» на версии
+            # Marc (GR.29a), с ней согласен. Раньше требовалось ещё отдельное «Confirm», и без него
+            # фиксация отвечала ALONE при согласном Marc — кнопка на кадре GR.29 не работала.
+            conf = list(_gp_confirms(p))
+            if not any(_norm_name(n) == _norm_name(who) for n in conf):
+                conf.append(who)
         if len(conf) < GP_FIX_MIN_CONFIRMS:
             # Согласен только сам организатор — это указ, а не план (см. GP_FIX_MIN_CONFIRMS).
             return _idem_put(idem, {"ok": False, "error": "ALONE",
@@ -5991,6 +7926,16 @@ def gp_fix(pid, who, idem=None):
             # А вот людей в плане должно остаться трое — это §1, и оно про состав, не про согласия.
             return _idem_put(idem, {"ok": False, "error": "NEED_THREE",
                                     "confirmed": conf, "plan": _gp_public(p, who)})
+        if pick:
+            for k in ("when", "place", "link", "starts_at"):
+                if pick.get(k) not in (None, ""):
+                    p[k] = pick[k]
+            p["version"] = int(p.get("version") or 1) + 1
+            p["responses"] = {n: {"state": "confirmed", "t": now, "version": p["version"]} for n in conf}
+            p["fixed_round"] = rn
+        else:
+            p.setdefault("responses", {}).setdefault(
+                who, {"state": "confirmed", "t": now, "version": int(p.get("version") or 1)})
         p["state"] = "confirmed"
         p["fixed_by"] = who
         p["fixed_at"] = now
@@ -6062,7 +8007,9 @@ def _gp_vote_view(v, me=""):
                                  "kind": v.get("kind"), "state": v.get("state"),
                                  "by": v.get("by"), "organiser": owner,
                                  "yes": len(yes), "no": len(no),
-                                 "waiting": [n for n in act if n not in votes],
+                                 # Ждём только участников: организатор не голосует, он решает.
+                                 "waiting": [n for n in act if n not in votes
+                                             and _norm_name(n) != _norm_name(owner)],
                                  "my_vote": votes.get(str(me or "")),
                                  # Срок — на экране это «closes in 4h» (GR.36). Отдаём момент, а
                                  # не «осталось столько-то»: клиент считает сам и не врёт, пока
@@ -6097,7 +8044,12 @@ def gp_vote(vote_id, who, yes, idem=None):
         if not any(_norm_name(n) == _norm_name(who) for n in act):
             return {"ok": False, "error": "NOT_A_MEMBER"}
         v.setdefault("votes", {})[who] = bool(yes)
-        if len(v["votes"]) >= len(act):
+        # Голосуют УЧАСТНИКИ, организатор — решает (борд GR.36 «Vote 1 of 2», GR.37 «Jane Voted,
+        # Marc Voted, You Confirmed»). Ждать его голоса значило держать голосование открытым все
+        # шесть часов: кнопки «проголосовать» у организатора нет — у него «See the numbers and decide».
+        owner = _norm_name(g.get("owner")) if g else ""
+        voters = [n for n in act if _norm_name(n) != owner] or act
+        if all(n in v["votes"] for n in voters):
             _gp_close_vote(v, now)
         _save_store()
         return _idem_put(idem, _gp_vote_view(v, who))
@@ -6121,7 +8073,10 @@ def _gp_close_vote(v, now=None):
     no = len(votes) - yes
     g = _gi_find(v.get("gid"))
     act = [m.get("name") for m in _gi_active(g)] if g else []
-    silent = max(0, len(act) - len(votes))
+    # Молчавшие — среди голосующих, то есть без организатора: он не голосует, а решает.
+    owner = _norm_name(g.get("owner")) if g else ""
+    voters = [n for n in act if _norm_name(n) != owner] or act
+    silent = max(0, len([n for n in voters if n not in votes]))
     v["state"] = "closed"
     v["closed"] = now
     v["tally"] = {"yes": yes, "no": no, "silent": silent}
@@ -6157,7 +8112,9 @@ def _gp_sweep():
     показывала живой план с кнопкой «Подтвердить» — а сервер на неё отвечал LOCKED: экран узнавал
     правду только после того, как соврал человеку."""
     with _STORE_LOCK:
-        if _gp_lock_due() | _gp_votes_due():
+        # Плюс смена организатора: конец голосования за перехват и истёкшее предложение роли
+        # наступают сами (GR.43/44) — их тоже проводит тот, кто пришёл читать.
+        if _gp_lock_due() | _gp_votes_due() | _gi_roles_due() | _gp_hold_due():
             _save_store()
 
 
@@ -6610,7 +8567,11 @@ def gp_for(who):
         # Закрытое, но НЕ решённое голосование — это и есть экран GR.37/38: организатору «It’s your
         # call», остальным «жду решения». Пока сюда попадали только открытые, обе стороны узнавали
         # исход ниоткуда: голосование просто исчезало.
-        if v.get("state") not in ("open", "closed") or v.get("decided"):
+        # Решённое — ещё сутки: участник должен увидеть исход (GR.38 «Mateo kept the plan as it
+        # is» и лист GR.38a), а не заметить, что голосование молча пропало.
+        if v.get("state") not in ("open", "closed"):
+            continue
+        if v.get("decided") and time.time() - float(v.get("decided_at") or 0) > 24 * 3600:
             continue
         g = _gi_find(v.get("gid"))
         if g and any(_norm_name(m.get("name")) == me for m in _gi_active(g)):
@@ -6661,18 +8622,10 @@ def mp_side(pid, who, side, idem=None):
             return {"ok": False, "error": "NO_SUCH_PLAN"}
         if not _mp_is_in(p, who):
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
-        # Только у гибрида. У звонка «прийти живьём» некуда, у встречи вживую «уйти в звонок»
-        # не по чему — предлагать выбор там значило бы обещать несуществующее.
-        if p.get("mode") != "hybrid":
-            return _idem_put(idem, {"ok": False, "error": "NOT_HYBRID", "mode": p.get("mode")})
-        if p.get("state") not in ("proposed", "confirmed"):
-            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
-        # Сторона, которой нет входа, — это тупик: уйти в звонок, которого не существует, значит
-        # не прийти вовсе. Пусть сперва донесут ссылку (HY.20a) или место (HY.20b).
-        if st == "call" and not _mp_link(p):
-            return _idem_put(idem, {"ok": False, "error": "NO_LINK"})
-        if st == "in_person" and not _mp_place(p):
-            return _idem_put(idem, {"ok": False, "error": "NO_PLACE"})
+        # Только у гибрида и только на сторону, у которой есть вход (ссылка или место) — mplan_rules.
+        no = _mp_refusal(p, who, "side_" + st)
+        if no:
+            return _idem_put(idem, no)
         was = (p.get("sides") or {}).get(_norm_name(who))
         p.setdefault("sides", {})[_norm_name(who)] = {"side": st, "t": time.time()}
         p["updated"] = time.time()
@@ -6725,6 +8678,14 @@ def _mp_place(p):
 MP_MODES = ("offline", "online", "hybrid")
 MP_MAX_AHEAD = 365 * 24 * 3600           # a first coffee is not scheduled for the year 31 billion
 MP_KEEP_AFTER = 24 * 3600                # a plan stays "active" for a day past its start, then history
+# РАУНДЫ И СРОК ОТВЕТА — борд «1:1 · Offline — new layout», разделы B/C (OF.20–20c, OF.21a–c, C3–C5),
+# 06.10.2026. До подтверждения каждое встречное время — раунд, их не больше трёх; на ответ — 6 ч и
+# до, и после подтверждения («Round 1 / 3 · Ends in 6h», «Accepted 0 of 1 · Ends in 6h»).
+MP_MAX_ROUNDS = 3
+MP_ROUND_TTL = 6 * 3600
+# O.23c «Nobody joined the call»: ссылка открыта 15 минут от начала. Это ПОМЕТКА для экрана, а не
+# исход: состоялась ли встреча, по-прежнему решают ответы двоих (решение владельца 11.10.2026).
+MP_JOIN_WINDOW = 15 * 60
 
 
 def _mplans():
@@ -6764,6 +8725,36 @@ def _mp_of(a, b):
     return None
 
 
+def person_card(me, other):
+    """Карточка человека для того, с кем он УЖЕ согласился встретиться.
+
+    ЗАМОК ТОТ ЖЕ, ЧТО У СООБЩЕНИЙ И ПЛАНОВ — `_mp_matched`. Одна функция на все три двери, чтобы
+    правило не разошлось само с собой: имя человека видно в выдаче, и ручка без проверки отдавала
+    бы профиль кого угодно по одному запросу.
+
+    НИЧЕГО НОВОГО НЕ РАСКРЫВАЕМ. Отдаём ровно те поля, которые собеседник уже видел карточкой в
+    выдаче, когда решал, звать или нет: имя, фото, возраст, район, интересы, языки, настрой,
+    подтверждённость. Точных координат здесь нет и быть не может — их нет и в выдаче.
+
+    Отдельно про `km`: он НЕ отдаётся. Расстояние в выдаче считается от того, кто искал, и здесь
+    было бы числом из чужой системы координат — либо враньём, либо утечкой точности.
+    """
+    me, other = str(me or "").strip(), str(other or "").strip()
+    if not me or not other:
+        return {"ok": False, "error": "TWO_PEOPLE_REQUIRED"}
+    if _blocked_pair(me, other):
+        return {"ok": False, "error": "BLOCKED"}
+    if not _mp_matched(me, other):
+        return {"ok": False, "error": "NOT_MATCHED"}
+    row = _person(other)                     # по id: карточка тёзки — это другой человек
+    if row is None:
+        return {"ok": False, "error": "not found"}
+    card = {k: row.get(k) for k in ("id", "name", "photo", "age", "area", "interests", "langs",
+                                    "vibe", "verified", "formats", "role", "open", "summary")
+            if row.get(k) is not None}
+    return {"ok": True, "person": card}
+
+
 def _mp_matched(a, b):
     """A plan may only go to someone who ACCEPTED an invitation. Without this gate the exact address of
     a first date is one POST away from any name in the pool."""
@@ -6796,25 +8787,115 @@ def _mp_other(p, who):
     return p.get("guest") if _norm_name(who) == _norm_name(p.get("host")) else p.get("host")
 
 
+def _mp_facts(p, who, now=None):
+    """Факты о плане для правил (`mplan_rules`) — одна сборка, чтобы ручки и проекция читали одно и то же."""
+    pend = p.get("pending") or {}
+    return {"state": p.get("state"), "frozen": _mp_frozen(p, now),
+            "pending": bool(pend),
+            "pending_mine": bool(pend) and _norm_name(pend.get("by")) == _norm_name(who),
+            "mode": p.get("mode"), "link": bool(_mp_link(p)), "place": bool(_mp_place(p)),
+            "my_answer": _mp_answer(p, who),
+            "is_host": _norm_name(who) == _norm_name(p.get("host")),
+            "round": int(p.get("round") or 1), "max_rounds": MP_MAX_ROUNDS,
+            "final": _mp_final_open(p)}
+
+
+def _mp_final_open(p):
+    """Хозяин зафиксировал финальную версию (OF.20c), гость ещё не ответил «остаюсь / выхожу»."""
+    f = p.get("final_by_host") or None
+    return bool(f) and not f.get("answer") and p.get("state") == "proposed"
+
+
+def _mp_round_entry(p, rnd, by, starts_at, when, district, now):
+    return {"round": int(rnd), "by": by, "starts_at": starts_at, "when": str(when or "")[:120],
+            "district": str(district or "")[:120], "at": now}
+
+
+def _mp_sweep(now=None):
+    """Время наступает на чтении: просроченное встречное время снимается само (OF.21c, C5a).
+
+    «Marta не ответила за 6 ч — остаётся 20:00»: висящее предложение уходит, план остаётся ровно
+    каким был, в переписке пары — строка об этом. Зовётся из каждой ручки, отдающей или меняющей
+    план (как _gp_sweep у группы), иначе экран показал бы перенос, на который уже нельзя ответить.
+    Предложения без срока (до 06.10.2026) не трогаем — им срок никто не обещал."""
+    now = now or time.time()
+    changed = False
+    for p in _mplans():
+        # МОЛЧАНИЕ ДО ПОДТВЕРЖДЕНИЯ (решение владельца 06.10.2026): на каждый ход 6 ч; кто молчит —
+        # план закрывается «не ответил(а)» БЕЗ последствий. Из молчания нельзя получить встречу, на
+        # которую второй ни разу не сказал «да». Срок ставят propose/counter/fix; у планов до
+        # 06.10.2026 его нет — их время не закрывает.
+        try:
+            due = float(p.get("round_ends_at") or 0)
+        except (TypeError, ValueError):
+            due = 0
+        if p.get("state") == "proposed" and due and now >= due:
+            pend = p.get("pending") or {}
+            # Чей был ход: висит встречное — отвечает не его автор; нет — гость (хозяин уже «за»).
+            silent = (_mp_other(p, pend.get("by")) if pend.get("by") else p.get("guest"))
+            was_final = _mp_final_open(p)           # считать ДО смены состояния: проверка смотрит на proposed
+            p["state"] = "cancelled"
+            p["cancelled_by"] = ""
+            p["cancel_kind"] = "expired_no_answer"
+            p["expired_silent"] = silent
+            p["pending"] = None
+            p["round_ends_at"] = None
+            if was_final:
+                p["final_by_host"] = dict(p["final_by_host"], answer="timeout", answered_at=now)
+            p["updated"] = now
+            _sys_msg(silent, _mp_other(p, silent), "plan_expired", at=p.get("starts_at"), by=silent)
+            changed = True
+            continue
+        pend = p.get("pending") or None
+        if not pend or p.get("state") not in ("proposed", "confirmed"):
+            continue
+        try:
+            exp = float(pend.get("expires_at") or 0)
+        except (TypeError, ValueError):
+            exp = 0
+        if not exp or now < exp:
+            continue
+        p["pending"] = None
+        p["last_change"] = {"state": "expired", "by": pend.get("by"), "at": now}
+        p["updated"] = now
+        _sys_msg(pend.get("by"), _mp_other(p, pend.get("by")), "plan_change_expired",
+                 at=p.get("starts_at"), was=pend.get("starts_at"))
+        changed = True
+    if changed:
+        _save_store()
+    return changed
+
+
+def _mp_refusal(p, who, action, now=None):
+    """Готовый отказ ручки по таблице правил, или None — действие возможно."""
+    return mpr.refusal(action, _mp_facts(p, who, now))
+
+
 def _mp_public(p, me=""):
     if not p:
         return None
     who = _norm_name(me)
     conf = set(_mp_confirmed(p))
-    by = _photo_by_name()
-    tzs = _tz_by_name()
     people = []
     for nm, role in ((p.get("host"), "host"), (p.get("guest"), "guest")):
         k = _norm_name(nm)
-        people.append({"name": nm, "role": role, "is_me": k == who, "photo": by.get(k),
+        people.append({"name": nm, "role": role, "is_me": k == who, "photo": _photo_of(k),
+                       # «Marta, 29» на кадрах B/C. Возраст пара и так видит в карточке человека
+                       # (person_card — тот же замок «приглашение принято»), план без него не открыть.
+                       "age": (_person(nm) or {}).get("age"),
+                       # Пол — только двоим участникам плана, чтобы тексты писали «он/она», а не «they»
+                       # (решение владельца 11.10.2026). В выдаче и карточке человека его по-прежнему нет.
+                       "gender": (_person(nm) or {}).get("gender") or "",
                        "status": _mp_answer(p, nm) or "pending", "confirmed": k in conf,
                        # Пояс участника — чтобы экран мог показать чужое местное время, и только
                        # когда оно отличается от своего.
-                       "tz": tzs.get(k) or "",
+                       "tz": _tz_of(k),
                        # HY.22a/22b: с какой стороны человек придёт. Второму это видно — в том и
                        # смысл: «она сказала заранее, и ты не сидишь за столиком один».
                        "side": ((p.get("sides") or {}).get(k) or {}).get("side"),
-                       "live": (p.get("live") or {}).get(k)})
+                       "live": (p.get("live") or {}).get(k),
+                       # Вошёл в звонок / пришёл: клиент шлёт статус `here` по «Open link» (O.23).
+                       "joined": ((p.get("live") or {}).get(k) or {}).get("status") == "here"})
     # OF.C3: released by the viewer's OWN confirmation — plus, always, to whoever typed it. Without
     # that second half a counter-proposal (which resets every confirmation) would hide the address
     # from the very person who wrote it, which is not privacy, just a broken screen.
@@ -6841,8 +8922,17 @@ def _mp_public(p, me=""):
         # написал. Ссылка не безобиднее адреса — по ней входят в разговор.
         "place": (_mp_place(p) if opened else ""),
         "place_set": bool(_mp_place(p)),
+        # ПЕРЕДАЧА ВЫБОРА — ФАКТ ПЛАНА, А НЕ ПАМЯТЬ ЭКРАНА. «Пусть выберет он(а)» жило локальным
+        # флагом в приложении: сбрасывалось при повторном открытии, второму не показывалось вовсе,
+        # и оба могли просить друг друга по кругу. Теперь просьба лежит в плане, оба её видят, и
+        # она снимается сама, когда просимое названо (см. mp_address).
+        "place_asked_by": ((p.get("asks") or {}).get("place") or {}).get("by") or "",
+        "link_asked_by": ((p.get("asks") or {}).get("link") or {}).get("by") or "",
         "link": (_mp_link(p) if opened else ""),
         "link_set": bool(_mp_link(p)),
+        # Чья ссылка и чьё место: после «Host the call myself» экран подписывал ссылку организатору
+        # («Mateo's link»), хотя её дал гость. Сам вход по-прежнему открыт только подтвердившим.
+        "link_by": p.get("link_by") or "", "address_by": p.get("address_by") or "",
         "note": p.get("note"), "cover": p.get("cover"),
         "host": p.get("host"), "guest": p.get("guest"), "other": _mp_other(p, me),
         "participants": people,
@@ -6855,6 +8945,9 @@ def _mp_public(p, me=""):
         # что происходит. Признак отдаём фактом, чтобы экран не считал время сам и не разошёлся
         # с сервером на минуту.
         "locked": _mp_frozen(p),
+        # Что этому участнику можно предложить прямо сейчас — по той же таблице, по которой ручки
+        # отказывают. Экран рисует кнопки по этому списку, а не выводит правила заново.
+        "actions": mpr.offered(_mp_facts(p, me)),
         "locks_at": (float(p["starts_at"]) - MP_LOCK_BEFORE) if p.get("starts_at") else None,
         # Сторона парой my/their — как live и tz: экрану нужен один ключ, а не перебор участников.
         "my_side": ((p.get("sides") or {}).get(who) or {}).get("side"),
@@ -6863,7 +8956,7 @@ def _mp_public(p, me=""):
         "their_live": (p.get("live") or {}).get(_norm_name(_mp_other(p, me))),
         # Пояс собеседника рядом с their_live по той же причине: экрану нужен ОДИН ключ, а не
         # перебор participants ради поля, которое смотрят в каждой строке времени.
-        "their_tz": tzs.get(_norm_name(_mp_other(p, me))) or "",
+        "their_tz": _tz_of(_mp_other(p, me)),
         # OF.23a разводит «You told X you can't make it» и «X can't make it» — без имени отменившего
         # экран не знает, какую из двух правд показывать.
         "cancelled_by": p.get("cancelled_by"),
@@ -6882,6 +8975,40 @@ def _mp_public(p, me=""):
         # live: наружу уходит булево, чужая оценка и причина остаются внутри.
         "their_feedback": bool((p.get("feedback") or {}).get(_norm_name(_mp_other(p, me)))),
         "due": bool(p.get("starts_at") and time.time() >= float(p["starts_at"])),
+        # «Reply by Sun 20:00» (O.24 / O.C10 / OF.24): до какого момента план спрашивает об исходе —
+        # сутки от начала, тот же горизонт, за которым он уходит в историю. Срок только показывается:
+        # по его истечении ничего не засчитывается само.
+        "feedback_expires_at": (float(p["starts_at"]) + MP_KEEP_AFTER) if p.get("starts_at") else None,
+        # O.23c: звонок, в который за 15 минут не вошёл никто. Только у встречи-звонка и только
+        # у подтверждённой; пометка, а не состояние.
+        "join_closes_at": ((float(p["starts_at"]) + MP_JOIN_WINDOW)
+                           if p.get("starts_at") and (p.get("mode") == "online" or p.get("moved_to_call")) else None),
+        "nobody_joined": bool(p.get("state") == "confirmed" and p.get("starts_at")
+                              and (p.get("mode") == "online" or p.get("moved_to_call"))
+                              and time.time() >= float(p["starts_at"]) + MP_JOIN_WINDOW
+                              and not any(x.get("joined") for x in people)),
+        # РАУНДЫ (OF.20–20c, C3–C3d). round — номер текущей версии до подтверждения (1 — исходный
+        # план), round_ends_at — срок ответа на висящее встречное время. Журнал раундов — для листа
+        # «Fix the plan»: хозяин выбирает финальную версию из всех.
+        "round": int(p.get("round") or 1), "max_rounds": MP_MAX_ROUNDS,
+        # До подтверждения — срок текущего хода (молчание закрывает план); после — срок переноса.
+        "round_ends_at": (p.get("round_ends_at") if p.get("state") == "proposed"
+                          else ((p.get("pending") or {}).get("expires_at") if p.get("pending") else None)),
+        "rounds_log": list(p.get("rounds_log") or []),
+        "can_fix": (p.get("state") == "proposed" and who == _norm_name(p.get("host"))
+                    and int(p.get("round") or 1) >= MP_MAX_ROUNDS and not _mp_frozen(p)
+                    and not _mp_final_open(p)),
+        # Кто промолчал, если план закрыло время (cancel_kind = expired_no_answer).
+        # Ключа нет в _PERSON_KEYS, поэтому подпись и id — явно: иначе экран получил бы голый id.
+        "expired_silent": (_display(p["expired_silent"], str(p["expired_silent"]))
+                           if p.get("expired_silent") else ""),
+        "expired_silent_id": _canon_pid(p.get("expired_silent")) if p.get("expired_silent") else "",
+        # Гость должен решить «остаться / выйти» по зафиксированному плану; сам факт фиксации —
+        # в fixed (раунд и время), он остаётся и после ответа.
+        "final_by_host": _mp_final_open(p),
+        "fixed": p.get("final_by_host") or None,
+        # «Вышел из зафиксированного плана» — без последствий (OF.C3d), отличать от отмены.
+        "cancel_kind": p.get("cancel_kind") or "",
         "created": p.get("created"), "updated": p.get("updated"),
     }
 
@@ -6931,11 +9058,21 @@ def mp_propose(frm, to, title="", mode="offline", starts_at=None, when="", distr
              "pending": None,
              "note": str(note or "")[:400], "cover": str(cover or "")[:400],
              "state": "proposed", "version": 1,
+             "round": 1, "rounds_log": [_mp_round_entry(None, 1, frm, sa, when, district, now)],
+             "round_ends_at": now + MP_ROUND_TTL,
              # Proposing IS confirming. Asking the sender to agree with themselves would be theatre.
              "responses": {_norm_name(frm): {"state": "confirmed", "t": now, "version": 1}},
              "live": {}, "feedback": {}, "created": now, "updated": now}
         _mplans().append(p)
         _sys_msg(frm, to, "plan_proposed", at=sa, mode=p["mode"], district=p["district"])
+        # МЕСТО, ВПИСАННОЕ ПРЯМО В ФОРМУ, ТОЖЕ СОБЫТИЕ. Названное минутой позже через mp_address
+        # оно даёт `plan_place` и доходит до переписки, а названное сразу — не давало ничего:
+        # второй читал «план предложен» и не знал, что адрес уже есть. Владелец назвал это среди
+        # пропавших: «указываю новое время, дату, место».
+        if p["link"]:
+            _sys_msg(frm, to, "plan_place", kind="link")
+        if p["address"] or p["venue"]:
+            _sys_msg(frm, to, "plan_place", kind="place", district=p["district"])
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, frm)})
 
@@ -6974,7 +9111,7 @@ def _mp_frozen(p, now=None):
 
 
 def mp_respond(pid, who, action, starts_at=None, when="", district="",
-               title="", note="", version=None, idem=None):
+               title="", note="", version=None, idem=None, round_no=None):
     """confirm | decline | counter | accept_change | reject_change.
 
     A COUNTER here is NOT what a counter is on the group side. The group rule tears the plan up and
@@ -6991,19 +9128,36 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
     if cached is not None:
         return cached
     act = str(action or "").strip().lower()
-    if act not in ("confirm", "decline", "counter", "accept_change", "reject_change"):
+    if act not in ("confirm", "decline", "counter", "accept_change", "reject_change",
+                   "fix", "stay", "leave"):
         return {"ok": False, "error": "BAD_ACTION"}
     now = time.time()
     with _STORE_LOCK:
+        _mp_sweep(now)
         p = _mp_find(pid)
         if not p:
             return {"ok": False, "error": "NO_SUCH_PLAN"}
         if not _mp_is_in(p, who):
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
-        if p.get("state") not in ("proposed", "confirmed"):
-            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+        # Открыт ли план, не заморозка ли, не висит ли встречное время — всё по одной таблице
+        # (mplan_rules). Отказ уносит с собой проекцию: телефон опрашивает сервер раз в 15 секунд
+        # и о чужом переносе внутри этого окна иначе не узнал бы.
+        #
+        # ПОРЯДОК ТОТ ЖЕ, ЧТО БЫЛ: закрытый план → устаревшая версия → заморозка и условия.
+        # Версия обязана опережать LOCKED и PENDING_CHANGE: только на VERSION_CONFLICT экран
+        # перечитывает план и говорит «за это время всё изменилось» (plan.tsx), а на прочие коды
+        # показывает общее «не удалось». Ответ на позавчерашнюю версию — это именно «перечитай».
+        no = _mp_refusal(p, who, act, now)
+        if no and no.get("error") == "NOT_OPEN":
+            return _idem_put(idem, dict(no, plan=_mp_public(p, who)))
         if version is not None and str(version) != str(p.get("version") or 1):
             return {"ok": False, "error": "VERSION_CONFLICT", "version": p.get("version")}
+        if no:
+            # YOUR_OWN_CHANGE и раньше НЕ клался в кэш идемпотентности: это отказ «не тому
+            # человеку», а не результат действия, и повтор с тем же ключом должен считаться заново.
+            if no.get("error") == "YOUR_OWN_CHANGE":
+                return dict(no, plan=_mp_public(p, who))
+            return _idem_put(idem, dict(no, plan=_mp_public(p, who)))
         k = _norm_name(who)
         v = int(p.get("version") or 1)
         pend = p.get("pending") or None
@@ -7011,9 +9165,50 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
         # В заморозке живут только ответы, а не правки: подтвердить можно, «не смогу» — можно,
         # переносить время и принимать чужой перенос — нельзя. Спека: «Отключены правки, отмена,
         # голосования и приглашения. Остаётся только „I can't make it" — оно встречу не отменяет».
-        if act in ("counter", "accept_change", "reject_change") and _mp_frozen(p, now):
-            return _idem_put(idem, {"ok": False, "error": "LOCKED",
-                                    "note": "less than two hours before the meeting"})
+        if act in ("confirm", "stay") and _mp_final_open(p):
+            p["final_by_host"] = dict(p["final_by_host"], answer="stay", answered_at=now)
+            act = "confirm"
+        if act == "leave":
+            # OF.C3d «Leave the plan»: выход из зафиксированного хозяином плана — без последствий.
+            # Это не отмена встречи кем-то из двоих, а честный выход после трёх несошедшихся раундов.
+            p["final_by_host"] = dict(p["final_by_host"], answer="leave", answered_at=now)
+            p["state"] = "cancelled"
+            p["cancelled_by"] = who
+            p["cancel_kind"] = "left_final"
+            p.setdefault("responses", {})[k] = {"state": "declined", "t": now, "version": v}
+            _sys_msg(who, peer, "plan_left", at=p.get("starts_at"))
+            p["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
+        if act == "fix":
+            try:
+                rn = int(round_no)
+            except (TypeError, ValueError):
+                return _idem_put(idem, {"ok": False, "error": "NO_ROUND"})
+            entry = next((e for e in (p.get("rounds_log") or []) if int(e.get("round") or 0) == rn), None)
+            if not entry:
+                return _idem_put(idem, {"ok": False, "error": "NO_SUCH_ROUND"})
+            try:
+                sa = float(entry.get("starts_at")) if entry.get("starts_at") else None
+            except (TypeError, ValueError):
+                sa = None
+            if sa is not None and sa <= now:
+                return _idem_put(idem, {"ok": False, "error": "IN_THE_PAST"})
+            p["starts_at"] = sa
+            for f in ("when", "district"):
+                if entry.get(f):
+                    p[f] = entry[f]
+            p["pending"] = None
+            p["version"] = v + 1
+            # Хозяин выбрал — значит, он согласен; гость отвечает «остаюсь / выхожу» (OF.C3d).
+            p["responses"] = {k: {"state": "confirmed", "t": now, "version": p["version"]}}
+            p["final_by_host"] = {"round": rn, "by": who, "starts_at": sa, "at": now}
+            p["round_ends_at"] = now + MP_ROUND_TTL           # молчание гостя = вышел, без последствий
+            p["live"] = {}
+            _sys_msg(who, peer, "plan_fixed", at=sa, round=rn, mode=p.get("mode"))
+            p["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
         if act == "decline" and _mp_frozen(p, now):
             # СПЕКА, СЛОВО В СЛОВО: «Остаётся только „I can't make it" — оно встречу не отменяет».
             # Комментарий выше это правило называл, а код строкой ниже ставил `cancelled` — то
@@ -7035,12 +9230,20 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
             p.setdefault("responses", {})[k] = {"state": "declined", "t": now, "version": v}
             _sys_msg(who, peer, "plan_cancelled", at=p.get("starts_at"))
         elif act == "confirm":
+            # Условие смотрит на ПЕРЕХОД, а не на итог. «Согласились оба» остаётся истиной и после
+            # того, как согласились, — поэтому каждое следующее нажатие «Подтвердить» писало в
+            # ленту ещё одну строку «План подтверждён». Комментарий ниже обещал «пишется один раз»
+            # ещё до того, как это стало правдой; прогон 14.09.2026 дал три одинаковых строки на
+            # три нажатия. С кнопкой прямо в ленте промахнуться пальцем стало только легче.
+            _was_confirmed = p.get("state") == "confirmed"
             p.setdefault("responses", {})[k] = {"state": "confirmed", "t": now, "version": v}
             if len(_mp_confirmed(p)) >= 2:
                 p["state"] = "confirmed"
+                p["round_ends_at"] = None
                 # ЭТА строка и есть «финальное сообщение, что план подтверждён». Пишется один раз,
                 # в момент, когда согласились оба, — не на каждое нажатие «Подтвердить».
-                _sys_msg(who, peer, "plan_confirmed", at=p.get("starts_at"), mode=p.get("mode"))
+                if not _was_confirmed:
+                    _sys_msg(who, peer, "plan_confirmed", at=p.get("starts_at"), mode=p.get("mode"))
         elif act == "counter":
             try:
                 sa = float(starts_at) if starts_at else None
@@ -7053,18 +9256,29 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
             if sa > now + MP_MAX_AHEAD:
                 return _idem_put(idem, {"ok": False, "error": "TOO_FAR_AHEAD"})
             # The plan itself is untouched: same state, same starts_at, same confirmations.
+            # Срок ответа — 6 ч (OF.21c, C3); по истечении предложение снимает _mp_sweep.
             p["pending"] = {"by": who, "starts_at": sa, "when": str(when or "")[:120],
                             "district": str(district or "")[:120], "title": str(title or "")[:120],
-                            "note": str(note or "")[:400], "at": now}
-            _sys_msg(who, peer, "plan_counter", at=sa, was=p.get("starts_at"))
+                            "note": str(note or "")[:400], "at": now,
+                            "expires_at": now + MP_ROUND_TTL}
+            rnd = None
+            if p.get("state") == "proposed":
+                # До подтверждения встречное — новый раунд (OF.20b). Журнал нужен листу «Fix the
+                # plan»: у планов, созданных до раундов, первый раунд — нынешние условия хозяина.
+                log = p.setdefault("rounds_log", [])
+                if not log:
+                    log.append(_mp_round_entry(p, 1, p.get("host"), p.get("starts_at"), p.get("when"),
+                                               p.get("district"), p.get("created") or now))
+                rnd = int(p.get("round") or 1) + 1
+                p["round"] = rnd
+                log.append(_mp_round_entry(p, rnd, who, sa, when or p.get("when"),
+                                           district or p.get("district"), now))
+                p["pending"]["round"] = rnd
+                p["round_ends_at"] = p["pending"]["expires_at"]
+            _sys_msg(who, peer, "plan_counter", at=sa, was=p.get("starts_at"), round=rnd)
         elif act in ("accept_change", "reject_change"):
-            if not pend:
-                return _idem_put(idem, {"ok": False, "error": "NO_PENDING_CHANGE"})
-            # Rubber-stamping your own proposal is not the other person agreeing to it. Taking it
-            # BACK is a different act, and there has to be a way to do it — otherwise a suggestion
-            # sits on the other person's screen until they answer something you no longer mean.
-            if act == "accept_change" and _norm_name(pend.get("by")) == k:
-                return {"ok": False, "error": "YOUR_OWN_CHANGE"}
+            # Своё предложение принять нельзя (mplan_rules), а забрать — можно и нужно: иначе оно
+            # висит у второго на экране, пока он не ответит на то, чего автор уже не имеет в виду.
             if act == "reject_change":
                 p["pending"] = None
                 p["last_change"] = {"state": "rejected", "by": who, "at": now}
@@ -7085,6 +9299,7 @@ def mp_respond(pid, who, action, starts_at=None, when="", district="",
                                                               "version": p["version"]},
                                   k: {"state": "confirmed", "t": now, "version": p["version"]}}
                 p["state"] = "confirmed"
+                p["round_ends_at"] = None
                 p["live"] = {}                    # nobody is on their way to the old hour any more
                 p["last_change"] = {"state": "accepted", "by": who, "at": now}
                 _sys_msg(who, peer, "plan_change_ok", at=p.get("starts_at"), mode=p.get("mode"))
@@ -7108,15 +9323,13 @@ def mp_address(pid, who, address="", venue="", idem=None, link=""):
             return {"ok": False, "error": "NO_SUCH_PLAN"}
         if not _mp_is_in(p, who):
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
-        # Место в заморозке не переписывают: человек уже едет по названному адресу.
-        if _mp_frozen(p):
-            return _idem_put(idem, {"ok": False, "error": "LOCKED",
-                                    "note": "less than two hours before the meeting"})
-        if p.get("state") not in ("proposed", "confirmed"):
-            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+        no = _mp_refusal(p, who, "address")
+        if no:
+            return _idem_put(idem, no)
         if address:
             p["address"] = str(address)[:200]
             p["address_by"] = who
+            (p.get("asks") or {}).pop("place", None)      # место названо — просьба выбрать снята
         if venue:
             p["venue"] = str(venue)[:120]
         # HY.20a/HY.20b: у гибрида второй вход доносят ОТДЕЛЬНО и в любом порядке — «место есть,
@@ -7124,12 +9337,63 @@ def mp_address(pid, who, address="", venue="", idem=None, link=""):
         if link:
             p["link"] = str(link)[:400]
             p["link_by"] = who
+            (p.get("asks") or {}).pop("link", None)       # ссылка есть — просьба хостить снята
         p["updated"] = time.time()
         if address or venue or link:
             # Само место в ленту НЕ уходит: адрес открывается только подтвердившим (OF.C3), а лента
             # общая. В строке — сам факт, что место наконец названо; кто подтвердил, увидит его в плане.
             _sys_msg(who, _mp_other(p, who), "plan_place",
                      kind="link" if (link or p.get("mode") == "online") else "place")
+        _save_store()
+        return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
+
+
+MP_ASKS = ("place", "link")
+
+
+def mp_ask(pid, who, what, idem=None, cancel=False):
+    """OF.20a / O.20a «Пусть выберет он(а)» / «Пусть хостит он(а)» — передать второму выбор места
+    или создание ссылки.
+
+    Раньше это была только реплика в чат, а флаг «уже попросил» жил в памяти экрана. Теперь просьба
+    записана в план: второй видит на своём экране «X просит тебя выбрать место», а не общее поле с
+    двумя кнопками, автор — «попросил(а), ждём», и так до тех пор, пока просимое не названо. Повтор
+    той же просьбы — идемпотентен: перезаписывает время, не плодит строк в ленте."""
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    what = str(what or "").strip().lower()
+    if what not in MP_ASKS:
+        return {"ok": False, "error": "BAD_ASK", "allowed": list(MP_ASKS)}
+    with _STORE_LOCK:
+        p = _mp_find(pid)
+        if not p:
+            return {"ok": False, "error": "NO_SUCH_PLAN"}
+        if not _mp_is_in(p, who):
+            return {"ok": False, "error": "NOT_A_PARTICIPANT"}
+        if cancel:
+            # O.C3e «I can't host» / «Take it back»: просьбу можно было только исполнить. Теперь её
+            # снимает любая из двух сторон — попросивший забирает, попрошенный отказывается; в ленте
+            # это разные строки. План при этом не трогается: поле снова общее.
+            if p.get("state") not in ("proposed", "confirmed"):
+                return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
+            ask = (p.get("asks") or {}).get(what) or None
+            if not ask:
+                return _idem_put(idem, {"ok": False, "error": "NO_ASK"})
+            mine = _norm_name(ask.get("by")) == _norm_name(who)
+            p["asks"].pop(what, None)
+            p["updated"] = time.time()
+            _sys_msg(who, _mp_other(p, who), "plan_ask_pulled" if mine else "plan_ask_declined", kind=what)
+            _save_store()
+            return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
+        no = _mp_refusal(p, who, "ask_" + what)
+        if no:
+            return _idem_put(idem, no)
+        was = ((p.get("asks") or {}).get(what) or {}).get("by")
+        p.setdefault("asks", {})[what] = {"by": who, "t": time.time()}
+        p["updated"] = time.time()
+        if _norm_name(was) != _norm_name(who):
+            _sys_msg(who, _mp_other(p, who), "plan_ask", kind=what)
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
 
@@ -7145,13 +9409,9 @@ def mp_cancel(pid, who, reason="", idem=None):
             return {"ok": False, "error": "NO_SUCH_PLAN"}
         if not _mp_is_in(p, who):
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
-        if p.get("state") not in ("proposed", "confirmed"):
-            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
-        # Отмена — «правка» в смысле спеки, и в заморозке она закрыта. Человеку, который уже
-        # вышел из дома, встречу отменять поздно: остаётся «не смогу», и оно встречу не отменяет.
-        if _mp_frozen(p):
-            return _idem_put(idem, {"ok": False, "error": "LOCKED",
-                                    "note": "less than two hours before the meeting"})
+        no = _mp_refusal(p, who, "cancel")
+        if no:
+            return _idem_put(idem, no)
         p["state"] = "cancelled"
         p["cancelled_by"] = who
         p["cancel_reason"] = str(reason or "")[:400]
@@ -7181,13 +9441,9 @@ def mp_move_to_call(pid, who, idem=None):
             return {"ok": False, "error": "NO_SUCH_PLAN"}
         if not _mp_is_in(p, who):
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
-        if p.get("mode") != "hybrid":
-            return _idem_put(idem, {"ok": False, "error": "NOT_HYBRID", "mode": p.get("mode")})
-        if p.get("state") not in ("proposed", "confirmed"):
-            return _idem_put(idem, {"ok": False, "error": "NOT_OPEN", "state": p.get("state")})
-        # Без ссылки уходить некуда, и «уходим в звонок» стало бы обещанием пустоты.
-        if not _mp_link(p):
-            return _idem_put(idem, {"ok": False, "error": "NO_LINK"})
+        no = _mp_refusal(p, who, "move_to_call")
+        if no:
+            return _idem_put(idem, no)
         now = time.time()
         for nm in (p.get("host"), p.get("guest")):
             p.setdefault("sides", {})[_norm_name(nm)] = {"side": "call", "t": now, "by": who}
@@ -7222,10 +9478,28 @@ def mp_status(pid, who, status, eta_min=None, idem=None):
             return {"ok": False, "error": "NO_SUCH_PLAN"}
         if not _mp_is_in(p, who):
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
-        if p.get("state") != "confirmed":
-            return _idem_put(idem, {"ok": False, "error": "NOT_CONFIRMED", "state": p.get("state")})
-        p.setdefault("live", {})[_norm_name(who)] = {"status": st, "eta_min": eta, "t": time.time()}
+        no = _mp_refusal(p, who, "status")
+        if no:
+            return _idem_put(idem, no)
+        # СТАТУС ДОЛЖЕН ДОХОДИТЬ ДО ПЕРЕПИСКИ, А НЕ ТОЛЬКО ДО ЭКРАНА ПЛАНА.
+        #
+        # Здесь статус только клался в план, и второй видел его, лишь если сам открывал экран
+        # плана и смотрел на карточку. В переписку не приходило НИЧЕГО. Сообщено владельцем с
+        # телефона: «говорю, что я на месте… часть сообщений не приходит вообще». Прогон 14.09.2026
+        # подтвердил: из девяти действий плана восемь пишут строку в ленту, а все четыре статуса —
+        # «выхожу», «опаздываю», «я на месте» и «не смогу» — не пишут ни одной.
+        #
+        # «Не смогу» тут особенно дорого: человек предупреждает, что не придёт, и предупреждение
+        # уходит в пустоту.
+        _key = _norm_name(who)
+        _prev = (p.get("live") or {}).get(_key) or {}
+        p.setdefault("live", {})[_key] = {"status": st, "eta_min": eta, "t": time.time()}
         p["updated"] = time.time()
+        # Повтор того же статуса в ленту не пишем: человек жмёт «я на месте» дважды, а лента не
+        # должна повторять за ним. Изменилось время опоздания — это новость, её пишем.
+        if _prev.get("status") != st or (st in ("late", "otw") and _prev.get("eta_min") != eta):
+            _sys_msg(who, _mp_other(p, who), "plan_status", status=st, eta=eta,
+                     at=p.get("starts_at"))
         _save_store()
         return _idem_put(idem, {"ok": True, "plan": _mp_public(p, who)})
 
@@ -7244,8 +9518,9 @@ def mp_feedback(pid, who, happened=None, reason="", rating=None, text="", idem=N
             return {"ok": False, "error": "NO_SUCH_PLAN"}
         if not _mp_is_in(p, who):
             return {"ok": False, "error": "NOT_A_PARTICIPANT"}
-        if p.get("state") not in ("confirmed", "done"):
-            return _idem_put(idem, {"ok": False, "error": "NOT_YET", "state": p.get("state")})
+        no = _mp_refusal(p, who, "feedback")
+        if no:
+            return _idem_put(idem, no)
         k = _norm_name(who)
         row = dict((p.setdefault("feedback", {})).get(k) or {})
         if happened is not None:
@@ -7314,7 +9589,7 @@ def block_user(who, name, on=True, idem=None):
         closed = {"requests": 0, "plans": 0}
         if on:
             for r in _requests():
-                if r.get("status") == "pending" and \
+                if r.get("status") in REQ_OPEN and \
                         {_norm_name(r.get("from")), _norm_name(r.get("to"))} == {me, tn}:
                     r["status"] = "withdrawn" if _norm_name(r.get("from")) == me else "declined"
                     r["updated"] = now
@@ -7362,11 +9637,329 @@ def report_user(who, name, reason="", text="", idem=None):
     return _idem_put(idem, {"ok": True, "id": rid, "reasons": list(REPORT_REASONS)})
 
 
+# ──────────────────────────────────────────────────────────────────────────────────── модерация
+# Жалобы писались и не читались никем: строки копились в `_reports`, а экрана не было ни одного.
+# «Спасибо, посмотрим» было фразой без адресата. Здесь появляется то, что делает её правдой:
+# очередь для модератора, ответ, доходящий до человека, и зачистка данных при удалении учётки.
+#
+# ГЛАВНОЕ ПРАВИЛО ЭТОГО БЛОКА. Хранилище матчинга живёт В ПАМЯТИ этого процесса: оно читается
+# один раз на старте и пишется по «грязным» ключам. Поэтому НИКТО СНАРУЖИ не имеет права писать
+# в те же ключи напрямую в базу — при следующей записи матчинг перетрёт чужую правку своей
+# копией из памяти, молча. Отсюда и эти ручки: панель просит, а делает всё сам матчинг.
+
+def reports_queue(limit=200, reason="", name=""):
+    """Очередь жалоб для модератора. Только чтение.
+
+    К каждой строке добавляется то, ради чего очередь и открывают: сколько ВСЕГО жалоб на этого
+    человека. Одна жалоба — это чей-то плохой вечер, пятая на того же — это уже видно без слов.
+    """
+    rows = list(_reports())
+    rs, nm = str(reason or "").strip().lower(), _norm_name(name)
+    about_counts = {}
+
+    def _about_key(r):
+        # Жалобы на группу считаются по группе, а не в общую кучу с пустым «на кого».
+        return ("group:" + str(r.get("gid") or "")) if r.get("kind") == "group" else _norm_name(r.get("about"))
+
+    for r in rows:
+        k = _about_key(r)
+        about_counts[k] = about_counts.get(k, 0) + 1
+    out = []
+    for r in reversed(rows):                       # свежие сверху: модератор смотрит с конца
+        if rs and str(r.get("reason") or "") != rs:
+            continue
+        if nm and nm not in (_norm_name(r.get("about")), _norm_name(r.get("by"))):
+            continue
+        out.append(dict(r,
+                        by_key=_norm_name(r.get("by")),
+                        about_key=_about_key(r),
+                        about_count=about_counts.get(_about_key(r), 1)))
+        if len(out) >= max(1, min(500, int(limit or 200))):
+            break
+    # Потолок виден намеренно: `report_user` режет список до 2000 строк, и необработанная жалоба
+    # может исчезнуть раньше, чем её откроют. Молчать об этом нельзя.
+    return {"ok": True, "total": len(rows), "cap": 2000, "near_cap": len(rows) > 1800,
+            "reasons": list(REPORT_REASONS) + list(GROUP_REPORT_REASONS), "reports": out}
+
+
+# Имя, от которого приходят ответы модерации. Человеку важно видеть, что это продукт, а не
+# случайный собеседник, поэтому отправитель назван и одинаков всегда.
+SAFETY_SENDER = "Kleal"
+
+
+def admin_notify(to, text, ref="", idem=None):
+    """Написать человеку от имени продукта — так, чтобы он это УВИДЕЛ.
+
+    Почему обычная реплика, а не системная строка. Системные строки (`_sys_msg`) клиент рисует по
+    известному ему коду, а неизвестный код не рисует вовсе — при этом текст такой строки всё равно
+    попал бы в список переписок предпросмотром. Вышло бы худшее: жирная непрочитанная строка,
+    открываешь — пусто. Обычная реплика рисуется любым клиентом, включая уже установленные.
+
+    Переписки может не быть вовсе — и это нормально: список тредов собирается из самих сообщений,
+    поэтому строка сама создаёт разговор с Kleal.
+    """
+    cached = _idem_get(idem)
+    if cached is not None:
+        return cached
+    who = str(to or "").strip()
+    body = str(text or "").strip()
+    if not who or len(body) < 2:
+        return {"ok": False, "error": "NAME_AND_TEXT_REQUIRED"}
+    now = time.time()
+    with _STORE_LOCK:
+        m = {"id": _mid("a_"), "pair": _pair_key(SAFETY_SENDER, who),
+             "from": SAFETY_SENDER, "to": who, "text": body[:2000], "t": now, "u": now,
+             # Признак происхождения. Клиент по нему рисует реплику как системную, а не как
+             # сообщение незнакомца; старый клиент лишнего ключа не заметит и покажет обычной.
+             "admin": True}
+        if ref:
+            m["ref"] = str(ref)[:64]
+        _messages().append(m)
+        _save_store()
+    return _idem_put(idem, {"ok": True, "id": m["id"], "to": who})
+
+
+def admin_ban_sweep(name, reason="banned"):
+    """Закрыть всё открытое у заблокированного: приглашения снять, встречи отменить.
+
+    Сам запрет («не показывать, не пускать в группы») живёт полями строки человека и пишется
+    панелью. Здесь — только то, что нельзя сделать снаружи: состояние в памяти этого процесса.
+    Второй стороне про отмену говорят: подтверждённая встреча, исчезнувшая молча, — это человек,
+    пришедший в назначенное место зря.
+    """
+    me = _norm_name(name)
+    if not me:
+        return {"ok": False, "error": "NAME_REQUIRED"}
+    now = time.time()
+    closed = {"requests": 0, "plans": 0}
+    with _STORE_LOCK:
+        for r in _requests():
+            if r.get("status") not in REQ_OPEN:
+                continue
+            if me not in (_norm_name(r.get("from")), _norm_name(r.get("to"))):
+                continue
+            r["status"] = "withdrawn" if _norm_name(r.get("from")) == me else "declined"
+            r["updated"] = now
+            r["version"] = int(r.get("version") or 1) + 1
+            closed["requests"] += 1
+        for p in _mplans():
+            if p.get("state") not in ("proposed", "confirmed"):
+                continue
+            if me not in (_norm_name(p.get("host")), _norm_name(p.get("guest"))):
+                continue
+            p["state"] = "cancelled"
+            p["cancel_reason"] = reason
+            p["updated"] = now
+            closed["plans"] += 1
+            other = _mp_other(p, name)
+            if other:
+                _sys_msg(name, other, "plan_cancelled", at=p.get("starts_at"))
+        _save_store()
+    return {"ok": True, "closed": closed}
+
+
+def purge_person(name):
+    """Стереть следы человека из хранилища матчинга — при удалении учётки.
+
+    Почему это ДОЛЖНО делаться здесь. Хранилище матчинга — это словарь в памяти процесса; удаление
+    строк прямо в базе снаружи не удалит ничего: при первой же записи матчинг вернёт их обратно
+    из своей копии. Единственное честное удаление — то, что происходит в этом процессе.
+
+    Что остаётся намеренно: строки жалоб, поданных НА этого человека, — они принадлежат тем, кто
+    пожаловался, и нужны, если он вернётся под другим именем. Его собственные жалобы уходят. Так же
+    остаются записи модерации групп (`_gremovals`).
+
+    ГРУППЫ И ФАЙЛЫ (аудит 27.09.2026). Раньше стирание их не касалось вовсе, а удаление учётки из
+    приложения не звало его совсем: у удалившегося оставались интенты на карте, переписка, планы,
+    места в группах, голосовые и кружки на диске. Теперь человек выходит из каждой группы тем же
+    путём, что и сам (`gi_leave`: наследник организатора, пересчёт кворума), после чего из групп
+    уходят его след в составе, приглашения, реплики, ответы по планам и голоса. Файлы голосовых и
+    кружков удалённых реплик стираются с диска.
+    """
+    me = _norm_name(name)
+    if not me:
+        return {"ok": False, "error": "NAME_REQUIRED"}
+    gone = {}
+    media = []
+
+    def _media_of(m):
+        for k in ("voice", "video"):
+            v = m.get(k) if isinstance(m, dict) else None
+            if isinstance(v, dict) and v.get("url"):
+                media.append(str(v["url"]))
+
+    with _STORE_LOCK:
+        msgs = _messages()
+        keep = [m for m in msgs if me not in (_norm_name(m.get("from")), _norm_name(m.get("to")))]
+        for m in msgs:
+            if me in (_norm_name(m.get("from")), _norm_name(m.get("to"))):
+                _media_of(m)
+        gone["messages"] = len(msgs) - len(keep)
+        msgs[:] = keep
+
+        reqs = _requests()
+        keep = [r for r in reqs if me not in (_norm_name(r.get("from")), _norm_name(r.get("to")))]
+        gone["requests"] = len(reqs) - len(keep)
+        reqs[:] = keep
+
+        plans = _mplans()
+        keep = [p for p in plans if me not in (_norm_name(p.get("host")), _norm_name(p.get("guest")))]
+        gone["plans"] = len(plans) - len(keep)
+        plans[:] = keep
+
+        ints = _intents()
+        keep = [i for i in ints if _norm_name(i.get("owner_id") or i.get("owner") or i.get("self")) != me]
+        gone["intents"] = len(ints) - len(keep)
+        ints[:] = keep
+
+        bl = _blocks()
+        gone["blocks"] = 1 if bl.pop(me, None) is not None else 0
+        for k, lst in list(bl.items()):
+            if me in (lst or []):
+                lst.remove(me)
+                gone["blocks"] += 1
+
+        rows = _reports()
+        keep = [r for r in rows if _norm_name(r.get("by")) != me]
+        gone["own_reports"] = len(rows) - len(keep)
+        rows[:] = keep
+
+        # Личная сессия человека лежит отдельным ключом верхнего уровня — по имени.
+        for k in list(SESSION.keys()):
+            if _norm_name(k) == me:
+                SESSION.pop(k, None)
+                gone["session_key"] = 1
+
+        # ---- группы
+        left = 0
+        for g in list(_gintents()):
+            if any(_norm_name(m.get("name")) == me for m in _gi_active(g)):
+                if (gi_leave(g.get("id"), me) or {}).get("ok"):
+                    left += 1
+        gone["groups_left"] = left
+        n = 0
+        for g in _gintents():
+            mem = g.get("members") or []
+            kept = [m for m in mem if _norm_name(m.get("name")) != me]
+            n += len(mem) - len(kept)
+            g["members"] = kept
+        gone["group_member_rows"] = n
+        inv = _ginvites()
+        keep = [i for i in inv if me not in (_norm_name(i.get("to")), _norm_name(i.get("frm")))]
+        gone["group_invites"] = len(inv) - len(keep)
+        inv[:] = keep
+        gm = _gmsgs()
+        keep = []
+        for m in gm:
+            # Автор реплики в группе — поле `frm` (у 1:1 — `from`); смотрим оба.
+            if me in (_norm_name(m.get("frm")), _norm_name(m.get("from"))):
+                _media_of(m)
+            else:
+                keep.append(m)
+        gone["group_messages"] = len(gm) - len(keep)
+        gm[:] = keep
+        n = 0
+        for pl in _gplans():
+            for fld in ("responses", "sides", "live", "feedback"):
+                d = pl.get(fld)
+                if isinstance(d, dict):
+                    for k in [k for k in d if _norm_name(k) == me]:
+                        d.pop(k, None)
+                        n += 1
+        for v in _gvotes():
+            d = v.get("votes")
+            if isinstance(d, dict):
+                for k in [k for k in d if _norm_name(k) == me]:
+                    d.pop(k, None)
+                    n += 1
+        gone["group_plan_marks"] = n
+        tr = _thread_reads()
+        drop = [k for k in tr if me in str(k).split("|")]
+        for k in drop:
+            tr.pop(k, None)
+        gone["thread_reads"] = len(drop)
+        _names().pop(me, None)
+        ev = _evidence()
+        mine = [k for k, e in ev.items() if _norm_name(e.get("by")) == me]
+        for k in mine:
+            try:
+                os.remove(os.path.join(EVIDENCE_DIR, str(ev[k].get("file") or "")))
+            except Exception:
+                pass
+            ev.pop(k, None)
+        gone["evidence"] = len(mine)
+        _save_store()
+    gone["files"] = _drop_media(media)
+    return {"ok": True, "purged": gone}
+
+
+def _drop_media(urls):
+    """Удалить с диска файлы голосовых и кружков по их адресам. Только имя файла — путь к нему
+    строит сервер, и имя проверяется по форме, которую выдаёт сам сервер при записи."""
+    n = 0
+    for u in urls or []:
+        u = str(u or "")
+        name = u.rsplit("/", 1)[-1]
+        if not re.match(r"^[0-9a-f]{8,64}\.[a-z0-9]{2,5}$", name):
+            continue
+        folder = VOICE_DIR if "/voice/" in u else VIDEO_DIR if "/video/" in u else None
+        if not folder:
+            continue
+        try:
+            os.remove(os.path.join(folder, name))
+            n += 1
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print("[purge] файл не удалён: %s: %s" % (name, str(e)[:80]), flush=True)
+    return n
+
+
 def safety_for(who):
     me = _norm_name(who)
     return {"ok": True, "blocked": list(_blocks().get(me) or []),
             "reports": [dict(r) for r in _reports() if _norm_name(r.get("by")) == me][-50:],
             "reasons": list(REPORT_REASONS)}
+
+
+def mp_alternatives(me, iid="", title="", except_pid=""):
+    """OF.19e «Pick someone else»: кто раньше принял МОЁ приглашение по этой затее.
+
+    Затея узнаётся по `iid` заявки (или метке затеи внутри неё), а если опознавателя нет хотя бы с
+    одной стороны — по названию: у большинства живых заявок `iid` пуст (так же сверяет клиент,
+    src/invites.ts sameIntent). Принявший уже открыл переписку — «Pick» значит сразу в чат, новое
+    приглашение не нужно. `free` — с ним нет живого плана (у пары он один, PLAN_EXISTS)."""
+    mk = _norm_name(me)
+    iid = str(iid or "").strip()
+    tk = _norm_name(title)
+    ex = _norm_name(except_pid)
+    out, seen = [], set()
+    for r in sorted(_requests(), key=lambda x: -(x.get("updated") or 0)):
+        if r.get("status") != "accepted" or _norm_name(r.get("from")) != mk:
+            continue
+        it = r.get("intent") or {}
+        rid = str(r.get("iid") or it.get("kleal_intent_id") or it.get("id") or "").strip()
+        same = (rid == iid) if (rid and iid) else bool(tk) and _norm_name(it.get("title")) == tk
+        other = r.get("to")
+        ok_ = _norm_name(other)
+        if not same or not ok_ or ok_ in seen or ok_ == ex or _blocked_pair(me, other):
+            continue
+        seen.add(ok_)
+        # Карточка OF.19e — только поля person_card: этот человек уже принял моё приглашение, и
+        # ровно это я о нём видел в выдаче. Профессии в анкете нет — её не выдумываем.
+        row = _person(other) or {}
+        # Интересы бывают плоским списком (боевые анкеты) и словарём старой формы
+        # {explicit, categories, roles} (shared/kleal_lib.py): из словаря — только explicit, иначе
+        # наружу уезжали его ключи («explicit»). Район пуст — город, как на борде («Barcelona»).
+        ints = row.get("interests") or []
+        if isinstance(ints, dict):
+            ints = ints.get("explicit") or []
+        ints = [str(x) for x in (ints if isinstance(ints, (list, tuple)) else []) if isinstance(x, str) and x.strip()]
+        out.append({"name": other, "photo": _photo_of(other), "age": row.get("age"),
+                    "area": row.get("area") or row.get("city") or "", "interests": ints[:6],
+                    "summary": row.get("summary") or "", "verified": bool(row.get("verified")),
+                    "free": _mp_of(me, other) is None, "rid": r.get("id"), "at": r.get("updated")})
+    return {"ok": True, "people": out}
 
 
 def mp_for(who, peer=""):
@@ -7389,7 +9982,7 @@ def mp_for(who, peer=""):
     history.sort(key=lambda x: -(x.get("updated") or 0))
     out = {"ok": True, "plans": active, "history": history}
     if peer:
-        out["peer_tz"] = _tz_by_name().get(_norm_name(peer)) or ""
+        out["peer_tz"] = _tz_of(peer)
     return out
 
 
@@ -7820,12 +10413,19 @@ def person_report(name, now_ts=None):
     hide the exact gate that is dropping the person.
     """
     now_ts = now_ts or time.time()
-    want = _norm_name(name)
+    # `name` — id человека (панель шлёт id; подпись разрешается однозначно в _admin_target).
+    _pid = _canon_pid(name)
     row = None
-    for u in _raw_store_rows():
-        if _norm_name(u.get("name")) == want:
-            row = u
-            break
+    if _pid:
+        row = next((u for u in _raw_store_rows() if str(u.get("id") or "") == _pid), None)
+        if row is not None:
+            name = row.get("name") or name
+    want = _norm_name(name)
+    if row is None:
+        for u in _raw_store_rows():
+            if _norm_name(u.get("name")) == want:
+                row = u
+                break
     if row is None:
         for u in CANDIDATES:                      # demo pool, only reachable with KLEAL_MERGE_DEMO
             if _norm_name(u.get("name")) == want:
@@ -7834,7 +10434,8 @@ def person_report(name, now_ts=None):
     if row is None:
         return {"ok": False, "error": "no such person", "name": name}
 
-    in_pool = any(_norm_name(c.get("name")) == want for c in load_candidates())
+    in_pool = any((str(c.get("id") or "") == str(row.get("id") or "")) if row.get("id")
+                  else _norm_name(c.get("name")) == want for c in load_candidates())
     ints = [str(x).lower() for x in (row.get("interests") or []) if str(x).strip()]
     lat, lon = _num(row.get("lat")), _num(row.get("lon"))
     age = _num(row.get("age"))
@@ -8135,24 +10736,73 @@ def form_group_from_slate(intent, cands, constraints=None, now_ts=None, pair_rel
 
 # ---------------------------------------------------------------- HTTP dispatcher (matching only)
 class H(BaseHTTPRequestHandler):
+    _pid = ""          # личность запроса — id человека (см. _whoami); пусто, пока не определена
+    _pname = ""
     # ---- restored routes: the names the profile frontend actually calls (see the block above) ----
+    # ---- ЛИЧНОСТЬ В РУЧКАХ (docs/IDENTITY.md) ---------------------------------------------------
+    # Действующее лицо — ВСЕГДА self._pid (сессия; без сессии — только бот без владельца или
+    # временная личность теста). То, что написано в `self`/`from`/`who` тела, личностью не является:
+    # 26.09.2026 по одному имени можно было читать чужую переписку и писать от чужого лица.
+    # Собеседник — по `<поле>_id`; подпись принимается, только если однозначна (_peer).
+    def _peer_of(self, src, *fields, related=False):
+        """(id собеседника, ответ-отказ или None). `src` — тело запроса или разобранная строка.
+
+        `related=True` — только для действий, возможных ЛИШЬ внутри уже существующей связи
+        (сообщение, прочтение, план, карточка собеседника, решение по участнику группы): там тёзку
+        без id разводит круг своих собеседников. Первый контакт (приглашение, зов в группу, блок и
+        жалоба из выдачи) — никогда: человек нажал на НОВОГО «Ивана», а связь есть со старым, и
+        приглашение ушло бы не тому. Это поймал tools/identity_http_test.py."""
+        if not any(str(src.get(f) or "").strip() or str(src.get(f + "_id") or "").strip()
+                   for f in fields):
+            return "", {"ok": False, "error": "TWO_PEOPLE_REQUIRED"}   # код отказа — прежний
+        for f in fields:
+            pid = _peer(src.get(f + "_id"), src.get(f), self._pid if related else "",
+                        src.get("gid") or "")
+            if pid:
+                return pid, None
+        for f in fields:
+            v = src.get(f)
+            if isinstance(v, str) and v.strip() and not src.get(f + "_id") \
+                    and len(_people_index()["by_name"].get(_norm_name(v)) or []) > 1:
+                return "", {"ok": False, "error": "AMBIGUOUS_PERSON",
+                            "note": "several people share this name — send %s_id" % f}
+        return "", {"ok": False, "error": "UNKNOWN_PERSON"}
+
+    def _no_actor(self):
+        return {"ok": False, "error": "sign in required"}
+
     def _restored_get(self):
         """The GET half of the restored screens. Returns True when it handled the request."""
         from urllib.parse import unquote
         base = self.path.split("?")[0]
+        q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
+            if "?" in self.path else {}
+        q = {k: unquote(str(v).replace("+", " ")) for k, v in q.items()}
+        me = self._pid                       # кто читает — решает сессия, а не `self` в строке запроса
         # 1:1 meeting plans. Read-your-own-only: the view is built FOR the caller, because the exact
         # address is released per viewer (OF.C3) — handing back an unfiltered row would leak it.
-        if base in ("/api/agent/mplans", "/api/agent/mplan", "/api/agent/safety"):
-            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
-                if "?" in self.path else {}
-            me = _me_or_claimed(self, unquote(q.get("self", "").replace("+", " ")))
-            if base == "/api/agent/safety":
-                send_json(self, 200, safety_for(me))
-            elif base == "/api/agent/mplans":
-                send_json(self, 200, mp_for(me, unquote(q.get("with", "").replace("+", " "))))
+        if base == "/api/agent/mplan-alternatives":
+            # OF.19e «Pick someone else»: кто уже сказал «да» на ЭТУ затею — только свои заявки.
+            if not me:
+                send_json(self, 200, {"ok": True, "people": []})
             else:
-                pl = _mp_find(unquote(q.get("id", "").replace("+", " ")))
-                if pl and not _mp_is_in(pl, me):
+                ex = (_peer(q.get("except_id"), q.get("except"), me)
+                      if (q.get("except") or q.get("except_id")) else "")
+                send_json(self, 200, mp_alternatives(me, q.get("iid", ""), q.get("title", ""), ex))
+            return True
+        if base in ("/api/agent/mplans", "/api/agent/mplan", "/api/agent/safety"):
+            if base != "/api/agent/safety":
+                with _STORE_LOCK:
+                    _mp_sweep()
+            if base == "/api/agent/safety":
+                send_json(self, 200, safety_for(me) if me else
+                          {"ok": True, "blocked": [], "reports": [], "reasons": list(REPORT_REASONS)})
+            elif base == "/api/agent/mplans":
+                peer = _peer(q.get("with_id"), q.get("with"), me) if (q.get("with") or q.get("with_id")) else ""
+                send_json(self, 200, mp_for(me, peer) if me else {"ok": True, "plans": [], "history": []})
+            else:
+                pl = _mp_find(q.get("id", ""))
+                if pl and (not me or not _mp_is_in(pl, me)):
                     send_json(self, 200, {"ok": False, "error": "NOT_A_PARTICIPANT"})
                 else:
                     send_json(self, 200, {"ok": bool(pl), "plan": _mp_public(pl, me) if pl else None})
@@ -8161,16 +10811,13 @@ class H(BaseHTTPRequestHandler):
         # membership ACL applies rather than the 1:1 thread rules below.
         if base in ("/api/agent/gintent", "/api/agent/gintent-thread", "/api/agent/gintents",
                     "/api/agent/gplans", "/api/agent/home-invites", "/api/agent/ginvite"):
-            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
-                if "?" in self.path else {}
-            me = _me_or_claimed(self, unquote(q.get("self", "").replace("+", " ")))
-            gid = unquote(q.get("gid", "").replace("+", " "))
+            gid = q.get("gid", "")
             # Все четыре ручки отдают план — значит все четыре обязаны сперва провести время.
             _gp_sweep()
             if base == "/api/agent/home-invites":
-                send_json(self, 200, home_invites(me))
+                send_json(self, 200, home_invites(me, q.get("pick") in ("1", "true")))
             elif base == "/api/agent/ginvite":
-                send_json(self, 200, gi_invite_detail(unquote(q.get("id", "").replace("+", " ")), me))
+                send_json(self, 200, gi_invite_detail(q.get("id", ""), me))
             elif base == "/api/agent/gplans":
                 send_json(self, 200, gp_for(me))
             elif base == "/api/agent/gintents":
@@ -8188,17 +10835,17 @@ class H(BaseHTTPRequestHandler):
         if base not in ("/api/agent/thread", "/api/agent/threads",
                         "/api/agent/inbox", "/api/agent/outbox", "/api/agent/groups"):
             return False
-        q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
-            if "?" in self.path else {}
-        me = _me_or_claimed(self, unquote(q.get("self", "").replace("+", " ")))
         if base == "/api/agent/threads":
-            send_json(self, 200, {"threads": threads_for(me)})
+            send_json(self, 200, {"threads": threads_for(me) if me else []})
         elif base == "/api/agent/thread":
             try:
                 since = float(q.get("since", 0) or 0)
             except (TypeError, ValueError):
                 since = 0.0
-            other = unquote(q.get("with", "").replace("+", " "))
+            other = _peer(q.get("with_id"), q.get("with"), me)
+            if not me or not other:
+                send_json(self, 200, {"messages": [], "peer_read_at": 0})
+                return True
             send_json(self, 200, {
                 "messages": thread(me, other, since),
                 # MSG.11: когда ВТОРАЯ сторона в последний раз открывала эту пару. Моих отметок тут
@@ -8207,7 +10854,7 @@ class H(BaseHTTPRequestHandler):
             })
         elif base in ("/api/agent/inbox", "/api/agent/outbox"):
             fn = inbox if base.endswith("inbox") else outbox
-            send_json(self, 200, {"requests": fn(me)})
+            send_json(self, 200, {"requests": fn(me) if me else []})
         else:
             try:
                 lim = max(1, min(100, int(q.get("limit", 30))))
@@ -8216,191 +10863,254 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, {"groups": group_list(me, lim, q.get("open") in ("1", "true"))})
         return True
 
+    # Ручки, где действующее лицо обязательно. Ответ без личности — «войди», а не молчаливое «ок».
+    _ACTOR_POST = frozenset((
+        "/api/agent/intent-save", "/api/agent/intent-delete", "/api/agent/message",
+        "/api/agent/thread-end", "/api/agent/message-react", "/api/agent/message-delete",
+        "/api/agent/thread-read", "/api/agent/propose", "/api/agent/respond", "/api/agent/withdraw",
+        "/api/agent/request-pick",
+        "/api/agent/request-archive", "/api/agent/gintent-create", "/api/agent/gintent-invite",
+        "/api/agent/gintent-invite-cancel", "/api/agent/gintent-approve", "/api/agent/gintent-remove",
+        "/api/agent/ginvite-respond", "/api/agent/gintent-post", "/api/agent/gmsg-react",
+        "/api/agent/gmsg-delete", "/api/agent/gplan-begin", "/api/agent/gplan-cancel",
+        "/api/agent/gplan-fix", "/api/agent/gplan-update", "/api/agent/gplan-link",
+        "/api/agent/gplan-details", "/api/agent/gplan-mode", "/api/agent/gplan-side",
+        "/api/agent/gplan-respond", "/api/agent/gplan-vote-open", "/api/agent/gplan-vote",
+        "/api/agent/gplan-vote-close", "/api/agent/gplan-vote-decide", "/api/agent/gplan-status",
+        "/api/agent/gplan-feedback", "/api/agent/mplan-propose", "/api/agent/mplan-respond",
+        "/api/agent/person", "/api/agent/block", "/api/agent/report", "/api/agent/mplan-ask",
+        "/api/agent/mplan-address", "/api/agent/mplan-cancel", "/api/agent/mplan-move-to-call",
+        "/api/agent/mplan-side", "/api/agent/mplan-status", "/api/agent/mplan-feedback",
+        "/api/agent/gintent-leave", "/api/agent/gintent-convert", "/api/agent/gintent-convert-respond",
+        "/api/agent/gintent-close", "/api/agent/gintent-report",
+        "/api/agent/gintent-takeover", "/api/agent/gintent-takeover-vote", "/api/agent/gintent-takeover-withdraw",
+        "/api/agent/gintent-takeover-back", "/api/agent/gintent-role-offer", "/api/agent/gintent-role-respond",
+        "/api/agent/gintent-role-withdraw", "/api/agent/gplan-hold-answer",
+        "/api/agent/group-create", "/api/agent/group-join", "/api/agent/group-leave"))
+
     def _restored_post(self, p, body):
         """The POST half of the restored screens. Returns True when it handled the request."""
+        if p in self._ACTOR_POST and not self._pid:
+            send_json(self, 200, self._no_actor())
+            return True
+        me = self._pid
+        # Интенты — только свои: «свои» решает личность запроса, а не присланное `self`.
         if p == "/api/agent/intent-save":
             send_json(self, 200, save_intent(body.get("self"), body.get("intent") or {},
                                              body.get("title"), body.get("id"),
-                                             bool(body.get("launched"))))
+                                             bool(body.get("launched")), owner_id=me))
         elif p == "/api/agent/intent-delete":
-            send_json(self, 200, delete_intent(body.get("self"), body.get("id")))
+            send_json(self, 200, delete_intent(body.get("self"), body.get("id"), owner_id=me))
         elif p == "/api/agent/intents":
             send_json(self, 200, {"intents": list_intents(body.get("self"), body.get("profile") or {},
-                                                          body.get("live") is not False)})
+                                                          body.get("live") is not False,
+                                                          owner_id=me)})
         elif p == "/api/agent/message":
-            send_json(self, 200, send_message(body.get("from"), body.get("to"), body.get("text"),
-                                              body.get("voice"), body.get("client_id"),
-                                              body.get("reply_to"), body.get("video")))
+            to, no = self._peer_of(body, "to", related=True)
+            send_json(self, 200, no or send_message(me, to, body.get("text"),
+                                                    body.get("voice"), body.get("client_id"),
+                                                    body.get("reply_to"), body.get("video")))
         elif p == "/api/agent/thread-end":
-            send_json(self, 200, end_thread(body.get("self"), body.get("with") or body.get("other"),
-                                            body.get("idem")))
+            other, no = self._peer_of(body, "with", "other", related=True)
+            send_json(self, 200, no or end_thread(me, other, body.get("idem")))
         elif p == "/api/agent/message-react":
-            send_json(self, 200, message_react(body.get("self"), body.get("id"), body.get("emoji")))
+            send_json(self, 200, message_react(me, body.get("id"), body.get("emoji")))
         elif p == "/api/agent/message-delete":
-            send_json(self, 200, message_delete(body.get("self"), body.get("id")))
+            send_json(self, 200, message_delete(me, body.get("id")))
         elif p == "/api/agent/thread-read":
-            send_json(self, 200, thread_mark_read(body.get("self"), body.get("with")))
+            other, no = self._peer_of(body, "with", related=True)
+            send_json(self, 200, no or thread_mark_read(me, other))
         elif p == "/api/agent/propose":
-            send_json(self, 200, propose(body.get("from"), body.get("to"), body.get("intent") or {},
-                                         body.get("note"), body.get("idem")))
+            to, no = self._peer_of(body, "to")
+            send_json(self, 200, no or propose(me, to, body.get("intent") or {},
+                                               body.get("note"), body.get("idem")))
         elif p == "/api/agent/respond":
-            send_json(self, 200, respond(body.get("id"), body.get("decision"), body.get("self"),
-                                         body.get("idem"), body.get("version")))
+            send_json(self, 200, respond(body.get("id"), body.get("decision"), me,
+                                         body.get("idem"), body.get("version"), body.get("flow")))
+        elif p == "/api/agent/request-pick":
+            send_json(self, 200, pick_request(body.get("id"), me, body.get("idem")))
         elif p == "/api/agent/withdraw":
-            send_json(self, 200, withdraw_request(body.get("id"), body.get("self"), body.get("idem")))
+            send_json(self, 200, withdraw_request(body.get("id"), me, body.get("idem")))
         elif p == "/api/agent/request-archive":
-            send_json(self, 200, archive_request(body.get("id"), body.get("self")))
+            send_json(self, 200, archive_request(body.get("id"), me))
         elif p == "/api/agent/gintent-create":
-            send_json(self, 200, gi_create(body.get("self") or body.get("owner"),
-                                           body.get("intent"), body.get("title"),
+            send_json(self, 200, gi_create(me, body.get("intent"), body.get("title"),
                                            body.get("min_total"), body.get("max_total"),
                                            body.get("idem")))
         elif p == "/api/agent/gintent-invite":
-            # `to` takes a name OR a list: the organiser invites the whole slate at once, and gets
-            # a per-candidate answer back rather than one verdict for the batch.
-            _to = body.get("to")
-            if isinstance(_to, list):
-                send_json(self, 200, gi_invite_many(body.get("gid"), body.get("self") or body.get("from"),
-                                                    _to, body.get("note"), body.get("idem")))
+            # `to` — один человек или список: организатор зовёт всю выдачу разом и получает ответ по
+            # каждому. Люди — по id (`to_id` / `to_ids`), подпись — только однозначная.
+            _to, _ids = body.get("to"), body.get("to_ids")
+            if isinstance(_to, list) or isinstance(_ids, list):
+                names = list(_to or []) if isinstance(_to, list) else []
+                ids = list(_ids or []) if isinstance(_ids, list) else []
+                peers = []
+                for i in range(max(len(names), len(ids))):
+                    pid = _peer(ids[i] if i < len(ids) else "", names[i] if i < len(names) else "")
+                    peers.append(pid or ("?" + str(names[i] if i < len(names) else "")))
+                send_json(self, 200, gi_invite_many(body.get("gid"), me, peers,
+                                                    body.get("note"), body.get("idem")))
             else:
-                send_json(self, 200, gi_invite(body.get("gid"), body.get("self") or body.get("from"),
-                                               _to, body.get("note"), body.get("idem")))
+                to, no = self._peer_of(body, "to")
+                send_json(self, 200, no or gi_invite(body.get("gid"), me, to,
+                                                     body.get("note"), body.get("idem")))
         elif p == "/api/agent/gintent-invite-cancel":
-            send_json(self, 200, gi_invite_cancel(body.get("id"), body.get("self"),
-                                                  body.get("idem")))
+            send_json(self, 200, gi_invite_cancel(body.get("id"), me, body.get("idem")))
+        elif p == "/api/agent/gintent-close":
+            send_json(self, 200, gi_close(body.get("gid"), me, body.get("idem")))
+        elif p == "/api/agent/gintent-report":
+            ev = body.get("evidence") if isinstance(body.get("evidence"), list) else []
+            about, no = ("", None)
+            if str(body.get("about") or "").strip() or str(body.get("about_id") or "").strip():
+                about, no = self._peer_of(body, "about", related=True)
+            send_json(self, 200, no or gi_report(body.get("gid"), me, body.get("reason"), body.get("text"),
+                                                 ev, body.get("idem"), about=about))
         elif p == "/api/agent/gintent-approve":
-            send_json(self, 200, gi_approve(body.get("gid"), body.get("self"), body.get("who"),
-                                            body.get("accept", True), body.get("idem")))
+            who, no = self._peer_of(body, "who", related=True)
+            send_json(self, 200, no or gi_approve(body.get("gid"), me, who,
+                                                  body.get("accept", True), body.get("idem")))
         elif p == "/api/agent/gintent-remove":
-            send_json(self, 200, gi_remove(body.get("gid"), body.get("self"), body.get("who"),
-                                           body.get("reason"), body.get("idem")))
+            who, no = self._peer_of(body, "who", related=True)
+            send_json(self, 200, no or gi_remove(body.get("gid"), me, who,
+                                                 body.get("reason"), body.get("idem")))
         elif p == "/api/agent/ginvite-respond":
-            send_json(self, 200, gi_respond(body.get("id"), body.get("self"),
-                                            bool(body.get("accept")), body.get("idem")))
+            send_json(self, 200, gi_respond(body.get("id"), me, bool(body.get("accept")), body.get("idem")))
         elif p == "/api/agent/gintent-post":
-            send_json(self, 200, gi_post(body.get("gid"), body.get("self"),
-                                         body.get("text"), body.get("idem"), body.get("voice"),
-                                         body.get("client_id"), body.get("reply_to"),
-                                         body.get("video")))
+            send_json(self, 200, gi_post(body.get("gid"), me, body.get("text"), body.get("idem"),
+                                         body.get("voice"), body.get("client_id"),
+                                         body.get("reply_to"), body.get("video")))
         elif p == "/api/agent/gmsg-react":
-            send_json(self, 200, gmsg_react(body.get("gid"), body.get("self"),
-                                            body.get("id"), body.get("emoji")))
+            send_json(self, 200, gmsg_react(body.get("gid"), me, body.get("id"), body.get("emoji")))
         elif p == "/api/agent/gmsg-delete":
-            send_json(self, 200, gmsg_delete(body.get("gid"), body.get("self"), body.get("id")))
+            send_json(self, 200, gmsg_delete(body.get("gid"), me, body.get("id")))
         elif p == "/api/agent/gplan-begin":
-            send_json(self, 200, gp_begin(body.get("gid"), body.get("self"), body.get("when"),
+            send_json(self, 200, gp_begin(body.get("gid"), me, body.get("when"),
                                           body.get("place"), body.get("note"),
                                           body.get("starts_at"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/gplan-cancel":
-            send_json(self, 200, gp_cancel(body.get("id"), body.get("self"), body.get("idem")))
+            send_json(self, 200, gp_cancel(body.get("id"), me, body.get("idem")))
+        elif p == "/api/agent/gplan-hold-answer":
+            send_json(self, 200, gp_hold_answer(body.get("id"), me, body.get("choice"), body.get("idem")))
         elif p == "/api/agent/gplan-fix":
-            send_json(self, 200, gp_fix(body.get("id"), body.get("self"), body.get("idem")))
+            send_json(self, 200, gp_fix(body.get("id"), me, body.get("idem"), body.get("round")))
         elif p == "/api/agent/gplan-update":
-            send_json(self, 200, gp_update(body.get("id"), body.get("self"), body.get("when"),
+            send_json(self, 200, gp_update(body.get("id"), me, body.get("when"),
                                            body.get("place"), body.get("note"),
                                            body.get("starts_at"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/gplan-link":
-            send_json(self, 200, gp_link(body.get("id"), body.get("self"),
-                                         body.get("link"), body.get("idem")))
+            send_json(self, 200, gp_link(body.get("id"), me, body.get("link"), body.get("idem")))
         elif p == "/api/agent/gplan-details":
-            send_json(self, 200, gp_details(body.get("id"), body.get("self"),
-                                            body.get("place"), body.get("link"), body.get("idem")))
+            send_json(self, 200, gp_details(body.get("id"), me, body.get("place"), body.get("link"),
+                                            body.get("idem")))
         elif p == "/api/agent/gplan-mode":
-            send_json(self, 200, gp_mode(body.get("id"), body.get("self"),
-                                         body.get("mode"), body.get("idem")))
+            send_json(self, 200, gp_mode(body.get("id"), me, body.get("mode"), body.get("idem")))
         elif p == "/api/agent/gplan-side":
-            send_json(self, 200, gp_side(body.get("id"), body.get("self"),
-                                         body.get("side"), body.get("idem")))
+            send_json(self, 200, gp_side(body.get("id"), me, body.get("side"), body.get("idem")))
         elif p == "/api/agent/gplan-respond":
-            send_json(self, 200, gp_respond(body.get("id"), body.get("self"), body.get("action"),
+            send_json(self, 200, gp_respond(body.get("id"), me, body.get("action"),
                                             body.get("when"), body.get("place"), body.get("note"),
                                             body.get("starts_at"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/gplan-vote-open":
-            send_json(self, 200, gp_vote_open(body.get("id"), body.get("self"), body.get("kind"),
+            send_json(self, 200, gp_vote_open(body.get("id"), me, body.get("kind"),
                                               body.get("when"), body.get("place"), body.get("note"),
                                               body.get("starts_at"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/gplan-vote":
-            send_json(self, 200, gp_vote(body.get("id"), body.get("self"),
-                                         bool(body.get("yes")), body.get("idem")))
+            send_json(self, 200, gp_vote(body.get("id"), me, bool(body.get("yes")), body.get("idem")))
         elif p == "/api/agent/gplan-vote-close":
-            send_json(self, 200, gp_vote_close(body.get("id"), body.get("self"), body.get("idem")))
+            send_json(self, 200, gp_vote_close(body.get("id"), me, body.get("idem")))
         elif p == "/api/agent/gplan-vote-decide":
             # `apply` по умолчанию НЕ True: решение «менять план» слишком тяжёлое, чтобы приезжать
             # из пропущенного поля. Не сказали — значит оставили как есть.
-            send_json(self, 200, gp_vote_decide(body.get("id"), body.get("self"),
-                                                bool(body.get("apply")), body.get("idem")))
+            send_json(self, 200, gp_vote_decide(body.get("id"), me, bool(body.get("apply")),
+                                                body.get("idem")))
         elif p == "/api/agent/gplan-status":
-            send_json(self, 200, gp_status(body.get("id"), body.get("self"), body.get("status"),
+            send_json(self, 200, gp_status(body.get("id"), me, body.get("status"),
                                            body.get("eta_min"), body.get("idem")))
         elif p == "/api/agent/gplan-feedback":
-            send_json(self, 200, gp_feedback(body.get("id"), body.get("self"), body.get("happened"),
+            send_json(self, 200, gp_feedback(body.get("id"), me, body.get("happened"),
                                              body.get("reason"), body.get("text"), body.get("rating"),
                                              body.get("idem")))
         elif p == "/api/agent/mplan-propose":
-            # ОТКАЗ ОБЯЗАН БЫТЬ ВИДЕН В ЖУРНАЛЕ. Человек четырежды подряд нажал «предложить», план
-            # не появился, а в журнале не осталось ни одной причины — только следы чтений. Снаружи
-            # пришлось перебирать запреты по одному и всё равно не сойтись. Пишем КОД отказа и
-            # выбранное время, без имён и без содержимого: причина нужна, переписка в журнале — нет.
-            _mp = mp_propose(body.get("self") or body.get("from"), body.get("to"),
-                             body.get("title"), body.get("mode") or "offline",
-                             body.get("starts_at"), body.get("when"),
-                             body.get("district"), body.get("address"),
-                             body.get("note"), body.get("cover"),
-                             body.get("venue"), body.get("idem"),
-                             body.get("link"))
+            # ОТКАЗ ОБЯЗАН БЫТЬ ВИДЕН В ЖУРНАЛЕ. Пишем КОД отказа и выбранное время, без имён и без
+            # содержимого: причина нужна, переписка в журнале — нет.
+            to, no = self._peer_of(body, "to", related=True)
+            _mp = no or mp_propose(me, to, body.get("title"), body.get("mode") or "offline",
+                                   body.get("starts_at"), body.get("when"),
+                                   body.get("district"), body.get("address"),
+                                   body.get("note"), body.get("cover"),
+                                   body.get("venue"), body.get("idem"), body.get("link"))
             if not (_mp or {}).get("ok"):
                 print("[mplan] отказ=%s starts_at=%s mode=%s"
                       % (str((_mp or {}).get("error") or "?")[:32],
                          body.get("starts_at"), body.get("mode")), flush=True)
             send_json(self, 200, _mp)
         elif p == "/api/agent/mplan-respond":
-            send_json(self, 200, mp_respond(body.get("id"), body.get("self"), body.get("action"),
+            send_json(self, 200, mp_respond(body.get("id"), me, body.get("action"),
                                             body.get("starts_at"), body.get("when"),
                                             body.get("district"), body.get("title"),
-                                            body.get("note"),
-                                            body.get("version"), body.get("idem")))
+                                            body.get("note"), body.get("version"), body.get("idem"),
+                                            body.get("round")))
+        elif p == "/api/agent/person":
+            other, no = self._peer_of(body, "name", related=True)
+            send_json(self, 200, no or person_card(me, other))
         elif p == "/api/agent/block":
-            send_json(self, 200, block_user(body.get("self"), body.get("name"),
-                                            body.get("on", True), body.get("idem")))
+            other, no = self._peer_of(body, "name")
+            send_json(self, 200, no or block_user(me, other, body.get("on", True), body.get("idem")))
         elif p == "/api/agent/report":
-            send_json(self, 200, report_user(body.get("self"), body.get("name"),
-                                             body.get("reason"), body.get("text"), body.get("idem")))
+            other, no = self._peer_of(body, "name")
+            send_json(self, 200, no or report_user(me, other, body.get("reason"), body.get("text"),
+                                                   body.get("idem")))
+        elif p == "/api/agent/mplan-ask":
+            send_json(self, 200, mp_ask(body.get("id"), me, body.get("what"), body.get("idem"),
+                                        bool(body.get("cancel"))))
         elif p == "/api/agent/mplan-address":
-            send_json(self, 200, mp_address(body.get("id"), body.get("self"), body.get("address"),
+            send_json(self, 200, mp_address(body.get("id"), me, body.get("address"),
                                             body.get("venue"), body.get("idem"), body.get("link")))
         elif p == "/api/agent/mplan-cancel":
-            send_json(self, 200, mp_cancel(body.get("id"), body.get("self"),
-                                           body.get("reason"), body.get("idem")))
+            send_json(self, 200, mp_cancel(body.get("id"), me, body.get("reason"), body.get("idem")))
         elif p == "/api/agent/mplan-move-to-call":
-            send_json(self, 200, mp_move_to_call(body.get("id"), body.get("self"), body.get("idem")))
+            send_json(self, 200, mp_move_to_call(body.get("id"), me, body.get("idem")))
         elif p == "/api/agent/mplan-side":
-            send_json(self, 200, mp_side(body.get("id"), body.get("self"),
-                                         body.get("side"), body.get("idem")))
+            send_json(self, 200, mp_side(body.get("id"), me, body.get("side"), body.get("idem")))
         elif p == "/api/agent/mplan-status":
-            send_json(self, 200, mp_status(body.get("id"), body.get("self"), body.get("status"),
+            send_json(self, 200, mp_status(body.get("id"), me, body.get("status"),
                                            body.get("eta_min"), body.get("idem")))
         elif p == "/api/agent/mplan-feedback":
-            send_json(self, 200, mp_feedback(body.get("id"), body.get("self"), body.get("happened"),
+            send_json(self, 200, mp_feedback(body.get("id"), me, body.get("happened"),
                                              body.get("reason"), body.get("rating"),
-                                             body.get("text"), body.get("idem"),
-                                             body.get("how")))
+                                             body.get("text"), body.get("idem"), body.get("how")))
         elif p == "/api/agent/gintent-leave":
-            send_json(self, 200, gi_leave(body.get("gid"), body.get("self"), body.get("idem")))
+            send_json(self, 200, gi_leave(body.get("gid"), me, body.get("idem")))
+        # Смена организатора (GR.42–44).
+        elif p == "/api/agent/gintent-takeover":
+            send_json(self, 200, gi_takeover(body.get("gid"), me, body.get("idem")))
+        elif p == "/api/agent/gintent-takeover-vote":
+            send_json(self, 200, gi_takeover_vote(body.get("gid"), me, bool(body.get("yes")), body.get("idem")))
+        elif p == "/api/agent/gintent-takeover-withdraw":
+            send_json(self, 200, gi_takeover_withdraw(body.get("gid"), me, body.get("idem")))
+        elif p == "/api/agent/gintent-takeover-back":
+            send_json(self, 200, gi_takeover_back(body.get("gid"), me, bool(body.get("hand")), body.get("idem")))
+        elif p == "/api/agent/gintent-role-offer":
+            to, no = self._peer_of(body, "to", related=True)
+            send_json(self, 200, no or gi_role_offer(body.get("gid"), me, to, body.get("idem")))
+        elif p == "/api/agent/gintent-role-respond":
+            send_json(self, 200, gi_role_respond(body.get("gid"), me, bool(body.get("accept")), body.get("idem")))
+        elif p == "/api/agent/gintent-role-withdraw":
+            send_json(self, 200, gi_role_withdraw(body.get("gid"), me, body.get("idem")))
         elif p == "/api/agent/gintent-convert":
-            send_json(self, 200, gi_convert_ask(body.get("gid"), body.get("self"), body.get("idem")))
+            send_json(self, 200, gi_convert_ask(body.get("gid"), me, body.get("idem")))
         elif p == "/api/agent/gintent-convert-respond":
-            send_json(self, 200, gi_convert_respond(body.get("gid"), body.get("self"),
-                                                    bool(body.get("agree")), body.get("idem")))
+            send_json(self, 200, gi_convert_respond(body.get("gid"), me, bool(body.get("agree")),
+                                                    body.get("idem")))
         elif p == "/api/agent/group-create":
-            send_json(self, 200, group_create(body.get("host"), body.get("title"), body.get("topics"),
+            send_json(self, 200, group_create(me, body.get("title"), body.get("topics"),
                                               body.get("when"), body.get("area"), body.get("mode"),
                                               body.get("min_size"), body.get("max_size"),
                                               body.get("lat"), body.get("lon"), body.get("idem")))
         elif p == "/api/agent/group-join":
-            send_json(self, 200, group_join(body.get("gid"), body.get("self"),
-                                            body.get("idem"), body.get("version")))
+            send_json(self, 200, group_join(body.get("gid"), me, body.get("idem"), body.get("version")))
         elif p == "/api/agent/group-leave":
-            send_json(self, 200, group_leave(body.get("gid"), body.get("self"), body.get("idem")))
+            send_json(self, 200, group_leave(body.get("gid"), me, body.get("idem")))
         else:
             return False
         return True
@@ -8411,16 +11121,43 @@ class H(BaseHTTPRequestHandler):
     # dropped these with the rest; without them 23 of the panel's 87 checks fail and its Cohorts,
     # Person, Compare, Funnel and Stability views are blank. Bodies are verbatim from the
     # pre-rewrite service — read-only diagnostics, they never write to the store or send anything.
+    def _admin_target(self, src, id_field="id", name_field="name"):
+        """Кого касается действие модератора: id — и только однозначно. По подписи тёзок панель
+        могла забанить или стереть не того из двух «Иванов»; теперь для тёзок — отказ со списком."""
+        pid = _peer(src.get(id_field) or src.get(name_field + "_id"), "")
+        if pid:
+            return pid, None
+        nm = str(src.get(name_field) or "").strip()
+        rows = _people_index()["by_name"].get(_norm_name(nm)) or []
+        if len(rows) > 1:
+            return "", {"ok": False, "error": "AMBIGUOUS_PERSON",
+                        "candidates": [{"id": r.get("id"), "name": r.get("name"), "age": r.get("age"),
+                                        "area": r.get("area") or r.get("city"),
+                                        "owned": bool(r.get("owner"))} for r in rows[:10]]}
+        pid = _peer("", nm)
+        return (pid, None) if pid else ("", {"ok": False, "error": "UNKNOWN_PERSON"})
+
     def _restored_admin_get(self):
         """Returns True when it handled the request."""
         if self.path.split("?")[0] == "/api/agent/admin/person":
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
-            send_json(self, 200, person_report(unquote(q.get("name", "").replace("+", " "))))
+            q = {k: unquote(str(v).replace("+", " ")) for k, v in q.items()}
+            pid, no = self._admin_target(q)
+            send_json(self, 200, no or person_report(pid))
         elif self.path.split("?")[0] == "/api/agent/admin/cohorts":
             send_json(self, 200, cohorts())
         elif self.path.split("?")[0] == "/api/agent/admin/proposals":
             send_json(self, 200, proposals_registry())
+        elif self.path.split("?")[0] == "/api/agent/admin/reports":
+            from urllib.parse import unquote
+            q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) \
+                if "?" in self.path else {}
+            _nm = unquote(q.get("name", "").replace("+", " "))
+            _pid = _peer(q.get("id"), _nm) if (_nm or q.get("id")) else ""
+            send_json(self, 200, reports_queue(limit=int(q.get("limit") or 200),
+                                               reason=unquote(q.get("reason", "")),
+                                               name=_pid or _nm))
         else:
             return False
         return True
@@ -8445,7 +11182,21 @@ class H(BaseHTTPRequestHandler):
                      for x in (body.get("items") or []) if isinstance(x, dict)]
             send_json(self, 200, {"ok": True, "added": learn_topics(pairs), "known": len(LEARNED)})
         elif p == "/api/agent/admin/fatigue-reset":
-            send_json(self, 200, reset_fatigue(body.get("name")))
+            send_json(self, 200, reset_fatigue(body.get("name")))     # журнал движка — пока по подписи
+        elif p == "/api/agent/admin/notify":
+            pid, no = self._admin_target(body, "to_id", "to")
+            send_json(self, 200, no or admin_notify(pid, body.get("text"),
+                                                    body.get("ref") or "", body.get("idem")))
+        elif p == "/api/agent/admin/ban-sweep":
+            pid, no = self._admin_target(body)
+            send_json(self, 200, no or admin_ban_sweep(pid, body.get("reason") or "banned"))
+        elif p == "/api/agent/admin/purge":
+            pid, no = self._admin_target(body)
+            # Строки человека может уже не быть (учётку удалили раньше, стирание повторяют): тогда
+            # по сырому id — ручка внутренняя, снаружи её закрывает шлюз.
+            if no and str(body.get("id") or "").strip():
+                pid, no = str(body.get("id")).strip().lower(), None
+            send_json(self, 200, no or purge_person(pid))
         elif p == "/api/agent/stability":
             # Ported capability (not code) from the PROD|OLD|NEW bench: run the SAME search N times
             # and check the slate does not move. Our tie-break is a name hash, so drift can only come
@@ -8522,6 +11273,49 @@ class H(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _whoami(self, body=None):
+        """Определить личность запроса ОДИН раз и положить её туда, где её ждут.
+
+        `self._pid` / `self._pname` — id и подпись по сессии (или, без сессии, по правилам
+        `_unowned_pid`). В `ctx` поиска кладётся `self_id`, а при живой сессии и `self` — подпись
+        из сессии поверх присланной: движок исключает «себя», подтягивает свою анкету и сверяет
+        блокировки по id, а не по тому, как человек назвался в запросе. См. docs/IDENTITY.md.
+        """
+        claimed = ""
+        src = body if isinstance(body, dict) else {}
+        for k in ("self", "from", "who", "me", "uid", "owner", "host"):
+            v = src.get(k)
+            if isinstance(v, str) and v.strip():
+                claimed = v.strip()
+                break
+        if not claimed and isinstance(src.get("ctx"), dict):
+            # Поиск присылает «кто ищет» только внутри ctx — без этого запрос без сессии оставался
+            # без личности, и блокировки (они по id) в выдаче не применялись.
+            v = src["ctx"].get("self")
+            if isinstance(v, str) and v.strip():
+                claimed = v.strip()
+        if not claimed and "?" in self.path:
+            from urllib.parse import parse_qs, urlparse
+            q = parse_qs(urlparse(self.path).query)
+            for k in ("self", "who", "me", "from"):
+                if q.get(k) and str(q[k][0]).strip():
+                    claimed = str(q[k][0]).strip()
+                    break
+        try:
+            self._pid, self._pname = _identify(self, claimed)
+        except Exception as e:
+            print("[identity] не определилась: %s" % str(e)[:120], flush=True)
+            self._pid, self._pname = "", ""
+        ctx = src.get("ctx") if isinstance(src.get("ctx"), dict) else None
+        if ctx is not None:
+            if self._pid:
+                ctx["self_id"] = self._pid
+                if self._pname and not self._pid.startswith(ANON):
+                    ctx["self"] = self._pname
+            else:
+                ctx.pop("self_id", None)
+        return self._pid
+
     def _watch_owner(self, body=None):
         """НАБЛЮДЕНИЕ, А НЕ ЗАПРЕТ. Ничего не блокирует и ничего не меняет в ответе.
 
@@ -8572,6 +11366,7 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self._watch_owner()
+        self._whoami()
         _p = self.path.split("?", 1)[0]
         if _p == "/health":
             # Ровно один вопрос: процесс жив и отвечает. Состояние базы и очереди собирает
@@ -8582,6 +11377,30 @@ class H(BaseHTTPRequestHandler):
                                          "storage": db.MODE, "queue": mq.MODE})
         if _p.startswith("/api/agent/video/"):
             return self._video_serve(_p.rsplit("/", 1)[-1])
+        if _p.startswith("/api/agent/voice/"):
+            return self._voice_serve(_p.rsplit("/", 1)[-1])
+        if _p.startswith("/api/agent/admin/evidence/"):
+            # Файл к жалобе — только модератору: ручка внутренняя (шлюз закрывает /api/agent/admin/*),
+            # панель ходит сюда напрямую и отдаёт файл по своему токену.
+            eid = _p.rsplit("/", 1)[-1]
+            rec = _evidence().get(eid)
+            if not rec and re.match(r"^[0-9a-f]{32}$", eid):
+                # приложен по адресу, записи о загрузке нет — ищем файл по опознавателю
+                hit = [f for f in (os.listdir(EVIDENCE_DIR) if os.path.isdir(EVIDENCE_DIR) else [])
+                       if f.startswith(eid + ".")]
+                rec = {"file": hit[0], "mime_type": "application/octet-stream"} if hit else None
+            path = os.path.join(EVIDENCE_DIR, str((rec or {}).get("file") or "")) if rec else ""
+            if not rec or not os.path.isfile(path):
+                return send_json(self, 404, {"ok": False, "error": "NO_SUCH_FILE"})
+            data = open(path, "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Type", rec.get("mime_type") or "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", 'attachment; filename="%s"' % rec.get("file"))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if self._restored_get() or self._restored_admin_get():
             return
         if self.path == "/api/agent/weights":
@@ -8631,8 +11450,24 @@ class H(BaseHTTPRequestHandler):
                 store = {"path": os.path.abspath(USERS_PATH), "mtime": int(st.st_mtime), "bytes": st.st_size}
             except Exception as e:
                 store = {"path": os.path.abspath(USERS_PATH), "error": str(e)[:120]}
+            # СПИСОК ОСТАЁТСЯ, ТОЧКА НА КАРТЕ — НЕТ.
+            #
+            # Здесь отдавалась вся популяция целиком, с точными широтой и долготой каждого
+            # человека. Снаружи путь закрыт на nginx, но дверь сервиса не должна держаться на одной
+            # строке чужого конфига: запрос, пришедший через шлюз, приходит сюда с того же
+            # 127.0.0.1, что и внутренние.
+            #
+            # Убрать `users` целиком нельзя — его читает первичное наполнение панели
+            # администратора и смоук, и оба ходят без токена. Поэтому режется не список, а самое
+            # чувствительное в нём: координаты и адрес. Кому положено видеть точку — тот приходит
+            # с токеном.
+            if kleal_auth.admin_ok(self):
+                pool_rows = c
+            else:
+                _HIDE = ("lat", "lon", "latitude", "longitude", "address", "coords", "geo")
+                pool_rows = [{k: v for k, v in (u or {}).items() if k not in _HIDE} for u in c]
             send_json(self, 200, {"count": len(c), "fromStore": _users_cache["list"] is not None,
-                                  "bySource": src, "store": store, "users": c})
+                                  "bySource": src, "store": store, "users": pool_rows})
         elif self.path.split("?")[0] == "/api/agent/map-feed":
             from urllib.parse import parse_qs, urlsplit
             q = parse_qs(urlsplit(self.path).query)
@@ -8640,24 +11475,116 @@ class H(BaseHTTPRequestHandler):
             claimed = str((q.get("self") or [""])[0]).strip()
             # Prefer authenticated identity when available; the query name is compatibility for the
             # current Expo bundle and must never influence location fields.
-            me = kleal_auth.caller_name(self) or claimed
+            me = self._pname or claimed
             try:
                 lim = int((q.get("limit") or [60])[0])
             except (TypeError, ValueError):
                 lim = 60
             try:
-                send_json(self, 200, map_feed_payload(view=view, self_name=me, limit=lim))
+                send_json(self, 200, map_feed_payload(view=view, self_name=me, limit=lim,
+                                                      self_id=self._pid))
             except ValueError as e:
                 send_json(self, 400, {"error": str(e), "items": [],
                                       "partial": False, "unavailableCount": 0})
         elif self.path.split("?")[0] == "/api/agent/explore":
             q = dict(kv.split("=", 1) for kv in self.path.split("?", 1)[-1].split("&") if "=" in kv) if "?" in self.path else {}
             from urllib.parse import unquote
-            send_json(self, 200, {"plans": explore_plans(self_name=unquote(q.get("self", "")))})
+            send_json(self, 200, {"plans": explore_plans(self_name=unquote(q.get("self", "")),
+                                                         self_id=self._pid)})
         elif self.path == "/":
             send_json(self, 200, {"service": "matching", "ok": True})
         else:
             send_json(self, 404, {})
+
+    def _read_one_file(self, max_bytes, err):
+        """Общий приём одного файла multipart: тело целиком, потом разбор. None — уже ответили."""
+        try:
+            ln = int(self.headers.get("Content-Length", "0") or 0)
+        except (TypeError, ValueError):
+            ln = 0
+        if ln <= 0 or ln > max_bytes + 64 * 1024:
+            send_json(self, 413, {"ok": False, "error": err + "_TOO_LARGE"})
+            return None
+        raw = self.rfile.read(ln)
+        name, ctype, blob = _one_file(self.headers.get("Content-Type", ""), raw)
+        if blob is None:
+            send_json(self, 400, {"ok": False, "error": err + "_REQUIRED"})
+            return None
+        return name, ctype, blob
+
+    def _evidence_upload(self):
+        """POST /api/agent/report-evidence — файл к жалобе на группу (multipart, одно поле)."""
+        self._whoami({})                       # кто загружает — только по сессии
+        if not self._pid:
+            return send_json(self, 200, {"ok": False, "error": "sign in required"})
+        got = self._read_one_file(MAX_EVIDENCE_BYTES, "EVIDENCE")
+        if got is None:
+            return
+        name, ctype, blob = got
+        send_json(self, 200, report_evidence_store(name, ctype, blob, self._pid))
+
+    def _voice_upload(self):
+        """POST /api/speech/voice — голосовое файлом; в ответ id, url, длительность, тип и текст."""
+        got = self._read_one_file(MAX_VOICE_BYTES, "VOICE")
+        if got is None:
+            return
+        name, ctype, blob = got
+        try:
+            ms = int(self.headers.get("X-Voice-Duration-Ms", "0") or 0)
+        except (TypeError, ValueError):
+            ms = 0
+        stored = voice_store(name, ctype, blob, ms)
+        if not stored.get("ok"):
+            return send_json(self, 400, stored)
+        text, lang = transcribe_remote(blob, name, ctype)
+        stored["transcript"] = text
+        stored["language"] = lang
+        return send_json(self, 200, stored)
+
+    def _voice_transcribe(self):
+        """POST /api/speech/transcribe — надиктовка в поле: только текст, файл не хранится."""
+        got = self._read_one_file(MAX_VOICE_BYTES, "VOICE")
+        if got is None:
+            return
+        name, ctype, blob = got
+        text, lang = transcribe_remote(blob, name, ctype)
+        if not text:
+            return send_json(self, 200, {"ok": False, "error": "NO_SPEECH", "text": ""})
+        return send_json(self, 200, {"ok": True, "text": text, "language": lang})
+
+    def _voice_serve(self, name):
+        """GET /api/agent/voice/<id>.m4a — как кружок: с частичными запросами, иначе iOS не играет."""
+        if not VOICE_NAME_RE.match(name):
+            return send_json(self, 404, {})
+        path = os.path.join(VOICE_DIR, name)
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            return send_json(self, 404, {})
+        start, end, partial = 0, size - 1, False
+        rm = re.match(r"bytes=(\d*)-(\d*)\s*$", str(self.headers.get("Range") or "").strip())
+        if rm:
+            a, b = rm.group(1), rm.group(2)
+            if a:
+                start = min(int(a), size - 1)
+                end = min(int(b), size - 1) if b else size - 1
+            elif b:
+                start = max(0, size - int(b))
+            partial = True
+        with open(path, "rb") as f:
+            f.seek(start)
+            chunk = f.read(end - start + 1)
+        self.send_response(206 if partial else 200)
+        self.send_header("Content-Type", VOICE_MIME.get(name.rsplit(".", 1)[-1], "audio/mp4"))
+        self.send_header("Content-Length", str(len(chunk)))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        if partial:
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(chunk)
 
     def _video_upload(self):
         """POST /api/agent/video — кружок приезжает файлом, а не в JSON."""
@@ -8721,8 +11648,16 @@ class H(BaseHTTPRequestHandler):
         # тело до конца, и до файла дело уже не дойдёт.
         if self.path.split("?", 1)[0] == "/api/agent/video":
             return self._video_upload()
+        # Голосовое — тоже multipart, и тоже до read_json: см. объяснение выше.
+        if self.path.split("?", 1)[0] == "/api/speech/voice":
+            return self._voice_upload()
+        if self.path.split("?", 1)[0] == "/api/speech/transcribe":
+            return self._voice_transcribe()
+        if self.path.split("?", 1)[0] == "/api/agent/report-evidence":
+            return self._evidence_upload()
         body = read_json(self)
         self._watch_owner(body)
+        self._whoami(body)
         p = self.path
         if self._restored_post(p, body) or self._restored_admin_post(p, body):
             return
@@ -8741,6 +11676,7 @@ class H(BaseHTTPRequestHandler):
                 limit=int(body.get("limit") or 12),
                 self_name=body.get("self") or prof.get("name") or "",
                 viewer_profile=prof,
+                self_id=self._pid,
             )})
         elif p == "/api/agent/match":
             # structured entry: caller (e.g. the buddy agent) already assembled the intent/signals -> skip LLM parse
@@ -8856,8 +11792,13 @@ class H(BaseHTTPRequestHandler):
                     send_json(self, 200, {"error": str(e)[:200], "matched": [], "excluded": [], "considered": []})
                 return
             try:
-                cand = next((c for c in load_candidates()
-                             if str(c.get("name", "")).strip().lower() == who), None)
+                # Кандидат — по id, если панель его прислала; по подписи — только если она однозначна.
+                _cid = str(body.get("candidate_id") or "").strip()
+                if _cid:
+                    cand = _person(_cid)
+                else:
+                    _same = [c for c in load_candidates() if str(c.get("name", "")).strip().lower() == who]
+                    cand = _same[0] if len(_same) == 1 else None
                 if cand is None:
                     send_json(self, 200, {"ok": False, "error": "candidate not found in store"})
                 elif not CORE_V2:
@@ -8867,7 +11808,7 @@ class H(BaseHTTPRequestHandler):
                     ctx2 = dict(ctx)
                     ctx2.setdefault("now", time.time())
                     ctx2.setdefault("received24", _proposals_received_24h())
-                    if self_name and str(cand.get("name", "")).strip().lower() == self_name:
+                    if _is_self(cand, gate_ctx.get("self_id") or "", self_name):
                         send_json(self, 200, {"ok": True, "trace": {
                             "name": cand.get("name"), "shown": False, "steps": [
                                 {"step": "self-match guard", "ok": False,
@@ -9062,6 +12003,50 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+# Панели нужен список ВСЕХ инструкций сервиса, а не только тех, что успели
+# прочитаться. Объявляем их при старте: ни одного обращения к модели это не стоит,
+# зато промпт виден в панели сразу после перезапуска, а не после первого разговора.
+try:
+    settings.announce([
+        ("matching.parse_intent", PARSE_PROMPT),
+        ("matching.intro", INTRO_PROMPT),
+        ("matching.negotiate", NEGOTIATE_PROMPT),
+    ])
+except Exception:
+    pass
+
+
+def _warm_up():
+    """Один холостой поиск при старте — чтобы первым его ждала служба, а не человек.
+
+    Память на ответы (`cat_of`, `canonical._resolve`) наполняется словами СТОРА, и наполняет её
+    первый же настоящий поиск: он и платит за всех. Замер 15.09.2026 на боевой службе: первый
+    запрос после перезапуска — 17,5 с, следующий — 1,5 с. Человеку, зашедшему сразу после
+    выкладки, доставалась ровно та секунда, за которую он решает, работает приложение или нет.
+
+    Идёт в отдельном потоке и молча: ошибка прогрева не должна мешать службе подняться. Ничего
+    не пишет — поиск состояние не трогает (журнал показов ведётся при отправке, а не при выдаче)."""
+    try:
+        t0 = time.time()
+        pool = load_candidates()
+        me = next((u for u in pool if u.get("lat") and u.get("interests")), None) or {}
+        prof = {"name": "", "lat": me.get("lat"), "lon": me.get("lon"),
+                "languages": {"comfortable": me.get("langs") or []}}
+        match_candidates({"topics": ["кофе"], "type": "social", "role": "meet",
+                          "mode": "offline", "time": "Today evening"}, prof, {"self": ""})
+        print("[warm] словарь прогрет за %.1f с, карточек %d" % (time.time() - t0, len(pool)), flush=True)
+    except Exception as e:
+        print("[warm] прогрев не удался: %s" % str(e)[:120], flush=True)
+
+
 if __name__ == "__main__":
     print("Kleal matching-service on http://127.0.0.1:%d  (LLM via llm-service)" % PORT)
-    ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()
+    # Перевод хранилища на id — ДО приёма запросов: иначе первые ответы шли бы по старым именам.
+    try:
+        _migrate_identity_v2(apply=True)
+    except Exception as _e:
+        print("[identity] перевод на id не выполнен: %s" % str(_e)[:200], flush=True)
+        traceback.print_exc()
+    threading.Thread(target=_warm_up, daemon=True).start()
+    import serving  # очередь подключений на 128, а не на 5 — см. shared/serving.py
+    serving.KlealServer(("127.0.0.1", PORT), H).serve_forever()

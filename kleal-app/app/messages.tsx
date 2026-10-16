@@ -1,81 +1,106 @@
 /**
- * «Сообщения» — кадры MSG.01–MSG.05.
+ * «Сообщения» — борд «Messages — new layout» (Figma 6873:170006), раздел A: MSG.01–MSG.05.
  *
- * UX-КАРКАС: вид натянется поверх; копия и сборка строк — в src/messages.ts.
+ * Список собирается на каждый заход из настоящих источников (планы 1:1 и групповые, принятые
+ * приглашения, переписки, комнаты групп с их лентами) и НИГДЕ не хранится. Хранятся только
+ * локальные пометки (без уведомлений, архив, когда группу открывали) в MsgPrefs.
  *
- * Это точка, куда ведут все остальные секции: переписки, заявки и то, что остаётся после
- * встречи. Список собирается на каждый заход из настоящих источников (планы, приглашения,
- * переписки) и НИГДЕ не хранится — хранятся только локальные пометки (без уведомлений, архив,
- * «покинул», когда тред открывали) в MsgPrefs.
+ * Вкладки две: «Intents» — все открытые чаты затей, и групп, и пар, по разделам Planning /
+ * Upcoming / Ended; «Private» — личные переписки вне затей (MSG.22; личных запросов на сервере ещё
+ * нет — вкладка пока пустая). Приглашения сюда не попадают: им место в «My activity» и на главной.
  *
- * Долгое нажатие по строке — лист MSG.04. «Пожаловаться» — настоящий /api/agent/report;
- * отзыв своего приглашения — настоящий /api/agent/withdraw; остальное — локальные пометки.
+ * Долгое нажатие по строке — лист MSG.03 / MSG.03a. Выход, передача роли и закрытие группы — те же
+ * настоящие шаги, что в комнате (лист подтверждения открывается там); жалоба — экран жалобы.
  */
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { MSG, Row, intentRows, planRows, gplanRows, threadRows, groupRows, searchRows, bucketOf, isUnread, rowTime, newestFirst, unreadByPerson } from '../src/messages';
-import { mediaUrl, group as gapi } from '../src/api';
+import {
+  MSG, Row, GMsg, inboxRows, searchInbox, bucketOf, isUnread, rowTime, newestFirst, threadRows, shortDay,
+} from '../src/messages';
+import { mediaUrl, group as gapi, agent, isMe } from '../src/api';
 import { planWhen, sysLine } from '../src/chat';
+import { groupSysLine } from '../src/groups';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb, setMsgPrefs } from '../src/state';
-import { agent } from '../src/api';
-import { IconChevronLeft, IconSearch, IconPerson, IconSpark, IconCalendar } from '../src/components/icons';
+import {
+  IconSearch, IconPerson, IconClose, IconBellOff, IconBell, IconArchive, IconFlag, IconExit, IconCrown, IconBan,
+  IconChevronRight, IconImagePlaceholder,
+} from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { Sheet, SheetItem } from '../src/components/Sheet';
 import { usePolling } from '../src/polling';
-import { color, radius as rad, space, type } from '../src/theme';
+import { color, radius as rad, space, type, heading } from '../src/theme';
+import { GlassBack, GlassSurface } from '../src/components/LiquidGlass';
+import { Ambient, GLOW_FORM } from '../src/components/Ambient';
+import { useNavCollapse } from '../src/navScroll';
+
+/** Сколько комнат дотягивать лентой за раз: превью, счётчик и поиск по репликам. */
+const GROUP_FEEDS = 12;
+/** Чат после встречи держится открытым 30 дней (MSG.05). */
+const OPEN_DAYS = 30;
 
 export default function Messages() {
-  useLang();
+  const navCollapse = useNavCollapse();
+  const lang = useLang();
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
   const ru = getLang() === 'ru';
   const me = String(st.profile.name || '');
 
-  const [tab, setTab] = useState<'intents' | 'plans' | 'private'>('intents');
-  const [searching, setSearching] = useState(false);
+  const [tab, setTab] = useState<'intents' | 'private'>('intents');
+  const [arch, setArch] = useState(false);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<{
     plans: any[]; history: any[]; inbox: any[]; outbox: any[]; threads: any[];
-    groups: any[]; ginvites: any[]; gplans: any[]; ghistory: any[];
-  }>({ plans: [], history: [], inbox: [], outbox: [], threads: [], groups: [], ginvites: [],
-       gplans: [], ghistory: [] });
-  /** Лист MSG.04 — по какой строке вызван. */
+    groups: any[]; gplans: any[]; ghistory: any[]; gmsgs: Record<string, GMsg[]>;
+  }>({ plans: [], history: [], inbox: [], outbox: [], threads: [], groups: [], gplans: [], ghistory: [], gmsgs: {} });
   const [menuRow, setMenuRow] = useState<Row | null>(null);
-  const [menuNote, setMenuNote] = useState('');
+
+  const prefs = st.msg || {};
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
 
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
     try {
-      // Группы — своим запросом и со своим catch: групповой слой новее остальных, и его
-      // неудача не должна уносить список переписок, который работал годами.
-      // Планов у человека ДВА рода, и живут они на разных ручках: `mplans` — один на один,
-      // `gplans` — групповые. Здесь запрашивали только первую, поэтому созданный групповой план
-      // во вкладку «Планы» не попадал вообще: человек его делал, видел в группе — и не находил
-      // там, где приложение обещает показывать все планы.
-      const [pl, inb, out, th, gr, gpl] = await Promise.all([
+      // Группы — своим catch: их неудача не должна уносить переписки один на один.
+      const [pl, inb, out, th, gr, gpl, saf] = await Promise.all([
         agent.plans(me), agent.inbox(me), agent.outbox(me), agent.threads(me),
         gapi.mine(me).catch(() => null),
         gapi.plans(me).catch(() => null),
+        agent.safety(me).catch(() => null),
       ]);
+      // Реплики заблокированных не всплывают и превью строки (MSG.14b — у меня они скрыты).
+      const blocked = new Set((((saf as any)?.blocked || []) as string[]).map((x) => String(x).trim().toLowerCase()));
       const arr = (r: any, k: string) => (Array.isArray(r) ? r : r?.[k] || []);
-      const threads = arr(th, 'threads');
+      const groups: any[] = (gr as any)?.groups || [];
+      // Ленты комнат: в списке групп последней реплики нет, а строка на борде её показывает.
+      const gids = [...groups].sort((a, b) => Number(b.updated || b.created || 0) - Number(a.updated || a.created || 0))
+        .slice(0, GROUP_FEEDS).map((g) => String(g.gid || '')).filter(Boolean);
+      const feeds = await Promise.all(gids.map((gid) => gapi.thread(gid, me, 0).catch(() => null)));
+      const gmsgs: Record<string, GMsg[]> = {};
+      gids.forEach((gid, i) => {
+        gmsgs[gid] = (((feeds[i] as any)?.messages || []) as GMsg[])
+          .filter((m) => !m.frm || !blocked.has(String(m.frm).trim().toLowerCase())).slice(-50);
+      });
+      // Группа, которую ни разу не открывали с этого телефона, начинает счёт с этой минуты —
+      // иначе первый заход зажёг бы счётчик на всю историю каждой комнаты.
+      const seen = prefsRef.current.seen || {};
+      const fresh = gids.filter((gid) => !seen['g:' + gid]);
+      if (fresh.length) {
+        const now = Date.now() / 1000;
+        setMsgPrefs((m) => ({ ...m, seen: { ...(m.seen || {}), ...Object.fromEntries(fresh.map((g) => ['g:' + g, now])) } }));
+      }
       setData({
-        plans: (pl as any)?.plans || [],
-        history: (pl as any)?.history || [],
-        inbox: arr(inb, 'requests'),
-        outbox: arr(out, 'requests'),
-        threads,
-        groups: (gr as any)?.groups || [],
-        ginvites: (gr as any)?.invites || [],
-        gplans: (gpl as any)?.plans || [],
-        ghistory: (gpl as any)?.history || [],
+        plans: (pl as any)?.plans || [], history: (pl as any)?.history || [],
+        inbox: arr(inb, 'requests'), outbox: arr(out, 'requests'), threads: arr(th, 'threads'),
+        groups, gplans: (gpl as any)?.plans || [], ghistory: (gpl as any)?.history || [], gmsgs,
       });
     } catch {
       /* тихо: фоновая дотяжка */
@@ -84,338 +109,306 @@ export default function Messages() {
     }
   }, [me]);
 
-  // Спит, пока экран не виден: раньше таймер тикал и из стека, и из свёрнутого приложения.
   usePolling(load, 15000);
 
-  const prefs = st.msg || {};
-  const sections = useMemo(
-    () => intentRows(me, data.plans, data.inbox, data.outbox),
-    [me, data.plans, data.inbox, data.outbox]
-  );
-  /**
-   * Договорились о времени и месте — живут здесь, а не среди намерений. И парные, и групповые:
-   * для человека «план» это встреча, на которую он идёт, а сколько там людей — вопрос второй.
-   * Групповые сюда не попадали вовсе, пока экран не спрашивал `gplans`.
-   */
-  const plansSec = useMemo(() => {
-    const one = planRows(me, data.plans, data.history, ru, planWhen);
-    // Групповой план приходит с сервера уже с подписью времени (`when`), собранной пикером, —
-    // пересобирать её из starts_at незачем и вредно: разойдётся с тем, что видно в самой группе.
-    const many = gplanRows(data.gplans, data.ghistory, ru, (p: any) => String(p.when || ''));
-    return {
-      upcoming: [...one.upcoming, ...many.upcoming].sort(newestFirst),
-      forming: [...one.forming, ...many.forming].sort(newestFirst),
-      past: [...one.past, ...many.past].sort(newestFirst),
-    };
-  }, [me, data, ru]);
-  /** С кем приглашение уже принято — только их переписки и существуют. */
-  const acceptedWith = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of [...(data.inbox || []), ...(data.outbox || [])]) {
+  const rows = useMemo(() => inboxRows({
+    me, ru, ...data, seen: prefs.seen || {}, planWhen, sysLine,
+    gSysLine: (m) => groupSysLine(String(m.text || ''), m.sys),
+  }), [me, ru, data, prefs.seen]);
+
+  /** «Private» — переписки, у которых нет строки в «Intents» (сейчас таких почти не бывает). */
+  const privRows = useMemo(() => {
+    const taken = new Set(rows.map((r) => String(r.who || '').trim().toLowerCase()).filter(Boolean));
+    const accepted = new Set<string>();
+    for (const r of [...data.inbox, ...data.outbox]) {
       if (r?.status !== 'accepted') continue;
-      const who = String(r.from || '').trim().toLowerCase() === String(me || '').trim().toLowerCase() ? r.to : r.from;
-      const key = String(who || '').trim().toLowerCase();
-      if (key) set.add(key);
+      const mine = isMe(r.from, r.from_id, me);
+      const id = String((mine ? r.to_id : r.from_id) || '');
+      if (id) accepted.add('id:' + id);
+      accepted.add(String((mine ? r.to : r.from) || '').trim().toLowerCase());
     }
-    return set;
-  }, [data.inbox, data.outbox, me]);
-  const privateRows = useMemo(
-    () => threadRows(data.threads, me, ru, sysLine, acceptedWith),
-    [data.threads, me, ru, acceptedWith]
-  );
+    return threadRows(data.threads, me, ru, sysLine, accepted)
+      .filter((r) => !taken.has(String(r.who || '').trim().toLowerCase()));
+  }, [rows, data.threads, data.inbox, data.outbox, me, ru]);
 
-  /**
-   * Непрочитанное приклеивается в ОДНОМ месте — иначе одна и та же переписка показывает разную
-   * правду в двух вкладках: в «Интентах» она стоит как пара, которая договаривается, в «Личных»
-   * как переписка, и раньше число доставалось только вторым.
-   */
-  const unread = useMemo(() => unreadByPerson(data.threads), [data.threads]);
-  const withUnread = useCallback((rows: Row[]) => rows.map((r) => {
-    const n = r.who ? unread[String(r.who).trim().toLowerCase()] || 0 : 0;
-    return n ? { ...r, unread: true, count: n } : r;
-  }), [unread]);
+  const live = (list: Row[]) => list.filter((r) => bucketOf(r, prefs) === 'normal' || bucketOf(r, prefs) === 'muted');
+  const archived = [...rows, ...privRows].filter((r) => { const b = bucketOf(r, prefs); return b === 'archived' || b === 'left'; })
+    .sort(newestFirst);
+  const intents = live(rows);
+  const priv = live(privRows);
+  const isMuted = (r: Row) => bucketOf(r, prefs) === 'muted';
+  const hot = (r: Row) => isUnread(r, prefs) && !isMuted(r);
+  const intentsBadge = intents.filter(hot).length;
+  const privBadge = priv.filter(hot).length;
 
-  // Раскладка по локальным пометкам: покинутые исчезают, архив и «без уведомлений» — вниз.
-  const split = (rows: Row[]) => {
-    const normal: Row[] = [], muted: Row[] = [], archived: Row[] = [];
-    for (const r of rows) {
-      const b = bucketOf(r, prefs);
-      if (b === 'left') continue;
-      if (b === 'archived') archived.push(r);
-      else if (b === 'muted') muted.push(r);
-      else normal.push(r);
-    }
-    return { normal, muted, archived };
-  };
-
-  /** Группы стоят рядом с одиночными интентами: для человека это одна затея, просто людей больше. */
-  const gRows = useMemo(() => groupRows(data.groups, data.ginvites, ru), [data.groups, data.ginvites, ru]);
-  const formingWithGroups = useMemo(
-    () => withUnread([...gRows, ...sections.forming].sort(newestFirst)),
-    [gRows, sections.forming, withUnread]
-  );
-
-  const intentsAll = formingWithGroups;
-  const iForm = split(formingWithGroups);
-  const plansAll = [...plansSec.upcoming, ...plansSec.forming, ...plansSec.past];
-  const pUp = split(withUnread(plansSec.upcoming)), pForm = split(withUnread(plansSec.forming)),
-        pPast = split(withUnread(plansSec.past));
-  const pMuted = [...pUp.muted, ...pForm.muted, ...pPast.muted];
-  const pArch = [...pUp.archived, ...pForm.archived, ...pPast.archived];
-  const pv = split(withUnread(privateRows));
-
-  const empty = !loading
-    && intentsAll.length === 0 && plansAll.length === 0 && privateRows.length === 0;
-
+  const searching = q.trim().length > 0;
   const found = useMemo(
-    () => searchRows(tab === 'intents' ? intentsAll : tab === 'plans' ? plansAll : privateRows, q),
-    [q, tab, data] // eslint-disable-line react-hooks/exhaustive-deps
+    () => searchInbox([...intents, ...priv], data.gmsgs, data.threads, me, q),
+    [q, intents, priv, data, me] // eslint-disable-line react-hooks/exhaustive-deps
   );
+  const nothing = !loading && rows.length === 0 && privRows.length === 0;
 
-  /**
-   * ЛЮБАЯ строка «Сообщений» открывает ПЕРЕПИСКУ — и «Интенты», и «Планы», и «Личные».
-   *
-   * Раньше каждая вкладка вела в своё: интент — на экран приглашения, план — сразу на экран
-   * встречи, и только «Личные» в чат. Экран называется «Сообщения», строки выглядят как чаты, а
-   * тап уводил куда угодно, кроме чата, — человек терял разговор, который у него с этим человеком
-   * уже есть.
-   *
-   * Вглубь ведёт сама переписка: закреплённая карточка сверху открывает план или интент, а
-   * приглашение, на которое ещё не ответили, стоит карточкой прямо в ленте (MSG.18–MSG.21).
-   * Один вход, дальше по одному шагу — вместо трёх разных дверей с одинаковыми ручками.
-   */
+  /** Любая строка открывает разговор: группа — комнату, пара — переписку. */
   const open = (r: Row) => {
-    // У групп собеседника нет — вместо переписки открывается комната по gid. Правило «любая
-    // строка ведёт в разговор» при этом соблюдено: комната и ЕСТЬ разговор группы.
-    if (r.kind === 'group' || r.kind === 'ginvite-in') {
-      if (!r.gid) return;
-      if (r.kind === 'ginvite-in') {
-        router.navigate({ pathname: '/ginvite', params: { id: r.id || '', gid: r.gid } });
-        return;
-      }
-      router.navigate({ pathname: '/group', params: { gid: r.gid } });
+    if (r.kind === 'group') {
+      if (r.gid) router.navigate({ pathname: '/group', params: { gid: r.gid } });
       return;
     }
-    if (!r.who) return;              // строка без собеседника — открывать нечего
+    if (!r.who) return;
     router.navigate({
       pathname: '/conversation',
-      params: { who: r.who, title: r.title || '', photo: r.photo || '' },
+      params: { who: r.who, who_id: r.whoId || '', title: r.title || '', photo: r.photo || '' },
     });
   };
 
-  const toggle = (list: 'muted' | 'archived' | 'left', r: Row) => {
+  const toggle = (list: 'muted' | 'archived', r: Row) => {
     setMsgPrefs((m) => {
       const cur = new Set(m[list] || []);
-      if (cur.has(r.key)) cur.delete(r.key); else cur.add(r.key);
-      return { ...m, [list]: [...cur] };
+      const keys = [r.key, String(r.who || '').trim().toLowerCase()].filter(Boolean);
+      const on = keys.some((k) => cur.has(k));
+      for (const k of keys) { if (on) cur.delete(k); else if (k === r.key) cur.add(k); }
+      // Вернуть из архива — снять и старую пометку «покинул», она жила той же полкой.
+      const left = list === 'archived' && on ? (m.left || []).filter((k) => !keys.includes(k)) : m.left;
+      return { ...m, [list]: [...cur], left };
     });
   };
 
-  const report = async (r: Row) => {
-    try {
-      const res: any = await agent.report(me, String(r.who || r.title), 'chat', '');
-      if (!res?.ok) throw new Error();
-      setMenuNote(MSG.reportSent());
-    } catch {
-      setMenuNote(T('Не получилось. Попробуй ещё раз.', 'Something went wrong. Try again.'));
-    }
-  };
+  /** Шаг листа: закрыть лист, затем перейти — иначе переход ловит закрывающуюся модалку. */
+  const go = (fn: () => void) => { setMenuRow(null); setTimeout(fn, 250); };
 
-  const withdraw = async (r: Row) => {
-    try {
-      await agent.withdraw(String(r.id), me);
-      setMenuRow(null);
-      await load();
-    } catch {
-      setMenuNote(T('Не получилось. Попробуй ещё раз.', 'Something went wrong. Try again.'));
-    }
-  };
+  const report = (r: Row) => go(() => router.navigate(r.kind === 'group'
+    ? { pathname: '/group-report', params: { gid: r.gid || '', title: r.title || '' } }
+    : { pathname: '/group-report', params: { who: r.who || '', who_id: r.whoId || '', photo: r.photo || '' } }));
 
-  /** asMessage — режим раздела «Сообщения» в поиске (MSG.03): под заголовком время реплики. */
-  const rowView = (r: Row, asMessage = false) => {
-    const unread = isUnread(r, prefs) && bucketOf(r, prefs) === 'normal';
+  // ===== строка
+
+  const rowView = (r: Row, opts: { search?: boolean; arch?: boolean; chat?: boolean } = {}) => {
+    const muted = isMuted(r);
+    const unread = isUnread(r, prefs) && !opts.search;
+    // «open until …» — только пока срок впереди: прошедшая дата читалась бы как обещание.
+    const ended = r.sec === 'ended' && r.meetAt && Number(r.meetAt) + OPEN_DAYS * 86400 > Date.now() / 1000;
+    // В найденных чатах под названием — кто в чате (MSG.02 «Jane, Marc and you»).
+    const sub = ended
+      ? `${r.sub} · ${MSG.openUntil(shortDay(Number(r.meetAt) + OPEN_DAYS * 86400))}`
+      : opts.chat && r.kind === 'group' ? (r.people || r.sub) : r.sub;
     return (
       <Pressable
-        key={(asMessage ? 'm:' : '') + r.key}
+        key={r.key}
         accessibilityRole="button"
-        style={s.row}
+        style={({ pressed }) => [s.row, pressed && { opacity: 0.85 }]}
         onPress={() => open(r)}
-        onLongPress={() => { setMenuNote(''); setMenuRow(r); }}
+        onLongPress={opts.search ? undefined : () => setMenuRow(r)}
         delayLongPress={350}
       >
         {r.photo ? (
           <Image source={{ uri: mediaUrl(String(r.photo)) }} style={s.ava} />
         ) : (
-          <View style={[s.ava, s.avaEmpty]}><IconPerson size={22} /></View>
+          <View style={[s.ava, s.avaEmpty]}>
+            {r.kind === 'group' ? <IconImagePlaceholder size={18} c={color.muted} /> : <IconPerson size={20} />}
+          </View>
         )}
         <View style={{ flex: 1, gap: 2 }}>
-          <Text style={s.rowTitle} numberOfLines={1}>{r.title}</Text>
-          {(asMessage ? rowTime(r.t) : r.sub) ? (
-            <Text style={s.rowSub} numberOfLines={1}>{asMessage ? rowTime(r.t) : r.sub}</Text>
-          ) : null}
-          {r.teaser ? <Text style={s.rowTeaser} numberOfLines={1}>{r.teaser}</Text> : null}
-        </View>
-        <View style={s.rowRight}>
-          <Text style={s.rowTime}>{rowTime(r.t)}</Text>
-          {r.count && unread ? (
-            <View style={s.badge}><Text style={s.badgeText}>{r.count > 9 ? '9+' : r.count}</Text></View>
-          ) : unread ? (
-            <View style={s.badgeDot} />
-          ) : null}
+          <View style={s.line}>
+            <Text style={s.rowTitle} numberOfLines={1}>{r.title}</Text>
+            {muted ? <IconBellOff size={16} c={color.muted} /> : null}
+            <Text style={s.rowTime}>{rowTime(r.t)}</Text>
+          </View>
+          <View style={s.line}>
+            <View style={{ flex: 1, gap: 2 }}>
+              {sub ? <Hl style={s.rowSub} text={sub} q={opts.search ? q : ''} /> : null}
+              {r.teaser ? <Hl style={s.rowTeaser} text={r.teaser} q={opts.search ? q : ''} /> : null}
+            </View>
+            {r.count && unread ? (
+              <View style={[s.badge, muted && s.badgeMuted]}><Text style={s.badgeText}>{r.count > 9 ? '9+' : r.count}</Text></View>
+            ) : unread && !muted ? <View style={s.dot} /> : null}
+          </View>
         </View>
       </Pressable>
     );
   };
 
-  const section = (label: string, rows: Row[]) =>
-    rows.length ? (
-      <View key={label}>
-        <Text style={s.section}>{label}</Text>
-        {rows.map((r) => rowView(r))}
+  const section = (label: string, list: Row[], opts: { search?: boolean; arch?: boolean; chat?: boolean } = {}, note?: string) =>
+    list.length ? (
+      <View key={label} style={{ gap: 8 }}>
+        <View style={{ gap: 2, marginTop: space.sm }}>
+          <Text style={s.section}>{label}</Text>
+          {note ? <Text style={s.sectionNote}>{note}</Text> : null}
+        </View>
+        {list.map((r) => rowView(r, opts))}
       </View>
     ) : null;
 
+  const back = () => {
+    if (arch) { setArch(false); return; }
+    router.canGoBack() ? router.back() : router.replace('/home');
+  };
+
+  // ===== лист MSG.03 / MSG.03a
+
+  const m = menuRow;
+  const mMuted = m ? isMuted(m) : false;
+  const mArch = m ? ['archived', 'left'].includes(bucketOf(m, prefs)) : false;
+  const sheet = m ? (
+    <>
+      <SheetItem
+        icon={mMuted ? <IconBell size={20} c={color.primary} /> : <IconBellOff size={20} c={color.primary} />}
+        label={mMuted ? MSG.unmuteNew() : MSG.muteAction()}
+        note={mMuted ? MSG.unmuteNote() : MSG.muteNoteNew()}
+        onPress={() => { toggle('muted', m); setMenuRow(null); }}
+      />
+      <SheetItem
+        icon={<IconArchive size={20} c={color.primary} />}
+        label={mArch ? MSG.unarchiveNew() : MSG.archiveAction()}
+        note={mArch ? MSG.unarchiveNote() : MSG.archiveNoteNew()}
+        onPress={() => { toggle('archived', m); setMenuRow(null); }}
+      />
+      {m.kind === 'group' && m.owner && !m.readOnly ? (
+        <>
+          {m.canHandOver ? (
+            <SheetItem icon={<IconCrown />} label={MSG.handOver()} note={MSG.handOverNote()}
+              onPress={() => go(() => router.navigate({ pathname: '/grole', params: { gid: m.gid || '', pick: '1' } }))} />
+          ) : null}
+          {m.canEnd ? (
+            <SheetItem icon={<IconBan />} danger label={MSG.endGroup()} note={MSG.endGroupNote()}
+              onPress={() => go(() => router.navigate({ pathname: '/group', params: { gid: m.gid || '', act: 'end' } }))} />
+          ) : null}
+        </>
+      ) : (
+        <>
+          <SheetItem icon={<IconFlag size={20} c={color.primary} />} label={MSG.report()} note={MSG.reportNoteNew()}
+            onPress={() => report(m)} />
+          {m.kind === 'group' && !m.readOnly ? (
+            <SheetItem icon={<IconExit size={20} c={color.danger} />} danger label={MSG.leaveGroup()}
+              note={MSG.leaveGroupNote(m.others || [])}
+              onPress={() => go(() => router.navigate({ pathname: '/group', params: { gid: m.gid || '', act: 'leave' } }))} />
+          ) : null}
+        </>
+      )}
+    </>
+  ) : null;
+
+  // ===== экран
+
+  const bySec = (sec: Row['sec']) => intents.filter((r) => r.sec === sec);
+
   return (
-    <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
-      <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
-          <IconChevronLeft />
-        </Pressable>
-        <Text style={s.headTitle}>{MSG.title()}</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={MSG.searchPlaceholder()}
-          accessibilityState={{ selected: searching }}
-          style={s.back}
-          onPress={() => { setSearching((v) => !v); setQ(''); }}
-        >
-          <IconSearch size={20} c={color.fg} />
-        </Pressable>
+    <View style={s.wrap}>
+      <Ambient glows={GLOW_FORM} />
+      <View style={[s.top, { paddingTop: insets.top + 6 }]}>
+        <GlassBack label={T('Назад', 'Back', 'Atrás')} onPress={back} />
+        <Text style={[s.title, heading(lang, type.headingSm)]} numberOfLines={1}>{arch ? MSG.archiveRow() : MSG.title()}</Text>
       </View>
 
-      {searching ? (
-        <View style={s.searchBox}>
-          <IconSearch size={16} c={color.neutral400} />
+      {!arch && !nothing ? (
+        // MSG.01: поиск всегда на виду — стеклянная пилюля.
+        <GlassSurface tone="light" radius={999} style={s.search}>
+          <IconSearch size={20} c={color.fg} />
           <TextInput
             style={s.searchInput}
             value={q}
             onChangeText={setQ}
-            placeholder={MSG.searchPlaceholder()}
-            placeholderTextColor={color.neutral400}
-            autoFocus
+            placeholder={MSG.searchChats()}
+            placeholderTextColor={color.muted}
+            returnKeyType="search"
+            autoCorrect={false}
           />
-        </View>
-      ) : (
-        // MSG.02: два сегмента в одной белой обойме, активный — красная пилюля.
-        <View style={s.tabsWrap}>
-          <View style={s.tabs}>
-            {([['intents', MSG.tabIntents()], ['plans', MSG.tabPlans()], ['private', MSG.tabPrivate()]] as const).map(([k, label]) => (
-              <Pressable
-                key={k}
-                accessibilityRole="button"
-                accessibilityState={{ selected: tab === k }}
-                style={[s.tab, tab === k && s.tabOn]}
-                onPress={() => setTab(k)}
-              >
-                <Text style={[s.tabText, tab === k && s.tabTextOn]}>{label}</Text>
+          {q ? (
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Очистить', 'Clear', 'Borrar')} hitSlop={10} onPress={() => setQ('')}>
+              <IconClose size={18} c={color.fg} />
+            </Pressable>
+          ) : null}
+        </GlassSurface>
+      ) : null}
+
+      {!arch && !searching ? (
+        <View style={s.segs}>
+          {([['intents', MSG.tabIntents(), intentsBadge], ['private', MSG.tabPrivate(), privBadge]] as const).map(([k, label, badge]) => {
+            const on = tab === k;
+            const inner = (
+              <>
+                <Text style={[s.segText, on && s.segTextOn]} numberOfLines={1}>{label}</Text>
+                {badge > 0 ? (
+                  <View style={[s.segBadge, on && s.segBadgeOn]}><Text style={[s.segBadgeText, on && s.segBadgeTextOn]}>{badge}</Text></View>
+                ) : null}
+              </>
+            );
+            return (
+              <Pressable key={k} style={{ flex: 1 }} accessibilityRole="button" accessibilityState={{ selected: on }} onPress={() => setTab(k)}>
+                {on ? <View style={[s.seg, s.segOn]}>{inner}</View>
+                  : <GlassSurface tone="light" radius={999} style={s.seg}>{inner}</GlassSurface>}
               </Pressable>
-            ))}
-          </View>
+            );
+          })}
         </View>
-      )}
+      ) : null}
 
-      <ScrollView contentContainerStyle={[s.body, { paddingBottom: 130 }]} keyboardShouldPersistTaps="handled">
-        {/* Kleal закреплён сверху в любом состоянии — так обещает пустой экран MSG.01. */}
-        {!searching ? (
-          <Pressable accessibilityRole="button" style={s.row} onPress={() => router.navigate('/buddy')}>
-            <View style={s.klealAva}><IconSpark size={20} c={color.onPrimary} /></View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.rowTitle}>{MSG.kleal()}</Text>
-              <Text style={s.rowSub}>{MSG.klealSub()}</Text>
-              <Text style={s.rowTeaser}>{MSG.klealTeaser()}</Text>
-            </View>
-          </Pressable>
-        ) : null}
-
+      <ScrollView
+        onScroll={navCollapse}
+        scrollEventThrottle={16}
+        contentContainerStyle={[s.body, { paddingBottom: insets.bottom + 120 }]}
+        keyboardShouldPersistTaps="handled"
+      >
         {loading ? <ActivityIndicator color={color.muted} style={{ marginTop: space.lg }} /> : null}
 
-        {searching ? (
+        {arch ? (
+          // MSG.05 — архив.
           <>
-            <Text style={s.note}>{MSG.searchNote()}</Text>
-            {q && !found.chats.length && !found.messages.length ? (
-              <Text style={s.note}>{MSG.nothingFound()}</Text>
-            ) : null}
-            {section(MSG.chats(), found.chats)}
-            {/* MSG.03: в разделе «Сообщения» под заголовком — время найденной реплики. */}
-            {found.messages.length ? (
-              <View>
-                <Text style={s.section}>{MSG.messages()}</Text>
-                {found.messages.map((r) => rowView(r, true))}
-              </View>
-            ) : null}
+            {section(MSG.archivedByYou(), archived, { arch: true }, MSG.archivedByYouNote())}
           </>
-        ) : empty ? (
-          // MSG.01 — пустое состояние.
-          <View style={s.empty}>
-            <View style={s.emptyIcon}><IconCalendar /></View>
-            <Text style={s.emptyTitle}>{MSG.emptyTitle()}</Text>
-            <Text style={s.emptyNote}>{MSG.emptyNote()}</Text>
-            <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/create')}>
-              <Text style={s.ctaText}>{MSG.createIntent()}</Text>
-            </Pressable>
-          </View>
+        ) : searching ? (
+          // MSG.02 / MSG.02a — поиск.
+          found.chats.length || found.messages.length ? (
+            <>
+              {section(MSG.chats(), found.chats, { search: true, chat: true })}
+              {section(MSG.messages(), found.messages, { search: true })}
+            </>
+          ) : (
+            <View style={s.empty}>
+              <Text style={s.emptyTitle}>{MSG.nothingFoundFor(q.trim())}</Text>
+              <Text style={s.emptyNote}>{MSG.searchHint()}</Text>
+            </View>
+          )
         ) : tab === 'intents' ? (
-          <>
-            {section(MSG.forming(), iForm.normal)}
-            {section(MSG.muted(), iForm.muted)}
-            {section(MSG.archived(), iForm.archived.map((r) => ({ ...r, teaser: MSG.readOnly() })))}
-          </>
-        ) : tab === 'plans' ? (
-          <>
-            {section(MSG.upcoming(), pUp.normal)}
-            {section(MSG.forming(), pForm.normal)}
-            {section(MSG.past(), pPast.normal)}
-            {section(MSG.muted(), pMuted)}
-            {section(MSG.archived(), pArch.map((r) => ({ ...r, teaser: MSG.readOnly() })))}
-          </>
-        ) : (
-          <>
-            {pv.normal.map((r) => rowView(r))}
-            {section(MSG.muted(), pv.muted)}
-            {section(MSG.archived(), pv.archived.map((r) => ({ ...r, teaser: MSG.readOnly() })))}
-          </>
-        )}
+          !loading && intents.length === 0 && archived.length === 0 ? (
+            // MSG.01a — пусто.
+            <View style={s.empty}>
+              <Text style={s.emptyTitle}>{MSG.noChats()}</Text>
+              <Text style={s.emptyNote}>{MSG.noChatsNote()}</Text>
+              <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/buddy')}>
+                <Text style={s.ctaText}>{MSG.talkToKleal()}</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <>
+              {section(MSG.planning(), bySec('planning'))}
+              {section(MSG.upcomingNew(), bySec('upcoming'))}
+              {section(MSG.endedSec(), bySec('ended'))}
+              {archived.length ? (
+                // MSG.04 — архив строкой внизу.
+                <Pressable accessibilityRole="button" style={[s.row, s.archRow]} onPress={() => setArch(true)}>
+                  <IconArchive size={22} c={color.primary} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.rowTitle}>{MSG.archiveRow()}</Text>
+                    <Text style={s.rowSub}>{MSG.chatsCount(archived.length)}</Text>
+                  </View>
+                  <IconChevronRight size={20} c={color.muted} />
+                </Pressable>
+              ) : null}
+            </>
+          )
+        ) : priv.length ? (
+          <View style={{ gap: 8, marginTop: space.sm }}>{priv.map((r) => rowView(r))}</View>
+        ) : !loading ? (
+          // MSG.22a — личных пока нет.
+          <View style={s.empty}>
+            <Text style={s.emptyTitle}>{MSG.noPrivate()}</Text>
+            <Text style={s.emptyNote}>{MSG.noPrivateNote()}</Text>
+          </View>
+        ) : null}
       </ScrollView>
 
-      {/* MSG.04 — лист по долгому нажатию. */}
       <Sheet visible={!!menuRow} onClose={() => setMenuRow(null)} title={menuRow?.title}>
-        {menuRow?.kind === 'invite-out' ? (
-          <SheetItem
-            label={MSG.withdrawAction()}
-            note={MSG.withdrawNote()}
-            onPress={() => menuRow && withdraw(menuRow)}
-          />
-        ) : (
-          <>
-            <SheetItem
-              label={bucketOf(menuRow || ({} as Row), prefs) === 'muted' ? MSG.unmuteAction() : MSG.muteAction()}
-              note={MSG.muteNote()}
-              onPress={() => { if (menuRow) { toggle('muted', menuRow); setMenuRow(null); } }}
-            />
-            <SheetItem
-              label={bucketOf(menuRow || ({} as Row), prefs) === 'archived' ? MSG.unarchiveAction() : MSG.archiveAction()}
-              note={MSG.archiveNote()}
-              onPress={() => { if (menuRow) { toggle('archived', menuRow); setMenuRow(null); } }}
-            />
-            <SheetItem
-              label={MSG.leaveAction()}
-              note={MSG.leaveNote()}
-              onPress={() => { if (menuRow) { toggle('left', menuRow); setMenuRow(null); } }}
-            />
-            <SheetItem label={MSG.reportAction()} note={MSG.reportNote()} onPress={() => menuRow && report(menuRow)} />
-          </>
-        )}
-        {menuNote ? <Text style={s.note}>{menuNote}</Text> : null}
+        {sheet}
       </Sheet>
 
       <View style={s.navFloat} pointerEvents="box-none">
@@ -425,82 +418,84 @@ export default function Messages() {
   );
 }
 
-// ============================================================ вид
-// Дизайн-проход по кадрам MSG.02/MSG.03: карточки с мягкой тенью, крупный аватар, сегменты в
-// белой обойме, красный счётчик под временем. Цвета и шрифты — только из токенов темы.
+/** Совпадение с запросом — красным, как на кадре MSG.02. */
+function Hl({ text, q, style }: { text: string; q: string; style: any }) {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return <Text style={style} numberOfLines={1}>{text}</Text>;
+  const parts: { t: string; on: boolean }[] = [];
+  const low = text.toLowerCase();
+  let i = 0;
+  while (i < text.length) {
+    const j = low.indexOf(needle, i);
+    if (j < 0) { parts.push({ t: text.slice(i), on: false }); break; }
+    if (j > i) parts.push({ t: text.slice(i, j), on: false });
+    parts.push({ t: text.slice(j, j + needle.length), on: true });
+    i = j + needle.length;
+  }
+  return (
+    <Text style={style} numberOfLines={1}>
+      {parts.map((p, k) => <Text key={k} style={p.on ? { color: color.primary } : undefined}>{p.t}</Text>)}
+    </Text>
+  );
+}
 
-/** Тень карточек списка — одна на все, чтобы список не «мигал» разными глубинами. */
-const cardShadow = {
-  shadowColor: '#0F172A', shadowOpacity: 0.06, shadowRadius: 12,
-  shadowOffset: { width: 0, height: 4 }, elevation: 2,
-} as const;
+// ============================================================ вид
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
-  head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingBottom: space.sm },
-  back: {
-    width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border,
-    backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
-  },
-  headTitle: { flex: 1, fontSize: 22, fontWeight: '700', color: color.fg, textAlign: 'center' } as any,
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: space.lg, paddingBottom: space.md },
+  title: { flex: 1, color: color.fg } as any,
 
-  // Сегменты MSG.02: белая обойма, активная пилюля красная.
-  tabsWrap: { paddingHorizontal: 16, paddingBottom: space.md, alignItems: 'center' },
-  tabs: {
-    flexDirection: 'row', backgroundColor: color.card, borderRadius: rad.full, padding: 4,
-    ...cardShadow,
+  search: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: space.lg, marginBottom: space.md,
+    height: 48, paddingHorizontal: 16,
   },
-  tab: {
-    height: 40, paddingHorizontal: 26, borderRadius: rad.full,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  tabOn: { backgroundColor: color.primary },
-  tabText: { fontSize: 15, fontWeight: '600', color: color.fg } as any,
-  tabTextOn: { color: color.onPrimary } as any,
+  searchInput: { flex: 1, color: color.fg, fontSize: 16, paddingVertical: 0 },
 
-  searchBox: {
-    flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 16, marginBottom: space.md,
-    height: 48, borderRadius: rad.full, backgroundColor: color.neutral100, paddingHorizontal: 16,
+  segs: { flexDirection: 'row', gap: 8, paddingHorizontal: space.lg, paddingBottom: space.xs },
+  seg: {
+    height: 36, paddingHorizontal: 16, borderRadius: rad.full,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
   },
-  searchInput: { flex: 1, color: color.fg, fontSize: 16 },
+  segOn: { backgroundColor: color.primary },
+  segText: { ...type.labelSmall, color: color.fg } as any,
+  segTextOn: { color: color.onPrimary, fontWeight: '700' },
+  segBadge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  segBadgeOn: { backgroundColor: color.onPrimary },
+  segBadgeText: { fontSize: 10, fontWeight: '700', color: color.onPrimary },
+  segBadgeTextOn: { color: color.primary },
 
-  body: { paddingHorizontal: 16, gap: 0 },
-  section: { fontSize: 19, fontWeight: '700', color: color.fg, marginTop: space.lg, marginBottom: 4 } as any,
-  note: { ...type.caption, color: color.muted, marginTop: 6 } as any,
+  body: { paddingHorizontal: space.lg, gap: 4 },
+  section: { ...type.title, color: color.fg } as any,
+  sectionNote: { ...type.caption, color: color.fg } as any,
 
   row: {
-    flexDirection: 'row', alignItems: 'center', gap: space.md,
-    backgroundColor: color.card, borderRadius: 20, paddingVertical: 14, paddingHorizontal: 14,
-    marginTop: 10, ...cardShadow,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: color.glassCard, borderRadius: rad.lg, padding: 12,
   },
-  klealAva: {
-    width: 52, height: 52, borderRadius: 26, backgroundColor: color.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  ava: { width: 52, height: 52, borderRadius: 26 },
+  archRow: { marginTop: space.md, paddingVertical: 16 },
+  line: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  ava: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.neutral100 },
   avaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
-  rowTitle: { fontSize: 17, fontWeight: '700', color: color.fg } as any,
-  rowSub: { fontSize: 13, color: color.muted } as any,
-  rowTeaser: { fontSize: 14, color: color.fg, opacity: 0.75 } as any,
-  rowRight: { alignItems: 'flex-end', justifyContent: 'space-between', alignSelf: 'stretch', paddingVertical: 2 },
-  rowTime: { fontSize: 12, color: color.neutral400 } as any,
+  rowTitle: { flex: 1, fontSize: 16, fontWeight: '700', color: color.fg } as any,
+  rowTime: { fontSize: 12, color: color.muted } as any,
+  rowSub: { fontSize: 11, color: color.muted } as any,
+  rowTeaser: { fontSize: 13, color: color.fg } as any,
   badge: {
-    minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 6,
+    minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5,
     backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center',
   },
-  badgeText: { fontSize: 12, fontWeight: '700', color: color.onPrimary } as any,
-  badgeDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary, marginBottom: 4 },
+  badgeMuted: { backgroundColor: color.neutral400 },
+  badgeText: { fontSize: 10, fontWeight: '700', color: color.onPrimary } as any,
+  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: color.primary },
 
-  empty: { alignItems: 'center', gap: space.md, marginTop: 80, paddingHorizontal: 24 },
-  emptyIcon: {
-    width: 64, height: 64, borderRadius: 32, backgroundColor: color.neutral100,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  emptyTitle: { fontSize: 19, fontWeight: '700', color: color.fg } as any,
-  emptyNote: { ...type.bodySmall, color: color.muted, textAlign: 'center', lineHeight: 20 } as any,
+  /** MSG.01a / 02a / 22a — пустое состояние слева, сразу под вкладками. */
+  empty: { gap: 4, paddingTop: space.md },
+  emptyTitle: { ...type.title, color: color.fg } as any,
+  emptyNote: { ...type.bodySmall, color: color.fg } as any,
   cta: {
-    height: 52, paddingHorizontal: 32, borderRadius: rad.full, backgroundColor: color.primary,
-    alignItems: 'center', justifyContent: 'center', marginTop: space.sm, ...cardShadow,
+    marginTop: space.md, height: 48, borderRadius: rad.full, backgroundColor: color.primary,
+    alignItems: 'center', justifyContent: 'center',
   },
   ctaText: { ...type.button, color: color.onPrimary } as any,
 

@@ -2,7 +2,7 @@
 
 Реализация **строго по** `Kleal_Matching_Core_Final_Spec_RU_v2.md`. Модульная структура — по §23.1,
 порядок сборки — по §23.4, инварианты — §23.2, Definition of Done — §23.3. Питон, stdlib-only,
-детерминированный, без LLM в скоринге. Веса/пороги — только в sha-pinned `config/matching-core.yaml`.
+детерминированный, без LLM в скоринге. Веса/пороги — только в sha-pinned `config/Kleal_Matching_Core_Config_v2.yaml`.
 
 ---
 
@@ -49,7 +49,7 @@ Matching Core **не считает «совместимость людей»**.
 matching_core/
   contracts/    §4  — profile, intent, candidate, proposal, match, plan, decision_trace, evidence,
                        receiving_policy, relationship_edge, reservation, group
-  config/       §9.5 — matching-core.yaml (sha-pinned), schema.json, validator.py
+  config/       §9.5 — Kleal_Matching_Core_Config_v2.yaml (sha-pinned, лежит в <kleal-ms>/config/), schema.json, validator.py
   intent_compiler/  §5   taxonomy/ §6   retrieval/ §7   policy_engine/ §8
   feature_builder/  §6.1/§9.1        relevance_engine/ §9        reciprocity_readiness/ §10
   allocation/ §11   orchestrator/ §13/§14   group_formation/ §15   plan_coordination/ §14
@@ -87,7 +87,7 @@ UX-copy отделён от системного решения.
 
 **+ Закрытие партиалов (батчи 1–3): 328→ тесты.
 + Ответ на внешний «Вердикт» (84/100) — все 27 замечаний закрыты (V-P0 45 + V-P1 47 тестов),
-см. [VERDICT_RESPONSE.md](VERDICT_RESPONSE.md). Новые модули: `orchestrator/{agent_decision,intent_set}`,
+см. историю коммитов (разбор внешнего ревью удалён как устаревший, 2026-08-27). Новые модули: `orchestrator/{agent_decision,intent_set}`,
 `reciprocity_readiness/{reciprocity,fatigue}`, `feature_builder/unknowns`, `feedback_learning/reasons`,
 `contracts/geo_privacy`, `policy_engine/trust_safety`; расширены expansion/allocation/compiler/dating/
 receiving_policy/state_machines/gates/decision/relevance.

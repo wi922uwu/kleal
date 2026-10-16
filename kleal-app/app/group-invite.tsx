@@ -9,8 +9,12 @@ import { useOnb } from '../src/state';
 import { IconCalendar, IconChevronLeft, IconGroups, IconPin } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { color, radius as rad, space, type } from '../src/theme';
+import { Ambient, GLOW_FORM } from '../src/components/Ambient';
+import { useNavCollapse } from '../src/navScroll';
 
 export default function GroupInvite() {
+  /** Navigation V2: панель сворачивается при прокрутке вниз (NAV.S2). */
+  const navCollapse = useNavCollapse();
   useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -31,7 +35,7 @@ export default function GroupInvite() {
       const rows: any[] = r?.invites || [];
       setRow(rows.find((x) => String(x?.invite?.id || '') === wantedId) || null);
     } catch {
-      setErr(T('Не удалось загрузить приглашение.', 'Could not load the invitation.'));
+      setErr(T('Не удалось загрузить приглашение.', 'Could not load the invitation.', 'No se pudo cargar la invitación.'));
     } finally {
       setLoading(false);
     }
@@ -47,12 +51,12 @@ export default function GroupInvite() {
       const r: any = await group.respondInvite(row.invite.id, me, accept, newIdem('group-invite-response'));
       if (!r?.ok) {
         const messages: Record<string, string> = {
-          GROUP_FULL: T('В группе уже нет свободных мест.', 'This group is already full.'),
-          EXPIRED: T('Срок приглашения истёк.', 'This invitation has expired.'),
-          CLOSED: T('Эта группа уже закрыта.', 'This group is already closed.'),
-          NOT_ELIGIBLE: T('Условия участия изменились.', 'Participation requirements have changed.'),
+          GROUP_FULL: T('В группе уже нет свободных мест.', 'This group is already full.', 'Este grupo ya está lleno.'),
+          EXPIRED: T('Срок приглашения истёк.', 'This invitation has expired.', 'Esta invitación ha expirado.'),
+          CLOSED: T('Эта группа уже закрыта.', 'This group is already closed.', 'Este grupo ya está cerrado.'),
+          NOT_ELIGIBLE: T('Условия участия изменились.', 'Participation requirements have changed.', 'Los requisitos de participación han cambiado.'),
         };
-        throw new Error(messages[String(r?.error || '')] || T('Приглашение больше недоступно.', 'This invitation is no longer available.'));
+        throw new Error(messages[String(r?.error || '')] || T('Приглашение больше недоступно.', 'This invitation is no longer available.', 'Esta invitación ya no está disponible.'));
       }
       if (accept) {
         setJoined(true);
@@ -61,7 +65,7 @@ export default function GroupInvite() {
         router.dismissTo('/home');
       }
     } catch (e: any) {
-      setErr(String(e?.message || T('Не удалось ответить.', 'Could not respond.')));
+      setErr(String(e?.message || T('Не удалось ответить.', 'Could not respond.', 'No se pudo responder.')));
     } finally {
       setBusy(false);
     }
@@ -76,26 +80,28 @@ export default function GroupInvite() {
 
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
+      {/* Фирменный фон «Ambient · glass pilot» — тот же слой, что на входных экранах. */}
+      <Ambient glows={GLOW_FORM} />
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.dismissTo('/home'))}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.dismissTo('/home'))}>
           <IconChevronLeft />
         </Pressable>
-        <Text style={s.headTitle} numberOfLines={1}>{group.title || T('Приглашение в группу', 'Group invitation')}</Text>
+        <Text style={s.headTitle} numberOfLines={1}>{group.title || T('Приглашение в группу', 'Group invitation', 'Invitación de grupo')}</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={s.body}>
+      <ScrollView onScroll={navCollapse} scrollEventThrottle={16} contentContainerStyle={s.body}>
         {loading ? <ActivityIndicator color={color.primary} style={{ marginTop: space.xl }} /> : null}
-        {!loading && !row ? <Text style={s.note}>{T('Приглашение больше недоступно.', 'This invitation is no longer available.')}</Text> : null}
+        {!loading && !row ? <Text style={s.note}>{T('Приглашение больше недоступно.', 'This invitation is no longer available.', 'Esta invitación ya no está disponible.')}</Text> : null}
 
         {row ? (
           <>
             <Text style={s.title}>
               {ended
-                ? T('Эта группа завершена', 'This group has ended')
+                ? T('Эта группа завершена', 'This group has ended', 'Este grupo ha terminado')
                 : joined
-                  ? T('Ты присоединился к группе', 'You joined the group')
-                  : T(`${from} приглашает тебя`, `${from} invited you`)}
+                  ? T('Ты присоединился к группе', 'You joined the group', 'Te uniste al grupo')
+                  : T(`${from} приглашает тебя`, `${from} invited you`, `${from} te invitó`)}
             </Text>
             {inv.note ? <Text style={s.note}>{String(inv.note)}</Text> : null}
 
@@ -106,7 +112,7 @@ export default function GroupInvite() {
               {group.area ? <Meta icon={<IconPin size={16} c={color.muted} />} text={String(group.area)} /> : null}
               <Meta
                 icon={<IconGroups size={16} c={color.muted} />}
-                text={capacity ? T(`${members} из ${capacity} участников`, `${members} of ${capacity} people`) : T(`${members} участников`, `${members} people`)}
+                text={capacity ? T(`${members} из ${capacity} участников`, `${members} of ${capacity} people`, `${members} de ${capacity} personas`) : T(`${members} участников`, `${members} people`, `${members} personas`)}
               />
             </View>
 
@@ -114,18 +120,18 @@ export default function GroupInvite() {
 
             {ended ? (
               <Text style={s.note}>{T('Организатор завершил группу. Приглашение больше не действует.',
-                                      'The organiser ended the group. This invite is no longer available.')}</Text>
+                                      'The organiser ended the group. This invite is no longer available.', 'El organizador terminó el grupo. Esta invitación ya no está disponible.')}</Text>
             ) : joined ? (
               <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.dismissTo('/home')}>
-                <Text style={s.ctaText}>{T('Готово', 'Done')}</Text>
+                <Text style={s.ctaText}>{T('Готово', 'Done', 'Hecho')}</Text>
               </Pressable>
             ) : (
               <>
                 <Pressable accessibilityRole="button" accessibilityState={{ busy }} style={s.cta} onPress={() => answer(true)}>
-                  {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.ctaText}>{T('Присоединиться', 'Join')}</Text>}
+                  {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.ctaText}>{T('Присоединиться', 'Join', 'Únete')}</Text>}
                 </Pressable>
                 <Pressable accessibilityRole="button" disabled={busy} style={s.soft} onPress={() => answer(false)}>
-                  <Text style={s.softText}>{T('Не в этот раз', 'Not this time')}</Text>
+                  <Text style={s.softText}>{T('Не в этот раз', 'Not this time', 'No esta vez')}</Text>
                 </Pressable>
               </>
             )}
@@ -143,14 +149,14 @@ function Meta({ icon, text }: { icon: React.ReactNode; text: string }) {
 }
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
   head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingBottom: space.sm },
   back: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border, backgroundColor: color.card, alignItems: 'center', justifyContent: 'center' },
   headTitle: { flex: 1, ...type.title, color: color.fg, textAlign: 'center' } as any,
   body: { padding: 20, paddingBottom: 130, gap: space.md },
   title: { fontSize: 21, lineHeight: 28, fontWeight: '700', color: color.fg },
   note: { ...type.bodySmall, color: color.muted } as any,
-  card: { padding: space.lg, borderRadius: rad.xl, backgroundColor: color.card, gap: space.md },
+  card: { padding: space.lg, borderRadius: rad.xl, backgroundColor: color.glassCard, gap: space.md },
   hero: { height: 120, borderRadius: rad.lg, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   cardTitle: { ...type.title, color: color.fg } as any,
   meta: { flexDirection: 'row', alignItems: 'center', gap: 8 },

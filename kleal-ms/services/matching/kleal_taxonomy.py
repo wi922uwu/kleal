@@ -19,6 +19,7 @@ Design invariants (do NOT break):
   * The governance proofs mutate the LIVE taxonomy globals via the injected graph_txn — TEST-ONLY / offline.
 """
 import os, time
+import calendar
 try:
     import kleal_contracts as kc
 except Exception:                                    # pragma: no cover — kc is always present in-repo
@@ -53,6 +54,13 @@ _EDGE_NOTE = {
 CONTRACTS_VERSION = "taxonomy-6.0.0"
 ENGINE_VERSION = "matching-core-2.0.0"
 ENGINE_SHA = "d804df8e"   # follows the live config; 21505ccb was the pre-retune pin (see shared/contracts.md)
+# КОГДА ЭТА ВЕРСИЯ ПОДТВЕРЖДЕНА — дата перепина ENGINE_SHA (2026-07-22, см. shared/contracts.md).
+# Нужна evidence-объекту ребра таксономии: его «last_confirmed_at» — это момент, когда узел был
+# подтверждён в ЭТОЙ версии движка, а не момент поиска. Раньше поле заполнялось умолчанием
+# build_evidence — реальными часами, — и два одинаковых поиска отличались только этим штампом:
+# золотая батарея объявляла «недетерминизм» на 100 сценариях из 108, хотя порядок, ярусы и баллы
+# совпадали до байта. Меняется вместе с ENGINE_SHA, как и положено полю governance.
+ENGINE_VERSION_CONFIRMED_AT = calendar.timegm(time.strptime("2026-07-22", "%Y-%m-%d"))
 
 # ------------------------------------------------------------------ lazy, guarded ontology load
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "taxonomy")
@@ -320,7 +328,9 @@ def governance_of(edge):
             # under a fixed field — so an alias and its canonical collapse to ONE evidence_id (§4.1 dedup):
             # taxonomy.node / "football" is identical whether reached via "soccer" (alias) or "football" (exact).
             canon = node_id or _ENGINE.get("norm", lambda x: x)(edge.get("b") or edge.get("a"))
-            ev = kc.build_evidence("taxonomy.node", canon, "explicit_stable_profile", scope="taxonomy_edge")
+            # last_confirmed — дата версии движка, а не часы: см. ENGINE_VERSION_CONFIRMED_AT.
+            ev = kc.build_evidence("taxonomy.node", canon, "explicit_stable_profile", scope="taxonomy_edge",
+                                   last_confirmed=ENGINE_VERSION_CONFIRMED_AT)
     except Exception:
         ev = None
     return {

@@ -15,13 +15,14 @@
  * общие, и вторая их сборка разошлась бы с первой на первой же правке. Разное — куда ведёт строка.
  * В «Сообщениях» она открывает РАЗГОВОР, здесь — САМУ ЗАТЕЮ: план, приглашение, интент.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import { useLang, T, getLang } from '../src/i18n';
+import { splitWhen } from '../src/home';
 import { useOnb } from '../src/state';
 import { agent, group as gapi, mediaUrl } from '../src/api';
 import { searchProfile } from '../src/intent';
@@ -35,10 +36,13 @@ import {
 } from '../src/activity';
 import { BottomNav } from '../src/components/BottomNav';
 import {
-  IconChevronLeft, IconCalendar, IconClock, IconPin, IconPencil, IconImagePlaceholder, IconPerson,
-  IconSearch, IconCheckCircle,
+  IconCalendar, IconClock, IconPin, IconPencil, IconPerson, IconGlobe, IconWand,
 } from '../src/components/icons';
-import { color, radius as rad, space, type } from '../src/theme';
+import { color, radius as rad, space, type, heading } from '../src/theme';
+import { GlassBack, GlassSurface } from '../src/components/LiquidGlass';
+import { Ambient, GLOW_FORM } from '../src/components/Ambient';
+import { Cover } from '../src/components/Cover';
+import { useNavCollapse } from '../src/navScroll';
 
 type Seg = 'intents' | 'plans' | 'invites' | 'history';
 
@@ -49,7 +53,9 @@ const EMPTY = {
 };
 
 export default function Activity() {
-  useLang();
+  /** Navigation V2: панель сворачивается при прокрутке вниз (NAV.S2). */
+  const navCollapse = useNavCollapse();
+  const lang = useLang();
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
@@ -78,11 +84,21 @@ export default function Activity() {
    * Групповые ручки со своим `catch`: групповой слой новее остальных, и его неудача не должна
    * уносить список, который работает. Тот же приём, что в «Сообщениях».
    */
+  /** Номер чтения: пересчёт, догнавший экран после следующего чтения, не должен его перебить. */
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
+    const seq = ++loadSeq.current;
     try {
+      /*
+        СНАЧАЛА ПОКАЗАТЬ, ПОТОМ ДОСЧИТАТЬ. Список интентов с `live` ранжирует каждый заново — по две
+        секунды на штуку, и вкладка стояла за вертушкой 10 секунд при пяти затеях, при каждом
+        заходе (замерено). Остальные четыре ручки отвечают за десятки миллисекунд, но ждали его.
+        Теперь первым идёт мгновенный снимок последнего пересчёта (сервер помнит его), экран
+        рисуется сразу, а свежий пересчёт приезжает вторым запросом и подменяет строки.
+      */
       const [ints, out, pl, gpl, inv] = await Promise.all([
-        agent.intents(me, searchProfile(st.profile)),
+        agent.intents(me, searchProfile(st.profile), false),
         agent.outbox(me),
         agent.plans(me),
         gapi.plans(me).catch(() => null),
@@ -99,6 +115,13 @@ export default function Activity() {
         invites: (inv as any)?.invites || [],
       });
       setErr('');
+      setLoading(false);
+      // Второй проход — живой пересчёт. Строки подменяются только если это всё ещё то же чтение.
+      agent.intents(me, searchProfile(st.profile), true).then((live: any) => {
+        if (seq !== loadSeq.current) return;
+        const rows = (live?.intents || []) as IntentRow[];
+        if (rows.length) setData((d) => ({ ...d, intents: rows }));
+      }).catch(() => { /* снимок уже на экране — тихо */ });
     } catch {
       setErr(ACT.loadFailed());
     } finally {
@@ -116,7 +139,9 @@ export default function Activity() {
    */
   const plans = useMemo(() => ({
     live: [...data.plans, ...data.gplans].map((p: any) => planCard(p, me)),
-    past: [...data.history, ...data.ghistory].map((p: any) => planCard(p, me)),
+    // Признак «это история» — здесь, а не в ответе сервера: в историю план уходит и по
+    // возрасту, оставаясь «подтверждённым», и карточка иначе светит зелёным про прошедшее.
+    past: [...data.history, ...data.ghistory].map((p: any) => planCard(p, me, true)),
   }), [data, me]);
 
   /**
@@ -160,7 +185,13 @@ export default function Activity() {
 
   const openPlan = (c: PlanCard) => {
     if (c.gid) return router.navigate({ pathname: '/gplan', params: { gid: c.gid } });
-    router.navigate({ pathname: '/plan', params: { id: c.id || '', who: c.who || '', title: c.title } });
+    router.navigate({ pathname: '/plan', params: { id: c.id || '', who: c.who || '', who_id: c.whoId || '', title: c.title } });
+  };
+
+  /** Из карточки истории — прямо в переписку с тем, с кем встречались. У группы это комната. */
+  const openChat = (c: PlanCard) => {
+    if (c.gid) return router.navigate({ pathname: '/group', params: { gid: c.gid } });
+    router.navigate({ pathname: '/conversation', params: { who: c.who || '', who_id: c.whoId || '', title: c.title } });
   };
 
   const openInvite = (v: any) =>
@@ -175,13 +206,14 @@ export default function Activity() {
     ['history', ACT.tabHistory(), 0],
   ];
 
-  const empty = (title: string, note?: string, cta?: () => void) => (
+  /** C.01a–C.04a: пусто — заголовок и пояснение слева, у затей ещё «Talk to Kleal». */
+  const empty = (title: string, note: string, cta?: () => void) => (
     <View style={s.empty}>
       <Text style={s.emptyTitle}>{title}</Text>
-      {note ? <Text style={s.emptyNote}>{note}</Text> : null}
+      <Text style={s.emptyNote}>{note}</Text>
       {cta ? (
         <Pressable accessibilityRole="button" style={s.emptyCta} onPress={cta}>
-          <Text style={s.emptyCtaText}>{ACT.create()}</Text>
+          <Text style={s.ctaText}>{ACT.talkToKleal()}</Text>
         </Pressable>
       ) : null}
     </View>
@@ -189,48 +221,36 @@ export default function Activity() {
 
   return (
     <View style={s.wrap}>
-      <View style={[s.top, { paddingTop: insets.top + space.sm }]}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={T('Назад', 'Back')}
-          style={s.back}
-          onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}
-        >
-          <IconChevronLeft />
-        </Pressable>
-        <Text style={s.title} numberOfLines={1}>{ACT.title()}</Text>
-        <View style={s.back} />
+      {/* Фирменный фон «Ambient · glass pilot» — тот же слой, что на входных экранах. */}
+      <Ambient glows={GLOW_FORM} />
+      {/* C.01: стеклянная «назад» и название слева, как у остальных экранов нового вида. */}
+      <View style={[s.top, { paddingTop: insets.top + 6 }]}>
+        <GlassBack label={T('Назад', 'Back', 'Atrás')} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))} />
+        <Text style={[s.title, heading(lang, type.headingSm)]} numberOfLines={1}>{ACT.titleNew()}</Text>
       </View>
 
-      {/*
-        Сегменты по СОДЕРЖИМОМУ, а не равными четвертями. Четвертями «Приглашения» не помещались
-        и обрезались в «Приглашен…» — обрезанное слово читается как поломка вёрстки. Полоса при
-        этом прокручивается: перевод длиннее уедет вбок, но целым.
-      */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={s.segsWrap}
-        contentContainerStyle={s.segs}
-      >
+      {/* Четыре отдельные пилюли, а не одна дорожка: так на кадре, и длинный перевод не режется. */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.segsWrap} contentContainerStyle={s.segs}>
         {segments.map(([k, label, badge]) => {
           const on = seg === k;
-          return (
-            <Pressable
-              key={k}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}
-              style={[s.seg, on && s.segOn]}
-              onPress={() => setSeg(k)}
-            >
+          const inner = (
+            <>
               <Text style={[s.segText, on && s.segTextOn]} numberOfLines={1}>{label}</Text>
-              {badge > 0 ? <View style={s.badge}><Text style={s.badgeText}>{badge}</Text></View> : null}
+              {badge > 0 ? (
+                <View style={[s.badge, on && s.badgeOn]}><Text style={[s.badgeText, on && s.badgeTextOn]}>{badge}</Text></View>
+              ) : null}
+            </>
+          );
+          return (
+            <Pressable key={k} style={{ flexGrow: 1 }} accessibilityRole="button" accessibilityState={{ selected: on }} onPress={() => setSeg(k)}>
+              {on ? <View style={[s.seg, s.segOn]}>{inner}</View>
+                : <GlassSurface tone="light" radius={999} style={s.seg}>{inner}</GlassSurface>}
             </Pressable>
           );
         })}
       </ScrollView>
 
-      <ScrollView
+      <ScrollView onScroll={navCollapse} scrollEventThrottle={16}
         contentContainerStyle={[s.list, { paddingBottom: insets.bottom + 120 }]}
         refreshControl={<RefreshControl refreshing={false} onRefresh={load} tintColor={color.muted} />}
       >
@@ -243,47 +263,97 @@ export default function Activity() {
 
         {!loading && seg === 'intents' ? (
           data.intents.length
-            ? data.intents.map((row) => (
-                <IntentCard
-                  key={row.id}
-                  row={row}
-                  outbox={data.outbox}
-                  busy={busy === row.id}
-                  onOpen={() => openSearch(row)}
-                  onOpenPage={() => router.navigate({ pathname: '/myintent', params: { id: row.id } })}
-                  onEdit={() => router.navigate({ pathname: '/myintent', params: { id: row.id, edit: '1' } })}
-                />
-              ))
-            : empty(ACT.emptyIntents(), ACT.emptyIntentsNote(), () => router.navigate('/create'))
+            ? data.intents.map((row) => {
+                const state = intentState(row, data.outbox);
+                const when = intentWhen(row);
+                const faces = (row.candidates || []).map((c: any) => String(c?.photo || '')).filter(Boolean);
+                return (
+                  <ActCard
+                    key={row.id}
+                    cover={{ intent: row?.intent || row }}
+                    chip={{ label: chipLabel(state, row, data.outbox), tone: CHIP_TONE[state] }}
+                    title={intentTitle(row)}
+                    date={when.date} time={when.time}
+                    place={intentWhere(row)} call={String(row?.intent?.mode || '') === 'online'}
+                    status={{ photo: faces[0], text: row.error ? ACT.rankFailed() : ACT.lookingNearby() }}
+                    primary={{ label: ctaLabel(state), onPress: () => openSearch(row), busy: busy === row.id }}
+                    extra={{ label: ACT.edit(), onPress: () => router.navigate({ pathname: '/myintent', params: { id: row.id, edit: '1' } }) }}
+                    onPress={() => router.navigate({ pathname: '/myintent', params: { id: row.id } })}
+                  />
+                );
+              })
+            : empty(ACT.emptyIntentsTitle(), ACT.emptyIntentsBoard(), () => router.navigate('/buddy'))
         ) : null}
 
         {!loading && seg === 'plans' ? (
           plans.live.length
-            ? plans.live.map((c) => <PlanBlock key={c.key} card={c} onPress={() => openPlan(c)} />)
-            : empty(ACT.emptyPlans())
+            ? plans.live.map((c) => (
+                <ActCard
+                  key={c.key}
+                  cover={{ sub: c.sub }}
+                  chip={{ label: c.chip, tone: c.tone }}
+                  title={c.title} date={c.date} time={c.time}
+                  place={c.mode === 'online' ? ACT.onCall() : c.where} call={c.mode === 'online'}
+                  status={{ text: c.state === 'confirmed' || c.state === 'locked'
+                    ? (c.mode === 'online' || c.mode === 'hybrid' ? ACT.planFixedCall() : ACT.planFixed())
+                    : ACT.planAgreeing(), plain: true }}
+                  primary={{ label: ACT.goToPlan(), onPress: () => openPlan(c) }}
+                  onPress={() => openPlan(c)}
+                />
+              ))
+            : empty(ACT.emptyPlans(), ACT.emptyPlansNote())
         ) : null}
 
         {!loading && seg === 'invites' ? (
           data.invites.length
-            ? data.invites.map((v: any) => (
-                <PlainRow
-                  key={String(v.id)}
-                  row={{
-                    key: String(v.id), kind: 'invite-in',
-                    title: String(v.intent?.title || v.from?.name || ''),
-                    sub: [v.from?.name, v.intent?.when].filter(Boolean).join(' · '),
-                    photo: v.from?.photo,
-                  }}
-                  onPress={() => openInvite(v)}
-                />
-              ))
-            : empty(ACT.emptyInvites())
+            ? data.invites.map((v: any) => {
+                const who = [v.from?.name, v.from?.age].filter(Boolean).join(', ');
+                const when = splitWhen(String(v.intent?.when || ''));
+                const online = String(v.intent?.mode || '') === 'online';
+                return (
+                  <ActCard
+                    key={String(v.id)}
+                    cover={{ intent: v.intent || {} }}
+                    chip={{ label: ACT.chipNew(), tone: 'info' }}
+                    title={ACT.invitedYou(who || String(v.intent?.title || ''))}
+                    date={v.intent?.when ? when.date : ''} time={v.intent?.when ? when.time : ''}
+                    place={online ? ACT.onCall() : ACT.afterAccept(String(v.intent?.area || v.intent?.district || ''))}
+                    call={online}
+                    status={{ photo: v.from?.photo, text: ACT.pickedYou() }}
+                    primary={{ label: ACT.reviewInvite(), onPress: () => openInvite(v) }}
+                    onPress={() => openInvite(v)}
+                  />
+                );
+              })
+            : empty(ACT.emptyInvitesTitle(), ACT.emptyInvitesNote())
         ) : null}
 
         {!loading && seg === 'history' ? (
           plans.past.length
-            ? plans.past.map((c) => <PlanBlock key={c.key} card={c} onPress={() => openPlan(c)} />)
-            : empty(ACT.emptyHistory())
+            ? plans.past.map((c) => {
+                const off = c.state === 'cancelled' || c.state === 'below_quorum';
+                /* C.04: у встречи один на один без моего ответа — «Leave feedback»; у группы, что не
+                   собралась, — «Plan it again with Kleal»; иначе — к записи плана. */
+                const text = off ? (c.gid ? ACT.didntStart(Math.max(0, c.count), c.need) : ACT.cancelledNote())
+                  : c.gid ? '' : c.answered ? ACT.oneToOne() : ACT.oneToOneNoFeedback();
+                const soft = off ? { label: ACT.planAgain(), onPress: () => router.navigate('/buddy'), wand: true }
+                  : !c.gid && !c.answered ? { label: ACT.leaveFeedback(), onPress: () => openPlan(c) }
+                  : c.who ? { label: PLAN_STATE.openChat(), onPress: () => openChat(c) }
+                  : { label: PLAN_STATE.open(), onPress: () => openPlan(c) };
+                return (
+                  <ActCard
+                    key={c.key}
+                    cover={{ sub: c.sub }}
+                    chip={{ label: off ? ACT.chipClosed() : ACT.chipDone(), tone: off ? 'muted' : 'success' }}
+                    title={c.title} date={c.date} time={c.time}
+                    place={c.mode === 'online' ? ACT.onCall() : c.where} call={c.mode === 'online'}
+                    status={text ? { text, plain: true } : undefined}
+                    soft={soft}
+                    onPress={() => openPlan(c)}
+                  />
+                );
+              })
+            : empty(ACT.emptyHistoryTitle(), ACT.emptyHistoryNote())
         ) : null}
       </ScrollView>
 
@@ -292,129 +362,77 @@ export default function Activity() {
   );
 }
 
-/** Карточка затеи — «Event Hero Card v2» с кадра: обложка с чипом, название, когда и где, кнопка. */
-function IntentCard({
-  row, outbox, busy, onOpen, onOpenPage, onEdit,
-}: {
-  row: IntentRow; outbox: any[]; busy: boolean;
-  onOpen: () => void; onOpenPage: () => void; onEdit: () => void;
-}) {
-  const state = intentState(row, outbox);
-  const tone = CHIP_TONE[state];
-  const when = intentWhen(row);
-  const faces = (row.candidates || []).map((c: any) => String(c?.photo || '')).filter(Boolean).slice(0, 3);
-  return (
-    /*
-      Нажимается ВСЯ карточка, а не только кнопка. На борде стрелка идёт от самой карточки к
-      странице затеи, и это единственный разумный жест: человек тычет в название и обложку,
-      а не выцеливает кнопку. Кнопка и карандаш внутри остаются своими — вложенное нажатие
-      выигрывает у внешнего, и «посмотреть варианты» по-прежнему ведёт в выдачу, а не на страницу.
-    */
-    /*
-      Три разных нажатия — три разных места, как на борде:
-        тело карточки → страница затеи в ПРОСМОТРЕ,
-        карандаш      → она же сразу в ПРАВКЕ,
-        кнопка        → выдача.
-      Тело и карандаш вели в одно и то же: карандаш переставал что-либо значить.
-    */
-    <Pressable style={s.card} accessibilityRole="button" onPress={onOpenPage}>
-      <View style={s.cover}>
-        <IconImagePlaceholder size={40} c={color.onCoverSoft} />
-        {/* Чип цветом называет состояние раньше, чем словом: карточки лежат стопкой. */}
-        <View style={[s.chip, s[`chip_${tone}` as 'chip_warn']]}>
-          {state === 'options' ? <IconCheckCircle size={13} /> : <IconSearch size={13} c={s[`chipText_${tone}` as 'chipText_warn'].color} />}
-          <Text style={[s.chipText, s[`chipText_${tone}` as 'chipText_warn']]}>{chipLabel(state, row, outbox)}</Text>
-        </View>
-      </View>
-      <View style={s.cardBody}>
-        <Text style={s.cardTitle} numberOfLines={1}>{intentTitle(row)}</Text>
-        <View style={s.meta}>
-          <IconCalendar size={16} />
-          <Text style={s.metaText} numberOfLines={1}>{when.date}</Text>
-          {when.time ? <IconClock size={16} /> : null}
-          {when.time ? <Text style={s.metaText} numberOfLines={1}>{when.time}</Text> : null}
-        </View>
-        <View style={s.meta}>
-          <IconPin size={16} c={color.muted} />
-          <Text style={s.metaText} numberOfLines={1}>{intentWhere(row)}</Text>
-        </View>
-        {/*
-          Лица с кадра — НАСТОЯЩИЕ: это те, кого поиск уже нашёл по этой затее. Пока не нашёл
-          никого, ряд просто не рисуется: три серых кружка означали бы людей, которых нет.
-        */}
-        <View style={s.foot}>
-          {faces.length ? (
-            <View style={s.faces}>
-              {faces.map((ph, i) => (
-                <Image key={i} source={{ uri: mediaUrl(ph) }} style={[s.face, i > 0 && s.faceNext]} />
-              ))}
-            </View>
-          ) : null}
-          <Text style={s.footNote} numberOfLines={1}>
-            {row.error ? ACT.rankFailed() : ACT.lookingNearby()}
-          </Text>
-        </View>
-        <View style={s.actions}>
-          <Pressable
-            accessibilityRole="button"
-            style={[s.cta, busy && { opacity: 0.6 }]}
-            disabled={busy}
-            onPress={onOpen}
-          >
-            {busy ? <ActivityIndicator size="small" color={color.onPrimary} />
-              : <Text style={s.ctaText}>{ctaLabel(state)}</Text>}
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel={ACT.edit()} style={s.pencil} onPress={onEdit}>
-            <IconPencil size={18} c={color.onPrimary} />
-          </Pressable>
-        </View>
-      </View>
-    </Pressable>
-  );
-}
+type Tone = 'warn' | 'success' | 'info' | 'muted';
 
-/** Блок плана — та же карточка, что у затеи: обложка с чипом, название, когда и где, действие. */
-function PlanBlock({ card, onPress }: { card: PlanCard; onPress: () => void }) {
+/**
+ * Карточка вкладок C.01–C.04 — одна на всё: обложка с чипом справа, название, когда, где,
+ * строка состояния (лицо и текст) и кнопки. Разные вкладки отличаются только тем, что в неё кладут.
+ */
+function ActCard({
+  cover, chip, title, date, time, place, call, status, primary, soft, extra, onPress,
+}: {
+  cover: { intent?: any; sub?: string };
+  chip: { label: string; tone: Tone };
+  title: string; date: string; time: string; place: string; call?: boolean;
+  status?: { photo?: string; text: string; plain?: boolean };
+  primary?: { label: string; onPress: () => void; busy?: boolean };
+  soft?: { label: string; onPress: () => void; wand?: boolean };
+  extra?: { label: string; onPress: () => void };
+  onPress: () => void;
+}) {
   return (
     <Pressable style={s.card} accessibilityRole="button" onPress={onPress}>
-      <View style={s.cover}>
-        <IconImagePlaceholder size={40} c={color.onCoverSoft} />
-        <View style={[s.chip, s[`chip_${card.tone}` as 'chip_warn']]}>
-          <Text style={[s.chipText, s[`chipText_${card.tone}` as 'chipText_warn']]}>{card.chip}</Text>
+      <Cover intent={cover.intent} sub={cover.sub} style={s.cover}>
+        <View style={[s.chip, s[`chip_${chip.tone}` as 'chip_warn']]}>
+          <Text style={[s.chipText, s[`chipText_${chip.tone}` as 'chipText_warn']]} numberOfLines={1}>{chip.label}</Text>
         </View>
-      </View>
+      </Cover>
       <View style={s.cardBody}>
-        <Text style={s.cardTitle} numberOfLines={1}>{card.title}</Text>
-        <View style={s.meta}>
-          <IconCalendar size={16} />
-          <Text style={s.metaText} numberOfLines={1}>{card.date}</Text>
-          {card.time ? <IconClock size={16} /> : null}
-          {card.time ? <Text style={s.metaText} numberOfLines={1}>{card.time}</Text> : null}
-        </View>
-        <View style={s.meta}>
-          <IconPin size={16} c={color.muted} />
-          <Text style={s.metaText} numberOfLines={1}>{card.where}</Text>
-        </View>
-        <View style={s.actions}>
-          <Pressable accessibilityRole="button" style={s.cta} onPress={onPress}>
-            <Text style={s.ctaText}>{PLAN_STATE.open()}</Text>
-          </Pressable>
-        </View>
-      </View>
-    </Pressable>
-  );
-}
-
-/** Строка для приглашений: там это человек, а не встреча, и карточка была бы не о том. */
-function PlainRow({ row, onPress }: { row: Row; onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="button" style={s.row} onPress={onPress}>
-      {row.photo
-        ? <Image source={{ uri: mediaUrl(row.photo) }} style={s.avatar} />
-        : <View style={[s.avatar, s.avatarEmpty]}><IconPerson size={22} /></View>}
-      <View style={{ flex: 1 }}>
-        <Text style={s.rowTitle} numberOfLines={1}>{row.title}</Text>
-        <Text style={s.rowSub} numberOfLines={1}>{row.teaser || row.sub}</Text>
+        <Text style={s.cardTitle} numberOfLines={1}>{title}</Text>
+        {date || time ? (
+          <View style={s.meta}>
+            {date ? <IconCalendar size={16} c={color.primary} /> : null}
+            {date ? <Text style={s.metaText} numberOfLines={1}>{date}</Text> : null}
+            {time ? <IconClock size={16} c={color.primary} /> : null}
+            {time ? <Text style={s.metaText} numberOfLines={1}>{time}</Text> : null}
+          </View>
+        ) : null}
+        {place ? (
+          <View style={s.meta}>
+            {call ? <IconGlobe size={16} c={color.primary} /> : <IconPin size={16} c={color.primary} />}
+            <Text style={s.metaText} numberOfLines={1}>{place}</Text>
+          </View>
+        ) : null}
+        {status ? (
+          <View style={s.meta}>
+            {status.plain ? null : status.photo
+              ? <Image source={{ uri: mediaUrl(status.photo) }} style={s.face} />
+              : <View style={[s.face, s.faceEmpty]}><IconPerson size={12} /></View>}
+            <Text style={s.metaText} numberOfLines={1}>{status.text}</Text>
+          </View>
+        ) : null}
+        {primary || soft || extra ? (
+          <View style={s.actions}>
+            {primary ? (
+              <Pressable accessibilityRole="button" style={[s.cta, primary.busy && { opacity: 0.6 }]}
+                         disabled={primary.busy} onPress={primary.onPress}>
+                {primary.busy ? <ActivityIndicator size="small" color={color.onPrimary} />
+                  : <Text style={s.ctaText}>{primary.label}</Text>}
+              </Pressable>
+            ) : null}
+            {soft ? (
+              <Pressable accessibilityRole="button" style={s.ctaSoft} onPress={soft.onPress}>
+                {soft.wand ? <IconWand size={16} c={color.fg} /> : null}
+                <Text style={s.ctaSoftText}>{soft.label}</Text>
+              </Pressable>
+            ) : null}
+            {extra ? (
+              <Pressable accessibilityRole="button" accessibilityLabel={extra.label} style={s.pencil} onPress={extra.onPress}>
+                <IconPencil size={18} c={color.onPrimary} />
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -423,67 +441,64 @@ function PlainRow({ row, onPress }: { row: Row; onPress: () => void }) {
 // ===== вид
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
-  top: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingBottom: space.sm },
-  back: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  title: { flex: 1, textAlign: 'center', ...type.title, color: color.fg } as any,
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: space.lg, paddingBottom: space.sm },
+  title: { flex: 1, color: color.fg } as any,
 
-  segsWrap: { flexGrow: 0, marginHorizontal: space.lg },
-  segs: { padding: 4, borderRadius: rad.full, backgroundColor: color.card, flexDirection: 'row', gap: 2 },
+  segsWrap: { flexGrow: 0 },
+  /** Пилюли тянутся на всю ширину, как на кадре; не влезает перевод — полоса прокручивается. */
+  segs: { flexGrow: 1, paddingHorizontal: space.lg, paddingVertical: 4, gap: 8, flexDirection: 'row' },
   seg: {
-    height: 36, paddingHorizontal: space.md, borderRadius: rad.full,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5,
+    height: 36, paddingHorizontal: 16, borderRadius: rad.full,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
   },
   segOn: { backgroundColor: color.primary },
-  segText: { ...type.labelSmall, color: color.muted } as any,
+  segText: { ...type.labelSmall, color: color.fg } as any,
   segTextOn: { color: color.onPrimary, fontWeight: '700' },
-  badge: { minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 4, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
-  badgeText: { fontSize: 9, fontWeight: '700', color: color.onPrimary },
+  badge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 5, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  badgeOn: { backgroundColor: color.onPrimary },
+  badgeText: { fontSize: 10, fontWeight: '700', color: color.onPrimary },
+  badgeTextOn: { color: color.primary },
 
   list: { paddingHorizontal: space.lg, paddingTop: space.md, gap: space.md },
 
-  card: { borderRadius: rad.lg, backgroundColor: color.card, overflow: 'hidden', ...({} as any) },
-  /** Обложек у затей нет ни в API, ни в проекте — та же подложка, что у карточек на главной. */
-  cover: { height: 100, backgroundColor: color.coverFallback, alignItems: 'center', justifyContent: 'center' },
+  card: { borderRadius: rad.lg, backgroundColor: color.glassCard, overflow: 'hidden' },
+  cover: { height: 128, backgroundColor: color.coverFallback },
+  /** Чип справа сверху, как на кадре C.01–C.04. */
   chip: {
-    position: 'absolute', left: space.md, top: space.md,
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 10, height: 24, borderRadius: 12,
+    position: 'absolute', right: space.md, top: space.md,
+    paddingHorizontal: 10, height: 22, borderRadius: 11, justifyContent: 'center',
   },
   chip_warn: { backgroundColor: color.warnBg },
   chip_success: { backgroundColor: color.successBg },
   chip_info: { backgroundColor: color.infoBg },
-  chipText: { ...type.labelSmall, fontWeight: '700' } as any,
+  chip_muted: { backgroundColor: color.neutral100 },
+  chipText: { ...type.labelSmall, fontWeight: '600' } as any,
   chipText_warn: { color: color.warnText },
   chipText_success: { color: color.successText },
   chipText_info: { color: color.infoText },
-  cardBody: { padding: space.md, gap: 6 },
+  chipText_muted: { color: color.muted },
+  cardBody: { padding: space.md, gap: 8 },
   cardTitle: { ...type.title, color: color.fg } as any,
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  metaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
-  foot: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  faces: { flexDirection: 'row' },
-  face: { width: 24, height: 24, borderRadius: 12, backgroundColor: color.neutral100, borderWidth: 2, borderColor: color.card },
-  /** Внахлёст, как на кадре: ряд лиц читается как «люди», а не как три отдельных значка. */
-  faceNext: { marginLeft: -8 },
-  footNote: { ...type.labelSmall, color: color.muted, flexShrink: 1 } as any,
+  metaText: { ...type.bodySmall, color: color.fg, flexShrink: 1 } as any,
+  face: { width: 24, height: 24, borderRadius: 12, backgroundColor: color.neutral100 },
+  faceEmpty: { alignItems: 'center', justifyContent: 'center' },
   actions: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginTop: 4 },
   cta: { flex: 1, height: 40, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
   ctaText: { ...type.button, color: color.onPrimary } as any,
-  /** Тёмный круг, как на кадре: карандаш стоит рядом с красной кнопкой и не должен с ней спорить. */
+  ctaSoft: {
+    flex: 1, height: 40, borderRadius: rad.full, backgroundColor: color.card, flexDirection: 'row', gap: 6,
+    borderWidth: 1, borderColor: color.border, alignItems: 'center', justifyContent: 'center',
+  },
+  ctaSoftText: { ...type.button, color: color.fg } as any,
   pencil: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
 
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md, borderRadius: rad.lg, backgroundColor: color.card },
-  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.neutral100 },
-  avatarEmpty: { alignItems: 'center', justifyContent: 'center' },
-  rowTitle: { ...type.body, color: color.fg, fontWeight: '600' } as any,
-  rowSub: { ...type.bodySmall, color: color.muted } as any,
-
-  empty: { alignItems: 'center', gap: space.sm, paddingTop: space.xl * 2, paddingHorizontal: space.lg },
+  /** C.01a–C.04a: пустое состояние слева, сразу под вкладками. */
+  empty: { gap: 4, paddingTop: space.xs },
   emptyTitle: { ...type.title, color: color.fg } as any,
-  emptyNote: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
-  emptyCta: { marginTop: space.sm, height: 44, paddingHorizontal: space.xl, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
-  emptyCtaText: { ...type.button, color: color.onPrimary } as any,
+  emptyNote: { ...type.bodySmall, color: color.fg } as any,
+  emptyCta: { marginTop: space.md, height: 48, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
 
   err: { padding: space.md, borderRadius: rad.md, backgroundColor: color.warnBg },
   errText: { ...type.bodySmall, color: color.warnText } as any,

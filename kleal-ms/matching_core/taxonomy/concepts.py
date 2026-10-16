@@ -210,6 +210,11 @@ _CONCEPTS = {
 _BLOCKED_WHEN = {
     "coffee": ("свидание", "свидания", "date", "cita", "dating", "citas"),
     "walking": ("свидание", "свидания", "date", "cita", "dating", "citas"),
+    # «stand-up paddleboarding» — это сапборд, а не стендап: алиас «stand up» находился внутри
+    # названия доски, и запрос про сап приводил комиков ТОЧНЫМ совпадением (замер 30.09.2026:
+    # 12 из 12 карточек по «stand-up paddleboarding» были людьми со стендапом).
+    "stand_up_comedy": ("paddle", "paddles", "paddling", "paddleboard", "paddleboards", "paddleboarding",
+                        "sup", "board", "boarding"),
 }
 
 

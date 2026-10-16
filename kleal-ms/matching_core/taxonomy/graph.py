@@ -243,6 +243,16 @@ def similarity_detail(topics, interests):
                     if norm(x) not in derived:
                         natural = max(natural, lvl)
                 continue
+            # --- догадка: слово вне канона, поставленное к узлу моделью (canonical_guess.json) ---
+            # Только там, где канон пару не решил; уровень не выше 3 — точное остаётся точным, а одинаковый
+            # текст («labubu» ~ «labubu») по-прежнему решает seed-граф ниже (четвёрка). Не `continue`:
+            # seed-граф может дать больше, берётся максимум.
+            if canon and norm(x) != nt:
+                g = C.similarity_guess(t, x)
+                if g:
+                    lvl_t = max(lvl_t, g)
+                    if norm(x) not in derived:
+                        natural = max(natural, g)
             # --- seed fallback: концепт вне канона (bootstrap для unknown) ---
             if norm(x) == nt:
                 matched.add(norm(x)); lvl_t = max(lvl_t, 4)        # exact/alias
@@ -262,6 +272,16 @@ def similarity_detail(topics, interests):
                     lvl_t = max(lvl_t, lvl)
                     if norm(x) not in derived:
                         natural = max(natural, lvl)
+        # --- близкие по смыслу: только незнакомое слово, только если не совпало ничего (02.10.2026) ---
+        # «электроника», «паяльник», «попыт» раньше давали ноль всем; теперь человек с интересом, который модель
+        # признала близким (робототехника, компьютеры), встаёт на уровень 1. Известные слова не трогаются.
+        if lvl_t == 0 and canon and not t_in_canon and not C.guess_node(t):
+            for x in interests:
+                if C.meaning_near(t, x):
+                    lvl_t = 1
+                    if norm(x) not in derived:
+                        natural = max(natural, 1)
+                    break
         per_topic[norm(t)] = lvl_t
         best = max(best, lvl_t)
     # Мост проверяется ПОСЛЕДНИМ и не спорит с каноном: он поднимает только тех, кого канон и

@@ -24,8 +24,10 @@
 
 // У api.ts до сих пор не было импортов — он самодостаточный слой над fetch. Эти два
 // нужны подписям интересов: язык интерфейса и реестр, куда сгружаются словари с сервера.
-import { getLang } from './i18n';
+import { Image as RNImage } from 'react-native';
+import { getLang, replyLang } from './i18n';
 import { registerInterestLabels } from './interest-label';
+import { whileThinking } from './thinking';
 
 const DEFAULT_BASE = 'https://aiopenware.com';
 
@@ -42,11 +44,86 @@ const DEFAULT_BASE = 'https://aiopenware.com';
 let SESSION = '';
 
 export function setSession(token: string) {
-  SESSION = String(token || '');
+  const next = String(token || '');
+  if (next !== SESSION) {
+    ME_ID = '';                                  // другой вход — другой человек
+    ME_LOADING = null;
+  }
+  SESSION = next;
 }
 
 export function getSession(): string {
   return SESSION;
+}
+
+/*
+ * ЛИЧНОСТЬ = ID, А НЕ ИМЯ (kleal-ms/docs/IDENTITY.md).
+ *
+ * Имена совпадают: 26.09.2026 у четырёх аккаунтов было одно имя «Иван». Пока приложение звало
+ * собеседника только подписью, сервер не мог понять, какому из «Иванов» ушло приглашение (отвечал
+ * AMBIGUOUS_PERSON), а переписка двух тёзок считала «моими» все сообщения. Поэтому:
+ *   — собеседник едет в запрос подписью И id (`Peer`, поля `to` + `to_id`, `with` + `with_id`…);
+ *   — «моё ли это» решает `isMe` по id; по имени — только пока id неизвестен (старый ответ).
+ * Сервер к каждому полю-человеку в ответе кладёт `<поле>_id` (у `name` в списке — `id`).
+ */
+let ME_ID = '';
+let ME_LOADING: Promise<string> | null = null;
+
+/** Мой id — строка на сервере, которой владеет этот вход. Пусто, пока не узнан. */
+export const myId = (): string => ME_ID;
+
+/**
+ * Запомнить id, если ответ пришёл на ТЕКУЩИЙ вход. Запрос, ушедший до смены входа, возвращался уже
+ * после неё и записывал «я» прежнего человека: вошёл Marc — а экран роли считал его Jane.
+ */
+function rememberMe(user: unknown, session = SESSION) {
+  const id = String((user as { id?: unknown } | null)?.id || '');
+  if (id && session === SESSION) ME_ID = id;
+}
+
+/** Узнать свой id, если его ещё нет. Экраны, где «моё» решается сравнением, зовут это при открытии. */
+export function ensureMe(): Promise<string> {
+  if (ME_ID || !SESSION) return Promise.resolve(ME_ID);
+  if (!ME_LOADING) {
+    ME_LOADING = profile.get('')
+      .then(() => ME_ID)
+      .catch(() => ME_ID)
+      .finally(() => { ME_LOADING = null; });
+  }
+  return ME_LOADING;
+}
+
+/** Это я? По id, когда он известен с обеих сторон; иначе по имени без регистра — как было до id. */
+export function isMe(name: unknown, id: unknown, meName: string): boolean {
+  const i = String(id || '');
+  if (i && ME_ID) return i === ME_ID;
+  const n = String(name || '').trim().toLowerCase();
+  return !!n && n === String(meName || '').trim().toLowerCase();
+}
+
+/** Собеседник: подпись и id. Строка — для мест, где id ещё не проведён; сервер примет её, только
+ *  если имя однозначно (или среди своих собеседников такой ровно один). */
+export type Peer = string | { name?: string; id?: string };
+
+export const peerName = (p: Peer): string => (typeof p === 'string' ? p : String(p?.name || ''));
+export const peerId = (p: Peer): string => (typeof p === 'string' ? '' : String(p?.id || ''));
+
+/** id человека из строки ответа: `<поле>_id`, а у поля `name` в списке людей — просто `id`. */
+export function pidOf(row: unknown, field: string): string {
+  const r = (row || {}) as Record<string, unknown>;
+  return String(r[field + '_id'] || (field === 'name' ? r.id : '') || '');
+}
+
+/** Поле собеседника в теле запроса: `{to: 'Иван', to_id: 'on…'}`; пустой id не шлётся. */
+function peerBody(field: string, p: Peer): Json {
+  const id = peerId(p);
+  return id ? { [field]: peerName(p), [field + '_id']: id } : { [field]: peerName(p) };
+}
+
+/** То же для строки запроса GET: `&with=Иван&with_id=on…`. */
+function peerQuery(field: string, p: Peer): string {
+  const id = peerId(p);
+  return `&${field}=${encodeURIComponent(peerName(p))}` + (id ? `&${field}_id=${encodeURIComponent(id)}` : '');
 }
 
 export const API_BASE: string =
@@ -89,6 +166,31 @@ export type VoicePayload = {
  */
 export const mediaUrl = (url: string) =>
   !url || /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : API_BASE + url;
+
+/**
+ * Согреть чужие фотографии до того, как их покажут.
+ *
+ * Лица людей приходят с сервера файлами и раньше не грелись никем: карточка рисовалась пустой, и
+ * лицо проявлялось через паузу — на приглашении, в выдаче, в ленте сообщений. `Image.prefetch`
+ * кладёт файл в тот же кэш, из которого потом читает `<Image>`, поэтому показ становится
+ * мгновенным без единой правки в разметке.
+ *
+ * ОШИБКИ ГЛОТАЮТСЯ НАМЕРЕННО, и по той же причине, что у предзагрузки картинок при запуске: без
+ * фотографии экран некрасив, без экрана его нет вовсе. Недоступное лицо не должно ронять список.
+ *
+ * Уже согретое просить повторно дёшево — кэш отвечает сразу, — но одинаковые адреса всё же
+ * отсеиваются: в выдаче один человек попадается в нескольких списках.
+ */
+const warmed = new Set<string>();
+
+export function warmPhotos(urls: Array<string | undefined | null>): void {
+  for (const raw of urls || []) {
+    const u = mediaUrl(String(raw || '').trim());
+    if (!u || warmed.has(u)) continue;
+    warmed.add(u);
+    RNImage.prefetch(u).catch(() => {});
+  }
+}
 
 export class ApiError extends Error {
   status: number;
@@ -179,7 +281,7 @@ const LLM_TIMEOUT_MS = 120000;
  * человеческого терпения.
  */
 const RANK_TIMEOUT_MS = 25000;
-const LLM_PATHS = /\/api\/(buddy|onboarding\/chat|agent\/plan)/;
+const LLM_PATHS = /\/api\/(buddy|onboarding\/(?:chat|interest-normalize)|agent\/plan)/;
 const RANK_PATHS = /\/api\/agent\/(match|expand)/;
 
 const timeoutFor = (path: string) =>
@@ -239,6 +341,14 @@ export function sse(
   // ответ целиком, и поток перестаёт быть потоком — а на телефоне это выглядело как обрыв связи.
   xhr.setRequestHeader('Accept', 'text/event-stream');
   xhr.setRequestHeader('Cache-Control', 'no-cache');
+  /*
+    ТОКЕН И ЗДЕСЬ. `request` подставляет его один раз на все запросы, а поток идёт мимо него, своим
+    XHR, — и шёл без Authorization. С 01.10.2026 Буди требует вход (/api/buddy/chat и intent-build:
+    401 sign_in_required), и с тех пор КАЖДЫЙ потоковый ответ молча отваливался: экраны уходили во
+    вторую попытку обычным запросом, ответ приходил целиком и позже, а печати по мере написания не
+    было вовсе (сверка с агентом нейросети, 04.10).
+  */
+  if (SESSION) xhr.setRequestHeader('Authorization', `Bearer ${SESSION}`);
   xhr.onprogress = () => {
     const t = xhr.responseText || '';
     buf += t.slice(seen);
@@ -246,6 +356,8 @@ export function sse(
     flush();
   };
   xhr.onload = () => {
+    // Вход истёк или его нет — это не обрыв связи, и вторая попытка тем же токеном не поможет.
+    if (xhr.status === 401 && !finished) { finished = true; on.error?.('sign_in_required'); return; }
     const t = xhr.responseText || '';
     buf += t.slice(seen);
     seen = t.length;
@@ -297,8 +409,6 @@ export function isAbort(e: unknown): boolean {
 
 // ---------------------------------------------------------------- онбординг
 
-export type SignupResult = { ok?: boolean; error?: string; login?: string };
-
 export const auth = {
   /**
    * A.03.1 «Continue» — просим код. Ответ одинаков для знакомого и незнакомого адреса.
@@ -312,6 +422,25 @@ export const auth = {
                dev_code?: string; mail_error?: string }>(
       '/api/auth/code/request', { email, lang }
     ),
+
+  /**
+   * Настроен ли на сервере вход через этот сервис (`google` | `apple`). Спрашиваем ДО показа
+   * кнопки: ключи живут в окружении службы, и без них ручка честно отвечает `enabled:false` —
+   * кнопка, которая на нажатие говорит «не настроено», хуже отсутствующей.
+   */
+  oauthEnabled: (provider: 'google' | 'apple') =>
+    api.get<{ ok?: boolean; enabled?: boolean }>(`/api/auth/${provider}/available`),
+
+  /**
+   * Обменять одноразовую метку, с которой браузер вернулся в приложение, на сессию. Ручка одна на
+   * оба входа: хранилище меток на сервере общее. Ответ — ровно той же формы, что у `verifyCode`,
+   * потому что это буквально одна и та же функция `session_for_email`.
+   */
+  oauthExchange: (ticket: string) =>
+    api.post<{
+      ok?: boolean; error?: string; token?: string; login?: string; email?: string;
+      name?: string; profile?: Json | null; isNew?: boolean; hasProfile?: boolean;
+    }>('/api/auth/oauth/exchange', { ticket }),
 
   /** A.03.2 «Verify». Отказ приходит с причиной: wrong (со счётчиком попыток) или expired. */
   verifyCode: (email: string, code: string, lang: string) =>
@@ -327,15 +456,24 @@ export const auth = {
                profile?: Json | null; hasProfile?: boolean }>('/api/auth/session', {}),
 
   signOut: () => api.post<{ ok?: boolean }>('/api/auth/signout', {}),
+
+  /**
+   * Удалить аккаунт насовсем.
+   *
+   * Тела у запроса нет намеренно: цель определяет сессия, подставить чужое имя нечем. Ответ
+   * говорит, что именно исчезло — строка человека и сам аккаунт, — чтобы экран не сообщал об
+   * удалении, которого не было.
+   */
+  deleteAccount: () =>
+    api.post<{ ok?: boolean; error?: string; profile?: boolean; account?: boolean }>(
+      '/api/onboarding/delete-account', {}
+    ),
 };
 
 export const onboarding = {
-  /** Создать логин. Пароль уходит один раз и на сервере лежит только PBKDF2-хеш. */
-  signup: (login: string, password: string, name = '') =>
-    api.post<SignupResult>('/api/onboarding/signup', { login, password, name }),
-
-  signin: (login: string, password: string) =>
-    api.post<SignupResult>('/api/onboarding/signin', { login, password }),
+  // Обёрток signup/signin здесь больше нет: вход в приложении — только по коду на почту (см.
+  // `auth` выше), а единственным их потребителем был экран app/login.tsx, удалённый вместе с
+  // ними. Серверные ручки остались на месте и не тронуты.
 
   /**
    * Привязать собранный профиль к аккаунту, чтобы следующий вход вёл в приложение, а не сюда же.
@@ -352,7 +490,13 @@ export const onboarding = {
    * Записать собранный профиль. Это единственный писатель users.json — намеренно: пока запись
    * идёт одним путём, профиль не может разойтись сам с собой.
    */
-  register: (profile: Json) => api.post('/api/onboarding/register', { profile }),
+  register: (profile: Json) => {
+    const sent = SESSION;
+    return api.post('/api/onboarding/register', { profile }).then((r: any) => {
+      rememberMe(r?.user, sent);
+      return r;
+    });
+  },
 
   /** Текст сводки от агента по собранному профилю. Язык обязателен: без него сервер молча
    *  писал по-русски, и человек с английской системой читал рассказ о себе не на своём языке. */
@@ -370,13 +514,16 @@ export const profile = {
   /** Прочитать сохранённую строку профиля. Ключ — имя: другого идентификатора у хранилища нет.
    *  `lang` едет ради подписей: интересы в строке — английские ключи, а рядом с ответом сервер
    *  кладёт словарь подписей на языке интерфейса; он сгружается в реестр interest-label. */
-  get: (name: string) =>
-    api.post<{ user: Json | null; interestLabels?: Record<string, string> }>(
+  get: (name: string) => {
+    const sent = SESSION;
+    return api.post<{ user: Json | null; interestLabels?: Record<string, string> }>(
       '/api/onboarding/profile', { name, lang: getLang() }
     ).then((r) => {
       registerInterestLabels(r?.interestLabels, getLang());
+      rememberMe(r?.user, sent);
       return r;
-    }),
+    });
+  },
 
   /**
    * Изменить профиль. Сервер принимает только поля из своего белого списка (_PATCH_FIELDS) и молча
@@ -385,6 +532,23 @@ export const profile = {
    */
   update: (name: string, patch: Json) =>
     api.post<{ ok?: boolean; error?: string }>('/api/onboarding/profile-update', { name, patch }),
+
+  /** Free text is a proposal until the person confirms one canonical formulation. */
+  normalizeInterest: (text: string, existing: string[], lang: string) =>
+    api.post<{
+      ok?: boolean;
+      status?: 'ready' | 'clarify' | 'duplicate' | 'invalid' | 'unavailable';
+      canonical?: string;
+      question?: string;
+      error?: string;
+      options?: { canonical: string; label: string; token: string }[];
+    }>('/api/onboarding/interest-normalize', { text, existing, lang }),
+
+  /** This second request is the explicit-confirmation boundary and the only novel-interest writer. */
+  confirmInterest: (name: string, token: string) =>
+    api.post<{ ok?: boolean; error?: string; canonical?: string; label?: string; token?: string; persisted?: boolean }>(
+      '/api/onboarding/interest-confirm', { name, token }
+    ),
 
   /** Доступность (§4.4 receiving policy). Без `receiving` — просто чтение текущего статуса. */
   receiving: (name: string, receiving: Json = {}) =>
@@ -421,8 +585,10 @@ export const buddy = {
       '/api/buddy/interests-chat', { messages, profile: prof, lang, recorded }
     ),
 
-  resummary: (prof: Json, current: string, personality = '', lang = 'ru') =>
-    api.post<{ summary?: string }>('/api/buddy/resummary', { profile: prof, current, personality, lang }),
+  /** `extra` — то, что человек дописал своими словами в листе правки сводки; пусто у сторожа. */
+  resummary: (prof: Json, current: string, personality = '', lang = 'ru', extra = '') =>
+    api.post<{ summary?: string }>('/api/buddy/resummary',
+      { profile: prof, current, personality, lang, extra }),
 
   /** Итог теста личности: один вызов на все восемь ответов. */
   persona: (payload: Json) => api.post<Json>('/api/buddy/persona', payload),
@@ -444,11 +610,11 @@ export const buddy = {
   chatStream: (messages: Json[], prof: Json,
                on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void },
                signals: Json = {}) =>
-    sse('/api/buddy/chat', { messages, profile: prof, signals, stream: true }, on),
+    sse('/api/buddy/chat', { messages, profile: prof, signals, stream: true, lang: replyLang() }, on),
 
   chat: (messages: Json[], prof: Json, signals: Json = {}) =>
     api.post<{ reply?: string; intent?: Json | null; signals?: Json; lang?: string }>(
-      '/api/buddy/chat', { messages, profile: prof, signals }
+      '/api/buddy/chat', { messages, profile: prof, signals, lang: replyLang() }
     ),
 
   /**
@@ -465,11 +631,11 @@ export const buddy = {
    */
   intentBuildStream: (messages: Json[], prof: Json,
                       on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void }) =>
-    sse('/api/buddy/intent-build', { messages, profile: prof, stream: true }, on),
+    sse('/api/buddy/intent-build', { messages, profile: prof, stream: true, lang: replyLang() }, on),
 
   intentBuild: (messages: Json[], prof: Json) =>
     api.post<{ reply?: string; valid?: boolean; ready?: boolean; intent?: Json | null; hints?: string[] }>(
-      '/api/buddy/intent-build', { messages, profile: prof }
+      '/api/buddy/intent-build', { messages, profile: prof, lang: replyLang() }
     ),
 
   /** Три варианта из профиля для пустого экрана создания. `seed` меняет выборку для «Ещё варианты». */
@@ -484,8 +650,9 @@ export const agent = {
    * Свободный текст → интент + кандидаты. Разбирает модель, поэтому это единственный вход,
    * которому можно отдать «хочу посмотреть футбол вечером» как есть.
    */
+  // Пока идёт поиск, Kleal в панели «думает» (src/agentState.ts).
   plan: (query: string, profile: Json, ctx: Json = {}, override?: Json, signal?: AbortSignal) =>
-    api.post('/api/agent/plan', { query, profile, ctx, override }, signal),
+    whileThinking(api.post('/api/agent/plan', { query, profile, ctx, override }, signal)),
 
   /** Уже собранный интент → кандидаты, без разбора текста. */
   /** `signal` — чтобы экран поиска мог отменить запрос по кнопке, а не ждать срока. */
@@ -497,10 +664,10 @@ export const agent = {
    * без этого кнопка «показать ещё» жила бы вечно и однажды снова нажималась бы впустую.
    */
   match: (intent: Json, profile: Json, ctx: Json = {}, signal?: AbortSignal, limit?: number) =>
-    api.post<any>('/api/agent/match',
+    whileThinking(api.post<any>('/api/agent/match',
       limit ? { intent, profile, ctx, limit, lang: getLang() }
             : { intent, profile, ctx, lang: getLang() }, signal
-    ).then((r) => {
+    )).then((r) => {
       // Подписи интересов кандидатов: ключи английские, карточки читаются на языке интерфейса.
       registerInterestLabels((r as any)?.interestLabels, getLang());
       return r;
@@ -527,8 +694,9 @@ export const agent = {
    * `live` не передаём: по умолчанию сервер пересчитывает кандидатов на каждый запрос, и «3
    * варианта готовы» на карточке означает состояние СЕЙЧАС, а не слепок на момент создания.
    */
-  intents: (self: string, prof: Json) =>
-    api.post<{ intents?: Json[] }>('/api/agent/intents', { self, profile: prof }),
+  /** `live=false` — мгновенный снимок последнего пересчёта; `true` — пересчёт по живому пулу. */
+  intents: (self: string, prof: Json, live = true) =>
+    api.post<{ intents?: Json[] }>('/api/agent/intents', { self, profile: prof, live }),
 
   /**
    * Сохранить или обновить. Без `id` сервер сам склеит повтор по теме и роли — одна и та же
@@ -557,6 +725,12 @@ export const agent = {
       `/api/agent/explore?limit=${limit}&self=${encodeURIComponent(self)}`
     ),
 
+  /** Privacy-safe intent-address feed for the Map/List search screen. */
+  mapFeed: (self: string, view: 'offline' | 'online' = 'offline', limit = 60) =>
+    api.get<{ items?: Json[]; partial?: boolean; unavailableCount?: number }>(
+      `/api/agent/map-feed?view=${view}&limit=${limit}&self=${encodeURIComponent(self)}`
+    ),
+
   /**
    * То же, но с профилем: сервер отбирает только совместимые интенты. Главный экран строже
    * обзора — там показываются люди, к которым есть смысл обращаться, а не все подряд.
@@ -568,9 +742,9 @@ export const agent = {
    * Приглашение (O.14): человек увидит интент и профиль отправителя. Одно открытое приглашение на
    * пару в одну сторону — повторная отправка обновляет его, а не плодит копии; это правило сервера.
    */
-  propose: (from: string, to: string, intent: Json, note = '') =>
+  propose: (from: string, to: Peer, intent: Json, note = '') =>
     api.post<{ ok?: boolean; id?: string; error?: string }>(
-      '/api/agent/propose', { from, to, intent, note }
+      '/api/agent/propose', { from, ...peerBody('to', to), intent, note }
     ),
 
   /**
@@ -584,10 +758,10 @@ export const agent = {
    * Жалоба (O.13b). Причина — из словаря сервера (fake/harassment/spam/unsafe/underage/other):
    * «Спасибо, посмотрим» обязано соответствовать строке, которую кто-то реально откроет.
    */
-  report: (self: string, name: string, reason: string, text = '', idem?: string,
+  report: (self: string, name: Peer, reason: string, text = '', idem?: string,
            messageId?: string, threadType?: string, threadId?: string) =>
     api.post<{ ok?: boolean; error?: string }>('/api/agent/report', {
-      self, name, reason, text, idem, message_id: messageId,
+      self, ...peerBody('name', name), reason, text, idem, message_id: messageId,
       thread_type: threadType, thread_id: threadId,
     }),
 
@@ -614,8 +788,20 @@ export const agent = {
    * Себя сервер называет `self`, а не `who`: с `who` он молча отвечает TWO_PEOPLE_REQUIRED,
    * потому что видит пустого отправителя. Проверено на живом стенде.
    */
-  block: (self: string, name: string, on: boolean) =>
-    api.post<{ ok?: boolean; blocked?: string[] }>('/api/agent/block', { self, name, on }),
+  block: (self: string, name: Peer, on: boolean) =>
+    api.post<{ ok?: boolean; blocked?: string[]; blocked_ids?: string[] }>(
+      '/api/agent/block', { self, ...peerBody('name', name), on }),
+
+  /**
+   * Карточка собеседника — открывается из шапки разговора.
+   *
+   * Сервер отдаёт её ТОЛЬКО тому, кто уже согласился (`_mp_matched` — тот же замок, что у
+   * сообщений и планов), и без расстояния и координат. Отказ приходит кодом `NOT_MATCHED`; это не
+   * поломка, а состояние, и на экране он превращается в «профиль откроется, когда примет».
+   */
+  person: (self: string, name: Peer) =>
+    api.post<{ ok?: boolean; error?: string; person?: Json }>(
+      '/api/agent/person', { self, ...peerBody('name', name) }),
 
   /** Исходящие приглашения — по ним карточка выдачи знает, приняли её или отклонили. */
   outbox: (self: string) =>
@@ -629,9 +815,9 @@ export const agent = {
     api.get<{ threads?: Json[] }>(`/api/agent/threads?self=${encodeURIComponent(self)}`),
 
   /** Переписка с одним человеком, старые сверху. `since` — чтобы дотягивать только новое. */
-  thread: (self: string, other: string, since = 0) =>
+  thread: (self: string, other: Peer, since = 0) =>
     api.get<{ messages?: Json[] }>(
-      `/api/agent/thread?self=${encodeURIComponent(self)}&with=${encodeURIComponent(other)}&since=${since}`
+      `/api/agent/thread?self=${encodeURIComponent(self)}${peerQuery('with', other)}&since=${since}`
     ),
 
   /** Отправить сообщение. Доставка настоящая — сообщение появится и у собеседника. */
@@ -646,11 +832,11 @@ export const agent = {
    * обратно. Раньше экран узнавал его по ТЕКСТУ — а у голосового локальный текст пустой, тогда
    * как сервер кладёт туда расшифровку, и голосовое двоилось в ленте. По ключу узнаётся любое.
    */
-  message: (from: string, to: string, text: string, voice?: VoicePayload, clientId?: string,
+  message: (from: string, to: Peer, text: string, voice?: VoicePayload, clientId?: string,
             replyTo?: string, video?: VideoPayload) =>
     api.post<{ ok?: boolean; error?: string; id?: string; t?: number; cid?: string }>(
       '/api/agent/message',
-      { from, to, text, voice, client_id: clientId, reply_to: replyTo, video }),
+      { from, ...peerBody('to', to), text, voice, client_id: clientId, reply_to: replyTo, video }),
 
   /** Реакция переключается: то же нажатие второй раз её снимает. Набор закрыт — см. REACTIONS. */
   react: (self: string, id: string, emoji: string) =>
@@ -675,11 +861,11 @@ export const agent = {
    * Предложить встречу (O.20). Сервер откажет, если человек ещё не принял приглашение
    * (NOT_MATCHED) или если время уже прошло (IN_THE_PAST) — оба случая называются на экране.
    */
-  planPropose: (self: string, to: string, p: Json, idem = newIdem('mp-propose')) =>
+  planPropose: (self: string, to: Peer, p: Json, idem = newIdem('mp-propose')) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       // Ответ отдаёт план целиком в `plan`, id лежит ВНУТРИ него — сверху `id` нет.
       // Ещё один отказ, о котором стоит знать: PLAN_EXISTS, у пары может быть только одна встреча.
-      '/api/agent/mplan-propose', { self, to, ...p, idem }
+      '/api/agent/mplan-propose', { self, ...peerBody('to', to), ...p, idem }
     ),
 
   /**
@@ -709,6 +895,12 @@ export const agent = {
                 idem = newIdem('mp-address')) =>
     api.post<{ ok?: boolean; error?: string; plan?: Json }>(
       '/api/agent/mplan-address', { id, self, address, venue, link, idem }
+    ),
+  /** «Пусть выберет он(а)» / «пусть хостит»: просьба записывается в план и видна обоим. */
+  planAsk: (id: string, self: string, what: 'place' | 'link', idem = newIdem('mp-ask'), cancel = false) =>
+    // `cancel` снимает просьбу: попросивший забирает её, попрошенный отказывается (O.C3e «I can’t host»).
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/mplan-ask', { id, self, what, idem, ...(cancel ? { cancel: true } : {}) }
     ),
 
   /**
@@ -756,10 +948,20 @@ export const agent = {
 
   /** Планы этого человека: живые и прошедшие. */
   /** `with` — собеседник, ради его часового пояса: на форме плана самого плана ещё нет. */
-  plans: (self: string, withWhom?: string) =>
+  /**
+   * OF.19e «Pick someone else»: кто раньше принял МОЁ приглашение по этой затее (без вышедшего).
+   * Сервер узнаёт затею по названию, если у заявок нет iid; читает только свои заявки.
+   */
+  planAlternatives: (self: string, title: string, except?: Peer) =>
+    api.get<{ ok?: boolean; people?: Json[] }>(
+      `/api/agent/mplan-alternatives?self=${encodeURIComponent(self)}&title=${encodeURIComponent(title)}` +
+      (except && (peerName(except) || peerId(except)) ? peerQuery('except', except) : '')
+    ),
+
+  plans: (self: string, withWhom?: Peer) =>
     api.get<{ plans?: Json[]; history?: Json[]; peer_tz?: string }>(
       `/api/agent/mplans?self=${encodeURIComponent(self)}` +
-      (withWhom ? `&with=${encodeURIComponent(withWhom)}` : '')
+      (withWhom && (peerName(withWhom) || peerId(withWhom)) ? peerQuery('with', withWhom) : '')
     ),
 
   /** Входящие приглашения. Просроченные и отозванные сервер отсекает сам. */
@@ -767,24 +969,34 @@ export const agent = {
     api.get<{ requests?: Json[] }>(`/api/agent/inbox?self=${encodeURIComponent(self)}`),
 
   /** Единая лента входящих 1:1 и групповых приглашений для главного экрана. */
-  homeInvites: (self: string) =>
-    api.get<{ invites?: Json[] }>(`/api/agent/home-invites?self=${encodeURIComponent(self)}`),
+  homeInvites: (self: string, pick = false) =>
+    // `pick=1` — вместе с новыми приходят «ты ответил „да“» (answered) и «выбран другой» (not_picked,
+    // сутки после закрытия). Без него лента прежняя: только неотвеченные.
+    api.get<{ invites?: Json[] }>(`/api/agent/home-invites?self=${encodeURIComponent(self)}${pick ? '&pick=1' : ''}`),
 
   /** Ответ получателя на приглашение (O.C1). Сервер пере-проверяет политику на момент ответа:
    *  между отправкой и согласием человек мог заблокировать или закрыть направление. */
   respondInvite: (id: string, self: string, decision: 'accept' | 'decline', version?: number) =>
-    api.post<{ ok?: boolean; error?: string; status?: string }>(
-      '/api/agent/respond', { id, self, decision, version }
+    // `flow: 'pick'` — «да» становится `answered` и ждёт выбора организатора (OF.C1a). Сервер без
+    // этого пути признак не читает и отвечает по-старому `accepted` — экран разбирает оба ответа.
+    api.post<{ ok?: boolean; error?: string; status?: string; pick_by?: number }>(
+      '/api/agent/respond', { id, self, decision, version, flow: 'pick' }
+    ),
+
+  /** OF.12d «Pick Marta»: организатор выбирает одного из ответивших; остальные заявки закрываются. */
+  requestPick: (id: string, self: string, idem?: string) =>
+    api.post<{ ok?: boolean; error?: string; status?: string; closed?: string[] }>(
+      '/api/agent/request-pick', { id, self, idem }
     ),
 
   /** «Я открыл эту переписку» — из этой отметки у второй стороны получаются двойные галочки
    *  (MSG.11). Отметка одна на пару, по-сообщенного статуса нет намеренно. */
   /** Закрыть переписку так, чтобы об этом узнал второй: сервер пишет строку в общую ленту. */
-  threadEnd: (self: string, other: string) =>
-    api.post<{ ok?: boolean; error?: string }>('/api/agent/thread-end', { self, with: other }),
+  threadEnd: (self: string, other: Peer) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/thread-end', { self, ...peerBody('with', other) }),
 
-  threadRead: (self: string, other: string) =>
-    api.post<{ ok?: boolean }>('/api/agent/thread-read', { self, with: other }),
+  threadRead: (self: string, other: Peer) =>
+    api.post<{ ok?: boolean }>('/api/agent/thread-read', { self, ...peerBody('with', other) }),
 };
 
 // ---------------------------------------------------------------- группы
@@ -843,7 +1055,9 @@ export type GroupReportReason =
   | 'insults_or_humiliation'
   | 'harassment_or_threats'
   | 'fake_profile'
-  | 'rule_violation';
+  | 'rule_violation'
+  | 'unsafe_behaviour'
+  | 'something_else';
 
 export type ReportEvidence = {
   id: string;
@@ -861,6 +1075,7 @@ export type GroupReportResult = {
   status?: string;
   at?: number;
   protective_measures?: string[];
+  about?: string;
   group?: GroupInfo;
 };
 
@@ -878,12 +1093,16 @@ export const group = {
    * ответ ПО КАЖДОМУ (sent/refused с причинами), а не один вердикт на батч. Места приглашение
    * не резервирует — на последнее место может быть два живых приглашения, это по спеке (§20).
    */
-  invite: (gid: string, self: string, to: string | string[], idem: string, note = '') =>
+  invite: (gid: string, self: string, to: Peer | Peer[], idem: string, note = '') =>
     api.post<{
       ok?: boolean; error?: string;
       invite?: Json;                       // одиночное приглашение
       sent?: Json[]; refused?: Json[];     // батч
-    }>('/api/agent/gintent-invite', { gid, self, to, note, idem }),
+    }>('/api/agent/gintent-invite', {
+      gid, self, note, idem,
+      // Список едет двумя параллельными массивами: подписи и id по тем же местам.
+      ...(Array.isArray(to) ? { to: to.map(peerName), to_ids: to.map(peerId) } : peerBody('to', to)),
+    }),
 
   /** Отозвать ОТКРЫТОЕ приглашение — Cancel со строки GR.17 и выход из капа по GR.15. Только
    *  организатор, только неотвеченное: по принятому человек уже участник, по ожидающему апрува
@@ -907,15 +1126,17 @@ export const group = {
     ),
 
   /** Апрув ожидающего (этап плана). Только организатор; accept: false — отказать во входе. */
-  approve: (gid: string, self: string, who: string, idem: string, accept = true) =>
+  approve: (gid: string, self: string, who: Peer, idem: string, accept = true) =>
     api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>(
-      '/api/agent/gintent-approve', { gid, self, who, accept, idem }
+      '/api/agent/gintent-approve', { gid, self, ...peerBody('who', who), accept, idem }
     ),
 
   /** GR.51: удалить участника с одной причиной из закрытого списка. Произвольного текста нет. */
-  remove: (gid: string, self: string, who: string, reasonCode: GroupRemovalReason, idem: string) =>
+  remove: (gid: string, self: string, who: Peer, reasonCode: GroupRemovalReason, idem: string) =>
     api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>(
-      '/api/agent/gintent-remove', { gid, self, who, reason_code: reasonCode, idem }
+      // ИМЯ ПОЛЯ — `reason`. Сервер читает именно его и без причины удаление отклоняет, поэтому
+      // «убрать из группы» не срабатывало ни разу: организатор выбирал причину и получал отказ.
+      '/api/agent/gintent-remove', { gid, self, ...peerBody('who', who), reason: reasonCode, idem }
     ),
 
   /** S10 / GR.53-55: organiser closes the group before a plan is set. */
@@ -936,10 +1157,11 @@ export const group = {
       '/api/agent/report-evidence', body
     ),
 
+  /** GR.55: жалоба на конкретного участника (`about`) — сервер сразу ставит блокировку между двумя. */
   report: (gid: string, self: string, reason: GroupReportReason, text: string,
-           evidence: ReportEvidence[], idem: string) =>
+           evidence: ReportEvidence[], idem: string, about?: Peer) =>
     api.post<GroupReportResult>('/api/agent/gintent-report', {
-      gid, self, reason, text, evidence, idem,
+      gid, self, reason, text, evidence, idem, ...(about ? peerBody('about', about) : {}),
     }),
 
   /**
@@ -956,6 +1178,29 @@ export const group = {
     api.post<{ ok?: boolean; error?: string; agreed?: boolean; group?: GroupInfo }>(
       '/api/agent/gintent-convert-respond', { gid, self, agree, idem }
     ),
+
+  // ---- смена организатора (GR.42–44) ------------------------------------
+  /** GR.42b «Put me forward»: предложить себя вместо молчащего 12 ч организатора. */
+  takeover: (gid: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; by?: string; group?: GroupInfo }>('/api/agent/gintent-takeover', { gid, self, idem }),
+  /** GR.43e: голос за кандидата — решают ответившие. */
+  takeoverVote: (gid: string, self: string, yes: boolean, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-takeover-vote', { gid, self, yes, idem }),
+  /** GR.43a: кандидат снимает предложение. */
+  takeoverWithdraw: (gid: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-takeover-withdraw', { gid, self, idem }),
+  /** GR.42a: организатор вернулся — оставить роль (hand: false) или отдать кандидату (hand: true). */
+  takeoverBack: (gid: string, self: string, hand: boolean, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-takeover-back', { gid, self, hand, idem }),
+  /** GR.44b: предложить роль одному участнику, 24 ч на ответ. */
+  roleOffer: (gid: string, self: string, to: Peer, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-role-offer', { gid, self, ...peerBody('to', to), idem }),
+  /** GR.44c: взять роль или оставить её организатору. */
+  roleRespond: (gid: string, self: string, accept: boolean, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-role-respond', { gid, self, accept, idem }),
+  /** GR.44d «Withdraw the offer». */
+  roleWithdraw: (gid: string, self: string, idem: string) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-role-withdraw', { gid, self, idem }),
 
   /** Сообщение в общий чат группы. */
   post: (gid: string, self: string, text: string, voice?: VoicePayload, clientId?: string,
@@ -1035,11 +1280,18 @@ export const group = {
       '/api/agent/gplan-cancel', { id, self, idem }
     ),
 
+  /** GR.40a / GR.40d: ответ на «Twelve hours passed» — перейти в один на один или отпустить план. */
+  planHoldAnswer: (id: string, self: string, choice: 'one_on_one' | 'let_go', idem: string) =>
+    api.post<{ ok?: boolean; error?: string; plan?: Json }>(
+      '/api/agent/gplan-hold-answer', { id, self, choice, idem }
+    ),
+
   /** GR.30 «Fix the plan» — организатор закрывает согласование, когда раунды кончились. Не
    *  выбрасывает молчавших: им предлагается остаться или выйти (GR.31, флаг stay_or_leave). */
-  planFix: (id: string, self: string, idem: string) =>
+  /** `round` — какую версию закрепить (GR.29a); без него — текущую. */
+  planFix: (id: string, self: string, idem: string, round?: number) =>
     api.post<{ ok?: boolean; error?: string; fixed?: boolean; unconfirmed?: string[]; plan?: Json }>(
-      '/api/agent/gplan-fix', { id, self, idem }
+      '/api/agent/gplan-fix', round ? { id, self, idem, round } : { id, self, idem }
     ),
 
   /** GR/GRO.32 — организатор правит УТВЕРЖДЁННЫЙ план. Каждый участник после этого принимает
@@ -1114,4 +1366,3 @@ export const group = {
       `/api/agent/gplans?self=${encodeURIComponent(self)}`
     ),
 };
-

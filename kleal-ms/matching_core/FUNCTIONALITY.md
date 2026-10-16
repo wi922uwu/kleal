@@ -283,4 +283,4 @@ config/policy, tier, evidence, directional (A→B, B→A), reciprocal, readiness
 - **Ручной стенд (браузер):** `python matching_core/sim/serve.py` → http://127.0.0.1:7099 — форма интента/профиля/пула, на каждый «Match» реально гоняется `search()`.
 - **Тесты:** `for f in matching_core/tests/test_*.py; do python "$f"; done` → 25 сьютов / 428 зелёных.
 
-_Сопутствующие документы в пакете: `ARCHITECTURE.md` (чеклист сборки §0–§24), `VERDICT_RESPONSE.md` (ответ на внешний ревью), `COMPLIANCE_REPORT.md` (соответствие спеке)._
+_Сопутствующий документ в пакете: `ARCHITECTURE.md` (чеклист сборки §0–§24). Отчёты о ревью июля 2026 (`VERDICT_RESPONSE`, `COMPLIANCE_REPORT`, `INTEGRATION_REPORT`) удалены 2026-08-27: они описывали состояние, которого больше нет, и читались как действующее описание. Ищи в истории git._

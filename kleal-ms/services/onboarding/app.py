@@ -7,7 +7,14 @@ import os, sys, json, re, threading, hashlib, hmac, time, base64, secrets
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(_HERE, "..", "..", "shared"), os.path.join(_HERE, "shared")):
     if os.path.isdir(_p) and _p not in sys.path: sys.path.insert(0, _p)
+import kleal_auth                             # проверка админского токена для ручек панели
+import age_rollout                            # explicit server-only DEV KYC/demo opt-in
 import kleal_lib as base                      # keyless shared helpers/prompts
+import settings                            # живые настройки: промпты и температура из панели
+import urllib.parse                        # разбор строки запроса у GET-ручек Google
+import vibe as kvibe                       # настрой из теста характера: одно правило на все службы
+import google_auth as gauth                # вход через Google: ссылки, метки, обмен кода
+import apple_auth as aauth                 # вход через Apple: там же, но ответ приходит формой
 import config                                  # the one topology table (ports/URLs/store paths)
 import db                                      # хранилище: postgres или файл — решает KLEAL_DB
 from llm_client import llm_complete           # the ONLY model access (HTTP -> llm-service)
@@ -476,7 +483,10 @@ def v2_summary(profile, lang="ru"):
     DROP = ("photo", "summary", "safety", "permissions", "receiving", "verified", "paused",
             "radiusKm", "km", "lat", "lon", "geo", "datingOk", "blocksMe", "source", "id")
     prof = {k: v for k, v in (profile or {}).items() if k not in DROP}
-    sys_prompt = (SUMMARY_PROMPT
+    if isinstance(prof.get("interests"), dict):
+        prof["interests"] = {k: v for k, v in prof["interests"].items()
+                             if k != "confirmations"}
+    sys_prompt = (settings.prompt("onboarding.summary", SUMMARY_PROMPT)
                   .replace("__LANGNAME__", _SUM_LANGNAME.get(lang, "Russian"))
                   .replace("__LANGDIR__", _SUM_LANGDIR.get(lang, _SUM_LANGDIR["ru"])))
     raw = llm_complete(cfg, [{"role": "system", "content": sys_prompt},
@@ -497,7 +507,7 @@ def v2_chat(messages, prior, want_lang=None):
             for mm in hist:
                 who = "User" if mm.get("role") == "user" else "Agent"
                 lines.append(who + ": " + str(mm.get("content", "")))
-            ext_raw = llm_complete(cfg, [{"role": "system", "content": EXTRACT_V2},
+            ext_raw = llm_complete(cfg, [{"role": "system", "content": settings.prompt("onboarding.extract", EXTRACT_V2)},
                                           {"role": "user", "content": "\n".join(lines)}], 0.1)
             prof = base._extract_json(ext_raw)
             if isinstance(prof, dict):
@@ -518,7 +528,7 @@ def v2_chat(messages, prior, want_lang=None):
     # the flag never went true, the _FIN_RE finish branch became unreachable, and the step looped
     # forever — the user answered «Это всё» three times and was asked again each time.
 
-    sys = FUNNEL_PROMPT + _ONB_LANG_RULE[_onb_lang(hist, want_lang)]
+    sys = settings.prompt("onboarding.funnel", FUNNEL_PROMPT) + _ONB_LANG_RULE[_onb_lang(hist, want_lang)]
     complete = False
     if _is_gibberish(lastu):
         # user typed junk / random characters - do NOT advance or wrap up, gently re-ask.
@@ -551,7 +561,7 @@ def v2_chat(messages, prior, want_lang=None):
     # 0.45, не 0.6. Здесь модель не сочиняет, а формулирует один вопрос на чужом для неё языке, и
     # каждая лишняя десятая температуры — это «Ты бы играл в игры с кем-то или смотреть матчи».
     # Разнообразие вопросов задаёт список пробелов выше, а не разброс сэмплинга.
-    raw = llm_complete(cfg, [{"role": "system", "content": sys}] + hist, 0.45)
+    raw = llm_complete(cfg, [{"role": "system", "content": sys}] + hist, 0.45, tag="onboarding.funnel")
     reply, _p, _i, _b, _s, options = base.parse_reply(raw)
     options = _norm_options(options)
     reply = base.dose_reply(base.sanitize_output(base.guard_reply(reply)))
@@ -657,7 +667,7 @@ def _translate_interests(batch):
     общие с миграцией (shared/interest_i18n.py), иначе два пути дали бы разные ключи одному слову.
     """
     import interest_i18n
-    raw = llm_complete(MODEL_ID, [{"role": "system", "content": interest_i18n.TRANSLATE_PROMPT},
+    raw = llm_complete(MODEL_ID, [{"role": "system", "content": settings.prompt("shared.translate_interests", interest_i18n.TRANSLATE_PROMPT)},
                                   {"role": "user", "content": "\n".join(batch)}], 0.2)
     return interest_i18n.parse_translation(raw, batch)
 
@@ -799,6 +809,15 @@ def attach_profile(login, name, profile=None):
             return {"ok": False, "error": "unknown login"}
         # Адрес сюда не кладём даже молча: отсюда он возвращается в профиль при каждом входе.
         accs[key]["name"] = _clean_name(name)
+        # Личность — id строки, которой владеет аккаунт; имя выше — только подпись.
+        try:
+            row = next((x for x in _read_users() if x.get("owner") == key), None)
+            if row is not None and row.get("id"):
+                accs[key]["person_id"] = str(row["id"])
+        except UserStorageUnavailable:
+            raise
+        except Exception:
+            pass
         if isinstance(profile, dict):
             # photo is a data URL and can be megabytes; it already travels through shared-origin
             # localStorage, so it has no business in the credential file.
@@ -850,12 +869,16 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
 # первый же сбой провайдера), громкая строка в лог при старте, и заметная пометка на экране, чтобы
 # никто не принял это за возможность продукта.
 def show_code_enabled():
-    return os.environ.get("KLEAL_SHOW_CODE", "").strip() in ("1", "true", "yes", "on")
+    return ((os.environ.get('KLEAL_AGE_GATE_ENABLED') != '1' or age_rollout.dev_demo_auth())
+            and os.environ.get("KLEAL_SHOW_CODE", "").strip() in ("1", "true", "yes", "on"))
 
 
 if show_code_enabled():
     print("[auth] ВНИМАНИЕ: KLEAL_SHOW_CODE включён — код входа возвращается наружу и виден на "
           "экране. Это режим отладки, в проде он обязан быть выключен.", flush=True)
+    if os.environ.get('KLEAL_AGE_GATE_ENABLED') == '1':
+        print('[auth] DEV KYC + demo auth: a real Didit result belongs to the shared account, '
+              'not to every holder of its demo session. Not production identity assurance.', flush=True)
 
 
 def _norm_email(e):
@@ -902,6 +925,15 @@ def request_code(email, lang="en", ip=""):
     e = _norm_email(email)
     if not valid_email(e):
         return {"ok": False, "error": "bad email"}
+    # КИРИЛЛИЦА ДО «@» — ОТДЕЛЬНЫЙ ОТКАЗ, А НЕ «ПОПРОБУЙ ЧЕРЕЗ МИНУТУ».
+    #
+    # Регулярка адреса пропускает любые непробельные символы, и «иван@mail.ru» доходил до
+    # провайдера, который отвечал 422 «contains non-ASCII characters». Человеку при этом
+    # показывали «Письмо не ушло. Попробуй ещё раз через минуту» — а повтор не поможет никогда:
+    # почтовые провайдеры не доставляют на не-ASCII имена ящиков. Домен — другое дело, его можно
+    # закодировать (punycode), это делает mailer при отправке. Снято из журнала 4 сентября 2026.
+    if not e.split("@", 1)[0].isascii():
+        return {"ok": False, "error": "latin email"}
     now = time.time()
     with _CODE_LOCK:
         _prune(now)
@@ -971,15 +1003,35 @@ def verify_code(email, code, lang="en"):
             return {"ok": False, "error": "wrong", "attempts_left": rec["left"]}
         _CODES.pop(e, None)                                 # одноразовый: гасим до выдачи сессии
 
+    return session_for_email(e, "code")
+
+
+def session_for_email(email, how, name=""):
+    """Аккаунт по ПРОВЕРЕННОЙ почте и новая сессия. Одна дверь на все способы входа.
+
+    Почтовый код и Google отличаются ровно одним — чем подтверждена почта. Всё, что дальше (завести
+    аккаунт или найти прежний, выдать сессию, решить, новый это человек или вернувшийся), обязано
+    быть одинаковым, иначе два входа начнут расходиться в мелочах: у одного заводится профиль, у
+    другого нет; один уводит в анкету, другой на главную.
+
+    `name` — имя из Google. Ставим его ТОЛЬКО если своего ещё нет: человек мог назваться в анкете
+    иначе, и переписывать его имя чужими данными при каждом входе нельзя ([[имя это личность]]).
+    """
+    e = _norm_email(email)
+    now = time.time()
     with _ACC_LOCK:
         accs = _read_accounts()
         key = _acc_by_email(accs, e)
         is_new = key is None
         if is_new:
             key = e
-            accs[key] = {"login": e, "email": e, "created": int(now), "auth": "code"}
+            accs[key] = {"login": e, "email": e, "created": int(now), "auth": how}
         else:
             accs[key].setdefault("email", e)
+        if accs[key].get("deleting"):
+            return {"ok": False, "error": "account_deleting"}
+        if name and not str(accs[key].get("name") or "").strip():
+            accs[key]["name"] = str(name)[:80]
         tok = _new_session(accs, key)
         acc = accs[key]
         _write_accounts(accs)
@@ -993,6 +1045,51 @@ def verify_code(email, code, lang="en"):
             "isNew": bool(is_new or not prof), "hasProfile": bool(prof)}
 
 
+def apple_login(code, state, user_field=""):
+    """Возврат от Apple -> (адрес приложения, поля для возврата). Как `google_login`, но с именем.
+
+    ИМЯ ПРИХОДИТ ОДИН РАЗ В ЖИЗНИ. Apple кладёт его в поле формы `user` при ПЕРВОЙ авторизации и
+    больше не присылает никогда. Поэтому берём его здесь же и сразу — на второй попытке брать будет
+    неоткуда."""
+    back = gauth.take_state(state)                # метки общие: oauth_common
+    if not back:
+        return None, {"error": "state"}
+    if not code:
+        return back, {"error": "denied"}          # человек закрыл окно Apple
+    try:
+        ident = aauth.identity_from_code(code)
+    except Exception as ex:
+        print("[apple] обмен кода не удался: %s" % str(ex)[:120], flush=True)
+        return back, {"error": "apple"}
+    try:
+        payload = session_for_email(ident["email"], "apple", aauth.name_from_form(user_field))
+    except Exception as ex:
+        print("[apple] сессия не завелась: %s" % str(ex)[:120], flush=True)
+        return back, {"error": "server"}
+    return back, {"ticket": gauth.new_ticket(payload)}
+
+
+def google_login(code, state):
+    """Возврат от Google -> (адрес приложения, поля для возврата). Исключений наружу не пускаем:
+    браузер в любом случае должен вернуться в приложение, пусть и со словом об ошибке."""
+    back = gauth.take_state(state)
+    if not back:
+        return None, {"error": "state"}          # метки нет: ссылка старая, чужая или уже сработала
+    if not code:
+        return back, {"error": "denied"}         # человек нажал «отмена» в окне Google
+    try:
+        ident = gauth.identity_from_code(code)
+    except Exception as ex:
+        print("[google] обмен кода не удался: %s" % str(ex)[:120], flush=True)
+        return back, {"error": "google"}
+    try:
+        payload = session_for_email(ident["email"], "google", ident.get("name") or "")
+    except Exception as ex:
+        print("[google] сессия не завелась: %s" % str(ex)[:120], flush=True)
+        return back, {"error": "server"}
+    return back, {"ticket": gauth.new_ticket(payload)}
+
+
 def session_owner(token):
     """Кому принадлежит сессия. Возвращает запись аккаунта или None. Заодно продлевает `last` —
     по нему потом можно будет чистить заброшенное."""
@@ -1003,6 +1100,8 @@ def session_owner(token):
     with _ACC_LOCK:
         accs = _read_accounts()
         for key, acc in accs.items():
+            if not isinstance(acc, dict) or acc.get("deleting"):
+                continue
             sess = (acc or {}).get("sessions") or {}
             rec = sess.get(h)
             if not rec:
@@ -1233,12 +1332,12 @@ _RECV_STATUSES = ("active", "busy", "paused")
 _RECV_DOMAINS = {"social_meet", "walk", "games", "language_exchange", "sport_activity",
                  "culture_event", "professional_networking", "watch_together", "coworking", "dating"}
 
-def update_receiving(name, patch):
+def update_receiving(name, patch, uid=None):
     """The user's own availability settings — a WHITELISTED patch of their receiving policy
     (status / passive_outreach / allowed_domains / quiet_hours / paused_until), atomic on the
     shared store. Unknown fields are dropped, never written."""
     key = str(name or "").strip().lower()
-    if not key:
+    if not key and not uid:
         return {"ok": False, "error": "name required"}
     clean = {}
     st = str(patch.get("status") or "").lower()
@@ -1271,15 +1370,14 @@ def update_receiving(name, patch):
         elif isinstance(pu, str) and _valid_ts(pu):     # accept epoch or 'YYYY-MM-DDTHH:MM', drop junk
             clean["paused_until"] = pu
     with _REG_LOCK:
-        try:
-            with open(USERS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            users = data.get("users") if isinstance(data, dict) else data
-            if not isinstance(users, list):
-                users = []
-        except Exception:
-            users = []
-        me = next((x for x in users if str(x.get("name", "")).strip().lower() == key), None)
+        # ЧИТАЕМ ХРАНИЛИЩЕ, А НЕ ФАЙЛ. Здесь стоял прямой `open(USERS_PATH)` — то есть снимок,
+        # замороженный при переходе на Postgres. Из-за этого настройки приёма делали две вещи
+        # разом: у того, кто есть в снимке, строка в базе перезаписывалась старой (терялись
+        # интересы, сводка, фото, возраст), а тот, кто завёлся после перехода, получал «user not
+        # found» на существующий аккаунт. `_read_users()` отдаёт то же самое в режиме json и
+        # настоящие строки в режиме postgres — это единственный правильный вход.
+        users = _read_users()
+        me = _find_row(users, key, uid)
         if me is None:
             return {"ok": False, "error": "user not found"}
         r = me.get("receiving")
@@ -1299,17 +1397,24 @@ def update_receiving(name, patch):
 
 
 
+class UserStorageUnavailable(RuntimeError):
+    """Public-safe error: authoritative user storage could not complete work."""
+    def __init__(self):
+        super().__init__("storage unavailable")
+
+
 def _read_users():
     """Все люди: из базы, если она ведущая, иначе из файла."""
     if db.ENABLED:
         try:
             rows = db.load_users()
-            if rows:
+            if isinstance(rows, list):
                 return rows
-            # База пуста — перенос ещё не делали. Падаем на файл, а не отдаём пустую популяцию:
-            # пустой ответ здесь выглядит как «все пользователи пропали».
-        except Exception as e:
-            print("[users] postgres недоступен, читаю файл: %s: %s" % (type(e).__name__, str(e)[:120]))
+        except Exception:
+            pass
+        # Postgres/mirror are authoritative, including an empty population.
+        # A stale JSON snapshot cannot stand in for a failed identity read.
+        raise UserStorageUnavailable() from None
     try:
         with open(USERS_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -1337,9 +1442,10 @@ def _persist_users(users, touched=None):
             else:
                 db.save_users(users)
             wrote = True
-        except Exception as e:
-            print("[users] запись в postgres не удалась, падаю на файл: %s: %s"
-                  % (type(e).__name__, str(e)[:120]))
+        except Exception:
+            # Do not acknowledge a registration/profile update absent from the
+            # authoritative database; never leak driver DSNs/error bodies.
+            raise UserStorageUnavailable() from None
     if wrote and not db.MIRROR_JSON:
         return True
     tmp = USERS_PATH + ".tmp"
@@ -1348,6 +1454,23 @@ def _persist_users(users, touched=None):
         json.dump({"users": users}, f, ensure_ascii=False)
     os.replace(tmp, USERS_PATH)
     return True
+
+
+def _find_row(users, name_key, uid=None):
+    """Строка человека: по ID, если он известен, — и ТОЛЬКО по нему. Имя — запасной путь для
+    вызовов без сессии (тесты, посев); ручки с сессией всегда передают `uid`, потому что по имени
+    у тёзок найдётся не тот человек (docs/IDENTITY.md)."""
+    if uid:
+        u = str(uid).strip()
+        return next((x for x in users if str(x.get("id") or "") == u), None)
+    return next((x for x in users if str(x.get("name", "")).strip().lower() == name_key), None)
+
+
+def get_user_by_id(uid):
+    u = str(uid or "").strip()
+    if not u:
+        return None
+    return next((x for x in _read_users() if str(x.get("id") or "") == u), None)
 
 
 def get_user(name):
@@ -1415,9 +1538,9 @@ def _clean_persona(p):
     return out
 
 
-def update_user(name, patch):
+def update_user(name, patch, uid=None):
     key = str(name or "").strip().lower()
-    if not key or not isinstance(patch, dict):
+    if (not key and not uid) or not isinstance(patch, dict):
         return {"ok": False, "error": "name and patch required"}
     clean = {k: v for k, v in patch.items() if k in _PATCH_FIELDS}
     # update_user does a blind row.update(), so every free-text field a person can type without any
@@ -1428,6 +1551,14 @@ def update_user(name, patch):
                 clean[_k] = clean[_k][:_cap]
             else:
                 clean.pop(_k)
+    # Настрой сравнивается строкой: слово вне словаря ничему не противоположно и ни с чем не
+    # совпадает — оно молча гасит признак вместо того, чтобы его задать. Чужое слово не пишем.
+    if "vibe" in clean:
+        _v = kvibe.clean(clean["vibe"])
+        if _v:
+            clean["vibe"] = _v
+        else:
+            clean.pop("vibe")
     if "country" in clean:
         if isinstance(clean["country"], str) and clean["country"].strip():
             clean["country"] = clean["country"].strip()[:80]
@@ -1443,7 +1574,7 @@ def update_user(name, patch):
         return {"ok": False, "error": "no editable fields in patch"}
     with _REG_LOCK:
         users = _read_users()
-        row = next((x for x in users if str(x.get("name", "")).strip().lower() == key), None)
+        row = _find_row(users, key, uid)
         if row is None:
             return {"ok": False, "error": "unknown user"}
         if isinstance(clean.get("interests"), list):
@@ -1461,7 +1592,249 @@ def update_user(name, patch):
     return {"ok": True, "user": row}
 
 
-def confirm_interest(name, token, owner_key=""):
+def _purge_in_matching(uid):
+    """Стереть следы человека в матчинге: интенты, переписку, заявки, планы, места в группах, файлы
+    голосовых. Зовётся ДО удаления строки — без неё матчинг уже не узнаёт человека по id (повтор
+    по сырому id он принимает, но первый проход — здесь). Ручка внутренняя: шлюз её закрывает,
+    сюда ходим напрямую."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(config.MATCH_URL + "/api/agent/admin/purge",
+                                     data=json.dumps({"id": uid}).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read().decode("utf-8") or "{}")
+    except Exception as e:
+        return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:120])}
+
+
+def _drop_photo(uid):
+    if re.match(r"^[A-Za-z0-9_-]{1,64}$", str(uid or "")):
+        try:
+            os.remove(os.path.join(PHOTOS_DIR, "%s.jpg" % uid))
+            return True
+        except FileNotFoundError:
+            return False
+        except Exception as e:
+            print("[account] фото не удалено: %s: %s" % (type(e).__name__, str(e)[:80]), flush=True)
+    return False
+
+
+def delete_account(owner_key):
+    """Стереть человека целиком: его строку в популяции и сам аккаунт с сессиями.
+
+    ЦЕЛЬ ОПРЕДЕЛЯЕТ СЕССИЯ, а не тело запроса — по тому же правилу, что и `my_profile_name`:
+    подставить чужое имя физически нечем.
+
+    Порядок важен. Сначала строка: пока она в популяции, человека находит подбор, и оборвись мы на
+    середине — остался бы профиль без владельца, невидимый хозяину и живой для всех остальных.
+    Аккаунт удаляется вторым: он лишь ключ ко входу, и лишний аккаунт без строки безвреден.
+
+    Удаляем НАСОВСЕМ, а не помечаем флагом. Пометка означала бы, что данные лежат дальше, а человек
+    об этом не знает; вдобавок каждый читатель популяции обязан был бы помнить про этот флаг, и
+    первый забывший вернул бы удалённого в выдачу.
+    """
+    key = str(owner_key or "").strip()
+    if not key:
+        return {"ok": False, "error": "sign in required"}
+    # Durable barrier before slow cleanup. The existing admin/delete route can
+    # retry a crashed deletion; sign-in and product auth reject this marker.
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        account = accs.get(key)
+        if not isinstance(account, dict):
+            return {"ok": True, "profile": False, "account": False}
+        account = dict(account)
+        account["deleting"] = True
+        accs[key] = account
+        _write_accounts(accs)
+    # Only the explicit canary can own KYC evidence. Keep unrelated account
+    # deletion independent from the new KYC store; existing ID purge stays.
+    import age_rollout
+    age_rollout.begin_delete_account(key, account)
+    age_rollout.delete_account(key, account)
+    mine = my_profile_row(key)
+    gone_row = False
+    purged, photo = None, False
+    if mine is not None and str(mine.get("id") or ""):
+        # СНАЧАЛА — всё, что человек оставил вокруг анкеты (аудит 27.09.2026: раньше удалялись
+        # только строка и учётка, а интенты оставались на карте, фото — по прямой ссылке).
+        # Стирание не удалось — удаление всё равно идёт: человек просил удалить, а повтор по id
+        # сделает панель; id пишем в журнал именно для этого.
+        purged = _purge_in_matching(str(mine.get("id")))
+        if not purged.get("ok"):
+            print("[account] стирание в матчинге не удалось для id=%s: %s — повторить из панели"
+                  % (mine.get("id"), purged.get("error")), flush=True)
+        photo = _drop_photo(str(mine.get("id")))
+    if mine is not None:
+        with _REG_LOCK:
+            users = _read_users()
+            # ТОЛЬКО СВОЯ СТРОКА, по id. Раньше удалялись все строки с этим именем — то есть
+            # заодно и анкеты тёзок, которые к этому аккаунту не имеют никакого отношения.
+            uid = str(mine.get("id") or "")
+            keep = [u for u in users if not (uid and str(u.get("id") or "") == uid)]
+            gone_row = len(keep) != len(users)
+            if gone_row:
+                # Файл переписываем целиком (в нём строки больше нет), а базе говорим прямо, что
+                # удалить: `save_users` строки не убирает, она их вписывает, и без этого вызова
+                # человек исчез бы из файла, оставшись в базе — то есть в выдаче.
+                if db.ENABLED:
+                    try:
+                        db.delete_user(uid=uid)
+                    except Exception:
+                        raise UserStorageUnavailable() from None
+                tmp = USERS_PATH + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({"users": keep}, f, ensure_ascii=False)
+                os.replace(tmp, USERS_PATH)
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        live = accs.get(key)
+        gone_acc = bool(isinstance(live, dict) and live.get("created") == account.get("created"))
+        if gone_acc:
+            accs.pop(key, None)
+            _write_accounts(accs)
+    # Saved incarnation makes the final cleanup idempotent and recreation-safe.
+    age_rollout.delete_account(key, account)
+    print("[account] удалён аккаунт: строка=%s аккаунт=%s матчинг=%s фото=%s"
+          % (gone_row, gone_acc, bool(purged and purged.get("ok")), photo), flush=True)
+    return {"ok": True, "profile": gone_row, "account": gone_acc,
+            "purged": (purged or {}).get("purged") if purged and purged.get("ok") else None}
+
+
+# ────────────────────────────────────────────────────────────────────── модерация: панель
+# Почему это здесь, а не в панели. accounts.json переписывается ЦЕЛИКОМ, чтением-правкой-записью,
+# и делает это только этот процесс под своим замком. Второй пишущий (панель) не виден этому
+# замку: обычный трафик обновляет отметку «последний вход» примерно раз в час на живую сессию, и
+# запись панели, попавшая в это окно, была бы молча отменена — отозванная сессия вернулась бы.
+# Поэтому панель ПРОСИТ по HTTP, а делает всё этот процесс.
+
+def admin_accounts(q=""):
+    """Учётки для панели: почта, имя, когда заведена, сколько живых входов. Без хэшей и токенов."""
+    ql = str(q or "").strip().lower()
+    out = []
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        for key, acc in (accs or {}).items():
+            if not isinstance(acc, dict):
+                continue
+            email = str(acc.get("email") or key)
+            nm = str(acc.get("name") or "")
+            if ql and ql not in email.lower() and ql not in nm.lower() and ql not in str(key).lower():
+                continue
+            sess = acc.get("sessions") or {}
+            out.append({"key": key, "email": email, "name": nm,
+                        "created": acc.get("created") or 0,
+                        "sessions": len(sess) if isinstance(sess, dict) else 0,
+                        # Хэш не секрет (по нему нельзя войти), но показываем только начало —
+                        # его хватает, чтобы отличить один вход от другого и снять именно его.
+                        "session_ids": sorted([h[:10] for h in (sess or {})])[:10],
+                        "verified": bool(acc.get("verified"))})
+    out.sort(key=lambda r: -(r.get("created") or 0))
+    return {"ok": True, "count": len(out), "accounts": out[:300]}
+
+
+def admin_revoke(account_key, session_hash=None):
+    """Отозвать вход: один (по началу хэша) или все.
+
+    Отозвать — значит стереть строку сессии. Никакой сервис не держит долгоживущего кэша сессий:
+    онбординг перечитывает файл, а общий кэш в shared/kleal_auth привязан ко времени изменения
+    файла — то есть сама правка его и сбрасывает. Человек оказывается разлогинен за один запрос.
+    """
+    key = str(account_key or "").strip()
+    if not key:
+        return {"ok": False, "error": "no account"}
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        acc = accs.get(key)
+        if not isinstance(acc, dict):
+            return {"ok": False, "error": "unknown account"}
+        sess = acc.get("sessions") or {}
+        if session_hash:
+            hits = [h for h in sess if h.startswith(str(session_hash))]
+            if len(hits) != 1:
+                return {"ok": False, "error": "unknown session" if not hits else "ambiguous session"}
+            sess.pop(hits[0], None)
+            gone = 1
+        else:
+            gone = len(sess)
+            acc["sessions"] = {}
+        _write_accounts(accs)
+        left = len(acc.get("sessions") or {})
+    print("[account] отозван вход: аккаунт=%s снято=%d осталось=%d" % (key, gone, left), flush=True)
+    return {"ok": True, "revoked": gone, "left": left}
+
+
+def admin_resolve(account_key):
+    """Кого именно удалит панель. Отдельным запросом — ПЕРЕД удалением, чтобы показать человека.
+
+    Связь «учётка → строка в популяции» держится полем `owner`. Когда она не разрешается ровно в
+    одну строку, удалять нельзя: по имени строки не различимы (база держит человека по имени, и
+    два тёзки для неё один), и панель молча стёрла бы не того. Тогда честный ответ — отказ со
+    списком кандидатов, а не догадка.
+    """
+    key = str(account_key or "").strip()
+    if not key:
+        return {"ok": False, "error": "no account"}
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        acc = accs.get(key)
+    if not isinstance(acc, dict):
+        return {"ok": False, "error": "unknown account"}
+    users = _read_users()
+    owned = [u for u in users if str(u.get("owner") or "") == key]
+    info = {"ok": True, "key": key, "email": acc.get("email") or key,
+            "account_name": acc.get("name") or "",
+            "sessions": len(acc.get("sessions") or {}),
+            "created": acc.get("created") or 0}
+    if len(owned) == 1:
+        u = owned[0]
+        info.update({"link": "owner", "name": u.get("name"), "id": u.get("id"),
+                     "row": {"age": u.get("age"), "area": u.get("area") or u.get("city"),
+                             "interests": (u.get("interests") or [])[:6],
+                             "source": u.get("source") or ""}})
+        return info
+    if len(owned) > 1:
+        info.update({"ok": False, "error": "ambiguous", "link": "owner",
+                     "candidates": [{"name": u.get("name"), "id": u.get("id")} for u in owned[:8]]})
+        return info
+    # Слабая связь по имени — только когда имя единственное во всей популяции.
+    nm = str(acc.get("name") or "").strip().lower()
+    same = [u for u in users if str(u.get("name", "")).strip().lower() == nm] if nm else []
+    if len(same) == 1:
+        u = same[0]
+        info.update({"link": "legacy-name", "name": u.get("name"), "id": u.get("id"),
+                     "warning": "связь по имени, а не по владельцу",
+                     "row": {"age": u.get("age"), "area": u.get("area") or u.get("city"),
+                             "interests": (u.get("interests") or [])[:6],
+                             "source": u.get("source") or ""}})
+        return info
+    info.update({"link": "none", "name": "", "id": "",
+                 "warning": "строка в популяции не найдена — удалится только учётка",
+                 "candidates": [{"name": u.get("name"), "id": u.get("id")} for u in same[:8]]})
+    return info
+
+
+def admin_delete_account(account_key):
+    """Удалить учётку целиком: сессии, сама учётка, строка в популяции.
+
+    Порядок ровно тот же, что у самостоятельного удаления: сперва строка — пока она в популяции,
+    человека находит подбор, и обрыв на середине оставил бы профиль без владельца, невидимый
+    хозяину и живой для всех остальных. Учётка вторым: без строки она безвредна.
+
+    Данные в хранилище матчинга — переписки, встречи, приглашения — стирает САМ матчинг: снаружи
+    их удалить нельзя, он держит хранилище в памяти и вернул бы всё обратно первой же записью.
+    Панель зовёт его отдельно и показывает результат вместе с этим.
+    """
+    info = admin_resolve(account_key)
+    if not info.get("ok"):
+        return info
+    res = delete_account(account_key)
+    res["resolved"] = {"name": info.get("name"), "id": info.get("id"), "link": info.get("link")}
+    return res
+
+
+def confirm_interest(name, token, owner_key="", uid=None):
     """Persist one schema-validated proposal after its owner explicitly confirms it."""
     rec = interest_norm.mark_confirmed(token, owner=owner_key)
     if not rec:
@@ -1470,14 +1843,14 @@ def confirm_interest(name, token, owner_key=""):
     if not canonical:
         return {"ok": False, "error": "invalid interest proposal"}
     key = str(name or "").strip().lower()
-    if not key:
+    if not key and not uid:
         # During onboarding no user row exists yet. The receipt travels only in device state and is
         # validated again by register_profile before the first database write.
         return {"ok": True, "canonical": canonical, "label": rec.get("label"), "token": token,
                 "persisted": False}
     with _REG_LOCK:
         users = _read_users()
-        row = next((x for x in users if str(x.get("name", "")).strip().lower() == key), None)
+        row = _find_row(users, key, uid)
         if row is None:
             return {"ok": True, "canonical": canonical, "label": rec.get("label"), "token": token,
                     "persisted": False}
@@ -1514,10 +1887,20 @@ def _owned_row(users, owner_key):
             acc = _read_accounts().get(owner_key) or {}
     except Exception:
         acc = {}
+    # `person_id` — id строки, записанный в аккаунт при регистрации/привязке (с 26.09.2026).
+    pid = str(acc.get("person_id") or "").strip()
+    if pid:
+        hit = next((x for x in users if str(x.get("id") or "") == pid), None)
+        if hit is not None:
+            return hit
+    # По имени — ТОЛЬКО строка без владельца и только единственная с этим именем. Строку, у
+    # которой уже есть владелец, по имени не берём никогда: это чужой человек, просто тёзка.
     attached = str(acc.get("name") or "").strip().lower()
     if not attached:
         return None
-    return next((x for x in users if str(x.get("name", "")).strip().lower() == attached), None)
+    legacy = [x for x in users if not x.get("owner")
+              and str(x.get("name", "")).strip().lower() == attached]
+    return legacy[0] if len(legacy) == 1 else None
 
 
 def _fresh_uid(owner_key, users):
@@ -1537,6 +1920,20 @@ def _fresh_uid(owner_key, users):
         if uid not in taken:
             return uid
     return "on" + base
+
+
+def my_profile_row(owner_key):
+    """Строка, принадлежащая ЭТОМУ аккаунту, или None. Личность — её `id` (docs/IDENTITY.md)."""
+    if not str(owner_key or "").strip():
+        return None
+    try:
+        return _owned_row(_read_users(), owner_key)
+    except UserStorageUnavailable:
+        # Deletion must retain its durable barrier for operator recovery, not
+        # interpret a failed read as "no row" and remove the account alone.
+        raise
+    except Exception:
+        return None
 
 
 def my_profile_name(owner_key):
@@ -1598,14 +1995,13 @@ def register_profile(profile, owner_key=""):
         raise ValueError("unconfirmed interests: " + ", ".join(invalid[:6]))
     u["interests"] = _canon_interests(u.get("interests")) or u.get("interests")
     with _REG_LOCK:
-        try:
-            with open(USERS_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            users = data.get("users") if isinstance(data, dict) else data
-            if not isinstance(users, list):
-                users = []
-        except Exception:
-            users = []
+        # И ЗДЕСЬ ХРАНИЛИЩЕ, А НЕ ФАЙЛ — по той же причине, что и в настройках приёма, но с более
+        # дорогой ценой: по этому списку ищется ПРЕЖНЯЯ строка человека. Читая замороженный снимок,
+        # повторный проход анкеты не находил того, кто завёлся после перехода на базу, выдавал ему
+        # НОВЫЙ идентификатор — и отвязывал от него фотографию (photos/<id>.jpg) и ссылки в
+        # хранилище матчинга. Заодно `_fresh_uid` считался по неполной популяции и мог выдать id,
+        # уже занятый в базе.
+        users = _read_users()
         prior = _owned_row(users, owner_key)
         if prior is not None:
             # ИДЕНТИФИКАТОР СТАРОЙ СТРОКИ СОХРАНЯЕТСЯ, и это не косметика: по нему лежит файл
@@ -1626,6 +2022,16 @@ def register_profile(profile, owner_key=""):
             u["photo"] = photo_url(u["id"])
         users.append(u)
         _persist_users(users, touched=u)
+    # Аккаунт запоминает, КАКАЯ строка его: по id, а не по имени. Имя в аккаунте остаётся для
+    # показа и для самых старых строк без владельца (см. _owned_row).
+    try:
+        with _ACC_LOCK:
+            accs = _read_accounts()
+            if owner_key in accs and accs[owner_key].get("person_id") != u["id"]:
+                accs[owner_key]["person_id"] = u["id"]
+                _write_accounts(accs)
+    except Exception as e:
+        print("[register] person_id не записан в аккаунт: %s" % str(e)[:120], flush=True)
     interest_norm.validate_confirmations(confirmed_input, confirmations, consume=True, owner=owner_key)
     return u
 
@@ -1718,12 +2124,20 @@ def _bearer(handler):
 
 
 def _client_ip(handler):
-    """Источник запроса для счётчика частоты. За шлюзом видно только его адрес, поэтому сперва
-    смотрим X-Forwarded-For — иначе весь мир считался бы одним отправителем."""
+    """Источник запроса для счётчика частоты. За шлюзом видно только его адрес — нужен адрес,
+    который видел nginx.
+
+    X-Real-IP ставит САМ nginx (`$remote_addr`) и затирает присланный клиентом. Первый адрес
+    X-Forwarded-For — наоборот, пишет клиент: nginx лишь дописывает настоящий В КОНЕЦ
+    (`$proxy_add_x_forwarded_for`). До 27.09.2026 брался первый, и лимит «20 кодов в час с
+    источника» обходился новым выдуманным адресом в каждом запросе."""
     try:
-        fwd = (handler.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        real = (handler.headers.get("X-Real-IP") or "").strip()
+        if real:
+            return real[:64]
+        fwd = [x.strip() for x in (handler.headers.get("X-Forwarded-For") or "").split(",") if x.strip()]
         if fwd:
-            return fwd[:64]
+            return fwd[-1][:64]
         return str(handler.client_address[0])[:64]
     except Exception:
         return "?"
@@ -1731,6 +2145,9 @@ def _client_ip(handler):
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
+        import monetization_http
+        if monetization_http.handle(self):
+            return
         if self.path.split("?")[0] == "/health":
             return send_json(self, 200, {"service": "onboarding", "ok": True,
                                          "storage": db.MODE})
@@ -1764,10 +2181,102 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "public, max-age=86400")
             self.send_header("Content-Length", str(len(b)))
             self.end_headers(); self.wfile.write(b)
+        elif self.path.split("?")[0] == "/api/auth/google/start":
+            # Первый шаг: уводим системный браузер к Google. Адрес возврата приложение присылает
+            # своим (`exp://…` в Expo Go, `kleal://…` в сборке) — и он обязан пройти белый список,
+            # иначе ручка становится открытым перенаправителем.
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            back = (q.get("redirect") or [""])[0]
+            if not gauth.configured():
+                return send_json(self, 200, {"ok": False, "error": "google_not_configured"})
+            if not gauth.safe_redirect(back):
+                return send_json(self, 200, {"ok": False, "error": "bad_redirect"})
+            self.send_response(302)
+            self.send_header("Location", gauth.auth_url(gauth.new_state(back)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+        elif self.path.split("?")[0] == "/api/auth/google/callback":
+            # Второй шаг: Google вернулся к нам. Меняем код на почту, заводим сессию и уводим
+            # браузер обратно в приложение — с ОДНОРАЗОВОЙ меткой, а не с токеном: адресная строка
+            # оседает в истории браузера и в журналах, и сессии на 90 дней там не место.
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            back, params = google_login((q.get("code") or [""])[0], (q.get("state") or [""])[0])
+            if not back:
+                return send_json(self, 400, {"ok": False, "error": params.get("error") or "state"})
+            self.send_response(302)
+            self.send_header("Location", gauth.back_to_app(back, **params))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+        elif self.path.split("?")[0] == "/api/auth/apple/start":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            back = (q.get("redirect") or [""])[0]
+            if not aauth.configured():
+                return send_json(self, 200, {"ok": False, "error": "apple_not_configured"})
+            if not aauth.safe_redirect(back):
+                return send_json(self, 200, {"ok": False, "error": "bad_redirect"})
+            self.send_response(302)
+            self.send_header("Location", aauth.auth_url(aauth.new_state(back)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+        elif self.path.split("?")[0] == "/api/auth/apple/available":
+            send_json(self, 200, {"ok": True, "enabled": aauth.configured()})
+        elif self.path.split("?")[0] == "/.well-known/apple-developer-domain-association.txt":
+            # Apple пускает вход только с подтверждённого домена и проверяет это ФАЙЛОМ по этому
+            # адресу. Отдаём его отсюда: nginx знает только acme-challenge, а всё прочее и так
+            # приходит сюда через шлюз — новой строки в конфиге не нужно.
+            path = str(os.environ.get("KLEAL_APPLE_DOMAIN_FILE") or "").strip()
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read()
+            except Exception:
+                return send_json(self, 404, {"ok": False, "error": "no domain file"})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        elif self.path.split("?")[0] == "/api/auth/google/available":
+            # Экран входа спрашивает заранее: показывать кнопку или нет. Кнопка, которая отвечает
+            # «не настроено», хуже отсутствующей.
+            send_json(self, 200, {"ok": True, "enabled": gauth.configured()})
         else:
             send_json(self, 404, {})
 
+    def _apple_callback(self):
+        """Возврат от Apple. Он приходит POST-ФОРМОЙ (`response_mode=form_post`) — так устроен его
+        ответ, как только просишь имя и почту. Тело читаем сами: `read_json` тут не подходит, а
+        позвать его и потом разобрать форму нельзя — он уже прочтёт поток до конца.
+
+        Отвечаем 303: на POST правильный переход — «смотри в другом месте», и браузер уйдёт туда
+        методом GET, а не повторит POST в приложение."""
+        try:
+            ln = int(self.headers.get("Content-Length", "0") or 0)
+        except (TypeError, ValueError):
+            ln = 0
+        raw = self.rfile.read(ln).decode("utf-8", "replace") if ln else ""
+        form = {k: (v[0] if v else "") for k, v in urllib.parse.parse_qs(raw).items()}
+        back, params = apple_login(form.get("code"), form.get("state"), form.get("user") or "")
+        if not back:
+            return send_json(self, 400, {"ok": False, "error": params.get("error") or "state"})
+        self.send_response(303)
+        self.send_header("Location", aauth.back_to_app(back, **params))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def do_POST(self):
+        try:
+            return self._do_POST()
+        except UserStorageUnavailable:
+            # Some read endpoints intentionally have no broad error handler.
+            # Keep a failed authoritative identity read a structured failure.
+            return send_json(self, 503, {"ok": False, "error": "storage unavailable"})
+
+    def _do_POST(self):
+        import monetization_http
+        if monetization_http.handle(self):
+            return
+        if self.path.split("?")[0] == "/api/auth/apple/callback":
+            return self._apple_callback()
         body = read_json(self)
         # ONE canonical name per endpoint. Every route used to be spelled out twice — under
         # /api/onboarding/* and under the /api/v2/* alias left from the kleal_v2 era — and the
@@ -1798,25 +2307,39 @@ class H(BaseHTTPRequestHandler):
                 send_json(self, 200, v2_summary(prof, body.get("lang") or "ru"))
             except Exception as e:
                 send_json(self, 200, {"summary": "", "error": str(e)[:200]})
-        elif p == "/api/onboarding/signup":
-            return send_json(self, 200, signup(body.get("login"), body.get("password"), body.get("name")))
-        elif p == "/api/onboarding/signin":
-            return send_json(self, 200, signin(body.get("login"), body.get("password")))
+        elif p in ("/api/onboarding/signup", "/api/onboarding/signin"):
+            # ВХОД ПО ПАРОЛЮ ЗАКРЫТ (аудит 27.09.2026). Экрана для него нет с 14.09, вход — только
+            # кодом из письма, через Google или Apple. Ручки же оставались открытыми: signup без
+            # всякого лимита заводил учётки (e2e_smoke заводил по одной в проде на каждый прогон —
+            # их набралось 263), signin без ограничения попыток отдавал сохранённую анкету.
+            return send_json(self, 410, {"ok": False, "error": "gone",
+                                         "note": "password sign-in is closed; use the email code"})
         elif p == "/api/onboarding/attach":
             # Привязка по СЕССИИ, если она есть, и по логину иначе. Второй путь оставлен только для
             # старых сборок на телефонах: они про сессии не знают, а разлогинивать их выкладкой
             # нельзя. Новый клиент всегда шлёт токен.
+            # Только по сессии. Привязка по одному `login` из тела позволяла кому угодно, зная чужую
+            # почту, переписать имя и анкету чужого аккаунта. Старых сборок, не знающих про сессии,
+            # нет: приложение грузится с дев-сервера всегда свежим.
             tok = _bearer(self)
-            if tok:
-                return send_json(self, 200, attach_profile_by_token(tok, body.get("name"),
-                                                                    body.get("profile")))
-            return send_json(self, 200, attach_profile(body.get("login"), body.get("name"), body.get("profile")))
+            if not tok:
+                return send_json(self, 200, {"ok": False, "error": "sign in required"})
+            return send_json(self, 200, attach_profile_by_token(tok, body.get("name"),
+                                                                body.get("profile")))
         elif p == "/api/auth/code/request":
             return send_json(self, 200, request_code(body.get("email"), body.get("lang") or "en",
                                                      _client_ip(self)))
         elif p == "/api/auth/code/verify":
             return send_json(self, 200, verify_code(body.get("email"), body.get("code"),
                                                     body.get("lang") or "en"))
+        elif p in ("/api/auth/oauth/exchange", "/api/auth/apple/exchange", "/api/auth/google/exchange"):
+            # Третий шаг: приложение вернулось из браузера с меткой и меняет её на сессию. Метка
+            # одноразовая и живёт две минуты (`oauth_common.TICKET_TTL`). Имя ручки для Google и
+            # Apple разное только ради читаемости: хранилище меток одно на оба входа.
+            data = gauth.take_ticket(body.get("ticket"))
+            if not data:
+                return send_json(self, 200, {"ok": False, "error": "expired"})
+            return send_json(self, 200, data)
         elif p == "/api/auth/session":
             # «Кто я» по токену. Клиент зовёт на старте: сессия могла истечь или быть погашена.
             acc = session_owner(_bearer(self))
@@ -1829,6 +2352,21 @@ class H(BaseHTTPRequestHandler):
         elif p == "/api/waitlist":
             return send_json(self, 200, join_waitlist(body.get("email"), body.get("source"),
                                                       _client_ip(self)))
+        elif p.startswith("/api/auth/admin/"):
+            # Ручки панели. Токен проверяется здесь же: снаружи этот путь закрыт в nginx, но
+            # правило доступа обязано жить в коде, а не только в конфиге веб-сервера.
+            if not kleal_auth.admin_ok(self):
+                return send_json(self, 401, {"ok": False, "error": "unauthorized"})
+            if p == "/api/auth/admin/accounts":
+                return send_json(self, 200, admin_accounts((body or {}).get("q") or ""))
+            if p == "/api/auth/admin/revoke":
+                return send_json(self, 200, admin_revoke((body or {}).get("account"),
+                                                         (body or {}).get("session")))
+            if p == "/api/auth/admin/resolve":
+                return send_json(self, 200, admin_resolve((body or {}).get("account")))
+            if p == "/api/auth/admin/delete":
+                return send_json(self, 200, admin_delete_account((body or {}).get("account")))
+            return send_json(self, 404, {"ok": False, "error": "unknown admin route"})
         elif p == "/api/auth/signout":
             return send_json(self, 200, sign_out(_bearer(self)))
         elif p == "/api/onboarding/register":
@@ -1838,16 +2376,32 @@ class H(BaseHTTPRequestHandler):
                 owner = session_owner(_bearer(self))
                 send_json(self, 200, {"ok": True, "user": register_profile(
                     prof, (owner or {}).get("_key") or "")})
+            except UserStorageUnavailable:
+                raise
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         elif p == "/api/onboarding/profile":
             # Своя строка и только своя: цель берётся из сессии, `body["name"]` игнорируется.
             _owner = session_owner(_bearer(self))
-            _mine = my_profile_name((_owner or {}).get("_key") or "")
-            if not _mine:
+            _row = my_profile_row((_owner or {}).get("_key") or "")
+            if not _row:
                 return send_json(self, 200, {"ok": False, "error": "sign in required"})
-            _u = get_user(_mine)
+            _u = dict(_row)
+            # НАСТРОЙ ОТДАЁМ ВСЕГДА, ДАЖЕ ЕСЛИ В СТРОКЕ ЕГО НЕТ. Поле руками не заполняется:
+            # подбор выводит его из теста характера при загрузке карточек (shared/vibe.py), и
+            # человек не мог увидеть, каким его видят, — экран «Твоя личность» показывал ответы
+            # теста, но не то единственное, что из них уходит в поиск. Строку не трогаем: копия
+            # только для ответа, выбор руками по-прежнему сильнее вывода.
+            if isinstance(_u, dict) and not str(_u.get("vibe") or "").strip():
+                _derived = kvibe.from_persona(_u)
+                if _derived:
+                    _u = dict(_u, vibe=_derived)
             _resp = {"user": _u}
+            # Отдельным ключом — ВЫВЕДЕН настрой или выбран руками: экран пишет об этом честно
+            # («выведено из твоих ответов» против «выбрано тобой»), а по самому полю их не
+            # различить.
+            if isinstance(_u, dict) and _u.get("vibe"):
+                _resp["vibeDerived"] = not str((_row or {}).get("vibe") or "").strip()
             # Подписи интересов на языке интерфейса. Ключи в строке английские; читатель
             # по-русски или по-испански получает словарь «ключ -> подпись» и рисует его.
             _lng = str(body.get("lang") or "").lower()
@@ -1871,19 +2425,37 @@ class H(BaseHTTPRequestHandler):
             if not owner:
                 return send_json(self, 200, {"ok": False, "error": "no session"})
             requested_name = str(body.get("name") or "").strip()
-            owned_name = str(owner.get("name") or "").strip()
+            _row = my_profile_row(owner.get("_key") or "")
+            owned_name = str((_row or {}).get("name") or owner.get("name") or "").strip()
             if requested_name and owned_name and requested_name.lower() != owned_name.lower():
                 return send_json(self, 200, {"ok": False, "error": "profile does not belong to session"})
+            # Своя строка — по id из сессии; до регистрации её нет, и подтверждение едет в анкете.
             send_json(self, 200, confirm_interest(
-                requested_name, body.get("token"), owner.get("_key") or ""))
+                requested_name if _row else "", body.get("token"), owner.get("_key") or "",
+                uid=(_row or {}).get("id")))
         elif p == "/api/onboarding/profile-update":
             try:
                 owner = session_owner(_bearer(self))
-                mine = my_profile_name((owner or {}).get("_key") or "")
-                if not mine:
+                _row = my_profile_row((owner or {}).get("_key") or "")
+                if not _row:
                     return send_json(self, 200, {"ok": False, "error": "sign in required"})
-                send_json(self, 200, update_user(mine,
-                                                 body.get("patch") if isinstance(body.get("patch"), dict) else {}))
+                send_json(self, 200, update_user(_row.get("name"),
+                                                 body.get("patch") if isinstance(body.get("patch"), dict) else {},
+                                                 uid=_row.get("id")))
+            except UserStorageUnavailable:
+                raise
+            except Exception as e:
+                send_json(self, 200, {"ok": False, "error": str(e)[:200]})
+        elif p == "/api/onboarding/delete-account":
+            # Согласие спрашивает экран, и спрашивает дважды; сервер лишь проверяет, что просит
+            # владелец. Тела у запроса нет вовсе — удалять можно только себя.
+            try:
+                owner = session_owner(_bearer(self))
+                if not owner:
+                    return send_json(self, 200, {"ok": False, "error": "sign in required"})
+                send_json(self, 200, delete_account(owner.get("_key") or ""))
+            except UserStorageUnavailable:
+                raise
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         elif p == "/api/onboarding/receiving":
@@ -1891,11 +2463,14 @@ class H(BaseHTTPRequestHandler):
             # {name} alone reads the current policy; whitelisted fields update it atomically.
             try:
                 owner = session_owner(_bearer(self))
-                mine = my_profile_name((owner or {}).get("_key") or "")
-                if not mine:
+                _row = my_profile_row((owner or {}).get("_key") or "")
+                if not _row:
                     return send_json(self, 200, {"ok": False, "error": "sign in required"})
-                send_json(self, 200, update_receiving(mine,
-                                                      body.get("receiving") if isinstance(body.get("receiving"), dict) else {}))
+                send_json(self, 200, update_receiving(_row.get("name"),
+                                                      body.get("receiving") if isinstance(body.get("receiving"), dict) else {},
+                                                      uid=_row.get("id")))
+            except UserStorageUnavailable:
+                raise
             except Exception as e:
                 send_json(self, 200, {"ok": False, "error": str(e)[:200]})
         else:
@@ -1905,6 +2480,25 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+# Панели нужен список ВСЕХ инструкций сервиса, а не только тех, что успели
+# прочитаться. Объявляем их при старте: ни одного обращения к модели это не стоит,
+# зато промпт виден в панели сразу после перезапуска, а не после первого разговора.
+try:
+    # `interest_i18n` этот сервис импортирует ВНУТРИ функции перевода, поэтому здесь его надо
+    # позвать явно. Без этого объявление падало на неизвестном имени целиком — и в панели не
+    # появлялось НИ ОДНОГО промпта онбординга, хотя виноват был один из четырёх.
+    import interest_i18n as _i18n
+    settings.announce([
+        ("onboarding.funnel", FUNNEL_PROMPT),
+        ("onboarding.extract", EXTRACT_V2),
+        ("onboarding.summary", SUMMARY_PROMPT),
+        ("shared.translate_interests", _i18n.TRANSLATE_PROMPT),
+    ])
+except Exception:
+    pass
+
+
 if __name__ == "__main__":
     print("Kleal onboarding-service on http://127.0.0.1:%d  (LLM via llm-service)" % PORT)
-    ThreadingHTTPServer((config.BIND_HOST, PORT), H).serve_forever()
+    import serving  # очередь подключений на 128, а не на 5 — см. shared/serving.py
+    serving.KlealServer((config.BIND_HOST, PORT), H).serve_forever()

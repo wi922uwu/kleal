@@ -20,8 +20,13 @@ def check(name, cond):
 
 def run():
     # ---- канон загружен ----
-    check("CN1 канон доступен (405 нод, ~1200 алиасов, 560 рёбер)",
-          CN.AVAILABLE and len(CN.NODES) == 405 and len(CN.ALIAS) > 1000)
+    # Порог, а не равенство. Ровное «405 нод» означало, что тест краснеет от любого ЗАКОННОГО
+    # пополнения таксономии — а пополняется она через canonical_extra.json постоянно. Сторожить
+    # надо то, ради чего проверка написана: канон загрузился и не усох. Числа — нижние границы,
+    # снятые с состояния, которое считали здоровым.
+    check("CN1 канон доступен и не усох (>=405 нод, >1000 алиасов; сейчас %d/%d)"
+          % (len(CN.NODES), len(CN.ALIAS)),
+          CN.AVAILABLE and len(CN.NODES) >= 405 and len(CN.ALIAS) > 1000)
     check("CN2 resolve alias -> node", CN.resolve_node("coffee") == "I_coffee_chat" and CN.resolve_node("dota") == "I_dota2")
     check("CN3 similarity по канон-иерархии (padel/tennis sibling)", CN.similarity_nodes("padel", "tennis") == 3)
     check("CN4 slots домена загружены", len(CN.slots_for_domain("social_meet")) >= 5)

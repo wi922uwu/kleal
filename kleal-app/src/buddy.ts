@@ -21,22 +21,55 @@ import { T } from './i18n';
 import { topicAcc } from './names';
 
 export const BUDDY = {
-  title: () => T('Kleal', 'Kleal'),
-  create: () => T('Создать', 'Create'),
-  placeholder: () => T('Сообщение…', 'Message…'),
-  /** Первая реплика, когда человек пришёл без текста. */
+  title: () => T('Kleal', 'Kleal', 'Kleal'),
+  create: () => T('Создать', 'Create', 'Crear'),
+  placeholder: () => T('Сообщение…', 'Message…', 'Mensaje…'),
+  /**
+   * Первая реплика, когда человек пришёл без текста. Обычный пузырь агента (GR.02 борда «0 · Create
+   * the intent»): разговор с Kleal свободный, и приветствие — его первая реплика, а не заголовок.
+   */
   hello: (name: string) =>
-    name ? T(`Привет, ${name}. О чём поговорим?`, `Hey ${name}. What's on your mind?`)
-         : T('Привет. О чём поговорим?', "Hey. What's on your mind?"),
-  offline: () => T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?'),
+    name ? T(`Привет, ${name}! Как проходит день? Чем хочется заняться?`,
+             `Hi ${name}! How’s your day going? What would you like to do?`,
+             `¡Hola, ${name}! ¿Qué tal tu día? ¿Qué te apetece hacer?`)
+         : T('Привет! Как проходит день? Чем хочется заняться?',
+             'Hi! How’s your day going? What would you like to do?',
+             '¡Hola! ¿Qué tal tu día? ¿Qué te apetece hacer?'),
+  /**
+   * GR.02: на распознанное желание Kleal отвечает вслух, а уже потом выезжает лист GR.03. Сервер на
+   * явную просьбу присылает пустой текст (окно и есть ответ) — без этой строки лист выезжал
+   * посреди молчания. Строка только на экране: в историю модели она не идёт, у сборщика своя
+   * затравка (см. packHistory).
+   */
+  letsCreate: () => T(
+    'Отличная идея! Давай создадим интент — задам пару коротких вопросов и найду людей.',
+    'Great idea! Let’s create an intent — I’ll ask a few quick things and find the people.',
+    '¡Gran idea! Creemos una propuesta: te haré un par de preguntas rápidas y buscaré a la gente.',
+  ),
+  offline: () => T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?', 'Perdí la conexión. ¿Lo repites?'),
+  /**
+   * Сервер не пускает без входа (401 sign_in_required, с 01.10.2026). Это не обрыв связи, и «повтори»
+   * тут не поможет — человеку нужен вход, и кнопка к нему стоит под репликой.
+   */
+  signIn: () => T('Чтобы поговорить со мной, нужно войти снова.', 'To talk to me, please sign in again.', 'Para hablar conmigo, vuelve a iniciar sesión.'),
+  signInBtn: () => T('Войти снова', 'Sign in again', 'Iniciar sesión de nuevo'),
 };
+/** 401 из обычного запроса (ApiError.status) или из потока (причина 'sign_in_required'). */
+export const needsSignIn = (e: any) => e === 'sign_in_required' || e?.status === 401;
 
 /** Всплывающее окно O.03. Появляется и по кнопке, и по распознанному триггеру — оно одно. */
 export const SHEET = {
-  title: () => T('С чего начнём?', 'Get started'),
-  create: () => T('Создать интент', 'Create Intent'),
-  keep: () => T('Продолжить разговор', 'Keep chatting'),
-  close: () => T('Закрыть', 'Close'),
+  /** GR.03: заголовок листа, вопрос и пояснение — копия кадра. */
+  title: () => T('Создать интент', 'Create an intent', 'Crear una propuesta'),
+  ask: () => T('Сделать из этого интент?', 'Turn this into an intent?', '¿Lo convertimos en una propuesta?'),
+  note: () => T(
+    'Kleal спросит, что, когда, где и с кем, — и найдёт людей. Это займёт около минуты.',
+    'Kleal asks what, when, where and who — then finds the people. It takes about a minute.',
+    'Kleal pregunta qué, cuándo, dónde y con quién, y luego encuentra a la gente. Lleva un minuto.',
+  ),
+  create: () => T('Создать интент', 'Create intent', 'Crear propuesta'),
+  keep: () => T('Продолжить разговор', 'Keep chatting', 'Sigue charlando'),
+  close: () => T('Закрыть', 'Close', 'Cerrar'),
 };
 
 /**
@@ -49,37 +82,105 @@ export const SHEET = {
  *
  * Предмета нет (сервер не смог назвать тему) — говорим общо, но по-прежнему предложением.
  */
-export function intentPhrase(res: any, fallback = ''): string {
+/*
+  ПРЕДМЕТ — ТОЛЬКО ОТ СЕРВЕРА, НИКОГДА НЕ СЫРОЙ ТЕКСТ. Здесь стоял запасной путь `fallback` — вся
+  реплика человека целиком: когда сервер не назвал предмет, окно говорило «Похоже, ты хочешь найти
+  компанию: хочу выпить кофе с кем-нибудь сегодня вечером». Это и было «кривое описание» с телефона.
+  Второй источник кривизны — форма «найти компанию: Кофе» с двоеточием: подпись, а не речь.
+*/
+function subjectOf(res: any): { role: string; subject: string } {
   const i = (res && res.intent) || {};
-  const role = String(i.role || '').toLowerCase();
-  const subject = String(i.subject || '').trim()
-    || String(fallback || '').trim();
+  return { role: String(i.role || '').toLowerCase(), subject: String(i.subject || '').trim() };
+}
+
+/**
+ * ЗАГОЛОВОК-ГЛАГОЛ ГЛАВНЕЕ СБОРКИ ИЗ ПРЕДМЕТА. Сервер пишет заголовок глаголом с дополнением —
+ * «Выпить кофе», «Посидеть с кофе и рыбачить», «Jugar al pádel», — и в «я думал, ты хочешь …» он
+ * встаёт как есть. Сборка «кто тоже за ${topicAcc(subject)}» склоняла только одно слово, и выходило
+ * «кто тоже за рыбалка и кофе» (снимок владельца 24.09.2026, 16:44). Не глагол — пусто, и работает
+ * прежняя сборка.
+ */
+function verbTitle(res: any): string {
+  const i = (res && res.intent) || {};
+  const t = String(i.title || i.activity || '').trim();
+  if (!t) return '';
+  const first = t.split(/\s+/)[0].toLowerCase();
+  const low = t[0].toLowerCase() + t.slice(1);
+  if (/(ть|ться|ти|чь|чься|тись)$/.test(first)) return low;                 // русский инфинитив
+  if (/(ar|er|ir|arse|erse|irse)$/.test(first) && /[a-záéíóúñ]/.test(first)) return low; // испанский
+  if (/^[a-z]+$/.test(first) && !/^(the|a|an)$/.test(first)) return first === 'to' ? low : `to ${low}`;
+  return '';
+}
+
+/** Фраза-дополнение для реплики агента: «…я думал, ты хочешь ПОГОВОРИТЬ ПРО КОФЕ». */
+export function intentPhrase(res: any, _fallback = ''): string {
+  const vt = verbTitle(res);
+  if (vt) return vt + T(' с кем-нибудь', ' with someone', ' con alguien');
+  const { role, subject } = subjectOf(res);
   if (!subject) {
-    return role === 'discuss' ? T('поговорить с кем-нибудь', 'to talk to someone')
-         : role === 'watch' ? T('посмотреть что-нибудь вместе', 'to watch something together')
-         : T('с кем-нибудь встретиться', 'to meet someone');
+    return role === 'discuss' ? T('поговорить с кем-нибудь', 'to talk to someone', 'hablar con alguien')
+         : role === 'watch' ? T('посмотреть что-нибудь вместе', 'to watch something together', 'ver algo juntos')
+         : T('с кем-нибудь встретиться', 'to meet someone', 'quedar con alguien');
   }
   // Винительный для русской темы, латиница как есть — см. topicAcc.
   const s = topicAcc(subject);
   const en = subject.toLowerCase();
   switch (role) {
-    case 'discuss':  return T(`поговорить про ${s}`, `to talk about ${en}`);
-    case 'watch':    return T(`посмотреть ${s} с кем-нибудь`, `to watch ${en} with someone`);
-    case 'practise': return T(`попрактиковать ${s} с кем-нибудь`, `to practise ${en} with someone`);
-    default:         return T(`найти компанию: ${subject}`, `to find someone for ${en}`);
+    case 'discuss':  return T(`поговорить про ${s}`, `to talk about ${en}`, `hablar sobre ${en}`);
+    case 'watch':    return T(`посмотреть ${s} с кем-нибудь`, `to watch ${en} with someone`, `ver ${en} con alguien`);
+    case 'practise': return T(`попрактиковать ${s} с кем-нибудь`, `to practise ${en} with someone`, `practicar ${en} con alguien`);
+    // «За кофе», «за падел», «за прогулку» — один предлог годится для любого занятия в винительном.
+    default:         return T(`встретиться с кем-то, кто тоже за ${s}`, `to meet someone who's also up for ${en}`, `quedar con alguien a quien también le apetezca ${en}`);
   }
 }
 
-/** «Похоже, ты хочешь …» — предложение целиком, с точкой. */
-export const sheetWhat = (phrase: string) =>
-  T(`Похоже, ты хочешь ${phrase}.`, `Looks like you want ${phrase}.`);
+/**
+ * Заголовок затеи в окне — как на карточке: сервер собирает его фразой («Поговорить про кофе»,
+ * «Падел»). Нет заголовка — предмет с заглавной; нет и предмета — общее слово по роли.
+ */
+export function intentTitle(res: any): string {
+  const i = (res && res.intent) || {};
+  const title = String(i.title || i.activity || '').trim();
+  if (title) return title;
+  const { role, subject } = subjectOf(res);
+  if (subject) return subject[0].toUpperCase() + subject.slice(1);
+  return role === 'discuss' ? T('Разговор', 'A chat', 'Charla') : T('Встреча', 'Meet someone', 'Quedada');
+}
+
+/**
+ * Описание под заголовком — одним предложением, что именно Kleal предлагает сделать.
+ *
+ * ГОТОВОЕ ОПИСАНИЕ С СЕРВЕРА ГЛАВНЕЕ СОБРАННОГО ЗДЕСЬ. Эта таблица знает три глагола — поговорить,
+ * посмотреть, попрактиковать, — а занятий у людей больше: плавают, пьют кофе, ходят в сауну,
+ * танцуют. Сервер теперь называет затею целиком (title и desc) по словарю из 23 глаголов и общему
+ * реестру занятий, и новые глаголы доезжают до телефона без выкладки приложения. Здешний разбор
+ * остаётся запасным — для старых ответов, где поля `desc` ещё нет.
+ */
+export function intentDesc(res: any): string {
+  const ready = String((res && res.intent && res.intent.desc) || '').trim();
+  if (ready) return ready;
+  const { role, subject } = subjectOf(res);
+  if (!subject) {
+    return role === 'discuss' ? T('Найти, с кем поговорить.', 'Find someone to talk to.', 'Encontrar con quién hablar.')
+         : role === 'watch' ? T('Найти, с кем что-нибудь посмотреть.', 'Find someone to watch something with.', 'Encontrar con quién ver algo.')
+         : T('Найти компанию для встречи.', 'Find someone to meet.', 'Encontrar compañía para quedar.');
+  }
+  const s = topicAcc(subject);
+  const en = subject.toLowerCase();
+  switch (role) {
+    case 'discuss':  return T(`Найти, с кем поговорить про ${s}.`, `Find someone to talk about ${en} with.`, `Encontrar con quién hablar sobre ${en}.`);
+    case 'watch':    return T(`Найти, с кем посмотреть ${s}.`, `Find someone to watch ${en} with.`, `Encontrar con quién ver ${en}.`);
+    case 'practise': return T(`Найти, с кем попрактиковать ${s}.`, `Find someone to practise ${en} with.`, `Encontrar con quién practicar ${en}.`);
+    default:         return T(`Найти, кто тоже за ${s}.`, `Find someone who's also up for ${en}.`, `Encontrar a alguien a quien también le apetezca ${en}.`);
+  }
+}
 
 /** Ответ на «продолжим общаться»: Kleal называет, что понял, и отдаёт ход человеку. */
 export const sheetKept = (phrase: string) =>
   T(
     `Слушай, я думал, ты хочешь ${phrase}. Может, имелось в виду другое — или просто болтаем дальше?`,
     `I thought you wanted ${phrase}. Did you mean something else — or shall we just keep talking?`
-  );
+  , `Pensé que querías ${phrase}. ¿Quisiste decir otra cosa — o simplemente seguimos charlando?`);
 
 /** Как назвать распознанную затею КАРТОЧКОЙ — заголовок для экранов, где нужна подпись, а не речь. */
 export function intentLabel(res: any, fallback = ''): string {
@@ -101,24 +202,26 @@ export function intentLabel(res: any, fallback = ''): string {
  * читается как враньё, — а сколько на самом деле займёт ответ модели, не знает никто.
  */
 export const THINKING = () => [
-  T('Слушаю', 'Listening'),
-  T('Собираю затею', 'Putting it together'),
-  T('Почти', 'Almost there'),
+  T('Слушаю', 'Listening', 'Escuchando'),
+  T('Собираю затею', 'Putting it together', 'Poniéndolo todo junto'),
+  T('Почти', 'Almost there', 'Casi allí'),
 ];
 
 export const CREATE = {
-  title: () => T('Все интенты', 'All intents'),
-  ask: () => T('Что хочешь сделать?', 'What do you want to do?'),
+  title: () => T('Все интенты', 'All intents', 'Todas las propuestas'),
+  ask: () => T('Что хочешь сделать?', 'What do you want to do?', '¿Qué es lo que quieres hacer?'),
   sub: () =>
     T(
       'Без сложностей — кофе, партия, игра, прогулка или просто «не хочу сидеть дома».',
       'Keep it simple — coffee, a match, a game, a walk, or just “don’t feel like staying in.”'
-    ),
-  suggestions: () => T('Варианты', 'Suggestions'),
-  choose: () => T('Выбери из предложенного', 'Choose from the suggested options'),
-  regenerate: () => T('Ещё варианты', 'Regenerate'),
+    , 'Manténlo sencillo: un café, un partido, una partida, un paseo, o simplemente «no me apetece quedarme en casa».'),
+  suggestions: () => T('Варианты', 'Suggestions', 'Sugerencias'),
+  choose: () => T('Выбери из предложенного', 'Choose from the suggested options', 'Elige entre las opciones sugeridas'),
+  regenerate: () => T('Ещё варианты', 'Regenerate', 'Regenerar'),
+  /** GR.04: Kleal подтверждает выбор, и мастер сам идёт дальше — кнопки Next на этом шаге нет. */
+  gotIt: (title: string) => T(`Отлично — ${title}!`, `Great — ${title} it is!`, `¡Genial, ${title}!`),
   empty: () =>
-    T('Вариантов пока нет — напиши своими словами.', 'No suggestions yet — say it in your own words.'),
+    T('Вариантов пока нет — напиши своими словами.', 'No suggestions yet — say it in your own words.', 'Todavía no hay sugerencias — dinos tú cómo quieres que sea.'),
   /**
    * Тема собрана — кнопка под сводкой.
    *
@@ -129,19 +232,19 @@ export const CREATE = {
    * Слово «интент» осталось там, где оно называет РАЗДЕЛ, а не действие: «Все интенты» в шапке,
    * вкладка, история. Там оно уже знакомо по названию места, и переводить его не нужно.
    */
-  ready: () => T('Нажми', 'Tap'),
+  ready: () => T('Нажми', 'Tap', 'Pulsa'),
   /** Заголовок сводки над кнопкой: что именно сейчас будет создано. */
-  summaryLabel: () => T('Вот что получилось', 'Here is what we have'),
+  summaryLabel: () => T('Вот что получилось', 'Here is what we have', 'Esto es lo que tenemos'),
   readyNote: () =>
     T(
       'Время, место и с кем — на следующем шаге, там это выставляется вручную.',
       'When, where and who comes next — you set those by hand.'
-    ),
+    , 'Cuándo, dónde y quién viene después — tú decides eso manualmente.'),
   /** Разбор правок в развёрнутой сводке: уточнение вслепую — это уточнение без обратной связи. */
-  changed: () => T('Что изменилось', 'What changed'),
-  wasCalled: (was: string) => T(`Было: ${was}`, `Was: ${was}`),
-  added: (list: string) => T(`Добавилось: ${list}`, `Added: ${list}`),
-  dropped: (list: string) => T(`Ушло: ${list}`, `Dropped: ${list}`),
+  changed: () => T('Что изменилось', 'What changed', '¿Qué ha cambiado?'),
+  wasCalled: (was: string) => T(`Было: ${was}`, `Was: ${was}`, `Era: ${was}`),
+  added: (list: string) => T(`Добавилось: ${list}`, `Added: ${list}`, `Añadido: ${list}`),
+  dropped: (list: string) => T(`Ушло: ${list}`, `Dropped: ${list}`, `Dejado: ${list}`),
 };
 
 /**
@@ -152,8 +255,10 @@ export const CREATE = {
  * окно выскакивало бы посреди обычного разговора.
  */
 export function looksLikeIntent(res: any): boolean {
+  if (res?.refused || res?.valid === false || res?.rankable === false) return false;
   const i = res && res.intent;
   if (!i || typeof i !== 'object') return false;
+  if (i.rankable === false) return false;
   const topics = Array.isArray(i.topics) ? i.topics.filter(Boolean) : [];
   return topics.length > 0 || !!i.activity || !!i.title;
 }
@@ -185,6 +290,17 @@ export function topicsOf(res: any): string[] {
 export function titleOf(res: any, fallback = ''): string {
   const i = (res && res.intent) || {};
   return String(i.title || i.activity || res?.activity || fallback).trim();
+}
+
+/**
+ * Свидание — ТИП затеи, а не чип: построитель кладёт его в `intent.type`, чипом идёт занятие.
+ * Отдаём только 'dating': по нему поиск включает свои ворота (`datingOk` у кандидата). Прочие
+ * типы мастер в поиск не шлёт и не слал — там тип становится доменом ранжирования и сдвинул бы
+ * веса у всех обычных затей.
+ */
+export function datingOf(res: any): boolean {
+  const i = (res && res.intent) || {};
+  return String(i.type || '').trim().toLowerCase() === 'dating';
 }
 
 export type Turn = { role: string; content: string };

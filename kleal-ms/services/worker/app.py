@@ -50,6 +50,15 @@ def teach_phrases(payload):
             d = _post(config.FILTER_URL, "/api/filter/categorize", {"text": ph}, timeout=90)
         except Exception:
             return False                      # фильтрация недоступна — повторим позже
+        # ЗАПАСНОЙ РЕЖИМ ФИЛЬТРАЦИИ НЕЛЬЗЯ ЗАКРЕПЛЯТЬ НАВСЕГДА.
+        #
+        # Когда её модель не отвечает, она честно помечает ответ «keyword fallback» и отдаёт слова
+        # САМОГО ЧЕЛОВЕКА вместо английских ключей: «хочу», «поговорить», «ищу», «algo», «wanna».
+        # Здесь пометка не проверялась, и такой ответ уезжал в постоянный phrase_topics.json — то
+        # есть разовая заминка модели превращалась в вечную запись. Замер 18.09.2026: до правки
+        # таймаута фильтрация срывалась на 20 новых фразах из 20, так что лилось это месяцами.
+        if str(d.get("note") or "") == "keyword fallback":
+            continue
         ts = [str(t).lower().strip() for t in (d.get("topics") or []) if str(t).strip()]
         if ts:
             items.append({"phrase": ph, "topics": ts})

@@ -90,6 +90,13 @@ PID = ((p or {}).get("plan") or {}).get("id")
 check("plan to a matched pair is created", p.get("ok") and PID, p)
 check("the sender is confirmed by proposing", ((p.get("plan") or {}).get("my_response")) == "confirmed")
 check("state is proposed until the other side answers", (p.get("plan") or {}).get("state") == "proposed")
+# `actions` — что участнику можно предложить прямо сейчас, по той же таблице (mplan_rules), по
+# которой ручки отказывают. Экран рисует кнопки по нему, а не выводит правила из восьми полей.
+_ga = (get(GUEST, PID).get("plan") or {}).get("actions") or []
+check("guest is offered confirm/counter/decline", all(a in _ga for a in ("confirm", "counter", "decline")), _ga)
+_ha = (get(HOST, PID).get("plan") or {}).get("actions") or []
+check("the host, confirmed by proposing, is not offered confirm", "confirm" not in _ha and "counter" in _ha, _ha)
+check("nobody is offered a status before both agreed", "status" not in _ga and "status" not in _ha)
 
 # ---------------------------------------------------------------- OF.C3, the whole point of the screen
 print("\n-- «confirm and the exact address opens for you» --")
@@ -107,6 +114,9 @@ check("host sees the address they typed", h.get("address") == "Carrer Verdi 12",
 out = call("/api/agent/mplan-respond", {"id": PID, "self": GUEST, "action": "confirm"})
 check("guest confirms", out.get("ok"), out)
 check("plan becomes confirmed", (out.get("plan") or {}).get("state") == "confirmed")
+_ca = (out.get("plan") or {}).get("actions") or []
+check("once confirmed, status and feedback are offered and confirm is not",
+      "status" in _ca and "feedback" in _ca and "confirm" not in _ca, _ca)
 check("both sides counted", (out.get("plan") or {}).get("both_confirmed") is True)
 g2 = (get(GUEST, PID).get("plan") or {})
 check("address opens for the guest after confirming", g2.get("address") == "Carrer Verdi 12", g2.get("address"))
@@ -202,6 +212,8 @@ check("an out-of-range rating is clamped",
       ((f3.get("plan") or {}).get("my_feedback") or {}).get("rating") == 5, f3)
 f4 = call("/api/agent/mplan-feedback", {"id": PID, "self": GUEST, "happened": True, "rating": 4})
 check("both answered -> the plan is done", (f4.get("plan") or {}).get("state") == "done", f4)
+check("a done plan offers only feedback", ((f4.get("plan") or {}).get("actions") or []) == ["feedback"],
+      (f4.get("plan") or {}).get("actions"))
 
 lst = call("/api/agent/mplans?self=" + HOST)
 check("a finished plan moves to history",
@@ -221,7 +233,13 @@ nh = call("/api/agent/mplan-feedback", {"id": PID2, "self": G2, "happened": Fals
                                         "reason": "he never showed up"})
 np = nh.get("plan") or {}
 check("didn't happen is recorded", (np.get("outcome") or {}).get("happened") is False, np.get("outcome"))
-check("the reason is kept", (np.get("outcome") or {}).get("reason") == "he never showed up")
+# ПРИЧИНА ХРАНИТСЯ, НО ВТОРОМУ НЕ ПОКАЗЫВАЕТСЯ. Проверка требовала её обратно в ответе — и
+# падала на СОБСТВЕННОМ правиле продукта: `_mp_public` намеренно вырезает `outcome.reason`,
+# чтобы второй не узнал, почему про встречу сказали «не состоялась». В ответе ТОМУ, КТО ОТВЕЧАЛ,
+# его собственная причина видна законно (это его запись) — смотреть надо чужой ответ.
+theirs = json.dumps(call("/api/agent/mplans?self=" + H2), ensure_ascii=False)
+check("the reason is never shown to the other side", "he never showed up" not in theirs,
+      "утекла" if "he never showed up" in theirs else "")
 check("one side saying no closes it without waiting for the other", np.get("state") == "done", np.get("state"))
 
 # ---------------------------------------------------------------- times that make no sense
@@ -246,6 +264,8 @@ print("\n-- cancelling, and doing everything twice --")
 cn = call("/api/agent/mplan-cancel", {"id": PID3, "self": G3, "reason": "something came up"})
 check("either side can cancel", cn.get("ok"), cn)
 check("a cancelled plan is cancelled", (cn.get("plan") or {}).get("state") == "cancelled")
+check("a cancelled plan offers nothing", ((cn.get("plan") or {}).get("actions") or []) == [],
+      (cn.get("plan") or {}).get("actions"))
 again = call("/api/agent/mplan-respond", {"id": PID3, "self": H3, "action": "confirm"})
 check("a cancelled plan cannot be confirmed", again.get("error") == "NOT_OPEN", again)
 after = plan(H3, G3, "c2")

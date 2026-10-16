@@ -12,8 +12,7 @@
  * пузырь означает «сказал», страница — «написал». Уравняв их, экран сообщает, что ответ такая же
  * проходная реплика, как «ок», — и человек читает его так же бегло.
  *
- * ПОЧЕМУ СВОЙ РАЗБОР, А НЕ БИБЛИОТЕКА. Проект живёт на SDK 54 ради Expo Go (см. AGENTS.md), и
- * каждая зависимость — риск уронить его. Здесь нужен НЕ полный markdown, а тот его кусок, который
+ * ПОЧЕМУ СВОЙ РАЗБОР, А НЕ БИБЛИОТЕКА. Здесь нужен НЕ полный markdown, а тот его кусок, который
  * модель действительно печатает: заголовки, списки, врезки, таблицы, жирный, код. Сотня строк
  * своего разбора дешевле и предсказуемее, чем чужой парсер со своими краевыми случаями.
  *
@@ -21,12 +20,12 @@
  * иначе она растягивает страницу, и горизонтально начинает ездить весь разговор. Это ломает не
  * таблицу, а экран — и ломает молча: на коротких таблицах не заметно.
  *
- * ЧЕГО ЗДЕСЬ НАМЕРЕННО НЕТ. Вложенных списков глубже одного уровня, картинок, HTML. Модель их
+ * ЧЕГО ЗДЕСЬ НАМЕРЕННО НЕТ. Картинок, HTML. Модель их
  * почти не печатает, а поддержка каждого — это ещё один способ отрисовать мусор вместо текста.
  * Неузнанная строка становится обычным абзацем: показать текст как есть всегда лучше, чем съесть.
  */
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 import { color, radius as rad, space, type } from '../theme';
 
 // ---------------------------------------------------------------- разбор
@@ -37,15 +36,13 @@ type Block =
   | { kind: 'h'; level: 1 | 2 | 3; text: string }
   | { kind: 'p'; text: string }
   | { kind: 'quote'; lines: string[] }
-  | { kind: 'ul'; items: string[] }
-  | { kind: 'ol'; items: string[] }
+  | { kind: 'ul'; items: Block[][] }
+  | { kind: 'ol'; start: number; items: Block[][] }
   | { kind: 'table'; head: string[]; rows: string[][] }
   | { kind: 'code'; text: string }
   | { kind: 'hr' };
 
 const RE_H = /^(#{1,6})\s+(.*)$/;
-const RE_UL = /^[-*•]\s+(.*)$/;
-const RE_OL = /^\d+[.)]\s+(.*)$/;
 const RE_QUOTE = /^>\s?(.*)$/;
 const RE_HR = /^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/;
 const RE_ROW = /^\s*\|(.+)\|\s*$/;
@@ -56,8 +53,63 @@ function cells(line: string): string[] {
   return (m ? m[1] : line).split('|').map((c) => c.trim());
 }
 
+/** Keep indentation and the first explicit number. Later numbers do not restart a list. */
+function listMarker(line: string) {
+  const expanded = line.replace(/^[\t ]*/, (s) => s.replace(/\t/g, '    '));
+  const m = expanded.match(/^( *)(?:(\d{1,9})([.)])|([-*•]))(?:[ \t]+(.*)|$)/);
+  if (!m) return null;
+  const text = m[5] || '';
+  return {
+    kind: (m[2] === undefined ? 'ul' : 'ol') as 'ul' | 'ol',
+    delimiter: m[3] || m[4], indent: m[1].length,
+    contentIndent: expanded.length - text.length,
+    start: Number(m[2] || 1), text,
+  };
+}
+
+/** A list owns its item blocks, including loose paragraphs and nested lists. */
+function readList(lines: string[], from: number, depth: number): { block: Block; next: number } {
+  const first = listMarker(lines[from])!;
+  const items: Block[][] = [];
+  let i = from;
+  const sameList = (m: ReturnType<typeof listMarker>) => !!m && m.indent === first.indent
+    && m.kind === first.kind && m.delimiter === first.delimiter;
+  while (i < lines.length && sameList(listMarker(lines[i]))) {
+    const marker = listMarker(lines[i])!;
+    const body = [marker.text];
+    i++;
+    while (i < lines.length) {
+      const raw = lines[i].replace(/^[\t ]*/, (s) => s.replace(/\t/g, '    '));
+      const line = raw.trim();
+      if (!line) {
+        let next = i + 1;
+        while (next < lines.length && !lines[next].trim()) next++;
+        if (next >= lines.length) break;
+        const nextRaw = lines[next].replace(/^[\t ]*/, (s) => s.replace(/\t/g, '    '));
+        const nextMarker = listMarker(nextRaw);
+        if (sameList(nextMarker)) { i = next; break; }
+        if (nextRaw.search(/\S/) < marker.contentIndent) break;
+        body.push(''); i++; continue;
+      }
+      const nextMarker = listMarker(raw);
+      if (nextMarker && nextMarker.indent <= first.indent) break;
+      const indent = raw.search(/\S/);
+      if (indent < marker.contentIndent && (RE_H.test(line) || RE_HR.test(line)
+          || RE_QUOTE.test(line) || /^```/.test(line) || RE_ROW.test(line))) break;
+      // Unindented text without a blank is Markdown's lazy paragraph continuation.
+      body.push(raw.slice(Math.min(indent, marker.contentIndent)));
+      i++;
+    }
+    const text = body.join('\n');
+    items.push(depth < 32 ? parseBlocks(text, depth + 1) : [{ kind: 'p', text }]);
+  }
+  return { block: first.kind === 'ol'
+    ? { kind: 'ol', start: first.start, items }
+    : { kind: 'ul', items }, next: i };
+}
+
 /** Строки -> блоки. Ничего не выбрасывается: непонятое становится абзацем. */
-export function parseBlocks(src: string): Block[] {
+export function parseBlocks(src: string, depth = 0): Block[] {
   const lines = String(src || '').replace(/\r\n?/g, '\n').split('\n');
   const out: Block[] = [];
   let para: string[] = [];
@@ -129,27 +181,11 @@ export function parseBlocks(src: string): Block[] {
       continue;
     }
 
-    const ul = line.match(RE_UL);
-    if (ul) {
+    if (listMarker(raw)) {
       flush();
-      const items = [ul[1]];
-      while (i + 1 < lines.length && RE_UL.test(at(i + 1))) {
-        items.push((at(i + 1).match(RE_UL) as RegExpMatchArray)[1]);
-        i++;
-      }
-      out.push({ kind: 'ul', items });
-      continue;
-    }
-
-    const ol = line.match(RE_OL);
-    if (ol) {
-      flush();
-      const items = [ol[1]];
-      while (i + 1 < lines.length && RE_OL.test(at(i + 1))) {
-        items.push((at(i + 1).match(RE_OL) as RegExpMatchArray)[1]);
-        i++;
-      }
-      out.push({ kind: 'ol', items });
+      const list = readList(lines, i, depth);
+      out.push(list.block);
+      i = list.next - 1;
       continue;
     }
 
@@ -264,6 +300,11 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
  */
 export default function Markdown({ text }: { text: string }) {
   const blocks = React.useMemo(() => parseBlocks(text), [text]);
+  const { fontScale } = useWindowDimensions();
+  return <Blocks blocks={blocks} fontScale={fontScale} />;
+}
+
+function Blocks({ blocks, fontScale, inList = false }: { blocks: Block[]; fontScale: number; inList?: boolean }) {
   return (
     <View style={s.doc}>
       {blocks.map((b, i) => {
@@ -283,7 +324,7 @@ export default function Markdown({ text }: { text: string }) {
                     ]} />
             );
           case 'p':
-            return <Rich key={i} src={b.text} style={s.p} />;
+            return <Rich key={i} src={b.text} style={[s.p, inList && i === blocks.length - 1 && s.itemLast]} />;
           case 'quote':
             return (
               <View key={i} style={s.quote}>
@@ -293,23 +334,15 @@ export default function Markdown({ text }: { text: string }) {
               </View>
             );
           case 'ul':
-            return (
-              <View key={i} style={s.list}>
-                {b.items.map((it, j) => (
-                  <View key={j} style={s.li}>
-                    <Text style={s.marker}>•</Text>
-                    <Rich src={it} style={s.liText} />
-                  </View>
-                ))}
-              </View>
-            );
           case 'ol':
             return (
-              <View key={i} style={s.list}>
+              <View key={i} style={[s.list, inList && i === blocks.length - 1 && s.itemLast]}>
                 {b.items.map((it, j) => (
                   <View key={j} style={s.li}>
-                    <Text style={s.marker}>{j + 1}.</Text>
-                    <Rich src={it} style={s.liText} />
+                    <Text style={[s.marker, { minWidth: b.kind === 'ol'
+                      ? Math.max(18, (String(b.start + b.items.length - 1).length + 1) * type.body.fontSize * 0.65) * fontScale
+                      : 18 * fontScale }]}>{b.kind === 'ol' ? `${b.start + j}.` : '•'}</Text>
+                    <View style={s.liBody}><Blocks blocks={it} fontScale={fontScale} inList /></View>
                   </View>
                 ))}
               </View>
@@ -357,7 +390,8 @@ const s = StyleSheet.create({
   // список перестаёт читаться как список.
   li: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
   marker: { ...type.body, color: color.muted, minWidth: 18, textAlign: 'right' } as any,
-  liText: { ...type.body, color: color.fg, flex: 1 } as any,
+  liBody: { flex: 1, minWidth: 0 },
+  itemLast: { marginBottom: 0 },
 
   tableWrap: { marginBottom: space.md },
   tableInner: { paddingRight: space.lg },

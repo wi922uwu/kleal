@@ -22,41 +22,71 @@ import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { CANDS, CAP, OPTIONS, REPORT_REASONS, Cand, candSubtitle, candWhere, candSummary, hideCandidate } from '../src/candidates';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { CANDS, CAP, OPTIONS, REPORT_REASONS, REPORT_REASON_ES, Cand, candSubtitle, candWhere, candSummary, candReadiness, hideCandidate } from '../src/candidates';
 import { CHAT } from '../src/chat';
-import { useInvites, inviteTo, sendInvite, withdrawInvite } from '../src/invites';
+import { useInvites, inviteTo, sendInvite, withdrawInvite, openInvites, pickInvite } from '../src/invites';
+import { GR14, OFP } from '../src/groups';
+import { GlassPill } from '../src/components/Glass';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, takeCandidate } from '../src/results-store';
+import { useOnb } from '../src/state';
 import { mediaUrl, agent } from '../src/api';
-import { IconPerson, IconPin, IconUserLock } from '../src/components/icons';
+import { IconPerson, IconPin, IconUserLock, IconUserX, IconShieldAlert, IconBan } from '../src/components/icons';
 import { langPlainName } from '../src/languages';
 import { BottomNav } from '../src/components/BottomNav';
-import { Sheet } from '../src/components/Sheet';
+import { Sheet, SheetText, SheetItem } from '../src/components/Sheet';
 import { color, radius as rad, space, type } from '../src/theme';
+import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { interestLabels } from '../src/interest-label';
+import { useNavCollapse } from '../src/navScroll';
 
 const ru = () => getLang() === 'ru';
 
 export default function Candidate() {
+  /** Navigation V2: панель сворачивается при прокрутке вниз (NAV.S2). */
+  const navCollapse = useNavCollapse();
   useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const c: Cand | null = useMemo(() => takeCandidate(), []);
   const handoff = useMemo(() => takeResults(), []);
-  const self = String(handoff?.profile?.name || '');
+  const st = useOnb();
+  /*
+    КТО Я — ЭТО НЕ СВОЙСТВО ПЕРЕХОДА. Имя бралось только из передачи выдачи, и экран, открытый не
+    из поиска (из разговора — «профиль собеседника»), получал пустое `self`. Тогда `useInvites('')`
+    не находил ничего, и уже согласившемуся человеку показывалась кнопка «Пригласить» — второе
+    приглашение тому, с кем уже переписываешься.
+    Передача остаётся первой: в ней профиль в том виде, в каком он ушёл в поиск, и расширение
+    обязано идти с тем же самым. Своё имя из анкеты — запасной путь, а не замена.
+  */
+  const self = String(handoff?.profile?.name || st.profile?.name || '');
+  /*
+    ОТКРЫТА ИЗ РАЗГОВОРА — ПРИГЛАШАТЬ НЕКОГО.
+    Состояние приглашения читается из ИСХОДЯЩИХ (`useInvites` -> `inviteTo`), и это верно для
+    выдачи, откуда экран и родился. Но в разговор можно попасть и по ВХОДЯЩЕМУ приглашению: тогда
+    в исходящих пусто, `invite` пуст, и человеку, с которым он уже переписывается, показывалась
+    кнопка «Пригласить». Признак перехода отвечает на это прямо и не зависит от того, кто кого
+    позвал первым.
+  */
+  const fromChat = String(useLocalSearchParams<{ from?: string }>().from || '') === 'chat';
   const name = String(c?.name || '');
+  /** Человек — подписью И id: в выдаче бывают тёзки, и по одной подписи сервер не выберет. */
+  const peer = { name, id: String(c?.id || '') };
   /**
    * Приглашение — общее состояние со списком выдачи (src/invites.ts). Своего у карточки больше
    * нет: пока оно было, приглашённый из списка человек открывался здесь с кнопкой «Пригласить»,
    * и заявка уходила во второй раз.
    */
   useInvites(self);
-  const invite = inviteTo(name);
+  // По ЭТОЙ затее, а не по человеку: см. inviteTo. С тем, с кем уже согласились по другой,
+  // полная карточка тоже обязана предлагать приглашение, а не только «Открыть чат».
+  const invite = inviteTo(peer, handoff?.intent);
 
   const [asking, setAsking] = useState(false);
   /** MSG.22: потолок открытых приглашений сработал — окно живёт и здесь, не только в выдаче. */
   const [capOpen, setCapOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
   /** Лист O.13b и его отсчёт. pending — действие, которое случится через n секунд, если не отменить. */
   const [options, setOptions] = useState(false);
   const [reporting, setReporting] = useState(false);
@@ -69,12 +99,14 @@ export default function Candidate() {
   if (!c) {
     return (
       <View style={[s.wrap, s.center, { paddingTop: insets.top }]}>
+        {/* Фирменный фон «Ambient · glass pilot» — тот же слой, что на входных экранах. */}
+        <Ambient glows={GLOW_FORM} />
         <Text style={s.lead}>
           {T('Карточка живёт один переход из выдачи. Поищем заново?',
-             'This card lives one hop from the results. Search again?')}
+             'This card lives one hop from the results. Search again?', 'Esta tarjeta está a un paso de los resultados. ¿Buscar de nuevo?')}
         </Text>
         <Pressable accessibilityRole="button" style={s.cta} onPress={() => { router.dismissTo('/home'); router.navigate('/create'); }}>
-          <Text style={s.ctaText}>{T('Новый поиск', 'New search')}</Text>
+          <Text style={s.ctaText}>{T('Новый поиск', 'New search', 'Nueva búsqueda')}</Text>
         </Pressable>
       </View>
     );
@@ -82,14 +114,14 @@ export default function Candidate() {
 
   const where = candWhere(c);
   const summary = candSummary(c, ru());
-  const readiness = (ru() ? c.readiness_ru : c.readiness_en) || '';
+  const readiness = candReadiness(c);
 
   const send = async () => {
     if (sending) return;
     setSending(true);
     setErr('');
     try {
-      const r = await sendInvite(self, name, handoff?.intent || {});
+      const r = await sendInvite(self, peer, handoff?.intent || {});
       if (r.capped) { setAsking(false); setCapOpen(true); return; }
       if (!r.ok) throw new Error(r.error || 'propose failed');
       setAsking(false);
@@ -103,7 +135,7 @@ export default function Candidate() {
   /** O.15 «Отменить»: отзыв НЕотвеченного приглашения. Уже отвеченное отзывать нечем. */
   const cancel = async () => {
     setErr('');
-    const r = await withdrawInvite(self, name);
+    const r = await withdrawInvite(self, peer);
     if (!r.ok) setErr(r.resolved ? CANDS.cancelTooLate() : CANDS.cancelFailed());
   };
 
@@ -127,7 +159,7 @@ export default function Candidate() {
       }
       try {
         if (pending.kind === 'block') {
-          const r: any = await agent.block(self, name, true);
+          const r: any = await agent.block(self, peer, true);
           if (!r?.ok) throw new Error(r?.error || 'block failed');
         } else {
           // Ответ ПРОВЕРЯЕМ, как и у блокировки рядом. Сервер теперь может отказать (личные
@@ -160,7 +192,7 @@ export default function Candidate() {
   const sendReport = async (reason: string) => {
     setOptNote('');
     try {
-      const r: any = await agent.report(self, name, reason);
+      const r: any = await agent.report(self, peer, reason);
       if (!r?.ok) throw new Error(r?.error || 'report failed');
       setReporting(false);
       setOptNote(OPTIONS.reportSent());
@@ -172,7 +204,7 @@ export default function Candidate() {
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
+        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
           <Text style={s.backIcon}>‹</Text>
         </Pressable>
         <View style={{ flex: 1 }} />
@@ -182,7 +214,7 @@ export default function Candidate() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={s.scroll}>
+      <ScrollView onScroll={navCollapse} scrollEventThrottle={16} contentContainerStyle={s.scroll}>
         {/*
           Кадр O.13a: фото — большим блоком на всю ширину, а не кружком. Точки-пейджер на кадре
           подразумевают несколько фотографий; в данных фото ровно одно (или ни одного), и рисовать
@@ -224,7 +256,7 @@ export default function Candidate() {
           </Text>
         ) : null}
         {readiness ? (
-          <Text style={s.meta}>{T('Связаться: ', 'Reach out: ')}{readiness}</Text>
+          <Text style={s.meta}>{T('Связаться: ', 'Reach out: ', 'Contacta: ')}{readiness}</Text>
         ) : null}
 
         {summary ? (
@@ -243,19 +275,34 @@ export default function Candidate() {
         {err ? <Text style={s.err}>{err}</Text> : null}
 
         {/* Те же четыре состояния, что и на карточке в списке (O.15/O.16/O.17) — они читаются из
-            общего стора, поэтому «Пригласить» здесь не может появиться у уже приглашённого. */}
-        {invite?.status === 'declined' ? (
+            общего стора, поэтому «Пригласить» здесь не может появиться у уже приглашённого.
+            Из разговора не рисуем ничего: там уже идёт переписка, и любая из четырёх пилюль
+            предлагала бы начать то, что давно началось. */}
+        {fromChat ? null : invite?.status === 'declined' ? (
           <View style={s.invitedRow}>
             <View style={[s.invite, s.invitedPill]}>
               <Text style={[s.inviteText, { color: color.muted }]}>⊘  {CHAT.declined()}</Text>
             </View>
           </View>
+        ) : invite?.status === 'answered' ? (
+          /* OF.12d: человек ответил «да» — выбрать его можно и с его карточки. */
+          <Pressable accessibilityRole="button" accessibilityState={{ busy: picking }} style={s.invite}
+                     onPress={async () => {
+                       if (picking) return;
+                       setPicking(true);
+                       await pickInvite(self, peer);
+                       setPicking(false);
+                     }}>
+            <Text style={s.inviteText}>{OFP.pick(name)}</Text>
+          </Pressable>
         ) : invite?.status === 'accepted' ? (
           <View style={s.invitedRow}>
             <Pressable
               accessibilityRole="button"
               style={[s.invite, { flex: 1 }]}
-              onPress={() => router.navigate({ pathname: '/conversation', params: { who: name, photo: c.photo || '' } })}
+              /* Приглашение уже принято — карточка сделала своё дело и уступает место чату
+                 (`dismissTo`), а не ложится под него: возвращаться к ней больше незачем. */
+              onPress={() => router.dismissTo({ pathname: '/conversation', params: { who: name, who_id: peer.id, photo: c.photo || '' } })}
             >
               <Text style={s.inviteText}>{CHAT.openChat()}</Text>
             </Pressable>
@@ -301,11 +348,11 @@ export default function Candidate() {
 
       {/* MSG.22 — потолок открытых приглашений. Раньше жил только в выдаче, и отправка отсюда
           его обходила: карточка молча слала четвёртое приглашение. */}
-      <Sheet visible={capOpen} onClose={() => setCapOpen(false)} title={CAP.title(CAP.limit)}>
-        <Text style={s.sheetBody}>{CAP.note()}</Text>
-        <Pressable accessibilityRole="button" style={s.sheetNot} onPress={() => { setCapOpen(false); router.back(); }}>
-          <Text style={s.sheetNotText}>{CAP.cancelOne()}</Text>
-        </Pressable>
+      {/* OF.17 — тот же лист «Kleal Plus», что в выдаче. Plus в продукте нет — кнопка выключена. */}
+      <Sheet visible={capOpen} onClose={() => setCapOpen(false)} title="Kleal Plus">
+        <SheetText lead={CAP.plusLead(openInvites().length)} note={CAP.plusNote(CAP.limit)} />
+        <GlassPill tone="brand" style={s.btn48} disabled label={GR14.getPlus()} />
+        <GlassPill tone="dark" style={s.btn48} label={GR14.notNow()} onPress={() => setCapOpen(false)} />
       </Sheet>
 
       {/* Лист O.13b. Пока идёт отсчёт, лист закрыть нельзя — иначе отмена потеряется вместе с ним. */}
@@ -326,7 +373,7 @@ export default function Candidate() {
           <>
             {REPORT_REASONS.map(([k, ruL, enL]) => (
               <Pressable key={k} accessibilityRole="button" style={s.reasonBtn} onPress={() => sendReport(k)}>
-                <Text style={s.reasonText}>{T(ruL, enL)}</Text>
+                <Text style={s.reasonText}>{T(ruL, enL, REPORT_REASON_ES[k])}</Text>
               </Pressable>
             ))}
             <Pressable accessibilityRole="button" style={s.optCancel} onPress={() => setReporting(false)}>
@@ -335,18 +382,13 @@ export default function Candidate() {
           </>
         ) : (
           <>
-            <Pressable accessibilityRole="button" style={s.optDark} onPress={() => startPending('reject')}>
-              <Text style={s.optDarkText}>⊗  {OPTIONS.notInterested()}</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" style={s.optSoft} onPress={() => { setOptNote(''); setReporting(true); }}>
-              <Text style={s.optSoftText}>{OPTIONS.report()}</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" style={s.optSoft} onPress={() => startPending('block')}>
-              <Text style={s.optSoftText}>{OPTIONS.block(name)}</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" style={s.optCancel} onPress={() => setOptions(false)}>
-              <Text style={s.optCancelText}>{OPTIONS.cancel()}</Text>
-            </Pressable>
+            {/* OF.13b: три пункта меню со знаком и пояснением; «Block» — красным. Закрывают крестиком. */}
+            <SheetItem icon={<IconUserX size={20} c={color.primary} />} label={OPTIONS.notInterested()}
+                       note={OPTIONS.notInterestedNote(name)} onPress={() => startPending('reject')} />
+            <SheetItem icon={<IconShieldAlert size={20} c={color.primary} />} label={OPTIONS.report()}
+                       note={OPTIONS.reportNote()} onPress={() => { setOptNote(''); setReporting(true); }} />
+            <SheetItem icon={<IconBan size={20} c={color.primary} />} danger label={OPTIONS.block(name)}
+                       note={OPTIONS.blockNote()} onPress={() => startPending('block')} />
           </>
         )}
       </Sheet>
@@ -358,7 +400,8 @@ export default function Candidate() {
 // Оформление UX-каркаса: значения — из токенов темы; при натягивании UI меняется этот блок.
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  btn48: { height: 48 },
   center: { alignItems: 'center', justifyContent: 'center', gap: space.lg, paddingHorizontal: 28 },
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: space.sm },
   back: {

@@ -17,7 +17,7 @@
  * кольцо, а это уже заметно на слабом телефоне.
  */
 import React from 'react';
-import { G, Path, Circle, Line, Rect } from 'react-native-svg';
+import Svg, { G, Path, Circle, Line, Rect } from 'react-native-svg';
 
 type IconFn = (c: string) => React.ReactElement;
 
@@ -292,3 +292,20 @@ export const iconNameFor = (nodeKey: string, own?: string): string =>
 /** Иконка по ключу категории; неизвестный ключ рисуется точкой — врать формой нельзя. */
 export const categoryIcon = (key: string, c: string): React.ReactElement =>
   (CATEGORY_ICON[key] || ((cc: string) => g(<Circle cx={12} cy={12} r={3.2} fill={cc} stroke="none" />, cc)))(c);
+
+/**
+ * ЗНАЧОК ТЕМЫ ВНЕ КОЛЬЦА — со своим полотном.
+ *
+ * `categoryIcon` отдаёт голый `<G>` без `<Svg>`: так нужно колесу, которое вставляет два десятка
+ * значков в одно общее полотно. Но кладя тот же `<G>` прямо в `<View>`, экран не рисует НИЧЕГО —
+ * react-native-svg молча выбрасывает узел без полотна. Ровно это и происходило на всех четырёх
+ * местах карты: на пине, в листе «рядом», в листе «Онлайн» и в карточке — красный кружок был, а
+ * значка внутри не было. Здесь полотно есть, и любой экран берёт значок отсюда.
+ */
+export function CategoryGlyph({ name, c = '#fff', size = 14 }: { name: string; c?: string; size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24">
+      {categoryIcon(name, c)}
+    </Svg>
+  );
+}

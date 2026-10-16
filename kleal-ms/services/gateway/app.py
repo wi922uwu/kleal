@@ -54,8 +54,6 @@ a.card:hover{border-color:#FECDD4;box-shadow:0 8px 24px rgba(245,69,92,.10);tran
 <div class="sub">Один вход — весь прототип</div>
 <a class="card" href="/onboarding"><div class="t">Онбординг <span class="arw">→</span></div>
   <div class="d">Знакомство с агентом: чат, интересы, локация, безопасность.</div></a>
-<a class="card" href="/profile"><div class="t">Мой профиль <span class="arw">→</span></div>
-  <div class="d">Память агента: интересы, личность, цели, интенты, Safety & Privacy.</div></a>
 <div class="note">Агент («бадди») — это чат внутри онбординга и экрана интента в профиле.</div>
 </div></body></html>"""
 
@@ -73,6 +71,20 @@ _OWNED = {"server", "date", "access-control-allow-origin", "access-control-allow
           "access-control-allow-methods", "access-control-max-age"}
 
 
+# ТОЛЬКО ДЛЯ СВОИХ (аудит 27.09.2026). Эти ручки матчинга приложение не зовёт; их зовут Буди,
+# воркер и панель — напрямую на 127.0.0.1:7074, мимо шлюза. Снаружи они были открыты без входа, и
+# часть из них ПИШЕТ: learn/learn-phrases — общий словарь категорий (испортить подбор всем),
+# outcome/transition/proposal — журналы движка, по которым считается ранжирование, save — любой
+# JSON до 32 МБ в хранилище; negotiate/intro — вызовы модели за наш счёт; explain/funnel/diversity
+# — разбор выдачи с чужими людьми и причинами отсева. Инструменты на боксе ходят к ним на :7074.
+# /api/agent/pool закрыт в nginx и здесь не повторён: e2e_smoke читает его через шлюз.
+_SERVICE_ONLY = frozenset("/api/agent/" + x for x in (
+    "learn", "learn-phrases", "outcome", "outcomes", "transition", "proposal", "proposal/respond",
+    "save", "load", "event", "plan_resource", "revalidate", "room", "venue", "confirm",
+    "intents/compile", "save_search", "save_search/check", "save_search/delete", "saved_searches",
+    "negotiate", "intro", "explain", "funnel", "diversity"))
+
+
 def _passthrough(k):
     kl = k.lower()
     return kl not in _HOP and kl not in _OWNED
@@ -88,8 +100,22 @@ def route(path):
     if path.startswith("/api/filter/"):
         return (FILTER, path)
     if path.startswith("/api/speech/"):
-        return (LLM, path)
+        # ГОЛОС ХРАНИТ MATCHING, А НЕ СЛУЖБА МОДЕЛИ. 22.09.2026 сюда уходили голосовые и
+        # получали 404: у службы модели нет ни приёма файлов, ни хранилища. Файл живёт на
+        # боксе рядом с кружками, а за текстом matching сам ходит на под (/llm/transcribe).
+        return (MATCH, path)
     if path.startswith("/api/agent/"):
+        # ЧЕРЕЗ ПУБЛИЧНУЮ ДВЕРЬ — НЕ ВСЁ. В матчинге есть семейство /api/agent/admin/* без единой
+        # проверки прав (оно отдаёт координаты названного человека и сбрасывает ему лимит
+        # приглашений) и диагностическая /api/agent/stability. Внутренние потребители — панель
+        # администратора и бот kleal-life — ходят в матчинг НАПРЯМУЮ на 127.0.0.1:7074, минуя
+        # шлюз, поэтому закрытие здесь их не задевает. На nginx тот же запрет уже стоит; здесь он
+        # повторён потому, что защита не должна держаться на одной строке конфига, которую легко
+        # потерять при следующей правке.
+        if path.startswith("/api/agent/admin/") or path.split("?")[0] == "/api/agent/stability":
+            return ("BLOCK", None)
+        if path.split("?")[0] in _SERVICE_ONLY:
+            return ("BLOCK", None)
         return (MATCH, path)
     if path.startswith("/api/onboarding/") or path.startswith("/api/v2/"):   # /api/v2/* = legacy alias
         return (ONB, path)
@@ -150,7 +176,8 @@ class H(BaseHTTPRequestHandler):
         """
         import json as _json
         out = {"services": {}, "storage": None, "queue": None}
-        for name in ("llm", "onboarding", "profile", "matching", "buddy", "filtration", "admin"):
+        # «profile» здесь больше нет: сервис удалён, и строка о нём вечно горела красным.
+        for name in ("llm", "onboarding", "matching", "buddy", "filtration", "admin"):
             try:
                 # llm НАМЕРЕННО по порту, а не по config.url: на боксе LLM_URL указывает на
                 # туннель к поду (17071), и опрос по нему проверял бы модель, а не сервис.
@@ -190,6 +217,9 @@ class H(BaseHTTPRequestHandler):
         base, fwd = route(self.path)
         if base == "LANDING":
             return self._serve(LANDING.encode("utf-8"))
+        if base == "BLOCK":
+            # 404, а не 403: снаружи такой ручки просто нет, и говорить «есть, но нельзя» незачем.
+            return self._serve(b'{"error":"not found"}', 404, "application/json; charset=utf-8")
         length = int(self.headers.get("Content-Length") or 0)
         data = self.rfile.read(length) if length else None
         req = urllib.request.Request(base + fwd, data=data, method=self.command)
@@ -253,4 +283,5 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print("Kleal gateway on http://%s:%d  (onb=%s match=%s buddy=%s filter=%s)"
           % (config.GATEWAY_BIND_HOST, PORT, ONB, MATCH, BUDDY, FILTER))
-    ThreadingHTTPServer((config.GATEWAY_BIND_HOST, PORT), H).serve_forever()
+    import serving  # очередь подключений на 128, а не на 5 — см. shared/serving.py
+    serving.KlealServer((config.GATEWAY_BIND_HOST, PORT), H).serve_forever()

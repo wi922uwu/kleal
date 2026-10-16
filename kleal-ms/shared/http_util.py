@@ -10,7 +10,9 @@ def read_json(handler):
         ln = int(handler.headers.get("Content-Length", "0") or 0)
     except (TypeError, ValueError):
         ln = 0
-    raw = handler.rfile.read(ln).decode("utf-8") if ln else ""
+    # errors="replace": тело не в UTF-8 роняло обработчик UnicodeDecodeError (500 вместо {}),
+    # хотя обещано ровно обратное — «{} on invalid» (аудит 27.09.2026).
+    raw = handler.rfile.read(ln).decode("utf-8", "replace") if ln else ""
     try:
         return json.loads(raw or "{}")
     except Exception:

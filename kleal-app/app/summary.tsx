@@ -5,7 +5,9 @@
  * дальше речь уже не о заполнении, а о том, что из этого понято.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
+import { Alert, View, Text, StyleSheet, ScrollView, Image } from 'react-native';
+import Animated, { Easing, useAnimatedProps, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
+import Svg, { Circle } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useLang, T, replyLang } from '../src/i18n';
@@ -13,12 +15,20 @@ import { useOnb, patch, set, get, getState, profileForRegister, profileForAttach
 import { mediaUrl, onboarding } from '../src/api';
 import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';
 import { Composer } from '../src/components/Composer';
-import { IconPerson } from '../src/components/icons';
-import { color, radius as rad, space, type } from '../src/theme';
+import { IconPerson, IconVerified } from '../src/components/icons';
+import { GlassPill } from '../src/components/Glass';
+import { Blob } from '../src/components/Blob';
+import { GlassBack, GlassSurface, riseIn } from '../src/components/LiquidGlass';
+import { color, font, heading, space, type } from '../src/theme';
+
+/** Дуга кольца уверенности анимируется свойством strokeDashoffset — нужен анимированный Circle. */
+const ARing = Animated.createAnimatedComponent(Circle);
+import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { interestLabels } from '../src/interest-label';
 
 export default function Summary() {
-  useLang();
+  const lang = useLang();
+  const reduced = useReducedMotion();
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
@@ -98,9 +108,9 @@ export default function Summary() {
     const h = interestLabels(p.interests?.explicit);
     const l = (p.languages?.comfortable || []).map(langPlain);
     const bits = [
-      h.length ? T('Интересы: ' + h.join(', '), 'Into ' + h.join(', ')) : '',
-      l.length ? T('Языки: ' + l.join(', '), 'speaks ' + l.join(', ')) : '',
-      p.city ? T('Обычно бывает: ' + p.city, 'usually around ' + p.city) : '',
+      h.length ? T('Интересы: ' + h.join(', '), 'Into ' + h.join(', '), 'Le gusta ' + h.join(', ')) : '',
+      l.length ? T('Языки: ' + l.join(', '), 'speaks ' + l.join(', '), 'habla ' + l.join(', ')) : '',
+      p.city ? T('Обычно бывает: ' + p.city, 'usually around ' + p.city, 'suele estar por ' + p.city) : '',
     ].filter(Boolean);
     return bits.join('. ') + (bits.length ? '.' : '');
   }, [p]);
@@ -184,14 +194,27 @@ export default function Summary() {
       // профиль не привязывался ни к чему — он оставался в памяти телефона и строкой в users.json
       // по имени. Переустановил приложение и войти обратно некуда. Теперь личность сервер берёт из
       // сессии; `login` едет рядом только ради старых сборок, которые про сессии не знают.
-      await onboarding.attach(st.login || '', p.name || '', profileForAttach()).catch(() => {});
+      const attached: any = await onboarding.attach(st.login || '', p.name || '', profileForAttach());
+      // register owns the user row, but attach persists the restorable account profile. A
+      // rejected or lost attach is not completed onboarding: retain the draft for retry.
+      if (!attached?.ok) {
+        const why = String(attached?.error || '');
+        if (/sign\s*in\s*required|no session/i.test(why)) {
+          setNeedsSignIn(true);
+          setErr(SUMMARY.saveNeedsSignIn());
+        } else setErr(SUMMARY.saveRejected(why || '—'));
+        return false;
+      }
       // Отметка ставится ТОЛЬКО после успешной записи: иначе следующий запуск пустил бы человека
       // в приложение с профилем, которого на сервере нет.
       patch({ done: true });
       return true;
-    } catch {
-      // Сюда попадает только настоящий обрыв: запрос не дошёл или ответ не разобрался.
-      setErr(SUMMARY.saveOffline());
+    } catch (e: any) {
+      // HTTP 401 requires sign-in; network failures keep the draft available for retry.
+      if (e?.status === 401) {
+        setNeedsSignIn(true);
+        setErr(SUMMARY.saveNeedsSignIn());
+      } else setErr(SUMMARY.saveOffline());
       return false;
     } finally {
       setSending(false);
@@ -218,66 +241,74 @@ export default function Summary() {
     if (await register()) { router.dismissAll(); router.navigate('/home'); router.navigate('/profile'); return; }
     // Причина уже разобрана в register() и лежит в err — Alert обязан говорить то же самое,
     // иначе на одном экране два разных объяснения одной неудачи.
-    Alert.alert(T('Профиль не сохранился', 'Your profile didn’t save'), err || SUMMARY.saveOffline());
+    Alert.alert(T('Профиль не сохранился', 'Your profile didn’t save', 'Tu perfil no se guardó'), err || SUMMARY.saveOffline());
   };
 
   return (
-    <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
+    <View style={[s.wrap, { paddingTop: insets.top + 8 }]}>
+      {/* Фирменный фон «Ambient · glass pilot» — тот же слой, что на входных экранах. */}
+      <Ambient glows={GLOW_FORM} />
+      {/* Шапка — та же, что у разговора (кадр A.14): «назад», заголовок по центру, 100% и капля. */}
       <View style={s.head}>
-        <View style={s.avatar} />
-        <Text style={s.headTitle}>{SUMMARY_TITLE()}</Text>
-        <Text style={s.headPct}>100%</Text>
+        <View style={s.headSide}>
+          <GlassBack label={T('Назад', 'Back', 'Atrás')} onPress={() => router.back()} />
+        </View>
+        {/* По-русски заголовок длинный («Что Kleal знает о тебе») — ужимается по ширине, а не режется. */}
+        <Text style={[s.headTitle, heading(lang, type.headingSm)]} numberOfLines={1}
+              adjustsFontSizeToFit minimumFontScale={0.7}>{SUMMARY_TITLE()}</Text>
+        <View style={[s.headSide, s.headRight]}>
+          <Text style={s.headPct}>100%</Text>
+          <Blob size={30} float={false} />
+        </View>
       </View>
       <View style={s.track}><View style={[s.trackFill, { width: '100%' }]} /></View>
 
       <ScrollView contentContainerStyle={s.scroll}>
-        <View style={s.card}>
-          <View style={s.idRow}>
-            {p.photo ? (
-              <Image source={{ uri: mediaUrl(String(p.photo)) }} style={s.idAvatar} />
-            ) : (
-              <View style={[s.idAvatar, s.idAvatarEmpty]}>
-                <IconPerson />
-              </View>
-            )}
-            <View style={{ flex: 1 }}>
-              <View style={s.nameRow}>
-                <Text style={s.name}>{p.name || '—'}</Text>
-                <Text style={s.verified}>✓</Text>
-              </View>
-              <View style={s.confRow}>
-                <Text style={s.confLabel}>{SUMMARY.confidence()}</Text>
-                <Text style={s.confPct}>{confidence}%</Text>
-              </View>
-              <View style={s.confTrack}>
-                <View style={[s.confFill, { width: `${confidence}%` }]} />
+        {/* Карточка человека: аватар в кольце уверенности, имя, «70% PROFILE CONFIDENCE». */}
+        <View style={s.cardShadow}>
+          <GlassSurface tone="light" radius={16} style={s.card}>
+            <View style={s.idRow}>
+              <ConfidenceRing pct={confidence}>
+                {p.photo ? (
+                  <Image source={{ uri: mediaUrl(String(p.photo)) }} style={s.idAvatar} />
+                ) : (
+                  <View style={[s.idAvatar, s.idAvatarEmpty]}>
+                    <IconPerson />
+                  </View>
+                )}
+              </ConfidenceRing>
+              <View style={{ flex: 1, gap: 8 }}>
+                <View style={s.nameRow}>
+                  <Text style={[s.name, heading(lang, type.headingSm)]} numberOfLines={1}>{p.name || '—'}</Text>
+                  <IconVerified size={18} />
+                </View>
+                {/* Процент и подпись — читаемым шрифтом на любом языке (точечный не читался). */}
+                <Text style={s.conf} numberOfLines={1}>
+                  <Text style={s.confNum}>{confidence}% </Text>
+                  <Text style={s.confLabel}>{SUMMARY.confidence()}</Text>
+                </Text>
               </View>
             </View>
-          </View>
+          </GlassSurface>
         </View>
 
-        <View style={s.card}>
-          <View style={s.cardHead}>
-            <Text style={s.cardTitle}>{SUMMARY.klealSummary()}</Text>
-            <Text style={s.cardMeta}>{SUMMARY.updatedToday()}</Text>
-          </View>
-          <Text style={[s.para, !text && loading && s.paraWait]}>
-            {text || (loading ? SUMMARY.composing() : fallback)}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            style={[s.cta, sending && { opacity: 0.6 }]}
-            onPress={sending ? undefined : toProfile}
-            accessibilityState={{ busy: sending }}
-          >
-            <Text style={s.ctaText}>{SUMMARY.viewAll()}</Text>
-          </Pressable>
+        <View style={s.cardShadow}>
+          <GlassSurface tone="light" radius={16} style={s.card}>
+            <View style={s.cardHead}>
+              <Text style={[s.cardTitle, heading(lang, type.headingSm)]}>{SUMMARY.klealSummary()}</Text>
+              <Text style={s.cardMeta}>{SUMMARY.updatedToday()}</Text>
+            </View>
+            <Text style={[s.para, !text && loading && s.paraWait]}>
+              {text || (loading ? SUMMARY.composing() : fallback)}
+            </Text>
+            <GlassPill tone="brand" label={SUMMARY.viewAll()} busy={sending} onPress={toProfile} style={s.cardCta} />
+          </GlassSurface>
         </View>
 
-        <View style={s.info}>
-          <Text style={s.infoTitle}>✦  {SUMMARY.planTitle()}</Text>
-          <Text style={s.infoBody}>{SUMMARY.planBody()}</Text>
-        </View>
+        {/*
+          Плашки «План обновлён» больше нет (владелец, 26.09): голубая карточка с общими словами
+          спорила с кнопкой «Готово» и ничего не сообщала о самом человеке.
+        */}
 
         {err ? <Text style={s.err}>{err}</Text> : null}
         {/*
@@ -285,94 +316,100 @@ export default function Summary() {
           там убирать нечего, там надо повторить.
         */}
         {rejected.length ? (
-          <Pressable accessibilityRole="button" onPress={dropRejected} disabled={sending}
-                     style={({ pressed }) => [s.drop, pressed && { opacity: 0.85 }]}>
-            <Text style={s.dropText}>{SUMMARY.dropRejected()}</Text>
-          </Pressable>
+          <GlassPill tone="dark" label={SUMMARY.dropRejected()} disabled={sending} onPress={dropRejected} style={s.drop} />
         ) : null}
         {/*
           Дорога ко входу вместо тупика. Собранное никуда не девается: оно лежит в памяти телефона,
           и возобновление анкеты приведёт человека обратно сюда — на сводку, раз всё заполнено.
         */}
         {badName ? (
-          <Pressable accessibilityRole="button" onPress={() => router.navigate('/chat')}
-                     style={({ pressed }) => [s.drop, pressed && { opacity: 0.85 }]}>
-            <Text style={s.dropText}>{SUMMARY.saveFixName()}</Text>
-          </Pressable>
+          <GlassPill tone="dark" label={SUMMARY.saveFixName()} onPress={() => router.navigate('/chat')} style={s.drop} />
         ) : null}
         {needsSignIn ? (
-          <Pressable accessibilityRole="button" onPress={() => router.navigate('/auth')}
-                     style={({ pressed }) => [s.drop, pressed && { opacity: 0.85 }]}>
-            <Text style={s.dropText}>{SUMMARY.saveGoSignIn()}</Text>
-          </Pressable>
+          <GlassPill tone="dark" label={SUMMARY.saveGoSignIn()} onPress={() => router.navigate('/auth')} style={s.drop} />
         ) : null}
+
+        <View>
+          <GlassPill tone="brand" label={SUMMARY.done()} busy={sending} onPress={finish} style={s.done} />
+        </View>
       </ScrollView>
 
-      <View style={s.foot}>
-        <Pressable accessibilityRole="button"
-          style={[s.cta, sending && { opacity: 0.6 }]}
-          onPress={sending ? undefined : finish}
-          accessibilityState={{ busy: sending }}
-        >
-          <Text style={s.ctaText}>{SUMMARY.done()}</Text>
-        </Pressable>
-      </View>
       {/* Композер здесь есть на кадре A.14: разговор не заканчивается на последнем шаге анкеты. */}
-      <Composer onBack={() => router.back()} bottomInset={insets.bottom} />
+      <Composer bottomInset={insets.bottom} />
     </View>
   );
 }
 
+/**
+ * КОЛЬЦО УВЕРЕННОСТИ вокруг аватара (кадр A.14: две окружности 64 — бежевая дорожка и коралловая
+ * дуга). Дуга заполняется до процента уверенности при появлении.
+ */
+function ConfidenceRing({ pct, children }: { pct: number; children: React.ReactNode }) {
+  const R = 31;
+  const C = 2 * Math.PI * R;
+  const reduced = useReducedMotion();
+  const k = useSharedValue(0);
+  useEffect(() => {
+    const to = Math.max(0, Math.min(100, pct)) / 100;
+    k.value = reduced ? to : withTiming(to, { duration: 700, easing: Easing.out(Easing.cubic) });
+  }, [pct, k, reduced]);
+  const arc = useAnimatedProps(() => ({ strokeDashoffset: C * (1 - k.value) }));
+  return (
+    <View style={s.ring}>
+      <Svg width={64} height={64} style={StyleSheet.absoluteFill}>
+        <Circle cx={32} cy={32} r={R} stroke="#E5DED4" strokeWidth={2} fill="none" />
+        <ARing
+          cx={32} cy={32} r={R} stroke="#F45D77" strokeWidth={2} fill="none" strokeLinecap="round"
+          strokeDasharray={`${C} ${C}`} animatedProps={arc} transform="rotate(-90 32 32)"
+        />
+      </Svg>
+      {children}
+    </View>
+  );
+}
+
+// ===== вид
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
-  head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingBottom: 10 },
-  avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: color.primary },
-  headTitle: { flex: 1, ...type.title, color: color.fg, fontWeight: '700' } as any,
-  headPct: { ...type.labelMedium, color: color.muted } as any,
-  track: { height: 3, backgroundColor: color.neutral100, marginHorizontal: 20, borderRadius: 2 },
-  trackFill: { height: 3, backgroundColor: color.primary, borderRadius: 2 },
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, height: 44 },
+  headSide: { width: 84, flexDirection: 'row', alignItems: 'center' },
+  headRight: { justifyContent: 'flex-end', gap: space.sm },
+  headTitle: { flex: 1, textAlign: 'center', color: color.fg } as any,
+  headPct: { ...type.num, color: color.muted } as any,
+  track: {
+    alignSelf: 'center', width: 100, height: 2, marginTop: 10,
+    backgroundColor: 'rgba(255,255,255,0.67)', borderRadius: 999, overflow: 'hidden',
+  },
+  trackFill: { height: 2, backgroundColor: '#FF385C', borderRadius: 999 },
 
-  // Запас снизу, чтобы последний блок не уезжал под кнопку «Готово» и композер.
-  scroll: { padding: 20, paddingBottom: 130, gap: space.md },
-  card: { backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg, gap: space.md },
-  idRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  idAvatar: { width: 52, height: 52, borderRadius: rad.full },
+  // Запас снизу, чтобы последний блок не уезжал под композер.
+  scroll: { paddingHorizontal: 20, paddingTop: space.lg, paddingBottom: 40, gap: space.md },
+  cardShadow: {
+    borderRadius: 16,
+    shadowColor: '#0A0A14', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 5 },
+  },
+  card: { padding: space.lg, gap: 14 },
+  idRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  ring: { width: 64, height: 64, alignItems: 'center', justifyContent: 'center' },
+  idAvatar: { width: 56, height: 56, borderRadius: 28 },
   idAvatarEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
-  idLetter: { ...type.title, color: color.muted } as any,
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  name: { fontSize: 20, fontWeight: '700', color: color.fg },
-  verified: { color: color.primary, fontWeight: '700' },
-  confRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
-  confLabel: { ...type.bodySmall, color: color.muted } as any,
-  confPct: { ...type.bodySmall, color: color.muted } as any,
-  confTrack: { height: 4, backgroundColor: color.neutral100, borderRadius: 2, marginTop: 5 },
-  confFill: { height: 4, backgroundColor: color.primary, borderRadius: 2 },
+  name: { color: color.fg, flexShrink: 1 } as any,
+  conf: { lineHeight: 16 } as any,
+  confNum: { fontFamily: font.textSemibold, fontSize: 13, lineHeight: 16, color: color.fg, fontVariant: ['tabular-nums'] } as any,
+  confLabel: { fontFamily: font.textMedium, fontSize: 11, lineHeight: 16, color: color.muted, textTransform: 'uppercase', letterSpacing: 0.6 } as any,
 
-  cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  cardTitle: { fontSize: 18, fontWeight: '700', color: color.fg },
-  cardMeta: { ...type.caption, color: color.muted } as any,
-  para: { ...type.body, color: color.fg } as any,
+  cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: space.sm },
+  cardTitle: { color: color.fg, flexShrink: 1 } as any,
+  cardMeta: { fontFamily: font.text, fontSize: 11, lineHeight: 16, color: '#B4ABA0' } as any,
+  para: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: color.muted } as any,
+  /** Ожидание — бледнее: это ещё не описание, и путать его с описанием нельзя. */
+  paraWait: { color: color.neutral400 } as any,
+  cardCta: { height: 40, marginTop: 10 },
 
-  info: { backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.lg, gap: 6 },
-  infoTitle: { ...type.title, color: color.infoText } as any,
-  infoBody: { ...type.bodySmall, color: color.infoText } as any,
 
-  cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
-  ctaText: { ...type.button, color: color.onPrimary } as any,
-  /** Ожидание — приглушённым: это ещё не описание, и путать его с описанием нельзя. */
-  paraWait: { color: color.muted } as any,
   err: { ...type.bodySmall, color: color.primary } as any,
   /** Единственное действие, которое на этом экране имеет смысл при отказе, — потому и заметное. */
-  drop: {
-    marginTop: space.md,
-    alignSelf: 'flex-start',
-    paddingHorizontal: space.lg,
-    height: 44,
-    borderRadius: rad.full,
-    backgroundColor: color.ink,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dropText: { ...type.button, color: color.onPrimary } as any,
-  foot: { paddingHorizontal: 20, paddingTop: space.md },
+  drop: { marginTop: space.xs },
+  done: { height: 48, marginTop: space.xs },
 });

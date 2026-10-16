@@ -20,6 +20,7 @@
 # taxonomy helpers (injected via `H`), HTTP routes, and the legacy v1 scorer as rollback
 # (env KLEAL_CORE_V2=0). This module is import-safe: stdlib only, no I/O besides load_config().
 
+import re
 import hashlib, math, time
 from geo import haversine as _haversine, latlon as _latlon   # см. shared/geo.py
 
@@ -182,6 +183,33 @@ LANG_WORDS = {"spanish": "es", "espanol": "es", "испан": "es", "english": "
 def _lang_codes(seq):
     return {str(l)[:2].lower() for l in (seq or []) if str(l).strip()}
 
+
+def geo_value(km):
+    """Близость числом по тем же якорям GEO_BANDS — но БЕЗ СТУПЕНЕК.
+
+    Ступенька уравнивала 1,6 км и 3,4 км (обоим 0.85), 3,6 км и 6,9 км (обоим 0.65) — разницу
+    вдвое движок не видел вовсе. Значений у признака было ровно пять, и на восьмерых одной выдачи
+    приходилось три-четыре разных балла: порядок внутри полосы решала сортировка, а не близость
+    (проверка `granularity` в батарее: 49 % при пороге 70 %).
+
+    Якоря сохранены ТОЧНО: 1,5 км → 1.0; 3,5 → 0.85; 7 → 0.65; 15 → 0.45; дальше — прежние 0.15.
+    Между якорями — прямая. Ближе 1,5 км значение остаётся 1.0 у всех: «в шаговой доступности»
+    — это про то, дойдёшь ли ты, а не про сто метров разницы, и выдумывать здесь точность нечестно.
+
+    Двойник: одна и та же функция живёт в ЖИВОМ движке (matching_core/feature_builder/builder.py)
+    и в запасном (services/matching/core_v2.py). Правишь одну — правь обе: на языковой паре копии
+    уже разошлись, и полгода носитель языка был неотличим от ученика.
+    """
+    prev_lim, prev_val = 0.0, GEO_BANDS[0][1]
+    for lim, val in GEO_BANDS:
+        if km <= lim:
+            if lim <= prev_lim:
+                return val
+            t = (km - prev_lim) / (lim - prev_lim)
+            return round(prev_val + (val - prev_val) * t, 4)
+        prev_lim, prev_val = lim, val
+    return 0.15
+
 def build_features(intent, prof, cand, domain, H, role_conflict):
     """A->B evidence for the 7 groups -> {group: (state, value, detail)}. One aggregated subfeature
     per group; alias/parent readings of the same interest collapse into one matched set (no double
@@ -227,11 +255,7 @@ def build_features(intent, prof, cand, domain, H, role_conflict):
         if km is None:
             F["location_feasibility"] = (UNKNOWN, None, "")
         else:
-            v = 0.15
-            for lim, val in GEO_BANDS:
-                if km <= lim:
-                    v = val
-                    break
+            v = geo_value(km)
             F["location_feasibility"] = ((K_MATCH if v >= 0.45 else K_MISM), v, "%.1f km" % km)
 
     # 4. mode_format — candidates rarely declare formats; unknown, not assumed compatible
@@ -361,12 +385,12 @@ TIER_KIND = {"T0": "reciprocal", "T1": "exact", "T2": "related", "T3": "adjacent
 # relevance (spec §10: "эти величины не складываются"). It gates can_outreach, orders the slate
 # (§11.2) and is shown as an availability status; paused people leave retrieval entirely.
 READINESS_LABELS = {
-    "open_now":          ("открыт(а) сейчас", "open now"),
-    "open_later":        ("не сейчас — тихие часы", "later (quiet hours)"),
-    "passive_discovery": ("только в подборке", "discovery only"),
-    "busy":              ("сейчас занят(а)", "busy right now"),
-    "paused":            ("на паузе", "paused"),
-    "unknown":           ("доступность не настроена", "availability not set"),
+    "open_now":          ("открыт(а) сейчас", "open now", "disponible ahora"),
+    "open_later":        ("не сейчас — тихие часы", "later (quiet hours)", "más tarde — horas de silencio"),
+    "passive_discovery": ("только в подборке", "discovery only", "solo en la selección"),
+    "busy":              ("сейчас занят(а)", "busy right now", "ocupado/a ahora"),
+    "paused":            ("на паузе", "paused", "en pausa"),
+    "unknown":           ("доступность не настроена", "availability not set", "disponibilidad sin configurar"),
 }
 READINESS_RANK = {"open_now": 0, "open_later": 1, "unknown": 2, "passive_discovery": 3, "busy": 4,
                   "paused": 5}
@@ -410,6 +434,74 @@ def is_paused(cand, now_ts=None):
     pu = _parse_ts(r.get("paused_until"))
     return bool(pu and pu > (now_ts or time.time()))
 
+def gender_label(label, gender, lang="ru"):
+    """«открыт(а) сейчас» → «открыта сейчас» / «открыт сейчас», когда пол человека известен.
+
+    Подписи готовности написаны нейтрально — «открыт(а)», «занят(а)», «ocupado/a», — потому что
+    таблица не знает, о ком речь. На карточке речь о конкретном человеке, и пол у него в профиле
+    есть: скобки там читались как недоделка (снято с телефона). Небинарный или неизвестный пол —
+    нейтральная форма остаётся, выдумывать род нельзя."""
+    t = str(label or "")
+    g = str(gender or "").strip().lower()
+    fem = g in ("female", "f", "woman", "женский", "ж", "mujer")
+    masc = g in ("male", "m", "man", "мужской", "м", "hombre")
+    if not (fem or masc):
+        return t
+    if lang == "ru":
+        return t.replace("(а)", "а" if fem else "")
+    if lang == "es":
+        return t.replace("o/a", "a" if fem else "o")
+    return t
+
+
+_RU_2SG = re.compile(r"\b([а-яё]{2,}?)(ешься|ёшься|ишься|ешь|ёшь|ишь)\b")
+_RU_2SG_MAP = {"ешься": "ется", "ёшься": "ётся", "ишься": "ится", "ешь": "ет", "ёшь": "ёт", "ишь": "ит"}
+_RU_PRON = [
+    (re.compile(r"\bТы\b"), "S"), (re.compile(r"\bты\b"), "s"),
+    (re.compile(r"\bТебе\b"), "D"), (re.compile(r"\bтебе\b"), "d"),
+    (re.compile(r"\bТебя\b"), "A"), (re.compile(r"\bтебя\b"), "a"),
+    (re.compile(r"\bТобой\b"), "I"), (re.compile(r"\bтобой\b"), "i"),
+    (re.compile(r"\b[Тт]во(?:й|я|ё|и|его|ей|их|им|ими|ю|ем)\b"), "P"),
+]
+
+
+def card_summary(text, name, gender):
+    """Сводка человека для ЧУЖОЙ карточки.
+
+    Сводку Kleal пишет человеку — во втором лице: «Ты живёшь в Барселоне, учишься в МИРЭА».
+    На карточке кандидата это читает другой человек, и «ты» там обращено не к нему. Русский
+    текст переводим в третье лицо по роду: местоимения — «она/он» (а без пола — имя), глаголы
+    настоящего времени — окончаниями (-ешь → -ет, -ишься → -ится). Первое и третье лицо (сеяные
+    персоны, «Совладелец кофейни…») трогать не надо. Английский и испанский второго лица
+    без модели не перепишешь (you live → she lives), поэтому такой текст на карточку не идёт —
+    остаётся разбор совпадения. Настоящее решение — публичная сводка от третьего лица,
+    собранная моделью вместе с личной; это отдельная правка."""
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    if re.match(r"^(You|Your|Tú|Tu\b|Te\b)", t):
+        return ""
+    if not re.search(r"\b(ты|тебе|тебя|тобой|тво(?:й|я|ё|и))\b", t, re.I) and not _RU_2SG.search(t):
+        return t                                        # не второе лицо — как есть
+    g = str(gender or "").strip().lower()
+    fem = g in ("female", "f", "woman", "женский", "ж", "mujer")
+    masc = g in ("male", "m", "man", "мужской", "м", "hombre")
+    nm = str(name or "").strip().split(" ")[0]
+    subj = "она" if fem else "он" if masc else (nm or "человек")
+    dat = "ей" if fem else "ему" if masc else nm or "человеку"
+    acc = "её" if fem else "его" if masc else nm or "человека"
+    ins = "ней" if fem else "ним" if masc else nm or "человеком"
+    # Без пола притяжательное опускаем: «когда день начинается с кофе» читается, а «Deniz день» — нет.
+    poss = "её" if fem else "его" if masc else ""
+    for rx, kind in _RU_PRON:
+        rep = {"S": subj[:1].upper() + subj[1:], "s": subj, "D": dat[:1].upper() + dat[1:], "d": dat,
+               "A": acc[:1].upper() + acc[1:], "a": acc, "I": ins[:1].upper() + ins[1:], "i": ins,
+               "P": poss}[kind]
+        t = rx.sub(rep, t)
+    t = _RU_2SG.sub(lambda m: m.group(1) + _RU_2SG_MAP[m.group(2)], t)
+    return re.sub(r"\s{2,}", " ", t).strip()
+
+
 def readiness_state(cand, domain, now_ts, cfg, received_24h=0):
     """Spec §10.1 states. Sources, in order: receiving policy (canonical §4.4 object on the user),
     else the demo-pool legacy 'open' flag as an explicit availability signal, else unknown —
@@ -446,10 +538,10 @@ def readiness_state(cand, domain, now_ts, cfg, received_24h=0):
 
 # ------------------------------------------------------------------ presentation (spec §9.7)
 BAND_LABELS = {
-    "especially_close":    ("Особенно близко к вашему запросу", "Especially close to your request"),
-    "strong_option":       ("Хороший вариант", "Strong option"),
-    "broader_option":      ("Более широкий вариант", "Broader option"),
-    "needs_clarification": ("Нужно уточнение", "Needs clarification"),
+    "especially_close":    ("Особенно близко к вашему запросу", "Especially close to your request", "Especialmente cerca de lo que buscas"),
+    "strong_option":       ("Хороший вариант", "Strong option", "Buena opción"),
+    "broader_option":      ("Более широкий вариант", "Broader option", "Opción más amplia"),
+    "needs_clarification": ("Нужно уточнение", "Needs clarification", "Necesita aclaración"),
 }
 BAND_RANK = {"especially_close": 0, "strong_option": 1, "broader_option": 2, "needs_clarification": 3}
 
@@ -461,23 +553,23 @@ def assign_band(lcb, cov, bands):
     return "needs_clarification"
 
 _REASON = {
-    "semantic_activity":   lambda d: (("общее: %s" % d, "shares %s" % d) if d else
-                                      ("близкая тема", "related topic")),
-    "time_feasibility":    lambda d: ("открыт(а) к встрече сейчас", "open to meet now"),
-    "location_feasibility":lambda d: ("рядом (%s)" % d, "nearby (%s)" % d),
-    "mode_format":         lambda d: ("совпадает формат", "format fits"),
-    "directed_preferences":lambda d: ("подходящая роль (%s)" % d, "matching role (%s)" % d),
-    "social_context":      lambda d: ("похожий вайб", "similar vibe"),
-    "domain_constraints":  lambda d: ("совпадают условия (%s)" % d, "constraints fit (%s)" % d),
+    "semantic_activity":   lambda d: (("общее: %s" % d, "shares %s" % d, "en común: %s" % d) if d else
+                                      ("близкая тема", "related topic", "tema cercano")),
+    "time_feasibility":    lambda d: ("открыт(а) к встрече сейчас", "open to meet now", "disponible para quedar ahora"),
+    "location_feasibility":lambda d: ("рядом (%s)" % d, "nearby (%s)" % d, "cerca (%s)" % d),
+    "mode_format":         lambda d: ("совпадает формат", "format fits", "el formato encaja"),
+    "directed_preferences":lambda d: ("подходящая роль (%s)" % d, "matching role (%s)" % d, "rol adecuado (%s)" % d),
+    "social_context":      lambda d: ("похожий вайб", "similar vibe", "vibra parecida"),
+    "domain_constraints":  lambda d: ("совпадают условия (%s)" % d, "constraints fit (%s)" % d, "las condiciones encajan (%s)" % d),
 }
 _GAP = {
-    "semantic_activity":   ("интересы не заполнены", "interests not filled in"),
-    "time_feasibility":    ("время не подтверждено", "time not confirmed"),
-    "location_feasibility":("район не указан", "area unknown"),
-    "mode_format":         ("формат не уточнён", "format not set"),
-    "directed_preferences":("роль не указана", "role unknown"),
-    "social_context":      ("вайб не указан", "vibe unknown"),
-    "domain_constraints":  ("детали (платформа/уровень) не указаны", "domain details unknown"),
+    "semantic_activity":   ("интересы не заполнены", "interests not filled in", "intereses sin rellenar"),
+    "time_feasibility":    ("время не подтверждено", "time not confirmed", "hora sin confirmar"),
+    "location_feasibility":("район не указан", "area unknown", "zona desconocida"),
+    "mode_format":         ("формат не уточнён", "format not set", "formato sin definir"),
+    "directed_preferences":("роль не указана", "role unknown", "rol desconocido"),
+    "social_context":      ("вайб не указан", "vibe unknown", "vibra desconocida"),
+    "domain_constraints":  ("детали (платформа/уровень) не указаны", "domain details unknown", "detalles (plataforma/nivel) desconocidos"),
 }
 
 def _presentation(F, d_ab, dom_cfg):
@@ -486,10 +578,10 @@ def _presentation(F, d_ab, dom_cfg):
     known = [(float(W.get(k, 0)) * float(v), k, d)
              for k, (st, v, d) in F.items() if st == K_MATCH and float(W.get(k, 0)) > 0]
     known.sort(key=lambda x: -x[0])
-    rs_ru, rs_en, legacy = [], [], []
+    rs_ru, rs_en, rs_es, legacy = [], [], [], []
     for _wv, k, d in known[:3]:
-        ru, en = _REASON[k](d)
-        rs_ru.append(ru); rs_en.append(en)
+        ru, en, es = _REASON[k](d)
+        rs_ru.append(ru); rs_en.append(en); rs_es.append(es)
         if k == "semantic_activity" and d:
             legacy.append("shares " + d)               # exact legacy phrasing buddy.humanize knows
         elif k == "social_context":
@@ -505,10 +597,10 @@ def _presentation(F, d_ab, dom_cfg):
     if not gaps:
         gaps = [(float(W.get(k, 0)), k) for k in d_ab["unknowns"]]
     gaps.sort(key=lambda x: -x[0])
-    gap_ru = gap_en = None
+    gap_ru = gap_en = gap_es = None
     if gaps:
-        gap_ru, gap_en = _GAP[gaps[0][1]]
-    return rs_ru, rs_en, legacy, gap_ru, gap_en
+        gap_ru, gap_en, gap_es = _GAP[gaps[0][1]]
+    return rs_ru, rs_en, legacy, gap_ru, gap_en, rs_es, gap_es
 
 # ------------------------------------------------------------------ allocation (slate diversity)
 TOP_N, PER_BUCKET = 8, 3        # slate size params (allocation layer, not relevance — spec §11)
@@ -577,7 +669,7 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
         can_outreach = (outreach_tier_ok and readiness == "open_now" and
                         d_ab["lcb"] >= float(dom_cfg["outreach_min_lcb"]) and
                         d_ab["coverage"] >= float(dom_cfg["outreach_min_coverage"]))
-        rs_ru, rs_en, legacy_reasons, gap_ru, gap_en = _presentation(F, d_ab, dom_cfg)
+        rs_ru, rs_en, legacy_reasons, gap_ru, gap_en, rs_es, gap_es = _presentation(F, d_ab, dom_cfg)
         matched = F["semantic_activity"][2] or ""
         bucket = (H["cat_of"](matched.split(", ")[0])[0] if matched else
                   H["cat_of"]((c.get("interests") or ["x"])[0])[0]) or "other"
@@ -588,8 +680,10 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
                ("Agent: not reachable now (%s)" % READINESS_LABELS[readiness][1]
                 if readiness != "open_now" else
                 ("Agent: needs clarification" if band == "needs_clarification" else "Agent: fit too weak"))
-        band_ru, band_en = BAND_LABELS[band]
-        rdy_ru, rdy_en = READINESS_LABELS[readiness]
+        band_ru, band_en, band_es = BAND_LABELS[band]
+        rdy_ru, rdy_en, rdy_es = READINESS_LABELS[readiness]
+        rdy_ru = gender_label(rdy_ru, c.get("gender"), "ru")
+        rdy_es = gender_label(rdy_es, c.get("gender"), "es")
         out.append({
             # ---- legacy card contract (buddy/_card + profile UI keep rendering) ----
             "name": c.get("name"), "score": round(d_ab["lcb"] * 100, 1), "tier": tier,
@@ -599,11 +693,14 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
             "dealBreakers": c.get("dealBreakers"), "reasons": legacy_reasons or rs_en,
             "agree": agree, "note": note, "bucket": bucket,
             # ---- Matching Core v2 (spec) ----
-            "band": band, "band_ru": band_ru, "band_en": band_en,
+            "band": band, "band_ru": band_ru, "band_en": band_en, "band_es": band_es,
             "reasons_ru": rs_ru, "reasons_en": rs_en, "gap_ru": gap_ru, "gap_en": gap_en,
+            "reasons_es": rs_es, "gap_es": gap_es,
             "coverage": d_ab["coverage"], "lcb": d_ab["lcb"], "reciprocal": rec,
             "unknowns": d_ab["unknowns"], "can_outreach": can_outreach,
-            "readiness": readiness, "readiness_ru": rdy_ru, "readiness_en": rdy_en,
+            "readiness": readiness, "readiness_ru": rdy_ru, "readiness_en": rdy_en, "readiness_es": rdy_es,
+            # Сводка о человеке — вместо разбора совпадения на карточке (см. candSummary в клиенте).
+            "summary": str(c.get("summary") or "")[:600],
             "trace": {"tier": tier, "policy": "ALLOW", "domain": domain,
                       "a_to_b": d_ab, "b_to_a": d_ba, "reciprocal": rec,
                       "band": band, "readiness": readiness,

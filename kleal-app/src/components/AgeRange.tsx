@@ -13,13 +13,17 @@
  * (у верхнего — справа), и две одинаковые полосы читались как противоречащие друг другу.
  */
 import React from 'react';
+import { AGE_MIN, AGE_MAX } from '../age-ruler';
 import { View, Text, StyleSheet } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { PREFS } from '../candidates';
 import { color, space, type } from '../theme';
 
-const FLOOR = 18;   // ниже — жёсткий гейт матчинга, спрашивать бессмысленно
-const CEIL = 80;
+// Границы — ОДНИ. Здесь стояли свои 18/80 рядом с такими же AGE_MIN/AGE_MAX в age-ruler.ts:
+// два объявления одного правила расходятся молча, а нижняя граница — это жёсткий гейт
+// матчинга, и разойтись ей нельзя.
+const FLOOR = AGE_MIN;
+const CEIL = AGE_MAX;
 
 export function AgeRange({
   min, max, onChange,

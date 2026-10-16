@@ -6,51 +6,57 @@
  * человек должен увидеть, куда попал, ещё до первого действия.
  */
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { BlurView } from 'expo-blur';
+import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { IconImagePlaceholder } from '../src/components/icons';
+import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 import { BottomNav } from '../src/components/BottomNav';
-import { Ambient, GLOW_DONE } from '../src/components/Ambient';
+import { Ambient, GLOW_SIGNIN } from '../src/components/Ambient';
 import { GlassPill } from '../src/components/Glass';
+import { riseIn } from '../src/components/LiquidGlass';
+import { KlealMark, RibbonTile } from '../src/components/Ribbon';
 import { useLang } from '../src/i18n';
 import { DONE_SCREEN } from '../src/onboarding';
-import { color, displayFamily, glass, radius as rad, space, type } from '../src/theme';
+import { color, heading, space, type } from '../src/theme';
 
 export default function Done() {
   const lang = useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const reduced = useReducedMotion();
 
   return (
     <View style={s.wrap}>
-      {/* Тот же тёплый фон, что на «Ты в деле»: оба кадра — исходы, а не шаги. */}
-      <Ambient glows={GLOW_DONE} />
-      <View style={[s.page, { paddingTop: insets.top }]}>
+      {/*
+        КАДР A.15: розово-сиреневое поле (тот же размытый цветной фон, что на входе A.03), коралловая
+        лента со стеклянной плиткой и белым знаком Kleal — «нить» из A.03.3 довела до конца анкеты.
+      */}
+      <Ambient glows={GLOW_SIGNIN} />
+      <View style={[s.page, { paddingTop: insets.top + 40 }]}>
+        <View style={s.art}>
+          <RibbonTile width={width} x={-65} tileTop={152}>
+            <KlealMark size={70} />
+          </RibbonTile>
+        </View>
         <View style={s.body}>
-          <View style={s.circle}>
-            <BlurView intensity={glass.blur} tint="light" style={StyleSheet.absoluteFill} />
-            <View
-              style={[StyleSheet.absoluteFill, { backgroundColor: color.glassLight, opacity: glass.lightAlpha }]}
-            />
-            {/* Тот же значок-заглушка изображения, что на борде */}
-            <IconImagePlaceholder size={55} />
-          </View>
-          {/* Гарнитура заголовка зависит от языка — см. displayFamily. */}
-          <Text style={[s.title, { fontFamily: displayFamily(lang) }]}>{DONE_SCREEN.title()}</Text>
+          <Animated.Text
+            entering={reduced ? undefined : FadeIn.delay(600).duration(420)}
+            style={[s.title, heading(lang, type.hero)]}
+          >
+            {DONE_SCREEN.title()}
+          </Animated.Text>
         </View>
 
-        <View style={s.ctaWrap}>
-          {/* Кнопка обещает создание интента — и открывает именно его. Главная подкладывается ВНИЗ,
-              чтобы «назад» из создания вело на неё, а не обратно в поздравление. */}
+        {/* Кнопка обещает создание интента — и открывает именно его. Главная подкладывается ВНИЗ,
+            чтобы «назад» из создания вело на неё, а не обратно в поздравление. */}
+        <Animated.View style={s.ctaWrap} entering={reduced ? undefined : riseIn(700, 6)}>
           <GlassPill
             tone="brand"
             label={DONE_SCREEN.cta()}
-            style={s.cta}
             onPress={() => { router.dismissTo('/home'); router.navigate('/create'); }}
           />
-        </View>
+        </Animated.View>
 
         <BottomNav />
       </View>
@@ -58,19 +64,12 @@ export default function Done() {
   );
 }
 
-
+// ===== вид
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ambientBase },
   page: { flex: 1 },
-  body: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28, paddingHorizontal: 20 },
-  /** Круг 200 и значок 55 внутри — размеры из кадра. */
-  circle: {
-    width: 200, height: 200, borderRadius: rad.full, overflow: 'hidden',
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: '#FFFFFF88',
-  },
-  title: { ...type.display, color: color.fg, textAlign: 'center' } as any,
+  art: { alignItems: 'flex-start' },
+  body: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
+  title: { color: color.fg, textAlign: 'center' } as any,
   ctaWrap: { paddingHorizontal: 20, marginBottom: space.lg },
-  /** Кнопка финала ниже входной: 52 против 56 — так в кадре. */
-  cta: { height: 52 },
 });

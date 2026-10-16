@@ -17,15 +17,24 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { useLang, T } from '../src/i18n';
+import { useLang, T, dateLocale } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { group as gapi, mediaUrl, newIdem, type GroupInfo } from '../src/api';
-import { GINVITE, ROOM } from '../src/groups';
-import { IconChevronLeft, IconPerson, IconCalendar, IconPin } from '../src/components/icons';
-import { color, radius as rad, space, type } from '../src/theme';
+import { group as gapi, mediaUrl, newIdem, pidOf, myId, ensureMe, type GroupInfo } from '../src/api';
+import { GINVITE, ROOM, groupCallLine, isOnlineGroup } from '../src/groups';
+import Animated, { useReducedMotion } from 'react-native-reanimated';
+import { IconPerson, IconCalendar, IconPin, IconClock, IconShieldCheck, IconVideo } from '../src/components/icons';
+import { color, font, heading, labelFamily, space, type } from '../src/theme';
+import { Cover } from '../src/components/Cover';
+import { GlassPill } from '../src/components/Glass';
+import { GlassBack, GlassSurface, riseIn } from '../src/components/LiquidGlass';
+import { BottomNav } from '../src/components/BottomNav';
+import { useNavCollapse } from '../src/navScroll';
 
 export default function GroupInvite() {
-  useLang();
+  /** Navigation V2: панель сворачивается при прокрутке вниз (NAV.S2). */
+  const navCollapse = useNavCollapse();
+  const lang = useLang();
+  const reduced = useReducedMotion();
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
@@ -41,6 +50,12 @@ export default function GroupInvite() {
   const [busy, setBusy] = useState(false);
   /** Итог ответа — им же экран и заканчивается: показать результат честнее, чем молча уйти. */
   const [outcome, setOutcome] = useState<'' | 'declined' | 'awaiting' | 'full' | 'gone' | 'error'>('');
+  /** GR.56a: приглашение закрылось само — почему (full / converted / closed / expired). */
+  const [closed, setClosed] = useState('');
+  /** Кто позвал — из самого приглашения: состав закрытой группы постороннему не отдаётся. */
+  const [inviter, setInviter] = useState<{ name: string; photo: string; age?: number } | null>(null);
+  const [, setMeKnown] = useState('');
+  useEffect(() => { ensureMe().then(setMeKnown); }, []);
 
   /**
    * Карточку группы читаем ДО согласия. Не участнику сервер не отдаст ни чат, ни состав
@@ -54,6 +69,9 @@ export default function GroupInvite() {
       if (r?.group) {
         setG(r.group);
         setGroupId(String(r.group.gid || r.invite?.gid || gid));
+        setClosed(String(r.invite?.closed || ''));
+        if (r.invite?.from) setInviter({ name: String(r.invite.from), photo: String(r.invite.from_photo || ''),
+                                         age: r.invite.from_age || undefined });
       } else {
         setOutcome('gone');
       }
@@ -100,22 +118,37 @@ export default function GroupInvite() {
   const joined = Number(g?.joined_count || members.length || 0);
   const max = Number(g?.max_total || 5);
   const min = Number(g?.min_total || 3);
-  const owner = String(g?.owner || '');
+  const owner = String(g?.owner || inviter?.name || '');
+  const ownerId = String((g as any)?.owner_id || '');
+  /** «Thu 23 July, 19:00» → дата и время раздельно, у каждого свой знак. */
+  const whenParts = ((): [string, string] => {
+    const w = String(g?.when || '');
+    const m = w.match(/^(.*?)\s*(?:·|,)\s*(\d{1,2}[:.]\d{2}(?:\s*[AaPp][Mm])?)$/);
+    return m ? [m[1], m[2]] : [w, ''];
+  })();
+
+  const inside = members.map((m) => String(m.name || '')).filter(Boolean);
+  /** «on Thursday» (GR.56) — день недели из даты затеи; нет даты — без дня, не выдумываем. */
+  const weekday = (() => {
+    const k = String((g as any)?.date_key || (g as any)?.intent?.dateKey || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) return '';
+    return new Date(k + 'T12:00:00').toLocaleDateString(dateLocale(), { weekday: 'long' });
+  })();
 
   const back = () => (router.canGoBack() ? router.back() : router.replace('/messages'));
 
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
+      {/* Фон — ровный «Ambient · glass pilot» #F5F1EC (s.wrap), без пятен: так на новом борде раздела A (6864:115809), как и в мастере создания. */}
+      {/* Кадр GR.56: стеклянная «назад» и название затеи слева гарнитурой шапок. */}
       <View style={s.head}>
-        <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={back}>
-          <IconChevronLeft />
-        </Pressable>
-        <Text style={s.headTitle} numberOfLines={1}>
-          {g?.title || T('Приглашение', 'Invite')}
+        <GlassBack label={T('Назад', 'Back', 'Atrás')} onPress={back} />
+        <Text style={[s.headTitle, heading(lang, type.headingSm)]} numberOfLines={1}>
+          {g?.title || T('Приглашение', 'Invite', 'Invitar')}
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={s.scroll}>
+      <ScrollView onScroll={navCollapse} scrollEventThrottle={16} contentContainerStyle={s.scroll}>
         {loading ? <ActivityIndicator style={{ marginTop: 40 }} color={color.primary} /> : null}
 
         {!loading && outcome ? (
@@ -130,108 +163,167 @@ export default function GroupInvite() {
 
         {!loading && !outcome && g ? (
           <>
-            <Text style={s.title}>{GINVITE.title(owner, String(g.title || ''))}</Text>
-            <Text style={s.note}>{GINVITE.note()}</Text>
-
-            {/* Карточка интента — когда и где, если группа это назвала. Ссылки на звонок здесь
-                нет и быть не может: её приносит план позже, уже подтвердившим. */}
-            <View style={s.card}>
-              <Text style={s.cardTitle} numberOfLines={2}>{g.title}</Text>
-              {g.when ? (
-                <View style={s.metaRow}>
-                  <IconCalendar />
-                  <Text style={s.meta}>{String(g.when)}</Text>
-                </View>
-              ) : null}
-              {g.area ? (
-                <View style={s.metaRow}>
-                  <IconPin size={15} c={color.muted} />
-                  <Text style={s.meta} numberOfLines={1}>{String(g.area)}</Text>
-                </View>
-              ) : null}
-              <Text style={s.seats}>{GINVITE.seats(joined, max, min)}</Text>
+            {/* GR.56: кто позвал и что это; GR.56a: приглашение закрылось и почему — без вины. */}
+            <View style={s.status}>
+              <Text style={[s.title, { fontFamily: labelFamily(lang) }]}>
+                {closed ? GINVITE.closedTitle() : GINVITE.invitedYou(owner)}
+              </Text>
+              <Text style={s.note}>
+                {closed
+                  ? GINVITE.closedNote(closed, String(g.title || ''), owner)
+                  : GINVITE.inviteNote2(
+                      isOnlineGroup(g) ? GINVITE.inviteWhatCall(String(g.title || ''), weekday, max)
+                        : GINVITE.inviteWhat(String(g.title || ''), String(g.area || ''), weekday, max),
+                      // Кто внутри — по составу; если сервер постороннему состав не отдал, внутри
+                      // как минимум тот, кто позвал (иначе выходило «. is in» без имени).
+                      ROOM.andList(inside.length ? inside : (owner ? [owner] : [])),
+                      Math.max(0, max - Math.max(joined, inside.length || (owner ? 1 : 0))))}
+              </Text>
             </View>
 
-            <Text style={s.section}>{GINVITE.whosIn()}</Text>
-            {members.map((m, i) => {
-              const nm = String(m.name || '');
-              const isOwner = nm.trim().toLowerCase() === owner.trim().toLowerCase();
-              return (
-                <View key={nm + i} style={s.memberRow}>
-                  {/* Заглушка снизу, фото сверху — как в app/gplan.tsx. */}
-                  <View style={[s.memberAv, s.memberAvEmpty]}>
-                    <IconPerson size={18} />
-                    {m.photo ? (
-                      <Image source={{ uri: mediaUrl(String(m.photo)) }}
-                             style={[s.memberAv, StyleSheet.absoluteFillObject]} />
-                    ) : null}
+            {/* Карточка затеи — «Plan Card · forming»: обложка, дата и время раздельно, место и
+                зелёная строка «Exact spot after everyone confirms»: точный адрес откроется позже. */}
+            <View style={s.cardShadow}>
+              <GlassSurface tone="light" radius={20} style={s.card}>
+                <Cover intent={g} style={s.cover} />
+                <View style={s.cardBody}>
+                  {g.when ? (
+                    <View style={s.metaRow}>
+                      <IconCalendar size={18} c={color.primary} />
+                      <Text style={s.meta} numberOfLines={1}>{whenParts[0]}</Text>
+                      {whenParts[1] ? (
+                        <>
+                          <IconClock size={18} c={color.primary} />
+                          <Text style={s.meta}>{whenParts[1]}</Text>
+                        </>
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {isOnlineGroup(g) ? (
+                    <View style={s.metaRow}>
+                      <IconVideo size={18} c={color.primary} />
+                      <Text style={s.meta} numberOfLines={1}>{groupCallLine(g)}</Text>
+                    </View>
+                  ) : g.area ? (
+                    <View style={s.metaRow}>
+                      <IconPin size={18} c={color.primary} />
+                      <Text style={s.meta} numberOfLines={1}>{String(g.area)}</Text>
+                    </View>
+                  ) : null}
+                  <View style={s.metaRow}>
+                    <IconShieldCheck size={18} c="#238C62" />
+                    <Text style={[s.meta, { color: '#238C62' }]} numberOfLines={1}>
+                      {isOnlineGroup(g) ? GINVITE.linkOpens() : GINVITE.exactSpot()}
+                    </Text>
                   </View>
-                  <Text style={s.memberName} numberOfLines={1}>{nm}</Text>
-                  <Text style={s.memberRole}>
-                    {isOwner ? ROOM.roleOrganiser() : ROOM.roleMember()}
-                  </Text>
                 </View>
-              );
-            })}
+              </GlassSurface>
+            </View>
+
+            {/* Люди: организатор «Invited you», остальные «In the group», ты — последним. */}
+            <View>
+              {(members.length ? members
+                : inviter ? [{ name: inviter.name, photo: inviter.photo, age: inviter.age } as any] : []).map((m, i) => {
+                const nm = String(m.name || '');
+                const isOwner = ownerId && pidOf(m, 'name') ? pidOf(m, 'name') === ownerId : nm.trim().toLowerCase() === owner.trim().toLowerCase();
+                return (
+                  <View key={nm + i} style={s.memberRow}>
+                    <View style={[s.memberAv, s.memberAvEmpty]}>
+                      <IconPerson size={18} />
+                      {m.photo ? (
+                        <Image source={{ uri: mediaUrl(String(m.photo)) }}
+                               style={[s.memberAv, StyleSheet.absoluteFill]} />
+                      ) : null}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <View style={s.nameRow}>
+                        <Text style={s.memberName} numberOfLines={1}>{ROOM.nameAge(nm, (m as any).age)}</Text>
+                        {isOwner ? (
+                          <View style={s.orgBadge}><Text style={s.orgText}>{ROOM.roleOrganiser().toLowerCase()}</Text></View>
+                        ) : null}
+                      </View>
+                      <Text style={s.memberRole}>{isOwner ? GINVITE.stInvitedYou() : ROOM.roleMember()}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+              <View style={s.memberRow}>
+                <View style={[s.memberAv, s.memberAvEmpty]}>
+                  <IconPerson size={18} />
+                  {myId() ? <Image source={{ uri: mediaUrl(`/api/onboarding/photo/${encodeURIComponent(myId())}.jpg`) }} style={[s.memberAv, StyleSheet.absoluteFill]} /> : null}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.memberName}>{T('Ты', 'You', 'Tú')}</Text>
+                  <Text style={s.memberRole}>{closed ? GINVITE.stDidntAnswer() : GINVITE.stAnswerNeeded()}</Text>
+                </View>
+              </View>
+            </View>
           </>
+        ) : null}
+        {/* Кнопки — сразу под составом, как на кадрах GR.56/56a. */}
+        {!loading && !outcome && g && closed ? (
+          <View style={s.foot}>
+            <GlassPill tone="brand" style={s.pill} label={GINVITE.gotIt()} onPress={() => router.dismissTo('/home')} />
+          </View>
+        ) : !loading && !outcome && g ? (
+          <View style={s.foot}>
+            <GlassPill tone="brand" style={s.pill} busy={busy} label={GINVITE.join()}
+                       onPress={busy ? undefined : () => answer(true)} />
+            <GlassPill style={s.pill} label={GINVITE.notThisTime()}
+                       onPress={busy ? undefined : () => answer(false)} />
+          </View>
+        ) : !loading && outcome ? (
+          <View style={s.foot}>
+            <GlassPill tone="brand" style={s.pill} label={T('Понятно', 'Got it', 'Entendido')} onPress={back} />
+          </View>
         ) : null}
       </ScrollView>
 
-      {!loading && !outcome && g ? (
-        <View style={[s.foot, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-          <Pressable accessibilityRole="button" accessibilityState={{ busy }} style={s.cta}
-                     onPress={busy ? undefined : () => answer(true)}>
-            {busy ? <ActivityIndicator color={color.onPrimary} />
-                  : <Text style={s.ctaText}>{GINVITE.join()}</Text>}
-          </Pressable>
-          <Pressable accessibilityRole="button" style={s.ghost}
-                     onPress={busy ? undefined : () => answer(false)}>
-            <Text style={s.ghostText}>{GINVITE.notThisTime()}</Text>
-          </Pressable>
-        </View>
-      ) : !loading && outcome ? (
-        <View style={[s.foot, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-          <Pressable accessibilityRole="button" style={s.cta} onPress={back}>
-            <Text style={s.ctaText}>{T('Понятно', 'Got it')}</Text>
-          </Pressable>
-        </View>
-      ) : null}
+      {/* Панель внизу — как на кадре GR.56. */}
+      <BottomNav active="intents" />
     </View>
   );
 }
 
 // ============================================================ вид
 
+const INK = '#181B22';
+const GREY = '#5A616E';
+
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
-  head: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingBottom: space.sm },
-  back: {
-    width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border,
-    backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, height: 56 },
+  headTitle: { flex: 1, color: INK } as any,
+
+  scroll: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: space.xl, gap: 12 },
+  status: { gap: 4 },
+  title: { fontSize: 15, lineHeight: 20, color: INK } as any,
+  note: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: INK } as any,
+  outcome: { fontFamily: font.text, fontSize: 15, lineHeight: 22, color: INK, marginTop: space.lg } as any,
+
+  cardShadow: {
+    borderRadius: 20,
+    shadowColor: '#0A0A14', shadowOpacity: 0.06, shadowRadius: 14, shadowOffset: { width: 0, height: 5 },
   },
-  headTitle: { flex: 1, ...type.title, color: color.fg, fontWeight: '700' } as any,
+  card: { overflow: 'hidden' },
+  cover: { height: 128, backgroundColor: color.neutral100 },
+  cardBody: { padding: 16, gap: 8 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  meta: { fontFamily: font.text, fontSize: 13, lineHeight: 22, color: INK, flexShrink: 1 } as any,
+  seats: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: GREY } as any,
 
-  scroll: { paddingHorizontal: 20, paddingBottom: space.xl, gap: space.md },
-  title: { fontSize: 22, lineHeight: 30, fontWeight: '700', color: color.fg },
-  note: { ...type.bodySmall, color: color.muted } as any,
-  outcome: { ...type.body, color: color.fg, marginTop: space.lg } as any,
+  section: { fontSize: 15, lineHeight: 20, color: INK, marginTop: space.sm } as any,
+  memberRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 56 },
+  memberAv: { width: 40, height: 40, borderRadius: 999 },
+  memberAvEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  memberName: { fontFamily: font.textSemibold, fontSize: 14, lineHeight: 20, color: INK, flexShrink: 1 } as any,
+  orgBadge: { height: 16, paddingHorizontal: 8, borderRadius: 99, backgroundColor: '#CFE3FF', justifyContent: 'center' },
+  orgText: { fontFamily: font.textMedium, fontSize: 11, lineHeight: 14, color: '#1F58BE' } as any,
+  /** Статус строки — чернилами, как на GR.56 («Invited you», «Your answer needed»). */
+  memberRole: { fontFamily: font.text, fontSize: 13, lineHeight: 22, color: INK } as any,
 
-  card: { backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg, gap: 8 },
-  cardTitle: { ...type.title, color: color.fg, fontWeight: '700' } as any,
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  meta: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
-  seats: { ...type.caption, color: color.muted, marginTop: 4 } as any,
-
-  section: { ...type.labelMedium, color: color.fg, fontWeight: '700', marginTop: space.sm } as any,
-  memberRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  memberAv: { width: 36, height: 36, borderRadius: rad.full },
-  memberAvEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
-  memberName: { flex: 1, ...type.body, color: color.fg } as any,
-  memberRole: { ...type.caption, color: color.muted } as any,
-
-  foot: { paddingHorizontal: 20, paddingTop: space.md, gap: space.sm },
-  cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
-  ctaText: { ...type.button, color: color.onPrimary } as any,
-  ghost: { height: 52, borderRadius: rad.full, backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
-  ghostText: { ...type.button, color: color.fg } as any,
+  foot: { paddingTop: 2, gap: 8 },
+  /** Кнопки GR.56 — 40 высотой. */
+  pill: { height: 40 },
 });

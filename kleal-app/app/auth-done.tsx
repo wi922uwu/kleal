@@ -10,104 +10,81 @@
  * набирают текст; здесь набирать нечего, и цвет наконец можно вернуть.
  */
 import React from 'react';
-import { View, Text, StyleSheet, Image } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import Svg, { Defs, Ellipse, RadialGradient, Stop } from 'react-native-svg';
+import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';
 import { AUTH } from '../src/auth';
 import { useLang } from '../src/i18n';
 import { Ambient, GLOW_DONE } from '../src/components/Ambient';
 import { GlassPill } from '../src/components/Glass';
-import { color, displayFamily, space, type } from '../src/theme';
-
-/**
- * Ореол под иллюстрацией.
- *
- * В борде это эллипс с линейным градиентом из фирменного красного в янтарь, размытый на 100 —
- * то есть от самого градиента остаётся только тёплое свечение. Размытия слоя в RN нет (`expo-blur`
- * размывает то, что ПОД видом, а не сам вид), и повторять его нечем. Но размытый двухцветный
- * эллипс и два мягких пятна рядом дают на глаз одно и то же, а стоят один Svg вместо нативного
- * фильтра — тем более что радиальный градиент и так гаснет к краю, как размытие.
- */
-function Halo({ size }: { size: number }) {
-  return (
-    <Svg width={size} height={size} style={s.halo} pointerEvents="none">
-      <Defs>
-        <RadialGradient id="h0">
-          <Stop offset="0" stopColor={color.primary} stopOpacity={0.55} />
-          <Stop offset="1" stopColor={color.primary} stopOpacity={0} />
-        </RadialGradient>
-        <RadialGradient id="h1">
-          <Stop offset="0" stopColor={color.ambientAmber} stopOpacity={0.6} />
-          <Stop offset="1" stopColor={color.ambientAmber} stopOpacity={0} />
-        </RadialGradient>
-      </Defs>
-      {/* Красный выше и левее, янтарь ниже и правее — так же, как идёт градиент в борде. */}
-      <Ellipse cx={size * 0.42} cy={size * 0.4} rx={size * 0.42} ry={size * 0.36} fill="url(#h0)" />
-      <Ellipse cx={size * 0.6} cy={size * 0.62} rx={size * 0.38} ry={size * 0.32} fill="url(#h1)" />
-    </Svg>
-  );
-}
+import { Blob } from '../src/components/Blob';
+import { RibbonTile } from '../src/components/Ribbon';
+import { riseIn } from '../src/components/LiquidGlass';
+import { color, heading, space, type } from '../src/theme';
 
 export default function AuthDone() {
   const lang = useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const reduced = useReducedMotion();
+  // Главное движение экрана — лента; текст спокойно проявляется, когда она уже почти легла.
+  const up = (n: number) => (reduced ? undefined : FadeIn.delay(600 + n * 80).duration(420));
 
   return (
     <View style={s.wrap}>
       <Ambient glows={GLOW_DONE} />
-      <View style={[s.page, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + space.lg }]}>
+      <View style={[s.page, { paddingTop: insets.top + 45, paddingBottom: insets.bottom + space.lg }]}>
+        {/*
+          КАДР A.03.3: коралловая лента со стеклянной плиткой, из которой снизу выглядывает капля —
+          «ты внутри». Лента во всю ширину экрана и шире, поэтому живёт вне боковых отступов.
+        */}
+        <View style={s.art}>
+          <RibbonTile width={width} x={-72} tileTop={182}>
+            <View style={s.peek}>
+              <Blob size={61} float={false} />
+            </View>
+          </RibbonTile>
+        </View>
         <View style={s.mid}>
-          <View style={s.art}>
-            <Halo size={HALO} />
-            <Image
-              accessibilityIgnoresInvertColors
-              source={require('../assets/art/auth-keyhole.png')}
-              style={s.pic}
-              resizeMode="contain"
-            />
-          </View>
-          {/* Гарнитура заголовка зависит от языка — см. displayFamily. */}
-          <Text style={[s.h, { fontFamily: displayFamily(lang) }]}>{AUTH.doneTitle()}</Text>
-          <Text style={s.note}>{AUTH.doneNote()}</Text>
+          {/* Гарнитура и кегль заголовка зависят от языка — см. heading(). */}
+          <Animated.Text entering={up(0)} style={[s.h, heading(lang, type.hero)]}>{AUTH.doneTitle()}</Animated.Text>
+          <Animated.Text entering={up(1)} style={s.note}>{AUTH.doneNote()}</Animated.Text>
         </View>
 
         {/*
           `replace`, а не переход: назад отсюда возвращаться некуда и незачем — код уже погашен,
           сессия выдана, а экран ввода кода за спиной означал бы кнопку в никуда.
         */}
-        <GlassPill
-          tone="brand"
-          label={AUTH.setUp()}
-          onPress={() => router.replace('/chat')}
-          style={s.cta}
-        />
+        <Animated.View entering={reduced ? undefined : riseIn(700, 6)}>
+          <GlassPill
+            tone="brand"
+            label={AUTH.setUp()}
+            onPress={() => router.replace('/chat')}
+          />
+        </Animated.View>
       </View>
     </View>
   );
 }
 
 // ===== вид
-/** Иллюстрация из борда и ореол вокруг неё: ореол заметно шире, иначе он читается как рамка. */
-const PIC = 195;
-const HALO = 300;
-
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ambientBase },
   page: { flex: 1, paddingHorizontal: 24 },
-  mid: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  art: { width: HALO, height: HALO, alignItems: 'center', justifyContent: 'center' },
-  halo: { ...StyleSheet.absoluteFillObject },
-  pic: { width: PIC, height: PIC },
-  h: { ...type.display, color: color.fg, textAlign: 'center', marginTop: space.sm } as any,
+  art: { marginHorizontal: -24 },
+  /** Капля в плитке: видна верхняя часть, низ срезан краем плитки — она «выглядывает». */
+  peek: { position: 'absolute', left: 17, top: 49, width: 61, height: 47, overflow: 'hidden' },
+  mid: { flex: 1, alignItems: 'center', paddingTop: space.xl },
+  h: { color: color.fg, textAlign: 'center' } as any,
   note: {
-    ...type.displaySubLg,
+    fontFamily: 'Geist-400',
+    fontSize: 17,
+    lineHeight: 26,
     color: color.muted,
     textAlign: 'center',
-    marginTop: space.md,
+    marginTop: space.xl,
     paddingHorizontal: space.md,
   } as any,
-  // Кнопка входа выше стеклянных: у неё в борде своя высота, 56 против 52.
-  cta: { height: 56 },
 });

@@ -11,33 +11,41 @@
  *    словами вместо нажатия, текст уходит в /api/onboarding/chat, и агент сам разбирает ответ и
  *    правит профиль. Виджет — быстрый путь, разговор — основной.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image, TextInput,
+  BackHandler,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { squarePhoto } from '../src/photo';
 import {
   STEP_PROGRESS, HEADER_TITLE, STEP_START, STEP_BASICS, SEXES, sexLabel,
   STEP_AREA, STEP_LANGUAGES, LANGS, langLabel, langPlain, STEP_HOBBIES,
   STEP_PHOTO, StepId, resumeStep, hasProgress, onbComplete, RESUME,
-  OWN_INPUT, parseName, isName, CONFIRM_INTEREST } from '../src/onboarding';
+  OWN_INPUT, parseName, isName, CONFIRM_INTEREST, SECTION_TITLE } from '../src/onboarding';
 import { interestLabel, registerInterestLabels } from '../src/interest-label';
 import { isKnownInterest } from '../src/interests-known';
 import { saveConversation } from '../src/history';
-import { addConfirmedInterest } from '../src/profile';
+import { addConfirmedInterest, pushInterests } from '../src/profile';
 import { profile as profileApi } from '../src/api';
-import { useLang, T, getLang, replyLang, noticeWritten } from '../src/i18n';
+import { useLang, T, getLang, replyLang, noticeWritten, dateLocale, use12h } from '../src/i18n';
 import { useOnb, set, get, patch, resetProfile, profileForAttach, mergeProfile, getState } from '../src/state';
 import { onboarding, agent, buddy as buddyApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
+import { clampAge } from '../src/age-ruler';
 import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
-import { ChatShell, BotLine, chatStyles as cs } from '../src/components/ChatShell';
+import { ChatShell, BotLine, ChatViewport, chatStyles as cs } from '../src/components/ChatShell';
 import { MindMap } from '../src/components/MindMap';
+import { InterestHelix } from '../src/components/InterestHelix';
+import { loadInterestsView, saveInterestsView, type InterestsView } from '../src/interestsView';
+import { InterestMapActions } from '../src/components/InterestMapActions';
+import { hCommit, hTap } from '../src/haptics';
+import { DockAction } from '../src/components/DockAction';
 import { GlassChip, GlassPill } from '../src/components/Glass';
-import { IconCheckCircle } from '../src/components/icons';
-import { color, radius as rad, type } from '../src/theme';
+import { GlassSurface } from '../src/components/LiquidGlass';
+import { IconCamera, IconCheckCircle, IconUpload } from '../src/components/icons';
+import { color, font, labelFamily, radius as rad, type } from '../src/theme';
 
 /**
  * Слово, которого нет в колесе, и то, что о нём ответил сервер.
@@ -48,7 +56,8 @@ import { color, radius as rad, type } from '../src/theme';
 type NovelOption = { canonical: string; label: string; token: string };
 type Novel = { text: string; label: string; question?: string; options?: NovelOption[] };
 
-type Msg = { who: 'bot' | 'me'; text: string; at: string; photo?: string };
+/** `sec` — этап, на котором реплика прозвучала: по нему лента делится на секции-якоря. */
+type Msg = { who: 'bot' | 'me'; text: string; at: string; photo?: string; sec?: StepId };
 /** Реплика в истории, которая уходит модели. Отличается от Msg: у неё роль, а не сторона экрана. */
 type Msg2 = { role: string; content: string };
 
@@ -56,8 +65,8 @@ type Msg2 = { role: string; content: string };
 const ORDER: StepId[] = ['start', 'basics', 'area', 'languages', 'hobbies', 'photo'];
 
 const now = () =>
-  new Date().toLocaleTimeString(getLang() === 'ru' ? 'ru-RU' : 'en-US', {
-    hour: '2-digit', minute: '2-digit', hour12: getLang() !== 'ru',
+  new Date().toLocaleTimeString(dateLocale(), {
+    hour: '2-digit', minute: '2-digit', hour12: use12h(),
   });
 
 export default function Chat() {
@@ -73,12 +82,18 @@ export default function Chat() {
    * `back` — куда вернуться, когда с этим шагом закончено. Пусто = обычный онбординг, дальше по
    * сценарию.
    */
-  const params = useLocalSearchParams<{ step?: string; back?: string }>();
+  const params = useLocalSearchParams<{ step?: string; back?: string; map?: string }>();
   const entry = ORDER.includes(String(params.step) as StepId) ? (String(params.step) as StepId) : null;
   const back = params.back ? String(params.back) : '';
 
   const [thread, setThread] = useState<Msg[]>([]);
-  const [step, setStep] = useState<StepId>('start');
+  const [step, setStepState] = useState<StepId>('start');
+  /*
+    Этап — ещё и в ref: реплика помечается этапом В МОМЕНТ, когда прозвучала, а реплики агента
+    приходят из очереди позже `setStep` — к этому времени состояние может ещё не перерисоваться.
+  */
+  const stepRef = useRef<StepId>('start');
+  const setStep = (s: StepId) => { stepRef.current = s; setStepState(s); };
   const [typing, setTyping] = useState(false);
   /** Нить разговора об увлечениях. Ref, а не состояние: её читает и дописывает обработчик
    *  отправки, перерисовка ей не нужна — на экране живёт общая лента. */
@@ -98,6 +113,32 @@ export default function Chat() {
    */
   const [mapOpen, setMapOpen] = useState(false);
   const [mapPicked, setMapPicked] = useState<string[]>([]);
+  /** Отметить или снять занятие на карте — и из облака, и из корзины под ней. */
+  const toggleMapPick = (k: string) =>
+    setMapPicked((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
+  const mapPickedNow = useRef(mapPicked);
+  mapPickedNow.current = mapPicked;
+  /*
+    СВОЁ СЛОВО НА КАРТЕ — В КОРЗИНУ, А НЕ В РАЗГОВОР (владелец, 26.09). Раньше «Добавить своё»
+    закрывало карту и уводило в чат: агент принимал одно слово — и шаг на этом кончался, вернуться к
+    темам было нельзя. Теперь кнопка ставит курсор в поле, написанное разбирает сервер (известное
+    слово — сразу, незнакомое — моделью, с квитанцией), и оно ложится меткой в корзину рядом с
+    отмеченным на карте. Карта остаётся открытой: можно добавить ещё или вернуться к темам.
+  */
+  const [ownBusy, setOwnBusy] = useState<string[]>([]);
+  const [ownAsk, setOwnAsk] = useState<{ text: string; question: string; options: NovelOption[] } | null>(null);
+  const [ownNote, setOwnNote] = useState('');
+  /** Квитанции своих слов: предъявляются при «Дальше» (addConfirmedInterest), до того — только метка. */
+  const ownTok = useRef<Record<string, { label: string; token: string }>>({});
+  const [focusTick, setFocusTick] = useState(0);
+  /** Внутри темы карты «назад» (шапка, жест, кнопка Android) сначала возвращает ко всем темам. */
+  const [mapTopic, setMapTopic] = useState(false);
+  const [mapBack, setMapBack] = useState(0);
+  useEffect(() => {
+    if (!ownNote) return;
+    const id = setTimeout(() => setOwnNote(''), 4500);
+    return () => clearTimeout(id);
+  }, [ownNote]);
   /**
    * Записанное ЗА ЭТОТ разговор. Раньше под «Записал» показывался весь профиль целиком, и человек,
    * пришедший добавить один интерес, видел ряд из пяти старых — где именно среди них появился
@@ -172,7 +213,14 @@ export default function Chat() {
   }, [convId, entry]);
 
   const say = useCallback((who: 'bot' | 'me', text: string, photo?: string) => {
-    setThread((t) => [...t, { who, text, at: now(), photo }]);
+    /*
+      Этап берётся ЗДЕСЬ, в момент реплики, а не внутри функции обновления. React вызывает её
+      позже, при следующей отрисовке, — а виджеты говорят «ответ» и сразу «перейти дальше»
+      (say('me') → goto). Читая stepRef изнутри, ответ получал метку СЛЕДУЮЩЕГО этапа и уезжал в
+      чужую секцию: «28, мужской» — в «Где ты» (владелец, 27.09).
+    */
+    const sec = stepRef.current;
+    setThread((t) => [...t, { who, text, at: now(), photo, sec }]);
   }, []);
 
   // Первая реплика. Ref, а не состояние: в строгом режиме эффект выполняется дважды, и без
@@ -223,7 +271,9 @@ export default function Chat() {
     } else if (entry) {
       // Вход с экрана интересов — единственное место, где человек уже сказал «хочу добавить»,
       // но ещё не сказал ЧТО. Здесь и стоит развилка: первой репликой предлагаем обе дороги.
-      if (entry === 'hobbies') setFork(true);
+      // `map=1` — вход сразу в карту интересов (выбрать пузырями, а не рассказывать): та же карта,
+      // что в анкете; выбранное дописывается к профилю и уходит на сервер (см. onMapDone).
+      if (entry === 'hobbies') { if (params.map) setMapOpen(true); else setFork(true); }
       botLines([
         entry === 'hobbies' ? STEP_HOBBIES.forkBot()
         : entry === 'languages' ? STEP_LANGUAGES.bot()
@@ -237,38 +287,18 @@ export default function Chat() {
     }
   }, [say]);
 
-  /** Начать онбординг заново. Спрашиваем: это стирает всё, что человек уже ввёл. */
-  /**
-   * Начать анкету заново. Стирает СОБРАННОЕ, но не вход: см. разбор у `resetProfile` в state.ts.
-   * Спрашиваем всегда — это единственное необратимое действие на экране.
-   */
-  const restart = () => {
-    const wipe = () => {
-      resetProfile();
-      setThread([]);
-      setStep('start');
-      setStartAsked(false);
-      setStartGone(false);
-      setRunId((n) => n + 1);
-      started.current = true;
-      botLines([STEP_START.intro(), STEP_START.ask()], 400);
-    };
-    if (Platform.OS === 'web') {
-      // Alert.alert на вебе не показывает кнопок — там это window.confirm.
-      // eslint-disable-next-line no-alert
-      if (typeof confirm === 'function' && confirm(RESUME.restartAsk())) wipe();
-      return;
-    }
-    Alert.alert(RESUME.restartAsk(), undefined, [
-      { text: RESUME.restartNo(), style: 'cancel' },
-      { text: RESUME.restartYes(), style: 'destructive', onPress: wipe },
-    ]);
-  };
+  /*
+    «НАЧАТЬ ЗАНОВО» УБРАНО С ЭКРАНА (26.09.2026, решение владельца). Ссылка стояла строкой под шапкой
+    на каждом шаге и спорила с самим разговором за внимание, а стирала всё собранное — самое опасное
+    действие экрана лежало на самом виду. Сама очистка анкеты есть в state.ts (`resetProfile`).
+  */
 
-  useEffect(() => {
-    const id = setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 80);
-    return () => clearTimeout(id);
-  }, [thread.length, typing, step]);
+  /*
+    АВТОПРОКРУТКУ ВЕДЁТ ChatShell: лента поделена на секции-якоря, и только оболочка знает, где они
+    лежат. Новый этап — лента доезжает до его секции целиком, а не до самого низа.
+  */
+  const sections = (entry ? [entry] : ORDER.filter((k) => k === step || thread.some((m) => m.sec === k)))
+    .map((k) => ({ key: k, title: SECTION_TITLE(k) }));
 
   /**
    * РЕПЛИКИ АГЕНТА ПРИХОДЯТ ПО ОДНОЙ, С «ПЕЧАТАЕТ» МЕЖДУ НИМИ.
@@ -337,9 +367,24 @@ export default function Chat() {
    * (тап уходил по ветке онбординга и до API не доходил).
    */
   const onMapDone = ((keys: string[]) => {
+    // Свои слова — первыми и с квитанцией: иначе ключ уже лежал бы в списке и квитанция не записалась.
+    for (const k of keys) {
+      const o = ownTok.current[k];
+      if (o) addConfirmedInterest(k, o.label, o.token);
+    }
+    setOwnAsk(null);
+    setOwnNote('');
     const cur: string[] = get('interests.explicit') || [];
     const merged = [...cur, ...keys.filter((k) => !cur.includes(k))];
     set('interests.explicit', merged);
+    /*
+      НА СЕРВЕР — СРАЗУ, А НЕ ПРИ СЛЕДУЮЩЕМ ЗАХОДЕ НА ЭКРАН ИНТЕРЕСОВ. Матчинг читает строку в
+      базе, а не состояние телефона. Отправка жила только в фокусе app/profile/interests.tsx:
+      человек, добавивший интересы здесь и ушедший по нижней панели, оставался для поиска
+      прежним, пока когда-нибудь не откроет тот экран. Во время анкеты вызов пустой — там всё
+      уедет одним register(); после неё это тот же patchFor(['interests']), что и везде.
+    */
+    pushInterests();
     setJustAdded((p) => [...p, ...keys.filter((k) => !p.includes(k))]);
     setMapOpen(false);
     /*
@@ -476,6 +521,63 @@ export default function Chat() {
     if (which === 'help') send(STEP_HOBBIES.forkHelpSaid());
   };
 
+  /** Принять прочтение своего слова: квитанция сервера → метка в корзине карты. */
+  const takeOwn = async (opt: NovelOption) => {
+    const ok = await profileApi.confirmInterest('', opt.token);
+    if (!ok.ok || !ok.canonical || !ok.token) { setOwnNote(STEP_HOBBIES.ownUnclear(opt.label || opt.canonical)); return; }
+    const key = ok.canonical;
+    const label = ok.label || opt.label || key;
+    ownTok.current[key] = { label, token: ok.token };
+    // Подпись известного ключа — из словаря; незнакомому — слова сервера, иначе метка покажет ключ.
+    if (interestLabel(key) === key) registerInterestLabels({ [key]: label }, getLang());
+    hCommit();
+    setMapPicked((p) => (p.includes(key) ? p : [...p, key]));
+  };
+
+  const addOwnOnMap = async (raw: string) => {
+    const text = raw.trim();
+    if (!text) return;
+    noticeWritten(text);
+    setOwnNote('');
+    setOwnAsk(null);
+    setOwnBusy((b) => (b.includes(text) ? b : [...b, text]));
+    try {
+      const cur: string[] = get('interests.explicit') || [];
+      const r = await profileApi.normalizeInterest(text, [...cur, ...mapPickedNow.current], replyLang());
+      const opts = r.options || [];
+      if (r.status === 'duplicate') setOwnNote(STEP_HOBBIES.ownHave(interestLabel(String(r.canonical || text))));
+      else if (r.status === 'ready' && opts.length === 1) await takeOwn(opts[0]);
+      else if ((r.status === 'ready' || r.status === 'clarify') && opts.length) {
+        setOwnAsk({ text, question: String(r.question || ''), options: opts });
+      }
+      // «Не разобрал» — только когда слово правда непонятно. Нет входа, модель лежит, чужой ответ —
+      // это не вина человека, и просить его «написать иначе» было бы неправдой.
+      else if (r.status === 'invalid' && r.error !== 'no session') setOwnNote(STEP_HOBBIES.ownUnclear(text));
+      else setOwnNote(STEP_HOBBIES.ownRetry());
+    } catch {
+      setOwnNote(STEP_HOBBIES.ownOffline());
+    } finally {
+      setOwnBusy((b) => b.filter((x) => x !== text));
+    }
+  };
+
+  /** Поле ввода: пока открыта карта, написанное — своё занятие в корзину; иначе — реплика агенту. */
+  const onComposer = (text: string) => {
+    if (step === 'hobbies' && mapOpen) { addOwnOnMap(text); return; }
+    send(text);
+  };
+
+  /** «Назад» внутри темы карты — к темам; иначе обычный выход с экрана. */
+  const onHeaderBack = () => {
+    if (step === 'hobbies' && mapOpen && mapTopic) { setMapBack((n) => n + 1); return; }
+    router.back();
+  };
+  useEffect(() => {
+    if (!(step === 'hobbies' && mapOpen && mapTopic)) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { setMapBack((n) => n + 1); return true; });
+    return () => sub.remove();
+  }, [step, mapOpen, mapTopic]);
+
   /**
    * «Готово» на шаге увлечений: сначала сказать, что запись закончена, потом уйти.
    *
@@ -533,7 +635,7 @@ export default function Chat() {
         // работы. Поймано на скриншоте живого экрана. Сервер почти всегда что-то отвечает —
         // значит сюда доехал сбой связи или чужой ответ, и об этом надо сказать вслух.
         const reply = String(r?.reply || '')
-          || T('Что-то я замолчал. Повтори, пожалуйста?', 'I went quiet there. Say that again?');
+          || T('Что-то я замолчал. Повтори, пожалуйста?', 'I went quiet there. Say that again?', 'Me quedé en silencio. ¿Lo repites?');
         say('bot', reply);
         hobbyThread.current = [...next, { role: 'assistant', content: reply }];
         setChips(Array.isArray((r as any)?.chips) ? (r as any).chips.map(String) : []);
@@ -556,6 +658,7 @@ export default function Chat() {
             }
           }
           set('interests.explicit', cur);
+          pushInterests();                       // см. onMapDone: строка в базе, а не память телефона
           if (ask.length) absorbNovel(ask);
           setJustAdded((p) => {
             const keys = added.map((a) => String(a.key || '').trim()).filter(Boolean);
@@ -572,7 +675,7 @@ export default function Chat() {
         }
       } catch {
         setTyping(false);
-        say('bot', T('Связь на секунду пропала. Повторишь?', 'I lost the connection for a second. Say that again?'));
+        say('bot', T('Связь на секунду пропала. Повторишь?', 'I lost the connection for a second. Say that again?', 'Perdí la conexión un momento. ¿Lo repites?'));
       }
       return;
     }
@@ -612,7 +715,18 @@ export default function Chat() {
   // вещь, число не значит ничего, поэтому полосы там просто нет.
   const pct = entry ? null : (STEP_PROGRESS[step] ?? 0);
 
+  /*
+    СМАХНУТЬ АНКЕТУ СЛУЧАЙНО НЕЛЬЗЯ. На iOS 26 системный «назад» срабатывает от ЛЮБОГО места экрана,
+    а не только от края, — и горизонтальное движение по рулетке возраста уводило страницу назад
+    посреди выбора (сообщено с телефона). Рулетка свой жест у системы не отнимает, поэтому на шагах,
+    где палец ведут вбок — возраст, район с картой и ползунком, карта интересов, — и пока любой
+    виджет тянут, возврат протяжкой выключен. «Назад» в шапке остаётся.
+  */
+  const lockSwipe = step === 'basics' || step === 'area' || (step === 'hobbies' && mapOpen) || dragging;
+
   return (
+    <>
+    <Stack.Screen options={{ gestureEnabled: !lockSwipe }} />
     <ChatShell
       ref={scroller}
       /* Анкета — единственное место с живой подложкой: так она и на кадрах борда. */
@@ -620,10 +734,39 @@ export default function Chat() {
       title={HEADER_TITLE()}
       pct={pct}
       thread={thread}
+      sections={sections}
       typing={typing}
-      onBack={() => router.back()}
-      onSend={send}
+      onBack={onHeaderBack}
+      onSend={onComposer}
+      focusSignal={focusTick}
       scrollEnabled={!dragging}
+      // Пока открыта карта, поле ввода — второй путь: своё слово ложится в корзину (см. addOwnOnMap).
+      composerPlaceholder={step === 'hobbies' && mapOpen ? STEP_HOBBIES.mapTypeHint() : undefined}
+      footer={step === 'hobbies' && mapOpen && !queue && !typing ? (
+        <InterestMapActions
+          selected={mapPicked}
+          onDone={onMapDone}
+          onRemove={toggleMapPick}
+          onOwn={() => setFocusTick((n) => n + 1)}
+          busy={ownBusy}
+          note={ownNote}
+          ask={ownAsk}
+          onAskPick={(o) => { setOwnAsk(null); takeOwn(o).catch(() => setOwnNote(STEP_HOBBIES.ownOffline())); }}
+          onAskSkip={() => setOwnAsk(null)}
+        />
+      ) : step === 'hobbies' && !mapOpen && !queue && !typing ? (
+        /*
+          «ГОТОВО» — НАД ПОЛЕМ ВВОДА, КОМПАКТНОЙ ПИЛЮЛЕЙ (как «Make the plan» на борде; попросил
+          владелец). Раньше кнопка стояла полосой под шапкой: одна на весь разговор, неподвижная — это
+          было верно и осталось, но глаз искал её там, где пишет, а не наверху. Крестика нет: это
+          единственный выход с шага, прятать его нечем заменить.
+        */
+        <DockAction
+          label={STEP_HOBBIES.cta()}
+          disabled={!(st.profile.interests?.explicit || []).length}
+          onPress={finishHobbies}
+        />
+      ) : null}
       /*
         ПОКА АГЕНТ ТОЛЬКО ПРЕДСТАВИЛСЯ, ПИСАТЬ НЕЧЕГО. На первом шаге он здоровается и ждёт
         «Поехали!» — а поле ввода выглядело обычным, приглашало «Сообщение…» и молчало в ответ на
@@ -632,33 +775,6 @@ export default function Chat() {
         известно — то есть на возобновлении, где разговор уже идёт.
       */
       composerDisabled={step === 'start' && !startGone && !st.profile.name}
-      /*
-        КНОПКА «ГОТОВО» ЖИВЁТ ПОД ШАПКОЙ, А НЕ В ЛЕНТЕ.
-
-        В ленте она ехала вместе с виджетом и повторялась под каждой репликой агента: чтобы
-        закончить разговор, надо было доскроллить до низа, а по дороге прочитать список
-        записанного столько раз, сколько было ходов. Здесь она одна и неподвижна.
-
-        Показываем только на шаге увлечений и только когда карта закрыта: пока выбирают пузыри,
-        у поля своя кнопка с порогом в три интереса, и две кнопки выхода разом — это выбор между
-        выходами.
-      */
-      brow={step === 'hobbies' && !mapOpen && !queue ? (
-        <View style={s.browWrap}>
-          <Cta
-            label={STEP_HOBBIES.cta()}
-            disabled={!(st.profile.interests?.explicit || []).length}
-            onPress={finishHobbies}
-          />
-        </View>
-      ) : null}
-      headerExtra={
-        hasProgress(st.profile) ? (
-          <Pressable accessibilityRole="button" onPress={restart} hitSlop={10}>
-            <Text style={s.restart}>{RESUME.restart()}</Text>
-          </Pressable>
-        ) : null
-      }
       widget={queue ? null : (
         <StepWidget
           key={runId}
@@ -681,15 +797,17 @@ export default function Chat() {
           onStartGone={() => setStartGone(true)}
           mapOpen={mapOpen}
           mapPicked={mapPicked}
-          onMapPick={(k: string) => setMapPicked((p) =>
-            p.includes(k) ? p.filter((x) => x !== k) : [...p, k])}
+          onMapPick={toggleMapPick}
           onMapDone={onMapDone}
+          mapBack={mapBack}
+          onMapTopic={setMapTopic}
           onFork={onFork}
           onChip={send}
           onDrop={(k: string) => setJustAdded((p) => p.filter((x) => x !== k))}
         />
       )}
     />
+    </>
   );
 }
 
@@ -710,6 +828,7 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
   };
   return (
     <View style={s.ownRow}>
+      <GlassSurface tone="light" radius={rad.full} style={s.ownField}>
       <TextInput
         style={s.ownInput}
         value={v}
@@ -721,6 +840,7 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
         autoFocus
         accessibilityLabel={placeholder}
       />
+      </GlassSurface>
       <Pressable accessibilityRole="button" style={s.ownAdd} onPress={add}>
         <Text style={s.ownAddText}>{OWN_INPUT.add()}</Text>
       </Pressable>
@@ -731,7 +851,7 @@ function OwnField({ placeholder, onAdd }: { placeholder: string; onAdd: (v: stri
 function StepWidget({
   step, say, goto, onDone, onDrag, leave, fork, chips, added, onFork, onChip, onDrop,
   bot,
-  mapOpen, mapPicked, onMapPick, onMapDone,
+  mapOpen, mapPicked, onMapPick, onMapDone, mapBack, onMapTopic,
   pending, onConfirmPending, onSkipPending,
   startAsked, startGone, onStartAsked, onStartGone,
 }: {
@@ -756,6 +876,9 @@ function StepWidget({
   mapPicked?: string[];
   onMapPick?: (key: string) => void;
   onMapDone?: (keys: string[]) => void;
+  /** Счётчик «вернуться к темам» и отчёт карты, открыта ли тема. */
+  mapBack?: number;
+  onMapTopic?: (open: boolean) => void;
   /** Придуманные интересы, ждущие подтверждения. Живут в экране — см. там почему. */
   pending?: Novel[];
   onConfirmPending?: (item: Novel, opt?: NovelOption) => void;
@@ -784,6 +907,7 @@ function StepWidget({
     <HobbyW say={say} leaveFunnel={leave} fork={fork} chips={chips} added={added}
             onFork={onFork} onChip={onChip} onDrop={onDrop} onDrag={onDrag}
             mapOpen={mapOpen} mapPicked={mapPicked} onMapPick={onMapPick} onMapDone={onMapDone}
+            mapBack={mapBack} onMapTopic={onMapTopic}
             pending={pending} onConfirmPending={onConfirmPending} onSkipPending={onSkipPending} />
   );
   if (step === 'photo') return <PhotoW say={say} onDone={onDone} name={st.profile.name || ''} />;
@@ -803,14 +927,16 @@ function Chip({ label, on, onPress }: { label: string; on?: boolean; onPress?: (
   return <GlassChip label={label} on={on} onPress={onPress} />;
 }
 
-function Cta({ label, onPress, disabled, kind = 'primary' }: {
+function Cta({ label, onPress, disabled, kind = 'primary', icon }: {
   label: string; onPress?: () => void; disabled?: boolean; kind?: 'primary' | 'dark' | 'muted';
+  icon?: React.ReactNode;
 }) {
   return (
     <GlassPill
       label={label}
       onPress={onPress}
       disabled={disabled}
+      icon={icon}
       tone={kind === 'primary' ? 'brand' : kind === 'dark' ? 'dark' : 'light'}
       style={s.cta}
     />
@@ -856,18 +982,20 @@ function StartW({ say, bot, asked, gone, onAsked, onGone }: any) {
   );
 }
 
-/** A.05 — кольцо возраста и пол. */
+/** A.05 — линейка возраста и пол. */
 function BasicsW({ say, goto, onDrag }: any) {
-  const [age, setAge] = useState(28);
+  const st = useOnb();
+  const lang = useLang();
+  const [age, setAge] = useState(() => clampAge(st.profile.age));
   const [sex, setSex] = useState<string | null>(null);
   return (
     <View style={cs.widget}>
-      <Text style={cs.label}>{STEP_BASICS.ageLabel()}</Text>
-      <AgeDial value={age} onChange={setAge} onDragChange={onDrag} />
-      <Text style={cs.label}>{STEP_BASICS.sexLabel()}</Text>
-      <View style={cs.row}>
+      <Text maxFontSizeMultiplier={1.6} style={[cs.label, s.basicsLabel, { fontFamily: labelFamily(lang) }]}>{STEP_BASICS.ageLabel()}</Text>
+      <AgeDial value={age} onChange={setAge} locale={replyLang()} onDragChange={onDrag} />
+      <Text maxFontSizeMultiplier={1.6} style={[cs.label, s.basicsLabel, { fontFamily: labelFamily(lang) }]}>{STEP_BASICS.sexLabel()}</Text>
+      <View style={cs.rowSplit}>
         {SEXES.map(([k]) => (
-          <Chip key={k} label={sexLabel(k)} on={sex === k} onPress={() => setSex(k)} />
+          <GlassChip key={k} grow label={sexLabel(k)} on={sex === k} onPress={() => setSex(k)} />
         ))}
       </View>
       <Cta
@@ -926,7 +1054,7 @@ function LangW({ say, goto }: any) {
   const own = sel.filter((k) => !LANGS.some(([l]) => l === k));
 
   return (
-    <View style={cs.widget}>
+    <View style={[cs.widget, cs.fill]}>
       <Hint>{STEP_LANGUAGES.hint()}</Hint>
       <View style={cs.row}>
         {LANGS.map(([k]) => (
@@ -948,26 +1076,42 @@ function LangW({ say, goto }: any) {
           }}
         />
       ) : null}
-      <Cta
-        label={STEP_LANGUAGES.cta()}
-        disabled={!sel.length}
-        onPress={() => {
-          set('languages.comfortable', sel);
-          say('me', sel.map(langPlain).join(', '));
-          goto('hobbies', STEP_HOBBIES.bot());
-        }}
-      />
+      {/* «Дальше» внизу, над полем ввода — так в кадре A.07: чипы остаются у вопроса. */}
+      <View style={cs.pin}>
+        <Cta
+          label={STEP_LANGUAGES.cta()}
+          disabled={!sel.length}
+          onPress={() => {
+            set('languages.comfortable', sel);
+            say('me', sel.map(langPlain).join(', '));
+            goto('hobbies', STEP_HOBBIES.bot());
+          }}
+        />
+      </View>
     </View>
   );
 }
 
 /** A.08 — увлечения с эмодзи. */
-function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone,
+function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone, mapBack, onMapTopic,
                  pending, onConfirmPending, onSkipPending,
                  say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop, onDrag,
                  }: any) {
   const st = useOnb();
   const [busy, setBusy] = useState(false);
+  /*
+    Спираль занимает секцию «Интересы» целиком: окно ленты минус заголовок секции, строка
+    «Выбери…» с переключателем и подсказка (~190). Карта v1 остаётся 440 — под неё свёрстан её тест.
+  */
+  const vh = useContext(ChatViewport);
+  const helixH = vh ? Math.max(300, Math.min(600, vh - 190)) : 440;
+  /*
+    ВИД ИНТЕРЕСОВ: v2 — спираль (по умолчанию), v1 — карта пузырей, какой она была до 27.09.
+    Карта сохранена целиком и включается переключателем над полем; выбор помнит телефон.
+  */
+  const [view, setView] = useState<InterestsView>('v2');
+  useEffect(() => { loadInterestsView().then(setView); }, []);
+  const pickView = (v: InterestsView) => { if (v === view) return; hTap(); setView(v); saveInterestsView(v); };
   // Показываем записанное ЗА ЭТОТ разговор. Всё, что было в профиле раньше, человек видит на
   // экране «Интересы», откуда пришёл; повторять его здесь значит прятать новое среди старого.
   const explicit: string[] = added || [];
@@ -981,7 +1125,6 @@ function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone,
    */
   if (mapOpen) {
     const picked: string[] = mapPicked || [];
-    const need = 3;
     return (
       <View style={cs.widget}>
         {/*
@@ -990,22 +1133,29 @@ function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone,
           цветных кружков и не понимал, что от него хотят: сообщено с телефона. Сначала — ЧТО
           выбираем, и только потом — как.
         */}
-        <Text style={cs.mapTitle}>{STEP_HOBBIES.mapTitle()}</Text>
-        <Text style={cs.hint}>{STEP_HOBBIES.mapHint()}</Text>
-        <MindMap width={330} height={430} selected={picked}
-                 onToggle={(k) => onMapPick?.(k)} onDrag={onDrag} />
-        <View style={cs.row}>
-          {picked.slice(-6).map((k: string) => (
-            <Chip key={k} label={interestLabel(k)} on onPress={() => onMapPick?.(k)} />
-          ))}
+        <View style={hs.titleRow}>
+          <Text style={[cs.mapTitle, hs.title]}>{STEP_HOBBIES.mapTitle()}</Text>
+          <View style={hs.seg} accessibilityRole="tablist">
+            {(['v2', 'v1'] as const).map((v) => (
+              <Pressable key={v} accessibilityRole="tab" accessibilityState={{ selected: view === v }}
+                         onPress={() => pickView(v)} hitSlop={6}
+                         style={[hs.segBtn, view === v && hs.segOn]}>
+                <Text style={[hs.segText, view === v && hs.segTextOn]}>
+                  {v === 'v2' ? STEP_HOBBIES.viewHelix() : STEP_HOBBIES.viewMap()}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
-        <Cta
-          label={picked.length >= need
-            ? STEP_HOBBIES.mapCount(picked.length)
-            : STEP_HOBBIES.mapMin(need)}
-          disabled={picked.length < need}
-          onPress={() => onMapDone?.(picked)}
-        />
+        <Text style={cs.hint}>{view === 'v2' ? STEP_HOBBIES.helixHint() : STEP_HOBBIES.mapHint()}</Text>
+        {/* Ширину поле берёт по экрану само; 440 — поле целиком помещается над корзиной и кнопками. */}
+        {view === 'v2' ? (
+          <InterestHelix height={helixH} selected={picked} onToggle={(k) => onMapPick?.(k)} onDrag={onDrag} />
+        ) : (
+          <MindMap height={440} selected={picked} onToggle={(k) => onMapPick?.(k)}
+                   backSignal={mapBack} onTopicChange={onMapTopic} />
+        )}
+        {/* Выбранное — корзиной над кнопками (InterestMapActions): там оно всегда на виду. */}
       </View>
     );
   }
@@ -1144,19 +1294,22 @@ function PhotoW({ say, onDone, name }: any) {
 
   if (stage === 'ask') {
     return (
-      <View style={cs.widget}>
+      <View style={[cs.widget, cs.fill]}>
         <Hint>{STEP_PHOTO.hint()}</Hint>
-        <Cta label={STEP_PHOTO.take()} onPress={take} />
-        <Cta label={STEP_PHOTO.upload()} kind="dark" onPress={upload} />
-        <Cta
-          label={STEP_PHOTO.skip()}
-          kind="muted"
-          onPress={() => {
-            set('photoStatus', 'skipped');
-            onDone();
-          }}
-        />
-        {busy ? <ActivityIndicator color={color.primary} /> : null}
+        {/* Три кнопки стопкой внизу, над полем ввода (кадр A.09); подсказка — у вопроса. */}
+        <View style={cs.pin}>
+          {busy ? <ActivityIndicator color={color.primary} /> : null}
+          <Cta label={STEP_PHOTO.take()} onPress={take} icon={<IconCamera size={20} c={color.onPrimary} />} />
+          <Cta label={STEP_PHOTO.upload()} kind="dark" onPress={upload} icon={<IconUpload size={20} c={color.onPrimary} />} />
+          <Cta
+            label={STEP_PHOTO.skip()}
+            kind="muted"
+            onPress={() => {
+              set('photoStatus', 'skipped');
+              onDone();
+            }}
+          />
+        </View>
       </View>
     );
   }
@@ -1164,15 +1317,16 @@ function PhotoW({ say, onDone, name }: any) {
   if (stage === 'result') {
     return (
       <View style={cs.widget}>
-        {uri ? <Image source={{ uri }} style={s.resultPhoto} /> : null}
+        {/* Снимок уже стоит в ленте репликой человека — вторая копия здесь только повторяла его. */}
         <BotLine>{STEP_PHOTO.praise()}</BotLine>
         <Hint>{STEP_PHOTO.pickHint()}</Hint>
+        {/* Порядок кадра A.12: «переснять» слева на стекле, «оставить» справа фирменной. */}
         <View style={cs.rowSplit}>
           <View style={{ flex: 1 }}>
-            <Cta label={STEP_PHOTO.use()} onPress={() => { say('bot', STEP_PHOTO.confirmed()); setStage('confirmed'); }} />
+            <Cta label={STEP_PHOTO.retake()} kind="muted" onPress={() => { setUri(null); setStage('ask'); }} />
           </View>
           <View style={{ flex: 1 }}>
-            <Cta label={STEP_PHOTO.retake()} kind="muted" onPress={() => { setUri(null); setStage('ask'); }} />
+            <Cta label={STEP_PHOTO.use()} onPress={() => { say('bot', STEP_PHOTO.confirmed()); setStage('confirmed'); }} />
           </View>
         </View>
       </View>
@@ -1181,13 +1335,16 @@ function PhotoW({ say, onDone, name }: any) {
 
   return (
     <View style={cs.widget}>
-      <View style={s.doneCard}>
-        {uri ? <Image source={{ uri }} style={s.doneAvatar} /> : <View style={[s.doneAvatar, { backgroundColor: color.neutral100 }]} />}
-        <View style={{ flex: 1 }}>
-          <Text style={s.doneTitle}>{STEP_PHOTO.cardTitle()}</Text>
-          <Text style={s.doneSub}>{STEP_PHOTO.cardSub(name)}</Text>
-        </View>
-        <IconCheckCircle />
+      {/* Карточка «Profile photo set» — светлое стекло, как пузырь агента (кадр A.14). */}
+      <View style={s.doneShadow}>
+        <GlassSurface tone="light" radius={20} style={s.doneCard}>
+          {uri ? <Image source={{ uri }} style={s.doneAvatar} /> : <View style={[s.doneAvatar, { backgroundColor: color.neutral100 }]} />}
+          <View style={{ flex: 1 }}>
+            <Text style={s.doneTitle}>{STEP_PHOTO.cardTitle()}</Text>
+            <Text style={s.doneSub}>{STEP_PHOTO.cardSub(name)}</Text>
+          </View>
+          <IconCheckCircle size={24} />
+        </GlassSurface>
       </View>
       <BotLine>{STEP_PHOTO.next()}</BotLine>
       <Cta label={STEP_PHOTO.cta()} onPress={onDone} />
@@ -1200,37 +1357,37 @@ function PhotoW({ say, onDone, name }: any) {
  * ровно один раз на оба чат-экрана, онбординг и создание интента.
  */
 const s = StyleSheet.create({
-  /** Бровка «Это всё»: тонкая строка под шапкой. Тише ответов в ленте — это выход, а не ответ. */
-  brow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    marginHorizontal: 20, marginTop: 10,
-    height: 32, borderRadius: rad.full, backgroundColor: color.neutral100,
-  },
-  browText: { ...type.caption, color: color.muted, fontWeight: '600' } as any,
-  browChev: { fontSize: 13, color: color.muted, marginTop: -1 },
+  /** Fits the 1.6x Dynamic Type cap even though the shared label token has a fixed line height. */
+  basicsLabel: { lineHeight: 24 },
 
   ownRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  ownInput: {
-    flex: 1, height: 44, borderRadius: rad.full, backgroundColor: color.neutral100,
-    paddingHorizontal: 16, color: color.fg, fontSize: 15,
-  },
+  ownField: { flex: 1, height: 44, justifyContent: 'center' },
+  ownInput: { height: 44, paddingHorizontal: 16, color: color.fg, fontFamily: font.text, fontSize: 15 },
   ownAdd: {
     height: 44, paddingHorizontal: 18, borderRadius: rad.full, backgroundColor: color.primary,
     alignItems: 'center', justifyContent: 'center',
   },
   ownAddText: { ...type.button, color: color.onPrimary } as any,
-  restart: { ...type.caption, color: color.primary } as any,
-  /** Полоса под шапкой: та же ширина полей, что у ленты, чтобы кнопка стояла по её краю. */
-  browWrap: { paddingHorizontal: 16, paddingBottom: 8 },
   /** Высота из борда: главная кнопка шага ниже входной — 48 против 56. */
   cta: { height: 48 },
 
-  resultPhoto: { width: '100%', height: 260, borderRadius: rad.md },
-  doneCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: color.card,
-    borderRadius: rad.lg, padding: 12,
+  doneShadow: {
+    borderRadius: 20,
+    shadowColor: '#0A0A14', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
   },
-  doneAvatar: { width: 40, height: 40, borderRadius: 20 },
-  doneTitle: { ...type.title, color: color.fg } as any,
-  doneSub: { ...type.bodySmall, color: color.muted } as any,
+  doneCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12 },
+  doneAvatar: { width: 48, height: 48, borderRadius: 24 },
+  doneTitle: { fontFamily: font.textSemibold, fontSize: 16, lineHeight: 22, color: color.fg } as any,
+  doneSub: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: color.muted } as any,
+});
+
+/** Переключатель вида интересов (v2 спираль / v1 карта) — в строке заголовка над полем. */
+const hs = StyleSheet.create({
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  title: { flex: 1 },
+  seg: { flexDirection: 'row', padding: 2, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.55)', borderWidth: 1, borderColor: '#FFFFFF' },
+  segBtn: { height: 24, paddingHorizontal: 10, borderRadius: 12, justifyContent: 'center' },
+  segOn: { backgroundColor: '#181B22' },
+  segText: { fontFamily: font.textMedium, fontSize: 12, lineHeight: 16, color: '#5A616E' } as any,
+  segTextOn: { color: '#FFFFFF' },
 });

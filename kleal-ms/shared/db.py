@@ -90,15 +90,21 @@ create table if not exists store_kv (
 );
 
 -- Люди. Строка на человека: регистрация больше не переписывает всех остальных.
--- name_key — тот же ключ, по которому матчинг сравнивает имена (нижний регистр, схлопнутые
--- пробелы), чтобы «Miguel  Ángel» и «miguel ángel» не завели двух людей.
+--
+-- КЛЮЧ — ID ЧЕЛОВЕКА, А НЕ ИМЯ (с 26.09.2026). До этого первичным ключом был name_key, и база
+-- физически не могла держать двух тёзок: второй «Иван» при регистрации делал upsert по имени и
+-- молча затирал анкету первого, а все его интенты, планы и переписка становились общими. Имя —
+-- подпись, она не уникальна и может меняться; личность — `id` строки. См. docs/IDENTITY.md.
+-- name_key остался обычным индексом: по нему ищут человека по подписи (поиск, админка).
 create table if not exists users (
-    name_key   text primary key,
+    id         text primary key,
+    name_key   text not null,
     name       text not null,
     row        jsonb not null,
     updated    timestamptz not null default now()
 );
 create index if not exists users_updated_idx on users (updated desc);
+create index if not exists users_name_key_idx on users (name_key);
 
 -- Исходящая почта для очереди (см. shared/mq.py). Лежит в ТОЙ ЖЕ базе намеренно: задание
 -- записывается той же транзакцией, что и данные, ради которых оно послано. Иначе остаётся
@@ -165,7 +171,7 @@ def save_store(session):
         return 0
     dirty = []
     with _HASH_LOCK:
-        for k, v in session.items():
+        for k, v in list(session.items()):      # снимок ключей: словарь могут дополнить на ходу
             d = _digest(v)
             if _HASHES.get(k) != d:
                 dirty.append((k, v, d))
@@ -192,9 +198,82 @@ def save_store(session):
     return len(dirty)
 
 
+# ---------------------------------------------------------------- одна строка хранилища
+# `load_store`/`save_store` работают ВСЕМ состоянием сразу: первый читает всё одним запросом на
+# старте сервиса, второй принимает целый словарь и сверяет хэши, чтобы писать только изменившееся.
+# Для настроек это не годится — их читает и пишет один ключ, часто и из другого процесса, а
+# проталкивание его через save_store испортило бы учёт «грязных» ключей. Отсюда отдельная пара.
+
+def kv_get(key):
+    """Значение одного ключа или None. Без базы — None: зовущий обязан иметь значение по умолчанию."""
+    if not ENABLED:
+        return None
+    with _connect().connection() as c, c.cursor() as cur:
+        cur.execute("select value from store_kv where key = %s", (key,))
+        row = cur.fetchone()
+    STATS["reads"] += 1
+    return row[0] if row else None
+
+
+def kv_set(key, value):
+    """Записать один ключ. Хэш обновляем следом: иначе save_store решит, что ключ «грязный»,
+    и перезапишет наше значение своей копией из памяти процесса."""
+    if not ENABLED:
+        raise RuntimeError("kv_set: база выключена (KLEAL_DB=%s)" % MODE)
+    payload = json.dumps(value, ensure_ascii=False, default=str)
+    with _connect().connection() as c:
+        with c.cursor() as cur:
+            cur.execute(
+                "insert into store_kv (key, value, updated) values (%s, %s, now()) "
+                "on conflict (key) do update set value = excluded.value, updated = now()",
+                (key, payload))
+        c.commit()
+    with _HASH_LOCK:
+        _HASHES[key] = _digest(value)
+    STATS["writes"] += 1
+    STATS["keys_written"] += 1
+    return True
+
+
+def kv_updated(key):
+    """Когда ключ менялся в последний раз (epoch) — для «изменено N часов назад»."""
+    if not ENABLED:
+        return 0.0
+    with _connect().connection() as c, c.cursor() as cur:
+        cur.execute("select extract(epoch from updated) from store_kv where key = %s", (key,))
+        row = cur.fetchone()
+    return float(row[0]) if row and row[0] is not None else 0.0
+
+
 # ---------------------------------------------------------------- люди
+# ЛИЧНОСТЬ — ЭТО ID СТРОКИ, А НЕ ИМЯ. Все функции ниже пишут и удаляют людей ТОЛЬКО по `id`.
+# Имя в строке — подпись: у двух людей она может совпасть, и это нормально.
+#
+# ПЕРЕХОДНЫЙ РЕЖИМ. Таблица, созданная до 26.09.2026, имеет первичный ключ по имени; её
+# переводит `migrate_users_to_id()` (tools/migrate_users_to_id.py). Код ниже сам узнаёт, какая
+# схема перед ним, поэтому его можно выложить и до миграции, и после — ничего не упадёт. В старой
+# схеме он ведёт себя по-старому; в новой — только по id.
 def _name_key(name):
     return " ".join(str(name or "").lower().split())
+
+
+_KEYMODE = {"mode": None, "t": 0.0}
+
+
+def users_keymode(force=False):
+    """'id' — первичный ключ таблицы users по id (правильно); 'name' — старая схема по имени."""
+    now = time.time()
+    if not force and _KEYMODE["mode"] and now - _KEYMODE["t"] < 300:
+        return _KEYMODE["mode"]
+    with _connect().connection() as c, c.cursor() as cur:
+        cur.execute(
+            "select a.attname from pg_index i join pg_attribute a "
+            "on a.attrelid = i.indrelid and a.attnum = any(i.indkey) "
+            "where i.indrelid = 'users'::regclass and i.indisprimary")
+        cols = [r[0] for r in cur.fetchall()]
+    mode = "id" if cols == ["id"] else "name"
+    _KEYMODE.update(mode=mode, t=now)
+    return mode
 
 
 def load_users():
@@ -220,23 +299,52 @@ def users_version():
         return "%s|%d" % (ts.isoformat() if ts else "", n)
 
 
-def save_user(row):
-    """Записать ОДНОГО человека. Регистрация больше не трогает остальных семьсот."""
-    if not ENABLED:
-        return False
+def _upsert_user(cur, row, mode):
     nm = str((row or {}).get("name") or "").strip()
     if not nm:
         return False
-    with _connect().connection() as c:
-        with c.cursor() as cur:
-            cur.execute(
-                "insert into users (name_key, name, row, updated) values (%s, %s, %s, now()) "
-                "on conflict (name_key) do update set name = excluded.name, "
-                "row = excluded.row, updated = now()",
-                (_name_key(nm), nm, json.dumps(row, ensure_ascii=False, default=str)))
-        c.commit()
-    STATS["writes"] += 1
+    body = json.dumps(row, ensure_ascii=False, default=str)
+    if mode == "id":
+        uid = str((row or {}).get("id") or "").strip()
+        if not uid:
+            # Строка без id — это человек без личности. Писать её по имени значило бы вернуть
+            # ровно ту ошибку, от которой уходим: тёзка затёр бы тёзку.
+            raise ValueError("users: у строки нет id (личность человека — только id)")
+        cur.execute(
+            "insert into users (id, name_key, name, row, updated) values (%s, %s, %s, %s, now()) "
+            "on conflict (id) do update set name_key = excluded.name_key, name = excluded.name, "
+            "row = excluded.row, updated = now()",
+            (uid, _name_key(nm), nm, body))
+    else:
+        cur.execute(
+            "insert into users (name_key, name, row, updated) values (%s, %s, %s, now()) "
+            "on conflict (name_key) do update set name = excluded.name, "
+            "row = excluded.row, updated = now()",
+            (_name_key(nm), nm, body))
     return True
+
+
+def save_user(row):
+    """Записать ОДНОГО человека — по его id. Регистрация больше не трогает остальных."""
+    if not ENABLED:
+        return False
+    for attempt in (0, 1):
+        mode = users_keymode(force=bool(attempt))
+        try:
+            with _connect().connection() as c:
+                with c.cursor() as cur:
+                    ok = _upsert_user(cur, row, mode)
+                c.commit()
+            break
+        except ValueError:
+            raise
+        except Exception:
+            if attempt:
+                raise
+            # Схема могла смениться между проверкой и записью (миграция) — узнаём заново и
+            # повторяем один раз.
+    STATS["writes"] += 1
+    return bool(ok)
 
 
 def save_users(rows):
@@ -244,33 +352,80 @@ def save_users(rows):
     в базе хуже, чем ни одной, потому что выглядит как рабочая."""
     if not ENABLED:
         return 0
+    mode = users_keymode(force=True)
     n = 0
     with _connect().connection() as c:
         with c.cursor() as cur:
             for row in rows or []:
-                nm = str((row or {}).get("name") or "").strip()
-                if not nm:
-                    continue
-                cur.execute(
-                    "insert into users (name_key, name, row, updated) values (%s, %s, %s, now()) "
-                    "on conflict (name_key) do update set name = excluded.name, "
-                    "row = excluded.row, updated = now()",
-                    (_name_key(nm), nm, json.dumps(row, ensure_ascii=False, default=str)))
-                n += 1
+                if _upsert_user(cur, row, mode):
+                    n += 1
         c.commit()
     STATS["writes"] += 1
     STATS["keys_written"] += n
     return n
 
 
-def delete_user(name):
+def delete_user(uid=None, name=None):
+    """Удалить ОДНОГО человека — по id. Удаление по имени стирало заодно всех его тёзок, поэтому
+    в новой схеме имя без id не принимается вовсе."""
     if not ENABLED:
         return False
+    mode = users_keymode(force=True)
     with _connect().connection() as c:
         with c.cursor() as cur:
-            cur.execute("delete from users where name_key = %s", (_name_key(name),))
+            if mode == "id":
+                if not str(uid or "").strip():
+                    raise ValueError("delete_user: нужен id — по имени удалять нельзя")
+                cur.execute("delete from users where id = %s", (str(uid).strip(),))
+            else:
+                if uid:
+                    cur.execute("delete from users where row->>'id' = %s", (str(uid).strip(),))
+                else:
+                    cur.execute("delete from users where name_key = %s", (_name_key(name),))
         c.commit()
     return True
+
+
+def migrate_users_to_id(apply=False):
+    """Перевести таблицу users с ключа по имени на ключ по id. Одна транзакция, идемпотентно.
+
+    Строкам без id выдаётся устойчивый `nm` + md5(name_key)[:12] и он же вписывается в саму строку.
+    Если id повторяется — ОТКАЗ без изменений: склеивать двух людей молча нельзя.
+    Возвращает отчёт; при apply=False ничего не меняет.
+    """
+    if not ENABLED:
+        return {"ok": False, "error": "db disabled"}
+    rep = {"mode_before": users_keymode(force=True)}
+    with _connect().connection() as c:
+        with c.cursor() as cur:
+            cur.execute("lock table users in exclusive mode")
+            cur.execute("select count(*) from users")
+            rep["rows"] = cur.fetchone()[0]
+            cur.execute("alter table users add column if not exists id text")
+            cur.execute("update users set id = nullif(row->>'id', '') where id is null")
+            cur.execute("select count(*) from users where id is null")
+            rep["without_id"] = cur.fetchone()[0]
+            cur.execute("update users set id = 'nm' || substr(md5(name_key), 1, 12) where id is null")
+            cur.execute("update users set row = jsonb_set(row, '{id}', to_jsonb(id)) "
+                        "where coalesce(row->>'id', '') <> id")
+            cur.execute("select id, count(*) from users group by id having count(*) > 1")
+            dups = cur.fetchall()
+            rep["dup_ids"] = [[d[0], d[1]] for d in dups]
+            if dups or not apply:
+                c.rollback()
+                rep["ok"] = not dups
+                rep["applied"] = False
+                return rep
+            if rep["mode_before"] != "id":
+                cur.execute("alter table users drop constraint if exists users_pkey")
+                cur.execute("alter table users add constraint users_pkey primary key (id)")
+            cur.execute("alter table users alter column name_key set not null")
+            cur.execute("create index if not exists users_name_key_idx on users (name_key)")
+        c.commit()
+    rep["mode_after"] = users_keymode(force=True)
+    rep["ok"] = rep["mode_after"] == "id"
+    rep["applied"] = True
+    return rep
 
 
 # ---------------------------------------------------------------- исходящая почта

@@ -18,21 +18,71 @@
  * Прокрутка. Карта живёт внутри ScrollView, и жест у них общий: без onDragChange родительский
  * список забирает вертикальное движение себе, и карта не двигается вовсе.
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import MapView, { Circle, MapPressEvent, Region } from 'react-native-maps';
 import { color } from '../theme';
+import { GlMap, GL_MAPS, type GlMapHandle } from './GlMap';
 
 /** Насколько координаты должны разойтись, чтобы считать это переездом, а не дрожанием региона. */
 const EPS = 0.0004;   // ~45 метров
 
-export function RadiusMap({
-  lat, lon, km, onMove, onDragChange,
-}: {
+type RadiusProps = {
   lat: number; lon: number; km: number;
   onMove?: (lat: number, lon: number) => void;
   onDragChange?: (dragging: boolean) => void;
-}) {
+};
+
+/**
+ * На Android карту рисует MapLibre (см. GlMap: у Expo Go протух ключ Google), на iOS — Apple.
+ * Булавка в центре и круг радиуса выглядят одинаково в обоих случаях.
+ */
+export function RadiusMap(props: RadiusProps) {
+  return GL_MAPS ? <RadiusGl {...props} /> : <RadiusNative {...props} />;
+}
+
+/**
+ * Масштаб, при котором круг радиуса занимает примерно половину карточки карты (её высота на
+ * экранах 200–250 точек). Считается от километров и широты: на севере градус долготы короче.
+ */
+function zoomForKm(km: number, lat: number): number {
+  const px = 200 * 0.55;                                   // желаемый диаметр круга в точках
+  const mpp = (km * 2000) / Math.max(60, px);              // метров на точку при таком диаметре
+  const z = Math.log2((156543.03392 * Math.cos((lat * Math.PI) / 180)) / mpp);
+  return Math.max(1, Math.min(18, Math.round(z * 10) / 10));
+}
+
+function RadiusGl({ lat, lon, km, onMove, onDragChange }: RadiusProps) {
+  const map = useRef<GlMapHandle>(null);
+  const lastKm = useRef(km);
+
+  // Радиус тянут ползунком — человек ждёт, что круг впишется. Это единственный случай, когда
+  // масштаб назначаем мы: во всех остальных им распоряжается тот, кто держит телефон.
+  useEffect(() => {
+    if (km === lastKm.current) return;
+    lastKm.current = km;
+    map.current?.setZoom(zoomForKm(km, lat));
+  }, [km, lat]);
+
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      <GlMap
+        ref={map}
+        mode="radius"
+        lat={lat} lon={lon} km={km}
+        zoom={zoomForKm(km, lat)}
+        rotate={false}
+        interactive={!!onMove}
+        onDragChange={onDragChange}
+        onMoveEnd={(la, lo) => onMove?.(la, lo)}
+        onPress={onMove ? (la, lo) => onMove(la, lo) : undefined}
+      />
+      <Pin />
+    </View>
+  );
+}
+
+function RadiusNative({ lat, lon, km, onMove, onDragChange }: RadiusProps) {
   const ref = useRef<MapView>(null);
   /**
    * Регион, который мы поставили САМИ (выбрали город, нажали «определить», вернули к дому).
@@ -137,8 +187,8 @@ export function RadiusMap({
         <Circle
           center={{ latitude: lat, longitude: lon }}
           radius={km * 1000}
-          strokeColor="rgba(241,58,89,0.55)"
-          fillColor="rgba(241,58,89,0.18)"
+          strokeColor="rgba(255,56,92,0.55)"
+          fillColor="rgba(255,56,92,0.18)"
         />
       </MapView>
 
@@ -147,17 +197,23 @@ export function RadiusMap({
         прокрутки уезжает вместе с картой, а нам нужна ровно обратная связь — точка стоит, мир
         едет. pointerEvents="none", иначе она перехватывает жест у карты под собой.
       */}
-      <View style={s.pinWrap} pointerEvents="none">
-        <View style={s.pinStem} />
-        <View style={s.pinHead} />
-      </View>
+      <Pin />
+    </View>
+  );
+}
+
+function Pin() {
+  return (
+    <View style={s.pinWrap} pointerEvents="none">
+      <View style={s.pinStem} />
+      <View style={s.pinHead} />
     </View>
   );
 }
 
 const s = StyleSheet.create({
   pinWrap: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
   },

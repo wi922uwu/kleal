@@ -24,6 +24,7 @@ import { TimeDial } from './Dials';
 import { DETAILS, dateChips, planWhenLabel, tzDisplay } from '../intent';
 import { IconCalendar, IconClock, IconGlobe } from './icons';
 import { color, radius as rad, space, type } from '../theme';
+import { T } from '../i18n';
 import {
   editableTimePartValue, formatTimePart, normalizeTimePart, parseClockPaste,
   replaceTimePart, sanitizeTimePartInput, splitClock, type TimePart,
@@ -218,7 +219,7 @@ function NumBox({ value, part, onChange, onFocusChange, onFinish }: {
       keyboardType="number-pad"
       selectTextOnFocus
       testID={`when-${part}`}
-      accessibilityLabel={part === 'hours' ? 'HH' : 'MM'}
+      accessibilityLabel={part === 'hours' ? T('часы', 'hours', 'horas') : T('минуты', 'minutes', 'minutos')}
     />
   );
 }

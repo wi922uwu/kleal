@@ -12,19 +12,50 @@
  * комнату-сироту. Пока никто не приглашён, группы нет.
  */
 import { useEffect, useState } from 'react';
-import { group as gapi, newIdem } from './api';
+import { group as gapi, newIdem, pidOf, peerId, peerName, type Peer } from './api';
 
 const norm = (s: string) => String(s || '').trim().toLowerCase();
 
-export type GRow = { id: string; to: string; state: string };
+export type GRow = {
+  id: string; to: string; toId?: string; state: string;
+  /** Когда ушло (мс) — «Invite sent · 14:25» на карточке GR.14a. */
+  at?: number;
+  /** Когда истечёт само (мс) — отсюда «Ends in 12h» полосы набора. */
+  expiresAt?: number;
+};
+/**
+ * Закрытое приглашение — карточки GR.14d «Can’t make it» и GR.14e «Invite closed». Отказ и
+ * закрытие — разные события и называются по-разному: отказ освобождает место, закрытие значит, что
+ * группа собралась раньше ответа.
+ */
+export type GClosed = {
+  to: string; toId?: string; state: 'declined' | 'closed'; at: number;
+  /** Почему закрылось: группа собралась раньше ответа (GR.14e), вышел срок, иное. Для пояснения. */
+  why?: 'full' | 'expired' | 'other';
+};
+export type GStatus = 'joined' | 'pending' | 'declined' | 'closed';
 export type GCounters = {
   joined: number; max: number; min: number; open: number; cap: number; full: boolean;
 };
 
 let gid: string | null = null;
 let self = '';
-let rows: Record<string, GRow> = {};          // открытые приглашения, ключ — имя
-let joined = new Set<string>();               // кто уже в группе (включая организатора)
+let rows: Record<string, GRow> = {};          // открытые приглашения, ключ — id человека (имя — без id)
+let joined = new Set<string>();               // кто уже в группе (включая организатора): id и имена
+let closed: Record<string, GClosed> = {};     // ответившие «нет» и закрывшиеся сами — тот же ключ
+let joinedAt: Record<string, number> = {};    // когда вступил (мс) — «Joined the group · 14:28»
+
+/*
+ * КЛЮЧ ЧЕЛОВЕКА — ID (kleal-ms/docs/IDENTITY.md). В выдаче бывают тёзки: по имени приглашение одному
+ * «Ивану» показывалось на карточке второго, а вступивший «Иван» делал «в группе» обоих.
+ */
+const keyOf = (p: Peer) => (peerId(p) ? 'id:' + peerId(p) : norm(peerName(p)));
+function rowOf(p: Peer): GRow | undefined {
+  const byKey = rows[keyOf(p)];
+  if (byKey || peerId(p)) return byKey;
+  const hits = Object.values(rows).filter((r) => norm(r.to) === norm(peerName(p)));
+  return hits.length === 1 ? hits[0] : undefined;
+}
 let counters: GCounters = { joined: 0, max: 5, min: 3, open: 0, cap: 3, full: false };
 const subs = new Set<() => void>();
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -35,16 +66,100 @@ function emit() {
   subs.forEach((f) => f());
 }
 
+/** Секунды или миллисекунды — сервер отдаёт время секундами, клиент считает в мс. */
+const ms = (v: any): number | undefined => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return n < 1e12 ? n * 1000 : n;
+};
+/** Чем закончилось приглашение, которое больше не открыто. Всё, кроме отказа, — «закрылось». */
+const CLOSED_STATES = new Set(['declined', 'rejected', 'expired', 'withdrawn', 'closed', 'cancelled', 'superseded']);
+/**
+ * ОТМЕНИЛ САМ ОРГАНИЗАТОР — НЕ ИСХОД, А ВОЗВРАТ. По борду GR.14b после «Cancel the invite» карточка
+ * снова «Invite Jane» и слот свободен; показать её «Invite closed» значило бы запереть человека,
+ * которого организатор просто передумал звать сейчас.
+ */
+const OWN_CANCEL = new Set(['withdrawn', 'cancelled']);
+
+/** Закрытая строка сервера → исход карточки. `null` — показывать нечего (своя отмена). */
+function outcomeOf(i: any, full: boolean, now: number): GClosed | null {
+  const to = String(i?.to || '').trim();
+  const state = String(i?.state || 'closed');
+  if (!to || OWN_CANCEL.has(state)) return null;
+  const declined = state === 'declined' || state === 'rejected';
+  return {
+    to, toId: String(i?.to_id || ''),
+    state: declined ? 'declined' : 'closed',
+    why: declined ? undefined : state === 'expired' ? 'expired' : full ? 'full' : 'other',
+    at: ms(i?.closed_at ?? i?.answered_at) || now,
+  };
+}
+
 function absorb(g: any) {
   if (!g || typeof g !== 'object') return;
-  joined = new Set((g.members || []).map((m: any) => norm(m?.name)));
+  const now = Date.now();
+  // Вступившие — по id, а у строки без id — по имени (старый ответ сервера).
+  const members = (g.members || []) as any[];
+  joined = new Set(members.map((m: any) => keyOf({ name: String(m?.name || ''), id: pidOf(m, 'name') })));
+  for (const m of members) {
+    const k = keyOf({ name: String(m?.name || ''), id: pidOf(m, 'name') });
+    if (!joinedAt[k]) joinedAt[k] = ms(m?.joined_at ?? m?.at) || now;
+  }
+  /*
+    ЗАКРЫТЫЕ — С СЕРВЕРА, когда он их отдаёт (`invites_closed`, только организатору; агент логики,
+    03.10). Тогда он единственный источник: исход, причина и время — его, а не догадка этого
+    модуля, и они переживают перезапуск. В `invites` закрытые не кладутся: их длину другие экраны
+    читают как «открытых».
+  */
+  const serverClosed = Array.isArray(g.invites_closed);
+  if (serverClosed) {
+    const fresh: Record<string, GClosed> = {};
+    for (const i of g.invites_closed) {
+      const c = outcomeOf(i, !!g.full, now);
+      if (!c) continue;
+      const k = keyOf({ name: c.to, id: c.toId });
+      if (joined.has(k)) continue;
+      // Одного человека могли звать дважды — показываем последний исход.
+      if (!fresh[k] || fresh[k].at <= c.at) fresh[k] = c;
+    }
+    closed = fresh;
+  }
   const next: Record<string, GRow> = {};
   for (const i of g.invites || []) {
     const to = String(i?.to || '').trim();
-    if (to) next[norm(to)] = { id: String(i.id || ''), to, state: String(i.state || 'sent') };
+    const toId = String(i?.to_id || '');
+    if (!to) continue;
+    const k = keyOf({ name: to, id: toId });
+    const state = String(i.state || 'sent');
+    const at = ms(i.at ?? i.created_at ?? i.ts);
+    // Старый ответ мог класть закрытые прямо в `invites` — исход берётся из них, а не угадывается.
+    if (CLOSED_STATES.has(state)) {
+      const c = outcomeOf(i, !!g.full, now);
+      if (c && !joined.has(k)) closed[k] = { ...c, at: ms(i.closed_at ?? i.answered_at) || closed[k]?.at || now };
+      else if (!c) delete closed[k];
+      continue;
+    }
+    next[k] = { id: String(i.id || ''), to, toId, state, at: at || rows[k]?.at, expiresAt: ms(i.expires_at) };
+  }
+  /*
+    ПРИГЛАШЕНИЕ ПРОПАЛО ИЗ ОТКРЫТЫХ, А ЧЕЛОВЕК НЕ ВСТУПИЛ — значит, оно закрылось: «нет» (GR.14d) или
+    группа собралась раньше ответа (GR.14e). Свою отмену экран убирает из `rows` сам ДО перечитывания,
+    поэтому сюда она не попадает. Различаем по полноте группы: пока места есть, пропажа — это отказ.
+    ПОКА СЕРВЕР НЕ ОТДАЁТ ЗАКРЫТЫЕ СТРОКИ, это догадка клиента и живёт до перезапуска — см. память
+    kleal-create-board-w2 (зона логики).
+  */
+  // Ответ без списка приглашений (не тот вид, обрыв) — не повод объявлять всех отказавшимися.
+  // Сервер сам отдал закрытые — угадывать нечего: пропавшая без исхода строка — это своя отмена.
+  const listed = Array.isArray(g.invites) && !serverClosed;
+  for (const [k, v] of Object.entries(rows)) {
+    if (!listed || next[k] || !v.id || joined.has(k) || closed[k]) continue;
+    closed[k] = { to: v.to, toId: v.toId, state: g.full ? 'closed' : 'declined', why: g.full ? 'full' : undefined, at: now };
   }
   // Только что отправленное сервер мог ещё не отдать — оптимистичная строка не теряется.
   for (const [k, v] of Object.entries(rows)) if (!next[k] && !v.id) next[k] = v;
+  // Позвали заново после отказа — открытая строка главнее закрытой.
+  for (const k of Object.keys(next)) delete closed[k];
+  for (const k of joined) delete closed[k];
   rows = next;
   counters = {
     joined: Number(g.joined_count || joined.size || 0),
@@ -88,12 +203,48 @@ export function useGroupSession(who: string, active: boolean) {
   return { gid, rows, counters };
 }
 
-/** Состояние кандидата в наборе: в группе / приглашён / никак. */
-export function groupStatusFor(name: string): 'joined' | 'pending' | undefined {
-  const k = norm(name);
-  if (joined.has(k)) return 'joined';
-  if (rows[k]) return 'pending';
-  return undefined;
+/** Состояние кандидата в наборе: в группе / приглашён / отказался / закрылось / никак. */
+export function groupStatusFor(who: Peer): GStatus | undefined {
+  if (joined.has(keyOf(who))) return 'joined';
+  if (rowOf(who)) return 'pending';
+  const c = closedOf(who);
+  return c ? c.state : undefined;
+}
+
+function closedOf(p: Peer): GClosed | undefined {
+  const byKey = closed[keyOf(p)];
+  if (byKey || peerId(p)) return byKey;
+  const hits = Object.values(closed).filter((r) => norm(r.to) === norm(peerName(p)));
+  return hits.length === 1 ? hits[0] : undefined;
+}
+
+/** Когда наступило текущее состояние (мс): ушло, вступил, ответил. Нет — времени не показываем. */
+export function groupStatusAt(who: Peer): number | undefined {
+  const k = keyOf(who);
+  if (joined.has(k)) return joinedAt[k];
+  const r = rowOf(who);
+  if (r) return r.at;
+  return closedOf(who)?.at;
+}
+
+/** Закрытые приглашения — строки «Can’t make it» / «Invite closed» обзора GR.17a. */
+export function groupClosed(): GClosed[] {
+  return Object.values(closed);
+}
+
+/** Исход одного человека — с причиной, чтобы пояснение под «Invite closed» говорило правду. */
+export function groupClosedOf(who: Peer): GClosed | undefined {
+  return closedOf(who);
+}
+
+/**
+ * Когда кончается набор — «Ends in 12h» на полосе GR.14a. Срок у каждого приглашения свой; полоса
+ * показывает ближайший, то есть когда первое из открытых закроется само. Срока нет в ответе — нет
+ * и строки: выдумывать часы нельзя.
+ */
+export function groupEndsAt(): number | undefined {
+  const ts = Object.values(rows).map((r) => r.expiresAt || 0).filter((x) => x > 0);
+  return ts.length ? Math.min(...ts) : undefined;
 }
 
 export function groupCounters(): GCounters {
@@ -124,6 +275,8 @@ export async function adoptGroup(who: string, id: string): Promise<boolean> {
   self = name;
   rows = {};
   joined = new Set();
+  closed = {};
+  joinedAt = {};
   try {
     const r: any = await gapi.get(g, name);
     if (!r?.group) { gid = null; return false; }
@@ -141,9 +294,10 @@ export type GSend = { ok: boolean; capped?: boolean; full?: boolean; error?: str
  * Пригласить в группу. Первое приглашение сначала СОЗДАЁТ группу — см. шапку. Кап проверяет
  * сервер (INVITE_CAP), но и локально он известен: не ходить за отказом, который виден заранее.
  */
-export async function sendGroupInvite(who: string, to: string, intent: any, title: string): Promise<GSend> {
+export async function sendGroupInvite(who: string, to: Peer, intent: any, title: string): Promise<GSend> {
   const from = String(who || '').trim();
-  const name = String(to || '').trim();
+  const name = peerName(to).trim();
+  const toId = peerId(to);
   if (!from || !name) return { ok: false, error: 'no name' };
   if (!gid) {
     // Группа должна получить ТОТ ЖЕ интент, который человек только что проверил в сводке.
@@ -167,24 +321,29 @@ export async function sendGroupInvite(who: string, to: string, intent: any, titl
     self = from;
     absorb(g);
   }
-  if (groupPending().length >= counters.cap && !rows[norm(name)]) return { ok: false, capped: true };
-  const r: any = await gapi.invite(gid, from, name, newIdem('giv')).catch(() => null);
+  if (groupPending().length >= counters.cap && !rowOf({ name, id: toId })) return { ok: false, capped: true };
+  const r: any = await gapi.invite(gid, from, { name, id: toId }, newIdem('giv')).catch(() => null);
   if (r?.error === 'INVITE_CAP') return { ok: false, capped: true };
   if (r?.error === 'GROUP_FULL') return { ok: false, full: true };
   if (!r?.ok) return { ok: false, error: String(r?.error || 'invite failed') };
-  rows[norm(name)] = { id: String((r.invite || {}).id || ''), to: name, state: 'sent' };
+  const inv: any = r.invite || {};
+  rows[keyOf({ name, id: toId })] = {
+    id: String(inv.id || ''), to: name, toId, state: 'sent',
+    at: ms(inv.at ?? inv.created_at) || Date.now(), expiresAt: ms(inv.expires_at),
+  };
+  delete closed[keyOf({ name, id: toId })];
   emit();
   syncGroup(from);
   return { ok: true };
 }
 
 /** Отозвать открытое приглашение — Cancel строки GR.17. Ответившее отзовётся отказом сервера. */
-export async function cancelGroupInvite(who: string, to: string): Promise<boolean> {
-  const row = rows[norm(to)];
+export async function cancelGroupInvite(who: string, to: Peer): Promise<boolean> {
+  const row = rowOf(to);
   if (!row?.id) return false;
   const r: any = await gapi.inviteCancel(row.id, String(who || '').trim(), newIdem('gcx')).catch(() => null);
   if (!r?.ok && r?.error !== 'WITHDRAWN') return false;
-  delete rows[norm(to)];
+  for (const [k, v] of Object.entries(rows)) if (v.id === row.id) delete rows[k];
   emit();
   syncGroup(who);
   return true;
@@ -198,6 +357,8 @@ export function resetGroupSession() {
   gid = null;
   rows = {};
   joined = new Set();
+  closed = {};
+  joinedAt = {};
   counters = { joined: 0, max: 5, min: 3, open: 0, cap: 3, full: false };
   subs.forEach((f) => f());
 }

@@ -27,20 +27,22 @@ import {
   KeyboardAvoidingView, Platform, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 // Свайп от края (iOS) и аппаратная «назад» (Android) снимают экран мимо любого обработчика
 // кнопки. Единственный способ вклиниться — usePreventRemove; expo-router его не реэкспортирует,
 // поэтому берём из навигатора, на котором он и построен.
-import { usePreventRemove } from '@react-navigation/native';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import Slider from '@react-native-community/slider';
 import {
   INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
   NATURE_TRAITS, NATURE_MAX,
   STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL, GROUP_FREE_MAX_TOTAL,
   GROUP_PLUS_MAX_TOTAL, GROUP_SIZE, normalizeIntentSize, initialGroupSize,
-  DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl,
+  DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl, withScheme, categoryLabel,
   SEARCHING,
   SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
+  rollIntentName, intentNameOptions,
+  WIZ, AGE_PRESETS, agePresetLabel, dayChips, TIME_SLOTS, cardDate, tzPlace, tzChoices, wizSummary,
 } from '../src/intent';
 import { SEXES, sexLabel, COMPOSER_PLACEHOLDER } from '../src/onboarding';
 import { RangeDial } from '../src/components/Dials';
@@ -48,21 +50,36 @@ import { WhenPicker } from '../src/components/WhenPicker';
 import { RadiusMap } from '../src/components/RadiusMap';
 import {
   IconChevronLeft, IconMic, IconPin, IconVideo, IconPlusRound, IconPerson, IconGroups,
-  IconCalendar, IconClock, IconLink, IconPlay, IconImagePlaceholder, IconPencil, IconStar,
+  IconCalendar, IconClock, IconLink, IconPlay, IconPencil, IconStar, IconDice,
+  IconGlobe, IconPinPlus, IconUsers, IconUserPlus, IconChevronDown, IconMaximize, IconMinimize, IconPinSolid, IconCrosshair, IconHelp, IconLock, IconChevronUp, IconWand,
 } from '../src/components/icons';
+import {
+  CreatingHeader, StepAsk, AgentLine, MyLine, Caption, PrefLabel, ChoiceRow, Check, GlassChip, ChipRow,
+  ChipScroller, StepIndicator, CreateComposer, RadiusSlider,
+} from '../src/components/CreateFlow';
+import { GlassPill } from '../src/components/Glass';
+import { GlassIconButton, GlassSurface } from '../src/components/LiquidGlass';
+import { SheetText } from '../src/components/Sheet';
 import { EditSheet } from '../src/components/ProfileShell';
 import { Sheet } from '../src/components/Sheet';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { resetGroupSession } from '../src/ginvites';
-import { useLang, T } from '../src/i18n';
+import { useLang, T, replyLang } from '../src/i18n';
+import { AddressField } from '../src/components/AddressField';
 import { useOnb } from '../src/state';
 import { setResults, patchResults } from '../src/results-store';
 import { openResults } from '../src/results-navigation';
 import {
   applyIntentEdit, beginIntentEdit, IntentEditTarget,
 } from '../src/intent-edit';
-import { agent, isAbort } from '../src/api';
-import { color, radius as rad, space, type } from '../src/theme';
+import { agent, isAbort, buddy as buddyApi } from '../src/api';
+import { CREATE } from '../src/buddy';
+import { color, font, heading, radius as rad, space, type } from '../src/theme';
+import { reverseGeocode } from '../src/geocode';
+import * as Location from 'expo-location';
+import { Cover } from '../src/components/Cover';
+import { LogoMark } from '../src/components/Logo';
+import { parseIntentChange } from '../src/intent-talk';
 
 type Draft = {
   mode?: string;
@@ -86,7 +103,29 @@ type Draft = {
   /** OF.09: центр поиска. Пусто — берётся из профиля; заполняется, когда булавку передвинули. */
   lat?: number;
   lon?: number;
+  /**
+   * Координаты пришли ОТ АДРЕСА, а не от перетаскивания булавки. Разница решает, можно ли ставить
+   * их на общую карту точно.
+   *
+   * Булавка на карте радиуса — это «ищи вокруг вон той точки», то есть место, где человек
+   * находится. Такое публиковать нельзя: контракт geo_privacy держит домашнюю точку огрублённой,
+   * и это правильно. Адрес же он называет сам и именно для того, чтобы туда пришли, — площадка не
+   * его дом, и прятать её незачем (`can_be_first_meeting_place` в том же контракте прямо отделяет
+   * место встречи от домашнего и рабочего).
+   */
+  venue?: boolean;
 };
+
+/**
+ * Ближайшее время ряда GR.09, которое ещё не прошло: следующий получасовой слот через час от
+ * «сейчас», но не раньше 19:00 — на кадре вечер, и большинство затей вечерние. После 22:30 —
+ * 19:00 следующего дня считать нечем (дата на шаге «сегодня»), поэтому просто 23:30.
+ */
+function firstFreeSlot(now = new Date()): number {
+  const m = now.getHours() * 60 + now.getMinutes() + 60;
+  const slot = Math.ceil(m / 30) * 30;
+  return Math.min(23 * 60 + 30, Math.max(19 * 60, slot));
+}
 
 export default function Intent() {
   useLang();
@@ -115,13 +154,36 @@ export default function Intent() {
   const params = useLocalSearchParams<{
     topics?: string; title?: string; topic?: string;
     size?: string; format?: string; groupSize?: string;
+    type?: string;
+    /** Только для стенда сверки с бордом (EXPO_PUBLIC_HARNESS=1): открыть мастер сразу на шаге. */
+    step?: string;
   }>();
+  /**
+   * Свидание — ТИП затеи из разговора создания, а не ключ темы. Терялся здесь: мастер слал в поиск
+   * темы и заголовок, и свидание искалось как обычная встреча — без ворот `datingOk` у кандидата.
+   */
+  const dating = String(params.type || '').trim().toLowerCase() === 'dating';
   const legacy = String(params.topic || '').trim();
-  const topics = String(params.topics || legacy || '')
+  const paramTopics = String(params.topics || legacy || '')
     .split(',')
     .map((t) => t.trim())
     .filter(Boolean);
-  const title = String(params.title || legacy || '').trim();
+  /*
+    ТЕМЫ ПОИСКА ИДУТ ЗА НАЗВАНИЕМ (GR.12c). Темы приходят из разговора создания вместе с
+    названием. Раньше правка «What» на сводке меняла только надпись: карточка называлась «Book
+    club», а искали по `bbq, beach`. Теперь новое название разбирает агент фильтрации
+    (/api/filter/categorize — он и даёт ключи, понимает и русский), и поиск идёт по новым темам.
+  */
+  const [topics, setTopics] = useState<string[]>(paramTopics);
+  /** Пока темы нового названия едут, «Start search» ждёт: иначе поиск ушёл бы по старым. */
+  const [retopic, setRetopic] = useState(false);
+  const paramTitle = String(params.title || legacy || '').trim();
+  /*
+    НАЗВАНИЕ ЖИВЁТ В СОСТОЯНИИ, А НЕ В ПАРАМЕТРЕ МАРШРУТА, потому что его теперь можно менять
+    костями на сводке. Параметр остаётся начальным значением: он пришёл из разговора создания и
+    правильно быть первым предложением.
+  */
+  const [title, setTitle] = useState(paramTitle);
 
   const [step, setStep] = useState<IntentStepId>('how');
   const legacySize = params.size ?? params.format;
@@ -133,14 +195,42 @@ export default function Intent() {
     size: normalizedSize,
     groupSize: normalizedSize === 'group' ? initialGroupSize(legacySize, params.groupSize) : undefined,
     date: dateChips(1)[0].key,
-    minutes: 20 * 60,
+    minutes: firstFreeSlot(),
     tz: deviceTz(),
-    minAge: 18,
-    maxAge: 28,               // диапазон с кадра O.08
+    /*
+      ВОЗРАСТ ПО УМОЛЧАНИЮ — «Any age» ([0, 0], без рамки). Раньше стояли 18–28 с кадра O.08, а
+      сервер читает любой minAge как жёсткий гейт: «до 28» отсекал и тех, у кого возраст просто не
+      указан (см. prefsFromIntent в app/results.tsx). На GR.10 возраст — чипы, и «любой» среди них
+      есть; выбирает его человек, а не мы за него.
+    */
+    minAge: 0,
+    maxAge: 0,
     nature: {},
     radiusKm: 15,
     link: '',
   }));
+  /*
+    СТЕНД СВЕРКИ С БОРДОМ. Локальный Metro стенда задаёт EXPO_PUBLIC_HARNESS=1, и тогда ссылка
+    `/intent?step=summary` открывает мастер сразу на нужном шаге с ответами кадров (Offline, группа
+    из трёх, 25–35). На боксе переменной нет — Metro подставляет undefined, и ветка мертва.
+  */
+  useEffect(() => {
+    if (process.env.EXPO_PUBLIC_HARNESS !== '1' || !params.step) return;
+    const hm = String((params as any).mode || 'offline');
+    const hs = (params as any).size === '1:1' ? '1:1' : 'group';
+    setDraft((d) => ({ ...d, mode: hm, size: hs, groupSize: hs === 'group' ? 3 : undefined, minAge: 25, maxAge: 35 }));
+    // `change` — режим GR.12a, `edit` — сразу лист GR.12b (снимать кадры листа без пяти нажатий).
+    const st = String(params.step);
+    setStep((st === 'change' || st === 'edit' ? 'summary' : st) as IntentStepId);
+    if (st === 'change') setChanging(true);
+    if (st === 'edit') setTimeout(() => {
+      setDraft((d) => { setEdraft(beginIntentEdit(d)); return d; });
+      setEtitle(paramTitle);
+      setEditOpen(true);
+    }, 400);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /** Между шагом и шагом агент отвечает «Awesome!» и печатает — как на кадрах. */
   const [ack, setAck] = useState(false);
   /**
@@ -172,6 +262,20 @@ export default function Intent() {
   const [free, setFree] = useState('');
   /** Категория для строки сводки O.10. Приходит от агента фильтрации; пусто — строка не рисуется. */
   const [category, setCategory] = useState('');
+  /**
+   * GR.12a: после «Change it» шаг сводки показывает два пути правки — «Edit it myself» и «скажи
+   * Kleal». Это режим того же шага (100%), а не новый экран: на кадре шапка и проценты те же.
+   */
+  const [changing, setChanging] = useState(false);
+  /**
+   * GR.11a: лист с картой. Держит СВОЙ черновик точки — «Back» ничего не меняет, «Use this spot»
+   * отдаёт точку и адрес тому черновику, из которого лист открыли (шаг мастера или лист правки).
+   */
+  const [spotOpen, setSpotOpen] = useState(false);
+  const [spot, setSpot] = useState<{ lat: number; lon: number; address: string; area: string }>({ lat: 0, lon: 0, address: '', area: '' });
+  const spotSet = useRef<SetDraft | null>(null);
+  /** Лист точки открыт ИЗ листа правки — тогда он рисуется внутри него, а не вторым модалом. */
+  const spotInEdit = useRef(false);
 
   /**
    * Профиль, как он уезжает в поиск. Координаты — из черновика, когда булавку на OF.09 передвинули:
@@ -244,6 +348,8 @@ export default function Intent() {
   const send = async () => {
     const text = free.trim();
     if (!text || busy) return;
+    // GR.12a: на сводке текст — это правка сводки, а не новый запрос (заметка к кадру).
+    if (step === 'summary' && changing) { setFree(''); talkChange(text); return; }
     setFree('');
     setErr('');
     setBusy(true);
@@ -254,7 +360,7 @@ export default function Intent() {
       toResults(r, {}, text);
     } catch (e) {
       setErr(isAbort(e) ? SEARCHING.cancelled()
-                        : T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?'));
+                        : T('Связь пропала. Повторишь?', 'I lost the connection. Say that again?', 'Perdí la conexión. ¿Lo repites?'));
     } finally {
       abortRef.current = null;
       setBusy(false);
@@ -300,6 +406,8 @@ export default function Intent() {
       // format, а не groupSize. §5.3 признаёт интент описанным только когда есть и mode, и format;
       // groupSize же увёл бы запрос в групповую ветку, где 1:1 просто нечего делать.
       format: draft.size === 'group' ? 'group' : '1:1',
+      // Сохраняется вместе с затеей: повторный поиск из «Моей активности» и выдачи берёт её целиком.
+      ...(dating ? { type: 'dating' } : {}),
     };
     if (draft.size === 'group') intent.groupSize = draft.groupSize || GROUP_MIN_TOTAL;
     if (draft.sex && draft.sex !== 'Any') intent.sex = draft.sex;
@@ -322,6 +430,24 @@ export default function Intent() {
       // OF.09: точное место ранжирование не читает — оно нужно ПОЗЖЕ, когда из мэтча собирается
       // план: форма плана подхватит его, чтобы не спрашивать дважды. В выдачу уходит только район.
       if (draft.address?.trim()) intent.address = draft.address.trim();
+      /*
+        КООРДИНАТЫ ЕДУТ В САМУ ЗАТЕЮ, а не только в профиль поиска.
+
+        В профиль они клались и раньше — оттуда считается расстояние до кандидатов. Но карта
+        рисует пины по координатам ЗАТЕИ, и без них она ставила встречу туда, где живёт автор:
+        назначил в Грасии, а на карте пин у дома в Побленоу.
+
+        На карту они уходят ОГРУБЛЁННЫМИ до зоны ~500 м — снапит сервер (`_zone_point` в
+        services/matching). Точный адрес остаётся в `address` и открывается только плану после
+        взаимного подтверждения, как и было.
+      */
+      // ТОЛЬКО КООРДИНАТЫ ПЛОЩАДКИ. Булавка карты радиуса сюда НЕ попадает: она означает «ищи
+      // вокруг вон той точки», то есть где человек находится, и уезжает в профиль поиска, где и
+      // нужна. На общую карту идёт только то, что человек назвал адресом встречи.
+      if (draft.venue && draft.lat != null && draft.lon != null) {
+        intent.lat = draft.lat;
+        intent.lon = draft.lon;
+      }
     }
     if (wantsLink) {
       // Иначе §5.3 требует город, которого у онлайн-встречи нет по определению. Гибриду это тоже
@@ -331,7 +457,7 @@ export default function Intent() {
       intent.allowOnlineFallback = true;
       // Ссылку ранжирование не читает — она нужна ПОЗЖЕ, когда из мэтча собирается план встречи.
       // Кладётся в интент, чтобы уехать вместе с ним в выдачу, а не потеряться на этом экране.
-      if (draft.link.trim()) intent.link = draft.link.trim();
+      if (draft.link.trim()) intent.link = withScheme(draft.link);
     }
     /**
      * ЗАТЕЯ ЗАПОМИНАЕТСЯ — иначе она живёт ровно столько, сколько открыт этот экран.
@@ -391,7 +517,7 @@ export default function Intent() {
     agent.categorize(text)
       .then((r: any) => {
         const c = String(r?.category || '').trim();
-        if (c) setCategory(c.charAt(0).toUpperCase() + c.slice(1));
+        if (c) setCategory(categoryLabel(c));
       })
       .catch(() => {});
   };
@@ -414,14 +540,21 @@ export default function Intent() {
   /** В Group Online ссылка — третий обязательный шаг: без неё приглашённые придут в пустой звонок. */
   const groupOnline = draft.mode === 'online' && draft.size === 'group';
   const groupLinkBlocked = (v: Draft) =>
-    linkBroken(v) || (v.mode === 'online' && v.size === 'group' && !v.link.trim());
+    // Ссылка не обязательна ни у кого (решение владельца 14.10): пустую добавляют позже, в плане. Битую — нет.
+    linkBroken(v);
 
+  /**
+   * GR.07: строки «1:1» и «Group» с галочкой, а под выбранной группой — «How many, you included»
+   * чипами 3 / 4 / 5 / 6+. Размер — часть того же шага, а не отдельный экран: на кадре это один вопрос.
+   */
   const sizeBlockOf = (v: Draft, set: SetDraft) => (
-    <View style={s.chipRowWrap}>
+    <View style={s.options}>
       {SIZES.map(([k]) => (
-        <Chip
+        <ChoiceRow
           key={k}
+          Icon={k === '1:1' ? IconUsers : IconUserPlus}
           label={sizeLabel(k)}
+          sub={WIZ.sizeSub(k)}
           on={v.size === k}
           onPress={() => set((x) => ({
             ...x,
@@ -433,119 +566,173 @@ export default function Intent() {
     </View>
   );
 
-  /** Режим в листе не двигает мастер: выбранное значение коммитится обратно прямо в summary. */
-  const modeBlockOf = (v: Draft, set: SetDraft) => (
-    <View style={s.chipRowWrap}>
+  /** GR.05: три формата строками с галочкой — тот же вид, что у размера. */
+  const modeBlockOf = (v: Draft, set: SetDraft, locked = false) => (
+    <View style={s.options}>
       {FORMATS.map(([k]) => (
-        <Chip
+        <ChoiceRow
           key={k}
+          Icon={k === 'offline' ? IconPin : k === 'online' ? IconGlobe : IconPinPlus}
           label={formatLabel(k)}
+          sub={WIZ.formatSub(k)}
           on={v.mode === k}
+          disabled={locked && v.mode !== k}
           onPress={() => set((x) => ({ ...x, mode: k }))}
         />
       ))}
     </View>
   );
 
-  /** Один числовой контрол вместо двух пользовательских типов группы. */
+  /**
+   * «How many, you included»: 3 / 4 / 5 / 6+. «6+» открывает лист Plus (GR.08) и сам размер не
+   * ставит: на бесплатном тарифе группа до пяти, и выбор, которого нельзя получить, не должен
+   * выглядеть выбранным.
+   */
   const groupSizeBlockOf = (v: Draft, set: SetDraft, target: 'draft' | 'edit') => {
     const total = v.groupSize || GROUP_MIN_TOTAL;
-    const change = (next: number) => {
-      if (next > GROUP_FREE_MAX_TOTAL) {
-        setGroupSizeTarget(target);
-        setGroupSizeOpen(true);
-        return;
-      }
-      set((x) => ({ ...x, size: 'group', groupSize: Math.max(GROUP_MIN_TOTAL, next) }));
-    };
     return (
-      <View>
-        <View style={s.capacityControl}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={T('Уменьшить размер группы', 'Decrease group size')}
-            accessibilityState={{ disabled: total <= GROUP_MIN_TOTAL }}
-            disabled={total <= GROUP_MIN_TOTAL}
-            style={[s.capacityButton, total <= GROUP_MIN_TOTAL && s.capacityButtonOff]}
-            onPress={() => change(total - 1)}
-          >
-            <Text style={s.capacityButtonText}>−</Text>
-          </Pressable>
-          <View style={s.capacityValue}>
-            <Text style={s.capacityNumber}>{total}</Text>
-            <Text style={s.capacityPeople}>{GROUP_SIZE.people(total)}</Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={T('Увеличить размер группы', 'Increase group size')}
-            accessibilityHint={total >= GROUP_FREE_MAX_TOTAL ? GROUP_SIZE.plusLimit() : undefined}
-            style={s.capacityButton}
-            onPress={() => change(Math.min(GROUP_PLUS_MAX_TOTAL, total + 1))}
-          >
-            <Text style={s.capacityButtonText}>+</Text>
-          </Pressable>
-        </View>
-        <Text style={s.capacityFree}>{GROUP_SIZE.freeLimit()}</Text>
-        <Text style={s.capacityPlus}>{GROUP_SIZE.plusLimit()}</Text>
+      <View style={s.pref}>
+        <PrefLabel text={WIZ.howMany()} />
+        <ChipRow>
+          {[3, 4, 5].map((n) => (
+            <GlassChip key={n} label={String(n)} on={total === n}
+              onPress={() => set((x) => ({ ...x, size: 'group', groupSize: n }))} />
+          ))}
+          <GlassChip label="6+" on={total > GROUP_FREE_MAX_TOTAL}
+            onPress={() => { setGroupSizeTarget(target); setGroupSizeOpen(true); }} />
+        </ChipRow>
       </View>
     );
   };
 
-  /* O.07 — дата, круглый циферблат и пояс. Тот же WhenPicker, что у группового плана: разметка
-     здесь была своя и слово в слово такая же, а копии в этом проекте расходятся. */
+  /**
+   * GR.09: «Day» — 14 дней рядом, «Time» — каждые 30 минут рядом, оба листаются вбок, и выбранный
+   * чип при открытии докручен в поле зрения. «Time zone» — строка-выбор, лист GR.09a.
+   *
+   * Прошедшее время сегодняшнего дня выключено: план на 08:00, когда уже 14:00, сервер всё равно не
+   * примет, и лучше не дать его выбрать, чем отказать после «Start search». Выбрал «Today», а
+   * стоявшее время уже прошло — оно само сдвигается на ближайшее.
+   */
   const whenBlockOf = (
     v: Draft,
     set: SetDraft,
     onPressTz?: () => void,
     only?: 'date' | 'time',
-  ) => (
-    <WhenPicker
-      value={{ date: v.date, minutes: v.minutes, tz: v.tz }}
-      // В точечной правке общий контрол остаётся единым, но соседнее значение не меняется даже
-      // внутри edraft. Поэтому дата и время сохраняются независимо, без копии WhenPicker.
-      onChange={(w) => set((x) => ({
-        ...x,
-        date: only === 'time' ? x.date : w.date,
-        minutes: only === 'date' ? x.minutes : w.minutes,
-        tz: w.tz,
-      }))}
-      onDragChange={setDragging}
-      onPressTz={onPressTz}
-    />
-  );
+  ) => {
+    const days = dayChips(14);
+    const today = days[0].key;
+    const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+    const past = (m: number) => v.date === today && m <= nowMin;
+    return (
+      <>
+        {only !== 'time' ? (
+          <View style={s.pref}>
+            <PrefLabel text={WIZ.day()} />
+            <ChipScroller
+              items={days}
+              selected={v.date}
+              chipWidth={66}
+              onPick={(k) => set((x) => {
+                const nm = new Date().getHours() * 60 + new Date().getMinutes();
+                const bump = k === today && x.minutes <= nm ? firstFreeSlot() : x.minutes;
+                return { ...x, date: k, minutes: bump };
+              })}
+            />
+          </View>
+        ) : null}
+        {only !== 'date' ? (
+          <View style={s.pref}>
+            <PrefLabel text={WIZ.time()} />
+            <ChipScroller
+              items={TIME_SLOTS.map((m) => ({ key: String(m), label: hhmm(m), disabled: past(m) }))}
+              selected={String(v.minutes)}
+              chipWidth={63}
+              onPick={(k) => set((x) => ({ ...x, minutes: Number(k) }))}
+            />
+          </View>
+        ) : null}
+        {onPressTz ? (
+          <View style={s.pref}>
+            <PrefLabel text={WIZ.timeZone()} />
+            <SelectField value={tzPlace(v.tz)} onPress={onPressTz} />
+          </View>
+        ) : null}
+      </>
+    );
+  };
 
+  /** «Use this spot»: точка, адрес и район уходят тому черновику, из которого лист открыли. */
+  const useSpot = () => {
+    const fn = spotSet.current;
+    if (fn) fn((x) => ({
+      ...x, lat: spot.lat, lon: spot.lon, venue: !!spot.address,
+      address: spot.address || x.address,
+      // В записку «Others see …» — только район, без города: на кадре «Barceloneta».
+      district: (spot.area.split(',')[0] || '').trim() || x.district,
+    }));
+    setSpotOpen(false);
+  };
+
+  /** Открыть GR.11a: точка и адрес — из того черновика, который потом и получит выбор. */
+  const openSpot = (set: SetDraft, v: Draft) => {
+    spotSet.current = set;
+    spotInEdit.current = editOpen;
+    setSpot({ lat: v.lat ?? homeLat, lon: v.lon ?? homeLon, address: v.address || '', area: v.district || '' });
+    setSpotOpen(true);
+  };
+
+  /** Пол и возраст — какой из чипов возраста сейчас выбран (или ни один, если рамка своя). */
+  const agePreset = (v: Draft) =>
+    AGE_PRESETS.findIndex(([lo, hi]) => (v.minAge || 0) === lo && (v.maxAge || 0) === hi);
+
+  /** Чип возраста горит, когда его диапазон целиком внутри выбранной рамки. «Любой» — когда рамки нет. */
+  const ageOn = (v: Draft, i: number) => {
+    const [lo, hi] = AGE_PRESETS[i];
+    const min = v.minAge || 0, max = v.maxAge || 0;
+    if (!lo && !hi) return !min && !max;
+    return !!(min || max) && lo >= min && hi <= max;
+  };
+  /** Нажатие: добавить или убрать диапазон и склеить выбранные в одну рамку. */
+  const ageToggle = (v: Draft, i: number): { minAge: number; maxAge: number } => {
+    const [lo, hi] = AGE_PRESETS[i];
+    if (!lo && !hi) return { minAge: 0, maxAge: 0 };
+    const ranges = AGE_PRESETS.map((r, k) => ({ r, k })).filter(({ r }) => r[0] || r[1]);
+    let picked = ranges.filter(({ k }) => ageOn(v, k)).map(({ k }) => k);
+    if (picked.includes(i)) {
+      picked = picked.filter((k) => k !== i);
+      // Убрали средний — рамка не может быть с дырой: оставляем часть выше него.
+      if (picked.some((k) => k < i) && picked.some((k) => k > i)) picked = picked.filter((k) => k > i);
+    } else {
+      picked = [...picked, i];
+      // Добавили через промежуток — промежуток входит в рамку и тоже загорается.
+    }
+    if (!picked.length) return { minAge: 0, maxAge: 0 };
+    const sel = picked.map((k) => AGE_PRESETS[k]);
+    return { minAge: Math.min(...sel.map((r) => r[0])), maxAge: Math.max(...sel.map((r) => r[1])) };
+  };
+
+  /** GR.10: «Who you’d like to meet» — Women / Men / Anyone, «Age» — три диапазона и «Any age». */
   const whoBlockOf = (v: Draft, set: SetDraft) => (
     <>
-      <LabelRow Icon={IconPlay} text={DETAILS.audience()} />
-      <View style={s.chipRowWrap}>
-        {SEXES.map(([k]) => (
-          <Chip key={k} label={sexLabel(k)} on={v.sex === k} onPress={() => set((x) => ({ ...x, sex: k }))} />
-        ))}
+      <View style={s.pref}>
+        <PrefLabel text={WIZ.whoPref()} />
+        <ChipRow>
+          {(['Female', 'Male', 'Any'] as const).map((k) => (
+            <GlassChip key={k} label={WIZ.sexChip(k)} on={(v.sex || 'Any') === k}
+              onPress={() => set((x) => ({ ...x, sex: k }))} />
+          ))}
+        </ChipRow>
       </View>
-
-      <LabelRow Icon={IconPerson} text={DETAILS.age()} />
-      <RangeDial
-        lo={v.minAge}
-        hi={v.maxAge}
-        onChange={(lo, hi) => set((x) => ({ ...x, minAge: lo, maxAge: hi }))}
-        onDragChange={setDragging}
-      />
-      <View style={s.boxRow}>
-        <NumBox
-          value={String(v.minAge)}
-          onChange={(t) => {
-            const n = Math.max(18, Math.min(v.maxAge, parseInt(t || '18', 10) || 18));
-            set((x) => ({ ...x, minAge: n }));
-          }}
-        />
-        <Text style={s.boxColon}>–</Text>
-        <NumBox
-          value={String(v.maxAge)}
-          onChange={(t) => {
-            const n = Math.min(80, Math.max(v.minAge, parseInt(t || '80', 10) || 80));
-            set((x) => ({ ...x, maxAge: n }));
-          }}
-        />
+      <View style={s.pref}>
+        <PrefLabel text={WIZ.age()} />
+        <ChipRow>
+          {/* Несколько диапазонов сразу (просьба тестировщиков 09.10): соседние чипы стыкуются,
+              выбранные склеиваются в одну рамку minAge–maxAge. «Любой» снимает остальные. */}
+          {AGE_PRESETS.map((r, i) => (
+            <GlassChip key={i} label={agePresetLabel(r)} on={ageOn(v, i)}
+              onPress={() => set((x) => ({ ...x, ...ageToggle(x, i) }))} />
+          ))}
+        </ChipRow>
       </View>
     </>
   );
@@ -592,86 +779,83 @@ export default function Intent() {
     </>
   );
 
+  /** Ссылка на звонок (онлайн и гибрид): стеклянное поле 48 и записка с кадра O.09. */
   const linkBlockOf = (v: Draft, set: SetDraft) => (
-    <>
-      <LabelRow Icon={IconLink} text={DETAILS.link()} />
-      <TextInput
-        style={s.linkInput}
-        value={v.link}
-        onChangeText={(t) => set((x) => ({ ...x, link: t }))}
-        placeholder={DETAILS.linkPlaceholder()}
-        placeholderTextColor={color.neutral400}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="url"
-        accessibilityLabel={DETAILS.link()}
-      />
-      <View style={s.noteRow}>
-        <IconLink size={16} c={color.muted} />
-        <Text style={s.note}>{DETAILS.linkNote()}</Text>
-      </View>
-    </>
+    <View style={s.pref}>
+      {/* GRO.11: у онлайн-группы над полем подписи нет — вопрос уже сказал, что вставлять. */}
+      {v.mode === 'online' && v.size === 'group' ? null : <PrefLabel text={DETAILS.link()} />}
+      <GlassSurface tone="light" radius={999} style={s.input48}>
+        <TextInput
+          style={s.inputText}
+          value={v.link}
+          onChangeText={(t) => set((x) => ({ ...x, link: t }))}
+          placeholder={v.mode === 'online' ? WIZ.linkPhGroup() : DETAILS.linkPlaceholder()}
+          placeholderTextColor={color.muted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          accessibilityLabel={DETAILS.link()}
+        />
+      </GlassSurface>
+      {/* O.09: у звонка один на один ссылку получит только выбранный человек. */}
+      <Caption text={v.mode !== 'online' ? DETAILS.linkNote() : v.size === 'group' ? WIZ.linkHintGroup() : WIZ.linkHintSolo()} />
+      {/* Звонок и гибрид: пустое поле — не ошибка, ссылку добавят в плане. */}
+      {v.mode === 'online' || v.mode === 'hybrid' ? <Caption text={WIZ.linkLater()} /> : null}
+    </View>
   );
 
-  /* OF.09 — район картой, а не списком: круг показывает, что человек считает «рядом».
-     Порядок с кадра: карта → точный адрес → радиус → записка о приватности. */
+  /**
+   * GR.11: город строкой-выбором, карта карточкой 134 с кругом радиуса, «How far can people come
+   * from?» с числом и ползунком, поле точного места и записка о приватности.
+   *
+   * Карта здесь — ПРЕВЬЮ: двигают её в листе GR.11a, который открывается касанием карты или кнопкой
+   * «развернуть». В карточке на 134 точки жест «подвинь карту» дрался бы с прокруткой шага, а
+   * прицелиться булавкой в улицу на такой полосе нельзя.
+   */
   const placeBlockOf = (v: Draft, set: SetDraft) => {
-    // Центр и признак «булавку увели от дома» считаются от ТОГО ЖЕ черновика, что правится:
-    // иначе лист правки рисовал бы карту по draft, а двигал бы edraft.
     const la = v.lat ?? homeLat;
     const lo = v.lon ?? homeLon;
-    const away = v.lat != null || v.lon != null;
+    const area = (v.district || '').trim() || where;
     return (
       <>
-        <LabelRow Icon={IconPin} text={DETAILS.district()} />
-        <View style={s.map}>
-          <RadiusMap
-            lat={la}
-            lon={lo}
-            km={v.radiusKm}
-            onMove={(la, lo) => set((x) => ({ ...x, lat: la, lon: lo }))}
-            onDragChange={setDragging}
+        <View style={s.placeTop}>
+          <SelectField value={where || T('Город', 'City', 'Ciudad')} onPress={() => openSpot(set, v)} muted />
+          <Pressable accessibilityRole="button" accessibilityLabel={WIZ.expandMap()} onPress={() => openSpot(set, v)} style={s.mapCard}>
+            <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+              <RadiusMap lat={la} lon={lo} km={v.radiusKm} />
+            </View>
+            <View style={s.mapExpand} pointerEvents="none">
+              <GlassSurface tone="light" radius={15} style={s.mapExpandBtn}>
+                <IconMaximize size={16} c={color.fg} />
+              </GlassSurface>
+            </View>
+          </Pressable>
+        </View>
+
+        <View style={s.radiusBox}>
+          <View style={s.radiusRow}>
+            <Text style={s.radiusAsk}>{WIZ.radius()}</Text>
+            <Text style={s.radiusKm}>{v.radiusKm} km</Text>
+          </View>
+          <RadiusSlider
+            value={v.radiusKm}
+            onChange={(km) => set((x) => ({ ...x, radiusKm: km }))}
+            onDrag={setDragging}
           />
         </View>
-        <View style={s.mapHintRow}>
-          <Text style={s.mapHint}>{away ? DETAILS.centerMoved() : DETAILS.dragPin()}</Text>
-          {away ? (
-            <Pressable
-              accessibilityRole="button"
-              hitSlop={8}
-              onPress={() => set((x) => ({ ...x, lat: undefined, lon: undefined }))}
-            >
-              <Text style={s.mapReset}>{DETAILS.backHome()}</Text>
-            </Pressable>
-          ) : null}
-        </View>
 
-        {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт
-            только план после взаимного подтверждения (OF.C3). */}
-        <TextInput
-          style={s.linkInput}
-          value={v.address || ''}
-          onChangeText={(t) => set((x) => ({ ...x, address: t }))}
-          placeholder={DETAILS.exactAddress()}
-          placeholderTextColor={color.neutral400}
-          accessibilityLabel={DETAILS.exactAddress()}
-        />
-
-        <View style={s.radiusRow}>
-          <Text style={s.tzLabel}>{DETAILS.radius()}</Text>
-          <Text style={s.radiusValue}>{v.radiusKm} km</Text>
+        {/* Точное место можно назвать сразу — но чужим оно не показывается: его выдаёт только план
+            после взаимного подтверждения (OF.C3). */}
+        <View style={s.addressBox}>
+          <AddressField
+            style={s.addressInput}
+            placeholder={WIZ.exactPlaceholder()}
+            value={v.address || ''}
+            onChange={(t) => set((x) => ({ ...x, address: t }))}
+            onPick={(hit) => set((x) => ({ ...x, address: hit.label, lat: hit.lat, lon: hit.lon, venue: true }))}
+          />
+          <Caption text={WIZ.exactNote(area)} />
         </View>
-        <Slider
-          minimumValue={1}
-          maximumValue={50}
-          step={1}
-          value={v.radiusKm}
-          onValueChange={(km) => set((x) => ({ ...x, radiusKm: Math.round(km) }))}
-          minimumTrackTintColor={color.primary}
-          maximumTrackTintColor={color.neutral100}
-          thumbTintColor={color.primary}
-        />
-        <Text style={s.privacyNote}>{DETAILS.exactAddressNote()}</Text>
       </>
     );
   };
@@ -695,116 +879,219 @@ export default function Intent() {
    *  строки: выбрал «онлайн» — и адрес, который человек только что вписал, молча перестаёт
    *  существовать. Размер группы остаётся: он ничего за собой не тянет.
    */
-  const editRows = (v: Draft): [IntentEditTarget, any, string, string][] => ([
-    ...(v.size === 'group'
-      ? ([['groupSize', IconPerson, GROUP_SIZE.row(), GROUP_SIZE.people(v.groupSize || GROUP_MIN_TOTAL)]] as [IntentEditTarget, any, string, string][])
-      : []),
-    ['date', IconCalendar, EDIT_SHEET.date(), summaryDate(v.date)],
-    ['time', IconClock, EDIT_SHEET.time(), hhmm(v.minutes)],
-    ['timezone', IconClock, EDIT_SHEET.timezone(), tzCity(v.tz)],
-    ['audience', IconPerson, EDIT_SHEET.audience(),
-      `${v.sex && v.sex !== 'Any' ? sexLabel(v.sex) + ', ' : ''}${v.minAge}–${v.maxAge}`],
-    ['nature', IconStar, DETAILS.nature(), natureOf(v) || EDIT_SHEET.noData()],
-    ...(v.mode !== 'online'
-      ? ([['place', IconPin, DETAILS.district(), v.address?.trim() || where || EDIT_SHEET.noData()]] as [IntentEditTarget, any, string, string][])
-      : []),
-    ...(v.mode !== 'offline'
-      ? ([['link', IconLink, EDIT_SHEET.link(), v.link.trim() || EDIT_SHEET.noData()]] as [IntentEditTarget, any, string, string][])
-      : []),
-  ]);
+  /**
+   * ЛИСТ «EDIT IT YOURSELF» (GR.12b–GR.12i): аккордеон по шагам мастера — What · How you meet ·
+   * How many · When · Time zone · Who · Where. Открыта одна строка; внутри тот же контрол, что на
+   * шаге. Правки копятся в черновике листа (edraft, etitle): «Cancel» и крестик ничего не меняют,
+   * «Apply» неактивна, пока ничего не изменено, и применяет всё изменённое разом.
+   *
+   * «How you meet» с замком: другой формат — это другой интент (заметка к GR.12b), у офлайна
+   * спрашивают место, у онлайна — ссылку, и правка отсюда тихо обнулила бы соседние ответы.
+   * Группу на 1:1 здесь тоже не поменять (заметка к GR.12d) — только число людей.
+   */
+  type EditKey = 'what' | 'how' | 'size' | 'when' | 'tz' | 'who' | 'where';
+  const accRef = useRef<ScrollView>(null);
+  /** Где в списке стоит каждая строка — чтобы докрутить к открытой. */
+  const accY = useRef<Record<string, number>>({});
+  // Вернулись с карты или из Plus внутри листа — аккордеон смонтирован заново и стоит в начале;
+  // открытая строка обязана остаться перед глазами, иначе человек не видит, что точка применилась.
+  useEffect(() => {
+    if (!editOpen || spotOpen || groupSizeOpen || !editPick) return;
+    const id = setTimeout(() => accRef.current?.scrollTo({ y: Math.max(0, (accY.current[editPick] || 0) - 8), animated: false }), 80);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spotOpen, groupSizeOpen]);
+  const [etitle, setEtitle] = useState('');
+  const [esug, setEsug] = useState<string[]>([]);
+  const [esugBusy, setEsugBusy] = useState(false);
+  /** GR.12j: что ответил Kleal после «Apply» — встаёт над сводкой вместо вопроса шага. */
+  const [updated, setUpdated] = useState('');
+  /** GR.12a словами: реплики человека и ответы Kleal, пока правка не удалась. */
+  const [talk, setTalk] = useState<{ me: string; kleal: string }[]>([]);
 
-  /** Контрол раскрытой строки — тот же, что на шаге мастера, только пишет в черновик листа. */
-  const editField = (k: IntentEditTarget, v: Draft) => {
+  /**
+   * «Просто скажи мне, что изменить» (GR.12a). Понял и применил — сводка обновлена, и Kleal
+   * называет, ЧТО поменялось (GR.12j). Не понял или нельзя — остаёмся на GR.12a и объясняем.
+   */
+  const talkChange = (text: string) => {
+    const r = parseIntentChange(text, draft, new Date(), GROUP_FREE_MAX_TOTAL);
+    const say = (kleal: string) => {
+      setChanging(true);
+      setTalk((x) => [...x, { me: text, kleal }]);
+      setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 60);
+    };
+    if (!r) { say(WIZ.talkUnclear()); return; }
+    if (r.problem) { say(r.problem === 'past' ? WIZ.talkPast() : r.problem === 'plus' ? WIZ.talkPlus(GROUP_FREE_MAX_TOTAL) : WIZ.talkFormat()); return; }
+    const p = r.patch;
+    const titleChanged = !!r.title && r.title !== title;
+    if (!Object.keys(p).length && !titleChanged) { say(WIZ.talkSame()); return; }
+    const v: Draft = { ...draft, ...p };
+    const parts: string[] = [];
+    if (titleChanged) parts.push(`«${r.title}»`);
+    if (p.date || p.minutes != null) {
+      parts.push([p.date ? cardDate(v.date) : '', p.minutes != null ? hhmm(v.minutes) : ''].filter(Boolean).join(', '));
+    }
+    if (p.sex || p.minAge != null || p.maxAge != null) parts.push(audienceOf(v));
+    if (p.groupSize) parts.push(WIZ.groupOf(p.groupSize));
+    if (p.radiusKm) parts.push(`${p.radiusKm} km`);
+    setDraft(v);
+    if (titleChanged) setTitle(r.title!);
+    setTalk([]);
+    setChanging(false);
+    setUpdated(WIZ.updatedTalk(parts.join(' · ')));
+    scroller.current?.scrollTo({ y: 0, animated: false });
+  };
+
+  const audienceOf = (v: Draft) => `${WIZ.sexChip(v.sex || 'Any')}, ${
+    v.minAge || v.maxAge ? `${v.minAge}–${v.maxAge}` : WIZ.anyAge().toLowerCase()}`;
+  const whereOf = (v: Draft) => v.mode === 'online'
+    ? (v.link.trim() || EDIT_SHEET.noData())
+    : (v.address?.trim() || (where ? `${where} · ${v.radiusKm} km` : EDIT_SHEET.noData()));
+
+  const loadIdeas = () => {
+    if (esugBusy) return;
+    setEsugBusy(true);
+    buddyApi.intentSuggest({ name: st.profile.name, city: st.profile.city,
+                             interests: st.profile.interests?.explicit || [], languages: st.profile.languages || {} },
+                           replyLang(), String(Date.now() % 1000))
+      .then((r: any) => setEsug(Array.isArray(r?.suggestions) ? r.suggestions.map(String).slice(0, 3) : []))
+      .catch(() => setEsug([]))
+      .finally(() => setEsugBusy(false));
+  };
+
+  const openEdit = (target: IntentEditTarget | '' = '') => {
+    void target;
+    setEdraft(beginIntentEdit(draft));
+    setEtitle(title);
+    setEditPick('');
+    setEditOpen(true);
+  };
+
+  /** Что изменено в листе — для «Apply» и для ответа Kleal на GR.12j. */
+  const editChanges = (v: Draft | null): EditKey[] => {
+    if (!v) return [];
+    const out: EditKey[] = [];
+    if (etitle.trim() !== title.trim()) out.push('what');
+    if ((v.groupSize || 0) !== (draft.groupSize || 0)) out.push('size');
+    if (v.date !== draft.date || v.minutes !== draft.minutes) out.push('when');
+    if (v.tz !== draft.tz) out.push('tz');
+    if ((v.sex || 'Any') !== (draft.sex || 'Any') || v.minAge !== draft.minAge || v.maxAge !== draft.maxAge) out.push('who');
+    if (v.radiusKm !== draft.radiusKm || (v.address || '') !== (draft.address || '') || v.lat !== draft.lat
+        || v.lon !== draft.lon || v.link !== draft.link) out.push('where');
+    return out;
+  };
+
+  const applyEdit = () => {
+    const v = edraft;
+    const changed = editChanges(v);
+    if (!v || !changed.length || linkBroken(v)) return;
+    // Формат и состав (1:1 / группа) не правятся отсюда — берём их из живого черновика.
+    setDraft({ ...v, mode: draft.mode, size: draft.size });
+    if (changed.includes('what') && etitle.trim()) {
+      const name = etitle.trim();
+      setTitle(name);
+      setRetopic(true);
+      agent.categorize(name)
+        .then((r: any) => {
+          const next = ((r?.topics || []) as string[]).map((t) => String(t).trim()).filter(Boolean);
+          if (next.length) setTopics(next);
+          const c = String(r?.category || '').trim();
+          if (c) setCategory(categoryLabel(c));
+        })
+        .catch(() => {})   // не ответил — остаются прежние темы, поиск всё равно идёт
+        .finally(() => setRetopic(false));
+    }
+    setEditOpen(false);
+    setChanging(false);
+    const when = changed.includes('when')
+      ? (v.date !== draft.date ? cardDate(v.date) : '') + (v.date !== draft.date && v.minutes !== draft.minutes ? ', ' : '')
+        + (v.minutes !== draft.minutes ? hhmm(v.minutes) : '')
+      : '';
+    setUpdated(when ? WIZ.updatedWhen(when) : WIZ.updatedOther());
+    scroller.current?.scrollTo({ y: 0, animated: false });
+  };
+
+  const editValue = (k: EditKey, v: Draft): string =>
+    k === 'what' ? (etitle || '—')
+    : k === 'how' ? `${draft.mode ? formatLabel(draft.mode) : '—'} · ${WIZ.formatSub(draft.mode || 'offline')}`
+    : k === 'size' ? (draft.size === 'group' ? WIZ.groupOf(v.groupSize || GROUP_MIN_TOTAL) : WIZ.oneToOne())
+    : k === 'when' ? `${cardDate(v.date)} · ${hhmm(v.minutes)}`
+    : k === 'tz' ? tzPlace(v.tz)
+    : k === 'who' ? audienceOf(v)
+    : whereOf(v);
+
+  const editPanel = (k: EditKey, v: Draft) => {
     const set: SetDraft = (fn) => setEdraft((x) => (x ? fn(x) : x));
-    if (k === 'mode') {
+    if (k === 'what') {
       return (
         <>
-          {modeBlockOf(v, set)}
-          {v.mode === 'online' && v.size === 'group' && !v.link.trim() ? (
-            <>
-              <Text style={s.natureHint}>{EDIT_SHEET.groupOnlineLinkNeeded()}</Text>
-              {linkBlockOf(v, set)}
-            </>
-          ) : null}
+          <GlassSurface tone="light" radius={999} style={s.input48}>
+            <TextInput style={s.inputText} value={etitle} onChangeText={setEtitle}
+              placeholder={WIZ.whatPlaceholder()} placeholderTextColor={color.muted} />
+            {intentNameOptions(topics, { size: draft.size, minutes: v.minutes }, etitle).length ? (
+              <Pressable accessibilityRole="button" accessibilityLabel={SUMMARY_O10.roll()} hitSlop={8}
+                onPress={() => { const n = rollIntentName(topics, { size: draft.size, minutes: v.minutes }, etitle); if (n) setEtitle(n); }}>
+                <IconDice size={20} c={color.primary} />
+              </Pressable>
+            ) : null}
+          </GlassSurface>
+          <Caption text={WIZ.ideas()} />
+          {esugBusy && !esug.length ? <ActivityIndicator color={color.primary} /> : (
+            <View style={s.options}>
+              {esug.map((o) => (
+                <ChoiceRow key={o} label={o} on={etitle === o} onPress={() => setEtitle(o)} />
+              ))}
+            </View>
+          )}
+          <GlassPill tone="light" small icon={<IconWand size={16} c={color.fg} />} label={CREATE.regenerate()}
+            busy={esugBusy} onPress={loadIdeas} style={{ height: 40 }} />
         </>
       );
     }
     if (k === 'size') {
-      return (
+      return draft.size === 'group' ? (
         <>
-          {sizeBlockOf(v, set)}
-          {v.size === 'group' ? (
-            <>
-              <Text style={s.natureHint}>{EDIT_SHEET.groupSizeNeeded()}</Text>
-              {groupSizeBlockOf(v, set, 'edit')}
-            </>
-          ) : null}
-          {v.mode === 'online' && v.size === 'group' && !v.link.trim() ? (
-            <>
-              <Text style={s.natureHint}>{EDIT_SHEET.groupOnlineLinkNeeded()}</Text>
-              {linkBlockOf(v, set)}
-            </>
-          ) : null}
+          {groupSizeBlockOf(v, set, 'edit')}
+          <Caption text={WIZ.freeNote()} />
         </>
+      ) : <Caption text={WIZ.oneToOneLocked()} />;
+    }
+    if (k === 'when') return whenBlockOf(v, set);
+    if (k === 'tz') {
+      return (
+        <View style={s.tzList}>
+          {tzChoices().map((z) => (
+            <Pressable key={z} accessibilityRole="radio" accessibilityState={{ selected: z === v.tz }}
+              style={[s.tzRow, z === v.tz && s.tzRowOn]} onPress={() => set((x) => ({ ...x, tz: z }))}>
+              <Text style={s.tzText}>{tzPlace(z)}</Text>
+              {z === v.tz ? <Check /> : null}
+            </Pressable>
+          ))}
+        </View>
       );
     }
-    if (k === 'groupSize') return groupSizeBlockOf(v, set, 'edit');
-    if (k === 'date') return whenBlockOf(v, set, undefined, 'date');
-    if (k === 'time') return whenBlockOf(v, set, undefined, 'time');
-    if (k === 'timezone') {
-      return tzOptions().map((z) => (
-        <Pressable
-          key={z}
-          accessibilityRole="button"
-          accessibilityState={{ selected: z === v.tz }}
-          style={[s.pickRow, z === v.tz && s.pickRowOn]}
-          onPress={() => set((x) => ({ ...x, tz: z }))}
-        >
-          <Text style={s.pickText}>{tzCity(z)}</Text>
-          {z === v.tz ? <Text style={s.pickCheck}>✓</Text> : null}
-        </Pressable>
-      ));
-    }
-    if (k === 'audience') return whoBlockOf(v, set);
-    if (k === 'nature') return natureBlockOf(v, set);
-    if (k === 'place') return placeBlockOf(v, set);
-    if (k === 'link') return linkBlockOf(v, set);
-    if (k === 'both') {
-      return (
-        <>
-          {placeBlockOf(v, set)}
-          <View style={s.bothSplit} />
-          {linkBlockOf(v, set)}
-        </>
-      );
+    if (k === 'who') return whoBlockOf(v, set);
+    if (k === 'where') {
+      return draft.mode === 'online' ? linkBlockOf(v, set)
+        : draft.mode === 'hybrid' ? (<>{placeBlockOf(v, set)}{linkBlockOf(v, set)}</>)
+        : placeBlockOf(v, set);
     }
     return null;
   };
 
-  const openEdit = (target: IntentEditTarget | '' = '') => {
-    setEditPick(target);
-    setEdraft(beginIntentEdit(draft));
-    setEditOpen(true);
-  };
-
-  const chooseEditTarget = (target: IntentEditTarget) => {
-    // Переключение строки отменяет незавершённую правку предыдущей: один лист — один параметр.
-    setEdraft(beginIntentEdit(draft));
-    setEditPick(target);
-  };
-
-  const editBlocked = (v: Draft, target: IntentEditTarget | '') => {
-    if (!target) return false;
-    const touchesLink = target === 'link' || target === 'both' || target === 'mode' || target === 'size';
-    return (touchesLink && linkBroken(v))
-      || ((target === 'link' || target === 'mode' || target === 'size')
-        && v.mode === 'online' && v.size === 'group' && !v.link.trim());
-  };
+  const EDIT_ROWS: [EditKey, (p: { size?: number; c?: string }) => React.ReactElement, () => string][] = [
+    ['what', IconStar, WIZ.rowWhat],
+    ['how', IconHelp, WIZ.rowHow],
+    ['size', IconUsers, WIZ.rowHowMany],
+    ['when', IconCalendar, WIZ.rowWhen],
+    ['tz', IconGlobe, WIZ.timeZone],
+    ['who', IconPerson, WIZ.rowWho],
+    ['where', IconPin, WIZ.rowWhere],
+  ];
 
   /**
-   * Потолок высоты листа правки. 300 — это шапка, две кнопки и безопасные отступы, которые лист
-   * занимает ВНЕ прокрутки; ниже 240 не опускаемся, иначе на маленьком экране в лист не влезает
-   * даже одно поле.
+   * Потолок высоты листа правки: лист от статус-бара до низа (кадр GR.12b — 776 из 844), прокрутка
+   * аккордеона внутри него, кнопки снизу всегда на виду.
    */
   const sheetMax = Math.max(240, Math.round(win.height - 300));
 
@@ -828,12 +1115,14 @@ export default function Intent() {
    * фиксированное имя: иначе офлайн и гибрид уехали бы на чужой шаг.
    */
   const prevStep = (from: IntentStepId, grouped = false): IntentStepId | null =>
+    // GR.05 → GR.07 → GR.09 → GR.10 → GR.11 → GR.12. Размер группы стоит на шаге «сколько»
+    // (GR.07), шага «характер» в этом потоке нет: на борде детали — ровно «Step N of 3».
     from === 'size' ? 'how'
     : from === 'capacity' ? 'size'
-    : from === 'when' ? (grouped ? 'capacity' : 'size')
+    : from === 'when' ? 'size'
     : from === 'who' ? 'when'
     : from === 'nature' ? 'who'
-    : from === 'link' || from === 'both' || from === 'place' ? 'nature'
+    : from === 'link' || from === 'both' || from === 'place' ? 'who'
     : from === 'summary' ? lastStep
     : null;
 
@@ -844,6 +1133,8 @@ export default function Intent() {
    * листе срабатывает дважды: лист закрывается по onRequestClose И экран отступает на шаг.
    */
   const goBack = () => {
+    if (spotOpen) { setSpotOpen(false); return; }
+    if (changing) { setChanging(false); setTalk([]); return; }
     if (groupSizeOpen) { setGroupSizeOpen(false); return; }
     if (tzOpen || editOpen) { setTzOpen(false); setEditOpen(false); return; }
     if (busy) { cancelSearch(); return; }
@@ -864,7 +1155,7 @@ export default function Intent() {
    * отступить — держим экран и отдаём событие тому же goBack(); на первом шаге предотвращение
    * снимается само, и жест честно уводит в разговор создания.
    */
-  usePreventRemove(step !== 'how' || groupSizeOpen || tzOpen || editOpen || busy, (e) => {
+  usePreventRemove(step !== 'how' || groupSizeOpen || tzOpen || editOpen || busy || spotOpen || changing, (e) => {
     // Перехват висит на СНЯТИИ ЭКРАНА, а не на жесте, и под него попадает всё, что уводит с
     // маршрута, — включая «Все интенты» (dismissTo → POP_TO). Эта кнопка обязана остаться
     // сквозным выходом: без неё из мастера стало бы некуда деться, кроме как назад по шагам.
@@ -876,21 +1167,45 @@ export default function Intent() {
     goBack();
   });
 
+  /** Проценты шапки — с кадров: 30 / 40 / 60 / 70 / 90 / 100. */
+  const pct = step === 'how' ? 30 : step === 'size' || step === 'capacity' ? 40
+    : step === 'when' ? 60 : step === 'who' || step === 'nature' ? 70
+    : step === 'summary' ? 100 : 90;
+
+  /** «Next» шага: выключен, пока на шаге не выбрано то, без чего дальше идти нельзя. */
+  const nextOf = (): { on: boolean; go: () => void } => {
+    if (step === 'how') return { on: !!draft.mode, go: () => setStep('size') };
+    if (step === 'size' || step === 'capacity') {
+      return {
+        on: !!draft.size,
+        go: () => (draft.size === 'group' && (draft.groupSize || 0) > GROUP_FREE_MAX_TOTAL
+          ? (setGroupSizeTarget('draft'), setGroupSizeOpen(true))
+          : setStep('when')),
+      };
+    }
+    if (step === 'when') return { on: true, go: () => setStep('who') };
+    if (step === 'who' || step === 'nature') return { on: true, go: () => setStep(lastStep) };
+    if (step === 'link') return { on: !groupLinkBlocked(draft), go: toSummary };
+    if (step === 'both') return { on: !linkBroken(draft), go: toSummary };
+    return { on: true, go: toSummary };
+  };
+  const nx = nextOf();
+
+  const detailN = step === 'when' ? 1 : step === 'who' || step === 'nature' ? 2 : 3;
+  const detailLabel = step === 'when' ? WIZ.whenStep() : step === 'who' || step === 'nature' ? WIZ.whoStep()
+    : step === 'link' ? (draft.mode === 'online' ? WIZ.whereStep() : WIZ.linkStep()) : step === 'both' ? WIZ.bothStep() : WIZ.whereStep();
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
-        <View style={s.head}>
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back')} style={s.back} onPress={goBack}>
-            <IconChevronLeft />
-          </Pressable>
-          <View style={{ flex: 1 }} />
-          {/* Кнопка называется «Все интенты» — значит ведёт к ним, а не на главную. Раньше она
-              делала replace('/home'), и человек, искавший список своих затей, оказывался на
-              ленте (поймано 14 августа). Список живёт во вкладке «Интенты» — это /activity. */}
-          <Pressable accessibilityRole="button" style={s.allBtn} onPress={() => { router.dismissTo('/home'); router.navigate('/activity'); }}>
-            <Text style={s.allText}>{INTENT.allIntents()}</Text>
-          </Pressable>
-        </View>
+      {/* «Назад» — только от левого края (app/_layout.tsx); пока палец на ползунке радиуса — и он выключен. */}
+      <Stack.Screen options={{ gestureEnabled: !dragging }} />
+      <View style={[s.wrap, { paddingTop: insets.top }]}>
+        {/*
+          ШАПКА — ТА ЖЕ, ЧТО НА «ЧТО ДЕЛАЕМ» (app/create.tsx): «Creating intent», проценты шага и
+          маскот. Прежняя красная «All intents» справа ушла: на кадрах её нет, а вкладка «Интенты»
+          и так в нижней панели. «Назад» отступает на шаг, а не снимает весь мастер (goBack).
+        */}
+        <CreatingHeader pct={pct} onBack={goBack} />
 
         <ScrollView
           ref={scroller}
@@ -898,278 +1213,236 @@ export default function Intent() {
           keyboardShouldPersistTaps="handled"
           scrollEnabled={!dragging}
         >
-          {step === 'how' || step === 'size' ? (
+          {step === 'how' ? (
             <>
-              <QuestionHead title={step === 'how' ? STEP_HOW.ask() : STEP_SIZE.ask()} />
-              {step === 'how'
-                ? FORMATS.map(([k]) => (
-                    <OptionRow
-                      key={k}
-                      Icon={k === 'offline' ? IconPin : k === 'online' ? IconVideo : IconPlusRound}
-                      title={formatLabel(k)}
-                      sub={formatSub(k)}
-                      on={draft.mode === k}
-                      onPress={() => choose({ mode: k }, 'size')}
-                    />
-                  ))
-                : SIZES.map(([k]) => (
-                    <OptionRow
-                      key={k}
-                      Icon={k === '1:1' ? IconPerson : IconGroups}
-                      title={sizeLabel(k)}
-                      sub={sizeSub(k)}
-                      on={draft.size === k}
-                      onPress={() => choose(
-                        {
-                          size: k as Draft['size'],
-                          groupSize: k === 'group' ? (draft.groupSize || GROUP_MIN_TOTAL) : undefined,
-                        },
-                        k === 'group' ? 'capacity' : 'when'
-                      )}
-                    />
-                  ))}
-              {ack ? <Ack /> : null}
+              <StepAsk text={WIZ.howAsk()} caption={WIZ.howCaption()} />
+              {modeBlockOf(draft, setDraft)}
             </>
-          ) : step === 'capacity' ? (
+          ) : step === 'size' || step === 'capacity' ? (
             <>
-              <QuestionHead title={GROUP_SIZE.ask()} sub={GROUP_SIZE.sub()} />
-              <View style={s.card}>
-                {groupSizeBlockOf(draft, setDraft, 'draft')}
-                <Cta
-                  label={INTENT.next()}
-                  onPress={() => draft.groupSize && draft.groupSize > GROUP_FREE_MAX_TOTAL
-                    ? (setGroupSizeTarget('draft'), setGroupSizeOpen(true))
-                    : setStep('when')}
-                />
-              </View>
+              <StepAsk text={WIZ.sizeAsk()} caption={draft.size === '1:1' ? WIZ.sizeCaptionSolo() : WIZ.sizeCaption()} />
+              {sizeBlockOf(draft, setDraft)}
+              {draft.size === 'group' ? (
+                <>
+                  {groupSizeBlockOf(draft, setDraft, 'draft')}
+                  <Caption text={WIZ.freeNote()} />
+                </>
+              ) : null}
             </>
-          ) : (
-            <>
-              {step === 'summary' ? (
-                <>
-                  <QuestionHead title={SUMMARY_O10.title()} />
-                  {/* Пузырь-примечание с кадра: сверить и поправить можно что угодно. */}
-                  <View style={s.ackBub}><Text style={s.ackText}>{SUMMARY_O10.note()}</Text></View>
-                </>
-              ) : (
-                <>
-                  <QuestionHead
-                    title={DETAILS.title()}
-                    sub={
-                      step === 'when' ? DETAILS.subWhen()
-                      : step === 'who' ? DETAILS.subWho()
-                      : step === 'nature' ? DETAILS.subNature()
-                      : step === 'link' ? DETAILS.subLink()
-                      : step === 'both' ? DETAILS.subBoth()
-                      : DETAILS.subPlace()
-                    }
-                  />
-                  <Stepper current={detailIndex} count={compactThreeStep ? 3 : 4} />
-                </>
-              )}
-
-              {step === 'when' ? (
-                <View style={s.card}>
-                  {/* O.07a: строка пояса открывает лист выбора — выбор применяется по «Применить». */}
-                  {whenBlockOf(draft, setDraft, () => { setTzPick(draft.tz); setTzOpen(true); })}
-                  <Cta label={INTENT.next()} onPress={() => setStep('who')} />
+          ) : step === 'summary' ? (
+            changing ? (
+              /* GR.12a: два пути правки — сам (лист GR.12b) или словами Kleal. */
+              <>
+                <StepAsk text={draft.mode === 'online' ? WIZ.changeAskOnline() : WIZ.changeAsk()} caption={WIZ.changeCaption()} />
+                <View style={s.editMyself}>
+                  <GlassPill tone="light" small icon={<IconPencil size={16} c={color.fg} />}
+                    label={WIZ.editMyself()} onPress={() => openEdit()} style={s.editMyselfBtn} />
                 </View>
-              ) : null}
-
-              {step === 'who' ? (
-                <View style={s.card}>
-                  {whoBlockOf(draft, setDraft)}
-                  <Cta label={INTENT.next()} onPress={() => setStep(groupOnline ? 'link' : 'nature')} />
-                </View>
-              ) : null}
-
-              {step === 'nature' ? (
-                <View style={s.card}>
-                  {natureBlockOf(draft, setDraft)}
-                  <Cta label={INTENT.next()} onPress={() => setStep(lastStep)} />
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => { setDraft((x) => ({ ...x, nature: {} })); setStep(lastStep); }}
-                  >
-                    <Text style={s.natureSkip}>{DETAILS.natureSkip()}</Text>
-                  </Pressable>
-                </View>
-              ) : null}
-
-              {step === 'link' ? (
-                <View style={s.card}>
-                  {linkBlock}
-                  <Cta label={INTENT.next()} disabled={groupLinkBlocked(draft)} onPress={toSummary} />
-                </View>
-              ) : null}
-
-              {/*
-                HY.09 — «3 of 3 · place and link». У гибрида шаг ОДИН, но в нём оба блока: борд
-                говорит это прямо на HY.20a/20b — «hybrid needs both». Раньше гибрид шёл по ветке
-                ссылки, то есть места у него не было вовсе: тому, кто хотел прийти живьём, приходить
-                было некуда, а радиус поиска не задавался ничем.
-              */}
-              {step === 'both' ? (
-                <View style={s.card}>
-                  {placeBlock}
-                  <View style={s.bothSplit} />
-                  {linkBlock}
-                  <Cta label={INTENT.next()} disabled={linkBroken(draft)} onPress={toSummary} />
-                </View>
-              ) : null}
-
-              {step === 'place' ? (
-                <View style={s.card}>
-                  {placeBlock}
-                  <Cta label={INTENT.next()} onPress={toSummary} />
-                </View>
-              ) : null}
-
-              {step === 'summary' ? (
+                {talk.map((l, i) => (
+                  <React.Fragment key={i}>
+                    <MyLine text={l.me} />
+                    <AgentLine text={l.kleal} />
+                  </React.Fragment>
+                ))}
+              </>
+            ) : (
+              <>
+                <StepAsk text={updated || WIZ.sumAsk()} caption={WIZ.sumCaption()} />
                 <SummaryCard
                   topic={title}
+                  /*
+                    Костей НЕТ, если предлагать нечего: темы могут прийти такими, что словарь их
+                    не знает ни одной, и тогда любое нажатие ничего не изменит. Кнопка, которая
+                    заведомо не сработает, хуже её отсутствия.
+                  */
+                  onRollTopic={
+                    intentNameOptions(topics, { size: draft.size, minutes: draft.minutes }, title).length
+                      ? () => {
+                          const next = rollIntentName(topics, { size: draft.size, minutes: draft.minutes }, title);
+                          if (next) setTitle(next);
+                        }
+                      : undefined
+                  }
+                  topics={topics}
                   where={where}
-                  nature={natureSummary}
                   draft={draft}
                   category={category}
-                  busy={busy}
-                  onStart={finish}
-                  onEdit={() => openEdit()}
-                  onEditField={openEdit}
                 />
-              ) : null}
+                <View style={s.sumButtons}>
+                  <GlassPill tone="brand" style={s.btn48} busy={busy || retopic} label={WIZ.start()} onPress={finish} />
+                  <GlassPill tone="dark" style={s.btn48} disabled={busy} label={WIZ.changeIt()} onPress={() => setChanging(true)} />
+                </View>
+              </>
+            )
+          ) : (
+            <>
+              <StepAsk
+                text={step === 'when' ? WIZ.whenAsk() : step === 'who' || step === 'nature' ? WIZ.whoAsk()
+                  : step === 'link' ? (draft.mode === 'online' ? WIZ.linkAskGroup() : WIZ.linkAsk()) : step === 'both' ? (draft.size === 'group' ? WIZ.bothAskGroup() : WIZ.bothAskSolo()) : WIZ.whereAsk()}
+                caption={step === 'when' ? WIZ.whenCaption() : step === 'who' || step === 'nature' ? WIZ.whoCaption() : undefined}
+              />
+              <StepIndicator n={detailN} label={detailLabel} />
+              {step === 'when'
+                ? whenBlockOf(draft, setDraft, () => { setTzPick(draft.tz); setTzOpen(true); })
+                : null}
+              {step === 'who' || step === 'nature' ? whoBlockOf(draft, setDraft) : null}
+              {step === 'link' ? linkBlock : null}
+              {/*
+                HY.09 — у гибрида шаг ОДИН, но в нём оба блока: борд говорит это прямо на HY.20a/20b —
+                «hybrid needs both». Без места тому, кто хотел прийти живьём, приходить было некуда.
+              */}
+              {step === 'both' ? (<>{placeBlock}{linkBlock}</>) : null}
+              {step === 'place' ? placeBlock : null}
             </>
           )}
 
           {err ? <Text style={s.err}>{err}</Text> : null}
         </ScrollView>
 
-        <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
-          <View style={s.field}>
-            <TextInput
-              style={s.input}
+        {step !== 'summary' ? (
+          <View style={s.nextDock}>
+            <GlassPill tone="brand" style={s.btn48} disabled={!nx.on} label={INTENT.next()} onPress={nx.go} />
+          </View>
+        ) : null}
+
+        {/*
+          На сводке GR.12 / GR.12j поля нет — внизу две кнопки, и поле их выталкивало за край. Писать
+          Kleal, что поменять, — путь GR.12a («Change it»): там поле и появляется.
+        */}
+        {step === 'summary' && !changing ? (
+          <View style={{ height: Math.max(insets.bottom, 12) }} />
+        ) : (
+          <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
+            <CreateComposer
               value={free}
-              onChangeText={setFree}
+              onChange={setFree}
+              onSubmit={send}
               placeholder={COMPOSER_PLACEHOLDER()}
-              placeholderTextColor={color.neutral400}
-              onSubmitEditing={send}
-              returnKeyType="send"
               editable={!busy}
             />
-            <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send')} onPress={send}>
-              <IconMic />
-            </Pressable>
           </View>
-        </View>
+        )}
 
-        {/* Покупки Plus ещё нет: предел 20 виден внутри Group-flow, но недоступное действие честно выключено. */}
-        <Sheet visible={groupSizeOpen} onClose={() => setGroupSizeOpen(false)} title={GROUP_SIZE.plusTitle()}>
-          <Text style={s.plusBody}>{GROUP_SIZE.plusBody()}</Text>
-          <View style={[s.cta, { opacity: 0.45 }]} accessibilityRole="button" accessibilityState={{ disabled: true }}>
-            <Text style={s.ctaText}>{GROUP_SIZE.getPlus()}</Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            style={s.plusKeep}
+        {/* GR.08 — Plus над шагом «сколько» после «6+». Покупки Plus ещё нет: кнопка честно выключена. */}
+        <Sheet visible={groupSizeOpen && !editOpen} onClose={() => setGroupSizeOpen(false)} title={WIZ.plusTitle()}>
+          <SheetText lead={WIZ.plusLead()} note={WIZ.plusNote()} />
+          <GlassPill tone="brand" style={s.btn48} disabled label={WIZ.getPlus()} />
+          <GlassPill
+            tone="dark"
+            style={s.btn48}
+            label={WIZ.keepFive()}
             onPress={() => {
               setGroupSizeOpen(false);
               if (groupSizeTarget === 'edit') {
                 setEdraft((x) => x ? ({ ...x, size: 'group', groupSize: GROUP_FREE_MAX_TOTAL }) : x);
               } else {
                 setDraft((x) => ({ ...x, size: 'group', groupSize: GROUP_FREE_MAX_TOTAL }));
-                setStep('when');
               }
             }}
-          >
-            <Text style={s.plusKeepText}>{GROUP_SIZE.keepAtFive()}</Text>
-          </Pressable>
+          />
         </Sheet>
 
-        {/* O.07a — часовой пояс. Выбор живёт в tzPick и попадает в черновик только по «Применить». */}
-        <EditSheet
-          open={tzOpen}
-          title={DETAILS.tzSheetTitle()}
-          onClose={() => setTzOpen(false)}
-          onAccept={() => { if (tzPick) setDraft((x) => ({ ...x, tz: tzPick })); setTzOpen(false); }}
-          acceptLabel={DETAILS.apply()}
-          cancelLabel={DETAILS.cancel()}
-        >
-          {tzOptions().map((z) => (
-            <Pressable
-              key={z}
-              accessibilityRole="button"
-              accessibilityState={{ selected: z === tzPick }}
-              style={[s.pickRow, z === tzPick && s.pickRowOn]}
-              onPress={() => setTzPick(z)}
-            >
-              <Text style={s.pickText}>{tzCity(z)}</Text>
-              {z === tzPick ? <Text style={s.pickCheck}>✓</Text> : null}
-            </Pressable>
-          ))}
-        </EditSheet>
-
-        {/*
-          O.10a — правка собранного интента.
-
-          Лист был УКАЗАТЕЛЕМ: строка только подсвечивалась, а «Изменить» уводило на шаг мастера —
-          и там стояла кнопка «Дальше», ведущая ДАЛЬШЕ по цепочке, а не обратно в сводку. Поправить
-          одну дату стоило четырёх экранов, и сводка на выходе заново дёргала agent.categorize.
-          Теперь строка раскрывается и поле правится тут же, тем же контролом, что на шаге.
-
-          Правки идут в edraft: «Отмена» и крестик обязаны отменять — правило листа записано в
-          src/components/ProfileShell.tsx. editPick — белый список commit: даже общий WhenPicker
-          не может случайно поменять дату вместе со временем. Режим/формат доступны здесь же;
-          обязательный размер или Group Online-ссылка показываются внутри выбранного параметра.
-        */}
-        <EditSheet
-          open={editOpen}
-          title={EDIT_SHEET.title()}
-          onClose={() => setEditOpen(false)}
-          onAccept={() => {
-            if (!edraft || editBlocked(edraft, editPick)) return;
-            // Пустой target означает, что человек открыл общий список и ничего не выбрал.
-            // В остальных случаях коммитится только белый список выбранного параметра.
-            if (editPick) setDraft((current) => applyIntentEdit(current, edraft, editPick));
-            setEditOpen(false);
-          }}
-          acceptLabel={DETAILS.apply()}
-          cancelLabel={DETAILS.cancel()}
-          // Циферблат и карта живут внутри прокрутки листа, и жест у них общий: пока прокрутка
-          // включена, она забирает вертикальное движение себе. То же место уже решено так в профиле.
-          scrollEnabled={!dragging}
-          // Своей высоты у листа нет — он растёт вверх по содержимому. С раскрытым полем «Применить»
-          // уезжала бы за верх экрана, и нажать её было бы нечем.
-          maxHeight={sheetMax}
-        >
-          {edraft ? editRows(edraft).map(([k, Icon, label, value]) => (
-            <View key={k}>
+        {/* GR.09a — часовой пояс. Выбор живёт в tzPick и попадает в черновик только по «Done». */}
+        <Sheet visible={tzOpen} onClose={() => setTzOpen(false)} title={WIZ.tzTitle()}>
+          <Text style={s.sheetLead}>{WIZ.tzLead()}</Text>
+          <ScrollView style={{ maxHeight: Math.max(220, win.height * 0.42) }} contentContainerStyle={s.tzList}>
+            {tzChoices().map((z) => (
               <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ expanded: editPick === k }}
-                style={[s.pickRow, editPick === k && s.pickRowOn]}
-                // Раскрыто РОВНО одно поле: два крупных разом (карта плюс циферблат) лист не держит.
-                onPress={() => editPick === k ? setEditPick('') : chooseEditTarget(k)}
+                key={z}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: z === tzPick }}
+                style={[s.tzRow, z === tzPick && s.tzRowOn]}
+                onPress={() => setTzPick(z)}
               >
-                <Icon size={20} c={color.fg} />
-                <View style={{ flex: 1 }}>
-                  <Text style={s.pickText}>{label}</Text>
-                  <Text style={s.pickSub} numberOfLines={1}>{value}</Text>
-                </View>
-                <Text style={s.chev}>{editPick === k ? '⌃' : '⌄'}</Text>
+                <Text style={s.tzText}>{tzPlace(z)}</Text>
+                {z === tzPick ? <Check /> : null}
               </Pressable>
-              {editPick === k ? <View style={s.editBody}>{editField(k, edraft)}</View> : null}
-            </View>
-          )) : null}
-          {edraft && editPick && editBlocked(edraft, editPick) && linkBroken(edraft) ? (
-            <Text style={s.err}>{DETAILS.linkBad()}</Text>
-          ) : null}
-          {edraft && editPick && (editPick === 'link' || editPick === 'mode' || editPick === 'size')
-            && edraft.mode === 'online' && edraft.size === 'group' && !edraft.link.trim() ? (
-            <Text style={s.err}>{DETAILS.groupLinkRequired()}</Text>
-          ) : null}
-        </EditSheet>
+            ))}
+          </ScrollView>
+          <GlassPill tone="brand" style={s.btn48} label={WIZ.done()}
+            onPress={() => { if (tzPick) setDraft((x) => ({ ...x, tz: tzPick })); setTzOpen(false); }} />
+          <GlassPill tone="dark" style={s.btn48} label={WIZ.cancel()} onPress={() => setTzOpen(false)} />
+        </Sheet>
 
-        {busy ? <Searching onCancel={cancelSearch} /> : null}
+        {/* GR.12b–GR.12i — «Edit it yourself». Тот же лист открывается со страницы интента (GR.14h). */}
+        <Sheet
+          visible={editOpen}
+          onClose={() => (spotOpen ? setSpotOpen(false) : groupSizeOpen ? setGroupSizeOpen(false) : setEditOpen(false))}
+          title={spotOpen || groupSizeOpen ? (groupSizeOpen ? WIZ.plusTitle() : undefined) : EDIT_SHEET.title()}
+        >
+          {/*
+            ВТОРОЙ ЛИСТ ВНУТРИ ПЕРВОГО. Карта GR.12i и Plus GR.08 открываются из листа правки, а второй
+            RN-модал поверх открытого на iOS не показывается (проверено на симуляторе). Поэтому они
+            встают внутрь этого листа вместо аккордеона; «Back» / «Keep it at 5» возвращают аккордеон.
+          */}
+          {spotOpen ? (
+            <SpotPanel open={spotOpen} value={spot} onChange={setSpot} onClose={() => setSpotOpen(false)} onUse={useSpot} />
+          ) : groupSizeOpen ? (
+            <>
+              <SheetText lead={WIZ.plusLead()} note={WIZ.plusNote()} />
+              <GlassPill tone="brand" style={s.btn48} disabled label={WIZ.getPlus()} />
+              <GlassPill tone="dark" style={s.btn48} label={WIZ.keepFive()} onPress={() => {
+                setGroupSizeOpen(false);
+                setEdraft((x) => x ? ({ ...x, size: 'group', groupSize: GROUP_FREE_MAX_TOTAL }) : x);
+              }} />
+            </>
+          ) : (<>
+          <ScrollView
+            ref={accRef}
+            style={{ maxHeight: Math.max(260, win.height - 330) }}
+            contentContainerStyle={s.accordion}
+            keyboardShouldPersistTaps="handled"
+            scrollEnabled={!dragging}
+          >
+            {edraft ? EDIT_ROWS.map(([k, Icon, label]) => {
+              const open = editPick === k;
+              const locked = k === 'how';
+              return (
+                <View key={k} style={open ? s.accOpen : null}
+                  onLayout={(e) => { accY.current[k] = e.nativeEvent.layout.y; }}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: open, disabled: locked }}
+                    disabled={locked}
+                    onPress={() => {
+                      if (k === 'what' && !open && !esug.length) loadIdeas();
+                      setEditPick(open ? '' : (k as any));
+                      // Открытая строка встаёт к верху списка (заметки к GR.12g/GR.12h): иначе
+                      // раскрытое у нижних строк уходит под кнопки и его не видно.
+                      if (!open) setTimeout(() => accRef.current?.scrollTo({ y: Math.max(0, (accY.current[k] || 0) - 8), animated: true }), 60);
+                    }}
+                    style={[s.accRow, open && s.accRowOn]}
+                  >
+                    <Icon size={20} c={color.primary} />
+                    <View style={{ flex: 1, gap: 4 }}>
+                      <Text style={s.accTitle}>{label()}</Text>
+                      <Text style={s.accValue} numberOfLines={1}>{editValue(k, edraft)}</Text>
+                    </View>
+                    {locked ? <IconLock size={20} c={color.muted} />
+                      : open ? <IconChevronUp size={20} c={color.fg} /> : <IconChevronDown size={20} c={color.fg} />}
+                  </Pressable>
+                  {open ? <View style={s.accPanel}>{editPanel(k, edraft)}</View> : null}
+                </View>
+              );
+            }) : null}
+          </ScrollView>
+          {edraft && linkBroken(edraft) ? <Text style={s.err}>{DETAILS.linkBad()}</Text> : null}
+          <GlassPill tone="brand" style={s.btn48} disabled={!editChanges(edraft).length || (!!edraft && linkBroken(edraft))}
+            label={DETAILS.apply()} onPress={applyEdit} />
+          <GlassPill tone="dark" style={s.btn48} label={DETAILS.cancel()} onPress={() => setEditOpen(false)} />
+          </>)}
+        </Sheet>
+
+        {busy ? <Searching onCancel={cancelSearch} dateKey={draft.date} /> : null}
+
+        {/* GR.11a — точное место на карте: карта двигается под булавкой, адрес под ней меняется. */}
+        <SpotSheet
+          open={spotOpen && !spotInEdit.current}
+          value={spot}
+          onChange={setSpot}
+          onClose={() => setSpotOpen(false)}
+          onUse={useSpot}
+        />
       </View>
     </KeyboardAvoidingView>
   );
@@ -1304,123 +1577,249 @@ function Cta({ label, onPress, disabled, busy }: {
  * «Поправить». Обложки-фотографии в данных нет — цветное поле со значком, как везде в каркасе:
  * рисовать фотографию, которой нет, не из чего.
  */
+/**
+ * Карточка сводки GR.12 («Intent Summary Card»): обложка 128, под ней белое стекло 45% с полями
+ * 16 — название 17/22 и кости справа, строка «когда» (дата и время), строка «где», четыре строки
+ * Mode / Format / Category / Audience (подпись 60%, значение 500) и «Kleal summary» коралловым.
+ *
+ * Строки не нажимаются: на кадре правка — кнопкой «Change it» под карточкой (GR.12a → GR.12b), и
+ * точечные стрелки на строках обещали бы второй вход в тот же лист.
+ */
 function SummaryCard({
-  topic, draft, category, where, nature, busy, onStart, onEdit, onEditField,
+  topic, topics, onRollTopic, draft, category, where,
 }: {
   topic: string;
+  topics: string[];
+  /** Кости у названия: подобрать другое. Пусто — костей нет (нечего предлагать). */
+  onRollTopic?: () => void;
   draft: Draft;
-  /** Отмеченные черты одной строкой. Собраны на экране — здесь только показываются. */
-  nature: string;
   category: string;
-  /** Подпись места в сводке: город профиля — район на OF.09 задаёт карта, а не список. */
+  /** Город профиля — когда точного места не назвали. */
   where: string;
-  busy: boolean;
-  onStart: () => void;
-  onEdit: () => void;
-  onEditField: (target: IntentEditTarget) => void;
 }) {
-  const facts: [string, string, IntentEditTarget?][] = [
-    [SUMMARY_O10.mode(), draft.mode ? formatLabel(draft.mode) : '—', 'mode'],
-    [SUMMARY_O10.format(), draft.size ? sizeLabel(draft.size) : '—', 'size'],
-    ...(draft.size === 'group'
-      ? ([[GROUP_SIZE.row(), GROUP_SIZE.people(draft.groupSize || GROUP_MIN_TOTAL), 'groupSize']] as [string, string, IntentEditTarget][])
-      : []),
-    ...(category ? ([[SUMMARY_O10.category(), category]] as [string, string][]) : []),
-    [DETAILS.nature(), nature || EDIT_SHEET.noData(), 'nature'],
-    [SUMMARY_O10.audience(),
-      `${draft.sex && draft.sex !== 'Any' ? sexLabel(draft.sex) + ', ' : ''}${draft.minAge}–${draft.maxAge}`, 'audience'],
+  const audience = `${WIZ.sexChip(draft.sex || 'Any')}, ${
+    draft.minAge || draft.maxAge ? `${draft.minAge}–${draft.maxAge}` : WIZ.anyAge().toLowerCase()}`;
+  const rows: [string, string][] = [
+    // GRO.12: онлайн — «Online · video call»; офлайн (GR.12) — просто «Offline».
+    [WIZ.mode(), draft.mode === 'online' ? T('Онлайн · видеозвонок', 'Online · video call', 'Online · videollamada')
+      // HY.10 / GRH.12: «Hybrid · in person or on a call».
+      : draft.mode === 'hybrid' ? WIZ.modeHybrid()
+      : draft.mode ? formatLabel(draft.mode) : '—'],
+    [WIZ.format(), draft.size === 'group' ? WIZ.groupOf(draft.groupSize || GROUP_MIN_TOTAL) : WIZ.oneToOne()],
+    ...(category ? ([[WIZ.category(), category]] as [string, string][]) : []),
+    [WIZ.audience(), audience],
   ];
+  const place = draft.mode === 'online'
+    ? (draft.link.trim() || EDIT_SHEET.noData())
+    : (draft.address?.trim() || (where ? `${where} · ${draft.radiusKm} km` : EDIT_SHEET.noData()));
   return (
-    <View style={s.card}>
-      <View style={s.cover}><IconImagePlaceholder size={44} /></View>
-      {topic ? <Text style={s.sumTopic}>{topic}</Text> : null}
-
-      <View style={s.sumMeta}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={EDIT_SHEET.change(EDIT_SHEET.date())}
-          style={s.sumMetaAction}
-          onPress={() => onEditField('date')}
-        >
-          <IconCalendar />
-          <Text style={s.sumMetaText}>{summaryDate(draft.date)}</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={EDIT_SHEET.change(EDIT_SHEET.time())}
-          style={s.sumMetaAction}
-          onPress={() => onEditField('time')}
-        >
-          <IconClock />
-          {/* Пояс показывается только при расхождении с поясом устройства. */}
-          <Text style={s.sumMetaText}>
-            {hhmm(draft.minutes)}{draft.tz && draft.tz !== deviceTz() ? ` ${tzOffsetLabel(draft.tz)} ${tzCity(draft.tz)}` : ''}
-          </Text>
-        </Pressable>
-      </View>
-      {/* Гибрид показывает ОБЕ строки: у него и место, и ссылка (HY.09). Раньше условие места
-          было привязано к офлайну, и гибрид уезжал в поиск, показав человеку только ссылку. */}
-      {draft.mode !== 'offline' ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={EDIT_SHEET.change(EDIT_SHEET.link())}
-          style={s.sumMeta}
-          onPress={() => onEditField('link')}
-        >
-          <IconLink size={16} c={color.muted} />
-          <Text style={s.sumMetaText} numberOfLines={1}>{draft.link.trim() || EDIT_SHEET.noData()}</Text>
-        </Pressable>
-      ) : null}
-      {draft.mode !== 'online' ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={EDIT_SHEET.change(DETAILS.district())}
-          style={s.sumMeta}
-          onPress={() => onEditField('place')}
-        >
-          <IconPin size={16} c={color.muted} />
-          <Text style={s.sumMetaText}>
-            {where ? `${where} · ${draft.radiusKm} km` : EDIT_SHEET.noData()}
-          </Text>
-        </Pressable>
-      ) : null}
-
-      {facts.map(([k, v, target]) => (
-        <Pressable
-          key={k}
-          accessibilityRole={target ? 'button' : undefined}
-          accessibilityLabel={target ? EDIT_SHEET.change(k) : undefined}
-          style={({ pressed }) => [s.sumRow, target && pressed && { opacity: 0.7 }]}
-          onPress={target ? () => onEditField(target) : undefined}
-        >
-          <Text style={s.sumKey}>{k}</Text>
-          <Text style={s.sumVal}>{v}</Text>
-          {target ? <Text style={s.sumRowEdit}>›</Text> : null}
-        </Pressable>
-      ))}
-
-      <View style={s.sumSummaryBox}>
-        <View style={s.sumSummaryHead}>
-          <Text style={s.sumSummaryLabel}>{SUMMARY_O10.summaryLabel()}</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel={SUMMARY_O10.edit()} onPress={onEdit} hitSlop={8}>
-            <IconPencil size={18} />
-          </Pressable>
+    <GlassSurface tone="light" radius={20} style={s.sumCard}>
+      {/*
+        Категория ЗДЕСЬ ЖЕ, и она важнее названия: название человек пишет на своём языке
+        («Консоли»), а категорию присылает фильтратор английским ключом. Без неё обложка у
+        русского названия падала в общую — что и было видно на экране.
+      */}
+      <Cover intent={{ title: topic, category, mode: draft.mode, topics }} style={s.sumCover} />
+      <View style={s.sumBody}>
+        <View style={s.sumTitleRow}>
+          <Text style={s.sumTitle} numberOfLines={2}>{topic || '—'}</Text>
+          {onRollTopic ? (
+            // Кости 44 на кадре заходят в поле карточки: строка названия остаётся ростом 22.
+            <GlassIconButton label={SUMMARY_O10.roll()} onPress={onRollTopic} style={{ marginTop: -11, marginRight: -6, marginBottom: -11 }}>
+              <IconDice size={20} c={color.fg} />
+            </GlassIconButton>
+          ) : null}
         </View>
-        <Text style={s.sumSummaryText}>
-          {intentSummaryText({
-            topic, size: draft.size, groupSize: draft.groupSize, sex: draft.sex,
-            minAge: draft.minAge, maxAge: draft.maxAge,
-            dateKey: draft.date, minutes: draft.minutes,
-            nature: nature,
-          })}
-        </Text>
-      </View>
+        <View style={s.sumLine}>
+          <View style={s.sumPart}>
+            <IconCalendar size={18} c={color.primary} />
+            <Text style={s.sumLineText}>{cardDate(draft.date)}</Text>
+          </View>
+          <View style={s.sumPart}>
+            <IconClock size={18} c={color.primary} />
+            {/* Пояс показывается только при расхождении с поясом устройства. */}
+            <Text style={s.sumLineText}>
+              {hhmm(draft.minutes)}{draft.tz && draft.tz !== deviceTz() ? ` ${tzOffsetLabel(draft.tz)}` : ''}
+            </Text>
+          </View>
+        </View>
+        <View style={s.sumLine}>
+          <View style={[s.sumPart, { flex: 1 }]}>
+            {draft.mode === 'online' ? <IconVideo size={18} c={color.primary} /> : <IconPin size={18} c={color.primary} />}
+            <Text style={[s.sumLineText, { flex: 1 }]} numberOfLines={1}>
+              {/* GRO.12: «Video call · your link» — саму ссылку на карточке не показываем. */}
+              {draft.mode === 'online'
+                ? (draft.link.trim() ? T('Звонок · твоя ссылка', 'Video call · your link', 'Videollamada · tu enlace') : WIZ.linkLaterLine())
+                : place}
+            </Text>
+          </View>
+        </View>
+        {/* Гибрид показывает ОБЕ строки: у него и место, и ссылка (HY.09). */}
+        {draft.mode === 'hybrid' ? (
+          <View style={s.sumLine}>
+            <View style={[s.sumPart, { flex: 1 }]}>
+              <IconLink size={18} c={color.primary} />
+              <Text style={[s.sumLineText, { flex: 1 }]} numberOfLines={1}>{draft.link.trim() || WIZ.linkLaterLine()}</Text>
+            </View>
+          </View>
+        ) : null}
 
-      <Cta label={SUMMARY_O10.start()} busy={busy} onPress={onStart} />
-      <Pressable accessibilityRole="button" style={s.sumEditBtn} onPress={onEdit}>
-        <Text style={s.sumEditText}>{SUMMARY_O10.edit()}</Text>
-      </Pressable>
-    </View>
+        <View style={s.sumRows}>
+          {rows.map(([k, v]) => (
+            <View key={k} style={s.sumRow}>
+              <Text style={s.sumKey}>{k}</Text>
+              <Text style={s.sumVal}>{v}</Text>
+            </View>
+          ))}
+        </View>
+
+        <View style={s.sumKleal}>
+          <Text style={s.sumKlealLabel}>{WIZ.kleal()}</Text>
+          <Text style={s.sumKlealText}>
+            {wizSummary({ size: draft.size, groupSize: draft.groupSize, online: draft.mode === 'online', hybrid: draft.mode === 'hybrid', when: `${cardDate(draft.date)} ${hhmm(draft.minutes)}` })}
+          </Text>
+        </View>
+      </View>
+    </GlassSurface>
+  );
+}
+
+/** Строка-выбор («Form/Dropdown Select» кадра): стекло 48, значение и шеврон вниз. */
+function SelectField({ value, onPress, muted = false }: { value: string; onPress: () => void; muted?: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" accessibilityLabel={value} onPress={onPress}>
+      <GlassSurface tone="light" radius={999} pointerEvents="none" style={s.select}>
+        <Text style={[s.selectText, muted && { color: color.muted }]} numberOfLines={1}>{value}</Text>
+        <IconChevronDown size={20} c={color.fg} />
+      </GlassSurface>
+    </Pressable>
+  );
+}
+
+/**
+ * GR.11a — «Pick the exact spot». Лист почти во весь экран: заголовок с пояснением, карта крупно
+ * (её двигают пальцем, булавка стоит в центре и показывает точку), поиск места поверх карты,
+ * под картой — адрес под булавкой, он меняется, когда карту сдвинули. «Use this spot» отдаёт
+ * точку и адрес, «Back» ничего не меняет.
+ *
+ * Адрес под булавкой — обратное геокодирование с паузой: карту двигают непрерывно, а у геокодера
+ * жёсткий лимит (src/geocode.ts). Ответа нет — остаются координаты, «Use this spot» работает и так.
+ */
+type Spot = { lat: number; lon: number; address: string; area: string };
+
+/**
+ * Лист GR.11a — обёртка над панелью. Со шага мастера он открывается отдельным листом; из листа
+ * правки (GR.12i) — НЕ открывается: второй RN-модал поверх открытого на iOS не показывается вовсе
+ * (проверено на симуляторе iOS 27 — нажатие по карте не давало ничего). Там панель встаёт внутрь
+ * листа правки вместо аккордеона — на экране это тот же лист с картой поверх.
+ */
+function SpotSheet({ open, value, onChange, onClose, onUse }: {
+  open: boolean; value: Spot; onChange: (v: Spot) => void; onClose: () => void; onUse: () => void;
+}) {
+  return (
+    <Sheet visible={open} onClose={onClose}>
+      <SpotPanel open={open} value={value} onChange={onChange} onClose={onClose} onUse={onUse} />
+    </Sheet>
+  );
+}
+
+function SpotPanel({
+  open, value, onChange, onClose, onUse,
+}: {
+  open: boolean;
+  value: Spot;
+  onChange: (v: Spot) => void;
+  onClose: () => void;
+  onUse: () => void;
+}) {
+  const lang = useLang();
+  const win = useWindowDimensions();
+  const [q, setQ] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const seq = useRef(0);
+  /** Адрес под булавкой — с паузой: карту двигают непрерывно, а у геокодера жёсткий лимит. */
+  const lookup = (lat: number, lon: number, wait = 600) => {
+    const my = ++seq.current;
+    setTimeout(() => {
+      if (my !== seq.current) return;
+      reverseGeocode(lat, lon, lang).then((p) => {
+        if (!p || my !== seq.current) return;
+        onChange({ lat, lon, address: p.label || '', area: [p.district, p.city].filter(Boolean).join(', ') });
+      });
+    }, wait);
+  };
+  // Открыли без названного места — сразу подписать точку под булавкой, а не показывать цифры.
+  useEffect(() => {
+    if (!open) return;
+    setQ('');
+    if (!value.address) lookup(value.lat, value.lon, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const moved = (lat: number, lon: number) => {
+    onChange({ ...value, lat, lon });
+    lookup(lat, lon);
+  };
+  /** «Найти меня»: разрешение — по нажатию, как в поле адреса (src/components/AddressField.tsx). */
+  const findMe = async () => {
+    if (locating) return;
+    setLocating(true);
+    try {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (perm.status !== 'granted') return;
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      moved(pos.coords.latitude, pos.coords.longitude);
+    } catch { /* нет точки — карта остаётся, где была */ }
+    finally { setLocating(false); }
+  };
+  // Лист от статус-бара до низа: на экране другой высоты меняется только высота карты (заметка к GR.11a).
+  const mapH = Math.max(260, Math.round(win.height - 430));
+  return (
+    <>
+      <Text style={s.spotTitle}>{WIZ.spotTitle()}</Text>
+      <Text style={s.spotSub}>{WIZ.spotSub()}</Text>
+      <View style={[s.spotMap, { height: mapH }]}>
+        <RadiusMap lat={value.lat} lon={value.lon} km={0} onMove={moved} onDragChange={setDragging} />
+        {/* Булавка в центре: карту двигают под ней, острие — точка, которая уйдёт в интент. */}
+        <View pointerEvents="none" style={[s.spotPin, { top: mapH / 2 - 52 * 56 / 48 }]}>
+          <IconPinSolid size={52} c={color.primary} />
+        </View>
+        <View style={s.spotSearch} pointerEvents={dragging ? 'none' : 'box-none'}>
+          <AddressField
+            style={s.spotSearchInput}
+            placeholder={WIZ.spotSearch()}
+            value={q}
+            onChange={setQ}
+            onPick={(hit) => {
+              setQ(hit.label);
+              seq.current++;
+              onChange({ lat: hit.lat, lon: hit.lon, address: hit.label, area: '' });
+            }}
+          />
+        </View>
+        <View style={[s.spotCorner, { left: 12 }]}>
+          <GlassIconButton label={WIZ.findMe()} onPress={findMe}>
+            {locating ? <ActivityIndicator color={color.primary} /> : <IconCrosshair size={20} c={color.primary} />}
+          </GlassIconButton>
+        </View>
+        <View style={[s.spotCorner, { right: 12 }]}>
+          <GlassIconButton label={WIZ.collapse()} onPress={onClose}>
+            <IconMinimize size={20} c={color.primary} />
+          </GlassIconButton>
+        </View>
+      </View>
+      <GlassSurface tone="light" radius={16} style={s.spotAddr}>
+        <IconPin size={20} c={color.primary} />
+        <View style={{ flex: 1 }}>
+          <Text style={s.spotAddrText} numberOfLines={1}>
+            {value.address || `${value.lat.toFixed(5)}, ${value.lon.toFixed(5)}`}
+          </Text>
+          {value.area ? <Text style={s.spotAddrSub} numberOfLines={1}>{value.area}</Text> : null}
+        </View>
+      </GlassSurface>
+      <GlassPill tone="brand" style={s.btn48} label={WIZ.useSpot()} onPress={onUse} />
+      <GlassPill tone="dark" style={s.btn48} label={WIZ.back()} onPress={onClose} />
+    </>
   );
 }
 
@@ -1436,7 +1835,8 @@ function SummaryCard({
  * говорит, что дольше обычного, а выход есть с первой секунды. Подбор занимает полторы секунды —
  * всё, что дольше, уже нештатно, и молчащий кружок в этот момент неотличим от зависания.
  */
-function Searching({ onCancel }: { onCancel?: () => void }) {
+function Searching({ onCancel, dateKey }: { onCancel?: () => void; dateKey?: string }) {
+  const lang = useLang();
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     const id = setTimeout(() => setSlow(true), 6000);
@@ -1444,17 +1844,19 @@ function Searching({ onCancel }: { onCancel?: () => void }) {
   }, []);
   return (
     <View style={s.veil}>
-      {/* Кадр O.11: два круга-заглушки под иллюстрации и подпись Kleal. Иллюстраций в проекте
-          нет — честная заглушка, как везде в каркасе. */}
-      <View style={s.veilAva}><IconImagePlaceholder size={28} /></View>
-      <Text style={s.veilBrand}>Kleal</Text>
-      <View style={s.veilBig}><IconImagePlaceholder size={44} /></View>
-      <Text style={s.veilTitle}>{SEARCHING.title()}</Text>
-      <View style={s.veilRow}>
-        <ActivityIndicator size="small" color={color.primary} />
-        <Text style={s.veilStep}>{SEARCHING.step()}</Text>
+      {/* GR.13: капля Kleal 96 и слово под ней, через 40 — заголовок, строка хода и подпись. */}
+      <View style={s.veilMark}>
+        <LogoMark width={118} />
+        <Text style={[s.veilBrand, heading(lang, { fontSize: 32, lineHeight: 38, letterSpacing: 0 })]}>Kleal</Text>
       </View>
-      <Text style={s.veilNote}>{slow ? SEARCHING.slow() : SEARCHING.note()}</Text>
+      <View style={s.veilText}>
+        <Text style={[s.veilTitle, heading(lang, { fontSize: 28, lineHeight: 32, letterSpacing: 0 })]}>{SEARCHING.title()}</Text>
+        <View style={s.veilRow}>
+          <ActivityIndicator size="small" color={color.fg} style={{ transform: [{ scale: 0.75 }] }} />
+          <Text style={s.veilStep}>{SEARCHING.step(dateKey)}</Text>
+        </View>
+        <Text style={s.veilNote}>{slow ? SEARCHING.slow() : SEARCHING.note()}</Text>
+      </View>
       {onCancel ? (
         <Pressable accessibilityRole="button" style={s.veilCancel} onPress={onCancel} hitSlop={10}>
           <Text style={s.veilCancelText}>{SEARCHING.cancel()}</Text>
@@ -1468,7 +1870,6 @@ function Searching({ onCancel }: { onCancel?: () => void }) {
 // Оформление UX-каркаса: значения — из токенов темы; при натягивании UI меняется этот блок.
 
 const s = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: color.bg },
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: space.sm },
   back: {
     width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: color.border,
@@ -1477,7 +1878,6 @@ const s = StyleSheet.create({
   allBtn: { height: 40, paddingHorizontal: 16, borderRadius: rad.full, backgroundColor: color.primary, justifyContent: 'center' },
   allText: { ...type.labelMedium, color: color.onPrimary } as any,
 
-  body: { paddingHorizontal: 20, paddingBottom: space.lg, gap: space.sm },
   qhead: { marginTop: space.sm, marginBottom: space.sm, gap: 6 },
   qrow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   qdot: { width: 26, height: 26, borderRadius: 13, backgroundColor: color.primary },
@@ -1512,8 +1912,10 @@ const s = StyleSheet.create({
   stepLineOn: { backgroundColor: color.primary },
 
   card: {
-    backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg, gap: space.md,
-    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 2,
+    backgroundColor: color.glassCard, borderRadius: rad.xl, padding: space.lg, gap: space.md,
+    // Без elevation: фон полупрозрачный, и на Android тень просвечивает сквозь него — карточка сереет,
+    // а под содержимым проступает светлая плашка (известная беда RN: react-native#32385).
+    shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
   },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   label: { ...type.labelMedium, color: color.fg, fontWeight: '600' } as any,
@@ -1574,7 +1976,6 @@ const s = StyleSheet.create({
   noteRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
   note: { flex: 1, ...type.caption, color: color.muted } as any,
 
-  radiusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   radiusValue: { ...type.body, color: color.primary, fontWeight: '600' } as any,
   /** OF.09: карта района — та же, что в онбординге и профиле. */
   map: { height: 200, borderRadius: rad.lg, overflow: 'hidden', backgroundColor: color.neutral100 },
@@ -1592,7 +1993,6 @@ const s = StyleSheet.create({
   err: { ...type.bodySmall, color: color.primary, marginTop: space.sm } as any,
   plusBody: { ...type.body, color: color.muted, marginBottom: space.sm } as any,
 
-  dock: { paddingHorizontal: 16, paddingTop: space.sm, backgroundColor: color.bg },
   field: {
     height: 48, borderRadius: rad.full, backgroundColor: color.neutral100,
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, gap: space.sm,
@@ -1603,13 +2003,18 @@ const s = StyleSheet.create({
     height: 128, borderRadius: rad.lg, backgroundColor: color.neutral100,
     alignItems: 'center', justifyContent: 'center',
   },
-  sumTopic: { fontSize: 19, fontWeight: '700', color: color.fg },
+  /*
+    Название и кости в одной строке. `flex: 1` у самого текста, а не у строки: длинное название
+    переносится на вторую строку и упирается в кости, а не уезжает под них. Кости прижаты к верху
+    (`alignItems: 'flex-start'`) — при двух строках значок, стоящий по центру, выглядит съехавшим.
+  */
+  sumTopicRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  sumTopic: { fontSize: 19, fontWeight: '700', color: color.fg, flex: 1 },
+  /** Отступ сверху равен разнице кегля и значка — так значок стоит на одной линии с первой строкой. */
+  sumRoll: { paddingTop: 2 },
   sumMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sumMetaAction: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   sumMetaText: { ...type.bodySmall, color: color.muted, flexShrink: 1 } as any,
-  sumRow: { flexDirection: 'row', justifyContent: 'space-between', gap: space.md },
-  sumKey: { ...type.bodySmall, color: color.muted } as any,
-  sumVal: { ...type.bodySmall, color: color.fg, flex: 1, textAlign: 'right' } as any,
   sumRowEdit: { ...type.bodySmall, color: color.primary } as any,
   sumSummaryBox: { backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.md, gap: 6 },
   sumSummaryHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -1626,27 +2031,109 @@ const s = StyleSheet.create({
   },
   plusKeepText: { ...type.button, color: color.onPrimary } as any,
 
+  /** GR.13 «Searching»: ровная подложка, всё по центру, между знаком и текстом 40. */
   veil: {
-    ...StyleSheet.absoluteFillObject, backgroundColor: color.bg, alignItems: 'center',
-    justifyContent: 'center', gap: space.md, paddingHorizontal: 32,
+    ...StyleSheet.absoluteFill, backgroundColor: color.ambientBase, alignItems: 'center',
+    justifyContent: 'center', gap: 40, paddingHorizontal: 32,
   },
-  veilAva: {
-    width: 96, height: 96, borderRadius: 48, backgroundColor: color.neutral100,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  veilBrand: { ...type.title, color: color.fg, fontWeight: '700' } as any,
-  veilBig: {
-    width: 148, height: 148, borderRadius: 74, backgroundColor: color.neutral100,
-    alignItems: 'center', justifyContent: 'center', marginTop: space.md,
-  },
+  veilMark: { alignItems: 'center', gap: 8 },
+  veilBrand: { color: color.fg, textAlign: 'center', marginTop: -14 } as any,
+  veilText: { alignItems: 'center', gap: 24, alignSelf: 'stretch' },
   veilRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  veilTitle: { fontSize: 24, lineHeight: 31, fontWeight: '700', color: color.fg, textAlign: 'center' },
-  veilStep: { ...type.body, color: color.primary, textAlign: 'center' } as any,
-  veilNote: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
-  veilCancel: {
-    marginTop: space.xl, height: 44, paddingHorizontal: 24, borderRadius: rad.full,
-    borderWidth: 1, borderColor: color.border, backgroundColor: color.card,
-    alignItems: 'center', justifyContent: 'center',
+  veilTitle: { color: color.fg, textAlign: 'center' } as any,
+  veilStep: { fontFamily: font.text, fontSize: 13, lineHeight: 22, color: color.fg, textAlign: 'center' } as any,
+  veilNote: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: '#5A616E', textAlign: 'center' } as any,
+  /** Выход есть всегда, но тихий: на кадре его нет, и главным он быть не должен. */
+  veilCancel: { height: 44, paddingHorizontal: 24, alignItems: 'center', justifyContent: 'center', marginTop: -16 },
+  veilCancelText: { fontFamily: font.textSemibold, fontSize: 14, lineHeight: 20, color: '#5A616E' } as any,
+  /** Подложка кадра — ровный «Ambient · glass pilot» #F5F1EC, без цветных пятен. */
+  wrap: { flex: 1, backgroundColor: color.ambientBase },
+  /** «Step Content»: поля 12/16/24/16, между блоками шага 24. */
+  body: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 24, gap: 24 },
+  options: { gap: 4 },
+  /** «Pref»: подпись и ряд контролов через 12. */
+  pref: { gap: 12 },
+  btn48: { height: 48 },
+  /** «Next» стоит над полем ввода, через 22 (кадр GR.05: кнопка 676–724, поле с 746). */
+  /** Без подложки: коралловое свечение под Next ложится на поле ввода, как на кадре. */
+  nextDock: { paddingHorizontal: 16, paddingTop: 8, zIndex: 1 },
+  dock: { paddingHorizontal: 16, paddingTop: 22 },
+  input48: { height: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 },
+  inputText: { flex: 1, color: color.fg, fontFamily: font.text, fontSize: 15, paddingVertical: 0 } as any,
+  select: { height: 48, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16 },
+  selectText: { flex: 1, color: color.fg, fontFamily: font.text, fontSize: 15, lineHeight: 20 } as any,
+
+  placeTop: { gap: 12 },
+  /** Карта карточкой 358×134, скругление 20; «развернуть» — стеклянный круг 30 в правом нижнем. */
+  mapCard: { height: 134, borderRadius: 20, overflow: 'hidden', backgroundColor: color.neutral100 },
+  mapExpand: { position: 'absolute', right: 15, bottom: 15 },
+  mapExpandBtn: { width: 30, height: 30, alignItems: 'center', justifyContent: 'center' },
+  /** «How far can people come from?» — поля 16, число справа, ползунок под ним. */
+  radiusBox: { paddingHorizontal: 16, gap: 18 },
+  radiusRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  radiusAsk: { flex: 1, fontFamily: font.text, fontSize: 15, lineHeight: 22, color: color.fg } as any,
+  radiusKm: { fontFamily: font.num, fontSize: 15, lineHeight: 16, color: color.muted, fontVariant: ['tabular-nums'] } as any,
+  addressBox: { gap: 12 },
+  addressInput: {
+    height: 48, borderRadius: 999, paddingHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.56)',
+    color: color.fg, fontFamily: font.text, fontSize: 15,
+  } as any,
+
+  sheetLead: { fontFamily: font.displaySemi, fontSize: 15, lineHeight: 20, color: color.fg, marginBottom: 8 } as any,
+  tzList: { gap: 4, paddingBottom: 8 },
+  tzRow: {
+    minHeight: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.24)',
   },
-  veilCancelText: { ...type.button, color: color.fg } as any,
+  tzRowOn: { backgroundColor: 'rgba(255,255,255,0.6)' },
+  tzText: { flex: 1, fontFamily: font.textSemibold, fontSize: 13, lineHeight: 20, color: color.fg } as any,
+
+  /** «Edit it myself» — пилюля 40 по ширине подписи, у левого края, через 16 под подписью. */
+  editMyself: { flexDirection: 'row', alignItems: 'flex-start', marginTop: -8 },
+  editMyselfBtn: { height: 40 },
+  sumButtons: { gap: 8 },
+
+  /** «Intent Summary Card»: скругление 20, обложка 128, под ней белое 45% с полями 16. */
+  sumCard: { overflow: 'hidden' },
+  sumCover: { height: 128, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
+  sumBody: { padding: 16, gap: 8, backgroundColor: 'rgba(255,255,255,0.45)' },
+  sumTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  sumTitle: { flex: 1, fontFamily: font.textSemibold, fontSize: 17, lineHeight: 22, color: color.fg } as any,
+  sumLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sumPart: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  sumLineText: { fontFamily: font.text, fontSize: 13, lineHeight: 22, color: color.fg } as any,
+  sumRows: { gap: 6, paddingTop: 4 },
+  sumRow: { flexDirection: 'row', gap: 12 },
+  sumKey: { width: 88, fontFamily: font.text, fontSize: 13, lineHeight: 22, color: 'rgba(24,27,34,0.6)' } as any,
+  sumVal: { flex: 1, fontFamily: font.textMedium, fontSize: 13, lineHeight: 22, color: color.fg } as any,
+  sumKleal: { gap: 4, paddingTop: 4 },
+  sumKlealLabel: { fontFamily: font.textSemibold, fontSize: 13, lineHeight: 22, color: color.primary } as any,
+  sumKlealText: { fontFamily: font.text, fontSize: 13, lineHeight: 22, color: color.fg } as any,
+
+  spotTitle: { fontFamily: font.display, fontSize: 20, lineHeight: 24, color: color.fg } as any,
+  spotSub: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: color.muted, marginBottom: 8 } as any,
+  spotMap: { borderRadius: 20, overflow: 'hidden', backgroundColor: color.neutral100 },
+  spotSearch: { position: 'absolute', left: 12, right: 12, top: 12 },
+  spotSearchInput: {
+    height: 44, borderRadius: 999, paddingHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.9)',
+    color: color.fg, fontFamily: font.text, fontSize: 15,
+  } as any,
+  /** Аккордеон GR.12b: строки 64 через 8, белое 24%, скругление 16; открытая — коралловая кромка. */
+  accordion: { gap: 8, paddingBottom: 8 },
+  accOpen: { gap: 16 },
+  accRow: {
+    minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12,
+    borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.24)', borderWidth: 1, borderColor: 'transparent',
+  },
+  accRowOn: { borderColor: color.primary },
+  accTitle: { fontFamily: font.textSemibold, fontSize: 15, lineHeight: 16, color: color.fg } as any,
+  accValue: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: color.muted } as any,
+  /** Содержимое открытой строки: поля 0/16/8/16, между блоками 16. */
+  accPanel: { paddingHorizontal: 16, paddingBottom: 8, gap: 16 },
+  spotPin: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
+  spotCorner: { position: 'absolute', bottom: 12 },
+  /** Адрес под булавкой — стеклянная карточка 64: адрес полужирным, ниже район и город. */
+  spotAddr: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, marginVertical: 8 },
+  spotAddrText: { fontFamily: font.textSemibold, fontSize: 13, lineHeight: 20, color: color.fg } as any,
+  spotAddrSub: { fontFamily: font.text, fontSize: 13, lineHeight: 20, color: color.fg } as any,
 });
