@@ -25,8 +25,6 @@ export const NODE_LABEL_H = 18;
 export const HUB_D = 60;
 /** Занятия: не меньше пальца с запасом, не больше, чем нужно самой длинной подписи. */
 const LEAF_MIN = 58;
-const LEAF_MAX = 92;
-const LEAF_FLOOR = 52;
 /** Внутренний отступ подписи от края пузыря — тот же, что в вёрстке (MindMap.tsx). */
 export const LEAF_PAD = 6;
 const GAP = 8;
@@ -38,7 +36,6 @@ const GOLDEN = Math.PI * (3 - Math.sqrt(5));
  * («Программн / ое»), то ужимает подпись вдвое сильнее нужного.
  */
 const EM = 0.62;
-const CHAR_W = 12 * EM;
 /** Мельче этого подпись не читается; если не влезает — растёт пузырь, а не мельчает текст. */
 export const FONT_MIN = 10;
 const FONT_MAX = 12;

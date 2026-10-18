@@ -12,11 +12,12 @@
  * Каждый экран задаёт СВОЮ силу пятен: на welcome снизу горит красный, на входе — розовый с
  * янтарём. Цвета при этом общие, из токенов.
  */
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import { useEffect, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 import Svg, { Defs, Ellipse, RadialGradient, Rect, Stop, LinearGradient } from 'react-native-svg';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { color } from '../theme';
+import { useFullScreenSize } from '../fullscreen';
 
 /** Одно пятно: цвет, центр и радиусы в долях экрана, сила в центре. */
 export type Glow = { c: string; x: number; y: number; rx: number; ry: number; a: number };
@@ -69,12 +70,15 @@ export function Ambient({
    * Без звука и без органов управления: это фон, а не проигрыватель. Крутится по кругу.
    */
   video = false,
+  /** Ролик стоит на текущем кадре (карта интересов: «зачем там всё двигается», 18.10.2026). */
+  paused = false,
 }: {
   glows?: Glow[];
   bleed?: number;
   video?: boolean;
+  paused?: boolean;
 }) {
-  const { width: w, height: h } = useWindowDimensions();
+  const { width: w, height: h } = useFullScreenSize();
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
       <Svg width={w} height={h}>
@@ -105,7 +109,7 @@ export function Ambient({
           <Rect x={0} y={h * (1 - bleed)} width={w} height={h * bleed} fill="url(#bleed)" />
         )}
       </Svg>
-      {video ? <AmbientVideo /> : null}
+      {video ? <AmbientVideo paused={paused} /> : null}
     </View>
   );
 }
@@ -114,7 +118,7 @@ export function Ambient({
  * Ролик заведён отдельным видом НАМЕРЕННО: `useVideoPlayer` — хук, и вызывать его в `Ambient`
  * значило бы заводить проигрыватель на каждом экране с фоном, включая те, где ролика нет.
  */
-function AmbientVideo() {
+function AmbientVideo({ paused = false }: { paused?: boolean }) {
   const player = useVideoPlayer(require('../../assets/video/ambient.mp4'), (p) => {
     p.loop = true;
     p.muted = true;
@@ -133,6 +137,10 @@ function AmbientVideo() {
     const off = player.addListener('statusChange', ({ status }) => { if (status === 'error') setLive(false); });
     return () => { on.remove(); off.remove(); };
   }, [player]);
+  // Пауза — остановить на текущем кадре: фон остаётся тем же, просто не течёт. Сняли — играет дальше.
+  useEffect(() => {
+    try { if (paused) player.pause(); else player.play(); } catch { /* проигрыватель уже выгружен */ }
+  }, [paused, player]);
   return (
     <VideoView
       style={[StyleSheet.absoluteFill, { opacity: live ? 1 : 0 }]}

@@ -13,19 +13,19 @@
  * согласия, второе — разговор с Бадди, а не объявление. Сервер их и не отдаёт.
  *
  * ДЕЙСТВИЕ ОДНО — откликнуться. Это то же приглашение, что с карточки пина на карте
- * (`sendInvite`), поэтому и правило одно: пока ответа нет, второй раз не отправить, а когда
+ * (`sendIntentReply`), поэтому и правило одно: пока ответа нет, второй раз не отправить, а когда
  * переписка уже открыта — кнопка ведёт в неё.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { agent, mediaUrl, ensureMe, isMe } from '../src/api';
-import { MAP } from '../src/explore';
+import { agent, getSession, mediaUrl, ensureMe, isMe } from '../src/api';
+import { MAP, intentReplyError } from '../src/explore';
 import { intentTitle, intentWhen } from '../src/activity';
 import { planWhenLabel } from '../src/intent';
 import { CategoryGlyph, iconNameFor } from '../src/components/category-icons';
-import { sendInvite, inviteTo, useInvites } from '../src/invites';
+import { sendIntentReply, inviteTo, useInvites } from '../src/invites';
 import { useLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { Cover } from '../src/components/Cover';
@@ -35,6 +35,7 @@ import { color, radius as rad, shadow, space, type } from '../src/theme';
 /** Элемент ленты карты: то, что отдаёт /api/agent/map-feed. */
 type FeedRow = {
   id: string;
+  searchId?: string;
   title?: string;
   mode?: string;
   kind?: string;
@@ -45,8 +46,6 @@ type FeedRow = {
   owner?: { id?: string; displayName?: string; photo?: string };
   intent?: any;
 };
-
-const norm = (v: unknown) => String(v ?? '').trim().toLowerCase();
 
 export default function MapIntentDetail() {
   const router = useRouter();
@@ -66,24 +65,33 @@ export default function MapIntentDetail() {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState('');
+  const target = useRef({ id, generation: 0 });
+  if (target.current.id !== id) target.current = { id, generation: target.current.generation + 1 };
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { setSending(false); setSent(false); setErr(''); }, [st.session, id]);
 
   const load = useCallback(async () => {
+    const session = getSession(), generation = target.current.generation;
+    const current = () => mounted.current && getSession() === session && target.current.generation === generation;
     setLoading(true);
     try {
       if (!id || !me) throw new Error('missing identity or intent id');
       const response: any = await agent.mapFeed(me, feedView);
+      if (!current()) return;
       const items: FeedRow[] = Array.isArray(response?.items) ? response.items : [];
       const found = items.find((item) => String(item?.id || '') === id) || null;
       if (!found) throw new Error('intent is no longer visible');
       setRow(found);
       setFailed(false);
     } catch {
+      if (!current()) return;
       setRow(null);
       setFailed(true);
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [feedView, id, me]);
+  }, [feedView, id, me, st.session]);
 
   useEffect(() => { load(); }, [load]);
   // Свой id — «моя ли это затея» решается по нему: у тёзок подписи равны. Пришёл — перерисовать.
@@ -124,39 +132,32 @@ export default function MapIntentDetail() {
       seatsLeft: row.seatsLeft,
       place,
       topics: (Array.isArray(intent.topics) ? intent.topics : []).filter(Boolean).map((t: unknown) => String(t)),
-      irow: { id: row.id, title: String(row.title || intent.title || ''), intent },
+      irow: { id: row.id, searchId: row.searchId, title: String(row.title || intent.title || ''), intent },
       mine: !!who && isMe(who, whoId, me),
     };
   }, [row, feedView, me, meKnown]);
 
-  const answered = !!(view && inviteTo({ name: view.who, id: view.whoId }));
+  const answered = !!(view && inviteTo({ name: view.who, id: view.whoId }, view.irow));
 
   /** Отклик — то же приглашение, что с карточки пина: одно правило на всё приложение. */
   const respond = useCallback(async () => {
-    if (!view || sending || view.mine) return;
+    if (!view || view.irow.id !== id || sending || view.mine) return;
+    const session = getSession();
+    const generation = target.current.generation;
+    const current = () => mounted.current && getSession() === session && target.current.generation === generation;
     setSending(true);
     setErr('');
     try {
-      /*
-       * Уезжает НАСТОЯЩИЙ интент автора, а не огрызок из двух полей: сервер кладёт его в заявку
-       * дословно, и в «Активности» потом видно, на что именно человек откликнулся.
-       * `id` НЕ подставляем: по нему считается потолок открытых приглашений (три на СВОЮ затею).
-       * Чужой id превратил бы потолок в «три на чужую затею» — правило тихо поменяло бы смысл.
-       */
-      const r = await sendInvite(me, { name: view.who, id: view.whoId }, {
-        ...(view.irow.intent || {}),
-        targetIntentId: view.irow.id,
-        topics: view.topics,
-        place: view.place,
-      });
+      const r = await sendIntentReply(me, { name: view.who, id: view.whoId }, view.irow);
+      if (!current()) return;
       if (r.ok) setSent(true);
-      else setErr(r.capped ? MAP.respondCapped() : MAP.respondFailed());
+      else setErr(intentReplyError(r));
     } catch {
-      setErr(MAP.respondFailed());
+      if (current()) setErr(MAP.respondFailed());
     } finally {
-      setSending(false);
+      if (current()) setSending(false);
     }
-  }, [me, sending, view]);
+  }, [me, sending, view, id]);
 
   /*
    * Время собирается ИЗ ДАТЫ И МИНУТ тем же кодом, что подписывает свои затеи, — тогда оно на
@@ -325,6 +326,7 @@ export default function MapIntentDetail() {
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ disabled: sending }}
+                  disabled={sending}
                   onPress={respond}
                   style={[s.cta, sending && { opacity: 0.6 }]}
                 >

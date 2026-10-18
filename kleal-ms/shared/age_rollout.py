@@ -42,18 +42,28 @@ def enrolled(key):
     return os.environ.get('KLEAL_AGE_GATE_ENABLED') == '1' and configured_member(key)
 
 
+def _evidence_call(fn_name, key, account):
+    """Стереть запись проверки при удалении аккаунта — ВСЕГДА, когда задана база проверок (18.10.2026,
+    решение Ивана). Раньше — только у configured_member: при KLEAL_AGE_REQUIRE_ALL=0 документы добровольно
+    проверившихся оставались бы после удаления аккаунта. delete/begin_delete идемпотентны и без
+    KLEAL_AGE_DB ничего не делают. Без секрета привязки записи вне когорты быть не могло (subject не
+    вычислить) — тогда пропускаем; у участника когорты ошибка, как и раньше, прерывает удаление."""
+    if not os.environ.get('KLEAL_AGE_DB'):
+        return
+    import age_verification as age
+    try:
+        getattr(age, fn_name)(key, account)
+    except age.VerificationError:
+        if configured_member(key):
+            raise
+
+
 def delete_account(key, account):
-    # Keep rollout scope configured until evidence is deleted, even with the
-    # admission switch off. Non-enrolled canary accounts remain independent.
-    if configured_member(key):
-        import age_verification as age
-        age.delete(key, account)
+    _evidence_call('delete', key, account)
 
 
 def begin_delete_account(key, account):
-    if configured_member(key):
-        import age_verification as age
-        age.begin_delete(key, account)
+    _evidence_call('begin_delete', key, account)
 
 
 def check_configuration():

@@ -11,6 +11,7 @@ Owner/profile coordinates are never a fallback. Missing location is represented
 as metadata, not a made-up point. Address geocoding is best-effort, bounded and
 cacheable so a provider outage cannot make intent persistence fail.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -283,7 +284,58 @@ def prepare_persisted_intent(intent, owner_profile=None, geocoder=None):
     return out
 
 
-def _active(record, intent):
+# ПРОШЕДШАЯ ВСТРЕЧА С КАРТЫ УХОДИТ (17.10.2026). Статус и launched о времени не знают, и затея на
+# прошлую субботу висела на карте вечно. Время встречи — это `dateKey` + `minutes` из мастера: день
+# и минуты по часам устройства автора (src/components/WhenPicker.tsx), то есть в его поясе. Пояс
+# берётся из самой затеи, если он там есть, иначе из профиля автора (`tz` пишет онбординг). Запас
+# три часа: встреча в 20:00 ещё идёт в 22:30, и прятать её посреди вечера нельзя. Затея без дня
+# не трогается — её время неизвестно, а строка `time` («tomorrow 20:30») относительна.
+PAST_MEETING_GRACE_S = 3 * 3600
+# Пояс неизвестен — считаем самым западным (UTC−12): так встреча не спрячется раньше времени нигде
+# на Земле, просто уйдёт на полдня позже.
+_UNKNOWN_TZ_SHIFT_S = 12 * 3600
+
+
+def _zone(name):
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(str(name).strip()) if str(name or "").strip() else None
+    except Exception:                    # нет базы поясов или кривое имя — не повод ронять карту
+        return None
+
+
+def _meeting_at(record, intent):
+    """Начало встречи в секундах UTC, или None, если дня встречи у затеи нет."""
+    raw = str(intent.get("dateKey") or "").strip()
+    try:
+        day = datetime.date.fromisoformat(raw) if len(raw) == 10 else None
+    except ValueError:
+        day = None
+    if day is None:
+        return None
+    try:
+        minutes = int(intent.get("minutes"))
+    except (TypeError, ValueError):
+        minutes = -1
+    if not 0 <= minutes <= 1439:
+        minutes = 1439                   # день без часа — встреча живёт до конца этого дня
+    local = datetime.datetime.combine(day, datetime.time(minutes // 60, minutes % 60))
+    owner = record.get("ownerProfile") if isinstance(record.get("ownerProfile"), dict) else {}
+    zone = _zone(intent.get("tz") or owner.get("tz"))
+    if zone is not None:
+        return local.replace(tzinfo=zone).timestamp()
+    return local.replace(tzinfo=datetime.timezone.utc).timestamp() + _UNKNOWN_TZ_SHIFT_S
+
+
+def _freshness(record):
+    """Когда затею последний раз создали, перезапустили или тронули — для порядка без времени."""
+    marks = [record.get(k) for k in ("created", "updated", "launched")]
+    return max([float(v) for v in marks if isinstance(v, (int, float)) and not isinstance(v, bool)] or [0.0])
+
+
+def _active(record, intent, now=None):
+    if record.get('searchState') and record['searchState'] != 'active':
+        return False
     if record.get("deleted"):
         return False
     status = _fold(record.get("status") or intent.get("status") or "active").replace(" ", "_")
@@ -293,6 +345,9 @@ def _active(record, intent):
     if state and record.get("kind") == "group" and state not in ACTIVE_GROUP_STATES:
         return False
     if record.get("ownerOpen") is False or intent.get("open") is False:
+        return False
+    meeting = _meeting_at(record, intent)
+    if meeting is not None and (time.time() if now is None else now) > meeting + PAST_MEETING_GRACE_S:
         return False
     return bool(record.get("legacyPublic") or record.get("launched"))
 
@@ -318,7 +373,10 @@ def _stable_id(record, intent, fingerprint):
 
 def _owner_card(record):
     owner = record.get("ownerProfile") if isinstance(record.get("ownerProfile"), dict) else {}
-    name = str(record.get("owner") or owner.get("name") or "").strip()
+    # Живое имя автора — из его строки (найдена по id), подпись из записи — только запасная (18.10.2026,
+    # «личность по id», шаг 4): записи хранят имя на момент сохранения, и после переименования карта
+    # показывала бы старое.
+    name = str((owner.get("name") if owner.get("id") else "") or record.get("owner") or owner.get("name") or "").strip()
     card = {"displayName": name or "Someone"}
     if owner.get("id"):
         card["id"] = str(owner["id"])
@@ -338,6 +396,9 @@ def _owner_projection(candidate):
         "country": candidate.get("country"),
         "countryCode": candidate.get("countryCode"),
         "area": candidate.get("area") or candidate.get("city"),
+        # Пояс автора — только чтобы понять, прошла ли его встреча (17.10.2026); наружу не едет:
+        # из проекции в элемент ленты переносятся лишь имя, id, фото и страна.
+        "tz": candidate.get("tz"),
     }
 
 
@@ -403,6 +464,7 @@ def collect_sources(users, saved_intents, group_intents, self_name="", self_id="
                     if isinstance(member, dict) and member.get("state") in ("joined", "active"))
         out.append({
             "id": group.get("id"), "owner": owner, "title": group.get("title"),
+            "searchId": group.get("searchId"), "searchState": group.get("searchState"),
             "intent": intent, "kind": "group", "state": group.get("state"),
             "status": group.get("status"), "launched": group.get("created") or True,
             "count": count, "ownerOpen": True,
@@ -413,6 +475,8 @@ def collect_sources(users, saved_intents, group_intents, self_name="", self_id="
             # развалило бы склейку группы с её же поисковой копией — на карте появились бы дубли.
             "when": group.get("when"), "area": group.get("area"),
             "minTotal": group.get("min_total"), "maxTotal": group.get("max_total"),
+            # Для порядка ленты (17.10.2026): свежие выше старых, см. build_feed.
+            "created": group.get("created"), "updated": group.get("updated"),
         })
 
     for row in saved_intents or []:
@@ -426,9 +490,11 @@ def collect_sources(users, saved_intents, group_intents, self_name="", self_id="
         profile = (owners_by_id.get(owner_id) if owner_id else owners.get(_fold(owner))) or {}
         out.append({
             "id": row.get("id"), "owner": owner, "title": row.get("title"),
+            "searchId": row.get("searchId"), "searchState": row.get("searchState"),
             "intent": intent, "kind": normalize_kind(intent),
             "status": row.get("status"), "launched": row.get("launched"),
             "ownerOpen": profile.get("open", True), "ownerProfile": profile,
+            "created": row.get("created"), "updated": row.get("updated"),
         })
 
     for candidate in users or []:
@@ -582,8 +648,12 @@ def _count(record, kind):
         return 1
 
 
-def build_feed(records, view, limit=60, geocoder=None, geocode_budget=4):
-    """Project persisted intent rows into the stable map-feed response."""
+def build_feed(records, view, limit=60, geocoder=None, geocode_budget=4, now=None, want_id=None):
+    """Project persisted intent rows into the stable map-feed response.
+
+    `want_id` — затея, которую экран ищет по id (map-intent): она остаётся в ответе, даже если по
+    порядку выпала за `limit`. Фильтров она не обходит — только обрезку.
+    """
     view = str(view or "offline").strip().lower()
     if view not in ("offline", "online"):
         raise ValueError("view must be offline or online")
@@ -592,16 +662,25 @@ def build_feed(records, view, limit=60, geocoder=None, geocode_budget=4):
     except (TypeError, ValueError):
         limit = 60
     budget = max(0, int(geocode_budget or 0))
+    now = time.time() if now is None else float(now)
     items = []
     unavailable = 0
     seen_ids = set()
+    seen_resources = set()
     seen_fingerprints = set()
 
+    # ПОРЯДОК ЛЕНТЫ (17.10.2026). Раньше шли все группы, за ними затеи в порядке записи (старые
+    # первыми), и обрезка на `limit` срезала как раз свежие: на снимке стора от 26.09 десять новейших
+    # затей стояли на местах 97–105 из 106 при limit=60 — на карте их не было, а окно затеи писало
+    # «intent is no longer visible». Теперь сначала отбор и склейка дублей В ИСХОДНОМ порядке
+    # (группа по-прежнему побеждает свою поисковую копию), потом сортировка, потом обрезка:
+    # встречи со временем — ближайшие первыми, за ними затеи без времени — свежие первыми.
+    picked = []
     for record in records or []:
         if not isinstance(record, dict):
             continue
         intent = record.get("intent") if isinstance(record.get("intent"), dict) else {}
-        if not _active(record, intent):
+        if not _active(record, intent, now):
             continue
         if is_dating(intent, record.get("title")):
             continue
@@ -614,9 +693,24 @@ def build_feed(records, view, limit=60, geocoder=None, geocode_budget=4):
         owner_card, owner_profile = _owner_card(record)
         fingerprint = _fingerprint(record, intent, owner_card["displayName"], mode, kind)
         item_id = _stable_id(record, intent, fingerprint)
-        if item_id in seen_ids or fingerprint in seen_fingerprints:
+        resource_id=record.get('searchId')
+        if item_id in seen_ids or fingerprint in seen_fingerprints or (resource_id and resource_id in seen_resources):
             continue
+        seen_ids.add(item_id)
+        seen_fingerprints.add(fingerprint)
+        if resource_id: seen_resources.add(resource_id)
+        meeting = _meeting_at(record, intent)
+        rank = (0, meeting) if meeting is not None else (1, -_freshness(record))
+        picked.append((rank, record, intent, mode, kind, owner_card, owner_profile, item_id))
+    picked.sort(key=lambda row: row[0])          # сортировка устойчивая: при равенстве — как записано
+    keep = picked[:limit]
+    if want_id and not any(row[-1] == str(want_id) for row in keep):
+        wanted = [row for row in picked[limit:] if row[-1] == str(want_id)]
+        if wanted:
+            keep = keep[:limit - 1] + wanted[:1]
 
+    # Геокодер зовётся уже только для тех, кто попал в ответ: бюджет не тратится на отрезанных.
+    for _rank, record, intent, mode, kind, owner_card, owner_profile, item_id in keep:
         title = str(record.get("title") or intent.get("title") or "").strip()
         if not title:
             topics = intent.get("topics") or intent.get("tags") or []
@@ -633,6 +727,9 @@ def build_feed(records, view, limit=60, geocoder=None, geocode_budget=4):
             # Открытая часть самого интента: по ней экран рисует настоящую карточку.
             "intent": public,
         }
+        if resource_id:
+            item['searchId']=resource_id
+            seen_resources.add(resource_id)
         # Сколько мест осталось в комнате — считается здесь, а не на телефоне: состав участников
         # наружу не отдаётся вовсе, а число свободных мест — открытый факт про саму затею.
         if kind == "group" and public.get("maxTotal"):
@@ -690,10 +787,6 @@ def build_feed(records, view, limit=60, geocoder=None, geocode_budget=4):
 
         _assert_publishable(item, view)
         items.append(item)
-        seen_ids.add(item_id)
-        seen_fingerprints.add(fingerprint)
-        if len(items) >= limit:
-            break
 
     return {
         "items": items,

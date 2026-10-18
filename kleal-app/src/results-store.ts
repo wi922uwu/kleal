@@ -12,6 +12,10 @@
  * восстановленная из кэша она врала бы именно в этом.
  */
 
+import { getSession } from './api';
+let handoffSession = '';
+let candidateSession = '';
+
 export type ResultsHandoff = {
   intent: any;
   candidates: any[];
@@ -23,12 +27,13 @@ export type ResultsHandoff = {
 let handoff: ResultsHandoff | null = null;
 
 export function setResults(r: ResultsHandoff) {
+  handoffSession = getSession();
   handoff = r;
 }
 
 /** null означает «экран открыт напрямую» — например после обновления страницы. */
 export function takeResults(): ResultsHandoff | null {
-  return handoff;
+  return handoffSession === getSession() ? handoff : null;
 }
 
 export function clearResults() {
@@ -42,7 +47,7 @@ export function clearResults() {
  * человеку, и он видит то, чего в поиске уже не было.
  */
 export function patchResults(p: Partial<ResultsHandoff>) {
-  if (handoff) handoff = { ...handoff, ...p };
+  if (handoff && handoffSession === getSession()) handoff = { ...handoff, ...p };
 }
 
 /**
@@ -52,10 +57,11 @@ export function patchResults(p: Partial<ResultsHandoff>) {
 let candidate: any | null = null;
 
 export function setCandidate(c: any) {
+  candidateSession = getSession();
   candidate = c;
 }
 
 /** null — экран открыт напрямую (обновление страницы): показать нечего, честный путь назад. */
 export function takeCandidate(): any | null {
-  return candidate;
+  return candidateSession === getSession() ? candidate : null;
 }

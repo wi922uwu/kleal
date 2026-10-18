@@ -5,38 +5,42 @@
  * приглашения, переписки, комнаты групп с их лентами) и НИГДЕ не хранится. Хранятся только
  * локальные пометки (без уведомлений, архив, когда группу открывали) в MsgPrefs.
  *
- * Вкладки две: «Intents» — все открытые чаты затей, и групп, и пар, по разделам Planning /
+ * Вкладки три (слово владельца 17.10.2026: «интенты, планы, личные»): «Intents» — чаты затей, где
+ * время и место ещё обсуждают (раздел Planning); «Plans» — чаты с назначенной встречей, разделы
  * Upcoming / Ended; «Private» — личные переписки вне затей (MSG.22; личных запросов на сервере ещё
  * нет — вкладка пока пустая). Приглашения сюда не попадают: им место в «My activity» и на главной.
  *
  * Долгое нажатие по строке — лист MSG.03 / MSG.03a. Выход, передача роли и закрытие группы — те же
  * настоящие шаги, что в комнате (лист подтверждения открывается там); жалоба — экран жалобы.
  */
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import {
-  MSG, Row, GMsg, inboxRows, searchInbox, bucketOf, isUnread, rowTime, newestFirst, threadRows, shortDay,
+  MSG, Row, GMsg, inboxRows, searchInbox, bucketOf, isUnread, rowTime, newestFirst, threadRows, shortDay, migrateLegacyMsgPrefs, archiveTeaser, personKey,
 } from '../src/messages';
-import { mediaUrl, group as gapi, agent, isMe } from '../src/api';
-import { planWhen, sysLine } from '../src/chat';
+import { mediaUrl, group as gapi, agent, isMe, getSession } from '../src/api';
+import { CHAT, planWhen, sysLine } from '../src/chat';
 import { groupSysLine } from '../src/groups';
 import { useLang, T, getLang } from '../src/i18n';
-import { useOnb, setMsgPrefs } from '../src/state';
+import { useOnb, setMsgPrefs, syncChatLifecycles } from '../src/state';
 import {
   IconSearch, IconPerson, IconClose, IconBellOff, IconBell, IconArchive, IconFlag, IconExit, IconCrown, IconBan,
   IconChevronRight, IconImagePlaceholder,
 } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { Sheet, SheetItem } from '../src/components/Sheet';
+import { chatLifecycle } from '../src/chat-lifecycle';
 import { usePolling } from '../src/polling';
 import { color, radius as rad, space, type, heading } from '../src/theme';
 import { GlassBack, GlassSurface } from '../src/components/LiquidGlass';
 import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { useNavCollapse } from '../src/navScroll';
+import { blurReturnAction, navigateReturnAction, recoveryAction, returnActionRoute } from '../src/monetization-actions';
+import { MONETIZATION } from '../src/monetization';
 
 /** Сколько комнат дотягивать лентой за раз: превью, счётчик и поиск по репликам. */
 const GROUP_FEEDS = 12;
@@ -44,6 +48,11 @@ const GROUP_FEEDS = 12;
 const OPEN_DAYS = 30;
 
 export default function Messages() {
+  const st = useOnb();
+  return <MessagesContent key={String(st.session || '')} />;
+}
+
+function MessagesContent() {
   const navCollapse = useNavCollapse();
   const lang = useLang();
   const router = useRouter();
@@ -51,8 +60,11 @@ export default function Messages() {
   const insets = useSafeAreaInsets();
   const ru = getLang() === 'ru';
   const me = String(st.profile.name || '');
+  const screenSession = String(st.session || '');
+  const recovery = recoveryAction(screenSession,'messages');
+  useFocusEffect(useCallback(()=>()=>blurReturnAction(screenSession,'messages'),[screenSession]));
 
-  const [tab, setTab] = useState<'intents' | 'private'>('intents');
+  const [tab, setTab] = useState<'intents' | 'plans' | 'private'>('intents');
   const [arch, setArch] = useState(false);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
@@ -62,12 +74,20 @@ export default function Messages() {
   }>({ plans: [], history: [], inbox: [], outbox: [], threads: [], groups: [], gplans: [], ghistory: [], gmsgs: {} });
   const [menuRow, setMenuRow] = useState<Row | null>(null);
 
+  const mounted = useRef(true);
+  const loadVersion = useRef(0);
+  const appliedVersion = useRef(0);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const prefs = st.msg || {};
+  const menuChat = menuRow?.whoId ? prefs.chats?.[menuRow.whoId] : undefined;
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
 
   const load = useCallback(async () => {
     if (!me) { setLoading(false); return; }
+    const session = screenSession, version = ++loadVersion.current;
+    const current = () => mounted.current && session === getSession() && version >= appliedVersion.current;
+    if (!session || !current()) return;
     try {
       // Группы — своим catch: их неудача не должна уносить переписки один на один.
       const [pl, inb, out, th, gr, gpl, saf] = await Promise.all([
@@ -91,23 +111,44 @@ export default function Messages() {
       });
       // Группа, которую ни разу не открывали с этого телефона, начинает счёт с этой минуты —
       // иначе первый заход зажёг бы счётчик на всю историю каждой комнаты.
-      const seen = prefsRef.current.seen || {};
-      const fresh = gids.filter((gid) => !seen['g:' + gid]);
-      if (fresh.length) {
-        const now = Date.now() / 1000;
-        setMsgPrefs((m) => ({ ...m, seen: { ...(m.seen || {}), ...Object.fromEntries(fresh.map((g) => ['g:' + g, now])) } }));
+      if (!current()) return;
+      appliedVersion.current=version;
+      // Partial lists can disprove an old name binding, never prove uniqueness.
+      const peers = arr(th,'threads').map((r:any)=>({name:String(r.who || ''),id:String(r.who_id || '')}));
+      for (const r of [...arr(inb,'requests'),...arr(out,'requests')]) {
+        const mine=isMe(r.from,r.from_id,me);
+        peers.push({name:String((mine ? r.to : r.from) || ''),id:String((mine ? r.to_id : r.from_id) || '')});
       }
+      for (const r of [...((pl as any)?.plans || []),...((pl as any)?.history || [])]) {
+        if (r.other) peers.push({name:String(r.other),id:String(r.other_id || '')});
+        for (const p of r.participants || []) if (!isMe(p.name,p.name_id || p.id,me))
+          peers.push({name:String(p.name || ''),id:String(p.name_id || p.id || '')});
+      }
+      const chats=arr(th,'threads').flatMap((row:any)=>{
+        const chat=chatLifecycle(row.chat,row.who_id);return chat?[chat]:[];
+      });
+      syncChatLifecycles(chats,session,false,prefs=>{
+        const migrated=migrateLegacyMsgPrefs(prefs,peers);
+        const fresh=gids.filter(gid=>!migrated.seen?.['g:'+gid]);
+        if (!fresh.length) return migrated;
+        const now = Date.now() / 1000;
+        return {...migrated,seen:{...migrated.seen,...Object.fromEntries(fresh.map(g=>['g:'+g,now]))}};
+      });
       setData({
         plans: (pl as any)?.plans || [], history: (pl as any)?.history || [],
-        inbox: arr(inb, 'requests'), outbox: arr(out, 'requests'), threads: arr(th, 'threads'),
+        // Заявки с заблокированным в списке не всплывают: сервер убрал его переписку из threads, а
+        // строку пары давали inbox/outbox (сверка п. 4).
+        inbox: arr(inb, 'requests').filter((r: any) => !blocked.has(String(r?.from || '').trim().toLowerCase())),
+        outbox: arr(out, 'requests').filter((r: any) => !blocked.has(String(r?.to || '').trim().toLowerCase())),
+        threads: arr(th, 'threads'),
         groups, gplans: (gpl as any)?.plans || [], ghistory: (gpl as any)?.history || [], gmsgs,
       });
     } catch {
       /* тихо: фоновая дотяжка */
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [me]);
+  }, [me, screenSession]);
 
   usePolling(load, 15000);
 
@@ -118,7 +159,8 @@ export default function Messages() {
 
   /** «Private» — переписки, у которых нет строки в «Intents» (сейчас таких почти не бывает). */
   const privRows = useMemo(() => {
-    const taken = new Set(rows.map((r) => String(r.who || '').trim().toLowerCase()).filter(Boolean));
+    const peerKey = (r: Row) => r.whoId ? 'id:' + r.whoId : String(r.who || '').trim().toLowerCase();
+    const taken = new Set(rows.map(peerKey).filter(Boolean));
     const accepted = new Set<string>();
     for (const r of [...data.inbox, ...data.outbox]) {
       if (r?.status !== 'accepted') continue;
@@ -128,7 +170,7 @@ export default function Messages() {
       accepted.add(String((mine ? r.to : r.from) || '').trim().toLowerCase());
     }
     return threadRows(data.threads, me, ru, sysLine, accepted)
-      .filter((r) => !taken.has(String(r.who || '').trim().toLowerCase()));
+      .filter((r) => !taken.has(peerKey(r)));
   }, [rows, data.threads, data.inbox, data.outbox, me, ru]);
 
   const live = (list: Row[]) => list.filter((r) => bucketOf(r, prefs) === 'normal' || bucketOf(r, prefs) === 'muted');
@@ -138,7 +180,11 @@ export default function Messages() {
   const priv = live(privRows);
   const isMuted = (r: Row) => bucketOf(r, prefs) === 'muted';
   const hot = (r: Row) => isUnread(r, prefs) && !isMuted(r);
-  const intentsBadge = intents.filter(hot).length;
+  /** Встреча назначена (Upcoming) или прошла (Ended) — вкладка «Plans»; остальное — «Intents». */
+  const planned = intents.filter((r) => r.sec === 'upcoming' || r.sec === 'ended');
+  const openRows = intents.filter((r) => r.sec !== 'upcoming' && r.sec !== 'ended');
+  const intentsBadge = openRows.filter(hot).length;
+  const plansBadge = planned.filter(hot).length;
   const privBadge = priv.filter(hot).length;
 
   const searching = q.trim().length > 0;
@@ -155,16 +201,18 @@ export default function Messages() {
       return;
     }
     if (!r.who) return;
+    const recoveryRoute=recovery ? returnActionRoute(screenSession,'conversation') : null;
+    if (recoveryRoute) navigateReturnAction(screenSession,'messages','conversation');
     router.navigate({
       pathname: '/conversation',
-      params: { who: r.who, who_id: r.whoId || '', title: r.title || '', photo: r.photo || '' },
+      params: { ...recoveryRoute?.params, who: r.who, who_id: r.whoId || '', title: r.title || '', photo: r.photo || '' },
     });
   };
 
   const toggle = (list: 'muted' | 'archived', r: Row) => {
     setMsgPrefs((m) => {
       const cur = new Set(m[list] || []);
-      const keys = [r.key, String(r.who || '').trim().toLowerCase()].filter(Boolean);
+      const keys = [r.key, r.whoId ? 'id:' + r.whoId : String(r.who || '').trim().toLowerCase()].filter(Boolean);
       const on = keys.some((k) => cur.has(k));
       for (const k of keys) { if (on) cur.delete(k); else if (k === r.key) cur.add(k); }
       // Вернуть из архива — снять и старую пометку «покинул», она жила той же полкой.
@@ -216,7 +264,7 @@ export default function Messages() {
           <View style={s.line}>
             <View style={{ flex: 1, gap: 2 }}>
               {sub ? <Hl style={s.rowSub} text={sub} q={opts.search ? q : ''} /> : null}
-              {r.teaser ? <Hl style={s.rowTeaser} text={r.teaser} q={opts.search ? q : ''} /> : null}
+              {archiveTeaser(r,prefs) ? <Hl style={s.rowTeaser} text={archiveTeaser(r,prefs)!} q={opts.search ? q : ''} /> : null}
             </View>
             {r.count && unread ? (
               <View style={[s.badge, muted && s.badgeMuted]}><Text style={s.badgeText}>{r.count > 9 ? '9+' : r.count}</Text></View>
@@ -258,9 +306,9 @@ export default function Messages() {
       />
       <SheetItem
         icon={<IconArchive size={20} c={color.primary} />}
-        label={mArch ? MSG.unarchiveNew() : MSG.archiveAction()}
-        note={mArch ? MSG.unarchiveNote() : MSG.archiveNoteNew()}
-        onPress={() => { toggle('archived', m); setMenuRow(null); }}
+        label={menuChat?.state === 'closed' ? (menuChat.blocked ? CHAT.openHistory() : CHAT.resumeChat()) : mArch ? MSG.unarchiveNew() : MSG.archiveAction()}
+        note={menuChat?.state === 'closed' ? (menuChat.blocked ? CHAT.chatBlocked() : CHAT.resumeNote()) : mArch ? MSG.unarchiveNote() : MSG.archiveNoteNew()}
+        onPress={() => { if (menuChat?.state === 'closed') open(m); else toggle('archived', m); setMenuRow(null); }}
       />
       {m.kind === 'group' && m.owner && !m.readOnly ? (
         <>
@@ -299,6 +347,11 @@ export default function Messages() {
         <Text style={[s.title, heading(lang, type.headingSm)]} numberOfLines={1}>{arch ? MSG.archiveRow() : MSG.title()}</Text>
       </View>
 
+      {recovery ? <Pressable accessibilityRole="button" onPress={() => {
+        const route=returnActionRoute(screenSession,'plus');
+        if (route && navigateReturnAction(screenSession,'messages','plus')) router.dismissTo(route);
+      }}><Text style={s.rowTitle}>{MONETIZATION.returnToAction()}</Text></Pressable> : null}
+
       {!arch && !nothing ? (
         // MSG.01: поиск всегда на виду — стеклянная пилюля.
         <GlassSurface tone="light" radius={999} style={s.search}>
@@ -322,7 +375,7 @@ export default function Messages() {
 
       {!arch && !searching ? (
         <View style={s.segs}>
-          {([['intents', MSG.tabIntents(), intentsBadge], ['private', MSG.tabPrivate(), privBadge]] as const).map(([k, label, badge]) => {
+          {([['intents', MSG.tabIntents(), intentsBadge], ['plans', MSG.tabPlans(), plansBadge], ['private', MSG.tabPrivate(), privBadge]] as const).map(([k, label, badge]) => {
             const on = tab === k;
             const inner = (
               <>
@@ -368,7 +421,7 @@ export default function Messages() {
               <Text style={s.emptyNote}>{MSG.searchHint()}</Text>
             </View>
           )
-        ) : tab === 'intents' ? (
+        ) : tab === 'intents' || tab === 'plans' ? (
           !loading && intents.length === 0 && archived.length === 0 ? (
             // MSG.01a — пусто.
             <View style={s.empty}>
@@ -380,9 +433,24 @@ export default function Messages() {
             </View>
           ) : (
             <>
-              {section(MSG.planning(), bySec('planning'))}
-              {section(MSG.upcomingNew(), bySec('upcoming'))}
-              {section(MSG.endedSec(), bySec('ended'))}
+              {tab === 'intents' ? (
+                openRows.length ? section(MSG.planning(), openRows) : !loading ? (
+                  <View style={s.empty}>
+                    <Text style={s.emptyTitle}>{MSG.noIntentsOpen()}</Text>
+                    <Text style={s.emptyNote}>{MSG.noIntentsOpenNote()}</Text>
+                  </View>
+                ) : null
+              ) : planned.length ? (
+                <>
+                  {section(MSG.upcomingNew(), bySec('upcoming'))}
+                  {section(MSG.endedSec(), bySec('ended'))}
+                </>
+              ) : !loading ? (
+                <View style={s.empty}>
+                  <Text style={s.emptyTitle}>{MSG.noPlansYet()}</Text>
+                  <Text style={s.emptyNote}>{MSG.noPlansNote()}</Text>
+                </View>
+              ) : null}
               {archived.length ? (
                 // MSG.04 — архив строкой внизу.
                 <Pressable accessibilityRole="button" style={[s.row, s.archRow]} onPress={() => setArch(true)}>

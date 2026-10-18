@@ -13,12 +13,13 @@ import { useRouter } from 'expo-router';
 import { useLang, T, replyLang } from '../src/i18n';
 import { useOnb, patch, set, get, getState, profileForRegister, profileForAttach } from '../src/state';
 import { mediaUrl, onboarding } from '../src/api';
-import { SUMMARY, SUMMARY_TITLE, hobbyPlain, langPlain } from '../src/onboarding';
+import { SUMMARY, SUMMARY_TITLE, langPlain } from '../src/onboarding';
 import { Composer } from '../src/components/Composer';
+import { VerifyCard, useAgeVerified } from '../src/components/VerifyCard';
 import { IconPerson, IconVerified } from '../src/components/icons';
 import { GlassPill } from '../src/components/Glass';
 import { Blob } from '../src/components/Blob';
-import { GlassBack, GlassSurface, riseIn } from '../src/components/LiquidGlass';
+import { GlassBack, GlassSurface } from '../src/components/LiquidGlass';
 import { color, font, heading, space, type } from '../src/theme';
 
 /** Дуга кольца уверенности анимируется свойством strokeDashoffset — нужен анимированный Circle. */
@@ -28,9 +29,12 @@ import { interestLabels } from '../src/interest-label';
 
 export default function Summary() {
   const lang = useLang();
-  const reduced = useReducedMotion();
   const router = useRouter();
   const st = useOnb();
+  // Галочка рядом с именем — только у прошедших проверку возраста (18.10.2026).
+  const [verifiedNow, setVerifiedNow] = useState<boolean | null>(null);
+  const verifiedSrv = useAgeVerified();
+  const verified = verifiedNow ?? verifiedSrv;
   const insets = useSafeAreaInsets();
   const p = st.profile;
 
@@ -280,7 +284,7 @@ export default function Summary() {
               <View style={{ flex: 1, gap: 8 }}>
                 <View style={s.nameRow}>
                   <Text style={[s.name, heading(lang, type.headingSm)]} numberOfLines={1}>{p.name || '—'}</Text>
-                  <IconVerified size={18} />
+                  {verified ? <IconVerified size={18} /> : null}
                 </View>
                 {/* Процент и подпись — читаемым шрифтом на любом языке (точечный не читался). */}
                 <Text style={s.conf} numberOfLines={1}>
@@ -305,6 +309,9 @@ export default function Summary() {
           </GlassSurface>
         </View>
 
+        {/* Верификация (18.10.2026): что даёт и одна кнопка; видна, только когда сервер даёт начать. */}
+        <VerifyCard onChange={setVerifiedNow} />
+
         {/*
           Плашки «План обновлён» больше нет (владелец, 26.09): голубая карточка с общими словами
           спорила с кнопкой «Готово» и ничего не сообщала о самом человеке.
@@ -328,11 +335,15 @@ export default function Summary() {
         {needsSignIn ? (
           <GlassPill tone="dark" label={SUMMARY.saveGoSignIn()} onPress={() => router.navigate('/auth')} style={s.drop} />
         ) : null}
-
-        <View>
-          <GlassPill tone="brand" label={SUMMARY.done()} busy={sending} onPress={finish} style={s.done} />
-        </View>
       </ScrollView>
+
+      {/*
+        «ГОТОВО» — ВНИЗУ, У ЧАТА (Иван, 18.10.2026: «кнопку готово нужно перенести ниже к чату»). Раньше
+        она стояла в ленте под карточками и уходила под сгиб; здесь она всегда на виду, над полем.
+      */}
+      <View style={s.doneDock}>
+        <GlassPill tone="brand" label={SUMMARY.done()} busy={sending} onPress={finish} style={s.done} />
+      </View>
 
       {/* Композер здесь есть на кадре A.14: разговор не заканчивается на последнем шаге анкеты. */}
       <Composer bottomInset={insets.bottom} />
@@ -411,5 +422,6 @@ const s = StyleSheet.create({
   err: { ...type.bodySmall, color: color.primary } as any,
   /** Единственное действие, которое на этом экране имеет смысл при отказе, — потому и заметное. */
   drop: { marginTop: space.xs },
-  done: { height: 48, marginTop: space.xs },
+  done: { height: 48 },
+  doneDock: { paddingHorizontal: 20, paddingTop: space.sm, paddingBottom: space.sm },
 });

@@ -15,7 +15,7 @@
  * устройства — сервер хранит его отдельным полем, потому что «22:00» без пояса означает разное
  * время в Барселоне и Токио.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, ToggleRow, Segments, Divider } from '../../src/components/ProfileShell';

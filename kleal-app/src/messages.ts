@@ -9,7 +9,14 @@
 import { T, getLang, dateLocale, use12h } from './i18n';
 import type { MsgPrefs } from './state';
 import { isMe, pidOf } from './api';
-import { klealText } from './chat';
+import { klealText, CHAT } from './chat';
+
+/**
+ * КЛЮЧ ЧЕЛОВЕКА — ПО id, ИМЯ ТОЛЬКО БЕЗ НЕГО (сверка 17.10, п. 5). Строки и превью сводились по имени, и
+ * у двух «Анн» переписки склеивались в одну строку с чужим превью. Сервер отдаёт `who_id` — по нему.
+ */
+/** Ключ человека для пометок: `id:<id>`, имя — только у строк без id. Экспорт — для экранов, которые пишут пометки. */
+export const personKey = (name: unknown, id?: unknown) => (id ? 'id:' + String(id) : norm(String(name || '')));
 
 export const MSG = {
   title: () => T('Сообщения', 'Messages', 'Mensajes'),
@@ -90,6 +97,16 @@ export const MSG = {
     'A chat opens when someone joins your intent or you join theirs.',
     'Un chat se abre cuando alguien se une a tu propuesta o tú a la suya.'),
   talkToKleal: () => T('Поговорить с Kleal', 'Talk to Kleal', 'Hablar con Kleal'),
+  /** Вкладка «Планы» пуста: ни одной встречи с назначенным временем. */
+  noPlansYet: () => T('Планов пока нет', 'No plans yet', 'Aún no hay planes'),
+  noPlansNote: () => T('Когда договоритесь о времени и месте, чат переедет сюда из «Интентов».',
+    'Once you agree on a time and place, the chat moves here from Intents.',
+    'Cuando acordéis hora y lugar, el chat se mueve aquí desde Propuestas.'),
+  /** Вкладка «Интенты» пуста, а планы есть: всё уже договорено. */
+  noIntentsOpen: () => T('Все договорились', 'Everything is agreed', 'Todo acordado'),
+  noIntentsOpenNote: () => T('Здесь — чаты, где время и место ещё обсуждают. Готовые встречи — в «Планах».',
+    'Chats where the time and place are still open live here. Agreed meetups are in Plans.',
+    'Aquí están los chats en los que aún se habla de hora y lugar. Las quedadas acordadas están en Planes.'),
   // MSG.22a — «Личные» пусты. Вторая фраза кадра обещает «напиши из состава группы» — этого пути
   // ещё нет (личные запросы — сервер, OPEN_TASKS), поэтому пока без обещания.
   noPrivate: () => T('Личных чатов пока нет', 'No private chats yet', 'Aún no hay chats privados'),
@@ -276,20 +293,23 @@ export function intentRows(me: string, plans: any[], inbox: any[], outbox: any[]
    * данное ПОСЛЕ последней встречи, — это новая затея, и её строка возвращается.
    */
   const planSeenAt = new Map<string, number>();
+  const planPeerKey = (p: any) => personKey(otherOf(p, me), String(p.other_id || pidOf(otherRowOf(p, me), 'name') || ''));
   for (const p of [...(plans || []), ...(history || [])]) {
-    const key = norm(otherOf(p, me));
+    const key = planPeerKey(p);
     if (!key) continue;
     const at = Number(p.updated || p.created || 0);
     planSeenAt.set(key, Math.max(planSeenAt.get(key) || 0, at));
   }
-  const livePlanWith = new Set((plans || []).map((p: any) => norm(otherOf(p, me))));
+  const livePlanWith = new Set((plans || []).map(planPeerKey));
   // Заявка приезжает и во входящих, и в исходящих (сервер отдаёт обе стороны) — без ключа по
   // ЧЕЛОВЕКУ одна и та же пара вставала в список двумя одинаковыми строками.
   const already = new Set<string>();
   for (const r of [...(inbox || []), ...(outbox || [])]) {
     if (r.status !== 'accepted') continue;
-    const who = norm(r.from) === norm(me) ? r.to : r.from;
-    const key = norm(who);
+    const mine = isMe(r.from, r.from_id, me);
+    const who = mine ? r.to : r.from;
+    const whoId = String((mine ? r.to_id : r.from_id) || '');
+    const key = personKey(who, whoId);
     if (!key || livePlanWith.has(key) || already.has(key)) continue;
     // Согласие уже стало встречей — и встреча позади. Договариваться больше не о чем.
     if ((planSeenAt.get(key) || 0) >= Number(r.updated || 0)) continue;
@@ -297,7 +317,7 @@ export function intentRows(me: string, plans: any[], inbox: any[], outbox: any[]
     forming.push({
       // Ключ по человеку, а не по id заявки: пометки «без уведомлений» и «архив» ставятся на
       // собеседника и должны пережить новую заявку с тем же человеком.
-      key: 'th:' + key, kind: 'thread', who, photo: r.photo,
+      key: 'th:' + key, kind: 'thread', who, whoId, photo: r.photo,
       title: String(r.intent?.title || (r.intent?.topics || []).join(', ') || who),
       sub: `${who} · ${MSG.agreeing()}`,
       t: Number(r.updated || 0),
@@ -381,12 +401,15 @@ export function threadRows(threads: any[], me = '', ru = true, line?: (sys: any,
   // Согласие — по id собеседника, если он есть (у тёзок имена равны); у строки без id — по имени.
   const agreed = (t: any) => (t.who_id ? accepted!.has('id:' + t.who_id) : accepted!.has(norm(t.who)));
   return (threads || []).filter((t: any) => !accepted || agreed(t)).map((t: any) => ({
-    key: 'th:' + norm(t.who), kind: 'thread' as const, who: t.who, whoId: t.who_id,
+    key: 'th:' + personKey(t.who, t.who_id), kind: 'thread' as const, who: t.who, whoId: t.who_id,
     title: String(t.who || ''), sub: '',
-    teaser: t.kind === 'voice'
+    // Последнее сообщение удалили — сервер отдаёт deleted: true и пустой last; без этой строки под
+    // именем было пусто (сверка, сообщение логики 17.10).
+    teaser: t.deleted ? CHAT.deleted() : t.kind === 'voice'
       ? MSG.voiceMessage()
       : klealText(t) || String(t.last || '') || (t.sys && line ? line(t.sys, me, ru) : ''),
     photo: t.photo, t: Number(t.t || 0),
+    ...(Number(t.unread || 0) > 0 ? { unread: true, count: Number(t.unread) } : {}),
   })).sort(newestFirst);
 }
 
@@ -514,7 +537,7 @@ export function unreadByPerson(threads: any[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const t of threads || []) {
     const n = Number(t?.unread || 0);
-    if (n > 0) out[norm(t.who)] = n;
+    if (n > 0) out[personKey(t.who, t.who_id)] = n;
   }
   return out;
 }
@@ -529,12 +552,51 @@ export function searchRows(rows: Row[], q: string): { chats: Row[]; messages: Ro
 }
 
 /** Куда строка попадает с учётом локальных пометок. */
+export function migrateLegacyMsgPrefs(prefs: MsgPrefs, peers: {name: string; id: string}[],
+  proofs: {name:string;id:string;source:'saved_peer_id'}[]=[]): MsgPrefs {
+  const matches = new Map<string,Set<string>>();
+  for (const peer of peers) {
+    const name=norm(peer.name); if (!name) continue;
+    const ids=matches.get(name) || new Set<string>(); ids.add(peer.id); matches.set(name,ids);
+  }
+  const legacyPeers={...prefs.legacyPeers};
+  const legacyProofs={...prefs.legacyProofs};
+  // Only a stored ID tied to the original marker is proof. A partial inbox,
+  // even one with a single matching name, is merely an observation.
+  for (const proof of proofs) if (proof.id && proof.source==='saved_peer_id') legacyProofs[norm(proof.name)]={id:proof.id,source:proof.source};
+  for (const [name,ids] of matches) {
+    const id=ids.size===1 && !ids.has('') ? [...ids][0] : null;
+    const prior=legacyPeers[name];
+    const proven=prior===null || (prior && prior!==id) ? null : id;
+    legacyPeers[name]=proven;
+    if (!proven || legacyProofs[name]?.id!==proven) delete legacyProofs[name];
+  }
+  // Keep the original markers and provenance. Derived bindings never become
+  // indistinguishable from an explicit ID preference and can be revoked safely.
+  return JSON.stringify(legacyPeers)===JSON.stringify(prefs.legacyPeers || {})
+    && JSON.stringify(legacyProofs)===JSON.stringify(prefs.legacyProofs || {})
+    ? prefs : {...prefs,legacyPeers,legacyProofs};
+}
+
 export function bucketOf(r: Row, prefs: MsgPrefs): 'left' | 'archived' | 'muted' | 'normal' {
-  const keys = [r.key, norm(r.who || '')];
+  // A legacy name marker cannot identify one of two people with the same name.
+  const keys = [r.key, r.whoId ? 'id:' + r.whoId : norm(r.who || '')];
+  for (const [name,proof] of Object.entries(prefs.legacyProofs || {})) {
+    if (proof.source==='saved_peer_id' && proof.id===r.whoId && prefs.legacyPeers?.[name]===r.whoId) keys.push(name,'th:'+name);
+  }
   if ((prefs.left || []).some((k) => keys.includes(k))) return 'left';
+  if (r.whoId && prefs.chats?.[r.whoId]?.state === 'closed') return 'archived';
   if ((prefs.archived || []).some((k) => keys.includes(k))) return 'archived';
   if ((prefs.muted || []).some((k) => keys.includes(k))) return 'muted';
   return 'normal';
+}
+
+/** A local archive is a list preference, never evidence that sending is forbidden. */
+export function archiveTeaser(r: Row, prefs: MsgPrefs): string | undefined {
+  const chat = r.whoId ? prefs.chats?.[r.whoId] : undefined;
+  if (chat?.blocked) return T('Переписка заблокирована', 'Messaging blocked', 'Mensajes bloqueados');
+  if (chat?.state === 'closed') return T('Чат завершён · можно написать снова', 'Chat ended · you can write again', 'Chat finalizado · puedes volver a escribir');
+  return r.teaser;
 }
 
 /**
@@ -550,7 +612,8 @@ export function isUnread(r: Row, prefs: MsgPrefs): boolean {
   if (r.unread) return true;
   if (r.kind === 'thread') return false;      // у переписки правду говорит только счётчик сервера
   if (!r.t || !r.who) return false;
-  const seen = (prefs.seen || {})[norm(r.who)] || 0;
+  const marks = prefs.seen || {};
+  const seen = Math.max((r.whoId ? marks[personKey(r.who, r.whoId)] : 0) || 0, marks[norm(r.who)] || 0);
   return r.t > seen;
 }
 
@@ -596,14 +659,14 @@ export function shortDay(sec?: number): string {
 }
 
 /** Реплика группы так, как её отдаёт /gintent-thread. */
-export type GMsg = { id?: string; frm?: string; text?: string; t?: number; kind?: string; sys?: any; deleted?: any };
+export type GMsg = { id?: string; frm?: string; frm_id?: string; text?: string; t?: number; kind?: string; sys?: any; deleted?: any };
 
 /** Последняя реплика строкой превью: «Marc: Let’s do it», «You: …», событие — без имени. */
-export function previewOf(m: { frm?: string; text?: string; kind?: string; sys?: any; mine?: boolean } | undefined,
+export function previewOf(m: { frm?: string; frm_id?: string; text?: string; kind?: string; sys?: any; mine?: boolean } | undefined,
                           me: string, sysLine: (m: any) => string): string {
   if (!m) return '';
   if (m.kind === 'system' || !m.frm && m.mine === undefined) return sysLine(m) || String(m.text || '');
-  const mine = m.mine !== undefined ? m.mine : isMe(m.frm, undefined, me);
+  const mine = m.mine !== undefined ? m.mine : isMe(m.frm, m.frm_id, me);
   const text = String(m.text || '');
   if (!text) return '';
   return `${mine ? MSG.you() : m.frm}: ${text}`;
@@ -613,7 +676,7 @@ export function previewOf(m: { frm?: string; text?: string; kind?: string; sys?:
 export function groupUnread(msgs: GMsg[], me: string, seen?: number): number {
   if (!seen) return 0;
   return (msgs || []).filter((m) => m.kind !== 'system' && m.frm && !m.deleted && Number(m.t || 0) > seen
-    && !isMe(m.frm, undefined, me)).length;
+    && !isMe(m.frm, m.frm_id, me)).length;
 }
 
 const mOf = (p: any) => String(p?.mode || 'offline');
@@ -635,17 +698,17 @@ export function inboxRows(a: {
   const { me, ru } = a;
   const rows: Row[] = [];
   const thr = new Map<string, any>();
-  for (const t of a.threads || []) thr.set(norm(t.who), t);
+  for (const t of a.threads || []) thr.set(personKey(t.who, t.who_id), t);
   const unread = unreadByPerson(a.threads);
 
   /** 1:1 — превью и время из переписки с этим человеком. */
   const withThread = (r: Row): Row => {
-    const t = thr.get(norm(r.who || ''));
+    const t = thr.get(personKey(r.who || '', r.whoId));
     if (!t) return r;
-    const teaser = t.kind === 'voice'
+    const teaser = t.deleted ? CHAT.deleted() : t.kind === 'voice'
       ? `${t.mine ? MSG.you() + ': ' : ''}${MSG.voiceMessage()}`
       : klealText(t) || (t.sys ? a.sysLine(t.sys, me, ru) : previewOf({ frm: t.who, text: t.last, mine: !!t.mine }, me, () => ''));
-    const n = unread[norm(r.who || '')] || 0;
+    const n = unread[personKey(r.who || '', r.whoId)] || 0;
     return { ...r, teaser: teaser || r.teaser, t: Math.max(Number(r.t || 0), Number(t.t || 0)),
              ...(n ? { unread: true, count: n } : {}) };
   };
@@ -671,7 +734,8 @@ export function inboxRows(a: {
   for (const r of pr.forming) {
     const p = byId.get(String(r.id)) || {};
     const waiting: string[] = Array.isArray(p.waiting_on) ? p.waiting_on.map(String) : [];
-    const meWaits = waiting.some((w) => isMe(w, undefined, me));
+    const waitingIds: string[] = Array.isArray(p.waiting_on_ids) ? p.waiting_on_ids.map(String) : [];
+    const meWaits = waiting.some((w, i) => isMe(w, waitingIds[i], me));
     const who = String(r.who || '');
     rows.push(withThread({ ...r, sec: 'planning', people: who, others: [who], teaser: undefined,
                            meetAt: Number(p.starts_at || 0) || undefined,
@@ -690,12 +754,13 @@ export function inboxRows(a: {
   // Группы.
   const gById = new Map<string, any>();
   for (const g of a.groups || []) gById.set(String(g.gid || ''), g);
-  const othersOf = (g: any) => (g?.members || []).map((m: any) => String(m?.name || ''))
-    .filter((n: string) => n && !isMe(n, undefined, me));
+  const othersOf = (g: any) => (g?.members || []).filter((m: any) => m?.name && !isMe(m.name, m.id, me))
+    .map((m: any) => String(m.name));
   const photoOf = (g: any, msgs: GMsg[]) => {
-    const last = [...(msgs || [])].reverse().find((m) => m.frm && !isMe(m.frm, undefined, me));
+    const last = [...(msgs || [])].reverse().find((m) => m.frm && !isMe(m.frm, m.frm_id, me));
     const mem = (g?.members || []) as any[];
-    const pick = (last && mem.find((m) => norm(m.name) === norm(last.frm!))) || mem.find((m) => m.photo && !isMe(m.name, undefined, me));
+    const same = (m: any) => (last!.frm_id && m.id ? String(m.id) === String(last!.frm_id) : norm(m.name) === norm(last!.frm!));
+    const pick = (last && mem.find(same)) || mem.find((m) => m.photo && !isMe(m.name, m.id, me));
     return pick?.photo ? String(pick.photo) : undefined;
   };
   const gRow = (gid: string, title: string, base: Partial<Row>): Row => {
@@ -719,8 +784,11 @@ export function inboxRows(a: {
     const gid = String(p.gid || '');
     planned.add(gid);
     const g = gById.get(gid) || {};
-    const mem: string[] = (g.members || []).map((m: any) => String(m.name || ''));
+    const members: any[] = (g.members || []).filter((m: any) => m?.name);
+    const mem: string[] = members.map((m: any) => String(m.name));
     const conf = new Set((p.confirmed || []).map((x: any) => norm(x)));
+    const confIds = new Set((p.confirmed_ids || []).map((x: any) => String(x)));
+    const confirmed = (m: any) => (m.id && confIds.size ? confIds.has(String(m.id)) : conf.has(norm(m.name)));
     if (p.state === 'confirmed' || p.state === 'locked') {
       const where = mOf(p) === 'online' ? MSG.onCall() : String(p.area || g.area || '');
       rows.push(gRow(gid, String(p.title || ''), { sec: 'upcoming', meetAt: Number(p.starts_at || 0) || undefined,
@@ -728,9 +796,9 @@ export function inboxRows(a: {
     } else if (p.state === 'below_quorum') {
       rows.push(gRow(gid, String(p.title || ''), { sec: 'planning', sub: MSG.fewerLeft() }));
     } else {
-      const waiting = mem.filter((x) => x && !conf.has(norm(x)));
-      const meWaits = waiting.some((x) => isMe(x, undefined, me));
-      const rest = waiting.filter((x) => !isMe(x, undefined, me));
+      const waiting = members.filter((m) => !confirmed(m));
+      const meWaits = waiting.some((m) => isMe(m.name, m.id, me));
+      const rest = waiting.filter((m) => !isMe(m.name, m.id, me)).map((m) => String(m.name));
       const names = meWaits ? MSG.youAnd(joinNames(rest, T('и', 'and', 'y'))) : joinNames(rest, T('и', 'and', 'y'));
       rows.push(gRow(gid, String(p.title || ''), { sec: 'planning',
         sub: names ? MSG.planSentWaiting(names) : `${MSG.inGroup(mem.length, Number(g.min_total || 3))} · ${MSG.makingPlan()}` }));
@@ -783,12 +851,12 @@ export function searchInbox(rows: Row[], gmsgs: Record<string, GMsg[]>, threads:
         // Реплика находится и по тексту, и по автору: «marc» на кадре MSG.02 — это и «Message from Marc».
         if (m.kind === 'system' || m.deleted || !m.frm) continue;
         if (!norm(m.text || '').includes(needle) && !norm(m.frm).includes(needle)) continue;
-        const mine = isMe(m.frm, undefined, me);
+        const mine = isMe(m.frm, m.frm_id, me);
         messages.push({ ...r, key: 'm:' + r.gid + ':' + (m.id || m.t), sub: mine ? MSG.messageFromYou() : MSG.messageFrom(m.frm),
                         teaser: String(m.text || ''), t: Number(m.t || 0), unread: false, count: undefined });
       }
     } else if (r.who) {
-      const t = (threads || []).find((x: any) => norm(x.who) === norm(r.who!));
+      const t = (threads || []).find((x: any) => personKey(x.who, x.who_id) === personKey(r.who!, r.whoId));
       if (t && t.kind !== 'voice' && t.last && (norm(t.last).includes(needle) || !t.mine && norm(t.who).includes(needle))) {
         messages.push({ ...r, key: 'm:' + r.key, sub: t.mine ? MSG.messageFromYou() : MSG.messageFrom(String(t.who)),
                         teaser: String(t.last || ''), t: Number(t.t || 0), unread: false, count: undefined });

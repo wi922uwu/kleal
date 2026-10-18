@@ -25,7 +25,7 @@
  * место голой строкой — без подсказок и без точки. Вынесено сюда, чтобы место везде спрашивалось
  * одинаково.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator,
   type StyleProp, type TextStyle,

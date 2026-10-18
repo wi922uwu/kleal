@@ -7,35 +7,35 @@
  * Наполненность считается, а не показывается красивым числом: шесть признаков, доля заполненных.
  * Полоса, которая всегда одна и та же, ничего не сообщает.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator, Alert, Platform,
-         useWindowDimensions } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  View, Text, StyleSheet, Pressable, Image, TextInput, ActivityIndicator, useWindowDimensions,
+} from 'react-native';
 import { useRouter } from 'expo-router';
-import { ProfileShell, Card, Segments, EditSheet } from '../../src/components/ProfileShell';
+import { ProfileShell, Card, EditSheet, LinkRow, OptionRow, KlealPill, SectionHead } from '../../src/components/ProfileShell';
 import * as ImagePicker from 'expo-image-picker';
 import { squarePhoto } from '../../src/photo';
 import { BottomNav } from '../../src/components/BottomNav';
 import {
-  IconPerson, IconVerified, IconStar, IconFaceScan, IconUserLock, IconTranslate, IconPin, IconPencil, IconGear,
+  IconPerson, IconVerified, IconStar, IconFaceScan, IconUserLock, IconTranslate, IconPin, IconGear, IconUsers,
 } from '../../src/components/icons';
-import { useLang, getLang, setLang } from '../../src/i18n';
-import { useOnb, set, reset } from '../../src/state';
-import { forgetOwner } from '../../src/history';
+import { useLang, getLang } from '../../src/i18n';
+import { useOnb, set } from '../../src/state';
 import { mediaUrl, profile as profileApi } from '../../src/api';
 import {
-  PROFILE_TITLE, HUB, SIGNOUT, HUB_ROWS, SHEETS, WHOAMI, profileData, fmtUpdated, adaptSummary,
-  onSummaryBusy, syncInterestLabels } from '../../src/profile';
-import { langName, searchLangs } from '../../src/languages';
+  PROFILE_TITLE, HUB, HUB_ROWS, SHEETS, WHOAMI, profileData, fmtUpdated, adaptSummary,
+  onSummaryBusy, syncInterestLabels, PRO, FORMATS, FORMAT_SHORT, formatsForServer } from '../../src/profile';
+import { langPlainName, searchLangs } from '../../src/languages';
 import { isName, SUMMARY } from '../../src/onboarding';
 import { writeFact, patchFor } from '../../src/fields';
-import { SETTINGS } from '../../src/settings';
-import { AreaPicker, Area, DEFAULT_AREA, PLACES } from '../../src/components/AreaPicker';
 import { color, radius as rad, space, type } from '../../src/theme';
+import { useAgeVerified } from '../../src/components/VerifyCard';
 
 export default function ProfileHub() {
   const lang = useLang();
   const router = useRouter();
   const st = useOnb();
+  const ageOk = useAgeVerified();
   const p = st.profile;
   const d = useMemo(() => profileData(p), [p, lang]);
 
@@ -46,7 +46,7 @@ export default function ProfileHub() {
   const [busy, setBusy] = useState(false);
   useEffect(() => onSummaryBusy(setBusy), []);
   /** Какой лист правки открыт. Пусто — ни один. */
-  const [sheet, setSheet] = useState<'languages' | 'location' | 'whoami' | 'summary' | null>(null);
+  const [sheet, setSheet] = useState<'languages' | 'formats' | 'whoami' | 'summary' | null>(null);
 
   /**
    * Пересобрать сводку. Одна и та же дверь и для кнопки «Пересобрать», и для правок профиля —
@@ -66,21 +66,59 @@ export default function ProfileHub() {
    * всё остальное он молча выбрасывает.
    */
   /**
-   * Сохранить «кто ты». Возраст сервер принимает патчем; имя и фото — нет: строка пользователя
-   * ключуется именем, а фото едет отдельным путём при регистрации. См. WHOAMI в src/profile.ts —
-   * там записано, почему переименование не создаёт вторую строку молча.
+   * Сохранить «кто ты». Возраст, фото (с 17.10.2026) и имя (с 18.10.2026, шаг 4 «личность по id»)
+   * сервер принимает патчем; строка ключуется id, имя — подпись. См. WHOAMI в src/profile.ts.
    */
   const saveWhoAmI = async (v: { name: string; surname: string; age: number; photo?: string }) => {
+    const oldName = String(p.name || '').trim();
+    const newName = v.name.trim();
     // Лист сюда с непригодным именем уже не пускает; проверка остаётся вторым рубежом.
-    if (isName(v.name)) set('name', v.name.trim());
+    const renamed = isName(newName) && newName !== oldName;
+    if (isName(newName)) set('name', newName);
     // Пустую фамилию записываем тоже — иначе стереть её было бы нельзя.
     set('surname', v.surname.trim());
     if (v.age) set('age', v.age);
-    set('photo', v.photo || '');
     setSheet(null);
-    if (p.name && v.age) await profileApi.update(p.name, { age: v.age }).catch(() => {});
+    /*
+      ФОТО ТЕПЕРЬ ДОХОДИТ ДО СЕРВЕРА (сверка 17.10, п. 22; сервер выложен логикой 17.10). Раньше уходил
+      только возраст: человек менял или убирал фото, а другие видели старое лицо. Новое фото едет
+      data-URL'ом, сервер отвечает ссылкой с меткой ?v= — её и храним, чтобы кэш у других обновился.
+      Убрать — пустая строка.
+
+      ИМЯ ТОЖЕ ДОХОДИТ ДО СЕРВЕРА (шаг 4 плана «личность по id», 18.10.2026). Строка ключуется id, имя —
+      только подпись: заявки, переписка, планы и группы остаются за человеком. Сервер пишет по порядку
+      фото → имя → остальное и на первом отказе останавливается, поэтому при любом отказе имя на
+      телефоне возвращается к прежнему — иначе телефон показывал бы имя, которого на сервере нет.
+    */
+    const prev = String(p.photo || '');
+    const next = String(v.photo || '');
+    const patch: Record<string, any> = {};
+    if (v.age) patch.age = v.age;
+    if (next !== prev) patch.photo = next;
+    if (renamed) patch.name = newName;
+    if (!('photo' in patch)) set('photo', next);
+    if (oldName && Object.keys(patch).length) {
+      const r: any = await profileApi.update(oldName, patch).catch(() => null);
+      if ('photo' in patch) {
+        if (r?.ok) set('photo', String(r.photo ?? next));
+        else setPhotoNote(r?.error === 'bad photo' ? WHOAMI.photoRejected()
+          : r?.error === 'sign in required' ? WHOAMI.photoSignIn() : WHOAMI.photoNotSaved());
+      }
+      if ('name' in patch) {
+        if (r?.ok) set('name', String(r.name || newName));
+        else {
+          set('name', oldName);
+          if (!('photo' in patch) || r?.error !== 'bad photo') {
+            setPhotoNote(r?.error === 'bad name' ? WHOAMI.nameRejected()
+              : r?.error === 'sign in required' ? WHOAMI.nameSignIn() : WHOAMI.nameNotSaved());
+          }
+        }
+      }
+    } else if ('photo' in patch) set('photo', next);
     rewrite();                     // сводка называет возраст вслух
   };
+  /** Что не так с фото после сохранения листа — строкой под шапкой профиля. */
+  const [photoNote, setPhotoNote] = useState('');
 
   const saveLanguages = async (list: string[]) => {
     writeFact('languages', list);
@@ -90,44 +128,14 @@ export default function ProfileHub() {
     rewrite();                    // сводка называет языки вслух — она обязана догнать
   };
 
-  const saveLocation = async (a: Area) => {
-    // location.area ложится в profile.city — значит это ГОРОД. Раньше сюда приезжало название
-    // страны, и человек из Барселоны хранился как живущий в «Spain».
-    writeFact('location.area', a.city);
-    /*
-      СТРАНА ТОЖЕ СОХРАНЯЕТСЯ. Лист давал её выбрать, показывал выбранной — и терял: факта
-      «location.country» в реестре не было вовсе, а экран не имеет права писать имя поля строкой.
-      Поэтому у человека из Лондона страна каждый раз возвращалась к «Испании» — не потому что
-      экран так решил, а потому что сохранять её было нечем. Теперь факт заведён (shared/fields.json).
-    */
-    writeFact('location.country', a.country);
-    writeFact('location.lat', a.lat);
-    writeFact('location.lon', a.lon);
-    writeFact('location.radiusKm', a.km);
+  /** B.03: форматы встреч. Подбор читает их полем `formats` (см. formatsForServer). */
+  const formats: string[] = Array.isArray((p as any).formats)
+    ? (p as any).formats.filter((x: string) => FORMATS.some((f) => f.id === x)) : [];
+  const saveFormats = async (list: string[]) => {
+    set('formats', list);
     setSheet(null);
-    if (p.name) {
-      await profileApi.update(
-        p.name,
-        patchFor(['location.area', 'location.country', 'location.lat', 'location.lon', 'location.radiusKm'])
-      ).catch(() => {});
-    }
-    rewrite();                    // «живёт в Барселоне» после переезда в Италию — неправда
-  };
-
-  const signOut = () => {
-    const has = !!st.login;
-    const go = () => { forgetOwner();   // выход из аккаунта уносит и переписку — см. src/history.ts
-      reset(); router.replace('/'); };
-    if (Platform.OS === 'web') {
-      // Alert.alert на вебе рисуется без кнопок — там это window.confirm.
-      // eslint-disable-next-line no-alert
-      if (typeof confirm === 'function' && confirm(SIGNOUT.ask(has))) go();
-      return;
-    }
-    Alert.alert(SIGNOUT.ask(has), undefined, [
-      { text: SIGNOUT.no(), style: 'cancel' },
-      { text: SIGNOUT.yes(), style: 'destructive', onPress: go },
-    ]);
+    if (p.name) await profileApi.update(p.name, { formats: formatsForServer(list) }).catch(() => {});
+    rewrite();                    // сводка говорит «один на один или небольшие группы» — пусть догонит
   };
 
   const summary = String((p as any).summary || '');
@@ -153,33 +161,17 @@ export default function ProfileHub() {
     rewrite();
   }, [summary, d.interests.length, d.basics.length, busy]);
 
+  const city = String(p.city || '').trim();
+  const km = p.geo?.maxDistanceKm;
+  const personality = String((p as any).personality || '').trim();
+  const rowSub = (id: string) => HUB_ROWS.find((r) => r.id === id)?.sub(p) || '';
+
   return (
-    <ProfileShell
-      title={PROFILE_TITLE()}
-      onBack={() => router.back()}
-      nav={<BottomNav active="profile" />}
-      right={
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={SETTINGS.title()}
-          style={s.gear}
-          onPress={() => router.navigate('/settings')}
-        >
-          <IconGear />
-        </Pressable>
-      }
-    >
+    <ProfileShell title={PROFILE_TITLE()} onBack={() => router.back()} nav={<BottomNav active="profile" />}>
       {/*
-        ПОДПИСЬ, КОТОРАЯ ИМЕНЕМ НЕ ЯВЛЯЕТСЯ, ЗДЕСЬ И ЛОВИТСЯ.
-
-        У живого человека профиль назывался его собственным адресом почты, и адрес читал каждый,
-        кому он писал. Сам он это починить не мог: анкета с заполненным именем на шаг имени не
-        заходит, а правка в листе «Кто ты» до сервера не доезжает — имя туда уходит только вместе
-        с регистрацией. Значит починка живёт в анкете, а сюда ставится дорога к ней: анкета снимет
-        непригодную подпись, спросит имя и на заполненном профиле сама выведет на сводку, где
-        «Готово» и перепишет строку.
-
-        Строка появляется только у испорченного имени: у всех остальных её нет вовсе.
+        ПОДПИСЬ, КОТОРАЯ ИМЕНЕМ НЕ ЯВЛЯЕТСЯ, ЗДЕСЬ И ЛОВИТСЯ. У живого человека профиль назывался его
+        собственным адресом почты; починка живёт в анкете, а сюда ставится дорога к ней. Строка
+        появляется только у испорченного имени.
       */}
       {!isName(p.name) ? (
         <Card>
@@ -193,34 +185,32 @@ export default function ProfileHub() {
           </Pressable>
         </Card>
       ) : null}
-      {/* Верхняя карточка — кнопка: за ней имя, возраст и фото (кадр B.01 их не редактирует, но
-          менять их больше негде — «Основного» в списке ниже нет). */}
+
+      {/* B.01 — кто ты: фото 88, имя с печатью, возраст и город, заполненность. Тап — лист «Кто ты»
+          (имя, возраст и фото менять больше негде). */}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={WHOAMI.title()}
         onPress={() => setSheet('whoami')}
-        style={({ pressed }) => [pressed && { opacity: 0.92 }]}
+        style={({ pressed }) => [s.idRow, pressed && { opacity: 0.9 }]}
       >
-      <Card>
-        <View style={s.idRow}>
-          <View>
-            {p.photo ? (
-              <Image source={{ uri: mediaUrl(String(p.photo)) }} style={s.ava} />
-            ) : (
-              <View style={[s.ava, s.avaEmpty]}><IconPerson /></View>
-            )}
+        {p.photo ? (
+          <Image source={{ uri: mediaUrl(String(p.photo)) }} style={s.ava} />
+        ) : (
+          <View style={[s.ava, s.avaEmpty]}><IconPerson size={32} /></View>
+        )}
+        <View style={{ flex: 1, gap: 2 }}>
+          <View style={s.nameRow}>
+            <Text style={s.name} numberOfLines={1}>{d.name}</Text>
+            {/* Печать — только прошедшим проверку возраста по документу (статус сервера, 18.10.2026). */}
+            {ageOk ? <IconVerified /> : null}
           </View>
-          <Text style={s.name} numberOfLines={1}>{d.name}{p.age ? `, ${p.age}` : ''}</Text>
-          {/* Печать показывается только по-настоящему подтверждённым: нарисовать её всем значило
-              бы сообщить о человеке то, чего никто не проверял. */}
-          {d.verified ? <IconVerified /> : null}
+          {[p.age, city].filter(Boolean).length ? (
+            <Text style={s.meta}>{[p.age, city].filter(Boolean).join(' · ')}</Text>
+          ) : null}
+          <Text style={s.metaSmall}>{PRO.complete(d.confidence)}</Text>
+          {photoNote ? <Text style={[s.metaSmall, { color: color.primary }]}>{photoNote}</Text> : null}
         </View>
-        <View style={s.confRow}>
-          <Text style={s.confLabel}>{HUB.confidence()}</Text>
-          <Text style={s.confPct}>{d.confidence}%</Text>
-        </View>
-        <View style={s.track}><View style={[s.trackFill, { width: `${d.confidence}%` }]} /></View>
-      </Card>
       </Pressable>
 
       <Card>
@@ -228,65 +218,32 @@ export default function ProfileHub() {
           <Text style={s.sumLabel}>{HUB.summaryLabel()}</Text>
           {updated ? <Text style={s.updated}>{updated}</Text> : null}
         </View>
-
-        {/*
-          ОДНА ДВЕРЬ. Раньше здесь стояли две ссылки: «Изменить» открывала поле правки прямо в
-          карточке, «Пересобрать» молча звала модель — и что именно она сделает, по кнопке было
-          не понять. Теперь дверь одна, а выбор — внутри листа, рядом с текстом, который меняют.
-        */}
-        <Text style={s.sumText}>
-          {summary || (busy ? HUB.writing() : HUB.empty())}
-        </Text>
-        <View style={s.linkRow}>
-          <Pressable accessibilityRole="button" accessibilityState={{ busy }}
-                     onPress={busy ? undefined : () => setSheet('summary')}>
-            {busy ? <ActivityIndicator size="small" color={color.primary} />
-                  : <Text style={s.link}>{HUB.edit()}</Text>}
-          </Pressable>
-        </View>
-
-        {/*
-          Ведёт в разговор создания интента, а не в мастер: мастер начинается с формата и времени,
-          то есть с того, что ставится руками ПОСЛЕ того, как тема собрана. Открывать его первым —
-          значит просить человека выбрать «онлайн или офлайн» раньше, чем он сказал, для чего.
-        */}
-        <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/create')}>
-          <Text style={s.ctaText}>{HUB.createIntent()}</Text>
-        </Pressable>
+        <Text style={s.sumText}>{summary || (busy ? HUB.writing() : HUB.empty())}</Text>
+        {/* «Change it with Kleal» — тот же лист, где человек говорит Kleal, что учесть, и модель
+            переписывает абзац. Руками абзац не правится: у него один хозяин. */}
+        {busy ? <ActivityIndicator style={{ alignSelf: 'flex-start' }} color={color.primary} />
+          : <KlealPill label={PRO.changeWithKleal()} onPress={() => setSheet('summary')} />}
       </Card>
 
-      {/*
-        Пять строк одним списком — так на кадре. Первые три ведут вглубь, две последние открывают
-        лист правки поверх профиля. Выглядят одинаково, потому что для человека это одно и то же
-        действие: «поправить вот это».
-      */}
-      {HUB_ROWS.map((row) => (
-        <HubRowView
-          key={row.id}
-          title={row.title()}
-          sub={row.sub(p)}
-          Icon={ROW_ICON[row.id]}
-          onPress={() => (row.kind === 'screen'
-            ? router.navigate(`/profile/${row.id}` as any)
-            : setSheet(row.id as 'languages' | 'location'))}
-        />
-      ))}
+      {/* Строка «What Kleal remembers» (B.02) появится вместе с памятью на сервере. */}
+      <LinkRow Icon={IconUsers} title={PRO.formats()}
+               sub={formats.length ? formats.map((f) => FORMAT_SHORT[f]?.() || f).join(' · ') : PRO.notSet()}
+               onPress={() => setSheet('formats')} />
+      <LinkRow Icon={IconStar} title={HUB_ROWS[0].title()} sub={rowSub('interests')}
+               onPress={() => router.navigate('/profile/interests')} />
+      <LinkRow Icon={IconFaceScan} title={HUB_ROWS[1].title()}
+               sub={personality ? personality.split(/(?<=[.!?])\s/)[0] : PRO.personalityNotSet()}
+               onPress={() => router.navigate('/profile/personality')} />
+      <LinkRow Icon={IconTranslate} title={HUB_ROWS[3].title()} sub={rowSub('languages')}
+               onPress={() => setSheet('languages')} />
+      <LinkRow Icon={IconPin} title={HUB_ROWS[4].title()}
+               sub={[city, km ? PRO.within(km) : ''].filter(Boolean).join(' · ') || PRO.notSet()}
+               onPress={() => router.navigate('/profile/location')} />
+      <LinkRow Icon={IconUserLock} title={HUB_ROWS[2].title()} sub={PRO.safetySub()}
+               onPress={() => router.navigate('/profile/safety')} />
+      <LinkRow Icon={IconGear} title={PRO.settings()} sub={PRO.settingsSub()}
+               onPress={() => router.navigate('/settings')} />
 
-
-      <Card>
-        <Text style={s.basicTitle}>{HUB.lang()}</Text>
-        <Segments
-          options={[['ru', 'RU'], ['en', 'EN'], ['es', 'ES']]}
-          value={lang}
-          onChange={(v) => setLang(v as any)}
-        />
-      </Card>
-
-      {/*
-        Выход стирает состояние на устройстве целиком — и профиль тоже. Оставить его лежать значило
-        бы показать его следующему, кто возьмёт этот телефон. Карточка показывается всегда: см.
-        SIGNOUT — привязка к логину прятала кнопку от тех, у кого логина нет.
-      */}
       <SummarySheet
         open={sheet === 'summary'}
         summary={summary}
@@ -294,12 +251,17 @@ export default function ProfileHub() {
         onClose={() => setSheet(null)}
         onRebuild={rewrite}
       />
-
       <WhoAmISheet
         open={sheet === 'whoami'}
         p={p}
         onClose={() => setSheet(null)}
         onAccept={saveWhoAmI}
+      />
+      <FormatsSheet
+        open={sheet === 'formats'}
+        value={formats}
+        onClose={() => setSheet(null)}
+        onAccept={saveFormats}
       />
       <LanguagesSheet
         open={sheet === 'languages'}
@@ -307,59 +269,27 @@ export default function ProfileHub() {
         onClose={() => setSheet(null)}
         onAccept={saveLanguages}
       />
-      <LocationSheet
-        open={sheet === 'location'}
-        p={p}
-        onClose={() => setSheet(null)}
-        onAccept={saveLocation}
-      />
-
-      <Card>
-        <Text style={s.basicTitle}>{SIGNOUT.who(st.login)}</Text>
-        <Pressable accessibilityRole="button" style={s.signout} onPress={signOut}>
-          <Text style={s.signoutText}>{SIGNOUT.label(!!st.login)}</Text>
-        </Pressable>
-      </Card>
     </ProfileShell>
   );
 }
 
 const s = StyleSheet.create({
-  idRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  ava: { width: 60, height: 60, borderRadius: rad.full },
+  idRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: space.sm },
+  ava: { width: 88, height: 88, borderRadius: 44 },
   avaEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
-  name: { fontSize: 20, fontWeight: '700', color: color.fg, flex: 1 },
-  confRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: space.sm },
-  confLabel: { ...type.bodySmall, color: color.muted } as any,
-  confPct: { ...type.bodySmall, color: color.muted } as any,
-  track: { height: 4, backgroundColor: color.neutral100, borderRadius: 2 },
-  trackFill: { height: 4, backgroundColor: color.primary, borderRadius: 2 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  name: { fontSize: 20, lineHeight: 26, fontWeight: '700', color: color.fg, flexShrink: 1 } as any,
+  meta: { ...type.bodySmall, color: color.fg } as any,
+  metaSmall: { ...type.caption, color: color.fg } as any,
 
-  basicRow: { flexDirection: 'row', alignItems: 'center' },
   basicTitle: { ...type.labelMedium, color: color.muted } as any,
   basicValue: { ...type.body, color: color.fg, marginTop: 2 } as any,
 
   sumHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  sumLabel: { fontSize: 17, fontWeight: '700', color: color.fg },
+  sumLabel: { fontSize: 15, fontWeight: '600', color: color.fg } as any,
   updated: { ...type.caption, color: color.muted } as any,
-  sumText: { ...type.body, color: color.fg } as any,
-  linkRow: { flexDirection: 'row', gap: space.lg, marginTop: 2 },
-  link: { ...type.labelMedium, color: color.primary } as any,
-
-  gear: {
-    width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border,
-    backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
-  },
-  row: {
-    flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16,
-    borderRadius: rad.xl, backgroundColor: color.card,
-  },
-  rowIcon: {
-    width: 46, height: 46, borderRadius: 23, borderWidth: 1, borderColor: color.border,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  rowTitle: { fontSize: 18, fontWeight: '700', color: color.fg },
-  rowSub: { ...type.bodySmall, color: color.muted, marginTop: 2 } as any,
+  sumText: { ...type.bodySmall, color: color.fg } as any,
+  sheetNote: { ...type.bodySmall, color: color.fg } as any,
 
   whoPhotoRow: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   whoPhoto: { width: 84, height: 84, borderRadius: 42 },
@@ -417,39 +347,6 @@ const s = StyleSheet.create({
   },
   signoutText: { ...type.button, color: color.danger } as any,
 });
-
-/** Строка хаба — круглая иконка, заголовок, подпись, карандаш. Один вид на все пять. */
-function HubRowView({
-  title, sub, Icon, onPress,
-}: {
-  title: string;
-  sub: string;
-  Icon: (p: any) => React.ReactElement;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [s.row, pressed && { opacity: 0.9 }]}
-    >
-      <View style={s.rowIcon}><Icon size={22} /></View>
-      <View style={{ flex: 1 }}>
-        <Text style={s.rowTitle} numberOfLines={1}>{title}</Text>
-        <Text style={s.rowSub} numberOfLines={1}>{sub}</Text>
-      </View>
-      <IconPencil />
-    </Pressable>
-  );
-}
-
-const ROW_ICON: Record<string, (p: any) => React.ReactElement> = {
-  interests: IconStar,
-  personality: IconFaceScan,
-  safety: IconUserLock,
-  languages: IconTranslate,
-  location: IconPin,
-};
 
 /**
  * Кто ты: имя, возраст, фото. Правка идёт по черновику — крестик не сохраняет.
@@ -664,12 +561,34 @@ function WhoAmISheet({
   );
 }
 
+/** B.03 — форматы встреч: строки с галочкой, «Save» и «Cancel». Правка по черновику. */
+function FormatsSheet({
+  open, value, onClose, onAccept,
+}: {
+  open: boolean;
+  value: string[];
+  onClose: () => void;
+  onAccept: (list: string[]) => void;
+}) {
+  const [sel, setSel] = useState<string[]>(value);
+  useEffect(() => { if (open) setSel(value); }, [open]);
+  const toggle = (k: string) => setSel((x) => (x.includes(k) ? x.filter((y) => y !== k) : [...x, k]));
+  return (
+    <EditSheet open={open} title={PRO.formats()} onClose={onClose} onAccept={() => onAccept(sel)}
+               acceptLabel={PRO.save()} cancelLabel={PRO.cancel()}>
+      <SectionHead title={PRO.formatsHow()} />
+      {FORMATS.map((f) => <OptionRow key={f.id} label={f.label()} on={sel.includes(f.id)} onPress={() => toggle(f.id)} />)}
+      <Text style={s.sheetNote}>{PRO.formatsNote()}</Text>
+    </EditSheet>
+  );
+}
+
+/** Ходовые языки — первыми строками листа (B.06), как в «First run» A.07. */
+const COMMON_LANGS = ['Italian', 'English', 'Spanish', 'Catalan', 'French'];
+
 /**
- * Языки — полный список с поиском.
- *
- * Выбранные всегда сверху и видны сразу: иначе, набрав в поиске «швед», человек перестаёт видеть,
- * что у него уже отмечено, и снимает нужное вслепую. Правка идёт по черновику — крестик не
- * сохраняет.
+ * B.06 — языки строками с галочкой. Свои — всегда сверху, затем ходовые; редкий язык находится
+ * полем поиска под списком (на кадре его добавляют в разговоре с Kleal — здесь короче и без чата).
  */
 function LanguagesSheet({
   open, value, onClose, onAccept,
@@ -683,146 +602,28 @@ function LanguagesSheet({
   const [sel, setSel] = useState<string[]>(value);
   const [q, setQ] = useState('');
   useEffect(() => { if (open) { setSel(value); setQ(''); } }, [open]);
-
   const toggle = (k: string) => setSel((x) => (x.includes(k) ? x.filter((y) => y !== k) : [...x, k]));
-  /*
-    ВОСЕМЬДЕСЯТ ЧЕТЫРЕ ЧИПА СРАЗУ — ЭТО НЕ ВЫБОР, А СТЕНА.
-
-    `searchLangs('')` отдаёт ВЕСЬ список, и лист открывался простынёй на десяток экранов прокрутки:
-    свои языки терялись сверху, найти нужный глазами быстрее, чем напечатать, было нельзя.
-    Показываем первые двенадцать — список курирован, и в начале стоят самые ходовые, — а под ними
-    честно говорим, сколько осталось и как их достать. Начал печатать — ищется по всему списку.
-  */
-  const all = searchLangs(q).filter((l) => !sel.includes(l[0]));
-  const short = !q.trim();
-  const found = short ? all.slice(0, 12) : all;
-  const hidden = short ? all.length - found.length : 0;
-
+  const base = [...new Set([...value, ...COMMON_LANGS])];
+  const extra = [...sel.filter((k) => !base.includes(k))];
+  const found = q.trim() ? searchLangs(q).map((l) => l[0]).filter((k) => !base.includes(k) && !extra.includes(k)).slice(0, 8) : [];
   return (
-    <EditSheet
-      open={open}
-      title={SHEETS.languages()}
-      onClose={onClose}
-      onAccept={() => onAccept(sel)}
-      acceptLabel={SHEETS.accept()}
-    >
+    <EditSheet open={open} title={SHEETS.languages()} onClose={onClose} onAccept={() => onAccept(sel)}
+               acceptLabel={PRO.save()} cancelLabel={PRO.cancel()}>
+      <SectionHead title={PRO.langsYouSpeak()} />
+      {[...base, ...extra, ...found].map((k) => (
+        <OptionRow key={k} label={langPlainName(k, ru)} on={sel.includes(k)} onPress={() => toggle(k)} />
+      ))}
       <TextInput
         style={s.search}
         value={q}
         onChangeText={setQ}
-        placeholder={SHEETS.search()}
+        placeholder={PRO.findLang()}
         placeholderTextColor={color.neutral400}
         autoCorrect={false}
-        accessibilityLabel={SHEETS.search()}
+        accessibilityLabel={PRO.findLang()}
       />
-
-      {sel.length ? (
-        <View style={s.chips}>
-          {sel.map((k) => (
-            <Pressable
-              key={k}
-              accessibilityRole="button"
-              accessibilityState={{ selected: true }}
-              onPress={() => toggle(k)}
-              style={[s.chip, s.chipOn]}
-            >
-              <Text style={[s.chipText, { color: color.onPrimary }]}>{langName(k, ru)}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
-
-      {found.length ? (
-        <View style={s.chips}>
-          {found.map((l) => (
-            <Pressable
-              key={l[1]}
-              accessibilityRole="button"
-              accessibilityState={{ selected: false }}
-              onPress={() => toggle(l[0])}
-              style={s.chip}
-            >
-              <Text style={s.chipText}>{langName(l[0], ru)}</Text>
-            </Pressable>
-          ))}
-        </View>
-      ) : (
-        <Text style={s.basicValue}>{SHEETS.nothing()}</Text>
-      )}
-
-      {hidden > 0 ? <Text style={s.basicValue}>{SHEETS.moreLangs(hidden)}</Text> : null}
-    </EditSheet>
-  );
-}
-
-/** Локация — страна, радиус и карта. Тот же AreaPicker, что в онбординге: это одна и та же вещь. */
-function LocationSheet({
-  open, p, onClose, onAccept,
-}: {
-  open: boolean;
-  p: any;
-  onClose: () => void;
-  onAccept: (a: Area) => void;
-}) {
-  /**
-   * ЛИСТ ОТКРЫВАЕТСЯ НА СВОЁМ МЕСТЕ, А НЕ В БАРСЕЛОНЕ.
-   *
-   * Было три подстановки по умолчанию, и каждая врала своему человеку. Страна бралась ТОЛЬКО из
-   * короткого списка городов (сорок штук на пять стран), поэтому у живущего в Лондоне, Бадалоне
-   * или Матаро — а это две сотни людей в базе — открывалась «Испания» и якорь «Вернуть к
-   * Barcelona». Координаты при их отсутствии (двести с лишним профилей) ставились барселонскими:
-   * строка города говорила «London», а карта показывала Испанию.
-   *
-   * Теперь порядок такой: страна — та, что сохранена в профиле, и только если её там нет,
-   * выводится по городу; точка — своя, а без неё берётся точка своего города из списка, и лишь
-   * в последнюю очередь — первый город страны. Якорь «Вернуть к …» называет свой город, если он
-   * в списке, иначе первый город своей страны — но никогда чужую Барселону.
-   */
-  const current = (): Area => {
-    const city = String(p.city || '').trim() || DEFAULT_AREA.city;
-    const home = PLACES.find((x) => x.cities.some((c) => c[0] === city));
-    // Страна своя, даже если её нет в коротком списке: AreaPicker добавит её первой строкой
-    // (см. placesFor). Подменять «Россию» «Испанией» только потому, что список короткий, нельзя.
-    const saved = String(p.country || '').trim();
-    const country = saved || home?.country || DEFAULT_AREA.country;
-    const list = PLACES.find((x) => x.country === country);
-    const row = list?.cities.find((c) => c[0] === city) || list?.cities[0];
-    const lat = Number(p.geo?.coarseLat);
-    const lon = Number(p.geo?.coarseLon);
-    // Ноль на обеих осях сервер и сам считает отсутствием координат, а не точкой в Атлантике.
-    const mine = Number.isFinite(lat) && Number.isFinite(lon) && !(lat === 0 && lon === 0);
-    return {
-      country,
-      city,
-      // Якорь «Вернуть к …»: свой город, если он в списке; страна не из списка — тоже свой город.
-      pinCity: home || !list ? city : row![0],
-      lat: mine ? lat : (row?.[1] ?? DEFAULT_AREA.lat),
-      lon: mine ? lon : (row?.[2] ?? DEFAULT_AREA.lon),
-      km: p.geo?.maxDistanceKm ?? 15,
-      // Точка «своя», когда города нет в списке: подпись тогда показывает адрес, а не город.
-      moved: !home && mine,
-    };
-  };
-  const [area, setArea] = useState<Area>(current);
-  /**
-   * Пока карту двигают или сводят пальцами, прокрутка листа выключена.
-   *
-   * Жест у карты и у прокрутки общий, и без этого прокрутка забирала вертикальное движение себе:
-   * карту в профиле нельзя было ни подвинуть, ни приблизить — она только уезжала вместе с листом.
-   * В онбординге ровно то же место решено так же, здесь этого просто не было.
-   */
-  const [dragging, setDragging] = useState(false);
-  useEffect(() => { if (open) setArea(current()); }, [open]);
-  return (
-    <EditSheet
-      open={open}
-      title={SHEETS.location()}
-      onClose={onClose}
-      onAccept={() => onAccept(area)}
-      acceptLabel={SHEETS.accept()}
-      scrollEnabled={!dragging}
-    >
-      <AreaPicker value={area} onChange={setArea} onDragChange={setDragging} />
+      {q.trim() && !found.length ? <Text style={s.sheetNote}>{SHEETS.nothing()}</Text> : null}
+      <Text style={s.sheetNote}>{PRO.langsNote()}</Text>
     </EditSheet>
   );
 }

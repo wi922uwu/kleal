@@ -82,7 +82,12 @@ _SERVICE_ONLY = frozenset("/api/agent/" + x for x in (
     "learn", "learn-phrases", "outcome", "outcomes", "transition", "proposal", "proposal/respond",
     "save", "load", "event", "plan_resource", "revalidate", "room", "venue", "confirm",
     "intents/compile", "save_search", "save_search/check", "save_search/delete", "saved_searches",
-    "negotiate", "intro", "explain", "funnel", "diversity"))
+    "negotiate", "intro", "explain", "funnel", "diversity",
+    # 18.10.2026, подготовка к проду: старые группы §15 (group/groups/group-create/-join/-leave) и explore
+    # приложение не зовёт (живые группы — gintent*, карта — map-feed), а снаружи они были открыты: POST
+    # group с reserve:true пишет занятые места в хранилище без входа, explore отдаёт координаты авторов.
+    # Смоуки ходят к ним напрямую на 127.0.0.1:7074, их это не задевает.
+    "group", "groups", "group-create", "group-join", "group-leave", "explore"))
 
 
 def _passthrough(k):
@@ -140,12 +145,11 @@ class H(BaseHTTPRequestHandler):
     # уходил в 501 (обработчика просто не было), и запрос не начинался. На iOS и Android CORS нет,
     # поэтому мобильное приложение работало бы, а веб-цель Expo — нет.
     #
-    # Разрешено «*» и НАМЕРЕННО без allow-credentials. Само по себе это не открывает ничего нового:
-    # API и так без аутентификации, личность передаётся именем в теле, и злоумышленник отправит
-    # такой запрос со своего сервера, не трогая ничей браузер. CORS защищает только от чтения
-    # ответа чужим фронтендом от имени пользователя — а «имени пользователя» здесь пока не
-    # существует. Когда появятся сессии и куки, «*» придётся сменить на список источников,
-    # иначе это станет настоящей дырой.
+    # Разрешено «*» и НАМЕРЕННО без allow-credentials. Личность — токен сессии в заголовке
+    # Authorization (не куки), и браузер сам его не подставит: чужой фронтенд не может действовать
+    # от имени человека, пока не украдёт сам токен. Если когда-нибудь сессии переедут в куки, «*»
+    # придётся сменить на список источников — иначе это станет настоящей дырой. (Обновлено 18.10.2026:
+    # раньше здесь было «личность передаётся именем в теле» — так не работает с 26.09.)
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")

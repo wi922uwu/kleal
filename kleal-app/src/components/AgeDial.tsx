@@ -8,7 +8,7 @@
  * линейки с новыми выражениями анимации. Теперь деления стоят в одном слое, его сдвигает нативный
  * драйвер, слой собран один раз (useMemo), а число меняется без «подпрыгивания».
  */
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Animated,
   AppState,

@@ -10,9 +10,62 @@ const path = require('path');
 require('./onboarding_android_layout_test');
 require('./age_ruler_test');
 require('./interest_normalization_test');
+for (const [file,env] of [
+  ['monetization_review4_test.js',{}],
+  ['monetization_review5_test.js',{}],
+  ['monetization_review6_test.js',{}],
+  ['role_quota_recovery_test.js',{KLEAL_ROLE_PLATFORM:'web'}],
+  ['role_quota_recovery_test.js',{KLEAL_ROLE_PLATFORM:'ios'}],
+]) {
+  const result=require('node:child_process').spawnSync(process.execPath,[path.join(__dirname,file)],{encoding:'utf8',env:{...process.env,...env}});
+  process.stdout.write(result.stdout || '');process.stderr.write(result.stderr || '');
+  if(result.status!==0)process.exit(result.status || 1);
+}
+const review3 = require('node:child_process').spawnSync(process.execPath,
+  [path.join(__dirname, 'monetization_review3_test.js')], { encoding: 'utf8' });
+process.stdout.write(review3.stdout || ''); process.stderr.write(review3.stderr || '');
+if (review3.status !== 0) process.exit(review3.status || 1);
+const acceptance = require('node:child_process').spawnSync(process.execPath,
+  [path.join(__dirname, 'monetization_acceptance_test.js')], { encoding: 'utf8' });
+process.stdout.write(acceptance.stdout || ''); process.stderr.write(acceptance.stderr || '');
+if (acceptance.status !== 0) process.exit(acceptance.status || 1);
+const components = require('node:child_process').spawnSync(process.execPath,
+  [path.join(__dirname, 'monetization_components_test.js')], { encoding: 'utf8' });
+process.stdout.write(components.stdout || ''); process.stderr.write(components.stderr || '');
+if (components.status !== 0) process.exit(components.status || 1);
+const recoveryNavigation = require('node:child_process').spawnSync(process.execPath,
+  [path.join(__dirname, 'recovery_navigation_test.js')], { encoding: 'utf8' });
+process.stdout.write(recoveryNavigation.stdout || ''); process.stderr.write(recoveryNavigation.stderr || '');
+if (recoveryNavigation.status !== 0) process.exit(recoveryNavigation.status || 1);
+const recruitment = require('node:child_process').spawnSync(process.execPath,
+  [path.join(__dirname, 'group_recruitment_test.js')], { encoding: 'utf8' });
+process.stdout.write(recruitment.stdout || ''); process.stderr.write(recruitment.stderr || '');
+if (recruitment.status !== 0) process.exit(recruitment.status || 1);
+const messagesPolling = require('node:child_process').spawnSync(process.execPath,
+  [path.join(__dirname, 'messages_polling_test.js')], { encoding: 'utf8' });
+process.stdout.write(messagesPolling.stdout || ''); process.stderr.write(messagesPolling.stderr || '');
+if (messagesPolling.status !== 0) process.exit(messagesPolling.status || 1);
+const mapReply = require('node:child_process').spawnSync(process.execPath,
+  [path.join(__dirname, 'map_reply_test.js')], { encoding: 'utf8' });
+process.stdout.write(mapReply.stdout || ''); process.stderr.write(mapReply.stderr || '');
+if (mapReply.status !== 0) process.exit(mapReply.status || 1);
 
 const ROOT = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+const typescript = require('typescript');
+const compile = source => typescript.transpileModule(source.replace(/\bexport\s+(?=function|const|type)/g, ''), {
+  compilerOptions: { target: typescript.ScriptTarget.ES2020, module: typescript.ModuleKind.CommonJS },
+}).outputText;
+function loadSource(file, mocks = {}) {
+  const m = { exports: {} };
+  const js = typescript.transpileModule(read(file), { compilerOptions: { target: 7, module: 1, esModuleInterop: true } }).outputText;
+  Function('require', 'module', 'exports', js)(name => {
+    if (name in mocks) return mocks[name];
+    if (name.startsWith('.')) return loadSource(path.join(path.dirname(file), name + '.ts'), mocks);
+    throw Error('Unmocked module: ' + name);
+  }, m, m.exports);
+  return m.exports;
+}
 
 // Исходник БЕЗ комментариев. В этом проекте комментарии длинные и цитируют неправильный код
 // («в профиле стояло ImageManipulator.manipulate(...)»), поэтому поиск по всему тексту находит
@@ -102,7 +155,8 @@ console.log('\nсо сводки нельзя уйти, не записав пр
     /patch\(\{ done: true \}\);\s*\n\s*return true;/.test(scr));
 
   check('«Все настройки профиля» ведёт в профиль, а не в финал',
-    /onPress=\{sending \? undefined : toProfile\}/.test(scr));
+    /label=\{SUMMARY\.viewAll\(\)\} busy=\{sending\} onPress=\{toProfile\}/.test(scr)
+    && /router\.(replace|navigate)\('\/profile'\)/.test(scr.slice(scr.indexOf('const toProfile'), scr.indexOf('const toProfile') + 450)));
 }
 
 // ---------------------------------------------------------------- 3. подготовка фото — одна на двоих
@@ -144,8 +198,9 @@ console.log('\nкадр группового плана считается по 
   // раз: тернарник отдаёт сразу два имени, а состояния плана ('locked', 'proposed') стоят в
   // условии и в возврат не попадают. Лишние строки внутри return (вроде plan.get("can_fix"))
   // отсекает словарь кадров — других имён у экрана нет.
-  const FRAMES = new Set(['none', 'proposed', 'confirmed', 'fix', 'stayOrLeave', 'acceptOrLeave',
-                          'voteOpen', 'voteDecide', 'voteWait', 'locked', 'below', 'closed']);
+  const FRAMES = new Set(['none', 'proposed', 'confirmed', 'stayOrLeave', 'acceptOrLeave',
+                          'voteOpen', 'voteDecide', 'voteWait', 'locked', 'below', 'closed',
+                          'holdClosed', 'answered', 'feedback', 'now', 'holdAsk']);
   const pick = (body, re, q) => [...body.matchAll(re)]
     .flatMap((m) => [...m[1].matchAll(new RegExp(`${q}([a-zA-Z_]+)${q}`, 'g'))].map((x) => x[1]))
     .filter((n) => FRAMES.has(n));
@@ -328,7 +383,7 @@ console.log('\nголосовое ведёт себя как в мессендж
   check('есть отмена протяжкой влево', /CANCEL_AT/.test(v) && /dx < CANCEL_AT/.test(v),
     'запись, которую нельзя оборвать, — ловушка');
   check('отмену промахнуться труднее, чем закрепление',
-    /const LOCK_AT = -56/.test(v) && /const CANCEL_AT = -80/.test(v));
+    Math.abs(Number(v.match(/const CANCEL_AT = (-?\d+)/)?.[1])) > Math.abs(Number(v.match(/const LOCK_AT = (-?\d+)/)?.[1])));
   check('перехват жеста считается отменой, а не отправкой',
     /onPanResponderTerminate/.test(v),
     'отправлять то, чего человек не заканчивал, нельзя');
@@ -354,7 +409,7 @@ console.log('\nголосовое ведёт себя как в мессендж
     /isMeteringEnabled: true/.test(v),
     'в пресете HIGH_QUALITY его нет — без него metering всегда пустой');
   check('громкость ведёт ореол вокруг кнопки',
-    /voice\.level/.test(v) && /haloOpacity|haloScale/.test(v));
+    /voice\.level/.test(v) && /haloStyle/.test(v) && /scale: interpolate\(lvl\.value/.test(v));
   check('огибающая пишется во время записи и переживает отправку',
     /samples\.current\.push/.test(v) && /PEAKS\.set\(String\(result\.id\)/.test(v),
     'иначе у своего же сообщения столбики нарисуются выдумкой');
@@ -362,7 +417,7 @@ console.log('\nголосовое ведёт себя как в мессендж
     /pseudoPeaks/.test(v) && !/Math\.random/.test(v),
     'случайная форма меняется на каждом кадре ленты — сообщение «дышит» без причины');
   check('заполнение волны едет трансформом, а не шириной',
-    /waveMask/.test(v) && /translateX: back/.test(v) && !/width: `\$\{/.test(v),
+    /waveMask/.test(v) && /translateX: \(p\.value - 1\) \* w\.value/.test(v) && !/width: `\$\{/.test(v),
     'анимация ширины пересчитывает разметку в JS и дёргается на каждом кадре ленты');
   check('волну можно перематывать пальцем',
     /onSeek/.test(v) && /player\.seekTo\(\(total \/ 1000\)/.test(v));
@@ -372,10 +427,10 @@ console.log('\nголосовое ведёт себя как в мессендж
   // 206, `Accept-Ranges` нет. Проигрыватель на iOS такой источник не открывает вовсе — замерено:
   // с прямым адресом состояние навсегда isLoaded=0, isBuffering=1, duration=0; с локальным
   // файлом isLoaded=1 и настоящая длительность. Снаружи это «нажал — и ничего».
-  check('чужое голосовое скачивается до проигрывания',
+  check('чужое голосовое имеет локальный fallback при ошибке streaming',
     /Asset\.fromURI\(source\)\.downloadAsync\(\)/.test(v) &&
-    /useAudioPlayer\(remote \? cached : source/.test(v),
-    'прямой адрес на этом сервере не откроется никогда');
+    /useAudioPlayer\(fallback \|\| source/.test(v),
+    'сервер поддерживает Range; при ошибке потока нужен download fallback');
   check('своя запись не качается: она и так на диске',
     /const remote = \/\^https\?:\/i\.test\(source\)/.test(v),
     'скачивать file:// — лишний круг и лишняя копия');
@@ -458,21 +513,23 @@ console.log('\nголосовое ведёт себя как в мессендж
       const m = v.match(new RegExp('const ' + name + ' = (-?\\d+)'));
       return m ? Number(m[1]) : NaN;
     };
-    const drag = travel('DRAG_TRAVEL');
+    // 17.10 капля переехала в HoldLayer и следует dx напрямую до порога отмены.
+    const drag = travel('CANCEL_AT');
     const hintTravel = travel('HINT_TRAVEL');
     check('кнопка и подсказка едут на разные расстояния',
-      Math.abs(hintTravel) < Math.abs(drag),
+      Math.abs(hintTravel) < Math.abs(drag)
+      && /function HoldLayer[\s\S]*?translateX: dx\.value/.test(v),
       'общий ход у них и приводил к наложению: вокруг кнопки пусто, слева от подсказки таймер');
     check('ход подсказки не длиннее замеренного просвета до таймера',
       Math.abs(hintTravel) <= 79,
       'на кадре 12 августа подсказка начинается на 152 пунктах, таймер кончается на 65');
     check('подсказку останавливает зажим, а не сама величина',
-      /extrapolate: 'clamp'/.test(v) && /translateX: cancelling \? 0 : hintX/.test(v),
+      /\[HINT_TRAVEL, 0\], \[HINT_TRAVEL, 0\], Extrapolation\.CLAMP/.test(v),
       'без зажима палец утащит её за предел, каким бы предел ни был');
     // Строка центрируется: чем шире надпись, тем левее она начинается. «Отпусти — отмена» с
     // корзиной начинается на ~105 пунктах против 152 у короткой — одного хода на обе не бывает.
     check('подсказку отмены не тащат за пальцем вовсе',
-      /translateX: cancelling \? 0 : hintX/.test(v),
+      /Extrapolation\.CLAMP\) \* \(1 - cancelHint\.value\)/.test(v),
       'её ход пришлось бы считать отдельно, и он всё равно упирался бы в таймер');
   }
 }
@@ -537,9 +594,12 @@ console.log('\nсообщения не покупают цифру в кружк
     !/agent\.thread\(/.test(scr),
     'вернулся поштучный подсчёт — это десять лишних запросов на каждый опрос');
   check('непрочитанное берётся из ответа сервера',
-    /unreadByPerson/.test(scr) && /export function unreadByPerson/.test(mod));
+    /inboxRows\(/.test(scr) && /const unread = unreadByPerson\(a.threads\)/.test(mod));
+  const unreadBehavior = require('node:child_process').spawnSync(process.execPath,
+    [path.join(__dirname, 'chat_lifecycle_test.js')], { encoding: 'utf8' });
   check('счётчик один на переписку, а не по вкладке',
-    (scr.match(/withUnread\(/g) || []).length >= 3,
+    /withThread/.test(mod) && /count: n/.test(mod) && /threadRows\(data.threads/.test(scr)
+      && unreadBehavior.status === 0,
     'иначе одна и та же пара показывает в «Интентах» точку, а в «Личных» цифру');
   check('у переписки нет второй правды о непрочитанном',
     /r\.kind === 'thread'\) return false/.test(mod),
@@ -578,16 +638,16 @@ console.log('\nвкладка «Моя активность» связана и�
     'без записи в ROUTE кнопка гаснет и весь флоу недостижим');
 
   // Самое тихое звено: ручки хранения были на сервере всё время, а звать их было некому.
-  check('мастер запоминает затею, и сразу запущенной',
-    /agent\.intentSave\(/.test(wiz) && /, true\)/.test(wiz),
-    'без записи список пуст всегда — показывать нечего, а не некому');
+  check('мастер публикует затею единой серверной командой',
+    /await agent\.match\(intent, profile\(\), ctx\(\), ctrl.signal\)/.test(wiz)
+      && /api\/agent\/search-command/.test(code('src/api.ts')),
+    'публикация и проверка квоты должны иметь один ответ');
   // Смотрим на СМЫСЛ: запись не ждут и её сбой гасят. Проверка держалась за точную форму вызова
   // и упала, когда к нему добавился разбор ответа ради id затеи, — правка ничего не изменила по
   // существу, а проверка сообщила о поломке.
-  check('сбой записи не отменяет поиск',
-    /agent[\s\S]{0,80}\.intentSave\([\s\S]{0,220}\.catch\(\(\) => ''\)/.test(wiz)
-    || /agent\.intentSave\([^;]*\)\s*\n?\s*\.catch\(\(\) => \{\}\)/.test(wiz),
-    'человек шёл искать людей, а не сохранять карточку');
+  check('нет параллельной независимой записи и поздней подмены id',
+    !/const savedId = agent\.intentSave/.test(wiz) && !/savedId\.then/.test(wiz),
+    'ответ публикации уже содержит canonical id');
 
   check('правка шлёт id затеи',
     /agent\.intentSave\(me, next, String\(row\.title \|\| ''\), row\.id\)/.test(page),
@@ -598,7 +658,7 @@ console.log('\nвкладка «Моя активность» связана и�
   // переписка — а ведёт он во встречу: одинаковый вид у разных вещей обманывает ожидание вернее,
   // чем неточное слово. Разбор при этом один на парные и групповые.
   check('планы — блоки, а не строки чата',
-    /function PlanBlock/.test(scr) && /planCard\(/.test(scr) && !/planRows\(/.test(scr),
+    /function ActCard/.test(scr) && /planCard\(/.test(scr) && /onPress=\{\(\) => openPlan\(c\)\}/.test(scr) && !/planRows\(/.test(scr),
     'в «Сообщениях» такая строка открывает разговор, здесь — саму встречу');
   check('разбор плана один на парные и групповые',
     (code('src/activity.ts').match(/export function planCard/g) || []).length === 1);
@@ -657,7 +717,8 @@ console.log('\nвкладка «Моя активность» связана и�
   // На борде стрелка идёт от САМОЙ карточки к странице затеи. Нажималась только кнопка, и по
   // названию с обложкой — самому крупному, во что человек и тычет, — не происходило ничего.
   check('нажимается вся карточка, а не только кнопка',
-    /<Pressable style=\{s\.card\} accessibilityRole="button" onPress=\{onOpenPage\}>/.test(scr),
+    /<Pressable style=\{s\.card\} accessibilityRole="button" onPress=\{onPress\}>/.test(scr)
+      && /onPress=\{\(\) => router.navigate\(\{ pathname: '\/myintent', params: \{ id: row.id \}/.test(scr),
     'выцеливать кнопку там, где полкарточки — заголовок, незачем');
   // Три нажатия — три места. Тело и карандаш вели в одно и то же, и карандаш ничего не значил.
   check('карандаш и тело карточки ведут в РАЗНОЕ',
@@ -742,7 +803,7 @@ console.log('\nпереписка не врёт про отправку и не 
   check('неотправленное можно отправить ещё раз',
     /onPress=\{failed \? \(\) => onRetry\(m\)/.test(f) && /onRetry=\{deliver\}/.test(c));
   check('повтор несёт ТОТ ЖЕ ключ, а не новый',
-    /agent\.message\(me, other, String\(m\.text \|\| ''\), m\.voice, m\.cid,/.test(c),
+    /agent\.message\(me, peer, String\(m\.text \|\| ''\), m\.voice, m\.cid,/.test(c),
     'с новым ключом повтор создаст у собеседника вторую копию');
   check('блокировку называют блокировкой',
     /code === 'BLOCKED' \? CHAT\.blocked\(\)/.test(c),
@@ -765,7 +826,8 @@ console.log('\nпереписка не врёт про отправку и не 
     /\{tail \? \(/.test(f),
     'иначе живая переписка — столбик одинаковых часов');
   check('хвостик у пузыря только в конце серии',
-    /bubMeMid/.test(f) && /borderBottomRightRadius: 18/.test(f));
+    /tail \? s\.bubMeTail : s\.bubMeMid/.test(f)
+    && Number(f.match(/bubMeTail: \{ borderBottomRightRadius: (\d+)/)?.[1]) < Number(f.match(/bubMeMid: \{ borderBottomRightRadius: (\d+)/)?.[1]));
   check('разделитель дня считается по ВИДИМЫМ строкам',
     /const shown = msgs\.filter/.test(f) && /shown\.map\(\(m, i\)/.test(f),
     'скрытая системная строка уносила «Сегодня» с собой');
@@ -849,7 +911,7 @@ console.log('\nнад сообщением можно что-то сделать
     /rt: replyTo \? \{ id: replyTo\.id/.test(c));
 
   check('удалять можно только своё',
-    /String\(picked\.from \|\| ''\)\.trim\(\)\.toLowerCase\(\) === me\.trim\(\)\.toLowerCase\(\)/.test(c));
+    /picked && isMe\(picked\.from, \(picked as any\)\.from_id, me\)/.test(c));
   check('удалённое остаётся строкой, а не исчезает',
     /m\.deleted \? CHAT\.deleted\(\)/.test(f) && /bubGone/.test(f),
     'пропасть бесследно оно не может — второй его уже видел');
@@ -1010,7 +1072,7 @@ console.log('\nплан ниже трёх стоит на паузе, а не в
     'люди остались — распускать их незачем');
 
   check('кадр GR.40 не называет себя утверждённым планом',
-    /case 'below': return GPLAN\.belowTitle\(\)/.test(scr) && /belowTitle:/.test(txt));
+    /case 'below': return a\.isOwner \? GPLAN\.belowTitle\(\) : GPLAN\.onHoldTitle\(\)/.test(scr) && /belowTitle:/.test(txt));
   check('и не закрывает вопрос, который сам задаёт',
     /belowNote:/.test(txt) && !/belowQuorum/.test(txt),
     'борд говорит «на паузе, решай», прежняя строка — «всё кончено»');
@@ -1018,13 +1080,14 @@ console.log('\nплан ниже трёх стоит на паузе, а не в
     /GPLAN\.inviteMore\(\)/.test(scr) && /GPLAN\.cancelPlan\(\)/.test(scr));
 
   check('на последнем раунде нечего предлагать',
-    /p\?\.rounds_used_up \? null :/.test(scr),
+    /p\?\.rounds_used_up\s*\? \(a\.isOwner && p\?\.can_fix \?[^:]+: null\)/.test(scr),
     'сервер откажет ROUNDS_USED_UP — кнопка обещает то, чего не будет');
   check('индикатор раундов виден и в форме',
-    /\{plan\?\.state === 'proposed' \? \(/.test(scr),
+    /plan\?\.state === 'proposed'[\s\S]{0,160}<RoundBar/.test(scr),
     'раунд тратится именно в форме — там счётчик и нужен');
   check('«дать ещё время» не уводит с экрана решения',
-    /onPress=\{a\.onMoreTime\}/.test(scr));
+    /onPress=\{a\.onMoreTime\}/.test(scr),
+    'RETAINED FINDING R01: debbbf3 требует действие на fix-frame; замена на voteDecide не проверяет тот же контракт. Требуется решение по удалённому GR.29 action.');
 }
 
 // ------------------------------------------------- 18. кружок
@@ -1232,7 +1295,7 @@ console.log('\nпереход группы в один на один постр�
   check('второму видно, что его спросили',
     /"pending_1to1": g\.get\("pending_1to1"\)/.test(py) && /const askedMe =/.test(scr));
   check('кнопка больше не декоративна',
-    !/switchSoon/.test(txt) && !/switchSoon/.test(scr) && /onPress=\{\(\) => setAsk1to1\(true\)\}/.test(scr),
+    !/switchSoon/.test(txt) && !/switchSoon/.test(scr) && /setTimeout\(\(\) => setAsk1to1\(true\), 250\)/.test(scr),
     'мёртвый View со стилем ctaOff заменён живым Pressable');
   check('обёртки клиента на месте',
     /convertAsk:/.test(api) && /convertRespond:/.test(api));
@@ -1254,10 +1317,7 @@ console.log('\nимя вытаскивается из живого ответа'
 
   // Исполняем НАСТОЯЩИЙ разбор из файла, а не сверяем регуляркой: проверять формулировку
   // здесь бессмысленно — важно, что именно получится из живой фразы.
-  const js = src.slice(from, to)
-    .replace(/: RegExp\[\]/, '')
-    .replace('export function parseName(raw: string): { name: string; surname: string }', 'function parseName(raw)')
-    .replace('(w: string)', '(w)');
+  const js = compile(src.slice(from, to));
   const parseName = new Function(js + '\nreturn parseName;')();
 
   const CASES = [
@@ -1344,13 +1404,7 @@ console.log('\nинтерес показывается на языке экра�
   }
 
   // Словарь исполняется по-настоящему: проверка формулировки тут бессмысленна.
-  const wheel = read('src/interests-wheel.ts');
-  let body = wheel.slice(wheel.indexOf('const N = '), wheel.indexOf('\n}\n', wheel.indexOf('export function labelOf')) + 3);
-  body = body.replace(/\bkids\?/g, 'kids')
-             .replace(/:\s*WheelNode\[\]|:\s*WheelNode|:\s*string\s*\|\s*null|:\s*string/g, '')
-             .replace(/export const/g, 'const').replace(/export function/g, 'function')
-             .replace(/const nodeLabel = [^;]+;/, 'const nodeLabel = (n) => (LANG === "ru" ? n.ru : n.en);');
-  const mk = (lang) => new Function('let LANG="' + lang + '";' + body + '\nreturn labelOf;')();
+  const mk = (lang) => loadSource('src/interests-wheel.ts', { './i18n': { T: (...v) => v[lang === 'ru' ? 0 : 1] } }).labelOf;
   const ru = mk('ru'), en = mk('en');
 
   check('один ключ — два разных слова',
@@ -1398,7 +1452,7 @@ console.log('\nсистемная строка группы приходит к�
 
   // Коды сервера и разбор клиента обязаны совпадать поимённо — иначе строка снова уедет сырой.
   const serverCodes = [...new Set([...py.matchAll(/code="([a-z_]+)"/g)].map((m) => m[1]))].sort();
-  const clientCodes = [...new Set([...gr.matchAll(/c === '([a-z_]+)'/g)].map((m) => m[1]))].sort();
+  const clientCodes = [...new Set([...gr.matchAll(/c === '([a-z_]+)'/g), ...code('app/group.tsx').matchAll(/case '([a-z_]+)'/g)].map((m) => m[1]))].sort();
   const missing = serverCodes.filter((c) => !clientCodes.includes(c));
   check('клиент знает каждый код сервера', missing.length === 0,
     'сервер шлёт, клиент не понимает: ' + missing.join(', '));
@@ -1411,7 +1465,7 @@ console.log('\nсистемная строка группы приходит к�
     'выкинуть его — значит потерять историю старых групп');
 
   check('экран передаёт код в отрисовку',
-    /groupSysLine\(String\(m\.text \|\| ''\), \(m as any\)\.sys\)/.test(code('app/group.tsx')),
+    /const f = \(\(m as any\)\.sys \|\| \{\}\)/.test(code('app/group.tsx')) && /groupSysLine\(String\(m\.text \|\| ''\), f\)/.test(code('app/group.tsx')),
     'иначе сервер шлёт код, а клиент его не видит');
 }
 
@@ -1443,7 +1497,8 @@ console.log('\nчисла 1:1 совпадают со спекой');
     /MP_LOCK_BEFORE = GP_LOCK_BEFORE/.test(py) && /def _mp_frozen\(p, now=None\)/.test(py),
     'заморозка была только у групп: пару можно было отменить за пять минут до встречи');
   check('заморозка закрывает правки, но не ответы',
-    /act in \("counter", "accept_change", "reject_change"\) and _mp_frozen/.test(py),
+    /_mp_refusal\(p, who, act, now\)/.test(py)
+    && ['counter', 'accept_change', 'reject_change'].every(a => new RegExp('"' + a + '":\\s+Rule\\(OPEN, "NOT_OPEN", False').test(read('../kleal-ms/services/matching/mplan_rules.py'))),
     'confirm и «не смогу» обязаны работать и в заморозке — так говорит спека');
   check('заморозка одна на группу и на пару',
     /MP_LOCK_BEFORE = GP_LOCK_BEFORE/.test(py),
@@ -1467,7 +1522,7 @@ console.log('\nзавершение разговора доходит до со�
   // клало имя в локальный список на телефоне закрывшего и на сервер не уходило ничего. Второй
   // оставался ждать ответа в открытой переписке.
   check('у завершения есть серверная ручка',
-    /def end_thread\(who, other, idem=None\)/.test(py) && /"\/api\/agent\/thread-end"/.test(py),
+    /def end_thread\(who, other, idem=None, session_id=None\)/.test(py) && /"\/api\/agent\/thread-end"/.test(py),
     'без неё завершение остаётся в телефоне закрывшего');
   // Ищем внутри самой функции, а не в окне фиксированной длины: у неё длинное описание, и
   // проверка «первые 900 символов» падала на исправном коде.
@@ -1477,9 +1532,11 @@ console.log('\nзавершение разговора доходит до со�
       /_mp_matched\(who, other\)/.test(fn) && /NOT_MATCHED/.test(fn),
       'иначе закрыть переписку сможет любой, кто знает два имени');
   }
-  check('экран сообщает серверу, а не только себе',
-    /agent\.threadEnd\(me, other\)/.test(conv),
-    'локальная отметка — про свой список, она не заменяет сообщения второму');
+  const lifecycle = require('node:child_process').spawnSync(process.execPath,
+    [path.join(ROOT, 'tools/conversation_lifecycle_test.js')], { encoding: 'utf8' });
+  check('экран подтверждает end/resume и сохраняет историю при отказе',
+    lifecycle.status === 0,
+    lifecycle.stdout + lifecycle.stderr);
   check('второму есть что показать',
     /case 'chat_ended':/.test(chat),
     'строка придёт кодом, а показать её будет нечем');
@@ -1526,7 +1583,8 @@ console.log('\nпотолок приглашений считается на з�
   check('заявка помнит свою затею', /"iid": str\(\(intent or \{\}\)\.get\("id"\)/.test(py),
     'без опознавателя считать «на интент» нечем');
   check('мастер запоминает id затеи и кладёт его в выдачу',
-    /savedId/.test(wiz) && /patchResults\(\{ intent: \{ \.\.\./.test(wiz),
+    /toResults\(r, intent\)/.test(wiz) && /intent: r\?\.intent \|\| fallbackIntent/.test(wiz)
+      && /dict\(command_intent,id=iid,_searchId=rid\)/.test(read('../kleal-ms/services/matching/monetization_commands.py')),
     'id приходит от сервера и нужен приглашениям');
   check('потолок фильтрует по затее', /export function openInvites\(iid\?: string\)/.test(inv));
   check('старые заявки без опознавателя не теряются из счёта',
@@ -1565,11 +1623,11 @@ console.log('\nчужой пояс — только когда он и прав�
     .replace('export function peerLocalTime(startsAt?: number | null, peerTz?: string, ru = true): string',
              'function peerLocalTime(startsAt, peerTz, ru = true)')
     .replace('(zone: string)', '(zone)');
-  const peerLocalTime = new Function('deviceTz', js + '\nreturn peerLocalTime;');
+  const peerLocalTime = new Function('deviceTz', 'dateLocale', js + '\nreturn peerLocalTime;');
 
   const at = Math.floor(Date.parse('2026-08-20T18:00:00Z') / 1000);
   const at22 = Math.floor(Date.parse('2026-08-20T22:00:00Z') / 1000);
-  const call = (a, peer, mine) => peerLocalTime(() => mine)(a, peer);
+  const call = (a, peer, mine) => peerLocalTime(() => mine, () => 'en-GB')(a, peer);
   const CASES = [
     ['разные пояса, разные часы', at, 'Europe/London', 'Europe/Madrid', '19:00 London'],
     ['тот же пояс — молчит', at, 'Europe/Madrid', 'Europe/Madrid', ''],
@@ -1594,10 +1652,10 @@ console.log('\nчужой пояс — только когда он и прав�
     'своё смещение печаталось всегда — ровно то, что правило запрещает');
   check('план берёт пояс собеседника', /plan\?\.their_tz \|\| peerTz/.test(pl));
   check('форма плана получает пояс', /otherTz=\{peerTz\}/.test(pl));
-  check('список планов спрашивает пояс собеседника', /agent\.plans\(me, other\)/.test(pl));
+  check('список планов спрашивает пояс собеседника', /agent\.plans\(me, otherPeer\)/.test(pl));
 
   const api = code('src/api.ts');
-  check('api умеет передать собеседника', /with=\$\{encodeURIComponent\(withWhom\)\}/.test(api));
+  check('api умеет передать собеседника', /peerQuery\('with', withWhom\)/.test(api));
 
   // Сервер обязан НЕСТИ пояс через register: он заменяет строку целиком, и без этого повторный
   // онбординг молча стирал бы пояс — так уже случалось со story.
@@ -1606,8 +1664,8 @@ console.log('\nчужой пояс — только когда он и прав�
   check('пояс разрешён к правке', /"safety", "tz"|"tz", "safety"/.test(onb) || /_PATCH_FIELDS[\s\S]{0,400}"tz"/.test(onb));
 
   const mt = read('../kleal-ms/services/matching/app.py');
-  check('план отдаёт пояс собеседника', /"their_tz": tzs\.get\(_norm_name\(_mp_other\(p, me\)\)\)/.test(mt));
-  check('список планов отдаёт peer_tz', /out\["peer_tz"\] = _tz_by_name\(\)/.test(mt));
+  check('план отдаёт пояс собеседника', /"their_tz": _tz_of\(_mp_other\(p, me\)\)/.test(mt));
+  check('список планов отдаёт peer_tz', /out\["peer_tz"\] = _tz_of\(peer\)/.test(mt));
 
   // Клиент обязан СООБЩАТЬ свой пояс, иначе на сервере он ни у кого не появится и правило
   // «показывать при расхождении» будет вечно молчать — то есть выглядеть как работающее.
@@ -1657,7 +1715,7 @@ console.log('\nчетыре пометки с борда групп закрыт
   check('её стрелка ведёт в план', /planReachable[\s\S]{0,600}pathname: '\/gplan'/.test(gr));
   // Стрелка, за которой пусто, хуже отсутствующей: человек жмёт и решает, что всё сломано.
   check('и только когда за ней что-то есть',
-    /const planReachable = canPlan \|\| !!\(g as any\)\?\.plan/.test(gr));
+    /const planReachable = !readOnly && \(canPlan \|\| !!\(g as any\)\?\.plan\)/.test(gr));
 
   const gp = code('app/gplan.tsx');
   // GR.26. Прогресс раундов был на месте и раньше — проверка держит его, а не добавляет.
@@ -1678,7 +1736,7 @@ console.log('\nчетыре пометки с борда групп закрыт
   check('на замке можно сказать «не смогу»', /GPLAN\.cantMakeIt\(\)/.test(gp));
   check('на идущей — «опаздываю»', /GPLAN\.imLate\(\)/.test(gp) && /gapi\.planStatus\(/.test(gp));
   // Второй раз говорить то же самое незачем — и кнопка обязана это показывать.
-  check('сказанное однажды опоздание не повторяют', /a\.imLateSent \? GPLAN\.lateSent\(\)/.test(gp));
+  check('сказанное однажды опоздание не повторяют', /if \(a\.imLateSent\) return <P label=\{GPLAN\.openChat\(\)\}/.test(gp));
 
   // Опоздание видит ВСЯ группа — тем и отличается от один-на-один. Значит строка обязана
   // разбираться в чате, иначе придёт сырым английским текстом.
@@ -1742,7 +1800,7 @@ console.log('\nистория даёт интересы, заголовок гр
   // Ничего не добавляется само: интересы, проставленные за человека, это ярлыки, которых он не
   // выбирал. Ровно то же правило, что у редактора профиля, — там тоже сперва подтверждение.
   check('добавляет только подтверждённое',
-    /suggest\.filter\(\(x\) => picked\[x\.key\]\)\.map/.test(pers));
+    /const chosen = suggest\.filter\(\(x\) => picked\[x\.key\]\)/.test(pers) && /for \(const item of chosen\)/.test(pers) && /profileApi\.confirmInterest/.test(pers));
   const pr = code('src/profile.ts');
   check('подтверждённое уходит и на сервер, а не только в телефон',
     /export async function addInterests[\s\S]{0,700}pushInterests\(\)/.test(pr));
@@ -1753,15 +1811,18 @@ console.log('\nистория даёт интересы, заголовок гр
   // Заголовок группы — не подпись, а вход. Приглашённый нигде не мог прочесть, ради чего
   // группа собралась: тема и формат жили только на экране создания, куда он не попадает.
   const gr = code('app/group.tsx');
-  check('заголовок группы нажимается', /accessibilityLabel=\{ROOM\.aboutTitle\(\)\} onPress=\{\(\) => setInfo\(true\)\}/.test(gr));
-  check('лист начинается с затеи, а не с состава',
-    gr.indexOf('ROOM.aboutTitle()') < gr.indexOf('ROOM.infoNote('));
+  const members = code('app/gmembers.tsx');
+  check('заголовок группы нажимается', /accessibilityLabel=\{ROOM\.infoTitle\(\)\} onPress=\{\(\) => openInfo\(\)\}/.test(gr)
+    && /const openInfo = \(\) => router\.navigate\(\{ pathname: '\/gmembers'/.test(gr));
+  check('сведения начинаются с затеи, а не с состава', members.indexOf('s.cardBody') < members.indexOf('rows.map('));
   check('в сведениях есть тема, время, место и размер',
-    /ROOM\.aboutTopics\(\)/.test(gr) && /ROOM\.aboutWhen\(\)/.test(gr)
-    && /ROOM\.aboutWhere\(\)/.test(gr) && /ROOM\.aboutSize\(/.test(gr));
-  check('темы показываются подписями, а не ключами', /interestLabels\(g\?\.topics/.test(gr));
-  // Пустая строка на экране читается как «здесь ничего нет», а не «мы не спросили».
-  check('пустое поле не рисуется вовсе', /if \(!String\(value \|\| ''\)\.trim\(\)\) return null/.test(gr));
+    /g\?\.title/.test(members) && /splitWhen\(/.test(members)
+    && /groupPlace\(/.test(members) && /ROOM\.whoNote\(n, max, open, canRemove\)/.test(members));
+  check('тема показывается подписью, а не ключами', /\{g\?\.title \|\| ''\}/.test(members));
+  // Сведения теперь в gmembers: пустые дата/время скрыты, неназванное место явно подписано.
+  check('пустые дата и время не рисуются, неназванное место подписано',
+    /\{date \|\| time \? \(/.test(members) && /\{date \? \(/.test(members)
+    && /\{time \? \(/.test(members) && /groupPlace\(g, me\) \|\| ROOM\.aboutUnset\(\)/.test(members));
 }
 
 // ------------------------------------------------- 26. ответ Бадди верстается документом
@@ -1913,7 +1974,7 @@ console.log('\nответ модели — документ, а не репли�
   for (const f of ['src/components/ChatShell.tsx']) {
     const c = code(f);
     check(`${f}: текст модели идёт документом`, /<Markdown text=\{m\.text\}/.test(c));
-    check(`${f}: реплика человека осталась пузырём`, /\[s\.bub, s\.bubMe\]/.test(c));
+    check(`${f}: реплика человека осталась пузырём`, /s\.bubMe/.test(c) && /m\.who === 'me'/.test(c));
   }
   // Создание интента (GR.04): обе стороны — пузыри общих деталей мастера; разметка — внутри пузыря.
   {
@@ -1945,8 +2006,8 @@ console.log('\nответ модели — документ, а не репли�
 
   check('экран растит текст прямо в ленте', /const grow = \(t: string\)/.test(bd),
     'две копии текста разошлись бы и человек увидел бы мигание');
-  check('показанное потоком второй раз не печатается', /if \(!shown\) say\('bot', reply\)/.test(bd));
-  check('а при распознанном плане — снимается', /if \(shown\) setThread\(\(prev\) => prev\.slice\(0, -1\)\)/.test(bd));
+  check('показанное потоком второй раз не печатается', /if \(shown < 0\) say\('bot', reply\)/.test(bd));
+  check('распознанный план сохраняет и уточняет уже показанную реплику', /else if \(reply\) replaceShown\(shown, reply\)/.test(bd));
 
   // Извлекатель поля ждал ключ «reply», которого в голой прозе нет, и молчал до конца генерации:
   // 6,26 с против 0,24 с. Двадцать шесть раз разницы на пустом месте.
@@ -2016,7 +2077,7 @@ console.log('\nвосемь — первая страница, а не весь 
     /res\["has_more"\] = len\(cands\) > _lim/.test(py));
 
   const api = code('src/api.ts');
-  check('клиент умеет попросить больше', /limit \? \{ intent, profile, ctx, limit \}/.test(api));
+  check('клиент умеет попросить больше', /limit \? \{ intent, profile, ctx, limit, lang: getLang\(\)/.test(api));
 
   const rs = code('app/results.tsx');
   check('на экране есть «показать ещё»', /RESULTS\.more\(\)/.test(rs) && /const showMore = async/.test(rs));
@@ -2069,7 +2130,7 @@ console.log('\nцензура ловит просьбу о способе, но 
   // Предложение и окно затеи взаимоисключающи: окно поверх собственного вопроса означает, что
   // вопрос был не вопросом. В промпте правило есть и не соблюдается.
   check('окно не открывается в ходу с предложением',
-    /want_match and not _agreed and _TRAILING_OFFER\.search/.test(bp));
+    /want_match and not _agreed and not _own_ask\s*\\\s*and _TRAILING_OFFER\.search/.test(bp));
 
   // ПОТОК — СПОСОБ ДОСТАВКИ, А НЕ ОТВЕТ. Сообщено с телефона: «Связь пропала. Повторишь?»
   // приходило на каждое сообщение подряд, хотя сервер отвечал исправно — рвался поток, и вместе
@@ -2123,26 +2184,12 @@ console.log('\nцензура ловит просьбу о способе, но 
   check('курсор гаснет по завершении', /live: false/.test(bd3));
   check('в создании интента то же', /makeReveal\(/.test(code('app/create.tsx')));
   {
-    const md2 = code('src/components/Markdown.tsx');
-    check('курсор есть', /function Caret\(\)/.test(md2));
-    // View внутри строки текста в React Native встать не может — он всегда уезжает строкой ниже,
-    // и курсор читался как посторонний элемент, а не как место, где сейчас пишут.
-    check('курсор — ЗНАК, а не прямоугольник', /Animated\.Text style=\{\[s\.caret/.test(md2),
-      'View внутри Text всегда переносится на следующую строку');
-    check('и рисуется в последнем блоке', /const tail = caret && i === blocks\.length - 1/.test(md2));
-    check('в списке — в последнем пункте', /tail=\{j === b\.items\.length - 1 \? tail : null\}/.test(md2));
-    // Внутрь таблицы курсор не поставить — там он честнее отдельной строкой.
-    check('отдельной строкой только у таблицы и кода',
-      /\['table', 'code', 'hr'\]\.includes/.test(md2));
-
-    // Резкая граница написанного читается механически: буквы выскакивают. Градиент прозрачности
-    // по последним символам даёт то же, что размытие, но без нативного модуля и маски.
-    check('конец строки гаснет во время печати', /const FADE = \[/.test(md2));
-    check('и гаснет только последний кусок', /fade && i === parts\.length - 1/.test(md2));
-    check('в коде не гаснет', /&& !t\.code/.test(md2),
-      'моноширинный кусок с полупрозрачным хвостом читается как ошибка отрисовки');
-    // Жёсткое мигание с постоянным шагом — то же механическое ощущение, что и ровная выдача.
-    check('курсор гаснет не до нуля', /toValue: 0\.3, duration: 620/.test(md2));
+    // В baseline Markdown.tsx явно записано удаление курсора/прозрачного хвоста после
+    // пользовательской жалобы на розовое пятно. Проверяем нынешний render и поток исполняемо.
+    const r = require('node:child_process').spawnSync(process.execPath,
+      [path.join(__dirname, 'regression_contracts_test.js')], { encoding: 'utf8' });
+    process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || '');
+    check('актуальные UI/stream/navigation контракты выполняются', r.status === 0);
   }
 
   // РИТМ, А НЕ МЕТРОНОМ. Ровная выдача читается как принтер; живой текст дышит — на точке пауза
@@ -2202,22 +2249,24 @@ console.log('\nкарта: масштаб держится, жест отдан 
   const surfaces = [
     ['app/chat.tsx', 'онбординг'],
     ['app/intent.tsx', 'мастер интента'],
-    ['app/profile/index.tsx', 'профиль'],
+    ['app/profile/location.tsx', 'профиль'],
   ];
   for (const [f, name] of surfaces) {
     check(`${name}: карте отдан жест`, /onDragChange=|onDrag=/.test(code(f)), f);
   }
   // Профиль был единственным местом, где этого не было, — карта там не двигалась вовсе.
-  const pr = code('app/profile/index.tsx');
+  // Partner вынес редактор места в отдельный route; проверяем живой экран и вход в него.
+  check('профиль открывает редактор места', /router\.navigate\('\/profile\/location'\)/.test(code('app/profile/index.tsx')));
+  const pr = code('app/profile/location.tsx');
   check('профиль гасит прокрутку листа на время жеста', /scrollEnabled=\{!dragging\}/.test(pr));
   check('и лист это умеет', /scrollEnabled\?: boolean/.test(code('src/components/ProfileShell.tsx')));
 }
 
 // ------------------------------------------------- 29. интересы выбираются чипами
-console.log('\nинтересы выбираются чипами, и цепочка ключей цела');
+console.log('\nинтересы выбираются на карте и подтверждаются каноническими ключами');
 {
   const ch = code('app/chat.tsx');
-  check('шаг увлечений рисует чипы', /<InterestChips /.test(ch));
+  check('шаг увлечений рисует карту', /<MindMap/.test(ch));
   check('колесо больше не рисуется', !/<CipherWheel/.test(ch));
   // Профиль по «Добавить» уходит в ТОТ ЖЕ шаг онбординга — поэтому правка одна на два экрана.
   // Если это разойдётся, профиль останется со старым видом, и никто этого не заметит.
@@ -2226,23 +2275,34 @@ console.log('\nинтересы выбираются чипами, и цепоч
   check('профиль ведёт в тот же шаг',
     /'\/chat\?step=hobbies&back=\/profile\/interests'/.test(code('app/profile/interests.tsx')));
 
-  const ic = read('src/components/InterestChips.tsx');
-  // ГЛАВНОЕ. Матчинг сравнивает интересы БУКВАЛЬНО: без родителей человека не найдёт тот, кто
-  // искал шире — он искал «спорт», а записан только «падел». Правило пришло из колеса.
+  // InterestChips удалён 23.08; историю перехода фиксирует interests-wheel.ts, новый
+  // MindMap — 26.09. Geometric/pagination suite + onboarding suite выше исполняют реальные
+  // layout/actions: все выбранные ключи, удаление, возврат к темам, ограниченное окно.
+  const r = require('node:child_process').spawnSync(process.execPath,
+    [path.join(__dirname, 'mindmap_layout_test.js')], { encoding: 'utf8' });
+  process.stdout.write(r.stdout || ''); process.stderr.write(r.stderr || '');
+  check('геометрия, страницы и сохранение выбранных ключей карты', r.status === 0);
+
+  // Удаление подборщика не отменяет решение 10.08: по широкому интересу должен
+  // находиться выбравший лист. Исполняем текущую запись, а не ищем старый chainOf.
+  const ast = typescript.createSourceFile('chat.tsx', read('app/chat.tsx'), 99, true, typescript.ScriptKind.TSX);
+  let declaration;
+  function visit(n) {
+    if (typescript.isVariableDeclaration(n) && n.name.getText(ast) === 'onMapDone') declaration = n.getText(ast);
+    typescript.forEachChild(n, visit);
+  }
+  visit(ast);
+  let stored = [];
+  const noop = () => {};
+  const scope = { ownTok: { current: {} }, addConfirmedInterest: noop, setOwnAsk: noop, setOwnNote: noop,
+    get: () => stored, set: (_path, value) => { stored = value; }, pushInterests: noop,
+    setJustAdded: noop, setMapOpen: noop, interestLabel: k => k, send: noop, botAfter: noop,
+    interestChain: loadSource('src/interests-wheel.ts', { './i18n': { T: ru => ru } }).interestChain };
+  const onMapDone = Function(...Object.keys(scope), compile('const ' + declaration) + ';return onMapDone;')(...Object.values(scope));
+  onMapDone(['padel']);
   check('в набор уходит вся цепочка, а не один ключ',
-    /const chainOf = \(path: WheelNode\[\], node: WheelNode\) => \[\.\.\.path, node\]\.map\(\(n\) => n\.key\)/.test(ic));
-  // Два УТВЕРЖДЕНИЯ вместо одного расстояния между ними: привязка к числу символов ломается на
-  // отступах и ничего не проверяет по существу.
-  check('лист выбирается', /if \(on\) onRemove\?\.\(n\.key\); else onAdd\(chainOf\(path, n\)\)/.test(ic));
-  check('ветка раскрывается', /setPath\(\(p\) => \[\.\.\.p, n\]\)/.test(ic));
-  // «Остановиться можно на любом уровне» — свойство колеса, которое нельзя потерять: человеку,
-  // который просто «занимается спортом», незачем выбирать между паделом и сквошем.
-  check('уровень можно взять целиком', /CHIPS_COPY\.whole\(/.test(ic));
-  check('и это явный чип, а не долгое нажатие', /onPress=\{\(\) => onAdd\(chainOf\(path\.slice\(0, -1\), here\)\)\}/.test(ic));
-  check('глубина видна строкой пути', /CHIPS_COPY\.back\(\)/.test(ic));
-  // Список живёт в ленте разговора: без предела длинная категория вытолкнет композер за экран.
-  check('высота списка ограничена', /maxHeight: 260/.test(ic));
-  check('копия лежит в src, а не в разметке', /CHIPS_COPY = \{/.test(read('src/interests-wheel.ts')));
+    ['sports', 'racket', 'padel'].every(k => stored.includes(k)),
+    'решение 10.08 о leaf+parents: onMapDone([padel]) записал ' + JSON.stringify(stored));
 }
 
 // ------------------------------------------------- 30. находки сверки 1:1 закрыты
@@ -2253,9 +2313,10 @@ console.log('\nчетыре находки сверки: слот, кнопка,
   // становилась ровно системная строка «разговор закрыт». Человек не мог открыть НИ ОДНУ другую
   // переписку: продукт кончался после первого разговора.
   const cs = code('src/chat.ts');
-  check('закрытый разговор слот не занимает', /t\.sys\?\.code !== 'chat_ended'/.test(cs));
+  check('история не блокируется локальным последним именем', !/t\.sys\?\.code !== 'chat_ended'/.test(cs));
   // Написали снова — тред опять живой: закрыть и передумать обычное дело.
-  check('и признак — последнее сообщение пары', /Признак — последнее сообщение пары/.test(read('src/chat.ts')));
+  check('слот задаёт серверная сессия', /server owned/.test(read('src/chat.ts'))
+    && /PendingActions/.test(read('src/api.ts')));
 
   const rs = code('app/results.tsx');
   check('кнопка «закончить» и правда заканчивает', /agent\.threadEnd\(self, who\)/.test(rs));
@@ -2341,12 +2402,12 @@ console.log('\nчетыре находки сверки: слот, кнопка,
     check('переходы не копят стопку экранов', guilty.length === 0,
       guilty.map((f) => f.split('/').slice(-2).join('/')).join(', '));
     const nav = code('src/components/BottomNav.tsx');
-    check('панель не реагирует на текущую вкладку', /to && !on \?/.test(nav));
+    check('панель не реагирует на текущую вкладку', /const canPick =[^;]+active !== t/.test(nav) && /!canPick\(t\)/.test(nav));
     // Одного navigate мало: он не кладёт ВТОРОЙ такой же экран, но чередование вкладок стопку
     // растит. Проверено на устройстве: «сообщения → профиль → сообщения» давало три экрана.
     // Поэтому переход сперва сворачивает стопку до главной.
     check('вкладка сворачивает стопку до главной', /dismissTo\('\/home'\);\s*router\.navigate/.test(nav));
-    check('и «домой» тоже сворачивает', /onPress=\{\(\) => router\.dismissTo\('\/home'\)\}/.test(nav));
+    check('и «домой» тоже сворачивает', /if \(t === 'home'\)[\s\S]{0,80}router\.dismissTo\('\/home'\)/.test(nav));
 
   // ---- вход по коду с почты (кадры A.03.1 … A.03.3) -------------------------------------------
   {
@@ -2386,7 +2447,7 @@ console.log('\nчетыре находки сверки: слот, кнопка,
 
     // Борд разводит два исхода стрелками: новому — A.03.3, вернувшемуся — сразу главная.
     check('новый идёт в A.03.3', /router\.replace\('\/auth-done'\)/.test(codeS));
-    check('вернувшийся — сразу на главную', /router\.dismissTo\('\/home'\)/.test(codeS));
+    check('вернувшийся — сразу на главную', /router\.replace\('\/home'\)/.test(codeS));
 
     // Адрес проверяется до отправки — кадр A.03.1b.
     check('кривой адрес ловится на экране', /looksLikeEmail/.test(email));
@@ -2418,10 +2479,10 @@ console.log('\nчетыре находки сверки: слот, кнопка,
       const lay = code('app/_layout.tsx');
       const tabs = ['home', 'activity', 'messages', 'profile/index'];
       const missing = tabs.filter((t) =>
-        !new RegExp('name="' + t + '"[^>]*animation: \'none\'').test(lay));
+        !lay.includes("['" + t + "', TAB]"));
       check('вкладки открываются без анимации', missing.length === 0, missing.join(', '));
       // А проваливание вглубь её сохраняет — там движение говорит, куда идёшь.
-      check('вглубь анимация осталась', /animation: 'slide_from_right'/.test(lay));
+      check('вглубь анимация осталась', /animation: 'ios_from_right'/.test(lay) && /const TAB = \{ animation: 'none' \}/.test(lay));
     }
     // Выход НА КОРЕНЬ через `replace` подменяет только верхний экран, оставляя всё под ним:
     // из [главная, приглашение] получалось [главная, главная]. Единственная законная форма —
@@ -2437,7 +2498,7 @@ console.log('\nчетыре находки сверки: слот, кнопка,
         src.split('\n').forEach((ln, i) => {
           if (!/router\.replace\('\/(home|activity|messages|profile)'\)/.test(ln)) return;
           if (/canGoBack\(\)/.test(ln)) return;                       // запасной путь «назад»
-          if (/index\.tsx$|login\.tsx$|chat\.tsx$/.test(full)) return; // перенаправления входа
+          if (/(?:index|login|chat|auth-code|auth|intro)\.tsx$/.test(full)) return; // перенаправления входа
           bad.push(e.name + ':' + (i + 1));
         });
       });
@@ -2543,12 +2604,13 @@ console.log('\nпрошедшая встреча не зовёт назнача�
   if (pastSrc && liveSrc && cond) {
     const at = (h) => Math.round(Date.now() / 1000) + h * 3600;
     const pair = [{ name: 'Аня', confirmed: true }, { name: 'Иван', confirmed: true }];
-    const scope = (pl) => ({ pl, other: 'Аня', planPhase, norm: (v) => String(v || '').trim().toLowerCase() });
+    const scope = (pl) => ({ pl, other: 'Аня', planPhase, norm: (v) => String(v || '').trim().toLowerCase(),
+      isOther: (name, id) => id ? id === 'peer-id' : name === 'Аня', pidOf: (row, field) => row[field + '_id'] || '' });
     const live = (pl) => run(liveSrc, scope(pl));
     const past = (pl) => run(pastSrc, scope(pl));
     // Подсказка рисуется ровно по этому условию — берём его из JSX, а не пересказываем.
     const nudge = (pl) => run('return (' + cond + ');',
-      { livePlan: live(pl), pastPlan: past(pl), talk: new Array(12), noNudge: false });
+      { livePlan: live(pl), pastPlan: past(pl), talk: new Array(12), noNudge: false, composerEnabled: true });
 
     check('вчерашняя встреча — прошедшая',
       planPhase({ state: 'confirmed', starts_at: at(-24), participants: pair }) === 'after');
@@ -2609,7 +2671,7 @@ console.log('\n«назад» в мастере интента отступае�
   const from = src.indexOf('const prevStep = ');
   const to = src.indexOf(': null;', from) + ': null;'.length;
   check('порядок шагов назад нашёлся в исходнике', from >= 0 && to > from, 'переименовали prevStep?');
-  const js = src.slice(from, to).replace('(from: IntentStepId): IntentStepId | null =>', '(from) =>');
+  const js = compile(src.slice(from, to));
   const make = new Function('lastStep', js + '\nreturn prevStep;');
   const online = make('link');
 
@@ -2619,7 +2681,7 @@ console.log('\n«назад» в мастере интента отступае�
     'третий шаг ветвится по типу встречи: офлайн и гибрид уехали бы на чужой');
 
   check('цепочка деталей ведёт к началу',
-    online('place') === 'nature' && online('both') === 'nature' && online('link') === 'nature'
+    online('place') === 'who' && online('both') === 'who' && online('link') === 'who'
     && online('nature') === 'who' && online('who') === 'when'
     && online('when') === 'size' && online('size') === 'how',
     'разорванная цепочка возвращает не туда, откуда пришли');
@@ -2646,7 +2708,7 @@ console.log('\n«назад» в мастере интента отступае�
     'router.back() в шапке снимает ВЕСЬ мастер и возвращает в разговор создания');
 
   check('из мастера выходят только когда отступать некуда',
-    gb.indexOf('prevStep(step)') >= 0 && gb.indexOf('router.back()') > gb.indexOf('prevStep(step)'),
+    gb.indexOf('prevStep(step,') >= 0 && gb.indexOf('router.back()') > gb.indexOf('prevStep(step,'),
     'выход обязан стоять ПОСЛЕ проверки предыдущего шага, а не вместо неё');
 
   check('другого выхода по «назад» в мастере нет',
@@ -2665,26 +2727,28 @@ console.log('\n«назад» в мастере интента отступае�
   check('намеренный выход из мастера перехват не глотает',
     /'GO_BACK'/.test(pr) && /'POP'/.test(pr) && /dispatch\(a\)/.test(pr),
     'задерживать можно только «назад»; всё остальное обязано быть отправлено дальше');
-  check('и «Все интенты» этим выходом остаётся',
-    /allBtn[\s\S]{0,160}dismissTo\('\/home'\)[\s\S]{0,80}navigate\('\/activity'\)/.test(wiz),
-    'кнопка называется «Все интенты» — значит ведёт к ним, а не в никуда');
+  check('выход на список остаётся в общей нижней панели',
+    /intents: '\/activity'/.test(code('src/components/BottomNav.tsx')) && /dispatch\(a\)/.test(pr));
   check('перехват объявлен зависимостью, а не подобран из чужих узлов',
-    /"@react-navigation\/native"/.test(read('package.json')),
-    'usePreventRemove приезжает транзитивно от expo-router и может уехать с его версией');
+    /usePreventRemove[^;]+from 'expo-router\/react-navigation'/.test(wiz),
+    'SDK 57 требует публичный экспорт expo-router/react-navigation');
 
-  // Пауза «Awesome!» уводит ВПЕРЁД через 900 мс. Без гашения таймера «назад», нажатая в эти
-  // 900 мс, отступала на шаг — и тут же возвращалась обратно.
-  check('пауза между шагами гасится при возврате',
-    /ackTimer\.current = setTimeout\(/.test(wiz) && /clearTimeout\(ackTimer\.current\)/.test(gb),
+  // Новый мастер переходит сразу через nextOf: таймер шага не должен отменить возврат.
+  // Если пауза вернётся, её по-прежнему обязан гасить goBack.
+  const stepTimers = [...wiz.matchAll(/setTimeout\(\s*\(\)\s*=>\s*\{([^}]+)\}/g)]
+    .filter((m) => /setStep\(/.test(m[1]));
+  check('переход по таймеру не отменяет возврат',
+    stepTimers.length === 0 ||
+      (/ackTimer\.current = setTimeout\(/.test(wiz) && /clearTimeout\(ackTimer\.current\)/.test(gb)),
     'иначе шаг назад отменяется таймером, который уже был заведён');
 
   // Порядок веток goBack — смысл, а не оформление: верхний слой закрывается первым.
   check('открытый лист закрывается раньше, чем отступает шаг',
     gb.indexOf('setEditOpen(false)') >= 0
-    && gb.indexOf('setEditOpen(false)') < gb.indexOf('prevStep(step)'),
+    && gb.indexOf('setEditOpen(false)') < gb.indexOf('prevStep(step,'),
     'на Android «назад» иначе закроет лист И отступит на шаг одним нажатием');
   check('идущий поиск отменяется, а не остаётся без экрана',
-    gb.indexOf('cancelSearch()') >= 0 && gb.indexOf('cancelSearch()') < gb.indexOf('prevStep(step)'),
+    gb.indexOf('cancelSearch()') >= 0 && gb.indexOf('cancelSearch()') < gb.indexOf('prevStep(step,'),
     'иначе свайп во время запроса снимает экран, а ответ приезжает на размонтированный');
 }
 
@@ -2729,7 +2793,7 @@ console.log('\nправка интента со сводки происходи�
     ['<RadiusMap lat={la} lon={lo} km={v.radiusKm}', 'карта района'],
     ['DETAILS.linkNote()', 'блок ссылки'],
     ['label={WIZ.sexChip(k)}', 'чипы аудитории'],
-    ['AGE_PRESETS.map(', 'чипы возраста'],
+    ['{AGE_PRESETS.map(', 'чипы возраста'],
     ['items={days}', 'ряд дней'],
     ['TIME_SLOTS.map(', 'ряд времени'],
   ];

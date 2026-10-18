@@ -14,7 +14,7 @@
  * разбирает сервер, и оно ложится меткой в ту же корзину. Пока разбирается — бледная метка с
  * вертушкой; если слово читается по-разному — короткий вопрос с вариантами прямо над корзиной.
  */
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { STEP_HOBBIES } from '../onboarding';
 import { interestLabel } from '../interest-label';

@@ -52,12 +52,19 @@ def frame_of(plan, vote, is_owner):
     if not plan:
         return "none"
     st = plan.get("state")
-    if st in ("cancelled", "done"):
-        return "closed"
+    if st == "cancelled":
+        hold_closed = (plan.get("hold") or {}).get("closed")
+        return "holdClosed" if hold_closed else "closed"
+    if plan.get("feedback_due"):
+        return "answered" if plan.get("my_feedback") else "feedback"
+    if st == "done":
+        return "answered" if plan.get("my_feedback") else "closed"
+    if plan.get("started"):
+        return "now"
     if st == "locked":
         return "locked"
     if st == "below_quorum":
-        return "below"
+        return "holdAsk" if (plan.get("hold") or {}).get("ask") else "below"
     if plan.get("stay_or_leave"):
         return "stayOrLeave"
     if plan.get("accept_or_leave"):
@@ -67,7 +74,7 @@ def frame_of(plan, vote, is_owner):
     if vote and vote.get("state") == "closed" and not vote.get("decided"):
         return "voteDecide" if is_owner else "voteWait"
     if st == "proposed":
-        return "fix" if plan.get("can_fix") else "proposed"
+        return "proposed"
     return "confirmed"
 
 

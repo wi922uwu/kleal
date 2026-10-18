@@ -20,7 +20,7 @@
  *   — правки района: её блок (карта, радиус, адрес) живёт внутри мастера и наружу не вынесен;
  *     вторая копия разошлась бы с первой на первой же правке. Район здесь показан, но не правится.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator,
 } from 'react-native';
@@ -43,7 +43,7 @@ import {
 import { EditSheet } from '../src/components/ProfileShell';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { TimeDial, RangeDial } from '../src/components/Dials';
-import { IconChevronLeft, IconCalendar, IconClock, IconPin, IconPencil, IconImagePlaceholder } from '../src/components/icons';
+import { IconChevronLeft, IconCalendar, IconClock, IconPin, IconPencil } from '../src/components/icons';
 import { color, radius as rad, space, type } from '../src/theme';
 import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { Cover } from '../src/components/Cover';

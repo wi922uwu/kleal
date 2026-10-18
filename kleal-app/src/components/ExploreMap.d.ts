@@ -22,7 +22,9 @@ export declare function ExploreMap(props: {
   /** «planet» — карта сворачивается в планету («Онлайн»); «city» — разворачивается обратно в город. */
   mode?: 'city' | 'planet';
   /** Страны с интентами: плашки на планете. */
-  countries?: { code: string; lat: number; lon: number; count: number }[] | null;
+  countries?: { code: string; lat: number; lon: number; count: number; w?: number }[] | null;
+  /** Буди думает над вопросом шару — ореолы стран бегут волной. */
+  scanning?: boolean;
   /** Выбранная страна: её плашка подсвечена, планета к ней довёрнута. */
   selectedCountry?: string | null;
   /** Нажали на плашку страны на планете. */

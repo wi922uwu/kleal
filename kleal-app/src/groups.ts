@@ -12,7 +12,7 @@
  *    already in», а не «кого ещё позвали» (GR.16).
  */
 import { T } from './i18n';
-import { myId } from './api';
+import { myId, isMe } from './api';
 import { normalizeIntentSize } from './intent';
 import type { Msg } from './chat';
 
@@ -61,7 +61,8 @@ export const isOnlineGroup = (g: any) => String(g?.mode || g?.intent?.mode || ''
 /** GRO.24 / GRO.42 / GRO.56: «Video call · your link» / «Video call · Mateo’s link». */
 export function groupCallLine(g: any, me = ''): string {
   const norm = (s: any) => String(s || '').trim().toLowerCase();
-  const mine = !!g?.i_am_owner || (!!norm(me) && norm(g?.owner) === norm(me));
+  // Владелец — по признаку сервера или по id; имя только для старых ответов без owner_id.
+  const mine = !!g?.i_am_owner || (!!norm(me) && isMe(g?.owner, g?.owner_id, me));
   const owner = String(g?.owner || '').trim();
   return mine ? T('Звонок · твоя ссылка', 'Video call · your link', 'Videollamada · tu enlace')
     : owner ? T(`Звонок · ссылка ${owner}`, `Video call · ${owner}’s link`, `Videollamada · enlace de ${owner}`)
@@ -81,8 +82,8 @@ export const GROUP = {
   regime: (min: number, max: number, cap: number) =>
     T(
       `Группа · ${min}–${max} человек · не больше ${cap} приглашений разом · кто первым согласится, тот в группе`,
-      `Group · ${min}–${max} people · ${cap} open invites at a time on Free · first ${max} who accept are in`
-    , `Grupo · ${min}–${max} personas · ${cap} invitaciones abiertas al mismo tiempo en Free · las primeras ${max} que acepten entrarán`),
+      `Group · ${min}–${max} people · ${cap} open invites at a time · first ${max} who accept are in`
+    , `Grupo · ${min}–${max} personas · ${cap} invitaciones abiertas al mismo tiempo · las primeras ${max} que acepten entrarán`),
 
   /**
    * Счётчик набора — GR.17: «2 of 5 joined · 3 invites still open · a plan needs 3».
@@ -149,9 +150,9 @@ const P = (p: Pron) => ({
 export const OFP = {
   /** OF.12 */
   lead: (n: number, short: string, cap: number) => T(
-    `Kleal подобрал для «${short}» ${n} чел. Зови одного или нескольких — на Free до ${cap} открытых приглашений. Ты выбираешь одного из тех, кто скажет «да».`,
-    `Kleal picked ${n} ${n === 1 ? 'person' : 'people'} for your ${short}. Invite one or several — up to ${cap} open invites on Free. You pick one from those who say yes.`,
-    `Kleal eligió ${n} ${n === 1 ? 'persona' : 'personas'} para tu ${short}. Invita a una o a varias — hasta ${cap} invitaciones abiertas en Free. Eliges a una de las que digan que sí.`),
+    `Kleal подобрал для «${short}» ${n} чел. Зови одного или нескольких — до ${cap} открытых приглашений. Ты выбираешь одного из тех, кто скажет «да».`,
+    `Kleal picked ${n} ${n === 1 ? 'person' : 'people'} for your ${short}. Invite one or several — up to ${cap} open invites. You pick one from those who say yes.`,
+    `Kleal eligió ${n} ${n === 1 ? 'persona' : 'personas'} para tu ${short}. Invita a una o a varias — hasta ${cap} invitaciones abiertas. Eliges a una de las que digan que sí.`),
   /** OF.12e */
   leadPicked: (name: string, others: string) => T(
     `Ты выбрал(а) ${name}. Чат открыт${others ? ` — ${others} получили уведомление` : ''}.`,
@@ -262,9 +263,9 @@ export const GR14 = {
   title: () => T('Кто лучше подходит твоей группе', 'Best fit for your group', 'Quién encaja mejor en tu grupo'),
   /** GR.14: «Kleal picked 3 people for your BBQ. Invite them one by one — up to 3 open invites on Free. The first two who say yes join the group.» */
   lead: (n: number, short: string, cap: number, take: number) => T(
-    `Kleal подобрал для «${short}» ${n} чел. Приглашай по одному — на Free до ${cap} открытых приглашений. Первые ${word(take)}, кто скажет «да», попадут в группу.`,
-    `Kleal picked ${n} ${n === 1 ? 'person' : 'people'} for your ${short}. Invite them one by one — up to ${cap} open invites on Free. The first ${word(take)} who say yes join the group.`,
-    `Kleal eligió ${n} ${n === 1 ? 'persona' : 'personas'} para tu ${short}. Invítalas una a una — hasta ${cap} invitaciones abiertas en Free. Las primeras ${word(take)} que digan que sí entran al grupo.`),
+    `Kleal подобрал для «${short}» ${n} чел. Приглашай по одному — до ${cap} открытых приглашений. Первые ${word(take)}, кто скажет «да», попадут в группу.`,
+    `Kleal picked ${n} ${n === 1 ? 'person' : 'people'} for your ${short}. Invite them one by one — up to ${cap} open invites. The first ${word(take)} who say yes join the group.`,
+    `Kleal eligió ${n} ${n === 1 ? 'persona' : 'personas'} para tu ${short}. Invítalas una a una — hasta ${cap} invitaciones abiertas. Las primeras ${word(take)} que digan que sí entran al grupo.`),
   /** GR.14e: группа собралась. Хвост про закрывшиеся — только если такие есть. */
   leadFull: (yes: string, closedNames: string, many: boolean) => T(
     `${yes} — «да», и группа собрана.${closedNames ? ` ${many ? 'Приглашения' : 'Приглашение'} ${closedNames} ${many ? 'закрылись' : 'закрылось'} сами.` : ''}`,
@@ -284,6 +285,22 @@ export const GR14 = {
 
   invite: (name: string) => T(`Пригласить ${name}`, `Invite ${name}`, `Invitar a ${name}`),
   cancelInvite: () => T('Отменить приглашение', 'Cancel invite', 'Cancelar invitación'),
+  /*
+    СКАЗАЛ «ДА» ПОСЛЕ НАЧАЛА ПЛАНА (сервер: state awaiting_approval). Вход решает организатор — раньше
+    у него была только «Отменить», а её сервер отклоняет (AWAITING_APPROVAL), и человек висел до
+    конца срока. Сверка экранов и бэкенда 17.10.2026, п. 18.
+  */
+  letIn: (name: string) => T(`Впустить ${name}`, `Let ${name} in`, `Dejar entrar a ${name}`),
+  dontLetIn: () => T('Не впускать', 'Don’t let in', 'No dejar entrar'),
+  awaitingNote: (name: string) => T(`${name} сказал(а) «да», когда план уже обсуждали. Впустить в группу?`,
+    `${name} said yes after the plan was already under way. Let them into the group?`,
+    `${name} dijo que sí cuando el plan ya estaba en marcha. ¿Le dejas entrar al grupo?`),
+  awaitingBanner: (name: string) => T(`${name} хочет присоединиться`, `${name} wants to join`, `${name} quiere unirse`),
+  awaitingBannerNote: () => T('План остаётся как есть — новый человек просто войдёт в группу.',
+    'The plan stays as it is — they simply join the group.', 'El plan sigue igual: solo se une al grupo.'),
+  approveFull: () => T('Мест в группе больше нет.', 'The group is already full.', 'El grupo ya está completo.'),
+  approveClosed: () => T('Группа закрыта.', 'The group is closed.', 'El grupo está cerrado.'),
+  approveFailed: () => T('Не получилось. Попробуй ещё раз.', 'Didn’t work. Try again.', 'No ha funcionado. Inténtalo de nuevo.'),
   openChat: () => T('Открыть чат группы', 'Open the group chat', 'Abrir el chat del grupo'),
   seeNew: () => T('Показать новых людей', 'See new candidates', 'Ver nuevas personas'),
 
@@ -349,14 +366,13 @@ export const GR14 = {
   cancelYes: () => T('Отменить приглашение', 'Cancel the invite', 'Cancelar la invitación'),
   keep: () => T('Оставить', 'Keep it', 'Mantenerla'),
 
-  /** Лист GR.15 — кап открытых приглашений. Plus в продукте нет: кнопка честно выключена. */
-  /** Подпись для озвучки и тестов. На экране — «Kleal Plus+» с коралловым «Plus+» (имя тарифа не переводится). */
-  capTitle: () => 'Kleal Plus+',
+  /** Лист GR.15 — общий для тарифов кап открытых приглашений. */
+  capTitle: () => T('Лимит приглашений', 'Invitation limit', 'Límite de invitaciones'),
   capLead: (n: number) => T(`У тебя ${n} открытых приглашения`, `You have ${n} open invites`, `Tienes ${n} invitaciones abiertas`),
   capNote: (cap: number, max: number) => T(
-    `На Free открыто не больше ${cap} приглашений разом, а в группе до ${max} человек. С Kleal Plus зови сколько хочешь — €6,99 в месяц, отмена в любой момент.`,
-    `On Free you can keep ${cap} invites open at a time, and a group is up to ${max} people. With Kleal Plus you invite as many people as you like — €6.99 a month, cancel any time.`,
-    `En Free puedes tener ${cap} invitaciones abiertas a la vez, y un grupo es de hasta ${max} personas. Con Kleal Plus invitas a tantas personas como quieras — €6,99 al mes, cancela cuando quieras.`),
+    `Можно держать ${cap} приглашений открытыми, в группе до ${max} человек. Эти ограничения одинаковы для Free и Plus.`,
+    `Keep up to ${cap} invitations open, with up to ${max} people in a group. These limits are the same for Free and Plus.`,
+    `Hasta ${cap} invitaciones abiertas y ${max} personas por grupo. Estos límites son iguales en Free y Plus.`),
   getPlus: () => T('Подключить Kleal Plus', 'Get Kleal Plus', 'Obtén Kleal Plus'),
   notNow: () => T('Не сейчас', 'Not now', 'Ahora no'),
 
@@ -804,6 +820,8 @@ export const GINVITE = {
   notThisTime: () => T('Не в этот раз', 'Not this time', 'No esta vez'),
   declined: () => T('Ты отказал(ась/ся). Приглашение закрыто.', 'You passed. The invite is closed.', 'Has dicho que no. La invitación está cerrada.'),
   gone: () => T('Приглашение больше не действует.', 'This invite is no longer live.', 'Esta invitación ya no está activa.'),
+  /** NOT_ELIGIBLE: правила этой группы (возраст, пол, блокировка) больше не пускают — сверка п. 16. */
+  notEligible: () => T('В эту группу сейчас не получится войти — её условия не подходят.', 'You can’t join this group right now — its settings don’t match.', 'Ahora no puedes unirte a este grupo: sus condiciones no encajan.'),
   /** GR.22, дословно по смыслу: группа заполнилась, пока ты думал(а), и твоей вины в этом нет. */
   full: (title: string, max: number) =>
     T(
@@ -841,6 +859,10 @@ export const GINVITE = {
                            `${owner} cerró ${title} antes de fijar un plan. No fue por ti — el chat queda como archivo.`)
     /* GR.56a, четвёртая причина: организатор отозвал именно это приглашение (GR.14b). Сервер
        называет это withdrawn/cancelled — оба читаются одинаково. */
+    /* Сказал «да» после начала плана, организатор не впустил (сервер: closed: "declined", сверка п. 18). */
+    : why === 'declined' ? T(`${owner} не впустил(а) тебя в «${title}»: план там уже обсуждали. Ты ни при чём — твоя затея остаётся открытой.`,
+                             `${owner} didn’t let you into ${title} — the plan was already under way. Nothing you did — your intent stays open.`,
+                             `${owner} no te dejó entrar en ${title}: el plan ya estaba en marcha. No fue por ti — tu propuesta sigue abierta.`)
     : why === 'withdrawn' || why === 'cancelled' ? T(`${owner} отменил(а) твоё приглашение в «${title}» до твоего ответа. Ты ни при чём — твоя затея остаётся открытой.`,
                            `${owner} closed your invite to ${title} before you answered. Nothing you did — your intent stays open.`,
                            `${owner} cerró tu invitación a ${title} antes de que respondieras. No fue por ti — tu propuesta sigue abierta.`)

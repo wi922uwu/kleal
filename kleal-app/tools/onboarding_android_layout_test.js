@@ -78,7 +78,7 @@ function load(file, extra = {}) {
   const output = ts.transpileModule(read(file), { compilerOptions: { jsx: ts.JsxEmit.React, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, esModuleInterop: true } }).outputText;
   const mod = { exports: {} };
   const imports = { ...modules, ...extra };
-  Function('require', 'module', 'exports', output)(name => {
+  Function('React', 'require', 'module', 'exports', output)(React, name => {
     if (name.endsWith('.wav')) return 1;
     assert(name in imports, `Unmocked import ${name} in ${file}`);
     return imports[name];

@@ -11,7 +11,6 @@
  * переписки, про удаление по запросу в поддержку и про «мы не передаём данные третьим лицам»:
  * первого нет, второго некому исполнить, третье требует договора, а не абзаца.
  */
-import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card } from '../../src/components/ProfileShell';

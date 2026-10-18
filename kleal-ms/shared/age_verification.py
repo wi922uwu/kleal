@@ -48,6 +48,19 @@ def enabled():
     return os.environ.get('KLEAL_AGE_GATE_ENABLED') == '1'
 
 
+def voluntary():
+    """ДОБРОВОЛЬНАЯ проверка (18.10.2026, решение Ивана): пройти Didit может любой вошедший с анкетой,
+    и одобрение даёт галочку. Это НЕ рубильник допуска: enabled() по-прежнему решает, пускать ли только
+    проверенных, и пока он выключен, поиск и вход никого не прячут (04.10 обязательная проверка
+    опустошила поиск). Выключается только явным KLEAL_AGE_VOLUNTARY=0."""
+    return os.environ.get('KLEAL_AGE_VOLUNTARY', '1') != '0'
+
+
+def active():
+    """Путь проверки у провайдера работает: обязательная проверка или добровольная."""
+    return enabled() or voluntary()
+
+
 def subject(key, account):
     secret = os.environ.get('KLEAL_AGE_BINDING_SECRET', '')
     if len(secret) < 32:
@@ -185,7 +198,16 @@ def present(key, account, rec, *, onboarded=True, url=None):
 
 def state(key, account, onboarded=True):
     if not required(account):
-        return public(legacy=True, onboarded=onboarded)
+        if not voluntary():
+            return public(legacy=True, onboarded=onboarded)
+        # Добровольно: показываем НАСТОЯЩЕЕ состояние проверки, но допуск остаётся прежним (admitted) —
+        # проверка не обязательна, и её отсутствие ни от чего не отрезает.
+        with database() as conn:
+            rec = record(conn, subject(key, account))
+        result = present(key, account, rec, onboarded=onboarded)
+        result['admitted'] = True
+        result['voluntary'] = True
+        return result
     with database() as conn:
         rec = record(conn, subject(key, account))
     return present(key, account, rec, onboarded=onboarded)
@@ -448,7 +470,7 @@ def reconcile(key, account):
 def start(key, account, language='en', onboarded=False):
     if not onboarded:
         raise VerificationError('onboarding_required', 409)
-    if not required(account):
+    if not required(account) and not voluntary():
         return public(legacy=True)
     sub = subject(key, account)
     with database() as conn:
@@ -609,7 +631,7 @@ def webhook(raw, headers):
     # Authenticate before ACK; do not persist the event or call the provider.
     if diagnostic:
         return {'ok': True, 'ignored': True}
-    if not enabled():
+    if not active():
         # Transport diagnostics must not require activating the product gate.
         # Do not ACK/consume a real event during rollout or rollback: request a
         # retry and stop before any account lookup, database write or provider I/O.

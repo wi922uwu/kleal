@@ -100,7 +100,20 @@ def status(person_id):
 
 
 def start_preview(person_id):
+    import monetization_store as phase2
+    if phase2.mode() == 'enforce':
+        raise MonetizationError('preview_starts_on_meaningful_use', 409)
     if not preview_enabled():
         raise MonetizationError("preview_unavailable", 409)
     store = PreviewStore(database_path())
     return describe(store.start(person_id), enabled=True)
+
+
+def status_v2(person_id):
+    import monetization_store as phase2
+    if phase2.mode() == 'enforce':
+        return phase2.status(person_id)
+    # Off/shadow does not claim working entitlement enforcement.
+    result = status(person_id)
+    result['mode'] = phase2.mode()
+    return result

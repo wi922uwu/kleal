@@ -72,7 +72,10 @@ def local():
     check("вторая ошибка уменьшает счётчик", r4.get("attempts_left") == app.CODE_ATTEMPTS - 2, r4)
     r5 = app.verify_code(mail, "222222")
     check("после последней попытки код мёртв", r5.get("error") == "expired", r5)
-    check("и из памяти удалён", mail not in app._CODES)
+    # 17.10.2026: удаляется КОД, а счётчик писем остаётся — иначе лимит «5 в час» обходился
+    # тремя неверными попытками (см. _kill_code в app.py).
+    check("и из памяти удалён", not (app._CODES.get(mail) or {}).get("hash"))
+    check("а счётчик писем остался", (app._CODES.get(mail) or {}).get("sent") == 1, app._CODES.get(mail))
 
     print("\n-- верный код, новый аккаунт --")
     mail2 = "probe%db@example.com" % S

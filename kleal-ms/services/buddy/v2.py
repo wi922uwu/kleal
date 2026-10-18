@@ -24,7 +24,8 @@ user), профиль нормальным текстом и словарь ин
 КОНТРАКТ ТЕЛЕФОНА (проверено по app/buddy.tsx и src/buddy.ts на боевой копии 24.09.2026):
   * чипы карточки телефон рисует из intent.topics, поле tags он не показывает;
   * окно затеи не выезжает, если ответ кончается вопросом — поэтому хвостовой вопрос при затее снимаем;
-  * в потоке шлём только событие done: delta и done одной пачкой заставляют экран напечатать ответ дважды.
+  * в потоке delta — только проверенные законченные предложения первой попытки (_Поток, 17.10.2026), done — итог
+    с replaced, если он разошёлся с показанным; delta и done одной пачкой экран печатал дважды — так не шлём.
 """
 import ast
 import io
@@ -227,6 +228,10 @@ def разобрать(сырое):
     else:
         i = s.find('{"card"')
         ответ, хвост = (s[:i], s[i:]) if i >= 0 else (s, "")
+    # МАРКЕР В КОНЦЕ СТРОКИ. «…spielen kannst. ###CARD» — модель пишет маркер не с новой строки, `_МАРКЕР` его
+    # не видит, хвост режется по {"card", и «###CARD» оставался в тексте — брак обеих попыток, ход уходил в V1
+    # (проба 17.10.2026, согласие по-немецки).
+    ответ = re.sub(r"(?i)[\s`*_>#]*#{2,}\s*card\b[\s:*_`]*$", "", ответ)
     ответ = re.sub(r"[\s`*#_]+$", "", ответ).strip()
     карточка = None
     м = re.search(r"\{.*\}", хвост, re.S)
@@ -237,11 +242,126 @@ def разобрать(сырое):
                 break
             except Exception:
                 continue
-    чисто = bool(ответ) and '{"' not in ответ and "###" not in ответ
-    return ответ, (карточка if isinstance(карточка, dict) else None), чисто
+    карточка = карточка if isinstance(карточка, dict) else None
+    # ОДНА КАРТОЧКА БЕЗ ТЕКСТА — НЕ БРАК. На «sì volentieri» / «sim claro» модель отвечает только карточкой (проба
+    # 17.10.2026: итальянский 3 из 3, португальский 2 из 3), обе попытки шли в брак, и ход уходил в V1. Окно и
+    # есть ответ — контракт телефона; годится ли сама карточка, решает ход() (без затеи — снова брак).
+    чисто = (bool(ответ) or карточка is not None) and '{"' not in ответ and "###" not in ответ
+    return ответ, карточка, чисто
 
 
 # ---------------------------------------------------------------- сито чипов
+
+# «ВМЕСТЕ» НА ЯЗЫКЕ ЧЕЛОВЕКА. Самопроверка 18.10.2026: «Pedalar вместе», «Spielen вместе», «Scherzare вместе» — к
+# глаголу из одного слова приклеивалось русское слово для всех языков, кроме ru/en/es.
+_ВМЕСТЕ = {"ru": " вместе", "en": " together", "es": " juntos", "de": " zusammen", "fr": " ensemble", "it": " insieme",
+           "pt": " juntos"}
+
+
+_ТОЛЬКО_ПРИВЕТ = re.compile(r"(?iu)^\s*(?:привет|здравствуй\w*|добрый\s+\w+|hi|hello|hey|hola|buenas|ciao|salve|salut|"
+                            r"bonjour|hallo|servus|ol[aá]|oi|ei)\b[\s,!.]*(?:(?-i:[A-ZА-ЯЁ])[\w-]*)?[\s,!.]*$")
+
+
+_ПУСТЫЕ_ЧИПЫ = {"время", "скука", "скучно", "досуг", "настроение", "дело", "занятие", "что-то", "развлечение", "веселье",
+                "компания", "вечер", "день", "выходные", "fun", "boredom", "bored", "time", "something", "plans", "plan",
+                "langweilig", "langeweile", "spaß", "spass", "freizeit", "ennui", "ennuyeux", "temps", "noia", "divertente",
+                "divertimento", "tempo", "aburrido", "aburrimiento", "diversión", "diversion", "tiempo", "tédio", "tedio",
+                "chato", "diversão", "diversao", "casual", "algo", "qualcosa", "quelque chose", "etwas"}
+
+
+def _пустой_чип(x, B):
+    """Чип из пустого слова: «время», «скука», «langweilig» — не занятие."""
+    н = _плоско(x).strip()
+    if н in _ПУСТЫЕ_ЧИПЫ:
+        return True
+    return bool(_формы(н, B) & _ПУСТЫЕ_ЧИПЫ)
+
+
+_ПРЕДЛОГ_МЕСТА = {"в", "во", "на", "по", "у", "около", "возле", "рядом", "под", "у", "in", "at", "near", "on", "around", "en",
+                  "por", "cerca", "em", "no", "na", "nos", "nas", "perto", "a", "al", "ao", "vicino", "presso", "près", "pres",
+                  "dans", "au", "aux", "im", "am", "bei", "um", "com", "con", "with", "mit", "avec", "pelos", "pelas", "nel", "nella"}
+_ВРЕМЯ_СЛОВА = re.compile(r"(?iu)^(?:утр\w*|вечер\w*|дн[её]м|ночь\w*|выходн\w*|суббот\w*|воскресен\w*|morning|evening|weekend|"
+                         r"tonight|ma[ñn]ana|tarde|noche|fin\s+de\s+semana|fim\s+de\s+semana|manh[ãa]|noite|matin|soir|"
+                         r"week-?end|abend|morgen|wochenende|sera|mattina|fine\s+settimana|de\s+manh[ãa])$")
+
+
+def _место_или_время(x, said, B):
+    """Чип — место или время: слово времени или в словах человека перед ним стоит предлог места («в», «por», «a»…)."""
+    н = _плоско(x).strip()
+    if _ВРЕМЯ_СЛОВА.match(н):
+        return True
+    первое = (re.findall(r"[^\W\d_]{3,}", н, re.UNICODE) or [""])[0]
+    if not первое:
+        return False
+    фх = _формы(первое, B)
+    for текст in said or []:
+        токены = re.findall(r"[^\W\d_]+", _плоско(текст), re.UNICODE)
+        for i, т in enumerate(токены):
+            if т == первое or (_формы(т, B) & фх) or (len(т) >= 5 and т[:5] == первое[:5]):
+                if any(p in _ПРЕДЛОГ_МЕСТА for p in токены[max(0, i - 2):i]):
+                    return True
+    return False
+
+
+def _в_названии(x, текст, B):
+    """Есть ли слово чипа в названии/предмете: по словарной форме или по общему началу от 5 букв."""
+    слова_т = re.findall(r"[^\W\d_]{3,}", _плоско(текст), re.UNICODE)
+    формы_т = set()
+    for w in слова_т:
+        формы_т |= _формы(w, B)
+    for w in re.findall(r"[^\W\d_]{3,}", _плоско(x), re.UNICODE):
+        if _формы(w, B) & формы_т:
+            return True
+        if len(w) >= 5 and any(len(t) >= 5 and t[:5] == w[:5] for t in слова_т):
+            return True
+        # корень внутри слова: «рыбная ловля» при «Порыбачить…» (ночной замер: иначе терялась рыбалка)
+        if len(w) >= 5 and any(w[:3] in t for t in слова_т if len(t) >= 5):
+            return True
+    return False
+
+
+_ПУСТАЯ_ВЕЖЛИВОСТЬ = re.compile(
+    r"(?iu)^\s*(?:рад[аы]?\s+(?:помочь|приветствовать|стараться)|конечно|понял[а]?|отлично|хорошо|супер|ясно|"
+    r"glad\s+to\s+help|happy\s+to\s+help|sure|of\s+course|got\s+it|encantad[oa]|claro(?:\s+que\s+s[ií])?|con\s+gusto|"
+    r"gerne|klar|avec\s+plaisir|bien\s+s[uû]r|volentieri|certo|com\s+prazer|claro)"
+    r"(?:\s*,?\s*(?-i:[A-ZА-ЯЁ])[\w-]*)?(?:\s*[,—–-]?\s*(?:рад\s+помочь|glad\s+to\s+help))?[\s!.]*$")
+
+
+def _двухбуквенный_сказан(к, said, B):
+    """Короткий ключ (ai, cs, ml) сказан, если в словах человека — без снятия ударений — есть слово, которое реестр
+    сводит в этот ключ («кс» -> cs, «AI» -> ai), или полное имя ключа из подписи."""
+    for x in said or []:
+        for w in re.findall(r"[^\W\d_]{2,}", str(x or "").lower(), re.UNICODE):
+            try:
+                if B.norm_topic(w) == к:
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+# РАССУЖДЕНИЯ МОДЕЛИ НЕ ДЛЯ ЧЕЛОВЕКА. Самопроверка 18.10.2026: итальянцу в сборщике ушло «Okay, let's see. They
+# mentioned going to the cinema or an aperitivo… I should create a card for one of these» — модель думала вслух.
+_РАССУЖДЕНИЕ = re.compile(
+    r"(?iu)^\s*(?:okay|ok|alright|hmm+)[,.]?\s+(?:so[,]?\s+)?let'?s\s+see\b|\bthe\s+user\s+(?:is|wants|said|says|asked|mentioned|has)\b|"
+    r"\b(?:they|he|she)\s+(?:mentioned|said|asked|want(?:s|ed)?\s+to)\b.{0,80}\bi\s+should\b|\bi\s+should\s+(?:create|send|return|make)\s+(?:a|the)\s+card\b|"
+    r"\b(?:the|a)\s+card\s+(?:should|must|needs?\s+to)\b|###|\breturn\s+(?:the\s+)?json\b|<\s*/?\s*think\s*>")
+_АНГЛ_СЛОВА = re.compile(r"(?iu)\b(?:the|and|you|your|to|is|are|for|with|someone|would|like|it'?s|that|this|let'?s|i'?m|i'?ll|what|how)\b")
+
+
+def _утечка_рассуждений(ответ):
+    return bool(_РАССУЖДЕНИЕ.search(str(ответ or "")))
+
+
+def _английский_не_к_месту(ответ, lang):
+    """Ответ по-английски при разговоре на es/de/fr/it/pt: от трёх английских служебных слов и их больше половины слов-маркеров."""
+    if lang not in ("es", "de", "fr", "it", "pt"):
+        return False
+    т = str(ответ or "")
+    англ = len(_АНГЛ_СЛОВА.findall(т))
+    слов = len(re.findall(r"[^\W\d_]+", т, re.UNICODE))
+    return англ >= 3 and англ * 4 >= слов
+
 
 def _плоско(s):
     """ё→е, без ударений, нижний регистр — чтобы «ещё/еще», «café/cafe» сравнивались как одно.
@@ -553,10 +673,23 @@ def _без_нет_впереди(x):
     return _НЕТ_ПЕРЕД_ВЫБОРОМ.sub("", str(x or ""))
 
 
+# «НЕ С КЕМ» — НЕ ОТКАЗ. Самопроверка 18.10.2026: «последнее время не с кем было поиграть в теннис» -> «не … поиграть
+# в теннис» читалось как отказ, карточку «Поиграть в теннис» отбраковывало дважды, и человек получал «Чем хочется
+# заняться?» после согласия. «Не с кем / некому / nobody to / no tengo con quién» — это и есть просьба.
+_НЕ_С_КЕМ = re.compile(r"(?iu)\bне\s+с\s+кем\b|\bнекому\b|\bнекого\s+позвать\b|"
+                       # «никто не предложил поиграть в теннис» — про других людей, не отказ (самопроверка 18.10.2026)
+                       r"\bникто\s+не\s+[а-яё]+|\b(?:nobody|no\s+one|noone)\s+(?:has\s+|have\s+|ever\s+|wants?\s+to\s+)?[a-z]+|"
+                       r"\bnadie\s+(?:me\s+)?[a-záéíóúñ]+|\bniemand\s+[a-zäöüß]+|\bpersonne\s+ne\s+[a-zéèêàç]+|"
+                       r"\bnessuno\s+(?:mi\s+)?[a-zàèéìòù]+|\bningu[eé]m\s+(?:me\s+)?[a-zãõáéíóúç]+|\b(?:no\s+one|nobody|noone)\s+to\b|"
+                       r"\bno\s+(?:tengo|hay)\s+(?:con\s+qui[eé]n|a\s+nadie)\b|\bniemand(?:en)?\s+(?:zum|mit\s+dem)\b|"
+                       r"\bpersonne\s+avec\s+qui\b|\bnessuno\s+con\s+cui\b|\bningu[eé]m\s+(?:para|com\s+quem)\b")
+
+
 def _явный_отказ(said, B):
     """Только ЯВНО отвергнутое: «не хочу X», «X не зови», «нет, хочу Y». Без широкого cancelled_before V1 —
     по нему проверка заголовка давала ложные отказы (проверка шага 2)."""
     out = set()
+    said = [_НЕ_С_КЕМ.sub(" ", str(x or "")) for x in (said or [])]
     for x in said:
         try:
             for w in B.negated_terms(_без_нет_впереди(x)):
@@ -586,6 +719,9 @@ def _сказанное(said, B, lang="ru"):
     русский = (lang or "ru") == "ru"
     if русский:
         said = [(_транслит_текст(x) + " " + x) if _латиницей(x) else x for x in said]
+    # «не с кем поиграть в теннис» — не отказ от тенниса (самопроверка 18.10.2026, третий круг: сито вычитало «теннис»,
+    # и на «хочу просто поиграть в теннис» человек получал «Чем хочется заняться?»)
+    said = [_НЕ_С_КЕМ.sub(" ", str(x or "")) for x in said]
     текст = " ".join(said)
     вычесть = set()
     try:
@@ -896,6 +1032,8 @@ def чипы(сырые, said, B, профиль=None, lang="ru", запас=Non
                     к = ""
                 if к:
                     break
+        if к and len(к) <= 2 and not _двухбуквенный_сказан(к, said, B):
+            continue                                  # «Aí, estou entediado» -> чип AI (круг n2 18.10.2026)
         if к:
             if к in ключи or к in вычесть:
                 continue
@@ -1382,6 +1520,43 @@ _НАЙТИ_С_КЕМ = re.compile(r"(?iu)\b(?:найти|найду|поиск�
                          r"|\bjemand\w*\s+(?:\w+\s+){0,3}?(?:finden|suchen)\b")
 
 
+# «КТО-ТО ЕЩЁ ХОЧЕТ…?» — ЭТО ПРЕДЛОЖЕНИЕ. Жалоба владельца 18.10.2026 (12:55 МСК): «люблю лес и крипту» -> «Кто-то ещё
+# хочет с тобой поговорить на эти темы?» -> «не знаю» -> … -> «да» -> снова «Кто-то ещё хочет…?». Модель спрашивает
+# человека о других людях; код не узнавал в этом предложение найти компанию, и «да» не открывало окно.
+_КТО_ТО_ХОЧЕТ = re.compile(
+    r"(?iu)\bкто-?(?:то|нибудь)\s+(?:ещ[её]\s+)?(?:хоч\w*|захоч\w*)\b|"
+    r"\b(?:anyone|anybody|someone|somebody)\s+(?:else\s+)?(?:wants?|wanna|would\s+like)\s+to\b|"
+    r"\balguien\s+(?:m[aá]s\s+)?(?:quiere|quisiera|querr[ií]a)\b|\bjemand\s+(?:anderes\s+)?(?:will|m[oö]chte)\b|"
+    r"\bquelqu['’]un\s+(?:d['’]autre\s+)?(?:veut|voudrait)\b|\bqualcun\w*\s+(?:altro\s+)?(?:vuole|vorrebbe)\b|"
+    r"\balgu[eé]m\s+(?:mais\s+)?(?:quer|gostaria)\b")
+_ПРЕДЛОЖИТЬ = {"ru": "Хочешь, найду тебе компанию на это?", "en": "Want me to find someone to do that with?",
+               "es": "¿Quieres que te busque a alguien para eso?", "de": "Soll ich jemanden dafür finden?",
+               "fr": "Tu veux que je te trouve quelqu’un pour ça ?", "it": "Vuoi che ti trovi qualcuno per questo?",
+               "pt": "Queres que te encontre alguém para isso?"}
+_БЕЗ_СПЕШКИ = {"ru": "Хорошо, без спешки — напиши, когда захочется.", "en": "No rush — just tell me when you feel like it.",
+               "es": "Sin prisa: dímelo cuando te apetezca.", "de": "Kein Stress — sag einfach Bescheid, wenn du Lust hast.",
+               "fr": "Pas de souci, dis-moi quand tu en as envie.", "it": "Nessuna fretta: dimmelo quando ti va.",
+               "pt": "Sem pressa — diz-me quando te apetecer."}
+# «НЕ ЗНАЮ» — НЕ СОГЛАСИЕ. В той же жалобе и на пробе модель на «не знаю» то открывала окно, то нет.
+_НЕ_ЗНАЮ = re.compile(
+    r"(?iu)^\W*(?:(?:хм+|ну|эм+|hmm+|um+|pues|bueno|boh|mah)\W+)?(?:не\s+знаю|не\s+уверен\w*|даже\s+не\s+знаю|хз|без\s+понятия|"
+    r"i\s+don'?t\s+know|not\s+sure|idk|dunno|no\s+s[eé]|no\s+estoy\s+segur[oa]|ni\s+idea|wei(?:ß|ss)\s+nicht|"
+    r"keine\s+ahnung|je\s+(?:ne\s+)?sais\s+pas|chais\s+pas|non\s+(?:lo\s+)?so|n[aã]o\s+sei)\b")
+
+
+def _не_знает(said, B):
+    """Короткое «не знаю» без нового занятия."""
+    if not said:
+        return False
+    t = str(said[-1] or "")
+    if not _НЕ_ЗНАЮ.match(t) or len(t.split()) > 6:
+        return False
+    try:
+        return not новое_занятие(said, B)
+    except Exception:
+        return False
+
+
 def _принятое_предложение(msgs, B):
     """Реплики агента, на которые человек сейчас соглашается, если среди них есть предложение найти компанию.
 
@@ -1401,7 +1576,7 @@ def _принятое_предложение(msgs, B):
                     continue
                 break
             тексты.append(т)
-            if B._OFFERED_MEET.search(т) or _НАЙТИ_С_КЕМ.search(т):
+            if B._OFFERED_MEET.search(т) or _НАЙТИ_С_КЕМ.search(т) or _КТО_ТО_ХОЧЕТ.search(т):
                 звал = True
             if len(тексты) >= 4:
                 break
@@ -1430,7 +1605,7 @@ def _затея(карточка, msgs, profile, signals, lang, B):
     # (снимок владельца 24.09.2026, 18:55: «Хочу побегать» — карточку «Побегать» отбраковывало дважды,
     # и сборщик оставался пустым). Существительное («Скалодром») — имя собирает V1 (build_intent).
     if len(title.split()) == 1 and _глагол_ли(title, lang, B):
-        title = title + {"ru": " вместе", "en": " together", "es": " juntos"}.get(lang, " вместе")
+        title = title + _ВМЕСТЕ.get(lang, "")
     имя_v1 = len(title.split()) < 2
     запас = {}
     # ЗАГОЛОВОК ПРО ЯВНО ОТВЕРГНУТОЕ. «Обсудить крипту» после «вообще нет, хочу покурить сигары» и
@@ -1502,7 +1677,7 @@ def _затея(карточка, msgs, profile, signals, lang, B):
     общие_к = set(getattr(B, "_GENERIC_TOPIC", set()) or set()) | set(getattr(B, "_NO_ACTIVITY", set()) or set())
     # Пара слов проверяется раньше одного: «настольный теннис» — pingpong, а поодиночке «теннис» давал
     # tennis, и карточка про пинг-понг получала большой теннис первым (ревью 4d).
-    кандидаты = []
+    кандидаты, глаголы = [], []
     формы_сказ = _сказанное(said, B, lang)[0]
     for часть in (str(карточка.get("subject") or ""), title):
         сл = re.findall(r"[^\W\d_]{3,}", _плоско(часть), re.UNICODE)
@@ -1510,6 +1685,7 @@ def _затея(карточка, msgs, profile, signals, lang, B):
         while i < len(сл):
             к = ""
             if _глагол_тег(сл[i], B):
+                глаголы.append(_ключ_слова(сл[i], B))  # в запас: только если ключей не будет вовсе (ниже)
                 i += 1                                # «выпить кофе» целиком — drinks, «поесть суши» — food
                 continue
             if i + 1 < len(сл):
@@ -1536,6 +1712,22 @@ def _затея(карточка, msgs, profile, signals, lang, B):
         if сказан:
             ключи.insert(0, к)
             показ.insert(0, к)
+    # ГЛАГОЛ ЗАГОЛОВКА — КЛЮЧ, ЕСЛИ ДРУГИХ НЕТ. Снимок владельца 18.10.2026, 02:13: «оставь прогулку» -> карточка
+    # «Прогуляться по лесу» с одним чипом «лес» (не ключ), прогулка ушла из чипов и из поиска. Глагол заголовка
+    # отброшен выше ради «поесть суши» (food вместо sushi); но когда ключа нет совсем, «прогуляться» -> walk лучше
+    # пустоты. То же сито «сказано ли», общие слова и места — нет.
+    if not ключи:
+        for к in глаголы:
+            if not к or к in общие_к or к in отказ or к in _ключи_мест(B):
+                continue
+            try:
+                сказан = к in чипы([к], said, B, profile, lang=lang, запас={})[0]
+            except Exception:
+                сказан = False
+            if сказан:
+                ключи.insert(0, к)
+                показ.insert(0, к)
+                break
     ключи, показ = ключи[:4], показ[:4]
     кат, тип, дом = _категории()
     категория = str(карточка.get("category") or "").strip().lower()
@@ -1543,6 +1735,21 @@ def _затея(карточка, msgs, profile, signals, lang, B):
         категория = "other" if "other" in кат else кат[-1]
     роль = str(карточка.get("role") or "").strip().lower()
     роль = роль if роль in _РОЛИ else ""
+    # СВОИ СЛОВА В ЧИПАХ — ТОЛЬКО ЗАНЯТИЕ. Самопроверка 18.10.2026: «Piazza», «zonas verdes», «trilhas», «кухня»,
+    # «fim de semana», «grupo pequeno» становились чипами рядом с занятием — сито держит всё, что человек сказал.
+    # Своё слово (не ключ) остаётся, если оно есть в названии или предмете затеи; иначе уходит, но только когда
+    # рядом остаётся другой чип. Ключи реестра не трогаем.
+    свои = [x for x in показ if x not in ключи]
+    if свои and (ключи or len(свои) > 1):
+        опора_т = " ".join([str(title or ""), str(карточка.get("subject") or "")])
+        # уходит только место или время, которого нет в названии: «овцы» при затее про крипту — интерес, остаётся
+        годные = [x for x in свои if _в_названии(x, опора_т, B) or not _место_или_время(x, said, B)]
+        if ключи or годные:
+            показ = [x for x in показ if x in ключи or x in годные]
+    # ПУСТОЕ СЛОВО — НЕ ЗАТЕЯ. «Скучно… не знаю, с кем провести время» -> «Провести время» с чипом «время»,
+    # «Was unternehmen» с чипом «Langweilig» (самопроверка 18.10.2026). Окно без занятия — переспрос.
+    if not ключи and показ and all(_пустой_чип(x, B) for x in показ):
+        return None, "пустой чип: «%s»" % показ[0]
     темы = ключи + [x for x in показ if x not in ключи]
     cat = {"topics": темы, "category": категория, "subcategory": "",
            "type": "dating" if категория == "dating" else тип.get(категория, "social"),
@@ -1559,7 +1766,7 @@ def _затея(карточка, msgs, profile, signals, lang, B):
         print("[v2-заголовок] %s -> %s (%s)" % (title, нов, правка), flush=True)
         title = нов
         if len(title.split()) == 1 and _глагол_ли(title, lang, B):
-            title = title + {"ru": " вместе", "en": " together", "es": " juntos"}.get(lang, " вместе")
+            title = title + _ВМЕСТЕ.get(lang, "")
     предмет = str(карточка.get("subject") or "").strip() or (показ[0] if показ else "")
     # Что видит человек и что главное для поиска — от V2. Чипы телефон рисует из topics.
     затея.update({"title": title, "activity": title, "subject": предмет, "topics": темы, "tags": темы,
@@ -1608,7 +1815,17 @@ _ЗАЯВКА = re.compile(
     r"(?<!если\s)(?<!чтобы\s)кто-?(?:то|нибудь)\s+(?:[\w-]+\s+){0,3}?(?:присоедин\w*|найд[её]тся|откликн\w*|составит)|"
     r"(?:обязательно|точно|наверняка)\s+найд[её]шь|рад[аы]?,?\s+что\s+(?:ты\s+)?наш[её]л\w*(?:\(а\))?\s+(?:единомышленник\w*|компани\w*|друз\w*|люд\w*|кого|партн[её]р\w*)|(?:удачной|приятной)\s+встречи|"
     r"you" + _АП + r"ll\s+(?:definitely\s+|surely\s+)?find|someone\s+will\s+(?:join|love|be\s+happy)|"
-    r"alguien\s+(?:se\s+)?(?:unir[aá]|apuntar[aá])|seguro\s+que\s+(?:alguien|encuentras))(?![\w-])")
+    r"alguien\s+(?:se\s+)?(?:unir[aá]|apuntar[aá])|seguro\s+que\s+(?:alguien|encuentras)|"
+    # Самопроверка 18.10.2026: на de/fr/it/pt обещания проходили мимо («já adicionado ao plano», «je vais voir si»).
+    r"d[eé]jame\s+ver\s+si|ya\s+(?:lo\s+)?(?:he\s+)?(?:a[ñn]adido|agregado|actualizado)|i" + _АП + r"ve\s+(?:already\s+)?(?:added|updated)|"
+    r"ich\s+(?:suche|finde|schaue)|wir\s+(?:suchen|finden)|ich\s+helfe\s+dir\s*,?\s*(?:jemanden\s+)?(?:zu\s+)?finden|"
+    r"lass\s+(?:uns|mich)\s+(?:schauen|suchen|finden)|jemand\s+wird\s+(?:sicher|bestimmt)|"
+    r"je\s+(?:cherche|vais\s+chercher|vais\s+trouver|vais\s+voir\s+(?:si|qui))|on\s+va\s+(?:chercher|trouver)|"
+    r"je\s+t[" + "'\u2019" + r"]aide\s+[àa]\s+(?:trouver|chercher)|quelqu[" + "'\u2019" + r"]un\s+(?:va|viendra)\s+(?:s[uû]rement|certainement)|"
+    r"cercher[oò]|trover[oò]|troveremo|vado\s+a\s+cercare|ti\s+aiuto\s+a\s+(?:trovare|cercare)|vediamo\s+(?:se|chi)|"
+    r"vou\s+(?:procurar|encontrar|ver\s+se)|vamos\s+(?:encontrar|procurar|achar|ver\s+(?:se|quem))|"
+    r"te\s+ajudo\s+a\s+(?:encontrar|achar)|j[aá]\s+(?:est[aá]\s+)?(?:adicionad[oa]|adicionei|atualizei|atualizad[oa])|"
+    r"algu[eé]m\s+(?:vai|ir[aá])\s+(?:aparecer|se\s+juntar))(?![\w-])")
 # «не ищу», «пока не создаю», «I won't look» — это не заявление.
 _НЕ_ПЕРЕД = re.compile(r"(?iu)(?:\bне|\bnot|n" + _АП + r"t|\bno)\s+(?:\w+\s+)?$")
 _ПРЕДЛ = re.compile(r"[^.!?…\n]+[.!?…]*[»\"'\u2019)\]]*\s*")
@@ -1887,6 +2104,95 @@ _ИНТИМ = re.compile(r"(?iu)\b(?:sext(?!et|ant)\w*|секст\w*|nudes?|nude
                     r"sexe|sexuel\w*|plan\s+cul|coucher\s+avec|baiser\s+avec|"
                     r"sesso|sessual\w*|scopare\s+con|scopata|foto\s+nude|"
                     r"foder|transar|putaria)\b")
+# ИНТИМ ШИРЕ (18.10.2026, самопроверка): «cita con un enfoque íntimo», «mensagens picantes», «hookup», «one night
+# stand», «plan d'un soir» давали карточку, а по-португальски агент заигрывал в ответ. Явные слова на семи языках;
+# «íntimo/intime» — кроме концерта и обстановки («concierto íntimo», «ambiance intime» — не про секс).
+_ИНТИМ_ЕЩЁ_СЛОВА = re.compile(
+    r"(?iu)\b(?:hook\s*-?\s*up|one[\s-]+night[\s-]+stand|friends\s+with\s+benefits|fwb|booty\s+call|nsfw|dirty\s+talk|"
+    r"(?:spicy|naughty|hot)\s+(?:messages?|pics?|photos?|chat|texts?)|"
+    r"переспать|на\s+одну\s+ночь|для\s+близости|ins\s+bett|"
+    r"(?:mensajes?|fotos?|mensagens?|messaggi|foto)\s+(?:picantes?|calientes?|quentes?|piccanti|hot)|picantes?\s+(?:mensajes|fotos)|"
+    r"rollo\s+de\s+una\s+noche|aventura\s+de\s+una\s+noche|echar\s+un\s+polvo|"
+    r"plan\s+d'?un\s+soir|coquin\w*|cochon\w*|"
+    r"avventura\s+di\s+una\s+notte|una\s+botta|"
+    r"uma\s+noite\s+(?:só|apenas))\b")
+_ИНТИМ_ДВУСМ = re.compile(r"(?iu)\b(?:(?:í|i)ntim\w*)\b")
+_ИНТИМ_НЕ_ТО = re.compile(r"(?iu)concier\w*|concert\w*|konzert\w*|venue|show|ambient\w*|ambiance|atmosph\w*|atmosfer\w*|"
+                         r"atmósfera|caf[eéè]\w*|bar\b|restaura\w*|ristorant\w*|lokal\w*|dinner|cena|jantar|d[iî]ner|"
+                         r"abendessen|teatro|theat\w*|th[eé][aâ]tre|club|local\b|place|spot|lugar|sitio|s[ií]tio|lieu|endroit|"
+                         r"posto|locale|ort\b|setting|vibe|quiet|tranquil\w*|cozy|cosy|acogedor\w*|aconchegante|gem[uü]tlich|"
+                         r"уютн\w*|тих\w*|место\w*|кафе")
+
+
+def _интим_в(текст):
+    """Явный интим, плюс «íntimo/intime/intimate» — если рядом не концерт, кафе или ужин."""
+    т = str(текст or "")
+    if _ИНТИМ.search(т) or _ИНТИМ_ЕЩЁ_СЛОВА.search(т):
+        return True
+    for m in _ИНТИМ_ДВУСМ.finditer(т):
+        if not _ИНТИМ_НЕ_ТО.search(т[max(0, m.start() - 30):m.end() + 30]):
+            return True
+    return False
+# НАРКОТИКИ (18.10.2026, самопроверка: 13 провалов из 14 — «Покурить травку», «Take magic mushrooms», «Fumer du weed»,
+# «Fumar um baseado» уходили в поиск, «употребить грибы» — в «Собрать грибы»). Kleal не сводит людей ради веществ.
+# Только однозначные слова и пары: «грибы», «трава», «weed», «joint», «erba» сами по себе — тихая охота, газон,
+# прополка, сустав. Сбор грибов, «weed the garden», «joint venture» не трогаем.
+_НАРКОТИКИ = re.compile(
+    r"(?iu)(?:\b(?:наркот\w*|марихуан\w*|каннабис\w*|гашиш\w*|косяк\w*|шишк\w*\s+покурить|"
+    r"(?:покурить|курнуть|дунуть|раскурить)\s+(?:травк\w*|траву|шишк\w*|косяк\w*)|травк[уаи]\s+(?:покурить|курить)|"
+    r"закладк\w*|кокаин\w*|кокс\b|мефедрон\w*|меф\b|экстази|амфетамин\w*|псилоциб\w*|галлюциноген\w*|"
+    r"(?:употребить|закинуться|съесть|попробовать|заточить)\s+(?:\w+\s+)?(?:грибы|грибами|грибочки|грибочками|мухомор\w*)|"
+    r"грибы\s+(?:галлюциноген\w*|псило\w*)|мухомор\w*\s+(?:съесть|попробовать|микродоз\w*)|микродоз\w*|упороться|"
+    r"drugs?\b|weed\s+(?:together|tonight|with)|smoke\s+(?:some\s+)?(?:weed|pot|a\s+joint|joints|a\s+blunt|blunts)|"
+    r"(?:get|getting)\s+(?:high|stoned)|(?:do|doing)\s+(?:some\s+)?(?:coke|lines|drugs)|stoned|magic\s+mushrooms?|shrooms|psilocyb\w*|lsd|mdma|ecstasy|cocaine|"
+    r"ketamine|take\s+a\s+hit|cannabis|marijuana|"
+    r"porros?|fumar\s+(?:un\s+|unos\s+)?(?:porro|porros|hierba|maría|maria|marihuana|baseado|erva|maconha)|"
+    r"setas\s+(?:m[aá]gicas|alucin\w*)|hongos\s+(?:m[aá]gicos|alucin\w*|que\s+abren)|drogas?|"
+    r"kiffen|joints?\s+(?:rauchen|drehen|im\s+park)|jointe|jointen|gras\s+rauchen|drogen|koks|pilze\s+(?:einwerfen|nehmen|trip)|"
+    r"zauberpilze|magic\s+pilze|"
+    r"fumer\s+(?:un\s+peu\s+de\s+|un\s+|des\s+)?(?:joint|joints|pétard|beuh|weed|du\s+shit|de\s+la\s+weed)|du\s+weed|beuh|"
+    r"champignons\s+(?:magiques|hallucinog\w*)|drogues?|se\s+défoncer|défonce|"
+    r"spinell\w*|fumare\s+(?:erba|una\s+canna|uno\s+spinello)|"
+    r"funghi\s+(?:magici|allucinogeni)|droga|droghe|sballarsi|sballo|"
+    r"baseado|maconha|fumar\s+erva|cogumelos\s+(?:m[aá]gicos|alucin\w*))\b)")
+_НАРКОТИКИ_ОТВЕТ = {
+    "ru": "С наркотиками не помогу — Kleal не сводит людей ради веществ. Если хочешь компанию на что-то другое — прогулку, "
+          "кино, спорт — скажи.",
+    "en": "I can't help with drugs — Kleal doesn't connect people for that. If you'd like company for something else — "
+          "a walk, a film, a sport — just say.",
+    "es": "Con drogas no puedo ayudarte: Kleal no conecta a gente para eso. Si quieres compañía para otra cosa — un paseo, "
+          "cine, deporte —, dímelo.",
+    "de": "Bei Drogen kann ich nicht helfen — Kleal bringt Leute dafür nicht zusammen. Wenn du Gesellschaft für etwas "
+          "anderes suchst — Spaziergang, Kino, Sport —, sag Bescheid.",
+    "fr": "Pour la drogue, je ne peux pas aider — Kleal ne met pas les gens en relation pour ça. Si tu veux de la compagnie "
+          "pour autre chose — une balade, un film, du sport —, dis-le-moi.",
+    "it": "Con la droga non posso aiutarti: Kleal non mette in contatto le persone per questo. Se vuoi compagnia per altro "
+          "— una passeggiata, un film, lo sport — dimmelo.",
+    "pt": "Com drogas não posso ajudar — o Kleal não junta pessoas para isso. Se queres companhia para outra coisa — um "
+          "passeio, cinema, desporto —, diz-me."}
+_НАРКОТИКИ_ЕЩЁ = {
+    "ru": "С этим — нет. Компания на прогулку, кино или спорт — пожалуйста.",
+    "en": "Not with that. Company for a walk, a film or a sport — happy to help.",
+    "es": "Con eso no. Compañía para un paseo, cine o deporte — encantado.",
+    "de": "Dabei nicht. Gesellschaft für einen Spaziergang, Kino oder Sport — gern.",
+    "fr": "Pas pour ça. De la compagnie pour une balade, un film ou du sport — avec plaisir.",
+    "it": "Per questo no. Compagnia per una passeggiata, un film o lo sport — volentieri.",
+    "pt": "Para isso não. Companhia para um passeio, cinema ou desporto — com todo o gosto."}
+
+
+_НЕ_НАДО = re.compile(r"(?iu)\b(?:без|против|борьб\w*|фильм\w*|сериал\w*|документал\w*|книг\w*|не\s+употребляю|не\s+курю|no|not|don'?t|never|without|against|anti|sin|"
+                      r"nunca|ohne|keine?|gegen|sans|pas\s+de|jamais|senza|niente|mai|sem|nada\s+de|contra)\b[^.!?]{0,20}$")
+
+
+def _наркотики_в(текст):
+    """Есть ли просьба про вещества. «Без наркотиков», «no drugs», «sin drogas» — наоборот, не она."""
+    т = str(текст or "")
+    for m in _НАРКОТИКИ.finditer(т):
+        if not _НЕ_НАДО.search(т[max(0, m.start() - 40):m.start()]):
+            return True
+    return False
+
+
 _ИНТИМ_ОТВЕТ = {
     "ru": "С секстингом и интимом не помогу — Kleal для живых встреч и общения. Если хочешь познакомиться с кем-то "
           "для свидания, скажи — соберу свидание: кофе, прогулка или ужин.",
@@ -2103,6 +2409,10 @@ def рассказ_о_прошлом(текст, B):
     «собирался»), без «лучше», без вопроса и без признаков желания. Английский и испанский — только
     по маркерам V1 (вчера/на прошлой неделе)."""
     t = str(текст or "")
+    # «хотел поделиться / рассказать / похвастаться» — это про рассказ, а не про желание что-то сделать
+    # (самопроверка 18.10.2026: «хотел поделиться, что сегодня … готовил новое блюдо!» открывало окно).
+    t = re.sub(r"(?iu)\b(?:хотел[аи]?|хочу|решил[аи]?)\s+(?:просто\s+)?(?:поделиться|рассказать|похвастаться|"
+               r"сказать|сообщить)\b", " ", t)
     if _ЖЕЛАНИЕ.search(t) or _НАМЕРЕНИЕ.search(t):
         return False
     разбор = getattr(B, "_морф_разбор", None)
@@ -2170,8 +2480,9 @@ def _промпт(B, lang, сборщик, profile, signals):
     return текст
 
 
-def ход(messages, profile, signals, lang, B, сборщик=False):
-    """Один ход V2 -> (ответ, затея или None, язык, пометка, вызовов модели). Исключение — отдать ход V1."""
+def ход(messages, profile, signals, lang, B, сборщик=False, on_text=None):
+    """Один ход V2 -> (ответ, затея или None, язык, пометка, вызовов модели). Исключение — отдать ход V1.
+    on_text — печать по мере написания (см. _Поток): только первая попытка и только проверенные предложения."""
     msgs = нормализовать(messages)
     if not msgs or msgs[-1]["role"] != "user":
         raise RuntimeError("последней нет реплики человека")
@@ -2206,8 +2517,14 @@ def ход(messages, profile, signals, lang, B, сборщик=False):
         return B.SELFHARM_REPLY.get(lang, B.SELFHARM_REPLY["en"]), None, lang, "selfharm", 0
     if B.harmful_use_of_a_person(msgs):
         return B.HARM_REPLY.get(lang, B.HARM_REPLY["en"]), None, lang, "вред", 0
+    # НАРКОТИКИ — до модели, как интим: заготовка, затеи нет. Только последняя реплика: после отказа человек
+    # вправе сказать «давай лучше погуляем», и прошлая просьба не должна держать отказ (самопроверка 18.10.2026).
+    if _наркотики_в(said[-1] if said else ""):
+        первый = _НАРКОТИКИ_ОТВЕТ.get(lang, _НАРКОТИКИ_ОТВЕТ["en"])
+        return (первый if not _было_у_агента(первый, msgs) else _НАРКОТИКИ_ЕЩЁ.get(lang, _НАРКОТИКИ_ЕЩЁ["en"])), \
+            None, lang, "наркотики", 0
     интим_настаивает = False
-    if _ИНТИМ.search(str(said[-1] or "")):
+    if _интим_в(said[-1]):
         # ИНТИМНАЯ ПЕРЕПИСКА — НЕ ЗАТЕЯ. Снимок тестировщика 27.09.2026: «Sexting», «find me some one to sexting
         # with» — модель пять раз подряд отвечала одной фразой «I'm here to help you find people to do things
         # with…», а первым ответом обещала «помочь обсудить секстинг». Kleal — не площадка для интима: первый раз
@@ -2229,20 +2546,40 @@ def ход(messages, profile, signals, lang, B, сборщик=False):
     итог, пометки, вызовов, отмена = None, [], 0, False
     for попытка in range(2):
         вызовов += 1
-        сырое = B.llm_complete(B.MODEL_ID, сообщения, temperature=0.4 if попытка == 0 else 0.2, tag="v2") or ""
+        сырое = None
+        if on_text is not None and попытка == 0 and not интим_настаивает:
+            поток = _Поток(on_text, lang, B)
+            try:
+                # field=None: служба модели отдаёт сырой текст как есть, без разбора конверта.
+                сырое = B.llm_stream(B.MODEL_ID, сообщения, 0.4, None, поток, tag="v2") or поток.сырое
+            except Exception as e:
+                print("[v2] поток не удался, жду ответ целиком: %s" % str(e)[:120], flush=True)
+                if поток.показано:
+                    raise                          # на экране уже есть текст — дважды не пишем
+        if сырое is None:
+            сырое = B.llm_complete(B.MODEL_ID, сообщения, temperature=0.4 if попытка == 0 else 0.2, tag="v2") or ""
         ответ, карточка, чисто = разобрать(сырое)
         if not ответ and карточка and итог:
             ответ, чисто = итог[0], True          # вторая дала только карточку — текст из первой
-        if not чисто or not B._lang_ok(ответ, lang) or (_эхо(ответ, said) and not карточка):
+        if not чисто or (ответ and not B._lang_ok(ответ, lang)) or (_эхо(ответ, said) and not карточка) \
+                or _утечка_рассуждений(ответ) or _английский_не_к_месту(ответ, lang):
             пометки.append("брак ответа")
             if попытка == 0:
                 continue
             break
         затея, пометка = _затея(карточка, msgs, profile, signals, lang, B) if карточка else (None, "без карточки")
+        if затея and _наркотики_в(" ".join([str(затея.get("title") or ""), str(затея.get("subject") or "")]
+                                           + [str(x) for x in (затея.get("topics") or [])])):
+            затея, пометка = None, "карточка про вещества"   # модель сама назвала вещество — окна нет
         if сборщик and затея and затея.get("needs_activity"):
             затея, пометка = None, "свидание без занятия"
         if not сборщик and затея and сейчас_делает(said[-1], B):
             затея, пометка = None, "сейчас делает"
+        if not ответ and not затея:
+            пометки.append("брак ответа")          # одна карточка, и та не прошла — переспрос, как раньше
+            if попытка == 0:
+                continue
+            break
         пометки.append(пометка or "карточка")
         итог = (ответ, затея, карточка, пометка)
         if попытка == 1 or затея:
@@ -2289,6 +2626,8 @@ def ход(messages, profile, signals, lang, B, сборщик=False):
     if not итог:
         raise RuntimeError("модель не дала годного ответа: %s" % ",".join(пометки))
     ответ, затея, _, пометка = итог
+    if сборщик and затея and not str(ответ or "").strip():
+        ответ = _готово(затея, msgs, lang)        # пустым ответ сборщика не бывает (см. ниже)
     if интим_настаивает:
         затея = None
         if (not str(ответ or "").strip() or _повтор_ответа(ответ, msgs) or _было_у_агента(ответ, msgs)
@@ -2334,6 +2673,12 @@ def ход(messages, profile, signals, lang, B, сборщик=False):
     # СЛУЖЕБНЫЙ МУСОР ПОСЛЕ ПЕРЕСПРОСА: «Вот исправленный вариант:», «Here is the corrected card» — модель
     # отвечает записке, а не человеку (ru-phrases-03 на стенде шага 3). Такие фразы вырезаются.
     ответ = _МЕТА.sub("", ответ).strip()
+    # ОТВЕТ — ОДНО ПРИВЕТСТВИЕ. Самопроверка 18.10.2026: «Привет, Алекс!» над карточкой и в сборщике — всё остальное
+    # вырезали сита. Приветствие без дела при карточке — пустой ответ (дальше его заменит подтверждение).
+    if затея and _ТОЛЬКО_ПРИВЕТ.match(ответ):
+        ответ = ""
+    # Опечатка модели «Отличаяя идея» уходила мимо сита оценки.
+    ответ = re.sub(r"(?iu)\bотлича+я\b", "Отличная", ответ)
     if _ПОХВАЛА.search(ответ):
         без_похвалы = _ПОХВАЛА.sub("", ответ).strip()
         if len(без_похвалы) >= 15:
@@ -2433,6 +2778,25 @@ def ход(messages, profile, signals, lang, B, сборщик=False):
         # suena como una idea maravillosa.») — человек видел пустой сборщик и не знал, что сказать дальше.
         # Поиску нужно занятие встречи, поэтому вопрос о нём обязателен (мерка 26.09.2026).
         ответ = (str(ответ or "").strip() + " " + _ВОПРОС_СВИДАНИЯ.get(lang, _ВОПРОС_СВИДАНИЯ["ru"])).strip()
+    if not сборщик and затея and _не_знает(said, B):
+        # «НЕ ЗНАЮ» БЕЗ ЗАНЯТИЯ — БЕЗ ОКНА (жалоба 18.10.2026): предложение, если ещё не звали, иначе без нажима.
+        звал = any((_ЗОВ.search(str(m.get("content") or "")) or _КТО_ТО_ХОЧЕТ.search(str(m.get("content") or "")))
+                   for m in msgs[:-1] if m.get("role") == "assistant")
+        return (_БЕЗ_СПЕШКИ if звал else _ПРЕДЛОЖИТЬ).get(lang, _ПРЕДЛОЖИТЬ["en"]), None, lang, \
+            (пометка or "") + ":не знает", вызовов
+    if not сборщик and not затея and ответ and _КТО_ТО_ХОЧЕТ.search(ответ):
+        # Вопрос человеку о других людях — заменить понятным предложением найти компанию.
+        предл = _ПРЕДЛ.findall(ответ)
+        без = "".join(x for x in предл if not (_КТО_ТО_ХОЧЕТ.search(x) and "?" in x)).strip()
+        ответ = (без + " " + _ПРЕДЛОЖИТЬ.get(lang, _ПРЕДЛОЖИТЬ["en"])).strip()
+    if затея and (_ТОЛЬКО_ПРИВЕТ.match(str(ответ or "")) or _ПУСТАЯ_ВЕЖЛИВОСТЬ.match(str(ответ or ""))):
+        # ПРИВЕТ ИЛИ «РАД ПОМОЧЬ!» ВМЕСТО ОТВЕТА — проверка в самом конце: сита выше обрезают ответ до приветствия уже
+        # после первой проверки (круг n2 18.10.2026: «Привет, Алекс!», «Рад помочь!», «Рад приветствовать, Алекс!»).
+        ответ = _готово(затея, msgs, lang) if сборщик else _ответ_окна(затея, msgs, lang)
+    if сборщик and затея and not str(ответ or "").strip():
+        # ПУСТО В СБОРЩИКЕ. Самопроверка 18.10.2026: эхо человека обнулило ответ уже после страховки выше, и
+        # человек видел пустой пузырь под карточкой (2 из 3 на одном разговоре).
+        ответ = _готово(затея, msgs, lang)
     return ответ, затея, lang, пометка, вызовов
 
 
@@ -2478,19 +2842,55 @@ def _первый_новый(варианты, msgs):
     return варианты[-1]
 
 
+# РАЗНЫЕ ПОДТВЕРЖДЕНИЯ. Владелец 18.10.2026: «чтобы не отвечала однотипно: понял — …, понял — …». Одна форма на язык
+# звучала автоответчиком на каждом ходе, где от ответа модели ничего не осталось. Теперь — набор форм; в разговоре
+# форма не повторяется и не начинается тем же словом, что прошлые ответы агента. Чат и сборщик начинают с разных.
+_ПОДТВЕРЖДЕНИЯ = {
+    "ru": ["Понял — %s.", "Записал — %s.", "Окей, %s.", "Так и запишу: %s.", "Принято — %s.", "Хорошо, %s.", "Ага, %s."],
+    "en": ["Got it — %s.", "Noted: %s.", "Okay, %s.", "Writing it down: %s.", "All right — %s.", "Sure, %s."],
+    "es": ["Entendido — %s.", "Apuntado: %s.", "Vale, %s.", "De acuerdo — %s.", "Lo anoto: %s.", "Muy bien, %s."],
+    "de": ["Verstanden — %s.", "Notiert: %s.", "Okay, %s.", "Alles klar — %s.", "In Ordnung, %s.", "Ich schreibe es auf: %s."],
+    "fr": ["Compris — %s.", "C’est noté : %s.", "D’accord, %s.", "Ça marche — %s.", "Entendu, %s.", "Je note : %s."],
+    "it": ["Capito — %s.", "Annotato: %s.", "Va bene, %s.", "D’accordo — %s.", "Ok, %s.", "Lo segno: %s."],
+    "pt": ["Percebido — %s.", "Anotado: %s.", "Está bem, %s.", "Combinado — %s.", "Ok, %s.", "Fica registado: %s."],
+}
+
+
+def _первое_слово(т):
+    m = re.match(r"\W*(\w+)", str(т or ""), re.UNICODE)
+    return m.group(1).lower() if m else ""
+
+
+def _подтверждение(затея, msgs, lang, сдвиг):
+    """Форма подтверждения с названием затеи, которой в разговоре ещё не было и чьё первое слово агент не говорил."""
+    формы = _ПОДТВЕРЖДЕНИЯ.get(lang) or _ПОДТВЕРЖДЕНИЯ["ru"]
+    t = _с_маленькой((затея or {}).get("title"))
+    if not t:
+        return ""
+    свои = [str(m.get("content") or "").strip() for m in (msgs or []) if m.get("role") == "assistant"]
+    слова = {_первое_слово(x) for x in свои}
+    ходов = len(свои)
+    порядок = [формы[(сдвиг + ходов + i) % len(формы)] for i in range(len(формы))]
+    for ф in порядок:
+        т = ф % t
+        if т not in свои and _первое_слово(ф) not in слова:
+            return т
+    for ф in порядок:
+        if (ф % t) not in свои:
+            return ф % t
+    return ""
+
+
 def _готово(затея, msgs, lang):
     """Запасная реплика сборщика при карточке, без повторов за разговор: «Записал — X.», потом «Понял.»,
     потом «Хорошо.»."""
-    t = _с_маленькой((затея or {}).get("title"))
-    полная = (_ГОТОВО[lang] % t) if t else ""
-    return _первый_новый([полная, _ПОНЯЛ[lang], _ХОРОШО[lang]], msgs)
+    return _первый_новый([_подтверждение(затея, msgs, lang, 1), _ПОНЯЛ[lang], _ХОРОШО[lang]], msgs)
 
 
 def _ответ_окна(затея, msgs, lang):
     """Ответ чата при окне, когда от ответа модели ничего не осталось: «Понял — X.», потом «Хорошо.», «Понял.»."""
     lang = lang if lang in _ОКНО_ОТВЕТ else "ru"
-    t = _с_маленькой((затея or {}).get("title"))
-    return _первый_новый([(_ОКНО_ОТВЕТ[lang] % t) if t else "", _ХОРОШО[lang], _ПОНЯЛ[lang]], msgs)
+    return _первый_новый([_подтверждение(затея, msgs, lang, 0), _ХОРОШО[lang], _ПОНЯЛ[lang]], msgs)
 # АГЕНТ ЗОВЁТ С СОБОЙ: «давай просто посидим на мосту и покурим сигары» (снимок владельца 24.09.2026,
 # 17:23) — агент никуда не ходит. Промпт это запрещает; держит код.
 _САМ_ЗОВЁТ = re.compile(
@@ -2523,7 +2923,58 @@ _ОЦЕНКА_ПРЕДЛ = re.compile(r"(?iu)\b(?:отличн\w*|здорово
 
 _МЕТА = re.compile(r"(?imu)^[ \t]*(?:вот|here(?:'s|\s+is)|aqu[ií]\s+(?:est[aá]|tienes))\s+(?:исправленн\w*|обновл[её]нн\w*|"
                    r"corrected|updated|fixed|la\s+versi[oó]n\s+corregida)\b[^\n.!?]*[:.!]?[ \t]*$\n?")
-_СТОРОЖА = ("возраст", "отказ", "selfharm", "вред", "отказ по тексту")
+_СТОРОЖА = ("возраст", "отказ", "selfharm", "вред", "отказ по тексту", "наркотики")
+
+
+class _Поток:
+    """ПЕЧАТЬ ПО МЕРЕ НАПИСАНИЯ (17.10.2026, просьба владельца: «чтобы слова появлялись сразу»).
+
+    Модель пишет ответ, потом маркер и карточку; ход() дочищает ответ уже целиком (похвала, «ищу
+    тебе…», хвостовой вопрос, извинения). Поэтому на экран идут только ЗАКОНЧЕННЫЕ предложения, и
+    только пока каждое проходит те же сита. Первое сомнительное — и поток молчит до `done`: всё, что
+    показано, остаётся началом итога, и пузырь не переписывается на глазах. Вопрос держим всегда —
+    при карточке ход() его снимает. Разошлось всё же (вторая попытка, заготовка) — `replaced` в done."""
+
+    def __init__(self, on_text, lang, B):
+        self.on_text, self.lang, self.B = on_text, lang, B
+        self.сырое, self.показано, self.стоп = "", "", False
+
+    def __call__(self, кусок):
+        self.сырое += str(кусок or "")
+        if self.стоп:
+            return
+        текст = self.сырое
+        м = _МАРКЕР.search(текст)
+        for конец in ([м.start()] if м else []) + [текст.find('{"'), текст.find("```"), текст.find("##")]:
+            if конец >= 0:
+                текст, self.стоп = текст[:конец], True
+        готово = текст[len(self.показано):]
+        # Последнее предложение может быть недописано — ждём следующего (или маркера: тогда оно дописано).
+        части = _ПРЕДЛ.findall(готово)
+        if not self.стоп and части and not re.search(r"[.!?…][»\"'’)\]]*\s+$", части[-1]):
+            части = части[:-1]
+        for п in части:
+            if not self._можно(п):
+                self.стоп = True
+                return
+            self.показано += п
+            try:
+                self.on_text(п)
+            except Exception:
+                self.стоп = True
+                return
+
+    def _можно(self, п):
+        s = п.strip()
+        if not s or re.search(r"[?？]\s*[»\"'’)\]]*$", s) or "{" in s or "#" in s:
+            return False
+        if (_ПОХВАЛА.search(s) or _ОЦЕНКА_ПРЕДЛ.search(s) or _ОЦЕНКА.search(s) or _МЕТА.search(s)
+                or _САМ_ЗОВЁТ.search(s) or _ИЗВИНЕНИЕ.search(s) or _ПОНЯЛ_ЗАТЕЯ.match(s) or _заявка_в(s)):
+            return False
+        try:
+            return bool(self.B._lang_ok(self.показано + s, self.lang))
+        except Exception:
+            return False
 
 
 def _с_маленькой(t):
@@ -2537,11 +2988,52 @@ def serve(handler, route, body, B):
     profile = body.get("profile") if isinstance(body.get("profile"), dict) else {}
     signals = body.get("signals") if isinstance(body.get("signals"), dict) else {}
     сборщик = route == "/intent-build"
+    # ПОТОК (17.10.2026). Заголовки уходят только с первым показанным предложением: пока на экране
+    # ничего нет, любая беда V2 по-прежнему тихо отдаёт ход V1 (return False).
+    поток = {"начат": False, "жив": True, "показано": []}
+
+    def _шли(событие, obj):
+        if not поток["жив"]:
+            return
+        try:
+            if not поток["начат"]:
+                handler.send_response(200)
+                handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                handler.send_header("Cache-Control", "no-cache")
+                handler.send_header("X-Accel-Buffering", "no")
+                handler.send_header("Connection", "close")
+                handler.end_headers()
+                поток["начат"] = True
+            handler.wfile.write(("event: %s\ndata: %s\n\n" % (событие, json.dumps(obj, ensure_ascii=False))).encode("utf-8"))
+            handler.wfile.flush()
+        except Exception as e:
+            поток["жив"] = False               # человек ушёл с экрана: ход доделываем, писать перестаём
+            print("[v2] клиент ушёл посреди ответа: %s" % str(e)[:100], flush=True)
+
+    def _кусок(t):
+        if not поток["показано"]:
+            print("[v2] %s первое слово через %.1fс" % (route, time.time() - t0), flush=True)
+        поток["показано"].append(t)
+        _шли("delta", {"t": t})
+
     try:
-        ответ, затея, lang, пометка, вызовов = ход(body.get("messages"), profile, signals, body.get("lang"), B, сборщик=сборщик)
+        ответ, затея, lang, пометка, вызовов = ход(body.get("messages"), profile, signals, body.get("lang"), B,
+                                                   сборщик=сборщик, on_text=_кусок if body.get("stream") else None)
     except Exception as e:
-        print("[v2] %s брак, отвечает V1: %s" % (route, str(e)[:160]), flush=True)
-        return False
+        if not поток["начат"]:
+            print("[v2] %s брак, отвечает V1: %s" % (route, str(e)[:160]), flush=True)
+            return False
+        # Текст уже на экране, а V2 не дал годного ответа: V1 отвечает целиком, пузырь переписывается.
+        print("[v2] %s брак после показа, ответ V1 поверх: %s" % (route, str(e)[:160]), flush=True)
+        try:
+            if сборщик:
+                v1 = B.intent_build(body.get("messages") or [], profile, lang=body.get("lang"))
+            else:
+                v1 = B.buddy_chat(body.get("messages") or [], profile, signals, body.get("user_id"), lang=body.get("lang"))
+            _шли("done", dict(v1, replaced=True))
+        except Exception as e2:
+            _шли("error", {"error": str(e2)[:200]})
+        return True
     if сборщик:
         out = {"reply": ответ, "valid": True, "ready": bool(затея), "intent": затея, "lang": _язык_клиенту(lang, body.get("lang")),
                "hints": [], "v2": True}
@@ -2586,18 +3078,12 @@ def serve(handler, route, body, B):
         except Exception as e:
             print("[v2] клиент ушёл: %s" % str(e)[:100], flush=True)
         return True
-    # ПОТОК: только done. delta и done одной пачкой заставляли экран печатать ответ дважды;
-    # путь «ответ без delta» телефон уже знает по ранней просьбе V1 и печатает ответ один раз.
-    try:
-        handler.send_response(200)
-        handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        handler.send_header("Cache-Control", "no-cache")
-        handler.send_header("X-Accel-Buffering", "no")
-        handler.send_header("Connection", "close")
-        handler.end_headers()
-        out["replaced"] = False
-        handler.wfile.write(("event: done\ndata: %s\n\n" % json.dumps(out, ensure_ascii=False)).encode("utf-8"))
-        handler.wfile.flush()
-    except Exception as e:
-        print("[v2] клиент ушёл посреди ответа: %s" % str(e)[:100], flush=True)
+    # ПОТОК: delta — проверенные предложения по ходу письма (_Поток), done — итог. Итог разошёлся с
+    # показанным по существу (не пробелами) — `replaced`, и телефон переписывает пузырь. Ничего не
+    # показано — как раньше, один done: телефон печатает ответ сам и один раз.
+    _показано = " ".join("".join(поток["показано"]).split())
+    out["replaced"] = bool(_показано) and _показано != " ".join(str(out.get("reply") or "").split())
+    if _показано:
+        print("[v2] поток: показано %d зн., заменён=%s" % (len(_показано), out["replaced"]), flush=True)
+    _шли("done", out)
     return True

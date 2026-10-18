@@ -17,14 +17,12 @@
  * класть нельзя. Открытый напрямую (обновлением страницы) экран честно говорит, что данных больше
  * нет, и ведёт назад к поиску.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Modal,
-} from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { CANDS, CAP, OPTIONS, REPORT_REASONS, REPORT_REASON_ES, Cand, candSubtitle, candWhere, candSummary, candReadiness, hideCandidate } from '../src/candidates';
-import { CHAT } from '../src/chat';
+import { CHAT, OFB } from '../src/chat';
 import { useInvites, inviteTo, sendInvite, withdrawInvite, openInvites, pickInvite } from '../src/invites';
 import { GR14, OFP } from '../src/groups';
 import { GlassPill } from '../src/components/Glass';
@@ -165,7 +163,7 @@ export default function Candidate() {
           // Ответ ПРОВЕРЯЕМ, как и у блокировки рядом. Сервер теперь может отказать (личные
           // записи привязаны к сессии), а молчащий отказ выглядел бы как «нажал и скрылось»:
           // карточка уходит, а ранжирование о решении так и не узнало.
-          const r: any = await agent.feedback(name, 'reject', self);
+          const r: any = await agent.feedback(name, 'reject', self, peer.id);
           if (!r?.ok) throw new Error(r?.error || 'feedback failed');
         }
         setPending(null);
@@ -228,7 +226,9 @@ export default function Candidate() {
 
         <View style={s.nameRow}>
           <Text style={s.name}>{name}{c.age ? `, ${c.age}` : ''}</Text>
-          {c.verified ? <Text style={s.verified}>✓</Text> : null}
+          {/* Галочка — только прошедшим проверку документа (id_verified). Старое verified стоит у всех
+              («сам отметил 18+»), его для галочки не берём (ЛОГИКА, 18.10.2026). */}
+          {c.id_verified ? <Text style={s.verified}>✓</Text> : null}
         </View>
         <Text style={s.subtitle}>{candSubtitle(c, ru())}</Text>
 
@@ -290,8 +290,11 @@ export default function Candidate() {
                      onPress={async () => {
                        if (picking) return;
                        setPicking(true);
-                       await pickInvite(self, peer);
+                       setErr('');
+                       // Ошибка выбора видна (сверка п. 13): раньше нажатие молча ничего не делало.
+                       const r = await pickInvite(self, peer);
                        setPicking(false);
+                       if (!r.ok) setErr(r.error === 'ALREADY_RESOLVED' || r.error === 'EXPIRED' ? OFB.pickTooLate() : OFB.pickFailed());
                      }}>
             <Text style={s.inviteText}>{OFP.pick(name)}</Text>
           </Pressable>

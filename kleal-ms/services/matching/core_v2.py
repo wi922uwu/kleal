@@ -640,7 +640,7 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
     role_conflict = H.get("role_conflict") or set()
     topics = [str(t).lower() for t in (intent.get("topics") or [])]
     now_ts = ctx.get("now") or time.time()             # pin ctx.now for deterministic replay
-    received24 = ctx.get("received24") or {}           # {name_lower: proposals received last 24h}
+    received24 = ctx.get("received24") or {}           # {id (или имя без id): proposals received last 24h}
     out = []
     for c in candidates:
         if is_paused(c, now_ts):
@@ -664,7 +664,7 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
         #                                                 stay visible as "needs clarification"
         band = assign_band(d_ab["lcb"], d_ab["coverage"], bands) if disc_ok else "needs_clarification"
         readiness = readiness_state(c, domain, now_ts, cfg,
-                                    received24.get(str(c.get("name", "")).strip().lower(), 0))
+                                    received24.get(str(c.get("id") or c.get("name", "")).strip().lower(), 0))   # по id, 18.10.2026
         outreach_tier_ok = tier in ("T0", "T1") or (tier == "T2" and bool(intent.get("broadConsent")))
         can_outreach = (outreach_tier_ok and readiness == "open_now" and
                         d_ab["lcb"] >= float(dom_cfg["outreach_min_lcb"]) and
@@ -686,6 +686,9 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
         rdy_es = gender_label(rdy_es, c.get("gender"), "es")
         out.append({
             # ---- legacy card contract (buddy/_card + profile UI keep rendering) ----
+            # id человека (18.10.2026): без него всё, что идёт от выдачи, — приглашение, переговоры,
+            # усталость, бюджет, раскрытие места — держалось за имя, и тёзки путались.
+            "id": c.get("id"),
             "name": c.get("name"), "score": round(d_ab["lcb"] * 100, 1), "tier": tier,
             "kind": TIER_KIND.get(tier, "related"), "km": km, "vibe": c.get("vibe"),
             "open": c.get("open"), "verified": c.get("verified"), "age": c.get("age"),

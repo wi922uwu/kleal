@@ -7,7 +7,8 @@
  */
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { setSession, auth, ApiError } from './api';
+import { setSession, setMyId, onMyId, auth, ApiError } from './api';
+import type { ChatLifecycle } from './chat-lifecycle';
 
 export type Profile = {
   name?: string;
@@ -30,7 +31,7 @@ export type Profile = {
    *  характера отдаёт подбору; выводится сервером из осей теста, правится человеком. */
   vibe?: string;
   languages?: { comfortable?: string[] };
-  interests?: { explicit?: string[] };
+  interests?: { explicit?: string[]; labels?: Record<string, string>; confirmations?: Record<string, string> };
   safety?: { publicPlacesOnly?: boolean; hideExactLocation?: boolean; verifiedOnly?: boolean };
   /** Часовой пояс именем зоны (Europe/Madrid). Спрашивать нечего — устройство знает сам. */
   tz?: string;
@@ -47,9 +48,14 @@ export type Profile = {
  * На сервере их нет намеренно: это отношение человека к списку, а не состояние разговора.
  */
 export type MsgPrefs = {
+  /** Last confirmed server evidence, keyed only by users.id. */
+  chats?: Record<string, ChatLifecycle>;
   muted?: string[];
   archived?: string[];
   left?: string[];
+  /** Observations alone never authorize binding a name to an account. */
+  legacyPeers?: Record<string, string | null>;
+  legacyProofs?: Record<string, {id:string;source:'saved_peer_id'}>;
   seen?: Record<string, number>;
   noNudge?: string[];
   hiddenInvites?: string[];
@@ -64,6 +70,14 @@ export type OnbState = {
    * разлогинивался бы каждым закрытием приложения, а весь смысл входа по коду — войти один раз.
    */
   session?: string | null;
+  /** Мой id на сервере — рядом с токеном, чтобы «это я?» решалось по id с первого кадра (api.ts, setMyId). */
+  meId?: string | null;
+  /**
+   * Подтверждённое из черновика ChatGPT (18.10.2026, src/ai-suggest.ts): город, языки, интересы.
+   * Это ПРЕДЛОЖЕНИЯ шагам анкеты, а не ответы: шаги «Где ты», «Языки» и карта интересов открываются
+   * с ними выбранными, и человек подтверждает их там своей кнопкой.
+   */
+  aiSuggest?: { at: number; city?: string; country?: string; languages?: string[]; interests?: string[] } | null;
   authMethod: string | null;
   /**
    * ЧЕЙ ЭТО ЧЕРНОВИК: логин аккаунта, с которым начали анкету (в нижнем регистре). Переживает
@@ -89,6 +103,13 @@ const empty = (): OnbState => ({ slide: 0, step: -1, login: null, authMethod: nu
 
 let state: OnbState = empty();
 const listeners = new Set<(s: OnbState) => void>();
+
+// Узнали свой id (вход, сессия, profile.get, register) или вышли (пусто) — записать рядом с токеном.
+onMyId((id) => {
+  if ((state.meId || '') === id) return;
+  state = { ...state, meId: id || null };
+  emit();
+});
 
 /**
  * Пока restore() не дочитал диск, писать на него нельзя: экран, успевший тронуть состояние в
@@ -134,10 +155,12 @@ export async function restore(): Promise<void> {
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (raw) state = { ...empty(), ...JSON.parse(raw) };
+    const savedId = state.meId || '';
     // Токен подставляется в запросы из api.ts, а не из состояния экранов, — значит при запуске его
     // надо туда вернуть. Без этой строки человек считался бы вошедшим (профиль на месте, done
     // стоит), а сервер видел бы каждый запрос без сессии.
     setSession(String(state.session || ''));
+    setMyId(savedId);                            // setSession обнулил id в памяти — возвращаем с диска
   } catch {
     /* повреждённое состояние — начинаем заново, это онбординг, терять нечего */
   } finally {
@@ -163,7 +186,7 @@ export async function checkSession(): Promise<boolean> {
   if (!tok) return false;
   const expire = (): boolean => {
     if (state.session !== tok) return false;
-    state = { ...state, login: null, session: null, authMethod: null };
+    state = { ...state, login: null, session: null, authMethod: null, meId: null };
     setSession('');
     emit();
     return true;
@@ -171,6 +194,7 @@ export async function checkSession(): Promise<boolean> {
   try {
     const r: any = await auth.session();
     if (state.session !== tok) return false;        // пока шёл запрос, человек уже вошёл заново
+    if (r?.id) setMyId(r.id);
     if (r && r.ok === false && r.error === 'no session') {
       return expire();
     }
@@ -203,6 +227,8 @@ const who = (s: unknown) => String(s || '').trim().toLowerCase();
  */
 export function signedIn(p: {
   login: string; session: string; authMethod: string; profile?: Profile | null; isNew: boolean;
+  /** id человека из ответа входа; пусто — анкеты ещё нет. */
+  id?: string;
 }) {
   const next = who(p.login);
   const mine = !!next && who(state.owner || state.login) === next;
@@ -215,8 +241,10 @@ export function signedIn(p: {
     authMethod: p.authMethod,
     ...(p.profile ? { profile: p.profile } : {}),
     ...(p.isNew ? {} : { done: true }),
+    meId: p.id || null,
   };
   emit();
+  setMyId(p.id);
 }
 
 export function reset() {
@@ -272,13 +300,48 @@ export function msgPrefs(): MsgPrefs {
 
 /** Правка пометок сообщений одной функцией: setMsgPrefs((m) => ({ ...m, muted: [...] })). */
 export function setMsgPrefs(fn: (m: MsgPrefs) => MsgPrefs) {
-  state = { ...state, msg: fn(state.msg || {}) };
+  const prefs=state.msg || {}, next=fn(prefs);
+  if (next===prefs) return;
+  state = { ...state, msg: next };
   emit();
 }
 
+/** A late response from another login or an older poll cannot change this account's list. */
+export function syncChatLifecycle(chat: ChatLifecycle, session: string, delivered = false): boolean {
+  return syncChatLifecycles([chat],session,delivered);
+}
+
+/** One poll commits one semantic update. New clock evidence is retained in memory
+ * for per-peer ordering without rewriting the whole profile on every heartbeat. */
+export function syncChatLifecycles(chats: ChatLifecycle[], session: string, delivered = false,
+  updatePrefs: (prefs: MsgPrefs) => MsgPrefs = prefs => prefs): boolean {
+  if (!session || state.session !== session) return false;
+  const original=state.msg || {};
+  let prefs=updatePrefs(original), changed=prefs!==original, accepted=chats.length===0;
+  for (const chat of chats) {
+    const previous=prefs.chats?.[chat.peerId];
+    if (previous && previous.serverTime>chat.serverTime) continue;
+    accepted=true;
+    const resumed=chat.state==='active' && !chat.blocked
+      && (delivered || (previous?.state==='closed' && previous.sessionId!==chat.sessionId));
+    const key='id:'+chat.peerId;
+    const archived=resumed && prefs.archived?.some(k=>k===key || k==='th:'+key)
+      ? prefs.archived.filter(k=>k!==key && k!=='th:'+key) : prefs.archived;
+    const {serverTime: _now,...semantic}=chat;
+    const {serverTime: _previous,...prior}=previous || {};
+    changed ||= JSON.stringify(prior)!==JSON.stringify(semantic) || archived!==prefs.archived;
+    if (previous!==chat || archived!==prefs.archived)
+      prefs={...prefs,archived,chats:{...prefs.chats,[chat.peerId]:chat}};
+  }
+  if (prefs!==original) state={...state,msg:prefs};
+  if (changed) emit();
+  return accepted;
+}
+
 /** Тред открыт — бейдж на нём гаснет. Зовётся из переписки, а не из списка: списку виднее нельзя. */
-export function markSeen(who: string) {
-  const key = String(who || '').trim().toLowerCase();
+export function markSeen(who: string, id?: string) {
+  // По id, когда он известен (шаг 3 «личность по id»): у тёзок отметка по имени гасила чужой бейдж.
+  const key = id ? 'id:' + String(id) : String(who || '').trim().toLowerCase();
   if (!key) return;
   setMsgPrefs((m) => ({ ...m, seen: { ...(m.seen || {}), [key]: Date.now() / 1000 } }));
 }
@@ -358,6 +421,10 @@ export function profileForRegister(): Profile {
 export function profileForAttach(): Profile {
   const p: Profile = { ...state.profile, tz: deviceTz() };
   delete p.photo;
+  if (p.interests) {
+    p.interests = { ...p.interests };
+    delete p.interests.confirmations;
+  }
   return p;
 }
 

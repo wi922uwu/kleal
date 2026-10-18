@@ -35,6 +35,15 @@ export const ACT = {
   chipSearching: () => T('Ищем', 'Searching', 'Buscando'),
   chipOptions: (n: number) =>
     T(`${n} ${plural(n, 'вариант', 'варианта', 'вариантов')} готово`, `${n} option${n === 1 ? '' : 's'} ready`, `${n} ${n === 1 ? 'opción lista' : 'opciones listas'}`),
+  /*
+    ОТВЕТИЛИ «ДА» — ВЫБИРАЙ (сверка 17.10, п. 12). Раньше карточка считала только неотвеченные: стоило
+    всем ответить, как она переходила в «варианты», и срок выбора pick_by сгорал вместе со всеми «да».
+  */
+  chipPick: (n: number) =>
+    T(`${n} ${plural(n, 'ответил', 'ответили', 'ответили')} «да»`, `${n} said yes`, `${n} ${n === 1 ? 'dijo' : 'dijeron'} que sí`),
+  ctaPick: () => T('Выбрать из ответивших', 'Pick from who said yes', 'Elige entre quienes dijeron que sí'),
+  linePick: () => T('Выбери, с кем встречаешься, — иначе приглашения закроются.',
+    'Pick who you’re meeting — otherwise the invites close.', 'Elige con quién quedas; si no, las invitaciones se cierran.'),
   chipWaiting: (n: number) =>
     T(`Ждём ${n} ${plural(n, 'ответ', 'ответа', 'ответов')}`, `Waiting for ${n} repl${n === 1 ? 'y' : 'ies'}`, `Esperando ${n} respuesta${n === 1 ? '' : 's'}`),
 
@@ -122,7 +131,8 @@ export const ACT = {
   rankFailed: () => T('Поиск по этой затее сейчас не отвечает', 'Search for this one is not responding', 'La búsqueda para esto no responde'),
 };
 
-export type IntentState = 'searching' | 'options' | 'waiting';
+/** `pick` — кто-то ответил «да» и ждёт выбора организатора (status answered, срок pick_by). */
+export type IntentState = 'searching' | 'options' | 'waiting' | 'pick';
 
 /** Строка интента, как её отдаёт /api/agent/intents. */
 export type IntentRow = {
@@ -161,13 +171,25 @@ export function pendingFor(intentId: string, outbox: any[]): number {
  * Приглашения важнее вариантов: как только человек кого-то позвал, живой вопрос у него один —
  * ответят или нет. Показать в этот момент «3 варианта готовы» значит отвечать не на тот вопрос.
  */
+/** Сколько по этой затее ответили «да» и ждут выбора (answered) — им важнее всего ответ. */
+export function answeredFor(intentId: string, outbox: any[]): number {
+  const id = String(intentId || '');
+  if (!id) return 0;
+  return (outbox || []).filter(
+    (r) => r && r.status === 'answered' && String(r.intent?.[INTENT_ID_KEY] || '') === id
+  ).length;
+}
+
 export function intentState(row: IntentRow, outbox: any[]): IntentState {
+  // «Да» уже пришло — решение за организатором, и это главнее ожидания остальных.
+  if (answeredFor(row.id, outbox) > 0) return 'pick';
   if (pendingFor(row.id, outbox) > 0) return 'waiting';
   if ((row.candidates || []).length > 0) return 'options';
   return 'searching';
 }
 
 export function chipLabel(state: IntentState, row: IntentRow, outbox: any[]): string {
+  if (state === 'pick') return ACT.chipPick(answeredFor(row.id, outbox));
   if (state === 'waiting') return ACT.chipWaiting(pendingFor(row.id, outbox));
   if (state === 'options') return ACT.chipOptions((row.candidates || []).length);
   return ACT.chipSearching();
@@ -186,14 +208,15 @@ export const CHIP_TONE: Record<IntentState, 'warn' | 'success' | 'info'> = {
   searching: 'warn',
   options: 'success',
   waiting: 'info',
+  pick: 'success',
 };
 
 export function ctaLabel(state: IntentState): string {
-  return state === 'waiting' ? ACT.ctaWaiting() : state === 'options' ? ACT.ctaOptions() : ACT.ctaSearching();
+  return state === 'pick' ? ACT.ctaPick() : state === 'waiting' ? ACT.ctaWaiting() : state === 'options' ? ACT.ctaOptions() : ACT.ctaSearching();
 }
 
 export function stateLine(state: IntentState): string {
-  return state === 'waiting' ? ACT.lineWaiting() : state === 'options' ? ACT.lineOptions() : ACT.lineSearching();
+  return state === 'pick' ? ACT.linePick() : state === 'waiting' ? ACT.lineWaiting() : state === 'options' ? ACT.lineOptions() : ACT.lineSearching();
 }
 
 /**
@@ -290,6 +313,11 @@ export function intentSummary(row: IntentRow): string {
 export type PlanCard = {
   key: string;
   title: string;
+  /**
+   * Название затеи, как его хранит план, без подстановок. `title` для карточки падает на имя
+   * собеседника или «Встреча» — такой фразой мастер затеи не засеешь; «Plan it again» берёт это поле.
+   */
+  topic: string;
   date: string;
   time: string;
   where: string;
@@ -368,6 +396,7 @@ export function planCard(p: any, me = '', past = false): PlanCard {
   return {
     key: (p?.gid ? 'gp:' : 'mp:') + String(p?.id || p?.gid || ''),
     title: String(p?.title || who[0] || T('Встреча', 'Meetup', 'Quedada')).trim(),
+    topic: String(p?.title || '').trim(),
     date: when.date,
     time: when.time,
     where: cardWhere(p),

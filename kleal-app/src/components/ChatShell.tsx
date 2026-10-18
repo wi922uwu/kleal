@@ -102,6 +102,8 @@ export const ChatShell = forwardRef<ScrollView, {
   composerDisabled?: boolean;
   /** Живая подложка вместо нарисованной. Включена в анкете — там она и на кадрах борда. */
   ambientVideo?: boolean;
+  /** Подложка стоит (карта интересов: в покое на экране ничего не двигается). */
+  ambientPaused?: boolean;
   /** Поставить курсор в поле ввода — по кнопке «написать своё». */
   focusSignal?: number;
   onBack?: () => void;
@@ -112,7 +114,7 @@ export const ChatShell = forwardRef<ScrollView, {
    */
   sections?: ChatSection[];
 }>(function ChatShell(
-  { title, pct, thread, typing, widget, footer, headerExtra, brow, scrollEnabled = true, composerPlaceholder, composerDisabled, focusSignal, onBack, onSend, ambientVideo, sections },
+  { title, pct, thread, typing, widget, footer, headerExtra, brow, scrollEnabled = true, composerPlaceholder, composerDisabled, focusSignal, onBack, onSend, ambientVideo, ambientPaused, sections },
   scroller
 ) {
   const lang = useLang();
@@ -180,7 +182,7 @@ export const ChatShell = forwardRef<ScrollView, {
   );
   return (
     <View style={s.root}>
-      <Ambient glows={GLOW_FORM} video={ambientVideo} />
+      <Ambient glows={GLOW_FORM} video={ambientVideo} paused={ambientPaused} />
       <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[s.wrap, { paddingTop: insets.top + 8 }]}>
           {/*

@@ -12,12 +12,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Image, Pressable, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams, useIsFocused } from 'expo-router';
+import { useRouter, useLocalSearchParams, useIsFocused, useNavigationContainerRef } from 'expo-router';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
-import { group as gapi, mediaUrl, ensureMe, myId, isMe, pidOf, newIdem, type GroupInfo } from '../src/api';
+import { group as gapi, mediaUrl, ensureMe, myId, isMe, pidOf, newIdem, getSession, isAbort, type GroupInfo, type PostOptions } from '../src/api';
 import { ROOM, GINVITE, groupPlace, groupCallLine, isOnlineGroup } from '../src/groups';
-import { ROLE, roleView, type RoleView } from '../src/roles';
+import { ROLE, roleView, roleQuotaRecovery, type RoleView } from '../src/roles';
 import { elapsed, hoursLeft } from '../src/gplan';
 import { usePolling } from '../src/polling';
 import { IconCalendar, IconCheck, IconClock, IconMoon, IconPerson, IconPin, IconShieldCheck, IconVideo } from '../src/components/icons';
@@ -28,9 +28,13 @@ import { GlassBack, GlassSurface } from '../src/components/LiquidGlass';
 import { BottomNav } from '../src/components/BottomNav';
 import { Sheet, SheetText } from '../src/components/Sheet';
 import { useNavCollapse } from '../src/navScroll';
+import { MONETIZATION, PLUS } from '../src/monetization';
+import { cancelReturnAction, captureReturnOrigin, deferAction, returnAction, returnActionRoute } from '../src/monetization-actions';
+import { useMonetizationDialog } from '../src/components/MonetizationDialog';
 
 const INK = '#181B22';
 const eq = (a?: string, b?: string) => !!String(a || '').trim() && String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+const isPeer = (m: any, name?: string, id?: string) => id ? pidOf(m, 'name') === id : eq(m.name, name);
 
 /** «6h», «3h 31m», «45m». */
 function span(sec: number): string {
@@ -54,13 +58,21 @@ type Tone = 'ink' | 'warn' | 'muted' | 'ok' | 'turn';
 const NUM_EN = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 
 export default function GroupRole() {
-  /** Navigation V2: панель сворачивается при прокрутке вниз (NAV.S2). */
+  const session = useOnb().session || '';
+  const { gid } = useLocalSearchParams<{ gid?: string }>();
+  return <GroupRoleSession key={`${session}:${gid || ''}`} session={session} />;
+}
+
+function GroupRoleSession({ session }: { session: string }) {
   const navCollapse = useNavCollapse();
   const lang = useLang();
   const router = useRouter();
+  const navigation = useNavigationContainerRef();
   const st = useOnb();
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
+  const focus = useRef(focused); focus.current = focused;
+  const dialog = useMonetizationDialog(session, getSession);
   const params = useLocalSearchParams<{ gid?: string; pick?: string }>();
   const gid = String(params.gid || '').trim();
   const me = String(st.profile.name || '');
@@ -73,19 +85,40 @@ export default function GroupRole() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [pickedRaw, setPicked] = useState<{ name: string; id: string } | null>(null);
-  const [sheet, setSheet] = useState<'' | 'put' | 'withdraw' | 'vote' | 'keepWith' | 'leave' | 'already'>('');
+  const [sheet, setSheet] = useState<'' | 'put' | 'withdraw' | 'vote' | 'keepWith' | 'leave' | 'already' | 'chooseOther'>('');
   const [seen, setSeen] = useState<Set<string>>(new Set());
   const [meId, setMeId] = useState(myId());
-  // Экран единственный и переживает смену входа — id перечитывается, когда сменился человек.
-  useEffect(() => { setMeId(myId()); ensureMe().then(setMeId); }, [me]);
+  const active = useRef(true);
+  const actionBusy = useRef(false);
+  const dialogs = useRef(new Set<(e: Error) => void>());
+  const current = () => active.current && session === getSession();
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      const pending = returnAction(getSession());
+      if (pending?.session === session && pending.payload.gid === gid) cancelReturnAction();
+      for (const reject of dialogs.current) reject(new Error('action_cancelled'));
+      dialogs.current.clear();
+    };
+  }, [session, gid]);
+  useEffect(() => { ensureMe().then(id => { if (current()) setMeId(id); }).catch(() => {}); }, [session]);
+  useEffect(() => {
+    if (focused) return;
+    dialog.dismiss();
+    for (const reject of dialogs.current) reject(new Error('action_cancelled'));
+    dialogs.current.clear();
+  }, [focused, dialog.dismiss]);
 
   const load = useCallback(async () => {
-    if (!gid || !me) return;
+    if (!gid || !me || !current()) return;
     try {
       const r: any = await gapi.get(gid, me);
-      if (r?.group) setG(r.group); else if (r?.error || r?.ok === false) setGone(true);
+      if (!current()) return;
+      if (r?.group) { setG(r.group); return r.group; }
+      else if (r?.error || r?.ok === false) setGone(true);
     } catch { /* фоновый опрос — молча */ }
-  }, [gid, me]);
+  }, [gid, me, session]);
   useEffect(() => { load(); }, [load]);
   usePolling(load, 6000, !gone);
 
@@ -110,13 +143,14 @@ export default function GroupRole() {
   const members = ((gg.members || []) as any[]);
   const others = members.filter((m) => !isMe(m.name, pidOf(m, 'name'), me));
   const mine = members.filter((m) => isMe(m.name, pidOf(m, 'name'), me));
-  const voters = others.filter((m) => !eq(m.name, owner) && !eq(m.name, cand)).map((m) => String(m.name));
+  const voters = others.filter((m) => !isPeer(m, owner, ownerId) && !isPeer(m, cand, candId)).map((m) => String(m.name));
   const former = String(rf.who || '');
   const silentH = Math.max(12, Number(gg.organiser_silent_h || t.silent_h || 12));
   const now = Date.now() / 1000;
   // GR.44b: первый из группы уже выбран — «Offer it to Jane» готова сразу, касание меняет выбор.
   const picked = pickedRaw || (others[0] ? { name: String(others[0].name || ''), id: pidOf(others[0], 'name') } : null);
-  const nextToOffer = others.filter((m) => !eq(m.name, o.to) && !(o.declined || []).some((d: string) => eq(d, m.name)))[0];
+  const nextToOffer = others.find((m) => !isPeer(m, o.to, o.to_id)
+    && !(o.declined_ids ? o.declined_ids.includes(pidOf(m, 'name')) : (o.declined || []).some((d: string) => eq(d, m.name))));
 
   // Итог голосования приходит листом поверх того, что человек видел до конца (борд GR.43c/i/f/l/n/p):
   // под листом — прежний экран, полоса «Ended»/«Stopped», организатор — прежний. Закрыл лист — итог.
@@ -138,24 +172,79 @@ export default function GroupRole() {
   const showExact = !iAmOrg && !wasOrg && view !== 'offerToMe';
 
   const act = async (fn: () => Promise<any>, after?: () => void) => {
-    if (busy) return;
+    if (actionBusy.current || !current()) return;
+    actionBusy.current = true;
     setBusy(true); setErr('');
     try {
       const r: any = await fn();
+      if (!current()) return;
       if (r?.group) setG(r.group);
       if (r?.ok === false) {
         if (r.error === 'OFFER_EXISTS') { setSheet('already'); await load(); return; }
-        setErr(T('Не получилось. Попробуй ещё раз.', 'That didn’t work. Try again.', 'No funcionó. Inténtalo de nuevo.'));
+        setErr(ROLE.actionFailed());
         return;
       }
       after?.();
       await load();
-    } catch {
-      setErr(T('Не получилось. Попробуй ещё раз.', 'That didn’t work. Try again.', 'No funcionó. Inténtalo de nuevo.'));
+    } catch (e) {
+      if (current() && !isAbort(e) && (e as Error)?.message !== 'account_changed') setErr(ROLE.actionFailed());
     } finally {
-      setBusy(false);
+      actionBusy.current = false;
+      if (current()) setBusy(false);
     }
   };
+  const recovery = roleQuotaRecovery(g, meId);
+  const showAlternative = (value = recovery) => {
+    if (!current()) return;
+    if (value.alternative === 'decline') setSheet('keepWith');
+    else if (value.alternative === 'withdraw') setSheet('withdraw');
+    else if (value.alternative === 'choose') setSheet('chooseOther');
+  };
+  const quotaOptions: PostOptions = { organizerQuota: async (action, retry) => {
+    if (!current() || action.session !== session || action.payload.gid !== gid) throw new Error('account_changed');
+    // Re-read permissions: a poll, another member or another device may have changed the offer.
+    const fresh = await load();
+    const id = await ensureMe();
+    if (!current()) throw new Error('account_changed');
+    if (!fresh) throw new Error('role_state_unknown');
+    const recovery = roleQuotaRecovery(fresh, id);
+    const proposal = (value: any) => JSON.stringify([value?.owner_id, value?.role_offer, value?.takeover]);
+    const offered = proposal(fresh);
+    return new Promise((resolve, reject) => {
+      const fail = (e: Error) => { dialogs.current.delete(fail); action.cancel?.(); reject(e); };
+      dialogs.current.add(fail);
+      const cancel = () => { fail(new Error('action_cancelled')); };
+      const choose = async (next: () => void) => {
+        if (!current() || !focus.current) { cancel(); return; }
+        const latest = await load();
+        if (!current() || !focus.current || !dialogs.current.has(fail) || !latest || proposal(latest) !== offered) { cancel(); return; }
+        next();
+      };
+      dialog.show(PLUS.title(), recovery.ownSlot ? ROLE.quotaOwn() : ROLE.quotaOther(), [
+        { text: PLUS.cancel(), style: 'cancel', onPress: cancel },
+        ...(recovery.alternative ? [{ text: recovery.alternative === 'choose' ? MONETIZATION.chooseOther() : ROLE.returnChoice(), onPress: () => { void choose(() => { showAlternative(recovery); cancel(); }); } }] : []),
+        ...(recovery.ownSlot ? [{ text: MONETIZATION.freeSlot(), onPress: () => { void choose(() => {
+          const origin=captureReturnOrigin(navigation);
+          if (!origin) { fail(new Error('action_cancelled')); return; }
+          dialogs.current.delete(fail);
+          deferAction(action, retry, origin).then(resolve, reject);
+          router.navigate(returnActionRoute(session,'plus')!);
+        }); } }] : []),
+      ], { cancelable: false });
+    });
+  } };
+  const chooseOther = () => act(async () => {
+    const fresh: any = await load();
+    if (!current()) throw new Error('account_changed');
+    if (roleQuotaRecovery(fresh, meId).alternative !== 'choose') throw new Error('role_changed');
+    const blockedId = fresh.role_offer?.to_id || fresh.takeover?.by_id;
+    const other = fresh.members?.find((m: any) => pidOf(m, 'name') && pidOf(m, 'name') !== meId && pidOf(m, 'name') !== blockedId);
+    setPicked(other ? { name: other.name, id: pidOf(other, 'name') } : null);
+    if (fresh.takeover?.state === 'open') return gapi.takeoverBack(gid, me, false, newIdem('gtb'), quotaOptions);
+    if (fresh.role_offer?.state === 'open') return gapi.roleWithdraw(gid, me, newIdem('grw'));
+    if (!fresh.can_hand_over) throw new Error('role_changed');
+    return { ok: true };
+  }, () => { setSheet(''); router.setParams({ pick: '1' }); });
   const toChat = () => router.dismissTo({ pathname: '/group', params: { gid } });
   const toPlan = () => router.navigate({ pathname: '/gplan', params: { gid } });
 
@@ -248,16 +337,16 @@ export default function GroupRole() {
       case 'stoppedCand': case 'stoppedOther': return isOwner ? { text: ROLE.stBack(), tone: 'ink' } : inGroup;
       case 'pick':
         if (mineRow) return { text: ROLE.stCreated(), tone: 'ink' };
-        return picked && eq(picked.name, nm) ? { text: ROLE.stSelected(), tone: 'ok' } : { text: ROLE.stTapToOffer(), tone: 'ink' };
+        return picked && isPeer(m, picked.name, picked.id) ? { text: ROLE.stSelected(), tone: 'ok' } : { text: ROLE.stTapToOffer(), tone: 'ink' };
       case 'offerSent':
         if (mineRow) return { text: ROLE.stHanding(), tone: 'ink' };
-        return eq(nm, o.to) ? { text: ROLE.stDeciding(), tone: 'muted' } : inGroup;
+        return isPeer(m, o.to, o.to_id) ? { text: ROLE.stDeciding(), tone: 'muted' } : inGroup;
       case 'offerToMe':
         if (isOwner) return { text: ROLE.stHanding(), tone: 'ink' };
         return mineRow ? { text: ROLE.stYourCall(), tone: 'turn' } : inGroup;
       case 'offerDeclined': case 'offerExpired':
         if (mineRow) return { text: ROLE.stStillYours(), tone: 'ink' };
-        if (eq(nm, o.to)) return { text: view === 'offerDeclined' ? ROLE.stSaidNo() : ROLE.stNoAnswer(), tone: 'ink' };
+        if (isPeer(m, o.to, o.to_id)) return { text: view === 'offerDeclined' ? ROLE.stSaidNo() : ROLE.stNoAnswer(), tone: 'ink' };
         return inGroup;
       case 'offerPassedMine': case 'offerClosedMine': return isOwner ? { text: ROLE.stKept(), tone: 'ink' } : inGroup;
       default: return inGroup;
@@ -267,7 +356,6 @@ export default function GroupRole() {
   // ---- итог листом, один раз на исход -----------------------------------
   const resultSheet = ((): null | { title: string; lead: string; note: string; primary: string; onPrimary: () => void; counts?: boolean } => {
     if (!sheetUp) return null;
-    const res = t.result || {};
     if (view === 'youOrganiser' && rf.how === 'vote') return { title: ROLE.youOrgTitle(), lead: ROLE.youOrgSheetLead(former), note: ROLE.youOrgSheetNote(former), primary: ROLE.makePlan(), onPrimary: toPlan };
     if (view === 'formerOwner' && rf.how === 'vote') return { title: ROLE.isOrgTitle(owner), lead: ROLE.awayLead(), note: ROLE.awayNote(owner), primary: ROLE.openChat(), onPrimary: toChat };
     if (view === 'otherPassed') return { title: ROLE.isOrgTitle(owner), lead: '', counts: true, note: ROLE.passSheetNoteOther(owner, former), primary: ROLE.openChat(), onPrimary: toChat };
@@ -290,8 +378,8 @@ export default function GroupRole() {
       case 'candidate': return [S(ROLE.withdrawMine(), () => setSheet('withdraw'))];
       case 'voteNeeded': return [P(ROLE.vote(), () => setSheet('vote'))];
       case 'ownerBack': return [
-        P(ROLE.keepRole(), () => act(() => gapi.takeoverBack(gid, me, false, newIdem('gtb')))),
-        S(ROLE.handTo(cand), () => act(() => gapi.takeoverBack(gid, me, true, newIdem('gtb')))),
+        P(ROLE.keepRole(), () => act(() => gapi.takeoverBack(gid, me, false, newIdem('gtb'), quotaOptions))),
+        S(ROLE.handTo(cand), () => act(() => gapi.takeoverBack(gid, me, true, newIdem('gtb'), quotaOptions))),
       ];
       case 'youOrganiser': return [P(ROLE.makePlan(), toPlan)];
       case 'formerOwner': return [P(ROLE.openChat(), toChat), S(ROLE.leaveGroup(), () => setSheet('leave'))];
@@ -303,7 +391,7 @@ export default function GroupRole() {
       ];
       case 'offerSent': return [S(ROLE.withdrawOffer(), () => act(() => gapi.roleWithdraw(gid, me, newIdem('grw'))))];
       case 'offerToMe': return [
-        P(ROLE.takeRole(), () => act(() => gapi.roleRespond(gid, me, true, newIdem('grr')))),
+        P(ROLE.takeRole(), () => act(() => gapi.roleRespond(gid, me, true, newIdem('grr'), quotaOptions))),
         S(ROLE.keepWith(owner), () => setSheet('keepWith')),
       ];
       case 'offerDeclined': case 'offerExpired': return [
@@ -341,6 +429,7 @@ export default function GroupRole() {
 
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
+      {dialog.view}
       {/* Фон — ровный «Ambient · glass pilot» #F5F1EC (s.wrap), без пятен: так на новом борде раздела A (6864:115809), как и в мастере создания. */}
       <View style={s.head}>
         <GlassBack label={T('Назад', 'Back', 'Atrás')} onPress={() => (router.canGoBack() ? router.back() : toChat())} />
@@ -438,6 +527,15 @@ export default function GroupRole() {
             </View>
 
             {err ? <Text style={s.err}>{err}</Text> : null}
+            {gg.role_recovery && gg.i_am_member ? <GlassPill tone="brand" label={ROLE.putMe()} busy={busy}
+              onPress={()=>act(()=>gapi.takeover(gid,me,newIdem('recover'),quotaOptions))}/> : null}
+            {gg.role_transfer_blocked==='organizer_search_quota' ? <View style={s.actions}>
+              <Text accessibilityRole="alert" style={s.note}>{recovery.ownSlot ? ROLE.quotaOwn() : ROLE.quotaOther()}</Text>
+              {recovery.ownSlot ? <GlassPill tone="brand" label={MONETIZATION.freeSlot()} onPress={() => current() && router.navigate('/plus')}/> : null}
+              {recovery.alternative ? <GlassPill disabled={busy}
+                label={recovery.alternative === 'choose' ? MONETIZATION.chooseOther() : ROLE.returnChoice()}
+                onPress={() => showAlternative()}/> : null}
+            </View> : null}
             <View style={s.actions}>{actions}</View>
           </>
         ) : null}
@@ -448,7 +546,7 @@ export default function GroupRole() {
       <Sheet visible={sheet === 'put'} onClose={() => setSheet('')} title={ROLE.putTitle()}>
         <SheetText lead={ROLE.putLead(owner, silentH)} note={ROLE.putNote(owner)} />
         <GlassPill tone="brand" label={ROLE.putMe()} busy={busy} style={s.sheetBtn}
-                   onPress={() => act(() => gapi.takeover(gid, me, newIdem('gto')), () => setSheet(''))} />
+                   onPress={() => act(() => gapi.takeover(gid, me, newIdem('gto'), quotaOptions), () => setSheet(''))} />
         <GlassPill tone="dark" label={ROLE.notNow()} style={s.sheetBtn} onPress={() => setSheet('')} />
       </Sheet>
       {/* GR.44a — кто-то успел раньше: одно предложение за раз. */}
@@ -469,15 +567,20 @@ export default function GroupRole() {
       <Sheet visible={sheet === 'vote' && t.state === 'open'} onClose={() => setSheet('')} title={ROLE.voteTitle(cand)}>
         <SheetText lead={ROLE.voteLead(hoursLeft(Number(t.closes_at || 0)))} note={ROLE.voteNote(owner)} />
         <GlassPill tone="brand" label={ROLE.voteYes(cand)} busy={busy} style={s.sheetBtn}
-                   onPress={() => act(() => gapi.takeoverVote(gid, me, true, newIdem('gtv')), () => setSheet(''))} />
+                   onPress={() => act(() => gapi.takeoverVote(gid, me, true, newIdem('gtv'), quotaOptions), () => setSheet(''))} />
         <GlassPill tone="dark" label={ROLE.voteNo(owner)} style={s.sheetBtn}
-                   onPress={() => act(() => gapi.takeoverVote(gid, me, false, newIdem('gtv')), () => setSheet(''))} />
+                   onPress={() => act(() => gapi.takeoverVote(gid, me, false, newIdem('gtv'), quotaOptions), () => setSheet(''))} />
       </Sheet>
       {/* GR.44i — оставить роль у организатора. */}
-      <Sheet visible={sheet === 'keepWith'} onClose={() => setSheet('')} title={ROLE.keepWithTitle(owner)}>
+      <Sheet visible={sheet === 'keepWith' && view === 'offerToMe'} onClose={() => setSheet('')} title={ROLE.keepWithTitle(owner)}>
         <SheetText lead={ROLE.keepWithLead()} note={ROLE.keepWithNote(owner)} />
         <GlassPill tone="brand" label={ROLE.keepWithBtn(owner)} busy={busy} style={s.sheetBtn}
-                   onPress={() => act(() => gapi.roleRespond(gid, me, false, newIdem('grr')), () => setSheet(''))} />
+                   onPress={() => act(() => gapi.roleRespond(gid, me, false, newIdem('grr'), quotaOptions), () => setSheet(''))} />
+        <GlassPill tone="dark" label={ROLE.goBack()} style={s.sheetBtn} onPress={() => setSheet('')} />
+      </Sheet>
+      <Sheet visible={sheet === 'chooseOther' && recovery.alternative === 'choose'} onClose={() => setSheet('')} title={MONETIZATION.chooseOther()}>
+        <SheetText note={ROLE.chooseOtherNote()} />
+        <GlassPill tone="brand" label={MONETIZATION.continue()} busy={busy} style={s.sheetBtn} onPress={chooseOther} />
         <GlassPill tone="dark" label={ROLE.goBack()} style={s.sheetBtn} onPress={() => setSheet('')} />
       </Sheet>
       {/* GR.44m — выйти из группы бывшему организатору. */}

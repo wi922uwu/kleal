@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, PanResponder, Platform, Pressable, StyleSheet, Text, View,
 } from 'react-native';
 import Animated, {
-  Easing, cancelAnimation, interpolate, useAnimatedStyle, useSharedValue,
+  Easing, cancelAnimation, interpolate, useAnimatedStyle, useReducedMotion, useSharedValue,
   withRepeat, withSequence, withSpring, withTiming, Extrapolation,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
@@ -21,7 +21,8 @@ import { appendUploadFile } from './upload-file';
 import { mediaUrl, speech, VoicePayload } from './api';
 import { T } from './i18n';
 import { color } from './theme';
-import { IconChevronUp, IconLock, IconMic, IconPlay, IconSend, IconTrash } from './components/icons';
+import { IconArrowUp, IconChevronUp, IconLock, IconMic, IconPlay, IconTrash } from './components/icons';
+import { DropGlass, dropIn } from './components/LiquidDrop';
 
 /**
  * ГОЛОСОВЫЕ — КАК В МЕССЕНДЖЕРАХ, К КОТОРЫМ ЧЕЛОВЕК ПРИВЫК.
@@ -579,11 +580,96 @@ function AudioPlay({
  */
 const LOCK_AT = -56;
 const CANCEL_AT = -84;
-const DRAG_TRAVEL = -150;
 const HINT_TRAVEL = -72;
 
 const SPRING_SOFT = { damping: 16, stiffness: 180 };
 const SPRING_SNAP = { damping: 14, stiffness: 260 };
+
+/*
+  СЛОЙ УДЕРЖАНИЯ ПОВЕРХ ЭКРАНА (17.10.2026). Поле ввода — стекло со скруглением, и оно обрезает всё,
+  что выходит за его кромку. Ореол, кольца и замок «вверх — закрепить» стоят как раз над полем —
+  и поэтому замок не было видно ВООБЩЕ (снято на симуляторе: ни одного кадра с замком), а ореол
+  срезался прямой линией по верху поля. Теперь на время удержания капля, кольца и замок рисуются
+  в общем слое над всеми экранами (VoiceOverlayHost в app/_layout.tsx), по центру кнопки в окне.
+  Касание остаётся на кнопке: слой касаний не ловит.
+*/
+type Shared = { value: number };
+type HoldOverlay = {
+  x: number; y: number;
+  sv: { grow: Shared; lvl: Shared; dx: Shared; ripple: Shared; lift: Shared; arrow: Shared; enter: Shared };
+};
+let holdOv: HoldOverlay | null = null;
+const holdSubs = new Set<() => void>();
+const setHoldOv = (v: HoldOverlay | null) => { holdOv = v; holdSubs.forEach((f) => f()); };
+
+export function VoiceOverlayHost() {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const f = () => bump((n) => n + 1);
+    holdSubs.add(f);
+    return () => { holdSubs.delete(f); };
+  }, []);
+  if (!holdOv) return null;
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <HoldLayer ov={holdOv} />
+    </View>
+  );
+}
+
+function HoldLayer({ ov }: { ov: HoldOverlay }) {
+  const { grow, lvl, dx, ripple, lift, arrow, enter } = ov.sv;
+  const haloStyle = useAnimatedStyle(() => ({
+    opacity: grow.value * interpolate(lvl.value, [0, 1], [0.08, 0.3]),
+    transform: [{ translateX: dx.value }, { scale: interpolate(lvl.value, [0, 1], [1.1, 2.7]) }],
+  }));
+  const ringStyle = useAnimatedStyle(() => ({
+    opacity: grow.value * interpolate(lvl.value, [0, 1], [0.14, 0.4]),
+    transform: [{ translateX: dx.value }, { scale: interpolate(lvl.value, [0, 1], [1.0, 1.85]) }],
+  }));
+  /* Круги по воде: расходятся всегда, пока пишем, — видно, что запись идёт, даже в тишине. */
+  const rippleStyle = useAnimatedStyle(() => ({
+    opacity: grow.value * interpolate(ripple.value, [0, 1], [0.45, 0]),
+    transform: [{ translateX: dx.value }, { scale: interpolate(ripple.value, [0, 1], [1.2, 2.6]) }],
+  }));
+  /* Капля дрожит голосом: ширина и высота качаются в противофазе от громкости. */
+  const discStyle = useAnimatedStyle(() => {
+    const base = interpolate(grow.value, [0, 1], [1, 1.45]);
+    const w = grow.value * lvl.value;
+    return {
+      opacity: grow.value * interpolate(dx.value, [CANCEL_AT, CANCEL_AT / 2], [0.25, 1], Extrapolation.CLAMP),
+      transform: [{ translateX: dx.value }, { scaleX: base * (1 + 0.08 * w) }, { scaleY: base * (1 - 0.06 * w) }],
+    };
+  });
+  const lockPillStyle = useAnimatedStyle(() => ({
+    opacity: enter.value * grow.value,
+    transform: [{ translateY: interpolate(lift.value, [0, 1], [0, -14]) }, { scale: interpolate(lift.value, [0, 1], [1, 1.08]) }],
+  }));
+  const lockFillStyle = useAnimatedStyle(() => ({ opacity: lift.value }));
+  const arrowStyle = useAnimatedStyle(() => ({
+    opacity: arrow.value * (1 - lift.value),
+    transform: [{ translateY: interpolate(arrow.value, [0, 1], [2, -3]) }],
+  }));
+  const at = (w: number, h: number) => ({ position: 'absolute' as const, left: ov.x - w / 2, top: ov.y - h / 2 });
+  return (
+    <>
+      <Animated.View style={[s.halo, at(34, 34), haloStyle]} />
+      <Animated.View style={[s.halo, at(34, 34), ringStyle]} />
+      <Animated.View style={[s.ripple, at(34, 34), rippleStyle]} />
+      <Animated.View style={[s.micDisc, at(34, 34), discStyle]}>
+        <DropGlass size={34} id="vmicov" />
+        <View style={s.micIcon}><IconMic c={color.onPrimary} /></View>
+      </Animated.View>
+      {/* Замок — над каплей с зазором 16: капля под пальцем ~50, сам замок ~44. Своё `bottom` из
+          стиля снимаем — иначе капсула тянулась от этой точки до низа экрана. */}
+      <Animated.View style={[s.lockPill, { position: 'absolute', bottom: undefined, left: ov.x - 16, top: ov.y - 25 - 16 - 46 }, lockPillStyle]}>
+        <Animated.View style={[s.lockFill, lockFillStyle]} />
+        <Animated.View style={arrowStyle}><IconChevronUp size={11} c={color.muted} /></Animated.View>
+        <IconLock size={14} c={color.muted} />
+      </Animated.View>
+    </>
+  );
+}
 
 export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
   const recording = voice.phase === 'recording';
@@ -607,6 +693,9 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
   const enter = useSharedValue(0);    // появление полосы
   const cancelHint = useSharedValue(0); // подсказка «отпусти — отмена»
   const sendPop = useSharedValue(0);  // кнопка «отправить» выпрыгивает
+  const ripple = useSharedValue(0);   // волна от капли, пока идёт запись (живая и в тишине)
+  const reduced = useReducedMotion();
+  const slotBox = useRef<View>(null);
 
   const resetGesture = useCallback(() => {
     lockedRef.current = false;
@@ -632,6 +721,10 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
         lift.value = 0;
         cancelHint.value = 0;
         buzzStarted();
+        // Слой удержания — по центру кнопки в окне (см. VoiceOverlayHost): поле его не обрежет.
+        slotBox.current?.measureInWindow((x, y, w, h) => setHoldOv({
+          x: x + w / 2, y: y + h / 2, sv: { grow, lvl, dx, ripple, lift, arrow, enter },
+        }));
         voiceRef.current.start();
       },
       onPanResponderMove: (_e, g) => {
@@ -674,6 +767,14 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
   ).current;
 
   useEffect(() => { grow.value = withSpring(recording ? 1 : 0, { damping: 13, stiffness: 240 }); }, [grow, recording]);
+  // Слой удержания живёт, пока палец держит запись. Закрепили или отпустили — капля сдувается
+  // (grow → 0, ~220 мс) и слой уходит; на месте кнопки уже «Отправить» или микрофон.
+  useEffect(() => {
+    if (recording && !locked) return;
+    const id = setTimeout(() => setHoldOv(null), locked ? 0 : 240);
+    return () => clearTimeout(id);
+  }, [recording, locked]);
+  useEffect(() => () => setHoldOv(null), []);
   useEffect(() => { lvl.value = withTiming(recording ? voice.level : 0, { duration: 110, easing: Easing.out(Easing.quad) }); }, [lvl, recording, voice.level]);
   useEffect(() => {
     if (!recording) { cancelAnimation(blink); blink.value = 1; return; }
@@ -683,6 +784,12 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
     ), -1, false);
     return () => cancelAnimation(blink);
   }, [blink, recording]);
+  useEffect(() => {
+    if (!recording || reduced) { cancelAnimation(ripple); ripple.value = 0; return; }
+    ripple.value = 0;
+    ripple.value = withRepeat(withTiming(1, { duration: 1300, easing: Easing.out(Easing.quad) }), -1, false);
+    return () => cancelAnimation(ripple);
+  }, [ripple, recording, reduced]);
   useEffect(() => {
     if (!recording || locked) { cancelAnimation(arrow); arrow.value = 0; return; }
     arrow.value = withRepeat(withSequence(
@@ -700,21 +807,8 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
   }, [sendPop, voice.phase]);
 
   // ---- стили на стороне UI: ни одного setValue на кадр
-  const haloStyle = useAnimatedStyle(() => ({
-    opacity: grow.value * interpolate(lvl.value, [0, 1], [0.08, 0.3]),
-    transform: [{ translateX: dx.value }, { scale: interpolate(lvl.value, [0, 1], [1.1, 2.7]) }],
-  }));
-  const ringStyle = useAnimatedStyle(() => ({
-    opacity: grow.value * interpolate(lvl.value, [0, 1], [0.14, 0.4]),
-    transform: [{ translateX: dx.value }, { scale: interpolate(lvl.value, [0, 1], [1.0, 1.85]) }],
-  }));
-  const discStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(dx.value, [CANCEL_AT, CANCEL_AT / 2], [0.25, 1], Extrapolation.CLAMP),
-    transform: [{ translateX: dx.value }, { scale: interpolate(grow.value, [0, 1], [1, 1.3]) }],
-  }));
-  const micFillStyle = useAnimatedStyle(() => ({ opacity: grow.value }));
-  const micGreyStyle = useAnimatedStyle(() => ({ opacity: 1 - grow.value }));
-  const micWhiteStyle = useAnimatedStyle(() => ({ opacity: grow.value }));
+  /* Ореол, кольца, капля и замок — в слое удержания (HoldLayer). Микрофон в поле гаснет, как только капля поднялась в слое удержания (HoldLayer). */
+  const discStyle = useAnimatedStyle(() => ({ opacity: interpolate(grow.value, [0, 0.2], [1, 0], Extrapolation.CLAMP) }));
   const barStyle = useAnimatedStyle(() => ({
     opacity: enter.value,
     transform: [{ translateY: interpolate(enter.value, [0, 1], [10, 0]) }],
@@ -723,19 +817,18 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
   const hintStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: interpolate(dx.value, [HINT_TRAVEL, 0], [HINT_TRAVEL, 0], Extrapolation.CLAMP) * (1 - cancelHint.value) }],
   }));
-  const lockPillStyle = useAnimatedStyle(() => ({
-    opacity: enter.value,
-    transform: [{ translateY: interpolate(lift.value, [0, 1], [0, -14]) }, { scale: interpolate(lift.value, [0, 1], [1, 1.08]) }],
+  /* «Отправить» голосовое — та же стеклянная капля, что у текста (SendArrow): выпрыгивает желе. */
+  const sendStyle = useAnimatedStyle(() => ({
+    opacity: Math.min(1, sendPop.value * 2),
+    transform: [
+      { scaleX: interpolate(sendPop.value, [0, 1], [0.3, 1]) },
+      { scaleY: interpolate(sendPop.value, [0, 1], [0.5, 1]) },
+    ],
   }));
-  const lockFillStyle = useAnimatedStyle(() => ({ opacity: lift.value }));
-  const arrowStyle = useAnimatedStyle(() => ({
-    opacity: arrow.value * (1 - lift.value),
-    transform: [{ translateY: interpolate(arrow.value, [0, 1], [2, -3]) }],
-  }));
-  const sendStyle = useAnimatedStyle(() => ({ transform: [{ scale: interpolate(sendPop.value, [0, 1], [0.6, 1]) }], opacity: sendPop.value }));
 
   const cancelling = hint === 'cancel';
   const sendNow = () => { voice.stopAndSend(); resetGesture(); };
+  const sendReady = () => { voice.send(); };
   const dropIt = () => { buzzLost(); voice.cancel(); resetGesture(); };
   const ready = voice.phase === 'preview' || voice.phase === 'uploading';
 
@@ -778,38 +871,32 @@ export function VoiceMessageControl({ voice }: { voice: VoiceMessage }) {
         </Animated.View>
       ) : null}
 
-      <View style={s.micSlot}>
+      {/* Микрофон возвращается в поле после отправки желе — как капля текста (dropIn). */}
+      <Animated.View ref={slotBox} style={s.micSlot} entering={reduced ? undefined : dropIn()}>
         {locked || ready ? (
           <Animated.View style={sendStyle}>
             <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send', 'Enviar')}
-                       onPress={locked ? sendNow : voice.send} disabled={voice.disabled}
+                       onPress={locked ? sendNow : sendReady} disabled={voice.disabled}
                        style={[s.send, voice.disabled && { opacity: 0.55 }]}>
-              {voice.phase === 'uploading' ? <ActivityIndicator size="small" color={color.onPrimary} /> : <IconSend size={17} />}
+              <View style={s.sendDrop}>
+                <DropGlass size={36} id="vsend" dim={voice.disabled} />
+                {voice.phase === 'uploading' ? <ActivityIndicator size="small" color={color.onPrimary} /> : <IconArrowUp size={20} c="#FFFFFF" />}
+              </View>
             </Pressable>
           </Animated.View>
         ) : (
           <>
-            <Animated.View style={[s.halo, haloStyle]} pointerEvents="none" />
-            <Animated.View style={[s.halo, ringStyle]} pointerEvents="none" />
             <Animated.View
               accessibilityRole="button"
               accessibilityLabel={T('Удерживай, чтобы записать голосовое', 'Hold to record a voice message', 'Pulsa y sostén para grabar un mensaje de voz')}
               style={[s.micDisc, discStyle]}
             >
-              <Animated.View style={[s.micFill, micFillStyle]} pointerEvents="none" />
-              <Animated.View style={[s.micIcon, micGreyStyle]}><IconMic /></Animated.View>
-              <Animated.View style={[s.micIcon, micWhiteStyle]}><IconMic c={color.onPrimary} /></Animated.View>
+              {/* Под пальцем микрофон становится коралловой каплей — она рисуется в слое удержания. */}
+              <View style={s.micIcon}><IconMic /></View>
             </Animated.View>
-            {recording ? (
-              <Animated.View style={[s.lockPill, lockPillStyle]} pointerEvents="none">
-                <Animated.View style={[s.lockFill, lockFillStyle]} />
-                <Animated.View style={arrowStyle}><IconChevronUp size={11} c={color.muted} /></Animated.View>
-                <IconLock size={14} c={color.muted} />
-              </Animated.View>
-            ) : null}
           </>
         )}
-      </View>
+      </Animated.View>
     </View>
   );
 }
@@ -820,7 +907,8 @@ function LiveWave({ levels }: { levels: number[] }) {
     <View style={s.liveWave} pointerEvents="none">
       {Array.from({ length: LIVE_BARS }).map((_, i) => {
         const v = levels[levels.length - LIVE_BARS + i] ?? 0;
-        return <View key={i} style={[s.liveBar, { height: 3 + Math.round(v * 15) }]} />;
+        // Коралл, к старым столбикам светлее: голос «течёт» справа налево и тает.
+        return <View key={i} style={[s.liveBar, { height: 3 + Math.round(v * 15), opacity: 0.35 + 0.65 * (i / (LIVE_BARS - 1)) }]} />;
       })}
     </View>
   );
@@ -861,7 +949,9 @@ const s = StyleSheet.create({
   recording: { minWidth: 76, flexDirection: 'row', gap: 7 },
   stop: { width: 11, height: 11, borderRadius: 2, backgroundColor: color.primary },
   timer: { width: 46, fontSize: 12, color: color.primary, fontVariant: ['tabular-nums'] },
-  send: { width: 36, height: 36, borderRadius: 18, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },
+  send: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+          shadowColor: color.primary, shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+  sendDrop: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
 
   // --- проигрыватель: круглая кнопка слева, волна и отсчёт столбиком справа — как в мессенджерах
   playRow: { minWidth: 196, flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -892,11 +982,16 @@ const s = StyleSheet.create({
   micSlot: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   halo: { position: 'absolute', width: 34, height: 34, borderRadius: 17, backgroundColor: color.primary },
   micDisc: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
-  micFill: { ...StyleSheet.absoluteFill, borderRadius: 17, backgroundColor: color.primary },
+  micFill: { ...StyleSheet.absoluteFill, borderRadius: 17 },
+  /** Круги по воде от капли записи: тонкое кольцо, расходится и тает. */
+  ripple: { position: 'absolute', width: 34, height: 34, borderRadius: 17, borderWidth: 1.5, borderColor: color.primary },
   micIcon: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
+  /** Замок — светлая стеклянная капсула с мягкой тенью, как стекло приложения (не карточка с рамкой). */
   lockPill: {
-    position: 'absolute', bottom: 46, width: 30, paddingVertical: 6, borderRadius: 15,
-    alignItems: 'center', gap: 3, backgroundColor: color.card, borderWidth: 1, borderColor: color.border,
+    position: 'absolute', bottom: 50, width: 32, paddingVertical: 8, borderRadius: 16,
+    alignItems: 'center', gap: 3, backgroundColor: 'rgba(255,255,255,0.92)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.9)',
+    shadowColor: '#0A0A14', shadowOpacity: 0.12, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
   },
   lockFill: { ...StyleSheet.absoluteFill, borderRadius: 15, backgroundColor: color.neutral100 },
 
@@ -908,7 +1003,7 @@ const s = StyleSheet.create({
   hint: { fontSize: 12, color: color.muted, flexShrink: 1 },
   hintCancel: { color: color.primary, fontWeight: '600' },
   liveWave: { flex: 1, height: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 2 },
-  liveBar: { width: 2, borderRadius: 1, backgroundColor: color.neutral300 },
+  liveBar: { width: 2, borderRadius: 1, backgroundColor: color.primary },
 
   // --- пузырь
   bubble: { minWidth: 236, maxWidth: 290, paddingVertical: 10, paddingHorizontal: 12, borderRadius: 16, backgroundColor: color.neutral100 },

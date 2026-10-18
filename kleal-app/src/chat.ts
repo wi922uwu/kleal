@@ -12,10 +12,8 @@
  *  O.19  Лист действий: создать план, закончить разговор, открыть интент, продолжить.
  *  O.20  План отправлен и ждёт ответа: карточка плана, статусы обоих, «Открыть чат» и «Поправить».
  *
- * Про тариф. Ограничение «один чат на интент» — продуктовое правило с кадра O.17, и на сервере его
- * НЕТ: он позволяет писать любому, кто принял приглашение. Здесь оно живёт как правило клиента, и
- * это честно помечено — когда тариф появится на сервере, проверку надо будет перенести туда, иначе
- * ограничение обходится любым другим клиентом.
+ * Инициативные сессии и квоту теперь проверяет сервер. Открытие истории не расходует слот;
+ * ответы, групповые чаты и необходимая координация существующего плана остаются доступны.
  */
 import { T, dateLocale, use12h } from './i18n';
 import { acc, dat, gen, ins } from './names';
@@ -51,12 +49,12 @@ export const CHAT = {
   busyTitle: (name: string) => T(`Ты уже переписываешься с ${ins(name)}`, `You're already chatting with ${name}`, `Ya estás charlando con ${name}`),
   busyBody: () =>
     T(
-      'На бесплатном тарифе можно вести переписку только с одним мэтчем за раз. Закончи текущую, чтобы начать с другим, или подключи Kleal Plus — тогда доступны все три.',
-      'On the Free plan, you can chat with only one match at a time. End your current chat to start one with another match, or upgrade to Kleal Plus to chat with all three.'
-    , 'En el plan gratuito, solo puedes chatear con una coincidencia a la vez. Finaliza tu conversación actual para empezar una con otra coincidencia, o actualiza a Kleal Plus para chatear con las tres.'),
+      'На Free доступен один инициативный личный чат. Заверши его, чтобы начать новый. Ответы, история и договорённости сохраняются.',
+      'Free includes one initiated personal chat. End it to start another. Replies, history and agreed plans remain available.'
+    , 'Free incluye un chat personal iniciado. Termínalo para iniciar otro. Las respuestas, el historial y los planes acordados siguen disponibles.'),
   getPlus: () => T('Подключить Kleal Plus', 'Get Kleal Plus', 'Obtén Kleal Plus'),
-  plusPrice: () => T('€6,99 в месяц · переписка со всеми · отмена в любой момент',
-                     '€6.99 / month · Chat with all matches · Cancel any time', '€6,99 / mes · Chatear con todas las coincidencias · Cancelar en cualquier momento'),
+  plusPrice: () => T('Plus Preview · без оплаты и автосписания',
+                     'Plus Preview · no payment or automatic charge', 'Plus Preview · sin pago ni cobro automático'),
   endChatWith: (name: string) => T(`Закончить переписку с ${ins(name)}`, `End chat with ${name}`, `Finalizar conversación con ${name}`),
   /** Лист лимита: кнопка и правда заканчивает разговор, поэтому спрашивает — он закроется у ДВОИХ. */
   endAskTitle: (who: string) => T(`Закончить разговор с ${who}?`, `End your chat with ${who}?`, `¿Finalizar tu conversación con ${who}?`),
@@ -66,7 +64,7 @@ export const CHAT = {
   , 'El chat se cierra para ambos y el hueco se libera para otra coincidencia. El historial queda — puedes leerlo de nuevo.'),
   endAskYes: () => T('Закончить', 'End it', 'Finalizar'),
   endAskNo: () => T('Не надо', 'Keep it', 'Manténlo'),
-  endFailed: () => T('Не вышло закончить разговор. Попробуй ещё раз.', 'Couldn’t end the chat. Try again.', 'No se pudo finalizar la conversación. Inténtalo de nuevo.'),
+  endFailed: () => T('Не удалось подтвердить завершение чата. Попробуй ещё раз.', 'Could not confirm that the chat ended. Try again.', 'No se pudo confirmar el cierre del chat. Inténtalo de nuevo.'),
 
 
   /** O.18 — сам чат. */
@@ -158,6 +156,16 @@ export const CHAT = {
     `Their messages are hidden for you in every group, and Kleal won’t match you again. Any one-on-one invite or plan between you is cancelled — they see it was cancelled, not why. You both stay in ${group}. Unblock any time in Settings.`,
     `Sus mensajes se ocultan para ti en todos los grupos y Kleal no os volverá a juntar. Cualquier invitación o plan uno a uno entre vosotros se cancela: verá la cancelación, no el motivo. Los dos seguís en ${group}. Puedes desbloquear en Ajustes.`),
   notNow: () => T('Не сейчас', 'Not now', 'Ahora no'),
+  chatClosed: () => T('Чат завершён. История сохранена.', 'Chat ended. Your history is saved.', 'Chat finalizado. Se conserva el historial.'),
+  resumeChat: () => T('Написать снова', 'Write again', 'Volver a escribir'),
+  openHistory: () => T('Открыть историю', 'Open history', 'Abrir historial'),
+  resumeNote: () => T('Чат возобновится после успешной отправки сообщения. Сервер проверит свободный слот; общение по действующему плану остаётся доступным.', 'The chat resumes after a message is sent successfully. The server will check for a free slot; communication about an active plan remains available.', 'El chat se reanudará cuando se envíe un mensaje correctamente. El servidor comprobará si hay un espacio libre; seguirá disponible la comunicación sobre un plan activo.'),
+  chatResumed: () => T('Чат возобновлён.', 'Chat resumed.', 'Chat reanudado.'),
+  chatBlocked: () => T('Переписка недоступна из-за блокировки. История сохранена.', 'Messaging is unavailable because of a block. Your history is saved.', 'Los mensajes no están disponibles debido a un bloqueo. Se conserva el historial.'),
+  endingChat: () => T('Завершаем чат…', 'Ending chat…', 'Finalizando chat…'),
+  endRecorded: () => T('Завершение отмечено в истории.', 'The end was recorded in your history.', 'El cierre se registró en el historial.'),
+  chatStateRetry: () => T('Обновить состояние чата', 'Refresh chat status', 'Actualizar estado del chat'),
+  chatStateUnknown: () => T('Не удалось обновить состояние чата. Повтори проверку.', 'Could not refresh the chat status. Try again.', 'No se pudo actualizar el estado del chat. Inténtalo de nuevo.'),
 
   /** O.19 — лист действий. */
   actionsTitle: () => T('Действия с разговором', 'Conversation Actions', 'Acciones de conversación'),
@@ -738,6 +746,9 @@ export const OFB = {
   stillFree: (o: string) => T(`${o} свободен(на). Выбери — и откроется чат.`, `${o} is still free. Pick them and the chat opens.`, `${o} sigue libre. Elígela y se abre el chat.`),
   busyNow: (o: string) => T(`У ${o} уже есть план с тобой.`, `${o} already has a plan with you.`, `${o} ya tiene un plan contigo.`),
   pickName: (o: string) => T(`Выбрать ${o}`, `Pick ${o}`, `Elegir a ${o}`),
+  pickFailed: () => T('Не удалось выбрать. Попробуй ещё раз.', 'Could not pick. Try again.', 'No se pudo elegir. Inténtalo de nuevo.'),
+  /** Выбрать уже нельзя: приглашение решилось или сгорело, пока карточка была открыта. */
+  pickTooLate: () => T('Выбрать уже нельзя — приглашение закрылось.', 'You can’t pick any more — the invite has closed.', 'Ya no puedes elegir: la invitación se cerró.'),
   seeOthers: () => T('Посмотреть, кого нашёл Kleal', 'See who Kleal found', 'Ver a quién encontró Kleal'),
 };
 
@@ -1160,6 +1171,9 @@ export const PLAN = {
   cantMakeYes: () => T('Да, не смогу', 'Yes, I can’t make it', 'Sí, no puedo ir'),
   cantMakeMine: () => T('Предупредил(а), что не придёшь', 'You said you can’t make it', 'Avisaste de que no vendrás'),
   /** Ответ на устаревшую версию плана: не «не удалось», а что именно случилось. */
+  /** Отказ плана, после которого план надо перечитать: окно ходов закрыто, план закреплён, раунды кончились (сверка п. 14). */
+  closedMeanwhile: () => T('План уже нельзя так поменять — показываем, как он выглядит сейчас.', 'The plan can’t be changed like that any more — here’s how it looks now.', 'El plan ya no se puede cambiar así; así está ahora.'),
+  noRoundsLeft: () => T('Раунды переноса закончились — остаётся последняя версия.', 'No more rounds to change it — the last version stands.', 'No quedan rondas para cambiarlo; se queda la última versión.'),
   changedMeanwhile: () => T('План только что изменился — смотри свежую версию.', 'The plan just changed — see the latest version.', 'El plan acaba de cambiar: mira la versión actual.'),
   sendNewTime: () => T('Отправить новое время', 'Send the new time', 'Enviar la nueva hora'),
 
@@ -1333,8 +1347,8 @@ export const PLAN = {
  * же состояния.
  */
 export function planPinned(plan: any, me: string): { label: string; warn: boolean } {
-  const norm = (v: any) => String(v || '').trim().toLowerCase();
-  const meRow = (plan?.participants || []).find((p: any) => norm(p?.name) === norm(me));
+  // «Я» в участниках — по id (is_me от сервера или name_id/id), по имени только для старых ответов.
+  const meRow = (plan?.participants || []).find((p: any) => p?.is_me || isMe(p?.name, p?.id || p?.name_id, me));
   const iConfirmed = !!meRow?.confirmed;
   const pending = plan?.pending;
   if (pending) {
@@ -1461,6 +1475,16 @@ export const THREAD = {
   declinedClear: (name: string) =>
     T(`${name} видит ясное «нет», а не «может быть».`, `${name} sees a clear no, not a maybe.`, `${name} ve claramente un no, no un quizás.`),
   inviteExpired: () => T('Истекло · без ответа', 'Expired · no reply', 'Caducado · sin respuesta'),
+  /*
+    СВОИ ИСХОДЫ, А НЕ «ИСТЕКЛО» (сверка 17.10, п. 9–10). Сказавшей «да» карточка писала «Истекло · без
+    ответа», хотя она ответила и ждёт выбора (answered), выбран другой (not_picked) или приглашение
+    закрыто правилами (policy_revoked). Промолчавший организатор (expired + host_silent) — тоже не её вина.
+  */
+  inviteAnswered: (name: string) => T(`Ты сказал(а) «да» — ждём, кого выберет ${name}`, `You said yes — waiting for ${name} to pick`, `Dijiste que sí — esperando a que ${name} elija`),
+  inviteNotPicked: (name: string) => T(`${name} выбрал(а) другого человека. Ты ни при чём.`, `${name} picked someone else. Nothing you did.`, `${name} eligió a otra persona. No fue por ti.`),
+  invitePolicyClosed: () => T('Приглашение закрыто', 'This invite is closed', 'Esta invitación está cerrada'),
+  inviteHostSilent: (name: string) => T(`${name} не выбрал(а) вовремя — приглашение закрылось. Ты ни при чём.`,
+    `${name} didn’t pick in time, so the invite closed. Nothing you did.`, `${name} no eligió a tiempo y la invitación se cerró. No fue por ti.`),
   /** Часы — настоящие, из самой заявки (created→expires_at): сервер держит место 72 часа,
    *  а не 24 с борда. */
   expiredNote: (h: number) =>
@@ -1558,6 +1582,13 @@ export const INVITE = {
     'The invite was withdrawn before you answered. Nothing you did.'
   , 'La invitación se retiró antes de que respondieras. No fue por algo que hicieras tú.'),
   lookElse: () => T('Посмотреть другое', 'Find something else', 'Buscar otra cosa'),
+  /** Сказал(а) «да», а организатор не выбрал до pick_by (expired + trace.reason host_silent, сверка п. 10). */
+  hostSilentStatus: () => T('Организатор не выбрал', 'Organiser didn’t pick', 'No eligió a tiempo'),
+  hostSilentNote: (name: string) => T(`Ты ответил(а) «да», но ${name} не выбрал(а) вовремя, и приглашение закрылось. Ты ни при чём.`,
+    `You said yes, but ${name} didn’t pick in time, so the invite closed. Nothing you did.`,
+    `Dijiste que sí, pero ${name} no eligió a tiempo y la invitación se cerró. No fue por ti.`),
+  /** Приглашение поменялось, пока экран был открыт (VERSION_CONFLICT / POLICY_CHANGED) — перечитали. */
+  changedNote: () => T('Приглашение только что изменилось — показываем свежее.', 'The invite just changed — showing the latest.', 'La invitación acaba de cambiar; mostramos la última versión.'),
   goneNote: () =>
     T('Приглашение больше не действует: истекло или уже решено.', 'This invite is no longer live: it expired or was already settled.', 'Esta invitación ya no está activa: caducó o ya se resolvió.'),
 };
@@ -1998,11 +2029,8 @@ export function activeChatWith(
    * Признак — последнее сообщение пары. Если после «разговор закрыт» кто-то написал снова, тред
    * снова живой: закрыть и передумать — обычное дело, и запрещать это нечем.
    */
-  const live = (threads || []).filter(
-    (t) => String(t.who || '').trim() && t.sys?.code !== 'chat_ended',
-  );
-  live.sort((a, b) => (b.t || 0) - (a.t || 0));
-  return String(live[0]?.who || '');
+  // Entitlement lifecycle is server owned; history navigation never consumes a slot.
+  return '';
 }
 
 /** Время сообщения — часы и минуты, как на кадре. */

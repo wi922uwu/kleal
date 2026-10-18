@@ -247,6 +247,12 @@ export const BLOCKED = {
     ),
   empty: () => T('Ты никого не блокировал.', 'You haven’t blocked anyone.', 'No has bloqueado a nadie.'),
   unblock: () => T('Разблокировать', 'Unblock', 'Desbloquear'),
+  // Борд «Profile — new layout», B.09 / B.09a.
+  cantReach: () => T('Они до тебя не доберутся', 'They can’t reach you', 'No pueden contactarte'),
+  noneTitle: () => T('Никто не заблокирован', 'No one is blocked', 'No hay nadie bloqueado'),
+  noneNote: () => T('Если кто-то тебе неприятен, заблокируй его из профиля или из группового чата. Ему не сообщат.',
+    'If someone makes you uncomfortable, block them from their profile or the group chat. They won’t be told.',
+    'Si alguien te incomoda, bloquéalo desde su perfil o el chat del grupo. No se le avisará.'),
   /**
    * Даты рядом с именем не будет. Сервер хранит список блокировок именами и ничем больше — ни
    * когда, ни возраст. На кадре «Blocked 24 July» стоит как заполнитель; написать сюда любую дату

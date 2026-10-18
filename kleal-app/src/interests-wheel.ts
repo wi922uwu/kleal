@@ -48,10 +48,6 @@ export type WheelNode = {
   kids?: WheelNode[];
 };
 
-const N = (key: string, ru: string, en: string, es: string, kids?: WheelNode[]): WheelNode =>
-  ({ key, ru, en, es, kids });
-const TOP = (key: string, ru: string, en: string, es: string, icon: string, kids: WheelNode[]): WheelNode =>
-  ({ key, ru, en, es, icon, kids });
 
 /*
   ДЕРЕВО БОЛЬШЕ НЕ ЖИВЁТ ЗДЕСЬ. Оно генерируется из общего с сервером реестра —
@@ -70,6 +66,29 @@ import { TREE } from './interests-tree.generated';
 export const WHEEL_TREE: WheelNode[] = TREE;
 
 export const nodeLabel = (n: WheelNode) => T(n.ru, n.en, n.es);
+
+/** Запись выбора: только реальные предки общего реестра, не соседние занятия.
+ * Карта/корзина и реплика агенту по-прежнему показывают выбранные человеком ключи.
+ * Неизвестному слову не придумываем категорию; неоднозначные служебные группы
+ * (например, `more` в нескольких темах) не становятся интересами человека.
+ */
+export function interestChain(raw: string): string[] {
+  const key = String(raw || '').trim().toLowerCase();
+  if (!key) return [];
+  const paths = new Map<string, string[][]>();
+  const walk = (nodes: WheelNode[], parents: string[]) => {
+    for (const node of nodes) {
+      const path = [...parents, node.key];
+      paths.set(node.key, [...(paths.get(node.key) || []), path]);
+      if (node.kids) walk(node.kids, path);
+    }
+  };
+  walk(WHEEL_TREE, []);
+  const candidates = paths.get(key) || [];
+  if (candidates.some((p) => p.length === 1)) return [key];
+  if (candidates.length !== 1) return [key];
+  return candidates[0].filter((k) => k === key || (paths.get(k)?.length === 1) || WHEEL_TREE.some((n) => n.key === k));
+}
 
 /** Подпись по ключу — для чипов собранного. Не нашли в дереве — значит слово человека, как есть. */
 export function labelOf(key: string): string {

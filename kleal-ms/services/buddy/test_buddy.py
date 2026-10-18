@@ -1574,7 +1574,7 @@ check(u"квартал чипом не стал", "raval" not in _tags, _tags)
 # СТОРОЖ НА ЗАПРЕТ ПУСТЫХ ТЕМ В ФИЛЬТРАЦИИ. Промпт правится и из админки, и руками; без сторожа
 # запрет исчезнет незаметно, а с ним вернутся `meet`, `fun`, `friends` в темах карточек — замер
 # 22.09.2026 показал их в 9,4% ответов.
-_fp = open("/opt/kleal/kleal-ms/services/filtration/app.py", encoding="utf-8").read()
+_fp = open(os.path.join(_HERE, "..", "filtration", "app.py"), encoding="utf-8").read()
 check(u"фильтрация запрещает пустые темы", "TOPICS NAME THE THING OR THE ACTIVITY" in _fp)
 for _w in ("fun", "friends", "socializing", "weekend", "weather"):
     check(u"пустое слово названо запретом: %s" % _w,
@@ -1724,6 +1724,13 @@ check('connect и socialize не чипы', {'connect','socialize'} <= B._GENERI
 # БУДИ V2 — проверки без модели: разбор ответа, сито чипов, выключатель.
 import os as _os2, v2 as V2
 check('v2: разбор без маркера', V2.разобрать('Привет!')[:2] == ('Привет!', None))
+# 17.10.2026: маркер в конце строки и одна карточка без текста
+_v2m = V2.разобрать('Super! Ich suche jemanden. ###CARD\n{"card": {"title": "Brettspiele spielen", "chips": ["Brettspiele"], "request": true}}')
+check('v2: маркер в конце строки', _v2m[0] == 'Super! Ich suche jemanden.' and _v2m[2] and (_v2m[1] or {}).get('title') == 'Brettspiele spielen', _v2m)
+_v2o = V2.разобрать('###CARD\n{"card": {"title": "Giocare a giochi da tavolo", "chips": ["giochi da tavolo"], "request": true}}')
+check('v2: одна карточка без текста — чисто', _v2o[0] == '' and _v2o[2] and (_v2o[1] or {}).get('title'), _v2o)
+check('v2: пусто и без карточки — брак', V2.разобрать('')[2] is False)
+check('v2: «card» в тексте не срезается', V2.разобрать('I love my credit card')[0] == 'I love my credit card')
 check('v2: разбор с пустой карточкой', V2.разобрать('Привет!\n###CARD\n{"card": null}')[:2] == ('Привет!', None))
 _v2k = V2.разобрать('Ок!\n### CARD\n{"card": {"title": "Выпить кофе", "chips": ["coffee"], "category": "coffee", "request": true}}')
 check('v2: маркер с пробелом тоже читается', (_v2k[1] or {}).get('title') == 'Выпить кофе' and _v2k[0] == 'Ок!')
@@ -1917,6 +1924,133 @@ check("v2-3: пустые чипы — предмет карточки прох�
 _z = V2._затея({"title": "Поиграть в майнкрафт", "subject": "майнкрафт", "role": "play", "chips": [], "category": "gaming", "request": True},
                [{"role": "user", "content": "хочу поиграть в шахматы"}], {}, {}, "ru", B)
 check("v2-3: несказанный предмет не спасает пустые чипы", _z[0] is None, _z)
+# 18.10.2026: глагол заголовка — ключ, только когда других ключей нет
+_z = V2._затея({"title": "Прогуляться по лесу", "subject": "лес", "role": "meet", "chips": ["лес"], "category": "outdoors", "request": True},
+               [{"role": "user", "content": "хочу погулять"}, {"role": "assistant", "content": "Где?"},
+                {"role": "user", "content": "в лесу"}, {"role": "user", "content": "оставь прогулку"}], {}, {}, "ru", B)
+check("глагол заголовка: прогулка при одном «лесе»", _z[0] and (_z[0].get("topics") or [""])[0] == "walk", _z)
+_z = V2._затея({"title": "Поесть суши", "subject": "суши", "role": "meet", "chips": ["суши"], "category": "food", "request": True},
+               [{"role": "user", "content": "хочу поесть суши"}], {}, {}, "ru", B)
+check("глагол заголовка: при ключе предмета глагол не лезет", _z[0] and "food" not in (_z[0].get("topics") or []), _z)
+_z = V2._затея({"title": "Прогуляться по лесу", "subject": "лес", "role": "meet", "chips": ["лес"], "category": "outdoors", "request": True},
+               [{"role": "user", "content": "хочу в лес"}], {}, {}, "ru", B)
+check("глагол заголовка: несказанная прогулка не добавляется", _z[0] is None or "walk" not in (_z[0].get("topics") or []), _z)
+# 18.10.2026 ночь: пакеты A и B по самопроверке разговора
+check("ночь: «вместе» по-португальски", V2._ВМЕСТЕ.get("pt") == " juntos" and V2._ВМЕСТЕ.get("de") == " zusammen")
+check("ночь: одно приветствие", bool(V2._ТОЛЬКО_ПРИВЕТ.match("Привет, Алекс!")) and bool(V2._ТОЛЬКО_ПРИВЕТ.match("Hola Alex.")))
+check("ночь: приветствие с делом — не только приветствие", not V2._ТОЛЬКО_ПРИВЕТ.match("Привет! Записал — кофе."))
+check("ночь: «хотел поделиться» — рассказ",
+      V2.рассказ_о_прошлом("Привет, я просто хотел поделиться, что сегодня провёл много времени на кухне — готовил новое блюдо!", B))
+check("ночь: «хочу сходить в кино» — не рассказ", not V2.рассказ_о_прошлом("хочу сходить в кино", B))
+for _t in ("Entendido, já adicionado ao plano!", "Je vais voir si quelqu'un est libre.", "Ich suche jemanden für dich.",
+           "Vediamo se qualcuno è libero.", "Déjame ver si hay alguien cerca."):
+    check("ночь: обещание «%s»" % _t, V2.заявляет_поиск(_t))
+check("ночь: вопрос — не обещание", not V2.заявляет_поиск("Vuoi che cerchi qualcuno?"))
+check("ночь: «рыбная ловля» при «Порыбачить»", V2._в_названии("рыбная ловля", "Порыбачить и поговорить про опционы", B))
+check("ночь: «zonas verdes» — место", V2._место_или_время("zonas verdes", ["quiero andar en bici por zonas verdes"], B))
+check("ночь: «на кухне» — место", V2._место_или_время("кухня", ["провёл время на кухне"], B))
+check("ночь: «овцы» — не место", not V2._место_или_время("овцы", ["и еще овец люблю"], B))
+check("ночь: «fim de semana» — время", V2._место_или_время("fim de semana", ["no fim de semana"], B))
+_z = V2._затея({"title": "Поговорить про крипту и программирование", "subject": "крипта", "role": "discuss", "chips": ["crypto", "coding", "овцы"],
+                "category": "tech", "request": True}, [{"role": "user", "content": "люблю крипту и программирование"},
+               {"role": "user", "content": "и еще овец люблю"}, {"role": "user", "content": "хочу найти кого-то с кем все это обсудить"}], {}, {}, "ru", B)
+check("ночь: интерес «овцы» остаётся", _z[0] and "овцы" in (_z[0].get("topics") or []), _z[0] and _z[0].get("topics"))
+check("ночь C: «не с кем поиграть в теннис» — не отказ", "tennis" not in V2._явный_отказ(["Последнее время не с кем было поиграть в теннис. Жаль."], B))
+check("ночь E: «теннис» сказан при «не с кем»", "tennis" in V2.чипы(["теннис"], ["Последнее время не с кем было поиграть в теннис. Жаль.", "Хочу просто поиграть в теннис, если кто-то свободен."], B)[0])
+check("J: «Кто-то ещё хочет…?» — предложение", bool(V2._КТО_ТО_ХОЧЕТ.search("Кто-то ещё хочет с тобой поговорить на эти темы?")))
+_м = [{"role": "user", "content": "привет, люблю лес и крипту"}, {"role": "assistant", "content": "Отлично! Кто-то ещё хочет поговорить о лесе и крипте?"},
+      {"role": "user", "content": "да"}]
+check("J: «да» на «кто-то ещё хочет» — принятое предложение", bool(V2._принятое_предложение(_м, B)))
+check("J: «не знаю» — не знает", V2._не_знает(["привет, люблю лес и крипту", "не знаю"], B))
+check("J: «не знаю, может падел» — не просто «не знаю»", not V2._не_знает(["привет", "не знаю, может в падел поиграть"], B))
+check("J: «no sé» и «not sure»", V2._не_знает(["hola", "no sé"], B) and V2._не_знает(["hi", "not sure"], B))
+check("J: предложение узнаётся правилом согласия", all(bool(B._OFFERED_MEET.search(x) or V2._НАЙТИ_С_КЕМ.search(x)) for x in V2._ПРЕДЛОЖИТЬ.values()),
+      [x for x in V2._ПРЕДЛОЖИТЬ.values() if not (B._OFFERED_MEET.search(x) or V2._НАЙТИ_С_КЕМ.search(x))])
+check("ночь I: рассуждение модели", V2._утечка_рассуждений("Okay, let's see. They mentioned going to the cinema or an aperitivo. Since they're asking, I should create a card for one of these."))
+check("ночь I: обычный ответ — не рассуждение", not V2._утечка_рассуждений("Okay, go for a walk.") and not V2._утечка_рассуждений("Got it — play padel."))
+check("ночь I: английский итальянцу", V2._английский_не_к_месту("Okay, let's see what you would like to do with someone this weekend.", "it"))
+check("ночь I: итальянский итальянцу", not V2._английский_не_к_месту("Capito — andare al cinema con qualcuno.", "it"))
+check("ночь I: португальский с «do»", not V2._английский_не_к_месту("Anotado: ir ao parque do bairro com alguém do trabalho.", "pt"))
+check("ночь I: английскому — английский", not V2._английский_не_к_месту("Okay, let's see what you would like to do.", "en"))
+check("ночь H: «Park Güell» — не немецкий", B.detect_lang_eu(["Maybe we could pick a specific spot, like Park Güell or the beach?"]) is None)
+check("ночь H: «никто не предложил теннис» — не отказ",
+      "tennis" in V2.чипы(["теннис"], ["Последние дни никто не предложил поиграть в теннис...", "Хочу именно теннис."], B)[0])
+check("ночь H: «не хочу теннис» — по-прежнему отказ", "tennis" in V2._явный_отказ(["не хочу теннис"], B))
+check("ночь F: pt «não tem ninguém»", B.detect_lang_eu(["Está chovendo e não tem ninguém para jogar cartas comigo..."]) == "pt")
+check("ночь F: de «können»", B.detect_lang_eu(["Seit Wochen niemanden zum Tischtennis finden können."]) == "de")
+check("ночь F: es не pt", B.detect_lang_eu(["No tengo con quién jugar a las cartas, ¿alguien?"]) is None)
+check("ночь C: «не хочу теннис» — отказ", "tennis" in V2._явный_отказ(["не хочу теннис"], B))
+check("ночь C: «Рад помочь!» — пустая вежливость", bool(V2._ПУСТАЯ_ВЕЖЛИВОСТЬ.match("Рад помочь!")) and bool(V2._ПУСТАЯ_ВЕЖЛИВОСТЬ.match("Конечно, Алекс!")))
+check("ночь C: «Понял, кофе.» — не пустая", not V2._ПУСТАЯ_ВЕЖЛИВОСТЬ.match("Понял, кофе."))
+check("ночь C: «Привет, кофе» — не приветствие", not V2._ТОЛЬКО_ПРИВЕТ.match("Привет, кофе!"))
+check("ночь C: дело — не пустая вежливость", not V2._ПУСТАЯ_ВЕЖЛИВОСТЬ.match("Конечно, падел в субботу — записал."))
+check("ночь C: «quiet and intimate place» — не интим", not V2._интим_в("something quiet and intimate place with a view"))
+check("ночь C: «Aí» — не AI", not V2._двухбуквенный_сказан("ai", ["Aí, estou entediadíssimo"], B))
+check("ночь C: «кс» — CS", V2._двухбуквенный_сказан("cs", ["люблю кс и доту"], B))
+check("ночь: пустой чип «время»", V2._пустой_чип("время", B) and V2._пустой_чип("Langweilig", B) and not V2._пустой_чип("падел", B))
+check("ночь: слово в названии", V2._в_названии("Ciclismo", "Andar en bici ciclismo", B) and not V2._в_названии("zonas verdes", "Andar en bici", B))
+_z = V2._затея({"title": "Andar en bici", "subject": "bici", "role": "play", "chips": ["cycling", "zonas verdes"], "category": "sports", "request": True},
+               [{"role": "user", "content": "quiero andar en bici por zonas verdes con alguien"}], {}, {}, "es", B)
+check("ночь: место не чип при ключе", _z[0] and "zonas verdes" not in (_z[0].get("topics") or []), _z[0] and _z[0].get("topics"))
+_z = V2._затея({"title": "Провести время", "subject": "время", "role": "meet", "chips": ["время"], "category": "other", "request": True},
+               [{"role": "user", "content": "Скучно... Не знаю, с кем провести время."}], {}, {}, "ru", B)
+check("ночь: пустой чип — окна нет", _z[0] is None, _z)
+# 18.10.2026: личность по id (план личность-по-id, шаг 2)
+_c = B._shape({"id": "u-123", "name": "Иван", "score": 70}, "ru")
+check("личность: карточка — user_id = id", _c["user_id"] == "u-123" and _c["id"] == "u-123" and _c["name"] == "Иван", _c)
+_c = B._shape({"name": "Иван", "score": 70}, "ru")
+check("личность: без id — имя, как раньше", _c["user_id"] == "Иван", _c)
+_было = B._post
+_ушло = []
+def _лов(base, path, body, timeout=0, auth=""):
+    _ушло.append((path, body))
+    return {"candidates": [{"id": "u-9", "name": "Мария", "score": 60}]}
+B._post = _лов
+try:
+    _blk, _cards = B.run_match({"topics": ["coffee"]}, {}, "u-1", "ru", negotiate=False, owner="Иван")
+finally:
+    B._post = _было
+check("личность: в поиск уходит self_id", _ушло and _ушло[0][1]["ctx"].get("self_id") == "u-1", _ушло[:1])
+check("личность: карточка из поиска несёт id", _cards and _cards[0]["user_id"] == "u-9", _cards)
+# 18.10.2026: сторожа — наркотики, интим на семи языках, «несовершеннолетний» словом
+for _t in ("Кто хочет вместе покурить травку?", "закинуться грибами в выходные", "anyone want to smoke weed tonight",
+           "¿alguien para fumar un porro?", "Such jemanden zum Kiffen", "prendre des champignons magiques avec quelqu'un",
+           "chi vuole fumare una canna stasera", "Tem alguém aí que curte um baseado?"):
+    check("наркотики: «%s» — ловится" % _t, V2._наркотики_в(_t))
+for _t in ("по грибы кто со мной в субботу", "I need help to weed the garden", "joint venture meetup", "no drugs, just hiking",
+           "фильм про борьбу с наркотиками", "funghi porcini nel bosco", "canna da pesca al lago", "road trip with friends"):
+    check("наркотики: «%s» — не трогаем" % _t, not V2._наркотики_в(_t))
+_r = V2.ход([{"role": "user", "content": "Кто хочет вместе покурить травку?"}], {}, {}, "ru", B, сборщик=False)
+check("наркотики: заготовка без окна и без модели", _r[1] is None and _r[3] == "наркотики" and _r[4] == 0, _r)
+_r, _model = _v2ход(["Можно прогуляться в парке.\n" + _НЕТ],
+    [{"role": "user", "content": "Кто хочет вместе покурить травку?"}, {"role": "assistant", "content": V2._НАРКОТИКИ_ОТВЕТ["ru"]},
+     {"role": "user", "content": "ладно, давай лучше погуляем в парке"}])
+check("наркотики: новая допустимая просьба дошла до подставной модели", bool(_model.вызовы))
+check("наркотики: после отказа другая просьба не блокируется", _r[3] != "наркотики", _r[3])
+check("интим: «ins Bett»", V2._интим_в("Ich suche jemanden, der mit mir ins Bett geht."))
+check("наркотики: «Jointen im Park»", V2._наркотики_в("ein gemütliches Dingen mit ein paar Jointen im Park"))
+for _t in ("looking for a hookup tonight", "¿Alguien interesado en una cita con un enfoque íntimo?", "plan d'un soir ?",
+           "mándame mensajes picantes", "queria alguém para passar a noite comigo... algo mais íntimo"):
+    check("интим: «%s» — ловится" % _t, V2._интим_в(_t))
+for _t in ("concierto íntimo de jazz", "ambiance intime au restaurant", "romantic dinner date"):
+    check("интим: «%s» — не интим" % _t, not V2._интим_в(_t))
+for _t in ("Salve, sono minorenne, 15 anni", "soy menor de edad", "ich bin minderjährig", "je suis mineure", "i'm underage",
+           "я несовершеннолетний", "sou menor de idade"):
+    check("возраст-слово: «%s»" % _t, B.stated_minor([{"role": "user", "content": _t}]) is not None)
+for _t in ("я работаю с несовершеннолетними", "my sister is underage", "mon fils est mineur", "sou maior de idade"):
+    check("возраст-слово: «%s» — не про себя" % _t, B.stated_minor([{"role": "user", "content": _t}]) is None)
+# 18.10.2026: подтверждения разные и без повторов в разговоре
+_зт = {"title": "Прогуляться по лесу"}
+_м, _отв = [], []
+for _ in range(5):
+    _о = V2._готово(_зт, _м, "ru")
+    _отв.append(_о); _м += [{"role": "user", "content": "ещё"}, {"role": "assistant", "content": _о}]
+check("подтверждения: пять ходов — пять разных", len(set(_отв)) == 5, _отв)
+check("подтверждения: первые слова не повторяются", len({V2._первое_слово(x) for x in _отв}) == 5, _отв)
+check("подтверждения: чат и сборщик начинают по-разному", V2._ответ_окна(_зт, [], "ru") != V2._готово(_зт, [], "ru"))
+check("подтверждения: название на месте", all("прогуляться по лесу" in x for x in _отв), _отв)
+for _l in ("en", "es", "de", "fr", "it", "pt"):
+    check("подтверждения: %s есть" % _l, "%s" not in V2._готово(_зт, [], _l) and V2._готово(_зт, [], _l), V2._готово(_зт, [], _l))
 for _сл, _кл in (("квиз", "quiz"), ("боулинг", "bowling"), ("гончарка", "pottery"), ("пляж", "beach"), ("музеи", "museum"),
                  ("сап", "sup"), ("днд", "dnd"), ("байдарки", "kayaking"), ("кулинария", "cooking")):
     check("v2-3: «%s» ведёт к %s" % (_сл, _кл), B.norm_topic(_сл) == _кл, B.norm_topic(_сл))
@@ -2590,6 +2724,13 @@ for _t in ("Ich bin 25 und suche Freunde", "ich bin 15 Minuten zu spät", "ich b
            "Tenho 30 anos", "tenho 15 minutos", "a minha filha tem 15 anos", "tenho uma filha de 15 anos", "moro aqui há 15 anos",
            "tengo 30 años", "i'm 25", "мне 25"):
     check("возраст-eu: «%s» — не подросток" % _t, B.stated_minor(_U(_t)) is None, B.stated_minor(_U(_t)))
+# 18.10.2026: числа словами до девяти — возраст только с «лет/год»
+for _t in ("я один в городе, хочу найти друзей", "я одна, скучно", "я обычно делаю это один", "мне один друг посоветовал",
+           "я два раза был на скалодроме", "я тут один", "я три дня не выходил"):
+    check("возраст-слова: «%s» — не возраст" % _t, B.stated_minor(_U(_t)) is None, B.stated_minor(_U(_t)))
+for _t, _n in (("мне девять лет", 9), ("мне три года", 3), ("мне пятнадцать", 15), ("я семнадцать лет", 17),
+               ("мне шестнадцать, ищу друзей", 16), ("мне 15", 15)):
+    check("возраст-слова: «%s» -> %d" % (_t, _n), B.stated_minor(_U(_t)) == _n, B.stated_minor(_U(_t)))
 check("возраст-eu: отказ по-немецки при lang=en", B.minor_reply(_U("Ich bin 15"), "en").startswith("Kleal ist ab 18"))
 check("возраст-eu: отказ по-французски", "plus de 18 ans" in B.minor_reply(_U("j'ai 15 ans"), "en"))
 check("возраст-eu: русский отказ не тронут", B.minor_reply(_U("мне 15"), "ru") == B.MINOR_REPLY["ru"])

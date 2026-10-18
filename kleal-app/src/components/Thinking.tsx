@@ -17,7 +17,7 @@
  * Дыхание — на нативном драйвере; в JS остаются только два таймера на смену слова, по одному
  * срабатыванию каждый.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 import { THINKING } from '../buddy';
 import { color, space, type } from '../theme';

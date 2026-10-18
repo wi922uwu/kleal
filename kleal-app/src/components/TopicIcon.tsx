@@ -5,7 +5,6 @@
  * Контурный знак держит тот же смысл (мяч, чашка, хлопушка, гора…), но звучит тихо и одинаково, а
  * цвет в карте остаётся одному событию — выбору.
  */
-import React from 'react';
 import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
 
 export function TopicIcon({ topic, size = 24, c = '#3B404B' }: { topic: string; size?: number; c?: string }) {

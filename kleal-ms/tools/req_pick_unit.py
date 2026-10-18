@@ -158,6 +158,23 @@ next(x for x in app.SESSION["_requests"] if x["id"] == "rq1")["updated"] = time.
 check("not_picked leaves home after a day", not any(x["id"] == "rq1" for x in app.home_invites("Marta", True)["invites"]))
 check("accepted/declined never return to home", not any(x["id"] == "rq2" for x in app.home_invites("Nuria", True)["invites"]))
 
+# 17.10.2026: единственный приглашённый по затее — выбирать не из кого, «да» сразу открывает чат
+fresh()
+r = app.respond("rq4", "accept", "Leo", flow="pick")
+check("only invitee: yes -> accepted", r.get("ok") and r["status"] == "accepted", r)
+check("only invitee: chat open", app._chat_exists("Mateo", "Leo"))
+check("only invitee: other intents untouched", (st(1), st(2), st(3), st(5)) == ("pending",) * 4)
+# по названию, без iid — тот же расчёт, что и в выборе
+fresh()
+app.SESSION["_requests"] = [row(1, "Marta", iid=""), row(2, "Nuria", iid=""), row(6, "Ana", iid="", title="Standup")]
+check("no iid, rival by title: still answered", app.respond("rq1", "accept", "Marta", flow="pick")["status"] == "answered")
+check("no iid, alone by title: accepted", app.respond("rq6", "accept", "Ana", flow="pick")["status"] == "accepted")
+# соперник уже закрыт (отказал/сгорел) — тоже выбирать не из кого
+fresh()
+next(x for x in app.SESSION["_requests"] if x["id"] == "rq2")["status"] = "declined"
+next(x for x in app.SESSION["_requests"] if x["id"] == "rq3")["status"] = "expired"
+check("rivals closed: yes -> accepted", app.respond("rq1", "accept", "Marta", flow="pick")["status"] == "accepted")
+
 # пояс собеседника до плана: заявки, главная, выдача
 fresh()
 app._person = (lambda orig: (lambda x: {"id": "u_mateo", "name": "Mateo", "tz": "Europe/Madrid", "age": 34}

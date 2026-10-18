@@ -15,11 +15,12 @@
  *    показывают карта и «Онлайн» — вторая витрина того же на главной спорила бы с ними.
  *  • Кнопки «Открыть историю разговоров» под строкой ввода. На кадре её нет; вход в историю переехал
  *    в шапку разговора с Kleal (app/buddy.tsx), где эти разговоры и живут, — экран не осиротел.
- *  • Пятен подложки, перетекавших вместе с колесом. Фон теперь — фотография с кадра, и цветные
+ *  • Пятен подложки, перетекавших вместе с колесом. (С 17.10 фон снова идёт за каруселью, но иначе —
+ *    светом карточки под шёлковой фактурой, см. MoodBackdrop.) Тогда фон был фотографией с кадра, и цветные
  *    пятна поверх неё мутили бы её, а не оживляли.
  */
-import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, RefreshControl, useWindowDimensions } from 'react-native';
+import { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, RefreshControl, useWindowDimensions, Animated as RNAnimated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { BottomNav } from '../src/components/BottomNav';
@@ -28,7 +29,8 @@ import { MoodCarousel, moodGeometry } from '../src/components/MoodCarousel';
 import { PlanCard, EmptyInviteCard, DirectInviteCard, GroupInviteCard } from '../src/components/HomeCards';
 import { NotifyBubble } from '../src/components/NotifyBubble';
 import { GlassSurface } from '../src/components/LiquidGlass';
-import { WHEEL } from '../src/wheel';
+import { MoodBackdrop } from '../src/components/MoodBackdrop';
+import { shuffledWheelKeys, wheelInOrder } from '../src/wheel';
 import { IconMic } from '../src/components/icons';
 import { useLang } from '../src/i18n';
 import { useOnb } from '../src/state';
@@ -58,8 +60,11 @@ export default function Home() {
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
-  const { width, height: winH } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   const me = st.profile.name || '';
+  /** Ход карусели — по нему фон перетекает за пальцем (MoodBackdrop). Отдаёт сама карусель. */
+  const [track, setTrack] = useState<{ x: RNAnimated.Value; pitch: number } | null>(null);
+  const onTrack = useCallback((x: RNAnimated.Value, pitch: number) => setTrack({ x, pitch }), []);
 
   const [invites, setInvites] = useState<HomeInvite[]>([]);
   const [nextPlan, setNextPlan] = useState<any>(null);
@@ -114,7 +119,13 @@ export default function Home() {
     setLoading(false);
   }, [me]);
 
-  useFocusEffect(useCallback(() => { load(); setHint((n) => n + 1); }, [load]));
+  /*
+    КОЛЕСО ПЕРЕМЕШИВАЕТСЯ ПРИ КАЖДОМ ЗАХОДЕ НА ГЛАВНУЮ (владелец 17.10.2026). Порядок — состояние
+    экрана: пока человек здесь, карточки не прыгают; ушёл и вернулся — новая раскладка.
+  */
+  const [wheelOrder, setWheelOrder] = useState<string[]>(shuffledWheelKeys);
+  useFocusEffect(useCallback(() => { load(); setHint((n) => n + 1); setWheelOrder(shuffledWheelKeys()); }, [load]));
+  const wheel = wheelInOrder(wheelOrder);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -154,22 +165,11 @@ export default function Home() {
   return (
     <View style={s.wrap}>
       {/*
-        ФОН — ФОТОГРАФИЯ С КАДРА, СВЕДЁННАЯ ЗАРАНЕЕ. На борде это два слоя: фото с фильтрами и
-        размытием 61,5 и поверх — текстура в режиме color burn. Режимов наложения у RN нет, а
-        размывать фото на телефоне при каждом заходе незачем: слои выгружены из Figma и сведены в
-        один файл (assets/art/home/bg.jpg, 1170×2532), сверка с рендером кадра — 0,6 из 255.
+        ФОН ИДЁТ ЗА КАРУСЕЛЬЮ (решение владельца 17.10.2026). Раньше здесь лежала фотография цветка
+        с кадра (assets/art/home/bg.jpg) — «не наш стиль». Теперь у каждой карточки свой свет под
+        общей шёлковой фактурой, и он перетекает вслед за пальцем: см. src/components/MoodBackdrop.tsx.
       */}
-      {/*
-        РАЗМЕР ЗАДАН ЯВНО, ЭКРАНОМ. С `absoluteFill` Expo Go (iOS 27) рисовал файл в его пиксельном
-        размере — 1170 точек в ширину, в 2,9 раза крупнее экрана, прижатым к левому верхнему углу:
-        на экране была только розово-оранжевая середина фото, и «рисунок не совпадал» с кадром
-        (замер снимка 30.09: совпадение по фону лучшее именно при увеличении ×2,9 от угла).
-      */}
-      <Image
-        source={require('../assets/art/home/bg.jpg')}
-        style={[s.bg, { width, height: winH }]}
-        resizeMode="cover"
-      />
+      <MoodBackdrop keys={wheel.map((it) => it.key)} x={track?.x || null} pitch={track?.pitch || 0} />
 
       <ScrollView onScroll={navCollapse} scrollEventThrottle={16}
         onLayout={(e) => setViewH(e.nativeEvent.layout.height)}
@@ -185,11 +185,12 @@ export default function Home() {
         <View style={{ height: HEAD_H + CARD_GAP + mood.height - mood.cardTop }}>
           <View style={[s.mood, { top: HEAD_H + CARD_GAP - mood.cardTop }]}>
             <MoodCarousel
-              items={WHEEL()}
+              items={wheel}
               hint={hint}
               scale={moodScale}
               // Нажатие по центральной карточке открывает создание интента с уже сказанной фразой.
               onPick={(it) => router.navigate({ pathname: '/create', params: { seed: it.query } })}
+              onTrack={onTrack}
             />
           </View>
           <View style={s.head} pointerEvents="box-none">
@@ -275,7 +276,6 @@ export default function Home() {
 
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#F5F1EC' },
-  bg: { position: 'absolute', left: 0, top: 0 },
   scroll: { flexGrow: 1 },
   /** Полоса карусели лежит под шапкой и выходит за неё вверх — см. разметку. */
   mood: { position: 'absolute', left: 0, right: 0 },

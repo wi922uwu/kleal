@@ -9,15 +9,15 @@
  * Выключенные хранятся отдельным списком `interests.unused`, а не удалением из `explicit`: человек
  * сказал, что увлекается этим, и «не искать по этому» — не то же самое, что «я этим не увлекаюсь».
  */
-import React, { useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, Pressable, Switch, Alert, Platform } from 'react-native';
+import { useCallback, useMemo } from 'react';
+import { View, Text, StyleSheet, Pressable, Alert, Platform } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { ProfileShell, Card } from '../../src/components/ProfileShell';
+import { ProfileShell, Card, SectionHead, SwitchCard, KlealPill } from '../../src/components/ProfileShell';
 import { useLang, T } from '../../src/i18n';
 import { useOnb, set, get } from '../../src/state';
 import { profileData, INTERESTS_SCREEN as C, SECTIONS, adaptSummary, pushInterests,
-         syncInterestLabels } from '../../src/profile';
-import { color, radius as rad, space, type } from '../../src/theme';
+         syncInterestLabels, HUB, PRO, fmtUpdated } from '../../src/profile';
+import { color, type } from '../../src/theme';
 
 export default function Interests() {
   const lang = useLang();
@@ -82,79 +82,49 @@ export default function Interests() {
     ]);
   };
 
+  const summary = String((st.profile as any).summary || '');
+  const updated = fmtUpdated((st.profile as any).summaryUpdated);
+
   return (
     <ProfileShell title={SECTIONS[0].title()} onBack={() => router.back()}>
-      {d.interests.length === 0 ? (
+      {/* B.04 — сверху сводка Kleal: она и перечисляет интересы вслух. Правка — разговором. */}
+      {summary ? (
         <Card>
-          <Text style={s.emptyTitle}>{C.emptyTitle()}</Text>
-          <Text style={s.emptySub}>{C.emptySub()}</Text>
-          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/chat?step=hobbies&back=/profile/interests')}>
-            <Text style={s.ctaText}>{C.add()}</Text>
-          </Pressable>
+          <View style={s.head}>
+            <Text style={s.label}>{HUB.summaryLabel()}</Text>
+            {updated ? <Text style={s.updated}>{updated}</Text> : null}
+          </View>
+          <Text style={s.body}>{summary}</Text>
+          <KlealPill label={PRO.changeWithKleal()} onPress={() => router.navigate('/chat?step=hobbies&back=/profile/interests')} />
         </Card>
+      ) : null}
+
+      {d.interests.length === 0 ? (
+        <SectionHead title={C.emptyTitle()} note={C.emptySub()} />
       ) : (
         <>
-          <Text style={s.hint}>{C.hint()}</Text>
-
+          <SectionHead title={C.yours()} note={C.yoursNote()} />
           {/*
-            Карточка НЕ раскрывается. Раньше тап показывал внутренности — «Роль», «Опыт», а когда их
-            не было, заглушку «Kleal ещё разбирается…». Человек приходит сюда за одним: решить, что
-            учитывать при подборе. Строка с тумблером отвечает на это целиком, а раскрытие лишь
-            прятало удаление за лишним касанием и показывало то, чего он не спрашивал.
-
-            «Уверенность» убрана раньше и по той же причине: это была внутренняя оценка
-            derive-функции, а не факт о человеке.
+            Тумблер — настоящий: выключенный интерес уходит в `interests.unused` и не едет в подбор.
+            Удаления на кадре нет; оно осталось долгим нажатием по строке — терять его нельзя.
           */}
           {d.interests.map((it) => (
-            <Card key={it.name} style={{ gap: 0 }}>
-              <View style={s.row}>
-                <Text style={[s.name, { flex: 1 }]}>{it.label}</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={T(`Удалить «${it.label}»`, `Remove “${it.label}”`, `Eliminar «${it.label}»`)}
-                  hitSlop={10}
-                  style={s.del}
-                  onPress={() => remove(it.name, it.label)}
-                >
-                  <Text style={s.delText}>✕</Text>
-                </Pressable>
-                <Switch
-                  value={it.used}
-                  onValueChange={(v) => toggleUsed(it.name, v)}
-                  accessibilityLabel={T(`Учитывать «${it.label}» при подборе`, `Use “${it.label}” for matching`, `Usa “${it.label}” para coincidir`)}
-                  trackColor={{ false: color.neutral300, true: color.primary }}
-                  thumbColor={color.card}
-                  ios_backgroundColor={color.neutral300}
-                />
-              </View>
-            </Card>
+            <Pressable key={it.name} onLongPress={() => remove(it.name, it.label)} delayLongPress={400}
+                       accessibilityHint={T('Долгое нажатие — убрать из профиля', 'Long press to remove from your profile', 'Mantén pulsado para quitarlo del perfil')}>
+              <SwitchCard label={it.label} value={it.used} onChange={(v) => toggleUsed(it.name, v)} />
+            </Pressable>
           ))}
-
-          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/chat?step=hobbies&back=/profile/interests')}>
-            <Text style={s.ctaText}>{C.add()}</Text>
-          </Pressable>
         </>
       )}
+      <View style={{ height: 8 }} />
+      <KlealPill wide label={C.addOne()} onPress={() => router.navigate('/chat?step=hobbies&back=/profile/interests')} />
     </ProfileShell>
   );
 }
 
 const s = StyleSheet.create({
-  hint: { ...type.bodySmall, color: color.muted, paddingHorizontal: 4 } as any,
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
-  /** Крестик удаления: тихий, слева от тумблера — не спорит с ним за внимание. */
-  del: { paddingHorizontal: 10, paddingVertical: 4 },
-  delText: { fontSize: 17, color: color.neutral400 },
-  name: { ...type.title, color: color.fg } as any,
-  conf: { ...type.caption, color: color.muted, marginTop: 2 } as any,
-  exp: { marginTop: space.md, paddingTop: space.md, borderTopWidth: 1, borderTopColor: color.line, gap: space.sm },
-  kv: { flexDirection: 'row', justifyContent: 'space-between', gap: space.md },
-  k: { ...type.bodySmall, color: color.muted } as any,
-  v: { ...type.bodySmall, color: color.fg, flex: 1, textAlign: 'right' } as any,
-  remove: { ...type.labelMedium, color: color.danger, marginTop: space.sm } as any,
-
-  emptyTitle: { ...type.title, color: color.fg } as any,
-  emptySub: { ...type.bodySmall, color: color.muted } as any,
-  cta: { height: 48, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', marginTop: space.sm },
-  ctaText: { ...type.button, color: color.onPrimary } as any,
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 },
+  label: { fontSize: 15, fontWeight: '600', color: color.fg } as any,
+  updated: { ...type.caption, color: color.muted } as any,
+  body: { ...type.bodySmall, color: color.fg } as any,
 });

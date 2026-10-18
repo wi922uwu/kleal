@@ -5,7 +5,6 @@
  * сразу после того, как профиль записан. Нижняя панель показана потому же, почему и на борде:
  * человек должен увидеть, куда попал, ещё до первого действия.
  */
-import React from 'react';
 import { View, StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';

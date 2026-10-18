@@ -23,33 +23,35 @@
  * пришла с сервера — это не защита, а фокус, и в этом разница с адресом, который сервер прячет
  * по-настоящему.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator,
-  KeyboardAvoidingView, Platform, Linking, Modal,
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import {
   CHAT, PLAN, OFB, OFD, ONB, OND, HYB, RATINGS, LINK_LEAD_MIN, planWhen, personStatus, planPhase, minutesToStart, linkOpensAt,
 } from '../src/chat';
-import { DETAILS, dateChips, hhmm, peerLocalTime, looksLikeUrl, withScheme } from '../src/intent';
+import { DETAILS, dateChips, hhmm, peerLocalTime, peerTimeNote, looksLikeUrl, withScheme } from '../src/intent';
 import { callService } from '../src/gplan';
 import { TimeDial } from '../src/components/Dials';
-import { useKeyboardInset, dockBottom, useSheetKeyboard } from '../src/keyboard';
+import { useSheetKeyboard } from '../src/keyboard';
 import { normalizeTimePart } from '../src/timeInput';
 import { useLang, T, getLang, dateLocale, use12h } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { mediaUrl, agent, ensureMe, isMe, pidOf } from '../src/api';
 import { planChatCopy, planChatPeerRef, preparePlanChat } from '../src/plan-chat';
 import {
-  IconChevronLeft, IconCalendar, IconClock, IconPin, IconLink, IconPerson, IconExit, IconCheck, IconCalendarCheck, IconInfo, IconUserCheck, IconTimer, IconVideo } from '../src/components/icons';
+  IconCalendar, IconClock, IconPin, IconLink, IconPerson, IconExit, IconCheck, IconCalendarCheck, IconInfo, IconUserCheck, IconTimer, IconVideo,
+} from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { Sheet } from '../src/components/Sheet';
 import { AddressField } from '../src/components/AddressField';
 import { color, font, heading, labelFamily, radius as rad, space, type } from '../src/theme';
 import { GlassBack, GlassSurface } from '../src/components/LiquidGlass';
 import { Cover } from '../src/components/Cover';
+import { GlassPill } from '../src/components/Glass';
+import { CAL, DEFAULT_MINUTES, addToSystemCalendar, openGoogleCalendar, type CalEvent } from '../src/calendar';
 import { openResults } from '../src/results-navigation';
 import { interestEmoji } from '../src/candidates';
 import { useNavCollapse } from '../src/navScroll';
@@ -62,7 +64,6 @@ export default function Plan() {
   const st = useOnb();
   const insets = useSafeAreaInsets();
   /** Листы с полями ввода: на Android клавиатура ложится поверх них. См. src/keyboard.ts. */
-  const kb = useKeyboardInset();
 
   const params = useLocalSearchParams<{
     who?: string; who_id?: string; title?: string; photo?: string; link?: string; id?: string;
@@ -103,6 +104,8 @@ export default function Plan() {
   const [address, setAddress] = useState(String(params.address || '').trim());
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Запасной, на котором «Pick» не прошёл (request-pick ответил ошибкой) — текст под его кнопкой. */
+  const [pickErr, setPickErr] = useState('');
   const [err, setErr] = useState('');
   const [openingChat, setOpeningChat] = useState(false);
   const [chatError, setChatError] = useState('');
@@ -135,6 +138,9 @@ export default function Plan() {
   const [countering, setCountering] = useState(false);
   /** OF.20c: лист «Fix the plan» и выбранный в нём раунд. */
   const [fixing, setFixing] = useState(false);
+  /** Встречу уже добавили в календарь с этого экрана — кнопка говорит «В календаре». */
+  const [calAdded, setCalAdded] = useState(false);
+  const [calErr, setCalErr] = useState('');
   const [fixRound, setFixRound] = useState<number | null>(null);
   /** OF.19e: «Pick someone else» — тот же экран, другое тело; люди с сервера (mplan-alternatives). */
   const [picking, setPicking] = useState(false);
@@ -244,7 +250,7 @@ export default function Plan() {
   // Местное время собеседника — и только если оно расходится с моим. Раньше здесь безусловно
   // печаталось СВОЁ смещение «(GMT+2)»: сведений о чужом поясе не было нигде, поэтому строка
   // ничего не сообщала — человек и так знает, в каком он поясе.
-  const peerTime = peerLocalTime(plan?.starts_at, plan?.their_tz || peerTz, ru);
+  const peerTime = peerTimeNote(plan?.starts_at, plan?.their_tz || peerTz, other, ru);
   /** То же самое для ПРЕДЛОЖЕННОГО часа — см. O.21b у кнопок выбора. */
   const peerPendingTime = peerLocalTime(
     (plan?.pending as any)?.starts_at, plan?.their_tz || peerTz, ru
@@ -528,6 +534,33 @@ export default function Plan() {
     ? [plan?.venue, (plan as any)?.place ?? (offline ? plan?.address : '')].filter(Boolean).join(' · ')
     : '';
 
+  /*
+   * В КАЛЕНДАРЬ (18.10.2026): как только у плана есть время и он жив — отправлен, подтверждён или
+   * на носу. Место — то, что человек уже видит: адрес только открытый, иначе район.
+   */
+  const calEvent: CalEvent | null = plan && typeof plan.starts_at === 'number'
+    && (phase === 'waiting' || phase === 'confirmed' || phase === 'soon')
+    ? {
+      title: CAL.title(intentTitle || String(plan.title || '') || T('Встреча', 'Meetup', 'Quedada'), other),
+      startMs: plan.starts_at * 1000,
+      endMs: (typeof (plan as any).ends_at === 'number' ? (plan as any).ends_at * 1000 : plan.starts_at * 1000 + DEFAULT_MINUTES * 60000),
+      location: (placeLabel || String(plan.district || '')) || undefined,
+      notes: CAL.notes(),
+    }
+    : null;
+  const addCal = async () => {
+    if (!calEvent) return;
+    setCalErr('');
+    const r = await addToSystemCalendar(calEvent);
+    if (r === 'saved') setCalAdded(true);
+    else if (r === 'failed') setCalErr(CAL.failed());
+  };
+  const addGoogle = async () => {
+    if (!calEvent) return;
+    setCalErr('');
+    if (!(await openGoogleCalendar(calEvent))) setCalErr(CAL.failed());
+  };
+
   /** Место уже стоит зелёной плашкой: встреча на носу и адрес открыт. */
   const placeReady = wantsPlace && !dayView && (phase === 'soon' || phase === 'now') && !!placeLabel
     // После HY.23c звать «Открыть маршрут» значит отправить человека к запертой двери, из-за
@@ -601,12 +634,16 @@ export default function Plan() {
         // Ответили на устаревшую версию (второй успел принять перенос): перечитать и сказать,
         // что случилось, — а не «не удалось» поверх экрана, который врёт на 15 секунд опроса.
         if (r?.error === 'VERSION_CONFLICT') { await load(); throw new Error(PLAN.changedMeanwhile()); }
+        // Окно ходов закрыто, план закреплён, раунды кончились — тоже не «не отправился»: план
+        // уже другой, его надо перечитать и сказать почему (сверка п. 14).
+        if (r?.error === 'NO_ROUNDS_LEFT') { await load(); throw new Error(PLAN.noRoundsLeft()); }
+        if (r?.error === 'NOT_OPEN' || r?.error === 'LOCKED' || r?.error === 'NOT_PROPOSED') { await load(); throw new Error(PLAN.closedMeanwhile()); }
         throw new Error(r?.error || 'failed');
       }
       await load();
     } catch (e: any) {
       const m = String(e?.message || '');
-      setErr(m === CHAT.inThePast() || m === PLAN.changedMeanwhile() ? m : CHAT.planFailed());
+      setErr([CHAT.inThePast(), PLAN.changedMeanwhile(), PLAN.noRoundsLeft(), PLAN.closedMeanwhile()].includes(m) ? m : CHAT.planFailed());
     }
   };
 
@@ -988,10 +1025,24 @@ export default function Plan() {
                           </View>
                           {a.free ? (
                             <Pressable accessibilityRole="button" style={s.cta}
-                              onPress={() => router.navigate({ pathname: '/conversation', params: { who: nm, who_id: String(a.name_id || a.id || ''), title: String(intentTitle || plan?.title || '') } })}>
+                              onPress={async () => {
+                                // Ответивший «да», но не выбранный в первый раз (status not_picked, needs_pick):
+                                // чат открывается только после настоящего выбора. У прежних приглашений
+                                // (needs_pick нет) чат уже есть — сразу в него. Ошибку выбора пишем под
+                                // кнопкой: молча не открыть чат — это кнопка, которая «не работает».
+                                if (a.needs_pick && a.rid) {
+                                  setPickErr('');
+                                  try {
+                                    const r: any = await agent.requestPick(String(a.rid), me);
+                                    if (r?.ok === false) { setPickErr(nm); return; }
+                                  } catch { setPickErr(nm); return; }
+                                }
+                                router.navigate({ pathname: '/conversation', params: { who: nm, who_id: String(a.name_id || a.id || ''), title: String(intentTitle || plan?.title || '') } });
+                              }}>
                               <Text style={s.ctaText}>{OFB.pickName(nm)}</Text>
                             </Pressable>
                           ) : null}
+                          {a.free && pickErr === nm ? <Text style={s.err}>{OFB.pickFailed()}</Text> : null}
                         </GlassSurface>
                       </View>
                     );
@@ -1066,7 +1117,7 @@ export default function Plan() {
                           </Text>
                           <Text style={s.daySub} numberOfLines={1}>
                             {nobody ? OND.nobodySub() : dayOff || phase === 'now'
-                              ? `${tOf(plan.starts_at, ru)}${peerTime ? ` · ${peerTime}` : ''}`
+                              ? tOf(plan.starts_at, ru)
                               : OND.leaves(svc)}
                           </Text>
                         </View>
@@ -1139,16 +1190,19 @@ export default function Plan() {
                       </View>
                       <View style={s.metaPair}>
                         <IconClock size={18} c={color.primary} />
-                        <Text style={s.metaText}>{tOf((pendingChange || plan).starts_at, ru)}{peerTime && !pendingChange ? ` · ${peerTime}` : ''}</Text>
+                        <Text style={s.metaText}>{tOf((pendingChange || plan).starts_at, ru)}</Text>
                       </View>
                     </>
                   ) : (
                     <>
                       <IconCalendar size={18} c={color.primary} />
-                      <Text style={s.metaText}>{planWhen(plan, ru)}{peerTime ? ` · ${peerTime}` : ''}</Text>
+                      <Text style={s.metaText}>{planWhen(plan, ru)}</Text>
                     </>
                   )}
                 </View>
+                {/* Время собеседника — своей строкой и с его именем (см. peerTimeNote): «22:00 · 20:00 Moscow»
+                    читалось как «с 22 до 20». У предложенного переноса чужое время не показываем — как и раньше. */}
+                {peerTime && !pendingChange ? <Text style={s.tzNote}>{peerTime}</Text> : null}
                 {/* O.21b: предложенное время стоит РЯДОМ со старым — обе строки видны разом. */}
                 {pendingChange && !nl ? (
                   <View style={s.metaRow}>
@@ -1246,6 +1300,21 @@ export default function Plan() {
               </GlassSurface>
               </View>
               )}
+
+              {/* В календарь: родное окно «Новое событие» и рядом Google Календарь. */}
+              {calEvent ? (
+                <View style={s.calRow}>
+                  <GlassPill
+                    tone="light" small
+                    icon={calAdded ? <IconCalendarCheck size={18} c={color.primary} /> : <IconCalendar size={18} c={color.primary} />}
+                    label={calAdded ? CAL.added() : CAL.add()}
+                    onPress={addCal}
+                    style={s.calMain}
+                  />
+                  <GlassPill tone="light" small label={CAL.google()} onPress={addGoogle} style={s.calSide} />
+                </View>
+              ) : null}
+              {calErr ? <Text style={s.calErr}>{calErr}</Text> : null}
 
               {/*
                 ПОЛОСА РАУНДА / СРОКА (OF.20, OF.21b, OF.C3b, OF.C5): «Round 1 / 3 · Ends in 6h» пока план
@@ -2959,7 +3028,7 @@ function PlanForm({
 }: any) {
   // Выбранный час глазами собеседника. Здесь это нужнее, чем где-либо: время НАЗНАЧАЮТ, и «20:00»
   // может оказаться у него шестью часами позже. Пусто, если пояса совпали или чужой неизвестен.
-  const theirs = peerLocalTime(Math.floor(dayStart(date).getTime() / 1000) + minutes * 60, otherTz, ru);
+  const theirs = peerTimeNote(Math.floor(dayStart(date).getTime() / 1000) + minutes * 60, otherTz, other, ru);
   return (
     <View style={s.card}>
       {/* Что за встреча — сказано словами до первого поля: человек должен видеть, во что
@@ -2992,7 +3061,8 @@ function PlanForm({
         <Text style={s.label}>{DETAILS.time()}</Text>
       </View>
       <TimeDial minutes={minutes} onChange={setMinutes} onDragChange={setDragging} />
-      <Text style={s.tz}>{hhmm(minutes)}{theirs ? ` · ${theirs}` : ''}</Text>
+      <Text style={s.tz}>{hhmm(minutes)}</Text>
+      {theirs ? <Text style={s.tz}>{theirs}</Text> : null}
 
       {/* Ссылка — только у звонка и гибрида. У встречи вживую этого поля нет вовсе. */}
       {wantsLink ? (
@@ -3084,6 +3154,10 @@ function planWhenLabel(dateKey: string, minutes: number, ru: boolean): string {
 // ============================================================ вид
 
 const s = StyleSheet.create({
+  calRow: { flexDirection: 'row', gap: space.sm, marginTop: space.sm },
+  calMain: { flex: 1, height: 44 },
+  calSide: { height: 44, paddingHorizontal: space.md },
+  calErr: { ...type.caption, color: color.muted, marginTop: 4, textAlign: 'center' } as any,
   wrap: { flex: 1, backgroundColor: color.ambientBase },
   head: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, height: 56 },
   back: {
@@ -3179,6 +3253,7 @@ const s = StyleSheet.create({
   sheetGhostText: { fontFamily: font.textSemibold, fontSize: 14, lineHeight: 20, color: color.fg } as any,
   metaText: { fontFamily: font.text, fontSize: 13, lineHeight: 22, color: color.fg, flexShrink: 1 } as any,
   tz: { ...type.bodySmall, color: color.muted, textAlign: 'center' } as any,
+  tzNote: { ...type.bodySmall, color: color.muted } as any,
 
   linkCard: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,

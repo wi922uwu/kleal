@@ -18,7 +18,7 @@
  * Прокрутка. Карта живёт внутри ScrollView, и жест у них общий: без onDragChange родительский
  * список забирает вертикальное движение себе, и карта не двигается вовсе.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { View, StyleSheet } from 'react-native';
 import MapView, { Circle, MapPressEvent, Region } from 'react-native-maps';
 import { color } from '../theme';

@@ -18,11 +18,9 @@
  * экрану: тап по пину, отпущенная карта, готовность. Поверх карты экран волен класть свои вещи —
  * булавку в центре, полосу масштаба, панели, — это обычные View над WebView.
  */
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
-import { MAP } from '../explore';
-import { LogoMark } from './Logo';
-import { color, type } from '../theme';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Animated, Easing, Image, Platform, StyleSheet, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
 import { API_BASE } from '../api';
 import { getLang } from '../i18n';
@@ -49,7 +47,8 @@ export type GlPin = {
   stack?: number;
 };
 
-export type GlCountry = { code: string; lat: number; lon: number; count: number };
+/** `w` — вес 0..1 от «Спроси шар»: есть веса — страны с совпадениями горят, прочие притушены. */
+export type GlCountry = { code: string; lat: number; lon: number; count: number; w?: number };
 
 export type GlMapHandle = {
   /** Плавно переехать. */
@@ -59,7 +58,10 @@ export type GlMapHandle = {
   }) => void;
   /** Переставить камеру мгновенно — для жестов, где задержка читается как залипание. */
   jump: (o: { lat: number; lon: number; zoom?: number; pitch?: number; bearing?: number }) => void;
-  setZoom: (zoom: number) => void;
+  /** С длительностью — плавный наезд (шаги масштаба с края экрана), без неё — сразу. */
+  setZoom: (zoom: number, duration?: number) => void;
+  /** Масштаб, за которым страница плавно идёт по кадрам: палец на краю шлёт цель непрерывно. */
+  followZoom: (zoom: number) => void;
   /**
    * СВЕРНУТЬСЯ В ПЛАНЕТУ И ОБРАТНО. Это одна и та же карта: `on: true` — камера отъезжает к
    * нулевому масштабу, и в глобус-проекции плоскость сама становится шаром, а схема
@@ -85,6 +87,8 @@ type Props = {
   interactive?: boolean;
   pins?: GlPin[];
   countries?: GlCountry[];
+  /** Буди думает над вопросом шару — ореолы стран бегут волной. */
+  scanning?: boolean;
   selectedId?: string | null;
   /** Радиус круга в километрах — только для mode="radius". */
   km?: number;
@@ -113,6 +117,12 @@ export const GlMap = forwardRef<GlMapHandle, Props>(function GlMap(p, ref) {
   const reported = useRef({ lat: p.lat, lon: p.lon });
   const [ok, setOk] = useState(false);
   const [gone, setGone] = useState(false);
+  /** Снимок карты с прошлого захода — заставка, пока грузится эта (см. MapVeil). */
+  const [snap, setSnap] = useState<string | null>(null);
+  useEffect(() => {
+    if (p.mode !== 'explore') return;
+    AsyncStorage.getItem(SNAP_KEY).then((v) => { if (v) setSnap(v); }).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   /** Заставка не пропадает щелчком — тает, пока карта под ней усаживается в свой вид. */
   const veilA = useRef(new Animated.Value(1)).current;
 
@@ -139,7 +149,8 @@ export const GlMap = forwardRef<GlMapHandle, Props>(function GlMap(p, ref) {
   useImperativeHandle(ref, () => ({
     fly: (o) => { reported.current = { lat: o.lat, lon: o.lon }; cmd({ t: 'fly', ...o }); },
     jump: (o) => { reported.current = { lat: o.lat, lon: o.lon }; cmd({ t: 'jump', ...o }); },
-    setZoom: (zoom) => cmd({ t: 'zoom', zoom }),
+    setZoom: (zoom, duration) => cmd({ t: 'zoom', zoom, duration }),
+    followZoom: (zoom) => cmd({ t: 'zoom', zoom, follow: true }),
     planet: (o) => { reported.current = { lat: o.lat, lon: o.lon }; cmd({ t: 'planet', ...o }); },
     country: (code, duration) => cmd({ t: 'country', id: code, duration }),
   }), [cmd]);
@@ -177,10 +188,14 @@ export const GlMap = forwardRef<GlMapHandle, Props>(function GlMap(p, ref) {
     if (ready.current) cmd({ t: 'select', id: p.selectedId });
   }, [p.selectedId, cmd]);
 
-  const countriesKey = JSON.stringify((p.countries || []).map((c) => [c.code, c.count]));
+  const countriesKey = JSON.stringify((p.countries || []).map((c) => [c.code, c.count, c.w]));
   useEffect(() => {
     if (ready.current && p.countries) cmd({ t: 'countries', countries: p.countries, selectedId: p.selectedCountry });
   }, [countriesKey]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (ready.current) cmd({ t: 'scan', on: !!p.scanning });
+  }, [p.scanning, cmd]);
 
   useEffect(() => {
     if (ready.current && p.mode === 'radius' && p.km != null) cmd({ t: 'radius', lat: p.lat, lon: p.lon, km: p.km });
@@ -242,6 +257,11 @@ export const GlMap = forwardRef<GlMapHandle, Props>(function GlMap(p, ref) {
     if (m.t === 'pickCountry') { p.onPickCountry?.(m.id); return; }
     if (m.t === 'press') { p.onPress?.(m.lat, m.lon); return; }
     if (m.t === 'error') { p.onError?.(String(m.message || '')); return; }
+    // Страница сняла отрисованный город — храним последний снимок для заставки следующего захода.
+    if (m.t === 'snapshot' && typeof m.data === 'string' && m.data.startsWith('data:image/')) {
+      AsyncStorage.setItem(SNAP_KEY, m.data).catch(() => {});
+      return;
+    }
   }, [p]);
 
   // Карта интентов живёт над космосом: во вкладке «Онлайн» она сама становится планетой.
@@ -278,60 +298,40 @@ export const GlMap = forwardRef<GlMapHandle, Props>(function GlMap(p, ref) {
         onHttpError={(e) => p.onError?.('http ' + e.nativeEvent?.statusCode)}
       />
       {/*
-        Пока тайлы не пришли — не серое пятно, а заставка: у карты интентов это ночь с мягким
-        свечением и подписью, у карт радиуса — ровная подложка цвета карты. Тает по сигналу
-        «дорисовано», пока камера под ней усаживается в рабочий вид.
+        Пока тайлы не пришли — заставка цвета самой карты: у карты интентов это размытый снимок
+        прошлого захода (MapVeil), у карт радиуса и при первом заходе — ровная земля. Тает по
+        сигналу «дорисовано» — и резкость как будто наводится, без смены цвета на глазах.
       */}
       {gone ? null : (
-        <Animated.View style={[s.veil, { backgroundColor: bg, opacity: veilA }]} pointerEvents="none">
-          {p.mode === 'explore' ? <MapLoader /> : null}
+        <Animated.View style={[s.veil, { backgroundColor: LAND, opacity: veilA }]} pointerEvents="none">
+          {p.mode === 'explore' && snap ? <MapVeil uri={snap} /> : null}
         </Animated.View>
       )}
     </View>
   );
 });
 
+/** Где лежит снимок последней карты (data:image/jpeg, ~10 КБ). */
+const SNAP_KEY = 'kleal.map.snapshot.v1';
+
 /**
- * Заставка первого входа в карту — капля Кила, как в нижней панели и на входе. Ничего лишнего:
- * капля чуть покачивается, под ней подпись и тонкая линия, по которой ходит короткий штрих.
- * Это тот же знак, что человек уже видел, а не абстрактное свечение.
+ * ЗАСТАВКА ВКЛАДКИ «КАРТА» — ПРОШЛАЯ КАРТА, РАЗМЫТАЯ (решение владельца 17.10.2026).
+ *
+ * Нарисованные «загрузки» — капля с прогресс-баром, город из линий с точкой и пилюлей — читались
+ * шаблонно. Теперь пока карта грузится, на её месте тот же город с прошлого захода, только не в
+ * фокусе; дорисовалась настоящая — вуаль тает, и резкость как будто наводится. Снимок делает сама
+ * страница карты (событие `snapshot`), когда город отрисован и камера стоит. Первый заход, снимка
+ * ещё нет — просто ровная земля цвета карты, без рисунков и подписей.
  */
-function MapLoader() {
-  const bob = useRef(new Animated.Value(0)).current;
-  const run = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const a = Animated.loop(Animated.sequence([
-      Animated.timing(bob, { toValue: 1, duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      Animated.timing(bob, { toValue: 0, duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-    ]));
-    const b = Animated.loop(Animated.timing(run, { toValue: 1, duration: 1500, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }));
-    a.start(); b.start();
-    return () => { a.stop(); b.stop(); };
-  }, [bob, run]);
-  const lift = bob.interpolate({ inputRange: [0, 1], outputRange: [3, -3] });
-  const slide = run.interpolate({ inputRange: [0, 1], outputRange: [-44, LINE_W] });
+function MapVeil({ uri }: { uri: string }) {
   return (
-    <View style={l.root} pointerEvents="none">
-      <Animated.View style={{ transform: [{ translateY: lift }] }}>
-        <LogoMark width={72} />
-      </Animated.View>
-      <Text style={l.title}>{MAP.loading()}</Text>
-      <Text style={l.note}>{MAP.loadingNote()}</Text>
-      <View style={l.track}>
-        <Animated.View style={[l.dash, { transform: [{ translateX: slide }] }]} />
-      </View>
-    </View>
+    <>
+      <Image source={{ uri }} blurRadius={14} resizeMode="cover" style={StyleSheet.absoluteFill} />
+      {/* Лёгкая дымка поверх: снимок не спорит с картой, которая проступит на его месте. */}
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(242,243,245,0.22)' }]} />
+    </>
   );
 }
-
-const LINE_W = 120;
-const l = StyleSheet.create({
-  root: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
-  title: { ...type.title, color: 'rgba(255,255,255,0.92)', marginTop: 18 } as any,
-  note: { ...type.caption, color: 'rgba(255,255,255,0.55)', marginTop: 2 } as any,
-  track: { width: LINE_W, height: 2, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden', marginTop: 18 },
-  dash: { width: 44, height: 2, borderRadius: 1, backgroundColor: color.primary },
-});
 
 const s = StyleSheet.create({
   root: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, overflow: 'hidden', backgroundColor: '#f2f3f5' },

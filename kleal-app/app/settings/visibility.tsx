@@ -14,7 +14,7 @@
  * значило бы показывать настройку, которой нет. Поэтому после каждой правки перерисовываемся
  * ответом, а при отказе возвращаем прежнее состояние и говорим об этом.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, ToggleRow, Segments } from '../../src/components/ProfileShell';
@@ -22,7 +22,7 @@ import { useLang } from '../../src/i18n';
 import { useOnb } from '../../src/state';
 import { profile as profileApi } from '../../src/api';
 import { VISIBILITY, RECV_STATUS } from '../../src/settings';
-import { color, radius as rad, space, type } from '../../src/theme';
+import { color, space, type } from '../../src/theme';
 
 type Recv = {
   status?: string;

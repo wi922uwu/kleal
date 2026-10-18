@@ -2,7 +2,8 @@
 # Kleal matching-service — the buddy agent (intent parse -> ranked candidates -> agent negotiation).
 # Carved from the pre-split monolith kleal_v2.py (matching half, lines 304-831). Serves /api/agent/*.
 # Talks to llm-service over HTTP for parse/intro/negotiate; holds NO model keys. Owner: Dev B.
-# Endpoint names are FROZEN — the profile-service frontend hard-codes them (see ../../shared/contracts.md).
+# Endpoint names are FROZEN — the mobile app (kleal-app/src/api.ts) calls them (see ../../shared/contracts.md).
+# Личность запроса — id из сессии (`_whoami`, docs/IDENTITY.md); имена в ответах — только подписи (_humanize).
 import os, sys, json, re, threading, concurrent.futures, math, hashlib, time, copy, contextlib, traceback, secrets
 import urllib.request                        # мост тем: один вопрос фильтрации на НОВОЕ слово запроса
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -33,7 +34,7 @@ from http_util import send_json as _send_json_raw, read_json
 from geo import haversine as _haversine   # одна формула на дерево, см. shared/geo.py
 import vibe as kvibe                      # настрой из теста характера: одно правило на все службы
 import db                            # хранилище: postgres или файл — решает KLEAL_DB
-import kleal_auth                     # кто прислал запрос; пока ТОЛЬКО наблюдение, см. _watch_owner
+import kleal_auth                     # кто прислал запрос: id по токену сессии (_whoami)
 import mq                            # очередь заданий: rabbit или ничего — решает KLEAL_MQ
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -409,8 +410,6 @@ def topical(topics, interests, bridge=()):
             elif not bt and not bx and _wshare(t, x): matched.add(_norm(x)); best = max(best, 4)
     return best, matched
 
-def _cat_of(tok):   # back-compat: broad category only
-    return cat_of(tok)[0]
 
 # ---- §6 governed taxonomy layer: bind the REAL scoring taxonomy into the read-only narrator (kt) ----
 # kt never imports app (avoids a cycle) and never scores — app injects its own functions so kt narrates the
@@ -502,15 +501,33 @@ def _load_store():
     База не обязана быть: при KLEAL_DB=json (по умолчанию) сюда даже не заглядываем, и сервис
     поднимается на машине, где postgres не установлен."""
     if db.ENABLED:
-        try:
-            db.ensure_schema()
-            got = db.load_store()
-            if got:
-                return got
-            # База пуста, а файл есть — первый запуск после переноса ещё не случился. Читаем файл
-            # и НЕ падаем: пустое состояние выглядит как «все планы исчезли».
-        except Exception as e:
-            print("[store] postgres недоступен, читаю файл: %s: %s" % (type(e).__name__, str(e)[:120]))
+        # БАЗА ВЕДУЩАЯ — БЕЗ НЕЁ НЕ СТАРТУЕМ (18.10.2026). Раньше при недоступной базе читался файл —
+        # на бою это снимок от 26.09, — и первая же запись (_HASHES пуст) отправляла в базу ВСЕ ключи:
+        # три недели переписки, планов и групп затирались старым состоянием. Порядка запуска после
+        # postgres у служб нет, так что после перезагрузки сервера это был вопрос удачи. Теперь — ждём
+        # базу до минуты, потом падаем; systemd перезапустит, и мы подождём ещё.
+        last = None
+        for attempt in range(30):
+            try:
+                db.ensure_schema()
+                got = db.load_store()
+                if got:
+                    return got
+                # База пуста. Засеять её файлом — только по явному флагу (перенос на новую машину):
+                # пустая боевая база — не повод молча подставить старый снимок.
+                if os.environ.get("KLEAL_STORE_SEED_FROM_FILE") != "1":
+                    print("[store] база пуста — стартую с пустым состоянием (файл не читаю без "
+                          "KLEAL_STORE_SEED_FROM_FILE=1)", flush=True)
+                    return {}
+                break
+            except Exception as e:
+                last = e
+                print("[store] postgres недоступен (попытка %d/30): %s: %s"
+                      % (attempt + 1, type(e).__name__, str(e)[:120]), flush=True)
+                time.sleep(2)
+        else:
+            raise SystemExit("[store] postgres недоступен минуту — не стартую, чтобы не затереть базу "
+                             "старым файлом: %s" % str(last)[:160])
     try:
         with open(STORE_PATH, "r", encoding="utf-8") as f: return json.load(f)
     except Exception:
@@ -533,36 +550,18 @@ def _save_store():
             # молча уходила в файл, которого при базе никто не читает (26.09.2026: так потерялась
             # привязка 126 интентов к id). Замок — RLock: вызов изнутри `with _STORE_LOCK` безопасен.
             with _STORE_LOCK:
-                db.save_store(SESSION)
+                db.save_store(dict(SESSION))
             if not db.MIRROR_JSON:
                 return
         except Exception as e:
             print("[store] запись в postgres не удалась, падаю на файл: %s: %s"
                   % (type(e).__name__, str(e)[:120]))
     try:
-        with open(STORE_PATH, "w", encoding="utf-8") as f: json.dump(SESSION, f)
+        with open(STORE_PATH, "w", encoding="utf-8") as f: json.dump(dict(SESSION), f)
     except Exception:
         pass
-def _me_or_claimed(handler, claimed):
-    """УСТАРЕЛО с 26.09.2026: личность запроса — `handler._pid` (см. H._whoami). Оставлено для
-    совместимости вызовов: возвращает id по сессии, а без неё — пусто, имя из тела не принимается."""
-    return getattr(handler, "_pid", "") or ""
 
 
-def _me_or_claimed_legacy(handler, claimed):
-    """Имя своей строки, если сессия его называет; иначе — заявленное в запросе.
-
-    ЗАПРЕТА ЗДЕСЬ НЕТ, И ЭТО НАМЕРЕННО. Опросные ручки (планы, переписки, входящие) принимают за
-    неделю 22788 запросов без токена — это бот-эмулятор `kleal-life` на петле, у которого аккаунта
-    нет и быть не может. Отказ выкинул бы его целиком, а вместе с ним и всю проверку сценариев.
-
-    Но ПОДМЕНА закрыта: вошедший человек получает СВОИ планы и переписку, что бы он ни написал в
-    `self`. Сессия сильнее запроса. Осталось ровно одно окно — запрос совсем без токена; закрыть
-    его можно будет, когда у эмулятора появится собственный внутренний ключ, а у шести аккаунтов,
-    чей профиль не доехал до users.json, — строка, по которой их узнаёт `caller_name`.
-    """
-    mine = kleal_auth.caller_name(handler)
-    return mine or claimed
 
 
 def _own_uid(handler):
@@ -879,6 +878,8 @@ def _humanize(v, _d=0):
 
 def send_json(handler, status, obj):
     """Отправка ответа сервиса — всегда через перевод id → подпись (см. _humanize)."""
+    if isinstance(obj, dict) and obj.get('httpStatus') in (400,401,403,404,409,503):
+        status = obj['httpStatus']
     try:
         obj = _humanize(obj)
     except Exception as e:                  # перевод не имеет права ронять ответ
@@ -1115,6 +1116,95 @@ def _migrate_identity_v2(apply=True):
     return dict(report, applied=True)
 
 
+ENGINE_IDS_V = 3
+
+
+def _migrate_engine_ids_v3(apply=True):
+    """Журналы подбора — с имён на id (18.10.2026), то, что перевод v2 26.09 оставил именами.
+
+    Усталость (_exposure), бюджет предложений (_proposals), исходы (_outcomes), совпадения (_matches),
+    подтверждения (_completion_confirms), слоты (_match_taken) и оценки в личных сессиях (feedback).
+    Правило владельца: имя, которое в пуле ровно у одного человека, становится его id; неоднозначное
+    (тёзки) или неизвестное — ОТБРАСЫВАЕТСЯ, не угадывается. Это счётчики и журналы, не переписка:
+    худшее, что теряется, — «уже видел этого человека». Копия до перевода — SESSION["_premig_v3"]."""
+    import collections as _co
+    state = SESSION.get("_identity") or {}
+    if int(state.get("engine_v") or 0) >= ENGINE_IDS_V:
+        return {"skipped": True}
+    rep = _co.Counter()
+
+    def key_of(k):
+        s = str(k or "").strip()
+        if not s:
+            return None
+        if _is_pid(s):
+            rep["id"] += 1
+            return _norm_name(_canon_pid(s))
+        rows = _people_index()["by_name"].get(_norm_name(s)) or []
+        if len(rows) == 1 and rows[0].get("id"):
+            rep["resolved"] += 1
+            return _norm_name(rows[0]["id"])
+        rep["dropped_twins" if len(rows) > 1 else "dropped_unknown"] += 1
+        return None
+
+    keys = ("_exposure", "_proposals", "_outcomes", "_matches", "_completion_confirms", "_match_taken")
+    with _STORE_LOCK:
+        backup = {k: copy.deepcopy(SESSION.get(k)) for k in keys if SESSION.get(k) is not None}
+        for k in ("_exposure", "_proposals"):
+            old, new = SESSION.get(k) or {}, {}
+            for name, ts in old.items():
+                nk = key_of(name)
+                if nk:
+                    new[nk] = sorted(set(list(new.get(nk) or []) + list(ts or [])))
+            if k in SESSION:
+                SESSION[k] = new
+        outs = []
+        for e in SESSION.get("_outcomes") or []:
+            nk = key_of(e.get("name"))
+            if nk:
+                outs.append(dict(e, name=nk))
+        if "_outcomes" in SESSION:
+            SESSION["_outcomes"] = outs
+        for k in ("_matches", "_completion_confirms"):
+            old, new = SESSION.get(k) or {}, {}
+            for name, rec in old.items():
+                nk = key_of(name)
+                if nk and nk not in new:
+                    new[nk] = dict(rec, name=nk) if (k == "_matches" and isinstance(rec, dict)) else rec
+            if k in SESSION:
+                SESSION[k] = new
+        if isinstance(SESSION.get("_match_taken"), dict):
+            SESSION["_match_taken"] = {iid: nk for iid, nk in ((i, key_of(w)) for i, w in SESSION["_match_taken"].items())
+                                       if nk}
+        for sk in [k for k in list(SESSION.keys()) if not str(k).startswith("_") and k != "me"]:
+            sess = SESSION.get(sk)
+            fb = sess.get("feedback") if isinstance(sess, dict) else None
+            if not isinstance(fb, dict) or not fb:
+                continue
+            backup.setdefault("_feedback", {})[sk] = dict(fb)
+            new = {}
+            for key, val in fb.items():
+                name, _, purpose = str(key).partition("::")
+                nk = key_of(name)
+                if nk:
+                    new[nk + ("::" + purpose if purpose else "")] = val
+            sess["feedback"] = new
+        report = dict(rep)
+        if not apply:
+            for k, v in backup.items():
+                if k == "_feedback":
+                    for sk, fb in v.items():
+                        SESSION[sk]["feedback"] = fb
+                else:
+                    SESSION[k] = v
+            return dict(report, applied=False)
+        SESSION["_premig_v3"] = backup
+        SESSION["_identity"] = dict(state, engine_v=ENGINE_IDS_V, engine_at=time.time(), engine_report=report)
+    _save_store()
+    print("[identity] журналы подбора переведены на id: %s" % json.dumps(report, ensure_ascii=False), flush=True)
+    return dict(report, applied=True)
+
+
 def _account_created(owner_key):
     try:
         return float(((kleal_auth._accounts() or {}).get(owner_key) or {}).get("created") or 0)
@@ -1189,6 +1279,9 @@ def _check_saved_searches(prof=None, uid="me"):
     u = _session(uid)
     out = []
     for s in u.get("saved_searches") or []:
+        if monetization_commands.search_inactive(s.get('intent') or {}, uid):
+            out.append({'id':s.get('id'),'status':'paused','matches':0})
+            continue
         try:
             cands = match_candidates(dict(s.get("intent") or {}), prof or {}, {"uid": uid})
             real = [c for c in cands if not c.get("fallback")]
@@ -1253,7 +1346,12 @@ def _idempotent(idem_key, entity, ent_id, action, producer):
         return dict(prior, duplicate=True, error_code="DUPLICATE")
     res = producer()
     with _STORE_LOCK:
-        SESSION.setdefault("_write_seen", {})[key] = res
+        seen = SESSION.setdefault("_write_seen", {})
+        seen[key] = res
+        # Потолок, как у _idem (18.10.2026): памятка повторов не должна расти без конца, а negotiate
+        # кладёт сюда весь список кандидатов. Старые — первыми (словарь хранит порядок вставки).
+        while len(seen) > 500:
+            seen.pop(next(iter(seen)))
         _save_store()
     return res
 
@@ -1527,6 +1625,10 @@ _VIBE_MEMO = {"src": None, "out": None}
 
 
 def load_candidates():
+    adapter = globals().get('monetization_commands')
+    snapshot = adapter.ranking_pool() if adapter else None
+    if snapshot is not None:
+        return snapshot
     store = _load_pool_rows()
     if not store:
         # No real people in the store. The demo pool used to stand in here so a fresh system would
@@ -2026,17 +2128,6 @@ def _policy_decision(intent, c, gate_ctx, cfg=None):
             return "REVIEW", "%s: separate safety/legal track required (unverified)" % domain
     return "ALLOW", None
 
-def evaluate_policy(intent, c, gate_ctx=None):
-    """§23.4.2 — a single typed policy-verdict facade that runs the existing gate stack IN ORDER (_hard_gates ->
-    cross-purpose isolation -> _policy_decision -> disclosure clamp) and returns one object. It reproduces the
-    per-gate ALLOW/BLOCK/REVIEW outcome byte-for-byte — it adds NO new behavior, only a unified surface."""
-    gate_ctx = gate_ctx if gate_ctx is not None else _gate_ctx_and_self({})[0]
-    ok, why = _hard_gates(intent, c, gate_ctx)
-    decision, reason = _policy_decision(intent, c, gate_ctx)
-    disc = _revalidate_disclosure(intent, c, "profile_open") if decision != "BLOCK" else None
-    return {"decision": decision, "reason": reason, "eligible": ok, "gate_reason": why,
-            "cross_purpose_blocked": _cross_purpose_blocked(intent, c),
-            "disclosure": disc, "policy_version": "policy-2.0.0"}
 
 def _allocation_action(card):
     """§0 output table: an explicit typed allocation_action per candidate, DERIVED from decisions already
@@ -2169,10 +2260,11 @@ def _diversify(items):
 def match_candidates_legacy(intent, prof, ctx=None):
     W = WEIGHTS
     ctx = ctx or {}
-    sess = _session(ctx.get('uid', 'me'))
-    feedback = dict(sess.get('feedback') or {}); feedback.update(ctx.get('feedback') or {})
-    gate_ctx = {'feedback': feedback,
-                'blocked': set(sess.get('blocked') or []) | set(ctx.get('blocked') or [])}
+    # Блоки и оценки — тем же путём, что у основного движка (18.10.2026): своя копия здесь не видела
+    # блоков по id (`_blocks`, обе стороны), а этот путь включается сам, если конфиг движка не загрузился.
+    gate_ctx, _ = _gate_ctx_and_self(ctx, prof)
+    feedback = dict(gate_ctx.get('feedback') or {}); feedback.update(ctx.get('feedback') or {})
+    gate_ctx['feedback'] = feedback
     topics   = [str(t).lower() for t in (intent.get('topics') or [])]
     irole    = (intent.get('role') or 'meet').lower()
     my_langs = {str(l)[:2].lower() for l in _langs_of(prof)}
@@ -2242,7 +2334,8 @@ def match_candidates_legacy(intent, prof, ctx=None):
             elif km <= GEO_FAR:
                 score += W['geo_far']
         # feedback loop — learn from the owner's past decisions
-        fb = feedback.get(c['name'])
+        fb = (feedback.get(str(c.get('id') or '').lower()) or feedback.get(c['name'])
+              or feedback.get(str(c['name']).strip().lower()))
         if fb == 'accepted':
             score += W['fb_accept']; reasons.append('you accepted them before')
         elif fb == 'rejected':
@@ -2255,7 +2348,7 @@ def match_candidates_legacy(intent, prof, ctx=None):
         agree = bool(c.get('open') and score >= W['thr_t2'])
         note = ('Agent agreed — ' + reasons[0]) if agree else \
                ('Agent: not free today' if not c.get('open') else 'Agent: fit too weak')
-        out.append({"name": c['name'], "score": score, "tier": tier, "kind": kind, "km": km,
+        out.append({"id": c.get("id"), "name": c['name'], "score": score, "tier": tier, "kind": kind, "km": km,
                     "vibe": c['vibe'], "open": c['open'], "verified": c.get('verified'), "age": c.get('age'),
                     # Языки нужны карточке (O.13): без них человек решает, писать ли незнакомому,
                     # не зная, поймут ли его вообще. Внутри они у кандидата были всегда — просто
@@ -2275,9 +2368,8 @@ _H = {'topical': topical, 'cat_of': cat_of, 'reciprocal': _reciprocal, 'role_con
 
 
 def _blocks():
-    """who (normalised) -> the set of names they have blocked, as a list. Stored per NAME, like
-    requests and messages, because SESSION['me'] is a single shared session and a block list living
-    there would be one global block list for the whole product."""
+    """кто (id, нижний регистр) -> список id тех, кого он заблокировал. Свой у каждого человека и в
+    обе стороны проверяется `_blocked_pair`; общая корзина SESSION['me'] с 18.10.2026 не читается."""
     return SESSION.setdefault("_blocks", {})
 
 
@@ -2344,8 +2436,8 @@ def _within_band_demote(slate, cfg, exp):
         return slate
     resp = _responsive_counts()
     def _demote(c):
-        e = exp.get(str(c.get("name", "")).strip().lower(), 0)
-        return (e > pmin) or (e > rmax and resp.get(c.get("name"), 0) > 0)
+        e = exp.get(_ckey(c), 0)
+        return (e > pmin) or (e > rmax and resp.get(_ckey(c), 0) > 0)
     key = lambda c: (_core.READINESS_RANK.get(c.get("readiness"), 9), -(c.get("reciprocal") or 0),
                      -(c.get("lcb") or 0), -(c.get("coverage") or 0), str(c.get("name")))
     from collections import OrderedDict
@@ -2370,7 +2462,7 @@ def _allocate(slate, ctx, pool=None):
     out = list(slate)
     cap = cfg["exposure_cap_per_window"]              # per-user exposure cap -> remove over-exposed (tail, order kept)
     if cap < 10 ** 9:
-        out = [c for c in out if exp.get(str(c.get("name", "")).strip().lower(), 0) < cap]
+        out = [c for c in out if exp.get(_ckey(c), 0) < cap]
     smax = cfg["supply_max_per_area"]                 # city/area supply balancing (drop lowest-ranked surplus)
     if smax < 10 ** 9:
         seen, keep = {}, []
@@ -2383,9 +2475,9 @@ def _allocate(slate, ctx, pool=None):
     out = _within_band_demote(out, cfg, exp)          # popularity + responsive protection (demote-only, in-band)
     q = int(cfg["exploration_quota"])                 # §11.2 step5 exploration append (0 -> nobody; never fabricates)
     if q > 0 and pool:
-        have = {str(c.get("name", "")).strip().lower() for c in out}
-        picks = sorted((c for c in pool if str(c.get("name", "")).strip().lower() not in have),
-                       key=lambda c: exp.get(str(c.get("name", "")).strip().lower(), 0))
+        have = {_ckey(c) for c in out}
+        picks = sorted((c for c in pool if _ckey(c) not in have),
+                       key=lambda c: exp.get(_ckey(c), 0))
         for c in picks[:q]:
             out.append(dict(c, exploration=True, allocation_action="exploration"))
     return out
@@ -2400,7 +2492,7 @@ def _stamp_allocation_trace(slate, ctx, cfg):
     received24 = (ctx or {}).get("received24") or {}
     fatigue_cap = int(((_CORE_CFG or {}).get("outreach") or {}).get("max_proposals_received_per_user_24h") or 4)
     for idx, c in enumerate(slate):
-        nm = str(c.get("name", "")).strip().lower()
+        nm = _ckey(c)
         reasons = []
         if c.get("policy") == "REVIEW":     reasons.append("held: safety/legal review")
         if not c.get("can_outreach"):       reasons.append("discovery only (no personal outreach)")
@@ -2485,7 +2577,7 @@ def _retrieve(intent, eligible, budget):
     qbridge = resolve_query_topics(topics, str(intent.get("_query") or ""))
     scored, source_by = [], {}
     for c in eligible:
-        nm = str(c.get("name", "")).strip().lower()
+        nm = _ckey(c)
         best = topical(topics, [str(x).lower() for x in (c.get("interests") or [])], qbridge)[0]
         src = _retrieval_source(intent, c, best)
         source_by[nm] = src
@@ -2539,19 +2631,6 @@ def _photo_by_name():
     return out
 
 
-def _tz_by_name():
-    """имя (нормализованное) -> часовой пояс человека.
-
-    Нужен ровно для одного правила спеки: «Таймзона в UI — только при РАСХОЖДЕНИИ». Пока чужого
-    пояса не было нигде, расхождение не с чем было считать, и строку «20:00 Barcelona · 19:00
-    London» с кадров O.14/O.21/O.C3 показать было нечем.
-    """
-    out = {}
-    for u in load_candidates():
-        tz = str(u.get("tz") or "").strip()
-        if tz:
-            out[str(u.get("name", "")).strip().lower()] = tz
-    return out
 
 
 def _stamp_matched_first(cards, topics):
@@ -2609,7 +2688,7 @@ def _stamp_photo(cards):
             ph = _photo_of(c.get("id")) if c.get("id") else None
             if not ph and not c.get("id"):
                 by_name = by_name if by_name is not None else _photo_by_name()
-                ph = by_name.get(str(c.get("name", "")).strip().lower())
+                ph = by_name.get(_ckey(c))
             if ph:
                 c["photo"] = ph
         # Пояс — рядом с лицом и по той же причине «в одном месте» (борд 1:1 · Online, 11.10.2026):
@@ -2619,6 +2698,10 @@ def _stamp_photo(cards):
             tz = _tz_of(c.get("id"))
             if tz:
                 c["tz"] = tz
+        # Галочка «проверен по документу» (Didit), 18.10.2026 — рядом с лицом и по той же причине:
+        # одно место, после окончательной выдачи. Старое `verified` («сам отметил 18+») не трогаем.
+        if isinstance(c, dict) and c.get("id"):
+            c["id_verified"] = bool((_person(c.get("id")) or {}).get("id_verified"))
     return cards
 
 
@@ -2743,7 +2826,7 @@ def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
             continue
         if decision == "REVIEW" and diag is not None:
             diag['review'] += 1
-        policy_by[str(c.get('name', '')).strip().lower()] = decision
+        policy_by[_ckey(c)] = decision
         eligible.append(c)
     if diag is not None:
         diag['eligible'] = len(eligible)
@@ -2804,7 +2887,7 @@ def _match_candidates_engine(intent, prof, ctx=None, diag=None, want=None):
     slate = _allocate(slate, ctx, retrieved)              # §11 allocation (DORMANT at pilot defaults; before contracts)
     slate = _stamp_contracts(slate, intent, ctx)          # §4.6/§8.3/§4.12 additive contract overlays
     for c in slate:                                        # §7.1 retrieval-source provenance (additive)
-        c.setdefault("retrieval_source", source_by.get(str(c.get("name", "")).strip().lower(), 0))
+        c.setdefault("retrieval_source", source_by.get(_ckey(c), 0))
     _stamp_photo(slate)                                    # the person's real face, from the store row
     _stamp_matched_first(slate, intent.get("topics"))     # чипы начинаются с того, из-за чего нашли
     _stamp_allocation_trace(slate, ctx, _alloc_cfg(ctx))  # §11.2 step 6 allocation reasons (additive, read-only)
@@ -2964,16 +3047,17 @@ def _persona_order(slate, intent):
             c.setdefault("reasons_en", []).append("%s — as you asked" % say[1])
             c.setdefault("reasons_es", []).append("%s — como pediste" % say[2])
         tier = _TIER_ORDER.get(str(c.get("tier") or ""), 9)
-        keyed.append((tier, bands[band], -len(hits), 0 if filled else 1, i, c))
-    keyed.sort(key=lambda t: t[:5])
-    return [t[5] for t in keyed]
+        # сила совпадения по смыслу (02.10.2026) — только у слов вне словаря, иначе 0 и порядок прежний
+        keyed.append((tier, bands[band], -(c.get("meaning_rank") or 0), -len(hits), 0 if filled else 1, i, c))
+    keyed.sort(key=lambda t: t[:6])
+    return [t[6] for t in keyed]
 
 
 def _apply_policy(slate, policy_by):
     """Stamp each card with its policy_decision + a typed allocation_action (§0 output table). A REVIEW
     candidate stays in discovery but is forced non-proposable — outreach only after the separate track."""
     for c in slate:
-        decision = policy_by.get(str(c.get("name", "")).strip().lower(), c.get("policy") or "ALLOW")
+        decision = policy_by.get(_ckey(c), c.get("policy") or "ALLOW")
         c["policy"] = decision
         if decision == "REVIEW":
             c["can_outreach"] = False
@@ -2986,10 +3070,11 @@ def _apply_policy(slate, policy_by):
         c["decision_class"] = _decision_class(c)          # §9.6 read-only 5-way label (additive)
     return slate
 
-def _relationship_edge(name, uid="me", scope=None):
+def _relationship_edge(name, uid="me", scope=None, key=None):
     """Advisory §4.12 pair edge from the session outcome store (new/contact/friend/repeat/avoid/block).
-    NEVER authoritative — the real cooldown/block stays the matching hard gate; this is metadata only."""
-    key = str(name or "").strip().lower()
+    NEVER authoritative — the real cooldown/block stays the matching hard gate; this is metadata only.
+    `key` — ключ человека (_ckey: id), 18.10.2026; оценка ищется и по нему, и по подписи (старые записи)."""
+    key = str(key or name or "").strip().lower()
     sess = _session(uid)
     outs = [e for e in (SESSION.get("_outcomes") or []) if e.get("name") == key]
     # §17.2 mode isolation: prefer a purpose-scoped feedback key (e.g. name::dating) so a dating decline never
@@ -2997,8 +3082,8 @@ def _relationship_edge(name, uid="me", scope=None):
     fbmap = sess.get("feedback") or {}
     fb = None
     if scope:
-        fb = fbmap.get("%s::%s" % (name, scope)) or fbmap.get("%s::%s" % (key, scope))
-    fb = fb or fbmap.get(name) or fbmap.get(key)
+        fb = fbmap.get("%s::%s" % (key, scope)) or fbmap.get("%s::%s" % (name, scope))
+    fb = fb or fbmap.get(key) or fbmap.get(name) or fbmap.get(str(name or "").strip().lower())
     acc = sum(1 for e in outs if e.get("stage") == "accepted") or (1 if fb == "accepted" else 0)
     comp = sum(1 for e in outs if e.get("stage") == "completed")
     ov = {"blocked": key in {str(b).lower() for b in (sess.get("blocked") or [])},
@@ -3018,13 +3103,13 @@ def _stamp_contracts(slate, intent, ctx):
     cfg_meta = {"config_version": (_CORE_CFG or {}).get("config_version"),
                 "config_sha": ((_CORE_CFG or {}).get("_sha256") or "")[:12]}
     topics = intent.get("topics") or []
-    live_by = {str(u.get("name", "")).strip().lower(): u for u in load_candidates()}   # full fields for §10 factors
+    live_by = {_ckey(u): u for u in load_candidates()}   # full fields for §10 factors (по id, 18.10.2026)
     for c in slate:
         try:
-            nm_key = str(c.get("name", "")).strip().lower()
+            nm_key = _ckey(c)
             c["snapshot"] = kc.build_candidate_snapshot(c, intent, cfg_meta)
             c["profile_view"] = kc.build_profile_view(c, domain)
-            c["relationship"] = _relationship_edge(c.get("name"), uid, scope=domain)
+            c["relationship"] = _relationship_edge(c.get("name"), uid, scope=domain, key=_ckey(c))
             for k, v in kt.enrich_card(topics, c.get("interests") or [],       # §6 typed edge + expansion + complementary
                                        role_a=intent.get("role"), role_b=c.get("role")).items():
                 c.setdefault(k, v)                        # additive only — never touches band/tier/lcb/can_outreach
@@ -3147,8 +3232,44 @@ _NO_SUBSTITUTE = re.compile(r"наркот|травк|марихуан|кока�
                             r"\bdrogas?\b|\bporros?\b|секс|интим|\bsex\b|nudes|porn", re.I)
 
 
+def _ckey(c):
+    """Ключ человека в карточке и в журналах подбора (усталость, бюджет, исходы, совпадения), 18.10.2026.
+
+    id строки — у тёзок разный; имя — только у карточки без id (демо, запасные заготовки). До этого
+    ключом было имя, и всё, что шло от выдачи, путало двух «Иванов»: чужая усталость, чужой бюджет,
+    а раскрытие точного места проверяло взаимность по подписи."""
+    c = c or {}
+    return str(c.get("id") or c.get("name") or "").strip().lower()
+
+
 def _card_key(c):
-    return str(c.get("name") or c.get("id") or "").strip().lower()
+    return _ckey(c)
+
+
+def _live_store():
+    """(по id, по имени) — живые строки пула. По имени — только однозначные: тёзки туда не попадают,
+    и карточка без id, пришедшая снаружи (Буди до перехода на id), к чужой строке не прилипает."""
+    by_id, by_name, twins = {}, {}, set()
+    for u in load_candidates():
+        if u.get("id"):
+            by_id[str(u["id"]).strip().lower()] = u
+        nm = str(u.get("name", "")).strip().lower()
+        if nm:
+            if nm in by_name:
+                twins.add(nm)
+            by_name[nm] = u
+    for nm in twins:
+        by_name.pop(nm, None)
+    return by_id, by_name, twins
+
+
+def _live_of(c, store):
+    """Живая строка для карточки: по id, а без id — по имени, если оно однозначно; иначе None."""
+    by_id, by_name, _twins = store
+    c = c or {}
+    if c.get("id"):
+        return by_id.get(str(c["id"]).strip().lower())
+    return by_name.get(str(c.get("name", "")).strip().lower())
 
 
 def _meaning_of(topics, c):
@@ -3200,7 +3321,7 @@ def _expand_fallback(intent, prof, ctx, eligible):
     for c in avail[:_core.TOP_N]:
         ints = c.get("interests") or []
         out.append({
-            "name": c.get("name"), "score": 0, "tier": "T4", "kind": "alternative",
+            "id": c.get("id"), "name": c.get("name"), "score": 0, "tier": "T4", "kind": "alternative",
             "km": c.get("km"), "vibe": c.get("vibe"), "open": c.get("open"),
             "verified": c.get("verified"), "age": c.get("age"), "interests": ints,
             "langs": _langs_of(c) or c.get("langs") or [],
@@ -3232,22 +3353,6 @@ def _expand_fallback(intent, prof, ctx, eligible):
             o["note"] = "Similar interests — nobody named this exact activity yet"
     return _tag_ladder(out)                                 # §12.2 tag the alternative cards with the ladder step
 
-def _expand_stepwise(intent, prof, ctx, eligible, min_cards=1):
-    """§12.1 one-axis-per-step, cheapest-first: relax EXACTLY ONE axis per step over the SAME hard-gate-eligible
-    pool (safety/age/consent/block/language/purpose NEVER relaxed), stopping at the first step yielding >=
-    min_cards. Unlike _expand_fallback (which drops adjacent+exactness together), step 2 relaxes ONLY adjacency.
-    Returns (cards, step). Additive — the pool is byte-identical; only discovery breadth widens."""
-    if not eligible or not CORE_V2:
-        return [], None
-    for step, relaxed in ((2, dict(intent, adjacentAllowed=True)),
-                          (3, dict(intent, adjacentAllowed=True, broadAllowed=True)),
-                          (4, dict(intent, adjacentAllowed=True, broadAllowed=True, exactMatchRequired=False))):
-        slate, _m = _core.search(relaxed, prof, ctx, eligible, _H, _RELAXED_CFG or _CORE_CFG)
-        if len(slate) >= min_cards:
-            for c in slate:
-                c["fallback"] = "broader"; c["ladder_step"] = step
-            return _tag_ladder(slate), step
-    return [], None
 
 def _online_fallback(intent):
     """When 0 offline candidates: offer to go live + ways to broaden — so the user never hits a dead end.
@@ -3258,7 +3363,7 @@ def _online_fallback(intent):
     return {
         # §7.1 tier table: an online room is the T4 "alternative solution type" (another way to close the
         # intent, not a person) — no personal outreach; source 4 (events/rooms) surfaced as this alternative.
-        "room": {"title": "Live room: " + intent.get('title', 'meet'), "approved": approved,
+        "room": {"title": "Live room: " + (intent.get('title') or 'meet'), "approved": approved,
                  "tier": "T4", "kind": "alternative_solution_type", "retrieval_source": 4, "ladder_step": 6,
                  "options": [{"id": "voice", "label": "Start a voice room"},
                              {"id": "watch", "label": "Watch together online"}]},
@@ -3280,24 +3385,76 @@ def _section5_addendum(intent, text, cands):
             "clarification": ki.clarification_policy(intent, cons, has_results=bool(cands)),
             "minimally_sufficient": ki.minimally_sufficient(intent)}
 
-def agent_plan(query, prof, ctx=None, override=None):
-    intent = parse_intent(query)
-    if isinstance(override, dict):                 # broaden the search scope (radius / inexact / adjacent)
-        for k, v in override.items():
-            if k in ('radiusKm', 'verifiedOnly', 'minAge', 'maxAge', 'requiredLanguages', 'mode',
-                     'exactMatchRequired', 'adjacentAllowed', 'broadAllowed'):
-                intent[k] = v
-    ctx = ctx or {}
-    intent, _cons = ki.extract_constraints(query, intent)   # §5.1: merge additive soft/proposed/fallback keys
-    intent = kc.compile_intent(intent, _intent_identity(intent), ctx, ctx.get('now') or time.time())  # §4.3 blocks echoed
-    cands = match_candidates(intent, prof or {}, ctx)
-    res = {"intent": intent, "candidates": cands, "snapshot": _request_snapshot(intent)}
-    res.update(_section5_addendum(intent, query, cands))
-    res["retrieval"] = _retrieval_report(cands)           # §7 staged pipeline + source provenance
-    res["expansion"] = expansion_ladder(intent, ctx)      # §12 controlled-expansion ladder (plan)
+def prepare_search(path, body, ctx):
+    """Shared legacy/canonical preparation. Parsing is outside a quota transaction."""
+    monetization_commands.validate_search_input(path,body)
+    query = str(body.get('query') or '')
+    intent = dict(body.get('intent') or {})
+    if path.endswith('/plan'):
+        intent = parse_intent(query)
+        allowed = ('radiusKm','verifiedOnly','minAge','maxAge','requiredLanguages','mode',
+                   'exactMatchRequired','adjacentAllowed','broadAllowed')
+        intent.update({k:v for k,v in (body.get('override') or {}).items() if k in allowed})
+        intent, _ = ki.extract_constraints(query,intent)
+    elif path.endswith('/expand'):
+        axis = str(body.get('axis') or 'adjacent')
+        return dict(intent, **expansion_axis(intent,axis))
+    elif path.endswith('/confirm'):
+        cons = body.get('constraints') if isinstance(body.get('constraints'),list) else ki.extract_constraints(query,intent)[1]
+        intent = ki.apply_confirmation(intent,body.get('confirmed_ids') or [],cons,now=ctx.get('now'))
+    intent = kc.compile_intent(intent,_intent_identity(intent),ctx,ctx.get('now') or time.time())
+    if not path.endswith('/plan'):
+        phrase = str((body.get('intent') or {}).get('phrase') or query)
+        if phrase: intent['_query'] = phrase
+    return intent
+
+
+def render_search(path, body, intent, ctx):
+    """One ranking/policy path and wire contract for every entitlement mode."""
+    prof = body.get('profile') if isinstance(body.get('profile'),dict) else {}
+    if path.endswith('/expand'):
+        axis = str(body.get('axis') or 'adjacent')
+        return {'axis':axis,'changed_keys':list(expansion_axis(body.get('intent') or {},axis)),
+                'candidates':match_candidates(intent,prof,ctx),
+                'ladder_step':{'adjacent':2,'parent':3,'exactness':2,'radius':4}.get(axis),
+                'explanation':'Expanded by a single axis: %s (safety/age/consent unchanged)' % axis}
+    snap = _request_snapshot(intent)
+    structured = not path.endswith(('/plan','/confirm'))
+    if structured and not _pilot_enabled(intent):
+        ppl = match_candidates(dict(intent,groupSize=None,group=None,decisionType='person_to_person'),prof,ctx)
+        return {'intent':intent,'candidates':ppl,'snapshot':snap,
+                'pilot':{'enabled':False,'decision_type':snap['decision_type'],
+                         'note':'%s is not enabled in this pilot (%s)' % (snap['decision_type'],RELEASE_STATUS),
+                         'people_shown_anyway':len(ppl)}}
+    try: _lim = max(0,min(48,int(body.get('limit') or 0))) if structured else 0
+    except (TypeError,ValueError): _lim = 0
+    cands = match_candidates(intent,prof,ctx,want=_lim+1 if _lim else None)
+    res = {'intent':intent,'candidates':cands,'snapshot':snap}
+    if _lim:
+        res["has_more"] = len(cands) > _lim
+        res['candidates'] = cands = cands[:_lim]
+        res['shown'] = len(cands)
+    lang = str(body.get('lang') or '').lower()
+    if structured and lang in ('ru','es') and cands:
+        try:
+            import interest_i18n as ii
+            res['interestLabels'] = ii.labels_for(sorted({str(w) for c in cands for w in (c.get('interests') or [])}),lang)
+        except Exception: pass
+    res.update(_section5_addendum(intent,str(body.get('query') or ''),cands))
+    if path.endswith('/confirm'): res['confirmed'] = intent.get('_confirmed')
+    else: res['retrieval'] = _retrieval_report(cands)
+    res['expansion'] = expansion_ladder(intent,ctx)
+    if structured and snap['decision_type']=='group_formation':
+        res['group'] = form_group_from_slate(intent,cands,body.get('constraints') if isinstance(body.get('constraints'),dict) else None,now_ts=ctx.get('now'))
     if not cands:
-        res["fallback"] = _online_fallback(intent)
+        res['fallback'] = _online_fallback(intent)
+        if structured and kc.is_expired(intent,ctx.get('now')): res['expired'] = True
     return res
+
+
+def agent_plan(query, prof, ctx=None, override=None):
+    body = {'query':query,'profile':prof,'override':override}
+    return render_search('/api/agent/plan',body,prepare_search('/api/agent/plan',body,ctx or {}),ctx or {})
 
 # ---- Agent-to-agent intro (Phase 2): the candidate's agent confirms + an icebreaker opener ----
 INTRO_PROMPT = '''You are the AI agent of user B. User A wants to meet for the activity below, and B's agent has agreed.
@@ -3395,7 +3552,7 @@ def _negotiate_precheck(intent, cands, now_ts=None):
     readiness is computed and the parallel wave capped from config (default 2, urgent 3).
     Returns (to_send, decided_without_sending)."""
     now_ts = now_ts or time.time()
-    store = {str(u.get('name', '')).strip().lower(): u for u in load_candidates()}
+    store = _live_store()
     received = _proposals_received_24h()
     gate_ctx, _ = _gate_ctx_and_self({})
     out_cfg = ((_CORE_CFG or {}).get('outreach') or {})
@@ -3407,8 +3564,17 @@ def _negotiate_precheck(intent, cands, now_ts=None):
     wctx = {"urgent": soon, "expansion": bool(intent.get('broadConsent'))}
     to_send, decided, sent = [], [], 0
     for c in cands:
-        nm = str(c.get('name', '')).strip().lower()
-        live = store.get(nm, c)
+        if not c.get("id") and str(c.get("name", "")).strip().lower() in store[2]:
+            # Тёзки и нет id — кому это предложение, не угадываем (как AMBIGUOUS_PERSON у собеседника).
+            decided.append(dict(c, agree=False, decided=True, readiness="blocked", code="AMBIGUOUS_PERSON",
+                                reason="not eligible: several people share this name, id required", reply=None))
+            continue
+        row = _live_of(c, store)
+        if row is not None:
+            # дальше всё по id живой строки; _okey — ключ карточки, как её прислали (сопоставить итог)
+            c = dict(c, id=row.get("id"), _okey=_ckey(c))
+        nm = _ckey(c)
+        live = row if row is not None else c
         # §8.2 revalidation at the SEND boundary — never trust the caller's candidate list.
         if not (nm or c.get('name')):
             decided.append(dict(c, agree=False, decided=True, readiness="blocked",
@@ -3502,8 +3668,10 @@ def _revalidate_disclosure(intent, live, checkpoint):
     req = _REVEAL_STAGE.get(checkpoint, "limited_profile")
     cand_stage = (live.get("receiving") or {}).get("disclosure_stage")
     allowed = kc._min_disclosure(req, cand_stage) if cand_stage else req
-    nm = str(live.get("name", "")).strip().lower()
-    mutual = any(nm in {str(p).strip().lower() for p in (m.get("participants") or [])} for m in _match_capsules())
+    # Взаимность — по id (18.10.2026): по подписи совпадение у тёзки открывало точное место.
+    nm = _ckey(live)
+    mutual = bool(live.get("id")) and any(nm in {str(p).strip().lower() for p in (m.get("participants") or [])}
+                                          for m in _match_capsules())
     reveal_ok = (allowed == "full") and mutual
     return {"requested": req, "allowed": allowed, "exact_place_ok": bool(reveal_ok),
             "reason": None if reveal_ok else "exact place/contact requires mutual accept (Match Capsule) + full disclosure"}
@@ -3515,9 +3683,11 @@ def revalidate(intent, candidate, checkpoint="profile_open", now_ts=None):
     now_ts = now_ts or time.time()
     checkpoint = checkpoint if checkpoint in _REVAL_CHECKPOINTS else "profile_open"
     cand = candidate or {}
-    nm = str(cand.get("name", "")).strip().lower()
-    store = {str(u.get("name", "")).strip().lower(): u for u in load_candidates()}
-    live = dict(store.get(nm, cand)); live["name"] = live.get("name") or cand.get("name") or ""
+    row = _live_of(cand, _live_store())
+    if row is not None:
+        cand = dict(cand, id=row.get("id"))
+    nm = _ckey(cand)
+    live = dict(row if row is not None else cand); live["name"] = live.get("name") or cand.get("name") or ""
     gate_ctx, _ = _gate_ctx_and_self({})
     decision, why = _policy_decision(intent, live, gate_ctx)
     domain = _core.infer_domain(intent, cat_of) if CORE_V2 else None
@@ -3563,9 +3733,11 @@ def negotiate_candidates(intent, cands):
     to_send, decided = _negotiate_precheck(intent, top)
     snap = _request_snapshot(intent)
     for c in to_send:
-        _log_proposal(c.get('name'))                   # a real proposal reaches this person's agent
-        _log_exposure(c.get('name'))                   # §11.1 impression log (send boundary; not in match_candidates)
-        _record_outcome(c.get('name'), 'proposed')     # §1 outcome lifecycle: a proposal went out
+        # Журналы — по id человека (18.10.2026), как и бюджет из чата (propose): раньше здесь шло имя,
+        # и усталость двух тёзок складывалась, а приглашения из чата движок не видел вовсе.
+        _log_proposal(_ckey(c))                        # a real proposal reaches this person's agent
+        _log_exposure(_ckey(c))                        # §11.1 impression log (send boundary; not in match_candidates)
+        _record_outcome(_ckey(c), 'proposed')          # §1 outcome lifecycle: a proposal went out
         c['proposal'] = kc.build_proposal(intent, c)   # §4.7 structured proposal (idempotency + disclosure clamp)
         c['proposal']['state'] = ks.next_state('proposal', 'CREATED', 'PROPOSE_CONNECTION') or 'SENT'  # §14.1 CREATED->SENT
         c['envelope'] = kp.build_envelope(c['proposal'], snap, purpose=(intent.get('goal') or {}).get('purpose'),
@@ -3603,7 +3775,7 @@ def negotiate_candidates(intent, cands):
                 # concurrent accept is WITHDRAWN (SLOT_TAKEN) and is NOT recorded as accepted (no coexisting match).
                 if accept_policy.get("exclusive") and accept_policy.get("policy") == "one_to_one_fixed_time":
                     iid = (c.get('proposal') or {}).get('intent_id')
-                    slot = ks.claim_slot(SESSION.setdefault('_match_taken', {}), iid, str(c.get('name') or '').lower())
+                    slot = ks.claim_slot(SESSION.setdefault('_match_taken', {}), iid, _ckey(c))
                     if not slot.get("won"):
                         c['agree'] = False; c['decided'] = True; c['code'] = "SLOT_TAKEN"; c['action'] = "WITHDRAW"
                         c['reason'] = "slot unavailable"
@@ -3615,10 +3787,13 @@ def negotiate_candidates(intent, cands):
                     c['decided'] = True; c['code'] = "NEEDS_MANUAL_CONFIRM"
                     c['manual_confirm_required'] = True
                     continue
-                _record_outcome(c.get('name'), 'accepted')   # winner keeps the UNCHANGED accepted path (byte-identical)
+                _record_outcome(_ckey(c), 'accepted')        # winner keeps the UNCHANGED accepted path
                 _stamp_accept(c)                        # §14.1 proposal SENT->ACCEPTED, match state MUTUAL (additive)
-    by = {str(x.get('name', '')).strip().lower(): x for x in done + decided}
-    return [by.get(str(c.get('name', '')).strip().lower(), c) for c in top]
+    by = {(x.get("_okey") or _ckey(x)): x for x in done + decided}
+    out = [by.get(_ckey(c), c) for c in top]
+    for x in out:
+        x.pop("_okey", None)
+    return out
 
 def agent_transition(body):
     """§14 single VALIDATED transition surface for WITHDRAW/EXPIRE/COUNTER/etc. Stateless over the object the
@@ -3712,100 +3887,14 @@ def plan_resource(body):
             SESSION.setdefault("_plan_store", {})[pid] = res["object"]; _save_store()
     return res
 
-# ---------------------------------------------------------------- §1/§17/§18/§21/§23 additive orchestration helpers
-_DATING_REDACT = {"not open to dating": "no longer available", "private profile": "no longer available",
-                  "not verified": "no longer available"}
-def _redact_dating_reason(reason, domain=None):
-    """§17.1 explanation — a sensitive dating reason is NEVER surfaced to a non-owner; it is mapped to a coarse
-    public reason. Outside the dating domain the reason is unchanged (owner-only surfaces keep the detail)."""
-    return _DATING_REDACT.get(str(reason or ""), reason) if str(domain or "") == "dating" else reason
 
-def merge_conditions(intent_a, intent_b):
-    """§1.1 intent_to_intent — merge two overlapping intents: topics ∩, shared time, role pair. feasible iff a
-    shared topic exists. Additive, deterministic; the reciprocity join uses this to form a mutual condition."""
-    a, b = intent_a or {}, intent_b or {}
-    ta = set(str(t).lower() for t in a.get("topics") or [])
-    tb = set(str(t).lower() for t in b.get("topics") or [])
-    topics = sorted(ta & tb)
-    return {"topics": topics, "feasible": bool(topics), "roles": [a.get("role"), b.get("role")],
-            "time": a.get("time") if a.get("time") == b.get("time") else None}
 
-def coordinate_plan(intent_a, intent_b):
-    """§21.1 Plan Coordinator — from two overlapping intents pick a concrete time_block + public place and return
-    a kc.build_plan object (pilot-off, enabled:False). Compute only; persistence is infra."""
-    m = merge_conditions(intent_a, intent_b)
-    if not m["feasible"]:
-        return {"plan": None, "feasible": False, "reason": "no shared topic"}
-    tb = m.get("time") or (intent_a or {}).get("time") or "Flexible"
-    place = (intent_a or {}).get("place") or "Public place nearby"
-    parts = [((intent_a or {}).get("identity") or {}).get("user_id") or "a",
-             ((intent_b or {}).get("identity") or {}).get("user_id") or "b"]
-    return {"plan": kc.build_plan(tb, place, parts), "feasible": True, "shared_topics": m["topics"]}
 
-def confirm_completion(name, uid="me", party="a", now=None):
-    """§1.0b — a COMPLETED interaction needs TWO-SIDED confirmation. Records each party's confirm; completed_ts is
-    set ONLY when BOTH sides confirm. Silence by one side never marks completion (never a negative)."""
-    key = str(name or "").strip().lower()
-    with _STORE_LOCK:
-        cc = SESSION.setdefault("_completion_confirms", {}).setdefault(key, {})
-        cc[str(party)] = True
-        both = bool(cc.get("a") and cc.get("b"))
-        if both:
-            m = SESSION.setdefault("_matches", {}).setdefault(key, {"name": key, "matched_ts": None, "completed_ts": None})
-            if not m.get("completed_ts"):
-                m["completed_ts"] = float(now if now is not None else time.time())
-        _save_store()
-    return {"name": key, "confirms": dict(cc), "completed": both}
 
-def match_capsule_disclosed(participant_users, purpose, disclosure_stage="match_only"):
-    """§21.1 Match Capsule Builder — a per-participant purpose-bound disclosed ProfileView (a dating capsule omits
-    'entities'; a friendship capsule omits 'datingOk'), respecting the disclosure stage."""
-    return [kc.build_profile_view(u, purpose, disclosure_stage) for u in participant_users or []]
 
-def _decision_trace(card, intent, snapshot):
-    """§21.3 — a unified auditable decision trace per card (search/candidate/purpose ids + policy & model versions;
-    scoring is rule-based deterministic, the LLM is parse-only). Deterministic."""
-    snap = snapshot or {}
-    return {"search_id": kc._det_id("srch", snap.get("intent_id"), snap.get("data_version")),
-            "candidate_id": kc._det_id("cand", str((card or {}).get("name") or "").lower()),
-            "purpose_id": ((intent or {}).get("goal") or {}).get("purpose") or snap.get("decision_type"),
-            "policy": {"version": snap.get("policy_version")},
-            "model_versions": {"scoring": "rule_based_deterministic", "llm": "parse_only"},
-            "config_version": snap.get("config_version")}
 
-def _append_run_trace(snapshot):
-    """§23.4.8 — append each run's snapshot trace to a bounded SESSION['_run_traces'] (file-backed), so a fixture
-    run leaves a retrievable decision trace. Bounded to the last 200."""
-    with _STORE_LOCK:
-        rt = SESSION.setdefault("_run_traces", [])
-        rt.append({"intent_id": (snapshot or {}).get("intent_id"),
-                   "intent_version": (snapshot or {}).get("intent_version"),
-                   "config_version": (snapshot or {}).get("config_version")})
-        del rt[:-200]
-        _save_store()
-    return len(SESSION.get("_run_traces") or [])
 
-def _search_pipeline(intent, cards):
-    """§B.1 — a read-only provenance-tier walk over the already-labelled slate (accumulate under the high retrieval
-    budget so nothing is cut). Returns the SAME cards (byte-identical) + a trace; never re-scores or drops anyone."""
-    by_tier = {}
-    for c in cards or []:
-        by_tier[str(c.get("tier") or "T?")] = by_tier.get(str(c.get("tier") or "T?"), 0) + 1
-    strong = sum(v for k, v in by_tier.items() if k in ("T0", "T1"))
-    return {"cards": list(cards or []), "trace": {"tiers": by_tier, "strong_count": strong,
-            "enough_strong": strong >= 1, "budget": RETRIEVAL_BUDGET.get("structured", 500),
-            "used": len(cards or []), "broke_early": len(cards or []) < RETRIEVAL_BUDGET.get("structured", 500)}}
 
-_DOMAIN_LADDER = {
-    "games": ["exact game/role", "parent genre", "room with consent"],
-    "walk": ["same area/time", "another zone/time", "small group"],
-    "language_exchange": ["exact pair/role", "group practice", "event"],
-    "professional_networking": ["exact role/industry", "adjacent role", "curated group/event"],
-}
-def domain_ladder(intent):
-    """§18.1 — the per-domain typical fallback ordering (read-only plan; the generic ladder still executes)."""
-    return list(_DOMAIN_LADDER.get(_core.infer_domain(intent, cat_of),
-                                   ["broaden topic", "widen zone/time", "alternative"]))
 
 def compile_endpoint(body):
     """§21.2 POST /intents/compile — ONE object folding parse + compile + clarification + snapshot so a caller
@@ -3819,21 +3908,16 @@ def compile_endpoint(body):
             "intent_summary": add.get("intent_summary"), "clarification": add.get("clarification"),
             "minimally_sufficient": add.get("minimally_sufficient"), "snapshot": _request_snapshot(intent)}
 
+def expansion_axis(intent, axis):
+    return {'adjacent':{'adjacentAllowed':True},'parent':{'broadAllowed':True},
+            'exactness':{'exactMatchRequired':False},'radius':{'radiusKm':(intent.get('radiusKm') or 15)*2}}.get(axis,{})
+
+
 def expand_one_axis(body):
     """§21.2 POST /searches/{id}/expand — apply EXACTLY ONE declared expansion axis (never the two _expand_fallback
     relaxes together); safety/age/consent stay fixed. Returns {axis, candidates, ladder_step, explanation}."""
-    intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
-    prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
     ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
-    axis = str(body.get("axis") or "adjacent")
-    _AXIS = {"adjacent": {"adjacentAllowed": True}, "parent": {"broadAllowed": True},
-             "exactness": {"exactMatchRequired": False},
-             "radius": {"radiusKm": (intent.get("radiusKm") or 15) * 2}}
-    relaxed = dict(intent, **_AXIS.get(axis, {}))
-    return {"axis": axis, "changed_keys": list(_AXIS.get(axis, {}).keys()),
-            "candidates": match_candidates(relaxed, prof, ctx),
-            "ladder_step": {"adjacent": 2, "parent": 3, "exactness": 2, "radius": 4}.get(axis),
-            "explanation": "Expanded by a single axis: %s (safety/age/consent unchanged)" % axis}
+    return render_search('/api/agent/expand',body,prepare_search('/api/agent/expand',body,ctx),ctx)
 
 # ---------------------------------------------------------------- Explore: public plans near the owner
 # The client's Explore map used to hard-code 5 fake plans. Serve real ones instead: every candidate who
@@ -3868,6 +3952,8 @@ def _saved_public_intents():
     """Yield persisted intents with their owner (подпись, id), preserving only stored facts."""
     for row in list(SESSION.get("_intents") or []):
         if not isinstance(row, dict):
+            continue
+        if row.get('searchState') and row['searchState'] != 'active':
             continue
         owner = str(row.get("owner") or "").strip()
         raw = row.get("intent")
@@ -3926,6 +4012,8 @@ def _potential_fit(intent, topics, viewer):
 def explore_plans(limit=12, self_name="", viewer_profile=None, self_id=""):
     sn = str(self_name or "").strip().lower()
     users = [c for c in load_candidates() if not _is_self(c, self_id, sn)]
+    if monetization_commands.ms.mode() == 'enforce':
+        users = [dict(u,intents=[]) for u in users]
     # Seed users exist only to keep matching non-empty. They are never public content.
     ordered = [c for c in users if c.get("source") == "onboarding"]
     owners = {
@@ -4029,11 +4117,15 @@ def explore_plans(limit=12, self_name="", viewer_profile=None, self_id=""):
 # ---------------------------------------------------------------- Map feed: two privacy-distinct intent projections
 def map_feed_payload(view="offline", self_name="", limit=60, self_id=""):
     users = load_candidates()
+    if monetization_commands.ms.mode() == 'enforce':
+        # Profile-embedded historical searches are not canonical publications.
+        users = [dict(u,intents=[]) for u in users]
     _ensure_intent_owner_ids()
     # У группы `owner` — id организатора; ленте нужна подпись и id отдельно.
     gis = [dict(g, owner=_display(g.get("owner"), str(g.get("owner") or "")),
                 owner_id=_canon_pid(g.get("owner")))
-           for g in (SESSION.get("_gintents") or []) if isinstance(g, dict)]
+           for g in (SESSION.get("_gintents") or []) if isinstance(g, dict)
+           and (not g.get('searchState') or g['searchState']=='active')]
     return imf.build_feed(
         imf.collect_sources(users, SESSION.get("_intents") or [], gis,
                             self_name=self_name, self_id=self_id),
@@ -4368,11 +4460,15 @@ def propose(frm, to, intent, note, idem=None):
                     and _norm_name(r.get("to")) == _norm_name(to) and _req_same_intent(r, probe)):
                 return _idem_put(idem, {"ok": True, "id": r["id"], "status": "answered",
                                         "version": r.get("version"), "pick_by": r.get("pick_by")})
-        # one open proposal per pair per direction — re-sending updates it rather than stacking
+        # one open proposal per pair per direction AND PER INTENT — re-sending updates it rather than stacking.
+        # До 17.10.2026 «на пару» без затеи: приглашение на пробежку молча переписывало ещё не отвеченное
+        # приглашение на кофе (затея менялась, `iid` оставался старый) — у получателя кофе исчезал без следа,
+        # а выбор и соперники дальше считались по чужой затее. Другая затея — своя заявка.
         for r in rs:
             if (_norm_name(r.get("from")) == _norm_name(frm) and _norm_name(r.get("to")) == _norm_name(to)
-                    and r.get("status") == "pending"):
+                    and r.get("status") == "pending" and _req_same_intent(r, probe)):
                 r.update({"intent": intent or {}, "note": str(note or "")[:400], "updated": now,
+                          "iid": str((intent or {}).get("id") or "")[:64],
                           "expires_at": now + _invite_ttl(intent, now),
                           "version": int(r.get("version") or 1) + 1})
                 _save_store()
@@ -4499,8 +4595,8 @@ def _num(v):
 
 def _policy_ok_now(frm, to, blocked=None):
     """Re-resolve BOTH sides against the live store and re-run the hard gates. Returns (ok, reason).
-    Safe to call while _STORE_LOCK is held: load_candidates() and plain SESSION reads never take it
-    (_session() does — calling that here would deadlock on the non-reentrant lock)."""
+    Safe to call while _STORE_LOCK is held: _STORE_LOCK is an RLock, and load_candidates() and plain
+    SESSION reads never take it anyway."""
     # Обе стороны — по id: по имени нашёлся бы тёзка, и проверка допуска считалась бы не для того.
     a, b = _person(frm), _person(to)
     if not a or not b:
@@ -4513,7 +4609,9 @@ def _policy_ok_now(frm, to, blocked=None):
     # "too many open invites") governed whether the proposal could be SENT; re-applying them now
     # would revoke perfectly consensual acceptances just because the sender got popular meanwhile.
     bl = {str(x).strip().lower() for x in (blocked or ())}
-    if _norm_name(frm) in bl or a.get("blocksMe") or b.get("blocksMe"):
+    # Блокировки ПАРЫ, в обе стороны и по id (18.10.2026). Раньше сюда приходил список из общей корзины
+    # SESSION["me"] — одной на всех, — и чужой блок либо закрывал допуск, либо свой не находился вовсе.
+    if _norm_name(frm) in bl or a.get("blocksMe") or b.get("blocksMe") or _blocked_pair(frm, to):
         return False, "blocked"
     for side, tag in ((a, "sender"), (b, "recipient")):
         age = _num(side.get("age"))
@@ -4564,8 +4662,7 @@ def respond(rid, decision, who, idem=None, version=None, flow=None):
                 return {"ok": False, "error": "VERSION_CONFLICT", "id": rid,
                         "status": st, "version": r.get("version")}
             if dec == "accepted":
-                # the responder IS the local user, so their block list is session "me"
-                mine = (SESSION.get("me") or {}).get("blocked") or []
+                mine = ()                       # блоки пары проверяет сам _policy_ok_now (по id)
                 ok, why = _policy_ok_now(r.get("from"), r.get("to"), mine)
                 if not ok:
                     r["status"] = "policy_revoked"
@@ -4575,7 +4672,15 @@ def respond(rid, decision, who, idem=None, version=None, flow=None):
                     _save_store()
                     return _idem_put(idem, {"ok": False, "error": "POLICY_CHANGED", "id": rid,
                                             "status": "policy_revoked", "reason": why})
-            if dec == "accepted" and str(flow or "").strip().lower() == "pick":
+            # Выбирать есть из кого, только если по ТОЙ ЖЕ затее у отправителя открыта ещё хоть одна
+            # заявка. Единственный приглашённый сказал «да» — выбор очевиден: прежний путь, чат сразу.
+            # До 17.10.2026 и единственное «да» висело в `answered`, а чат не появлялся (жалоба владельца).
+            has_rivals = any(
+                other is not r and other.get("status") in REQ_OPEN
+                and _norm_name(other.get("from")) == _norm_name(r.get("from"))
+                and _req_same_intent(other, r)
+                for other in _requests())
+            if dec == "accepted" and str(flow or "").strip().lower() == "pick" and has_rivals:
                 # «ДА» = «ОТВЕТИЛ, ЖДЁТ ВЫБОРА». Чат не открывается (он держится на `accepted`),
                 # соседи не гасятся — выбирает организатор. Включается признаком `flow: "pick"` от
                 # нового клиента: старый клиент без признака идёт прежним путём «первое да», иначе
@@ -4637,6 +4742,28 @@ def respond(rid, decision, who, idem=None, version=None, flow=None):
                                     "withdrawn": withdrawn})
     return {"ok": False, "error": "not found"}
 
+def _pick_seat_freed(r):
+    """Место освободилось: у КАЖДОГО принятого по той же затее план с организатором отменён (или пара
+    заблокирована). Ровно та ситуация, где экран показывает OF.19e «Pick someone else». Сразу после
+    выбора — плана ещё нет, место занято, и второй выбор не выбранного — ALREADY_RESOLVED, как раньше:
+    иначе у одной затеи стало бы двое принятых."""
+    host = r.get("from")
+    for other in _requests():
+        if other is r or other.get("status") != "accepted" or not _req_same_intent(other, r):
+            continue
+        if _norm_name(other.get("from")) != _norm_name(host):
+            continue
+        peer = other.get("to")
+        if _blocked_pair(host, peer):
+            continue
+        since = float(other.get("picked_at") or other.get("updated") or 0)
+        gone = any(_mp_is_in(p, host) and _mp_is_in(p, peer) and p.get("state") == "cancelled"
+                   and float(p.get("updated") or 0) >= since for p in _mplans())
+        if not gone:
+            return False
+    return True
+
+
 def pick_request(rid, who, idem=None):
     """Организатор выбирает ОДНОГО из ответивших «да» (OF.14a–16). Только отправитель заявки.
 
@@ -4658,7 +4785,11 @@ def pick_request(rid, who, idem=None):
             st = r.get("status")
             if st == "pending":
                 return _idem_put(idem, {"ok": False, "error": "NOT_ANSWERED", "id": rid, "status": st})
-            if st != "answered":
+            # «Не в этот раз» из-за выбора другого — человек всё же сказал «да». Когда выбранный ушёл,
+            # организатор берёт его из OF.19e «Pick someone else» (17.10.2026). Другие закрытия — нет.
+            repick = (st == "not_picked" and (r.get("trace") or {}).get("reason") == "picked_other"
+                      and _pick_seat_freed(r))
+            if st != "answered" and not repick:
                 if st == "expired":
                     _save_store()
                 return _idem_put(idem, {"ok": False, "error": "ALREADY_RESOLVED", "id": rid,
@@ -4755,7 +4886,10 @@ def _sys_msg(frm, to, code, **fields):
     del ms[:-4000]
 
 
-_VOICE_URL_RE = re.compile(r"^/api/speech/audio/([0-9a-f]{32})\.(m4a|mp4|webm|wav|mp3|ogg)$")
+# АДРЕС ГОЛОСОВОГО — ТОТ, ЧТО ОТДАЛА ЗАГРУЗКА (voice_store): /api/agent/voice/<id>.<ext>. До 17.10.2026 здесь
+# пускали только старый /api/speech/audio/…, которого загрузка не отдаёт с 22.09, — и КАЖДОЕ голосовое между
+# людьми получало INVALID_VOICE (на бою не было ни одного). Старый вид оставлен для уже записанных строк.
+_VOICE_URL_RE = re.compile(r"^/api/(?:agent/voice|speech/audio)/([0-9a-f]{32})\.(m4a|mp4|webm|wav|mp3|ogg|aac|3gp|caf)$")
 
 
 def _voice_message(voice):
@@ -4774,9 +4908,14 @@ def _voice_message(voice):
         return None, "INVALID_VOICE"
     match = _VOICE_URL_RE.fullmatch(url)
     if (not re.fullmatch(r"[0-9a-f]{32}", voice_id) or not match
-            or match.group(1) != voice_id or not transcript or len(transcript) > 2000
+            or match.group(1) != voice_id or len(transcript) > 2000
             or duration_ms < 250 or duration_ms > 60000
             or not (mime_type.startswith("audio/") or mime_type.startswith("video/"))):
+        return None, "INVALID_VOICE"
+    # Файл обязан быть нашим и лежать на месте: адрес без файла — чужая или выдуманная ссылка.
+    if url.startswith("/api/agent/voice/") and not os.path.isfile(os.path.join(VOICE_DIR, url.rsplit("/", 1)[-1])):
+        if monetization_commands.active_tx():
+            raise monetization_commands.ms.CommandError('media_not_found',409)
         return None, "INVALID_VOICE"
     return {
         "id": voice_id, "url": url, "duration_ms": duration_ms,
@@ -4977,7 +5116,7 @@ def _touch(m):
     m["u"] = time.time()
 
 
-def end_thread(who, other, idem=None):
+def end_thread(who, other, idem=None, session_id=None):
     """Закрыть переписку — так, чтобы об этом узнал ВТОРОЙ.
 
     Кадр O.19c «Jane ended the chat. You can pick again» существует, а показать его было нечем:
@@ -4997,7 +5136,16 @@ def end_thread(who, other, idem=None):
     who, other = str(who or "").strip(), str(other or "").strip()
     if not who or not other or _norm_name(who) == _norm_name(other):
         return {"ok": False, "error": "TWO_PEOPLE_REQUIRED"}
-    if not _mp_matched(who, other):
+    pair_state = monetization_commands.canonical_pair_state(who, other)
+    tx=monetization_commands.active_tx()
+    if tx and session_id is not None:
+        row=tx.conn.execute("select id from monetization_sessions where pair=%s and state='active'",
+                            (monetization_commands.ms.pair_key(who,other),)).fetchone()
+        if row and row[0]!=session_id:
+            return {'ok':False,'error':'chat_session_changed'}
+    if pair_state == 'closed':
+        return _idem_put(idem, {"ok": True, "already": True})
+    if pair_state != 'active' and not _mp_matched(who, other):
         return {"ok": False, "error": "NOT_MATCHED"}
     with _STORE_LOCK:
         _sys_msg(who, other, "chat_ended")
@@ -5014,7 +5162,9 @@ def send_message(frm, to, text, voice=None, client_id=None, reply_to=None, video
     if video_error:
         return {"ok": False, "error": video_error}
     if voice:
-        text = voice["transcript"]
+        # Расшифровка — подсказка, а не условие: «тишина» или сбой распознавания не отменяют голосовое.
+        # Заглушка нужна списку «Сообщений» (он подменяет её по kind=voice), пузырь берёт voice.transcript.
+        text = voice["transcript"] or "[voice]"
     if video and not text:
         # У кружка расшифровки нет, а пустой текст `send_message` не пускает — и правильно
         # делает. Подпись даёт списку «Сообщений» что показать вместо пустоты под именем.
@@ -5135,9 +5285,29 @@ def message_delete(self_name, mid):
         m["text"] = ""
         m["deleted"] = True
         m.pop("voice", None)
+        # Кружок уходит вместе с текстом (17.10.2026): клиент его прятал, но адрес файла ехал
+        # собеседнику в /thread дальше — «удалённое» видео открывалось по ссылке.
+        video = m.pop("video", None)
         m.pop("r", None)
         _touch(m)
+        # Цитаты этой реплики в ответах — тоже удалённые (17.10.2026): `rt` хранит КОПИЮ текста
+        # (см. _quote_of), и стёртое продолжало читаться в каждом ответе на него. Вид тот же, что
+        # у самой реплики: пустой текст и `deleted`. `_touch` — чтобы правка доехала опросом.
+        for x in _messages():
+            q = x.get("rt")
+            if isinstance(q, dict) and q.get("id") == m["id"] and x.get("pair") == m.get("pair"):
+                q["text"] = ""
+                q["deleted"] = True
+                _touch(x)
+        # Файл кружка стираем, только если на тот же адрес больше не ссылается ни одна реплика:
+        # у присланного видео сервер проверяет лишь форму адреса, и ссылка может жить в двух лентах.
+        url = str(video.get("url") or "") if isinstance(video, dict) else ""
+        if url and any(isinstance(x.get("video"), dict) and x["video"].get("url") == url
+                       for x in _messages() + _gmsgs()):
+            url = ""
         _save_store()
+    if url:
+        _drop_media([url])                   # ошибки диска глотает сам _drop_media
     return {"ok": True, "id": m["id"]}
 
 
@@ -5170,9 +5340,12 @@ def threads_for(self_name):
         if not cur or (m.get("t") or 0) > (cur.get("t") or 0):
             # `sys` едет наружу: в списке «Сообщений» последней строкой вполне может быть событие
             # плана, и рисовать под именем пустоту вместо «План подтверждён» нельзя.
+            # Удалённая — как в ленте (17.10.2026): пустой текст и `deleted`. `kind` гасим: строка
+            # голосового с ним превьюилась «Голосовым сообщением», хотя в ленте уже «удалено».
             last[okey] = {"who": other, "last": m.get("text"), "t": m.get("t"),
-                          "kind": m.get("kind"), "voice": m.get("voice"),
+                          "kind": None if m.get("deleted") else m.get("kind"), "voice": m.get("voice"),
                           "sys": m.get("sys"),
+                          **({"deleted": True} if m.get("deleted") else {}),
                           # Строка Kleal с кодом (GR.52 «removed you from…») — чтобы превью в
                           # «Сообщениях» было на языке приложения, а не английским текстом сервера.
                           **({"code": m.get("code"), "by": m.get("by"), "title": m.get("title")}
@@ -5182,13 +5355,21 @@ def threads_for(self_name):
         # Клиент ради того же числа слал отдельный запрос на каждую переписку — до десяти штук
         # каждые пятнадцать секунд — и всё равно врал: у одиннадцатой переписки числа не бывало
         # никогда, а у групп не бывает и сейчас. Системные строки не считаем: событие плана —
-        # не реплика, и жирная единица из-за него читается как «тебе написали».
-        if _norm_name(m.get("from")) != me and not m.get("sys"):
+        # не реплика, и жирная единица из-за него читается как «тебе написали». Удалённые тоже
+        # не считаем (17.10.2026): читать в них нечего, а единица висела бы до открытия чата.
+        if _norm_name(m.get("from")) != me and not m.get("sys") and not m.get("deleted"):
             seen = (reads.get(_pair_key(self_name, other)) or {}).get(me) or 0
             if (m.get("t") or 0) > seen:
                 unread[okey] = unread.get(okey, 0) + 1
+    # Пару с блокировкой в любую сторону из списка убираем (17.10.2026): писать туда и так нельзя
+    # (BLOCKED в send_message), а строка в «Сообщениях» звала бы в чат, который не ответит.
+    # Саму историю (/thread) не прячем — открыть её по-прежнему можно.
+    last = {k: row for k, row in last.items() if not _blocked_pair(me, row.get("who"))}
     for k, row in last.items():
         row["unread"] = unread.get(k, 0)
+    states = monetization_commands.chat_states(self_name, [r['who'] for r in last.values()])
+    for row in last.values():
+        row['chat'] = states[row['who']]
     return _with_photos(sorted(last.values(), key=lambda x: -(x.get("t") or 0))[:50], "who")
 
 def _thread_reads():
@@ -5240,7 +5421,7 @@ def _ensure_intent_owner_ids():
     return changed
 
 
-def save_intent(owner, intent, title, iid=None, launched=None, owner_id=""):
+def save_intent(owner, intent, title, iid=None, launched=None, owner_id="", idem=None):
     owner_id = str(owner_id or "").strip()
     if not owner_id or not isinstance(intent, dict):
         # Без личности интент не сохраняется: хозяина у него определить нечем, а по имени — нельзя.
@@ -5358,7 +5539,10 @@ def list_intents(owner, profile=None, live=True, owner_id=""):
                "launched": r.get("launched"), "candidates": []}
         memo = _RANK_MEMO.get(r["id"])
         key = (r.get("updated"), sig)
-        if live:
+        row['searchId'], row['searchState'] = r.get('searchId'), r.get('searchState')
+        if r.get('searchState') and r['searchState'] != 'active':
+            row['paused'] = True
+        elif live:
             if memo and memo[0] == key and now - memo[1] < RANK_MEMO_TTL:
                 row["candidates"] = memo[2]
             else:
@@ -5571,6 +5755,9 @@ def _gi_full(g, me=""):
         "gid": g.get("id"), "title": g.get("title"), "topics": g.get("topics") or [],
         "when": g.get("when") or "", "area": g.get("area") or "", "mode": g.get("mode") or "offline",
         "owner": g.get("owner"), "state": g.get("state"),
+        "searchId": g.get("searchId"), "searchState": g.get("searchState"),
+        "role_transfer_blocked": g.get("role_transfer_blocked"),
+        "role_recovery": bool(g.get('role_recovery')),
         "min_total": g.get("min_total"), "max_total": g.get("max_total"),
         # Время входа и возраст — строка участника на борде «GR · Offline — new layout»: «Jane, 28»
         # и «In the group since ⏱ 14:28» (GR.24, GR.24a). Время создания — первая строка ленты
@@ -5763,7 +5950,9 @@ def gi_invite(gid, frm, to, note="", idem=None):
             return {"ok": False, "error": "NO_SUCH_GROUP"}
         if _norm_name(frm) != _norm_name(g.get("owner")):
             return {"ok": False, "error": "NOT_ORGANIZER"}
-        if g.get("state") in ("cancelled", "expired", "converted_1to1"):
+        # 17.10.2026: closed_by_owner — тоже конец (S10). Его здесь не было, и организатор, закрыв
+        # группу и вернувшись в выдачу, звал людей в комнату «только для чтения».
+        if g.get("state") in ("cancelled", "expired", "converted_1to1", "closed_by_owner"):
             return _idem_put(idem, {"ok": False, "error": "CLOSED", "gid": gid})
         # Recruitment is NOT locked during planning. The daily keeps inviting open and moves the
         # gate to acceptance instead: a person who accepts once a plan is being confirmed waits for
@@ -5791,7 +5980,7 @@ def gi_invite(gid, frm, to, note="", idem=None):
         # use. Over-inviting is bounded by the pending cap above; who actually gets in is decided by
         # the claim at accept, which is the only count that can be authoritative.
         # pairwise safety, against every person already in the room — not only the organiser
-        mine = (SESSION.get("me") or {}).get("blocked") or []
+        mine = ()                               # блоки пары — внутри _policy_ok_now (по id)
         for m in act:
             ok, why = _policy_ok_now(to, m.get("name"), mine)
             if not ok:
@@ -5841,6 +6030,14 @@ def gi_respond(inv_id, who, accept, idem=None):
             g["updated"] = now
             _save_store()
             return _idem_put(idem, {"ok": True, "invite": {"id": inv_id, "state": "declined"}})
+        # 17.10.2026: «да» в закрытую организатором группу — тот же отказ CLOSED, а приглашение гаснет
+        # так же, как гасит его сам gi_close: group_closed (GR.56a «closed it before a plan was set»).
+        # Иначе closed_by_owner не входит в GI_OPEN_PHASES, человек вставал в awaiting_approval, и
+        # одобрение организатора делало его участником комнаты только для чтения.
+        if g.get("state") == "closed_by_owner":
+            inv["state"] = "group_closed"; inv["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": False, "error": "CLOSED", "gid": g.get("id")})
         if g.get("state") in ("cancelled", "expired", "converted_1to1"):
             inv["state"] = "withdrawn"; inv["updated"] = now
             _save_store()
@@ -5853,7 +6050,7 @@ def gi_respond(inv_id, who, accept, idem=None):
             inv["state"] = "group_full"; inv["updated"] = now
             _save_store()
             return _idem_put(idem, {"ok": False, "error": "GROUP_FULL", "gid": g.get("id")})
-        mine = (SESSION.get("me") or {}).get("blocked") or []
+        mine = ()                               # блоки пары — внутри _policy_ok_now (по id)
         for m in act:
             ok, why = _policy_ok_now(who, m.get("name"), mine)
             if not ok:
@@ -6028,6 +6225,18 @@ def report_evidence_store(filename, media_type, blob, who=""):
             "name": rec["name"], "mime_type": mt, "size": rec["size"]}
 
 
+def _gi_exit_owner(g, rest, now, how='exit'):
+    eligible = [m for m in sorted(rest,key=lambda x:(x.get('joined') or 0,x.get('name') or ''))
+                if monetization_commands.role_available(g,m.get('name'))]
+    if eligible:
+        _gi_transfer(g,eligible[0]['name'],now,how)
+    else:
+        # The departing owner is never retained as a fictitious manager. Recruiting
+        # pauses; remaining members can explicitly recover the protected group.
+        g.update(owner='',role_recovery=True,role_transfer_blocked='organizer_search_quota')
+        g.pop('takeover',None);g.pop('role_offer',None)
+
+
 def _gi_safety_exit(g, who, now):
     """Выход по жалобе (S11): для комнаты — обычное нейтральное «вышел», без слова о жалобе.
     Роль организатора переходит к первому из оставшихся, кворум пересчитывается. Сам ушедший
@@ -6040,8 +6249,8 @@ def _gi_safety_exit(g, who, now):
     m["left"] = now
     m["safety_exit"] = True
     rest = _gi_active(g)
-    if _norm_name(who) == _norm_name(g.get("owner")) and rest:
-        g["owner"] = sorted(rest, key=lambda x: x.get("joined") or 0)[0].get("name")
+    if _norm_name(who) == _norm_name(g.get("owner")):
+        _gi_exit_owner(g,rest,now)
     _gi_say(g, "%s left the group." % who, code="left", who=who)
     if len(rest) < int(g.get("min_total") or GI_MIN_TOTAL) and g.get("state") in ("ready_to_plan", "planning"):
         g["state"] = "below_quorum"
@@ -6184,6 +6393,8 @@ def _gi_takeover_voters(g, t):
 
 def _gi_transfer(g, new_owner, now, how):
     prev = g.get("owner")
+    g.pop('role_transfer_blocked',None)
+    g.pop('role_recovery',None)
     g["owner"] = new_owner
     g["role_from"] = {"who": prev, "how": how, "at": now}
     g["owner_since"] = now
@@ -6193,6 +6404,12 @@ def _gi_transfer(g, new_owner, now, how):
     offer = g.get("role_offer")
     if offer and offer.get("state") == "open":
         offer.update(state="closed", closed=now, why="role_changed")
+    # 17.10.2026: и голосование за перехват — оно про молчание прежнего организатора. Обычные пути
+    # сюда приходят с уже закрытым (passed / handed), а предложение роли и голосование взаимно
+    # исключены, так что для них это ничего не меняет; нужно уходу организатора (gi_leave).
+    t = g.get("takeover")
+    if t and t.get("state") == "open":
+        t.update(state="closed", resolved=now, why="role_changed")
 
 
 def _gi_roles_due(now=None):
@@ -6217,6 +6434,11 @@ def _gi_roles_due(now=None):
                 t["resolved"] = now
                 prev = g.get("owner")
                 if yes > no and any(_norm_name(m.get("name")) == _norm_name(t.get("by")) for m in _gi_active(g)):
+                    if not monetization_commands.role_available(g, t.get("by")):
+                        t.update(state="failed", why="organizer_search_quota")
+                        g["role_transfer_blocked"] = "organizer_search_quota"
+                        changed = True
+                        continue
                     t["state"] = "passed"
                     _gi_transfer(g, t.get("by"), now, "vote")
                     _gi_say(g, "%s is the organiser now." % t.get("by"), code="takeover_passed",
@@ -6279,6 +6501,8 @@ def _gi_role_public(g, me, now=None):
     out["can_take_over"] = (no_plan and in_room and mine != owner and not open_t and not open_o
                             and silent >= GI_SILENT_AFTER)
     out["can_hand_over"] = no_plan and mine == owner and not open_t and not open_o and len(active) >= 2
+    if g.get('role_recovery'):
+        out['can_take_over'] = in_room
     return out
 
 
@@ -6287,7 +6511,7 @@ def _gi_role_guard(g, who):
         return {"ok": False, "error": "NO_SUCH_GROUP"}
     if g.get("state") in _GI_ENDED:
         return {"ok": False, "error": "GROUP_ENDED"}
-    if _gp_of(g.get("id")):
+    if _gp_of(g.get("id")) and not g.get('role_recovery'):
         return {"ok": False, "error": "PLAN_EXISTS"}
     if not any(_norm_name(m.get("name")) == _norm_name(who) for m in _gi_active(g)):
         return {"ok": False, "error": "NOT_A_MEMBER"}
@@ -6306,6 +6530,10 @@ def gi_takeover(gid, who, idem=None):
         bad = _gi_role_guard(g, who)
         if bad:
             return bad
+        if g.get('role_recovery'):
+            _gi_transfer(g,who,now,'recovery')
+            _save_store()
+            return _idem_put(idem,{'ok':True,'group':_gi_public(g,who)})
         if _norm_name(who) == _norm_name(g.get("owner")):
             return {"ok": False, "error": "ALREADY_ORGANISER"}
         t = g.get("takeover")
@@ -6507,6 +6735,12 @@ def gi_approve(gid, frm, who, accept=True, idem=None):
             inv["state"] = "declined_by_organizer"; inv["updated"] = now
             _save_store()
             return _idem_put(idem, {"ok": True, "approved": False, "who": who})
+        # 17.10.2026: в закрытую группу не одобряют. Ждущие одобрения, которых успел набрать прежний
+        # gi_respond (до этой правки), гаснут как у gi_close — group_closed.
+        if g.get("state") == "closed_by_owner":
+            inv["state"] = "group_closed"; inv["updated"] = now
+            _save_store()
+            return _idem_put(idem, {"ok": False, "error": "CLOSED", "gid": gid})
         if len(_gi_active(g)) >= int(g.get("max_total") or GI_MAX_TOTAL):
             inv["state"] = "group_full"; inv["updated"] = now
             _save_store()
@@ -6746,10 +6980,13 @@ def gi_leave(gid, who, idem=None):
         # frozen: three people in a room where no button works. Hand it to whoever has been there
         # longest instead; forbidding the exit would trap the organiser in a group they want out of,
         # and closing the group would destroy a plan the others may already have confirmed.
-        if _norm_name(who) == _norm_name(g.get("owner")) and rest:
-            heir = sorted(rest, key=lambda x: x.get("joined") or 0)[0]
-            g["owner"] = heir.get("name")
-            _gi_say(g, "%s left. %s is now the organiser." % (who, heir.get("name")), code="left_heir", who=who, heir=heir.get("name"))
+        if _norm_name(who) == _norm_name(g.get("owner")):
+            _gi_exit_owner(g,rest,now,'left')
+            if g.get('owner'):
+                _gi_say(g, "%s left. %s is now the organiser." % (who,g['owner']),
+                        code="left_heir",who=who,heir=g['owner'])
+            else:
+                _gi_say(g, "%s left the group." % who, code="left", who=who)
         else:
             _gi_say(g, "%s left the group." % who, code="left", who=who)
         n = len(rest)
@@ -6840,7 +7077,7 @@ def gi_post(gid, who, text, idem=None, voice=None, client_id=None, reply_to=None
     if video_error:
         return {"ok": False, "error": video_error}
     if voice:
-        text = voice["transcript"]
+        text = voice["transcript"] or "[voice]"      # см. send_message: расшифровка необязательна
     if video and not text:
         text = "[video]"
     if not text:
@@ -6918,7 +7155,10 @@ def _person_card(name):
             except (TypeError, ValueError):
                 age = None
             return {"name": str(u.get("name") or _display(name)), "id": str(u.get("id") or ""),
-                    "age": age, "photo": u.get("photo") or "", "tz": str(u.get("tz") or "")}
+                    "age": age, "photo": u.get("photo") or "", "tz": str(u.get("tz") or ""),
+                    # Галочка «проверен по документу» (Didit) — отдельно от `verified` («сам отметил 18+»),
+                    # 18.10.2026. Метод (didit/test) наружу не идёт: другим важно лишь, проверен ли человек.
+                    "id_verified": bool(u.get("id_verified"))}
     return {"name": _display(name, str(name or "")), "id": _canon_pid(name), "age": None, "photo": ""}
 
 
@@ -7035,7 +7275,9 @@ def gi_for(who):
         if any(_norm_name(m.get("name")) == me for m in _gi_active(g)):
             mine.append(_gi_public(g, who))
     for i in _ginvites():
-        if _norm_name(i.get("to")) == me and i.get("state") in ("sent", "viewed"):
+        # `awaiting_approval` — сказал «да» после начала плана и ждёт организатора (17.10.2026): раньше
+        # такое приглашение пропадало из списка, и человек не видел, что его «да» вообще где-то есть.
+        if _norm_name(i.get("to")) == me and i.get("state") in ("sent", "viewed", "awaiting_approval"):
             g = _gi_find(i.get("gid"))
             if g:
                 invited.append({"invite": {"id": i.get("id"), "from": i.get("frm"),
@@ -7050,7 +7292,10 @@ def gi_for(who):
 # «filled up before you answered», «closed it before a plan was set». Отказ и принятие сюда не
 # входят: их человек сделал сам и видит итог сразу.
 _GI_INVITE_CLOSED = {"group_full": "full", "withdrawn": "withdrawn", "group_closed": "closed",
-                     "expired": "expired", "policy_revoked": "withdrawn"}
+                     "expired": "expired", "policy_revoked": "withdrawn",
+                     # Организатор не впустил опоздавшего (gi_approve accept=False) — 17.10.2026: раньше
+                     # ссылка отвечала NO_SUCH_INVITE, «приглашения нет», хотя человек сказал «да».
+                     "declined_by_organizer": "declined"}
 
 
 def gi_invite_detail(inv_id, who):
@@ -7059,7 +7304,8 @@ def gi_invite_detail(inv_id, who):
     me = _norm_name(who)
     inv = next((i for i in _ginvites()
                 if i.get("id") == inv_id and _norm_name(i.get("to")) == me
-                and (i.get("state") in ("sent", "viewed") or i.get("state") in _GI_INVITE_CLOSED)), None)
+                and (i.get("state") in ("sent", "viewed", "awaiting_approval")
+                     or i.get("state") in _GI_INVITE_CLOSED)), None)
     if not inv:
         return {"ok": False, "error": "NO_SUCH_INVITE"}
     g = _gi_find(inv.get("gid"))
@@ -9837,13 +10083,23 @@ def purge_person(name):
                 if (gi_leave(g.get("id"), me) or {}).get("ok"):
                     left += 1
         gone["groups_left"] = left
+        for g in list(_groups()):
+            if me in (g.get('members') or []) or me in (g.get('waitlist') or []):
+                group_leave(g['id'],me)
         n = 0
         for g in _gintents():
             mem = g.get("members") or []
             kept = [m for m in mem if _norm_name(m.get("name")) != me]
             n += len(mem) - len(kept)
             g["members"] = kept
+            if _norm_name(g.get('owner'))==me:
+                _gi_exit_owner(g,_gi_active(g),time.time())
         gone["group_member_rows"] = n
+        for g in _groups():
+            if _norm_name(g.get('host'))==me:
+                eligible=[m for m in (g.get('members') or []) if monetization_commands.role_available(g,m)]
+                g['host']=eligible[0] if eligible else ''
+                if not eligible: g.update(role_recovery=True,role_transfer_blocked='organizer_search_quota')
         inv = _ginvites()
         keep = [i for i in inv if me not in (_norm_name(i.get("to")), _norm_name(i.get("frm")))]
         gone["group_invites"] = len(inv) - len(keep)
@@ -9882,10 +10138,11 @@ def purge_person(name):
         ev = _evidence()
         mine = [k for k, e in ev.items() if _norm_name(e.get("by")) == me]
         for k in mine:
-            try:
-                os.remove(os.path.join(EVIDENCE_DIR, str(ev[k].get("file") or "")))
-            except Exception:
-                pass
+            if monetization_commands.active_tx():
+                monetization_commands.queue_cleanup('evidence',str(ev[k].get('file') or ''))
+            else:
+                try: os.remove(os.path.join(EVIDENCE_DIR, str(ev[k].get("file") or "")))
+                except Exception: pass
             ev.pop(k, None)
         gone["evidence"] = len(mine)
         _save_store()
@@ -9902,8 +10159,11 @@ def _drop_media(urls):
         name = u.rsplit("/", 1)[-1]
         if not re.match(r"^[0-9a-f]{8,64}\.[a-z0-9]{2,5}$", name):
             continue
-        folder = VOICE_DIR if "/voice/" in u else VIDEO_DIR if "/video/" in u else None
+        folder = VOICE_DIR if "/voice/" in u or u.startswith('/api/speech/audio/') else VIDEO_DIR if "/video/" in u else None
         if not folder:
+            continue
+        if monetization_commands.active_tx():
+            monetization_commands.queue_cleanup('voice' if folder==VOICE_DIR else 'video',name)
             continue
         try:
             os.remove(os.path.join(folder, name))
@@ -9935,7 +10195,15 @@ def mp_alternatives(me, iid="", title="", except_pid=""):
     ex = _norm_name(except_pid)
     out, seen = [], set()
     for r in sorted(_requests(), key=lambda x: -(x.get("updated") or 0)):
-        if r.get("status") != "accepted" or _norm_name(r.get("from")) != mk:
+        # С выбором из ответивших (11.10) «принял» бывает только выбранный — а его и меняют. Поэтому
+        # сюда же идут сказавшие «да» и не выбранные (`not_picked` из-за выбора другого) и ещё ждущие
+        # выбора (`answered`): у них `needs_pick` — экран зовёт request-pick, и только потом чат.
+        # До 17.10.2026 их не было, и OF.19e почти всегда стоял пустым.
+        st = r.get("status")
+        if _norm_name(r.get("from")) != mk:
+            continue
+        if not (st in ("accepted", "answered")
+                or (st == "not_picked" and (r.get("trace") or {}).get("reason") == "picked_other")):
             continue
         it = r.get("intent") or {}
         rid = str(r.get("iid") or it.get("kleal_intent_id") or it.get("id") or "").strip()
@@ -9958,7 +10226,9 @@ def mp_alternatives(me, iid="", title="", except_pid=""):
         out.append({"name": other, "photo": _photo_of(other), "age": row.get("age"),
                     "area": row.get("area") or row.get("city") or "", "interests": ints[:6],
                     "summary": row.get("summary") or "", "verified": bool(row.get("verified")),
-                    "free": _mp_of(me, other) is None, "rid": r.get("id"), "at": r.get("updated")})
+                    "free": _mp_of(me, other) is None, "rid": r.get("id"),
+                    "at": r.get("answered_at") or r.get("updated"),
+                    "status": st, "needs_pick": st != "accepted"})
     return {"ok": True, "people": out}
 
 
@@ -10012,6 +10282,8 @@ def _group_public(g, me=""):
             "state": _group_state(g), "version": int(g.get("version") or 1),
             "mine": bool(me) and _norm_name(me) in _gnorm(mem),
             "hosting": bool(me) and _norm_name(me) == _norm_name(g.get("host")),
+            "role_recovery": bool(g.get('role_recovery')) if me in mem else False,
+            "role_transfer_blocked": g.get('role_transfer_blocked') if me in mem else None,
             "waiting": bool(me) and _norm_name(me) in _gnorm(g.get("waitlist"))}
 
 def _groups():
@@ -10073,7 +10345,7 @@ def group_join(gid, who, idem=None, version=None):
             # §15.1 safety exclusions are PAIRWISE: the joiner must be acceptable to every member
             # already in, and every member to them. Checking only the host would let a blocked
             # person walk in through someone else's group.
-            mine = (SESSION.get("me") or {}).get("blocked") or []
+            mine = ()                           # блоки пары — внутри _policy_ok_now (по id)
             for m in (g.get("members") or []):
                 ok, why = _policy_ok_now(who, m, mine)
                 if not ok:
@@ -10118,14 +10390,28 @@ def group_leave(gid, who, idem=None):
             g["members"], g["waitlist"] = mem, wl
             if not mem:
                 g["state"] = "cancelled"
+                g.update(host='',role_recovery=True)
             elif _norm_name(g.get("host")) == _norm_name(who):
-                g["host"] = mem[0]                       # the group survives its host leaving
+                eligible=[m for m in mem if monetization_commands.role_available(g,m)]
+                g['host']=eligible[0] if eligible else ''
+                if not eligible: g.update(role_recovery=True,role_transfer_blocked='organizer_search_quota')
             g["updated"] = time.time()
             g["version"] = int(g.get("version") or 1) + 1
             _save_store()
             return _idem_put(idem, {"ok": True, "gid": gid, "promoted": promoted,
                                     "group": _group_public(g, who)})
     return {"ok": False, "error": "not found"}
+
+def group_recover(gid,who,idem=None):
+    with _STORE_LOCK:
+        g=next((g for g in _groups() if g.get('id')==gid),None)
+        if not g or who not in (g.get('members') or []): return {'ok':False,'error':'NOT_A_MEMBER'}
+        if not g.get('role_recovery'): return {'ok':False,'error':'NO_ROLE_RECOVERY'}
+        if g.get('state')=='cancelled' or g.get('host'): return {'ok':False,'error':'NO_ROLE_RECOVERY'}
+        g.update(host=who,updated=time.time())
+        g.pop('role_recovery',None);g.pop('role_transfer_blocked',None)
+        _save_store()
+        return {'ok':True,'group':_group_public(g,who)}
 
 def _pair_fit(intent, a, b):
     """Directed relevance a->b combined reciprocally, on the SAME engine the slate uses. Returns
@@ -10196,6 +10482,8 @@ def group_list(self_name="", limit=30, open_only=False):
         if g.get("state") == "cancelled":
             continue
         pub = _group_public(g, me)
+        if not pub['mine'] and g.get('searchState') and g['searchState']!='active':
+            continue
         if open_only and (pub["mine"] or pub["state"] == "full"):
             continue
         pub["fit"] = group_utility(g, rows)
@@ -10735,6 +11023,28 @@ def form_group_from_slate(intent, cands, constraints=None, now_ts=None, pair_rel
 
 
 # ---------------------------------------------------------------- HTTP dispatcher (matching only)
+_OWNER_TALLY = {"since": time.time(), "n": {}, "paths": {}}
+_OWNER_TALLY_LOCK = threading.Lock()
+
+
+def _owner_tally(verdict, path, every=3600):
+    """Счётчики наблюдения `_watch_owner` и сводка в журнал раз в `every` секунд (18.10.2026)."""
+    now = time.time()
+    with _OWNER_TALLY_LOCK:
+        t = _OWNER_TALLY
+        t["n"][verdict] = t["n"].get(verdict, 0) + 1
+        if verdict == "имя без сессии":
+            t["paths"][path] = t["paths"].get(path, 0) + 1
+        if now - t["since"] < every:
+            return
+        top = sorted(t["paths"].items(), key=lambda kv: -kv[1])[:4]
+        line = "[owner] за %d мин: %s; без сессии чаще всего: %s" % (
+            int((now - t["since"]) / 60), ", ".join("%s %d" % kv for kv in sorted(t["n"].items())),
+            ", ".join("%s %d" % kv for kv in top) or "—")
+        t.update(since=now, n={}, paths={})
+    print(line, flush=True)
+
+
 class H(BaseHTTPRequestHandler):
     _pid = ""          # личность запроса — id человека (см. _whoami); пусто, пока не определена
     _pname = ""
@@ -10848,6 +11158,7 @@ class H(BaseHTTPRequestHandler):
                 return True
             send_json(self, 200, {
                 "messages": thread(me, other, since),
+                "chat": monetization_commands.chat_states(me, [other])[other],
                 # MSG.11: когда ВТОРАЯ сторона в последний раз открывала эту пару. Моих отметок тут
                 # нет — свою прочитанность человеку показывать незачем.
                 "peer_read_at": (_thread_reads().get(_pair_key(me, other)) or {}).get(_norm_name(other), 0),
@@ -10898,7 +11209,7 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/agent/intent-save":
             send_json(self, 200, save_intent(body.get("self"), body.get("intent") or {},
                                              body.get("title"), body.get("id"),
-                                             bool(body.get("launched")), owner_id=me))
+                                             bool(body.get("launched")), owner_id=me, idem=body.get('idem')))
         elif p == "/api/agent/intent-delete":
             send_json(self, 200, delete_intent(body.get("self"), body.get("id"), owner_id=me))
         elif p == "/api/agent/intents":
@@ -10912,7 +11223,7 @@ class H(BaseHTTPRequestHandler):
                                                     body.get("reply_to"), body.get("video")))
         elif p == "/api/agent/thread-end":
             other, no = self._peer_of(body, "with", "other", related=True)
-            send_json(self, 200, no or end_thread(me, other, body.get("idem")))
+            send_json(self, 200, no or end_thread(me, other, body.get("idem"),body.get('sessionId')))
         elif p == "/api/agent/message-react":
             send_json(self, 200, message_react(me, body.get("id"), body.get("emoji")))
         elif p == "/api/agent/message-delete":
@@ -11111,6 +11422,8 @@ class H(BaseHTTPRequestHandler):
             send_json(self, 200, group_join(body.get("gid"), me, body.get("idem"), body.get("version")))
         elif p == "/api/agent/group-leave":
             send_json(self, 200, group_leave(body.get("gid"), me, body.get("idem")))
+        elif p == '/api/agent/group-recover':
+            send_json(self,200,group_recover(body.get('gid'),me,body.get('idem')))
         else:
             return False
         return True
@@ -11303,7 +11616,13 @@ class H(BaseHTTPRequestHandler):
                     break
         try:
             self._pid, self._pname = _identify(self, claimed)
+            if monetization_commands.ms.mode() == 'enforce':
+                person = kleal_auth.caller_person(self, strict_storage=True)
+                self._pid = str((person or {}).get('id') or '')
+                self._pname = str((person or {}).get('name') or '')
         except Exception as e:
+            if monetization_commands.ms.mode() == 'enforce' and isinstance(e,kleal_auth.IdentityStorageUnavailable):
+                raise monetization_commands.ms.CommandError('monetization_unavailable',503) from e
             print("[identity] не определилась: %s" % str(e)[:120], flush=True)
             self._pid, self._pname = "", ""
         ctx = src.get("ctx") if isinstance(src.get("ctx"), dict) else None
@@ -11317,21 +11636,16 @@ class H(BaseHTTPRequestHandler):
         return self._pid
 
     def _watch_owner(self, body=None):
-        """НАБЛЮДЕНИЕ, А НЕ ЗАПРЕТ. Ничего не блокирует и ничего не меняет в ответе.
+        """НАБЛЮДЕНИЕ, А НЕ ЗАПРЕТ: сколько запросов приходит с сессией, сколько — с одним заявленным
+        именем без токена и как часто имя расходится с сессией. Ничего не блокирует и не меняет ответ.
 
-        ЗАЧЕМ. В этом сервисе человек до сих пор определяется ИМЕНЕМ, которое сам же и прислал:
-        шестьдесят с лишним ручек принимают `self`/`name`/`from` из запроса и по нему достают
-        чужие заявки, переписку и планы. Заголовок `Authorization` при этом уже доезжает — шлюз
-        его пробрасывает, — но никто его не читает.
+        Личность давно берётся из сессии (`_whoami`, docs/IDENTITY.md); это наблюдение нужно до тех пор,
+        пока открыто окно «имя без сессии» (боты kleal-life, пробы) — по нему видно, кого закроет запрет.
+        18.10.2026: раньше здесь печаталась строка на КАЖДЫЙ запрос — половина всего журнала сервера
+        (26 653 строки в сутки из 55 184). Теперь — счётчики и сводка раз в час; отдельной строкой только
+        РАСХОЖДЕНИЕ (имя в теле не совпало с сессией), оно редкое и важное.
 
-        Включать запрет вслепую нельзя: связка «аккаунт → строка» проставлена у шестнадцати строк
-        из восьмисот двадцати восьми, и отказ по несовпадению выкинул бы из поиска тех, кто вошёл
-        раньше. Сначала надо узнать ЦИФРУ: сколько живого трафика вообще приходит с токеном и как
-        часто заявленное имя расходится с именем из сессии. Её сейчас не существует.
-
-        В ЖУРНАЛ НЕ ПОПАДАЮТ НИ ИМЕНА, НИ АДРЕСА — только признаки. Журнал читают в отладке, и
-        превращать его во вторую копию персональных данных нельзя.
-        """
+        В ЖУРНАЛ НЕ ПОПАДАЮТ НИ ИМЕНА, НИ АДРЕСА — только признаки и пути."""
         try:
             claimed = ""
             if isinstance(body, dict):
@@ -11359,8 +11673,10 @@ class H(BaseHTTPRequestHandler):
                 verdict = "имя без сессии"
             else:
                 verdict = "сессия без имени"
-            print("[owner] %s | токен=%s | путь=%s"
-                  % (verdict, "да" if has_tok else "нет", self.path.split("?", 1)[0]), flush=True)
+            path = self.path.split("?", 1)[0]
+            if verdict == "РАСХОЖДЕНИЕ":
+                print("[owner] РАСХОЖДЕНИЕ | токен=%s | путь=%s" % ("да" if has_tok else "нет", path), flush=True)
+            _owner_tally(verdict, path)
         except Exception:
             pass                             # наблюдение не имеет права мешать работе
 
@@ -11659,6 +11975,8 @@ class H(BaseHTTPRequestHandler):
         self._watch_owner(body)
         self._whoami(body)
         p = self.path
+        if monetization_commands.handle(self,p,body):
+            return
         if self._restored_post(p, body) or self._restored_admin_post(p, body):
             return
         if p == "/api/agent/plan":
@@ -11678,103 +11996,14 @@ class H(BaseHTTPRequestHandler):
                 viewer_profile=prof,
                 self_id=self._pid,
             )})
-        elif p == "/api/agent/match":
-            # structured entry: caller (e.g. the buddy agent) already assembled the intent/signals -> skip LLM parse
-            intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
-            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
-            ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
-            # ЧЕЛОВЕЧЕСКАЯ ФРАЗА ради моста тем. Приложение шлёт её отдельным полем `phrase`:
-            # в `topics` ей нельзя (русская строка буквально не совпадает ни с кем), а без неё
-            # фильтрация разбирает голое «options» как «варианты выбора», а не как опционы.
-            # Ставится ПОСЛЕ compile_intent — тот собирает свою структуру и чужих ключей не носит.
-            _phrase = str(intent.get("phrase") or body.get("query") or "")
+        elif p in ("/api/agent/match", "/api/agent/confirm"):
+            ctx = body.get("ctx") if isinstance(body.get("ctx"),dict) else {}
             try:
-                intent = kc.compile_intent(intent, _intent_identity(intent), ctx, ctx.get('now') or time.time())  # §4.3 blocks
-                if _phrase:
-                    intent["_query"] = _phrase
-                snap = _request_snapshot(intent)
-                if not _pilot_enabled(intent):             # §1.2: a non-pilot decision type
-                    # ...but STILL rank the people. Returning an empty slate here meant that adding
-                    # `groupSize` to a request that found eight people found nobody, with the reason
-                    # buried in a `pilot` field the UI never showed. The layer being off is a reason
-                    # not to ASSEMBLE a group — never a reason to hide the people who fit.
-                    ppl = match_candidates(dict(intent, groupSize=None, group=None,
-                                                decisionType="person_to_person"), prof, ctx)
-                    send_json(self, 200, {"intent": intent, "candidates": ppl, "snapshot": snap,
-                                          "pilot": {"enabled": False, "decision_type": snap["decision_type"],
-                                                    "note": "%s is not enabled in this pilot (%s)"
-                                                            % (snap["decision_type"], RELEASE_STATUS),
-                                                    "people_shown_anyway": len(ppl)}}); return
-                # `limit` — сколько человек показать. Просим на одного БОЛЬШЕ и по нему же решаем,
-                # есть ли продолжение: иначе кнопка «показать ещё» осталась бы вечной, и человек
-                # снова жал бы её впустую — ровно та поломка, из-за которой всё это и правится.
-                _lim = 0
-                try:
-                    _lim = int(body.get("limit") or 0)
-                except (TypeError, ValueError):
-                    _lim = 0
-                _lim = max(0, min(48, _lim))
-                cands = match_candidates(intent, prof, ctx, want=(_lim + 1) if _lim else None)
-                res = {"intent": intent, "candidates": cands, "snapshot": snap}
-                if _lim:
-                    res["has_more"] = len(cands) > _lim
-                    res["candidates"] = cands = cands[:_lim]
-                    res["shown"] = len(cands)
-                _lng = str(body.get("lang") or "").lower()
-                if _lng in ("ru", "es") and cands:
-                    try:
-                        import interest_i18n as _ii
-                        _iw = sorted({str(w) for c in cands for w in (c.get("interests") or [])})
-                        res["interestLabels"] = _ii.labels_for(_iw, _lng)
-                    except Exception:
-                        pass
-                res.update(_section5_addendum(intent, str(body.get("query") or ""), cands))  # §5.1/§5.2
-                res["retrieval"] = _retrieval_report(cands)                                    # §7
-                res["expansion"] = expansion_ladder(intent, ctx)                               # §12
-                if snap["decision_type"] == "group_formation":     # §15: the slate becomes a group
-                    res["group"] = form_group_from_slate(intent, cands,
-                                                         body.get("constraints") if isinstance(body.get("constraints"), dict) else None,
-                                                         now_ts=ctx.get("now"))
-                if not cands:
-                    res["fallback"] = _online_fallback(intent)
-                    if kc.is_expired(intent, ctx.get('now')):     # §4.3 Lifecycle: distinguish expired from no-match
-                        res["expired"] = True
-                send_json(self, 200, res)
+                intent = prepare_search(p,body,ctx)
+                send_json(self,200,render_search(p,body,intent,ctx))
             except Exception as e:
-                _blew_up("/api/agent/match", e)
-                send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
-        elif p == "/api/agent/confirm":
-            # §5.1 confirmation flow: promote ONLY the confirmed sensitive constraints (required language,
-            # dating mode) into active gates, then re-match. Unconfirmed constraints stay soft/absent.
-            intent = body.get("intent") if isinstance(body.get("intent"), dict) else {}
-            prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
-            ctx = body.get("ctx") if isinstance(body.get("ctx"), dict) else {}
-            confirmed_ids = body.get("confirmed_ids") if isinstance(body.get("confirmed_ids"), list) else []
-            query = str(body.get("query") or "")
-            try:
-                cons = body.get("constraints") if isinstance(body.get("constraints"), list) \
-                    else ki.extract_constraints(query, intent)[1]
-                conf = ki.apply_confirmation(intent, confirmed_ids, cons, now=ctx.get("now"))
-                conf = kc.compile_intent(conf, _intent_identity(conf), ctx, ctx.get("now") or time.time())
-                # Исходная фраза едет с интентом ради моста тем: по ней фильтрация отличает
-                # «опционы» от «вариантов», а по скомпилированному слову — уже нет. Приложение
-                # шлёт её отдельным полем `phrase`, а не в `query`: `query` идёт ещё и в разбор
-                # ограничений, и человеческая подпись добавила бы туда условий, которых человек
-                # не ставил.
-                _ph = str((body.get("intent") or {}).get("phrase") or query or "")
-                if _ph:
-                    conf["_query"] = _ph
-                cands = match_candidates(conf, prof, ctx)
-                res = {"intent": conf, "candidates": cands, "snapshot": _request_snapshot(conf),
-                       "confirmed": conf.get("_confirmed")}
-                res.update(_section5_addendum(conf, query, cands))
-                res["expansion"] = expansion_ladder(conf, ctx)   # §12 controlled-expansion ladder (plan)
-                if not cands:
-                    res["fallback"] = _online_fallback(conf)      # §12 never dead-end even after a narrowing confirm
-                send_json(self, 200, res)
-            except Exception as e:
-                _blew_up("/api/agent/confirm", e)
-                send_json(self, 200, {"intent": intent, "candidates": [], "error": str(e)[:200]})
+                _blew_up("/api/agent/match" if p.endswith('/match') else "/api/agent/confirm",e)
+                send_json(self,200,{"intent":body.get("intent") or {},"candidates":[],"error":str(e)[:200]})
         elif p == "/api/agent/explain":
             # TWO tools under one name, chosen by whether a `candidate` is named:
             #   with candidate -> the per-pair decision trace (§21.3), «почему мне не попадается X»;
@@ -11835,7 +12064,7 @@ class H(BaseHTTPRequestHandler):
                 return send_json(self, 200, {"ok": False, "error": "sign in required"})
 
             def _do_feedback():                                # §23.2.13 idempotent write (opt-in idempotency_key)
-                ok = record_feedback(body.get("name"), body.get("decision"), _uid,
+                ok = record_feedback(_ckey(body), body.get("decision"), _uid,   # id, а без него — подпись
                                      purpose=body.get("purpose"))   # §17.2 optional mode-scoped feedback (dating isolation)
                 # Читаем ОТТУДА ЖЕ, куда писали. Раньше запись шла в `uid`, а ответ отдавал общую
                 # корзину "me": человек ставил оценку и получал обратно чужие.
@@ -11853,7 +12082,7 @@ class H(BaseHTTPRequestHandler):
                 if prior is not None:                  # the read-then-write gap so a concurrent replay can't double-append.
                     payload = dict(prior, duplicate=True, error_code="DUPLICATE")
                 else:
-                    ok = _record_outcome(body.get("name"), body.get("stage"), _own_uid(self) or "me")
+                    ok = _record_outcome(_ckey(body), body.get("stage"), _own_uid(self) or "me")
                     payload = {"ok": bool(ok), "stages": list(_OUTCOME_STAGES),
                                "metrics": _success_metrics(), "match_capsules": _match_capsules()}
                     if key and ok:                     # memoize only a real applied outcome (a failed record can retry)
@@ -12039,14 +12268,24 @@ def _warm_up():
         print("[warm] прогрев не удался: %s" % str(e)[:120], flush=True)
 
 
+import monetization_commands
+monetization_commands.install(globals())
+
 if __name__ == "__main__":
     print("Kleal matching-service on http://127.0.0.1:%d  (LLM via llm-service)" % PORT)
     # Перевод хранилища на id — ДО приёма запросов: иначе первые ответы шли бы по старым именам.
     try:
-        _migrate_identity_v2(apply=True)
+        if monetization_commands.ms.mode() != 'enforce':
+            _migrate_identity_v2(apply=True)
     except Exception as _e:
         print("[identity] перевод на id не выполнен: %s" % str(_e)[:200], flush=True)
         traceback.print_exc()
+    try:
+        _migrate_engine_ids_v3(apply=True)
+    except Exception as _e:
+        print("[identity] журналы подбора на id не переведены: %s" % str(_e)[:200], flush=True)
+        traceback.print_exc()
     threading.Thread(target=_warm_up, daemon=True).start()
+    monetization_commands.start_launch_worker()
     import serving  # очередь подключений на 128, а не на 5 — см. shared/serving.py
     serving.KlealServer(("127.0.0.1", PORT), H).serve_forever()

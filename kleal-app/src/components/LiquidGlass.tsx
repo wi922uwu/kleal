@@ -18,6 +18,14 @@ import { color, glass } from '../theme';
 import { hTap } from '../haptics';
 import { IconChevronLeft } from './icons';
 
+/**
+ * ЦЕЛЬ РАЗМЫТИЯ НА ANDROID. expo-blur на Android размывает только то, что лежит внутри
+ * `BlurTargetView`, и само стекло при этом должно лежать СНАРУЖИ цели. Поэтому корневой макет
+ * оборачивает в цель весь стек экранов, а то, что плавает поверх всех экранов (навбар), рисуется
+ * рядом с ней — см. `NavHost`. Стекло внутри экранов размыть нечем: оно остаётся плёнкой.
+ */
+export const blurTargetRef = React.createRef<View>();
+
 /** Есть ли системное жидкое стекло. Проверка один раз: ответ не меняется за время жизни процесса. */
 export const LIQUID: boolean = (() => {
   if (Platform.OS !== 'ios') return false;
@@ -66,6 +74,11 @@ const FILM: Record<GlassTone, { c: string; a: number }> = {
   sheet: { c: '#F5F1EC', a: 0.98 },
 };
 
+/** Плёнка поверх НАСТОЯЩЕГО размытия на Android: само размытие уже светлит, плёнка тоньше. */
+const ANDROID_LIVE_FILM: Partial<Record<GlassTone, number>> = { light: 0.32, clear: 0.12, veil: 0.6 };
+/** Иней без размытия почти невидим (6%) — на Android ему нужна плёнка заметнее. */
+const ANDROID_FLAT_FILM: Partial<Record<GlassTone, number>> = { frost: 0.3 };
+
 export function GlassSurface({
   tone = 'light',
   radius = 999,
@@ -73,6 +86,7 @@ export function GlassSurface({
   style,
   children,
   pointerEvents,
+  backdrop = false,
 }: {
   tone?: GlassTone;
   radius?: number;
@@ -86,7 +100,40 @@ export function GlassSurface({
   style?: StyleProp<ViewStyle>;
   children?: React.ReactNode;
   pointerEvents?: 'box-none' | 'none' | 'box-only' | 'auto';
+  /**
+   * Стекло лежит поверх всех экранов, вне цели размытия (навбар на Android). Только такое стекло
+   * на Android размывает по-настоящему; на iOS флаг ничего не меняет.
+   */
+  backdrop?: boolean;
 }) {
+  if (Platform.OS === 'android') {
+    /*
+      ANDROID. Без цели expo-blur не размывает, а кладёт серую полупрозрачную подложку — вместе с
+      нашей плёнкой это и была «белая непрозрачная плёнка». Поэтому:
+      - стекло поверх экранов (backdrop) размывает настоящим размытием и берёт плёнку тоньше;
+      - стекло внутри экрана подложку не берёт вовсе: только плёнка и светлая кромка.
+    */
+    const f = FILM[tone];
+    return (
+      <View pointerEvents={pointerEvents} style={[{ borderRadius: radius, overflow: 'hidden' }, s.edge, style]}>
+        {backdrop ? (
+          <BlurView
+            intensity={glass.blur}
+            tint={tone === 'dark' || tone === 'brand' ? 'dark' : 'light'}
+            blurMethod="dimezisBlurViewSdk31Plus"
+            blurTarget={blurTargetRef}
+            blurReductionFactor={2}
+            style={StyleSheet.absoluteFill}
+          />
+        ) : null}
+        <View style={[StyleSheet.absoluteFill, {
+          backgroundColor: f.c,
+          opacity: (backdrop ? ANDROID_LIVE_FILM[tone] : ANDROID_FLAT_FILM[tone]) ?? f.a,
+        }]} />
+        {children}
+      </View>
+    );
+  }
   /*
     ИНЕЙ — ВСЕГДА РАЗМЫТИЕ, И НА iOS 26+ ТОЖЕ. Это стекло карточек карусели на главной (GR.01,
     «Test 260930»: эффект GLASS без заливки). Системное стекло для него не годится ни в каком виде:

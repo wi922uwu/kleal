@@ -24,7 +24,7 @@ export function planChatPeerRef(plan: Plan | null, self: string): { name: string
     return people.find((p) => p !== mine[0]) || NOBODY;
   }
   // Compatibility with older plan responses that exposed only `other`.
-  return norm(plan.other) !== norm(self) ? { name: name(plan.other), id: name(plan.other_id) } : NOBODY;
+  return !isMe(plan.other, plan.other_id, self) ? { name: name(plan.other), id: name(plan.other_id) } : NOBODY;
 }
 
 export function planChatPeer(plan: Plan | null, self: string): string {

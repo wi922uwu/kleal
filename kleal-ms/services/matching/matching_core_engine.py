@@ -180,7 +180,7 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
             continue
         band = assign_band(d_ab["lcb"], d_ab["coverage"], bands) if disc_ok else "needs_clarification"
         readiness = readiness_state(c, domain, now_ts, cfg,
-                                    received24.get(str(c.get("name", "")).strip().lower(), 0))
+                                    received24.get(str(c.get("id") or c.get("name", "")).strip().lower(), 0))   # по id, 18.10.2026
         crit_unknown = _UNK.high_impact_unknown(F, intent, domain)   # Вердикт#8: критичный unknown -> нет outreach
         outreach_tier_ok = tier in ("T0", "T1") or (tier == "T2" and bool(intent.get("broadConsent")))
         can_outreach = (outreach_tier_ok and readiness == "open_now" and not crit_unknown and
@@ -211,6 +211,9 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
         rs_ru = [gender_label(x, c.get("gender"), "ru") for x in (rs_ru or [])]
         out.append({
             # ---- legacy card contract (buddy/_card + profile UI keep rendering) ----
+            # id человека (18.10.2026): без него всё, что идёт от выдачи, — приглашение, переговоры,
+            # усталость, бюджет, раскрытие места — держалось за имя, и тёзки путались.
+            "id": c.get("id"),
             "name": c.get("name"), "score": round(d_ab["lcb"] * 100, 1), "tier": tier,
             "kind": TIER_KIND.get(tier, "related"), "km": km, "vibe": c.get("vibe"),
             "open": c.get("open"), "verified": c.get("verified"), "age": c.get("age"),
@@ -230,8 +233,16 @@ def search(intent, prof, ctx, candidates, H, cfg, top_n=None):
                       "readiness": readiness, "critical_unknown": crit_unknown,
                       "config_version": cfg.get("config_version"), "engine": ENGINE_NAME},
         })
-    out.sort(key=lambda x: (BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]], -x["reciprocal"],
-                            -x["lcb"], -x["coverage"], str(x["name"])))
+    # Внутри равных — сила совпадения по смыслу (только для слов, которых словарь не знает; у остальных 0, и порядок
+    # прежний байт в байт): программист-робототехник по «электронике» встаёт выше «тоже из мира технологий».
+    try:
+        from matching_core.taxonomy import canonical as _CN
+        for x in out:
+            x["meaning_rank"] = round(_CN.meaning_rank(topics, x.get("interests")), 3)
+    except Exception:
+        pass
+    out.sort(key=lambda x: (BAND_RANK[x["band"]], READINESS_RANK[x["readiness"]], -(x.get("meaning_rank") or 0),
+                            -x["reciprocal"], -x["lcb"], -x["coverage"], str(x["name"])))
     meta = {"core": ENGINE_NAME, "config_version": cfg.get("config_version"), "domain": domain,
             "config_sha": (cfg.get("_sha256") or "")[:12]}
     return _slate(out, top_n), meta
@@ -343,7 +354,7 @@ def explain(intent, prof, ctx, cand, H, cfg):
 
     band = assign_band(d_ab["lcb"], d_ab["coverage"], bands) if disc_ok else "needs_clarification"
     readiness = readiness_state(cand, domain, now_ts, cfg,
-                               received24.get(str(cand.get("name", "")).strip().lower(), 0))
+                               received24.get(str(cand.get("id") or cand.get("name", "")).strip().lower(), 0))   # по id, 18.10.2026
     step("band", True, "%s" % band)
     step("readiness", readiness == "open_now", "%s" % readiness)
 

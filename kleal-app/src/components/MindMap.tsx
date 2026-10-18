@@ -20,19 +20,33 @@
  * вовсе (см. LiquidGlass.tsx). К тому же тридцать системных стёкол на одном поле — дорого.
  *
  * Геометрия — в src/mindmapLayout.ts: там же её проверка на всех темах и языках.
+ *
+ * ПЕРЕДЕЛКА 18.10.2026 (Иван: «переработай UI, картинки к категориям, Kleal объёмный, убери
+ * симметричные линии, профессиональный моушен»):
+ *   • НИТИ — «жидкое стекло, сдержанно» (выбор Ивана 18.10 из мокапов design/threads-2026-10-18, B2):
+ *     тонкие почти прозрачные к невыбранному, полнее и розовее — к теме с выбором и к выбранной
+ *     карточке. Рисует src/components/GlassThreads.tsx (неоновая петля ночи 18.10 отвергнута).
+ *   • ТЕМЫ НЕ ПО ЦИРКУЛЮ: каждая сдвинута от правильного эллипса на свой небольшой угол и радиус
+ *     (детерминированно, без случайности) — поле выглядит собранным руками, а не начерченным.
+ *   • ЦЕНТР — объёмная капля Kleal (logo-mark.png, та же, что в логотипе), без белого круга.
+ *   • КАРТИНКИ ТЕМ — 3D-предметы (assets/art/topics), выходят из стеклянного круга за край.
+ *     Нет картинки для темы — прежний контурный знак.
+ *   • ДВИЖЕНИЕ — ТОЛЬКО В ОТВЕТ НА ДЕЙСТВИЕ (18.10.2026, Иван: «map слишком живая, зачем там всё
+ *     двигается»). В покое поле стоит: парения тем и дыхания капли больше нет. Появление, вход в тему,
+ *     выход и смена подборки — короткие, около 250–300 мс; блик по нити — один раз, когда ветку открыли.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Image, Pressable, StyleSheet, Text, View, useWindowDimensions, type ImageSourcePropType } from 'react-native';
+import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { useReducedMotion } from 'react-native-reanimated';
 import { mapPools } from '../mindmap';
-import { HUB_D, NODE_D, NODE_LABEL_H, LEAF_PAD, PAGE, leafSpots, nextPage, threadPath, topicSpots } from '../mindmapLayout';
+import { HUB_D, NODE_D, NODE_LABEL_H, LEAF_PAD, PAGE, leafSpots, nextPage, topicSpots } from '../mindmapLayout';
 import { STEP_HOBBIES } from '../onboarding';
-import { color, font, labelFamily } from '../theme';
+import { font, labelFamily } from '../theme';
 import { useLang } from '../i18n';
 import { hTap, hCommit } from '../haptics';
-import { Blob } from './Blob';
 import { TopicIcon } from './TopicIcon';
+import { GlassThreads } from './GlassThreads';
 import { IconChevronLeft, IconRefresh } from './icons';
 
 /** Строка над полем одной высоты в обоих состояниях: поле не прыгает при входе в тему. */
@@ -56,6 +70,23 @@ const TINT: Record<string, string> = {
   music: '#F2E1E5', games: '#E0E5F1', learning: '#EFE9DC', tech: '#E3E6EB',
 };
 const tintOf = (key: string | null) => TINT[key || ''] || '#E9E7E3';
+
+/** 3D-картинки тем (агент «Картинки», 18.10.2026). Темы без картинки рисуются знаком. */
+const ART: Record<string, ImageSourcePropType> = {
+  sports: require('../../assets/art/topics/sports.webp'),
+  social: require('../../assets/art/topics/social.webp'),
+  culture: require('../../assets/art/topics/culture.webp'),
+  outdoors: require('../../assets/art/topics/outdoors.webp'),
+  music: require('../../assets/art/topics/music.webp'),
+  games: require('../../assets/art/topics/games.webp'),
+  learning: require('../../assets/art/topics/learning.webp'),
+  tech: require('../../assets/art/topics/tech.webp'),
+};
+
+/** Отступ темы от правильного эллипса: угол (рад) и радиус (доля). Свой у каждого места, без случайности. */
+const NUDGE: Array<[number, number]> = [
+  [0.05, 0.97], [-0.03, 1.0], [0.04, 0.94], [-0.05, 1.0], [0.03, 0.96], [-0.04, 0.99], [0.05, 0.95], [-0.02, 1.0],
+];
 
 export function MindMap({ width: widthProp, height, selected, onToggle, backSignal, onTopicChange }: {
   /** Ширина поля. Не задана — по экрану: ширина окна минус поля виджета чата. */
@@ -82,7 +113,12 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
   // Темы и ВСЕ их занятия (без раскладки старого поля — она тут не нужна и дорога).
   const pools = useMemo(() => mapPools(), [lang]);
   const roots = pools.roots;
-  const spots = useMemo(() => topicSpots(roots.length, width, H), [roots.length, width, H]);
+  const spots = useMemo(() => topicSpots(roots.length, width, H).map((p, i) => {
+    const [da, k] = NUDGE[i % NUDGE.length];
+    const dx = p.x - width / 2, dy = p.y - H / 2;
+    const c = Math.cos(da), sn = Math.sin(da);
+    return { x: width / 2 + (dx * c - dy * sn) * k, y: H / 2 + (dx * sn + dy * c) * k };
+  }), [roots.length, width, H]);
   const [open, setOpen] = useState<string | null>(null);
   const openRoot = roots.find((r) => r.key === open) || null;
 
@@ -176,7 +212,18 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
   const ONE = useRef(new Animated.Value(1)).current;
   const ZERO = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => { run(shown, 1, 360).start(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { run(shown, 1, 240).start(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Появление тем: короткое общее проявление со стороны центра. */
+  const pop = useRef(Array.from({ length: 12 }, () => new Animated.Value(reduced ? 1 : 0))).current;
+  const wave = () => {
+    if (reduced) { pop.forEach((v) => v.setValue(1)); return; }
+    pop.forEach((v) => v.setValue(0));
+    // Одно короткое проявление всех тем разом (~260 мс), без волны и пружины: поле не «играет».
+    Animated.parallel(pop.map((v) => Animated.timing(v, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }))).start();
+  };
+  useEffect(() => { wave(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // Новая подборка — заливка ставится сразу; нажатие в той же подборке — перетекает.
   const lastLeaves = useRef<typeof leaves | null>(null);
@@ -194,7 +241,7 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
   useEffect(() => {
     if (!open) return;
     bloom.setValue(0);
-    run(bloom, 1, 340).start(() => { busy.current = false; });
+    run(bloom, 1, 260).start(() => { busy.current = false; });
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const enter = (i: number) => {
@@ -203,7 +250,7 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
     hCommit();
     setGliding(i);
     glide.setValue(0);
-    Animated.parallel([run(shown, 0, 180, Easing.out(Easing.quad)), run(glide, 1, 320)]).start(() => {
+    Animated.parallel([run(shown, 0, 180, Easing.out(Easing.quad)), run(glide, 1, 260)]).start(() => {
       setPage(pageOf(roots[i].key));
       setOpen(roots[i].key);
     });
@@ -219,7 +266,8 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
       glide.setValue(1);
       shown.setValue(0);
       setOpen(null);
-      Animated.parallel([run(glide, 0, 300), run(shown, 1, 260, ease, 80)]).start(() => {
+      wave();
+      Animated.parallel([run(glide, 0, 240), run(shown, 1, 220, ease, 40)]).start(() => {
         setGliding(-1);
         busy.current = false;
       });
@@ -242,7 +290,7 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
     pageStart.current[open] = from;
     pageNext.current[open] = r.next;
     spin.setValue(0);
-    run(spin, 1, 560).start();
+    run(spin, 1, 300).start();
     prevPos.current = Object.fromEntries(leaves.map((l) => [l.key, { x: l.x, y: l.y }]));
     leaving.current = new Set(avoid);
     run(swap, 0, 170, Easing.in(Easing.quad)).start(() => {
@@ -259,7 +307,7 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
     arriving.current = false;
     leaving.current = new Set();
     swap.setValue(1);
-    run(arrive, 1, 340).start(() => {
+    run(arrive, 1, 260).start(() => {
       kept.current = null;
       prevPos.current = {};
       busy.current = false;
@@ -275,8 +323,6 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
     back();
   }, [backSignal]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const total = selected.length;
-  const here = open ? pickedIn[open] || 0 : total;
 
   return (
     <View style={{ width, alignSelf: 'center' }}>
@@ -296,35 +342,27 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
         <Text style={[s.headName, { fontFamily: labelFamily(lang) }]} numberOfLines={1}>
           {openRoot ? openRoot.label : ''}
         </Text>
-        <View style={[s.headSide, s.headRight]}>
-          <View style={[s.count, here ? s.countOn : null]}>
-            <Text style={[s.countText, here ? s.countTextOn : null]} numberOfLines={1}>
-              {STEP_HOBBIES.mapPickedShort(here)}
-            </Text>
-          </View>
-        </View>
+        {/* Плашки «выбрано N» здесь больше нет (Иван, 18.10.2026: «убери, оно лишнее»): число и так видно
+            на кнопке «Дальше», в точках над темой и в ленте выбранного. Пустая сторона той же ширины
+            держит название темы по центру. */}
+        <View style={[s.headSide, s.headRight]} />
       </View>
 
       <View style={{ width, height: H }}>
         {!open ? (
           <>
-            {/* Нити от центра к темам. Коралловая — в теме уже что-то выбрано. */}
+            {/* Нити — под каплей и пузырями: тема с выбором связана полнее (GlassThreads). */}
             <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: shown }]}>
-              <Svg width={width} height={H}>
-                {spots.map((p, i) => {
-                  const on = (pickedIn[roots[i]?.key] || 0) > 0;
-                  return (
-                    <Path key={i} d={threadPath(hub, HUB_D / 2 + 4, p, NODE_D / 2 + 4)} fill="none"
-                          stroke={on ? 'rgba(255,56,92,0.55)' : 'rgba(24,27,34,0.10)'} strokeWidth={on ? 1.4 : 1} />
-                  );
-                })}
-              </Svg>
+              <GlassThreads width={width} height={H} hub={hub} hubR={HUB_D / 2 - 6} live={!reduced}
+                targets={roots.map((r, i) => spots[i] ? ({ key: r.key, x: spots[i].x, y: spots[i].y, r: NODE_D / 2,
+                  active: (pickedIn[r.key] || 0) > 0 }) : null).filter(Boolean) as any} />
             </Animated.View>
 
-            {/* Центр — капля Kleal: карту собирает агент, и начинается она от него. */}
+            {/* Центр — объёмная капля Kleal: карту собирает агент. В покое не двигается. */}
             <Animated.View pointerEvents="none"
-              style={[s.hub, { left: hub.x - HUB_D / 2, top: hub.y - HUB_D / 2, opacity: shown }]}>
-              <Blob size={30} />
+              style={[s.abs, { left: hub.x - HUB_D / 2, top: hub.y - HUB_D / 2, width: HUB_D, height: HUB_D, opacity: shown }]}>
+              <Image accessibilityIgnoresInvertColors source={require('../../assets/art/logo-mark.png')}
+                     style={{ width: HUB_D, height: HUB_D * (501 / 558) }} resizeMode="contain" />
             </Animated.View>
 
             {roots.map((root, i) => {
@@ -345,15 +383,17 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
                           { translateY: glide.interpolate({ inputRange: [0, 1], outputRange: [0, hub.y - p.y] }) },
                         ]
                       : [
-                          // Появление — лёгкое стягивание к своему месту со стороны центра.
-                          { translateX: shown.interpolate({ inputRange: [0, 1], outputRange: [(hub.x - p.x) * 0.06, 0] }) },
-                          { translateY: shown.interpolate({ inputRange: [0, 1], outputRange: [(hub.y - p.y) * 0.06, 0] }) },
+                          // Появление — короткий сдвиг со стороны центра; в покое тема стоит.
+                          { translateX: pop[i % pop.length].interpolate({ inputRange: [0, 1], outputRange: [(hub.x - p.x) * 0.12, 0] }) },
+                          { translateY: pop[i % pop.length].interpolate({ inputRange: [0, 1], outputRange: [(hub.y - p.y) * 0.12, 0] }) },
+                          { scale: pop[i % pop.length].interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) },
                         ],
                   }]}
                 >
                   {/* Спутники и подпись гаснут у едущей темы: в центре её имя уже в шапке. */}
                   <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: moving ? shown : 1 }]}>
-                    {Array.from({ length: SAT }, (_, j) => {
+                    {/* Пустые точки не рисуем: над объёмной картинкой они только шумели. */}
+                    {Array.from({ length: Math.min(n, SAT) }, (_, j) => {
                       const a = ((-140 + j * 25) * Math.PI) / 180;
                       const rr = NODE_D / 2 + 9;
                       return (
@@ -383,14 +423,11 @@ export function MindMap({ width: widthProp, height, selected, onToggle, backSign
           </>
         ) : (
           <>
-            {/* Нити к выбранному — от темы в центре. */}
+            {/* Нити от темы к занятиям: выбранные — полнее и розовее. */}
             <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: bloom }]}>
-              <Svg width={width} height={H}>
-                {leaves.map((leaf) => leafOn(leaf.key) ? (
-                  <Path key={leaf.key} d={threadPath(hub, NODE_D / 2 + 3, leaf, leaf.d / 2 + 3, 0.08)} fill="none"
-                        stroke="rgba(255,56,92,0.38)" strokeWidth={1.2} />
-                ) : null)}
-              </Svg>
+              <GlassThreads width={width} height={H} hub={hub} hubR={NODE_D / 2} live={!reduced}
+                pulse={`${open}:${leaves.filter((l) => leafOn(l.key)).length}`}
+                targets={leaves.map((l) => ({ key: l.key, x: l.x, y: l.y, r: l.d / 2, active: leafOn(l.key) }))} />
             </Animated.View>
 
             {/*
@@ -502,7 +539,13 @@ function TopicBubble({ topic, d }: { topic: string | null; d: number }) {
         <Circle cx={d / 2} cy={d / 2} r={d / 2} fill={`url(#${id})`} />
         <Circle cx={d / 2} cy={d / 2} r={d / 2 - 0.75} fill="none" stroke="rgba(255,255,255,0.95)" strokeWidth={1.5} />
       </Svg>
-      <TopicIcon topic={topic || ''} size={Math.round(d * 0.4)} c={ICON} />
+      {topic && ART[topic] ? (
+        // Предмет выходит из круга вверх — объём читается, а не прячется в рамке.
+        <Image accessibilityIgnoresInvertColors source={ART[topic]} resizeMode="contain" fadeDuration={0}
+               style={{ position: 'absolute', width: d * 1.04, height: d * 1.04, top: -d * 0.08 }} />
+      ) : (
+        <TopicIcon topic={topic || ''} size={Math.round(d * 0.4)} c={ICON} />
+      )}
     </View>
   );
 }
@@ -524,22 +567,9 @@ const s = StyleSheet.create({
     shadowColor: '#0A0A14', shadowOpacity: 0.08, shadowRadius: 10, shadowOffset: { width: 0, height: 3 },
   },
   backText: { fontFamily: font.textSemibold, fontSize: 14, lineHeight: 18, color: INK, flexShrink: 1 } as any,
-  count: {
-    height: 28, paddingHorizontal: 12, borderRadius: 14, justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.6)', borderWidth: 1, borderColor: '#FFFFFF',
-  },
-  countOn: { backgroundColor: 'rgba(255,56,92,0.10)', borderColor: 'rgba(255,56,92,0.18)' },
-  countText: { fontFamily: font.textMedium, fontSize: 12, lineHeight: 16, color: '#5A616E' } as any,
-  countTextOn: { color: CORAL },
-  pressed: { transform: [{ scale: 0.96 }] },
+  pressed: { transform: [{ scale: 0.92 }] },
 
   abs: { position: 'absolute' },
-  hub: {
-    position: 'absolute', width: HUB_D, height: HUB_D, borderRadius: HUB_D / 2,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: '#FFFFFF',
-    shadowColor: CORAL, shadowOpacity: 0.16, shadowRadius: 18, shadowOffset: { width: 0, height: 6 },
-  },
   topic: {
     alignItems: 'center', justifyContent: 'center', overflow: 'visible',
     shadowColor: '#0A0A14', shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 5 },

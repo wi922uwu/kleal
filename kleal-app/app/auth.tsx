@@ -35,6 +35,7 @@ import { Ambient, GLOW_SIGNIN } from '../src/components/Ambient';
 import { GlassPill } from '../src/components/Glass';
 import { riseIn } from '../src/components/LiquidGlass';
 import { Blob } from '../src/components/Blob';
+import { InterestOrbit, useOrbitClock } from '../src/components/InterestOrbit';
 import { color, heading, space, type } from '../src/theme';
 
 /** Центр колец и капли от верха безопасной зоны — по кадру A.03 (центр капли на 291 от верха экрана). */
@@ -57,6 +58,7 @@ export default function Auth() {
   const c = AUTH_COPY();
   const { width } = useWindowDimensions();
   const reduced = useReducedMotion();
+  const orbitT = useOrbitClock();
   // Заголовок проявляется, кнопки встают одним блоком чуть позже — без лесенки и отскока.
   const up = (n: number) => (reduced ? undefined : FadeIn.delay(80 + n * 80).duration(400));
   // Кнопки — стекло: они появляются подъёмом, без прозрачности (см. riseIn).
@@ -98,6 +100,7 @@ export default function Auth() {
         session: String(r.token || ''),
         profile: r.profile || null,
         isNew: !!r.isNew,
+        id: String(r.id || ''),
       });
       if (r.isNew) {
         applyDefaults();
@@ -153,6 +156,8 @@ export default function Auth() {
         <Circle cx={width / 2} cy={insets.top + RING_Y} r={164} stroke="url(#ringMid)" strokeWidth={1} fill="none" />
         <Circle cx={width / 2} cy={insets.top + RING_Y} r={234} stroke="url(#ringOut)" strokeWidth={1} fill="none" />
       </Svg>
+      {/* Картинки интересов на орбите вокруг капли (18.10.2026): задняя половина — под каплей. */}
+      <InterestOrbit t={orbitT} layer="back" cx={width / 2} cy={insets.top + RING_Y} rx={Math.min(width / 2 - 44, 158)} ry={50} />
       <ScrollView
         contentContainerStyle={[
           s.scroll,
@@ -202,6 +207,8 @@ export default function Auth() {
           {gErr ? <Text style={s.note}>{gErr}</Text> : null}
         </View>
       </ScrollView>
+      {/* Передняя половина орбиты — над каплей. Касаний не ловит. */}
+      <InterestOrbit t={orbitT} layer="front" cx={width / 2} cy={insets.top + RING_Y} rx={Math.min(width / 2 - 44, 158)} ry={50} />
     </View>
   );
 }

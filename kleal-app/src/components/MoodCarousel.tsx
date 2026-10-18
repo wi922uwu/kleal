@@ -16,7 +16,7 @@
  * уже есть и сделаны системой: `snapToInterval` вместе с `decelerationRate fast` дают то самое
  * «щёлкает на место», которое в iOS ощущается родным. Своя физика на PanResponder повторяла бы
  * это приблизительно, и разница чувствуется сразу. Приём тот же, что у прежнего колеса
- * (ArcCarousel.tsx).
+ * (прежний ArcCarousel.tsx, удалён 18.10.2026).
  *
  * ВСЯ ГЕОМЕТРИЯ — ИНТЕРПОЛЯЦИЯ ОДНОГО ЗНАЧЕНИЯ. Масштаб, спуск и проявление предметов вокруг
  * карточки — функции общего сдвига ленты, у каждой карточки свой диапазон с вершиной в момент,
@@ -148,7 +148,7 @@ export function moodGeometry(width: number, scale = 1) {
   };
 }
 
-export function MoodCarousel({ items, onPick, hint, scale = 1 }: {
+export function MoodCarousel({ items, onPick, hint, scale = 1, onTrack }: {
   items: MoodItem[];
   /** Нажали по ТОЙ, что сейчас по центру. По соседней жест означает «подвинь её сюда». */
   onPick?: (it: MoodItem) => void;
@@ -162,6 +162,11 @@ export function MoodCarousel({ items, onPick, hint, scale = 1 }: {
    * учитывает сама (см. `moodGeometry`), сюда она не входит.
    */
   scale?: number;
+  /**
+   * Отдать наружу ход ленты: сдвиг прокрутки (тот же Animated.Value, что двигает карточки) и шаг.
+   * По нему фон главной перетекает вслед за пальцем — см. src/components/MoodBackdrop.tsx.
+   */
+  onTrack?: (x: Animated.Value, pitch: number) => void;
 }) {
   const lang = useLang();
   const { width } = useWindowDimensions();
@@ -179,6 +184,7 @@ export function MoodCarousel({ items, onPick, hint, scale = 1 }: {
   const start = n * pitch;
   const x = useRef(new Animated.Value(start)).current;
   const list = useRef<ScrollView>(null);
+  useEffect(() => { onTrack?.(x, pitch); }, [x, pitch]); // eslint-disable-line react-hooks/exhaustive-deps
   const [at, setAt] = useState(n);
   /**
    * Номер центральной — ещё и в ссылке. Обработчик прокрутки собирается один раз на шаг (см.

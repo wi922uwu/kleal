@@ -33,7 +33,8 @@ export type GClosed = {
   /** Почему закрылось: группа собралась раньше ответа (GR.14e), вышел срок, иное. Для пояснения. */
   why?: 'full' | 'expired' | 'other';
 };
-export type GStatus = 'joined' | 'pending' | 'declined' | 'closed';
+/** `awaiting` — сказал «да» после начала плана, вход решает организатор (сервер: awaiting_approval). */
+export type GStatus = 'joined' | 'pending' | 'awaiting' | 'declined' | 'closed';
 export type GCounters = {
   joined: number; max: number; min: number; open: number; cap: number; full: boolean;
 };
@@ -206,7 +207,8 @@ export function useGroupSession(who: string, active: boolean) {
 /** Состояние кандидата в наборе: в группе / приглашён / отказался / закрылось / никак. */
 export function groupStatusFor(who: Peer): GStatus | undefined {
   if (joined.has(keyOf(who))) return 'joined';
-  if (rowOf(who)) return 'pending';
+  const row = rowOf(who);
+  if (row) return row.state === 'awaiting_approval' ? 'awaiting' : 'pending';
   const c = closedOf(who);
   return c ? c.state : undefined;
 }
@@ -347,6 +349,20 @@ export async function cancelGroupInvite(who: string, to: Peer): Promise<boolean>
   emit();
   syncGroup(who);
   return true;
+}
+
+/**
+ * Впустить или не впустить того, кто сказал «да» после начала плана (GR, awaiting_approval).
+ * Отказ сервера — кодом: GROUP_FULL, CLOSED; экран переводит его в слова (GR14.approve*).
+ */
+export async function approveGroupInvite(who: string, to: Peer, accept: boolean): Promise<{ ok: boolean; error?: string }> {
+  if (!gid) return { ok: false };
+  const r: any = await gapi.approve(gid, String(who || '').trim(), to, newIdem(accept ? 'gap' : 'gdn'), accept).catch(() => null);
+  if (!r?.ok) return { ok: false, error: String(r?.error || '') };
+  if (!accept) for (const [k, v] of Object.entries(rows)) if (keyOf({ name: v.to, id: v.toId }) === keyOf(to)) delete rows[k];
+  emit();
+  syncGroup(who);
+  return { ok: true };
 }
 
 /**

@@ -25,7 +25,7 @@ import { useRouter } from 'expo-router';
 import { GlassSurface, LIQUID, usePress } from './LiquidGlass';
 import { GlassPill } from './Glass';
 import { IconClock, IconGlobe, IconGroups, IconImagePlaceholder, IconPin } from './icons';
-import { mediaUrl } from '../api';
+import { mediaUrl, isMe } from '../api';
 import { HOME, HomeInvite, splitWhen } from '../home';
 import { useLang, dateLocale, use12h } from '../i18n';
 import { hTap } from '../haptics';
@@ -97,7 +97,7 @@ const initial = (name?: string) => (Array.from(String(name || '').trim())[0] || 
  * карточки в колоде это кадр-два), на месте лица стоит буква, а не пустой серый круг. Не загрузилось
  * вовсе — буква и остаётся.
  */
-function Face({ photo, name, size = 48, ring, style }: {
+export function Face({ photo, name, size = 48, ring, style }: {
   photo?: string; name?: string; size?: number; ring?: boolean; style?: StyleProp<ViewStyle>;
 }) {
   const url = String(photo || '').trim();
@@ -113,7 +113,7 @@ function Face({ photo, name, size = 48, ring, style }: {
 }
 
 /** Бейдж в строке названия. `quiet` — серый: встреча ещё не подтверждена. */
-function Badge({ label, quiet }: { label: string; quiet?: boolean }) {
+export function Badge({ label, quiet }: { label: string; quiet?: boolean }) {
   return (
     <View style={[s.badge, quiet && s.badgeQuiet]}>
       <Text style={[s.badgeText, quiet && s.badgeQuietText]} numberOfLines={1}>{label}</Text>
@@ -125,7 +125,7 @@ function Badge({ label, quiet }: { label: string; quiet?: boolean }) {
  * Кусочек меты: значок и подпись. `shrink` — этот кусочек уступает место, когда строка не влезает:
  * длинное место встречи обрезается многоточием, а время рядом остаётся целым.
  */
-function Chunk({ icon, text, shrink, quiet }: { icon?: React.ReactNode; text: string; shrink?: boolean; quiet?: boolean }) {
+export function Chunk({ icon, text, shrink, quiet }: { icon?: React.ReactNode; text: string; shrink?: boolean; quiet?: boolean }) {
   return (
     <View style={[s.chunk, shrink && s.chunkShrink]}>
       {icon}
@@ -134,7 +134,7 @@ function Chunk({ icon, text, shrink, quiet }: { icon?: React.ReactNode; text: st
   );
 }
 
-const metaIcon = (Icon: typeof IconClock) => <Icon size={16} c={color.primary} />;
+export const metaIcon = (Icon: typeof IconClock) => <Icon size={16} c={color.primary} />;
 
 /**
  * Тело «Home Card». Все четыре карточки собраны из него, поэтому и рост, и поля, и кнопка у них
@@ -153,7 +153,11 @@ const metaIcon = (Icon: typeof IconClock) => <Icon size={16} c={color.primary} /
  * углами (снимок симулятора 30.09). На кадре свечение и правда выходит на края колоды — так и
  * оставлено.
  */
-function HomeCard({ avatar, title, badge, meta, action, onPress, onAction }: {
+/**
+ * Карточка открыта и для карты: карточка пина — та же «Home Card» (карта и главная говорят одним
+ * языком). Карте нужны вторая, тихая кнопка («Не сейчас») и состояние «отправляем» у главной.
+ */
+export function HomeCard({ avatar, title, badge, meta, action, onPress, onAction, alt, busy }: {
   avatar: React.ReactNode;
   title: string;
   badge?: React.ReactNode;
@@ -164,6 +168,10 @@ function HomeCard({ avatar, title, badge, meta, action, onPress, onAction }: {
   onPress?: () => void;
   /** Нажатие по кнопке, если оно не то же самое, что по карточке. */
   onAction?: () => void;
+  /** Вторая кнопка рядом с главной — светлое стекло, без свечения. */
+  alt?: { label: string; onPress: () => void };
+  /** Главное действие в пути: на кнопке колёсико, второе нажатие не уходит. */
+  busy?: boolean;
 }) {
   const p = usePress(0.98);
   const body = (
@@ -183,7 +191,14 @@ function HomeCard({ avatar, title, badge, meta, action, onPress, onAction }: {
         Кнопка нажимается сама по себе — со своей пружиной и откликом фирменной кнопки (GlassPill
         сам даёт hCommit). Отдельного отклика тут не нужно: он был бы вторым на одно касание.
       */}
-      <GlassPill tone="brand" small label={action} onPress={onAction || onPress} style={s.btn} />
+      {alt ? (
+        <View style={s.btns}>
+          <GlassPill tone="brand" small label={action} busy={busy} onPress={busy ? () => {} : (onAction || onPress)} style={StyleSheet.flatten([s.btn, { flex: 1 }])} />
+          <GlassPill tone="light" small label={alt.label} onPress={alt.onPress} style={s.btn} />
+        </View>
+      ) : (
+        <GlassPill tone="brand" small label={action} busy={busy} onPress={busy ? () => {} : (onAction || onPress)} style={s.btn} />
+      )}
     </>
   );
   if (!onPress) return <View style={s.card}>{body}</View>;
@@ -226,8 +241,8 @@ export function PlanCard({ plan, me }: { plan: any; me: string }) {
   // С кем: второй в паре. Имена сравниваются без регистра — так их хранит матчинг.
   const rows: any[] = Array.isArray(plan?.participants) ? plan.participants : [];
   const other = rows.find((x) => x && !x.is_me);
-  const norm = (x: any) => String(x || '').trim().toLowerCase();
-  const name = String(other?.name || (norm(plan?.host) === norm(me) ? plan?.guest : plan?.host) || '').trim();
+  const iHost = isMe(plan?.host, plan?.host_id, me);   // по id; имя — только у старых ответов
+  const name = String(other?.name || (iHost ? plan?.guest : plan?.host) || '').trim();
 
   const confirmed = plan?.state === 'confirmed';
   const online = plan?.mode === 'online';
@@ -394,6 +409,7 @@ const s = StyleSheet.create({
   metaQuiet: { color: color.muted },
   /** «Button» 326×40: GlassPill small даёт подпись 14/20 и поля 16, высоту задаём здесь. */
   btn: { height: 40 },
+  btns: { flexDirection: 'row', gap: 8 },
 
   face: {
     width: 48, height: 48, borderRadius: 24, overflow: 'hidden',

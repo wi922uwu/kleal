@@ -94,7 +94,7 @@ def _load():
         pa, pb = FAMILY_PURPOSE.get(_bare(_family_id(a))), FAMILY_PURPOSE.get(_bare(_family_id(b)))
         if pa and pb and pa != pb:
             PURPOSE_BLOCKS.add((pa, pb)); PURPOSE_BLOCKS.add((pb, pa))
-    _resolve.cache_clear()          # таблица пересобрана — прежние ответы недействительны
+    _resolve_c.cache_clear()        # таблица пересобрана — прежние ответы недействительны
     AVAILABLE = True
 
 
@@ -163,8 +163,49 @@ def _family_id(nid):
 # Кешировать безопасно: ALIAS собирается один раз при импорте (`_load`, единственный вызов внизу
 # файла) и больше не меняется — governance правит СИНОНИМЫ движка, а не эту таблицу. На случай
 # повторной сборки память сбрасывается там же, где таблица собирается.
-@functools.lru_cache(maxsize=100000)
+# ---- АВТОСИНОНИМЫ (canonical_auto.json, 17.10.2026) ------------------------------------------------
+# Слово, которого словарь не знает, система ставит синонимом к занятию сама (tools/auto_alias.py, таймер
+# kleal-alias.timer): модель выбирает узел и отдельно перепроверяет, что это то же занятие или его разновидность.
+# Ручные алиасы всегда важнее; файл читается раз в 30 с по mtime, при смене — сброс памяти разбора. Поиск в сеть
+# не ходит. Повод — «грибы» (17.10): ключ Буди `mushroom picking` и «porcini mushrooms», «lisichki» в анкетах
+# словарь не знал, грибники получали уровень 2, как любой походник, и стояли на 46–48 местах.
+_AUTO = {"t": -1e9, "m": None, "map": {}}
+_AUTO_FILE = os.environ.get("KLEAL_AUTO_FILE") or "/var/lib/kleal/canonical_auto.json"
+
+
+def _auto_tick():
+    now = time.monotonic()
+    if now - _AUTO["t"] < 30:
+        return
+    _AUTO["t"] = now
+    try:
+        m = os.path.getmtime(_AUTO_FILE)
+    except OSError:
+        m = None
+    if m == _AUTO["m"]:
+        return
+    mp = {}
+    if m is not None:
+        try:
+            with open(_AUTO_FILE, encoding="utf-8") as f:
+                d = json.load(f)
+            for k, v in (d.get("words") or {}).items():
+                n = v.get("node") if isinstance(v, dict) else None
+                if n in NODES and str(n).startswith("I_") and NODES[n].get("macro") != "M_dating":
+                    mp[_norm(k)] = n
+        except Exception:
+            return                                   # битый файл — остаёмся на прежней таблице
+    _AUTO.update(m=m, map=mp)
+    _resolve_c.cache_clear()
+
+
 def _resolve(text):
+    _auto_tick()
+    return _resolve_c(text)
+
+
+@functools.lru_cache(maxsize=100000)
+def _resolve_c(text):
     """node_id И КАК он получен: точным алиасом или догадкой по префиксу.
 
     Различать обязательно, потому что от этого зависит уровень. Раньше догадка была неотличима
@@ -191,6 +232,8 @@ def _resolve(text):
         return None, False
     if w in ALIAS:
         return ALIAS[w], True                                 # точный алиас
+    if w in _AUTO["map"]:
+        return _AUTO["map"][w], True                          # автосиноним (модель + проверка), см. _auto_tick
     # Кандидат выбирается детерминированно — ближайший по длине, при равенстве по алфавиту.
     # Раньше побеждал первый в порядке словаря, то есть результат зависел от порядка загрузки
     # и мог меняться между процессами.
@@ -279,7 +322,9 @@ def similarity_guess(a_text, b_text):
 # стоит встретиться ("ok"). Поиск только читает файл, раз в 30 с по mtime, в сеть не ходит. Уровень — 1 (третий
 # ярус, ниже семьи и раздела), ставит graph.similarity_detail и только там, где больше ничего не совпало.
 # "near" (сырой порядок векторов) нужен последней ступени выдачи app._expand_fallback — «похожие люди».
-_NEAR = {"t": -1e9, "m": None, "ok": {}, "near": {}}
+# Вторая версия (02.10.2026): "grade" — сила близости 3/2 от модели (порядок внутри яруса), "branch" — «тот же мир»
+# для слов без близких (раздел канона): человек с интересом из этого раздела тоже уровень 1, но ниже близких.
+_NEAR = {"t": -1e9, "m": None, "ok": {}, "near": {}, "grade": {}, "branch": {}}
 _NEAR_FILE = os.environ.get("KLEAL_NEAR_FILE") or "/var/lib/kleal/meaning_near.json"   # данные, не код
 
 
@@ -294,6 +339,9 @@ def _near_data():
                     d = json.load(f)
                 _NEAR["ok"] = {k: frozenset(v) for k, v in (d.get("ok") or {}).items() if v}
                 _NEAR["near"] = {k: dict((x, s) for x, s in v) for k, v in (d.get("near") or {}).items()}
+                _NEAR["grade"] = {k: dict(v) for k, v in (d.get("grade") or {}).items() if v}
+                _NEAR["branch"] = {k: v for k, v in (d.get("branch") or {}).items()
+                                   if v in NODES and v.startswith("M_") and v != "M_dating"}
                 _NEAR["m"] = m
         except Exception:
             pass
@@ -304,6 +352,42 @@ def meaning_near(a_text, b_text):
     """Интерес b близок по смыслу к незнакомому слову a (отобран моделью)."""
     ok = _near_data()["ok"]
     return bool(ok) and _norm(b_text) in ok.get(_norm(a_text), ())
+
+
+def meaning_branch(a_text):
+    """Раздел «тот же мир» для слова без близких или None."""
+    return _near_data()["branch"].get(_norm(a_text))
+
+
+def macro_of(text):
+    """Раздел канона для интереса: узел канона, иначе догадка (семья канона или заведённая)."""
+    n = _resolve(text)[0] or guess_node(text)
+    if not n:
+        return None
+    if n in NODES:
+        return NODES[n].get("macro")
+    return (_GUESS.get("fams") or {}).get(n)
+
+
+def meaning_rank(topics, interests):
+    """Сила совпадения по смыслу для порядка внутри яруса: 3/2 — оценка модели, 1 — «тот же мир», плюс доля
+    сходства векторов. 0 — если ни одно слово запроса не идёт по этой ступени (известные слова — всегда 0)."""
+    nd = _near_data()
+    ts = [_norm(t) for t in topics or []]
+    ts = [t for t in ts if t in nd["grade"] or t in nd["branch"]]
+    if not ts:
+        return 0.0
+    best = 0.0
+    for t in ts:
+        g, b = nd["grade"].get(t) or {}, nd["branch"].get(t)
+        for x in interests or []:
+            k = _norm(x)
+            r = float(g.get(k, 0))
+            if not r and b and macro_of(x) == b:
+                r = 1.0
+            if r:
+                best = max(best, r + nd["near"].get(t, {}).get(k, 0.0))
+    return best
 
 
 def meaning_score(a_text, b_text):

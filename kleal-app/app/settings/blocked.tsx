@@ -10,10 +10,11 @@
  * Даты «Blocked 24 July» с кадра здесь не будет: сервер хранит блокировки именами и ничем больше.
  * Написать сюда любую дату значило бы показать человеку выдуманный факт о его собственном решении.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
-import { useRouter } from 'expo-router';
-import { ProfileShell, Card } from '../../src/components/ProfileShell';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { ProfileShell, Card, SectionHead } from '../../src/components/ProfileShell';
+import { GlassSurface } from '../../src/components/LiquidGlass';
 import { IconPerson } from '../../src/components/icons';
 import { useLang, T } from '../../src/i18n';
 import { useOnb } from '../../src/state';
@@ -48,7 +49,8 @@ export default function Blocked() {
     }
   }, [me]);
 
-  useEffect(() => { load(); }, [me]);
+  // На каждый приход, а не один раз: экран остаётся в стопке, а блокируют из чата и профиля.
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   /** Снятие идёт на сервере, и список берётся из ЕГО ответа, а не правится на месте. */
   const unblock = async (name: string, i: number) => {
@@ -68,33 +70,35 @@ export default function Blocked() {
 
   return (
     <ProfileShell title={BLOCKED.title()} onBack={() => router.back()}>
-      <View style={s.lead}>
-        <Text style={s.leadText}>{BLOCKED.lead()}</Text>
-      </View>
-
       {loading ? (
         <ActivityIndicator style={{ marginTop: space.lg }} color={color.primary} />
       ) : err ? (
         <Text style={s.empty}>{T('Не удалось получить список.', 'Could not load the list.', 'No se pudo cargar la lista.')}</Text>
       ) : list.length === 0 ? (
-        <Text style={s.empty}>{BLOCKED.empty()}</Text>
+        // B.09a — пусто.
+        <SectionHead title={BLOCKED.noneTitle()} note={BLOCKED.noneNote()} />
       ) : (
-        list.map((name, i) => (
-          <Card key={ids[i] || name} style={s.row}>
-            <View style={s.ava}><IconPerson size={22} /></View>
-            <Text style={s.name} numberOfLines={1}>{name}</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ busy: busy === name }}
-              style={s.btn}
-              onPress={busy ? undefined : () => unblock(name, i)}
-            >
-              {busy === name
-                ? <ActivityIndicator size="small" color={color.fg} />
-                : <Text style={s.btnText}>{BLOCKED.unblock()}</Text>}
-            </Pressable>
-          </Card>
-        ))
+        <>
+          {/* B.09 — «They can’t reach you»; строка — лицо, имя и «Unblock» стеклянной пилюлей. */}
+          <SectionHead title={BLOCKED.cantReach()} note={BLOCKED.lead()} />
+          {list.map((name, i) => (
+            <Card key={ids[i] || name} style={s.row}>
+              <View style={s.ava}><IconPerson size={22} /></View>
+              <Text style={s.name} numberOfLines={1}>{name}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ busy: busy === name }}
+                onPress={busy ? undefined : () => unblock(name, i)}
+              >
+                <GlassSurface tone="light" radius={999} style={s.btn} pointerEvents="none">
+                  {busy === name
+                    ? <ActivityIndicator size="small" color={color.fg} />
+                    : <Text style={s.btnText}>{BLOCKED.unblock()}</Text>}
+                </GlassSurface>
+              </Pressable>
+            </Card>
+          ))}
+        </>
       )}
     </ProfileShell>
   );
@@ -105,16 +109,13 @@ export default function Blocked() {
 const s = StyleSheet.create({
   lead: { backgroundColor: color.infoBg, borderRadius: rad.lg, padding: space.md },
   leadText: { ...type.bodySmall, color: color.infoText } as any,
-  row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
+  row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 12 },
   ava: {
     width: 44, height: 44, borderRadius: 22, backgroundColor: color.neutral100,
     alignItems: 'center', justifyContent: 'center',
   },
   name: { flex: 1, fontSize: 16, fontWeight: '600', color: color.fg },
-  btn: {
-    height: 38, paddingHorizontal: 16, borderRadius: rad.full,
-    backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center',
-  },
-  btnText: { ...type.labelMedium, color: color.fg } as any,
+  btn: { height: 40, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
+  btnText: { ...type.bodySmall, color: color.fg, fontWeight: '600' } as any,
   empty: { ...type.body, color: color.muted, paddingHorizontal: 4 } as any,
 });

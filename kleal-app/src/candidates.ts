@@ -10,7 +10,7 @@
  * это карточка живого человека, а не макет.
  */
 import { T, getLang } from './i18n';
-import { acc, dat, gen, ins } from './names';
+import { acc } from './names';
 import { interestLabels } from './interest-label';
 
 export const CANDS = {
@@ -82,6 +82,8 @@ export type Cand = {
   photo?: string;
   vibe?: string;
   verified?: boolean;
+  /** Прошёл проверку документа (Didit) — только это даёт галочку. */
+  id_verified?: boolean;
   band?: string;
   band_ru?: string;
   band_en?: string;
@@ -250,15 +252,15 @@ export const CAP = {
   title: (n: number) => T(`Уже ${n} открытых приглашения`, `${n} open invites already`, `${n} invitaciones abiertas ya`),
   note: () =>
     T(
-      'Kleal держит не больше трёх разом, чтобы никто не получал веер заявок. Отмени одно или дождись ответа — Plus поднимает потолок до пяти.',
-      'Kleal holds them at three so nobody gets a fan-out of requests. Cancel one, or wait for an answer — Plus raises it to five.'
-    , 'Kleal las mantiene en tres para que nadie reciba una avalancha de solicitudes. Cancela una, o espera una respuesta — Plus la eleva a cinco.'),
+      'Одновременно открыто не больше трёх приглашений. Отмени одно или дождись ответа. Лимит одинаков для Free и Plus.',
+      'Keep up to three invitations open at a time. Cancel one or wait for a reply. The limit is the same for Free and Plus.'
+    , 'Hasta tres invitaciones abiertas a la vez. Cancela una o espera una respuesta. El límite es igual en Free y Plus.'),
   /** OF.17 — лист «Kleal Plus» у приглашений один на один. */
   plusLead: (n: number) => T(`У тебя ${n} открытых приглашения`, `You have ${n} open invites`, `Tienes ${n} invitaciones abiertas`),
   plusNote: (cap: number) => T(
-    `На Free по одной затее открыто не больше ${cap} приглашений. С Kleal Plus зови сколько хочешь — €6,99 в месяц, отмена в любой момент.`,
-    `On Free you can keep ${cap} invites open for one intent. With Kleal Plus you invite as many people as you like — €6.99 a month, cancel any time.`,
-    `En Free puedes tener ${cap} invitaciones abiertas por propuesta. Con Kleal Plus invitas a tantas personas como quieras — €6,99 al mes, cancela cuando quieras.`),
+    `По одной затее открыто не больше ${cap} приглашений. Лимит одинаков для Free и Plus. Вернись к карточкам, чтобы отозвать приглашение, или дождись ответа.`,
+    `Keep up to ${cap} invitations open for one intent. The limit is the same for Free and Plus. Return to the cards to withdraw an invitation, or wait for a reply.`,
+    `Hasta ${cap} invitaciones abiertas por propuesta. El límite es igual en Free y Plus. Vuelve a las tarjetas para retirar una invitación o espera una respuesta.`),
   cancelOne: () => T('Отменить одно', 'Cancel one instead', 'Cancela una en su lugar'),
   withdraw: () => T('Отозвать', 'Withdraw', 'Retirar'),
 };
@@ -289,6 +291,7 @@ export const REPORT_REASONS: [string, string, string][] = [
  */
 const INTEREST_EMOJI: [RegExp, string][] = [
   [/bbq|barbec|grill|гриль|шашлык|барбекю|parrilla|asado/i, '🍖'],
+  [/mushroom|forag|гриб|setas?\b/i, '🍄'],
   [/beach|пляж|playa/i, '🏖️'],
   [/sunset|закат|atardecer/i, '🌅'],
   [/paddle ?surf|sup\b|сап/i, '🏄'],

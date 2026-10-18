@@ -13,7 +13,7 @@
  * Ждать здесь, а не в шапке разговора, — сознательно: запрос идёт до сервера, и нажатие, которое
  * молчит секунду, читается как несработавшее.
  */
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';

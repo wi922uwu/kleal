@@ -2,7 +2,6 @@
  * Иконки. Отрисованы контурами, а не набраны символами вроде «≡» или «☺»: типографские знаки
  * выглядят на каждой платформе по-своему, не выравниваются по сетке и на борде их нет.
  */
-import React from 'react';
 import Svg, { Path, Circle, Rect, Line } from 'react-native-svg';
 import { color } from '../theme';
 

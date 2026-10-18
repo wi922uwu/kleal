@@ -12,7 +12,7 @@
  * хабе и строка «Общается на …» в памяти не могут разойтись между собой.
  */
 import { T, getLang, replyLang } from './i18n';
-import { sexLabel, hobbyPlain } from './onboarding';
+import { sexLabel } from './onboarding';
 import { langPlainName } from './languages';
 import type { Profile } from './state';
 import { getState, set, subscribe, profileForAttach } from './state';
@@ -116,24 +116,33 @@ export function onSummaryBusy(cb: (b: boolean) => void): () => void {
  * что лежит в строке, приложение не знает, и лишняя сверка дешевле молчаливого расхождения.
  */
 let _sentInterests: string | null = null;
+let _interestWrites: Promise<unknown> = Promise.resolve();
 
 export async function pushInterests(): Promise<boolean> {
   const st = getState();
   const name = st.profile.name;
   if (!name || !st.done) return false;          // до регистрации всё уедет одним register()
-  try {
+  const session=st.session;
+  const current=()=>getState().session===session && getState().profile.name===name && getState().done;
+  const save=async()=>{try {
+    if(!current()) return false;
     // patchFor внутри try намеренно: он БРОСАЕТ, если поля нет в реестре. Снаружи это стало бы
     // необработанным отказом промиса внутри эффекта фокуса — то есть опять тишиной.
     const patch = patchFor(['interests']);
-    const sig = JSON.stringify(patch);
+    const sig = JSON.stringify([session,name,patch]);
     if (sig === _sentInterests) return false;
     const r: any = await profileApi.update(name, patch);
-    if (r && r.ok === false) return false;      // сервер отказал — пробуем на следующем заходе
+    if (!current() || (r && r.ok === false)) return false; // ответ принадлежит этой сессии
     _sentInterests = sig;
     return true;
   } catch {
     return false;                                // сеть отвалилась — отпечаток не трогаем
-  }
+  }};
+  // Read the latest complete snapshot only when the previous write has settled.
+  // A slow older request can no longer arrive after a newer confirmation snapshot.
+  const task=_interestWrites.catch(()=>{}).then(save);
+  _interestWrites=task;
+  return task;
 }
 
 /**
@@ -354,7 +363,14 @@ export function addConfirmedInterest(canonical: string, label: string, token: st
   if (!key || !token) return false;
   const p = getState().profile as any;
   const have = explicitInterests(p);
-  if (have.some((x) => x.trim().toLowerCase() === key)) return false;
+  const already=have.some((x) => x.trim().toLowerCase() === key);
+  // A later valid confirmation can prove a canonical that was already present.
+  // Preserve that receipt even when no new chip is needed.
+  if (already) {
+    set('interests.confirmations', { ...((p.interests || {}).confirmations || {}), [key]: token });
+    _sentInterests=null;
+    return false;
+  }
   // A model-proposed label may repeat the grammatical case from the sentence ("в доту" ->
   // "доту"). Known taxonomy keys already have reviewed, nominative labels in the wheel, so those
   // always win. Free-form canonicals still use the server-normalized proposal label.
@@ -412,12 +428,10 @@ export const HUB_ROWS: HubRow[] = [
 /**
  * Лист «Кто ты»: имя, возраст, фото.
  *
- * Про имя. На сервере строка пользователя ключуется ИМЕНЕМ — другого идентификатора у хранилища
- * нет, и белый список profile-update имени не принимает (см. shared/fields.json, name.patchable
- * = false). Поэтому переименование меняет профиль на устройстве и привязку логина, но СТРОКА на
- * сервере остаётся под прежним именем, пока профиль не зарегистрируют заново. Это известный
- * разрыв, а не оплошность: молча создавать вторую строку под новым именем — значит раздвоить
- * человека в поиске.
+ * Про имя. Строка пользователя на сервере с 26.09.2026 ключуется id (identity v2, docs/IDENTITY.md),
+ * имя — только подпись. С 18.10.2026 (шаг 4 плана «личность по id») profile-update принимает имя:
+ * переименование доходит до сервера, id не меняется, заявки, переписка, планы и группы остаются.
+ * Отказ (`bad name`) — имя на телефоне возвращается к прежнему.
  */
 export const WHOAMI = {
   title: () => T('Кто ты', 'About you', 'Sobre ti'),
@@ -440,6 +454,15 @@ export const WHOAMI = {
   changePhoto: () => T('Сменить фото', 'Change photo', 'Cambia la foto'),
   removePhoto: () => T('Убрать фото', 'Remove photo', 'Eliminar foto'),
   /** Снимок выбран, а подготовить его не вышло. Молчать тут нельзя — человек ждёт фото на экране. */
+  /** Сервер не принял снимок (bad photo) — старое фото осталось. */
+  photoRejected: () => T('Сервер не принял этот снимок — оставили прежнее фото. Попробуй другой.',
+    'The server didn’t accept that photo — your old one stays. Try another.', 'El servidor no aceptó esa foto; se queda la anterior. Prueba con otra.'),
+  /** Сессия умерла — правка не дошла до сервера. */
+  photoSignIn: () => T('Чтобы сменить фото, войди заново.', 'Sign in again to change your photo.', 'Vuelve a iniciar sesión para cambiar la foto.'),
+  nameRejected: () => T('Сервер не принял это имя — оставили прежнее.', 'That name wasn’t accepted — we kept the old one.', 'Ese nombre no se aceptó — dejamos el anterior.'),
+  nameSignIn: () => T('Чтобы сменить имя, войди заново.', 'Sign in again to change your name.', 'Vuelve a iniciar sesión para cambiar el nombre.'),
+  nameNotSaved: () => T('Имя не сохранилось на сервере — оставили прежнее. Попробуй ещё раз.', 'The name didn’t save — we kept the old one. Try again.', 'El nombre no se guardó — dejamos el anterior. Inténtalo de nuevo.'),
+  photoNotSaved: () => T('Фото не сохранилось на сервере. Попробуй ещё раз.', 'The photo didn’t save. Try again.', 'La foto no se guardó. Inténtalo de nuevo.'),
   photoFailed: () =>
     T('Не получилось подготовить снимок. Попробуй другой.',
       'Could not prepare that photo. Try another one.', 'No se pudo preparar esa foto. Prueba con otra.'),
@@ -451,6 +474,68 @@ export const WHOAMI = {
 };
 
 /** Листы правки поверх профиля — кадры со «Accept changes». */
+/**
+ * Борд «Profile — new layout» (Figma 6873:169301): хаб B.01, листы B.03/B.06, экраны B.04–B.09.
+ *
+ * Строки, которые просят сервера, которого ещё нет («What Kleal remembers», правила встреч в B.08),
+ * здесь не заведены вовсе: решение владельца 17.10.2026 — показывать только то, что работает.
+ */
+export const PRO = {
+  complete: (pct: number) => T(`Профиль заполнен на ${pct}%`, `Profile ${pct}% complete`, `Perfil completo al ${pct}%`),
+  changeWithKleal: () => T('Изменить с Kleal', 'Change it with Kleal', 'Cambiarlo con Kleal'),
+  formats: () => T('Форматы встреч', 'Social formats', 'Formatos de quedada'),
+  formatsHow: () => T('Как тебе нравится встречаться', 'How you like to meet', 'Cómo te gusta quedar'),
+  formatsNote: () => T('Kleal предлагает планы только в этих форматах. Небольшая группа — 3–5 человек, больше — с Kleal Plus.',
+    'Kleal only suggests plans in these formats. Small groups are 3–5 people, bigger with Kleal Plus.',
+    'Kleal solo sugiere planes en estos formatos. Los grupos pequeños son de 3 a 5 personas; más grandes, con Kleal Plus.'),
+  notSet: () => T('Пока не заполнено', 'Not set yet', 'Aún sin rellenar'),
+  personalityNotSet: () => T('Пока нет · короткий разговор с Kleal', 'Not set yet · a short chat with Kleal', 'Aún no · una charla corta con Kleal'),
+  safetySub: () => T('Заблокированные и кто тебя видит', 'Blocked people and who can find you', 'Personas bloqueadas y quién te ve'),
+  settings: () => T('Настройки', 'Settings', 'Ajustes'),
+  settingsSub: () => T('Аккаунт, язык, Kleal Plus', 'Account, language, Kleal Plus', 'Cuenta, idioma, Kleal Plus'),
+  within: (km: number) => T(`в пределах ${km} км`, `within ${km} km`, `a menos de ${km} km`),
+  save: () => T('Сохранить', 'Save', 'Guardar'),
+  saveChanges: () => T('Сохранить изменения', 'Save changes', 'Guardar cambios'),
+  cancel: () => T('Отмена', 'Cancel', 'Cancelar'),
+  langsYouSpeak: () => T('На каких языках ты говоришь', 'Languages you speak', 'Idiomas que hablas'),
+  langsNote: () => T('Kleal сводит с людьми, у которых есть хотя бы один общий язык.',
+    'Kleal matches you with people who share at least one.',
+    'Kleal te junta con personas que comparten al menos uno.'),
+  findLang: () => T('Найти другой язык', 'Find another language', 'Buscar otro idioma'),
+  // B.07
+  whereLooks: () => T('Где Kleal ищет для тебя', 'Where Kleal looks for you', 'Dónde busca Kleal para ti'),
+  whereNote: () => T('Пока идёт подбор, другие видят только твой район.', 'Others only see your district while you’re matching.',
+    'Mientras buscas, los demás solo ven tu barrio.'),
+};
+
+/** Форматы встреч B.03. `mode` — то, что подбор сверяет с полем `formats` (core_v2: mode_format). */
+export const FORMATS: { id: string; label: () => string; mode: 'offline' | 'online' }[] = [
+  { id: '1:1', label: () => T('Один на один', 'One-on-one', 'Uno a uno'), mode: 'offline' },
+  { id: 'small_group', label: () => T('Небольшая группа', 'Small group', 'Grupo pequeño'), mode: 'offline' },
+  { id: 'events', label: () => T('События', 'Events', 'Eventos'), mode: 'offline' },
+  { id: 'online', label: () => T('Онлайн', 'Online', 'En línea'), mode: 'online' },
+];
+/** Короткие подписи для строки хаба: «1:1 · Small group · Online». */
+export const FORMAT_SHORT: Record<string, () => string> = {
+  '1:1': () => '1:1',
+  small_group: () => T('Небольшая группа', 'Small group', 'Grupo pequeño'),
+  events: () => T('События', 'Events', 'Eventos'),
+  online: () => T('Онлайн', 'Online', 'En línea'),
+};
+/**
+ * Что уходит на сервер. Подбор сверяет режим интента (offline/online/hybrid) с `formats` ВХОЖДЕНИЕМ
+ * строки, поэтому к выбранным форматам добавляются режимы: офлайн, если выбран хоть один очный,
+ * онлайн — если онлайн, и гибрид, когда есть оба. Иначе выбор «1:1» не совпал бы ни с одним интентом.
+ */
+export function formatsForServer(ids: string[]): string[] {
+  const modes = new Set(FORMATS.filter((f) => ids.includes(f.id)).map((f) => f.mode));
+  const out = [...ids];
+  if (modes.has('offline')) out.push('offline');
+  if (modes.has('online')) out.push('online');
+  if (modes.has('offline') && modes.has('online')) out.push('hybrid');
+  return [...new Set(out)];
+}
+
 export const SHEETS = {
   languages: () => T('Языки', 'Languages', 'Idiomas'),
   location: () => T('Локация', 'Location', 'Ubicación'),
@@ -595,7 +680,12 @@ export function profileData(op: Profile | any): ProfileData {
   op = op || {};
   const langs = arr(op.languages && (op.languages.comfortable || op.languages.fluent));
   const areas = arr(op.geo && op.geo.comfortableAreas);
-  const city = areas[0] || op.city || '';
+  /*
+    ГОРОД ГЛАВНЕЕ СТАРЫХ РАЙОНОВ (сообщение логики 17.10). Экран локации пишет только city, а районы
+    geo.comfortableAreas остаются от онбординга — и карточка показывала прежний район раньше нового
+    города: человек менял город, а в профиле ничего не менялось даже на его телефоне.
+  */
+  const city = String(op.city || '').trim() || areas[0] || '';
   const km = op.geo && op.geo.maxDistanceKm;
   // Интересы приходят В ДВУХ ФОРМАХ, и читать надо обе.
   //
@@ -665,7 +755,7 @@ export function profileData(op: Profile | any): ProfileData {
   if (areas.length || city) {
     basics.push({
       title: T('Локация', 'Location', 'Ubicación'),
-      value: [areas.join(', ') || city, km ? T(`до ${km} км`, `Max ${km} km`, `Máx. ${km} km`) : null].filter(Boolean).join(' · '),
+      value: [city || areas.join(', '), km ? T(`до ${km} км`, `Max ${km} km`, `Máx. ${km} km`) : null].filter(Boolean).join(' · '),
     });
   }
   if (langs.length) basics.push({ title: T('Языки', 'Languages', 'Idiomas'), value: langs.join(' · ') });
@@ -717,6 +807,11 @@ export const INTERESTS_SCREEN = {
       "Tell Kleal what you're into and they'll show up here."
     , 'Dile a Kleal lo que te interesa y aparecerán aquí.'),
   add: () => T('Добавить интересы', 'Add interests', 'Añade intereses'),
+  // Борд «Profile — new layout», B.04.
+  yours: () => T('Твои интересы', 'Your interests', 'Tus intereses'),
+  yoursNote: () => T('Выключи то, что Kleal пока не должен учитывать.', 'Turn off what you don’t want Kleal to use for now.',
+    'Desactiva lo que no quieras que Kleal use por ahora.'),
+  addOne: () => T('Добавить интерес', 'Add an interest', 'Añadir un interés'),
   remove: () => T('Удалить', 'Remove', 'Eliminar'),
   confLabel: (c: string) =>
     c === 'High' ? T('высокая', 'high', 'alto') : c === 'Medium' ? T('средняя', 'medium', 'medio') : T('низкая', 'low', 'bajo'),
@@ -737,6 +832,18 @@ export const PERSONALITY = {
    *  незачем. Заодно видно, что тест засчитан, даже когда абзац не собрался. */
   axesTitle: () => T('Ответы теста', 'Your test answers', 'Tus respuestas de prueba'),
   retake: () => T('Пройти тест заново', 'Take the test again', 'Vuelve a hacer la prueba'),
+  // Борд «Profile — new layout», B.05 / B.05b.
+  notSet: () => T('Пока не задано', 'Not set yet', 'Aún no definido'),
+  /** Число вопросов — настоящее (TEST_Q), а не «пять» с кадра. */
+  intro: (n: number) => T(`${n} коротких вопросов в разговоре с Kleal. Так Kleal подберёт людей, с которыми тебе будет легко.`,
+    `${n} quick questions in a chat with Kleal. It helps Kleal pick people you’ll get along with.`,
+    `${n} preguntas rápidas en una charla con Kleal. Así Kleal elige gente con la que te llevarás bien.`),
+  start: () => T('Начать тест', 'Start the test', 'Empezar la prueba'),
+  /** На кадре «Kleal only uses its summary» — но в подбор уходит настрой (vibe), а не абзац. */
+  privateNote: () => T('Ответы видишь только ты. В подбор идёт одно — настрой, который Kleal из них выводит.',
+    'Only you see your answers. Matching uses one thing drawn from them — your vibe.',
+    'Solo tú ves tus respuestas. Para buscar se usa una sola cosa sacada de ellas: tu vibra.'),
+  changeWithKleal: () => T('Изменить с Kleal', 'Change it with Kleal', 'Cambiarlo con Kleal'),
   /** Предложение интересов из истории — GR/профиль. Подтверждает человек, а не приложение. */
   fromStoryTitle: () => T('Из твоей истории', 'From your story', 'Desde tu historia'),
   fromStoryNote: () => T(

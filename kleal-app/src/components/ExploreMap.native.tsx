@@ -16,9 +16,10 @@
  * названиями районов там задать нечем. Это цена за Expo Go, и она видна глазом: расхождение с
  * макетом на iOS — не баг, а следствие выбора.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Image, Platform, PanResponder, Animated } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import Svg, { Path, Defs, LinearGradient as SvgGrad, Stop } from 'react-native-svg';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { color, shadow, type } from '../theme';
 import { mediaUrl } from '../api';
@@ -103,6 +104,7 @@ type ExploreProps = {
   mode?: 'city' | 'planet';
   /** Страны с интентами — плашки на планете (вкладка «Онлайн»). */
   countries?: GlCountry[] | null;
+  scanning?: boolean;
   selectedCountry?: string | null;
   onPickCountry?: (code: string) => void;
   /** Сколько пикселей снизу закрыто листом: планета уходит в верхнюю часть окна и ужимается. */
@@ -121,7 +123,7 @@ export function ExploreMap(props: ExploreProps) {
 
 function ExploreGl({
   pins, center, pitch = PITCH, onPick, stacks, recenter = 0, selectedId = null, mode = 'city',
-  countries = null, selectedCountry = null, onPickCountry, reserveBottom = 0, focusPin = null,
+  countries = null, selectedCountry = null, onPickCountry, reserveBottom = 0, focusPin = null, scanning = false,
 }: ExploreProps) {
   const map = useRef<GlMapHandle>(null);
   const start = center || centerOf(pins) || FALLBACK;
@@ -207,6 +209,7 @@ function ExploreGl({
         pins={shown}
         selectedId={selectedId}
         countries={countries || undefined}
+        scanning={scanning}
         selectedCountry={selectedCountry}
         onPickCountry={onPickCountry}
         reserveBottom={reserveBottom}
@@ -221,62 +224,99 @@ function ExploreGl({
       {mode === 'city' ? (
         <ZoomRail
           get={() => zoom.current}
-          set={(z) => { zoom.current = z; map.current?.setZoom(z); }}
+          set={(z) => { zoom.current = z; map.current?.followZoom(z); }}
         />
       ) : null}
     </View>
   );
 }
 
+/** Сколько пикселей пути пальца — один уровень масштаба. Масштаб непрерывный, без шагов. */
+const EDGE_PX_PER_ZOOM = 90;
+/** Вздутие края у пальца: насколько выпирает и как широко растекается по высоте. */
+const EDGE_BULGE = 18;
+const EDGE_SPREAD = 96;
+const EDGE_BASE = 5;
+
 /**
- * Полоса масштаба вдоль левого края — общая для обеих карт. Ради неё всё и было: свести пальцы
- * можно только двумя руками, а карту чаще смотрят одной, держа телефон.
+ * МАСШТАБ — НЕВИДИМЫМ КРАЕМ ЭКРАНА (владелец 17.10.2026, по референсу: край «переплывает», когда
+ * тянут пальцем; зум кратный).
+ *
+ * В покое на краю ничего нет. Палец лёг и повёл — вдоль левого края проступает тонкая стеклянная
+ * полоса, и возле пальца край мягко вздувается, как жидкость; вздутие плывёт за пальцем с лёгким
+ * отставанием. Отпустили — край опадает и гаснет.
+ *
+ * Масштаб НЕПРЕРЫВНЫЙ (владелец 17.10 вечером: целые шаги «багаются и магнитятся противно, убери
+ * стопы»): палец задаёт цель плавно, страница догоняет её по кадрам (команда zoom с follow), без
+ * округления, без доводки к целому при касании и без щелчков отдачи.
  */
 function ZoomRail({ get, set }: { get: () => number; set: (z: number) => void }) {
-  const [railH, setRailH] = useState(0);
-  const glow = useRef(new Animated.Value(REST)).current;
-  const frac = useRef(new Animated.Value(fracOf(ZOOM_START))).current;
-  const grab = useRef({ start: 0, step: 0 });
+  const [box, setBox] = useState({ w: RAIL_W, h: 0 });
+  const [shape, setShape] = useState({ y: 0, a: 0 });          // где вздутие и насколько проявлен край
+  const target = useRef({ y: 0, a: 0 });
+  const live = useRef({ y: 0, a: 0 });
+  const raf = useRef<number | null>(null);
+  const grab = useRef({ base: 0, cur: 0, on: false });
 
-  const fade = (to: number) =>
-    Animated.timing(glow, { toValue: to, duration: to === HELD ? 120 : 420, useNativeDriver: true }).start();
+  // Плавание: вздутие догоняет палец, проявление нарастает и опадает — по кадрам, мягкой кривой.
+  const loop = () => {
+    const L = live.current, T = target.current;
+    L.y += (T.y - L.y) * 0.22;
+    L.a += (T.a - L.a) * (T.a > L.a ? 0.2 : 0.12);
+    setShape({ y: L.y, a: L.a });
+    if (Math.abs(T.y - L.y) < 0.3 && Math.abs(T.a - L.a) < 0.005) { raf.current = null; if (T.a === 0) setShape({ y: L.y, a: 0 }); return; }
+    raf.current = requestAnimationFrame(loop);
+  };
+  const kick = () => { if (raf.current == null) raf.current = requestAnimationFrame(loop); };
+  useEffect(() => () => { if (raf.current != null) cancelAnimationFrame(raf.current); }, []);
 
   const rail = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_e, g) =>
         Math.abs(g.dy) > 6 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
-      onPanResponderGrant: () => {
-        fade(HELD);
+      onPanResponderGrant: (e) => {
+        // Отсчёт от того масштаба, где карта стоит: касание само ничего не двигает.
         const z0 = get();
-        grab.current = { start: z0, step: Math.round(z0) };
-        frac.setValue(fracOf(z0));
+        grab.current = { base: z0, cur: z0, on: true };
+        live.current.y = target.current.y = e.nativeEvent.locationY;
+        target.current.a = 1; kick();
       },
-      onPanResponderMove: (_e, g) => {
-        const z0 = grab.current.start;
-        if (!z0) return;
-        const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z0 - g.dy / PX_PER_ZOOM));
-        const step = Math.round(z);
-        if (step !== grab.current.step) { grab.current.step = step; tick(); }
-        set(z);
-        frac.setValue(fracOf(z));
+      onPanResponderMove: (e, g) => {
+        if (!grab.current.on) return;
+        target.current.y = e.nativeEvent.locationY; kick();
+        const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, grab.current.base - g.dy / EDGE_PX_PER_ZOOM));
+        if (Math.abs(z - grab.current.cur) > 0.004) { grab.current.cur = z; set(z); }
       },
-      onPanResponderRelease: () => { grab.current.start = 0; fade(REST); },
-      onPanResponderTerminate: () => { grab.current.start = 0; fade(REST); },
+      onPanResponderRelease: () => { grab.current.on = false; target.current.a = 0; kick(); },
+      onPanResponderTerminate: () => { grab.current.on = false; target.current.a = 0; kick(); },
     })
   ).current;
 
+  // Контур края: тонкая полоса во всю высоту, у пальца — гауссово вздутие; к концам сходит на нет.
+  const { h } = box, a = shape.a;
+  let d = '';
+  if (h > 0 && a > 0.01) {
+    const pts: string[] = [];
+    for (let yy = 0; yy <= h; yy += 6) {
+      const ends = Math.min(1, yy / 60) * Math.min(1, (h - yy) / 60);
+      const bulge = EDGE_BULGE * Math.exp(-Math.pow((yy - shape.y) / EDGE_SPREAD, 2));
+      pts.push(`${((EDGE_BASE + bulge) * a * ends).toFixed(1)},${yy}`);
+    }
+    d = `M0,0 L${pts.join(' L')} L0,${h} Z`;
+  }
   return (
-    <View style={s.rail} onLayout={(e) => setRailH(e.nativeEvent.layout.height)} {...rail.panHandlers}>
-      <Animated.View style={[s.track, { opacity: glow }]} pointerEvents="none" />
-      {railH ? (
-        <Animated.View
-          pointerEvents="none"
-          style={[s.thumb, {
-            opacity: glow,
-            transform: [{ translateY: frac.interpolate({ inputRange: [0, 1], outputRange: [railH - THUMB_H, 0] }) }],
-          }]}
-        />
+    <View style={s.rail} {...rail.panHandlers} onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
+      {d ? (
+        <Svg width={EDGE_BASE + EDGE_BULGE + 4} height={h} style={StyleSheet.absoluteFill} pointerEvents="none">
+          <Defs>
+            <SvgGrad id="edge" x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0" stopColor="#FFFFFF" stopOpacity={0.55 * a} />
+              <Stop offset="1" stopColor="#C9CDD4" stopOpacity={0.9 * a} />
+            </SvgGrad>
+          </Defs>
+          <Path d={d} fill="url(#edge)" stroke="rgba(24,27,34,0.10)" strokeWidth={1} />
+        </Svg>
       ) : null}
     </View>
   );

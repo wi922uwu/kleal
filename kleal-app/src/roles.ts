@@ -20,9 +20,21 @@ export type Takeover = {
 };
 export type RoleOffer = {
   to?: string; to_id?: string; by?: string; by_id?: string; state?: 'open' | 'accepted' | 'declined' | 'expired' | 'withdrawn' | 'closed' | string;
-  at?: number; expires_at?: number; closed_at?: number; declined?: string[];
+  at?: number; expires_at?: number; closed_at?: number; declined?: string[]; declined_ids?: string[];
 };
 export type RoleFrom = { who?: string; who_id?: string; how?: 'vote' | 'handed' | 'offer' | string; at?: number };
+
+/** Recovery never derives authority from a display name (or a route's pick flag). */
+export function roleQuotaRecovery(g: any, meId: string) {
+  const owner = !!meId && g?.owner_id === meId && g?.i_am_owner === true;
+  const recipient = !!meId && g?.role_offer?.to_id === meId && g.role_offer.state === 'open';
+  const candidate = !!meId && g?.takeover?.by_id === meId;
+  return {
+    ownSlot: !owner && (recipient || candidate || (!!meId && g?.i_am_member && (g?.can_take_over || g?.role_recovery))),
+    alternative: owner ? 'choose' : recipient ? 'decline'
+      : candidate && g.takeover.state === 'open' ? 'withdraw' : '',
+  } as const;
+}
 
 /** Кадр страницы роли глазами смотрящего. */
 export type RoleView =
@@ -97,6 +109,17 @@ export function roleView(g: any, me: string, meId: string, pick: boolean): RoleV
 }
 
 export const ROLE = {
+  quotaOwn: () => T('У тебя уже есть активный поиск. Освободи свой слот и повтори. Или оставь роль нынешнему организатору — он сможет выбрать другого участника. Пока роль не изменилась.',
+    'You already have an active search. Free your own slot and retry. Or leave the role with the current organizer, who can choose another member. The role has not changed.',
+    'Ya tienes una búsqueda activa. Libera tu espacio e inténtalo de nuevo. O deja el rol al organizador actual para que elija a otro participante. El rol no ha cambiado.'),
+  quotaOther: () => T('Кандидат уже ведёт свой поиск. Он может освободить собственный слот; нынешний организатор может выбрать другого участника. Роль пока не изменилась.',
+    'The candidate already has an active search. They can free their own slot; the current organizer can choose another member. The role has not changed.',
+    'El candidato ya tiene una búsqueda activa. Puede liberar su propio espacio; el organizador actual puede elegir a otro participante. El rol no ha cambiado.'),
+  returnChoice: () => T('Оставить выбор организатору', 'Let the organizer choose', 'Dejar la elección al organizador'),
+  chooseOtherNote: () => T('Текущее предложение или голосование будет закрыто. Ты останешься организатором и сможешь предложить роль другому участнику. Группа и переписка сохранятся.',
+    'The current offer or vote will close. You will stay the organizer and can offer the role to another member. The group and chat will be preserved.',
+    'Se cerrará la propuesta o votación actual. Seguirás organizando y podrás ofrecer el rol a otro participante. Se conservarán el grupo y el chat.'),
+  actionFailed: () => T('Не получилось. Попробуй ещё раз.', 'That didn’t work. Try again.', 'No funcionó. Inténtalo de nuevo.'),
   // ---- заголовки и пояснения кадров --------------------------------------
   silentTitle: (owner: string) => T(`${owner} не отвечает`, `${owner} hasn’t answered`, `${owner} no ha respondido`),
   silentNote: (owner: string, h: number) => T(

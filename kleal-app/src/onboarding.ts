@@ -138,8 +138,9 @@ export const HEADER_TITLE = () => T('Профиль', 'Creating Profile', 'Crean
  * вопрос задаёт агент своей репликой, повторять его крупно было бы тавтологией. «Шаг N из 6»
  * над заголовком не ставим — прогресс уже показывают проценты и полоса в шапке.
  */
-export const SECTION_TITLE = (s: StepId): string =>
-  s === 'start' ? T('Имя', 'Name', 'Nombre')
+export const SECTION_TITLE = (s: StepId, editing = false): string =>
+  // 18.10.2026, Иван: приветствие — заголовком, а не в реплике. Правка имени из профиля — снова «Имя».
+  s === 'start' ? (editing ? T('Имя', 'Name', 'Nombre') : T('Привет!', 'Hi!', '¡Hola!'))
   : s === 'basics' ? T('Возраст и пол', 'Age & gender', 'Edad y género')
   : s === 'area' ? T('Где ты', 'Your area', 'Tu zona')
   : s === 'languages' ? T('Языки', 'Languages', 'Idiomas')
@@ -158,9 +159,9 @@ export const STEP_START = {
    */
   intro: () =>
     T(
-      'Привет! Я Kleal — твой агент. Ты говоришь, чем хочешь заняться: сходить за кофе, погонять мяч, потренировать испанский, — а я ищу человека, которому хочется того же, и знакомлю вас, когда совпало у обоих.',
-      'Hi! I’m Kleal — your agent. You tell me what you feel like doing: grabbing a coffee, kicking a ball around, practising Spanish — and I find someone who wants the same, then introduce you once you both agree.'
-    , '¡Hola! Soy Kleal — tu agente. Tú me dices lo que te apetece hacer: tomar un café, patear un balón, practicar español — y yo encuentro a alguien que quiera lo mismo, y luego te presento una vez que los dos estéis de acuerdo.'),
+      'Я Kleal — твой агент. Ты говоришь, чем хочешь заняться: сходить за кофе, погонять мяч, потренировать испанский, — а я ищу человека, которому хочется того же, и знакомлю вас, когда совпало у обоих.',
+      'I’m Kleal — your agent. You tell me what you feel like doing: grabbing a coffee, kicking a ball around, practising Spanish — and I find someone who wants the same, then introduce you once you both agree.'
+    , 'Soy Kleal — tu agente. Tú me dices lo que te apetece hacer: tomar un café, patear un balón, practicar español — y yo encuentro a alguien que quiera lo mismo, y luego te presento una vez que los dos estéis de acuerdo.'),
   /** Вторая реплика: почему сейчас будут вопросы. */
   ask: () => T('Расскажешь пару деталей о себе? Так я пойму, кого искать.',
                 'Tell me a couple of things about yourself? That’s how I know who to look for.', 'Dime un par de cosas sobre ti. Así sé a quién buscar.'),
@@ -599,6 +600,8 @@ export const DONE_SCREEN = {
 };
 
 export const COMPOSER_PLACEHOLDER = () => T('Сообщение…', 'Message…', 'Mensaje…');
+/** Поле на шагах мастера с выбором закрыто — подсказка вместо «Сообщение…». */
+export const COMPOSER_LOCKED = () => T('Выбери вариант выше', 'Pick an option above', 'Elige una opción arriba');
 
 export const NAV = () => [
   T('Интенты', 'My Intents', 'Mis propuestas'),

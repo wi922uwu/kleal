@@ -25,9 +25,11 @@
 // У api.ts до сих пор не было импортов — он самодостаточный слой над fetch. Эти два
 // нужны подписям интересов: язык интерфейса и реестр, куда сгружаются словари с сервера.
 import { Image as RNImage } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLang, replyLang } from './i18n';
 import { registerInterestLabels } from './interest-label';
 import { whileThinking } from './thinking';
+import { PendingActions, abortableAction, cancelReturnAction, gatedOperation, protectiveOperation, monetizationInteraction, returnAction } from './monetization-actions';
 
 const DEFAULT_BASE = 'https://aiopenware.com';
 
@@ -45,11 +47,13 @@ let SESSION = '';
 
 export function setSession(token: string) {
   const next = String(token || '');
-  if (next !== SESSION) {
+  const changed = next !== SESSION;
+  if (changed) {
     ME_ID = '';                                  // другой вход — другой человек
     ME_LOADING = null;
   }
   SESSION = next;
+  if (changed) meIdSubs.forEach((f) => f(''));
 }
 
 export function getSession(): string {
@@ -78,7 +82,27 @@ export const myId = (): string => ME_ID;
  */
 function rememberMe(user: unknown, session = SESSION) {
   const id = String((user as { id?: unknown } | null)?.id || '');
-  if (id && session === SESSION) ME_ID = id;
+  if (id && session === SESSION) setMyId(id);
+}
+
+/**
+ * МОЙ ID ЖИВЁТ НА ДИСКЕ, А НЕ ТОЛЬКО В ПАМЯТИ (шаг 3 «личность по id», 18.10.2026). Раньше телефон
+ * узнавал его только из `profile.get` и терял при каждом запуске: до первого такого запроса все
+ * «это я?» шли по имени, и тёзки путались. Теперь id приходит прямо из ответа входа и проверки
+ * сессии (сервер отдаёт `id` с 18.10), а состояние (state.ts) пишет его рядом с токеном и
+ * возвращает при запуске. Пустой id из входа — анкеты ещё нет: тогда он придёт позже, из
+ * register или profile.get, как и раньше.
+ */
+const meIdSubs = new Set<(id: string) => void>();
+export function onMyId(fn: (id: string) => void): () => void {
+  meIdSubs.add(fn);
+  return () => { meIdSubs.delete(fn); };
+}
+export function setMyId(id: unknown) {
+  const next = String(id || '');
+  if (!next || next === ME_ID || !SESSION) return;
+  ME_ID = next;
+  meIdSubs.forEach((f) => f(next));
 }
 
 /** Узнать свой id, если его ещё нет. Экраны, где «моё» решается сравнением, зовут это при открытии. */
@@ -212,6 +236,7 @@ async function request<T = Json>(
   /** Отмена снаружи: экран поиска даёт человеку выйти, не дожидаясь срока. */
   external?: AbortSignal,
 ): Promise<T> {
+  const sentSession = SESSION;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   const relay = () => ctrl.abort();
@@ -232,6 +257,7 @@ async function request<T = Json>(
       },
     });
     const text = await res.text();
+    if (sentSession !== SESSION) throw new ApiError('account_changed',409,{ error: 'account_changed' });
     let body: any = null;
     try {
       body = text ? JSON.parse(text) : null;
@@ -374,12 +400,114 @@ export function sse(
   return () => { try { xhr.abort(); } catch { /* уже закрыт */ } };
 }
 
+export type PostOptions = {
+  quotaPresentation?: 'inline';
+  // Role recovery depends on whether this account is the recipient or owner.
+  organizerQuota?: NonNullable<ReturnType<typeof monetizationInteraction>['blocked']>;
+};
 export const api = {
   get: <T = Json>(path: string, signal?: AbortSignal) =>
     request<T>(path, undefined, timeoutFor(path), signal),
-  post: <T = Json>(path: string, body: Json, signal?: AbortSignal) =>
-    request<T>(path, { method: 'POST', body: JSON.stringify(body) }, timeoutFor(path), signal),
+  post: <T = Json>(path: string, body: Json, signal?: AbortSignal, options?: PostOptions) =>
+    monetizedPost<T>(path,body,signal,options),
 };
+
+const pendingCommands = new PendingActions(getSession,undefined,{
+  account:ensureMe,
+  read:()=>AsyncStorage.getItem('kleal.monetization.retry.v2'),
+  write:value=>AsyncStorage.setItem('kleal.monetization.retry.v2',value),
+});
+async function monetizedPost<T>(path: string, body: Json, signal?: AbortSignal, options?: PostOptions): Promise<T> {
+  if (signal?.aborted) throw new Error('action_cancelled');
+  const post = (payload: Json, requestSignal?: AbortSignal) => request<T>(path,{ method:'POST',body:JSON.stringify(payload) },timeoutFor(path),requestSignal);
+  if (!getSession() || !gatedOperation(path,body)) return post(body, signal);
+  const protective=protectiveOperation(path,body);
+  const action = await (protective ? pendingCommands.protective(path,body) : pendingCommands.durable(path,body));
+  const subscribe = (promise: Promise<T>) => {
+    action.subscribers = (action.subscribers || 0) + 1;
+    let released = false;
+    const release = (cancelled: boolean) => {
+      if (released) return;
+      released = true; action.subscribers!--;
+      if (cancelled && !action.subscribers) {
+        if (returnAction(getSession()) === action) cancelReturnAction();
+        action.cancel?.();
+      }
+    };
+    return abortableAction(promise, signal, () => release(true)).finally(() => release(false));
+  };
+  if (action.promise) return subscribe(action.promise);
+  if (signal?.aborted) { await pendingCommands.finish(action); throw new Error('action_cancelled'); }
+  const assertCurrent = () => {
+    if (!pendingCommands.current(action)) throw new ApiError('account_changed',409,{error:'account_changed'});
+  };
+  let awaitingReceipt = false;
+  let cancelled = false;
+  const cancel = () => {
+    // A late HTTP result must not turn an already cancelled uncertain dispatch
+    // into a fresh command: the first cancellation owns the cleanup decision.
+    if (cancelled) return;
+    cancelled=true; if (!awaitingReceipt) void pendingCommands.finish(action).catch(()=>{});
+  };
+  action.cancel = cancel;
+  const run = async (patch: Json = {}): Promise<T> => {
+    if (cancelled) throw new Error('action_cancelled');
+    assertCurrent();
+    await pendingCommands.patch(action,patch);
+    // AsyncStorage может завершиться уже после смены аккаунта или отмены экрана.
+    assertCurrent();
+    if (cancelled) throw new Error('action_cancelled');
+    const payload = { ...action.payload,...action.patch,commandId:action.key,idem:action.key };
+    awaitingReceipt = true;
+    let value: T;
+    try { value = await post(payload); }
+    catch (error) {
+      // HTTP-отказ известен; потеря ответа или abort могут случиться после commit.
+      if (error instanceof ApiError && error.message.startsWith('HTTP ')) awaitingReceipt = false;
+      throw error;
+    }
+    assertCurrent();
+    // A successful receipt can arrive after navigation was cancelled. Preserve its
+    // durable key until the user's explicit retry consumes it without republishing.
+    if (cancelled) throw new Error('action_cancelled');
+    if ((value as any)?.launchState === 'pending') {
+      monetizationInteraction().changed?.();
+      throw new ApiError('launch_pending',503,{error:'launch_pending',retryable:true});
+    }
+    if (!await pendingCommands.finish(action,true)) throw new Error('account_changed');
+    if (cancelled || action.session!==getSession()) throw new Error(cancelled?'action_cancelled':'account_changed');
+    awaitingReceipt = false;
+    monetizationInteraction().changed?.();
+    return value;
+  };
+  const execute=async()=>{
+  try {
+    assertCurrent();
+    if (/\/(match|plan|search-command|respond|ginvite-respond|gintent-create|group-join)$/.test(path)
+        && body.operation !== 'pause' && body.accept !== false && body.decision !== 'decline')
+      await monetizationInteraction().before?.();
+    return await run();
+  } catch (error) {
+    if (cancelled) throw new Error('action_cancelled');
+    const details = (error as ApiError)?.body as any;
+    if (pendingCommands.current(action) && ['search_quota','chat_quota','organizer_search_quota','search_paused'].includes(details?.error)) {
+      action.reason = details.error; action.blockerIds = details.blockerIds || [];
+      if (details.error === 'organizer_search_quota' && options?.organizerQuota)
+        return await options.organizerQuota(action,run);
+      const blocked = monetizationInteraction().blocked;
+      // Plus manages its own quota recovery. Do not defer a navigation back to
+      // that same screen; the server gate and durable retry remain identical.
+      if (blocked && options?.quotaPresentation !== 'inline') return await blocked(action,run);
+    }
+    throw error;
+  }
+  };
+  action.promise=execute().catch(error=>{
+    if(isAbort(error) || (error as Error)?.message==='account_changed') cancel();
+    throw error;
+  }).finally(()=>{action.promise=undefined;});
+  return subscribe(action.promise);
+}
 
 /**
  * Кружки. Ручка СВОЯ, а не голосовая: у видео нет расшифровки, нет распознавания и другой предел
@@ -404,7 +532,8 @@ export const speech = {
 /** Отменённый людьми запрос — не ошибка связи, и говорить о нём как об ошибке нельзя. */
 export function isAbort(e: unknown): boolean {
   const name = (e as any)?.name;
-  return name === 'AbortError' || String((e as any)?.message || '').includes('Aborted');
+  return name === 'AbortError' || String((e as any)?.message || '').includes('Aborted')
+    || (e as any)?.message === 'action_cancelled';
 }
 
 // ---------------------------------------------------------------- онбординг
@@ -439,7 +568,7 @@ export const auth = {
   oauthExchange: (ticket: string) =>
     api.post<{
       ok?: boolean; error?: string; token?: string; login?: string; email?: string;
-      name?: string; profile?: Json | null; isNew?: boolean; hasProfile?: boolean;
+      name?: string; profile?: Json | null; isNew?: boolean; hasProfile?: boolean; id?: string;
     }>('/api/auth/oauth/exchange', { ticket }),
 
   /** A.03.2 «Verify». Отказ приходит с причиной: wrong (со счётчиком попыток) или expired. */
@@ -447,12 +576,12 @@ export const auth = {
     api.post<{
       ok?: boolean; error?: string; attempts_left?: number;
       token?: string; login?: string; email?: string; name?: string;
-      profile?: Json | null; isNew?: boolean; hasProfile?: boolean;
+      profile?: Json | null; isNew?: boolean; hasProfile?: boolean; id?: string;
     }>('/api/auth/code/verify', { email, code, lang }),
 
   /** «Кто я» по токену: сессия могла истечь или быть погашена с другого устройства. */
   session: () =>
-    api.post<{ ok?: boolean; login?: string; email?: string; name?: string;
+    api.post<{ ok?: boolean; login?: string; email?: string; name?: string; id?: string;
                profile?: Json | null; hasProfile?: boolean }>('/api/auth/session', {}),
 
   signOut: () => api.post<{ ok?: boolean }>('/api/auth/signout', {}),
@@ -501,9 +630,6 @@ export const onboarding = {
   /** Текст сводки от агента по собранному профилю. Язык обязателен: без него сервер молча
    *  писал по-русски, и человек с английской системой читал рассказ о себе не на своём языке. */
   summary: (profile: Json, lang: string) => api.post('/api/onboarding/summary', { profile, lang }),
-
-  /** Реплика агента на шаге интересов — единственный шаг, где отвечает модель. */
-  chat: (payload: Json) => api.post('/api/onboarding/chat', payload),
 
   photoUrl: (uid: string) => `${API_BASE}/api/onboarding/photo/${encodeURIComponent(uid)}.jpg`,
 };
@@ -664,7 +790,7 @@ export const agent = {
    * без этого кнопка «показать ещё» жила бы вечно и однажды снова нажималась бы впустую.
    */
   match: (intent: Json, profile: Json, ctx: Json = {}, signal?: AbortSignal, limit?: number) =>
-    whileThinking(api.post<any>('/api/agent/match',
+    whileThinking(api.post<any>('/api/agent/search-command',
       limit ? { intent, profile, ctx, limit, lang: getLang() }
             : { intent, profile, ctx, lang: getLang() }, signal
     )).then((r) => {
@@ -672,6 +798,12 @@ export const agent = {
       registerInterestLabels((r as any)?.interestLabels, getLang());
       return r;
     }),
+
+  /** Re-rank the canonical publication of this group; never publish a copy. */
+  matchGroup: (groupId:string, profile:Json, ctx:Json={}) =>
+    whileThinking(api.post<any>('/api/agent/search-command',{
+      operation:'rank_group',groupId,profile,ctx,lang:getLang(),
+    })).then(r=>{registerInterestLabels(r?.interestLabels,getLang());return r;}),
 
   /**
    * §12 лестница расширения: на шаг шире по ОДНОЙ оси, а не «показать всех».
@@ -713,30 +845,11 @@ export const agent = {
   intentDelete: (self: string, id: string) =>
     api.post<{ ok?: boolean; error?: string }>('/api/agent/intent-delete', { self, id }),
 
-  /** Группы, к которым можно присоединиться. Это планы, а не «люди с похожими интересами». */
-  groups: (self: string, limit = 60) =>
-    api.get<{ groups?: Json[] }>(
-      `/api/agent/groups?limit=${limit}&self=${encodeURIComponent(self)}`
-    ),
-
-  /** Открытые планы вокруг. GET — общий список, без учёта профиля. */
-  explore: (self: string, limit = 60) =>
-    api.get<{ plans?: Json[] }>(
-      `/api/agent/explore?limit=${limit}&self=${encodeURIComponent(self)}`
-    ),
-
   /** Privacy-safe intent-address feed for the Map/List search screen. */
   mapFeed: (self: string, view: 'offline' | 'online' = 'offline', limit = 60) =>
     api.get<{ items?: Json[]; partial?: boolean; unavailableCount?: number }>(
       `/api/agent/map-feed?view=${view}&limit=${limit}&self=${encodeURIComponent(self)}`
     ),
-
-  /**
-   * То же, но с профилем: сервер отбирает только совместимые интенты. Главный экран строже
-   * обзора — там показываются люди, к которым есть смысл обращаться, а не все подряд.
-   */
-  forYou: (self: string, prof: Json, limit = 30) =>
-    api.post<{ plans?: Json[] }>('/api/agent/explore', { limit, self, profile: prof }),
 
   /**
    * Приглашение (O.14): человек увидит интент и профиль отправителя. Одно открытое приглашение на
@@ -751,8 +864,10 @@ export const agent = {
    * «Не интересно» (O.13b): решение уходит ранжированию как обратная связь — этого человека
    * больше не предлагать первым. Это не блокировка: написать он по-прежнему может.
    */
-  feedback: (name: string, decision: 'accept' | 'reject', uid: string) =>
-    api.post<{ ok?: boolean }>('/api/agent/feedback', { name, decision, uid }),
+  feedback: (name: string, decision: 'accept' | 'reject', uid: string, id = '') =>
+    // id кандидата (шаг 3 «личность по id»): с ним сервер пишет оценку по id, без — по имени, и у
+    // тёзок оценки склеивались. Имя остаётся для старых карточек без id.
+    api.post<{ ok?: boolean }>('/api/agent/feedback', { name, decision, uid, ...(id ? { id } : {}) }),
 
   /**
    * Жалоба (O.13b). Причина — из словаря сервера (fake/harassment/spam/unsafe/underage/other):
@@ -992,8 +1107,8 @@ export const agent = {
   /** «Я открыл эту переписку» — из этой отметки у второй стороны получаются двойные галочки
    *  (MSG.11). Отметка одна на пару, по-сообщенного статуса нет намеренно. */
   /** Закрыть переписку так, чтобы об этом узнал второй: сервер пишет строку в общую ленту. */
-  threadEnd: (self: string, other: Peer) =>
-    api.post<{ ok?: boolean; error?: string }>('/api/agent/thread-end', { self, ...peerBody('with', other) }),
+  threadEnd: (self: string, other: Peer, idem?: string, sessionId?: string | null) =>
+    api.post<{ ok?: boolean; error?: string }>('/api/agent/thread-end', { self, ...peerBody('with', other), idem, sessionId }),
 
   threadRead: (self: string, other: Peer) =>
     api.post<{ ok?: boolean }>('/api/agent/thread-read', { self, ...peerBody('with', other) }),
@@ -1181,23 +1296,23 @@ export const group = {
 
   // ---- смена организатора (GR.42–44) ------------------------------------
   /** GR.42b «Put me forward»: предложить себя вместо молчащего 12 ч организатора. */
-  takeover: (gid: string, self: string, idem: string) =>
-    api.post<{ ok?: boolean; error?: string; by?: string; group?: GroupInfo }>('/api/agent/gintent-takeover', { gid, self, idem }),
+  takeover: (gid: string, self: string, idem: string, options?: PostOptions) =>
+    api.post<{ ok?: boolean; error?: string; by?: string; group?: GroupInfo }>('/api/agent/gintent-takeover', { gid, self, idem }, undefined, options),
   /** GR.43e: голос за кандидата — решают ответившие. */
-  takeoverVote: (gid: string, self: string, yes: boolean, idem: string) =>
-    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-takeover-vote', { gid, self, yes, idem }),
+  takeoverVote: (gid: string, self: string, yes: boolean, idem: string, options?: PostOptions) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-takeover-vote', { gid, self, yes, idem }, undefined, options),
   /** GR.43a: кандидат снимает предложение. */
   takeoverWithdraw: (gid: string, self: string, idem: string) =>
     api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-takeover-withdraw', { gid, self, idem }),
   /** GR.42a: организатор вернулся — оставить роль (hand: false) или отдать кандидату (hand: true). */
-  takeoverBack: (gid: string, self: string, hand: boolean, idem: string) =>
-    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-takeover-back', { gid, self, hand, idem }),
+  takeoverBack: (gid: string, self: string, hand: boolean, idem: string, options?: PostOptions) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-takeover-back', { gid, self, hand, idem }, undefined, options),
   /** GR.44b: предложить роль одному участнику, 24 ч на ответ. */
   roleOffer: (gid: string, self: string, to: Peer, idem: string) =>
     api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-role-offer', { gid, self, ...peerBody('to', to), idem }),
   /** GR.44c: взять роль или оставить её организатору. */
-  roleRespond: (gid: string, self: string, accept: boolean, idem: string) =>
-    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-role-respond', { gid, self, accept, idem }),
+  roleRespond: (gid: string, self: string, accept: boolean, idem: string, options?: PostOptions) =>
+    api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-role-respond', { gid, self, accept, idem }, undefined, options),
   /** GR.44d «Withdraw the offer». */
   roleWithdraw: (gid: string, self: string, idem: string) =>
     api.post<{ ok?: boolean; error?: string; group?: GroupInfo }>('/api/agent/gintent-role-withdraw', { gid, self, idem }),

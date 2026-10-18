@@ -19,15 +19,14 @@ const interestsScreen = read('app/profile/interests.tsx');
 const personality = read('app/profile/personality.tsx');
 const onboardingBackend = read('../kleal-ms/services/onboarding/app.py');
 
-check('Buddy discoveries are queued for confirmation instead of written as raw interests',
-  /await queueInterestProposals\(added\)/.test(chat) &&
-  !/for \(const a of added\)[\s\S]{0,300}set\('interests\.explicit'/.test(chat));
+check('Buddy discoveries cross the guarded normalization boundary',
+  /await absorbAdded\(added\)/.test(chat) && /return absorbNovel\(ask\)/.test(chat));
 check('both profile interest entry points lead to the guarded conversation',
   (interestsScreen.match(/router\.navigate\('\/chat\?step=hobbies&back=\/profile\/interests'\)/g) || []).length === 2);
 check('story-derived interests cross the same normalizer boundary',
   /profileApi\.normalizeInterest/.test(personality) && /profileApi\.confirmInterest/.test(personality));
 check('proposal UI has explicit confirm and cancel paths',
-  /confirmInterestProposal\(option\)/.test(chat) && /onPress=\{closeInterestProposal\}/.test(chat));
+  /onConfirmPending=\{confirmPending\}/.test(chat) && /onSkipPending=\{skipPending\}/.test(chat));
 check('API separates normalize from confirm',
   /interest-normalize/.test(api) && /interest-confirm/.test(api));
 check('backend blocks unconfirmed direct profile updates',
@@ -42,3 +41,7 @@ check('confirmation receipts are not attached as durable profile facts',
   /delete p\.interests\.confirmations/.test(state));
 
 if (failed) throw new Error(failed + ' interest normalization source checks failed');
+const result = require('node:child_process').spawnSync(process.execPath, [path.join(__dirname, 'interest_confirmation_test.js')], { encoding: 'utf8' });
+process.stdout.write(result.stdout || ''); process.stderr.write(result.stderr || '');
+if (result.status !== 0) throw new Error('interest confirmation behavioral regression failed');
+require('./interest_hierarchy_test');

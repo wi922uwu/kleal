@@ -32,26 +32,13 @@ import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-rout
 // кнопки. Единственный способ вклиниться — usePreventRemove; expo-router его не реэкспортирует,
 // поэтому берём из навигатора, на котором он и построен.
 import { usePreventRemove } from 'expo-router/react-navigation';
-import Slider from '@react-native-community/slider';
 import {
-  INTENT, IntentStepId, STEP_HOW, FORMATS, formatLabel, formatSub,
-  NATURE_TRAITS, NATURE_MAX,
-  STEP_SIZE, SIZES, sizeLabel, sizeSub, GROUP_MIN_TOTAL, GROUP_FREE_MAX_TOTAL,
-  GROUP_PLUS_MAX_TOTAL, GROUP_SIZE, normalizeIntentSize, initialGroupSize,
-  DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, tzOptions, tzCity, looksLikeUrl, withScheme, categoryLabel,
-  SEARCHING,
-  SUMMARY_O10, summaryDate, tzOffsetLabel, intentSummaryText, hhmm, planWhenLabel,
-  rollIntentName, intentNameOptions,
-  WIZ, AGE_PRESETS, agePresetLabel, dayChips, TIME_SLOTS, cardDate, tzPlace, tzChoices, wizSummary,
+  INTENT, IntentStepId, FORMATS, formatLabel, SIZES, sizeLabel, GROUP_MIN_TOTAL, GROUP_FREE_MAX_TOTAL, normalizeIntentSize, initialGroupSize, DETAILS, EDIT_SHEET, dateChips, timeQueryFromDate, deviceTz, looksLikeUrl, withScheme, categoryLabel, SEARCHING, SUMMARY_O10, tzOffsetLabel, hhmm, planWhenLabel, rollIntentName, intentNameOptions, WIZ, AGE_PRESETS, agePresetLabel, dayChips, TIME_SLOTS, cardDate, tzPlace, tzChoices, wizSummary,
 } from '../src/intent';
-import { SEXES, sexLabel, COMPOSER_PLACEHOLDER } from '../src/onboarding';
-import { RangeDial } from '../src/components/Dials';
-import { WhenPicker } from '../src/components/WhenPicker';
+import { COMPOSER_PLACEHOLDER, COMPOSER_LOCKED } from '../src/onboarding';
 import { RadiusMap } from '../src/components/RadiusMap';
 import {
-  IconChevronLeft, IconMic, IconPin, IconVideo, IconPlusRound, IconPerson, IconGroups,
-  IconCalendar, IconClock, IconLink, IconPlay, IconPencil, IconStar, IconDice,
-  IconGlobe, IconPinPlus, IconUsers, IconUserPlus, IconChevronDown, IconMaximize, IconMinimize, IconPinSolid, IconCrosshair, IconHelp, IconLock, IconChevronUp, IconWand,
+  IconPin, IconVideo, IconPerson, IconCalendar, IconClock, IconLink, IconPencil, IconStar, IconDice, IconGlobe, IconPinPlus, IconUsers, IconUserPlus, IconChevronDown, IconMaximize, IconMinimize, IconPinSolid, IconCrosshair, IconHelp, IconLock, IconChevronUp, IconWand,
 } from '../src/components/icons';
 import {
   CreatingHeader, StepAsk, AgentLine, MyLine, Caption, PrefLabel, ChoiceRow, Check, GlassChip, ChipRow,
@@ -60,7 +47,6 @@ import {
 import { GlassPill } from '../src/components/Glass';
 import { GlassIconButton, GlassSurface } from '../src/components/LiquidGlass';
 import { SheetText } from '../src/components/Sheet';
-import { EditSheet } from '../src/components/ProfileShell';
 import { Sheet } from '../src/components/Sheet';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { resetGroupSession } from '../src/ginvites';
@@ -69,16 +55,15 @@ import { AddressField } from '../src/components/AddressField';
 import { useOnb } from '../src/state';
 import { setResults, patchResults } from '../src/results-store';
 import { openResults } from '../src/results-navigation';
-import {
-  applyIntentEdit, beginIntentEdit, IntentEditTarget,
-} from '../src/intent-edit';
+import { beginIntentEdit, IntentEditTarget } from '../src/intent-edit';
 import { agent, isAbort, buddy as buddyApi } from '../src/api';
 import { CREATE } from '../src/buddy';
 import { color, font, heading, radius as rad, space, type } from '../src/theme';
 import { reverseGeocode } from '../src/geocode';
 import * as Location from 'expo-location';
 import { Cover } from '../src/components/Cover';
-import { LogoMark } from '../src/components/Logo';
+import { IntentPlate } from '../src/components/IntentChips';
+import { KlealMood } from '../src/components/KlealMood';
 import { parseIntentChange } from '../src/intent-talk';
 
 type Draft = {
@@ -328,19 +313,6 @@ export default function Intent() {
     openResults(router);
   };
 
-  /** Выбор строки на O.05/O.06: галочка, «Awesome!», и через паузу следующий вопрос. */
-  const choose = (patch: Partial<Draft>, next: IntentStepId) => {
-    if (ack) return;
-    setDraft((d) => ({ ...d, ...patch }));
-    setAck(true);
-    ackTimer.current = setTimeout(() => {
-      ackTimer.current = null;
-      setAck(false);
-      setStep(next);
-      scroller.current?.scrollTo({ y: 0, animated: false });
-    }, 900);
-  };
-
   /**
    * Свободный текст. Человек, описавший затею словами, не проходит шаги, на которые уже ответил:
    * текст уходит модели целиком (/api/agent/plan) и ведёт сразу к выдаче.
@@ -348,6 +320,7 @@ export default function Intent() {
   const send = async () => {
     const text = free.trim();
     if (!text || busy) return;
+    if (step !== 'summary') return;            // шаги с выбором: поле закрыто (см. CreateComposer locked)
     // GR.12a: на сводке текст — это правка сводки, а не новый запрос (заметка к кадру).
     if (step === 'summary' && changing) { setFree(''); talkChange(text); return; }
     setFree('');
@@ -459,39 +432,17 @@ export default function Intent() {
       // Кладётся в интент, чтобы уехать вместе с ним в выдачу, а не потеряться на этом экране.
       if (draft.link.trim()) intent.link = withScheme(draft.link);
     }
-    /**
-     * ЗАТЕЯ ЗАПОМИНАЕТСЯ — иначе она живёт ровно столько, сколько открыт этот экран.
-     *
-     * Хранилище интентов на сервере было с самого начала, но не звал его никто: человек описывал
-     * затею, уходил в выдачу, закрывал приложение — и назавтра от неё не оставалось ничего.
-     * Поэтому вкладка «Моя активность» и была пуста: показывать было нечего, а не некому.
-     *
-     * `launched: true` ставится здесь же, вместе с запуском поиска: с этой секунды затея не
-     * черновик. Сбой записи поиск не отменяет — человек шёл искать людей, а не сохранять карточку,
-     * и ронять его дорогу из-за не доехавшей записи было бы наказанием не за то.
-     */
-    //
-    // Ответ ЗАПОМИНАЕМ: сервер возвращает id затеи, и без него потом нечем отличить одно
-    // приглашение от другого. Спека говорит «Открытых инвайтов НА ИНТЕНТ — 3», а считалось по
-    // всем затеям сразу — просто потому, что заявка не знала, по какой из них её отправили
-    // (проверено по живому хранилищу: из 32 заявок с затеей id не было ни у одной).
-    //
-    // Ждать ответа мы при этом не начинаем: человек шёл искать людей, а не сохранять карточку.
-    // Не доехал id — приглашение уйдёт как раньше, без привязки, и это хуже, но не поломка.
-    const savedId = agent.intentSave(String(st.profile.name || ''), intent, title || topics.join(', '), undefined, true)
-      .then((r: any) => String(r?.id || ''))
-      .catch(() => '');
-
+    // Публикация и запуск — одна durable-команда: результат содержит стабильный search ID.
+    // Отдельной фоновой записи нет; ошибка не должна показывать успешный пустой поиск.
     // Отмена принадлежит человеку: экран поиска даёт кнопку, и она рвёт именно этот запрос.
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
       const r: any = await agent.match(intent, profile(), ctx(), ctrl.signal);
+      // СБОЙ ПОДБОРА — НЕ «НИКОГО НЕТ» (сверка п. 28). Сервер при ошибке отвечает 200 с пустым списком
+      // и полем error; экран выдачи показывал «никого не нашлось», и человек уходил ни с чем.
+      if (r?.error && !(r?.candidates || []).length) { setErr(SEARCHING.failed()); return; }
       toResults(r, intent);
-      // Опознаватель затеи приезжает своим темпом и дописывается к ней уже в выдаче. Ждать его
-      // до показа кандидатов незачем: без него всё работает как раньше, с ним — приглашения
-      // считаются по своей затее, как требует спека («Открытых инвайтов НА ИНТЕНТ — 3»).
-      savedId.then((id) => { if (id) patchResults({ intent: { ...(r?.intent || intent), id } }); });
     } catch (e) {
       // Отменил сам — это не сбой связи. Называть это ошибкой значит врать о том, что произошло.
       setErr(isAbort(e) ? SEARCHING.cancelled() : SEARCHING.failed());
@@ -681,9 +632,6 @@ export default function Intent() {
     setSpotOpen(true);
   };
 
-  /** Пол и возраст — какой из чипов возраста сейчас выбран (или ни один, если рамка своя). */
-  const agePreset = (v: Draft) =>
-    AGE_PRESETS.findIndex(([lo, hi]) => (v.minAge || 0) === lo && (v.maxAge || 0) === hi);
 
   /** Чип возраста горит, когда его диапазон целиком внутри выбранной рамки. «Любой» — когда рамки нет. */
   const ageOn = (v: Draft, i: number) => {
@@ -734,48 +682,6 @@ export default function Intent() {
           ))}
         </ChipRow>
       </View>
-    </>
-  );
-
-  /*
-    Характер. Оси те же, что заполняет тест личности, — просить можно только то, что у кандидата
-    в профиле есть. Ничего не отметив, человек не сужает поиск: подсказка говорит это прямо,
-    потому что молчащий фильтр люди трактуют как «значит, ищет всех подряд».
-  */
-  const natureBlockOf = (v: Draft, set: SetDraft) => (
-    <>
-      <LabelRow Icon={IconPerson} text={DETAILS.nature()} />
-      <Text style={s.natureHint}>{DETAILS.natureHint()}</Text>
-      <View style={s.chipRowWrap}>
-        {NATURE_TRAITS.map((t) => {
-          const on = v.nature[t.axis] === t.token;
-          const full = Object.keys(v.nature).length >= NATURE_MAX;
-          // Забита ли ось — видно по тому, что в ней уже стоит другой токен: тогда нажатие
-          // ЗАМЕНЯЕТ, а не добавляет, и потолок не мешает.
-          const busyAxis = !!v.nature[t.axis];
-          const blocked = !on && !busyAxis && full;
-          return (
-            <Chip
-              key={t.axis + t.token}
-              label={t.label()}
-              on={on}
-              dim={blocked}
-              onPress={() =>
-                set((x) => {
-                  const next = { ...x.nature };
-                  if (on) delete next[t.axis];
-                  else if (blocked) return x;
-                  else next[t.axis] = t.token;
-                  return { ...x, nature: next };
-                })
-              }
-            />
-          );
-        })}
-      </View>
-      {Object.keys(v.nature).length >= NATURE_MAX ? (
-        <Text style={s.natureHint}>{DETAILS.natureLimit()}</Text>
-      ) : null}
     </>
   );
 
@@ -864,9 +770,6 @@ export default function Intent() {
   const placeBlock = placeBlockOf(draft, setDraft);
 
   /** Отмеченные черты одной строкой — для сводки O.10 и строк листа правки. */
-  const natureOf = (v: Draft) => NATURE_TRAITS.filter((t) => v.nature[t.axis] === t.token)
-    .map((t) => t.label()).join(', ');
-  const natureSummary = natureOf(draft);
 
   /** Полная карта параметр → точный контрол.
    *
@@ -1089,19 +992,10 @@ export default function Intent() {
     ['where', IconPin, WIZ.rowWhere],
   ];
 
-  /**
-   * Потолок высоты листа правки: лист от статус-бара до низа (кадр GR.12b — 776 из 844), прокрутка
-   * аккордеона внутри него, кнопки снизу всегда на виду.
-   */
-  const sheetMax = Math.max(240, Math.round(win.height - 300));
 
   /** Последний шаг деталей зависит от типа встречи — см. шапку src/intent.ts. */
   const lastStep: IntentStepId =
     draft.mode === 'offline' ? 'place' : draft.mode === 'hybrid' ? 'both' : 'link';
-  const compactThreeStep = groupOnline || draft.mode === 'offline';
-  const detailIndex = step === 'when' ? 0 : step === 'who' ? 1
-    : draft.mode === 'offline' && step === 'nature' ? 1
-    : compactThreeStep ? 2 : step === 'nature' ? 2 : 3;
 
   /**
    * ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ЗАПИСАН ПОРЯДОК ШАГОВ НАЗАД.
@@ -1213,6 +1107,8 @@ export default function Intent() {
           keyboardShouldPersistTaps="handled"
           scrollEnabled={!dragging}
         >
+          {/* Что создаём — над каждым шагом до сводки (см. IntentPlate). На сводке своя карточка. */}
+          {step !== 'summary' ? <IntentPlate title={title} topics={topics} /> : null}
           {step === 'how' ? (
             <>
               <StepAsk text={WIZ.howAsk()} caption={WIZ.howCaption()} />
@@ -1313,20 +1209,26 @@ export default function Intent() {
           <View style={{ height: Math.max(insets.bottom, 12) }} />
         ) : (
           <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
+            {/*
+              На шагах с выбором (как, сколько, когда, где, кто) поле закрыто — 18.10.2026 по слову
+              Ивана: написанное здесь уходило в agent.plan в обход шагов и ломало поток. Писать
+              Kleal можно на сводке, в «Изменить» (GR.12a).
+            */}
             <CreateComposer
               value={free}
               onChange={setFree}
               onSubmit={send}
-              placeholder={COMPOSER_PLACEHOLDER()}
+              placeholder={step === 'summary' ? COMPOSER_PLACEHOLDER() : COMPOSER_LOCKED()}
               editable={!busy}
+              locked={step !== 'summary'}
             />
           </View>
         )}
 
-        {/* GR.08 — Plus над шагом «сколько» после «6+». Покупки Plus ещё нет: кнопка честно выключена. */}
+        {/* GR.08 — одинаковая для всех тарифов вместимость после «6+». */}
         <Sheet visible={groupSizeOpen && !editOpen} onClose={() => setGroupSizeOpen(false)} title={WIZ.plusTitle()}>
           <SheetText lead={WIZ.plusLead()} note={WIZ.plusNote()} />
-          <GlassPill tone="brand" style={s.btn48} disabled label={WIZ.getPlus()} />
+          <GlassPill tone="brand" style={s.btn48} label={WIZ.cancel()} onPress={() => setGroupSizeOpen(false)} />
           <GlassPill
             tone="dark"
             style={s.btn48}
@@ -1380,7 +1282,7 @@ export default function Intent() {
           ) : groupSizeOpen ? (
             <>
               <SheetText lead={WIZ.plusLead()} note={WIZ.plusNote()} />
-              <GlassPill tone="brand" style={s.btn48} disabled label={WIZ.getPlus()} />
+              <GlassPill tone="brand" style={s.btn48} label={WIZ.cancel()} onPress={() => setGroupSizeOpen(false)} />
               <GlassPill tone="dark" style={s.btn48} label={WIZ.keepFive()} onPress={() => {
                 setGroupSizeOpen(false);
                 setEdraft((x) => x ? ({ ...x, size: 'group', groupSize: GROUP_FREE_MAX_TOTAL }) : x);
@@ -1445,130 +1347,6 @@ export default function Intent() {
         />
       </View>
     </KeyboardAvoidingView>
-  );
-}
-
-/** Красная точка + вопрос — так на всех кадрах мастера. У деталей под ним серый подвопрос. */
-function QuestionHead({ title, sub }: { title: string; sub?: string }) {
-  return (
-    <View style={s.qhead}>
-      <View style={s.qrow}>
-        <View style={s.qdot} />
-        <Text style={s.qtitle}>{title}</Text>
-      </View>
-      {sub ? <Text style={s.qsub}>{sub}</Text> : null}
-    </View>
-  );
-}
-
-/** Строка O.05/O.06: иконка, заголовок с подписью, красная галочка на выбранной. */
-function OptionRow({
-  Icon, title, sub, on, onPress,
-}: {
-  Icon: (p: any) => React.ReactElement;
-  title: string;
-  sub: string;
-  on?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ selected: !!on }}
-      onPress={onPress}
-      style={({ pressed }) => [s.opt, on && s.optOn, pressed && { opacity: 0.9 }]}
-    >
-      <Icon size={22} c={color.fg} />
-      <View style={{ flex: 1 }}>
-        <Text style={s.optTitle}>{title}</Text>
-        <Text style={s.optSub}>{sub}</Text>
-      </View>
-      {on ? <Text style={s.tick}>✓</Text> : null}
-    </Pressable>
-  );
-}
-
-/** «Awesome!» и точки печати — пауза между выбором и следующим вопросом, как на кадрах. */
-function Ack() {
-  return (
-    <View style={{ gap: 6, marginTop: space.md }}>
-      <View style={s.ackBub}><Text style={s.ackText}>{INTENT.awesome()}</Text></View>
-      <View style={[s.ackBub, { width: 64 }]}><ActivityIndicator size="small" color={color.muted} /></View>
-    </View>
-  );
-}
-
-/** Степпер 1–2–3 с кадров O.07–O.09: пройденное и текущее — красным, дальше — серым. */
-function Stepper({ current, count = 4 }: { current: number; count?: number }) {
-  return (
-    <View style={s.stepper}>
-      {Array.from({ length: count }, (_, i) => i).map((i) => (
-        <React.Fragment key={i}>
-          {i > 0 ? <View style={[s.stepLine, i <= current && s.stepLineOn]} /> : null}
-          <View style={[s.stepDot, i <= current && s.stepDotOn, i === current && s.stepDotNow]}>
-            <Text style={[s.stepNum, i <= current && s.stepNumOn]}>{i + 1}</Text>
-          </View>
-        </React.Fragment>
-      ))}
-    </View>
-  );
-}
-
-function LabelRow({ Icon, text }: { Icon: (p: any) => React.ReactElement; text: string }) {
-  return (
-    <View style={s.labelRow}>
-      <Icon size={18} c={color.fg} />
-      <Text style={s.label}>{text}</Text>
-    </View>
-  );
-}
-
-function Chip({
-  label, on, dim, onPress,
-}: { label: string; on?: boolean; dim?: boolean; onPress?: () => void }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ selected: !!on, disabled: !!dim }}
-      onPress={onPress}
-      style={({ pressed }) => [s.chip, on && s.chipOn, dim && { opacity: 0.4 }, pressed && { opacity: 0.85 }]}
-    >
-      <Text style={[s.chipText, on && { color: color.onPrimary }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-/** Маленькое числовое поле под циферблатом — «20 : 00» и «18 – 28» с кадров. */
-function NumBox({ value, onChange }: { value: string; onChange: (t: string) => void }) {
-  return (
-    <TextInput
-      style={s.numBox}
-      value={value}
-      onChangeText={onChange}
-      keyboardType="number-pad"
-      maxLength={2}
-      selectTextOnFocus
-      accessibilityLabel={value}
-    />
-  );
-}
-
-function Cta({ label, onPress, disabled, busy }: {
-  label: string; onPress?: () => void; disabled?: boolean; busy?: boolean;
-}) {
-  const off = disabled || busy;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      // И проп, и состояние: на вебе только disabled превращается в одноимённый атрибут кнопки —
-      // accessibilityState до aria-disabled в нашей версии react-native-web не доезжает.
-      disabled={!!off}
-      accessibilityState={{ disabled: !!off, busy: !!busy }}
-      onPress={off ? undefined : onPress}
-      style={({ pressed }) => [s.cta, { opacity: off ? 0.45 : pressed ? 0.9 : 1 }]}
-    >
-      {busy ? <ActivityIndicator color={color.onPrimary} /> : <Text style={s.ctaText}>{label}</Text>}
-    </Pressable>
   );
 }
 
@@ -1846,7 +1624,7 @@ function Searching({ onCancel, dateKey }: { onCancel?: () => void; dateKey?: str
     <View style={s.veil}>
       {/* GR.13: капля Kleal 96 и слово под ней, через 40 — заголовок, строка хода и подпись. */}
       <View style={s.veilMark}>
-        <LogoMark width={118} />
+        <KlealMood width={118} slow={slow} />
         <Text style={[s.veilBrand, heading(lang, { fontSize: 32, lineHeight: 38, letterSpacing: 0 })]}>Kleal</Text>
       </View>
       <View style={s.veilText}>

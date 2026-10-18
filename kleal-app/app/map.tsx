@@ -14,30 +14,34 @@
  * СЕГМЕНТЫ «КАРТА / ОНЛАЙН». Карта показывает Offline/Hybrid по адресу встречи, а мировой
  * обзор — Online/Hybrid только на уровне подтверждённой страны.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Image, ActivityIndicator, Animated, Easing } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, Animated, Easing } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter } from 'expo-router';
 import * as Location from 'expo-location';
-import { agent, mediaUrl } from '../src/api';
+import { agent, getSession, mediaUrl } from '../src/api';
 import { useOnb } from '../src/state';
-import { MAP, MORPH, ExplorePin, stackedAt, centerOf } from '../src/explore';
+import { MAP, MORPH, ExplorePin, stackedAt, centerOf, intentReplyError } from '../src/explore';
 import { buildOfflineIntentMapModel } from '../src/offline-map-feed';
 import {
   buildOnlineIntentGlobeModel, onlineIntentGlobeCopy, type OnlineIntentGlobeStatus, type OnlineIntentItem,
 } from '../src/online-intent-globe';
 import { confirmedOnlineCountryRows } from '../src/online-map-feed';
 import { useLang } from '../src/i18n';
-import { sendInvite } from '../src/invites';
+import { sendIntentReply } from '../src/invites';
 import { ExploreMap } from '../src/components/ExploreMap';
 import { OnlineIntentGlobe } from '../src/components/OnlineIntentGlobe';
+import { GlobeAsk } from '../src/components/GlobeAsk';
 import { NearbyIntentSheet } from '../src/components/NearbyIntentSheet';
 import { BottomNav } from '../src/components/BottomNav';
-import {
-  IconSearch, IconLocate, IconMap, IconGlobe, IconClock, IconChevronLeft,
-} from '../src/components/icons';
+import { IconSearch, IconLocate, IconMap, IconGlobe, IconClock } from '../src/components/icons';
 import { CategoryGlyph, iconNameFor } from '../src/components/category-icons';
 import { color, radius, shadow, space, type } from '../src/theme';
+import RAnimated from 'react-native-reanimated';
+import { HomeCard, Face, Chunk, metaIcon } from '../src/components/HomeCards';
+import { GlassToast } from '../src/components/Glass';
+import { riseIn } from '../src/components/LiquidGlass';
+import { IconPin as IconPinMeta, IconPerson } from '../src/components/icons';
 
 /** Доля перехода, к которой плашки карты растаяли (туда) и с которой проступают (обратно). */
 const CHROME_AT = 0.22;
@@ -58,8 +62,26 @@ export default function MapScreen() {
   const [geoDenied, setGeoDenied] = useState(false);
   const [onlineRows, setOnlineRows] = useState<any[]>([]);
   const [onlineStatus, setOnlineStatus] = useState<'idle' | OnlineIntentGlobeStatus>('idle');
-  const [picked, setPicked] = useState<ExplorePin | null>(null);
+  const [picked, updatePicked] = useState<ExplorePin | null>(null);
   const [sending, setSending] = useState(false);
+  const [replyError, setReplyError] = useState('');
+  const replyGeneration = useRef(0);
+  const setPicked = useCallback((pin: ExplorePin | null) => {
+    replyGeneration.current += 1;
+    updatePicked(pin); setSending(false); setReplyError('');
+  }, []);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { setPicked(null); }, [st.session, setPicked]);
+  /** Итог отклика с карты — короткий тост над панелью: «отправлено» или почему нет. */
+  const [toast, setToast] = useState<{ title: string; note?: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const say = useCallback((t: { title: string; note?: string }) => {
+    setToast(t);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2600);
+  }, []);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
   /** Скрытые «не сейчас» — только на время сеанса: это не отказ, а «убери с глаз». */
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [showMe, setShowMe] = useState(false);
@@ -111,6 +133,10 @@ export default function MapScreen() {
   useEffect(() => () => { if (darkTimer.current) clearTimeout(darkTimer.current); }, []);
   /** Сколько пикселей снизу закрыл лист: планета уходит в оставшееся окно. */
   const [sheetBottom, setSheetBottom] = useState(0);
+  /** «Спроси шар»: веса стран от Буди, волна ожидания и место под карточками совпадений. */
+  const [askW, setAskW] = useState<Record<string, number> | null>(null);
+  const [askScan, setAskScan] = useState(false);
+  const [askBottom, setAskBottom] = useState(0);
   /*
    * Панель «поиск · Карта/Онлайн · фильтры» уходит, пока открыт лист: она стояла ровно поверх
    * карточек. Нижняя навигация остаётся — под неё лист сам оставляет место.
@@ -194,11 +220,18 @@ export default function MapScreen() {
     [lang, onlineRows],
   );
   const onlineCopy = onlineIntentGlobeCopy(onlineModel.locale);
+  const onlineItems = useMemo(() => onlineModel.countries.flatMap((c) => c.intents), [onlineModel]);
+  const askProfile = useMemo(() => ({
+    interests: st.profile?.interests?.explicit || [], city: st.profile?.city, languages: st.profile?.languages,
+  }), [st.profile?.interests?.explicit, st.profile?.city, st.profile?.languages]);
   const onlineTotal = onlineModel.stats.total;
   /** Страны для плашек на планете: те же данные, что у списка. */
   const globeCountries = useMemo(
-    () => onlineModel.countries.map((c) => ({ code: c.code, lat: c.latitude, lon: c.longitude, count: c.count })),
-    [onlineModel],
+    () => onlineModel.countries.map((c) => ({
+      code: c.code, lat: c.latitude, lon: c.longitude, count: c.count,
+      ...(askW ? { w: askW[c.code] ?? 0 } : {}),
+    })),
+    [onlineModel, askW],
   );
 
   /**
@@ -219,14 +252,22 @@ export default function MapScreen() {
 
   const respond = useCallback(async () => {
     if (!picked || sending) return;
+    const session = getSession();
+    const generation = replyGeneration.current;
+    const current = () => mounted.current && getSession() === session && replyGeneration.current === generation;
     setSending(true);
+    setReplyError('');
     try {
-      const r = await sendInvite(me, { name: picked.who, id: picked.whoId }, { topics: picked.topics, place: picked.area });
-      if (r.ok) setPicked(null);
+      const r = await sendIntentReply(me, { name: picked.who, id: picked.whoId }, picked);
+      if (!current()) return;
+      if (r.ok) { setPicked(null); say({ title: MAP.sentWaiting() }); }
+      else setReplyError(intentReplyError(r));
+    } catch (error) {
+      if (current()) setReplyError(intentReplyError({}));
     } finally {
-      setSending(false);
+      if (current()) setSending(false);
     }
-  }, [picked, sending, me]);
+  }, [picked, sending, me, say]);
 
   const notNow = useCallback(() => {
     if (!picked) return;
@@ -274,7 +315,8 @@ export default function MapScreen() {
         countries={view === 'online' ? globeCountries : null}
         selectedCountry={country}
         onPickCountry={pickCountry}
-        reserveBottom={sheetBottom}
+        reserveBottom={Math.max(sheetBottom, askBottom)}
+        scanning={askScan}
       />
 
       {/* Надписи карты: тают в начале ухода и проступают в конце возврата, а не исчезают щелчком. */}
@@ -322,7 +364,13 @@ export default function MapScreen() {
         */}
         <Animated.View pointerEvents="none" style={[s.scrim, { opacity: dim }]} />
 
-        {picked ? <PinPreview pin={picked} sending={sending} onRespond={respond} onNotNow={notNow}
+        {toast ? (
+          <RAnimated.View entering={riseIn(0, 8)} style={[s.toastWrap, { bottom: NAV_CLEAR + insets.bottom + 72 }]} pointerEvents="none">
+            <GlassToast title={toast.title} note={toast.note} />
+          </RAnimated.View>
+        ) : null}
+
+        {picked ? <PinPreview pin={picked} sending={sending} error={replyError} onRespond={respond} onNotNow={notNow}
                               onOpen={() => openIntent(picked)} bottom={140 + insets.bottom} /> : null}
 
         <NearbyIntentSheet
@@ -360,6 +408,20 @@ export default function MapScreen() {
           pickSignal={pickSignal}
           openSignal={openSignal}
           testID="search-online-intent-globe"
+        />
+        {/* «Спроси шар» — Буди отвечает светом стран и карточками совпадений. */}
+        <GlobeAsk
+          active={view === 'online' && sheetBottom === 0 && onlineStatus === 'ready' && onlineTotal > 0}
+          items={onlineItems}
+          profile={askProfile}
+          me={me}
+          bottom={NAV_CLEAR + insets.bottom + 56}
+          topInset={insets.top + 8}
+          onLight={setAskW}
+          onFocus={setCountry}
+          onScan={setAskScan}
+          onReserve={(px) => setAskBottom(px ? px + 56 : 0)}
+          onOpen={openOnlineIntent}
         />
       </Animated.View>
 
@@ -411,12 +473,18 @@ export default function MapScreen() {
   );
 }
 
-/** Карточка выбранного пина — кадр «Pin selected». */
+/**
+ * Карточка выбранного пина — та же «Home Card», что на главной (переделано 17.10.2026: «нанести
+ * нашу идентику»). Лицо автора с бейджем темы, название затеи, кто и когда — значками фирменного
+ * цвета, коралловая кнопка и тихое «Не сейчас» рядом. Появляется подъёмом, как карточки главной.
+ * Нажатие по карточке — открыть затею целиком; по кнопке — откликнуться (у группы — открыть).
+ */
 function PinPreview({
-  pin, sending, onRespond, onNotNow, onOpen, bottom,
+  pin, sending, error, onRespond, onNotNow, onOpen, bottom,
 }: {
   pin: ExplorePin;
   sending: boolean;
+  error: string;
   onRespond: () => void;
   onNotNow: () => void;
   onOpen: () => void;
@@ -425,45 +493,30 @@ function PinPreview({
   const who = [pin.who, pin.age ? String(pin.age) : ''].filter(Boolean).join(', ');
   const group = pin.kind === 'group';
   return (
-    <View style={[s.card, { bottom }]}>
-      <Pressable accessibilityRole="button" onPress={onOpen} style={s.cardHead}>
-        <View style={s.avatarWrap}>
-          {pin.photo ? (
-            <Image source={{ uri: mediaUrl(pin.photo) }} style={s.avatar} />
-          ) : (
-            <View style={[s.avatar, s.avatarEmpty]}>
-              <Text style={s.avatarInitial}>{(pin.who || '?').slice(0, 1).toUpperCase()}</Text>
-            </View>
-          )}
-          <View style={s.avatarBadge}><CategoryGlyph name={iconNameFor(pin.topics[0] || '')} size={14} /></View>
-        </View>
-        <View style={s.cardText}>
-          <Text style={s.cardWho} numberOfLines={1}>{who || pin.title}</Text>
-          <Text style={s.cardTitle} numberOfLines={1}>{pin.title}</Text>
-          {pin.when ? (
-            <View style={s.metaRow}>
-              <IconClock size={16} c={color.muted} />
-              <Text style={s.meta} numberOfLines={1}>{pin.when}</Text>
-            </View>
-          ) : null}
-        </View>
-        {/* Шеврон смотрит вправо: та же иконка, повёрнутая, — своей в наборе нет. */}
-        <View style={s.chev}><IconChevronLeft size={20} c={color.neutral400} /></View>
-      </Pressable>
-      <View style={s.actions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: !group && sending }}
-          onPress={group ? onOpen : onRespond}
-          style={[s.primary, !group && sending && { opacity: 0.6 }]}
-        >
-          <Text style={s.primaryText}>{!group && sending ? '…' : (group ? MAP.openIntent() : MAP.respond())}</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" onPress={onNotNow} style={s.secondary}>
-          <Text style={s.secondaryText}>{MAP.notNow()}</Text>
-        </Pressable>
-      </View>
-    </View>
+    <RAnimated.View key={pin.id} entering={riseIn(0, 8)} style={[s.cardWrap, { bottom }]}>
+      {error ? <Text accessibilityRole="alert" style={s.replyError}>{error}</Text> : null}
+      <HomeCard
+        onPress={onOpen}
+        avatar={(
+          <View>
+            <Face photo={pin.photo} name={pin.who} />
+            <View style={s.avatarBadge}><CategoryGlyph name={iconNameFor(pin.topics[0] || '')} size={12} /></View>
+          </View>
+        )}
+        title={pin.title || who}
+        meta={(
+          <>
+            {who ? <Chunk icon={metaIcon(IconPerson)} text={who} shrink /> : null}
+            {pin.when ? <Chunk icon={metaIcon(IconClock)} text={pin.when} /> : null}
+            {!pin.when && pin.area ? <Chunk icon={metaIcon(IconPinMeta)} text={pin.area} shrink /> : null}
+          </>
+        )}
+        action={group ? MAP.openIntent() : MAP.respond()}
+        onAction={group ? onOpen : onRespond}
+        busy={!group && sending}
+        alt={{ label: MAP.notNow(), onPress: onNotNow }}
+      />
+    </RAnimated.View>
   );
 }
 
@@ -476,6 +529,8 @@ const s = StyleSheet.create({
    */
   root: { flex: 1, backgroundColor: '#05070f' },
   navFloat: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  cardWrap: { position: 'absolute', left: 16, right: 16 },
+  toastWrap: { position: 'absolute', left: 16, right: 16, alignItems: 'center' },
   scrim: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: 'rgba(17,19,26,0.22)' },
 
   spin: { position: 'absolute', alignSelf: 'center' },
@@ -529,6 +584,7 @@ const s = StyleSheet.create({
   chev: { transform: [{ rotate: '180deg' }] },
 
   actions: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  replyError: { ...type.bodySmall, color: color.danger } as any,
   primary: {
     flex: 1, height: 48, borderRadius: radius.full, backgroundColor: color.primary,
     alignItems: 'center', justifyContent: 'center',

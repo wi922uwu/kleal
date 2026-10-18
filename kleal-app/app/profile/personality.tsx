@@ -21,17 +21,17 @@
  * `personality` и `summary` — ДВА разных текста с двумя владельцами. Первый пишет тест, второй —
  * сводка на хабе. Сливать их нельзя: в вебе это уже пробовали, и тест молча съедал сводку.
  */
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ProfileShell, Card, Divider } from '../../src/components/ProfileShell';
+import { ProfileShell, Card, Divider, KlealPill, SectionHead } from '../../src/components/ProfileShell';
 import { useLang, replyLang } from '../../src/i18n';
 import { useOnb, set, getState } from '../../src/state';
 import { profile as profileApi, buddy } from '../../src/api';
 import {
   PERSONALITY as C, STORY_MAX, fmtUpdated, adaptSummary,
   AXIS_LABEL, AXIS_VALUE, AXIS_ORDER, addConfirmedInterest, explicitInterests,
-  VIBE_LABEL, VIBE_ORDER,
+  VIBE_LABEL, VIBE_ORDER, TEST_Q,
 } from '../../src/profile';
 import { color, radius as rad, space, type } from '../../src/theme';
 
@@ -206,17 +206,26 @@ export default function Personality() {
         абзац Kleal, дата и ответы по осям компактной таблицей; тест здесь можно только пройти
         заново, и это ссылка, а не кнопка: повтор — не то действие, ради которого сюда приходят.
       */}
-      <Card>
-        {hasTest ? (
-          <>
+      {hasTest ? (
+        <>
+          {/* B.05b — сводка Kleal: заголовок — настрой, дата, абзац и «Change it with Kleal». */}
+          <Card>
             <View style={s.head}>
-              <Text style={s.label}>{C.title()}</Text>
+              <Text style={s.label}>{vibe ? (VIBE_LABEL[vibe] || (() => vibe))() : C.title()}</Text>
               {updated ? <Text style={s.updated}>{updated}</Text> : null}
             </View>
             {text ? <Text style={s.body}>{text}</Text> : null}
+            <KlealPill label={C.changeWithKleal()} onPress={() => router.navigate('/profile/test')} />
+          </Card>
+          <Pressable accessibilityRole="button" onPress={() => router.navigate('/profile/test')} style={s.again}>
+            <Text style={s.againText}>{C.retake()}</Text>
+          </Pressable>
+
+          {/* Ответы по осям и настрой — ниже кадра: это то, что уходит в подбор, и человек вправе
+              видеть и поправить его. */}
+          <Card>
             {answered.length ? (
               <>
-                <Divider />
                 <Text style={s.axesTitle}>{C.axesTitle()}</Text>
                 {answered.map((k) => (
                   <View key={k} style={s.axisRow}>
@@ -224,11 +233,9 @@ export default function Personality() {
                     <Text style={s.axisVal}>{AXIS_VALUE[persona[k]]()}</Text>
                   </View>
                 ))}
+                <Divider />
               </>
             ) : null}
-            {/* Настрой — последней строкой таблицы: это не ещё один ответ, а вывод из них,
-                и единственный, который уезжает в поиск. Потому и объяснение рядом. */}
-            <Divider />
             <View style={s.axisRow}>
               <Text style={s.axisKey}>{C.vibeTitle()}</Text>
               <Text style={s.axisVal}>{vibe ? (VIBE_LABEL[vibe] || (() => vibe))() : '—'}</Text>
@@ -256,21 +263,18 @@ export default function Personality() {
                 <Text style={s.retake}>{C.vibePick()}</Text>
               </Pressable>
             )}
-
-            <Pressable accessibilityRole="button" onPress={() => router.navigate('/profile/test')} style={s.retakeWrap}>
-              <Text style={s.retake}>{C.retake()}</Text>
-            </Pressable>
-          </>
-        ) : (
-          <>
-            <Text style={s.label}>{C.title()}</Text>
-            <Text style={s.body}>{C.empty()}</Text>
-            <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/profile/test')}>
-              <Text style={s.ctaText}>{C.takeTest()}</Text>
-            </Pressable>
-          </>
-        )}
-      </Card>
+          </Card>
+        </>
+      ) : (
+        <>
+          {/* B.05 — ещё не задано: подпись, коралловая «Start the test», приписка про приватность. */}
+          <SectionHead title={C.notSet()} note={C.intro(TEST_Q.length)} />
+          <Pressable accessibilityRole="button" style={s.cta} onPress={() => router.navigate('/profile/test')}>
+            <Text style={s.ctaText}>{C.start()}</Text>
+          </Pressable>
+          <Text style={s.privateNote}>{C.privateNote()}</Text>
+        </>
+      )}
 
       {/*
         2. СВОИМИ СЛОВАМИ. Сохраняется само — по уходу с поля и по «назад» — и говорит об этом
@@ -354,9 +358,12 @@ export default function Personality() {
 
 const s = StyleSheet.create({
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: space.sm },
-  label: { ...type.title, color: color.fg } as any,
+  label: { fontSize: 15, fontWeight: '600', color: color.fg } as any,
+  again: { alignSelf: 'center', paddingVertical: space.md },
+  againText: { ...type.button, color: color.fg } as any,
+  privateNote: { ...type.caption, color: color.muted } as any,
   updated: { ...type.caption, color: color.muted } as any,
-  body: { ...type.body, color: color.fg } as any,
+  body: { ...type.bodySmall, color: color.fg } as any,
   note: { ...type.bodySmall, color: color.muted } as any,
 
   axesTitle: { ...type.labelMedium, color: color.muted, marginTop: space.xs } as any,
@@ -394,7 +401,7 @@ const s = StyleSheet.create({
   pickWhy: { ...type.bodySmall, color: color.muted } as any,
 
   /** Единственная красная кнопка экрана — и только у того, кто тест ещё не проходил. */
-  cta: { height: 48, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', marginTop: space.xs },
+  cta: { height: 52, borderRadius: rad.full, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', marginVertical: space.sm },
   ctaText: { ...type.button, color: color.onPrimary } as any,
   /** Мягкая кнопка второстепенных действий: добавить интересы, обновить сводку. */
   soft: { height: 44, borderRadius: rad.full, backgroundColor: color.infoBg, alignItems: 'center', justifyContent: 'center', marginTop: space.xs },

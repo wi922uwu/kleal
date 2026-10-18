@@ -14,6 +14,10 @@ import { T } from './i18n';
 export type ExplorePin = {
   /** id интента — ключ списка и то, с чем открывается карточка. */
   id: string;
+  /** Канонический поиск автора; отклик не превращает его в собственный поиск. */
+  searchId?: string;
+  /** Только уже публичная проекция map-feed; fallback для legacy backend с mode=off. */
+  intent?: Record<string, unknown>;
   /** Автор: имя приезжает в поле `who`, а не `name` — у ручки explore своя схема. */
   who: string;
   /** id автора: отклик зовёт его по id — у тёзок подписи равны (kleal-ms/docs/IDENTITY.md). */
@@ -209,8 +213,15 @@ export const MAP = {
     'Это заявка автору: звать в группу решает он.',
     'This is a request to the author: they decide who joins.',
     'Es una solicitud a quien lo propone: decide quién entra.'),
-  respondFailed: () => T('Не удалось отправить', 'Could not send', 'No se pudo enviar'),
+  respondFailed: () => T('Не удалось отправить. Попробуйте ещё раз.', 'Could not send. Please try again.', 'No se pudo enviar. Inténtalo de nuevo.'),
+  respondUnavailable: () => T('Этот интент больше не принимает отклики.', 'This intent is no longer accepting responses.', 'Esta propuesta ya no acepta respuestas.'),
   /** Больше открытых откликов зараз держать нельзя — это правило OF.09, не ошибка связи. */
   respondCapped: () => T('Слишком много открытых откликов',
     'Too many open responses', 'Demasiadas respuestas abiertas'),
 };
+
+export function intentReplyError(result: { capped?: boolean; error?: string }): string {
+  if (result.capped) return MAP.respondCapped();
+  return ['search_paused', 'search_not_found', 'not_your_search', 'search_reference_mismatch', 'search_reference_required']
+    .includes(result.error || '') ? MAP.respondUnavailable() : MAP.respondFailed();
+}

@@ -13,20 +13,19 @@
  *   awaiting_approval: true    — план уже обсуждают, вход подтверждает организатор;
  *   GROUP_FULL                 — места кончились, пока человек думал (GR.22, «Nothing you did»).
  */
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Image, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useLang, T, dateLocale } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { group as gapi, mediaUrl, newIdem, pidOf, myId, ensureMe, type GroupInfo } from '../src/api';
 import { GINVITE, ROOM, groupCallLine, isOnlineGroup } from '../src/groups';
-import Animated, { useReducedMotion } from 'react-native-reanimated';
 import { IconPerson, IconCalendar, IconPin, IconClock, IconShieldCheck, IconVideo } from '../src/components/icons';
 import { color, font, heading, labelFamily, space, type } from '../src/theme';
 import { Cover } from '../src/components/Cover';
 import { GlassPill } from '../src/components/Glass';
-import { GlassBack, GlassSurface, riseIn } from '../src/components/LiquidGlass';
+import { GlassBack, GlassSurface } from '../src/components/LiquidGlass';
 import { BottomNav } from '../src/components/BottomNav';
 import { useNavCollapse } from '../src/navScroll';
 
@@ -34,7 +33,6 @@ export default function GroupInvite() {
   /** Navigation V2: панель сворачивается при прокрутке вниз (NAV.S2). */
   const navCollapse = useNavCollapse();
   const lang = useLang();
-  const reduced = useReducedMotion();
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
@@ -49,7 +47,7 @@ export default function GroupInvite() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   /** Итог ответа — им же экран и заканчивается: показать результат честнее, чем молча уйти. */
-  const [outcome, setOutcome] = useState<'' | 'declined' | 'awaiting' | 'full' | 'gone' | 'error'>('');
+  const [outcome, setOutcome] = useState<'' | 'declined' | 'awaiting' | 'full' | 'gone' | 'ineligible' | 'error'>('');
   /** GR.56a: приглашение закрылось само — почему (full / converted / closed / expired). */
   const [closed, setClosed] = useState('');
   /** Кто позвал — из самого приглашения: состав закрытой группы постороннему не отдаётся. */
@@ -70,6 +68,9 @@ export default function GroupInvite() {
         setG(r.group);
         setGroupId(String(r.group.gid || r.invite?.gid || gid));
         setClosed(String(r.invite?.closed || ''));
+        // Уже сказал «да», ждёт организатора (state awaiting_approval) — при повторном заходе экран
+        // говорит это сразу, а не предлагает ответить ещё раз.
+        if (!r.invite?.closed && String(r.invite?.state || '') === 'awaiting_approval') setOutcome('awaiting');
         if (r.invite?.from) setInviter({ name: String(r.invite.from), photo: String(r.invite.from_photo || ''),
                                          age: r.invite.from_age || undefined });
       } else {
@@ -103,6 +104,23 @@ export default function GroupInvite() {
       if (!accept) { setOutcome('declined'); return; }
       if (r?.awaiting_approval) { setOutcome('awaiting'); return; }
       if (r?.error === 'GROUP_FULL') { setOutcome('full'); return; }
+      /*
+        ОСТАЛЬНЫЕ КОДЫ — СВОИМИ СЛОВАМИ (сверка п. 16). Раньше разбирались только GROUP_FULL и
+        NO_SUCH_INVITE, а всё прочее шло в «Попробуй ещё раз» — и по кругу, потому что сервер на
+        закрытое приглашение будет отвечать тем же. Уже вступил — в чат; закрылось — перечитываем
+        карточку и показываем «Приглашение закрыто» с причиной; правила не пускают — так и пишем.
+      */
+      if (r?.error === 'ACCEPTED') { router.replace({ pathname: '/group', params: { gid: groupId } }); return; }
+      if (r?.error === 'NOT_ELIGIBLE') { setOutcome('ineligible'); return; }
+      const CLOSED_WHY: Record<string, string> = {
+        EXPIRED: 'expired', WITHDRAWN: 'withdrawn', GROUP_CLOSED: 'closed', CLOSED: 'closed', POLICY_REVOKED: 'closed',
+      };
+      if (r?.error && CLOSED_WHY[r.error]) {
+        const d: any = await gapi.inviteDetail(id, me).catch(() => null);
+        if (d?.group) setG(d.group);
+        setClosed(String(d?.invite?.closed || CLOSED_WHY[r.error]));
+        return;
+      }
       if (!r?.ok) { setOutcome(r?.error === 'NO_SUCH_INVITE' ? 'gone' : 'error'); return; }
       // Вошёл — сразу в общий чат, как и обещано на GR.16. replace, а не push: приглашения
       // больше нет, и «назад» не должно возвращать к нему.
@@ -117,7 +135,6 @@ export default function GroupInvite() {
   const members = (g?.members || []) as { name?: string; photo?: string }[];
   const joined = Number(g?.joined_count || members.length || 0);
   const max = Number(g?.max_total || 5);
-  const min = Number(g?.min_total || 3);
   const owner = String(g?.owner || inviter?.name || '');
   const ownerId = String((g as any)?.owner_id || '');
   /** «Thu 23 July, 19:00» → дата и время раздельно, у каждого свой знак. */
@@ -157,6 +174,7 @@ export default function GroupInvite() {
               : outcome === 'awaiting' ? GINVITE.awaiting()
               : outcome === 'full' ? GINVITE.full(String(g?.title || ''), max)
               : outcome === 'gone' ? GINVITE.gone()
+              : outcome === 'ineligible' ? GINVITE.notEligible()
               : GINVITE.failed()}
           </Text>
         ) : null}

@@ -21,7 +21,7 @@ let session = null;
 const fresh = () => load('src/state.ts', {
   react: { useEffect() {}, useState: (v) => [v, () => {}] },
   '@react-native-async-storage/async-storage': { __esModule: true, default: { setItem: async () => {}, getItem: async () => null } },
-  './api': { setSession: (t) => { session = t; }, auth: { session: async () => ({ ok: false, error: 'no session' }) } },
+  './api': { setSession: (t) => { session = t; }, setMyId() {}, onMyId: () => () => {}, auth: { session: async () => ({ ok: false, error: 'no session' }) } },
 });
 
 let n = 0;

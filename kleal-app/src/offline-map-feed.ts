@@ -5,6 +5,7 @@ export type MapIntentKind = 'one_to_one' | 'group';
 
 export type MapFeedItem = {
   id: string;
+  searchId?: string;
   title: string;
   mode: MapIntentMode;
   kind: MapIntentKind;
@@ -115,6 +116,8 @@ export function buildOfflineIntentMapModel(payload: MapFeedResponse | null | und
     seen.add(id);
     pins.push({
       id,
+      searchId: text(row.searchId) || undefined,
+      intent,
       who: displayName,
       whoId: text(owner.id) || undefined,
       photo: text(owner.photo) || undefined,

@@ -28,8 +28,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Modal, Alert,
-  useWindowDimensions,
+  View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, Alert, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRouter } from 'expo-router';
@@ -41,19 +40,18 @@ import { useInvites, inviteTo, openInvites, sendInvite, withdrawInvite, pickInvi
 import { isGroupIntent, groupTitleOf, GROUP, GR14, OFP, ROOM, pronOf, namesList, shortTitle } from '../src/groups';
 import {
   useGroupSession, groupStatusFor, groupStatusAt, groupClosedOf, groupCounters, groupEndsAt, groupId,
-  sendGroupInvite, cancelGroupInvite, type GStatus,
+  sendGroupInvite, cancelGroupInvite, approveGroupInvite, type GStatus,
 } from '../src/ginvites';
 import { useLang, T, getLang } from '../src/i18n';
 import { takeResults, patchResults, setCandidate } from '../src/results-store';
 import { mediaUrl, agent, myId, group as gapi, newIdem, type Peer } from '../src/api';
-import { IconPerson, IconPin, IconCalendar, IconDots, IconPencil, IconBan } from '../src/components/icons';
+import { IconPerson, IconPin, IconDots, IconPencil, IconBan } from '../src/components/icons';
 import { GlassPill } from '../src/components/Glass';
 import { GlassBack, GlassIconButton } from '../src/components/LiquidGlass';
 import { RoundIndicator, StatusBlock, MemberRow, PlanCard, type StatusKind } from '../src/components/GroupInvite';
 import { GROUP_FREE_MAX_TOTAL } from '../src/intent';
-import { AgeRange } from '../src/components/AgeRange';
 import Slider from '@react-native-community/slider';
-import { SEXES, sexLabel } from '../src/onboarding';
+import { sexLabel } from '../src/onboarding';
 import { BottomNav } from '../src/components/BottomNav';
 import { Sheet, SheetText, SheetItem } from '../src/components/Sheet';
 import { color, font, heading, labelFamily, radius as rad, space, type } from '../src/theme';
@@ -206,6 +204,8 @@ export default function Results() {
       // выдачи, и без `self` он нашёл бы сам себя.
       const self = String((profile as any)?.name || '');
       const r: any = await agent.match(intent, profile, { self, uid: self }, undefined, next);
+      // Сбой подбора приходит 200 с пустым списком и error — это не «больше никого» (сверка п. 28).
+      if (r?.error && !(r?.candidates || []).length) throw new Error(String(r.error));
       const found: Cand[] = (r && r.candidates) || [];
       if (found.length > cands.length) {
         setCands(found);
@@ -319,6 +319,20 @@ export default function Results() {
     if (!r.ok) setNote(r.resolved ? CANDS.cancelTooLate() : CANDS.cancelFailed());
   };
 
+  /** Впустить / не впускать сказавшего «да» после начала плана (awaiting_approval, сверка п. 18). */
+  const [approving, setApproving] = useState('');
+  const approve = async (c: Cand, accept: boolean) => {
+    const k = String(c.id || c.name || '');
+    if (approving) return;
+    setApproving(k + (accept ? ':y' : ':n'));
+    try {
+      const r = await approveGroupInvite(self, peerOfCard(c), accept);
+      if (!r.ok) setNote(r.error === 'GROUP_FULL' ? GR14.approveFull() : r.error === 'CLOSED' ? GR14.approveClosed() : GR14.approveFailed());
+    } finally {
+      setApproving('');
+    }
+  };
+
   /** GR.14b «Cancel the invite»: отзыв идёт только отсюда, кнопка карточки лишь спрашивает. */
   const confirmCancel = async () => {
     const c = cancelAsk;
@@ -387,6 +401,8 @@ export default function Results() {
       const r: any = await agent.match(next, profile, {
         self, uid: self, city: profile?.city,
       });
+      // Сбой подбора (200 + error) не должен стирать выдачу и писать «никого» — сверка п. 28.
+      if (r?.error && !(r?.candidates || []).length) throw new Error(String(r.error));
       setIntent(r?.intent || next);
       patchResults({ intent: r?.intent || next });
       const found: Cand[] = (r?.candidates || []) as Cand[];
@@ -442,11 +458,6 @@ export default function Results() {
     if (gmode) {
       const gid = groupId();
       if (gid) router.navigate({ pathname: '/group', params: { gid } });
-      return;
-    }
-    const active = chatting;
-    if (active && active.toLowerCase() !== name.toLowerCase()) {
-      setBusyWith(active);
       return;
     }
     router.navigate({
@@ -546,6 +557,7 @@ export default function Results() {
       const why = groupClosedOf(peerOfCard(c))?.why;
       return why === 'expired' ? GR14.closedExpiredNote(n) : why === 'other' ? GR14.closedOtherNote(n) : GR14.closedNote(n, pronOf(c));
     }
+    if (st === 'awaiting') return GR14.awaitingNote(n);
     return GR14.sentNote(n, pronOf(c));
   };
   /**
@@ -670,8 +682,8 @@ export default function Results() {
                     photo={c.photo ? mediaUrl(String(c.photo)) : undefined}
                     name={`${c.name}${c.age ? `, ${c.age}` : ''}`}
                     status={st === 'joined' ? GR14.joinedTitle() : st === 'declined' ? GR14.declined()
-                          : st === 'closed' ? GR14.closed() : GR14.rowPending()}
-                    kind={st === 'pending' ? 'sent' : st}
+                          : st === 'closed' ? GR14.closed() : st === 'awaiting' ? GR14.awaitingBanner(String(c.name || '')) : GR14.rowPending()}
+                    kind={st === 'pending' || st === 'awaiting' ? 'sent' : st}
                   />
                 );
               })}
@@ -835,6 +847,8 @@ export default function Results() {
                 onCancel={() => (gmode || inviteTo(peerOfCard(c), intent)?.status === 'pending'
                   ? setCancelAsk(c) : cancelInvite(peerOfCard(c)))}
                 onOpenChat={() => openChat(String(c.name || ''), c.photo, String(c.id || ''))}
+                onApprove={(accept) => approve(c, accept)}
+                approving={approving.startsWith(String(c.id || c.name || '') + ':') ? (approving.endsWith(':y') ? 'y' : 'n') : undefined}
                 onRemove={() => removeCard(String(c.name || ''))}
               />
             );
@@ -894,9 +908,9 @@ export default function Results() {
       <Sheet visible={!!busyWith} onClose={() => setBusyWith('')} title={CHAT.busyTitle(busyWith)}>
         <Text style={s.sheetBody}>{CHAT.busyBody()}</Text>
         {/* Тарифа в продукте нет — кнопка честно выключена, как везде в каркасе. */}
-        <View style={[s.sheetSend, { opacity: 0.45 }]}>
+        <Pressable accessibilityRole="button" onPress={() => { setBusyWith(''); router.navigate('/plus'); }} style={s.sheetSend}>
           <Text style={s.sheetSendText}>{CHAT.getPlus()}</Text>
-        </View>
+        </Pressable>
         <Text style={s.plusPrice}>{CHAT.plusPrice()}</Text>
         {/*
           Кнопка называется «Закончить разговор с N» — и заканчивает его.
@@ -940,23 +954,18 @@ export default function Results() {
       <Sheet
         visible={capOpen}
         onClose={() => setCapOpen(false)}
-        title={gmode
-          ? <>Kleal <Text style={{ color: color.primary }}>Plus+</Text></>
-          : 'Kleal Plus'}
+        title={GR14.capTitle()}
       >
         {gmode ? (
-          /* GR.15: лимит словами и два выхода. Plus в продукте нет — кнопка честно выключена. */
+          /* GR.15: общий для тарифов лимит; возврат к карточкам приглашений. */
           <>
             <SheetText lead={GR14.capLead(gc.open)} note={GR14.capNote(gc.cap, GROUP_FREE_MAX_TOTAL)} />
-            <GlassPill tone="brand" style={s.btn48} disabled label={GR14.getPlus()} />
             <GlassPill tone="dark" style={s.btn48} label={GR14.notNow()} onPress={() => setCapOpen(false)} />
           </>
         ) : (
-          /* OF.17: тот же лист у приглашений один на один — лимит словами и два выхода. Plus в
-             продукте нет, кнопка честно выключена; отозвать приглашение можно с карточки человека. */
+          /* OF.17: отозвать приглашение можно с карточки человека. */
           <>
             <SheetText lead={CAP.plusLead(pendingOut.length)} note={CAP.plusNote(CAP.limit)} />
-            <GlassPill tone="brand" style={s.btn48} disabled label={GR14.getPlus()} />
             <GlassPill tone="dark" style={s.btn48} label={GR14.notNow()} onPress={() => setCapOpen(false)} />
           </>
         )}
@@ -1032,7 +1041,7 @@ export default function Results() {
  * «Cancel invite» → «Open the group chat»; у отказа и закрытого кнопки нет — позвать снова нельзя.
  */
 function CandCard({
-  c, badge, best, status, group, solo, picking, onPick, onOpen, onInvite, onCancel, onOpenChat, onRemove,
+  c, badge, best, status, group, solo, picking, onPick, onOpen, onInvite, onCancel, onOpenChat, onRemove, onApprove, approving,
 }: {
   c: Cand;
   badge: string;
@@ -1051,6 +1060,10 @@ function CandCard({
   onCancel: () => void;
   onOpenChat: () => void;
   onRemove: () => void;
+  /** «Впустить» (true) / «Не впускать» (false) — у сказавшего «да» после начала плана. */
+  onApprove?: (accept: boolean) => void;
+  /** Какая из двух кнопок сейчас ждёт ответа сервера. */
+  approving?: 'y' | 'n';
 }) {
   const readiness = candReadiness(c);
   /** Занятия и города в данных может не быть — тогда вайб/интересы и километры (см. src/candidates.ts). */
@@ -1061,7 +1074,7 @@ function CandCard({
   const [broken, setBroken] = useState(false);
   const name = String(c.name || '');
   const st = group?.st;
-  const kind: StatusKind | undefined = st === 'pending' ? 'sent' : st;
+  const kind: StatusKind | undefined = st === 'pending' || st === 'awaiting' ? 'sent' : st;
 
   return (
     /*
@@ -1079,6 +1092,7 @@ function CandCard({
         <View style={s.identity}>
           <Text style={[s.name, badge ? { paddingRight: 72 } : null]} numberOfLines={1}>
             {c.name}{c.age ? `, ${c.age}` : ''}
+            {(c as any).id_verified ? <Text style={s.idCheck}>{'  ✓'}</Text> : null}
           </Text>
           <View style={s.metaRow}>
             {role ? <Text style={[s.meta, { flexShrink: 1 }]} numberOfLines={1}>{role}</Text> : null}
@@ -1139,6 +1153,14 @@ function CandCard({
           <GlassPill tone="brand" small style={s.btn40} label={GR14.invite(name)} onPress={onInvite} />
         ) : st === 'pending' ? (
           <GlassPill tone="light" small style={s.btn40} label={GR14.cancelInvite()} onPress={onCancel} />
+        ) : st === 'awaiting' ? (
+          /* Сказал «да» после начала плана: «Отменить» сервер здесь отклоняет — решает организатор. */
+          <View style={s.approveRow}>
+            <GlassPill tone="light" small style={s.btn40Flex} busy={approving === 'n'} label={GR14.dontLetIn()}
+                       onPress={() => onApprove?.(false)} />
+            <GlassPill tone="brand" small style={s.btn40Flex} busy={approving === 'y'} label={GR14.letIn(name)}
+                       onPress={() => onApprove?.(true)} />
+          </View>
         ) : st === 'joined' ? (
           <GlassPill tone="light" small style={s.btn40} label={GR14.openChat()} onPress={onOpenChat} />
         ) : null
@@ -1382,6 +1404,8 @@ const s = StyleSheet.create({
   btn48: { height: 48 },
   btn40: { height: 40 },
   btn40Flex: { height: 40, flex: 1 },
+  /** «Не впускать» и «Впустить» — две кнопки поровну в ряд. */
+  approveRow: { flexDirection: 'row', gap: 8 },
   lead: { ...type.body, color: color.muted } as any,
   note: { ...type.bodySmall, color: color.primary } as any,
 
@@ -1396,6 +1420,7 @@ const s = StyleSheet.create({
   avEmpty: { backgroundColor: color.neutral100, alignItems: 'center', justifyContent: 'center' },
   identity: { flex: 1, gap: 8 },
   name: { fontFamily: font.textSemibold, fontSize: 15, lineHeight: 22, color: color.fg } as any,
+  idCheck: { color: color.primary, fontFamily: font.textSemibold } as any,
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   /** Бейдж 16 высотой в правом верхнем углу: «Best match» #D4F0DF/#1FAE5E, «Match» #E8E8E8/#5A616E. */
   badge: {

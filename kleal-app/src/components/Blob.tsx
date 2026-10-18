@@ -11,7 +11,7 @@
  * SVG на каждый кадр — нет.
  * При «Уменьшить движение» капля стоит.
  */
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { StyleSheet, View, ViewStyle } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Path, RadialGradient, Stop } from 'react-native-svg';
 import Animated, {

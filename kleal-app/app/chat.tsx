@@ -13,10 +13,9 @@
  */
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Alert, Platform, ActivityIndicator, Image, TextInput,
-  BackHandler,
+  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Image, TextInput, BackHandler,
 } from 'react-native';
-import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
+import { Stack, useRouter, useLocalSearchParams, useIsFocused } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { squarePhoto } from '../src/photo';
 import {
@@ -26,15 +25,18 @@ import {
   OWN_INPUT, parseName, isName, CONFIRM_INTEREST, SECTION_TITLE } from '../src/onboarding';
 import { interestLabel, registerInterestLabels } from '../src/interest-label';
 import { isKnownInterest } from '../src/interests-known';
+import { interestChain } from '../src/interests-wheel';
 import { saveConversation } from '../src/history';
 import { addConfirmedInterest, pushInterests } from '../src/profile';
 import { profile as profileApi } from '../src/api';
 import { useLang, T, getLang, replyLang, noticeWritten, dateLocale, use12h } from '../src/i18n';
-import { useOnb, set, get, patch, resetProfile, profileForAttach, mergeProfile, getState } from '../src/state';
-import { onboarding, agent, buddy as buddyApi } from '../src/api';
+import { useOnb, set, get, getState, profileForAttach } from '../src/state';
+import { buddy as buddyApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { clampAge } from '../src/age-ruler';
-import { AreaPicker, Area, DEFAULT_AREA } from '../src/components/AreaPicker';
+import { AreaPicker, Area } from '../src/components/AreaPicker';
+import { AiFillCard } from '../src/components/AiFill';
+import { suggestedArea, suggestedLangs, suggestedInterests, aiAnnounce } from '../src/ai-suggest';
 import { ChatShell, BotLine, ChatViewport, chatStyles as cs } from '../src/components/ChatShell';
 import { MindMap } from '../src/components/MindMap';
 import { InterestHelix } from '../src/components/InterestHelix';
@@ -54,7 +56,7 @@ import { color, font, labelFamily, radius as rad, type } from '../src/theme';
  * прочтение, и человеку остаётся выбрать своё. Однозначное записывается без вопроса.
  */
 type NovelOption = { canonical: string; label: string; token: string };
-type Novel = { text: string; label: string; question?: string; options?: NovelOption[] };
+type Novel = { text: string; label: string; replaces?: string; question?: string; options?: NovelOption[] };
 
 /** `sec` — этап, на котором реплика прозвучала: по нему лента делится на секции-якоря. */
 type Msg = { who: 'bot' | 'me'; text: string; at: string; photo?: string; sec?: StepId };
@@ -169,10 +171,32 @@ export default function Chat() {
   const [pending, setPending] = useState<Novel[]>([]);
   const [startAsked, setStartAsked] = useState(false);
   const [startGone, setStartGone] = useState(false);
+
+  /*
+    ВЕРНУЛИСЬ С ЛИСТА ChatGPT (app/ai-fill.tsx, 18.10.2026). Подтверждённое лежит в aiSuggest: агент
+    говорит, что взял, и спрашивает имя — его ChatGPT не передаёт. Приветственные кнопки уходят, как
+    после «Поехали!». Уже объявленное при повторном открытии экрана не повторяем.
+  */
+  const aiSeen = useRef(st.aiSuggest?.at || 0);
+  useEffect(() => {
+    const sg = st.aiSuggest;
+    if (!sg?.at || sg.at === aiSeen.current || entry) return;
+    aiSeen.current = sg.at;
+    if (stepRef.current !== 'start' || st.profile.name) return;
+    setStartGone(true);
+    botLines([aiAnnounce(sg)]);
+  }, [st.aiSuggest?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Карта интересов открылась — интересы из черновика ChatGPT уже отмечены, если человек ещё ничего не выбрал. */
+  useEffect(() => {
+    if (!mapOpen || entry || mapPickedNow.current.length) return;
+    const pre = suggestedInterests();
+    if (pre.length) setMapPicked(pre);
+  }, [mapOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   // Номер прохода. Меняется при «Начать заново» и служит ключом виджетам, чтобы те начинали с
   // чистого листа. Иначе внутри них остаётся своё состояние: спрятанные кнопки первого кадра,
   // выбранные увлечения, набранный возраст — всё от предыдущей попытки, которой уже нет.
-  const [runId, setRunId] = useState(0);
+  const [runId] = useState(0);
   const started = useRef(false);
   /*
     ВИДЖЕТ ПРЯЧЕТ ОЧЕРЕДЬ, А НЕ ТОЧКИ. Прятать его по «печатает» почти хватало, но между репликами
@@ -298,7 +322,7 @@ export default function Chat() {
     лежат. Новый этап — лента доезжает до его секции целиком, а не до самого низа.
   */
   const sections = (entry ? [entry] : ORDER.filter((k) => k === step || thread.some((m) => m.sec === k)))
-    .map((k) => ({ key: k, title: SECTION_TITLE(k) }));
+    .map((k) => ({ key: k, title: SECTION_TITLE(k, !!entry) }));
 
   /**
    * РЕПЛИКИ АГЕНТА ПРИХОДЯТ ПО ОДНОЙ, С «ПЕЧАТАЕТ» МЕЖДУ НИМИ.
@@ -375,7 +399,7 @@ export default function Chat() {
     setOwnAsk(null);
     setOwnNote('');
     const cur: string[] = get('interests.explicit') || [];
-    const merged = [...cur, ...keys.filter((k) => !cur.includes(k))];
+    const merged = [...new Set([...cur, ...keys.flatMap(interestChain)])];
     set('interests.explicit', merged);
     /*
       НА СЕРВЕР — СРАЗУ, А НЕ ПРИ СЛЕДУЮЩЕМ ЗАХОДЕ НА ЭКРАН ИНТЕРЕСОВ. Матчинг читает строку в
@@ -399,7 +423,7 @@ export default function Chat() {
       Промпт разбирает список как список интересов («A LIST IS A LIST»), а `recorded` не даёт ему
       записать их заново. Дальше он ведёт расспрос сам: два вопроса на интерес, потом следующий.
     */
-    const labels = merged.map((k) => interestLabel(k)).filter(Boolean);
+    const labels = keys.map((k) => interestLabel(k)).filter(Boolean);
     if (labels.length) send(labels.join(', '));
     else botAfter(STEP_HOBBIES.afterMap());
   });
@@ -433,12 +457,39 @@ export default function Chat() {
    * Идёт ПОСЛЕ реплики и молча: два запроса на интерес не должны задерживать ответ агента, а
    * извиняться за слово, которого человек не просил записывать, незачем.
    */
-  const absorbNovel = async (items: { text: string; label: string }[]) => {
+  const recordNovel = (item: Novel, canonical: string, label: string, token: string) => {
+    if (!token || !canonical) return;
+    addConfirmedInterest(canonical, label, token);
+    const key = canonical.trim().toLowerCase();
+    // Старое значение сохраняется до успешного подтверждения нового сервером.
+    if (item.replaces && item.replaces !== key) {
+      set('interests.explicit', (get('interests.explicit') || []).filter((x: string) => x !== item.replaces));
+    }
+    setJustAdded((p) => [...p.filter((x) => x !== item.replaces && x !== key), key]);
+    pushInterests();
+  };
+
+  const replaceConfirmed = (item: Novel, canonical?: string) => {
+    const key=String(canonical || '').trim().toLowerCase();
+    const cur: string[]=get('interests.explicit') || [];
+    const receipt=(get('interests.confirmations') || {})[key];
+    if(!item.replaces || !cur.includes(key) || typeof receipt!=='string' || !receipt.trim()) return false;
+    set('interests.explicit',cur.filter(x=>x!==item.replaces || x===key));
+    setJustAdded(p=>[...p.filter(x=>x!==item.replaces && x!==key),key]);
+    void pushInterests();
+    return true;
+  };
+
+  const absorbNovel = async (items: Novel[]) => {
+    const session = getState().session;
+    const current = () => alive.current && getState().session === session;
     for (const item of items) {
+      if (!current()) return;
       try {
         const cur: string[] = get('interests.explicit') || [];
         const r = await profileApi.normalizeInterest(item.text, cur, replyLang());
-        if (r.status === 'duplicate') continue;
+        if (!current()) return;
+        if (r.status === 'duplicate') { replaceConfirmed(item,r.canonical); continue; }
         const opts = r.status === 'ready' ? r.options || [] : [];
         if (opts.length !== 1) {
           // Сервер предложил несколько прочтений — это и есть тот случай, когда решает человек.
@@ -450,9 +501,9 @@ export default function Chat() {
           continue;
         }
         const ok = await profileApi.confirmInterest('', opts[0].token);
+        if (!current()) return;
         if (ok.ok && ok.canonical && ok.token) {
-          addConfirmedInterest(ok.canonical, ok.label || opts[0].label || item.label, ok.token);
-          setJustAdded((p) => (p.includes(ok.canonical!) ? p : [...p, ok.canonical!]));
+          recordNovel(item, ok.canonical, ok.label || opts[0].label || item.label, ok.token);
         }
       } catch {
         // Связь. Слово не потеряно: следующий ход отдаёт его снова вместе с той же цитатой.
@@ -461,43 +512,77 @@ export default function Chat() {
   };
 
   const confirmPending = async (item: Novel, opt?: NovelOption) => {
+    const session = getState().session;
+    const current = () => alive.current && getState().session === session;
+    if (!current()) return;
     setPending((p) => p.filter((x) => x.text !== item.text));
     // Вариант сервера уже несёт квитанцию — нормализовать второй раз нечего.
     if (opt) {
       try {
         const ok = await profileApi.confirmInterest('', opt.token);
+        if (!current()) return;
         if (ok.ok && ok.canonical && ok.token) {
-          addConfirmedInterest(ok.canonical, ok.label || opt.label, ok.token);
-          setJustAdded((p) => (p.includes(ok.canonical!) ? p : [...p, ok.canonical!]));
+          recordNovel(item, ok.canonical, ok.label || opt.label, ok.token);
         } else botAfter(CONFIRM_INTEREST.unclear());
       } catch {
-        botAfter(CONFIRM_INTEREST.unclear());
+        if (current()) botAfter(CONFIRM_INTEREST.unclear());
       }
       return;
     }
     try {
       const cur: string[] = get('interests.explicit') || [];
       const r = await profileApi.normalizeInterest(item.text, cur, replyLang());
+      if (!current()) return;
       const opt = r.status === 'ready' && r.options?.length ? r.options[0] : null;
       if (!opt) {
+        if(r.status==='duplicate') replaceConfirmed(item,r.canonical);
         // Дубль — молча: интерес уже записан, говорить «не смог» было бы неправдой.
         if (r.status !== 'duplicate') botAfter(CONFIRM_INTEREST.unclear());
         return;
       }
       const ok = await profileApi.confirmInterest('', opt.token);
+      if (!current()) return;
       if (ok.ok && ok.canonical && ok.token) {
-        addConfirmedInterest(ok.canonical, ok.label || opt.label, ok.token);
-        setJustAdded((p) => (p.includes(ok.canonical!) ? p : [...p, ok.canonical!]));
+        recordNovel(item, ok.canonical, ok.label || opt.label, ok.token);
       } else {
         botAfter(CONFIRM_INTEREST.unclear());
       }
     } catch {
-      botAfter(CONFIRM_INTEREST.unclear());
+      if (current()) botAfter(CONFIRM_INTEREST.unclear());
     }
   };
 
   const skipPending = (item: Novel) =>
     setPending((p) => p.filter((x) => x.text !== item.text));
+
+  const absorbAdded = (added: { key: string; label?: string; replaces?: string }[]) => {
+    let cur: string[] = get('interests.explicit') || [];
+    const ask: Novel[] = [];
+    const accepted: { key: string; replaces: string }[] = [];
+    for (const a of added) {
+      const key = String(a.key || '').trim();
+      if (!key) continue;
+      const old = String(a.replaces || '').trim();
+      if (isKnownInterest(key)) {
+        if (a.label) registerInterestLabels({ [key]: a.label }, getLang());
+        cur = cur.filter((x) => x !== old);
+        if (!cur.includes(key)) cur = [...cur, key];
+        accepted.push({ key, replaces: old });
+      } else if (cur.includes(key) && old && typeof (get('interests.confirmations') || {})[key]==='string'
+        && (get('interests.confirmations') || {})[key].trim()) {
+        cur=cur.filter(x=>x!==old || x===key);accepted.push({key,replaces:old});
+      } else if ((!cur.includes(key) || old) && !ask.some((x) => x.text === key)) {
+        ask.push({ text: key, label: String(a.label || key), replaces: old });
+      }
+    }
+    set('interests.explicit', cur);
+    pushInterests();
+    setJustAdded((p) => {
+      const keys = accepted.map((x) => x.key), gone = accepted.map((x) => x.replaces);
+      return [...p.filter((k) => !gone.includes(k) && !keys.includes(k)), ...keys];
+    });
+    return absorbNovel(ask);
+  };
 
   /**
    * ВЫХОД С ШАГА УВЛЕЧЕНИЙ. Имя историческое: раньше отсюда выходили из воронки-расспроса,
@@ -567,16 +652,39 @@ export default function Chat() {
     send(text);
   };
 
-  /** «Назад» внутри темы карты — к темам; иначе обычный выход с экрана. */
-  const onHeaderBack = () => {
-    if (step === 'hobbies' && mapOpen && mapTopic) { setMapBack((n) => n + 1); return; }
-    router.back();
+  /**
+   * «Назад»: внутри темы карты — к темам; есть куда вернуться — обычный выход с экрана.
+   *
+   * АНКЕТА БЕЗ ИСТОРИИ ПОЗАДИ (18.10.2026, баг Ивана со скриншота). При возобновлении («С возвращением,
+   * Иван! Продолжим с того места») экран открыт через replace — позади ничего нет, и router.back()
+   * падал красным тостом «GO_BACK was not handled by any navigator». Теперь «назад» ведёт к
+   * предыдущему шагу анкеты. К шагу «Имя» не возвращаемся (имя правится в профиле), а на первом
+   * шаге без истории кнопка просто ничего не делает. Шаг из профиля без истории — назад в профиль.
+   * Возвращает true, если «назад» обработан, — для аппаратной кнопки Android.
+   */
+  const onHeaderBack = (): boolean => {
+    if (step === 'hobbies' && mapOpen && mapTopic) { setMapBack((n) => n + 1); return true; }
+    if (router.canGoBack()) { router.back(); return true; }
+    // Шаг, открытый из профиля, но без истории (ссылкой): вернуть туда, откуда такие шаги открывают.
+    if (entry) { router.replace((back || '/profile') as any); return true; }
+    const i = ORDER.indexOf(step);
+    if (i > 1) {
+      const prev = ORDER[i - 1];
+      setMapOpen(false);
+      goto(prev, stepBot(prev));
+      return true;
+    }
+    return false;
   };
+  const focused = useIsFocused();
   useEffect(() => {
-    if (!(step === 'hobbies' && mapOpen && mapTopic)) return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => { setMapBack((n) => n + 1); return true; });
+    // Аппаратный «назад» — тот же путь, что и стрелка в шапке, и только пока анкета наверху: под
+    // другими экранами она остаётся смонтированной и не должна перехватывать их «назад». Не обработан
+    // (первый шаг без истории) — отдаём системе.
+    if (!focused) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => onHeaderBack());
     return () => sub.remove();
-  }, [step, mapOpen, mapTopic]);
+  });
 
   /**
    * «Готово» на шаге увлечений: сначала сказать, что запись закончена, потом уйти.
@@ -586,7 +694,8 @@ export default function Chat() {
    * поправить. Про число говорим прямо: оно и есть итог разговора.
    */
   const finishHobbies = () => {
-    const n = (get('interests.explicit') || []).length;
+    // Считаем выбор этого разговора, не служебных предков для широкого matching.
+    const n = justAdded.length;
     botAfter(STEP_HOBBIES.done(n));
     // Уходим ПОСЛЕ реплики, а не вместе с ней: иначе строка появляется на экране, который в тот
     // же кадр снимают, и человек её не читает. Задержка равна вдоху между репликами агента.
@@ -616,6 +725,8 @@ export default function Chat() {
     // английский (им ищет матчинг), подпись — слова человека, и каждый интерес подтверждён
     // цитатой из его же реплики.
     if (step === 'hobbies') {
+      const session = getState().session;
+      const current = () => alive.current && getState().session === session;
       const next: Msg2[] = [...hobbyThread.current, { role: 'user', content: text }];
       hobbyThread.current = next;
       setChips([]);            // подсказка к прошлому вопросу поверх нового — обман
@@ -629,6 +740,7 @@ export default function Chat() {
         const cur0: string[] = get('interests.explicit') || [];
         const recorded = cur0.map((k) => ({ key: k, label: interestLabel(k) }));
         const r = await buddyApi.interestsChat(next as any, profileForAttach(), replyLang(), recorded);
+        if (!current()) return;
         setTyping(false);
         // ПУСТОЙ ОТВЕТ ТОЖЕ НАДО ОЗВУЧИТЬ. Раньше пустая реплика молча не показывалась ничем, и
         // человек оставался перед собственным сообщением: ни ответа, ни ошибки, ни признака
@@ -641,39 +753,10 @@ export default function Chat() {
         setChips(Array.isArray((r as any)?.chips) ? (r as any).chips.map(String) : []);
         const added = Array.isArray(r?.added) ? r!.added! : [];
         if (added.length) {
-          // УТОЧНЕНИЕ ЗАМЕНЯЕТ, А НЕ ДОБАВЛЯЕТ. «рыбалка» -> «рыбалка на море» это один интерес,
-          // ставший точнее; без этого на экране копились три чипа про одно и то же.
-          let cur: string[] = get('interests.explicit') || [];
-          const ask: { text: string; label: string }[] = [];
-          for (const a of added) {
-            const key = String(a.key || '').trim();
-            if (!key) continue;
-            const old = String(a.replaces || '').trim();
-            if (old) cur = cur.filter((x) => x !== old);
-            // РАЗВИЛКА: своё пишем сразу, чужое слово уносим на нормализацию. Разбор — `absorbNovel`.
-            if (isKnownInterest(key)) {
-              if (!cur.includes(key)) cur = [...cur, key];
-            } else if (!cur.includes(key) && !ask.some((x) => x.text === key)) {
-              ask.push({ text: key, label: String(a.label || key) });
-            }
-          }
-          set('interests.explicit', cur);
-          pushInterests();                       // см. onMapDone: строка в базе, а не память телефона
-          if (ask.length) absorbNovel(ask);
-          setJustAdded((p) => {
-            const keys = added.map((a) => String(a.key || '').trim()).filter(Boolean);
-            const gone = added.map((a) => String(a.replaces || '').trim()).filter(Boolean);
-            const kept = p.filter((k) => !gone.includes(k) && !keys.includes(k));
-            return [...kept, ...keys];
-          });
-          // Подпись — слова человека. Кладём в тот же реестр, куда сгружаются словари сервера,
-          // иначе до следующего чтения профиля чип показывал бы английский ключ.
-          const lang = getLang();
-          registerInterestLabels(
-            Object.fromEntries(added.map((a) => [String(a.key), String(a.label || a.key)])), lang
-          );
+          await absorbAdded(added);
         }
       } catch {
+        if (!current()) return;
         setTyping(false);
         say('bot', T('Связь на секунду пропала. Повторишь?', 'I lost the connection for a second. Say that again?', 'Perdí la conexión un momento. ¿Lo repites?'));
       }
@@ -731,12 +814,14 @@ export default function Chat() {
       ref={scroller}
       /* Анкета — единственное место с живой подложкой: так она и на кадрах борда. */
       ambientVideo
+      /* На карте интересов фон стоит: в покое на экране ничего не движется (Иван, 18.10.2026). */
+      ambientPaused={step === 'hobbies' && mapOpen}
       title={HEADER_TITLE()}
       pct={pct}
       thread={thread}
       sections={sections}
       typing={typing}
-      onBack={onHeaderBack}
+      onBack={() => { onHeaderBack(); }}
       onSend={onComposer}
       focusSignal={focusTick}
       scrollEnabled={!dragging}
@@ -946,6 +1031,7 @@ function Cta({ label, onPress, disabled, kind = 'primary', icon }: {
 /** A.04 — согласие, потом имя. Имя человек пишет в композер: так на борде. */
 function StartW({ say, bot, asked, gone, onAsked, onGone }: any) {
   const st = useOnb();
+  const router = useRouter();
 
   // Нажатая кнопка должна исчезать — как на всех остальных шагах, где виджет уступает место
   // следующему вопросу. Здесь шаг не меняется (имя человек пишет в композер), поэтому прятать
@@ -977,6 +1063,12 @@ function StartW({ say, bot, asked, gone, onAsked, onGone }: any) {
             bot([STEP_START.askName()]);
           }}
         />
+      </View>
+      {/* «Заполнить через ChatGPT» (18.10.2026): он уже знает человека — черновик анкеты придёт
+          листом, и человек проверит каждый пункт. Карточка светлая и под кнопками: «Поехали!»
+          остаётся главным путём. Экран — app/ai-fill.tsx, карточка — src/components/AiFill.tsx. */}
+      <View style={{ marginTop: 12 }}>
+        <AiFillCard compact onPress={() => router.navigate('/ai-fill')} />
       </View>
     </View>
   );
@@ -1016,7 +1108,8 @@ function BasicsW({ say, goto, onDrag }: any) {
 
 /** A.06 — страна, город, радиус, карта. */
 function AreaW({ say, goto, onDrag }: any) {
-  const [area, setArea] = useState<Area>(DEFAULT_AREA);
+  // Город из черновика ChatGPT, если он подтверждён и есть в списке (src/ai-suggest.ts).
+  const [area, setArea] = useState<Area>(() => suggestedArea());
   return (
     <View style={cs.widget}>
       <AreaPicker value={area} onChange={setArea} onDragChange={onDrag} />
@@ -1045,7 +1138,8 @@ function AreaW({ say, goto, onDrag }: any) {
 /** A.07 — языки с флагами. */
 function LangW({ say, goto }: any) {
   const [ownOpen, setOwnOpen] = useState(false);
-  const [sel, setSel] = useState<string[]>([]);
+  // Языки из черновика ChatGPT — уже выбраны; человек снимает лишнее (src/ai-suggest.ts).
+  const [sel, setSel] = useState<string[]>(() => suggestedLangs());
   const toggle = (k: string) => setSel((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]));
 
   // Свой язык — тот, которого нет в готовом списке. Показывается отдельным чипом и зажжённым,
@@ -1097,8 +1191,6 @@ function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone, mapBack, onMapTopic,
                  pending, onConfirmPending, onSkipPending,
                  say, leaveFunnel, fork, chips, added, onFork, onChip, onDrop, onDrag,
                  }: any) {
-  const st = useOnb();
-  const [busy, setBusy] = useState(false);
   /*
     Спираль занимает секцию «Интересы» целиком: окно ленты минус заголовок секции, строка
     «Выбери…» с переключателем и подсказка (~190). Карта v1 остаётся 440 — под неё свёрстан её тест.
@@ -1106,16 +1198,14 @@ function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone, mapBack, onMapTopic,
   const vh = useContext(ChatViewport);
   const helixH = vh ? Math.max(300, Math.min(600, vh - 190)) : 440;
   /*
-    ВИД ИНТЕРЕСОВ: v2 — спираль (по умолчанию), v1 — карта пузырей, какой она была до 27.09.
-    Карта сохранена целиком и включается переключателем над полем; выбор помнит телефон.
+    ВИД ИНТЕРЕСОВ: v1 — карта (по умолчанию с 18.10.2026, Иван: «сделать map основной вместо helix»),
+    v2 — спираль, вторым вариантом через переключатель над полем; выбор помнит телефон.
   */
-  const [view, setView] = useState<InterestsView>('v2');
+  const [view, setView] = useState<InterestsView>('v1');   // карта — основной вид (18.10.2026)
   useEffect(() => { loadInterestsView().then(setView); }, []);
   const pickView = (v: InterestsView) => { if (v === view) return; hTap(); setView(v); saveInterestsView(v); };
   // Показываем записанное ЗА ЭТОТ разговор. Всё, что было в профиле раньше, человек видит на
   // экране «Интересы», откуда пришёл; повторять его здесь значит прятать новое среди старого.
-  const explicit: string[] = added || [];
-  const hasAny: boolean = !!(st.profile.interests?.explicit || []).length;
 
   /*
    * КАРТА ЗАНИМАЕТ ВЕСЬ ВИДЖЕТ и стоит первой веткой: пока она открыта, ни развилки, ни подсказок,
@@ -1136,7 +1226,7 @@ function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone, mapBack, onMapTopic,
         <View style={hs.titleRow}>
           <Text style={[cs.mapTitle, hs.title]}>{STEP_HOBBIES.mapTitle()}</Text>
           <View style={hs.seg} accessibilityRole="tablist">
-            {(['v2', 'v1'] as const).map((v) => (
+            {(['v1', 'v2'] as const).map((v) => (
               <Pressable key={v} accessibilityRole="tab" accessibilityState={{ selected: view === v }}
                          onPress={() => pickView(v)} hitSlop={6}
                          style={[hs.segBtn, view === v && hs.segOn]}>
@@ -1201,11 +1291,6 @@ function HobbyW({ mapOpen, mapPicked, onMapPick, onMapDone, mapBack, onMapTopic,
 
   // Снятие чипа убирает интерес И из профиля, И из показанного за этот разговор: списка теперь
   // два, и обновить один — значит оставить чип висеть после нажатия.
-  const drop = (k: string) => {
-    const cur: string[] = get('interests.explicit') || [];
-    set('interests.explicit', cur.filter((x) => x !== k));
-    onDrop?.(k);
-  };
 
   return (
     <View style={cs.widget}>

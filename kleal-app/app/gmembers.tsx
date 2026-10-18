@@ -9,7 +9,7 @@
  * Удаление и закрытие живут в чате (листы GR.24a/GR.51 и GR.24b): кнопки здесь возвращают туда
  * и открывают нужный лист. Второй экземпляр тех же листов разошёлся бы с первым при первой правке.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Image, ActivityIndicator, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';

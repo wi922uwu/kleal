@@ -9,7 +9,6 @@
  * весь центр и иллюстрация поверх него. Два предыдущих экрана намеренно бледные, потому что там
  * набирают текст; здесь набирать нечего, и цвет наконец можно вернуть.
  */
-import React from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';

@@ -39,3 +39,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Required partner home artwork; override only these root-level *.png exclusions.
+!/assets/art/home/silk-light.png
+!/assets/art/home/silk-shade.png

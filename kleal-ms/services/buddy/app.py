@@ -45,7 +45,10 @@ import os
 import re
 import sys
 import json
+import copy
+import uuid
 import threading
+import tempfile
 import urllib.request
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -1457,11 +1460,11 @@ def detect_lang(text):
 # слов самого человека — только отличительных: тех, которых нет в английском и испанском («die», «was», «comment»,
 # «fare», «con», «para» сюда не входят). Нужно два разных слова и перевес над остальными языками, иначе — None, и
 # решает прежняя логика. Короткое «ja» / «oui» наследует язык предыдущих реплик человека.
-_EU_WORDS = {
+_EU_WORDS_RAW = {
     "de": "ich nicht und ist möchte moechte suche jemand jemanden heute spielen mit für fuer einen eine wie geht hallo lust wer "
           "habe gerne gern zusammen leute auch oder aber das der mir dir du wir kann gehen trinken machen kaffee freunde "
           "danke bitte noch schon sehr nein kein keine zum zur auf ein jemandem hast bist sind haben wollen würde "
-          "irgendwer vielleicht morgen abend wochenende",
+          "irgendwer vielleicht morgen abend wochenende niemand niemanden",
     "fr": "je j'ai jai suis veux cherche quelqu'un quelqu avec aujourd'hui aujourd bonjour salut ça des est une pas j'aime envie "
           "jouer gens mais oui merci moi toi nous vous faire boire prendre aller dans très aussi quoi ce cette mon mes "
           "voudrais j'aimerais demain soir soirée week-end quelque chose peux veut",
@@ -1470,16 +1473,28 @@ _EU_WORDS = {
           "fine settimana sera volentieri stai sto bene giochi ciao",
     "pt": "quero procuro alguém alguem olá hoje jogar você voce tenho gosto não nao com uma obrigado obrigada fazer também "
           "pessoas tudo bem muito onde quem eu meu minha estou são um amanhã isso gostaria queres bora procurar "
-          "alguma coisa fim semana noite sim jogos adoro gostava",
+          "alguma coisa fim semana noite sim jogos adoro gostava ninguém ninguem comigo mesmo sou só coisas chovendo "
+          "tem vou pra dá talvez algum alguns adorei dica lá perto esse essa num numa soa quê esqueci assim fica tentar "
+          "caminhada passeio",
 }
-_EU_WORDS = {L: frozenset(w.split()) for L, w in _EU_WORDS.items()}
+_EU_WORDS = {L: frozenset(w.split()) for L, w in _EU_WORDS_RAW.items()}
 _EU_TOKEN = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)?", re.UNICODE)
 
 
 def _eu_scores(text):
     toks = {t.replace("’", "'") for t in _EU_TOKEN.findall(str(text or "").lower())}
     toks |= {t.split("'")[0] for t in toks if "'" in t} | {t.split("'")[-1] for t in toks if "'" in t}
-    return {L: len(toks & ws) for L, ws in _EU_WORDS.items()}, toks
+    sc = {L: len(toks & ws) for L, ws in _EU_WORDS.items()}
+    # Буквы, которых нет в испанском: «ã/õ» — португальский, «ä/ö/ü/ß» — немецкий (самопроверка 18.10.2026: «Está
+    # chovendo e não tem ninguém…» не узнавалось, и португальцу приходили «Play card games» и «Noted: …»).
+    # Только в словах со строчной буквы: «Park Güell», «São Paulo» — имена, не язык (самопроверка 18.10.2026:
+    # англичанин написал «Park Güell», и сборщик ответил по-немецки).
+    t = " ".join(w for w in re.findall(r"[^\W\d_]+", str(text or ""), re.UNICODE) if w[:1].islower())
+    if re.search(r"[ãõ]", t):
+        sc["pt"] += 2
+    if re.search(r"[äöüß]", t):
+        sc["de"] += 2
+    return sc, toks
 
 
 def detect_lang_eu(said):
@@ -1914,14 +1929,51 @@ def _baseline_signals(profile):
 # ======================= SESSIONS (only for the {user_id, message} mode) =======================
 # The profile UI keeps the thread client-side and posts it back each turn (stateless). Thin clients post just
 # {user_id, message}; for those buddy keeps the thread + signals here, so it actually remembers the person.
-_LOCK = threading.Lock()
+_LOCK = threading.RLock()
+_STORE_UNAVAILABLE = False
+
+
+class BuddyStoreUnavailable(Exception):
+    """A retry identity may not be forgotten or dispatched before durable storage."""
+
+
+class BuddyLaunchRejected(Exception):
+    def __init__(self, status, body):
+        self.status, self.body = status, body
+
+
+def _valid_launch_retry(row, key):
+    return (isinstance(row, dict) and isinstance(key, str) and bool(key)
+            and row.get('commandId') == key and isinstance(row.get('payload'), dict)
+            and row['payload'].get('commandId') == key
+            and isinstance(row['payload'].get('intent'), dict) and isinstance(row.get('lang'), str))
 
 
 def _load_store():
+    global _STORE_UNAVAILABLE
     try:
         with open(STORE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            value = json.load(f)
+        if not isinstance(value, dict) or any(not isinstance(s, dict) for s in value.values()):
+            raise ValueError('invalid session store')
+        for session in value.values():
+            for field in ('launch_retries', 'launch_receipts'):
+                if field in session and (not isinstance(session[field], dict) or any(
+                    not _valid_launch_retry(row, key)
+                    for key, row in session[field].items())):
+                    raise ValueError('invalid retry store')
+            legacy = session.get('launch_retry')
+            if legacy is not None and not _valid_launch_retry(legacy, legacy.get('commandId') if isinstance(legacy, dict) else None):
+                raise ValueError('invalid legacy retry store')
+        _STORE_UNAVAILABLE = False
+        return value
+    except FileNotFoundError:
+        _STORE_UNAVAILABLE = False
+        return {}
     except Exception:
+        # Keep the service available for stateless chat, but never replace an
+        # existing unreadable store or publish with a newly invented retry body.
+        _STORE_UNAVAILABLE = True
         return {}
 
 
@@ -1929,11 +1981,37 @@ SESSIONS = _load_store()
 
 
 def _save_store():
-    try:
-        with open(STORE_PATH, "w", encoding="utf-8") as f:
-            json.dump(SESSIONS, f, ensure_ascii=False)
-    except Exception:
-        pass
+    with _LOCK:
+        if _STORE_UNAVAILABLE:
+            raise BuddyStoreUnavailable('buddy_store_unavailable')
+        temporary = raw_fd = None
+        try:
+            directory = os.path.dirname(os.path.abspath(STORE_PATH))
+            data = json.dumps(SESSIONS, ensure_ascii=False)
+            raw_fd, temporary = tempfile.mkstemp(prefix='.buddy-', dir=directory)
+            stream = os.fdopen(raw_fd, 'w', encoding='utf-8')
+            raw_fd = None  # the stream now owns the descriptor
+            with stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, STORE_PATH)
+            temporary = None
+            fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except Exception:
+            raise BuddyStoreUnavailable('buddy_store_unavailable') from None
+        finally:
+            if raw_fd is not None:
+                os.close(raw_fd)
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
 
 
 def _session(uid):
@@ -1942,6 +2020,12 @@ def _session(uid):
 
 
 # ======================= AGENT-TO-AGENT CLIENTS =======================
+class MatchingHTTPError(Exception):
+    def __init__(self,status,body):
+        super().__init__('matching_request_failed')
+        self.status,self.body=status,body
+
+
 def _post(base_url, path, payload, timeout=30, auth=""):
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -1951,8 +2035,19 @@ def _post(base_url, path, payload, timeout=30, auth=""):
         # (kleal-ms/docs/IDENTITY.md). С ним матчинг сам ставит `self_id` из сессии.
         headers["Authorization"] = auth
     req = urllib.request.Request(base_url + path, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        try: body=json.loads(error.read(65536).decode('utf-8'))
+        except Exception: body={}
+        code=body.get('error') if isinstance(body,dict) else None
+        safe={'ok':False,'error':code if isinstance(code,str) and re.fullmatch(r'[A-Za-z0-9_]{1,80}',code) else 'matching_unavailable',
+              'httpStatus':error.code,'retryable':error.code>=500}
+        if isinstance(body,dict):
+            for field in ('blockerIds','resourceId','reason','retryable'):
+                if field in body:safe[field]=body[field]
+        raise MatchingHTTPError(error.code,safe) from None
 
 
 # Fire-and-forget teaching either works or it does not, and for weeks it did not: /api/agent/learn
@@ -4091,7 +4186,10 @@ def _shape(c, lang):
     Matching Core v2 fields (band/gap/localised reasons) pass through so the UI can show qualitative
     bands instead of raw percentages (spec §9.7)."""
     core_rs = c.get("reasons_ru") if lang == "ru" else c.get("reasons_en")
-    return {"user_id": c.get("name"), "name": c.get("name"), "score": c.get("score"), "km": c.get("km"),
+    # ЛИЧНОСТЬ ПО ID (18.10.2026, план личность-по-id, шаг 2): user_id — id человека из движка; имя — только для показа.
+    # Пока движок отдаёт карточку без id — имя, как раньше (телефон не ломается).
+    return {"user_id": c.get("id") or c.get("name"), "id": c.get("id"), "name": c.get("name"), "score": c.get("score"),
+            "km": c.get("km"),
             "tier": c.get("tier"), "kind": c.get("kind"), "vibe": c.get("vibe"), "open": c.get("open"),
             "verified": c.get("verified"), "interests": c.get("interests") or [], "role": c.get("role"),
             "reasons": c.get("reasons") or [],
@@ -4105,18 +4203,36 @@ def _shape(c, lang):
             "agree": c.get("agree"), "note": c.get("note"), "reply": c.get("reply")}
 
 
-def run_match(intent, sig, uid, lang, negotiate=False, owner=None, auth=""):
+def matching_payload(intent, sig, uid, owner, command_id=None):
+    return copy.deepcopy({'intent':intent,
+        'profile':{'languages':{'comfortable':norm_langs(sig.get('languages'))},'vibe':sig.get('vibe'),
+                   'city':sig.get('area'),'name':owner or ''},
+        'ctx':{'uid':uid or 'me','self':owner or '', 'self_id':uid or ''},'commandId':command_id or 'buddy:'+uuid.uuid4().hex})
+
+
+def run_match(intent, sig, uid, lang, negotiate=False, owner=None, auth="", command_id=None, request_payload=None):
     """Hand the intent to the matching agent; optionally let each candidate's agent negotiate.
     Returns (legacy_match_block, cards). Never fabricates people."""
-    prof = {"languages": {"comfortable": norm_langs(sig.get("languages"))}, "vibe": sig.get("vibe"),
-            "city": sig.get("area"), "name": owner or ""}
+    payload=copy.deepcopy(request_payload) if request_payload is not None else matching_payload(intent,sig,uid,owner,command_id)
+    command_id=payload['commandId']
+    intent=payload['intent']
     try:
         res = _post(MATCH_URL, "/api/agent/match",
-                    {"intent": intent, "profile": prof, "ctx": {"uid": uid or "me", "self": owner or ""}},
+                    payload,
                     timeout=45, auth=auth)
-    except Exception as e:
-        return {"intent": intent, "top": None, "candidates": [], "error": str(e)[:160]}, []
+    except MatchingHTTPError as error:
+        res=error.body
+    except Exception:
+        res={'ok':False,'error':'matching_unavailable','httpStatus':503,'retryable':True}
     cands = res.get("candidates") or []
+    # Keep the canonical publication identity through Buddy -> results -> invitations.
+    intent = res.get('intent') or intent
+    contract={k:res[k] for k in ('id','searchId','launchState','retryable','blockerIds','resourceId','reason','httpStatus') if k in res}
+    contract['commandId']=command_id
+    if res.get('error') or res.get('launchState')=='pending':
+        return dict(contract,intent=intent,top=None,candidates=[],ok=False,
+                    error=res.get('error') or 'launch_pending',retryable=res.get('retryable',res.get('launchState')=='pending'),
+                    httpStatus=res.get('httpStatus',503 if res.get('launchState')=='pending' else 409)), []
     # A score of 0 is not a weak match, it is no evidence at all. When the pool has nobody for the
     # ask, matching still returns filler at score 0 and the cards presented them as real people —
     # measured on "find someone into speedcubing": four scored-0 strangers, shown without a hint
@@ -4134,7 +4250,7 @@ def run_match(intent, sig, uid, lang, negotiate=False, owner=None, auth=""):
                     c["note"] = ("Agent agreed — " if c.get("agree") else "Agent passed — ") + str(c["reason"])
         except Exception:
             pass
-    block = {"intent": intent, "top": (cands[0] if cands else None), "candidates": cands[:3]}
+    block = dict(contract,intent=intent,top=(cands[0] if cands else None),candidates=cands[:3],ok=True)
     if res.get("broadened"):
         block["broadened"] = True
     if res.get("fallback"):
@@ -6873,6 +6989,21 @@ def _rel_before(text, start, rx, window=40):
     return bool(rx.search(text[max(0, start - window):start]))
 
 
+# «НЕСОВЕРШЕННОЛЕТНИЙ» СЛОВОМ. Самопроверка 18.10.2026: «sono minorenne, 15 anni», «soy menor de edad» проходили
+# рубеж — он знал только число. Слово про себя («я несовершеннолетний», «i'm underage», «je suis mineure») — тоже
+# возраст до 18; возвращаем 17, точный возраст не важен. Только от первого лица: «помогаю несовершеннолетним» — нет.
+_MINOR_WORD = re.compile(
+    r"(?iu)(?:\bя\s+(?:ещ[её]\s+|пока\s+)?(?:несовершеннолетн\w*|школьни(?:к|ца)\b|малолетк\w*)|"
+    r"\bмне\s+(?:ещ[её]\s+|пока\s+)?нет\s+(?:18|восемнадцати)\b|"
+    r"\b(?:i'?m|i\s+am|im)\s+(?:still\s+)?(?:a\s+)?(?:minor|underage|under\s*18|(?:in\s+)?high\s*school(?:er|\s+student)?)\b|"
+    r"\b(?:i'?m|i\s+am|im)\s+not\s+18\s+yet\b|"
+    r"\b(?:soy|sou)\s+(?:todav[ií]a\s+|ainda\s+)?menor(?:\s+de\s+(?:edad|idade))?\b|\bno\s+tengo\s+(?:18|dieciocho)\b|"
+    r"\bich\s+bin\s+(?:noch\s+)?(?:minderj[äa]hrig|unter\s+18)\b|"
+    r"\bje\s+suis\s+(?:encore\s+)?mineur(?:e)?\b|\bj'?ai\s+moins\s+de\s+18\b|"
+    r"\bsono\s+(?:ancora\s+)?minorenne\b|\bho\s+meno\s+di\s+18\b|"
+    r"\b(?:tenho|tengo)\s+menos\s+de\s+18\b)")
+
+
 def stated_minor(messages):
     """Did the person say, in their own words, that they are under 18?
 
@@ -6895,6 +7026,14 @@ def stated_minor(messages):
                 return n
         for mt in _AGE_RU_WORDS.finditer(t):
             n = _AGE_WORDS.get(mt.group(1).lower())
+            # «Я ОДИН» — НЕ ВОЗРАСТ. Самопроверка 18.10.2026: «я обычно делаю это один», «я одна, скучно», «я два
+            # раза был» читались как «мне 1/2 года», и взрослый до конца разговора получал «Kleal с 18 лет». Число
+            # словом до девяти — возраст, только если дальше «лет/год/года» («мне девять лет», «мне три года»);
+            # от десяти и выше — как раньше («мне пятнадцать»).
+            if n and n < 10 and not re.match(r"\s*(?:лет|год|года)\b", t[mt.end():]):
+                continue
+            if _AGE_NOT_YEARS.match(t[mt.end():]):
+                continue                              # «я пятнадцать минут иду» — единица, как у цифр
             if n and 1 <= n < 18:
                 return n
         for rx in _AGE_EN:                            # «my daughter is 15» — про другого
@@ -6922,6 +7061,8 @@ def stated_minor(messages):
         n, _ = _stated_minor_eu(t)
         if n is not None:
             return n
+        if _MINOR_WORD.search(t):
+            return 17
         for mt in _AGE_ES_WORDS_RE.finditer(t):
             if _rel_before(t, mt.start(), _AGE_ES_REL):
                 continue
@@ -7940,21 +8081,62 @@ class H(BaseHTTPRequestHandler):
             if r == "/launch":
                 # The "Launch search" button: re-run matching on the confirmed intent and let each
                 # candidate's agent negotiate, so the result carries real accept/decline verdicts.
-                s = _session(uid) if uid else {}
-                intent = body.get("intent") if isinstance(body.get("intent"), dict) else (s.get("intent") or {})
-                if not intent:
-                    return send_json(self, 400, {"error": "no intent to launch"})
-                intent = apply_override(intent, body.get("override"))
-                lang = intent.get("lang") or "en"
-                sig = s.get("signals") or (body.get("signals") if isinstance(body.get("signals"), dict) else {})
-                owner = (person or {}).get("name") or ""
+                with _LOCK:
+                    if _STORE_UNAVAILABLE:
+                        raise BuddyStoreUnavailable('buddy_store_unavailable')
+                    s = _session(uid) if uid else {}
+                    for field in ('commandId','idem'):
+                        if field in body and (not isinstance(body[field],str) or not body[field].strip() or len(body[field])>160):
+                            raise BuddyLaunchRejected(400,{'ok':False,'error':'idempotency_key_required'})
+                    pending_commands=s.setdefault('launch_retries',{})
+                    completed_commands=s.setdefault('launch_receipts',{})
+                    legacy=s.get('launch_retry')
+                    if isinstance(legacy,dict) and legacy.get('commandId') and isinstance(legacy.get('payload'),dict):
+                        pending_commands.setdefault(legacy['commandId'],legacy)
+                    command_id=body.get('commandId',body.get('idem'))
+                    launch_input={k:copy.deepcopy(body[k]) for k in ('intent','override','signals') if k in body}
+                    retry=(pending_commands.get(command_id) or completed_commands.get(command_id)) if command_id else next((value for value in reversed(list(pending_commands.values()))
+                        if not launch_input or launch_input==value.get('input',{})),None)
+                    if retry and command_id and any(retry.get('input',{}).get(k)!=v for k,v in launch_input.items()):
+                        raise BuddyLaunchRejected(409,{'ok':False,'error':'idempotency_payload_conflict'})
+                    use_retry=bool(retry and isinstance(retry.get('payload'),dict)
+                        and (command_id == retry['commandId'] or not command_id and
+                             (not launch_input or launch_input == retry.get('input',{})))
+                        and all(retry.get('input',{}).get(k)==v for k,v in launch_input.items()))
+                    intent = (retry['payload']['intent'] if use_retry else
+                              body.get("intent") if isinstance(body.get("intent"), dict) else (s.get("intent") or {}))
+                    if not intent:
+                        raise BuddyLaunchRejected(400,{"error": "no intent to launch"})
+                    if not use_retry: intent = apply_override(intent, body.get("override"))
+                    lang = retry['lang'] if use_retry else intent.get("lang") or "en"
+                    sig = s.get("signals") or (body.get("signals") if isinstance(body.get("signals"), dict) else {})
+                    owner = (person or {}).get("name") or ""
+                    payload=copy.deepcopy(retry['payload']) if use_retry else matching_payload(intent,sig,uid,owner,command_id)
+                    pending=retry if use_retry else {'payload':payload,'commandId':payload['commandId'],
+                                                    'signals':copy.deepcopy(sig),'lang':lang,'input':launch_input}
+                    if uid:
+                        # Persist the full command before dispatch, so a lost reply or
+                        # changed profile cannot bind different bytes to its retry key.
+                        s['launch_retry']=pending
+                        pending_commands[pending['commandId']]=pending
+                        _save_store()
                 block, cards = run_match(intent, sig, uid, lang, negotiate=True, owner=owner,
-                                         auth=self.headers.get("Authorization") or "")
-                if uid:
-                    s["intent"] = intent
-                    _save_store()
-                return send_json(self, 200, {"intent": intent, "match": block, "matches": cards,
-                                             "fallback": block.get("fallback"), "lang": lang})
+                                         auth=self.headers.get("Authorization") or "",
+                                         request_payload=payload)
+                with _LOCK:
+                    if uid:
+                        if not block.get('retryable'):
+                            # Matching completion does not acknowledge delivery to this
+                            # client. Retain the exact request binding for explicit-key
+                            # replay; implicit legacy launches choose only pending work.
+                            completed_commands[pending['commandId']]=pending
+                            pending_commands.pop(pending['commandId'],None)
+                            if s.get('launch_retry') is pending: s['launch_retry']=None
+                        s["intent"] = block.get('intent') or intent
+                        _save_store()
+                response={k:v for k,v in block.items() if k not in ('top','candidates')}
+                response.update(intent=block.get('intent') or intent,match=block,matches=cards,fallback=block.get('fallback'),lang=lang)
+                return send_json(self,block.get('httpStatus',200),response)
 
             if r == "/profile-edit":                 # "Edit with Kleal": free text -> profile patch (frontend applies)
                 msg = body.get("message") or ""
@@ -8048,6 +8230,28 @@ class H(BaseHTTPRequestHandler):
                     emit("error", {"error": str(e)[:200]})
                 return
 
+            if r in ("/online-ask", "/online-opener"):   # «Спроси шар» на вкладке «Онлайн» — services/buddy/online_ask.py
+                import online_ask as OA
+                _q = str(body.get("question") or "")
+                _lang = str(body.get("lang") or "en")
+                _prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
+                _msgs = [{"role": "user", "content": _q}]
+                # Те же сторожа, что у разговора: вопрос шару — тоже реплика человека.
+                if harmful_use_of_a_person(_msgs):
+                    return send_json(self, 200, {"reply": HARM_REPLY.get(_lang, HARM_REPLY["en"]), "matches": [],
+                                                 "countries": {}, "refused": True})
+                _verdict, _dom = safety.check_conversation(_msgs)
+                if _verdict in ("block", "selfharm"):
+                    _copy = SELFHARM_REPLY if _verdict == "selfharm" else REFUSE_REPLY
+                    return send_json(self, 200, {"reply": _copy.get(_lang, _copy["en"]), "matches": [],
+                                                 "countries": {}, "refused": True})
+                if r == "/online-opener":
+                    return send_json(self, 200, OA.online_opener(_q, body.get("item") or {}, _prof,
+                                                                 str(body.get("previous") or ""), _lang,
+                                                                 llm_complete, MODEL_ID, _lenient_json))
+                return send_json(self, 200, OA.online_ask(_q, body.get("items") if isinstance(body.get("items"), list) else [],
+                                                          _prof, _lang, llm_complete, MODEL_ID, _lenient_json))
+
             if r == "/intent-suggest":               # три варианта из профиля для экрана создания интента
                 return send_json(self, 200, intent_suggest(
                     body.get("profile") if isinstance(body.get("profile"), dict) else {},
@@ -8098,14 +8302,18 @@ class H(BaseHTTPRequestHandler):
 
             if r == "/feedback":                     # teach the ranker from the user's accept/pass
                 return send_json(self, 200, _post(MATCH_URL, "/api/agent/feedback",
-                                                  {"name": body.get("name"), "decision": body.get("decision"),
-                                                   "uid": uid or "me"},
+                                                  {"id": body.get("id") or body.get("user_id") or "", "name": body.get("name"),
+                                                   "decision": body.get("decision"), "uid": uid or "me"},
                                                   auth=self.headers.get("Authorization") or ""))
 
             if r == "/onboard":
                 return send_json(self, 200, onboard(uid, body.get("profile") or {}))
 
             send_json(self, 404, {})
+        except BuddyLaunchRejected as rejection:
+            send_json(self, rejection.status, rejection.body)
+        except BuddyStoreUnavailable:
+            send_json(self, 503, {"ok": False, "error": "buddy_store_unavailable", "retryable": True})
         except Exception as e:
             lang = detect_lang(body.get("message") or "")
             send_json(self, 200, {"reply": _GLITCH.get(lang, _GLITCH["en"]), "signals": body.get("signals") or {},

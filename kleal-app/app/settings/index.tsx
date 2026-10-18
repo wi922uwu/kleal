@@ -13,7 +13,6 @@
  * У каждой оставшейся строки есть подпись: список из одних заголовков заставляет открывать экран,
  * чтобы понять, тот ли он.
  */
-import React from 'react';
 import { View, Text, StyleSheet, Pressable, Alert, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card, Segments } from '../../src/components/ProfileShell';

@@ -9,7 +9,7 @@
  * ПОРЯДОК ШАГА: Kleal спрашивает «What do you want to do?» (GR.04) и предлагает варианты по профилю,
  * человек выбирает или пишет своё — это уходит построителю, и он отвечает в ленте как есть.
  *
- * ЗАТЕЯ СОБРАНА — ПОД ШАПКОЙ ЗАКРЕПЛЁННАЯ КАРТОЧКА С КНОПКОЙ (PinnedSummary), а не автопереход.
+ * ЗАТЕЯ СОБРАНА — СВОДКА С КНОПКОЙ ЖИВЁТ В ПОЛЕ ВВОДА (ReadyComposer), а не автопереход.
  * Решение владельца 04.10.2026: «если Бади создаёт интент, то сверху появляется мини-окошко и кнопка
  * „Нажми“, как это было раньше». В волне 1 борда (03.10) здесь стояло «Great — … it is!» и мастер
  * уезжал сам через 0,9 с: человек не успевал увидеть, что собрано, и не мог уточнить. Разговор здесь
@@ -22,14 +22,15 @@
  * Построитель уточняет ТОЛЬКО тему. Про время, место, пол и размер компании он не спрашивает: это
  * ставится на следующих шагах (правило живёт в промпте сервера, INTENT_BUILD_PROMPT).
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform,
+  View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { hOk, hTick } from '../src/haptics';
-import { IconWand, IconChevronDown, IconChevronUp } from '../src/components/icons';
+import { IconWand, IconChevronDown, IconChevronUp, IconMic } from '../src/components/icons';
+import { InterestChipRow } from '../src/components/IntentChips';
 import { interestLabel } from '../src/interest-label';
 import Animated, { Easing as REasing, useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 import { useLang, T, replyLang, dateLocale, use12h } from '../src/i18n';
@@ -321,17 +322,6 @@ export default function Create() {
         */}
         <CreatingHeader pct={10} onBack={() => (router.canGoBack() ? router.back() : router.replace('/home'))} />
 
-        {/* Затея собрана — карточка закреплена под шапкой, а не уезжает с лентой (см. PinnedSummary). */}
-        {ready ? (
-          <PinnedSummary
-            cur={ready}
-            versions={versions}
-            open={sumOpen}
-            onToggle={() => setSumOpen((o) => !o)}
-            onCreate={next}
-          />
-        ) : null}
-
         <ScrollView ref={scroller} contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
           <StepAsk text={CREATE.ask()} caption={CREATE.sub()} />
 
@@ -365,8 +355,8 @@ export default function Create() {
           {/* Человек говорит пузырём, Kleal отвечает пузырём — как на кадре GR.04. */}
           {thread.map((m, i) => (
             m.who === 'me'
-              ? <MyLine key={i} text={m.text} at={m.at} />
-              : <AgentLine key={i} text={m.text} at={m.live ? undefined : m.at} markdown />
+              ? <MyLine key={i} text={m.text} at={m.at} fresh />
+              : <AgentLine key={i} text={m.text} at={m.live ? undefined : m.at} markdown fresh />
           ))}
 
           {/* Ожидание — не вертушка, а живая строка: см. src/components/Thinking.tsx. */}
@@ -400,13 +390,29 @@ export default function Create() {
         </ScrollView>
 
         <View style={[s.dock, { paddingBottom: dockBottom(insets.bottom, kb) }]}>
-          <CreateComposer
-            value={draft}
-            onChange={setDraft}
-            onSubmit={submit}
-            placeholder={T('Сообщение…', 'Message…', 'Mensaje…')}
-            editable={!typing}
-          />
+          {/* Затея собрана — сводка становится частью поля ввода (см. ReadyComposer). */}
+          {ready ? (
+            <ReadyComposer
+              cur={ready}
+              versions={versions}
+              open={sumOpen}
+              onToggle={() => setSumOpen((o) => !o)}
+              onCreate={next}
+              value={draft}
+              onChange={setDraft}
+              onSubmit={submit}
+              placeholder={T('Сообщение…', 'Message…', 'Mensaje…')}
+              editable={!typing}
+            />
+          ) : (
+            <CreateComposer
+              value={draft}
+              onChange={setDraft}
+              onSubmit={submit}
+              placeholder={T('Сообщение…', 'Message…', 'Mensaje…')}
+              editable={!typing}
+            />
+          )}
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -414,29 +420,38 @@ export default function Create() {
 }
 
 /**
- * Закреплённая сводка затеи — «мини-окошко» над разговором с кнопкой «Нажми» (CREATE.ready).
+ * Сводка затеи В ПОЛЕ ВВОДА — название, лента чипов интересов и кнопка «Дальше →» (CREATE.nextStep).
  *
- * Разговор здесь уточняющий: человек отвечает, сводка пересобирается, отвечает снова. Пока она
- * стояла в ленте, её уносило вверх ровно тогда, когда на неё и надо смотреть, а кнопку приходилось
- * искать прокруткой. Свёрнута — одна строка с названием; развёрнута — темы поиска и, главное, ЧТО
- * ИЗМЕНИЛОСЬ от последнего ответа: «не бег, а плавание» без обратной связи — уточнение вслепую.
+ * Решение владельца 17.10.2026 (вариант «Е»): как цитата при ответе в мессенджере — сводка
+ * пристёгнута к полю, а не висит отдельным окном под шапкой. Под шапкой она закрывала разговор и
+ * выглядела чужой среди пузырей; у поля она всегда под большим пальцем и не уезжает, пока человек
+ * уточняет (ради этого её и закрепили 04.10).
  *
- * Вид — стекло нового борда (как пузыри и строки мастера). Появление и пересборка — сдвигом и
- * масштабом, без прозрачности: полупрозрачный предок гасит системное стекло целиком.
+ * Чипы — ТЕ ЖЕ, что в выдаче людей (results.tsx): белая пилюля 36 со значком и подписью, лентой
+ * до края. По ним идёт поиск, и человек должен узнать их потом на карточках. Чип, добавленный
+ * последним ответом, — коралловый: так видно, что изменило уточнение. Остальное «что изменилось»
+ * (переименование, убранные темы) — под стрелкой.
+ *
+ * Пока поле пустое, справа «Дальше →»; начал писать — значок отправки, как у обычного поля.
  */
-function PinnedSummary({
-  cur, versions, open, onToggle, onCreate,
+function ReadyComposer({
+  cur, versions, open, onToggle, onCreate, value, onChange, onSubmit, placeholder, editable,
 }: {
   cur: Ready;
   versions: Ready[];
   open: boolean;
   onToggle: () => void;
   onCreate: () => void;
+  value: string;
+  onChange: (t: string) => void;
+  onSubmit: () => void;
+  placeholder: string;
+  editable: boolean;
 }) {
   /*
-    СВОДКА ОБЪЯВЛЯЕТ О СЕБЕ. Появилась впервые — съезжает сверху с системным «получилось» (итог
-    разговора). Пересобралась после ответа — короткий вдох и щелчок: полное появление на каждом
-    уточнении читалось бы как «сводка пропала и пришла новая».
+    СВОДКА ОБЪЯВЛЯЕТ О СЕБЕ. Появилась впервые — поднимается снизу (итог разговора). Пересобралась
+    после ответа — короткий вдох и щелчок: полное появление на каждом уточнении читалось бы как
+    «сводка пропала и пришла новая».
   */
   const pulse = useSharedValue(1);
   const seen = useRef(versions.length);
@@ -457,52 +472,60 @@ function PinnedSummary({
   const gone = prev ? prev.topics.filter((x) => !cur.topics.includes(x)) : [];
   const renamed = prev && prev.title !== cur.title ? prev.title : '';
   const changed = !!(added.length || gone.length || renamed);
+  const empty = !value.trim();
 
   return (
-    <Animated.View entering={riseIn(0, 8)} style={[s.pinWrap, pulseStyle]}>
-      <GlassSurface tone="light" radius={20} style={s.pin}>
+    <Animated.View entering={riseIn(0, 8)} style={[s.rcWrap, pulseStyle]}>
+      <GlassSurface tone="light" radius={24} style={s.rc}>
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded: open }}
-          style={s.pinHead}
+          accessibilityLabel={`${CREATE.summaryLabel()}: ${cur.title}`}
+          style={s.rcHead}
           onPress={onToggle}
           hitSlop={6}
         >
-          <View style={{ flex: 1 }}>
-            <Text style={s.pinLabel}>{CREATE.summaryLabel()}</Text>
-            <Text style={s.pinTitle} numberOfLines={open ? 2 : 1}>{cur.title}</Text>
-          </View>
-          {/* Точка у свёрнутой строки — единственный намёк, что после ответа что-то поменялось. */}
-          {!open && changed ? <View style={s.pinDot} /> : null}
-          {open ? <IconChevronUp size={20} c={color.fg} /> : <IconChevronDown size={20} c={color.fg} />}
+          <IconWand size={16} c={color.primary} />
+          <Text style={s.rcTitle} numberOfLines={open ? 2 : 1}>{cur.title}</Text>
+          {/* Точка у свёрнутой строки — намёк, что под стрелкой есть «что изменилось». */}
+          {!open && (gone.length || renamed) ? <View style={s.pinDot} /> : null}
+          {open ? <IconChevronDown size={18} c={color.fg} /> : <IconChevronUp size={18} c={color.fg} />}
         </Pressable>
 
+        <InterestChipRow topics={cur.topics} added={added} />
+
         {open ? (
-          <View style={s.pinBody}>
-            {cur.topics.length ? (
-              <View style={s.pinChips}>
-                {cur.topics.map((x) => (
-                  <View key={x} style={[s.pinChip, added.includes(x) && s.pinChipNew]}>
-                    <Text style={[s.pinChipText, added.includes(x) && { color: color.onPrimary }]}>{interestLabel(x)}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
-            {changed ? (
-              <View style={s.diff}>
-                <Text style={s.diffLabel}>{CREATE.changed()}</Text>
-                {renamed ? <Text style={s.diffLine}>{CREATE.wasCalled(renamed)}</Text> : null}
-                {added.length ? <Text style={s.diffLine}>{CREATE.added(added.map(interestLabel).join(', '))}</Text> : null}
-                {gone.length ? <Text style={s.diffLine}>{CREATE.dropped(gone.map(interestLabel).join(', '))}</Text> : null}
-              </View>
-            ) : (
-              <Text style={s.pinNote}>{CREATE.readyNote()}</Text>
-            )}
-
-            <GlassPill tone="brand" style={s.pinBtn} label={CREATE.ready()} onPress={onCreate} />
-          </View>
+          changed ? (
+            <View style={s.diff}>
+              <Text style={s.diffLabel}>{CREATE.changed()}</Text>
+              {renamed ? <Text style={s.diffLine}>{CREATE.wasCalled(renamed)}</Text> : null}
+              {added.length ? <Text style={s.diffLine}>{CREATE.added(added.map(interestLabel).join(', '))}</Text> : null}
+              {gone.length ? <Text style={s.diffLine}>{CREATE.dropped(gone.map(interestLabel).join(', '))}</Text> : null}
+            </View>
+          ) : (
+            <Text style={s.pinNote}>{CREATE.readyNote()}</Text>
+          )
         ) : null}
+
+        <View style={s.rcField}>
+          <TextInput
+            style={s.rcInput}
+            value={value}
+            onChangeText={onChange}
+            placeholder={placeholder}
+            placeholderTextColor="#5A616E"
+            onSubmitEditing={onSubmit}
+            returnKeyType="send"
+            editable={editable}
+          />
+          {empty ? (
+            <GlassPill tone="brand" small style={s.rcBtn} label={CREATE.nextStep()} onPress={onCreate} />
+          ) : (
+            <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send', 'Enviar')} onPress={onSubmit} hitSlop={8}>
+              <IconMic c="#5A616E" />
+            </Pressable>
+          )}
+        </View>
       </GlassSurface>
     </Animated.View>
   );
@@ -521,32 +544,28 @@ const s = StyleSheet.create({
   hints: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   dock: { paddingHorizontal: 16, paddingTop: 8, backgroundColor: color.ambientBase },
 
-  /** Сводка под шапкой: те же поля 16, что у ленты, стекло со скруглением 20, как у карточек мастера. */
-  pinWrap: {
-    marginHorizontal: 16, marginTop: 8, marginBottom: 4, borderRadius: 20,
+  /** Сводка в поле ввода: стекло со скруглением 24, внутри те же поля 16, что у поля. */
+  rcWrap: {
+    borderRadius: 24,
     ...Platform.select({
       ios: { shadowColor: '#0A0A14', shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
       default: {},
     }),
   },
-  pin: { paddingHorizontal: 16, paddingVertical: 12 },
-  pinHead: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40 },
-  pinLabel: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: '#5A616E' } as any,
-  pinTitle: { fontFamily: font.textSemibold, fontSize: 15, lineHeight: 22, color: color.fg } as any,
-  pinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.primary },
-  pinBody: { gap: 12, paddingTop: 10 },
-  pinChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  pinChip: {
-    height: 28, paddingHorizontal: 12, borderRadius: 14, justifyContent: 'center',
-    // На белом стекле белый чип пропадал (снимок стенда 04.10) — лёгкая тёмная плёнка.
-    backgroundColor: 'rgba(24,27,34,0.06)',
+  rc: { paddingTop: 10, paddingBottom: 4, paddingHorizontal: 16, gap: 8 },
+  rcHead: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 28 },
+  rcTitle: { flex: 1, fontFamily: font.textSemibold, fontSize: 15, lineHeight: 22, color: color.fg } as any,
+  /** Само поле — под чертой, высота 48, как у обычного поля мастера. */
+  rcField: {
+    height: 48, flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(24,27,34,0.12)',
   },
-  pinChipNew: { backgroundColor: color.primary },
-  pinChipText: { fontFamily: font.textMedium, fontSize: 12, lineHeight: 16, color: color.fg } as any,
+  rcInput: { flex: 1, color: color.fg, fontFamily: font.text, fontSize: 15, paddingVertical: 0 } as any,
+  rcBtn: { height: 36 },
+  pinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: color.primary },
   diff: { gap: 2 },
   diffLabel: { fontFamily: font.textSemibold, fontSize: 13, lineHeight: 20, color: color.primary } as any,
   diffLine: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: color.fg } as any,
   pinNote: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: '#5A616E' } as any,
-  pinBtn: { height: 48 },
 });
 

@@ -61,9 +61,67 @@ const defer = () => { let resolve, reject; const promise = new Promise((a, b) =>
   await test('uses authenticated API without client identity or duration', async () => {
     sent = []; const client = new MembershipClient();
     await client.load(); await client.start();
-    assert.deepEqual(sent, [{ url: '/api/onboarding/monetization/status' },
+    assert.deepEqual(sent, [{ url: '/api/onboarding/monetization/v2/status' },
       { url: '/api/onboarding/monetization/preview', body: { consent: true } }]);
     assert.equal(client.view.data.state, 'preview');
+  });
+  await test('Plus states and active/expired unacked notices render accurately in RU EN ES', () => {
+    const v2={ok:true,version:2,phase:'phase2a',state:'free',plan:'free',serverTime:1000,
+      previewStartedAt:null,expiresAt:null,previewEligible:true,previewNotice:false,enforcementEnabled:true,
+      purchaseAvailable:false,restoreAvailable:false,
+      permissions:{publishSearch:true,initiateChat:true,reply:true,groupChat:true,manualCoordination:true,basicFilters:true},
+      usage:{activeSearches:0,initiatedChats:0},limits:{activeSearches:1,initiatedChats:1},
+      reasons:{publishSearch:null,initiateChat:null},blockerIds:{searches:[],chats:[]},searches:[],keepSearchId:null};
+    const {PLUS,MONETIZATION,membershipPresentation:present}=monetization;
+    for(language=0;language<3;language++) {
+      assert.deepEqual(present(v2),{status:PLUS.free(),notice:MONETIZATION.previewInfo(),timing:null,plusTiming:null,sources:[]});
+      assert.equal(present({...v2,previewEligible:false}).notice,null);
+      const active={...v2,state:'preview',plan:'plus',previewEligible:false,previewStartedAt:1000,expiresAt:1210600,
+        limits:{activeSearches:null,initiatedChats:null}};
+      assert.deepEqual(present(active),{status:PLUS.preview(),notice:null,timing:PLUS.until(monetization.expiresLabel(1210600)),plusTiming:null,sources:[]});
+      const ended={...v2,previewEligible:false,previewStartedAt:1000,expiresAt:1210600,serverTime:1210600};
+      assert.deepEqual(present(ended),{status:PLUS.expired(),notice:null,timing:PLUS.endedOn(monetization.expiresLabel(1210600)),plusTiming:null,sources:[]});
+      assert.deepEqual(present({...ended,state:'plus',plan:'plus',limits:{activeSearches:null,initiatedChats:null}}),
+        {status:PLUS.active(),notice:null,timing:null,plusTiming:null,sources:[]});
+      const manual={...ended,state:'plus',plan:'plus',limits:{activeSearches:null,initiatedChats:null},
+        plusExpiresAt:1300000,entitlementSources:[{source:'manual',expiresAt:1300000}]};
+      assert.equal(monetization.isMembershipV2(manual),true);
+      assert.deepEqual(present(manual),{status:PLUS.active(),notice:null,timing:null,
+        plusTiming:PLUS.plusUntil(monetization.expiresLabel(1300000)),sources:[PLUS.manualSource()]});
+      assert.equal(monetization.isMembershipV2({...manual,plusExpiresAt:manual.expiresAt}),false);
+      assert.equal(monetization.isMembershipV2({...manual,entitlementSources:[{source:'manual',expiresAt:1000}]}),false);
+      assert.equal(monetization.isMembershipV2({...manual,entitlementSources:[{source:'unknown',expiresAt:1300000}]}),false);
+      const mixed={...active,plusExpiresAt:1300000,entitlementSources:[{source:'preview',expiresAt:1210600},{source:'manual',expiresAt:1300000}]};
+      assert.equal(monetization.isMembershipV2(mixed),true);
+      assert.equal(present(mixed).timing,PLUS.until(monetization.expiresLabel(1210600)));
+      assert.equal(present(mixed).plusTiming,PLUS.plusUntil(monetization.expiresLabel(1300000)));
+      const startNotice=monetization.previewNoticePresentation({...active,previewNotice:true});
+      assert.equal(startNotice.title,MONETIZATION.previewStarted());
+      assert.equal(startNotice.message,PLUS.until(monetization.expiresLabel(active.expiresAt))+'\n\n'+PLUS.preserved());
+      const expiredNotice=monetization.previewNoticePresentation({...ended,previewNotice:true});
+      assert.equal(expiredNotice.title,PLUS.expired());
+      assert.equal(expiredNotice.message,PLUS.endedOn(monetization.expiresLabel(ended.expiresAt))+'\n\n'+PLUS.preserved());
+      assert.notEqual(expiredNotice.title,MONETIZATION.previewStarted());
+      assert.equal(monetization.previewNoticePresentation({...active,previewNotice:false}),null);
+      assert.equal(monetization.previewNoticePresentation({...ended,previewNotice:false}),null);
+      assert.equal(monetization.previewNoticePresentation(v2),null);
+      assert.equal(monetization.searchStateLabel('active'),MONETIZATION.searchActive());
+      assert.equal(monetization.searchStateLabel('paused'),MONETIZATION.searchPaused());
+      assert.equal(monetization.searchStateLabel('draft'),MONETIZATION.searchDraft());
+      assert.ok(MONETIZATION.resumeSearch());
+    }
+    language=0;
+    const screen=fs.readFileSync(path.join(APP,'app/plus.tsx'),'utf8');
+    assert.match(screen,/membershipPresentation\(data\)/);
+    assert.match(screen,/searchStateLabel\(search.state\)/);
+    assert.match(screen,/operation:'resume',searchId/);
+    assert.match(screen,/quotaPresentation:'inline'/);
+    assert.match(screen,/MONETIZATION.resumeSearch\(\)/);
+    const boundary=fs.readFileSync(path.join(SRC,'components/MonetizationBoundary.tsx'),'utf8');
+    assert.match(boundary,/previewNoticePresentation\(data\)/);
+    assert.match(boundary,/show\(notice.title,notice.message/);
+    assert.match(boundary,/if \(!active \|\| session !== getSession\(\)\) return;/);
+    assert.match(boundary,/v2\/notice.*commandId:`notice_\$\{data.previewStartedAt\}`/);
   });
   await test('does not grant optimistically and deduplicates double taps', async () => {
     const pending = defer(); let calls = 0;
@@ -117,7 +175,8 @@ const defer = () => { let resolve, reject; const promise = new Promise((a, b) =>
     assert.match(fs.readFileSync(path.join(SRC, 'settings.ts'), 'utf8'), /to: '\/plus'/);
     assert.match(fs.readFileSync(path.join(APP, 'app/_layout.tsx'), 'utf8'), /\['plus'\]/);
     assert.match(screen, /<ProfileShell/);
-    assert.match(screen, /<Button disabled label=\{PLUS.purchase\(\)\}/);
+    assert.match(screen, /MONETIZATION\.freeRules\(\)/);
+    assert.match(screen, /resumeReturnAction/);
     assert.doesNotMatch(screen, /router.push|AsyncStorage|\/purchase|\/restore/);
   });
   console.log(`\n${count} monetization tests PASS`);

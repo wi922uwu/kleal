@@ -20,8 +20,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
-  ActivityIndicator, Modal, KeyboardAvoidingView, Platform, Linking,
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter, useLocalSearchParams, useIsFocused } from 'expo-router';
@@ -29,7 +28,7 @@ import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { group as gapi, mediaUrl, newIdem, isMe, pidOf, type GroupInfo } from '../src/api';
-import { GPLAN, venue, callVenue, callService, hoursLeft, memberState, elapsed, type GPlan, type GVote, leftAgo} from '../src/gplan';
+import { GPLAN, venue, callVenue, callService, hoursLeft, elapsed, type GPlan, type GVote, leftAgo } from '../src/gplan';
 import { ROOM } from '../src/groups';
 import { WhenPicker, whenLabel, whenStartsAt, whenFromStartsAt, type WhenValue } from '../src/components/WhenPicker';
 import { dateChips, deviceTz, withScheme } from '../src/intent';
@@ -46,7 +45,7 @@ import { AddressField } from '../src/components/AddressField';
 import { color, font, heading, labelFamily, space, type } from '../src/theme';
 import { Cover } from '../src/components/Cover';
 import { GlassPill } from '../src/components/Glass';
-import { GlassBack, GlassIconButton, GlassSurface, riseIn } from '../src/components/LiquidGlass';
+import { GlassBack, GlassIconButton, GlassSurface } from '../src/components/LiquidGlass';
 import { BottomNav } from '../src/components/BottomNav';
 import { useNavCollapse } from '../src/navScroll';
 
@@ -57,7 +56,6 @@ export default function GroupPlan() {
   /** Navigation V2: панель сворачивается при прокрутке вниз (NAV.S2). */
   const navCollapse = useNavCollapse();
   const lang = useLang();
-  const reduced = useReducedMotion();
   const router = useRouter();
   const st = useOnb();
   const insets = useSafeAreaInsets();
@@ -205,7 +203,9 @@ export default function GroupPlan() {
     const dk = String((g as any).date_key || '');
     const mins = Number((g as any).minutes);
     if (dk && Number.isFinite(mins)) setWhen({ date: dk, minutes: mins, tz: deviceTz() });
-    setPlace(String(g.area || ''));
+    // Точный адрес (у организатора — поле address) главнее района: быстрая отправка плана подменяла
+    // его районом, и место встречи на плане становилось «El Born» вместо улицы (сверка п. 17).
+    setPlace(String((g as any).address || (g as any).intent?.address || g.area || ''));
     setMode('create');
   }, [params.edit, g, plan]);
 
@@ -277,7 +277,6 @@ export default function GroupPlan() {
                                  link: link.trim() || plan?.link || '' }),
         () => { setMode('view'); setChangeSheet(''); setPlace(''); setLink(''); });
 
-  const fix = () => act(() => gapi.planFix(String(plan?.id), me, newIdem('gpf')));
   // Версии для листа: журнал сервера, новые сверху; нет журнала (старый план) — одна текущая.
   const versions = (plan?.rounds_log && plan.rounds_log.length ? [...plan.rounds_log]
     : [{ round: Number(plan?.round || 1), by: String(plan?.proposed_by || g?.owner || ''), when: plan?.when, place: plan?.place }])
@@ -1604,11 +1603,8 @@ function P({ label, onPress }: { label: string; onPress: () => void }) {
 function S({ label, onPress }: { label: string; onPress: () => void }) {
   return <GlassPill label={label} onPress={onPress} style={s.pill} />;
 }
-function D({ label, onPress }: { label: string; onPress: () => void }) {
-  return <GlassPill tone="dark" label={label} onPress={onPress} style={s.pill} />;
-}
 
-/** Пара кнопок внизу. Ровно та, что на кадре: на борде их всегда две, и вторая всегда «мягкая». */
+/** Кнопки внизу для текущего состояния; дополнительные действия остаются «мягкими». */
 function Actions(a: Parameters<typeof ActionsFor>[0]) {
   return <DockBusy.Provider value={a.busy}>{ActionsFor(a)}</DockBusy.Provider>;
 }
@@ -1666,11 +1662,13 @@ function ActionsFor(a: {
         не подтвердивший — «Confirm» и изменить (GR.26d/28). Организатор меняет свой план
         («Change the plan»), участник — предлагает («Suggest a change»); своё уже внесённое
         организатор правит «Edit the change». На последнем раунде вместо изменения — «Fix the plan»
-        (GR.29), а если закреплять нельзя — ничего: сервер ответил бы ROUNDS_USED_UP.
+        и «Give it more time» (GR.29). Последняя оставляет экран открытым без продления срока.
+        Если закреплять нельзя — дополнительных действий нет: сервер ответил бы ROUNDS_USED_UP.
       */
       const mineChange = !!a.proposer && a.proposer.trim().toLowerCase() === a.owner.trim().toLowerCase();
       const change = p?.rounds_used_up
-        ? (a.isOwner && p?.can_fix ? <S label={GPLAN.fix()} onPress={a.onFix} /> : null)
+        ? (a.isOwner && p?.can_fix ? <><S label={GPLAN.fix()} onPress={a.onFix} />
+                                     <S label={GPLAN.moreTime()} onPress={a.onMoreTime} /></> : null)
         : <S label={a.isOwner ? (mineChange ? GPLAN.editTheChange() : GPLAN.changeThePlan()) : GPLAN.suggest()}
              onPress={a.onSuggestOpen} />;
       return mineDone

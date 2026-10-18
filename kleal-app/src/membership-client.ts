@@ -11,7 +11,7 @@ export class MembershipClient {
   private generation = 0;
   private listeners = new Set<(v: MembershipView) => void>();
   constructor(private session = getSession, private transport: Transport = {
-    get: () => api.get(PREFIX + '/status'),
+    get: () => api.get(PREFIX + '/v2/status'),
     start: () => api.post(PREFIX + '/preview', { consent: true }),
   }) {}
   subscribe(fn: (v: MembershipView) => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
@@ -26,18 +26,21 @@ export class MembershipClient {
   async start() { return this.run(true); }
   private async run(start: boolean) {
     const session = this.session();
-    if (this.view.busy && this.view.session === session) return;
+    if (this.view.busy && this.view.session === session) return false;
     const generation = ++this.generation;
     this.publish({ session, data: null, busy: !!session, error: session ? null : 'sign_in' });
-    if (!session) return;
+    if (!session) return false;
     try {
       const value = await (start ? this.transport.start() : this.transport.get());
       if (!isMembership(value)) throw new Error('invalid membership response');
-      if (generation === this.generation && session === this.session())
+      if (generation === this.generation && session === this.session()) {
         this.publish({ session, data: value, busy: false, error: null });
+        return true;
+      }
     } catch (error) {
       if (generation === this.generation && session === this.session())
         this.publish({ session, data: null, busy: false, error: (error as { status?: number })?.status === 401 ? 'sign_in' : 'network' });
     }
+    return false;
   }
 }

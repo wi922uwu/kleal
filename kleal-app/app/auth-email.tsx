@@ -12,7 +12,7 @@
  * поле, фирменная кнопка внизу. Экран стоит третьим подряд после welcome и входа, и обрывать на
  * нём фирменный слой значило бы уронить человека из продукта в системную форму.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeIn, useReducedMotion } from 'react-native-reanimated';

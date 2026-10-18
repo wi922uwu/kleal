@@ -26,7 +26,8 @@ import { VoiceBubble } from '../voice';
 import { VideoBubble } from '../videonote';
 import { SwipeToReply } from './SwipeToReply';
 import { GlassSurface } from './LiquidGlass';
-import { IconClock, IconPerson } from './icons';
+import { BubbleIn, EventIn } from './ChatMotion';
+import { IconBan, IconCalendar, IconCalendarCheck, IconClock, IconPerson, IconPin } from './icons';
 import { color, font, radius as rad, space } from '../theme';
 
 /** Кнопка под событием: подпись, что делать и насколько она главная. */
@@ -78,6 +79,12 @@ export function MessageFeed({
    * из полного списка: скрытая строка оставалась «предыдущей», и «Сегодня» исчезало вместе с ней.
    */
   const shown = msgs.filter((m) => !m.sys || !!sysText(m));
+  /*
+    НОВОЕ — ТО, ЧТО ПРИШЛО ИЛИ УШЛО ПРИ ОТКРЫТОМ ЭКРАНЕ (см. ChatMotion): время реплики не раньше
+    открытия ленты. История, открытая с экраном, стоит на месте. Секунда запаса — на часы сервера.
+  */
+  const openedAt = React.useRef(Date.now() / 1000 - 1).current;
+  const isFresh = (m: Msg) => (m.t || 0) >= openedAt;
 
   return (
     <>
@@ -97,8 +104,14 @@ export function MessageFeed({
           return (
             <React.Fragment key={m.id || m.cid || i}>
               {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
-              {/* Строка события по борду (GR.18): имена начертанием 500, остальное — 400, дальше
-                  часики 10 и время. Одной строкой по центру, переносится целиком. */}
+              {/* События ПЛАНА — карточкой (см. planEventLook): серой строкой 11 их не замечали. */}
+              {planEventLook(m) ? (
+                <EventIn fresh={isFresh(m)}>
+                  <PlanEvent look={planEventLook(m)!} text={sysSpans(sysText(m), sysNames)} at={m.t ? msgTime(m.t, ru) : ''} />
+                </EventIn>
+              ) : (
+              /* Строка события по борду (GR.18): имена начертанием 500, остальное — 400, дальше
+                  часики 10 и время. Одной строкой по центру, переносится целиком. */
               <View style={s.sysRow}>
                 <Text style={s.sys}>{sysSpans(sysText(m), sysNames)}</Text>
                 {m.t ? (
@@ -108,6 +121,7 @@ export function MessageFeed({
                   </View>
                 ) : null}
               </View>
+              )}
               {acts && acts.length ? (
                 <View style={s.sysActs}>
                   {acts.map((a) => (
@@ -155,10 +169,12 @@ export function MessageFeed({
         const read = peerRead !== undefined && peerRead >= (m.t || 0);
 
         return (
-          <React.Fragment key={m.id || m.cid || i}>
+          // Ключ — сначала `cid`: он один у показанной сразу реплики и у серверной. По `id` реплика
+          // меняла ключ в момент, когда сервер её принял, перемонтировалась и взлетала второй раз.
+          <React.Fragment key={m.cid || m.id || i}>
             {newDay ? <Text style={s.day}>{msgDayLabel(m.t!, ru)}</Text> : null}
             <SwipeToReply enabled={!!m.id && !m.deleted} onReply={() => onReply(m)}>
-              <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', marginTop: head ? 8 : 2 }}>
+              <BubbleIn mine={mine} fresh={isFresh(m)} style={{ alignItems: mine ? 'flex-end' : 'flex-start', marginTop: head ? 8 : 2 }}>
                 {/* Имя автора — только у чужих и только в начале серии: повторять его над каждой
                     репликой одного человека значит кричать его четыре раза подряд. */}
                 {showAuthor && !mine && head ? (
@@ -272,7 +288,7 @@ export function MessageFeed({
                     ) : null}
                   </Text>
                 ) : null}
-              </View>
+              </BubbleIn>
             </SwipeToReply>
           </React.Fragment>
         );
@@ -295,6 +311,46 @@ const SYS_INK = '#5A616E';
  * «ты» — серым), остальное — обычным. Ищется целое слово, самое длинное имя первым: иначе «Jan»
  * съело бы начало «Jane».
  */
+/**
+ * СОБЫТИЯ ПЛАНА — КАРТОЧКОЙ, А НЕ СЕРОЙ СТРОКОЙ.
+ *
+ * «Ты предложил(а) встречу», «План подтверждён», «Ты назвал(а) место» шли той же строкой 11 серым,
+ * что и «You joined»: тестировщики 17.10.2026 — «в чате ПЛОХО видно оповещения, что что-то
+ * создалось или изменилось». А это главные события переписки: после них меняется встреча.
+ * Поэтому у них — светлая карточка по центру, значок в круге и текст 13 тёмным; подтверждение —
+ * зелёным, отмена и молчание — серым. Мелкие события (вошёл, вышел из комнаты) остаются строкой.
+ */
+type PlanLook = { tone: 'brand' | 'ok' | 'off'; icon: 'cal' | 'check' | 'pin' | 'off' };
+const PLAN_OK = new Set(['plan_confirmed', 'plan_fixed', 'plan_change_ok']);
+const PLAN_OFF = new Set(['plan_cancelled', 'plan_expired', 'plan_left', 'plan_change_no', 'plan_change_expired',
+  'plan_cant_make_it', 'plan_ask_declined', 'plan_change_pulled', 'plan_ask_pulled']);
+function planEventLook(m: Msg): PlanLook | null {
+  const code = String((m.sys as any)?.code || '');
+  if (!(code.startsWith('plan_') || code === 'intent_new') || code === 'plan_status' || code === 'plan_side') return null;
+  if (PLAN_OK.has(code)) return { tone: 'ok', icon: 'check' };
+  if (PLAN_OFF.has(code)) return { tone: 'off', icon: 'off' };
+  if (code === 'plan_place') return { tone: 'brand', icon: 'pin' };
+  return { tone: 'brand', icon: 'cal' };
+}
+
+function PlanEvent({ look, text, at }: { look: PlanLook; text: React.ReactNode; at: string }) {
+  const ink = look.tone === 'ok' ? color.successText : look.tone === 'off' ? SYS_INK : color.primary;
+  const Icon = look.icon === 'check' ? IconCalendarCheck : look.icon === 'pin' ? IconPin : look.icon === 'off' ? IconBan : IconCalendar;
+  return (
+    <View style={s.evWrap}>
+      <GlassSurface tone="light" radius={16} style={s.ev}>
+        <View style={[s.evIcon, look.tone === 'ok' ? s.evIconOk : look.tone === 'off' ? s.evIconOff : s.evIconBrand]}>
+          <Icon size={16} c={ink} />
+        </View>
+        <View style={{ flexShrink: 1, gap: 2 }}>
+          <Text style={s.evText}>{text}</Text>
+          {at ? <Text style={s.evTime}>{at}</Text> : null}
+        </View>
+      </GlassSurface>
+    </View>
+  );
+}
+
 function sysSpans(text: string, names?: SysName[]): React.ReactNode {
   const list = (names || []).filter((n) => n.name.trim()).sort((a, b) => b.name.length - a.name.length);
   if (!list.length || !text) return text;
@@ -332,6 +388,16 @@ const s = StyleSheet.create({
   sysRow: { alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center',
             columnGap: 3, paddingVertical: 3, paddingHorizontal: 11, marginVertical: 2, maxWidth: '100%' },
   sysTime: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  /** Карточка события плана: по центру, ровно 88% ленты — подряд идущие события стоят одной
+      колонкой (по ширине текста они плясали: короткое «назвал место» уже длинного «предложил»). */
+  evWrap: { alignSelf: 'center', width: '88%', marginVertical: 6 },
+  ev: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, paddingLeft: 10, paddingRight: 14 },
+  evIcon: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  evIconBrand: { backgroundColor: 'rgba(255,56,92,0.12)' },
+  evIconOk: { backgroundColor: color.successBg },
+  evIconOff: { backgroundColor: 'rgba(24,27,34,0.06)' },
+  evText: { fontFamily: font.text, fontSize: 13, lineHeight: 18, color: color.fg } as any,
+  evTime: { fontFamily: font.text, fontSize: 11, lineHeight: 14, color: SYS_INK } as any,
   sysName: { fontFamily: font.textMedium },
   /* Кнопка события. Главная — фирменным цветом: человек должен видеть, что от него ждут ответа,
      не вчитываясь в серую строку над ней. Второстепенная — обведённая, чтобы «оставить как было»

@@ -12,7 +12,7 @@
  *   карточка затеи обзора — «Plan Card · forming»: обложка 128 со скруглением 20 сверху, под ней
  *     белое 45% с полями 16 и строками дня, времени и места (значки 18 кораллом, Geist 13/22).
  */
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Image } from 'react-native';
 import { color, font } from '../theme';
 import { useLang } from '../i18n';

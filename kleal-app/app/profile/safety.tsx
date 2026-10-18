@@ -15,63 +15,49 @@
  * в обе стороны) и два экрана настроек над политикой приёма, которую подбор читает по-настоящему.
  * Экран стал коротким — потому что правды оказалось ровно на столько.
  */
-import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { useRouter } from 'expo-router';
-import { ProfileShell, Card } from '../../src/components/ProfileShell';
+import { useCallback, useState } from 'react';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { ProfileShell, SectionHead, LinkRow } from '../../src/components/ProfileShell';
+import { IconUserLock, IconUserX, IconClock } from '../../src/components/icons';
 import { useLang, T } from '../../src/i18n';
+import { useOnb } from '../../src/state';
+import { agent } from '../../src/api';
 import { SECTIONS } from '../../src/profile';
-import { BLOCKED, VISIBILITY, AVAILABILITY } from '../../src/settings';
-import { color, radius as rad, space, type } from '../../src/theme';
+import { BLOCKED, VISIBILITY, AVAILABILITY, SETTING_ROWS } from '../../src/settings';
 
+/*
+  БОРД «Profile — new layout», B.08. Решение владельца 17.10.2026: только то, что работает. Правила
+  встреч («Public places first», «No late one-on-ones»…) и «What Kleal uses for matching» сервер пока не
+  исполняет — они появятся здесь, когда агент логики их сделает (список отправлен 17.10).
+*/
 export default function Safety() {
   useLang();
   const router = useRouter();
+  const st = useOnb();
+  const me = String(st.profile.name || '');
+  const [blocked, setBlocked] = useState<number | null>(null);
 
-  const rows: { title: string; sub: string; to: string }[] = [
-    { title: BLOCKED.title(), sub: BLOCKED.lead(), to: '/settings/blocked' },
-    { title: VISIBILITY.title(), sub: VISIBILITY.statusLead(), to: '/settings/visibility' },
-    { title: AVAILABILITY.title(), sub: AVAILABILITY.domainsLead(), to: '/settings/availability' },
-  ];
+  // Счётчик — с сервера и на каждый приход: человек возвращается сюда, сняв блокировку.
+  useFocusEffect(useCallback(() => {
+    if (!me) return;
+    agent.safety(me).then((r: any) => setBlocked(Array.isArray(r?.blocked) ? r.blocked.length : 0)).catch(() => {});
+  }, [me]));
 
   return (
     <ProfileShell title={SECTIONS[2].title()} onBack={() => router.back()}>
-      <Card>
-        <Text style={s.leadTitle}>{T('Всё под твоим контролем', 'You’re in control', 'Tú mandas')}</Text>
-        <Text style={s.leadBody}>
-          {T(
-            'Kleal показывает район города, а не точное место. Уйти из поиска можно одним тапом, и это подействует сразу: на паузе тебя не находит никто.',
-            'Kleal shares your city area, never your exact spot. You can leave search with one tap, and it takes effect at once: while paused, nobody can find you.',
-          )}
-        </Text>
-      </Card>
-
-      {rows.map((r) => (
-        <Pressable
-          key={r.to}
-          accessibilityRole="button"
-          onPress={() => router.navigate(r.to as any)}
-          style={({ pressed }) => [s.row, pressed && { opacity: 0.9 }]}
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={s.rowTitle}>{r.title}</Text>
-            <Text style={s.rowSub}>{r.sub}</Text>
-          </View>
-          <Text style={s.chev}>›</Text>
-        </Pressable>
-      ))}
+      <SectionHead
+        title={T('Всё под твоим контролем', 'You’re in control', 'Tú mandas')}
+        note={T('Kleal показывает район города, а не точное место. Уйти из поиска можно одним касанием — на паузе тебя не находит никто.',
+          'Kleal shares your city area, never your exact spot. Leave search with one tap — while paused, nobody can find you.',
+          'Kleal muestra tu zona, nunca tu sitio exacto. Sal de la búsqueda con un toque: en pausa nadie te encuentra.')}
+      />
+      <LinkRow Icon={IconUserLock} title={VISIBILITY.title()} sub={SETTING_ROWS.find((r) => r.id === 'visibility')!.sub()}
+               onPress={() => router.navigate('/settings/visibility')} />
+      <LinkRow Icon={IconClock} title={AVAILABILITY.title()} sub={SETTING_ROWS.find((r) => r.id === 'availability')!.sub()}
+               onPress={() => router.navigate('/settings/availability')} />
+      <LinkRow Icon={IconUserX} title={BLOCKED.title()}
+               sub={blocked == null ? BLOCKED.lead() : blocked ? BLOCKED.row(blocked) : BLOCKED.none()}
+               onPress={() => router.navigate('/settings/blocked')} />
     </ProfileShell>
   );
 }
-
-const s = StyleSheet.create({
-  leadTitle: { ...type.title, color: color.fg } as any,
-  leadBody: { ...type.body, color: color.muted, marginTop: space.sm } as any,
-  row: {
-    flexDirection: 'row', alignItems: 'center', gap: space.md,
-    backgroundColor: color.card, borderRadius: rad.xl, padding: space.lg,
-  },
-  rowTitle: { ...type.body, color: color.fg } as any,
-  rowSub: { ...type.caption, color: color.muted, marginTop: 2 } as any,
-  chev: { fontSize: 22, color: color.neutral400 },
-});

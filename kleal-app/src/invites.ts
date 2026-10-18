@@ -20,7 +20,7 @@
  *      оно станет тарифом, его место на сервере.
  */
 import { useEffect, useState } from 'react';
-import { agent, newIdem, Peer, peerId, peerName } from './api';
+import { agent, newIdem, getSession, Peer, peerId, peerName } from './api';
 import type { Req, ReqStatus } from './chat';
 import { CAP } from './candidates';
 
@@ -85,7 +85,7 @@ function merge(list: Req[]) {
       id: String(r.id || ''), to, toId,
       status: (r.status || 'pending') as ReqStatus,
       updated: Number(r.updated || 0),
-      iid: String((r as any).iid || ''),
+      iid: String((r.intent as any)?.targetIntentId || (r as any).iid || ''),
       title: String(((r as any).intent || {}).title || ''),
       answeredAt: Number((r as any).answered_at || 0) || undefined,
       pickBy: Number((r as any).pick_by || 0) || undefined,
@@ -184,7 +184,9 @@ export function openInvites(iid?: string): Invite[] {
 export type SendResult = { ok: boolean; capped?: boolean; error?: string };
 
 /** Отправка приглашения. Единственная на всё приложение — и правила OF.09/MSG.22 тоже. */
-export async function sendInvite(who: string, to: Peer, intent: any): Promise<SendResult> {
+/** `note` — первое сообщение к приглашению (сервер хранит его в заявке, до 400 символов; режем до 200). */
+export async function sendInvite(who: string, to: Peer, intent: any, note = ''): Promise<SendResult> {
+  const session = getSession();
   const from = String(who || '').trim();
   const name = peerName(to).trim();
   const toId = peerId(to);
@@ -196,13 +198,33 @@ export async function sendInvite(who: string, to: Peer, intent: any): Promise<Se
   // Правило 1 из шапки исполняет СЕРВЕР: он вырезает address на выходе получателю (inbox), а в
   // заявке место остаётся — оттуда его берёт форма плана автора, чтобы не спрашивать дважды.
   // Пока вырезал клиент, вместе с приватностью пропадал и собственный адрес отправителя.
-  const r: any = await agent.propose(from, { name, id: toId }, intent || {});
+  const r: any = await agent.propose(from, { name, id: toId }, intent || {}, String(note || '').trim().slice(0, 200));
+  if (getSession() !== session) return { ok: false, error: 'account_changed' };
   if (!r?.ok) return { ok: false, error: String(r?.error || 'propose failed') };
   self = from;
   rows[keyOf({ name, id: toId })] = { id: String(r.id || ''), to: name, toId, status: 'pending', updated: 0,
-                       iid: String((intent || {}).id || ''), title: String((intent || {}).title || '') };
+                       iid: String((intent || {}).targetIntentId || (intent || {}).id || ''), title: String((intent || {}).title || '') };
   emit();
   return { ok: true };
+}
+
+/** Отклик не публикует свой поиск. Публичный snapshot автора выбирает сервер по этим ссылкам. */
+export async function sendIntentReply(who: string, to: Peer,
+  target: { id: string; searchId?: string; title?: string; intent?: Record<string, unknown> }): Promise<SendResult> {
+  if (!peerId(to) || !target.id) return { ok: false, error: 'search_reference_required' };
+  try {
+    // Off/shadow retain the legacy public card. Enforcement replaces this entire
+    // snapshot from canonical storage, so it never trusts caller-supplied content.
+    const publicIntent: Record<string, unknown> = {};
+    for (const key of ['topics', 'when', 'dateKey', 'minutes', 'mode', 'format', 'kind', 'groupSize',
+      'address', 'venue_name', 'venueName', 'minTotal', 'maxTotal']) {
+      if (target.intent?.[key] !== undefined) publicIntent[key] = target.intent[key];
+    }
+    return await sendInvite(who, to, { ...publicIntent, targetIntentId: target.id,
+      ...(target.searchId ? { targetSearchId: target.searchId } : {}), title: target.title || '' });
+  } catch (error: any) {
+    return { ok: false, error: String(error?.body?.error || error?.message || 'network') };
+  }
 }
 
 /**

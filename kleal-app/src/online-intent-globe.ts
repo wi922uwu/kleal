@@ -10,6 +10,8 @@ export type OnlineIntentItem = Readonly<{
   id: string;
   title: string;
   who: string;
+  /** Автор затеи — для отклика прямо с карточки «Спроси шар». */
+  whoId?: string;
   topics: string[];
   when: string;
   mode: OnlineIntentMode;
@@ -243,6 +245,7 @@ function itemOf(row: Row, intent: Row, mode: OnlineIntentMode): OnlineIntentItem
     id,
     title,
     who: firstText(row.who, row.name, owner.displayName, owner.name, intent.who, intent.name),
+    ...(text(owner.id) ? { whoId: text(owner.id) } : {}),
     topics,
     when: firstText(row.when, row.time, intent.when, intent.time),
     mode,

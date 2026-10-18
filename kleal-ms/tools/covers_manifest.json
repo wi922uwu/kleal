@@ -1,0 +1,315 @@
+{
+ "источник": "Pexels",
+ "лицензия": "https://www.pexels.com/license/ — можно использовать в продукте, указание авторства не требуется",
+ "размер": "1200x675 JPEG q80",
+ "где лежат": "/var/www/kleal/covers/<подгруппа>.jpg → https://aiopenware.com/covers/",
+ "как обновить": "tools/fetch_covers.py с ключом Pexels; ключ нигде не хранится",
+ "обложки": {
+  "academic": {
+   "автор": "Yan Krukau",
+   "ссылка": "https://www.pexels.com/photo/teacher-and-students-inside-a-classroom-8197558/",
+   "запрос": "students in lecture hall",
+   "описание": "Professor teaching a diverse group of students in a university lecture hall."
+  },
+  "adventure": {
+   "автор": "Saksham Vikram",
+   "ссылка": "https://www.pexels.com/photo/paraglider-soaring-above-swiss-alps-30398458/",
+   "запрос": "paragliding over mountains",
+   "описание": "Paraglider sailing through clouds above the Swiss Alps near Lucerne, capturing adventure and tranquility."
+  },
+  "anime": {
+   "автор": "Joshua Roberts",
+   "ссылка": "https://www.pexels.com/photo/men-cosplaying-gaara-and-lee-12695402/",
+   "запрос": "cosplay convention anime fans",
+   "описание": "Cosplayers dressed as anime characters at a bustling convention center."
+  },
+  "career": {
+   "автор": "Werner Pfennig",
+   "ссылка": "https://www.pexels.com/photo/an-elderly-man-and-woman-talking-to-a-man-6950093/",
+   "запрос": "business people talking at conference",
+   "описание": "Group of business professionals in a formal meeting setting discussing strategy indoors."
+  },
+  "casual": {
+   "автор": "Katya Wolf",
+   "ссылка": "https://www.pexels.com/photo/woman-in-beige-tube-top-standing-beside-chain-link-fence-8733492/",
+   "запрос": "two friends walking and talking",
+   "описание": "Two women smiling and talking near a chain link fence against a vibrant orange wall."
+  },
+  "coffee": {
+   "автор": "John Diez",
+   "ссылка": "https://www.pexels.com/photo/woman-drinking-coffee-with-boyfriend-in-cafeteria-7388896/",
+   "запрос": "friends drinking coffee cafe",
+   "описание": "Young female sipping coffee to go while sitting at table and resting on weekend day in outdoor cafe"
+  },
+  "community": {
+   "автор": "RDNE Stock project",
+   "ссылка": "https://www.pexels.com/photo/a-group-of-volunteers-assisting-an-elderly-person-on-a-black-wheelchair-for-charity-6646917/",
+   "запрос": "volunteers helping community together",
+   "описание": "Volunteers distribute bottled water and supplies to diverse individuals in an outdoor setting, showcasing community supp"
+  },
+  "console": {
+   "автор": "Yan Krukau",
+   "ссылка": "https://www.pexels.com/photo/two-men-playing-video-games-while-sitting-on-the-sofa-9069297/",
+   "запрос": "friends playing console video games",
+   "описание": "Two friends sitting on a sofa, playing video games together at home."
+  },
+  "craft": {
+   "автор": "RIAN ANDRIANI",
+   "ссылка": "https://www.pexels.com/photo/hands-crafting-pottery-on-a-spinning-wheel-38933740/",
+   "запрос": "pottery workshop hands clay",
+   "описание": "Close-up of hands sculpting clay pottery on a wheel, pottery-making art."
+  },
+  "dance": {
+   "автор": "Marko Zirdum",
+   "ссылка": "https://www.pexels.com/photo/woman-and-man-dancing-under-light-2188012/",
+   "запрос": "couple dancing salsa",
+   "описание": "Elegant couple performing tango under a dramatic spotlight, showcasing passion and grace."
+  },
+  "dataai": {
+   "автор": "Kampus Production",
+   "ссылка": "https://www.pexels.com/photo/computer-and-laptop-over-white-table-8636589/",
+   "запрос": "data analytics charts on screen",
+   "описание": "A professional workspace featuring computers and analytical graphs on a monitor, symbolizing modern business environment"
+  },
+  "design": {
+   "автор": "Michael Burrows",
+   "ссылка": "https://www.pexels.com/photo/unrecognizable-woman-drawing-sketch-of-cloth-7147480/",
+   "запрос": "designer working on sketches",
+   "описание": "From above of crop anonymous female designer drawing draft of stylish garment at table with papers in modern light works"
+  },
+  "dining": {
+   "автор": "cottonbro studio",
+   "ссылка": "https://www.pexels.com/photo/a-people-having-dinner-together-6288743/",
+   "запрос": "friends having dinner restaurant",
+   "описание": "Warm indoor dinner scene with friends enjoying food and conversation."
+  },
+  "electronic": {
+   "автор": "Wijs (Wise)",
+   "ссылка": "https://www.pexels.com/photo/a-person-playing-music-with-an-audio-mixer-12473542/",
+   "запрос": "dj playing electronic music party",
+   "описание": "Close-up of DJ adjusting an audio mixer outdoors, showcasing modern music equipment."
+  },
+  "endurance": {
+   "автор": "cottonbro studio",
+   "ссылка": "https://www.pexels.com/photo/back-view-of-a-people-doing-jogging-5319396/",
+   "запрос": "group of people jogging outdoors",
+   "описание": "Diverse group jogging on a modern bridge in sportswear, promoting health."
+  },
+  "engineering": {
+   "автор": "cottonbro studio",
+   "ссылка": "https://www.pexels.com/photo/men-sitting-at-the-desks-in-an-office-and-using-computers-6804068/",
+   "запрос": "programmers coding at computers",
+   "описание": "Team of developers working together on computers in a modern tech office."
+  },
+  "esports": {
+   "автор": "Yan Krukau",
+   "ссылка": "https://www.pexels.com/photo/men-gaming-on-personal-computers-9072388/",
+   "запрос": "esports tournament players computers",
+   "описание": "Group of gamers immersed in competitive esports at a cyber arena with neon lighting."
+  },
+  "family": {
+   "автор": "Anete Lusina",
+   "ссылка": "https://www.pexels.com/photo/family-spending-time-on-playground-together-5239930/",
+   "запрос": "parents with children playground",
+   "описание": "Little girl playing on playground with support of mother and father in casual clothes in summer day"
+  },
+  "fishing": {
+   "автор": "Zeynep Sude  Emek",
+   "ссылка": "https://www.pexels.com/photo/man-fishing-on-the-side-of-a-bridge-14045148/",
+   "запрос": "person fishing at river",
+   "описание": "A fisherman in a yellow raincoat fishes on a bridge in Istanbul during rainy weather."
+  },
+  "foodie": {
+   "автор": "The Castlebar",
+   "ссылка": "https://www.pexels.com/photo/food-and-cocktails-on-the-table-19119728/",
+   "запрос": "colorful tapas dishes table",
+   "описание": "Top view of a beautifully set dining table with gourmet dishes and cocktails."
+  },
+  "genres": {
+   "автор": "Magda Ehlers",
+   "ссылка": "https://www.pexels.com/photo/stack-of-colorful-vintage-vinyl-records-38666684/",
+   "запрос": "vinyl records music collection",
+   "описание": "Close-up view of a stack of vintage vinyl records with colorful album covers."
+  },
+  "growth": {
+   "автор": "Walls.io",
+   "ссылка": "https://www.pexels.com/photo/people-making-a-plan-on-a-board-17724742/",
+   "запрос": "marketing team strategy whiteboard",
+   "описание": "Two colleagues brainstorm marketing strategies on a whiteboard in a modern office setting."
+  },
+  "hiking": {
+   "автор": "Kostas Dimopoulos",
+   "ссылка": "https://www.pexels.com/photo/group-hiking-through-a-sunlit-forest-trail-36598424/",
+   "запрос": "hikers walking forest trail",
+   "описание": "Hikers exploring a sunlit forest trail marked with an orange trail sign, surrounded by lush greenery."
+  },
+  "history": {
+   "автор": "Zeynep Öngel",
+   "ссылка": "https://www.pexels.com/photo/ruins-of-temple-of-olympian-zeus-in-athens-24554421/",
+   "запрос": "people visiting ancient ruins",
+   "описание": "Explore the iconic ancient temple ruins with visitors strolling around the historic landmark."
+  },
+  "langs2": {
+   "автор": "Thirdman",
+   "ссылка": "https://www.pexels.com/photo/a-female-teacher-tutoring-her-male-student-6502822/",
+   "запрос": "students learning language in class",
+   "описание": "A student and teacher engage in an English lesson on a whiteboard. Indoor educational setting."
+  },
+  "language": {
+   "автор": "Artem Podrez",
+   "ссылка": "https://www.pexels.com/photo/man-and-woman-having-a-conversation-8518732/",
+   "запрос": "two people practising conversation",
+   "описание": "Smiling man and woman having a friendly conversation in a bright indoor setting."
+  },
+  "listening": {
+   "автор": "Jeremy Li",
+   "ссылка": "https://www.pexels.com/photo/vibrant-indoor-concert-with-dynamic-lights-30215324/",
+   "запрос": "live music concert crowd",
+   "описание": "Energetic crowd enjoying a concert with dynamic lighting and smoke effects in an indoor venue."
+  },
+  "making": {
+   "автор": "Jan Kopřiva",
+   "ссылка": "https://www.pexels.com/photo/person-playing-guitar-3858086/",
+   "запрос": "person playing guitar",
+   "описание": "Close-up of a musician playing a bass guitar with a blurred background, warm tones."
+  },
+  "mindbody": {
+   "автор": "Yan Krukau",
+   "ссылка": "https://www.pexels.com/photo/people-in-a-yoga-class-8436610/",
+   "запрос": "yoga class group practice",
+   "описание": "A diverse group of adults engaged in yoga poses during an indoor class, emphasizing fitness and wellness."
+  },
+  "mobile": {
+   "автор": "Ketut Subiyanto",
+   "ссылка": "https://www.pexels.com/photo/person-looking-at-a-smartphone-4910129/",
+   "запрос": "person using smartphone outdoors",
+   "описание": "A hand interacting with a smartphone touchscreen outdoors. Modern technology concept."
+  },
+  "naturelife": {
+   "автор": "cottonbro studio",
+   "ссылка": "https://www.pexels.com/photo/man-and-woman-planting-plants-together-9722002/",
+   "запрос": "people gardening plants together",
+   "описание": "Two friends potting plants together indoors, enjoying a relaxed gardening session on a balcony."
+  },
+  "nightlife": {
+   "автор": "RDNE Stock project",
+   "ссылка": "https://www.pexels.com/photo/a-man-sitting-at-the-bar-counter-looking-at-a-woman-holding-a-cocktail-6174087/",
+   "запрос": "friends drinking cocktails bar",
+   "описание": "Two adults enjoying drinks at a lively bar with colorful lighting."
+  },
+  "pc": {
+   "автор": "Yan Krukau",
+   "ссылка": "https://www.pexels.com/photo/a-man-playing-a-video-game-in-a-computer-9071735/",
+   "запрос": "gamer playing on desktop computer",
+   "описание": "A focused gamer plays e-sports in a neon-lit room, surrounded by digital screens."
+  },
+  "personal": {
+   "автор": "Matheus Bertelli",
+   "ссылка": "https://www.pexels.com/photo/male-speaker-delivering-a-presentation-29708262/",
+   "запрос": "person giving presentation to audience",
+   "описание": "Man speaking into microphone during a presentation indoors."
+  },
+  "pets": {
+   "автор": "David Kanigan",
+   "ссылка": "https://www.pexels.com/photo/women-walking-dogs-on-a-park-trail-at-dawn-32846940/",
+   "запрос": "people walking dogs park",
+   "описание": "Four women walk dogs on a park trail in Stamford, Connecticut at dawn."
+  },
+  "racket": {
+   "автор": "Ahmed ؜",
+   "ссылка": "https://www.pexels.com/photo/man-playing-tennis-22931874/",
+   "запрос": "tennis player hitting ball court",
+   "описание": "Male tennis player hitting a ball on an urban outdoor court during the day."
+  },
+  "reading": {
+   "автор": "SHVETS production",
+   "ссылка": "https://www.pexels.com/photo/a-couple-holding-a-book-8933715/",
+   "запрос": "people reading books together",
+   "описание": "A young couple enjoying books indoors, promoting a love for reading and diversity."
+  },
+  "screen": {
+   "автор": "cottonbro studio",
+   "ссылка": "https://www.pexels.com/photo/women-sitting-and-eating-popcorn-at-cinema-8263369/",
+   "запрос": "friends watching movie cinema",
+   "описание": "Two women sitting in a dark cinema, enjoying popcorn and watching a movie."
+  },
+  "skills": {
+   "автор": "Matheus Bertelli",
+   "ссылка": "https://www.pexels.com/photo/photography-workshop-with-diverse-group-of-attendees-39201792/",
+   "запрос": "workshop class people learning",
+   "описание": "A group of adults attending a photography workshop indoors, featuring lighting equipment and informal setting."
+  },
+  "stage": {
+   "автор": "468684 Ink",
+   "ссылка": "https://www.pexels.com/photo/actors-on-theater-stage-20898292/",
+   "запрос": "theatre stage performance actors",
+   "описание": "Vibrant costumes and dramatic lighting in a theatrical stage performance."
+  },
+  "startups": {
+   "автор": "RDNE Stock project",
+   "ссылка": "https://www.pexels.com/photo/man-in-blue-jacket-looking-at-white-board-7413916/",
+   "запрос": "startup team pitch meeting",
+   "описание": "Team members discussing project ideas in a modern office setting."
+  },
+  "strength": {
+   "автор": "Julia Larson",
+   "ссылка": "https://www.pexels.com/photo/crop-black-woman-doing-exercises-with-dumbbells-6455931/",
+   "запрос": "woman lifting dumbbells gym",
+   "описание": "Crop unrecognizable curvy female in sportswear sitting on bench and doing dumbbell curls in gym"
+  },
+  "tabletop": {
+   "автор": "Ahmet Kurt",
+   "ссылка": "https://www.pexels.com/photo/a-wooden-board-with-numbers-on-it-27219382/",
+   "запрос": "friends playing board game table",
+   "описание": "Colorful Rummikub tiles arranged on a wooden rack during an indoor game session."
+  },
+  "team": {
+   "автор": "Bechir Lachiheb",
+   "ссылка": "https://www.pexels.com/photo/intense-soccer-match-on-green-field-29920213/",
+   "запрос": "people playing football match",
+   "описание": "Action shot of soccer players competing on a lush green field outdoors."
+  },
+  "travel": {
+   "автор": "Ketut Subiyanto",
+   "ссылка": "https://www.pexels.com/photo/backpackers-on-railway-station-4901995/",
+   "запрос": "travelers with backpacks at station",
+   "описание": "Two backpackers waiting at a railway station, ready for their travel adventure."
+  },
+  "urbanism": {
+   "автор": "Ella Ragasa",
+   "ссылка": "https://www.pexels.com/photo/modern-urban-skyline-at-dusk-21901580/",
+   "запрос": "city skyline modern buildings",
+   "описание": "A serene view of a modern city skyline with tall glass buildings at dusk."
+  },
+  "visual": {
+   "автор": "Anurag Jamwal",
+   "ссылка": "https://www.pexels.com/photo/busy-indoor-art-exhibit-in-toronto-museum-30150825/",
+   "запрос": "people at art gallery exhibition",
+   "описание": "People exploring a vibrant art exhibit inside a Toronto museum hall."
+  },
+  "watersnow": {
+   "автор": "정규송 Nui MALAMA",
+   "ссылка": "https://www.pexels.com/photo/people-surfing-in-the-ocean-13652017/",
+   "запрос": "people surfing ocean waves",
+   "описание": "Group of surfers riding waves in the ocean, ideal for adventure and sports enthusiasts."
+  },
+  "web3": {
+   "автор": "Rafael Minguet Delgado",
+   "ссылка": "https://www.pexels.com/photo/cryptocurrency-market-graph-with-technical-analysis-39052111/",
+   "запрос": "cryptocurrency trading charts",
+   "описание": "Detailed view of a cryptocurrency market graph displaying technical analysis data on a screen."
+  },
+  "wellness": {
+   "автор": "Tima Miroshnichenko",
+   "ссылка": "https://www.pexels.com/photo/white-candle-holder-on-wooden-surface-6186740/",
+   "запрос": "spa massage stones towels",
+   "описание": "Serene spa setting with a lit candle, ceramic holder, and plush towels for relaxation."
+  },
+  "writing": {
+   "автор": "Roberto Hund",
+   "ссылка": "https://www.pexels.com/photo/a-person-writing-on-notebook-5357177/",
+   "запрос": "person writing in notebook",
+   "описание": "Hand holding pen writing in an open notebook, indicating study or journaling."
+  }
+ }
+}

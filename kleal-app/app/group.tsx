@@ -20,10 +20,9 @@
  * Один запрос отдаёт и ленту, и состав (gi_thread возвращает `group` рядом с `messages`), поэтому
  * опрос здесь один, а не два.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
-  ActivityIndicator, Modal, KeyboardAvoidingView, Platform,
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams, useIsFocused } from 'expo-router';
@@ -33,17 +32,17 @@ import { useOnb, markSeen, setMsgPrefs } from '../src/state';
 import { MSG, joinNames } from '../src/messages';
 import { group as gapi, agent, mediaUrl, newIdem, ensureMe, isMe, pidOf, type GroupInfo, type GroupRemovalReason,
   type VoicePayload, type VideoPayload } from '../src/api';
-import { ROOM, GROUP, groupSysLine, roomMsg, type GroupSys } from '../src/groups';
+import { ROOM, GROUP, GR14, groupSysLine, roomMsg, type GroupSys } from '../src/groups';
 import { GPLAN } from '../src/gplan';
 import { ROLE } from '../src/roles';
 import { IconCrown } from '../src/components/icons';
 import { adoptGroup } from '../src/ginvites';
 import { setResults } from '../src/results-store';
 import { openResults } from '../src/results-navigation';
-import { IconChevronRight, IconClose, IconPerson, IconEllipsisV, IconInfo, IconUserPlus, IconUserX, IconBan,
-  IconGroups, IconExit, IconAlertTriangle, IconClock, IconCheck, IconBellOff, IconBell, IconFlag, IconCopy, IconTrash } from '../src/components/icons';
+import {
+  IconChevronRight, IconPerson, IconEllipsisV, IconInfo, IconUserPlus, IconUserX, IconBan, IconGroups, IconExit, IconAlertTriangle, IconClock, IconCheck, IconBellOff, IconBell, IconFlag, IconCopy, IconTrash,
+} from '../src/components/icons';
 import { SendArrow } from '../src/components/SendArrow';
-import { interestLabels } from '../src/interest-label';
 import { Sheet, SheetItem, SheetText } from '../src/components/Sheet';
 import { MessageFeed } from '../src/components/MessageFeed';
 import { CHAT, Msg, REACTIONS, msgTime } from '../src/chat';
@@ -202,7 +201,8 @@ export default function GroupRoom() {
           for (const m of rows) {
             const byCid = m.cid ? out.findIndex((x) => x.cid && x.cid === m.cid) : -1;
             const at = byCid >= 0 ? byCid : (m.id ? out.findIndex((x) => x.id && x.id === m.id) : -1);
-            if (at >= 0) out[at] = m; else out.push(m);
+            // Свой `cid` остаётся — по нему лента держит ключ реплики (см. MessageFeed).
+            if (at >= 0) out[at] = { ...m, cid: m.cid || out[at].cid }; else out.push(m);
           }
           return out.sort((a, b) => (a.t || 0) - (b.t || 0));
         });
@@ -383,7 +383,7 @@ export default function GroupRoom() {
         // это как «никого не нашлось». Поиск людей в группу не находил вообще ничего.
         languages: st.profile.languages || {},
       };
-      const r: any = await agent.match(intent, prof, { self: me, uid: me, city: st.profile.city });
+      const r: any = await agent.matchGroup(gid, prof, { self: me, uid: me, city: st.profile.city });
       setResults({
         intent: r?.intent || intent,
         candidates: r?.candidates || [],
@@ -580,6 +580,27 @@ export default function GroupRoom() {
   };
   const owner = String(g?.owner || '');
   const iOwn = !!g?.i_am_owner;
+  /*
+    ЖДУТ ОРГАНИЗАТОРА (awaiting_approval): сказали «да», когда план уже шёл. Раньше впустить их было
+    нечем — group.approve нигде не вызывался, и человек висел до конца срока (сверка 17.10, п. 18).
+    Плашка над лентой у организатора: «Впустить» / «Не впускать». План при этом не сбрасывается.
+  */
+  const awaiting: string[] = iOwn && Array.isArray((g as any)?.awaiting_approval)
+    ? ((g as any).awaiting_approval as any[]).map((x) => String(typeof x === 'string' ? x : x?.name || '')).filter(Boolean) : [];
+  const [approving, setApproving] = useState('');
+  const approve = async (who: string, accept: boolean) => {
+    if (!gid || approving) return;
+    setApproving(who + (accept ? ':y' : ':n'));
+    setErr('');
+    try {
+      const r: any = await gapi.approve(gid, me, who, newIdem(accept ? 'gap' : 'gdn'), accept).catch(() => null);
+      if (r?.group) setG(r.group);
+      if (!r?.ok) setErr(r?.error === 'GROUP_FULL' ? GR14.approveFull() : r?.error === 'CLOSED' ? GR14.approveClosed() : GR14.approveFailed());
+      else load();
+    } finally {
+      setApproving('');
+    }
+  };
   const sysNames = [
     ...everyone.filter((x) => String(x.name || '') && !isMe(x.name, pidOf(x, 'name'), me))
       .map((x) => ({ name: String(x.name), color: inkOf(x.name, pidOf(x, 'name')) })),
@@ -683,7 +704,7 @@ export default function GroupRoom() {
     setSending(true); setSendErr('');
     try {
       const r: any = await gapi.planBegin(gid, me, {
-        when: whenLabel(planWhen), starts_at: whenStartsAt(planWhen), place: String(g?.area || ''),
+        when: whenLabel(planWhen), starts_at: whenStartsAt(planWhen), place: String((g as any)?.address || (g as any)?.intent?.address || g?.area || ''),
       }, newIdem('gpb'));
       if (!r?.ok) {
         setSendErr(r?.error === 'TOO_LATE' ? GPLAN.tooLate() : r?.error === 'PLAN_EXISTS' ? GPLAN.planExists() : GPLAN.createFailed());
@@ -798,6 +819,24 @@ export default function GroupRoom() {
               <Text style={s.removedNoticeSub}>{ROOM.readOnlyHistory()}</Text>
             </View>
           ) : null}
+          {awaiting.length && !readOnly ? awaiting.map((who) => (
+            <View key={who} style={s.removedNotice} accessibilityRole="alert">
+              <Text style={s.removedNoticeText}>{GR14.awaitingBanner(who)}</Text>
+              <Text style={s.removedNoticeSub}>{GR14.awaitingBannerNote()}</Text>
+              <View style={s.approveRow}>
+                <Pressable accessibilityRole="button" style={[s.approveBtn, s.approveNo]} disabled={!!approving}
+                           onPress={() => approve(who, false)}>
+                  {approving === who + ':n' ? <ActivityIndicator color={color.fg} />
+                    : <Text style={s.approveNoText}>{GR14.dontLetIn()}</Text>}
+                </Pressable>
+                <Pressable accessibilityRole="button" style={[s.approveBtn, s.approveYes]} disabled={!!approving}
+                           onPress={() => approve(who, true)}>
+                  {approving === who + ':y' ? <ActivityIndicator color={color.onPrimary} />
+                    : <Text style={s.approveYesText} numberOfLines={1}>{GR14.letIn(who)}</Text>}
+                </Pressable>
+              </View>
+            </View>
+          )) : null}
           {/* MSG.12 — чат без уведомлений: плашка над лентой. */}
           {muted && !readOnly ? (
             <View style={[s.removedNotice, s.mutedNotice]}>
@@ -1017,7 +1056,8 @@ export default function GroupRoom() {
                 </View>
                 <View style={s.sendRow}>
                   <IconPin size={18} c={color.primary} />
-                  <Text style={s.sendLine} numberOfLines={1}>{String(g?.area || '') || ROOM.aboutUnset()}</Text>
+                  {/* Точный адрес организатору приходит полем address — он главнее района (сверка п. 17). */}
+                  <Text style={s.sendLine} numberOfLines={1}>{String((g as any)?.address || (g as any)?.intent?.address || g?.area || '') || ROOM.aboutUnset()}</Text>
                 </View>
               </View>
             </GlassSurface>
@@ -1206,18 +1246,6 @@ function LeaveSheet({
 // ============================================================ вид
 // Оформление UX-каркаса: значения — из токенов темы; при натягивании UI меняется этот блок.
 
-/** Строка «подпись — значение» в сведениях о затее. Пустое значение не рисуется вовсе: пустая
- *  строка на экране читается как «здесь ничего нет», а не как «мы не спросили». */
-function AboutRow({ label, value }: { label: string; value: string }) {
-  if (!String(value || '').trim()) return null;
-  return (
-    <View style={s.aboutRow}>
-      <Text style={s.aboutLabel}>{label}</Text>
-      <Text style={s.aboutValue}>{value}</Text>
-    </View>
-  );
-}
-
 const s = StyleSheet.create({
   reactRow: { flexDirection: 'row', justifyContent: 'space-between', paddingBottom: space.sm },
   reactPick: {
@@ -1288,6 +1316,13 @@ const s = StyleSheet.create({
   },
   removedNoticeText: { ...type.body, color: color.fg } as any,
   removedNoticeSub: { ...type.caption, color: color.muted, marginTop: 6 } as any,
+  /** «Не впускать» / «Впустить» под плашкой ждущего — две кнопки 40 поровну. */
+  approveRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  approveBtn: { flex: 1, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  approveNo: { backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: color.border },
+  approveYes: { backgroundColor: color.primary },
+  approveNoText: { ...type.bodySmall, color: color.fg, fontWeight: '600' } as any,
+  approveYesText: { ...type.bodySmall, color: color.onPrimary, fontWeight: '600' } as any,
   mutedNotice: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   mutedTitle: { ...type.labelSmall, color: color.fg, fontWeight: '700' } as any,
 

@@ -14,7 +14,7 @@
  * Содержимое остаётся за экраном: у каждого листа оно своё, и общего в нём — ничего.
  */
 import React from 'react';
-import { Dimensions, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSheetKeyboard } from '../keyboard';
 import { T, useLang } from '../i18n';
@@ -89,9 +89,14 @@ export function Sheet({
           Размытие — BlurView, а не системное стекло: стекло над затемнением преломляло его пятнами.
           На Android expo-blur не размывает, но под листом ровное затемнение — плёнка 80% даёт тот же цвет.
         */}
+        {/*
+          ANDROID: лист — отдельное окно (Modal), и expo-blur до содержимого под ним не достаёт.
+          Плёнка 80% без размытия просвечивала строками экрана (эмулятор Android 14, 17.10.2026) —
+          там подложка плотнее и без серой заглушки BlurView.
+        */}
         <View pointerEvents="none" style={[StyleSheet.absoluteFill, s.skin]}>
-          <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />
-          <View style={[StyleSheet.absoluteFill, s.film]} />
+          {Platform.OS === 'android' ? null : <BlurView intensity={40} tint="light" style={StyleSheet.absoluteFill} />}
+          <View style={[StyleSheet.absoluteFill, s.film, Platform.OS === 'android' && s.filmAndroid]} />
         </View>
         {grip ? <View style={s.grip} /> : null}
         {title ? (
@@ -173,6 +178,7 @@ const s = StyleSheet.create({
   },
   skin: { borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: 'hidden' },
   film: { backgroundColor: 'rgba(255,255,255,0.8)' },
+  filmAndroid: { backgroundColor: '#FAF8F5' },
   grip: {
     width: 36, height: 4, borderRadius: 2, backgroundColor: color.fg,
     alignSelf: 'center', marginBottom: space.sm,

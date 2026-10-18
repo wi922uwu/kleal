@@ -187,11 +187,22 @@ def start_relay(period_s=2.0):
         return None
 
     def _loop():
+        pruned_at = 0.0
         while True:
             try:
                 relay_once()
             except Exception as e:
                 STATS["last_error"] = "relay loop: %s" % str(e)[:160]
+            # Раз в час — убрать отправленное старше недели (18.10.2026): без этого outbox рос без конца.
+            if time.time() - pruned_at > 3600:
+                pruned_at = time.time()
+                try:
+                    import db
+                    n = db.outbox_prune()
+                    if n:
+                        print("[mq] outbox: удалено отправленных старше 7 дней: %d" % n, flush=True)
+                except Exception as e:
+                    STATS["last_error"] = "outbox prune: %s" % str(e)[:160]
             time.sleep(period_s)
 
     t = threading.Thread(target=_loop, daemon=True, name="mq-relay")

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
+<title>Kleal — profile from ChatGPT</title>
+<style>
+:root{--bg:#160d1f;--card:#22152f;--fg:#fff;--muted:#c9b8d8;--accent:#ff5a7a;--accent2:#c43cff;--chip:#33224a;--ok:#4ade80;--err:#ff8a8a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;justify-content:center;padding:24px 16px}
+main{width:100%;max-width:520px}.brand{font-weight:800;font-size:28px;letter-spacing:-.5px;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;color:transparent}
+h1{font-size:22px;margin:12px 0 6px}p{color:var(--muted);margin:0 0 16px}.card{background:var(--card);border-radius:20px;padding:18px;margin:12px 0}
+.row{margin:10px 0}.lbl{font-size:13px;color:var(--muted);margin-bottom:6px}.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{background:var(--chip);border-radius:999px;padding:6px 10px 6px 12px;display:inline-flex;gap:8px;align-items:center}
+.chip button,.x{background:none;border:0;color:var(--muted);font-size:16px;cursor:pointer;padding:0 2px}
+.txt{white-space:pre-wrap}.btn{width:100%;border:0;border-radius:16px;padding:16px;font-size:17px;font-weight:700;color:#fff;cursor:pointer;background:linear-gradient(90deg,var(--accent),var(--accent2));margin-top:8px}
+.btn[disabled]{opacity:.5}.ghost{background:none;border:1px solid #4a3560;color:var(--muted);font-weight:600}.msg{margin-top:14px;text-align:center}.ok{color:var(--ok)}.err{color:var(--err)}
+</style></head><body><main>
+<div class="brand">Kleal</div>
+<h1 id="t-title">Your profile from ChatGPT</h1>
+<p id="t-sub">Check what ChatGPT prepared. Remove anything that is wrong, then save — it will appear in the Kleal app as a draft you confirm there.</p>
+<div id="fields"></div>
+<button class="btn" id="save">Save to Kleal</button>
+<div class="msg" id="msg"></div>
+</main>
+<script>
+(function(){
+var L=(navigator.language||"en").slice(0,2), T={
+ ru:{title:"Твой профиль от ChatGPT",sub:"Проверь, что подготовил ChatGPT. Убери лишнее и сохрани — черновик появится в приложении Kleal, там ты его подтвердишь.",save:"Сохранить в Kleal",saved:"Готово! Открой приложение Kleal — черновик уже там.",empty:"В ссылке нет данных. Попроси ChatGPT подготовить её ещё раз.",err:"Не получилось сохранить. Возьми новую ссылку в приложении Kleal.",city:"Город",country:"Страна",languages:"Языки",interests:"Интересы",goals:"Что ищешь",vibe:"Настрой",format:"Формат встреч",about:"О себе"},
+ es:{title:"Tu perfil de ChatGPT",sub:"Revisa lo que preparó ChatGPT. Quita lo que no esté bien y guarda: aparecerá como borrador en la app de Kleal para que lo confirmes.",save:"Guardar en Kleal",saved:"¡Listo! Abre la app de Kleal: el borrador ya está ahí.",empty:"El enlace no tiene datos. Pide a ChatGPT que lo prepare de nuevo.",err:"No se pudo guardar. Pide un enlace nuevo en la app de Kleal.",city:"Ciudad",country:"País",languages:"Idiomas",interests:"Intereses",goals:"Qué buscas",vibe:"Cómo eres",format:"Formato",about:"Sobre mí"},
+ en:{title:"Your profile from ChatGPT",sub:"Check what ChatGPT prepared. Remove anything that is wrong, then save — it will appear in the Kleal app as a draft you confirm there.",save:"Save to Kleal",saved:"Done! Open the Kleal app — the draft is already there.",empty:"This link has no data. Ask ChatGPT to prepare it again.",err:"Could not save. Get a new link in the Kleal app.",city:"City",country:"Country",languages:"Languages",interests:"Interests",goals:"Looking for",vibe:"Vibe",format:"Meeting format",about:"About me"}};
+var t=T[L]||T.en; document.documentElement.lang=L;
+document.getElementById("t-title").textContent=t.title;document.getElementById("t-sub").textContent=t.sub;
+var btn=document.getElementById("save");btn.textContent=t.save;var msg=document.getElementById("msg");
+function dec(s){try{s=s.replace(/-/g,"+").replace(/_/g,"/");while(s.length%4)s+="=";return JSON.parse(decodeURIComponent(escape(atob(s))))}catch(e){return null}}
+var p=dec((location.hash||"").slice(1))||{};
+var lists={languages:["languages","comfortable"],interests:["interests","explicit"],goals:["goals","primary"],vibe:["vibe","primary"]};
+var box=document.getElementById("fields");
+function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
+function render(){box.innerHTML="";var any=false,c=el("div","card");
+ [["city",t.city],["country",t.country]].forEach(function(f){if(p[f[0]]){any=true;var r=el("div","row");r.appendChild(el("div","lbl",f[1]));var v=el("div","chips"),ch=el("span","chip",p[f[0]]);var x=el("button",null,"×");x.onclick=function(){delete p[f[0]];render()};ch.appendChild(x);v.appendChild(ch);r.appendChild(v);c.appendChild(r)}});
+ Object.keys(lists).forEach(function(k){var a=(p[lists[k][0]]||{})[lists[k][1]]||[];if(!a.length)return;any=true;var r=el("div","row");r.appendChild(el("div","lbl",t[k]));var v=el("div","chips");
+  a.forEach(function(item,i){var ch=el("span","chip",item);var x=el("button",null,"×");x.onclick=function(){a.splice(i,1);if(!a.length)delete p[lists[k][0]];render()};ch.appendChild(x);v.appendChild(ch)});r.appendChild(v);c.appendChild(r)});
+ if(p.format&&p.format.modePreference){any=true;var r=el("div","row");r.appendChild(el("div","lbl",t.format));var ch=el("span","chip",p.format.modePreference.replace("_"," "));var x=el("button",null,"×");x.onclick=function(){delete p.format;render()};ch.appendChild(x);r.appendChild(ch);c.appendChild(r)}
+ if(p.aboutMe){any=true;var r=el("div","row");r.appendChild(el("div","lbl",t.about));r.appendChild(el("div","txt",p.aboutMe));var x=el("button","x","×");x.onclick=function(){delete p.aboutMe;render()};r.appendChild(x);c.appendChild(r)}
+ if(any)box.appendChild(c);btn.disabled=!any;if(!any){msg.className="msg err";msg.textContent=t.empty}}
+render();
+var key=location.pathname.replace(/\/+$/,"").split("/").pop();
+btn.onclick=function(){btn.disabled=true;msg.textContent="";
+ fetch("/api/onboarding/ai-import/"+encodeURIComponent(key),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({profile:p})})
+ .then(function(r){return r.json()}).then(function(j){if(j&&j.ok){msg.className="msg ok";msg.textContent=t.saved;history.replaceState(null,"",location.pathname);box.innerHTML="";btn.style.display="none"}else{msg.className="msg err";msg.textContent=t.err;btn.disabled=false}})
+ .catch(function(){msg.className="msg err";msg.textContent=t.err;btn.disabled=false})};
+})();
+</script></body></html>

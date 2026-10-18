@@ -7,7 +7,6 @@
  * и работает ли выбор пина. Подложки и объёмных домов нет, и это подписано: выдавать схему
  * за карту нельзя, иначе на вебе «всё работает», а на устройстве оказывается пусто.
  */
-import React from 'react';
 import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { color, shadow, type } from '../theme';
 import { mediaUrl } from '../api';

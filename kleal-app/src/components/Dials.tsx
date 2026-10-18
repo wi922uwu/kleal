@@ -14,7 +14,7 @@
  * до конца жеста: переключение ручек посреди движения выглядит как скачок и ощущается как поломка.
  * Ручки не перекрещиваются — минимум не заходит за максимум.
  */
-import React, { useMemo, useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, PanResponder, GestureResponderEvent } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { hhmm } from '../intent';

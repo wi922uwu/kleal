@@ -470,14 +470,18 @@ def build_proposal(intent, candidate, disclosure_stage=None, now=None):
     ident = intent.get("identity") or {}
     iid = ident.get("intent_id") or _det_id("int", intent.get("type"), ",".join(intent.get("topics") or []))
     to_user = candidate.get("name")
+    # Опознаватель адресата — id (18.10.2026); подпись остаётся в to_user для показа. У тёзок по имени
+    # совпадали и ключ идемпотентности, и proposal_id: второе предложение «Ивану» считалось повтором первого.
+    to_key = str(candidate.get("id") or to_user or "")
     cand_stage = (candidate.get("receiving") or {}).get("disclosure_stage")
     stage_map = (intent.get("disclosure") or {}).get("stage_map") or {}
     intent_stage = disclosure_stage or stage_map.get("match") or "limited_profile"
     allowed = _min_disclosure(intent_stage, cand_stage) if cand_stage else intent_stage
     return {
-        "proposal_id": _det_id("prop", iid, to_user, int(now)),
-        "idempotency_key": _det_id("idem", iid, str(to_user).lower()),
+        "proposal_id": _det_id("prop", iid, to_key, int(now)),
+        "idempotency_key": _det_id("idem", iid, to_key.lower()),
         "intent_id": iid, "from_user": ident.get("user_id") or "me", "to_user": to_user,
+        "to_user_id": candidate.get("id"),
         "payload": {"title": intent.get("title"), "topics": intent.get("topics"),
                     "time": intent.get("time"), "place": intent.get("place")},
         "allowed_disclosure": allowed, "ttl_seconds": PROPOSAL_TTL,

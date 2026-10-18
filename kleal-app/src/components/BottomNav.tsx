@@ -20,10 +20,10 @@
  * не попал. Осталась одна такая: «Поиск».
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, Dimensions, Easing, PanResponder, Pressable, StyleSheet, View } from 'react-native';
+import { AccessibilityInfo, Animated, Dimensions, Easing, PanResponder, Platform, Pressable, StyleSheet, View } from 'react-native';
 import Svg, { Defs, Ellipse, RadialGradient, Stop } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { usePathname, useRouter } from 'expo-router';
+import { usePathname, useRouter, useIsFocused } from 'expo-router';
 import { IconLayers, IconSearch, IconMessages, IconProfile } from './icons';
 import { NAV } from '../onboarding';
 import { T } from '../i18n';
@@ -61,7 +61,68 @@ const REACH = 30;
  * `dark` — вариант для тёмных экранов (планета во вкладке «Онлайн»): та же пилюля, но из
  * тёмного стекла темы, знаки светлые, выбранный — фирменный. Геометрия и жест не меняются.
  */
-export function BottomNav({ active, dark = false }: { active?: Tab; dark?: boolean }) {
+type NavProps = { active?: Tab; dark?: boolean };
+
+/**
+ * НАВБАР НА ANDROID ЖИВЁТ НАД ВСЕМИ ЭКРАНАМИ, а не внутри каждого.
+ *
+ * Размытие на Android (expo-blur) видит только содержимое `BlurTargetView`, и стекло обязано лежать
+ * снаружи цели. Корневой макет оборачивает в цель весь стек экранов и рядом рисует `NavHost` — один
+ * навбар на приложение. Экран, на котором навбар нужен, лишь сообщает, какая вкладка активна, пока
+ * он в фокусе. На iOS всё как раньше: навбар внутри экрана, системное стекло размывает само.
+ */
+/**
+ * Вкладка, к которой только что ушли с панели. На iOS у нового экрана своя панель, и выпрыгнуть
+ * знак может только там — поэтому уходящая панель оставляет записку, а пришедшая её читает.
+ */
+let pendingPop: Tab | null = null;
+
+type HostNav = { key: object; props: NavProps };
+let hostNav: HostNav | null = null;
+const hostSubs = new Set<() => void>();
+const hostEmit = () => hostSubs.forEach((f) => f());
+
+function NavPortal(props: NavProps) {
+  const focused = useIsFocused();
+  useEffect(() => {
+    if (!focused) return;
+    const key = {};
+    hostNav = { key, props };
+    hostEmit();
+    return () => {
+      if (hostNav?.key === key) { hostNav = null; hostEmit(); }
+    };
+  }, [focused, props.active, props.dark]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Место навбара в разметке экрана остаётся: на главной поле ввода стоит НАД панелью, и без
+  // распорки оно съезжало под общий навбар. Распорка невидима и касаний не ловит.
+  const insets = useSafeAreaInsets();
+  return <View pointerEvents="none" style={{ height: NAV_BAR_H + Math.max(insets.bottom, space.md) }} />;
+}
+
+/** Один навбар на всё приложение (только Android) — стоит в корневом макете рядом с целью размытия. */
+export function NavHost() {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const f = () => bump((n) => n + 1);
+    hostSubs.add(f);
+    // Экраны монтируются РАНЬШЕ хоста (они внутри цели размытия, хост — после неё), и их эффект
+    // успевает сообщить вкладку до этой подписки. Перечитываем то, что уже лежит.
+    f();
+    return () => { hostSubs.delete(f); };
+  }, []);
+  if (!hostNav) return null;
+  return (
+    <View pointerEvents="box-none" style={s.host}>
+      <BottomNavView {...hostNav.props} />
+    </View>
+  );
+}
+
+export function BottomNav(props: NavProps) {
+  return Platform.OS === 'android' ? <NavPortal {...props} /> : <BottomNavView {...props} />;
+}
+
+function BottomNavView({ active, dark = false }: NavProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   /** Где стоим — через ref: жесты панели собраны один раз (useMemo) и иначе видели бы старый путь. */
@@ -200,6 +261,54 @@ export function BottomNav({ active, dark = false }: { active?: Tab; dark?: boole
     if (active === 'messages') markSeen('messages');
     if (active === 'intents') markSeen('intents');
   }, [active, news.messages, news.intents]);
+  /*
+    ПРУЖИННЫЙ ЗНАК (выбран Иваном 18.10.2026 из трёх живых образцов).
+
+    Под пальцем знак СПЛЮЩИВАЕТСЯ — как кнопка из желе, которую придавили: шире и ниже. Это
+    отказ от прежнего правила «знак не двигается»: панель отвечает касанию телом, а не только
+    цветом. Отпустил — знак отпружинивает, а на новом экране выбранный ВЫПРЫГИВАЕТ: вытягивается
+    вверх, приземляется со шлепком и оседает двумя затухающими колебаниями, уже коралловым.
+
+    Всё на нативном драйвере. «Уменьшить движение» — ни сплющивания, ни прыжка, только цвет.
+  */
+  const TABS: Tab[] = ['intents', 'search', 'messages', 'profile'];
+  const squash = useRef(Object.fromEntries(TABS.map((t) => [t, new Animated.Value(0)])) as Record<Tab, Animated.Value>).current;
+  const pop = useRef(Object.fromEntries(TABS.map((t) => [t, new Animated.Value(1)])) as Record<Tab, Animated.Value>).current;
+  useEffect(() => {
+    if (stillRef.current) return;
+    TABS.forEach((t) => Animated.spring(squash[t], {
+      toValue: lit === t ? 1 : 0, useNativeDriver: true, damping: 11, stiffness: 520, mass: 0.5,
+    }).start());
+  }, [lit]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!active || pendingPop !== active) return;
+    pendingPop = null;
+    if (stillRef.current) return;
+    const v = pop[active];
+    v.setValue(0);
+    // Небольшая задержка: новый экран ещё въезжает, и прыжок на полпути терялся бы в движении.
+    Animated.timing(v, { toValue: 1, duration: 620, delay: 140, easing: Easing.linear, useNativeDriver: true }).start();
+  }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  const jelly = (t: Tab) => {
+    const q = squash[t];
+    const p = pop[t];
+    const IN = [0, 0.16, 0.4, 0.6, 0.8, 1];
+    return [
+      { translateY: Animated.add(
+        q.interpolate({ inputRange: [0, 1], outputRange: [0, 1.5] }),
+        p.interpolate({ inputRange: IN, outputRange: [0, 1, -7, 0, -1.2, 0] }),
+      ) },
+      { scaleX: Animated.multiply(
+        q.interpolate({ inputRange: [0, 1], outputRange: [1, 1.16] }),
+        p.interpolate({ inputRange: IN, outputRange: [1, 1.14, 0.84, 1.1, 0.97, 1] }),
+      ) },
+      { scaleY: Animated.multiply(
+        q.interpolate({ inputRange: [0, 1], outputRange: [1, 0.82] }),
+        p.interpolate({ inputRange: IN, outputRange: [1, 0.84, 1.2, 0.92, 1.03, 1] }),
+      ) },
+    ];
+  };
+
   const groundScale = float.interpolate({ inputRange: [0, 1], outputRange: [1, 0.88] });
   const groundFade = float.interpolate({ inputRange: [0, 1], outputRange: [1, 0.75] });
   const canPick = (t: Target) => (t === 'home' ? true : !!ROUTE[t as Tab] && active !== t);
@@ -251,11 +360,14 @@ export function BottomNav({ active, dark = false }: { active?: Tab; dark?: boole
     return best;
   };
 
-  /** «Вихрь» на Kleal, потом переход — пока он доворачивается, экран уже меняется. */
+  /**
+   * «Вихрь» на Kleal, потом переход. Переход — к приземлению (~560 из 780 мс): раньше он шёл через
+   * 320 мс, и прыжок с оборотом (переделан 17.10.2026) почти целиком проходил на уходящем экране.
+   */
   const go = (t: Target) => {
     if (t === 'home' && !stillRef.current && agentRef.current) {
       agentRef.current.whirl();
-      setTimeout(() => goNow(t), 320);
+      setTimeout(() => goNow(t), 560);
       return;
     }
     goNow(t);
@@ -297,6 +409,7 @@ export function BottomNav({ active, dark = false }: { active?: Tab; dark?: boole
       `dismissTo`, а не `dismissAll`: корень стопки — не главная, а вступительные слайды
       (app/index.tsx остаётся смонтированным), и «свернуть всё» выбросило бы человека туда.
     */
+    pendingPop = t as Tab;
     router.dismissTo('/home');
     router.navigate(ROUTE[t as Tab] as any);
   };
@@ -360,7 +473,7 @@ export function BottomNav({ active, dark = false }: { active?: Tab; dark?: boole
   );
 
   /**
-   * ПОДСВЕТКА ПОД ПАЛЬЦЕМ — БЕЗ ДВИЖЕНИЯ ЗНАКА.
+   * ПОДСВЕТКА ПОД ПАЛЬЦЕМ. (С 18.10.2026 знак под пальцем ещё и сплющивается — см. `jelly`.)
    *
    * Сначала знак под пальцем всплывал: поднимался и увеличивался. На пилюле высотой 48 это
    * читалось как прыжок из плоскости — эффектно и лишне, потому что панель не должна на себя
@@ -428,9 +541,14 @@ export function BottomNav({ active, dark = false }: { active?: Tab; dark?: boole
           accessibilityLabel={label}
           onPress={live ? () => go(tab) : undefined}
         >
-          <Animated.View style={(tab === 'messages' || tab === 'intents') ? {
-            transform: [{ rotate: shake[tab].interpolate({ inputRange: [-1, 1], outputRange: ['-14deg', '14deg'] }) }],
-          } : undefined}>
+          <Animated.View style={{
+            transform: [
+              ...jelly(tab),
+              ...((tab === 'messages' || tab === 'intents')
+                ? [{ rotate: shake[tab].interpolate({ inputRange: [-1, 1], outputRange: ['-14deg', '14deg'] }) }]
+                : []),
+            ] as any,
+          }}>
             <Icon size={24} c={on || lit === tab ? color.primary : (dark ? 'rgba(255,255,255,0.62)' : color.muted)} />
             {(tab === 'messages' || tab === 'intents') && dots[tab] && !on ? (
               /* Вырез в линии иконки — кольцо цвета капсулы вокруг зелёной точки. */
@@ -470,7 +588,7 @@ export function BottomNav({ active, dark = false }: { active?: Tab; dark?: boole
           (почему — в комментарии к `pill`). `pointerEvents="none"`: касания достаются жесту панели.
         */}
         <View style={s.pill} collapsable={false}>
-          <GlassSurface tone={dark ? 'dark' : 'light'} radius={999} pointerEvents="none" style={StyleSheet.absoluteFill} />
+          <GlassSurface tone={dark ? 'dark' : 'light'} radius={999} pointerEvents="none" backdrop style={StyleSheet.absoluteFill} />
           {item('intents', nav[0], IconLayers)}
           {item('search', nav[1], IconSearch)}
         </View>
@@ -517,7 +635,7 @@ export function BottomNav({ active, dark = false }: { active?: Tab; dark?: boole
         </View>
 
         <View style={s.pill} collapsable={false}>
-          <GlassSurface tone={dark ? 'dark' : 'light'} radius={999} pointerEvents="none" style={StyleSheet.absoluteFill} />
+          <GlassSurface tone={dark ? 'dark' : 'light'} radius={999} pointerEvents="none" backdrop style={StyleSheet.absoluteFill} />
           {item('messages', nav[2], IconMessages)}
           {item('profile', nav[3], IconProfile)}
         </View>
@@ -580,6 +698,7 @@ const DROP = 48;
 
 const s = StyleSheet.create({
   wrap: { paddingHorizontal: NAV_SIDE, alignItems: 'center' },
+  host: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   row: { width: '100%', height: NAV_BAR_H, flexDirection: 'row', alignItems: 'center', gap: 16 },
   flyer: { position: 'absolute', left: 0, top: 0 },
   /** «Новое» на иконке: зелёная точка #1FAE5E (как у колокольчика на главной) в вырезе цвета капсулы. */

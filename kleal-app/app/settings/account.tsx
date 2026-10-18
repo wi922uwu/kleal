@@ -12,8 +12,8 @@
  * ПОСЛЕ УДАЛЕНИЯ гасим всё то же, что и при выходе, и в том же порядке: историю — до сессии, иначе
  * стирать было бы нечем, а переписка осталась бы на диске.
  */
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, Alert, Platform, ActivityIndicator } from 'react-native';
+import { useState } from 'react';
+import { Text, StyleSheet, Pressable, Alert, Platform, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card } from '../../src/components/ProfileShell';
 import { useLang } from '../../src/i18n';

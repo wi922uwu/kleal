@@ -266,7 +266,15 @@ def _write(users, touched=None):
 
 
 def _seed_if_empty():
-    """First run: pull the matching agent's demo pool so admins have something to curate."""
+    """First run: pull the matching agent's demo pool so admins have something to curate.
+
+    18.10.2026: ТОЛЬКО без базы. При KLEAL_DB=postgres таблица users и есть популяция, а файла STORE
+    при этом может и не быть — и засев из /api/agent/pool прогонял бы всех живых людей через
+    _norm_user с умолчаниями (coffee, en, 2 км, chill) и записывал в базу поверх их анкет. Сработало
+    бы при первом же перезапуске панели после уборки «старого» users.json."""
+    if db is not None and db.ENABLED:
+        _seeded["done"] = True
+        return
     if _seeded["done"] or os.path.exists(STORE):
         _seeded["done"] = True
         return
@@ -1167,7 +1175,9 @@ class H(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print("Kleal admin-service on http://127.0.0.1:%d  (store=%s, seed from %s)" % (PORT, STORE, MATCH_URL))
     battery_tree.start_folding(TREE)
-    print("ADMIN TOKEN: %s   (from %s — set KLEAL_ADMIN_TOKEN to override)" % (ADMIN_TOKEN, _TOKEN_FILE))
+    # Сам токен в журнал не пишем (18.10.2026): журнал читают и пересылают, а токен — полный доступ к
+    # панели. Раньше он печатался целиком при каждом старте и месяцами лежал в journald.
+    print("ADMIN TOKEN: %s… (полностью — в %s; задать свой — KLEAL_ADMIN_TOKEN)" % (ADMIN_TOKEN[:4], _TOKEN_FILE))
     if ADMIN_PASSWORD:
         # Сам пароль в журнал не пишем: журнал читают и пересылают. Пишем только то, что он включён.
         print("ADMIN PASSWORD: включён (временно, до прода; убрать — KLEAL_ADMIN_PASSWORD=)")

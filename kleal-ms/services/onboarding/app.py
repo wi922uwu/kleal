@@ -21,6 +21,7 @@ from llm_client import llm_complete           # the ONLY model access (HTTP -> l
 from http_util import send, send_json, read_json
 import mailer                                  # письмо с кодом: провайдер выбирается окружением
 import interest_normalization as interest_norm
+import ai_profile                              # «Заполнить через ChatGPT»: MCP-коннектор и черновик анкеты
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = config.PORTS["onboarding"]
@@ -947,9 +948,13 @@ def request_code(email, lang="en", ip=""):
         if cur and cur.get("sent", 0) >= SEND_PER_HOUR and now - cur.get("first", now) < 3600:
             return {"ok": False, "error": "too many", "retry_after": 3600}
         code = _gen_code()
+        # 17.10.2026: окно — ЧАС от первого письма, потом счёт с нуля. Раньше `first` не сдвигался
+        # никогда, и через час после первого письма лимит переставал действовать вовсе: `sent`
+        # рос дальше, а проверка «меньше часа от first» уже не срабатывала.
+        fresh = not cur or now - cur.get("first", now) >= 3600
         _CODES[e] = {"hash": _sha(code), "exp": now + CODE_TTL, "left": CODE_ATTEMPTS,
-                     "sent": (cur.get("sent", 0) + 1) if cur else 1,
-                     "first": cur.get("first", now) if cur else now, "last": now}
+                     "sent": 1 if fresh else cur.get("sent", 0) + 1,
+                     "first": now if fresh else cur.get("first", now), "last": now}
         hits.append(now)
     ok, how, detail = mailer.send_code(e, code, lang=lang, minutes=CODE_TTL // 60)
     dev = {"dev_code": code} if show_code_enabled() else {}
@@ -986,24 +991,118 @@ def _new_session(accs, key):
     return tok
 
 
+def _kill_code(rec):
+    """Погасить КОД, оставив счётчики отправок (`sent`, `first`, `last`).
+
+    17.10.2026: раньше гасилась вся запись, и вместе с кодом пропадало окно «5 писем в час».
+    Три неверные попытки — и счёт писем начинался с нуля: лимит обходился сам собой. Запись
+    уберёт `_prune`, когда окно отжило своё."""
+    rec.pop("hash", None)
+    rec.pop("left", None)
+
+
 def verify_code(email, code, lang="en"):
     """Кадр A.03.2 → «Verify». Три исхода борда: верный, неверный (со счётчиком), истёкший."""
     e = _norm_email(email)
     now = time.time()
     with _CODE_LOCK:
         rec = _CODES.get(e)
-        if not rec or rec.get("exp", 0) < now:
-            _CODES.pop(e, None)
+        if not rec or not rec.get("hash") or rec.get("exp", 0) < now:
+            if rec:
+                _kill_code(rec)
             return {"ok": False, "error": "expired"}
         if not hmac.compare_digest(_sha(str(code or "").strip()), rec.get("hash", "")):
             rec["left"] = int(rec.get("left", 1)) - 1
             if rec["left"] <= 0:
-                _CODES.pop(e, None)
+                _kill_code(rec)
                 return {"ok": False, "error": "expired"}   # попытки кончились — код мёртв
             return {"ok": False, "error": "wrong", "attempts_left": rec["left"]}
-        _CODES.pop(e, None)                                 # одноразовый: гасим до выдачи сессии
+        # Одноразовый: гасим до выдачи сессии. Здесь — всю запись, как и раньше: верный код
+        # доказал владение ящиком, и окно писем можно начать заново (обойти лимит так нельзя —
+        # для этого нужен код из письма).
+        _CODES.pop(e, None)
 
     return session_for_email(e, "code")
+
+
+def _login_profile(owner_key, prof):
+    """Анкета для входа: копия из аккаунта, догнанная до строки человека в хранилище.
+
+    17.10.2026: копию пишет только привязка в конце анкеты, а правки профиля (`update_user`)
+    уходят в строку. Вход отдавал копию, телефон клал её поверх своей — и после переустановки
+    интересы, сводка и город откатывались к первому дню.
+
+    Форма остаётся формой анкеты (interests.explicit, city, geo.*), а не строкой: клиент
+    понимает только её. Переносятся лишь факты реестра shared/fields.json, которые человек
+    правит сам (`patchable`), — ничего, что раньше не уходило наружу. Факт берётся из строки,
+    только если строка расходится с тем, что из этой же копии записала бы регистрация: так
+    умолчания регистрации («28 лет», «social», «en») не выдаются за ответы человека.
+    Любой сбой — прежнее поведение: копия как есть, вход не ломается."""
+    if not isinstance(prof, dict):
+        return None
+    try:
+        import fields
+        row = my_profile_row(owner_key)
+        if not isinstance(row, dict):
+            return prof
+        was = _profile_to_user(prof)          # что регистрация сделала бы из этой копии
+        out = json.loads(json.dumps(prof))
+
+        def put(path, value):
+            cur = out
+            parts = path.split(".")
+            for part in parts[:-1]:
+                if not isinstance(cur.get(part), dict):
+                    cur[part] = {}
+                cur = cur[part]
+            cur[parts[-1]] = value
+
+        for fact, spec in fields.FACTS.items():
+            if not (spec.get("patchable") and spec.get("app") and spec.get("row")):
+                continue
+            have = fields.row_get(row, fact)
+            if have is None or have == fields.row_get(was, fact):
+                continue
+            if fact == "interests":
+                # В строке — активные ключи; выключенные (interests.unused) живут только в копии.
+                ints = prof.get("interests") if isinstance(prof.get("interests"), dict) else {}
+                off = [x for x in (ints.get("unused") or []) if isinstance(x, str)]
+                active = {str(x).strip().lower() for x in (ints.get("explicit") or [])
+                          if isinstance(x, str) and x not in off}
+                keys = [str(x).strip().lower() for x in have if str(x).strip()]
+                if set(keys) == active:
+                    continue
+                put("interests.explicit", keys + [x for x in off if x.strip().lower() not in keys])
+            elif fact == "languages":
+                # В строке коды (en), в анкете названия (English): своё название, если было.
+                old = [x for x in (((prof.get("languages") or {}).get("comfortable")) or [])
+                       if isinstance(x, str)]
+                names = []
+                for code in have:
+                    mine = next((x for x in old if _lang_code(x) == code), None)
+                    en = next((k for k, v in _LANG_CODES.items() if v == code), "")
+                    names.append(mine or (en.capitalize() if en.isascii() and en else code))
+                put("languages.comfortable", names)
+            else:
+                put(spec["app"], have)
+        return out
+    except Exception:
+        return prof
+
+
+def _person_id_of(owner_key, acc=None):
+    """id человека этого аккаунта — для ответа входа (18.10.2026, «личность по id», шаг 3).
+
+    Телефон узнавал свой id только после регистрации или открытия профиля и держал его в памяти:
+    после входа на новом устройстве все сравнения «это я?» шли по имени. Нет строки или хранилище
+    недоступно — пустая строка: вход от этого не ломается, телефон спросит профиль позже."""
+    try:
+        row = my_profile_row(owner_key)
+        if isinstance(row, dict) and row.get("id"):
+            return str(row["id"])
+    except Exception:
+        pass
+    return str((acc or {}).get("person_id") or "")
 
 
 def session_for_email(email, how, name=""):
@@ -1036,12 +1135,13 @@ def session_for_email(email, how, name=""):
         acc = accs[key]
         _write_accounts(accs)
 
-    prof = acc.get("profile") if isinstance(acc.get("profile"), dict) else None
+    # 17.10.2026: не голая копия из аккаунта, а копия, догнанная до строки (см. _login_profile).
+    prof = _login_profile(key, acc.get("profile"))
     # `isNew` — это про ПРОФИЛЬ, а не про запись в файле. Борд разводит два исхода: новому показать
     # A.03.3 и увести в анкету, вернувшемуся — сразу на главную. Человек, который завёл аккаунт и
     # бросил анкету на середине, по этому правилу пойдёт достраивать профиль, и это верно.
     return {"ok": True, "token": tok, "login": acc.get("login") or key, "email": e,
-            "name": acc.get("name") or "", "profile": prof,
+            "name": acc.get("name") or "", "profile": prof, "id": _person_id_of(key, acc),
             "isNew": bool(is_new or not prof), "hasProfile": bool(prof)}
 
 
@@ -1592,6 +1692,386 @@ def update_user(name, patch, uid=None):
     return {"ok": True, "user": row}
 
 
+def set_photo(name, value, uid=None):
+    """Сменить или убрать фото из профиля («Кто ты»), 18.10.2026.
+
+    До этого фото писалось только при регистрации: человек менял или убирал лицо на телефоне, а
+    остальные продолжали видеть прежнее — по прямой ссылке, без входа. `value` — data-URL нового фото
+    или пустое значение (убрать). К ссылке добавляется метка версии: адрес файла у человека один и тот
+    же, и без неё чужие телефоны держали бы в кэше старое лицо."""
+    key = str(name or "").strip().lower()
+    with _REG_LOCK:
+        users = _read_users()
+        row = _find_row(users, key, uid)
+        if row is None:
+            return {"ok": False, "error": "unknown user"}
+        rid = str(row.get("id") or "")
+        if value:
+            saved = save_photo(rid, value)
+            if not saved:
+                return {"ok": False, "error": "bad photo"}
+            row["photo"] = "%s?v=%d" % (saved, int(time.time()))
+        else:
+            _drop_photo(rid)
+            row["photo"] = ""
+        _persist_users(users, touched=row)
+    return {"ok": True, "user": row, "photo": row["photo"]}
+
+
+def set_name(owner_key, value, uid=None):
+    """Сменить имя («Кто ты»), 18.10.2026 — шаг 4 плана «личность по id».
+
+    Имя — подпись, а не личность: id строки не меняется, и всё, что держится за человека (заявки,
+    переписка, планы, группы), держится за id. Поэтому переименование — правка одной строки: в
+    хранилище людей (name и name_key у того же id) и в копии анкеты у аккаунта (иначе следующий вход
+    вернул бы телефону старое имя). При старой схеме таблицы с ключом по имени (users_keymode=name)
+    запись завела бы вторую строку — тогда отказ, а не тихая поломка."""
+    name = _clean_name(value)
+    if not name:
+        return {"ok": False, "error": "bad name"}
+    if db.ENABLED:
+        try:
+            if db.users_keymode() != "id":
+                return {"ok": False, "error": "rename unavailable"}
+        except Exception:
+            raise UserStorageUnavailable() from None
+    with _REG_LOCK:
+        users = _read_users()
+        row = _find_row(users, "", uid)
+        if row is None:
+            return {"ok": False, "error": "unknown user"}
+        row["name"] = name
+        _persist_users(users, touched=row)
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        acc = accs.get(owner_key)
+        if isinstance(acc, dict):
+            acc["name"] = name
+            if isinstance(acc.get("profile"), dict):
+                acc["profile"]["name"] = name
+            _write_accounts(accs)
+    return {"ok": True, "user": row, "name": name}
+
+
+# ---------------------------------------------------------------- «Заполнить через ChatGPT» (18.10.2026)
+# Протокол и чистка — в ai_profile.py; здесь хранение в файле аккаунтов (ссылка — только хэш ключа,
+# черновик — до подтверждения в приложении) и ответы ручек.
+PUBLIC_URL = os.environ.get("KLEAL_PUBLIC_URL", "https://aiopenware.com").rstrip("/")
+
+
+def ai_link(owner_key):
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        acc = accs.get(owner_key)
+        if not isinstance(acc, dict):
+            return {"ok": False, "error": "sign in required"}
+        tok, exp = ai_profile.issue_link(acc)
+        _write_accounts(accs)
+    return {"ok": True, "url": "%s/api/onboarding/mcp/%s" % (PUBLIC_URL, tok), "expires_at": int(exp),
+            "prompt": dict(ai_profile.PROMPT), "paste_prompt": dict(ai_profile.PASTE_PROMPT)}
+
+
+_AI_LABEL_INDEX = {"idx": None}
+
+
+def _ai_label_index():
+    """Подпись интереса на любом из трёх языков -> ключ реестра (shared/interests.json, 1690 ключей).
+
+    Словарь анкеты (trusted_interest) знает ключи и английские синонимы, но не подписи: «Предпринимательство»,
+    «Зал», «Gimnasio» он не узнаёт, хотя это подписи ключей entrepreneur и gym. Из одинаковых подписей
+    берётся ключ, равный английской подписи, иначе самый короткий — детерминированно."""
+    if _AI_LABEL_INDEX["idx"] is not None:
+        return _AI_LABEL_INDEX["idx"]
+    idx = {}
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "shared", "interests.json")
+        labels = (json.load(open(path, encoding="utf-8")) or {}).get("labels") or {}
+    except Exception:
+        labels = {}
+    for key, lab in labels.items():
+        if not isinstance(lab, dict):
+            continue
+        for lang in ("ru", "en", "es"):
+            a = interest_norm._alias_key(lab.get(lang))
+            if not a:
+                continue
+            cur = idx.get(a)
+            prefer = interest_norm._alias_key(lab.get("en")) == interest_norm._alias_key(key)
+            if cur is None or (prefer and not cur[1]) or (prefer == cur[1] and len(key) < len(cur[0])):
+                idx[a] = (key, prefer)
+    _AI_LABEL_INDEX["idx"] = {a: k for a, (k, _p) in idx.items()}
+    return _AI_LABEL_INDEX["idx"]
+
+
+def _ai_known_key(text):
+    """Ключ реестра для слова или фразы без модели: словарь анкеты, затем подписи реестра."""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    k = interest_norm.trusted_interest(t)
+    if k:
+        return k
+    return _ai_label_index().get(interest_norm._alias_key(t))
+
+
+def _ai_head_key(canonical):
+    """«technology startups» -> startups, «gym workouts» -> gym: ключ по главному слову английского
+    ответа модели. Берётся самый длинный узнанный кусок (пара слов раньше одного)."""
+    words = [w for w in re.split(r"[^a-z0-9]+", str(canonical or "").lower()) if w]
+    for size in (2, 1):
+        for i in range(len(words) - size + 1):
+            k = _ai_known_key(" ".join(words[i:i + size]))
+            if k:
+                return k
+    return None
+
+
+def _ai_lang(text):
+    t = str(text or "")
+    if re.search(r"[а-яё]", t, re.I):
+        return "ru"
+    if re.search(r"[ñáéíóú¿¡]", t, re.I):
+        return "es"
+    return "en"
+
+
+def _ai_resolve_interests(raws, owner_key):
+    """Интересы из черновика ИИ -> (ключи реестра, вопросы на подтверждение), 18.10.2026.
+
+    Живой снимок Ивана: «Профиль не сохранился: Kleal пока не знает такие интересы — тренировки в зале,
+    программирование, …» — ChatGPT присылает обычные слова, а профиль принимает ключи реестра или
+    подтверждённое. Каждое слово — тем же путём, что в анкете: словарь, затем модель анкеты (normalize),
+    её ответ снова сводится к ключу. Не свелось однозначно — вопрос с квитанцией (тот же interest-confirm,
+    что в анкете): правило подтверждения не обходится, но и выбрасывать ничего не нужно."""
+    import concurrent.futures as _cf
+    keys, review = [], []
+
+    def one(raw):
+        k = _ai_known_key(raw)
+        if k:
+            return ("key", k, raw)
+        try:
+            r = interest_norm.normalize(raw, [], _ai_lang(raw), llm_complete, MODEL_ID, owner_key)
+        except Exception:
+            r = {"ok": False, "status": "unavailable"}
+        if r.get("status") == "duplicate" and r.get("canonical"):
+            return ("key", str(r["canonical"]), raw)
+        opts = r.get("options") or []
+        if r.get("status") == "ready" and len(opts) == 1:
+            c = opts[0].get("canonical")
+            k = _ai_known_key(c) or _ai_head_key(c)
+            if k:
+                return ("key", k, raw)
+            return ("review", {"raw": raw, "status": "confirm", "options": opts}, raw)
+        if r.get("status") == "clarify" and opts:
+            return ("review", {"raw": raw, "status": "clarify", "question": r.get("question") or "",
+                               "options": opts}, raw)
+        return ("review", {"raw": raw, "status": "unresolved", "options": []}, raw)
+
+    raws = [str(x) for x in (raws or []) if str(x).strip()][:15]
+    with _cf.ThreadPoolExecutor(max_workers=6) as ex:
+        results = list(ex.map(one, raws))
+    for kind, val, _raw in results:
+        if kind == "key":
+            k = str(val).strip().lower()
+            if k and k not in keys:
+                keys.append(k)
+        else:
+            review.append(val)
+    return keys, review
+
+
+def _ai_finish_profile(owner_key, prof):
+    """Черновик перед записью: интересы — ключами реестра, остальное — вопросами (см. выше)."""
+    prof = dict(prof or {})
+    raws = ((prof.get("interests") or {}).get("explicit") or []) if isinstance(prof.get("interests"), dict) else []
+    review = []
+    if raws:
+        keys, review = _ai_resolve_interests(raws, owner_key)
+        if keys:
+            prof["interests"] = {"explicit": keys}
+        else:
+            prof.pop("interests", None)
+    return prof, review
+
+
+def _ai_store_draft(owner_key, profile, source, review=None):
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        acc = accs.get(owner_key)
+        if not isinstance(acc, dict):
+            return None
+        acc["ai_draft"] = {"source": source, "at": int(time.time()), "profile": profile,
+                           "review": review or []}
+        _write_accounts(accs)
+        return ai_profile.draft_public(acc["ai_draft"])
+
+
+def ai_draft(owner_key, action="get"):
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        acc = accs.get(owner_key)
+        if not isinstance(acc, dict):
+            return {"ok": False, "error": "sign in required"}
+        if action == "discard":
+            acc.pop("ai_draft", None)
+            _write_accounts(accs)
+            return {"ok": True, "draft": None}
+        draft = ai_profile.draft_public(acc.get("ai_draft"))
+        # Короткий путь после ChatGPT (18.10.2026): экран спрашивает ТОЛЬКО недостающее. Имя — из аккаунта
+        # (Google/Apple его знают), а не от ИИ; `missing` — обязательные пункты анкеты, которых нет в
+        # черновике (та же проверка, что у онбординга, critical_status_v2).
+        out = {"ok": True, "draft": draft, "account_name": _clean_name(acc.get("name"))}
+        if draft:
+            out["missing"] = critical_status_v2(draft["profile"]).get("missing") or []
+        return out
+
+
+def ai_paste(owner_key, text, lang="ru"):
+    text = str(text or "").strip()
+    if not text:
+        return {"ok": False, "error": "empty_text"}
+    if len(text) > ai_profile.PASTE_MAX:
+        return {"ok": False, "error": "too_long"}
+    now = time.time()
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        acc = accs.get(owner_key)
+        if not isinstance(acc, dict):
+            return {"ok": False, "error": "sign in required"}
+        hits = [t for t in (acc.get("ai_paste_hits") or []) if now - float(t) < 3600]
+        if len(hits) >= ai_profile.PASTE_PER_HOUR:
+            return {"ok": False, "error": "rate_limited"}
+        acc["ai_paste_hits"] = hits + [now]
+        _write_accounts(accs)
+    # То же извлечение, что у разговора онбординга: только сказанное, ничего не домысливать.
+    try:
+        raw = llm_complete(MODEL_ID, [{"role": "system", "content": settings.prompt("onboarding.extract", EXTRACT_V2)},
+                                      {"role": "user", "content": "User: " + text}], 0.1, tag="onboarding.ai_paste")
+        prof = ai_profile.from_extracted(base._clean_profile(base._extract_json(raw) or {}))
+    except Exception:
+        return {"ok": False, "error": "extract_failed"}
+    if not prof:
+        return {"ok": False, "error": "extract_failed"}
+    prof, review = _ai_finish_profile(owner_key, prof)
+    return {"ok": True, "draft": _ai_store_draft(owner_key, prof, "paste", review)}
+
+
+def mcp_call(token, raw):
+    """Тело запроса коннектора -> (код, ответ). Ключ — в адресе; хранится только его хэш."""
+    with _ACC_LOCK:
+        key, link = ai_profile.find_link(_read_accounts(), token)
+    if not key:
+        return 404, {"jsonrpc": "2.0", "id": None,
+                     "error": {"code": -32001, "message": "This Kleal link is not valid. Open Kleal and get a new one."}}
+    state = ai_profile.link_usable(link)
+
+    def save(args):
+        prof = ai_profile.draft_profile(args)
+        if not prof:
+            return False, "Include at least city, languages or interests."
+        prof, review = _ai_finish_profile(key, prof)
+        with _ACC_LOCK:
+            accs = _read_accounts()
+            acc = accs.get(key)
+            k2, l2 = ai_profile.find_link({key: acc}, token)
+            if not k2 or not ai_profile.link_usable(l2)[0]:
+                return False, "The link expired."
+            l2["uses"] = int(l2.get("uses") or 0) + 1
+            acc["ai_draft"] = {"source": "chatgpt", "at": int(time.time()), "profile": prof, "review": review}
+            _write_accounts(accs)
+        print("[ai-profile] черновик от коннектора: поля=%s" % ",".join(sorted(prof)), flush=True)
+        return True, prof
+
+    def make_link(prof):
+        return "%s/ai/import/%s#%s" % (PUBLIC_URL, token, ai_profile.encode_fragment(prof))
+
+    return ai_profile.handle_body(raw, state, save, make_link)
+
+
+_AI_PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_import_page.html")
+
+
+def ai_import(token, profile):
+    """Страница «проверить и сохранить» (/ai/import/<ключ>): человек сам нажал «Сохранить» — кладём
+    черновик по тому же ключу и тем же правилам, что инструмент записи коннектора."""
+    prof = ai_profile.from_extracted(profile if isinstance(profile, dict) else {})
+    if not prof:
+        return {"ok": False, "error": "empty"}
+    with _ACC_LOCK:
+        key0, link0 = ai_profile.find_link(_read_accounts(), token)
+    if not key0:
+        return {"ok": False, "error": "unknown"}
+    if not ai_profile.link_usable(link0)[0]:
+        return {"ok": False, "error": ai_profile.link_usable(link0)[1]}
+    prof, review = _ai_finish_profile(key0, prof)
+    with _ACC_LOCK:
+        accs = _read_accounts()
+        key, link = ai_profile.find_link(accs, token)
+        if not key:
+            return {"ok": False, "error": "unknown"}
+        usable, why = ai_profile.link_usable(link)
+        if not usable:
+            return {"ok": False, "error": why}
+        link["uses"] = int(link.get("uses") or 0) + 1
+        accs[key]["ai_draft"] = {"source": "chatgpt", "at": int(time.time()), "profile": prof, "review": review}
+        _write_accounts(accs)
+    print("[ai-profile] черновик со страницы подтверждения: поля=%s" % ",".join(sorted(prof)), flush=True)
+    return {"ok": True, "fields": sorted(prof)}
+
+
+# ---------------------------------------------------------------- галочка «проверен» (18.10.2026)
+# Проверка возраста (shared/age_verification_http) сама строк людей не пишет — галочку ставит эта служба
+# через крючки. ПОЛЕ ОТДЕЛЬНОЕ: id_verified = «прошёл проверку документа (Didit)». Старое `verified` —
+# это «сам отметил 18+» при регистрации, оно стоит у всех 896 строк, и на нём держится фильтр «только
+# проверенные» у 175 человек: поменять его смысл значило бы опустошить им поиск, как 04.10.
+# id_verified_method: «didit» — настоящее одобрение, «test» — тестовый автопроход (его можно снять;
+# настоящую галочку тестовый путь не трогает никогда).
+def _set_verified(owner_key, method, on=True):
+    with _REG_LOCK:
+        users = _read_users()
+        row = _owned_row(users, owner_key)
+        if row is None:
+            return False
+        cur = row.get("id_verified_method")
+        if on:
+            if row.get("id_verified") and (cur == method or (cur == "didit" and method == "test")):
+                return True                     # уже стоит; настоящую тестом не перекрываем
+            row["id_verified"] = True
+            row["id_verified_method"] = method
+        else:
+            if cur != "test":
+                return cur != "didit"           # снять можно только тестовую
+            row["id_verified"] = False
+            row.pop("id_verified_method", None)
+        _persist_users(users, touched=row)
+    print("[age] галочка %s: метод=%s" % ("поставлена" if on else "снята", method), flush=True)
+    return True
+
+
+def _age_on_verified(owner_key, method):
+    return _set_verified(owner_key, method, True)
+
+
+def _age_test_pass(owner_key, on):
+    return _set_verified(owner_key, "test", bool(on))
+
+
+def _age_test_state(owner_key):
+    try:
+        row = my_profile_row(owner_key)
+    except Exception:
+        return False
+    return bool(row and row.get("id_verified") and row.get("id_verified_method") == "test")
+
+
+try:
+    import age_verification_http as _age_http
+    _age_http.ON_VERIFIED, _age_http.TEST_PASS, _age_http.TEST_STATE = _age_on_verified, _age_test_pass, _age_test_state
+except Exception as _e:                               # без крючков проверка работает, только без галочки
+    print("[age] крючки галочки не подключены: %s" % str(_e)[:120], flush=True)
+
+
 def _purge_in_matching(uid):
     """Стереть следы человека в матчинге: интенты, переписку, заявки, планы, места в группах, файлы
     голосовых. Зовётся ДО удаления строки — без неё матчинг уже не узнаёт человека по id (повтор
@@ -1648,12 +2128,16 @@ def delete_account(owner_key):
         account["deleting"] = True
         accs[key] = account
         _write_accounts(accs)
+    mine = my_profile_row(key)
+    if db.ENABLED and mine and mine.get('id'):
+        import monetization_admin
+        with db._connect().connection() as conn:
+            monetization_admin.begin_delete(conn,str(mine['id']))
     # Only the explicit canary can own KYC evidence. Keep unrelated account
     # deletion independent from the new KYC store; existing ID purge stays.
     import age_rollout
     age_rollout.begin_delete_account(key, account)
     age_rollout.delete_account(key, account)
-    mine = my_profile_row(key)
     gone_row = False
     purged, photo = None, False
     if mine is not None and str(mine.get("id") or ""):
@@ -2008,6 +2492,10 @@ def register_profile(profile, owner_key=""):
             # фотографии (photos/<id>.jpg) и на него ссылаются записи в хранилище матчинга.
             # Выдать существующему человеку новый id значило бы отвязать его от собственного лица.
             u["id"] = str(prior.get("id") or u["id"])
+            # Галочка проверки документа — от провайдера, а не из анкеты: повторный проход её не сбрасывает.
+            for _f in ("id_verified", "id_verified_method"):
+                if _f in prior:
+                    u[_f] = prior[_f]
             users = [x for x in users if x is not prior]
         else:
             u["id"] = _fresh_uid(owner_key, users)
@@ -2148,6 +2636,32 @@ class H(BaseHTTPRequestHandler):
         import monetization_http
         if monetization_http.handle(self):
             return
+        if self.path.split("?")[0].startswith("/ai/import/"):
+            # Страница «проверить и сохранить» для ссылки из ChatGPT. Анкета — во фрагменте (#…), на сервер
+            # она не приходит; страница сама показывает её и по кнопке шлёт на /api/onboarding/ai-import.
+            try:
+                html = open(_AI_PAGE, "rb").read()
+            except Exception:
+                return send_json(self, 404, {})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(html)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Robots-Tag", "noindex, nofollow")
+            self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; "
+                             "style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
+                             "frame-ancestors 'none'")
+            self.end_headers()
+            self.wfile.write(html)
+            return
+        if self.path.split("?")[0].startswith("/api/onboarding/mcp/"):
+            # Коннектор отвечает только на POST (без потока SSE) — так велит Streamable HTTP.
+            self.send_response(405)
+            self.send_header("Allow", "POST")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if self.path.split("?")[0] == "/health":
             return send_json(self, 200, {"service": "onboarding", "ok": True,
                                          "storage": db.MODE})
@@ -2271,12 +2785,32 @@ class H(BaseHTTPRequestHandler):
             # Keep a failed authoritative identity read a structured failure.
             return send_json(self, 503, {"ok": False, "error": "storage unavailable"})
 
+    def _mcp(self):
+        """MCP Streamable HTTP: только POST с JSON-ответом (без SSE). Ключ — последний сегмент пути."""
+        token = self.path.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+        try:
+            ln = int(self.headers.get("Content-Length", "0") or 0)
+        except (TypeError, ValueError):
+            ln = 0
+        if ln > 64 * 1024:
+            return send_json(self, 413, {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Too large"}})
+        raw = self.rfile.read(ln).decode("utf-8", "replace") if ln else ""
+        code, out = mcp_call(token, raw)
+        if out is None:
+            self.send_response(code)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        return send_json(self, code, out)
+
     def _do_POST(self):
         import monetization_http
         if monetization_http.handle(self):
             return
         if self.path.split("?")[0] == "/api/auth/apple/callback":
             return self._apple_callback()
+        if self.path.split("?")[0].startswith("/api/onboarding/mcp/"):
+            return self._mcp()
         body = read_json(self)
         # ONE canonical name per endpoint. Every route used to be spelled out twice — under
         # /api/onboarding/* and under the /api/v2/* alias left from the kleal_v2 era — and the
@@ -2289,10 +2823,29 @@ class H(BaseHTTPRequestHandler):
         p = self.path
         if p.startswith("/api/v2/"):
             p = "/api/onboarding/" + p[len("/api/v2/"):]
+        if p.startswith("/api/onboarding/ai-import/"):
+            # Ключ ссылки — вместо сессии: страницу открывают на компьютере, где входа в Kleal нет.
+            return send_json(self, 200, ai_import(p.rstrip("/").rsplit("/", 1)[-1], body.get("profile")))
+        if p in ("/api/onboarding/ai-link", "/api/onboarding/ai-draft", "/api/onboarding/ai-paste"):
+            owner = session_owner(_bearer(self))
+            if not owner:
+                return send_json(self, 200, {"ok": False, "error": "sign in required"})
+            k = owner.get("_key") or ""
+            if p == "/api/onboarding/ai-link":
+                return send_json(self, 200, ai_link(k))
+            if p == "/api/onboarding/ai-draft":
+                return send_json(self, 200, ai_draft(k, "discard" if body.get("action") == "discard" else "get"))
+            return send_json(self, 200, ai_paste(k, body.get("text"), body.get("lang") or "ru"))
         if p == "/api/onboarding/state":
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             send_json(self, 200, critical_status_v2(prof))
         elif p == "/api/onboarding/chat":
+            # 17.10.2026: только с сессией. Каждый вызов — обращение к модели, а ручка была открыта
+            # всем. Приложение до входа её не зовёт: анкета (/chat) открывается после входа кодом,
+            # Google или Apple, и index.tsx пускает в неё только с живой сессией. Ответ — как у
+            # соседней ручки с моделью, interest-normalize.
+            if not session_owner(_bearer(self)):
+                return send_json(self, 200, {"ok": False, "error": "no session"})
             prior = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             msgs = body.get("messages") if isinstance(body.get("messages"), list) else []
             try:
@@ -2302,6 +2855,11 @@ class H(BaseHTTPRequestHandler):
                                       "options": [], "profile": prior, "crit": critical_status_v2(prior),
                                       "error": str(e)[:200]})
         elif p == "/api/onboarding/summary":
+            # 17.10.2026: только с сессией — по той же причине, что и chat. Сводку зовёт экран
+            # summary.tsx, а до него доходят только из анкеты, то есть после входа. Пустая
+            # `summary` в отказе — чтобы экран спокойно ушёл в свою запасную фразу.
+            if not session_owner(_bearer(self)):
+                return send_json(self, 200, {"ok": False, "error": "no session", "summary": ""})
             prof = body.get("profile") if isinstance(body.get("profile"), dict) else {}
             try:
                 send_json(self, 200, v2_summary(prof, body.get("lang") or "ru"))
@@ -2348,6 +2906,7 @@ class H(BaseHTTPRequestHandler):
             prof = acc.get("profile") if isinstance(acc.get("profile"), dict) else None
             return send_json(self, 200, {"ok": True, "login": acc.get("login") or acc.get("_key"),
                                          "email": acc.get("email") or "", "name": acc.get("name") or "",
+                                         "id": _person_id_of(acc.get("_key") or "", acc),
                                          "profile": prof, "hasProfile": bool(prof)})
         elif p == "/api/waitlist":
             return send_json(self, 200, join_waitlist(body.get("email"), body.get("source"),
@@ -2439,9 +2998,18 @@ class H(BaseHTTPRequestHandler):
                 _row = my_profile_row((owner or {}).get("_key") or "")
                 if not _row:
                     return send_json(self, 200, {"ok": False, "error": "sign in required"})
-                send_json(self, 200, update_user(_row.get("name"),
-                                                 body.get("patch") if isinstance(body.get("patch"), dict) else {},
-                                                 uid=_row.get("id")))
+                patch = dict(body.get("patch")) if isinstance(body.get("patch"), dict) else {}
+                # Имя — подпись (шаг 4 «личность по id»): своя ручка, id строки не меняется.
+                if "name" in patch:
+                    renamed = set_name((owner or {}).get("_key") or "", patch.pop("name"), uid=_row.get("id"))
+                    if not renamed.get("ok") or not patch:
+                        return send_json(self, 200, renamed)
+                # Фото — файл, а не поле строки: идёт своим путём (set_photo), остальное — как было.
+                if "photo" in patch:
+                    shot = set_photo(_row.get("name"), patch.pop("photo"), uid=_row.get("id"))
+                    if not shot.get("ok") or not patch:
+                        return send_json(self, 200, shot)
+                send_json(self, 200, update_user(_row.get("name"), patch, uid=_row.get("id")))
             except UserStorageUnavailable:
                 raise
             except Exception as e:

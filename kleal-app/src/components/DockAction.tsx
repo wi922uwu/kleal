@@ -7,7 +7,6 @@
  *
  * Стоит в слоте `footer` чат-оболочки: над композером и вне прокрутки ленты — её не надо искать.
  */
-import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { GlassPill } from './Glass';
 import { GlassIconButton } from './LiquidGlass';

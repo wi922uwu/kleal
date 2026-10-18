@@ -282,6 +282,15 @@ def similarity_detail(topics, interests):
                     if norm(x) not in derived:
                         natural = max(natural, 1)
                     break
+            # «тот же мир»: у слова нет близких по смыслу, но модель назвала раздел (бонсай -> природа)
+            b = C.meaning_branch(t) if lvl_t == 0 else None
+            if b:
+                for x in interests:
+                    if C.macro_of(x) == b:
+                        lvl_t = 1
+                        if norm(x) not in derived:
+                            natural = max(natural, 1)
+                        break
         per_topic[norm(t)] = lvl_t
         best = max(best, lvl_t)
     # Мост проверяется ПОСЛЕДНИМ и не спорит с каноном: он поднимает только тех, кого канон и

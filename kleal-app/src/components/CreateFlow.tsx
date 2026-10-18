@@ -26,6 +26,7 @@ import { GlassBack, GlassSurface, usePress } from './LiquidGlass';
 import { LogoFace } from './Logo';
 import { IconCheck, IconMic } from './icons';
 import Markdown from './Markdown';
+import { BubbleIn } from './ChatMotion';
 
 /** Подпись пояснения в скобках и сами скобки — #AFAFAF с кадра («[in person]»). */
 const BRACKET = '#AFAFAF';
@@ -90,9 +91,9 @@ export function StepAsk({ text, caption }: { text: string; caption?: string }) {
 }
 
 /** Реплика Kleal в ленте шага — со временем под ней. Длинное рисуется разметкой. */
-export function AgentLine({ text, at, markdown = false }: { text: string; at?: string; markdown?: boolean }) {
+export function AgentLine({ text, at, markdown = false, fresh = false }: { text: string; at?: string; markdown?: boolean; fresh?: boolean }) {
   return (
-    <View style={s.rowThem}>
+    <BubbleIn mine={false} fresh={fresh} style={s.rowThem}>
       <View style={s.shadowThem}>
         <GlassSurface tone="light" radius={20} style={[s.bub, s.bubThem]}>
           {/* Разметка — только если она в тексте есть: у Markdown свои поля абзаца, и однострочное
@@ -101,21 +102,21 @@ export function AgentLine({ text, at, markdown = false }: { text: string; at?: s
         </GlassSurface>
       </View>
       {at ? <Text style={s.time}>{at}</Text> : null}
-    </View>
+    </BubbleIn>
   );
 }
 
 /** Своя реплика — коралловое стекло 20/20/4/20 со свечением. */
-export function MyLine({ text, at }: { text: string; at?: string }) {
+export function MyLine({ text, at, fresh = false }: { text: string; at?: string; fresh?: boolean }) {
   return (
-    <View style={s.rowMe}>
+    <BubbleIn mine fresh={fresh} style={s.rowMe}>
       <View style={s.shadowMe}>
         <GlassSurface tone="brand" radius={20} style={[s.bub, s.bubMe]}>
           <Text style={[s.bubText, { color: color.onPrimary }]}>{text}</Text>
         </GlassSurface>
       </View>
       {at ? <Text style={[s.time, { textAlign: 'right' }]}>{at}</Text> : null}
-    </View>
+    </BubbleIn>
   );
 }
 
@@ -289,23 +290,31 @@ export function StepIndicator({ n, of = 3, label }: { n: number; of?: number; la
  * же путём, что и раньше, — поле только выглядит по-новому.
  */
 export function CreateComposer({
-  value, onChange, onSubmit, placeholder, editable = true,
+  value, onChange, onSubmit, placeholder, editable = true, locked = false,
 }: {
   value: string; onChange: (t: string) => void; onSubmit: () => void; placeholder: string; editable?: boolean;
+  /**
+   * Поле закрыто совсем (шаги мастера с выбором, 18.10.2026): текст здесь уводил затею в обход
+   * шагов и ломал поток. Видно, что писать нельзя: подсказка вместо «Сообщение…», микрофон бледный,
+   * касания не принимаются. Гасим содержимое, а не стекло — у стекла и его предков opacity не трогаем.
+   */
+  locked?: boolean;
 }) {
   return (
-    <GlassSurface tone="light" radius={999} style={s.field}>
+    <GlassSurface tone="light" radius={999} style={s.field} pointerEvents={locked ? 'none' : 'auto'}>
       <TextInput
-        style={s.input}
-        value={value}
+        style={[s.input, locked && s.inputLocked]}
+        value={locked ? '' : value}
         onChangeText={onChange}
         placeholder={placeholder}
         placeholderTextColor={MUTED}
-        onSubmitEditing={onSubmit}
+        onSubmitEditing={locked ? undefined : onSubmit}
         returnKeyType="send"
-        editable={editable}
+        editable={editable && !locked}
+        accessibilityState={{ disabled: locked }}
       />
-      <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send', 'Enviar')} onPress={onSubmit} hitSlop={8}>
+      <Pressable accessibilityRole="button" accessibilityLabel={T('Отправить', 'Send', 'Enviar')}
+                 onPress={locked ? undefined : onSubmit} disabled={locked} hitSlop={8} style={locked && s.micLocked}>
         <IconMic c={MUTED} />
       </Pressable>
     </GlassSurface>
@@ -315,6 +324,8 @@ export function CreateComposer({
 // ===================================================================== вид
 
 const s = StyleSheet.create({
+  inputLocked: { opacity: 0.7 },
+  micLocked: { opacity: 0.35 },
   head: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 4, alignItems: 'center' },
   headRow: { flexDirection: 'row', alignItems: 'center', height: 44, alignSelf: 'stretch', gap: 8 },
   slot: { width: 72, flexDirection: 'row', alignItems: 'center', gap: 8 },

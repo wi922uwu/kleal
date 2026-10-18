@@ -12,22 +12,26 @@
  * моих пузырях не новее момента, когда собеседник в последний раз открывал переписку.
  * Чего у сервера нет — здесь не рисуется: ни «online now», ни «печатает…».
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
   ActivityIndicator, KeyboardAvoidingView, Platform, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
+import { takeOpener } from '../src/online-ask';
 import {
-  CHAT, CHATMENU, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS, SYS_ACT, planWhen, planPhase, sysLine, msgTime,
-  KLEAL_SENDER } from '../src/chat';
-import { inviteHoursLeft } from '../src/messages';
+  CHAT, CHATMENU, THREAD, INVITE, UNDO_BAR, Msg, REACTIONS, SYS_ACT, planPhase, sysLine, msgTime, KLEAL_SENDER,
+} from '../src/chat';
+import { inviteHoursLeft, personKey } from '../src/messages';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { useLang, T, getLang, dateLocale, use12h } from '../src/i18n';
-import { useOnb, markSeen, setMsgPrefs } from '../src/state';
-import { mediaUrl, agent, newIdem, ensureMe, isMe, pidOf, type VideoPayload } from '../src/api';
+import { useOnb, markSeen, setMsgPrefs, syncChatLifecycle } from '../src/state';
+import { mediaUrl, agent, newIdem, ensureMe, isMe, pidOf, getSession, type VideoPayload } from '../src/api';
+import { chatLifecycle, canComposeChat, type ChatLifecycle } from '../src/chat-lifecycle';
 import { usePolling } from '../src/polling';
+import { blurReturnAction, navigateReturnAction, recoveryAction, returnActionRoute } from '../src/monetization-actions';
+import { MONETIZATION } from '../src/monetization';
 import { Sheet, SheetItem } from '../src/components/Sheet';
 import * as Clipboard from 'expo-clipboard';
 import { MessageFeed, type SysAct } from '../src/components/MessageFeed';
@@ -45,6 +49,13 @@ import { Ambient, GLOW_FORM } from '../src/components/Ambient';
 import { withScheme } from '../src/intent';
 
 export default function Conversation() {
+  const st = useOnb();
+  const params = useLocalSearchParams<{ who?: string; who_id?: string }>();
+  // Navigation may reuse this screen for a namesake or another login. Reset its local history.
+  return <ConversationContent key={JSON.stringify([st.session, params.who_id, params.who])} />;
+}
+
+function ConversationContent() {
   useLang();
   const router = useRouter();
   const st = useOnb();
@@ -59,6 +70,9 @@ export default function Conversation() {
   const photo = String(params.photo || '');
 
   const me = String(st.profile.name || '');
+  const screenSession = String(st.session || '');
+  const recovery = recoveryAction(screenSession,'conversation');
+  useFocusEffect(useCallback(()=>()=>blurReturnAction(screenSession,'conversation'),[screenSession]));
   /*
    * СОБЕСЕДНИК — ПОДПИСЬ И ID (kleal-ms/docs/IDENTITY.md). `who_id` едет параметром перехода; если
    * экран открыли без него (место вызова, куда id ещё не проведён), id берётся из первого ответа
@@ -78,9 +92,33 @@ export default function Conversation() {
   useEffect(() => { ensureMe().then(setMeKnown); }, []);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [draft, setDraft] = useState('');
+  /*
+   * ПЕРВОЕ СООБЩЕНИЕ ОТ «СПРОСИ ШАР» (src/online-ask.ts): откликнулись с карточки шара — Буди
+   * предложил, с чего начать, на языке собеседника. Приглашение текста не несёт, поэтому черновик
+   * ждал здесь и встаёт в поле ввода при первом открытии переписки. Отправляет его человек сам.
+   */
+  useEffect(() => {
+    if (!other) return;
+    let live = true;
+    takeOpener({ name: other, id: otherId || undefined }).then((t) => { if (live && t) setDraft((d) => d || t); }).catch(() => {});
+    return () => { live = false; };
+  }, [other, otherId]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [actions, setActions] = useState(false);
+  const [chat, setChat] = useState<ChatLifecycle | null>(null);
+  const [resumeArmed, setResumeArmed] = useState(false);
+  const [ending, setEnding] = useState(false);
+  const [chatNotice, setChatNotice] = useState('');
+  const [stateError, setStateError] = useState(false);
+  const [blockedError, setBlockedError] = useState(false);
+  const mounted = useRef(true);
+  const loadVersion = useRef(0);
+  const appliedVersion = useRef(0);
+  const appliedServerTime = useRef(0);
+  const endKey = useRef<string | undefined>(undefined);
+  const currentSession = useCallback((session: string) => !!session && mounted.current && session === getSession(), []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   /**
    * O.19a/O.19b: «Создать план» и «Завершить чат» не срабатывают мгновенно — внизу чата тикает
    * полоса Undo · 4…0, и только по нулю действие случается. Отменить — просто снять pending,
@@ -156,17 +194,41 @@ export default function Conversation() {
               && Math.abs((x.t || 0) - (m.t || 0)) < 30
           )
         );
-        if (dupe >= 0) out[dupe] = m;      // серверная версия точнее: у неё настоящее время
+        // Серверная версия точнее: у неё настоящее время. Свой `cid` оставляем — по нему лента держит
+        // ключ реплики, иначе принятая сервером реплика перемонтировалась бы и взлетала второй раз.
+        if (dupe >= 0) out[dupe] = { ...m, cid: m.cid || out[dupe].cid };
         else out.push(m);
       }
       return out.sort((a, b) => (a.t || 0) - (b.t || 0));
     });
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (delivered = false) => {
     if (!me || !other) { setLoading(false); return; }
+    const session = screenSession, version = ++loadVersion.current;
+    const current = () => currentSession(session) && version >= appliedVersion.current;
+    if (!current()) return;
     try {
       const r: any = await agent.thread(me, peer, since.current);
+      if (!current()) return;
+      const evidence = chatLifecycle(r?.chat, otherId);
+      if (evidence && evidence.serverTime < appliedServerTime.current) return;
+      appliedVersion.current=version;
+      // HTTP success is not evidence that this pair permits sending. Preserve
+      // history/closed state, but require a valid fresh lifecycle before composing.
+      if (!evidence) setStateError(true);
+      if (evidence) appliedServerTime.current=evidence.serverTime;
+      if (evidence && syncChatLifecycle(evidence, session, delivered)) {
+        setChat(evidence);
+        setBlockedError(evidence.blocked);
+        setStateError(false);
+        if (evidence.state === 'closed' && endKey.current) {
+          // A lost end receipt may be confirmed by the next canonical poll.
+          setErr('');
+          endKey.current = undefined;
+        }
+        if (!params.who_id) setLearnedId(evidence.peerId);
+      }
       merge((r?.messages || []) as Msg[]);
       if (!params.who_id) {
         for (const x of (r?.messages || []) as any[]) {
@@ -178,18 +240,23 @@ export default function Conversation() {
       // Ошибку отправки здесь НЕ гасим: опрос и отправка — разные события, и удачный опрос ничего
       // не говорит об уехавшей реплике. Раньше «Сообщение не ушло» стиралось через четыре
       // секунды, экран выглядел здоровым, а пузырь так и оставался недоставленным.
+      return evidence;
     } catch {
+      if (current()) setStateError(true);
       /* тихо: это фоновая дотяжка, и ругаться на каждый неудавшийся опрос незачем */
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [me, peer, merge]);
+  }, [me, peer, merge, otherId, currentSession, screenSession]);
 
   /** План и заявка между нами — для шапки, закреплённой карточки и карточек приглашения. */
   const loadSide = useCallback(async () => {
     if (!me || !other) return;
+    const session = screenSession;
+    if (!currentSession(session)) return;
     try {
       const [pl, inb, out] = await Promise.all([agent.plans(me), agent.inbox(me), agent.outbox(me)]);
+      if (!currentSession(session)) return;
       const norm = (v: any) => String(v || '').trim().toLowerCase();
       const all = [...((pl as any)?.plans || [])];
       setLivePlan(all.find((p: any) =>
@@ -219,9 +286,9 @@ export default function Conversation() {
     } catch {
       /* тихо */
     }
-  }, [me, other, isOther]);
+  }, [me, other, isOther, currentSession, screenSession]);
 
-  useEffect(() => { load(); loadSide(); markSeen(other); }, [me, other]);
+  useEffect(() => { load(); loadSide(); markSeen(other, otherId); }, [me, other, otherId]);
   // План и заявка меняются редко — свой ритм, но спит так же, как и лента.
   usePolling(loadSide, 15000);
 
@@ -269,23 +336,41 @@ export default function Conversation() {
    * возвращает прежний ответ вместо второй копии у собеседника.
    */
   const deliver = useCallback(async (m: Msg) => {
+    if (!canWrite || !currentSession(screenSession)) return;
+    const session = screenSession;
+    const wasClosed = chat?.state === 'closed';
     setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'sending' } : x)));
     try {
       const r: any = await agent.message(me, peer, String(m.text || ''), m.voice, m.cid,
                                          m.rt?.id, m.video);
       if (!r?.ok) throw new Error(String(r?.error || 'SEND_FAILED'));
+      if (!currentSession(session)) return;
       setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: undefined, id: r.id, t: r.t || x.t } : x)));
       setErr('');
+      // The message receipt can be a replay from a previous session. Only a fresh
+      // canonical read can move this pair back out of the archive.
+      const evidence = await load(true);
+      if (!currentSession(session)) return;
+      if (wasClosed && evidence?.state === 'active' && !evidence.blocked) {
+        setResumeArmed(false);
+        setChatNotice(CHAT.chatResumed());
+        endKey.current = undefined;
+      }
     } catch (e) {
+      if (!currentSession(session)) return;
       // Причина называется своя: заблокированному «проверь связь» — ложь, он будет
       // переподключаться и писать снова.
       const code = String((e as any)?.body?.error || (e as any)?.message || '');
+      if (code === 'BLOCKED') { setBlockedError(true); setResumeArmed(false); }
       setMsgs((prev) => prev.map((x) => (x.cid === m.cid ? { ...x, state: 'failed' } : x)));
       setErr(code === 'BLOCKED' ? CHAT.blocked()
              : code === 'NOT_MATCHED' ? CHAT.writeNotMatched()
+             : code === 'action_cancelled' ? ''
+             : code === 'chat_quota' ? MONETIZATION.chatQuota()
+             : code.startsWith('monetization_') ? MONETIZATION.unknown()
              : CHAT.offline());
     }
-  }, [me, peer]);
+  }, [me, peer, chat, resumeArmed, ending, pending, blockedError, currentSession, screenSession, load, request, accepted, loading, stateError]);
 
   /**
    * Реакция ставится СРАЗУ на экране и только потом уходит на сервер: ждать ответа, чтобы увидеть
@@ -327,7 +412,7 @@ export default function Conversation() {
     const text = draft.trim();
     if (!text || !me || !other) return;
     // Не только кнопкой: по «отправить» с клавиатуры сюда приходят мимо неактивного поля.
-    if (!canWrite) return;
+    if (!canWrite || !currentSession(screenSession)) return;
     setDraft('');
     atBottom.current = true;
     // `since` НЕ двигаем: пусть опрос принесёт серверную версию этой же реплики — merge её склеит
@@ -366,12 +451,13 @@ export default function Conversation() {
   // Сравнение своей строкой, а не общим `norm`: он объявлен ниже по файлу, и до него здесь
   // ещё нельзя дотянуться.
   const isKleal = String(other || '').trim().toLowerCase() === KLEAL_SENDER.toLowerCase();
-  const canWrite = !isKleal && !(request && !accepted);
+  const canWrite = !!screenSession && !isKleal && !loading && !stateError && !blockedError && !ending && pending?.kind !== 'end'
+    && canComposeChat(chat, resumeArmed) && !(request && !accepted);
 
   /** Кружок уходит тем же путём, что текст и голосовое: тот же ключ, то же состояние, тот же повтор. */
   const canSend = !!me && !!other && canWrite;
   const sendCircle = (payload: VideoPayload) => {
-    if (!canSend) return;
+    if (!canSend || !currentSession(screenSession)) return;
     const local: Msg = {
       from: me, to: other, text: '', video: payload,
       t: Date.now() / 1000, cid: newIdem('c'), state: 'sending',
@@ -381,7 +467,7 @@ export default function Conversation() {
   };
 
   const voice = useVoiceMessage((payload) => {
-    if (!me || !other) return;
+    if (!canSend || !currentSession(screenSession)) return;
     // Тем же путём, что и текст: тот же ключ, то же состояние, тот же повтор при сбое. Своего
     // пути у голосового быть не должно — иначе половина работы над отправкой обходит его стороной.
     const local: Msg = {
@@ -391,7 +477,7 @@ export default function Conversation() {
     setMsgs((prev) => [...prev, local]);
     deliver(local);
   // Между людьми голосовое уходит и без расшифровки: сообщение — это звук, текст лишь подсказка.
-  }, !me || !other, { requireTranscript: false });
+  }, !canSend, { requireTranscript: false });
 
   /**
    * План — тому, кто уже принял приглашение, и никому больше.
@@ -404,7 +490,7 @@ export default function Conversation() {
   const canPlan = !!accepted;
 
   const startPending = (kind: 'plan' | 'end') => {
-    if (pending) return;
+    if (pending || ending) return;
     if (kind === 'plan' && !canPlan) {
       setActions(false);
       setErr(CHAT.notMatched());
@@ -412,6 +498,29 @@ export default function Conversation() {
     }
     setActions(false);
     setPending({ kind, n: 4 });
+  };
+
+  const endChat = async () => {
+    if (!currentSession(screenSession)) return;
+    const session = screenSession;
+    setEnding(true); setChatNotice(''); setErr('');
+    endKey.current ||= newIdem('end');
+    try {
+      const r = await agent.threadEnd(me, peer, endKey.current, chat?.sessionId);
+      if (!currentSession(session)) return;
+      if (!r?.ok) throw new Error(r?.error || 'END_FAILED');
+      setResumeArmed(false);
+      const evidence = await load();
+      if (!currentSession(session)) return;
+      // Do not navigate away or archive optimistically on a failed/unconfirmed end.
+      if (!evidence) setErr(CHAT.endFailed());
+      else if (evidence.state === 'legacy') setChatNotice(CHAT.endRecorded());
+      endKey.current = undefined;
+    } catch {
+      if (currentSession(session)) setErr(CHAT.endFailed());
+    } finally {
+      if (currentSession(session)) setEnding(false);
+    }
   };
 
   useEffect(() => {
@@ -427,33 +536,7 @@ export default function Conversation() {
       } else if (pending.kind === 'plan') {
         router.navigate({ pathname: '/plan', params: planParams() });
       } else {
-        // КОНЕЦ РАЗГОВОРА ЗАПИСЫВАЕТСЯ, а не только уводит с экрана.
-        //
-        // У сервера понятия «закрытый тред» действительно нет, и раньше отсюда следовал вывод:
-        // завершение — это просто уход назад. Но тогда «Закончить разговор» ничего не меняло:
-        // человек возвращался в «Сообщения» и находил ту же переписку на прежнем месте, во вкладке
-        // «Собирается». Кнопка обещала «переписка закроется» и не закрывала ничего.
-        //
-        // Пометка ЛОКАЛЬНАЯ — и это ровно та механика, что уже есть у «В архив» (MSG.04): отношение
-        // человека к списку живёт на устройстве, а не на сервере. Архив, а не «покинул»: разговор
-        // остаётся читаемым и находится поиском, он лишь уходит из активных — это и обещано словами
-        // «переписка закроется, а место освободится для другого мэтча».
-        //
-        // Ключ — имя собеседника в том же виде, в каком его кладёт `threadRows` (нижний регистр):
-        // `bucketOf` сверяет и по `r.key`, и по `norm(r.who)`, так что этого достаточно и для строки
-        // переписки, и для строки интента с тем же человеком.
-        // Сначала СЕРВЕРУ: разговор закрывают для двоих, а не только у себя в телефоне.
-        // Локальная отметка ниже — про свой список, она не заменяет сообщения второму.
-        agent.threadEnd(me, peer).catch(() => {});
-        const key = other.trim().toLowerCase();
-        if (key) {
-          setMsgPrefs((m) => {
-            const cur = new Set(m.archived || []);
-            cur.add(key);
-            return { ...m, archived: [...cur] };
-          });
-        }
-        if (router.canGoBack()) router.back(); else router.replace('/home');
+        void endChat();
       }
     }, 1000);
     return () => clearTimeout(timer.current);
@@ -504,13 +587,14 @@ export default function Conversation() {
   /** MSG.18–MSG.21: входящая заявка от этого человека, если её не скрывали. */
   const inviteIn = request && isOther(request.from, request.from_id) ? request : null;
   const inviteHidden = (st.msg?.hiddenInvites || []).includes(String(inviteIn?.id || ''));
-  const noNudge = (st.msg?.noNudge || []).includes(norm(other));
+  const nudgeKey = personKey(other, otherId);
+  const noNudge = (st.msg?.noNudge || []).some((k) => k === nudgeKey || k === norm(other));
   const requestTitle = String(request?.intent?.title || (request?.intent?.topics || []).join(', ') || '');
 
   const hideInvite = () =>
     setMsgPrefs((m) => ({ ...m, hiddenInvites: [...(m.hiddenInvites || []), String(inviteIn?.id || '')] }));
   const muteNudge = () =>
-    setMsgPrefs((m) => ({ ...m, noNudge: [...(m.noNudge || []), norm(other)] }));
+    setMsgPrefs((m) => ({ ...m, noNudge: [...(m.noNudge || []), nudgeKey] }));
   /**
    * Что форма плана обязана знать про интент, по которому вы совпали, — иначе она это выдумывает.
    *
@@ -783,6 +867,10 @@ export default function Conversation() {
           Аватар справа — вход в профиль. Он остался нажимаемым, просто переехал на своё место по
           макету: имя посередине читается как заголовок экрана, а не как строка списка.
         */}
+        {recovery ? <Pressable accessibilityRole="button" onPress={() => {
+          const route=returnActionRoute(screenSession,'plus');
+          if (route && navigateReturnAction(screenSession,'conversation','plus')) router.dismissTo(route);
+        }}><Text style={s.sub}>{MONETIZATION.returnToAction()}</Text></Pressable> : null}
         <View style={s.head}>
           <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={() => (router.canGoBack() ? router.back() : router.replace('/home'))}>
             <IconChevronLeft />
@@ -825,6 +913,10 @@ export default function Conversation() {
               <Text style={s.invState}>
                 {inviteIn.status === 'pending' ? THREAD.hoursToAnswer(inviteHoursLeft(inviteIn))
                   : inviteIn.status === 'declined' ? THREAD.youDeclined()
+                  : inviteIn.status === 'answered' ? THREAD.inviteAnswered(other)
+                  : inviteIn.status === 'not_picked' ? THREAD.inviteNotPicked(other)
+                  : inviteIn.status === 'policy_revoked' ? THREAD.invitePolicyClosed()
+                  : (inviteIn as any).trace?.reason === 'host_silent' ? THREAD.inviteHostSilent(other)
                   : THREAD.inviteExpired()}
               </Text>
               {requestTitle || inviteIn.intent?.when || inviteIn.intent?.time ? (
@@ -926,6 +1018,23 @@ export default function Conversation() {
           </View>
         ) : null}
 
+        {ending || chat?.blocked || blockedError || chat?.state === 'closed' || chatNotice || stateError ? (
+          <View style={s.noteBox} accessibilityLiveRegion="polite">
+            <Text style={s.noteText}>{ending ? CHAT.endingChat()
+              : chat?.blocked || blockedError ? CHAT.chatBlocked()
+              : stateError ? CHAT.chatStateUnknown()
+              : chat?.state === 'closed' ? (resumeArmed ? CHAT.resumeNote() : CHAT.chatClosed()) : chatNotice}</Text>
+            {chat?.state === 'closed' && !resumeArmed && !chat.blocked && !blockedError && !ending ? (
+              <Pressable accessibilityRole="button" style={s.chip} onPress={() => { setResumeArmed(true); setChatNotice(''); }}>
+                <Text style={s.chipText}>{CHAT.resumeChat()}</Text>
+              </Pressable>
+            ) : null}
+            {stateError ? <Pressable accessibilityRole="button" style={s.chip} onPress={() => { void load(); }}>
+              <Text style={s.chipText}>{CHAT.chatStateRetry()}</Text>
+            </Pressable> : null}
+          </View>
+        ) : null}
+
         {/* На что отвечаем — видно ДО отправки, иначе цитата становится сюрпризом. */}
         {replyTo ? (
           <View style={s.replyBar}>
@@ -988,6 +1097,9 @@ export default function Conversation() {
                   onChangeText={setDraft}
                   editable={canWrite}
                   placeholder={canWrite ? CHAT.placeholderTo(other)
+                               : ending || pending?.kind === 'end' ? CHAT.endingChat()
+                               : chat?.blocked || blockedError ? CHAT.chatBlocked()
+                               : chat?.state === 'closed' ? CHAT.chatClosed()
                                : isKleal ? CHAT.klealNoReply() : CHAT.lockedTo(other)}
                   placeholderTextColor={color.muted}
                   onSubmitEditing={send}

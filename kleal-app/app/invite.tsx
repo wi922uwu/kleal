@@ -12,7 +12,7 @@
  * согласии пере-проверяет политику (§14.2) — между отправкой и ответом человек мог, например,
  * заблокировать отправителя; на это есть отдельный текст.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -20,9 +20,7 @@ import { CHAT, INVITE, OFB } from '../src/chat';
 import { useLang, T } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { mediaUrl, agent } from '../src/api';
-import {
-  IconChevronLeft, IconCalendar, IconPerson, IconGroups, IconImagePlaceholder, IconPin,
-} from '../src/components/icons';
+import { IconChevronLeft, IconCalendar, IconPerson, IconGroups, IconPin } from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
 import { color, radius as rad, space, type } from '../src/theme';
 import { Ambient, GLOW_FORM } from '../src/components/Ambient';
@@ -70,6 +68,16 @@ export default function Invite() {
   }, [me, wantedId]);
 
   useEffect(() => { load(); }, [load]);
+  /*
+    ЭКРАН ЖИВОЙ, ПОКА ЖДЁТ (сверка п. 11). Человека выбрали или выбрали другого, а экран продолжал
+    показывать «ждём»: строка читалась один раз. Пока ответ не окончательный — перечитываем раз в 15 с.
+  */
+  const waiting = row?.status === 'pending' || row?.status === 'answered';
+  useEffect(() => {
+    if (!waiting) return;
+    const id = setInterval(() => { load(); }, 15000);
+    return () => clearInterval(id);
+  }, [waiting, load]);
 
   const answer = async (decision: 'accept' | 'decline') => {
     if (!row?.id || busy) return;
@@ -85,6 +93,12 @@ export default function Invite() {
         if (r?.error === 'EXPIRED' || r?.error === 'ALREADY_RESOLVED') {
           await load();
           throw new Error(INVITE.goneNote());
+        }
+        // Приглашение поменяли, пока экран был открыт (новое время, правила) — «План не отправился»
+        // по кругу не помогал: старая версия так и оставалась. Перечитываем и говорим, что изменилось.
+        if (r?.error === 'VERSION_CONFLICT' || r?.error === 'POLICY_CHANGED') {
+          await load();
+          throw new Error(INVITE.changedNote());
         }
         throw new Error(CHAT.planFailed());
       }
@@ -149,6 +163,14 @@ export default function Invite() {
                 : INVITE.note(what, from)}
             </Text>
 
+            {/* Первое сообщение к приглашению (поле note заявки — например, от «Спроси шар»). */}
+            {String(row.note || '').trim() ? (
+              <View style={s.noteBubble}>
+                <Text style={s.noteWho}>{T(`${from} пишет`, `${from} says`, `${from} dice`)}</Text>
+                <Text style={s.noteText}>«{String(row.note).trim()}»</Text>
+              </View>
+            ) : null}
+
             <View style={s.card}>
               <Cover intent={intent} style={s.cover} />
               {titleOf(row) ? <Text style={s.cardTitle}>{titleOf(row)}</Text> : null}
@@ -203,6 +225,7 @@ export default function Invite() {
                     : row.status === 'answered' ? INVITE.saidYes()
                     : row.status === 'not_picked' ? (saidYes ? INVITE.saidYes() : INVITE.didntAnswer())
                     : row.status === 'declined' ? CHAT.declinedPlan()
+                    : row.status === 'expired' && row.trace?.reason === 'host_silent' ? INVITE.hostSilentStatus()
                     : row.status === 'expired' ? INVITE.expiredStatus()
                     : row.status === 'withdrawn' ? INVITE.withdrawnStatus()
                     : row.status === 'accepted' ? CHAT.confirmed()
@@ -252,7 +275,8 @@ export default function Invite() {
               && row.status !== 'answered' && row.status !== 'not_picked' ? (
               <>
                 <Text style={s.note}>
-                  {row.status === 'expired' ? INVITE.expiredNote()
+                  {row.status === 'expired' && row.trace?.reason === 'host_silent' ? INVITE.hostSilentNote(String(row.from || ''))
+                    : row.status === 'expired' ? INVITE.expiredNote()
                     : row.status === 'withdrawn' ? INVITE.withdrawnNote()
                     : INVITE.closedNote()}
                 </Text>
@@ -315,6 +339,12 @@ const s = StyleSheet.create({
   body: { paddingHorizontal: 20, gap: space.md },
   title: { fontSize: 20, fontWeight: '700', color: color.fg, marginTop: space.sm },
   note: { ...type.bodySmall, color: color.muted } as any,
+  noteBubble: {
+    marginTop: space.md, padding: 12, borderRadius: 18, borderBottomLeftRadius: 6,
+    backgroundColor: 'rgba(255,56,92,0.08)', borderWidth: 1, borderColor: 'rgba(255,56,92,0.22)', gap: 2,
+  },
+  noteWho: { ...type.caption, color: color.primary, fontWeight: '700' } as any,
+  noteText: { ...type.body, color: color.fg, fontStyle: 'italic' } as any,
 
   card: { backgroundColor: color.glassCard, borderRadius: rad.xl, padding: space.lg, gap: space.md },
   cover: { height: 110, borderRadius: rad.lg, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center' },

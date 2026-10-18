@@ -17,7 +17,7 @@
  * кольцо, а это уже заметно на слабом телефоне.
  */
 import React from 'react';
-import Svg, { G, Path, Circle, Line, Rect } from 'react-native-svg';
+import Svg, { G, Path, Circle, Rect } from 'react-native-svg';
 
 type IconFn = (c: string) => React.ReactElement;
 

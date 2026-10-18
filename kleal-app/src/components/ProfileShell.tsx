@@ -6,17 +6,22 @@
  * значило бы получить компонент с двумя несвязанными половинами.
  */
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Switch, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Switch, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useKeyboardInset, dockBottom } from '../keyboard';
-import { T } from '../i18n';
+import { T, useLang } from '../i18n';
 import { Sheet } from './Sheet';
-import { color, radius as rad, space, type } from '../theme';
+import { GlassBack, GlassSurface } from './LiquidGlass';
+import { Ambient, GLOW_FORM } from './Ambient';
+import { IconChevronRight, IconCheck, IconWand } from './icons';
+import { color, radius as rad, space, type, heading } from '../theme';
 
 export function ProfileShell({
-  title, onBack, right, children, footer, nav,
+  title, onBack, right, children, footer, nav, scrollEnabled = true,
 }: {
   title: string;
+  /** Карта внутри (B.07): пока её двигают пальцем, прокрутка экрана выключена. */
+  scrollEnabled?: boolean;
   onBack?: () => void;
   right?: React.ReactNode;
   children: React.ReactNode;
@@ -29,25 +34,26 @@ export function ProfileShell({
    */
   nav?: React.ReactNode;
 }) {
+  const lang = useLang();
   const insets = useSafeAreaInsets();
   /** Android: подвал с кнопкой уезжает под клавиатуру, когда на экране есть поле. См. src/keyboard.ts. */
   const kb = useKeyboardInset();
+  // Борд «Profile — new layout»: стеклянная «назад», заголовок слева шрифтом заголовков, фирменный
+  // кремовый слой под всем экраном — как у «Сообщений» и «My activity».
   return (
     <View style={[s.wrap, { paddingTop: insets.top + 6 }]}>
+      <Ambient glows={GLOW_FORM} />
       <View style={s.bar}>
-        {onBack ? (
-          <Pressable accessibilityRole="button" accessibilityLabel={T('Назад', 'Back', 'Atrás')} style={s.back} onPress={onBack}>
-            <Text style={s.backIcon}>‹</Text>
-          </Pressable>
-        ) : <View style={{ width: 40 }} />}
-        <Text style={s.title} numberOfLines={1}>{title}</Text>
-        {right || <View style={{ width: 40 }} />}
+        {onBack ? <GlassBack label={T('Назад', 'Back', 'Atrás')} onPress={onBack} /> : null}
+        <Text style={[s.title, heading(lang, type.headingSm)]} numberOfLines={1}>{title}</Text>
+        {right || null}
       </View>
       <ScrollView
         // Клавиатура входит в отступ прокрутки: без этого поле внутри страницы (история, тест)
         // оставалось под ней — прокручивать было некуда.
         contentContainerStyle={[s.scroll, { paddingBottom: (footer ? 96 : 28) + (nav ? 84 : 0) + insets.bottom + kb }]}
         keyboardShouldPersistTaps="handled"
+        scrollEnabled={scrollEnabled}
       >
         {children}
       </ScrollView>
@@ -145,18 +151,107 @@ export function Segments({
 
 export const Divider = () => <View style={s.divider} />;
 
+/** Заголовок раздела и подпись под ним: «When you meet / Kleal applies these to every plan». */
+export function SectionHead({ title, note }: { title: string; note?: string }) {
+  return (
+    <View style={s.secHead}>
+      <Text style={s.secTitle}>{title}</Text>
+      {note ? <Text style={s.secNote}>{note}</Text> : null}
+    </View>
+  );
+}
+
+/** Строка-переход нового вида (B.01): коралловый знак, заголовок, подпись, стрелка. */
+export function LinkRow({
+  title, sub, Icon, onPress,
+}: {
+  title: string; sub?: string; Icon?: (p: any) => React.ReactElement; onPress: () => void;
+}) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress}
+               style={({ pressed }) => [s.card, s.linkRow, pressed && { opacity: 0.85 }]}>
+      {Icon ? <Icon size={22} c={color.primary} /> : null}
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={s.linkTitle} numberOfLines={1}>{title}</Text>
+        {sub ? <Text style={s.linkSub} numberOfLines={1}>{sub}</Text> : null}
+      </View>
+      <IconChevronRight size={20} c={color.muted} />
+    </Pressable>
+  );
+}
+
+/** Переключатель отдельной карточкой (B.04, B.08): заголовок, пояснение, тумблер. */
+export function SwitchCard({
+  label, desc, value, onChange, disabled = false,
+}: {
+  label: string; desc?: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean;
+}) {
+  return (
+    <View style={[s.card, s.switchCard]}>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={s.linkTitle}>{label}</Text>
+        {desc ? <Text style={s.linkSub}>{desc}</Text> : null}
+      </View>
+      <Switch
+        value={value}
+        disabled={disabled}
+        onValueChange={onChange}
+        accessibilityLabel={label}
+        trackColor={{ false: color.neutral300, true: color.primary }}
+        thumbColor={color.card}
+        ios_backgroundColor={color.neutral300}
+      />
+    </View>
+  );
+}
+
+/** Строка выбора в листе (B.03, B.06): подпись и коралловая галочка у выбранного. */
+export function OptionRow({ label, on, onPress }: { label: string; on: boolean; onPress: () => void }) {
+  return (
+    <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: on }} onPress={onPress}
+               style={({ pressed }) => [s.option, pressed && { opacity: 0.85 }]}>
+      <Text style={s.optionText}>{label}</Text>
+      {on ? <IconCheck size={20} c={color.primary} /> : null}
+    </Pressable>
+  );
+}
+
+/** «Change it with Kleal» — стеклянная пилюля со знаком Kleal. */
+export function KlealPill({ label, onPress, wide = false }: { label: string; onPress: () => void; wide?: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress}
+               style={({ pressed }) => [wide ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start' }, pressed && { opacity: 0.85 }]}>
+      <GlassSurface tone="light" radius={999} style={[s.pill, wide && s.pillWide]} pointerEvents="none">
+        <IconWand size={18} c={color.fg} />
+        <Text style={s.pillText}>{label}</Text>
+      </GlassSurface>
+    </Pressable>
+  );
+}
+
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ambientBase },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingBottom: space.md },
-  back: {
-    width: 40, height: 40, borderRadius: 20, borderWidth: 1, borderColor: color.border,
-    backgroundColor: color.card, alignItems: 'center', justifyContent: 'center',
-  },
-  backIcon: { fontSize: 24, color: color.fg, marginTop: -3 },
-  title: { flex: 1, ...type.title, color: color.fg, fontWeight: '700' } as any,
-  scroll: { paddingHorizontal: 16, gap: space.md },
+  bar: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingBottom: space.md },
+  title: { flex: 1, color: color.fg } as any,
+  scroll: { paddingHorizontal: 16, gap: 8 },
 
-  card: { backgroundColor: color.card, borderRadius: rad.lg, padding: space.lg, gap: space.sm },
+  /** Карточка борда: светлое стекло на кремовом фоне, скругление 16, без рамки. */
+  card: { backgroundColor: color.glassCard, borderRadius: 16, padding: 16, gap: space.sm },
+  secHead: { gap: 2, marginTop: space.sm, marginBottom: 2 },
+  secTitle: { ...type.body, color: color.fg, fontWeight: '600' } as any,
+  secNote: { ...type.bodySmall, color: color.fg } as any,
+  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 },
+  linkTitle: { fontSize: 15, lineHeight: 20, fontWeight: '600', color: color.fg } as any,
+  linkSub: { ...type.bodySmall, color: color.muted } as any,
+  switchCard: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 12 },
+  option: {
+    minHeight: 48, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.6)', paddingHorizontal: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  optionText: { ...type.bodySmall, color: color.fg, fontWeight: '500' } as any,
+  pill: { height: 40, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pillWide: { height: 52, justifyContent: 'center' },
+  pillText: { ...type.bodySmall, color: color.fg, fontWeight: '600' } as any,
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingVertical: 10 },
   rowLabel: { ...type.body, color: color.fg, fontWeight: '500' } as any,
   rowDesc: { ...type.bodySmall, color: color.muted, marginTop: 2 } as any,
@@ -171,7 +266,7 @@ const s = StyleSheet.create({
 
   footer: {
     paddingHorizontal: 16, paddingTop: space.md,
-    backgroundColor: color.ambientBase, borderTopWidth: 1, borderTopColor: color.line,
+    backgroundColor: 'transparent',
   },
 });
 

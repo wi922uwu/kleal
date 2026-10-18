@@ -26,7 +26,7 @@ import { AddressField } from './AddressField';
 import { STEP_AREA } from '../onboarding';
 import { reverseGeocode } from '../geocode';
 import { T, getLang } from '../i18n';
-import { color, font, radius as rad, space, type } from '../theme';
+import { color, font, space, type } from '../theme';
 import { GlassPill } from './Glass';
 import { GlassSurface } from './LiquidGlass';
 import { IconPin } from './icons';

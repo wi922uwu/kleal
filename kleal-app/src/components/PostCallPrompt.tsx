@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator, AppState, Modal, Pressable, StyleSheet, Text, View,
 } from 'react-native';
 import { useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { agent, group, newIdem } from '../api';
+import { agent, group, newIdem, isMe } from '../api';
 import { CHAT, PLAN, RATINGS, planPhase } from '../chat';
 import { GPLAN } from '../gplan';
 import { T, useLang } from '../i18n';
@@ -349,9 +349,9 @@ function groupRatingNote(plan: any): string {
 }
 
 function otherParticipant(plan: any, me: string): string {
-  const mine = me.trim().toLowerCase();
+  // «Не я» — по признаку сервера или по id (шаг 3 «личность по id»); у тёзок имя совпадало.
   const participant = (plan?.participants || []).find(
-    (item: any) => String(item?.name || '').trim().toLowerCase() !== mine
+    (item: any) => item?.name && !item?.is_me && !isMe(item.name, item.id, me)
   );
   return String(participant?.name || plan?.other || '').trim();
 }

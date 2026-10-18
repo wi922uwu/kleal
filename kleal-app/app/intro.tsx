@@ -1,5 +1,5 @@
 /** A.02: one photo, an ephemeral text pager, and the final pull-to-start wave. */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo, Image, PanResponder, Pressable, ScrollView,
   StyleSheet, Text, View, useWindowDimensions, type GestureResponderEvent,

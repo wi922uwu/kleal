@@ -26,6 +26,8 @@ export type AuthResult = {
   login?: string;
   email?: string;
   name?: string;
+  /** id человека этого аккаунта (сервер с 18.10.2026); пусто — анкеты ещё нет. */
+  id?: string;
   profile?: any;
   isNew?: boolean;
   hasProfile?: boolean;

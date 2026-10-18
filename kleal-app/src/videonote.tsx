@@ -34,7 +34,7 @@
  * ЗАПИСЬ ТОЛЬКО С ФРОНТАЛЬНОЙ КАМЕРЫ и без переключения: кружок — это лицо. Кому нужна задняя
  * камера, тому нужно не сообщение, а видеофайл.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, Linking, Modal, Platform, Pressable, StyleSheet, Text, View,
 } from 'react-native';

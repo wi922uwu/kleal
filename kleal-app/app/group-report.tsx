@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
-} from 'react-native';
-import { useKeyboardInset, dockBottom } from '../src/keyboard';
+import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useKeyboardInset } from '../src/keyboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as DocumentPicker from 'expo-document-picker';
@@ -12,10 +10,11 @@ import { agent, group, newIdem, isMe, pidOf, mediaUrl, ensureMe, type GroupRepor
 import * as Clipboard from 'expo-clipboard';
 import { useOnb } from '../src/state';
 import { T, useLang, dateLocale, use12h, getLang } from '../src/i18n';
-import { IconCaseTray, IconLoader, IconCopy, IconPhone, IconHeadset, IconLifeBuoy, IconChevronLeft, IconChevronRight, IconClip, IconTrash, IconAlertTriangle, IconChatWarning,
-  IconShieldAlert, IconUserX, IconShield, IconFilePlus, IconPerson, IconBan, IconCheck, IconClock } from '../src/components/icons';
+import {
+  IconCaseTray, IconLoader, IconCopy, IconPhone, IconHeadset, IconLifeBuoy, IconChevronRight, IconClip, IconTrash, IconAlertTriangle, IconChatWarning, IconShieldAlert, IconUserX, IconShield, IconFilePlus, IconPerson, IconBan, IconCheck, IconClock,
+} from '../src/components/icons';
 import { BottomNav } from '../src/components/BottomNav';
-import { color, font, heading, labelFamily, radius as rad, space, type } from '../src/theme';
+import { color, font, heading, radius as rad, type } from '../src/theme';
 import { GlassPill } from '../src/components/Glass';
 import { GlassBack, GlassSurface } from '../src/components/LiquidGlass';
 import { useNavCollapse } from '../src/navScroll';
@@ -78,7 +77,6 @@ export default function GroupReportScreen() {
   const soloName = String(params.who || '').trim();
   const soloId = String(params.who_id || '').trim();
   const solo = !gid && !!soloName;
-  const groupTitle = String(params.title || '').trim();
   const me = String(st.profile.name || '').trim();
 
   const [reason, setReason] = useState<GroupReportReason | ''>('');
@@ -384,15 +382,6 @@ function StatusRow({ title, note, trailing, state = 'pending' }: {
       <View style={{ flex: 1 }} />
       {trailing ? <Text style={[s.statusTrailing, state === 'done' && s.statusTrailingDone,
                                state === 'active' && s.statusTrailingActive]}>{trailing}</Text> : null}
-    </View>
-  );
-}
-
-function ProtectionRow({ text }: { text: string }) {
-  return (
-    <View style={s.protectionRow}>
-      <View style={s.protectionCheck}><Text style={s.protectionCheckText}>✓</Text></View>
-      <Text style={s.measureText}>{text}</Text>
     </View>
   );
 }

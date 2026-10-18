@@ -15,18 +15,17 @@
  * общие, и вторая их сборка разошлась бы с первой на первой же правке. Разное — куда ведёт строка.
  * В «Сообщениях» она открывает РАЗГОВОР, здесь — САМУ ЗАТЕЮ: план, приглашение, интент.
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Image, ActivityIndicator, RefreshControl,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
-import { useLang, T, getLang } from '../src/i18n';
+import { useLang, T } from '../src/i18n';
 import { splitWhen } from '../src/home';
 import { useOnb } from '../src/state';
 import { agent, group as gapi, mediaUrl } from '../src/api';
 import { searchProfile } from '../src/intent';
-import { type Row } from '../src/messages';
 import { setResults } from '../src/results-store';
 import { openResults } from '../src/results-navigation';
 import {
@@ -275,7 +274,7 @@ export default function Activity() {
                     title={intentTitle(row)}
                     date={when.date} time={when.time}
                     place={intentWhere(row)} call={String(row?.intent?.mode || '') === 'online'}
-                    status={{ photo: faces[0], text: row.error ? ACT.rankFailed() : ACT.lookingNearby() }}
+                    status={{ photo: faces[0], text: row.error ? ACT.rankFailed() : state === 'pick' ? ACT.linePick() : ACT.lookingNearby() }}
                     primary={{ label: ctaLabel(state), onPress: () => openSearch(row), busy: busy === row.id }}
                     extra={{ label: ACT.edit(), onPress: () => router.navigate({ pathname: '/myintent', params: { id: row.id, edit: '1' } }) }}
                     onPress={() => router.navigate({ pathname: '/myintent', params: { id: row.id } })}
@@ -333,10 +332,16 @@ export default function Activity() {
             ? plans.past.map((c) => {
                 const off = c.state === 'cancelled' || c.state === 'below_quorum';
                 /* C.04: у встречи один на один без моего ответа — «Leave feedback»; у группы, что не
-                   собралась, — «Plan it again with Kleal»; иначе — к записи плана. */
+                   собралась, — «Plan it again with Kleal»; иначе — к записи плана.
+                   «Plan it again» засевает мастер затеи её названием (`/create?seed=`, как попап из
+                   чата с Kleal): раньше вёл в пустой /buddy, и человек пересказывал всё заново.
+                   Названия нет — остаётся разговор с Kleal. */
                 const text = off ? (c.gid ? ACT.didntStart(Math.max(0, c.count), c.need) : ACT.cancelledNote())
                   : c.gid ? '' : c.answered ? ACT.oneToOne() : ACT.oneToOneNoFeedback();
-                const soft = off ? { label: ACT.planAgain(), onPress: () => router.navigate('/buddy'), wand: true }
+                const again = () => c.topic
+                  ? router.navigate({ pathname: '/create', params: { seed: c.topic } })
+                  : router.navigate('/buddy');
+                const soft = off ? { label: ACT.planAgain(), onPress: again, wand: true }
                   : !c.gid && !c.answered ? { label: ACT.leaveFeedback(), onPress: () => openPlan(c) }
                   : c.who ? { label: PLAN_STATE.openChat(), onPress: () => openChat(c) }
                   : { label: PLAN_STATE.open(), onPress: () => openPlan(c) };

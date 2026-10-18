@@ -26,7 +26,7 @@
  * Ключи (offline/online/hybrid, 1:1/group, коды районов) НЕ придуманы заново — совпадают с теми,
  * что уходят в /api/agent/plan и /api/agent/match.
  */
-import { T, getLang, plural, dateLocale } from './i18n';
+import { T, plural, dateLocale } from './i18n';
 import { interestLabel } from './interest-label';
 
 export type IntentStepId = 'how' | 'size' | 'capacity' | 'when' | 'who' | 'nature' | 'place' | 'link' | 'both' | 'summary';
@@ -139,12 +139,12 @@ export const GROUP_SIZE = {
   row: () => T('Размер группы', 'Group size', 'Tamaño del grupo'),
   people: (n: number) => T(`${n} ${plural(n, 'человек', 'человека', 'человек')}`, `${n} people`, `${n} personas`),
   freeLimit: () => T('До 5 человек — бесплатно', 'Up to 5 people is free', 'Hasta 5 personas es gratis'),
-  plusLimit: () => T('6–20 человек доступны с Kleal Plus', '6–20 people are available with Kleal Plus', '6–20 personas disponibles con Kleal Plus'),
-  plusTitle: () => T('Большие группы — с Plus', 'Bigger groups are with Plus', 'Grupos más grandes con Plus'),
+  plusLimit: () => T('Вместимость группы пока до 5 человек', 'Groups currently hold up to 5 people', 'Los grupos admiten hasta 5 personas'),
+  plusTitle: () => T('Вместимость группы', 'Group capacity', 'Capacidad del grupo'),
   plusBody: () => T(
-    'В бесплатной группе может быть до 5 человек. Plus поднимает предел до 20 и позволяет запускать несколько интентов одновременно. Качество ранжирования не зависит от тарифа.',
-    'Free groups go up to 5 people. Plus raises the ceiling to 20 and lets you run several intents at once. Matches are ranked the same either way.'
-  , 'Los grupos gratuitos llegan hasta 5 personas. Plus sube el límite a 20 y te deja tener varias propuestas a la vez. Las coincidencias se ordenan igual en ambos casos.'),
+    'В группе до 5 человек. Вместимость и качество подбора не зависят от тарифа.',
+    'Groups hold up to 5 people. Capacity and matching quality do not depend on your plan.'
+  , 'Hasta 5 personas por grupo. La capacidad y calidad de las coincidencias no dependen del plan.'),
   getPlus: () => T('Подключить Kleal Plus', 'Get Kleal Plus', 'Obtén Kleal Plus'),
   keepAtFive: () => T('Оставить максимум 5', 'Keep it at 5', 'Manténlo en 5'),
 };
@@ -383,6 +383,26 @@ export function peerLocalTime(startsAt?: number | null, peerTz?: string, ru = tr
   } catch {
     return '';
   }
+}
+
+/**
+ * ВРЕМЯ СОБЕСЕДНИКА — ОТДЕЛЬНОЙ ФРАЗОЙ С ЕГО ИМЕНЕМ. Раньше к своему часу дописывалось «· 20:00
+ * Moscow», и строка «22:00 · 20:00 Moscow» читалась как «с 22 до 20» — непонятно, чьё время
+ * (тестировщики 17.10.2026). Главное время на экране всегда МОЁ (пояс устройства), а чужое —
+ * пояснением: «У ИВАНН это 20:00 (Moscow)». Пусто, если пояса совпали или чужой неизвестен.
+ */
+export function peerTimeNote(startsAt?: number | null, peerTz?: string, name = '', ru = true): string {
+  const t = peerLocalTime(startsAt, peerTz, ru);
+  if (!t) return '';
+  const i = t.indexOf(' ');
+  const time = i > 0 ? t.slice(0, i) : t;
+  const city = i > 0 ? t.slice(i + 1) : '';
+  const who = String(name || '').trim();
+  const where = city ? ` (${city})` : '';
+  return who
+    // Те же слова, что у переноса (PLAN.theirTimeNote в chat.ts), плюс город — один голос на экране.
+    ? T(`У ${who} это ${time}${where}`, `That’s ${time} for ${who}${where}`, `Eso es ${time} para ${who}${where}`)
+    : T(`У собеседника это ${time}${where}`, `That’s ${time} for them${where}`, `Eso es ${time} para la otra persona${where}`);
 }
 
 export function deviceTz(): string {
@@ -815,20 +835,20 @@ export const WIZ = {
     const lo = GROUP_MIN_TOTAL, hi = GROUP_FREE_MAX_TOTAL, plus = GROUP_FREE_MAX_TOTAL + 1;
     return k === '1:1'
       ? T('только вы вдвоём', 'just the two of us', 'solo vosotros dos')
-      : T(`${lo}–${hi} бесплатно / ${plus}+ с Plus`, `${lo}–${hi} free / ${plus}+ with Plus`, `${lo}–${hi} gratis / ${plus}+ con Plus`);
+      : T(`${lo}–${hi} человек`, `${lo}–${hi} people`, `${lo}–${hi} personas`);
   },
   howMany: () => T('Сколько вас, включая тебя', 'How many, you included', 'Cuántos, contándote'),
-  freeNote: () => T('Бесплатно группа — до 5 человек. Kleal Plus снимает ограничение.',
-                    'On Free a group is up to 5 people. Kleal Plus lifts the limit.',
-                    'Gratis, un grupo es de hasta 5 personas. Kleal Plus quita el límite.'),
+  freeNote: () => T('В группе до 5 человек. Вместимость одинакова для всех тарифов.',
+                    'Groups hold up to 5 people on every plan.',
+                    'Hasta 5 personas por grupo en todos los planes.'),
 
-  /** GR.08 — лист Plus после «6+». */
-  plusTitle: () => 'Kleal Plus',
-  plusLead: () => T('Группы больше 5 человек', 'Groups over 5 people', 'Grupos de más de 5 personas'),
+  /** GR.08 — общий лимит вместимости после «6+». */
+  plusTitle: () => T('Вместимость группы', 'Group capacity', 'Capacidad del grupo'),
+  plusLead: () => T('Выбери до 5 человек', 'Choose up to 5 people', 'Elige hasta 5 personas'),
   plusNote: () => T(
-    'Бесплатно группа — до 5 человек, включая тебя. С Kleal Plus группы до 20 и больше открытых инвайтов — €6.99 в месяц, отменить можно в любой момент.',
-    'On Free a group is up to 5 people, you included. With Kleal Plus groups go up to 20 and you keep more invites open — €6.99 a month, cancel any time.',
-    'Gratis, un grupo es de hasta 5 personas, contándote. Con Kleal Plus los grupos llegan a 20 y mantienes más invitaciones abiertas: 6,99 € al mes, cancela cuando quieras.'),
+    'В группе до 5 человек, включая тебя. Вместимость группы и ограничения приглашений одинаковы для Free и Plus.',
+    'A group holds up to 5 people, including you. Group capacity and invitation limits are the same for Free and Plus.',
+    'Un grupo admite hasta 5 personas, incluyéndote. La capacidad y los límites de invitaciones son iguales en Free y Plus.'),
   getPlus: () => T('Подключить Kleal Plus', 'Get Kleal Plus', 'Obtén Kleal Plus'),
   keepFive: () => T('Оставить 5', 'Keep it at 5', 'Mantener en 5'),
 
@@ -963,9 +983,9 @@ export const WIZ = {
     'I didn’t catch what to change. Try “Saturday at 20:00”, “women 25–30”, “4 people” or “within 5 km”. The place is easier on the map — tap Edit it myself.',
     'No entendí qué cambiar. Prueba con «el sábado a las 20:00», «chicas 25–30», «4 personas» o «a 5 km». El lugar es más fácil en el mapa: toca Lo cambio yo.'),
   talkPast: () => T('Это время уже прошло — назови другое.', 'That time has already passed — pick another one.', 'Esa hora ya pasó: elige otra.'),
-  talkPlus: (max: number) => T(`На Free группа — до ${max} человек. Больше — с Kleal Plus.`,
-                               `On Free a group is up to ${max} people. More is with Kleal Plus.`,
-                               `En Free un grupo es de hasta ${max} personas. Más, con Kleal Plus.`),
+  talkPlus: (max: number) => T(`В группе до ${max} человек на любом тарифе.`,
+                               `Groups hold up to ${max} people on every plan.`,
+                               `Hasta ${max} personas por grupo en todos los planes.`),
   talkFormat: () => T('Формат встречи здесь не меняется — другой формат значит новый интент.',
                       'The format stays — a different format means a new intent.',
                       'El formato no cambia aquí: otro formato significa un plan nuevo.'),

@@ -11,7 +11,7 @@
  * делало replace('/home') поверх уже открытого экрана. Тот же разбор — в комментарии к прежней
  * версии этого гейта.
  */
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Image, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';

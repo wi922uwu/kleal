@@ -5,9 +5,9 @@
  * summary») показывает её под кнопкой «Done». Это осмысленно — разговор с агентом не заканчивается
  * на последнем шаге анкеты, сводку тоже можно поправить словами.
  */
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, TextInput, StyleSheet, Platform } from 'react-native';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { COMPOSER_PLACEHOLDER } from '../onboarding';
 import { useKeyboardInset, dockBottom } from '../keyboard';
 import { SendArrow } from './SendArrow';
@@ -53,7 +53,9 @@ export function Composer({
   const has = !!draft.trim();
   const k = useSharedValue(has ? 1 : 0);
   useEffect(() => {
-    k.value = withTiming(has ? 1 : 0, { duration: 180, easing: Easing.out(Easing.cubic) });
+    // Появление — упругое, как у стрелки в чатах (ChatMotion): «можно отправлять» должно быть видно.
+    k.value = has ? withSpring(1, { damping: 10, stiffness: 380, mass: 0.6 })
+      : withTiming(0, { duration: 180, easing: Easing.out(Easing.cubic) });
   }, [has, k]);
   const btn = useAnimatedStyle(() => ({
     transform: [{ scale: 0.86 + k.value * 0.14 }],

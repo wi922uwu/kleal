@@ -14,7 +14,7 @@
  * из них вышло. Теперь виден и абзац, и то, что записано по осям: эти токены и так лежат в профиле,
  * прятать их от того, про кого они, незачем.
  */
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ProfileShell, Card } from '../../src/components/ProfileShell';

@@ -7,6 +7,23 @@ import kleal_auth
 from http_util import send_json, send
 
 
+# Крючки службы, которая держит строки людей (онбординг ставит их при импорте), 18.10.2026:
+#   ON_VERIFIED(key, method)  — одобрение увидено: поставить галочку verified в строке человека;
+#   TEST_PASS(key, on)        — тестовый автопроход: поставить или снять галочку с пометкой «test»;
+#   TEST_STATE(key) -> bool   — стоит ли сейчас тестовая галочка.
+# Без крючков всё работает как раньше, просто без галочки. Ошибка крючка не ломает ответ.
+ON_VERIFIED = None
+TEST_PASS = None
+TEST_STATE = None
+
+
+def _hook(fn, *args):
+    try:
+        return fn(*args) if fn else None
+    except Exception:
+        return None
+
+
 def identity(handler):
     key = kleal_auth.owner_key(handler)
     account = (kleal_auth._accounts() or {}).get(key)
@@ -96,7 +113,26 @@ def _handle(handler):
             return True
         if path == age.PREFIX + '/enrollment' and handler.command == 'GET':
             key, account = identity(handler)
-            send_json(handler, 200, {'ok': True, 'required': age_rollout.enrolled(key)})
+            send_json(handler, 200, {'ok': True, 'required': age_rollout.enrolled(key),
+                                     'voluntary': age.voluntary(),
+                                     # Кнопка «пройти автоматически» — только в тестовом режиме.
+                                     'testPass': age_rollout.dev_demo_auth()})
+            return True
+        if path == age.PREFIX + '/test-pass' and handler.command == 'POST':
+            # ТЕСТОВЫЙ АВТОПРОХОД для тестировщиков (Иван, 18.10.2026): без документов, только при
+            # KLEAL_DEV_KYC_DEMO_AUTH=1. Ставит галочку с пометкой «test» и НЕ пишет в базу проверок —
+            # настоящим 18+ для фильтра допуска не считается. {"undo": true} снимает её.
+            if not age_rollout.dev_demo_auth():
+                raise age.VerificationError('not_found', 404)
+            key, account = identity(handler)
+            size = int(handler.headers.get('Content-Length', '0') or 0)
+            body = json.loads(handler.rfile.read(size)) if 0 < size <= 2048 else {}
+            undo = bool(isinstance(body, dict) and body.get('undo'))
+            if TEST_PASS is None or _hook(TEST_PASS, key, not undo) is not True:
+                raise age.VerificationError('service')
+            send_json(handler, 200, {'ok': True, 'status': 'not_started' if undo else 'approved',
+                                     'over18': not undo, 'method': None if undo else 'test',
+                                     'testPass': True})
             return True
         if path == age.PREFIX + '/webhook':
             # Provider transport is authenticated by HMAC, not a user's bearer.
@@ -115,10 +151,13 @@ def _handle(handler):
             if not age_rollout.enrolled(key):
                 if (handler.command, path.rsplit('/', 1)[-1]) not in {('GET', 'status'), ('POST', 'refresh'), ('POST', 'session')}:
                     raise age.VerificationError('not_found', 404)
-                send_json(handler, 200, age.public(legacy=True, onboarded=bool(kleal_auth.caller_name(handler))))
-                return True
-            age_rollout.check_configuration()
-        if not age.enabled():
+                if not age.voluntary():
+                    send_json(handler, 200, age.public(legacy=True, onboarded=bool(kleal_auth.caller_name(handler))))
+                    return True
+                # Добровольная проверка: дальше обычный путь провайдера, без условий пробной группы.
+            else:
+                age_rollout.check_configuration()
+        if not age.active():
             # GET status remains compatible before rollout, but never creates a session.
             identity(handler)
             if path == age.PREFIX + '/status' and handler.command == 'GET':
@@ -131,7 +170,8 @@ def _handle(handler):
             if path == age.PREFIX + '/status' and handler.command == 'GET':
                 result = age.state(key, account, onboarded)
             elif path == age.PREFIX + '/refresh' and handler.command == 'POST':
-                result = age.reconcile(key, account) if age.required(account) else age.public(legacy=True)
+                result = (age.reconcile(key, account) if (age.required(account) or age.voluntary())
+                          else age.public(legacy=True))
                 result['onboarded'] = onboarded
                 result['canStart'] = bool(result['canStart'] and onboarded)
             elif path == age.PREFIX + '/session' and handler.command == 'POST':
@@ -148,6 +188,14 @@ def _handle(handler):
             # proof and admission above are identical in development mode.
             if age_rollout.dev_demo_auth():
                 result['developmentDemo'] = True
+                result['testPass'] = True
+            if result.get('over18') and result.get('status') == 'approved':
+                _hook(ON_VERIFIED, key, 'didit')     # настоящее одобрение -> галочка в строке
+                result['method'] = 'didit'
+            elif (age_rollout.dev_demo_auth() and result.get('status') in ('not_started', 'cancelled', 'expired', 'legacy_exempt')
+                  and _hook(TEST_STATE, key) is True):
+                # Тестовая галочка поверх «не начато»: показываем как пройденную, но с пометкой.
+                result.update({'status': 'approved', 'over18': True, 'method': 'test'})
         send_json(handler, 200, result)
     except age.VerificationError as exc:
         send_json(handler, exc.http, {'ok': False, 'error': exc.code})

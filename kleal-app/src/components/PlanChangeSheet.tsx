@@ -10,7 +10,7 @@
  * Чипы — рядом с нынешним, а не с сегодняшним: меняют обычно «на день позже» или «на полчаса
  * раньше», и такие варианты должны быть под пальцем, а не в прокрутке.
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { T, useLang, dateLocale } from '../i18n';
 import { color, font, labelFamily } from '../theme';

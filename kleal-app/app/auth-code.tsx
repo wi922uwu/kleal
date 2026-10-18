@@ -131,6 +131,7 @@ export default function AuthCode() {
           session: r.token,
           profile: r.profile || null,
           isNew: !!r.isNew,
+          id: r.id || '',
         });
         if (r.isNew) {
           applyDefaults();

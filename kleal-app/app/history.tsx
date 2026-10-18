@@ -12,7 +12,7 @@
  * Данные — с устройства, разбор в src/history.ts. Оговорка про это стоит на самом экране: человек
  * не должен считать список резервной копией.
  */
-import React, { useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';

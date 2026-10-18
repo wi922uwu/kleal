@@ -376,6 +376,8 @@ def delete_user(uid=None, name=None):
             if mode == "id":
                 if not str(uid or "").strip():
                     raise ValueError("delete_user: нужен id — по имени удалять нельзя")
+                import monetization_admin
+                monetization_admin.begin_delete(c,str(uid).strip())
                 cur.execute("delete from users where id = %s", (str(uid).strip(),))
             else:
                 if uid:
@@ -456,7 +458,8 @@ def outbox_take(limit=50):
     with _connect().connection() as c, c.cursor() as cur:
         cur.execute(
             "select id, topic, payload, attempts from outbox "
-            "where sent_at is null and next_try <= now() "
+            # Matching consumes this local durable job itself, without RabbitMQ.
+            "where sent_at is null and next_try <= now() and topic not in ('monetization.search.launch','monetization.media.cleanup') "
             "order by id limit %s for update skip locked", (limit,))
         rows = cur.fetchall()
         c.commit()
@@ -483,6 +486,28 @@ def outbox_failed(rid, err, delay_s):
                 "next_try = now() + make_interval(secs => %s), last_error = %s where id = %s",
                 (float(delay_s), str(err)[:400], rid))
         c.commit()
+
+
+def outbox_prune(keep_days=7, batch=20000):
+    """Удалить ОТПРАВЛЕННЫЕ задания старше `keep_days` (18.10.2026). Неотправленные не трогаются.
+
+    Отправленные строки после `sent_at` никто не читает — только счёт в outbox_stats. Чистки не было
+    вовсе, и к 18.10 таблица держала 2,78 млн отправленных строк (572 МБ из 587 МБ базы). Порциями,
+    чтобы не держать таблицу одной долгой транзакцией. Возвращает, сколько удалено."""
+    if not ENABLED:
+        return 0
+    gone = 0
+    with _connect().connection() as c:
+        while True:
+            with c.cursor() as cur:
+                cur.execute(
+                    "delete from outbox where id in (select id from outbox where sent_at is not null "
+                    "and sent_at < now() - make_interval(days => %s) limit %s)", (int(keep_days), int(batch)))
+                n = cur.rowcount or 0
+            c.commit()
+            gone += n
+            if n < batch:
+                return gone
 
 
 def outbox_stats():

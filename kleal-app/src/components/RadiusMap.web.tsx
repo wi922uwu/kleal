@@ -7,7 +7,7 @@
  * километры по тому же кругу, который нарисован. Так проверяется вся проводка OF.09 — что точку
  * можно взять, что новые координаты доезжают до поиска, — не поднимая симулятор.
  */
-import React, { useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { View, Text, StyleSheet, PanResponder } from 'react-native';
 import { color, type } from '../theme';
 

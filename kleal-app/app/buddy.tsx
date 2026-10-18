@@ -8,29 +8,29 @@
  * сообщает, что распознал в сказанном план, и тогда появляется окно выбора — создавать или
  * продолжать разговор. Та же кнопка «Создать» в шапке открывает то же окно.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image,
-  KeyboardAvoidingView, Platform, Modal,
+  View, Text, StyleSheet, ScrollView, Pressable, TextInput, Image, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useIsFocused } from 'expo-router';
 import { IconClock } from '../src/components/icons';
 import { HOME } from '../src/home';
 import { GlassSurface, GlassBack, GlassIconButton, usePress } from '../src/components/LiquidGlass';
-import Animated, { Easing as REasing, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { cancelAnimation, Easing as REasing, useAnimatedStyle, useReducedMotion, useSharedValue, withRepeat, withTiming, type SharedValue } from 'react-native-reanimated';
 import Svg, { Circle as SvgCircle, Defs as SvgDefs, RadialGradient as SvgRadial, Stop as SvgStop } from 'react-native-svg';
 import { GlassPill } from '../src/components/Glass';
 import { LogoFace } from '../src/components/Logo';
 import { SendArrow } from '../src/components/SendArrow';
-import { useLang, getLang, T, dateLocale, use12h } from '../src/i18n';
+import { BubbleIn } from '../src/components/ChatMotion';
+import { useLang, T, dateLocale, use12h } from '../src/i18n';
 import { useOnb } from '../src/state';
 import { useKeyboardInset, dockBottom } from '../src/keyboard';
 import { buddy as buddyApi, VoicePayload } from '../src/api';
 import { BUDDY, SHEET, looksLikeIntent, intentPhrase, intentTitle, intentDesc, sheetKept, packHistory, needsSignIn, Turn } from '../src/buddy';
 import { safeCut } from '../src/reveal';
 import { Sheet, SheetText } from '../src/components/Sheet';
-import { color, font, radius as rad, space, type, heading, labelFamily } from '../src/theme';
+import { color, font, space, type, heading } from '../src/theme';
 import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice';
 import Markdown from '../src/components/Markdown';
 import { Thinking } from '../src/components/Thinking';
@@ -499,16 +499,17 @@ export default function Buddy() {
                 </View>
               );
             }
+            // Разговор с Kleal живёт только на этом экране — каждая реплика в нём новая (ChatMotion).
             if (mine) {
               return (
-                <View key={i} style={s.rowMe}>
+                <BubbleIn key={i} mine fresh style={s.rowMe}>
                   <View style={s.shadowMe}>
                     <GlassSurface tone="brand" radius={20} style={[s.bub, s.bubMe]}>
                       <Text style={[s.bubText, { color: color.onPrimary }]}>{m.text}</Text>
                     </GlassSurface>
                   </View>
                   <Text style={[s.time, s.timeMe]}>{m.at}</Text>
-                </View>
+                </BubbleIn>
               );
             }
             /*
@@ -519,18 +520,18 @@ export default function Buddy() {
               пунктами по-прежнему читается, просто в своей рамке.
             */
             return (
-              <View key={i} style={s.rowThem}>
+              <BubbleIn key={i} mine={false} fresh style={s.rowThem}>
                 <View style={s.shadowThem}>
                   <GlassSurface tone="light" radius={20} style={[s.bub, s.bubThem]}>
                     {m.hello ? <Text style={s.bubText}>{m.text}</Text> : <Markdown text={m.text} />}
                   </GlassSurface>
                 </View>
                 <Text style={s.time}>{m.at}</Text>
-              </View>
+              </BubbleIn>
             );
           })}
           {/* Ожидание — не вертушка, а живая строка: см. src/components/Thinking.tsx. */}
-          {typing ? <Thinking /> : null}
+          {typing ? <BubbleIn mine={false} fresh><Thinking /></BubbleIn> : null}
           {signIn ? (
             <View style={{ alignItems: 'flex-start' }}>
               <GlassPill tone="dark" small style={{ height: 40 }} label={BUDDY.signInBtn()} onPress={() => router.navigate('/auth')} />
@@ -627,19 +628,30 @@ export function GetStarted({
  * медленно ходят по кругу под стеклом с разной скоростью, и кнопка переливается, как мыльный пузырь.
  * Один таймер на все три (фазы разные), UI-поток reanimated. «Уменьшить движение» — пятна стоят.
  */
+/*
+  КОРАЛЛОВЫЙ ПЕРЕЛИВ (Иван, 18.10.2026: «сделай больше кораллового переливания»). Основа — коралл бренда
+  и его светлые родственники (розовый, персиковый); мята и голубой остались маленькими бликами, а не
+  основой. Тона светлые: тёмный текст «Создать» должен читаться поверх любого из них.
+*/
 const BLOBS = [
-  { c: '#9EF0C4', x: 22, y: 14, r: 34, ax: 26, ay: 8, k: 1, ph: 0 },
-  { c: '#A9D8FF', x: 80, y: 30, r: 36, ax: 24, ay: 9, k: 1, ph: 2.1 },
-  { c: '#F6B8E4', x: 55, y: 22, r: 30, ax: 34, ay: 10, k: 2, ph: 4.2 },
+  { c: '#FF9DB1', x: 24, y: 16, r: 36, ax: 26, ay: 8, k: 1, ph: 0, o: 0.8 },
+  { c: '#FFC6A8', x: 82, y: 28, r: 36, ax: 24, ay: 9, k: 1, ph: 2.1, o: 0.8 },
+  { c: '#FF7A94', x: 55, y: 24, r: 28, ax: 34, ay: 10, k: 2, ph: 4.2, o: 0.55 },
+  { c: '#BDF2DA', x: 40, y: 8, r: 14, ax: 30, ay: 6, k: 1, ph: 1.0, o: 0.6 },
+  { c: '#CDE7FF', x: 92, y: 36, r: 12, ax: 22, ay: 6, k: 2, ph: 3.3, o: 0.55 },
 ];
 
 function Iridescence() {
   const reduce = useReducedMotion();
+  // Чат с Kleal остаётся в стопке под другими экранами, и вечный перелив продолжал там крутиться: замер
+  // 17.10 — +12 пунктов процессора на всех экранах после захода в чат. Не в фокусе — стоит.
+  const focused = useIsFocused();
   const t = useSharedValue(0);
   useEffect(() => {
-    if (reduce) return;
-    t.value = withRepeat(withTiming(1, { duration: 7000, easing: REasing.linear }), -1, false);
-  }, [reduce, t]);
+    if (reduce || !focused) { cancelAnimation(t); return; }
+    t.value = withRepeat(withTiming(t.value + 1, { duration: 7000, easing: REasing.linear }), -1, false);
+    return () => cancelAnimation(t);
+  }, [reduce, focused, t]);
   return (
     <View pointerEvents="none" style={[StyleSheet.absoluteFill, { overflow: 'hidden', borderRadius: 22 }]}>
       {BLOBS.map((b, i) => <Blob key={i} b={b} t={t} />)}
@@ -654,7 +666,7 @@ function Blob({ b, t }: { b: (typeof BLOBS)[number]; t: SharedValue<number> }) {
   });
   const d = b.r * 2;
   return (
-    <Animated.View style={[{ position: 'absolute', left: b.x - b.r, top: b.y - b.r, width: d, height: d, opacity: 0.75 }, st]}>
+    <Animated.View style={[{ position: 'absolute', left: b.x - b.r, top: b.y - b.r, width: d, height: d, opacity: b.o }, st]}>
       <Svg width={d} height={d}>
         <SvgDefs>
           <SvgRadial id={`ir${b.c}`} cx="50%" cy="50%" rx="50%" ry="50%">
@@ -675,7 +687,9 @@ function CreatePill({ label, onPress }: { label: string; onPress: () => void }) 
       <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress}
         onPressIn={p.onPressIn} onPressOut={p.onPressOut} hitSlop={6}>
         <GlassSurface tone="light" radius={22} pointerEvents="none" style={s.createBtn}>
-          <Image source={require('../assets/art/buddy/create-mesh.png')} style={s.createMesh} resizeMode="stretch" />
+          {/* Под пятнами — коралловая подложка; прежняя мятно-голубая картинка осталась лёгким отсветом. */}
+          <View style={s.createCoral} />
+          <Image source={require('../assets/art/buddy/create-mesh.png')} style={[s.createMesh, { opacity: 0.22 }]} resizeMode="stretch" />
           <Iridescence />
           <LogoFace size={24} />
           <Text style={s.createText}>{label}</Text>
@@ -709,6 +723,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 16,
   },
   createMesh: { ...StyleSheet.absoluteFill, width: 111, height: 44 } as any,
+  createCoral: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(255,170,185,0.35)' } as any,
   /** «Create» — TASA 600 15/18, как подпись кнопки на кадре. */
   createText: { fontFamily: font.displaySemi, fontSize: 15, lineHeight: 18, color: color.fg } as any,
 

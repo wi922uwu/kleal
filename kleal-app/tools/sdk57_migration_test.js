@@ -78,9 +78,24 @@ async function main() {
     assert.match(read(file), /await appendUploadFile\(/, file);
     assert.doesNotMatch(read(file), /form\.append\('file',\s*\{/, file);
   }
-  for (const file of ['src/components/ExploreMap.native.tsx', 'src/components/OnlineIntentGlobe.native.tsx']) {
-    assert.match(read(file), /showsPointsOfInterests=\{false\}/, file);
+  // Partner made OnlineIntentGlobe a list overlay over ExploreMap, not a second
+  // MapView. Keep the SDK57 prop assertion on every actual native MapView.
+  const nativeMaps = [];
+  const mapSource = ts.createSourceFile('ExploreMap.native.tsx', read('src/components/ExploreMap.native.tsx'),
+    ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  function visit(node) {
+    if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && node.tagName.getText(mapSource) === 'MapView') {
+      nativeMaps.push(node.getText(mapSource));
+    }
+    ts.forEachChild(node, visit);
   }
+  visit(mapSource);
+  assert(nativeMaps.length > 0, 'actual native map is still exercised');
+  for (const mapView of nativeMaps) {
+    assert.match(mapView, /showsPointsOfInterests=\{false\}/);
+  }
+  assert.doesNotMatch(read('src/components/OnlineIntentGlobe.native.tsx'), /<MapView\b|from ['"]react-native-maps['"]/);
+  assert.match(read('app/map.tsx'), /<ExploreMap\b/);
   console.log('ok all native upload and map call sites migrated');
   for (const file of ['app/intent.tsx', 'app/results.tsx']) {
     assert.match(read(file), /usePreventRemove.*from 'expo-router\/react-navigation'/, file);

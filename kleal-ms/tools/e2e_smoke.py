@@ -99,14 +99,19 @@ check("filled profile passes more of the gate", st == 200 and isinstance(crit2, 
 
 st, chat = call("/api/onboarding/chat",
                 {"messages": [{"role": "user", "content": "hi, i'm new here"}], "profile": {}, "lang": "en"})
-check("onboarding agent replies", st == 200 and isinstance(chat, dict) and bool(chat.get("reply")),
-      (chat or {}).get("reply", "")[:80] if isinstance(chat, dict) else chat)
-check("onboarding reply carries no error", isinstance(chat, dict) and not chat.get("error"),
-      (chat or {}).get("error") if isinstance(chat, dict) else "")
+# 17.10.2026: chat и summary требуют вход, как register ниже. Без сессии смоук видит отказ —
+# это пропуск, а не падение; а вот ответ модели без входа был бы падением.
+if isinstance(chat, dict) and chat.get("error") == "no session":
+    skip("onboarding agent replies", "нужен вход по коду")
+    skip("onboarding reply carries no error", "нужен вход по коду")
+else:
+    check("onboarding agent is closed without a session", False, "ответила без входа")
 
 st, summ = call("/api/onboarding/summary", {"profile": PROF, "lang": "en"})
-check("summary generated", st == 200 and isinstance(summ, dict) and bool(summ.get("summary")),
-      (summ or {}).get("summary", "")[:80] if isinstance(summ, dict) else summ)
+if isinstance(summ, dict) and summ.get("error") == "no session":
+    skip("summary generated", "нужен вход по коду")
+else:
+    check("summary is closed without a session", False, "сводка без входа")
 
 st, reg = call("/api/onboarding/register", {"profile": PROF})
 # ВХОД ОБЯЗАТЕЛЕН С ТЕХ ПОР, КАК ПОЯВИЛИСЬ КОДЫ. Смоук сессию получить не может: код живёт в
@@ -225,7 +230,7 @@ check("matching_core engine is ENABLED (not the legacy fallback)",
 section("7. POST-SEARCH SCREENS — intents, messages, groups")
 for path, screen in (("/api/agent/intents", "My Intents"), ("/api/agent/intent-save", "save an intent"),
                      ("/api/agent/inbox", "Messages inbox"), ("/api/agent/threads", "Message threads"),
-                     ("/api/agent/groups", "Groups"), ("/api/agent/propose", "propose a meet")):
+                     ("/api/agent/gintents", "Groups"), ("/api/agent/propose", "propose a meet")):
     from urllib.parse import quote
     st, _ = call(path + "?self=" + quote(me), None)
     st2, _ = call(path, {"self": me})
