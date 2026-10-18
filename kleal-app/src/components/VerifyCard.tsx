@@ -28,11 +28,12 @@ import { getLang } from '../i18n';
  * обязательного шлюза и считает «admitted:true при not_started» невозможным, а добровольный режим
  * отвечает именно так (контракт ЛОГИКИ, 18.10.2026). Здесь проверяем только то, на что смотрит блок.
  */
-type VStatus = { status: string; over18: boolean; canStart: boolean; method?: string; url?: string };
+type VStatus = { status: string; over18: boolean; canStart: boolean; method?: string; url?: string; voluntary: boolean; onboarded: boolean };
 const V_STATUSES = new Set(['not_started', 'pending', 'review', 'approved', 'declined', 'cancelled', 'expired', 'legacy_exempt']);
 const asStatus = (r: any): VStatus | null =>
   r && V_STATUSES.has(String(r.status))
-    ? { status: String(r.status), over18: r.over18 === true, canStart: r.canStart === true, method: r.method, url: typeof r.url === 'string' ? r.url : undefined }
+    ? { status: String(r.status), over18: r.over18 === true, canStart: r.canStart === true, method: r.method, url: typeof r.url === 'string' ? r.url : undefined,
+        voluntary: r.voluntary === true, onboarded: r.onboarded !== false }
     : null;
 async function vStatus(): Promise<VStatus | null> {
   if (!getSession()) return null;
@@ -55,7 +56,14 @@ export function useAgeVerified(): boolean {
   return ok;
 }
 
-export function VerifyCard({ preview, onChange }: { preview?: 'start' | 'done'; onChange?: (verified: boolean) => void }) {
+/**
+ * `ensureRegistered` — сохранить анкету (та же регистрация, что делает «Готово»). На сводке строки
+ * человека ещё нет, и сервер не даёт начать проверку (onboarded:false) — поэтому блок виден в
+ * добровольном режиме и до регистрации, а по нажатию сначала сохраняет анкету (баг Ивана 18.10).
+ */
+export function VerifyCard({ preview, onChange, ensureRegistered }: {
+  preview?: 'start' | 'done'; onChange?: (verified: boolean) => void; ensureRegistered?: () => Promise<boolean>;
+}) {
   const [res, setRes] = useState<VStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -77,7 +85,17 @@ export function VerifyCard({ preview, onChange }: { preview?: 'start' | 'done'; 
 
   const verified = preview === 'done' || (!!res && res.status === 'approved' && res.over18);
   const isTest = res?.method === 'test';
-  const canStart = preview === 'start' || (!!res && res.canStart && !verified);
+  // До регистрации сервер даёт canStart:false — в добровольном режиме блок всё равно виден (см. выше).
+  const canStart = preview === 'start' || (!!res && !verified && (res.canStart || (res.voluntary && !res.onboarded)));
+
+  /** Перед стартом — сохранить анкету, если её строки ещё нет. false — причину показал экран. */
+  const ready = async (): Promise<boolean> => {
+    if (!res || res.onboarded) return true;
+    if (!ensureRegistered) return false;
+    const ok = await ensureRegistered();
+    if (ok) { const r = await vStatus().catch(() => null); if (r) setRes(r); }
+    return ok;
+  };
   useEffect(() => { onChange?.(verified); }, [verified]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Тестовый автопроход и его снятие. Ответ сервера — не полный статус, поэтому статус перечитываем. */
@@ -86,6 +104,7 @@ export function VerifyCard({ preview, onChange }: { preview?: 'start' | 'done'; 
     setTestBusy(true);
     setErr('');
     try {
+      if (!undo && !(await ready())) { setErr(V.saveFirst()); return; }
       const r = await api.post<{ ok?: boolean; status?: string }>('/api/onboarding/age-verification/test-pass', undo ? { undo: true } : {});
       if (!r?.ok && !r?.status) throw new Error('test');
       setRes(await vStatus());
@@ -112,6 +131,7 @@ export function VerifyCard({ preview, onChange }: { preview?: 'start' | 'done'; 
     setBusy(true);
     setErr('');
     try {
+      if (!(await ready())) { setErr(V.saveFirst()); return; }
       // Каждый старт — платная сессия Didit: зовём только по нажатию человека.
       const r = asStatus(await api.post('/api/onboarding/age-verification/session', { language: getLang() }));
       if (r?.url && isHostedVerificationURL(r.url)) await Linking.openURL(r.url);
@@ -170,6 +190,7 @@ const V = {
   testNote: () => T('только для тестировщиков', 'testers only', 'solo para testers'),
   doneTest: () => T('Проверен (тест)', 'Verified (test)', 'Verificado (prueba)'),
   undo: () => T('Снять', 'Undo', 'Deshacer'),
+  saveFirst: () => T('Сначала нужно сохранить анкету — проверь сообщение выше и попробуй ещё раз.', 'Your profile needs to be saved first — check the message above and try again.', 'Primero hay que guardar tu perfil: revisa el mensaje de arriba e inténtalo de nuevo.'),
   later: () => T('Сейчас не получилось начать — попробуй чуть позже.', 'Couldn’t start right now — try again a bit later.', 'No se pudo empezar ahora: inténtalo un poco más tarde.'),
 };
 

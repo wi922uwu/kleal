@@ -24,7 +24,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, TextInput,
-  KeyboardAvoidingView, Platform, useWindowDimensions,
+  KeyboardAvoidingView, Keyboard, Platform, useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
@@ -170,7 +170,9 @@ export default function Intent() {
   */
   const [title, setTitle] = useState(paramTitle);
 
-  const [step, setStep] = useState<IntentStepId>('how');
+  const [step, setStepRaw] = useState<IntentStepId>('how');
+  /** Смена шага мастера закрывает клавиатуру (Иван, 18.10.2026): иначе следующий шаг вставал «уехавшим». */
+  const setStep = (v: IntentStepId | ((p: IntentStepId) => IntentStepId)) => { Keyboard.dismiss(); setStepRaw(v as any); };
   const legacySize = params.size ?? params.format;
   const normalizedSize = normalizeIntentSize(legacySize, params.groupSize);
   /** Plus в продукте ещё не подключён, но диапазон 6–20 остаётся видимой частью Group-flow. */

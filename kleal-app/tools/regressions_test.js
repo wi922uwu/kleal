@@ -2146,7 +2146,7 @@ console.log('\nцензура ловит просьбу о способе, но 
   check('отказ по входу — не «связь пропала»',
     /needsSignIn\(e\)\) \{ setSignIn\(true\); say\('bot', BUDDY\.signIn\(\)\)/.test(bd2)
     && /setRequestHeader\('Authorization'/.test(ap2));
-  check('в создании интента то же', /await buddyApi\.intentBuild\(next, profile\(\)\)/.test(code('app/create.tsx')));
+  check('в создании интента то же — с текущей карточкой', /await buddyApi\.intentBuild\(next, profile\(\), card\)/.test(code('app/create.tsx')));
   // Без Accept посредники охотно буферизуют ответ целиком, и поток перестаёт быть потоком.
   check('поток просит себя явно', /setRequestHeader\('Accept', 'text\/event-stream'\)/.test(ap2));
 

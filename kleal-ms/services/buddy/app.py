@@ -584,12 +584,13 @@ _REFUSE = re.compile(r"^(нет|не\s+надо|не\s+хочу|не\s+сейч�
                      r"n[aã]o|agora\s+n[aã]o|mais\s+tarde|depois)\b", re.I)
 
 # Согласие целиком, а не слово внутри фразы: «да» в «да я вообще про другое» — не согласие.
-_AFFIRM_HEAD = re.compile(r"^(да|ага|угу|давай(те)?|конечно|хочу|хотел[аи]?\s+бы|можно|"
+_AFFIRM_HEAD = re.compile(r"^[¿¡]?(да|ага|угу|давай(те)?|конечно|хочу|хотел[аи]?\s+бы|можно|"
                           r"ок(ей)?|окей|идёт|идет|согласен|согласна|не\s+против|с\s+удовольствием|"
                           r"было\s+бы\s+(интересно|здорово|круто|неплохо)|почему\s+бы\s+и\s+нет|"
                           r"yes|yeah|yep|yup|sure|ok(ay)?|absolutely|definitely|i'?d\s+love|"
                           r"sounds\s+good|why\s+not|"
-                          r"s[íi]|claro|vale|venga|dale|por\s+supuesto|me\s+encantar[íi]a|"
+                          r"claro\s+que\s+s[íi]|por\s+qu[eé]\s+no|s[íi]|claro|vale|venga|dale|obvio|por\s+supuesto|me\s+encantar[íi]a|"
+                          r"me\s+parece\s+bien|porfa|por\s+favor|please|пожалуйста|попробуем|погнали|го|let'?s\s+do\s+it|i'?m\s+in|"
                           # de / fr / it / pt (13.10.2026): согласие на предложение Буди не узнавалось вовсе
                           r"ja|jo|jep|klar|na\s+klar|gerne?|sicher|nat[uü]rlich|unbedingt|auf\s+jeden\s+fall|"
                           r"warum\s+nicht|passt|einverstanden|mach\s+das|"

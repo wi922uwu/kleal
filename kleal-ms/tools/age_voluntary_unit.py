@@ -153,6 +153,23 @@ try:
           and len(CREATED) == 1, (st, r))
     check("сессия привязана к аккаунту (vendor_data — подпись, не ключ)", CREATED and CREATED[0]["vendor_data"] != key, CREATED)
 
+    print("\n-- сценарий Didit не совпал с утверждённым (18.10: «не получилось начать», потом 429) --")
+    tok3, key3 = login("cara%d@example.com" % (int(time.time()) % 100000))
+    onboard(tok3, key3, "Cara")
+    _wc = age_proof.workflow_current
+    age_proof.workflow_current = lambda p, fresh=False: False
+    n_before = len(CREATED)
+    st, r = call("POST", P + "/session", {"language": "ru"}, tok=tok3)
+    check("старт: честный отказ configuration (503)", st == 503 and r.get("error") == "configuration", (st, r))
+    st, r = call("POST", P + "/session", {"language": "ru"}, tok=tok3)
+    check("повтор сразу — та же ошибка, а не 429", st == 503 and r.get("error") == "configuration", (st, r))
+    check("платной сессии не создано", len(CREATED) == n_before, len(CREATED) - n_before)
+    st, r = call("GET", P + "/status", tok=tok3)
+    check("статус после сбоя — можно начать снова", r.get("status") == "not_started" and r.get("canStart") is True, r)
+    age_proof.workflow_current = _wc
+    st, r = call("POST", P + "/session", {"language": "ru"}, tok=tok3)
+    check("сценарий снова совпал — старт проходит сразу", st == 200 and r.get("url"), (st, r))
+
     print("\n-- приём событий провайдера --")
     ts = int(time.time())
     evt = {"timestamp": ts, "created_at": ts, "event_id": str(uuid.uuid4()), "webhook_type": "status.updated",

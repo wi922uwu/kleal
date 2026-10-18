@@ -5,7 +5,7 @@
  * дальше речь уже не о заполнении, а о том, что из этого понято.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, View, Text, StyleSheet, ScrollView, Image } from 'react-native';
+import { Alert, Keyboard, View, Text, StyleSheet, ScrollView, Image } from 'react-native';
 import Animated, { Easing, useAnimatedProps, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Circle } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -226,6 +226,7 @@ export default function Summary() {
   };
 
   const finish = async () => {
+    Keyboard.dismiss();                  // переход — без открытой клавиатуры (18.10.2026)
     if (await register()) router.replace('/done');
   };
 
@@ -310,7 +311,7 @@ export default function Summary() {
         </View>
 
         {/* Верификация (18.10.2026): что даёт и одна кнопка; видна, только когда сервер даёт начать. */}
-        <VerifyCard onChange={setVerifiedNow} />
+        <VerifyCard onChange={setVerifiedNow} ensureRegistered={register} />
 
         {/*
           Плашки «План обновлён» больше нет (владелец, 26.09): голубая карточка с общими словами

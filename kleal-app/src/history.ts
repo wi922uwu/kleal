@@ -24,7 +24,7 @@ const CAP = 50;
 /** Короче этого — не разговор, а случайный заход: открыл и вышел. */
 const MIN_LINES = 2;
 
-export type HistoryLine = { who: 'bot' | 'me'; text: string; at: string };
+export type HistoryLine = { who: 'bot' | 'me'; text: string; at: string; hello?: boolean };
 export type HistoryItem = {
   id: string;
   /**
@@ -38,6 +38,22 @@ export type HistoryItem = {
   /** Чем занимались: шаг онбординга или свободный разговор. Показываем как подзаголовок. */
   topic: string;
   lines: HistoryLine[];
+  /*
+    ВОССТАНОВЛЕНИЕ РАЗГОВОРА (18.10.2026, Иван: «я должен уметь восстановить диалог»). Раньше запись
+    хранила только текст пузырей — открыть её можно было лишь для чтения. Теперь рядом лежит всё, что
+    нужно, чтобы продолжить: ходы для модели (тот же контекст), что распознал Kleal (окно затеи) и
+    было ли окно открыто. Старые записи без этих полей открываются тоже: ходы собираются из реплик.
+  */
+  /** Последнее изменение, мс — по нему сортируем и подписываем дату. */
+  updatedAt?: number;
+  /** Ходы для модели в том виде, в каком их шлёт экран (role/content). */
+  turns?: { role: string; content: string }[];
+  /** Что распознал Kleal: фраза, заголовок и описание затеи, тема. */
+  intent?: { what: string; seen: { title: string; desc: string } | null; topic: string; sheet: boolean };
+  /** Из разговора ушли создавать затею. */
+  created?: boolean;
+  /** Откуда разговор: 'buddy' — чат с Kleal (его можно продолжить); без поля — старые записи. */
+  source?: 'buddy' | 'onboarding';
 };
 
 let cache: HistoryItem[] | null = null;
@@ -86,7 +102,7 @@ export async function saveConversation(item: Omit<HistoryItem, 'owner'>): Promis
   const rows = await all();
   // Ограничение в CAP считается ПО ВЛАДЕЛЬЦУ: чужие записи не должны вытеснять мои и наоборот.
   const mine = [{ ...item, owner: me }, ...rows.filter((x) => x.owner === me && x.id !== item.id)]
-    .sort((a, b) => b.startedAt - a.startedAt)
+    .sort((a, b) => (b.updatedAt || b.startedAt) - (a.updatedAt || a.startedAt))
     .slice(0, CAP);
   const next = [...mine, ...rows.filter((x) => x.owner !== me)];
   cache = next;
@@ -95,6 +111,26 @@ export async function saveConversation(item: Omit<HistoryItem, 'owner'>): Promis
   } catch {
     // Не сохранилось — не беда: история удобство, а не данные, ради которых стоит падать.
   }
+}
+
+/** Один разговор текущего человека — для восстановления. Чужой не отдаём. */
+export async function getConversation(id: string): Promise<HistoryItem | null> {
+  return (await loadHistory()).find((x) => x.id === id) || null;
+}
+
+/** Удалить один разговор текущего человека. */
+export async function deleteConversation(id: string): Promise<void> {
+  const me = owner();
+  if (!me) return;
+  const rows = (await all()).filter((x) => !(x.owner === me && x.id === id));
+  cache = rows;
+  try { await AsyncStorage.setItem(KEY, JSON.stringify(rows)); } catch { /* см. ниже */ }
+}
+
+/** Ходы для модели из реплик — для старых записей, где ходы не сохранялись. */
+export function turnsOf(item: HistoryItem): { role: string; content: string }[] {
+  if (item.turns && item.turns.length) return item.turns;
+  return item.lines.map((l) => ({ role: l.who === 'me' ? 'user' : 'assistant', content: l.text }));
 }
 
 /** Стереть историю ТЕКУЩЕГО человека. Чужие записи не трогаем — они не наши, чтобы их удалять. */

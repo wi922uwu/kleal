@@ -198,6 +198,9 @@ def _handle(handler):
                 result.update({'status': 'approved', 'over18': True, 'method': 'test'})
         send_json(handler, 200, result)
     except age.VerificationError as exc:
+        # Код и ручка — в журнал (18.10.2026: «не получилось начать» не оставляло следа). Только код
+        # ошибки и последний сегмент пути: ни ключей, ни тел провайдера, ни данных человека.
+        print('[age] %s %s -> %s %s' % (handler.command, path.rsplit('/', 1)[-1], exc.http, exc.code), flush=True)
         send_json(handler, exc.http, {'ok': False, 'error': exc.code})
     except (ValueError, TypeError):
         send_json(handler, 400, {'ok': False, 'error': 'invalid_request'})

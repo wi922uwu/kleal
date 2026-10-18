@@ -168,6 +168,8 @@ export const STEP_START = {
   hint: () => T('Выбери вариант или напиши своё', 'Pick some or write your own', 'Elige algunos o escribe la tuya'),
   why: () => T('Зачем это нужно?', 'Why do you need this?', '¿Por qué necesitas esto?'),
   go: () => T('Поехали!', "Let's go!", '¡Vamos!'),
+  /** Чип «Через ChatGPT» на приветствии анкеты (app/ai-fill.tsx). */
+  viaChatGPT: () => T('Через ChatGPT', 'Via ChatGPT', 'Con ChatGPT'),
   whyAnswer: () =>
     T(
       'Чтобы искать не всех подряд, а тех, с кем тебе правда будет о чём поговорить. Чем больше я знаю, тем точнее подбираю.',

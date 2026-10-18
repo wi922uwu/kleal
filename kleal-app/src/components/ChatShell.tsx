@@ -13,7 +13,7 @@ import React, { createContext, forwardRef, useCallback, useEffect, useImperative
 import { mediaUrl } from '../api';
 import {
   View, Text, StyleSheet, ScrollView, Image,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Keyboard, Platform,
 } from 'react-native';
 import Animated, {
   Easing, useAnimatedStyle, useReducedMotion, useSharedValue, withTiming,
@@ -131,6 +131,19 @@ export const ChatShell = forwardRef<ScrollView, {
   const ref = useRef<ScrollView>(null);
   useImperativeHandle(scroller, () => ref.current as ScrollView);
   const [vh, setVh] = useState(0);
+  /*
+    ГЛАВНАЯ КНОПКА ШАГА НАД КЛАВИАТУРОЙ (Иван, 18.10.2026: печатаешь язык — и не видно «Дальше»).
+    Кнопка шага прижата к низу текущей секции (chatStyles.pin), а секция не ниже окна ленты. Клавиатура
+    открылась — окно ужалось (KeyboardAvoidingView), секция стала ниже, но лента осталась на прежней
+    прокрутке, и низ секции с кнопкой уходил под поле. Доезжаем до низа: текущий этап последний, и его
+    кнопка встаёт прямо над полем ввода.
+  */
+  useEffect(() => {
+    const sub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => {
+      setTimeout(() => ref.current?.scrollToEnd({ animated: true }), Platform.OS === 'ios' ? 280 : 60);
+    });
+    return () => sub.remove();
+  }, []);
   const boxes = useRef<Record<string, { y: number; h: number }>>({});
   const [offsets, setOffsets] = useState<number[]>([]);
   const active = sections && sections.length ? sections[sections.length - 1].key : '';
@@ -199,7 +212,8 @@ export const ChatShell = forwardRef<ScrollView, {
             </Text>
             <View style={[s.headSide, s.headRight]}>
               {pct == null ? null : (
-                <Text style={s.headPct}>{String(Math.round(pct)).padStart(2, '0')}%</Text>
+                // Без ведущего нуля («00%» читалось как ошибка, Иван 18.10.2026); ширину держит minWidth.
+                <Text style={s.headPct}>{`${Math.round(pct)}%`}</Text>
               )}
               <Blob size={30} float={false} />
             </View>
@@ -365,7 +379,7 @@ const s = StyleSheet.create({
   headSide: { width: 84, flexDirection: 'row', alignItems: 'center' },
   headRight: { justifyContent: 'flex-end', gap: space.sm },
   headTitle: { flex: 1, textAlign: 'center', color: color.fg } as any,
-  headPct: { ...type.num, color: color.muted } as any,
+  headPct: { ...type.num, color: color.muted, minWidth: 40, textAlign: 'right', fontVariant: ['tabular-nums'] } as any,
   track: {
     alignSelf: 'center', width: 100, height: 2, marginTop: 10,
     backgroundColor: 'rgba(255,255,255,0.67)', borderRadius: 999, overflow: 'hidden',

@@ -218,6 +218,8 @@ export default function Create() {
     });
     const grow = (t: string) => { acc += t; rev.push(t); };
 
+    // Карточка на экране — сборщику (signals.v2_card): правит только то, что изменил человек.
+    const card = ready ? { title: ready.title, chips: ready.topics } : null;
     buddyApi.intentBuildStream(next, profile(), {
       delta: grow,
       done: (r: any) => {
@@ -248,7 +250,7 @@ export default function Create() {
         let locked = needsSignIn(why);
         if (!locked) {
           try {
-            const r: any = await buddyApi.intentBuild(next, profile());
+            const r: any = await buddyApi.intentBuild(next, profile(), card);
             setTyping(false);
             const reply = String(r?.reply || '');
             if (reply) { settle(r, reply, text, next, false); return; }
@@ -265,8 +267,8 @@ export default function Create() {
         say('bot', T('Связь пропала — я не дослушал. Попробуем ещё раз?',
                      'I lost the connection mid-thought. Shall we try again?', 'Perdí la conexión a mitad de pensamiento. ¿Lo intentamos de nuevo?'));
       },
-    });
-  }, [say, settle, st.profile]);
+    }, card);
+  }, [say, settle, st.profile, ready]);
 
   useEffect(() => {
     if (started.current) return;

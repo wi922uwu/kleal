@@ -1962,6 +1962,29 @@ _м = [{"role": "user", "content": "привет, люблю лес и крип�
       {"role": "user", "content": "да"}]
 check("J: «да» на «кто-то ещё хочет» — принятое предложение", bool(V2._принятое_предложение(_м, B)))
 check("J: «не знаю» — не знает", V2._не_знает(["привет, люблю лес и крипту", "не знаю"], B))
+for _t in ("sí, porfa", "por qué no", "¿por qué no?", "claro que sí", "vale", "dale", "venga", "sí"):
+    check("K: «%s» — согласие" % _t, B._is_affirmation(_t))
+_z = V2._затея({"title": "Погулять с животными", "subject": "животные", "role": "play", "chips": ["собачки", "котики"], "category": "outdoors", "request": True},
+               [{"role": "user", "content": "люблю котиков и собачек"}, {"role": "user", "content": "еще люблю по лесу гулять с ними"}], {}, {}, "ru", B)
+check("L: прогулка из названия при других ключах", _z[0] and "walk" in (_z[0].get("topics") or []), _z[0] and _z[0].get("topics"))
+check("L: «котики» — ключ cats", B.norm_topic("котики") == "cats" and B.norm_topic("кошки") == "cats")
+check("L: английское «chats» — не кошки", B.norm_topic("chats") != "cats")
+_z = V2._затея({"title": "Погулять с собакой", "subject": "прогулка", "role": "meet", "chips": ["прогулка", "собака"], "category": "outdoors", "request": True},
+               [{"role": "user", "content": "хочу погулять с собакой"}, {"role": "assistant", "content": "Где?"}, {"role": "user", "content": "по лесу"}], {}, {}, "ru", B)
+check("L: «по лесу» дополнением — nature в карточке", _z[0] and "nature" in (_z[0].get("topics") or []), _z[0] and _z[0].get("topics"))
+_z = V2._затея({"title": "Поиграть в теннис", "subject": "теннис", "role": "play", "chips": ["теннис"], "category": "sport", "request": True},
+               [{"role": "user", "content": "хочу поиграть в теннис"}, {"role": "assistant", "content": "Может, и кофе?"}, {"role": "user", "content": "нет, без кофе"}], {}, {}, "ru", B)
+check("L: отвергнутое дополнение не входит", _z[0] and "coffee" not in (_z[0].get("topics") or []), _z[0] and _z[0].get("topics"))
+check("L: «лес» — ключ nature", B.norm_topic("лес") == "nature" and B.norm_topic("лесу") == "nature", B.norm_topic("лес"))
+_z = V2._затея({"title": "Поесть суши", "subject": "суши", "role": "meet", "chips": ["суши"], "category": "food", "request": True},
+               [{"role": "user", "content": "хочу поесть суши"}], {}, {}, "ru", B)
+check("L: «поесть» не добавляет food при суши", _z[0] and "food" not in (_z[0].get("topics") or []), _z[0] and _z[0].get("topics"))
+check("K: «no, gracias» — не согласие", not B._is_affirmation("no, gracias"))
+_пр = V2._предложить_с_занятиями(["hola, me encantan el ajedrez y el café", "no sé"], "es", B)
+check("K: предложение с занятиями es", "alguien" in _пр and "?" in _пр, _пр)
+check("K: предложение с занятиями узнаётся как предложение", bool(B._OFFERED_MEET.search(_пр) or V2._НАЙТИ_С_КЕМ.search(_пр)), _пр)
+_пр = V2._предложить_с_занятиями(["привет, люблю шахматы и кофе", "не знаю"], "ru", B)
+check("K: предложение с занятиями ru", "компанию" in _пр and "?" in _пр and bool(B._OFFERED_MEET.search(_пр)), _пр)
 check("J: «не знаю, может падел» — не просто «не знаю»", not V2._не_знает(["привет", "не знаю, может в падел поиграть"], B))
 check("J: «no sé» и «not sure»", V2._не_знает(["hola", "no sé"], B) and V2._не_знает(["hi", "not sure"], B))
 check("J: предложение узнаётся правилом согласия", all(bool(B._OFFERED_MEET.search(x) or V2._НАЙТИ_С_КЕМ.search(x)) for x in V2._ПРЕДЛОЖИТЬ.values()),

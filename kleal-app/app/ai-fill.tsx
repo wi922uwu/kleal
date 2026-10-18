@@ -25,7 +25,8 @@ import { addConfirmedInterest } from '../src/profile';
 import { get } from '../src/state';
 import { GlassChip } from '../src/components/Glass';
 import { GlassSurface } from '../src/components/LiquidGlass';
-import { AiConnectGuide, AiDraftView, AiFillStatus, AiPasteBox, AiSpinner, type AiFillState } from '../src/components/AiFill';
+import { AiDraftView, AiFillStatus, AiPasteBox, AiSpinner } from '../src/components/AiFill';
+import { AiConnectFlow } from '../src/components/AiConnectFlow';
 import { IconChevronLeft } from '../src/components/icons';
 import { Ambient } from '../src/components/Ambient';
 import { color, font, space } from '../src/theme';
@@ -81,7 +82,6 @@ export default function AiFill() {
   }, [mode, focused]);
 
   const expired = !!link?.expiresAt && link.expiresAt <= now;
-  const status: AiFillState = draft ? 'arrived' : linkErr ? 'error' : expired ? 'expired' : 'waiting';
 
   /** Вставленный ответ ChatGPT → черновик. Свои слова отказа — у каждой причины свои. */
   const submitPaste = async (text: string) => {
@@ -132,7 +132,7 @@ export default function AiFill() {
           <IconChevronLeft size={22} c={color.fg} />
         </Pressable>
         <Text style={s.headTitle} numberOfLines={1}>{mode === 'review' ? AI.draftTitle() : AI.cardTitle()}</Text>
-        <View style={s.back} />
+        <View style={s.spacer} />
       </View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={[s.body, { paddingBottom: insets.bottom + space.xl }]}
@@ -147,18 +147,13 @@ export default function AiFill() {
             <AiPasteBox onSubmit={submitPaste} busy={pasteBusy} error={pasteErr} prompt={link?.pastePrompt} />
           ) : (
             <>
-              {/* Состояние сверху: пришёл черновик — его видно сразу, без прокрутки. */}
-              <AiFillStatus
-                state={status}
-                onAction={status === 'arrived' ? () => setMode('review')
-                  : status === 'expired' || status === 'error' ? makeLink : undefined}
-              />
-              {/* На телефоне режима разработчика нет — говорим честно и даём запасной путь. */}
-              <AiFillStatus state="mobile" onAction={() => setMode('paste')} />
+              {/* Подключение — три шага и одна главная кнопка (18.10.2026, src/components/AiConnectFlow.tsx). */}
               {link ? (
-                <AiConnectGuide url={link.url} prompt={link.prompt} expiresAt={link.expiresAt} now={now}
-                                onPaste={() => setMode('paste')} />
-              ) : linkErr ? null : <AiSpinner color={color.primary} style={{ marginTop: space.lg }} />}
+                <AiConnectFlow url={link.url} prompt={link.prompt} expired={expired} arrived={!!draft}
+                               onReview={() => setMode('review')} onNewLink={makeLink} onPaste={() => setMode('paste')} />
+              ) : linkErr ? (
+                <AiFillStatus state="error" onAction={makeLink} />
+              ) : <AiSpinner color={color.primary} style={{ marginTop: space.lg }} />}
             </>
           )}
         </ScrollView>
@@ -276,6 +271,7 @@ const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ambientBase },
   head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
   back: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.85)' },
+  spacer: { width: 44, height: 44 },
   review: { gap: 10, marginBottom: space.md },
   reviewTitle: { fontFamily: font.displaySemi, fontSize: 17, lineHeight: 22, color: color.fg } as any,
   reviewCard: { padding: 14, gap: 10 },

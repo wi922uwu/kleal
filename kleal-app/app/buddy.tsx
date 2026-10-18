@@ -35,7 +35,7 @@ import { useVoiceMessage, VoiceBubble, VoiceMessageControl } from '../src/voice'
 import Markdown from '../src/components/Markdown';
 import { Thinking } from '../src/components/Thinking';
 import { makeReveal } from '../src/reveal';
-import { saveConversation } from '../src/history';
+import { saveConversation, getConversation, turnsOf } from '../src/history';
 
 /**
  * `hello` — первая реплика экрана. Это не ответ модели, а обращение к человеку, и выглядеть оно
@@ -61,7 +61,10 @@ export default function Buddy() {
   const scroller = useRef<ScrollView>(null);
 
   /** Текст с главного экрана: человек уже сказал, что хочет, — повторять вопрос незачем. */
-  const seed = String(useLocalSearchParams<{ q?: string }>().q || '').trim();
+  const qp = useLocalSearchParams<{ q?: string; resume?: string }>();
+  const seed = String(qp.q || '').trim();
+  /** Продолжить разговор из истории (app/history.tsx): id записи. */
+  const resume = String(qp.resume || '').trim();
 
   const [thread, setThread] = useState<Msg[]>([]);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -92,15 +95,32 @@ export default function Buddy() {
   */
   const threadRef = useRef<Msg[]>([]);
   threadRef.current = thread;
-  const convId = useRef(String(Date.now())).current;
-  useEffect(() => () => {
-    saveConversation({
-      id: convId,
-      startedAt: Number(convId),
-      topic: BUDDY.title(),
-      lines: threadRef.current.map((m) => ({ who: m.who, text: m.text, at: m.at })),
-    });
-  }, [convId]);
+  // Продолжаем запись из истории под ТЕМ ЖЕ id — разговор не двоится, а дописывается.
+  const convId = useRef(resume || String(Date.now())).current;
+  const startedAt = useRef(Number(resume) || Number(convId) || Date.now());
+  const createdRef = useRef(false);
+  /*
+    СОХРАНЕНИЕ ПО ХОДУ, А НЕ ТОЛЬКО ПРИ УХОДЕ (18.10.2026). Раньше запись делалась при размонтировании —
+    закрыл приложение посреди разговора, и его не было в истории. И хранился только текст: восстановить
+    разговор было нечем. Теперь вместе с репликами — ходы для модели и окно затеи (src/history.ts).
+  */
+  const snapshot = useRef<() => void>(() => {});
+  snapshot.current = () => saveConversation({
+    id: convId,
+    startedAt: startedAt.current,
+    updatedAt: Date.now(),
+    topic: BUDDY.title(),
+    lines: threadRef.current.map((m) => ({ who: m.who, text: m.text, at: m.at, ...(m.hello ? { hello: true } : {}) })),
+    turns,
+    intent: { what, seen, topic, sheet },
+    created: createdRef.current,
+    source: 'buddy',
+  });
+  useEffect(() => {
+    const id = setTimeout(() => snapshot.current(), 500);
+    return () => clearTimeout(id);
+  }, [thread, turns, what, seen, topic, sheet]);
+  useEffect(() => () => snapshot.current(), []);
 
   const say = useCallback((who: 'bot' | 'me', text: string, hello = false) => {
     setThread((t) => [...t, { who, text, at: now(), hello }]);
@@ -390,6 +410,22 @@ export default function Buddy() {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    if (resume) {
+      // Восстановление: та же лента, тот же контекст для модели, окно затеи там, где было.
+      getConversation(resume).then((it) => {
+        if (!it) return;
+        setThread(it.lines.map((l) => ({ who: l.who, text: l.text, at: l.at, hello: !!l.hello })));
+        setTurns(turnsOf(it));
+        createdRef.current = !!it.created;
+        if (it.intent) {
+          setWhat(it.intent.what || '');
+          setSeen(it.intent.seen || null);
+          setTopic(it.intent.topic || '');
+          if (it.intent.sheet) setSheet(true);
+        }
+      }).catch(() => {});
+      return;
+    }
     if (seed) {
       say('me', seed);
       send(seed, []);
@@ -442,6 +478,7 @@ export default function Buddy() {
 
   const toCreate = () => {
     setSheet(false);
+    createdRef.current = true;           // в истории — «затея создана»
     const params: Record<string, string> = {};
     if (topic) params.seed = topic;
     // Затравка уже лежит последней в turns — в историю для сервера она попадёт оттуда, поэтому

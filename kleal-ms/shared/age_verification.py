@@ -547,7 +547,13 @@ def start(key, account, language='en', onboarded=False):
     except Exception as exc:
         with database() as conn:
             if same_record(reserved, record(conn, sub)):
-                if not sent or (isinstance(exc, VerificationError) and exc.code in ('credits', 'rate_limit')):
+                if not sent:
+                    # Платный вызов не уходил (сбой на проверке настроек) — паузы «раз в минуту» нет: она
+                    # бережёт от второй ПЛАТНОЙ сессии, а её не было. Возвращаем прежнее время попытки
+                    # (18.10.2026: человек нажал ещё раз через 2 с и получил 429 вместо понятной ошибки).
+                    conn.execute("UPDATE verification SET status='not_started',attempt_at=? WHERE subject=?",
+                                 (rec['attempt_at'] if rec else 0, sub))
+                elif isinstance(exc, VerificationError) and exc.code in ('credits', 'rate_limit'):
                     conn.execute("UPDATE verification SET status='not_started' WHERE subject=?", (sub,))
                 # Once dispatched, timeout/malformed response/revocation is
                 # uncertain. Keep pending without SID and canStart=false until

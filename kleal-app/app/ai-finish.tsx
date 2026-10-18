@@ -18,7 +18,7 @@
  * документу здесь не ставится и не подделывается: его спрашивает свой экран после анкеты.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, Image } from 'react-native';
+import { Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -105,6 +105,7 @@ export default function AiFinish() {
 
   const done = async () => {
     if (!ready || busy) return;
+    Keyboard.dismiss();
     setBusy(true);
     setErr('');
     if (need.name) set('name', name.trim());

@@ -755,13 +755,19 @@ export const buddy = {
    * `done` несёт весь разбор — ready, topics, подсказки: он существует только когда конверт
    * дочитан целиком. Экран показывает текст по дороге, а ветвится по `done`.
    */
+  /*
+    `card` — карточка затеи, которая СЕЙЧАС на экране (НЕЙРОСЕТЬ, 18.10.2026): сервер кладёт её модели
+    строкой CURRENT CARD («меняй только то, что изменил человек»). Нет карточки — поле не шлём.
+  */
   intentBuildStream: (messages: Json[], prof: Json,
-                      on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void }) =>
-    sse('/api/buddy/intent-build', { messages, profile: prof, stream: true, lang: replyLang() }, on),
+                      on: { delta?: (t: string) => void; done?: (o: any) => void; error?: (e: string) => void },
+                      card?: { title: string; chips: string[] } | null) =>
+    sse('/api/buddy/intent-build', { messages, profile: prof, stream: true, lang: replyLang(),
+                                     ...(card ? { signals: { v2_card: card } } : {}) }, on),
 
-  intentBuild: (messages: Json[], prof: Json) =>
+  intentBuild: (messages: Json[], prof: Json, card?: { title: string; chips: string[] } | null) =>
     api.post<{ reply?: string; valid?: boolean; ready?: boolean; intent?: Json | null; hints?: string[] }>(
-      '/api/buddy/intent-build', { messages, profile: prof, lang: replyLang() }
+      '/api/buddy/intent-build', { messages, profile: prof, lang: replyLang(), ...(card ? { signals: { v2_card: card } } : {}) }
     ),
 
   /** Три варианта из профиля для пустого экрана создания. `seed` меняет выборку для «Ещё варианты». */

@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Image, TextInput, BackHandler,
+  View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Image, TextInput, BackHandler, Keyboard,
 } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useIsFocused } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -35,7 +35,7 @@ import { buddy as buddyApi } from '../src/api';
 import { AgeDial } from '../src/components/AgeDial';
 import { clampAge } from '../src/age-ruler';
 import { AreaPicker, Area } from '../src/components/AreaPicker';
-import { AiFillCard } from '../src/components/AiFill';
+import { ChatGPTMark } from '../src/components/ChatGPTMark';
 import { suggestedArea, suggestedLangs, suggestedInterests, aiAnnounce } from '../src/ai-suggest';
 import { ChatShell, BotLine, ChatViewport, chatStyles as cs } from '../src/components/ChatShell';
 import { MindMap } from '../src/components/MindMap';
@@ -95,7 +95,12 @@ export default function Chat() {
     приходят из очереди позже `setStep` — к этому времени состояние может ещё не перерисоваться.
   */
   const stepRef = useRef<StepId>('start');
-  const setStep = (s: StepId) => { stepRef.current = s; setStepState(s); };
+  /*
+    КЛАВИАТУРА ЗАКРЫВАЕТСЯ НА КАЖДОМ ПЕРЕХОДЕ ШАГА (Иван, 18.10.2026): иначе она оставалась открытой, и
+    новый шаг вставал «уехавшим» вверх. Поле, в котором человек пишет, посреди ввода не трогаем — только
+    на смене шага (вперёд, назад, возврат с листа ChatGPT).
+  */
+  const setStep = (s: StepId) => { if (s !== stepRef.current) Keyboard.dismiss(); stepRef.current = s; setStepState(s); };
   const [typing, setTyping] = useState(false);
   /** Нить разговора об увлечениях. Ref, а не состояние: её читает и дописывает обработчик
    *  отправки, перерисовка ей не нужна — на экране живёт общая лента. */
@@ -1063,12 +1068,11 @@ function StartW({ say, bot, asked, gone, onAsked, onGone }: any) {
             bot([STEP_START.askName()]);
           }}
         />
-      </View>
-      {/* «Заполнить через ChatGPT» (18.10.2026): он уже знает человека — черновик анкеты придёт
-          листом, и человек проверит каждый пункт. Карточка светлая и под кнопками: «Поехали!»
-          остаётся главным путём. Экран — app/ai-fill.tsx, карточка — src/components/AiFill.tsx. */}
-      <View style={{ marginTop: 12 }}>
-        <AiFillCard compact onPress={() => router.navigate('/ai-fill')} />
+        {/* «Через ChatGPT» (18.10.2026) — таким же чипом, как соседние (Иван: «лаконичнее и в стиле
+            нашего UI»), а не карточкой на всю ширину. Знак ChatGPT — официальный монохромный, без
+            перекраски (правила бренда OpenAI). Экран — app/ai-fill.tsx. */}
+        <GlassChip label={STEP_START.viaChatGPT()} icon={<ChatGPTMark size={16} />}
+                   onPress={() => router.navigate('/ai-fill')} />
       </View>
     </View>
   );

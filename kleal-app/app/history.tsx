@@ -1,145 +1,170 @@
 /**
- * История разговоров с Kleal — модальное окно.
+ * История разговоров с Kleal (кнопка-часы в шапке чата с Буди).
  *
- * ПОЧЕМУ МОДАЛЬНОЕ, А НЕ ВКЛАДКА. История — это «загляну и вернусь», а не место, где живут:
- * человек пришёл перечитать, о чём договорились, и уходит обратно туда, откуда пришёл. Вкладка
- * заняла бы постоянное место в навигации под то, что открывают раз в неделю.
- *
- * ДВА СОСТОЯНИЯ ОДНОГО ЭКРАНА: список разговоров и один открытый. Разговор открывается ЗДЕСЬ ЖЕ,
- * а не отдельным маршрутом: иначе закрытие модального окна из глубины возвращало бы не туда,
- * откуда пришли, а на список внутри модалки — и «Закрыть» переставало бы закрывать.
- *
- * Данные — с устройства, разбор в src/history.ts. Оговорка про это стоит на самом экране: человек
- * не должен считать список резервной копией.
+ * ПЕРЕДЕЛАНА 18.10.2026 (Иван: «экран устарел и не проработан, функционально не работает — я должен
+ * уметь восстановить диалог; по нормам нашего UI/UX»):
+ *   • нажатие на разговор ОТКРЫВАЕТ ЕГО В ЧАТЕ С KLEAL и продолжает: та же лента, тот же контекст для
+ *     модели, окно затеи там, где было (app/buddy.tsx, параметр resume; хранение — src/history.ts);
+ *   • строка — стеклянная карточка: заголовок (затея или первая фраза), дата, превью последней
+ *     реплики, признак «затея создана»;
+ *   • удаление — кнопкой «…» на строке с подтверждением; «Новый разговор» — сверху;
+ *   • пустое состояние; без лишнего движения — как договорились по карте.
+ * История живёт на телефоне (оговорка внизу списка); перенос между устройствами — отдельная задача.
  */
 import { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { HISTORY } from '../src/home';
-import { useLang, dateLocale } from '../src/i18n';
-import { loadHistory, clearHistory, type HistoryItem } from '../src/history';
-import { color, displayFamily, radius as rad, space, type } from '../src/theme';
+import { BUDDY } from '../src/buddy';
+import { useLang, T, dateLocale, use12h } from '../src/i18n';
+import { loadHistory, deleteConversation, type HistoryItem } from '../src/history';
+import { color, font, space } from '../src/theme';
 import { Ambient, GLOW_FORM } from '../src/components/Ambient';
+import { GlassSurface } from '../src/components/LiquidGlass';
+import { GlassPill } from '../src/components/Glass';
+import { IconChevronLeft, IconDots, IconPlusRound } from '../src/components/icons';
+import { LogoFace } from '../src/components/Logo';
 
 export default function History() {
   const lang = useLang();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [items, setItems] = useState<HistoryItem[]>([]);
-  const [open, setOpen] = useState<HistoryItem | null>(null);
+  const [items, setItems] = useState<HistoryItem[] | null>(null);
 
-  // Перечитываем на КАЖДОМ появлении: разговор мог закончиться минуту назад, и открывать список,
-  // в котором его ещё нет, значит показывать неправду.
-  useFocusEffect(
-    useCallback(() => {
-      let alive = true;
-      loadHistory().then((h) => alive && setItems(h));
-      return () => { alive = false; };
-    }, [])
-  );
+  // Перечитываем на каждом появлении: разговор мог закончиться минуту назад.
+  useFocusEffect(useCallback(() => {
+    let alive = true;
+    // Только разговоры с Kleal — их можно продолжить. Разговор анкеты сюда не относится. Старые записи
+    // Буди без поля source узнаём по заголовку BUDDY.title() («Kleal»).
+    loadHistory().then((h) => alive && setItems(h.filter((x) => x.source === 'buddy' || (!x.source && x.topic === BUDDY.title()))));
+    return () => { alive = false; };
+  }, []));
 
-  const when = (ms: number) => {
-    const d = new Date(ms);
-    const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
-    const time = d.toLocaleTimeString(dateLocale(lang === 'ru', 'en-GB'),
-                                      { hour: '2-digit', minute: '2-digit' });
-    return sameDay ? time
-      : d.toLocaleDateString(dateLocale(lang === 'ru', 'en-GB'),
-                             { day: 'numeric', month: 'short' }) + ' · ' + time;
+  /** Открыть разговор в чате с Kleal. История — модальное окно над чатом: закрываем его и подменяем чат. */
+  const openConv = (id?: string) => {
+    if (router.canGoBack()) router.back();
+    setTimeout(() => router.replace(id ? { pathname: '/buddy', params: { resume: id } } : '/buddy'), 60);
   };
 
-  const wipe = () =>
-    Alert.alert(HISTORY.clearAsk(), undefined, [
-      { text: HISTORY.close(), style: 'cancel' },
-      { text: HISTORY.clear(), style: 'destructive',
-        onPress: () => clearHistory().then(() => { setItems([]); setOpen(null); }) },
+  const remove = (it: HistoryItem) =>
+    Alert.alert(H.deleteAsk(), titleOf(it), [
+      { text: H.cancel(), style: 'cancel' },
+      { text: H.delete(), style: 'destructive', onPress: () => {
+        deleteConversation(it.id).then(() => setItems((x) => (x || []).filter((y) => y.id !== it.id)));
+      } },
     ]);
 
+  const ru = lang === 'ru';
+  const when = (ms: number) => {
+    const d = new Date(ms), now = new Date();
+    const time = d.toLocaleTimeString(dateLocale(ru), { hour: '2-digit', minute: '2-digit', hour12: use12h(ru) });
+    if (d.toDateString() === now.toDateString()) return `${H.today()}, ${time}`;
+    const y = new Date(now.getTime() - 86400000);
+    if (d.toDateString() === y.toDateString()) return `${H.yesterday()}, ${time}`;
+    return d.toLocaleDateString(dateLocale(ru, 'en-GB'), { day: 'numeric', month: 'short' }) + `, ${time}`;
+  };
+
   return (
-    <View style={[s.wrap, { paddingTop: insets.top + space.md }]}>
-      {/* Фирменный фон «Ambient · glass pilot» — тот же слой, что на входных экранах. */}
+    // На iOS экран — модальный лист: статус-бар уже над ним, своего отступа под него не нужно.
+    <View style={[s.wrap, { paddingTop: Platform.OS === 'ios' ? 12 : insets.top + 8 }]}>
       <Ambient glows={GLOW_FORM} />
       <View style={s.head}>
-        <Text style={[s.title, { fontFamily: displayFamily(lang) }]} numberOfLines={1}>
-          {open ? open.topic : HISTORY.title()}
-        </Text>
-        <Pressable accessibilityRole="button" hitSlop={10}
-                   onPress={() => (open ? setOpen(null) : router.back())}>
-          <Text style={s.close}>{HISTORY.close()}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={HISTORY.close()} hitSlop={10}
+                   onPress={() => router.back()} style={s.back}>
+          <IconChevronLeft size={22} c={color.fg} />
         </Pressable>
+        <Text style={s.title} numberOfLines={1}>{HISTORY.title()}</Text>
+        <View style={s.spacer} />
       </View>
 
-      {open ? (
-        <ScrollView contentContainerStyle={s.body}>
-          {open.lines.map((l, n) => (
-            <View key={n} style={[s.bubble, l.who === 'me' ? s.mine : s.theirs]}>
-              <Text style={[s.text, l.who === 'me' && s.textMine]}>{l.text}</Text>
-              <Text style={[s.at, l.who === 'me' && s.atMine]}>{l.at}</Text>
-            </View>
-          ))}
-        </ScrollView>
-      ) : items.length ? (
-        <ScrollView contentContainerStyle={s.body}>
-          <Text style={s.local}>{HISTORY.local()}</Text>
-          {items.map((it) => (
-            <Pressable key={it.id} accessibilityRole="button" onPress={() => setOpen(it)}
-                       style={({ pressed }) => [s.row, pressed && { opacity: 0.85 }]}>
-              <Text style={s.rowTitle} numberOfLines={1}>{it.topic}</Text>
-              <Text style={s.rowMeta}>{when(it.startedAt)} · {HISTORY.lines(it.lines.length)}</Text>
-            </Pressable>
-          ))}
-          <Pressable accessibilityRole="button" onPress={wipe} style={s.clear}>
-            <Text style={s.clearText}>{HISTORY.clear()}</Text>
+      <ScrollView contentContainerStyle={[s.body, { paddingBottom: insets.bottom + space.xl }]} showsVerticalScrollIndicator={false}>
+        <GlassPill tone="brand" label={H.newChat()} icon={<IconPlusRound size={18} c="#FFFFFF" />}
+                   onPress={() => openConv()} style={s.newBtn} />
+
+        {items && !items.length ? (
+          <GlassSurface tone="light" radius={20} style={s.empty}>
+            <LogoFace size={44} />
+            <Text style={s.emptyTitle}>{HISTORY.empty()}</Text>
+            <Text style={s.emptyHint}>{H.emptyHint()}</Text>
+          </GlassSurface>
+        ) : null}
+
+        {(items || []).map((it) => (
+          <Pressable key={it.id} accessibilityRole="button" accessibilityLabel={titleOf(it)} onPress={() => openConv(it.id)}
+                     style={({ pressed }) => [pressed && s.pressed]}>
+            <GlassSurface tone="light" radius={18} style={s.row}>
+              <View style={s.rowTop}>
+                <Text style={s.rowTitle} numberOfLines={1}>{titleOf(it)}</Text>
+                <Pressable accessibilityRole="button" accessibilityLabel={H.delete()} hitSlop={10} onPress={() => remove(it)} style={s.dots}>
+                  <IconDots size={18} c={color.muted} />
+                </Pressable>
+              </View>
+              <Text style={s.preview} numberOfLines={2}>{previewOf(it)}</Text>
+              <View style={s.rowBottom}>
+                <Text style={s.meta}>{when(it.updatedAt || it.startedAt)} · {HISTORY.lines(it.lines.length)}</Text>
+                {it.created ? <View style={s.badge}><Text style={s.badgeText}>{H.created()}</Text></View> : null}
+              </View>
+            </GlassSurface>
           </Pressable>
-        </ScrollView>
-      ) : (
-        <View style={s.empty}>
-          <Text style={s.emptyTitle}>{HISTORY.empty()}</Text>
-          <Text style={s.emptyHint}>{HISTORY.emptyHint()}</Text>
-        </View>
-      )}
+        ))}
+
+        {items && items.length ? <Text style={s.local}>{HISTORY.local()}</Text> : null}
+      </ScrollView>
     </View>
   );
 }
 
+/** Заголовок разговора: затея, если Kleal её распознал; иначе первая фраза человека. */
+function titleOf(it: HistoryItem): string {
+  const t = it.intent?.seen?.title?.trim();
+  if (t) return t;
+  const first = it.lines.find((l) => l.who === 'me')?.text?.trim();
+  return first ? first : it.topic;
+}
+
+/** Превью — последняя реплика, кто её сказал. */
+function previewOf(it: HistoryItem): string {
+  const last = [...it.lines].reverse().find((l) => !l.hello) || it.lines[it.lines.length - 1];
+  if (!last) return '';
+  return `${last.who === 'me' ? H.you() : 'Kleal'}: ${last.text.replace(/\s+/g, ' ').trim()}`;
+}
+
+const H = {
+  newChat: () => T('Новый разговор', 'New conversation', 'Nueva conversación'),
+  emptyHint: () => T('Здесь будут твои разговоры с Kleal — любой можно открыть и продолжить с того же места.',
+    'Your conversations with Kleal will show up here — open any of them to pick up where you left off.',
+    'Aquí aparecerán tus conversaciones con Kleal: abre cualquiera para seguir donde lo dejaste.'),
+  today: () => T('Сегодня', 'Today', 'Hoy'),
+  yesterday: () => T('Вчера', 'Yesterday', 'Ayer'),
+  you: () => T('Ты', 'You', 'Tú'),
+  created: () => T('Затея создана', 'Intent created', 'Plan creado'),
+  delete: () => T('Удалить', 'Delete', 'Eliminar'),
+  cancel: () => T('Отмена', 'Cancel', 'Cancelar'),
+  deleteAsk: () => T('Удалить этот разговор?', 'Delete this conversation?', '¿Eliminar esta conversación?'),
+};
+
 // ===== вид
 const s = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: color.ambientBase },
-  head: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: space.lg,
-    paddingBottom: space.md,
-    gap: space.md,
-  },
-  title: { ...type.display, color: color.fg, flexShrink: 1 } as any,
-  close: { ...type.fieldLabel, color: color.primary } as any,
-  body: { paddingHorizontal: space.lg, paddingBottom: space.xl * 2, gap: space.sm },
-  /** Оговорка стоит НАД списком: её надо прочитать до того, как на список положились. */
-  local: { ...type.caption, color: color.muted, marginBottom: space.sm } as any,
-  row: {
-    backgroundColor: color.glassCard,
-    borderRadius: rad.lg,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
-    gap: space.xs,
-  },
-  rowTitle: { ...type.labelMedium, color: color.fg } as any,
-  rowMeta: { ...type.caption, color: color.muted } as any,
-  /** Пузыри повторяют ленту разговора: история должна выглядеть тем, чем она была. */
-  bubble: { maxWidth: '86%', borderRadius: rad.lg, paddingHorizontal: space.md, paddingVertical: space.sm },
-  theirs: { alignSelf: 'flex-start', backgroundColor: color.card },
-  mine: { alignSelf: 'flex-end', backgroundColor: color.primary },
-  text: { ...type.body, color: color.fg } as any,
-  textMine: { color: color.onPrimary },
-  at: { ...type.caption, color: color.muted, marginTop: 2 } as any,
-  atMine: { color: color.onCoverSoft },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space.xl, gap: space.sm },
-  emptyTitle: { ...type.labelMedium, color: color.fg } as any,
-  emptyHint: { ...type.caption, color: color.muted, textAlign: 'center' } as any,
-  clear: { alignSelf: 'center', marginTop: space.lg, padding: space.md },
-  clearText: { ...type.caption, color: color.muted } as any,
+  head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+  back: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.85)' },
+  spacer: { width: 44, height: 44 },
+  title: { flex: 1, textAlign: 'center', fontFamily: font.displaySemi, fontSize: 17, lineHeight: 22, color: color.fg } as any,
+  body: { paddingHorizontal: 16, paddingTop: 8, gap: 10 },
+  newBtn: { height: 48, marginBottom: 6 },
+  pressed: { transform: [{ scale: 0.98 }] },
+  row: { padding: 14, gap: 6 },
+  rowTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  rowTitle: { flex: 1, fontFamily: font.textSemibold, fontSize: 16, lineHeight: 22, color: color.fg } as any,
+  dots: { width: 28, height: 28, alignItems: 'center', justifyContent: 'center' },
+  preview: { fontFamily: font.text, fontSize: 14, lineHeight: 20, color: '#5A616E' } as any,
+  rowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 2 },
+  meta: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: color.muted } as any,
+  badge: { paddingHorizontal: 10, height: 24, borderRadius: 12, justifyContent: 'center', backgroundColor: 'rgba(255,56,92,0.10)' },
+  badgeText: { fontFamily: font.textMedium, fontSize: 12, lineHeight: 16, color: color.primary } as any,
+  empty: { padding: 24, alignItems: 'center', gap: 10, marginTop: 8 },
+  emptyTitle: { fontFamily: font.displaySemi, fontSize: 17, lineHeight: 22, color: color.fg, textAlign: 'center' } as any,
+  emptyHint: { fontFamily: font.text, fontSize: 14, lineHeight: 20, color: '#5A616E', textAlign: 'center' } as any,
+  local: { fontFamily: font.text, fontSize: 12, lineHeight: 16, color: color.muted, textAlign: 'center', marginTop: 8 } as any,
 });
